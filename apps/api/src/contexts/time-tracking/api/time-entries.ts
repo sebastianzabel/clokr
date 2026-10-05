@@ -1011,7 +1011,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
   // Plan 03, Issue #91, D-09: a SALONS/PERSONS-scoped manager sees only in-scope entries, never
   // the whole tenant)
   app.get("/", {
-    schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
+    schema: {
+      tags: ["Zeiterfassung"],
+      description:
+        "presenceMinutes/workingMinutes are per-entry display values (rounded, null for open entries; invalid and non-WORK rows included). Do not sum them: period totals come from GET /time-entries/summary.",
+      security: [{ bearerAuth: [] }],
+    },
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const { from, to, employeeId } = req.query as {

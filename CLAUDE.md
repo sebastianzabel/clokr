@@ -239,7 +239,8 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   unrounded and unclamped: a caller rounds or clamps around the call where it did before. The
   auto-break is never re-applied at read time — what the write path stored is what counts. An open
   entry is 0/0 in the kernel and `null` in `GET /time-entries` (`presenceMinutes`/`workingMinutes`
-  per item). `GET /time-entries/summary` (`employeeId`, `from`, `to`, at most 366 days) sums
+  per item; those are rounded per-entry display values that also cover invalid and non-WORK rows —
+  never total them, period totals come from `/summary`). `GET /time-entries/summary` (`employeeId`, `from`, `to`, at most 366 days) sums
   presence, working time and breaks over the saldo's own entry set (T1: closed, valid, non-deleted
   WORK entries), so its `workingMinutes` equals the Ist the account counts from recorded entries
   (a scoped manager gets the sum over the entries in scope). It is NOT the account's full month
