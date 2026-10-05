@@ -21,6 +21,7 @@ import {
   isObligatedWorkday,
   isDayDue,
   findUnconfirmedBreakDays, // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
+  entryDurations, // Phase 79 (Issue #79), D-03/D-05 — presence/working-time kernel
   type PresenceEntry,
   type PresenceLeave,
   type PresenceAbsence,
@@ -553,8 +554,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           let workedMinutes = 0;
           for (const e of dayEntries) {
             if (!e.isInvalid && e.endTime) {
-              workedMinutes +=
-                (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
+              workedMinutes += entryDurations(e).workingMinutes;
             }
           }
 
