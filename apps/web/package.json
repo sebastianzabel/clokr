@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@clokr/types": "workspace:*",
-    "@tanstack/svelte-query": "^6.2.4",
+    "@tanstack/svelte-query": "^6.3.0",
     "chart.js": "^4.5.1",
     "date-fns": "^4.4.0",
     "svelte-dnd-action": "^0.9.79"
@@ -40,7 +40,7 @@
     "svelte-check": "^4.7.6",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
-    "vite": "^8.3.1",
+    "vite": "^8.3.2",
     "vitest": "^4.1.10"
   }
 }

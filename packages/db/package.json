@@ -16,7 +16,7 @@
     "@prisma/client-runtime-utils": "^7.10.0",
     "@types/pg": "^8.23.1",
     "bcryptjs": "^3.0.3",
-    "pg": "^8.23.0"
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "prisma": "^7.10.0",
