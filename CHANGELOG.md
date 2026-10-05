@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.14.1](https://github.com/sebastianzabel/clokr/compare/v1.14.0...v1.14.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* **481:** Urlaubsverbrauch nach dem Vertrag am Urlaubstag; übliche Arbeitstage Pflicht bei Schichtbetrieb ([#489](https://github.com/sebastianzabel/clokr/issues/489)) ([9ef3ac9](https://github.com/sebastianzabel/clokr/commit/9ef3ac97e2a1d6bbf3d70e9e49ae98be202d7ab9))
+* **482:** Azubi-Standard in die Anspruchsberechnung übernehmen ([#483](https://github.com/sebastianzabel/clokr/issues/483)) ([5c5b3e2](https://github.com/sebastianzabel/clokr/commit/5c5b3e200849c874908c94de431a8a2d14c902bd))
+
 ## [1.14.0](https://github.com/sebastianzabel/clokr/compare/v1.13.1...v1.14.0) (2026-10-03)
 
 
