@@ -14,7 +14,7 @@ import type { PrismaClient } from "@clokr/db";
 import { getWorkedEntriesInRange } from "../time-tracking"; // Phase 100B Plan 08 — T2
 import { getAbsencesOverlapping, getActiveLeaveOverlapping } from "../absence"; // Phase 100B Plan 12 — A4; Plan 13 — A2; Issue #446
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — work-location resolution
-import { dateStrInTz } from "./timezone";
+import { dateStrInTz, monthDayBounds } from "./timezone";
 
 /**
  * Bulk-fetch all data needed by the close-month status handlers for a given date range
@@ -24,9 +24,20 @@ import { dateStrInTz } from "./timezone";
  * @param prisma   - Prisma client instance (app.prisma)
  * @param tenantId - Tenant scope for the holiday resolution
  * @param employeeIds - All relevant employee IDs (already tenant-scoped by the caller)
- * @param start    - Start of the date range (inclusive, UTC midnight)
- * @param end      - End of the date range (inclusive, last instant of the period)
- * @param tz       - Tenant timezone, for the holiday resolver's day-string window
+ * @param start    - First instant of the range (the `monthRangeUtc` start — an INSTANT, not a day)
+ * @param end      - Last instant of the range (the `monthRangeUtc` end)
+ * @param tz       - Tenant timezone: converts the instants to calendar days for the `@db.Date`
+ *                   reads (Q2-Q4) and the holiday resolver's day-string window
+ *
+ * Issue #493: Q1 compares `start`/`end` with the stored `SaldoSnapshot.periodStart` key ON
+ * PURPOSE (D-02, see the attribution comment in api/overtime.ts) — that key is instant-based.
+ * Q2-Q4 read `@db.Date` columns, which Postgres compares by the UTC DATE of a bound, so they take
+ * the tenant-local calendar days `firstDay`/`lastDay` instead; the instant of local Oct 1 00:00
+ * (2025-09-30T22:00Z) would otherwise pull the previous month's last day into the range.
+ * Q3 consumer proof (no saldo or close figure reads it): `findMissingWorkdays` adds a leave day
+ * only inside its [spanStart, spanEnd], `karenzOverrunFromRequests` works per row and its result
+ * is filtered to the month, year-status re-filters per month — a row ending the day before the
+ * range therefore cannot change any output.
  *
  * @returns
  *  snapshotsByEmp - Map<employeeId, SaldoSnapshot[]> — non-superseded MONTHLY snapshots
@@ -47,6 +58,10 @@ export async function fetchCloseMonthData(
   end: Date,
   tz: string,
 ) {
+  // Issue #493: calendar-day bounds for the `@db.Date` reads Q2-Q4; Q1 and the holiday window keep
+  // their own conventions (see the docblock).
+  const { firstDay, lastDay } = monthDayBounds(start, end, tz);
+
   const [snapshots, entries, leave, absences] = await Promise.all([
     // Q1: all non-superseded MONTHLY SaldoSnapshots for these employees in this date range.
     // Filters superseded=false to match the authoritative snapshot per employee per month.
@@ -64,7 +79,12 @@ export async function fetchCloseMonthData(
     // SAME bulk fetch (N+1-safe, PERF-V1814-01 — no extra per-employee query added). Also the
     // per-day work location fed into the holiday resolver below (Phase 71b, issue #71).
     // Phase 100B Plan 08 — T2, contexts/time-tracking facade.
-    getWorkedEntriesInRange(prisma, { kind: "employees", employeeIds, tenantId }, start, end),
+    getWorkedEntriesInRange(
+      prisma,
+      { kind: "employees", employeeIds, tenantId },
+      firstDay,
+      lastDay,
+    ),
 
     // Q3: all effective LeaveRequests (APPROVED + CANCELLATION_REQUESTED, Issue #446 D-02)
     // overlapping this date range. A2's select already carries leaveType.code (added in Phase
@@ -74,11 +94,16 @@ export async function fetchCloseMonthData(
     // leaveRequest read — a second leaveRequest query here would double-count against
     // overtime-perf-n1.test.ts's per-model ≤1 assertion.
     // Phase 100B Plan 13 — A2, contexts/absence facade.
-    getActiveLeaveOverlapping(prisma, { kind: "employees", employeeIds, tenantId }, start, end),
+    getActiveLeaveOverlapping(
+      prisma,
+      { kind: "employees", employeeIds, tenantId },
+      firstDay,
+      lastDay,
+    ),
 
     // Q4: all Absences overlapping this date range.
     // Phase 100B Plan 12 — A4, contexts/absence facade.
-    getAbsencesOverlapping(prisma, { kind: "employees", employeeIds, tenantId }, start, end),
+    getAbsencesOverlapping(prisma, { kind: "employees", employeeIds, tenantId }, firstDay, lastDay),
   ]);
 
   // ONE batched holiday resolution by work location (Phase 71b, issue #71) — fed with the
