@@ -452,6 +452,10 @@ export async function computeOvertimeBalanceBreakdown(
   // (RESEARCH §2.6 — all models benefit from per-month snapshot guarantee).
 
   let accumulatedCarryOver = snapshotCarryOver;
+  // The running base of the live TOTAL. It resets to 0 after a track-only month exactly like that
+  // month's close resets the chain (`effectiveCarryOverOut = 0`), so live == Σ closes
+  // (Issue #494, D-10).
+  let liveBase = snapshotCarryOver;
   let openPeriodBalance = 0;
 
   for (let monthIndex = 0; monthIndex < completeOpenMonths.length; monthIndex++) {
@@ -552,8 +556,16 @@ export async function computeOvertimeBalanceBreakdown(
 
     // Thread carryOver for next month (§2.3 RESEARCH).
     accumulatedCarryOver = result.effectiveCarryOverOut;
-    // Accumulate complete-month balance (already net — do NOT also add via leave/absence path).
-    openPeriodBalance += result.balanceMinutes;
+    if (isTrackOnlySchedule(monthSchedule)) {
+      // Issue #494 (D-10): this unclosed month is track-only on ITS OWN contract, so its close
+      // would store carry-over 0 — the live total drops everything before it, exactly as the chain
+      // of closes would.
+      liveBase = 0;
+      openPeriodBalance = 0;
+    } else {
+      // Accumulate complete-month balance (already net — do NOT also add via leave/absence path).
+      openPeriodBalance += result.balanceMinutes;
+    }
   }
 
   // ── Current partial month: ONE closeEmployeeMonth() call (Phase 76.39, D-07) ─
@@ -798,8 +810,9 @@ export async function computeOvertimeBalanceBreakdown(
 
   // totalBalanceHours = (snapshotCarryOver from lastSnapshot) + openPeriodBalance
   // (complete-months loop threads effectiveCarryOverOut, but the final balance displayed
-  // to the user is always relative to the snapshotCarryOver base — SNAP-01).
-  const totalBalanceHours = (snapshotCarryOver + openPeriodBalance) / 60;
+  // to the user is always relative to the stored snapshot base `liveBase` — SNAP-01; it differs
+  // from `snapshotCarryOver` only after an unclosed track-only month, Issue #494 D-10).
+  const totalBalanceHours = (liveBase + openPeriodBalance) / 60;
 
   // D-06: track-only mode (TRACK_ONLY, or MONTHLY_HOURS without monthly hours — Issue #494) —
   // display balance as 0 (hours are tracked but not accumulated). Today's contract — deliberate,
@@ -815,6 +828,9 @@ export async function computeOvertimeBalanceBreakdown(
   // Track-only already forces the reported total to 0 above; force BOTH split figures to 0 too
   // so a legacy non-zero snapshotCarryOver never surfaces as a phantom negative forecast
   // (naive 0 − confirmedMinutes would go negative). hasClosedMonth still reports the truth.
+  // `confirmedMinutes` deliberately keeps reading the STORED last closed carry (`snapshotCarryOver`),
+  // not `liveBase`: "Bestätigt" is the same figure `getConfirmedCarryOver` and the OVERTIME_COMP
+  // gate read, so zeroing it for an unclosed track-only month would contradict the stored snapshot.
   const confirmedMinutes = isTrackOnly ? 0 : snapshotCarryOver;
   const openMonthMinutes = isTrackOnly
     ? 0
