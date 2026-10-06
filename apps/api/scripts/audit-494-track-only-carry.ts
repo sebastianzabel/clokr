@@ -134,7 +134,7 @@ export type EmployeeSummary = {
   yearlyNonZeroCarry: number;
 };
 
-/** Full UUIDs — DSGVO-safe (no name, no employeeNumber), but locatable by the owner. */
+/** Full UUIDs — DSGVO-safe (no name, no employee number), but locatable by the owner. */
 export function formatFindingLine(f: Finding): string {
   return (
     `finding tenantId=${f.tenantId} employeeId=${f.employeeId} snapshotId=${f.snapshotId} ` +
@@ -203,112 +203,148 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       ? await prisma.tenant.findMany({ select: { id: true } })
       : [{ id: args.tenantId! }];
 
-    let employeesScanned = 0;
     let findingCount = 0;
     let highPriorityCount = 0;
 
-    for (const t of tenants) {
-      const tz = await getTenantTimezone(prisma, t.id);
-      // Ids only — no name, no employee number (DSGVO).
-      const employees = await prisma.employee.findMany({
-        where: { tenantId: t.id },
-        select: { id: true, tenantId: true },
-        orderBy: { id: "asc" },
+    const tenantIds = tenants.map((t) => t.id);
+    const employeesScanned = await prisma.employee.count({
+      where: { tenantId: { in: tenantIds } },
+    });
+
+    // One query for all selected tenants (the scope is the tenant-id filter): only snapshots with a
+    // stored carry can ever be a finding, so everything else is never read. Ids only — no name,
+    // no employee number (DSGVO).
+    const candidateRows = await prisma.saldoSnapshot.findMany({
+      where: {
+        periodType: "MONTHLY",
+        superseded: false,
+        carryOver: { not: 0 },
+        employee: { tenantId: { in: tenantIds } },
+      },
+      orderBy: [{ employeeId: "asc" }, { periodStart: "asc" }],
+      select: {
+        id: true,
+        periodStart: true,
+        periodEnd: true,
+        carryOver: true,
+        balanceMinutes: true,
+        employee: { select: { id: true, tenantId: true } },
+      },
+    });
+    const byEmployee = new Map<
+      string,
+      { emp: { id: string; tenantId: string }; snapshots: typeof candidateRows }
+    >();
+    for (const row of candidateRows) {
+      const entry = byEmployee.get(row.employee.id);
+      if (entry) entry.snapshots.push(row);
+      else byEmployee.set(row.employee.id, { emp: row.employee, snapshots: [row] });
+    }
+    const tzByTenant = new Map<string, string>();
+
+    // Contract rows of every employee with a candidate snapshot, in one read. The contract valid at
+    // a month midpoint is then resolved in memory exactly like `getEffectiveSchedule`: the newest
+    // row with `validFrom <= date`. (No row at all resolves to a FIXED_SCHEDULE default, which is
+    // never track-only, so "no row" is simply "not a finding".)
+    const contractRows = await prisma.workSchedule.findMany({
+      where: { employeeId: { in: [...byEmployee.keys()] } },
+      orderBy: [{ employeeId: "asc" }, { validFrom: "desc" }],
+      select: {
+        employeeId: true,
+        validFrom: true,
+        type: true,
+        overtimeMode: true,
+        monthlyHours: true,
+      },
+    });
+    const contractsByEmployee = new Map<string, typeof contractRows>();
+    for (const row of contractRows) {
+      const list = contractsByEmployee.get(row.employeeId);
+      if (list) list.push(row);
+      else contractsByEmployee.set(row.employeeId, [row]);
+    }
+
+    for (const { emp, snapshots } of byEmployee.values()) {
+      if (!tzByTenant.has(emp.tenantId)) {
+        tzByTenant.set(emp.tenantId, await getTenantTimezone(prisma, emp.tenantId));
+      }
+      const tz = tzByTenant.get(emp.tenantId)!;
+
+      const findings: Finding[] = [];
+      let lastFindingMidpoint: Date | null = null;
+
+      for (const snap of snapshots) {
+        // @db.Date columns: the midpoint is always safely inside the real calendar month, even
+        // for a tenant east of UTC where periodStart is the previous UTC date (same derivation
+        // as dry-run-433-monthly-hours-soll.ts).
+        const periodMidpoint = new Date(
+          (snap.periodStart.getTime() + snap.periodEnd.getTime()) / 2,
+        );
+        const year = periodMidpoint.getUTCFullYear();
+        const month = periodMidpoint.getUTCMonth() + 1; // 1-based
+        const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
+        const midMonth = new Date((monthStart.getTime() + monthEnd.getTime()) / 2);
+
+        // Same contract resolution as every close path: the contract valid at the month midpoint.
+        const schedule = (contractsByEmployee.get(emp.id) ?? []).find(
+          (row) => row.validFrom.getTime() <= midMonth.getTime(),
+        );
+        if (!schedule || !isTrackOnlySchedule(schedule)) continue;
+
+        const locked = await isSnapshotLocked(prisma, emp.id, emp.tenantId, monthStart, monthEnd);
+        const storedMode = String(schedule.overtimeMode ?? "");
+        findings.push({
+          tenantId: emp.tenantId,
+          employeeId: emp.id,
+          snapshotId: snap.id,
+          month: monthLabelFromPeriodEnd(snap.periodEnd),
+          storedCarryOver: snap.carryOver,
+          balanceMinutes: snap.balanceMinutes,
+          locked,
+          overtimeMode: storedMode,
+          monthlyHours: schedule.monthlyHours == null ? null : Number(schedule.monthlyHours),
+          reason: storedMode === "TRACK_ONLY" ? "TRACK_ONLY_MODE" : "NO_TARGET",
+        });
+        lastFindingMidpoint = midMonth;
+      }
+
+      if (findings.length === 0) continue;
+      findingCount += findings.length;
+      for (const f of findings) console.info(formatFindingLine(f));
+
+      const confirmed = await getConfirmedCarryOver(prisma, emp.id, emp.tenantId);
+      const breakdown = await computeOvertimeBalanceBreakdown(appShim, emp.id);
+      const todaySchedule = await getEffectiveSchedule(appShim, emp.id);
+
+      // Any contract starting after the last affected month that is NOT track-only would pick up
+      // the stale stored carry as its opening balance.
+      const laterRows = (contractsByEmployee.get(emp.id) ?? []).filter(
+        (row) => row.validFrom.getTime() > lastFindingMidpoint!.getTime(),
+      );
+      const laterContractWithTarget = laterRows.some((row) => !isTrackOnlySchedule(row));
+
+      const yearlyNonZeroCarry = await prisma.saldoSnapshot.count({
+        where: {
+          employeeId: emp.id,
+          periodType: "YEARLY",
+          superseded: false,
+          carryOver: { not: 0 },
+        },
       });
 
-      for (const emp of employees) {
-        employeesScanned++;
-
-        const snapshots = await prisma.saldoSnapshot.findMany({
-          where: { employeeId: emp.id, periodType: "MONTHLY", superseded: false },
-          orderBy: { periodStart: "asc" },
-          select: {
-            id: true,
-            periodStart: true,
-            periodEnd: true,
-            carryOver: true,
-            balanceMinutes: true,
-          },
-        });
-
-        const findings: Finding[] = [];
-        let lastFindingMidpoint: Date | null = null;
-
-        for (const snap of snapshots) {
-          if (snap.carryOver === 0) continue; // nothing stored to correct
-
-          // @db.Date columns: the midpoint is always safely inside the real calendar month, even
-          // for a tenant east of UTC where periodStart is the previous UTC date (same derivation
-          // as dry-run-433-monthly-hours-soll.ts).
-          const periodMidpoint = new Date(
-            (snap.periodStart.getTime() + snap.periodEnd.getTime()) / 2,
-          );
-          const year = periodMidpoint.getUTCFullYear();
-          const month = periodMidpoint.getUTCMonth() + 1; // 1-based
-          const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
-          const midMonth = new Date((monthStart.getTime() + monthEnd.getTime()) / 2);
-
-          // Same contract resolution as every close path: the contract valid at the month midpoint.
-          const schedule = await getEffectiveSchedule(appShim, emp.id, midMonth);
-          if (!isTrackOnlySchedule(schedule)) continue;
-
-          const locked = await isSnapshotLocked(prisma, emp.id, emp.tenantId, monthStart, monthEnd);
-          const storedMode = String(schedule.overtimeMode ?? "");
-          findings.push({
-            tenantId: t.id,
-            employeeId: emp.id,
-            snapshotId: snap.id,
-            month: monthLabelFromPeriodEnd(snap.periodEnd),
-            storedCarryOver: snap.carryOver,
-            balanceMinutes: snap.balanceMinutes,
-            locked,
-            overtimeMode: storedMode,
-            monthlyHours: schedule.monthlyHours == null ? null : Number(schedule.monthlyHours),
-            reason: storedMode === "TRACK_ONLY" ? "TRACK_ONLY_MODE" : "NO_TARGET",
-          });
-          lastFindingMidpoint = midMonth;
-        }
-
-        if (findings.length === 0) continue;
-        findingCount += findings.length;
-        for (const f of findings) console.info(formatFindingLine(f));
-
-        const confirmed = await getConfirmedCarryOver(prisma, emp.id, emp.tenantId);
-        const breakdown = await computeOvertimeBalanceBreakdown(appShim, emp.id);
-        const todaySchedule = await getEffectiveSchedule(appShim, emp.id);
-
-        // A list read of the employee's contract rows (not an effective-contract resolution): any
-        // contract starting after the last affected month that is NOT track-only would pick up the
-        // stale stored carry as its opening balance.
-        const laterRows = await prisma.workSchedule.findMany({
-          where: { employeeId: emp.id, validFrom: { gt: lastFindingMidpoint! } },
-          select: { type: true, overtimeMode: true, monthlyHours: true },
-        });
-        const laterContractWithTarget = laterRows.some((row) => !isTrackOnlySchedule(row));
-
-        const yearlyNonZeroCarry = await prisma.saldoSnapshot.count({
-          where: {
-            employeeId: emp.id,
-            periodType: "YEARLY",
-            superseded: false,
-            carryOver: { not: 0 },
-          },
-        });
-
-        const summary: EmployeeSummary = {
-          tenantId: t.id,
-          employeeId: emp.id,
-          findings: findings.length,
-          lastActiveCarryOver: confirmed.minutes,
-          liveAfterMinutes: breakdown ? Math.round(breakdown.totalHours * 60) : "exempt",
-          todayContractAffected: isTrackOnlySchedule(todaySchedule),
-          laterContractWithTarget,
-          priority: laterContractWithTarget ? "HIGH" : "normal",
-          yearlyNonZeroCarry,
-        };
-        if (summary.priority === "HIGH") highPriorityCount++;
-        console.info(formatEmployeeLine(summary));
-      }
+      const summary: EmployeeSummary = {
+        tenantId: emp.tenantId,
+        employeeId: emp.id,
+        findings: findings.length,
+        lastActiveCarryOver: confirmed.minutes,
+        liveAfterMinutes: breakdown ? Math.round(breakdown.totalHours * 60) : "exempt",
+        todayContractAffected: isTrackOnlySchedule(todaySchedule),
+        laterContractWithTarget,
+        priority: laterContractWithTarget ? "HIGH" : "normal",
+        yearlyNonZeroCarry,
+      };
+      if (summary.priority === "HIGH") highPriorityCount++;
+      console.info(formatEmployeeLine(summary));
     }
 
     if (findingCount === 0) {
