@@ -26,6 +26,7 @@ import {
 import {
   getTenantTimezone,
   monthRangeUtc,
+  monthDateRange, // Issue #493 (D-10)
   computeMonthReportFigures, // Issue #451 (D-03)
 } from "../contexts/working-time-account"; // Phase 101B
 import { entryDurations, addWorkingMinutes } from "../contexts/time-tracking"; // Phase 79 (Issue #79) — presence/working-time kernel (D-03/D-05)
@@ -159,10 +160,12 @@ type EmployeeWithIncludes = {
 // handlers below call `computeMonthReportFigures` (the working-time-account's own month result)
 // directly for those. The day-iterating helper left here (`daysInRange`) exists ONLY for the
 // sick-day / § 9 day counts, which are calendar-day spans, not Soll minutes.
+// Bounds are UTC-midnight calendar days (monthDateRange) because they reach @db.Date columns / date
+// clipping — never a monthRangeUtc instant (Issue #493, D-01).
 function computeEmployeeSummary(
   emp: EmployeeWithIncludes,
-  start: Date,
-  end: Date,
+  firstDay: Date,
+  lastDay: Date,
   tz: string,
   // Issue #451 (D-02): facade-fetched input — the absence context's own priced, §9-netted
   // leave-day map for this employee's report window (leaveDaysByCodeWithin, prefetched ONCE per
@@ -194,10 +197,10 @@ function computeEmployeeSummary(
     note?: string;
   }>;
 } {
-  // ── Days in range clamped to [start, end] ────────────────────────────────
+  // ── Days in range clamped to [firstDay, lastDay] ─────────────────────────
   function daysInRange(from: Date, to: Date): number {
-    const s = from < start ? start : from;
-    const e2 = to > end ? end : to;
+    const s = from < firstDay ? firstDay : from;
+    const e2 = to > lastDay ? lastDay : to;
     return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
   }
 
@@ -212,8 +215,8 @@ function computeEmployeeSummary(
   const _sickDaysAbsence = emp.absences
     .filter((a) => a.type === "SICK" || a.type === "SICK_CHILD")
     .reduce((sum, a) => {
-      const s = a.startDate < start ? start : a.startDate;
-      const e2 = a.endDate > end ? end : a.endDate;
+      const s = a.startDate < firstDay ? firstDay : a.startDate;
+      const e2 = a.endDate > lastDay ? lastDay : a.endDate;
       return sum + Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
     }, 0);
 
@@ -412,12 +415,15 @@ type DatevEmployee = {
   }>;
 };
 
+// Issue #493 (F-04): `firstDay`/`lastDay` are UTC-midnight calendar days (monthDateRange) because the
+// walk below keys days by UTC date and weekday — an instant start shifted every key of a leave that
+// began before the month by one day.
 function buildDatevLodas(params: {
   employees: DatevEmployee[];
   year: number;
   month: number;
-  start: Date;
-  end: Date;
+  firstDay: Date;
+  lastDay: Date;
   lna: { normal: number; urlaub: number; krank: number; sonderurlaub: number };
   // Issue #256 (Befund 3): the BeraterNr/MandantenNr pair of the [Allgemein] header.
   // Required, not optional: a `0` here is what made the file unassignable to a Mandant,
@@ -440,8 +446,8 @@ function buildDatevLodas(params: {
     employees,
     year: y,
     month: m,
-    start,
-    end,
+    firstDay,
+    lastDay,
     lna,
     kanzlei,
     section9ByEmp,
@@ -461,8 +467,8 @@ function buildDatevLodas(params: {
   // has always used. workDaysInMonthRange() is unchanged in behaviour, only in
   // implementation (its length).
   function workdayKeysInMonthRange(from: Date, to: Date): string[] {
-    const s = from < start ? start : from;
-    const e2 = to > end ? end : to;
+    const s = from < firstDay ? firstDay : from;
+    const e2 = to > lastDay ? lastDay : to;
     const keys: string[] = [];
     const cur = new Date(s);
     while (cur <= e2) {
@@ -508,8 +514,8 @@ function buildDatevLodas(params: {
     // Employee name for DATEV identification
     const name = `${emp.lastName} ${emp.firstName}`;
     // Kalendertag = letzter Tag des Monats im DDMMJJJJ-Format (DATEV-Konvention)
-    const lastDay = new Date(y, m, 0).getDate();
-    const datum = `${String(lastDay).padStart(2, "0")}${String(m).padStart(2, "0")}${y}`;
+    const lastDayOfMonth = new Date(y, m, 0).getDate();
+    const datum = `${String(lastDayOfMonth).padStart(2, "0")}${String(m).padStart(2, "0")}${y}`;
 
     // Working hours
     const workedMinutes = emp.timeEntries.reduce((sum, e) => addWorkingMinutes(sum, e), 0);
@@ -642,14 +648,16 @@ function buildDatevLodas(params: {
 }
 
 // ── Common employee include shape ─────────────────────────────────────────────
-function buildEmployeeInclude(start: Date, end: Date) {
+// Bounds are UTC-midnight calendar days (monthDateRange) because they reach @db.Date columns / date
+// clipping — never a monthRangeUtc instant (Issue #493, D-01).
+function buildEmployeeInclude(firstDay: Date, lastDay: Date) {
   return {
     user: { select: { role: true } },
     workSchedules: { orderBy: { validFrom: "asc" } },
     timeEntries: {
       where: {
         deletedAt: null,
-        date: { gte: start, lte: end },
+        date: { gte: firstDay, lte: lastDay },
         type: "WORK",
         endTime: { not: null },
         isInvalid: false,
@@ -657,14 +665,14 @@ function buildEmployeeInclude(start: Date, end: Date) {
       orderBy: { date: "asc" },
     },
     absences: {
-      where: { deletedAt: null, startDate: { lte: end }, endDate: { gte: start } },
+      where: { deletedAt: null, startDate: { lte: lastDay }, endDate: { gte: firstDay } },
     },
     leaveRequests: {
       where: {
         deletedAt: null,
         status: { in: Array.from(EFFECTIVE_LEAVE_STATUSES) }, // Issue #446 (D-04) — Array.from (not a spread) yields a mutable array despite this function's own `as const`
-        startDate: { lte: end },
-        endDate: { gte: start },
+        startDate: { lte: lastDay },
+        endDate: { gte: firstDay },
       },
       include: { leaveType: true },
     },
@@ -684,13 +692,15 @@ function buildEmployeeInclude(start: Date, end: Date) {
 // Employee shape at the call sites", but neither function ever touched the Employee shape —
 // both take (app, tenantId, start, end) and return the same Map. Two copies of a
 // payroll-relevant filter (status CONFIRMED + tenant scope) can drift, so there is one.
+// Bounds are UTC-midnight calendar days (monthDateRange) because they reach @db.Date columns / date
+// clipping — never a monthRangeUtc instant (Issue #493, D-01).
 async function fetchConfirmedSection9CreditsByEmp(
   app: FastifyInstance,
   tenantId: string,
-  start: Date,
-  end: Date,
+  firstDay: Date,
+  lastDay: Date,
 ): Promise<Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>> {
-  const credits = await getConfirmedSection9Credits(app.prisma, tenantId, start, end);
+  const credits = await getConfirmedSection9Credits(app.prisma, tenantId, firstDay, lastDay);
   const byEmp = new Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>();
   for (const c of credits) {
     if (c.creditedStart === null || c.creditedEnd === null) continue;
@@ -891,7 +901,10 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
       }
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { start, end } = monthRangeUtc(y, m, tz);
+      const { end } = monthRangeUtc(y, m, tz);
+      // Issue #493 (D-10): @db.Date columns and the day clip take calendar-day bounds; the
+      // instant `end` above stays for the Stichtag lookup only.
+      const { firstDay, lastDay } = monthDateRange(y, m, tz);
 
       // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
       // building the report body. Stichtag = the report period's own last day (`end`, already
@@ -926,7 +939,7 @@ export async function reportRoutes(app: FastifyInstance) {
               }
             : {}),
         },
-        include: buildEmployeeInclude(start, end),
+        include: buildEmployeeInclude(firstDay, lastDay),
         orderBy: { lastName: "asc" },
       })) as unknown as EmployeeWithIncludes[];
 
@@ -935,8 +948,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const section9ByEmp = await fetchConfirmedSection9CreditsByEmp(
         app,
         req.user.tenantId,
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
 
       // Issue #451 (D-02): the absence context's own priced leave-day map, one
@@ -978,8 +991,8 @@ export async function reportRoutes(app: FastifyInstance) {
       for (const emp of employees) {
         const summary = computeEmployeeSummary(
           emp,
-          start,
-          end,
+          firstDay,
+          lastDay,
           tz,
           leaveDaysByCodeByEmp.get(emp.id) ?? new Map(),
           section9ByEmp.get(emp.id) ?? [],
@@ -1403,6 +1416,10 @@ export async function reportRoutes(app: FastifyInstance) {
       }
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
+      // Issue #493 (D-01/D-10): @db.Date columns (time-entry date, leave dates, § 9 credits) get
+      // calendar-day bounds; the instants above stay for the Timestamptz payroll predicate
+      // (Employee.hireDate/exitDate), the skipped counts and the Stichtag.
+      const { firstDay, lastDay } = monthDateRange(y, m, tz);
 
       // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
       // building the export. Stichtag = the payroll period's own last day (`end`).
@@ -1434,7 +1451,7 @@ export async function reportRoutes(app: FastifyInstance) {
           timeEntries: {
             where: {
               deletedAt: null,
-              date: { gte: start, lte: end },
+              date: { gte: firstDay, lte: lastDay },
               endTime: { not: null },
               isInvalid: false,
             },
@@ -1443,8 +1460,8 @@ export async function reportRoutes(app: FastifyInstance) {
             where: {
               deletedAt: null,
               status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
-              startDate: { lte: end },
-              endDate: { gte: start },
+              startDate: { lte: lastDay },
+              endDate: { gte: firstDay },
             },
             include: { leaveType: true },
           },
@@ -1492,8 +1509,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const section9ByEmpDatev = await fetchConfirmedSection9CreditsByEmp(
         app,
         req.user.tenantId,
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
       // Issue #451 (D-01): UTC-midnight calendar-day bounds for the facade call — NOT `start`/
       // `end` above, which are monthRangeUtc()'s tenant-tz instants (see
@@ -1510,8 +1527,8 @@ export async function reportRoutes(app: FastifyInstance) {
         employees,
         year: y,
         month: m,
-        start,
-        end,
+        firstDay,
+        lastDay,
         lna,
         kanzlei,
         section9ByEmp: section9ByEmpDatev,
@@ -1573,6 +1590,9 @@ export async function reportRoutes(app: FastifyInstance) {
 
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
+      // Issue #493 (D-01/D-10): @db.Date columns get calendar-day bounds; the instants above stay
+      // for the Timestamptz payroll predicate and the Stichtag.
+      const { firstDay, lastDay } = monthDateRange(y, m, tz);
 
       const datevConfig = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: req.user.tenantId },
@@ -1613,7 +1633,7 @@ export async function reportRoutes(app: FastifyInstance) {
           timeEntries: {
             where: {
               deletedAt: null,
-              date: { gte: start, lte: end },
+              date: { gte: firstDay, lte: lastDay },
               endTime: { not: null },
               isInvalid: false,
             },
@@ -1622,8 +1642,8 @@ export async function reportRoutes(app: FastifyInstance) {
             where: {
               deletedAt: null,
               status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
-              startDate: { lte: end },
-              endDate: { gte: start },
+              startDate: { lte: lastDay },
+              endDate: { gte: firstDay },
             },
             include: { leaveType: true },
           },
@@ -1667,8 +1687,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const section9ByEmpDatevSingle = await fetchConfirmedSection9CreditsByEmp(
         app,
         req.user.tenantId,
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
       const leaveDaysByEmployeeDatevSingle = await fetchLeaveDaysByEmployeeForDatev(
         app,
@@ -1682,8 +1702,8 @@ export async function reportRoutes(app: FastifyInstance) {
         employees: [emp],
         year: y,
         month: m,
-        start,
-        end,
+        firstDay,
+        lastDay,
         lna,
         kanzlei,
         section9ByEmp: section9ByEmpDatevSingle,
@@ -1733,7 +1753,10 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
       }
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { start, end } = monthRangeUtc(y, m, tz);
+      const { end } = monthRangeUtc(y, m, tz);
+      // Issue #493 (D-10): @db.Date columns and the day clip take calendar-day bounds; the
+      // instant `end` above stays for the Stichtag lookup only.
+      const { firstDay, lastDay } = monthDateRange(y, m, tz);
 
       const tenant = await app.prisma.tenant.findUnique({
         where: { id: req.user.tenantId },
@@ -1745,7 +1768,7 @@ export async function reportRoutes(app: FastifyInstance) {
           id: employeeId,
           tenantId: req.user.tenantId,
         },
-        include: buildEmployeeInclude(start, end),
+        include: buildEmployeeInclude(firstDay, lastDay),
       })) as unknown as EmployeeWithIncludes | null;
 
       if (!emp) {
@@ -1791,8 +1814,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const section9ByEmpPdf = await fetchConfirmedSection9CreditsByEmp(
         app,
         req.user.tenantId,
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
       // Issue #451 (D-02): same priced leave-day map as GET /monthly, for this one employee.
       const leaveDaysByCodePdf = await fetchLeaveDaysByCodeForMonthlyReport(
@@ -1804,8 +1827,8 @@ export async function reportRoutes(app: FastifyInstance) {
       );
       const summary = computeEmployeeSummary(
         emp,
-        start,
-        end,
+        firstDay,
+        lastDay,
         tz,
         leaveDaysByCodePdf.get(emp.id) ?? new Map(),
         section9ByEmpPdf.get(emp.id) ?? [],
@@ -1881,7 +1904,10 @@ export async function reportRoutes(app: FastifyInstance) {
       const roleFilter: CompatRoleFilter | undefined = parseCompatRoleFilter(role);
 
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { start, end } = monthRangeUtc(y, m, tz);
+      const { end } = monthRangeUtc(y, m, tz);
+      // Issue #493 (D-10): @db.Date columns and the day clip take calendar-day bounds; the
+      // instant `end` above stays for the Stichtag lookup only.
+      const { firstDay, lastDay } = monthDateRange(y, m, tz);
 
       const tenant = await app.prisma.tenant.findUnique({
         where: { id: req.user.tenantId },
@@ -1913,7 +1939,7 @@ export async function reportRoutes(app: FastifyInstance) {
           user: { isActive: true, ...compatRoleUserWhere(roleFilter) },
           ...(pdfAllScopedIds !== "all" ? { id: { in: pdfAllScopedIds } } : {}),
         },
-        include: buildEmployeeInclude(start, end),
+        include: buildEmployeeInclude(firstDay, lastDay),
         orderBy: { lastName: "asc" },
       })) as unknown as EmployeeWithIncludes[];
 
@@ -1926,8 +1952,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const section9ByEmpAll = await fetchConfirmedSection9CreditsByEmp(
         app,
         req.user.tenantId,
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
 
       // Issue #451 (D-02): the absence context's own priced leave-day map, prefetched
@@ -1962,8 +1988,8 @@ export async function reportRoutes(app: FastifyInstance) {
       for (const emp of employees) {
         const summary = computeEmployeeSummary(
           emp,
-          start,
-          end,
+          firstDay,
+          lastDay,
           tz,
           leaveDaysByCodeAll.get(emp.id) ?? new Map(),
           section9ByEmpAll.get(emp.id) ?? [],

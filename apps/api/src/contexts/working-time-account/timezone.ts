@@ -164,6 +164,38 @@ export function weekRangeUtc(
 }
 
 /**
+ * The calendar-day bounds of a month / ISO week as UTC-MIDNIGHT dates — THE bounds for any
+ * `@db.Date` column (TimeEntry.date, LeaveRequest/Absence startDate/endDate, Section9Credit dates,
+ * Shift.date, PublicHoliday.date) fed from a calendar month or week, and for JS clipping of such
+ * values.
+ *
+ * Why (Issue #493): a Date parameter compared with a date column is evaluated at UTC-calendar-date
+ * precision, so the instant of local Oct 1 00:00 in Europe/Berlin (2026-09-30T22:00Z) admits the
+ * previous day — measured in prod (Monatsbericht, PDF and DATEV of October listed 30.09.).
+ * `monthRangeUtc` stays the bound for `@db.Timestamptz` columns (Employee.hireDate/exitDate,
+ * WorkSchedule.validFrom), the SaldoSnapshot key and Stichtag lookups.
+ *
+ * Pure composition of monthRangeUtc/monthDayBounds and weekRangeUtc — no date arithmetic of its own.
+ */
+export function monthDateRange(
+  year: number,
+  month: number,
+  tz: string,
+): { firstDay: Date; lastDay: Date } {
+  const { start, end } = monthRangeUtc(year, month, tz);
+  return monthDayBounds(start, end, tz);
+}
+
+/** Week counterpart of {@link monthDateRange}: Monday and Sunday of the ISO week containing `refDate`. */
+export function weekDateRange(refDate: Date, tz: string): { firstDay: Date; lastDay: Date } {
+  const { days } = weekRangeUtc(refDate, tz);
+  return {
+    firstDay: new Date(`${days[0]}T00:00:00Z`),
+    lastDay: new Date(`${days[6]}T00:00:00Z`),
+  };
+}
+
+/**
  * Iterate calendar days between two dates (inclusive) in the tenant timezone
  * and return the day-of-week for each.
  *

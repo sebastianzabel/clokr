@@ -44,6 +44,7 @@ import {
   isMonthClosed,
   getTenantTimezone,
   monthRangeUtc,
+  monthDateRange, // Issue #493 (D-10)
   recalculateSnapshots,
   getConfirmedCarryOver,
   loadNegativeBalanceTolerance,
@@ -3195,7 +3196,9 @@ export async function leaveRoutes(app: FastifyInstance) {
       const m = month ? parseInt(month) : new Date().getMonth() + 1;
 
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { start, end } = monthRangeUtc(y, m, tz);
+      // Issue #493: the leave overlap, the holiday window and the § 9 overlap all hit `@db.Date`
+      // columns / date-string windows, so they take calendar-day bounds, not month instants.
+      const { firstDay, lastDay } = monthDateRange(y, m, tz);
 
       const [rows, holidayMap] = await Promise.all([
         app.prisma.leaveRequest.findMany({
@@ -3203,8 +3206,8 @@ export async function leaveRoutes(app: FastifyInstance) {
             deletedAt: null,
             employee: { tenantId: req.user.tenantId },
             status: { in: ["PENDING", ...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04): same set, now derived
-            startDate: { lte: end },
-            endDate: { gte: start },
+            startDate: { lte: lastDay },
+            endDate: { gte: firstDay },
           },
           include: {
             leaveType: true,
@@ -3216,7 +3219,13 @@ export async function leaveRoutes(app: FastifyInstance) {
         // resolve a work location for, so it shows the REQUESTER's own work-location holidays
         // (or the tenant's default salon's, for a profile-less admin) until Block D (#82 ff.)
         // designs a salon-aware calendar.
-        getHolidayMap(app.prisma, req.user.tenantId, req.user.employeeId ?? null, start, end),
+        getHolidayMap(
+          app.prisma,
+          req.user.tenantId,
+          req.user.employeeId ?? null,
+          firstDay,
+          lastDay,
+        ),
       ]);
 
       // Phase 104-10 (D-28/D-29): bulk-load § 9 credits overlapping the visible month — ONE
@@ -3225,8 +3234,8 @@ export async function leaveRoutes(app: FastifyInstance) {
       const section9Credits = await app.prisma.section9Credit.findMany({
         where: {
           employee: { tenantId: req.user.tenantId },
-          overlapStart: { lte: end },
-          overlapEnd: { gte: start },
+          overlapStart: { lte: lastDay },
+          overlapEnd: { gte: firstDay },
         },
         select: {
           sickRequestId: true,

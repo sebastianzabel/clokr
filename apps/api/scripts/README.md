@@ -23,6 +23,7 @@ classified by lifecycle.
 | dry-run-429-leave-contract-days.ts             | 2026-09-30 | List, per SHIFT_BASED employee and closed MONTHLY snapshot overlapping approved leave, the stored vs. Issue #429-formula-recomputed expected/balance minutes and the delta (read-only, no opt-in write flag, exits 2 on findings)                                                                                                                                                                                                                                                                                                                                   | Audit tool                                   |
 | audit-exit-month-saldo.ts                      | 2026-10-02 | List, per employee with a non-null exitDate (any schedule type), the exit month's stored vs. Issue #447-exit-clip-formula-recomputed expected/balance minutes and the delta, plus the locked flag; months with no stored snapshot yet print stored=none (read-only, no opt-in write flag, exits 2 on findings)                                                                                                                                                                                                                                                      | Audit tool                                   |
 | audit-multi-day-half-day-leave.ts              | 2026-10-02 | List non-deleted multi-day half-day LeaveRequests (Issue #449), read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Audit tool                                   |
+| audit-493-month-boundary-leak.ts               | 2026-10-06 | List, per tenant/month/employee id, what the pre-#493 month bounds attributed to the wrong month — time entries with working minutes (A), sick/§ 9 report day counts (B), DATEV Krank day keys (C) — plus the audited exports recorded for that month (read-only, ids only, exits 2 on findings)                                                                                                                                                                                                                                                                    | Audit tool                                   |
 | audit-bs-leave-overlap.ts                      | 2026-10-02 | List non-deleted PENDING/APPROVED/CANCELLATION_REQUESTED VACATION LeaveRequests overlapping a VOCATIONAL_SCHOOL Absence (Issue #448, D-06), stored vs. resolveLeaveDays-recomputed BS-free days plus the locked-month flag, read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                | Audit tool                                   |
 | audit-vacation-entitlements.ts                 | 2026-10-02 | Prüfbericht over every stored VACATION LeaveEntitlement row, base year + following year (Issue #444), eight categories incl. OK, read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                                                                                                           | Audit tool                                   |
 | dry-run-433-monthly-hours-soll.ts              | 2026-10-03 | List, per MONTHLY_HOURS employee (monthlyHours > 0) and non-superseded MONTHLY snapshot, the stored vs. Issue #433-rule-recomputed expected/balance minutes, the delta and the locked flag; only differing months are printed (read-only, no opt-in write flag, exits 2 on findings)                                                                                                                                                                                                                                                                                | Audit tool                                   |
@@ -124,6 +125,36 @@ one of these rows runs only through "Antrag korrigieren" after owner approval, n
 script. It follows `audit-saldo-chain-integrity.ts`'s / `dry-run-429-leave-contract-days.ts`'s
 DSGVO convention of printing no employee name and no employee number, but — unlike those two —
 prints FULL, untruncated UUIDs: the owner must be able to locate each request directly.
+
+`audit-493-month-boundary-leak.ts` (Issue #493) lists what the month bounds used before the fix
+attributed to the wrong month. Until #493 the Monatsbericht, the PDFs and the DATEV export
+compared the month instants of `monthRangeUtc()` with `@db.Date` columns, so for a tenant east of
+UTC the previous month's last day counted as part of the month. Category A lists time entries
+that were also counted in the NEXT month's report/PDF/DATEV hours (`reportEntryList` for type
+WORK only, `datevHours` always, `reportIst` where it also raised the Ist of an untracked
+employee). Category B lists sick days and § 9 credits that were one too high in the earlier
+month's report (old and new day count). Category C lists DATEV Krank days of the later month
+counted on shifted weekdays; a shift that keeps the day count is not listed (known limitation).
+A row is listed only when the output it names really contained the employee at the old code: the
+Monatsbericht JSON and the company PDF selected `exitDate: null` with an active user, the DATEV
+export selected `datevPayrollPeriodEmployeeFilter` (imported from `composition/reports.ts`, not
+copied), and a single-employee PDF is attributed only through its audit row. Both report-side
+filters read the CURRENT employee state, so someone who exited or was deactivated after a file was
+delivered is not listed for the Monatsbericht although they were in that file. Every affected
+month also prints the AUDITED exports recorded for it: `exports(audited)=` on the month line
+carries the company-wide ones (`DATEV`, `COMPANY_MONTHLY_PDF(role=…)`), and each employee's summary
+line carries `employeeExports(audited)=` with the per-employee exports (`MONTHLY_PDF`,
+`DATEV_EMPLOYEE`) that named exactly that employee. `none` does NOT prove nothing was delivered:
+`GET /reports/monthly` (the JSON view the UI renders) writes no audit row, and an export by a
+since-anonymized user (`AuditLog.userId` set to null) cannot be attributed to a tenant. A closing
+`note` line repeats this. Usage:
+`DATABASE_URL=… pnpm --filter @clokr/api exec tsx scripts/audit-493-month-boundary-leak.ts --tenant-id <uuid>`
+or `--all-tenants`, one of which is required (an unknown `--tenant-id` is a German error, exit `1`).
+Exit codes: `0` no finding, `1` DATABASE_URL missing, unknown tenant or a DB/query failure, `2` one
+or more findings. It performs ZERO writes and has no write/correction
+flag (mechanically checked by its own test), prints ids only — full UUIDs, no personal data
+(DSGVO). The output is the correction list for files already delivered: fixed code reproduces
+correct reports on demand, nothing stored is recalculated and closed months stay as they are.
 
 `audit-vacation-entitlements.ts` (Issue #444) is a Prüfbericht over every stored VACATION
 `LeaveEntitlement` row of a base year (`--year`, default the current UTC calendar year) and the
