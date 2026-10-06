@@ -230,6 +230,46 @@ describe("Issue #493 — DATEV month boundaries", () => {
     });
   });
 
+  describe("per-employee export — same bounds as the company export", () => {
+    const employeeRows = (employeeId: string, year: number, month: number) =>
+      datevRows(
+        `/api/v1/reports/datev/employee?employeeId=${employeeId}&year=${year}&month=${month}`,
+      );
+
+    it.each([
+      ["U", 2026, 10, "2,00"], // red "2,97"
+      ["U", 2026, 2, "1,00"], // red "2,00"
+      ["U2", 2026, 3, "2,00"], // red "3,00"
+    ] as const)("%s %i-%i Normalstunden = %s", async (who, year, month, expected) => {
+      const e = who === "U" ? U : U2;
+      const rows = await employeeRows(e.id, year, month);
+      expect(cell(rows, e.number, 100, F_STUNDEN)).toBe(expected);
+    });
+
+    it.each([
+      [2026, 10, "2,0"], // red "3,0"
+      [2026, 9, "3,0"],
+    ] as const)("%i-%i Krank Tage of T = %s", async (year, month, expected) => {
+      const rows = await employeeRows(d.employee.id, year, month);
+      expect(cell(rows, d.employee.employeeNumber, 200, F_TAGE)).toBe(expected);
+    });
+
+    it("the DATEV_EMPLOYEE EXPORT audit row of the October call keeps its shape", async () => {
+      await employeeRows(U.id, 2026, 10);
+      const entry = await app.prisma.auditLog.findFirst({
+        where: { action: "EXPORT", entity: "Report", userId: d.adminUser.id },
+        orderBy: { createdAt: "desc" },
+      });
+      expect(entry).not.toBeNull();
+      expect(entry!.newValue).toEqual({
+        type: "DATEV_EMPLOYEE",
+        year: "2026",
+        month: "10",
+        employeeId: U.id,
+      });
+    });
+  });
+
   describe("neutrality — the payroll-period predicate stays on the Timestamptz instants (D-10)", () => {
     it("X2 (exitDate = Oct 1 00:00 Berlin) is IN the October file, X1 (hired Nov 1 00:30 Berlin) is not", async () => {
       const rows = await companyRows(2026, 10);
