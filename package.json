@@ -74,7 +74,8 @@
       "prettier": "3.9.9",
       "@playwright/test": "1.60.0",
       "deepmerge-ts": ">=8.0.0",
-      "mysql2": ">=3.22.0"
+      "mysql2": ">=3.22.0",
+      "source-map-js": ">=1.2.2"
     }
   }
 }
