@@ -44,7 +44,7 @@ import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import {
   walkSaldoChain,
-  isTrackOnlySchedule,
+  isTrackOnlyZeroingLink,
   monthLabelFromPeriodEnd,
   type ChainLink,
 } from "../src/contexts/working-time-account/saldo-chain-integrity";
@@ -385,13 +385,16 @@ export async function main(
       const links: ChainLink[] = walkSaldoChain(rows);
       const headLink = links[0];
 
-      // TRACK_ONLY (MONTHLY_HOURS + overtimeMode TRACK_ONLY) employees never carry a
-      // saldo at all — same filter the Phase 98 audit uses, for the same reason.
+      // Track-only months (MONTHLY_HOURS with TRACK_ONLY or without monthly hours, Issue #494)
+      // store carry 0 by design, so a head link with stored carry 0 has nothing to migrate. A head
+      // link with a NON-zero stored carry on such a month (a documented opening balance, or a
+      // legacy carry closed before #494) goes through the normal dry-run classification like any
+      // other employee — the skip must never hide an injected opening balance (D-11).
       const midMonth = new Date(
         (headLink.periodStart.getTime() + headLink.periodEnd.getTime()) / 2,
       );
       const schedule = await getEffectiveSchedule(appShim, emp.id, midMonth);
-      if (isTrackOnlySchedule(schedule)) continue;
+      if (isTrackOnlyZeroingLink(headLink, schedule)) continue;
 
       // Lineage-aware AuditLog lookup for the HEAD month only — provenance only ever
       // matters for the head link, the sole link that can become eligible. SaldoSnapshot
