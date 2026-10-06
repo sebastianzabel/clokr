@@ -120,9 +120,14 @@ to do about it.
   4. Otherwise treat it as a real incident and open a debug session — do **NOT** "correct" the
      snapshot by hand outside of a reviewed migration path.
 
-- **`TRACK_ONLY links skipped`** — MONTHLY_HOURS + TRACK_ONLY employees never carry a saldo;
-  `closeEmployeeMonth()` forces `carryOver = 0` for them by design, so these links violate the
-  chain identity on purpose and are excluded rather than reported.
+- **`Track-only zeroing links skipped`** — a track-only contract (MONTHLY_HOURS with
+  `overtimeMode` TRACK_ONLY or without monthly hours — `isTrackOnlySchedule()`, Issue #494)
+  never carries a saldo. `closeEmployeeMonth()` stores `carryOver = 0` for its months, so a
+  violating link of such a month whose stored carry-over is 0 is excluded on purpose
+  (`isTrackOnlyZeroingLink()`). A track-only month with a NON-zero stored carry-over (an opening
+  balance on a Minijob row, or a carry-over closed before Issue #494) stays reportable.
+  Carry-over stored before the rule is listed read-only by
+  `scripts/audit-494-track-only-carry.ts`.
 
 - **`duplicate-month links`** — two active rows exist for one employee-month, so the chain is
   unwalkable there. This condition fails the audit (exit `2`) on purpose — an unwalkable chain
