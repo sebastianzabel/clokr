@@ -1413,6 +1413,10 @@ export async function reportRoutes(app: FastifyInstance) {
       }
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
+      // Issue #493 (D-01/D-10): @db.Date columns (time-entry date, leave dates, § 9 credits) get
+      // calendar-day bounds; the instants above stay for the Timestamptz payroll predicate
+      // (Employee.hireDate/exitDate), the skipped counts and the Stichtag.
+      const { firstDay, lastDay } = monthDateRange(y, m, tz);
 
       // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
       // building the export. Stichtag = the payroll period's own last day (`end`).
@@ -1444,7 +1448,7 @@ export async function reportRoutes(app: FastifyInstance) {
           timeEntries: {
             where: {
               deletedAt: null,
-              date: { gte: start, lte: end },
+              date: { gte: firstDay, lte: lastDay },
               endTime: { not: null },
               isInvalid: false,
             },
@@ -1453,8 +1457,8 @@ export async function reportRoutes(app: FastifyInstance) {
             where: {
               deletedAt: null,
               status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
-              startDate: { lte: end },
-              endDate: { gte: start },
+              startDate: { lte: lastDay },
+              endDate: { gte: firstDay },
             },
             include: { leaveType: true },
           },
@@ -1502,8 +1506,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const section9ByEmpDatev = await fetchConfirmedSection9CreditsByEmp(
         app,
         req.user.tenantId,
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
       // Issue #451 (D-01): UTC-midnight calendar-day bounds for the facade call — NOT `start`/
       // `end` above, which are monthRangeUtc()'s tenant-tz instants (see
@@ -1520,8 +1524,8 @@ export async function reportRoutes(app: FastifyInstance) {
         employees,
         year: y,
         month: m,
-        start,
-        end,
+        start: firstDay,
+        end: lastDay,
         lna,
         kanzlei,
         section9ByEmp: section9ByEmpDatev,
