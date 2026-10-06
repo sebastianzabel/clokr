@@ -20,6 +20,22 @@
  *   C  sick leave whose DATEV Krank workday-key count differs between the old and the new bounds.
  * Plus, per affected tenant and month, which report exports the audit log recorded (D-07).
  *
+ * Each row is listed only when the OUTPUT it names would really have contained the employee at
+ * the old code (7c6018e9): the Monatsbericht JSON and the company PDF select `exitDate: null` and
+ * an active user; the single-employee PDF selects nobody (it is listed only when the audit log
+ * names that employee for that month); DATEV selects `datevPayrollPeriodEmployeeFilter` (the real
+ * predicate, imported). A row no delivered file contained is not a correction target. Both
+ * filters read the CURRENT employee state — an employee who exited or was deactivated AFTER a
+ * file was delivered was in that file but is not listed for the Monatsbericht; the stored history
+ * cannot reconstruct the state at delivery time.
+ *
+ * The exports line lists only AUDITED exports (`EXPORT` / `Report` rows: MONTHLY_PDF, DATEV,
+ * DATEV_EMPLOYEE, COMPANY_MONTHLY_PDF). `GET /reports/monthly` (the JSON the UI renders) writes no
+ * audit row, so `exports(audited)=none` does NOT mean the leaked figures were never shown. An
+ * export by a since-anonymized user (AuditLog.userId set to null, DSGVO) cannot be attributed to
+ * a tenant and is missing from the list. Per-employee exports appear on that employee's summary
+ * line, company-wide ones on the month line.
+ *
  * READ-ONLY. ZERO mutations. There is no write/correction flag anywhere in this file, and none
  * may ever be added: a delivered report is corrected by a deliberate new export, never by a
  * script rewriting stored data.
@@ -37,7 +53,7 @@
  *
  * Exit codes:
  *   0 — nothing was attributed to a wrong month for the given scope
- *   1 — DATABASE_URL missing, or a DB connection/query failure
+ *   1 — DATABASE_URL missing, an unknown --tenant-id, or a DB connection/query failure
  *   2 — one or more findings (correction list for already delivered files)
  */
 import { PrismaClient } from "@clokr/db";
@@ -53,6 +69,9 @@ import {
 } from "../src/contexts/working-time-account";
 import { entryDurations } from "../src/contexts/time-tracking";
 import { EFFECTIVE_LEAVE_STATUSES, isSickLeaveTypeCode } from "../src/contexts/absence";
+// The real DATEV payroll-period predicate — reused, never copied, so the audit cannot drift from
+// the export. `composition/` is not a context, so this import needs no boundary exception.
+import { datevPayrollPeriodEmployeeFilter } from "../src/composition/reports";
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
 export const EXIT_OK = 0;
@@ -93,13 +112,20 @@ Usage:
 
 READ-ONLY — lists what the pre-#493 month bounds attributed to the wrong month (Issue #493):
 time entries (category A), sick/§ 9 report day counts (B), DATEV Krank day keys (C), plus the
-report exports recorded for each affected month. No write/correction flag exists.
+AUDITED report exports recorded for each affected month (JSON views of GET /reports/monthly are
+not audited; exports by anonymized users are not attributable). No write/correction flag exists.
+Rows are listed only for employees the named output really contained.
 
 Exit codes:
   0 — no finding for the given scope
-  1 — DATABASE_URL missing, or a DB connection/query failure
+  1 — DATABASE_URL missing, an unknown --tenant-id, or a DB connection/query failure
   2 — one or more findings (correction list for already delivered files)
 `;
+
+const EXPORTS_NOTE =
+  "note exports(audited) and employeeExports(audited) list only AUDITED exports (PDF and DATEV). " +
+  "GET /reports/monthly (the JSON view) is not audited, and exports by since-anonymized users " +
+  "cannot be attributed to a tenant — 'none' does not prove that nothing was delivered.";
 
 // ── Month windows ─────────────────────────────────────────────────────────────
 function dateOnly(d: Date): string {
@@ -271,17 +297,120 @@ function monthsAround(from: Date, to: Date, current: YearMonth): YearMonth[] {
   return out;
 }
 
+// ── Audited exports ───────────────────────────────────────────────────────────
+/** One `EXPORT` / `Report` audit row: its month and what the export named. */
+export type ExportRecord = {
+  month: string; // YYYY-MM
+  type: string;
+  employeeId: string | null; // MONTHLY_PDF and DATEV_EMPLOYEE name one employee
+  role: string | null; // COMPANY_MONTHLY_PDF carries the role filter
+};
+
+/**
+ * Report exports the audit log recorded for a tenant. AUDITED exports only: `GET /reports/monthly`
+ * writes no row, and a row whose user was anonymized (`userId` set null) fails the tenant join.
+ * Rows without a numeric year and month (LEAVE_LIST_PDF, VACATION_PDF, ...) are not month exports.
+ */
+async function recordedExports(prisma: PrismaClient, tenantId: string): Promise<ExportRecord[]> {
+  const rows = await prisma.auditLog.findMany({
+    where: { action: "EXPORT", entity: "Report", user: { employee: { tenantId } } },
+    select: { newValue: true },
+  });
+  const out: ExportRecord[] = [];
+  for (const r of rows) {
+    const v = r.newValue as {
+      type?: unknown;
+      year?: unknown;
+      month?: unknown;
+      employeeId?: unknown;
+      role?: unknown;
+    } | null;
+    const year = Number(v?.year);
+    const month = Number(v?.month);
+    if (!v || typeof v.type !== "string" || !Number.isInteger(year) || !Number.isInteger(month)) {
+      continue;
+    }
+    out.push({
+      month: monthKey({ year, month }),
+      type: v.type,
+      employeeId: typeof v.employeeId === "string" ? v.employeeId : null,
+      role: typeof v.role === "string" ? v.role : null,
+    });
+  }
+  return out;
+}
+
+/** Month-level label of a company-wide export, e.g. `DATEV` or `COMPANY_MONTHLY_PDF(role=all)`. */
+function companyExportLabel(r: ExportRecord): string {
+  return r.role ? `${r.type}(role=${r.role})` : r.type;
+}
+
+// ── Output populations ────────────────────────────────────────────────────────
+/** Which employees a delivered output really contained, per month (see the file header). */
+export type Populations = {
+  /** Monatsbericht JSON / company PDF, or an audited single-employee PDF for that month. */
+  inReport(employeeId: string, ym: YearMonth): boolean;
+  /** DATEV payroll-period predicate with the month instants of the old code. */
+  inDatev(employeeId: string, ym: YearMonth): Promise<boolean>;
+};
+
+type EmployeeRow = {
+  id: string;
+  isTimeTrackingExempt: boolean;
+  exitDate: Date | null;
+  user: { isActive: boolean } | null;
+};
+
+function makePopulations(
+  prisma: PrismaClient,
+  tenantId: string,
+  tz: string,
+  employees: EmployeeRow[],
+  exports: ExportRecord[],
+): Populations {
+  // Source: `git show 7c6018e9:apps/api/src/composition/reports.ts`, GET /monthly (lines 912-917)
+  // and GET /monthly/pdf/all (lines 1909-1913): `exitDate: null, user: { isActive: true }`.
+  const reportBase = new Set(
+    employees.filter((e) => e.exitDate === null && e.user?.isActive === true).map((e) => e.id),
+  );
+  // GET /monthly/pdf (single employee) has no population filter; the audit row is the evidence.
+  const singlePdf = new Set(
+    exports
+      .filter((x) => x.type === "MONTHLY_PDF" && x.employeeId !== null)
+      .map((x) => `${x.month}|${x.employeeId}`),
+  );
+  const datevCache = new Map<string, Promise<Set<string>>>();
+  return {
+    inReport: (employeeId, ym) =>
+      reportBase.has(employeeId) || singlePdf.has(`${monthKey(ym)}|${employeeId}`),
+    inDatev: async (employeeId, ym) => {
+      const key = monthKey(ym);
+      if (!datevCache.has(key)) {
+        const { start, end } = monthRangeUtc(ym.year, ym.month, tz);
+        datevCache.set(
+          key,
+          prisma.employee
+            .findMany({
+              where: { tenantId, ...datevPayrollPeriodEmployeeFilter(start, end) },
+              select: { id: true },
+            })
+            .then((rows) => new Set(rows.map((r) => r.id))),
+        );
+      }
+      return (await datevCache.get(key)!).has(employeeId);
+    },
+  };
+}
+
 // ── Per-tenant scan ───────────────────────────────────────────────────────────
 async function scanEntries(
   prisma: PrismaClient,
   tenantId: string,
   tz: string,
   current: YearMonth,
+  employees: EmployeeRow[],
+  populations: Populations,
 ): Promise<EntryFinding[]> {
-  const employees = await prisma.employee.findMany({
-    where: { tenantId },
-    select: { id: true, isTimeTrackingExempt: true },
-  });
   const exempt = new Map(employees.map((e) => [e.id, e.isTimeTrackingExempt]));
 
   const entries = await prisma.timeEntry.findMany({
@@ -334,6 +463,14 @@ async function scanEntries(
       const inOld = date >= old.first && date <= old.last;
       const inNew = date >= now.first && date <= now.last;
       if (!inOld || inNew) continue;
+      // Only the outputs that really contained this employee count (WR-01): the entry list is the
+      // report's (type WORK only), the DATEV hours have no type filter (D-11).
+      const inReport = populations.inReport(e.employeeId, ym);
+      const reportEntryList = e.type === "WORK" && inReport;
+      const datevHours = await populations.inDatev(e.employeeId, ym);
+      const reportIst =
+        reportEntryList && !exempt.get(e.employeeId) && (await isUntracked(e.employeeId, ym));
+      if (!reportEntryList && !datevHours) continue;
       findings.push({
         tenantId,
         month: monthKey(ym),
@@ -342,10 +479,9 @@ async function scanEntries(
         date,
         type: String(e.type),
         workingMinutes: Math.round(entryDurations(e).workingMinutes),
-        reportEntryList: e.type === "WORK",
-        datevHours: true,
-        reportIst:
-          e.type === "WORK" && !exempt.get(e.employeeId) && (await isUntracked(e.employeeId, ym)),
+        reportEntryList,
+        datevHours,
+        reportIst,
       });
     }
   }
@@ -357,6 +493,7 @@ async function scanLeave(
   tenantId: string,
   tz: string,
   current: YearMonth,
+  populations: Populations,
 ): Promise<{ dayCounts: DayCountFinding[]; keyShifts: KeyShiftFinding[] }> {
   const dayCounts: DayCountFinding[] = [];
   const keyShifts: KeyShiftFinding[] = [];
@@ -385,7 +522,7 @@ async function scanLeave(
       // Report: whole-day clip, halved for a half day.
       const days = oldAndNew(row, ym, tz, legacyClippedDays, 0);
       const factor = r.halfDay ? 0.5 : 1;
-      if (days.old * factor !== days.now * factor) {
+      if (days.old * factor !== days.now * factor && populations.inReport(r.employeeId, ym)) {
         dayCounts.push({
           tenantId,
           month: monthKey(ym),
@@ -401,7 +538,7 @@ async function scanLeave(
       const keys = oldAndNew<string[]>(row, ym, tz, legacyWorkdayKeys, []);
       const keysOld = r.halfDay ? keys.old.length / 2 : keys.old.length;
       const keysNew = r.halfDay ? keys.now.length / 2 : keys.now.length;
-      if (keysOld !== keysNew) {
+      if (keysOld !== keysNew && (await populations.inDatev(r.employeeId, ym))) {
         keyShifts.push({
           tenantId,
           month: monthKey(ym),
@@ -436,7 +573,7 @@ async function scanLeave(
     const row = { from: c.creditedStart, to: c.creditedEnd };
     for (const ym of monthsAround(c.creditedStart, c.creditedEnd, current)) {
       const days = oldAndNew(row, ym, tz, legacyClippedDays, 0);
-      if (days.old !== days.now) {
+      if (days.old !== days.now && populations.inReport(c.employeeId, ym)) {
         dayCounts.push({
           tenantId,
           month: monthKey(ym),
@@ -452,30 +589,6 @@ async function scanLeave(
   }
 
   return { dayCounts, keyShifts };
-}
-
-/** Report exports the audit log recorded for a tenant, as `YYYY-MM` -> sorted export types. */
-async function recordedExports(
-  prisma: PrismaClient,
-  tenantId: string,
-): Promise<Map<string, string[]>> {
-  const rows = await prisma.auditLog.findMany({
-    where: { action: "EXPORT", entity: "Report", user: { employee: { tenantId } } },
-    select: { newValue: true },
-  });
-  const byMonth = new Map<string, Set<string>>();
-  for (const r of rows) {
-    const v = r.newValue as { type?: unknown; year?: unknown; month?: unknown } | null;
-    const year = Number(v?.year);
-    const month = Number(v?.month);
-    if (!v || typeof v.type !== "string" || !Number.isInteger(year) || !Number.isInteger(month)) {
-      continue;
-    }
-    const key = monthKey({ year, month });
-    if (!byMonth.has(key)) byMonth.set(key, new Set());
-    byMonth.get(key)!.add(v.type);
-  }
-  return new Map([...byMonth].map(([k, set]) => [k, [...set].sort()]));
 }
 
 function byKey<T>(...keys: ((x: T) => string)[]) {
@@ -525,18 +638,45 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
   }
 
   try {
-    const tenants = args.allTenants
-      ? await prisma.tenant.findMany({ select: { id: true }, orderBy: { id: "asc" } })
-      : [{ id: args.tenantId! }];
+    let tenants: { id: string }[];
+    if (args.allTenants) {
+      tenants = await prisma.tenant.findMany({ select: { id: true }, orderBy: { id: "asc" } });
+    } else {
+      // A mistyped id must not read as a clean bill of health (exit 0, "total findings=0").
+      const found = await prisma.tenant.findUnique({
+        where: { id: args.tenantId! },
+        select: { id: true },
+      });
+      if (!found) {
+        console.error(`Tenant nicht gefunden: --tenant-id ${args.tenantId} existiert nicht.`);
+        return EXIT_ERROR;
+      }
+      tenants = [found];
+    }
 
     let total = 0;
+    let exportsNoteNeeded = false;
     for (const t of tenants) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tz = await getTenantTimezone(prisma as any, t.id);
       const today = todayInTz(tz);
       const current: YearMonth = { year: today.getUTCFullYear(), month: today.getUTCMonth() + 1 };
 
-      const entryFindings = (await scanEntries(prisma, t.id, tz, current)).sort(
+      const employees: EmployeeRow[] = await prisma.employee.findMany({
+        where: { tenantId: t.id },
+        select: {
+          id: true,
+          isTimeTrackingExempt: true,
+          exitDate: true,
+          user: { select: { isActive: true } },
+        },
+      });
+      const exports = await recordedExports(prisma, t.id);
+      const populations = makePopulations(prisma, t.id, tz, employees, exports);
+
+      const entryFindings = (
+        await scanEntries(prisma, t.id, tz, current, employees, populations)
+      ).sort(
         byKey<EntryFinding>(
           (f) => f.month,
           (f) => f.employeeId,
@@ -544,7 +684,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
           (f) => f.entryId,
         ),
       );
-      const leave = await scanLeave(prisma, t.id, tz, current);
+      const leave = await scanLeave(prisma, t.id, tz, current, populations);
       const dayCounts = leave.dayCounts.sort(
         byKey<DayCountFinding>(
           (f) => f.month,
@@ -596,25 +736,40 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       for (const f of keyShifts) bump(f.month, f.employeeId, (x) => (x.keyShiftRows += 1));
 
       if (tally.size > 0) {
-        const exports = await recordedExports(prisma, t.id);
         for (const month of [...tally.keys()].sort()) {
           const perEmployee = tally.get(month)!;
-          const types = exports.get(month);
+          const company = [
+            ...new Set(
+              exports
+                .filter((x) => x.month === month && x.employeeId === null)
+                .map(companyExportLabel),
+            ),
+          ].sort();
           console.info(
             `month tenantId=${t.id} month=${month} employees=${perEmployee.size} ` +
-              `exports=${types && types.length > 0 ? types.join(",") : "none"}`,
+              `exports(audited)=${company.length > 0 ? company.join(",") : "none"}`,
           );
           for (const employeeId of [...perEmployee.keys()].sort()) {
             const x = perEmployee.get(employeeId)!;
+            const own = [
+              ...new Set(
+                exports
+                  .filter((e) => e.month === month && e.employeeId === employeeId)
+                  .map((e) => e.type),
+              ),
+            ].sort();
             console.info(
               `summary tenantId=${t.id} month=${month} employeeId=${employeeId} entries=${x.entries} ` +
-                `workingMinutes=${x.workingMinutes} dayCountRows=${x.dayCountRows} keyShiftRows=${x.keyShiftRows}`,
+                `workingMinutes=${x.workingMinutes} dayCountRows=${x.dayCountRows} keyShiftRows=${x.keyShiftRows} ` +
+                `employeeExports(audited)=${own.length > 0 ? own.join(",") : "none"}`,
             );
           }
         }
+        exportsNoteNeeded = true;
       }
     }
 
+    if (exportsNoteNeeded) console.info(EXPORTS_NOTE);
     console.info(`total findings=${total}`);
     return total > 0 ? EXIT_FINDINGS : EXIT_OK;
   } finally {

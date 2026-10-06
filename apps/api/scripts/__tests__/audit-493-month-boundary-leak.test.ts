@@ -17,6 +17,18 @@
  *     same days -> B for 2025-09 twice (sick request and credit, 3 -> 2), NO C (one October key
  *     before and after — the documented same-count limitation); the VACATION request is no line
  *   - AuditLog: tenant A's admin recorded a DATEV export for 2025-10; tenant B's admin one for 2025-09
+ *
+ * Output populations (WR-01) — a row is listed only for employees the named output contained:
+ *   - E4: exitDate 2025-09-30, WORK entry 2025-09-30 + SICK 2025-09-29..10-04 -> in neither the
+ *     October report (exitDate set) nor the October DATEV file (exited before the period start)
+ *     -> no line at all
+ *   - E5: inactive user, WORK entry 2025-09-30 + SICK 2025-09-29..10-04 -> not in the report
+ *     (inactive), but in DATEV -> A with datevHours only, no B, C present
+ *   - E6: exitDate 2025-09-30, WORK entry 2025-09-30, plus an audited single-employee MONTHLY_PDF
+ *     for 2025-10 naming E6 -> A with reportEntryList only (the audit row is the evidence)
+ * Audited exports (WR-02): a COMPANY_MONTHLY_PDF for 2025-10, a per-employee MONTHLY_PDF of E1 for
+ * 2025-09 (must not appear on E2's line) and a DATEV row of an anonymized user (userId null) that
+ * must stay out of the list.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../src/__tests__/setup";
@@ -28,6 +40,7 @@ import {
   legacyClippedDays,
   legacyWorkdayKeys,
   EXIT_OK,
+  EXIT_ERROR,
   EXIT_FINDINGS,
 } from "../audit-493-month-boundary-leak";
 import { monthDateRange, monthRangeUtc } from "../../src/contexts/working-time-account";
@@ -93,8 +106,14 @@ describe("audit-493-month-boundary-leak — category A (Issue #493)", () => {
   let e3Id: string;
   let sickE2Id: string;
   let sickE3Id: string;
+  let sickE4Id: string;
+  let sickE5Id: string;
   let vacE3Id: string;
   let creditE3Id: string;
+  let e4Id: string;
+  let e5Id: string;
+  let e6Id: string;
+  const extraUserIds: string[] = [];
   let exportLogIds: string[] = [];
   const entry: Record<string, string> = {};
 
@@ -184,16 +203,20 @@ describe("audit-493-month-boundary-leak — category A (Issue #493)", () => {
     entry.tenantB = rowB.id;
 
     // ── categories B / C ────────────────────────────────────────────────────
-    const makeEmployee = async (label: string) => {
+    const makeEmployee = async (
+      label: string,
+      opts: { exitDate?: Date; isActive?: boolean; hireDate?: string } = {},
+    ) => {
       const sfx = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
       const u = await app.prisma.user.create({
         data: {
           email: `audit493-${sfx}@test.de`,
           passwordHash: "x",
           role: "EMPLOYEE",
-          isActive: true,
+          isActive: opts.isActive ?? true,
         },
       });
+      extraUserIds.push(u.id);
       const emp = await app.prisma.employee.create({
         data: {
           tenantId: dataA.tenant.id,
@@ -201,7 +224,8 @@ describe("audit-493-month-boundary-leak — category A (Issue #493)", () => {
           employeeNumber: `N-${sfx}`,
           firstName: "Quirin",
           lastName: "Zackenbarsch",
-          hireDate: day("2024-01-01"),
+          hireDate: day(opts.hireDate ?? "2024-01-01"),
+          exitDate: opts.exitDate ?? null,
         },
       });
       await app.prisma.workSchedule.create({
@@ -267,6 +291,15 @@ describe("audit-493-month-boundary-leak — category A (Issue #493)", () => {
       })
     ).id;
 
+    // ── output populations (WR-01) ──────────────────────────────────────────
+    e4Id = await makeEmployee("e4", { exitDate: day("2025-09-30") });
+    e5Id = await makeEmployee("e5", { isActive: false });
+    e6Id = await makeEmployee("e6", { exitDate: day("2025-09-30") });
+    for (const emp of [e4Id, e5Id, e6Id])
+      await mk(`pop-${emp}`, emp, "2025-09-30", "08:00", "09:00");
+    sickE4Id = await mkLeave(e4Id, sickType.id, "2025-09-29", "2025-10-04");
+    sickE5Id = await mkLeave(e5Id, sickType.id, "2025-09-29", "2025-10-04");
+
     // A PENDING sick request is not effective leave — must produce no B/C line.
     await mkLeave(e2Id, sickType.id, "2025-05-29", "2025-06-03", "PENDING");
 
@@ -291,6 +324,47 @@ describe("audit-493-month-boundary-leak — category A (Issue #493)", () => {
           },
         })
       ).id,
+      (
+        await app.prisma.auditLog.create({
+          data: {
+            userId: dataA.adminUser.id,
+            action: "EXPORT",
+            entity: "Report",
+            newValue: { type: "COMPANY_MONTHLY_PDF", year: 2025, month: 10, role: "all" },
+          },
+        })
+      ).id,
+      (
+        await app.prisma.auditLog.create({
+          data: {
+            userId: dataA.adminUser.id,
+            action: "EXPORT",
+            entity: "Report",
+            newValue: { type: "MONTHLY_PDF", year: 2025, month: 9, employeeId: e1Id },
+          },
+        })
+      ).id,
+      (
+        await app.prisma.auditLog.create({
+          data: {
+            userId: dataA.adminUser.id,
+            action: "EXPORT",
+            entity: "Report",
+            newValue: { type: "MONTHLY_PDF", year: 2025, month: 10, employeeId: e6Id },
+          },
+        })
+      ).id,
+      // an export by a since-anonymized user (userId null) cannot be attributed to a tenant
+      (
+        await app.prisma.auditLog.create({
+          data: {
+            userId: null,
+            action: "EXPORT",
+            entity: "Report",
+            newValue: { type: "DATEV", year: "2025", month: "6" },
+          },
+        })
+      ).id,
     ];
   });
 
@@ -302,7 +376,7 @@ describe("audit-493-month-boundary-leak — category A (Issue #493)", () => {
     }
     try {
       await cleanupTestData(app, dataA.tenant.id);
-      await app.prisma.user.deleteMany({ where: { id: e1UserId } });
+      await app.prisma.user.deleteMany({ where: { id: { in: [e1UserId, ...extraUserIds] } } });
     } catch (err) {
       console.error("Test cleanup failed:", err);
     }
@@ -314,10 +388,14 @@ describe("audit-493-month-boundary-leak — category A (Issue #493)", () => {
     await closeTestApp();
   });
 
-  it("--tenant-id A lists exactly the two leaked entries (exit 2)", async () => {
+  it("--tenant-id A lists exactly the leaked entries the outputs contained (exit 2)", async () => {
     const { code, lines } = await capture(["--tenant-id", dataA.tenant.id], app.prisma);
     expect(code).toBe(EXIT_FINDINGS);
-    expect(ids(lines, "entryId").sort()).toEqual([entry.work0930, entry.overtime0531].sort());
+    // E4 (exited, in no output) is absent; E5 (DATEV only) and E6 (single PDF only) are present
+    expect(ids(lines, "entryId").sort()).toEqual(
+      [entry.work0930, entry.overtime0531, entry[`pop-${e5Id}`], entry[`pop-${e6Id}`]].sort(),
+    );
+    expect(ids(lines, "entryId")).not.toContain(entry[`pop-${e4Id}`]);
     for (const k of ["first1001", "mid1015", "deleted0831", "open0731", "invalid0630", "future"]) {
       expect(ids(lines, "entryId")).not.toContain(entry[k]);
     }
@@ -403,21 +481,87 @@ describe("audit-493-month-boundary-leak — category A (Issue #493)", () => {
         (l) =>
           `${field(l, "month")}|${field(l, "employeeId")}|${field(l, "leaveRequestId")}|${field(l, "keysOld")}->${field(l, "keysNew")}`,
       );
-    expect(c).toEqual([`2025-10|${e2Id}|${sickE2Id}|4->3`]);
+    // E5's sick request is in DATEV (login state is no DATEV criterion) but not in the report;
+    // E4's is in neither output.
+    expect([...c].sort()).toEqual(
+      [`2025-10|${e2Id}|${sickE2Id}|4->3`, `2025-10|${e5Id}|${sickE5Id}|4->3`].sort(),
+    );
+    expect(lines.join("\n")).not.toContain(sickE4Id);
     // the VACATION request and the PENDING sick request produce no line at all
     expect(lines.join("\n")).not.toContain(vacE3Id);
-    expect(lines.filter((l) => l.startsWith("category=A ")).length).toBe(2);
+    expect(lines.filter((l) => l.startsWith("category=A ")).length).toBe(4);
   });
 
-  it("annotates each affected month with the exports recorded for it (D-07)", async () => {
+  it("annotates each affected month with the AUDITED exports recorded for it (D-07, WR-02)", async () => {
     const { lines } = await capture(["--tenant-id", dataA.tenant.id], app.prisma);
     const monthLine = (m: string) =>
       lines.find((l) => l.startsWith("month ") && field(l, "month") === m)!;
-    expect(monthLine("2025-10")).toContain("exports=DATEV");
+    // company-wide exports only on the month line, with the role of the company PDF; the
+    // per-employee MONTHLY_PDF of E6 is on E6's summary line instead
+    expect(monthLine("2025-10")).toMatch(
+      /exports\(audited\)=COMPANY_MONTHLY_PDF\(role=all\),DATEV$/,
+    );
     // tenant B's admin exported 2025-09 — it must not show up for tenant A
-    expect(monthLine("2025-09")).toContain("exports=none");
-    expect(monthLine("2025-06")).toContain("exports=none");
+    expect(monthLine("2025-09")).toMatch(/exports\(audited\)=none$/);
+    // an export by an anonymized user (userId null) is not attributable and stays out
+    expect(monthLine("2025-06")).toMatch(/exports\(audited\)=none$/);
     expect(monthLine("2025-10")).toContain(`tenantId=${dataA.tenant.id}`);
+  });
+
+  it("per-employee exports appear only on that employee's summary line (WR-02)", async () => {
+    const { lines } = await capture(["--tenant-id", dataA.tenant.id], app.prisma);
+    const sum = (m: string, emp: string) =>
+      lines.find(
+        (l) =>
+          l.startsWith("summary ") && field(l, "month") === m && field(l, "employeeId") === emp,
+      )!;
+    expect(sum("2025-10", e6Id)).toContain("employeeExports(audited)=MONTHLY_PDF");
+    // E1's 2025-09 MONTHLY_PDF belongs to E1 — an unrelated employee's line must not carry it
+    expect(sum("2025-09", e2Id)).toContain("employeeExports(audited)=none");
+    expect(sum("2025-10", e2Id)).toContain("employeeExports(audited)=none");
+  });
+
+  it("states that only audited exports are listed and the JSON view is not (WR-02)", async () => {
+    const { lines } = await capture(["--tenant-id", dataA.tenant.id], app.prisma);
+    const note = lines.find((l) => l.startsWith("note "))!;
+    expect(note).toContain("AUDITED");
+    expect(note).toContain("GET /reports/monthly");
+    expect(note).toContain("not audited");
+    expect(note).toContain("anonymized");
+  });
+
+  it("lists only rows an output really contained (WR-01)", async () => {
+    const { lines } = await capture(["--tenant-id", dataA.tenant.id], app.prisma);
+    // E4 (exitDate = last day of the leaked month's predecessor): in no delivered file
+    expect(lines.join("\n")).not.toContain(e4Id);
+    // E5 (inactive user): DATEV hours only, no entry list, no Ist
+    const e5 = lines.find((l) => l.includes(`entryId=${entry[`pop-${e5Id}`]}`))!;
+    expect(e5).toContain("reportEntryList=false");
+    expect(e5).toContain("datevHours=true");
+    expect(e5).toContain("reportIst=false");
+    // E6 (exited): not in DATEV (exited before the period), in the report only via the audited PDF
+    const e6 = lines.find((l) => l.includes(`entryId=${entry[`pop-${e6Id}`]}`))!;
+    expect(e6).toContain("reportEntryList=true");
+    expect(e6).toContain("datevHours=false");
+    // no B line for E5 (inactive: not in the Monatsbericht), none for E4
+    expect(
+      lines.filter((l) => l.startsWith("category=B ") && l.includes(`employeeId=${e5Id}`)),
+    ).toEqual([]);
+  });
+
+  it("an unknown --tenant-id is a German error with exit 1, not a clean bill of health", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { code, lines } = await capture(
+        ["--tenant-id", "00000000-0000-4000-8000-000000000000"],
+        app.prisma,
+      );
+      expect(code).toBe(EXIT_ERROR);
+      expect(lines.join("\n")).not.toContain("total findings=0");
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("Tenant nicht gefunden"));
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 
   it("prints one summary line per affected month and employee", async () => {
