@@ -2506,6 +2506,95 @@ pnpm --filter @clokr/api exec tsx scripts/dry-run-433-monthly-hours-soll.ts --te
 pnpm --filter @clokr/web exec vitest run src/__tests__/monthly-hours-calendar-433.test.ts src/lib/utils/__tests__/work-schedule.test.ts
 ```
 
+### Nachtrag (Phase 494, Issue #494) — MONTHLY_HOURS ohne Monatsstunden verhält sich wie „Nur erfassen“
+
+**Schwere.** Unterbau-Semantikänderung nach ADR 0002, Entscheidung 7 (`WorkSchedule.overtimeMode` /
+`WorkSchedule.monthlyHours` — die Bedeutung, nicht das Schema; keine Migration). Owner-Entscheidung =
+Issue #494, Kommentar vom 06.10.2026.
+
+**Warum.** Befund auf prod: Ein Minijob-Vertrag ohne Monatsstunden im Modus „Übertragen“ buchte jede
+gearbeitete Stunde als Plus und übertrug sie von Monat zu Monat (Größenordnung im Issue, ohne
+Namen). Ohne Soll gibt es nichts, wogegen ein Saldo entstehen könnte. Owner-Entscheidung: ein
+`MONTHLY_HOURS`-Vertrag ohne Monatsstunden (`null` oder ≤ 0) verhält sich immer wie
+`overtimeMode = TRACK_ONLY`, unabhängig vom gespeicherten Modus.
+
+**Was sich geändert hat.**
+
+- Die eine Funktion `isTrackOnlySchedule()` in
+  `apps/api/src/contexts/working-time-account/track-only-schedule.ts`. Der Schlüssel `monthlyHours` ist
+  Pflichtparameter, damit kein Aufrufer ihn vergessen kann. Sie wird nicht über einen
+  `index.ts` exportiert; es entsteht kein neuer Export eines Kontexts.
+- Zwei Leser: der Live-Saldo (`overtime-balance.ts`) und der gemeinsame Abschlusskern
+  (`close-employee-month.ts` — manueller Abschluss, Cron und Neuberechnung laufen alle darüber).
+  Abschluss, Cron und Neuberechnung entscheiden nach dem Vertrag des Monats, die Live-Anzeige nach dem
+  heutigen Vertrag.
+- D-10: Offene (nicht abgeschlossene) Monate unter einem solchen Vertrag zählen im Live-Saldo 0 —
+  Live-Wert und späterer Abschluss stimmen damit überein. „Bestätigt“ bleibt der gespeicherte
+  Übertrag des letzten Abschlusses.
+- D-11: Prüf- und Migrationsskript (`audit-saldo-chain-integrity.ts`, `migrate-opening-balances.ts`)
+  überspringen nur die Nullungs-Signatur (Übertrag 0 im Track-only-Monat), nicht jeden Monat eines
+  solchen Vertrags — sonst würden Eröffnungssalden auf Minijob-Zeilen unsichtbar.
+- Das Formular „Überstunden-Modus“ in der Mitarbeiterverwaltung zeigt „Nur erfassen“ gesperrt, solange
+  keine Monatsstunden eingetragen sind (nur Anzeige; der gespeicherte Modus ändert sich nicht).
+- Neues Probelauf-Skript `apps/api/scripts/audit-494-track-only-carry.ts` (nur lesend, nur IDs) listet
+  abgeschlossene Monate mit gespeichertem Übertrag ≠ 0 unter einem Track-only-Vertrag.
+
+**Was bewusst NICHT geschah.** Keine Datenänderung und keine Migration. Gespeicherte
+`overtimeMode`-Werte werden nicht umgeschrieben (D-02), beim Speichern wird nichts normalisiert (D-05),
+abgeschlossene Monate werden nicht neu berechnet — eine Korrektur ist eine bewusste, auditierte
+Handlung je Monat (Entsperren mit Begründung, erneuter Abschluss).
+
+**Bekanntes Verhalten (D-12).** Leser gespeicherter Überträge, die die Regel nicht erreicht:
+
+- die Überstundenausgleich-Prüfung (`contexts/absence/api/leave.ts`) liest den bestätigten Übertrag
+  über `getConfirmedCarryOver`;
+- die Kalenderzelle abgeschlossener Monate (`month-saldo.ts`) liest `SaldoSnapshot.carryOver`;
+- der Jahresübertrag (`api/overtime.ts`, `plugins/auto-close-month.ts`) kopiert den gespeicherten
+  Dezember-Übertrag;
+- das Team-Diagramm (`composition/dashboard.ts`) summiert gespeicherte Überträge;
+- `recalculate-snapshots.ts` schreibt bei gesperrtem letztem Monat den gespeicherten Übertrag in
+  `OvertimeAccount.balanceHours` (die Anzeige liest live und ist davon unberührt).
+
+Die Live-Anzeige folgt dem HEUTIGEN Vertrag (bewusst, seit Issue #451), Abschluss, Cron und
+Neuberechnung dem Vertrag des Monats (D-04). Ein späterer Vertrag mit Soll übernimmt einen alten,
+gespeicherten Übertrag aus einem früheren Track-only-Monat — das Probelauf-Skript markiert solche Fälle
+mit `priority=HIGH`.
+
+**Auswirkung auf die Kontexte.**
+
+- **Unterbau:** Bedeutung von `overtimeMode` / `monthlyHours` für Verträge ohne Monatsstunden; keine
+  Feldänderung, keine Schemaänderung, kein neuer Export.
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** keine Codeänderung; die Überstundenausgleich-Prüfung liest weiterhin den
+  gespeicherten Übertrag (siehe Bekanntes Verhalten).
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** Kern der Änderung — Regel, Live-Saldo, Abschlusskern (und damit Cron und
+  Neuberechnung).
+- **Composition-Schicht:** keine Codeänderung; die Dashboard-Überstundenübersicht folgt automatisch über
+  `computeOvertimeBalanceBreakdown`.
+
+**Gemessen.**
+
+- Vorher (auf `7c6018e9`, rot in `monthly-hours-no-target-track-only-494.test.ts`): Vertrag mit 0 h /
+  ohne Monatsstunden, Jan–Jun je 25 h gearbeitet, live 150 h (Übertrag 1500 → 9000 Min.) → nachher 0 h,
+  jeder Abschluss mit Übertrag 0; Altübertrag-Fall 59,8 h → 0, Juni-Übertrag 3588 Min. → 0;
+  Vertragswechsel 0 h → 40 h: live 12 h → −113 h (= Kette der Abschlüsse, Live-Wert gleich Abschluss).
+- Unverändert (festgeschrieben vor der Änderung, `track-only-neutrality-494.test.ts`): Monatsstunden > 0
+  in beiden Modi, explizit „Nur erfassen“, alle anderen Vertragsarten.
+- Volle API-Suite auf dem gemergten Stand mit `origin/main` (Phase 493): 481 Dateien, 7740 Tests
+  bestanden, 3 übersprungen; volle Web-Suite: 105 Dateien, 1629 Tests bestanden;
+  `measure-saldo-path-parity.ts --check` OK (Baseline unverändert).
+
+**Nachrechnen.**
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/__tests__/monthly-hours-no-target-track-only-494.test.ts src/__tests__/track-only-neutrality-494.test.ts src/contexts/working-time-account/__tests__/track-only-rule-494.test.ts
+pnpm --filter @clokr/api exec vitest run scripts/__tests__/audit-494-track-only-carry.test.ts scripts/__tests__/migrate-opening-balances-494.test.ts scripts/__tests__/audit-saldo-chain-integrity-494.test.ts
+pnpm --filter @clokr/api exec tsx scripts/measure-saldo-path-parity.ts --check
+pnpm --filter @clokr/api exec tsx scripts/audit-494-track-only-carry.ts --tenant-id <uuid>
+```
+
 ---
 
 ## V — Urlaubsbuchungen: gespeicherter Überstundenausgleich, § 9 bei Korrektur, 6-Tage-Vertrag, Elternzeit-Kürzung (Phase 468, Issue #468)
