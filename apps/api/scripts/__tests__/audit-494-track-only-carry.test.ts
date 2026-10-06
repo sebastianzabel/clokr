@@ -74,6 +74,9 @@ describe("audit-494-track-only-carry (Issue #494, R6)", () => {
   let p3: string;
   let t1: string;
   let h1: string;
+  let n2: string;
+  let b1: string;
+  let b2: string;
   let nB: string;
   let runA: { code: number; lines: string[] };
   let runAll: { code: number; lines: string[] };
@@ -127,7 +130,15 @@ describe("audit-494-track-only-carry (Issue #494, R6)", () => {
     spec: {
       key: string;
       schedules: Array<{ validFrom: string; data: Record<string, unknown> }>;
-      snapshots?: Array<{ month: number; carryOver: number; type?: "MONTHLY" | "YEARLY" }>;
+      snapshots?: Array<{
+        month: number;
+        carryOver: number;
+        type?: "MONTHLY" | "YEARLY";
+        /** Bridge shape (isBridgeSnapshot): all-zero activity, non-zero carry. */
+        bridge?: boolean;
+      }>;
+      /** 1-based month (2026) of an active OpeningBalance row. */
+      openingBalanceMonth?: number;
       lockedEntry?: boolean;
     },
   ): Promise<string> {
@@ -165,12 +176,26 @@ describe("audit-494-track-only-carry (Issue #494, R6)", () => {
           periodType: snap.type ?? "MONTHLY",
           periodStart: firstDay,
           periodEnd: lastDay,
-          workedMinutes: 300,
+          workedMinutes: snap.bridge ? 0 : 300,
           expectedMinutes: 0,
-          balanceMinutes: snap.carryOver,
+          balanceMinutes: snap.bridge ? 0 : snap.carryOver,
           carryOver: snap.carryOver,
           closedAt: new Date(end.getTime() + 24 * 60 * 60_000),
           closedBy: "a494-seed",
+        },
+      });
+    }
+    if (spec.openingBalanceMonth) {
+      await app.prisma.openingBalance.create({
+        data: {
+          employeeId: emp.id,
+          minutes: 900,
+          effectiveFrom: new Date(
+            `2026-${String(spec.openingBalanceMonth).padStart(2, "0")}-01T00:00:00Z`,
+          ),
+          reason: "a494 seed opening balance",
+          source: "RECONSTRUCTED",
+          createdBy: "a494-seed",
         },
       });
     }
@@ -255,6 +280,25 @@ describe("audit-494-track-only-carry (Issue #494, R6)", () => {
       snapshots: [{ month: 3, carryOver: 2088 }],
     });
 
+    // WR-01: a negative stored carry is not bookable, so it does not make the employee HIGH.
+    n2 = await createEmp(dataA, {
+      key: "N2",
+      schedules: [{ validFrom: "2026-03-01", data: mhNull }],
+      snapshots: [{ month: 3, carryOver: -300 }],
+    });
+    // WR-02: an opening balance on a 0 h contract — bridge shape, and a documented OpeningBalance.
+    b1 = await createEmp(dataA, {
+      key: "B1",
+      schedules: [{ validFrom: "2026-03-01", data: mhNull }],
+      snapshots: [{ month: 3, carryOver: 900, bridge: true }],
+    });
+    b2 = await createEmp(dataA, {
+      key: "B2",
+      schedules: [{ validFrom: "2026-03-01", data: mhNull }],
+      snapshots: [{ month: 3, carryOver: 900 }],
+      openingBalanceMonth: 3,
+    });
+
     dataB = await seedTestData(app, "audit494b");
     nB = await createEmp(dataB, {
       key: "NB",
@@ -262,7 +306,7 @@ describe("audit-494-track-only-carry (Issue #494, R6)", () => {
       snapshots: [{ month: 3, carryOver: 600 }],
     });
 
-    fixtureEmpIds = [n1, n1b, p1, p2, p3, t1, h1, nB];
+    fixtureEmpIds = [n1, n1b, p1, p2, p3, t1, h1, n2, b1, b2, nB];
     stateBefore = await fixtureState();
 
     runA = await atClock(() => capture(() => main(["--tenant-id", dataA.tenant.id], app.prisma)));
@@ -271,6 +315,12 @@ describe("audit-494-track-only-carry (Issue #494, R6)", () => {
   }, 120_000);
 
   afterAll(async () => {
+    try {
+      // cleanupTestData does not know OpeningBalance (FK onto Employee) — remove the fixture rows.
+      await app.prisma.openingBalance.deleteMany({ where: { employeeId: { in: fixtureEmpIds } } });
+    } catch (err) {
+      console.error("audit494 cleanup (OpeningBalance) failed:", err);
+    }
     try {
       await cleanupTestData(app, dataA.tenant.id);
     } catch (err) {
@@ -335,6 +385,7 @@ describe("audit-494-track-only-carry (Issue #494, R6)", () => {
     expect(summary).toBeDefined();
     expect(summary).toContain("laterContractWithTarget=true");
     expect(summary).toContain("priority=HIGH");
+    expect(summary).toContain("priorityReason=LATER_CONTRACT_WITH_TARGET");
     expect(summary).toContain("todayContractAffected=false");
     expect(summary).toContain("lastActiveCarryOver=2088");
   });
@@ -353,11 +404,50 @@ describe("audit-494-track-only-carry (Issue #494, R6)", () => {
     expect(summary).toContain(`liveAfterMinutes=${liveMinutes}`);
   });
 
-  it("reports the YEARLY snapshots with a non-zero carry (N1) and a normal priority", () => {
+  it("reports the YEARLY snapshots with a non-zero carry (N1)", () => {
     const summary = lineFor(runA.lines, "employee ", n1)!;
     expect(summary).toContain("yearlyNonZeroCarry=1");
-    expect(summary).toContain("priority=normal");
     expect(summary).toContain("laterContractWithTarget=false");
+  });
+
+  it("flags an affected employee with a positive bookable legacy carry as HIGH (N1, WR-01)", () => {
+    const summary = lineFor(runA.lines, "employee ", n1)!;
+    expect(summary).toContain("todayContractAffected=true");
+    expect(summary).toContain("lastActiveCarryOver=600");
+    expect(summary).toContain("priority=HIGH");
+    expect(summary).toContain("priorityReason=BOOKABLE_LEGACY_CARRY");
+  });
+
+  it("keeps an affected employee with a negative stored carry at normal priority (N2, WR-01)", () => {
+    const summary = lineFor(runA.lines, "employee ", n2)!;
+    expect(summary).toContain("todayContractAffected=true");
+    expect(summary).toContain("lastActiveCarryOver=-300");
+    expect(summary).toContain("priority=normal");
+    expect(summary).toContain("priorityReason=none");
+  });
+
+  it("labels a bridge-shaped snapshot OPENING_BALANCE, not a re-close candidate (B1, WR-02)", () => {
+    const line = lineFor(runA.lines, "finding ", b1)!;
+    expect(line).toContain("reason=OPENING_BALANCE");
+    expect(line).toContain("storedCarryOver=900");
+    expect(line).not.toContain("reason=NO_TARGET");
+    expect(lineFor(runA.lines, "employee ", b1)).toContain("openingBalanceFindings=1");
+  });
+
+  it("labels a month holding an active OpeningBalance row OPENING_BALANCE (B2, WR-02)", () => {
+    const line = lineFor(runA.lines, "finding ", b2)!;
+    expect(line).toContain("reason=OPENING_BALANCE");
+    expect(lineFor(runA.lines, "employee ", b2)).toContain("openingBalanceFindings=1");
+  });
+
+  it("states in the summary and --help that opening-balance rows must not be re-closed", async () => {
+    expect(runA.lines.join("\n")).toMatch(/Never unlock\/re-close a reason=OPENING_BALANCE row/);
+    const help = await capture(() => main(["--help"]));
+    expect(help.lines.join("\n")).toMatch(/must NOT be unlocked and re-closed/);
+  });
+
+  it("labels ordinary rows NO_TARGET and counts no opening-balance finding (N1)", () => {
+    expect(lineFor(runA.lines, "employee ", n1)).toContain("openingBalanceFindings=0");
   });
 
   it("--tenant-id A output contains no tenant-B id; --all-tenants contains both", () => {

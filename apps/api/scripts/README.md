@@ -271,20 +271,27 @@ closed `MONTHLY` `SaldoSnapshot` whose contract valid at the month midpoint is t
 numbers untouched (Revisionssicherheit: closed months are never recalculated, a locked month is
 immutable even to admins), so this script gives the owner the concrete list to decide about. Each
 finding line carries `snapshotId`, `month`, `storedCarryOver`, `balanceMinutes`, `locked`,
-`overtimeMode`, `monthlyHours` and a `reason`: `NO_TARGET` (no monthly hours) or `TRACK_ONLY_MODE`
-(explicit mode). Each affected employee gets one summary line: `lastActiveCarryOver` (the stored
+`overtimeMode`, `monthlyHours` and a `reason`: `NO_TARGET` (no monthly hours), `TRACK_ONLY_MODE`
+(explicit mode) or `OPENING_BALANCE` (a bridge-shaped snapshot per `isBridgeSnapshot()` or a month
+with an active `OpeningBalance` row). **A `reason=OPENING_BALANCE` row must NOT be unlocked and
+re-closed**: a re-close under a track-only contract writes carry 0 and destroys the opening
+balance — it needs a separate, deliberate decision. Each affected employee gets one summary line: `lastActiveCarryOver` (the stored
 confirmed carry — the live figure BEFORE the rule), `liveAfterMinutes` (the live figure under the
 rule, the same computation as `GET /api/v1/overtime/:id`), `todayContractAffected`,
-`laterContractWithTarget` with `priority=HIGH` (a later contract that is NOT track-only would
-pick up the stale carry as its opening balance — handle these first) and `yearlyNonZeroCarry`
-(non-superseded `YEARLY` snapshots with a non-zero carry — Jahresübertrag exposure). Usage:
+`laterContractWithTarget`, `priority` with a `priorityReason` — `LATER_CONTRACT_WITH_TARGET` (a
+later contract that is NOT track-only would pick up the stale carry as its opening balance) or
+`BOOKABLE_LEGACY_CARRY` (today's contract is affected and the stored carry is positive: the
+Überstundenausgleich booking gate still reads the stored carry, so it stays bookable while the live
+saldo shows 0) — handle `HIGH` first — `yearlyNonZeroCarry` (non-superseded `YEARLY` snapshots with
+a non-zero carry — Jahresübertrag exposure) and `openingBalanceFindings`. Usage:
 `--tenant-id <uuid>` or `--all-tenants`, exactly one of which is required (a German usage message,
 exit `1`, for neither or both). Exit codes: `0` no finding, `1` usage error or DATABASE_URL
 missing/a DB failure, `2` one or more findings. It performs ZERO writes and has no write/repair
 flag anywhere in its source (mechanically checked by its own test); output is ids only, full
 UUIDs — no employee name, no employee number. Correcting a finding is a deliberate unlock of the
-affected month (mandatory reason, UNLOCK audit entry) followed by a re-close, never this script.
-Operator step: run it once on int and prod after the release that ships Issue #494.
+affected month (mandatory reason, UNLOCK audit entry) followed by a re-close, never this script
+(and never for an `OPENING_BALANCE` row). Operator step: run it once on int and prod after the
+release that ships Issue #494.
 
 ## Test infrastructure
 

@@ -15,6 +15,12 @@
  * or `TRACK_ONLY_MODE` (explicit mode; D-13). The reason is a display label read from the stored
  * field AFTER the predicate decided; it is not a second copy of the rule.
  *
+ * `OPENING_BALANCE` (review WR-02): a snapshot that carries a documented opening balance — the
+ * bridge shape of `isBridgeSnapshot()` (single source of truth, `saldo-snapshot-cleanup.ts`) or a
+ * month holding an active `OpeningBalance` row — is listed under that distinct reason and is NOT a
+ * candidate for unlock + re-close: re-closing it under a track-only contract writes carry 0 and
+ * destroys the opening balance. Such rows need a deliberate, separate decision.
+ *
  * Per affected employee one summary line: `lastActiveCarryOver` (the stored confirmed carry — the
  * live figure BEFORE the rule; a faithful pre-rule live figure cannot be recomputed without the
  * pre-rule code), `liveAfterMinutes` (the live figure UNDER the rule, the same computation
@@ -57,6 +63,7 @@ import {
   isTrackOnlySchedule,
   monthLabelFromPeriodEnd,
 } from "../src/contexts/working-time-account/saldo-chain-integrity";
+import { isBridgeSnapshot } from "../src/contexts/working-time-account/saldo-snapshot-cleanup";
 import { getEffectiveSchedule } from "../src/contexts/time-tracking";
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
@@ -100,6 +107,15 @@ READ-ONLY — lists every non-superseded closed MONTHLY snapshot whose contract 
 (MONTHLY_HOURS without monthly hours, or explicit TRACK_ONLY) and whose stored carry-over is not 0
 (Issue #494). No write/correction flag exists. Correction only via unlock + re-close.
 
+Rows with reason=OPENING_BALANCE (bridge-shaped snapshot or a month with an active OpeningBalance)
+must NOT be unlocked and re-closed — a re-close under a track-only contract writes carry 0 and
+destroys the opening balance. Decide those separately.
+
+priority=HIGH when a later contract with a target would inherit the stale carry
+(priorityReason=LATER_CONTRACT_WITH_TARGET) or when today's contract is affected and the stored
+carry is positive (priorityReason=BOOKABLE_LEGACY_CARRY — the Ueberstundenausgleich booking gate
+still reads the stored carry while the live saldo shows 0).
+
 Exit codes:
   0 — no finding for the given scope
   1 — DATABASE_URL missing, bad CLI, or a DB connection/query failure
@@ -107,7 +123,9 @@ Exit codes:
 `;
 
 // ── Output shapes ─────────────────────────────────────────────────────────────
-export type FindingReason = "NO_TARGET" | "TRACK_ONLY_MODE";
+export type FindingReason = "NO_TARGET" | "TRACK_ONLY_MODE" | "OPENING_BALANCE";
+
+export type PriorityReason = "LATER_CONTRACT_WITH_TARGET" | "BOOKABLE_LEGACY_CARRY";
 
 export type Finding = {
   tenantId: string;
@@ -131,7 +149,10 @@ export type EmployeeSummary = {
   todayContractAffected: boolean;
   laterContractWithTarget: boolean;
   priority: "HIGH" | "normal";
+  /** Why the employee is HIGH (both can apply); empty for normal priority. */
+  priorityReasons: PriorityReason[];
   yearlyNonZeroCarry: number;
+  openingBalanceFindings: number;
 };
 
 /** Full UUIDs — DSGVO-safe (no name, no employee number), but locatable by the owner. */
@@ -150,7 +171,8 @@ export function formatEmployeeLine(s: EmployeeSummary): string {
     `lastActiveCarryOver=${s.lastActiveCarryOver} liveAfterMinutes=${s.liveAfterMinutes} ` +
     `todayContractAffected=${s.todayContractAffected} ` +
     `laterContractWithTarget=${s.laterContractWithTarget} priority=${s.priority} ` +
-    `yearlyNonZeroCarry=${s.yearlyNonZeroCarry}`
+    `priorityReason=${s.priorityReasons.length > 0 ? s.priorityReasons.join(",") : "none"} ` +
+    `yearlyNonZeroCarry=${s.yearlyNonZeroCarry} openingBalanceFindings=${s.openingBalanceFindings}`
   );
 }
 
@@ -228,6 +250,8 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
         periodEnd: true,
         carryOver: true,
         balanceMinutes: true,
+        workedMinutes: true,
+        expectedMinutes: true,
         employee: { select: { id: true, tenantId: true } },
       },
     });
@@ -264,6 +288,19 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       else contractsByEmployee.set(row.employeeId, [row]);
     }
 
+    // Documented opening balances (Phase 99) of the same employees — a month holding one is not a
+    // re-close candidate (WR-02).
+    const openingBalanceRows = await prisma.openingBalance.findMany({
+      where: { employeeId: { in: [...byEmployee.keys()] }, superseded: false },
+      select: { employeeId: true, effectiveFrom: true },
+    });
+    const openingBalanceMonths = new Map<string, Set<string>>();
+    for (const row of openingBalanceRows) {
+      const months = openingBalanceMonths.get(row.employeeId) ?? new Set<string>();
+      months.add(row.effectiveFrom.toISOString().slice(0, 7));
+      openingBalanceMonths.set(row.employeeId, months);
+    }
+
     for (const { emp, snapshots } of byEmployee.values()) {
       if (!tzByTenant.has(emp.tenantId)) {
         tzByTenant.set(emp.tenantId, await getTenantTimezone(prisma, emp.tenantId));
@@ -293,17 +330,24 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
 
         const locked = await isSnapshotLocked(prisma, emp.id, emp.tenantId, monthStart, monthEnd);
         const storedMode = String(schedule.overtimeMode ?? "");
+        const monthLabel = monthLabelFromPeriodEnd(snap.periodEnd);
+        const isOpeningBalance =
+          isBridgeSnapshot(snap) || (openingBalanceMonths.get(emp.id)?.has(monthLabel) ?? false);
         findings.push({
           tenantId: emp.tenantId,
           employeeId: emp.id,
           snapshotId: snap.id,
-          month: monthLabelFromPeriodEnd(snap.periodEnd),
+          month: monthLabel,
           storedCarryOver: snap.carryOver,
           balanceMinutes: snap.balanceMinutes,
           locked,
           overtimeMode: storedMode,
           monthlyHours: schedule.monthlyHours == null ? null : Number(schedule.monthlyHours),
-          reason: storedMode === "TRACK_ONLY" ? "TRACK_ONLY_MODE" : "NO_TARGET",
+          reason: isOpeningBalance
+            ? "OPENING_BALANCE"
+            : storedMode === "TRACK_ONLY"
+              ? "TRACK_ONLY_MODE"
+              : "NO_TARGET",
         });
         lastFindingMidpoint = midMonth;
       }
@@ -332,16 +376,27 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
         },
       });
 
+      const todayContractAffected = isTrackOnlySchedule(todaySchedule);
+      // WR-01: the Ueberstundenausgleich booking gate reads the STORED carry (D-12), so a positive
+      // legacy carry stays bookable while the live saldo already shows 0.
+      const priorityReasons: PriorityReason[] = [];
+      if (laterContractWithTarget) priorityReasons.push("LATER_CONTRACT_WITH_TARGET");
+      if (todayContractAffected && confirmed.minutes > 0) {
+        priorityReasons.push("BOOKABLE_LEGACY_CARRY");
+      }
+
       const summary: EmployeeSummary = {
         tenantId: emp.tenantId,
         employeeId: emp.id,
         findings: findings.length,
         lastActiveCarryOver: confirmed.minutes,
         liveAfterMinutes: breakdown ? Math.round(breakdown.totalHours * 60) : "exempt",
-        todayContractAffected: isTrackOnlySchedule(todaySchedule),
+        todayContractAffected,
         laterContractWithTarget,
-        priority: laterContractWithTarget ? "HIGH" : "normal",
+        priority: priorityReasons.length > 0 ? "HIGH" : "normal",
+        priorityReasons,
         yearlyNonZeroCarry,
+        openingBalanceFindings: findings.filter((f) => f.reason === "OPENING_BALANCE").length,
       };
       if (summary.priority === "HIGH") highPriorityCount++;
       console.info(formatEmployeeLine(summary));
@@ -353,7 +408,8 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       console.info(
         `\nSummary: ${findingCount} finding(s), ${highPriorityCount} HIGH-priority employee(s), ` +
           `${employeesScanned} employee(s) scanned across ${tenants.length} tenant(s). ` +
-          `Correction runs only via unlock + re-close of the affected month — this script writes nothing.`,
+          `Correction runs only via unlock + re-close of the affected month — this script writes nothing. ` +
+          `Never unlock/re-close a reason=OPENING_BALANCE row: it would destroy the opening balance.`,
       );
     }
 
