@@ -186,11 +186,18 @@ export async function computeMonthReportFigures(
     scheduleType === "MONTHLY_HOURS" && !(Number(schedule?.monthlyHours ?? 0) > 0);
 
   if (!schedule || isUntrackedMonthlyHours) {
+    // Issue #493: the untracked Ist reads TimeEntry.date, a @db.Date column — the month instants
+    // admitted the previous month's last day (prod Ist 5.58 h). Calendar-day bounds instead.
+    const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
+      monthStart,
+      monthEnd,
+      tz,
+    );
     const entries = await getValidWorkedEntriesInRange(
       app.prisma,
       { kind: "employee", employeeId, tenantId: employee.tenantId },
-      monthStart,
-      monthEnd,
+      monthFirstDay,
+      monthLastDay,
     );
     // T1 returns closed rows only, so the open-row branch (0 here, previously minus the break) is
     // unreachable — a harmonisation, not a behaviour change (Phase 79, D-03).

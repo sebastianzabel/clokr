@@ -898,7 +898,10 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
       }
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { start, end } = monthRangeUtc(y, m, tz);
+      const { end } = monthRangeUtc(y, m, tz);
+      // Issue #493 (D-10): @db.Date columns and the day clip take calendar-day bounds; the
+      // instant `end` above stays for the Stichtag lookup only.
+      const { firstDay, lastDay } = monthDateRange(y, m, tz);
 
       // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
       // building the report body. Stichtag = the report period's own last day (`end`, already
@@ -933,7 +936,7 @@ export async function reportRoutes(app: FastifyInstance) {
               }
             : {}),
         },
-        include: buildEmployeeInclude(start, end),
+        include: buildEmployeeInclude(firstDay, lastDay),
         orderBy: { lastName: "asc" },
       })) as unknown as EmployeeWithIncludes[];
 
@@ -942,8 +945,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const section9ByEmp = await fetchConfirmedSection9CreditsByEmp(
         app,
         req.user.tenantId,
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
 
       // Issue #451 (D-02): the absence context's own priced leave-day map, one
@@ -985,8 +988,8 @@ export async function reportRoutes(app: FastifyInstance) {
       for (const emp of employees) {
         const summary = computeEmployeeSummary(
           emp,
-          start,
-          end,
+          firstDay,
+          lastDay,
           tz,
           leaveDaysByCodeByEmp.get(emp.id) ?? new Map(),
           section9ByEmp.get(emp.id) ?? [],
@@ -1891,7 +1894,10 @@ export async function reportRoutes(app: FastifyInstance) {
       const roleFilter: CompatRoleFilter | undefined = parseCompatRoleFilter(role);
 
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { start, end } = monthRangeUtc(y, m, tz);
+      const { end } = monthRangeUtc(y, m, tz);
+      // Issue #493 (D-10): @db.Date columns and the day clip take calendar-day bounds; the
+      // instant `end` above stays for the Stichtag lookup only.
+      const { firstDay, lastDay } = monthDateRange(y, m, tz);
 
       const tenant = await app.prisma.tenant.findUnique({
         where: { id: req.user.tenantId },
@@ -1923,7 +1929,7 @@ export async function reportRoutes(app: FastifyInstance) {
           user: { isActive: true, ...compatRoleUserWhere(roleFilter) },
           ...(pdfAllScopedIds !== "all" ? { id: { in: pdfAllScopedIds } } : {}),
         },
-        include: buildEmployeeInclude(start, end),
+        include: buildEmployeeInclude(firstDay, lastDay),
         orderBy: { lastName: "asc" },
       })) as unknown as EmployeeWithIncludes[];
 
@@ -1936,8 +1942,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const section9ByEmpAll = await fetchConfirmedSection9CreditsByEmp(
         app,
         req.user.tenantId,
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
 
       // Issue #451 (D-02): the absence context's own priced leave-day map, prefetched
@@ -1972,8 +1978,8 @@ export async function reportRoutes(app: FastifyInstance) {
       for (const emp of employees) {
         const summary = computeEmployeeSummary(
           emp,
-          start,
-          end,
+          firstDay,
+          lastDay,
           tz,
           leaveDaysByCodeAll.get(emp.id) ?? new Map(),
           section9ByEmpAll.get(emp.id) ?? [],
