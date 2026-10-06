@@ -79,10 +79,12 @@ export {
   getTenantTimezone,
   iterateDaysInTz,
   monthDayBounds,
+  monthDateRange, // Issue #493 (D-10)
   monthRangeUtc,
   timeStrInTz,
   todayInTz,
   weekRangeUtc,
+  weekDateRange, // Issue #493 (D-10)
 } from "./timezone";
 export { recalculateSnapshots } from "./recalculate-snapshots";
 export {

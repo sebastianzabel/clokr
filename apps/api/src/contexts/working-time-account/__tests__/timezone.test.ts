@@ -5,7 +5,10 @@ import {
   dateStrInTz,
   getDayOfWeekInTz,
   monthRangeUtc,
+  monthDayBounds,
+  monthDateRange,
   weekRangeUtc,
+  weekDateRange,
   iterateDaysInTz,
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
@@ -381,5 +384,68 @@ describe("todayInTz", () => {
     expect(today.getUTCHours()).toBe(0);
     expect(today.getUTCMinutes()).toBe(0);
     expect(today.getUTCSeconds()).toBe(0);
+  });
+});
+
+describe("monthDateRange (Issue #493, D-10)", () => {
+  const iso = (r: { firstDay: Date; lastDay: Date }) => [
+    r.firstDay.toISOString(),
+    r.lastDay.toISOString(),
+  ];
+
+  it.each([
+    [2026, 10, "Europe/Berlin", "2026-10-01", "2026-10-31"], // summer
+    [2026, 2, "Europe/Berlin", "2026-02-01", "2026-02-28"], // winter
+    [2026, 3, "Europe/Berlin", "2026-03-01", "2026-03-31"], // CET -> CEST
+    [2026, 4, "Europe/Berlin", "2026-04-01", "2026-04-30"],
+    [2028, 2, "Europe/Berlin", "2028-02-01", "2028-02-29"], // leap year
+    [2026, 12, "Europe/Berlin", "2026-12-01", "2026-12-31"],
+    [2026, 10, "UTC", "2026-10-01", "2026-10-31"],
+    [2026, 10, "America/New_York", "2026-10-01", "2026-10-31"],
+    [2026, 10, "Pacific/Auckland", "2026-10-01", "2026-10-31"],
+  ])("%i-%i in %s is %s .. %s", (year, month, tz, first, last) => {
+    expect(iso(monthDateRange(year, month, tz))).toEqual([
+      `${first}T00:00:00.000Z`,
+      `${last}T00:00:00.000Z`,
+    ]);
+  });
+
+  it("is the pure composition monthDayBounds(monthRangeUtc(...)) for every month of 2026", () => {
+    for (let month = 1; month <= 12; month++) {
+      const { start, end } = monthRangeUtc(2026, month, "Europe/Berlin");
+      expect(monthDateRange(2026, month, "Europe/Berlin")).toEqual(
+        monthDayBounds(start, end, "Europe/Berlin"),
+      );
+    }
+  });
+
+  it("returns UTC midnight (no time component)", () => {
+    const { firstDay, lastDay } = monthDateRange(2026, 10, "Europe/Berlin");
+    for (const dt of [firstDay, lastDay]) {
+      expect([
+        dt.getUTCHours(),
+        dt.getUTCMinutes(),
+        dt.getUTCSeconds(),
+        dt.getUTCMilliseconds(),
+      ]).toEqual([0, 0, 0, 0]);
+    }
+  });
+});
+
+describe("weekDateRange (Issue #493, D-10)", () => {
+  const range = (ref: string) => {
+    const r = weekDateRange(new Date(ref), "Europe/Berlin");
+    return [r.firstDay.toISOString(), r.lastDay.toISOString()];
+  };
+
+  it.each([
+    ["2026-10-07T10:00:00Z", "2026-10-05", "2026-10-11"],
+    ["2026-10-04T21:59:59Z", "2026-09-28", "2026-10-04"], // Sunday 23:59:59 CEST, month boundary
+    ["2026-10-04T22:00:00Z", "2026-10-05", "2026-10-11"], // Monday 00:00 CEST
+    ["2026-12-31T12:00:00Z", "2026-12-28", "2027-01-03"], // year boundary
+    ["2026-03-29T12:00:00Z", "2026-03-23", "2026-03-29"], // DST start Sunday
+    ["2026-10-25T12:00:00Z", "2026-10-19", "2026-10-25"], // DST end Sunday
+  ])("%s -> %s .. %s", (ref, first, last) => {
+    expect(range(ref)).toEqual([`${first}T00:00:00.000Z`, `${last}T00:00:00.000Z`]);
   });
 });
