@@ -11,6 +11,7 @@
   import DangerZone from "$lib/components/admin/DangerZone.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import RetroactiveBSWizard from "$lib/components/vocational-school/RetroactiveBSWizard.svelte";
+  import OvertimeModeField from "$lib/components/schedule/OvertimeModeField.svelte";
   import {
     shouldOfferRetroactiveRun,
     type RetroactivePreview,
@@ -2388,13 +2389,12 @@
               <p class="form-hint">Soll wird monatlich berechnet — es gibt keine Tagesziele.</p>
             </div>
 
-            <div class="form-group">
-              <label class="form-label" for="e-overtime-mode">Überstunden-Modus</label>
-              <select id="e-overtime-mode" bind:value={eOvertimeMode} class="form-input">
-                <option value="CARRY_FORWARD">Übertragen (CARRY_FORWARD)</option>
-                <option value="TRACK_ONLY">Nur erfassen (TRACK_ONLY)</option>
-              </select>
-            </div>
+            <OvertimeModeField
+              type={eType}
+              monthlyHours={eMonthlyHours}
+              value={eOvertimeMode}
+              onchange={(v) => (eOvertimeMode = v)}
+            />
 
             <!-- Phase 107 gap G-02 (UAT 2026-08-28) — these chips DO set workDays, just
                  indirectly: buildSchedulePayload() sends them as mondayHours…sundayHours =
