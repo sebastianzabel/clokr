@@ -70,6 +70,7 @@ import {
   getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1; THE SALDO INPUT (computeWeekProgress)
   getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, feeds the holiday resolver (computeWeekProgress)
   getEffectiveSchedule, // computeWeekProgress's per-piece contract resolution
+  entryDurations, // Phase 79 (Issue #79), D-03/D-05 — presence/working-time kernel
 } from "../time-tracking";
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver (computeWeekProgress)
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1 (computeWeekProgress)
@@ -665,9 +666,10 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
 
   // ── Step 5: Compute workedMinutes ─────────────────────────────────────────
   //
-  // Sum net durations (endTime - startTime - breakMinutes) for all entries within
-  // [effectiveStart, effectiveEnd]. The entry pre-filter at step 2 already ensures
-  // all entries in the set are within the employment span.
+  // Sum the working minutes (presence minus the stored break, via the Zeiterfassung kernel
+  // `entryDurations`, Phase 79 / Issue #79) for all entries within [effectiveStart, effectiveEnd].
+  // The entry pre-filter at step 2 already ensures all entries in the set are within the
+  // employment span.
 
   const effectiveStartStr = dateStrInTz(effectiveStart, tz);
   const effectiveEndStr = dateStrInTz(effectiveEnd, tz);
@@ -689,8 +691,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   for (const e of entries) {
     const ds = dateStrInTz(e.date, tz);
     if (ds < effectiveStartStr || ds > effectiveEndStr) continue;
-    const netMinutes =
-      (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
+    const netMinutes = entryDurations(e).workingMinutes;
     workedMinutes += netMinutes;
     workedMinutesByDate.set(ds, (workedMinutesByDate.get(ds) ?? 0) + netMinutes);
   }

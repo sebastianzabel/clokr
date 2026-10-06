@@ -249,6 +249,16 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "behavior to compare. Same vacuous-satisfaction reasoning as the Phase 430 and Phase 468 " +
       "entries above: RECORD/MERGE mode refuses to run once the role guard is gone.",
   },
+  {
+    route: "GET /api/v1/time-entries/summary",
+    reason:
+      "New route added in Phase 79 (Issue #79, R3), long after the role guard (`requireRole`) " +
+      "was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`time-entry:read`, EIGENE vs ZUGEWIESEN) from its very first commit and never had " +
+      "role-based access behavior to compare. Same vacuous-satisfaction reasoning as the Phase " +
+      "430, Phase 468 and Phase 481 entries above: RECORD/MERGE mode refuses to run once the " +
+      "role guard is gone.",
+  },
 ];
 
 /** Routes declared in `app.ts` itself — invisible to the source parser, proven registered. */

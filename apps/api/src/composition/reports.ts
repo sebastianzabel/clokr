@@ -28,6 +28,7 @@ import {
   monthRangeUtc,
   computeMonthReportFigures, // Issue #451 (D-03)
 } from "../contexts/working-time-account"; // Phase 101B
+import { entryDurations, addWorkingMinutes } from "../contexts/time-tracking"; // Phase 79 (Issue #79) — presence/working-time kernel (D-03/D-05)
 import {
   listEntitlementsForYear,
   getExpiringCarryOver,
@@ -309,13 +310,7 @@ function computeEmployeeSummary(
     start: formatInTimeZone(e.startTime, tz, "HH:mm"),
     end: e.endTime ? formatInTimeZone(e.endTime, tz, "HH:mm") : "",
     breakMin: Number(e.breakMinutes ?? 0),
-    netHours: e.endTime
-      ? Math.round(
-          (((e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes ?? 0)) /
-            60) *
-            100,
-        ) / 100
-      : 0,
+    netHours: e.endTime ? Math.round((entryDurations(e).workingMinutes / 60) * 100) / 100 : 0,
     note: (e as Record<string, unknown>).note as string | undefined,
   }));
 
@@ -516,13 +511,8 @@ function buildDatevLodas(params: {
     const lastDay = new Date(y, m, 0).getDate();
     const datum = `${String(lastDay).padStart(2, "0")}${String(m).padStart(2, "0")}${y}`;
 
-    // Arbeitsstunden
-    const workedMinutes = emp.timeEntries.reduce((sum, e) => {
-      if (!e.endTime) return sum;
-      return (
-        sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes ?? 0)
-      );
-    }, 0);
+    // Working hours
+    const workedMinutes = emp.timeEntries.reduce((sum, e) => addWorkingMinutes(sum, e), 0);
     const workedHours = workedMinutes / 60;
 
     // ── Krankheit aus LeaveRequest (Issue #210) ────────────────────────────

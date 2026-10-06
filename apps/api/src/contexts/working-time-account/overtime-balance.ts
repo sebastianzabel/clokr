@@ -181,7 +181,7 @@ export async function computeOvertimeBalanceBreakdown(
   // numbers as the close path, with no roster proration.
   const stillEmployedAfterWindowEnd = exitDateNorm === null || exitDateNorm > effectiveEnd;
 
-  // Worked minutes since snapshot (or month start). Same T1 facade read — every downstream use of
+  // Entries since snapshot (or month start). Same T1 facade read — every downstream use of
   // `entries` in this file only reads `date`/`startTime`/`endTime`/`breakMinutes`, exactly the
   // fields T1's `select` returns.
   const entries = await getValidWorkedEntriesInRange(
@@ -190,11 +190,6 @@ export async function computeOvertimeBalanceBreakdown(
     rangeStart,
     effectiveEnd,
   );
-
-  const workedMinutes = entries.reduce((sum, e) => {
-    if (!e.endTime) return sum;
-    return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
-  }, 0);
 
   // ── SNAP-03 (Phase 76.27): Per-month iteration via closeEmployeeMonth() ─────
   // ALL schedule models now use the unified per-month loop for COMPLETE open months,

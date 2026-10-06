@@ -182,6 +182,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/break-effective.ts": "zeiterfassung", // effective break-minutes calculation
   "src/contexts/time-tracking/clock-out-debounce-message.ts": "zeiterfassung", // Phase 307 Plan 02 (D-03/D-05) — builds the German 409 message for a DEBOUNCE_NOOP clock-out over TimeEntry.startTime
   "src/contexts/time-tracking/day-entries.ts": "zeiterfassung", // Phase 69b (Issue #69) — findEntriesOfDay, the single employee+day TimeEntry lookup
+  "src/contexts/time-tracking/__tests__/fixtures/legacy-working-minutes-pre79.ts": "zeiterfassung", // Phase 79 Plan 01 (Issue #79), D-10/D-12 — frozen verbatim pre-79 working-time expressions (commit f1fbb71f) for the equivalence proof; test infra of this context, same category as the pre-436/pre-481 fixtures
+  "src/contexts/time-tracking/entry-durations.ts": "zeiterfassung", // Phase 79 (Issue #79), D-03 — pure presence/working-time kernel, no model access; TimeEntry vocabulary
   "src/contexts/time-tracking/entry-invariants.ts": "zeiterfassung", // Phase 101B (Issue #101) — lifted out of api/time-entries.ts; one-per-day/overlap/month-lock/retro-window invariants + effective-schedule resolution over TimeEntry
   "src/contexts/time-tracking/entry-salon.ts": "zeiterfassung", // Phase 68b (issue #68) — resolveEntrySalon, the entry-salon rule; reads the Unterbau only through the platform index
   "src/contexts/time-tracking/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry

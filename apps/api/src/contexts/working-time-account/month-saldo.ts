@@ -38,6 +38,7 @@ import {
   getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1; Phase 101B wave 8 merged in
   getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, feeds the holiday resolver below
   getEffectiveBreakDuration,
+  addWorkingMinutes, // Phase 79 (Issue #79), D-12 — fold step
 } from "../time-tracking";
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
@@ -191,10 +192,9 @@ export async function computeMonthReportFigures(
       monthStart,
       monthEnd,
     );
-    const workedMinutes = entries.reduce((sum, e) => {
-      const slotMin = e.endTime ? (e.endTime.getTime() - e.startTime.getTime()) / 60000 : 0;
-      return sum + slotMin - Number(e.breakMinutes ?? 0);
-    }, 0);
+    // T1 returns closed rows only, so the open-row branch (0 here, previously minus the break) is
+    // unreachable — a harmonisation, not a behaviour change (Phase 79, D-03).
+    const workedMinutes = entries.reduce((sum, e) => addWorkingMinutes(sum, e), 0);
     return unlabelled(Math.round(workedMinutes));
   }
 

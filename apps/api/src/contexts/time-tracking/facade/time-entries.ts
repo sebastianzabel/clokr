@@ -97,6 +97,9 @@ function toIsoDate(d: Date): string {
  * `closeEmployeeMonth()` at all 4 call sites (`month-saldo.ts`, `recalculate-snapshots.ts`,
  * `overtime.ts`'s manual close, `auto-close-month.ts`'s cron close) — see the module header for
  * why this must never be merged with {@link getWorkedEntriesInRange} (T2).
+ *
+ * Phase 79 (issue #79), D-13: `id` is selected additively so the summary route can intersect T1
+ * with `scopedTimeEntryIds`; every saldo consumer only reads fields, so none is affected.
  */
 export async function getValidWorkedEntriesInRange(
   db: Prisma.TransactionClient,
@@ -113,7 +116,7 @@ export async function getValidWorkedEntriesInRange(
       type: "WORK",
       isInvalid: false,
     },
-    select: { date: true, startTime: true, endTime: true, breakMinutes: true },
+    select: { id: true, date: true, startTime: true, endTime: true, breakMinutes: true },
   });
 }
 
