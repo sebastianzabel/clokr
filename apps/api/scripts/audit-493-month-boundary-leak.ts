@@ -52,6 +52,7 @@ import {
   todayInTz,
 } from "../src/contexts/working-time-account";
 import { entryDurations } from "../src/contexts/time-tracking";
+import { EFFECTIVE_LEAVE_STATUSES, isSickLeaveTypeCode } from "../src/contexts/absence";
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
 export const EXIT_OK = 0;
@@ -168,6 +169,108 @@ export function formatEntryFinding(f: EntryFinding): string {
   );
 }
 
+export type DayCountFinding = {
+  tenantId: string;
+  month: string;
+  employeeId: string;
+  source: "leaveRequest" | "section9Credit";
+  id: string;
+  code: string;
+  daysOld: number;
+  daysNew: number;
+};
+
+export function formatDayCountFinding(f: DayCountFinding): string {
+  return (
+    `category=B tenantId=${f.tenantId} month=${f.month} employeeId=${f.employeeId} ` +
+    `source=${f.source} id=${f.id} code=${f.code} daysOld=${f.daysOld} daysNew=${f.daysNew}`
+  );
+}
+
+export type KeyShiftFinding = {
+  tenantId: string;
+  month: string;
+  employeeId: string;
+  leaveRequestId: string;
+  code: string;
+  keysOld: number;
+  keysNew: number;
+};
+
+export function formatKeyShiftFinding(f: KeyShiftFinding): string {
+  return (
+    `category=C tenantId=${f.tenantId} month=${f.month} employeeId=${f.employeeId} ` +
+    `leaveRequestId=${f.leaveRequestId} code=${f.code} keysOld=${f.keysOld} keysNew=${f.keysNew}`
+  );
+}
+
+// ── Frozen copies of the pre-#493 arithmetic ──────────────────────────────────
+// Both bodies below are token-identical copies of code that no longer exists in
+// composition/reports.ts; they are evaluated twice per month — once with the old
+// monthRangeUtc instants and once with the monthDateRange calendar days — so the difference
+// between the two results is exactly what the delivered files got wrong.
+
+/**
+ * Source: `git show 7c6018e9:apps/api/src/composition/reports.ts`, `daysInRange` inside
+ * `computeEmployeeSummary` (lines 198-202). Monatsbericht day count: the range clipped to
+ * [start, end], rounded to whole days.
+ */
+export function legacyClippedDays(from: Date, to: Date, start: Date, end: Date): number {
+  const s = from < start ? start : from;
+  const e2 = to > end ? end : to;
+  return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
+}
+
+/**
+ * Source: `git show 7c6018e9:apps/api/src/composition/reports.ts`, `workdayKeysInMonthRange`
+ * inside `buildDatevLodas` (lines 463-474). DATEV workday keys: the clipped range walked day by
+ * day from the clip start, weekends skipped.
+ */
+export function legacyWorkdayKeys(from: Date, to: Date, start: Date, end: Date): string[] {
+  const s = from < start ? start : from;
+  const e2 = to > end ? end : to;
+  const keys: string[] = [];
+  const cur = new Date(s);
+  while (cur <= e2) {
+    const dow = cur.getUTCDay();
+    if (dow !== 0 && dow !== 6) keys.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return keys;
+}
+
+/** The old and the new value of one counter for one month; 0 when the range misses that window. */
+function oldAndNew<T>(
+  row: { from: Date; to: Date },
+  ym: YearMonth,
+  tz: string,
+  measure: (from: Date, to: Date, lo: Date, hi: Date) => T,
+  zero: T,
+): { old: T; now: T } {
+  const fromStr = dateOnly(row.from);
+  const toStr = dateOnly(row.to);
+  const oldDays = legacyMonthDays(ym.year, ym.month, tz);
+  const newDays = currentMonthDays(ym.year, ym.month, tz);
+  const instants = monthRangeUtc(ym.year, ym.month, tz);
+  const days = monthDateRange(ym.year, ym.month, tz);
+  const overlaps = (w: { first: string; last: string }) => fromStr <= w.last && toStr >= w.first;
+  return {
+    old: overlaps(oldDays) ? measure(row.from, row.to, instants.start, instants.end) : zero,
+    now: overlaps(newDays) ? measure(row.from, row.to, days.firstDay, days.lastDay) : zero,
+  };
+}
+
+/** Months to test for a row: one before its first to one after its last, none after `current`. */
+function monthsAround(from: Date, to: Date, current: YearMonth): YearMonth[] {
+  const first = shiftMonth(monthOfDate(dateOnly(from)), -1);
+  const last = shiftMonth(monthOfDate(dateOnly(to)), 1);
+  const out: YearMonth[] = [];
+  for (let ym = first; !isAfter(ym, last); ym = shiftMonth(ym, 1)) {
+    if (!isAfter(ym, current)) out.push(ym);
+  }
+  return out;
+}
+
 // ── Per-tenant scan ───────────────────────────────────────────────────────────
 async function scanEntries(
   prisma: PrismaClient,
@@ -249,6 +352,132 @@ async function scanEntries(
   return findings;
 }
 
+async function scanLeave(
+  prisma: PrismaClient,
+  tenantId: string,
+  tz: string,
+  current: YearMonth,
+): Promise<{ dayCounts: DayCountFinding[]; keyShifts: KeyShiftFinding[] }> {
+  const dayCounts: DayCountFinding[] = [];
+  const keyShifts: KeyShiftFinding[] = [];
+
+  const requests = await prisma.leaveRequest.findMany({
+    where: {
+      employee: { tenantId },
+      deletedAt: null,
+      status: { in: [...EFFECTIVE_LEAVE_STATUSES] },
+      leaveType: { code: { in: ["SICK", "SICK_CHILD"] } },
+    },
+    select: {
+      id: true,
+      employeeId: true,
+      startDate: true,
+      endDate: true,
+      halfDay: true,
+      leaveType: { select: { code: true } },
+    },
+  });
+
+  for (const r of requests) {
+    if (!isSickLeaveTypeCode(r.leaveType.code)) continue;
+    const row = { from: r.startDate, to: r.endDate };
+    for (const ym of monthsAround(r.startDate, r.endDate, current)) {
+      // Report: whole-day clip, halved for a half day.
+      const days = oldAndNew(row, ym, tz, legacyClippedDays, 0);
+      const factor = r.halfDay ? 0.5 : 1;
+      if (days.old * factor !== days.now * factor) {
+        dayCounts.push({
+          tenantId,
+          month: monthKey(ym),
+          employeeId: r.employeeId,
+          source: "leaveRequest",
+          id: r.id,
+          code: String(r.leaveType.code),
+          daysOld: days.old * factor,
+          daysNew: days.now * factor,
+        });
+      }
+      // DATEV: workday keys; a half day counts n / 2.
+      const keys = oldAndNew<string[]>(row, ym, tz, legacyWorkdayKeys, []);
+      const keysOld = r.halfDay ? keys.old.length / 2 : keys.old.length;
+      const keysNew = r.halfDay ? keys.now.length / 2 : keys.now.length;
+      if (keysOld !== keysNew) {
+        keyShifts.push({
+          tenantId,
+          month: monthKey(ym),
+          employeeId: r.employeeId,
+          leaveRequestId: r.id,
+          code: String(r.leaveType.code),
+          keysOld,
+          keysNew,
+        });
+      }
+    }
+  }
+
+  const credits = await prisma.section9Credit.findMany({
+    where: {
+      employee: { tenantId },
+      status: "CONFIRMED",
+      creditedStart: { not: null },
+      creditedEnd: { not: null },
+    },
+    select: {
+      id: true,
+      employeeId: true,
+      creditedStart: true,
+      creditedEnd: true,
+      sickRequest: { select: { leaveType: { select: { code: true } } } },
+    },
+  });
+
+  for (const c of credits) {
+    if (!c.creditedStart || !c.creditedEnd) continue;
+    const row = { from: c.creditedStart, to: c.creditedEnd };
+    for (const ym of monthsAround(c.creditedStart, c.creditedEnd, current)) {
+      const days = oldAndNew(row, ym, tz, legacyClippedDays, 0);
+      if (days.old !== days.now) {
+        dayCounts.push({
+          tenantId,
+          month: monthKey(ym),
+          employeeId: c.employeeId,
+          source: "section9Credit",
+          id: c.id,
+          code: String(c.sickRequest.leaveType.code),
+          daysOld: days.old,
+          daysNew: days.now,
+        });
+      }
+    }
+  }
+
+  return { dayCounts, keyShifts };
+}
+
+/** Report exports the audit log recorded for a tenant, as `YYYY-MM` -> sorted export types. */
+async function recordedExports(
+  prisma: PrismaClient,
+  tenantId: string,
+): Promise<Map<string, string[]>> {
+  const rows = await prisma.auditLog.findMany({
+    where: { action: "EXPORT", entity: "Report", user: { employee: { tenantId } } },
+    select: { newValue: true },
+  });
+  const byMonth = new Map<string, Set<string>>();
+  for (const r of rows) {
+    const v = r.newValue as { type?: unknown; year?: unknown; month?: unknown } | null;
+    const year = Number(v?.year);
+    const month = Number(v?.month);
+    if (!v || typeof v.type !== "string" || !Number.isInteger(year) || !Number.isInteger(month)) {
+      continue;
+    }
+    const key = monthKey({ year, month });
+    if (!byMonth.has(key)) byMonth.set(key, new Set());
+    byMonth.get(key)!.add(v.type);
+  }
+  return new Map([...byMonth].map(([k, set]) => [k, [...set].sort()]));
+}
+
 function byKey<T>(...keys: ((x: T) => string)[]) {
   return (a: T, b: T) => {
     for (const k of keys) {
@@ -315,8 +544,75 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
           (f) => f.entryId,
         ),
       );
+      const leave = await scanLeave(prisma, t.id, tz, current);
+      const dayCounts = leave.dayCounts.sort(
+        byKey<DayCountFinding>(
+          (f) => f.month,
+          (f) => f.employeeId,
+          (f) => f.source,
+          (f) => f.id,
+        ),
+      );
+      const keyShifts = leave.keyShifts.sort(
+        byKey<KeyShiftFinding>(
+          (f) => f.month,
+          (f) => f.employeeId,
+          (f) => f.leaveRequestId,
+        ),
+      );
       for (const f of entryFindings) console.info(formatEntryFinding(f));
-      total += entryFindings.length;
+      for (const f of dayCounts) console.info(formatDayCountFinding(f));
+      for (const f of keyShifts) console.info(formatKeyShiftFinding(f));
+      total += entryFindings.length + dayCounts.length + keyShifts.length;
+
+      // Per affected month: the exports actually recorded (D-07), then one line per employee.
+      type Tally = {
+        entries: number;
+        workingMinutes: number;
+        dayCountRows: number;
+        keyShiftRows: number;
+      };
+      const tally = new Map<string, Map<string, Tally>>();
+      const bump = (month: string, employeeId: string, apply: (t: Tally) => void) => {
+        if (!tally.has(month)) tally.set(month, new Map());
+        const perEmployee = tally.get(month)!;
+        if (!perEmployee.has(employeeId)) {
+          perEmployee.set(employeeId, {
+            entries: 0,
+            workingMinutes: 0,
+            dayCountRows: 0,
+            keyShiftRows: 0,
+          });
+        }
+        apply(perEmployee.get(employeeId)!);
+      };
+      for (const f of entryFindings) {
+        bump(f.month, f.employeeId, (x) => {
+          x.entries += 1;
+          x.workingMinutes += f.workingMinutes;
+        });
+      }
+      for (const f of dayCounts) bump(f.month, f.employeeId, (x) => (x.dayCountRows += 1));
+      for (const f of keyShifts) bump(f.month, f.employeeId, (x) => (x.keyShiftRows += 1));
+
+      if (tally.size > 0) {
+        const exports = await recordedExports(prisma, t.id);
+        for (const month of [...tally.keys()].sort()) {
+          const perEmployee = tally.get(month)!;
+          const types = exports.get(month);
+          console.info(
+            `month tenantId=${t.id} month=${month} employees=${perEmployee.size} ` +
+              `exports=${types && types.length > 0 ? types.join(",") : "none"}`,
+          );
+          for (const employeeId of [...perEmployee.keys()].sort()) {
+            const x = perEmployee.get(employeeId)!;
+            console.info(
+              `summary tenantId=${t.id} month=${month} employeeId=${employeeId} entries=${x.entries} ` +
+                `workingMinutes=${x.workingMinutes} dayCountRows=${x.dayCountRows} keyShiftRows=${x.keyShiftRows}`,
+            );
+          }
+        }
+      }
     }
 
     console.info(`total findings=${total}`);
