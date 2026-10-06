@@ -39,6 +39,8 @@ import {
   weekRangeUtc,
   monthRangeUtc,
   monthDayBounds,
+  weekDateRange, // Issue #493 (D-10)
+  monthDateRange, // Issue #493 (D-10)
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
   timeStrInTz,
@@ -100,7 +102,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const now = new Date();
       const today = todayInTz(tz);
 
-      const { start: weekStart, end: weekEnd } = weekRangeUtc(now, tz);
+      // Issue #493 (D-10): the worked-entry read below is a `@db.Date` filter, so it takes
+      // calendar-day bounds; the Soll inputs (monthStart/monthEnd) keep their instants on purpose.
+      const { firstDay: weekFirstDay, lastDay: weekLastDay } = weekDateRange(now, tz);
 
       // ── Heute: gearbeitete Stunden ────────────────────────────────────
       // Phase 100B Plan 08 (T2) — the loop below only ever sums a row when `e.endTime` is
@@ -138,7 +142,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // ── Diese Woche / Dieser Monat: gearbeitete Stunden ──────────────
 
       // For MONTHLY_HOURS: fetch hours worked this month (monthStart..today).
-      // For FIXED_SCHEDULE / FLEXTIME / SHIFT_BASED: fetch hours worked this week (weekStart..weekEnd).
+      // For FIXED_SCHEDULE / FLEXTIME / SHIFT_BASED: fetch hours worked this week (weekFirstDay..weekLastDay).
       let workedQueryStart: Date;
       let workedQueryEnd: Date;
       let monthStart: Date | null = null;
@@ -151,11 +155,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const range = monthRangeUtc(y, m, tz);
         monthStart = range.start;
         monthEnd = range.end;
-        workedQueryStart = monthStart;
+        workedQueryStart = monthDateRange(y, m, tz).firstDay;
         workedQueryEnd = today; // Ist = hours worked so far this month
       } else {
-        workedQueryStart = weekStart;
-        workedQueryEnd = weekEnd;
+        workedQueryStart = weekFirstDay;
+        workedQueryEnd = weekLastDay;
       }
 
       const periodEntries = await getWorkedEntriesInRange(
@@ -428,7 +432,10 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const query = req.query as { date?: string };
       const refDate = query.date ? new Date(query.date) : new Date();
 
-      const { start: weekStart, end: weekEnd, days: weekDays } = weekRangeUtc(refDate, tz);
+      // Stichtag + `validFrom` (Timestamptz) keep the instant `weekEnd`; the `@db.Date` facade
+      // reads below take calendar-day bounds (Issue #493).
+      const { end: weekEnd, days: weekDays } = weekRangeUtc(refDate, tz);
+      const { firstDay: weekFirstDay, lastDay: weekLastDay } = weekDateRange(refDate, tz);
 
       // Phase 91b Plan 06 (Issue #91), D-09/D-10/D-13 — narrow to in-scope employees BEFORE any of
       // the per-employee facade calls below (D-13: aggregate only over visible rows). Resolver
@@ -478,8 +485,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const weekWorkEntries = await getWorkedEntriesInRange(
         app.prisma,
         employeeScopeFor(scopedAccess, { employeeIds: teamWeekEmployeeIds }),
-        weekStart,
-        weekEnd,
+        weekFirstDay,
+        weekLastDay,
       );
       const weekWorkLocationEntries: WorkLocationEntry[] = weekWorkEntries.map((e) => ({
         employeeId: e.employeeId,
@@ -503,8 +510,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const timeEntries = await getRecordedWorkEntriesInRange(
         app.prisma,
         employeeScopeFor(scopedAccess, { employeeIds: teamWeekEmployeeIds }),
-        weekStart,
-        weekEnd,
+        weekFirstDay,
+        weekLastDay,
       );
 
       // Genehmigte Abwesenheiten (inkl. Urlaubsstornierungen) + offene Anträge (PENDING).
@@ -513,8 +520,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const leaveRequests = await getCalendarLeaveOverlapping(
         app.prisma,
         employeeScopeFor(scopedAccess, { employeeIds: teamWeekEmployeeIds }),
-        weekStart,
-        weekEnd,
+        weekFirstDay,
+        weekLastDay,
       );
 
       // Krankheiten
@@ -522,16 +529,16 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const absences = await getAbsencesOverlapping(
         app.prisma,
         employeeScopeFor(scopedAccess, { employeeIds: teamWeekEmployeeIds }),
-        weekStart,
-        weekEnd,
+        weekFirstDay,
+        weekLastDay,
       );
 
       // Schichten der Woche (Phase 100B Plan 05 — S1, contexts/scheduling facade)
       const shifts = await getShiftsInRange(
         app.prisma,
         employeeScopeFor(scopedAccess, { employeeIds: teamWeekEmployeeIds }),
-        weekStart,
-        weekEnd,
+        weekFirstDay,
+        weekLastDay,
       );
 
       // Aktuelle Schedules aller MA (bulk, latest per employee)
@@ -1116,7 +1123,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const { date } = req.query as { date?: string };
       const refDate = date ? new Date(date) : new Date();
-      const { start, end, days: weekDays } = weekRangeUtc(refDate, tz);
+      // Issue #493 (D-10): the five facade reads below hit `@db.Date` columns — calendar-day bounds.
+      const { days: weekDays } = weekRangeUtc(refDate, tz);
+      const { firstDay, lastDay } = weekDateRange(refDate, tz);
 
       const schedule = await getEffectiveSchedule(app, employeeId);
 
@@ -1126,8 +1135,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const myWeekWorkEntries = await getWorkedEntriesInRange(
         app.prisma,
         employeeScopeFor(access, { employeeId }),
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
       const myWeekWorkLocationEntries: WorkLocationEntry[] = myWeekWorkEntries.map((e) => ({
         employeeId,
@@ -1156,8 +1165,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const entries = await getRecordedWorkEntriesInRange(
         app.prisma,
         employeeScopeFor(access, { employeeId }),
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
 
       // Phase 49.4: leave + absence overlay for the user week-view
@@ -1166,15 +1175,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const myWeekLeaves = await getCalendarLeaveOverlapping(
         app.prisma,
         employeeScopeFor(access, { employeeId }),
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
       // Phase 100B Plan 12 — A4, contexts/absence facade.
       const myWeekAbsences = await getAbsencesOverlapping(
         app.prisma,
         employeeScopeFor(access, { employeeId }),
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
       // Phase 49.4 (fix): own shifts for this week so SHIFT_BASED users see the planned shift
       // time on scheduled days instead of a generic "Geplant" label.
@@ -1182,8 +1191,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const myWeekShifts = await getShiftsInRange(
         app.prisma,
         employeeScopeFor(access, { employeeId }),
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
       const scheduleType = (schedule as { type?: string } | null)?.type ?? null;
 
