@@ -28,6 +28,44 @@ describe("OvertimeModeField — locked without monthly hours", () => {
     expect(onchange).not.toHaveBeenCalled();
   });
 
+  it("a change event on the locked select never reaches onchange (WR-04)", async () => {
+    const onchange = vi.fn();
+    renderWithTheme(OvertimeModeField, {
+      type: "MONTHLY_HOURS",
+      monthlyHours: 0,
+      value: "CARRY_FORWARD",
+      onchange,
+    });
+    await fireEvent.change(select(), { target: { value: "CARRY_FORWARD" } });
+    expect(onchange).not.toHaveBeenCalled();
+  });
+
+  it("the hint is associated with the locked select via aria-describedby (WR-03)", () => {
+    renderWithTheme(OvertimeModeField, {
+      type: "MONTHLY_HOURS",
+      monthlyHours: 0,
+      value: "CARRY_FORWARD",
+      onchange: vi.fn(),
+    });
+    const hint = screen.getByText(HINT);
+    expect(hint.id).toBe("e-overtime-mode-hint");
+    expect(select().getAttribute("aria-describedby")).toBe(hint.id);
+    expect(select().id).toBe("e-overtime-mode");
+  });
+
+  it("a custom id moves both the select id and the hint id (WR-03)", () => {
+    renderWithTheme(OvertimeModeField, {
+      type: "MONTHLY_HOURS",
+      monthlyHours: 0,
+      value: "CARRY_FORWARD",
+      onchange: vi.fn(),
+      id: "other-mode",
+    });
+    expect(select().id).toBe("other-mode");
+    expect(select().getAttribute("aria-describedby")).toBe("other-mode-hint");
+    expect(screen.getByText(HINT).id).toBe("other-mode-hint");
+  });
+
   it("monthlyHours null (cleared number input): locked as well", () => {
     const onchange = vi.fn();
     renderWithTheme(OvertimeModeField, {
@@ -39,6 +77,31 @@ describe("OvertimeModeField — locked without monthly hours", () => {
     expect(select()).toBeDisabled();
     expect(select().value).toBe("TRACK_ONLY");
     expect(screen.getByText(HINT)).toBeInTheDocument();
+    expect(onchange).not.toHaveBeenCalled();
+  });
+});
+
+describe("OvertimeModeField — locking is display only (WR-04)", () => {
+  it("re-render 15 -> 0 -> 15 keeps the stored CARRY_FORWARD and never calls onchange", async () => {
+    const onchange = vi.fn();
+    const props = {
+      type: "MONTHLY_HOURS",
+      monthlyHours: 15 as number | null,
+      value: "CARRY_FORWARD" as const,
+      onchange,
+    };
+    const { rerender } = renderWithTheme(OvertimeModeField, props);
+    expect(select().value).toBe("CARRY_FORWARD");
+
+    await rerender({ ...props, monthlyHours: 0 });
+    expect(select()).toBeDisabled();
+    expect(select().value).toBe("TRACK_ONLY");
+
+    await rerender({ ...props, monthlyHours: 15 });
+    expect(select()).not.toBeDisabled();
+    expect(select().value).toBe("CARRY_FORWARD");
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    expect(select().hasAttribute("aria-describedby")).toBe(false);
     expect(onchange).not.toHaveBeenCalled();
   });
 });
