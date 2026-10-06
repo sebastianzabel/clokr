@@ -31,7 +31,7 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, reissueTokenNow } from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 
 type Emp = "F" | "M";
@@ -235,6 +235,150 @@ const REPORT: Record<Emp, Record<Ym, ReportPin>> = {
   },
 };
 
+interface SnapshotPin {
+  periodStart: string;
+  periodEnd: string;
+  workedMinutes: number;
+  expectedMinutes: number;
+  balanceMinutes: number;
+  carryOver: number;
+}
+
+// Stored MONTHLY SaldoSnapshot rows after closing 2025-09..2025-12 and 2026-01..02 — captured at
+// 7c6018e9. periodStart/periodEnd are the stored @db.Date values (the tz-instant keys truncated
+// to a calendar date); that representation is NOT changed by Phase 493 (D-02).
+const SNAPSHOTS: Record<Emp, SnapshotPin[]> = {
+  F: [
+    {
+      periodStart: "2025-08-31T00:00:00.000Z",
+      periodEnd: "2025-09-30T00:00:00.000Z",
+      workedMinutes: 538,
+      expectedMinutes: 10560,
+      balanceMinutes: -10022,
+      carryOver: -10022,
+    },
+    {
+      periodStart: "2025-09-30T00:00:00.000Z",
+      periodEnd: "2025-10-31T00:00:00.000Z",
+      workedMinutes: 600,
+      expectedMinutes: 9120,
+      balanceMinutes: -8520,
+      carryOver: -18542,
+    },
+    {
+      periodStart: "2025-10-31T00:00:00.000Z",
+      periodEnd: "2025-11-30T00:00:00.000Z",
+      workedMinutes: 480,
+      expectedMinutes: 9600,
+      balanceMinutes: -9120,
+      carryOver: -27662,
+    },
+    {
+      periodStart: "2025-11-30T00:00:00.000Z",
+      periodEnd: "2025-12-31T00:00:00.000Z",
+      workedMinutes: 480,
+      expectedMinutes: 10080,
+      balanceMinutes: -9600,
+      carryOver: -37262,
+    },
+    {
+      periodStart: "2025-12-31T00:00:00.000Z",
+      periodEnd: "2026-01-31T00:00:00.000Z",
+      workedMinutes: 540,
+      expectedMinutes: 10080,
+      balanceMinutes: -9540,
+      carryOver: -46802,
+    },
+    {
+      periodStart: "2026-01-31T00:00:00.000Z",
+      periodEnd: "2026-02-28T00:00:00.000Z",
+      workedMinutes: 540,
+      expectedMinutes: 9600,
+      balanceMinutes: -9060,
+      carryOver: -55862,
+    },
+  ],
+  M: [
+    {
+      periodStart: "2025-08-31T00:00:00.000Z",
+      periodEnd: "2025-09-30T00:00:00.000Z",
+      workedMinutes: 58,
+      expectedMinutes: 2400,
+      balanceMinutes: -2342,
+      carryOver: -2342,
+    },
+    {
+      periodStart: "2025-09-30T00:00:00.000Z",
+      periodEnd: "2025-10-31T00:00:00.000Z",
+      workedMinutes: 120,
+      expectedMinutes: 2191,
+      balanceMinutes: -2071,
+      carryOver: -4413,
+    },
+    {
+      periodStart: "2025-10-31T00:00:00.000Z",
+      periodEnd: "2025-11-30T00:00:00.000Z",
+      workedMinutes: 240,
+      expectedMinutes: 2400,
+      balanceMinutes: -2160,
+      carryOver: -6573,
+    },
+    {
+      periodStart: "2025-11-30T00:00:00.000Z",
+      periodEnd: "2025-12-31T00:00:00.000Z",
+      workedMinutes: 0,
+      expectedMinutes: 2191,
+      balanceMinutes: -2191,
+      carryOver: -8764,
+    },
+    {
+      periodStart: "2025-12-31T00:00:00.000Z",
+      periodEnd: "2026-01-31T00:00:00.000Z",
+      workedMinutes: 240,
+      expectedMinutes: 1964,
+      balanceMinutes: -1724,
+      carryOver: -10488,
+    },
+    {
+      periodStart: "2026-01-31T00:00:00.000Z",
+      periodEnd: "2026-02-28T00:00:00.000Z",
+      workedMinutes: 240,
+      expectedMinutes: 2400,
+      balanceMinutes: -2160,
+      carryOver: -12648,
+    },
+  ],
+};
+
+const CLOSE_MONTHS: Array<{ year: number; month: number }> = [
+  { year: 2025, month: 9 },
+  { year: 2025, month: 10 },
+  { year: 2025, month: 11 },
+  { year: 2025, month: 12 },
+  { year: 2026, month: 1 },
+  { year: 2026, month: 2 },
+];
+
+// GET /overtime/:id (live lifetime balance, hire date -> yesterday) at the faked clock
+// 2026-03-02T10:00:00Z — captured at 7c6018e9. `balanceHours` must be IDENTICAL before and after
+// closing (live == closed at the boundary); only the confirmed/open split moves.
+const LIVE_CLOCK = "2026-03-02T10:00:00.000Z";
+const LIVE_BALANCE_HOURS: Record<Emp, number> = { F: -931.03, M: -210.8 };
+const LIVE_BEFORE: Record<
+  Emp,
+  { confirmedMinutes: number; openMonthMinutes: number; hasClosedMonth: boolean }
+> = {
+  F: { confirmedMinutes: 0, openMonthMinutes: -55862, hasClosedMonth: false },
+  M: { confirmedMinutes: 0, openMonthMinutes: -12648, hasClosedMonth: false },
+};
+const LIVE_AFTER: Record<
+  Emp,
+  { confirmedMinutes: number; openMonthMinutes: number; hasClosedMonth: boolean }
+> = {
+  F: { confirmedMinutes: -55862, openMonthMinutes: 0, hasClosedMonth: true },
+  M: { confirmedMinutes: -12648, openMonthMinutes: 0, hasClosedMonth: true },
+};
+
 describe("Phase 493 R5 — month-boundary saldo neutrality (frozen on the unfixed tree)", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
@@ -426,6 +570,95 @@ describe("Phase 493 R5 — month-boundary saldo neutrality (frozen on the unfixe
             balanceAdjustmentHours: row.balanceAdjustmentHours,
           }).toEqual(REPORT[emp][ym]);
           expect(row.overtimeConfirmed).toBe(false);
+        });
+      });
+    }
+  });
+
+  async function liveBalance(emp: Emp) {
+    vi.useFakeTimers({ now: new Date(LIVE_CLOCK), toFake: ["Date"] });
+    try {
+      const token = reissueTokenNow(app, data.adminToken);
+      const { status, body } = await get(`/api/v1/overtime/${ids[emp]}`, token);
+      expect(status).toBe(200);
+      return {
+        balanceHours: body.balanceHours as number,
+        confirmedMinutes: body.confirmedMinutes as number,
+        openMonthMinutes: body.openMonthMinutes as number,
+        hasClosedMonth: body.hasClosedMonth as boolean,
+      };
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  describe("live balance before closing — clock 2026-03-02T10:00:00Z", () => {
+    it.each(["F", "M"] as const)("employee %s", async (emp) => {
+      const live = await liveBalance(emp);
+      expect(live).toEqual({ balanceHours: LIVE_BALANCE_HOURS[emp], ...LIVE_BEFORE[emp] });
+    });
+  });
+
+  describe("Monatsabschluss — real clock", () => {
+    for (const emp of ["F", "M"] as const) {
+      describe(`employee ${emp}`, () => {
+        it.each(CLOSE_MONTHS)("close $year-$month", async ({ year, month }) => {
+          const res = await app.inject({
+            method: "POST",
+            url: "/api/v1/overtime/close-month",
+            headers: { authorization: `Bearer ${data.adminToken}` },
+            payload: { employeeId: ids[emp], year, month, confirmGaps: true },
+          });
+          expect(res.statusCode).toBe(201);
+        });
+
+        it("stored snapshot rows", async () => {
+          const rows = await app.prisma.saldoSnapshot.findMany({
+            where: { employeeId: ids[emp], periodType: "MONTHLY", superseded: false },
+            orderBy: { periodStart: "asc" },
+          });
+          expect(
+            rows.map((r) => ({
+              periodStart: r.periodStart.toISOString(),
+              periodEnd: r.periodEnd.toISOString(),
+              workedMinutes: r.workedMinutes,
+              expectedMinutes: r.expectedMinutes,
+              balanceMinutes: r.balanceMinutes,
+              carryOver: r.carryOver,
+            })),
+          ).toEqual(SNAPSHOTS[emp]);
+        });
+      });
+    }
+  });
+
+  describe("after closing", () => {
+    it.each(["F", "M"] as const)(
+      "live balance equals the pre-close literal — employee %s",
+      async (emp) => {
+        const live = await liveBalance(emp);
+        // live == closed at the boundary: the balance is the SAME literal as before closing.
+        expect(live.balanceHours).toBe(LIVE_BALANCE_HOURS[emp]);
+        expect(live).toEqual({ balanceHours: LIVE_BALANCE_HOURS[emp], ...LIVE_AFTER[emp] });
+      },
+    );
+
+    for (const emp of ["F", "M"] as const) {
+      describe(`closed-month report figures — employee ${emp}`, () => {
+        it.each(MONTHS)("report figures $ym (snapshot basis)", async ({ ym, year, month }) => {
+          const { status, body } = await get(
+            `/api/v1/reports/monthly?employeeId=${ids[emp]}&year=${year}&month=${month}`,
+          );
+          expect(status).toBe(200);
+          expect(body.rows).toHaveLength(1);
+          const row = body.rows[0];
+          expect({
+            workedHours: row.workedHours,
+            shouldHours: row.shouldHours,
+            overtimeHours: row.overtimeHours,
+            balanceAdjustmentHours: row.balanceAdjustmentHours,
+          }).toEqual(REPORT[emp][ym]);
+          expect(row.overtimeConfirmed).toBe(true);
         });
       });
     }
