@@ -448,4 +448,32 @@ describe("weekDateRange (Issue #493, D-10)", () => {
   ])("%s -> %s .. %s", (ref, first, last) => {
     expect(range(ref)).toEqual([`${first}T00:00:00.000Z`, `${last}T00:00:00.000Z`]);
   });
+
+  // The helper must resolve the week through the TENANT zone, for zones west of UTC (where the
+  // UTC date lags the local one) and far east of it (where it leads), including DST weeks.
+  it.each([
+    // UTC
+    ["UTC", "2026-10-07T10:00:00Z", "2026-10-05", "2026-10-11"],
+    ["UTC", "2026-10-04T23:59:59Z", "2026-09-28", "2026-10-04"], // Sunday end, month boundary
+    ["UTC", "2026-10-05T00:00:00Z", "2026-10-05", "2026-10-11"], // Monday start
+    ["UTC", "2026-12-31T23:59:59Z", "2026-12-28", "2027-01-03"], // year-end week
+    // America/New_York (UTC-4 / UTC-5)
+    ["America/New_York", "2026-10-26T03:59:59Z", "2026-10-19", "2026-10-25"], // Sun 23:59:59 EDT
+    ["America/New_York", "2026-10-26T04:00:00Z", "2026-10-26", "2026-11-01"], // Mon 00:00 EDT
+    ["America/New_York", "2026-11-01T12:00:00Z", "2026-10-26", "2026-11-01"], // DST-end Sunday
+    ["America/New_York", "2026-03-08T12:00:00Z", "2026-03-02", "2026-03-08"], // DST-start Sunday
+    ["America/New_York", "2027-01-01T03:00:00Z", "2026-12-28", "2027-01-03"], // Dec 31 22:00 EST
+    // Pacific/Auckland (UTC+12 / UTC+13)
+    ["Pacific/Auckland", "2026-10-04T10:59:59Z", "2026-09-28", "2026-10-04"], // Sun 23:59:59 NZDT
+    ["Pacific/Auckland", "2026-10-04T11:00:00Z", "2026-10-05", "2026-10-11"], // Mon 00:00 NZDT
+    ["Pacific/Auckland", "2026-09-26T20:00:00Z", "2026-09-21", "2026-09-27"], // DST-start Sunday
+    ["Pacific/Auckland", "2026-09-30T11:30:00Z", "2026-09-28", "2026-10-04"], // already Oct 1 local
+    ["Pacific/Auckland", "2026-12-31T12:00:00Z", "2026-12-28", "2027-01-03"], // already Jan 1 local
+  ])("%s %s -> %s .. %s", (tz, ref, first, last) => {
+    const r = weekDateRange(new Date(ref), tz);
+    expect([r.firstDay.toISOString(), r.lastDay.toISOString()]).toEqual([
+      `${first}T00:00:00.000Z`,
+      `${last}T00:00:00.000Z`,
+    ]);
+  });
 });
