@@ -31,7 +31,7 @@ import {
   walkSaldoChain,
   selectChainViolations,
   selectDuplicateMonthLinks,
-  isTrackOnlySchedule,
+  isTrackOnlyZeroingLink,
   monthLabelFromPeriodEnd,
 } from "../src/contexts/working-time-account/saldo-chain-integrity";
 import {
@@ -215,14 +215,16 @@ async function run(): Promise<number> {
       }
 
       for (const l of violations) {
-        // TRACK_ONLY filter FIRST (cheapest correct order — only nonzero-delta links are
-        // checked). closeEmployeeMonth() forces carryOver = 0 for MONTHLY_HOURS + TRACK_ONLY,
-        // so these links violate the identity by design. getEffectiveSchedule is used rather
-        // than a cheaper proxy because false positives are this script's primary failure
-        // mode and it is not performance-sensitive.
+        // Track-only filter FIRST (cheapest correct order — only nonzero-delta links are
+        // checked). Track-only months (Issue #494: MONTHLY_HOURS with TRACK_ONLY or without
+        // monthly hours) store carry 0 by design, so only a violating link whose STORED
+        // carry-over is 0 is the by-design zeroing. A non-zero stored carry on such a month
+        // (opening balance, legacy carry closed before #494) is reported like any other link.
+        // getEffectiveSchedule is used rather than a cheaper proxy because false positives are
+        // this script's primary failure mode and it is not performance-sensitive.
         const midMonth = new Date((l.periodStart.getTime() + l.periodEnd.getTime()) / 2);
         const schedule = await getEffectiveSchedule(appShim, emp.id, midMonth);
-        if (isTrackOnlySchedule(schedule)) {
+        if (isTrackOnlyZeroingLink(l, schedule)) {
           trackOnlySkipped++;
           continue;
         }
@@ -310,7 +312,7 @@ async function run(): Promise<number> {
     console.log(`  delta==0 links:                            ${zeroDeltaLinks}`);
     console.log(`  documented deltas:                         ${documentedCount}`);
     console.log(`  UNEXPLAINED deltas:                        ${unexplainedCount}`);
-    console.log(`  TRACK_ONLY links skipped:                  ${trackOnlySkipped}`);
+    console.log(`  Track-only zeroing links skipped:          ${trackOnlySkipped}`);
     console.log(`  duplicate-month links:                     ${duplicateMonthCount}`);
     console.log(`  employees with no closed months (skipped): ${employeesWithoutClosedMonths}`);
 
