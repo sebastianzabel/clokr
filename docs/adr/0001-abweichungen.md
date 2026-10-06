@@ -2528,8 +2528,9 @@ Namen). Ohne Soll gibt es nichts, wogegen ein Saldo entstehen könnte. Owner-Ent
   (`close-employee-month.ts` — manueller Abschluss, Cron und Neuberechnung laufen alle darüber).
   Abschluss, Cron und Neuberechnung entscheiden nach dem Vertrag des Monats, die Live-Anzeige nach dem
   heutigen Vertrag.
-- D-10: Offene (nicht abgeschlossene) Monate unter einem solchen Vertrag zählen im Live-Saldo 0 —
-  Live-Wert und späterer Abschluss stimmen damit überein. „Bestätigt“ bleibt der gespeicherte
+- D-10: Offene (nicht abgeschlossene) Monate unter jedem Track-only-Vertrag zählen im Live-Saldo 0 —
+  das gilt auch für einen ausdrücklichen Modus `TRACK_ONLY` mit Monatsstunden > 0, nicht nur für
+  Verträge ohne Monatsstunden. Live-Wert und späterer Abschluss stimmen damit überein. „Bestätigt“ bleibt der gespeicherte
   Übertrag des letzten Abschlusses.
 - D-11: Prüf- und Migrationsskript (`audit-saldo-chain-integrity.ts`, `migrate-opening-balances.ts`)
   überspringen nur die Nullungs-Signatur (Übertrag 0 im Track-only-Monat), nicht jeden Monat eines
@@ -2560,13 +2561,29 @@ Neuberechnung dem Vertrag des Monats (D-04). Ein späterer Vertrag mit Soll übe
 gespeicherten Übertrag aus einem früheren Track-only-Monat — das Probelauf-Skript markiert solche Fälle
 mit `priority=HIGH`.
 
+Die Überstundenausgleich-Prüfung zeigt dabei einen sichtbaren Widerspruch: Für einen betroffenen
+Mitarbeiter (Vertrag ohne Monatsstunden, gespeicherter Altübertrag X > 0 aus einem Abschluss vor der
+Regel) melden die Live-Anzeigen (`GET /overtime/:id`, `GET /leave/overtime-balance`) 0, die Prüfung
+`overtimeCompBalanceRejection()` rechnet aber mit dem gespeicherten Übertrag X — ein
+Überstundenausgleich-Antrag wird angenommen und bei der Genehmigung gegen den Altübertrag gebucht,
+obwohl die Anzeige 0 zeigt. Bewusst unverändert (D-12: Leser gespeicherter Überträge bleiben); die
+Korrektur ist der auditierte Weg je Monat (Entsperren, erneuter Abschluss), nicht eine Codeänderung
+des Prüfers. Das Probelauf-Skript markiert diesen Fall mit `priority=HIGH` und
+`priorityReason=BOOKABLE_LEGACY_CARRY` (heutiger Vertrag betroffen, gespeicherter Übertrag > 0), damit
+er vor dem Release bereinigt werden kann. Zeilen mit `reason=OPENING_BALANCE` (Brücken-Snapshot oder
+Monat mit aktivem `OpeningBalance`) dürfen dabei NICHT entsperrt und neu abgeschlossen werden — der
+erneute Abschluss unter einem Track-only-Vertrag schreibt Übertrag 0 und vernichtet den
+Eröffnungssaldo.
+
 **Auswirkung auf die Kontexte.**
 
 - **Unterbau:** Bedeutung von `overtimeMode` / `monthlyHours` für Verträge ohne Monatsstunden; keine
   Feldänderung, keine Schemaänderung, kein neuer Export.
 - **Zeiterfassung:** keine.
-- **Abwesenheiten:** keine Codeänderung; die Überstundenausgleich-Prüfung liest weiterhin den
-  gespeicherten Übertrag (siehe Bekanntes Verhalten).
+- **Abwesenheiten:** keine Codeänderung, aber eine sichtbare Wirkung: die Überstundenausgleich-Prüfung
+  (`overtimeCompBalanceRejection()`) liest weiterhin den gespeicherten Übertrag. Ein Altübertrag
+  bleibt dadurch buchbar, während der Live-Saldo bereits 0 zeigt (siehe Bekanntes Verhalten, D-12);
+  bis zur auditierten Korrektur des betroffenen Monats bleibt dieser Widerspruch bestehen.
 - **Schichtplanung:** keine.
 - **Arbeitszeitkonto:** Kern der Änderung — Regel, Live-Saldo, Abschlusskern (und damit Cron und
   Neuberechnung).
