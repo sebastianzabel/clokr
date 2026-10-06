@@ -197,6 +197,19 @@ Current: recalculated from hire date on every request (does not scale). Target a
   reports/DATEV go only through `leaveDaysByCodeWithin`/`leaveRequestDaysWithin`
   (`contexts/absence/leave-days.ts`) — the same priced, §9-netted day-counting kernel the absence
   context's own vacation calculation uses, never a separate calendar walk.
+- **`@db.Date` columns get calendar-day bounds, never a month/week instant (Issue #493).**
+  `monthRangeUtc()` / `weekRangeUtc()` return tenant-local boundaries as UTC instants (local 1 Oct
+  00:00 = `2026-09-30T22:00Z`); a Prisma filter or a JS clip on a `@db.Date` column
+  (`TimeEntry.date`, `LeaveRequest`/`Absence` `startDate`/`endDate`, `Section9Credit` dates,
+  `Shift.date`, `PublicHoliday.date`) against them takes in the previous local day. Month/week reads
+  of those columns use `monthDateRange()` / `weekDateRange()`
+  (`contexts/working-time-account/timezone.ts`, via its `index.ts`), or `monthDayBounds()` where
+  only the instants are at hand — as a NEW variable, never by reassigning the instants. The instants
+  stay for `@db.Timestamptz` columns (`Employee.hireDate/exitDate`, `WorkSchedule.validFrom`), the
+  `SaldoSnapshot.periodStart` key (changing it orphans every closed month) and Stichtag lookups. The
+  saldo/close paths still pass instants to the leave fetch on purpose — `closeEmployeeMonth` clips
+  the rows, and changing the fetch could move a stored SHIFT_BASED saldo; leave them. Outputs
+  produced before the fix: `apps/api/scripts/audit-493-month-boundary-leak.ts`.
 
 ## Releases & Deployment
 
