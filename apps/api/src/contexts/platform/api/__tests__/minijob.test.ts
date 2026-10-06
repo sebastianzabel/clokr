@@ -81,7 +81,7 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       expect(body.monthlyHours).toBeNull();
     });
 
-    it("pure tracking employee accumulates worked hours in overtime balance", async () => {
+    it("pure tracking employee: worked time is recorded but never becomes a saldo (Issue #494)", async () => {
       // Set schedule to pure tracking (monthlyHours = null).
       // validFrom must be a month-1st date that does NOT collide with an existing row of a
       // different type (Phase 76.24 model-switch-same-month guard). The seed creates a
@@ -108,15 +108,10 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       });
       expect(schedRes.statusCode).toBe(200);
 
-      // Issue #451 (D-04/D-05): the live saldo now resolves EACH historical month's own
-      // contract (getEffectiveSchedule at that month's midpoint) instead of applying today's
-      // schedule retroactively — so this employee's pre-existing FIXED_SCHEDULE period
-      // (seeded hireDate 2024-01-01 through the switch above) carries a real, non-zero Soll
-      // with no worked entries, which is now correctly counted. An absolute `balanceHours > 0`
-      // assertion would therefore measure that unrelated historical deficit, not pure tracking
-      // — and would also be a time-bomb (the deficit grows with "today"). Capture a BASELINE
-      // before adding the 4h entry and assert the DELTA equals the worked hours instead, which
-      // isolates pure tracking's own behavior regardless of the contract history before it.
+      // Issue #494 — owner decision 06.10.2026: a MONTHLY_HOURS contract without monthly hours
+      // behaves like TRACK_ONLY regardless of the stored mode (here CARRY_FORWARD), so the live
+      // balance is 0 even with the FIXED_SCHEDULE history before the switch (the display follows
+      // today's contract). Worked time is still recorded; it just never becomes a saldo.
       const { updateOvertimeAccount } = await import("../../../time-tracking/api/time-entries");
       await updateOvertimeAccount(app, data.employee.id);
       const baselineRes = await app.inject({
@@ -126,6 +121,7 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       });
       expect(baselineRes.statusCode).toBe(200);
       const baselineBalanceHours = Number(JSON.parse(baselineRes.body).balanceHours);
+      expect(baselineBalanceHours).toBe(0);
 
       // Create a time entry 2 days ago (4h of work)
       const now = new Date();
@@ -161,10 +157,13 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       });
       expect(overtimeRes.statusCode).toBe(200);
       const overtimeBody = JSON.parse(overtimeRes.body);
-      // Pure tracking: the 4h worked entry increases balanceHours by exactly 4h over the
-      // baseline captured above (not "balanceHours > 0" — see the Issue #451 note above).
+      // Pure tracking (#494): the 4h worked entry leaves the balance at 0.
       // Note: Prisma Decimal is serialized as string in JSON, so we cast to Number
-      expect(Number(overtimeBody.balanceHours) - baselineBalanceHours).toBeCloseTo(4, 2);
+      expect(Number(overtimeBody.balanceHours)).toBe(0);
+      // The worked time itself is still recorded and not deleted.
+      const recorded = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+      expect(recorded).not.toBeNull();
+      expect(recorded!.deletedAt).toBeNull();
 
       // Cleanup: soft-delete test entry (hard deletes violate audit-proof convention)
       await app.prisma.timeEntry.update({
