@@ -415,12 +415,15 @@ type DatevEmployee = {
   }>;
 };
 
+// Issue #493 (F-04): `firstDay`/`lastDay` are UTC-midnight calendar days (monthDateRange) because the
+// walk below keys days by UTC date and weekday — an instant start shifted every key of a leave that
+// began before the month by one day.
 function buildDatevLodas(params: {
   employees: DatevEmployee[];
   year: number;
   month: number;
-  start: Date;
-  end: Date;
+  firstDay: Date;
+  lastDay: Date;
   lna: { normal: number; urlaub: number; krank: number; sonderurlaub: number };
   // Issue #256 (Befund 3): the BeraterNr/MandantenNr pair of the [Allgemein] header.
   // Required, not optional: a `0` here is what made the file unassignable to a Mandant,
@@ -443,8 +446,8 @@ function buildDatevLodas(params: {
     employees,
     year: y,
     month: m,
-    start,
-    end,
+    firstDay,
+    lastDay,
     lna,
     kanzlei,
     section9ByEmp,
@@ -464,8 +467,8 @@ function buildDatevLodas(params: {
   // has always used. workDaysInMonthRange() is unchanged in behaviour, only in
   // implementation (its length).
   function workdayKeysInMonthRange(from: Date, to: Date): string[] {
-    const s = from < start ? start : from;
-    const e2 = to > end ? end : to;
+    const s = from < firstDay ? firstDay : from;
+    const e2 = to > lastDay ? lastDay : to;
     const keys: string[] = [];
     const cur = new Date(s);
     while (cur <= e2) {
@@ -511,8 +514,8 @@ function buildDatevLodas(params: {
     // Employee name for DATEV identification
     const name = `${emp.lastName} ${emp.firstName}`;
     // Kalendertag = letzter Tag des Monats im DDMMJJJJ-Format (DATEV-Konvention)
-    const lastDay = new Date(y, m, 0).getDate();
-    const datum = `${String(lastDay).padStart(2, "0")}${String(m).padStart(2, "0")}${y}`;
+    const lastDayOfMonth = new Date(y, m, 0).getDate();
+    const datum = `${String(lastDayOfMonth).padStart(2, "0")}${String(m).padStart(2, "0")}${y}`;
 
     // Working hours
     const workedMinutes = emp.timeEntries.reduce((sum, e) => addWorkingMinutes(sum, e), 0);
@@ -1524,8 +1527,8 @@ export async function reportRoutes(app: FastifyInstance) {
         employees,
         year: y,
         month: m,
-        start: firstDay,
-        end: lastDay,
+        firstDay,
+        lastDay,
         lna,
         kanzlei,
         section9ByEmp: section9ByEmpDatev,
@@ -1587,6 +1590,9 @@ export async function reportRoutes(app: FastifyInstance) {
 
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
+      // Issue #493 (D-01/D-10): @db.Date columns get calendar-day bounds; the instants above stay
+      // for the Timestamptz payroll predicate and the Stichtag.
+      const { firstDay, lastDay } = monthDateRange(y, m, tz);
 
       const datevConfig = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: req.user.tenantId },
@@ -1627,7 +1633,7 @@ export async function reportRoutes(app: FastifyInstance) {
           timeEntries: {
             where: {
               deletedAt: null,
-              date: { gte: start, lte: end },
+              date: { gte: firstDay, lte: lastDay },
               endTime: { not: null },
               isInvalid: false,
             },
@@ -1636,8 +1642,8 @@ export async function reportRoutes(app: FastifyInstance) {
             where: {
               deletedAt: null,
               status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
-              startDate: { lte: end },
-              endDate: { gte: start },
+              startDate: { lte: lastDay },
+              endDate: { gte: firstDay },
             },
             include: { leaveType: true },
           },
@@ -1681,8 +1687,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const section9ByEmpDatevSingle = await fetchConfirmedSection9CreditsByEmp(
         app,
         req.user.tenantId,
-        start,
-        end,
+        firstDay,
+        lastDay,
       );
       const leaveDaysByEmployeeDatevSingle = await fetchLeaveDaysByEmployeeForDatev(
         app,
@@ -1696,8 +1702,8 @@ export async function reportRoutes(app: FastifyInstance) {
         employees: [emp],
         year: y,
         month: m,
-        start,
-        end,
+        firstDay,
+        lastDay,
         lna,
         kanzlei,
         section9ByEmp: section9ByEmpDatevSingle,
