@@ -44,6 +44,7 @@ describe("Issue #493 — Monatsbericht month boundaries", () => {
   let d: Awaited<ReturnType<typeof seedTestData>>;
   let U = "";
   let U2 = "";
+  let T3 = "";
 
   async function createUntracked(label: string): Promise<string> {
     const prisma = app.prisma;
@@ -135,6 +136,60 @@ describe("Issue #493 — Monatsbericht month boundaries", () => {
     });
     await sick(d.employee.id, sickType.id, "2026-09-28", "2026-10-02");
     await sick(d.employee.id, sickType.id, "2026-01-28", "2026-02-04");
+
+    // T3: FIXED Mo-Fr, VACATION 28.09.-02.10., SICK 29.09.-01.10. and a CONFIRMED § 9 credit for
+    // the sick days (29.09.-01.10.) — the credit and the sick request both cross the month end.
+    T3 = await createUntracked("section9");
+    await app.prisma.workSchedule.updateMany({
+      where: { employeeId: T3 },
+      data: {
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+      },
+    });
+    const vac = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: T3,
+        leaveTypeId: d.vacationType.id,
+        startDate: new Date("2026-09-28T00:00:00Z"),
+        endDate: new Date("2026-10-02T00:00:00Z"),
+        days: 5,
+        status: "APPROVED",
+      },
+    });
+    const sick3 = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: T3,
+        leaveTypeId: sickType.id,
+        startDate: new Date("2026-09-29T00:00:00Z"),
+        endDate: new Date("2026-10-01T00:00:00Z"),
+        days: 3,
+        status: "APPROVED",
+      },
+    });
+    await app.prisma.section9Credit.create({
+      data: {
+        employeeId: T3,
+        sickRequestId: sick3.id,
+        vacationRequestId: vac.id,
+        overlapStart: new Date("2026-09-29T00:00:00Z"),
+        overlapEnd: new Date("2026-10-01T00:00:00Z"),
+        status: "CONFIRMED",
+        creditedStart: new Date("2026-09-29T00:00:00Z"),
+        creditedEnd: new Date("2026-10-01T00:00:00Z"),
+        creditedDays: 3,
+        attestSource: "PAPIER",
+        attestValidFrom: new Date("2026-09-29T00:00:00Z"),
+        attestValidTo: new Date("2026-10-01T00:00:00Z"),
+        reason: "Attest liegt vor (Testfixture Issue 493)",
+        reviewedAt: new Date("2026-10-05T10:00:00Z"),
+      },
+    });
   });
 
   afterAll(async () => {
@@ -183,6 +238,105 @@ describe("Issue #493 — Monatsbericht month boundaries", () => {
     ] as const)("%i-%i sickDays = %i", async (year, month, expected) => {
       const payload = await singlePdf(d.employee.id, year, month);
       expect(payload.sickDays).toBe(expected);
+    });
+  });
+  async function monthlyRow(employeeId: string, year: number, month: number) {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/monthly?employeeId=${employeeId}&year=${year}&month=${month}`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const row = JSON.parse(res.body).rows.find(
+      (r: { employeeId: string }) => r.employeeId === employeeId,
+    );
+    expect(row).toBeDefined();
+    return row as {
+      workedHours: number;
+      sickDays: number;
+      sickDaysWithAttest: number;
+      sickDaysWithoutAttest: number;
+      section9DaysThisMonth: number;
+    };
+  }
+
+  describe("GET /reports/monthly — untracked Ist (workedHours) reads the month's own entries", () => {
+    it.each([
+      ["U", 2026, 10, 2],
+      ["U", 2026, 9, 0.97],
+      ["U", 2026, 2, 1],
+      ["U", 2026, 1, 1],
+      ["U2", 2026, 3, 2],
+      ["U2", 2026, 4, 1],
+      ["U2", 2026, 2, 1],
+    ] as const)("%s %i-%i workedHours = %d", async (who, year, month, expected) => {
+      const row = await monthlyRow(who === "U" ? U : U2, year, month);
+      expect(row.workedHours).toBe(expected);
+    });
+
+    it("single PDF payload.workedHours of U in October = 2", async () => {
+      const payload = await singlePdf(U, 2026, 10);
+      expect(payload.workedHours).toBe(2);
+    });
+  });
+
+  describe("GET /reports/monthly — sick days of a leave crossing a month end (seeded employee T)", () => {
+    it.each([
+      [2026, 9, 3],
+      [2026, 10, 2],
+      [2026, 1, 4],
+      [2026, 2, 4],
+    ] as const)(
+      "%i-%i sickDays = %i and equals with + without attest",
+      async (year, month, expected) => {
+        const row = await monthlyRow(d.employee.id, year, month);
+        expect(row.sickDays).toBe(expected);
+        expect(row.sickDays).toBe(row.sickDaysWithAttest + row.sickDaysWithoutAttest);
+      },
+    );
+  });
+
+  describe("GET /reports/monthly — § 9 credit crossing a month end (T3)", () => {
+    it.each([
+      [2026, 9, 2],
+      [2026, 10, 1],
+    ] as const)("%i-%i: section9DaysThisMonth and sickDays = %i", async (year, month, expected) => {
+      const row = await monthlyRow(T3, year, month);
+      expect(row.section9DaysThisMonth).toBe(expected);
+      expect(row.sickDays).toBe(expected);
+      expect(row.sickDays).toBe(row.sickDaysWithAttest + row.sickDaysWithoutAttest);
+    });
+  });
+
+  describe("GET /reports/monthly/pdf/all — company PDF rows", () => {
+    async function companyRows(year: number, month: number) {
+      const spy = vi.mocked(pdfUtils.streamCompanyMonthlyReportPdf);
+      spy.mockClear();
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly/pdf/all?year=${year}&month=${month}`,
+        headers: { authorization: `Bearer ${d.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      return spy.mock.calls[0][1].rows;
+    }
+
+    it("October: U lists only 01.10.2026 and counts 2 h", async () => {
+      const num = (await app.prisma.employee.findUniqueOrThrow({ where: { id: U } }))
+        .employeeNumber;
+      const row = (await companyRows(2026, 10)).find((r) => r.employeeNumber === num);
+      expect(row).toBeDefined();
+      expect(row!.entries.map((e) => e.date)).toEqual(["01.10.2026"]);
+      expect(row!.workedHours).toBe(2);
+    });
+
+    it("September: T counts 3 sick days (not 4)", async () => {
+      const row = (await companyRows(2026, 9)).find(
+        (r) => r.employeeNumber === d.employee.employeeNumber,
+      );
+      expect(row).toBeDefined();
+      expect(row!.sickDaysWithAttest + row!.sickDaysWithoutAttest).toBe(3);
     });
   });
 });
