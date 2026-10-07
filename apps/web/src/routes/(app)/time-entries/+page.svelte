@@ -1483,6 +1483,10 @@
     // somewhere else. `null` = this branch has no count and the card must print none.
     workdaysSoFar: number | null;
     extraNote?: string;
+
+    // True only for a MONTHLY_HOURS contract without monthly hours; drives the card's no-Soll
+    // rendering (month Ist as the main figure instead of a saldo).
+    noSollTarget: boolean;
   };
   let monthMetrics: MonthMetrics = $derived.by(() => {
     if (!schedule) {
@@ -1494,6 +1498,7 @@
         closed: false,
         rosterIncomplete: false,
         workdaysSoFar: null,
+        noSollTarget: false,
       };
     }
 
@@ -1508,6 +1513,7 @@
         closed: monthSaldo.closed,
         rosterIncomplete: monthSaldo.rosterIncomplete ?? false,
         workdaysSoFar: monthSaldo.workedDays ?? null,
+        noSollTarget: false,
       };
     }
 
@@ -1522,6 +1528,7 @@
         closed: false,
         rosterIncomplete: false,
         workdaysSoFar: workedEntryDays,
+        noSollTarget: true,
       };
     }
 
@@ -1534,6 +1541,7 @@
         closed: false,
         rosterIncomplete: false,
         workdaysSoFar: workedEntryDays,
+        noSollTarget: false,
       };
     }
 
@@ -1551,6 +1559,7 @@
       closed: false,
       rosterIncomplete: false,
       workdaysSoFar: workedEntryDays,
+      noSollTarget: false,
       extraNote,
     };
   });
@@ -1747,6 +1756,7 @@
       sollToDateMin={monthMetrics.sollToDateMin}
       istMin={monthMetrics.istMin}
       saldoMin={monthMetrics.saldoMin}
+      noSollTarget={monthMetrics.noSollTarget}
       sollLabel={monthMetrics.sollLabel}
       extraNote={monthMetrics.extraNote}
       workdaysSoFar={monthMetrics.workdaysSoFar}

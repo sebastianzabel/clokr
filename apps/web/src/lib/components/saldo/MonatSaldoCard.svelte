@@ -24,8 +24,13 @@
     monthNav?: Snippet;
     sollToDateMin: number;
     istMin: number;
-    /** null = no WorkSchedule / no Soll target — figure collapses to "—". */
+    /** null = no WorkSchedule (when `noSollTarget` is false) — figure collapses to "—". */
     saldoMin: number | null;
+    /** True when the contract has no Soll to compare against (MONTHLY_HOURS without monthly
+     *  hours). Set explicitly by the caller because `sollToDateMin === 0` also occurs for a
+     *  Soll contract early in a month, and `saldoMin === null` also occurs when there is no
+     *  WorkSchedule. The card then shows `istMin` as the main figure instead of a saldo. */
+    noSollTarget?: boolean;
     /** "Soll (bisher)" or "Soll" — mirrors the label the month bar used to show. */
     sollLabel: string;
     /** Days in the displayed month, up to and including today, with worked minutes > 0.
@@ -50,6 +55,7 @@
     sollToDateMin,
     istMin,
     saldoMin,
+    noSollTarget = false,
     sollLabel,
     workdaysSoFar,
     runningCount,
@@ -61,16 +67,25 @@
     onRetry,
   }: Props = $props();
 
-  const microLabel = $derived(isLocked ? "Monat-Saldo (Bestätigt)" : "Monat-Saldo (Prognose)");
+  const microLabel = $derived.by(() => {
+    // "Prognose" describes a saldo forecast; a plain hour count is only provisional.
+    if (noSollTarget) return isLocked ? "Monatsstunden (Bestätigt)" : "Monatsstunden (Vorläufig)";
+    return isLocked ? "Monat-Saldo (Bestätigt)" : "Monat-Saldo (Prognose)";
+  });
 
   const sign = $derived.by(() => {
+    // A plain hour count carries no good/bad tone.
+    if (noSollTarget) return "neutral";
     if (saldoMin === null) return "neutral";
     if (saldoMin > 0) return "good";
     if (saldoMin < 0) return "bad";
     return "neutral";
   });
 
-  const figureText = $derived(saldoMin === null ? "—" : fmtBalance(saldoMin));
+  // No arithmetic here: without Soll the figure is the `istMin` prop, formatted.
+  const figureText = $derived(
+    noSollTarget ? `${fmtMin(istMin)} h` : saldoMin === null ? "—" : fmtBalance(saldoMin),
+  );
 </script>
 
 <Card class="msc-card">
@@ -104,7 +119,7 @@
             {figureText}
           </div>
           <div class="msc-context">
-            {#if sollToDateMin > 0}
+            {#if !noSollTarget && sollToDateMin > 0}
               <div class="msc-context-line">
                 {sollLabel}
                 {fmtMin(sollToDateMin)} h · Ist {fmtMin(istMin)} h erfüllt
@@ -126,7 +141,13 @@
           </div>
         </div>
 
-        <SollIstBar {sollToDateMin} {istMin} />
+        {#if noSollTarget}
+          <p class="msc-nosoll" data-testid="monat-saldo-nosoll-hint">
+            Zeiterfassung ohne Sollvergleich
+          </p>
+        {:else}
+          <SollIstBar {sollToDateMin} {istMin} />
+        {/if}
 
         <div class="msc-status">
           <div class="msc-status-left">
@@ -227,6 +248,12 @@
 
   .msc-context-line {
     line-height: 1.4;
+  }
+
+  .msc-nosoll {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: var(--s-2) 0 0;
   }
 
   .msc-status {
