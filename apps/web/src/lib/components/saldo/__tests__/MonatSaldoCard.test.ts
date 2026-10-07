@@ -150,3 +150,93 @@ describe("MonatSaldoCard — Arbeitstage-Zähler (Phase 125, issue #125)", () =>
     expect(el).toHaveTextContent("2 läuft");
   });
 });
+
+describe("MonatSaldoCard — contract without Soll (issue #495)", () => {
+  it("open month: shows the month Ist as the main figure with the no-Soll hint", () => {
+    const { container } = renderWithTheme(
+      MonatSaldoCard,
+      baseProps({
+        noSollTarget: true,
+        sollToDateMin: 0,
+        istMin: 1146,
+        saldoMin: null,
+        workdaysSoFar: 11,
+        isLocked: false,
+      }),
+    );
+    const figure = screen.getByTestId("monat-saldo-figure");
+    expect(figure).toHaveTextContent(/^\s*19:06 h\s*$/);
+    expect(figure).toHaveClass("msc-figure--neutral");
+    expect(figure.textContent).not.toContain("—");
+    expect(screen.getByTestId("monat-saldo-nosoll-hint")).toHaveTextContent(
+      "Zeiterfassung ohne Sollvergleich",
+    );
+    expect(screen.queryByTestId("soll-ist-bar-nosoll")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("soll-ist-bar")).not.toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/noch keine Sollzeit/);
+    expect(screen.getByText("Monatsstunden (Vorläufig)")).toBeInTheDocument();
+    expect(screen.getByTestId("monat-saldo-workdays")).toHaveTextContent("11 Arbeitstage bisher");
+  });
+
+  it("closed month: same figure and hint, microlabel Bestätigt, status says closed", () => {
+    renderWithTheme(
+      MonatSaldoCard,
+      baseProps({
+        noSollTarget: true,
+        sollToDateMin: 0,
+        istMin: 1146,
+        saldoMin: null,
+        workdaysSoFar: 11,
+        isLocked: true,
+      }),
+    );
+    expect(screen.getByTestId("monat-saldo-figure")).toHaveTextContent(/^\s*19:06 h\s*$/);
+    expect(screen.getByTestId("monat-saldo-nosoll-hint")).toHaveTextContent(
+      "Zeiterfassung ohne Sollvergleich",
+    );
+    expect(screen.getByText("Monatsstunden (Bestätigt)")).toBeInTheDocument();
+    expect(screen.getByText(/abgeschlossen/)).toBeInTheDocument();
+  });
+
+  it("zero Ist renders 0:00 h without NaN or Infinity", () => {
+    const { container } = renderWithTheme(
+      MonatSaldoCard,
+      baseProps({ noSollTarget: true, istMin: 0, saldoMin: null }),
+    );
+    expect(screen.getByTestId("monat-saldo-figure")).toHaveTextContent(/^\s*0:00 h\s*$/);
+    expect(container.textContent).not.toMatch(/NaN|Infinity/);
+  });
+
+  it("noSollTarget wins over a stray Soll value", () => {
+    const { container } = renderWithTheme(
+      MonatSaldoCard,
+      baseProps({ noSollTarget: true, sollToDateMin: 3360, istMin: 2880, saldoMin: -480 }),
+    );
+    expect(screen.getByTestId("monat-saldo-figure")).toHaveTextContent(/^\s*48:00 h\s*$/);
+    expect(screen.queryByTestId("soll-ist-bar")).not.toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/Soll \(bisher\)|erfüllt/);
+  });
+
+  it.each([{}, { noSollTarget: false }])("Soll contract is unchanged (overrides %j)", (extra) => {
+    renderWithTheme(
+      MonatSaldoCard,
+      baseProps({ sollToDateMin: 3360, istMin: 2880, saldoMin: -480, ...extra }),
+    );
+    const figure = screen.getByTestId("monat-saldo-figure");
+    expect(figure).toHaveTextContent("−8:00");
+    expect(figure).toHaveClass("msc-figure--bad");
+    expect(screen.getByTestId("soll-ist-bar")).toBeInTheDocument();
+    expect(screen.getByText("Ist 48:00 h")).toBeInTheDocument();
+    const context = screen.getByText(/Soll \(bisher\)/);
+    expect(context).toHaveTextContent("56:00 h");
+    expect(screen.queryByTestId("monat-saldo-nosoll-hint")).not.toBeInTheDocument();
+    expect(screen.getByText("Monat-Saldo (Prognose)")).toBeInTheDocument();
+  });
+
+  it("month start of a Soll contract keeps the old no-Soll text (no misfire)", () => {
+    renderWithTheme(MonatSaldoCard, baseProps({ sollToDateMin: 0, istMin: 240, saldoMin: 240 }));
+    expect(screen.getByTestId("soll-ist-bar-nosoll")).toBeInTheDocument();
+    expect(screen.queryByTestId("monat-saldo-nosoll-hint")).not.toBeInTheDocument();
+    expect(screen.getByTestId("monat-saldo-figure")).toHaveTextContent("+4:00");
+  });
+});
