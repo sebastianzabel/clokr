@@ -36,6 +36,7 @@
 import { PrismaClient } from "@clokr/db";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
+import { describeTarget } from "../src/utils/test-database";
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");
@@ -226,7 +227,11 @@ async function checkVolumePreservation() {
 }
 
 async function main() {
-  console.log("Running anonymization validation against:", process.env.DATABASE_URL);
+  // The raw URL carries the password — print only host:port/database, never the connection string.
+  console.log(
+    "Running anonymization validation against:",
+    describeTarget(process.env.DATABASE_URL ?? ""),
+  );
   console.log("");
 
   const checks: Array<[string, () => Promise<void>]> = [
