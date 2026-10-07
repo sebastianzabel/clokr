@@ -1115,6 +1115,10 @@
     // so it is produced by the SAME branch as `istMin` above it and can never be sourced from
     // somewhere else. `null` = this branch has no count and the card must print none.
     workdaysSoFar: number | null;
+
+    // True only for a MONTHLY_HOURS contract without monthly hours; drives the card's no-Soll
+    // rendering (month Ist as the main figure instead of a saldo).
+    noSollTarget: boolean;
   };
   let monthMetrics: MonthMetrics = $derived.by(() => {
     if (!schedule) {
@@ -1125,6 +1129,7 @@
         sollLabel: "Soll (bisher)",
         closed: false,
         workdaysSoFar: null,
+        noSollTarget: false,
       };
     }
 
@@ -1138,6 +1143,7 @@
         sollLabel: "Soll (bisher)",
         closed: monthSaldo.closed,
         workdaysSoFar: monthSaldo.workedDays ?? null,
+        noSollTarget: false,
       };
     }
 
@@ -1152,6 +1158,7 @@
         sollLabel: "Soll",
         closed: false,
         workdaysSoFar: workedEntryDays,
+        noSollTarget: true,
       };
     }
 
@@ -1163,6 +1170,7 @@
         sollLabel: "Soll",
         closed: false,
         workdaysSoFar: workedEntryDays,
+        noSollTarget: false,
       };
     }
 
@@ -1174,6 +1182,7 @@
       sollLabel: "Soll (bisher)",
       closed: false,
       workdaysSoFar: workedEntryDays,
+      noSollTarget: false,
     };
   });
   let runningCount = $derived(entries.filter((e) => !e.endTime).length);
@@ -1425,6 +1434,7 @@
       sollToDateMin={monthMetrics.sollToDateMin}
       istMin={monthMetrics.istMin}
       saldoMin={monthMetrics.saldoMin}
+      noSollTarget={monthMetrics.noSollTarget}
       sollLabel={monthMetrics.sollLabel}
       workdaysSoFar={monthMetrics.workdaysSoFar}
       {runningCount}
