@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.15.0](https://github.com/sebastianzabel/clokr/compare/v1.14.1...v1.15.0) (2026-10-07)
+
+
+### Features
+
+* **79:** Anwesenheitszeit und Arbeitszeit getrennt abrufbar ([#492](https://github.com/sebastianzabel/clokr/issues/492)) ([7c6018e](https://github.com/sebastianzabel/clokr/commit/7c6018e9011a7e74655ff6005cdf3b97926066f5))
+
+
+### Bug Fixes
+
+* **493:** Monatsgrenzen – Datumsspalten bekommen Kalendertags-Grenzen ([#497](https://github.com/sebastianzabel/clokr/issues/497)) ([86d126b](https://github.com/sebastianzabel/clokr/commit/86d126b6db4b7d2ee82b4d0a5a822d4d1f6a6ab9))
+* **494:** Vertrag ohne Monatsstunden verhält sich wie „Nur erfassen“ ([#498](https://github.com/sebastianzabel/clokr/issues/498)) ([d742b18](https://github.com/sebastianzabel/clokr/commit/d742b18325f3a6136da23d646e5ff58cbbc85494))
+* **495:** Monatskarte zeigt bei Verträgen ohne Soll die Ist-Stunden ([#499](https://github.com/sebastianzabel/clokr/issues/499)) ([ecc8d84](https://github.com/sebastianzabel/clokr/commit/ecc8d842bcd71e4846a3a7f4870dc12e1e24cd15))
+
 ## [1.14.1](https://github.com/sebastianzabel/clokr/compare/v1.14.0...v1.14.1) (2026-10-05)
 
 
