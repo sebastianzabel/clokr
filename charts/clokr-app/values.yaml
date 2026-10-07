@@ -47,13 +47,18 @@ postgres:
   image: postgres:18-alpine
   storage: 5Gi
   storageClass: "" # blank = k3s default (local-path-provisioner)
+  # PGDATA lives on the PVC, so ephemeral storage only covers the writable layer, the unix
+  # socket dir and rotated container logs. The limit is deliberately generous: exceeding it
+  # gets the database pod EVICTED.
   resources:
     requests:
       memory: 256Mi
       cpu: 100m
+      ephemeral-storage: 128Mi
     limits:
       memory: 512Mi
       cpu: 200m
+      ephemeral-storage: 1Gi
 
 ingress:
   enabled: true
