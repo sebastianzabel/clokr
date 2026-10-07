@@ -27,6 +27,7 @@ classified by lifecycle.
 | audit-bs-leave-overlap.ts                      | 2026-10-02 | List non-deleted PENDING/APPROVED/CANCELLATION_REQUESTED VACATION LeaveRequests overlapping a VOCATIONAL_SCHOOL Absence (Issue #448, D-06), stored vs. resolveLeaveDays-recomputed BS-free days plus the locked-month flag, read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                | Audit tool                                   |
 | audit-vacation-entitlements.ts                 | 2026-10-02 | Prüfbericht over every stored VACATION LeaveEntitlement row, base year + following year (Issue #444), eight categories incl. OK, read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                                                                                                           | Audit tool                                   |
 | dry-run-433-monthly-hours-soll.ts              | 2026-10-03 | List, per MONTHLY_HOURS employee (monthlyHours > 0) and non-superseded MONTHLY snapshot, the stored vs. Issue #433-rule-recomputed expected/balance minutes, the delta and the locked flag; only differing months are printed (read-only, no opt-in write flag, exits 2 on findings)                                                                                                                                                                                                                                                                                | Audit tool                                   |
+| audit-494-track-only-carry.ts                  | 2026-10-06 | List, per employee, closed MONTHLY snapshots whose contract valid in that month is track-only (MONTHLY_HOURS without monthly hours or TRACK_ONLY, Issue #494) with stored carry-over != 0, reason, locked flag, before/after live figure and a HIGH priority when a later contract has a target (read-only, no opt-in write flag, ids only, exits 2 on findings)                                                                                                                                                                                                    | Audit tool                                   |
 | migrate-opening-balances.ts                    | 2026-08-19 | Move documented opening balances out of SaldoSnapshot.carryOver onto the OpeningBalance model; dry-run default, per-employee zero-drift assertion, aborts writing nothing on any failure                                                                                                                                                                                                                                                                                                                                                                            | Migration artifact (Phase 99)                |
 | ensure-test-database.ts                        | 2026-08-21 | Idempotent `CREATE DATABASE "clokr_test"` + `COMMENT ON DATABASE` marker stamp; refuses any non-test target (wrong name, `?schema=` param, or NODE_ENV=production) before opening a connection                                                                                                                                                                                                                                                                                                                                                                      | Test infrastructure (Phase 101)              |
 | reset-test-databases.ts                        | 2026-08-26 | Drops and re-clones the N per-worker test databases from the migrated `clokr_test` template; the ONLY `DROP-DATABASE` statement in this repo, gated on marker possession AND the anchored worker-name pattern; excluded from the runtime image (Phase 106 D-07/D-08)                                                                                                                                                                                                                                                                                                | Test infrastructure (Phase 106)              |
@@ -261,6 +262,36 @@ through the existing correction-booking flow after owner approval, never through
 follows `audit-saldo-chain-integrity.ts`'s / `audit-exit-month-saldo.ts`'s DSGVO convention of
 printing truncated ids only — no employee name, no employee number. Operator step: run it once on
 prod after the release that ships Issue #433.
+
+`audit-494-track-only-carry.ts` (Issue #494, R6, D-06) lists, per employee, every non-superseded
+closed `MONTHLY` `SaldoSnapshot` whose contract valid at the month midpoint is track-only
+(`isTrackOnlySchedule`: a `MONTHLY_HOURS` contract with no monthly hours, or an explicit
+`TRACK_ONLY`) and whose stored `carryOver` is not 0. Since Issue #494 such a contract stores
+`carryOver` 0 at every close and shows 0 live; months closed BEFORE the rule keep their stored
+numbers untouched (Revisionssicherheit: closed months are never recalculated, a locked month is
+immutable even to admins), so this script gives the owner the concrete list to decide about. Each
+finding line carries `snapshotId`, `month`, `storedCarryOver`, `balanceMinutes`, `locked`,
+`overtimeMode`, `monthlyHours` and a `reason`: `NO_TARGET` (no monthly hours), `TRACK_ONLY_MODE`
+(explicit mode) or `OPENING_BALANCE` (a bridge-shaped snapshot per `isBridgeSnapshot()` or a month
+with an active `OpeningBalance` row). **A `reason=OPENING_BALANCE` row must NOT be unlocked and
+re-closed**: a re-close under a track-only contract writes carry 0 and destroys the opening
+balance — it needs a separate, deliberate decision. Each affected employee gets one summary line: `lastActiveCarryOver` (the stored
+confirmed carry — the live figure BEFORE the rule), `liveAfterMinutes` (the live figure under the
+rule, the same computation as `GET /api/v1/overtime/:id`), `todayContractAffected`,
+`laterContractWithTarget`, `priority` with a `priorityReason` — `LATER_CONTRACT_WITH_TARGET` (a
+later contract that is NOT track-only would pick up the stale carry as its opening balance) or
+`BOOKABLE_LEGACY_CARRY` (today's contract is affected and the stored carry is positive: the
+Überstundenausgleich booking gate still reads the stored carry, so it stays bookable while the live
+saldo shows 0) — handle `HIGH` first — `yearlyNonZeroCarry` (non-superseded `YEARLY` snapshots with
+a non-zero carry — Jahresübertrag exposure) and `openingBalanceFindings`. Usage:
+`--tenant-id <uuid>` or `--all-tenants`, exactly one of which is required (a German usage message,
+exit `1`, for neither or both). Exit codes: `0` no finding, `1` usage error or DATABASE_URL
+missing/a DB failure, `2` one or more findings. It performs ZERO writes and has no write/repair
+flag anywhere in its source (mechanically checked by its own test); output is ids only, full
+UUIDs — no employee name, no employee number. Correcting a finding is a deliberate unlock of the
+affected month (mandatory reason, UNLOCK audit entry) followed by a re-close, never this script
+(and never for an `OPENING_BALANCE` row). Operator step: run it once on int and prod after the
+release that ships Issue #494.
 
 ## Test infrastructure
 

@@ -28,6 +28,7 @@ import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) �
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month"; // SNAP-03 — Phase 76.27
 import { getConfirmedCarryOver } from "./confirmed-saldo"; // Phase 97-06
+import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
 import {
   getTenantTimezone,
   dateStrInTz,
@@ -50,7 +51,8 @@ import {
 // PURE READ (no DB write). Returns the LIFETIME running Überstundensaldo breakdown through the
 // windowEnd cutoff (always yesterday, in the tenant timezone — issue #438: today never counts,
 // the same rule computeMonthSaldo's §615 calendar header/cells use). Handles all schedule types:
-//   - MONTHLY_HOURS TRACK_ONLY → totalHours 0, confirmedMinutes/openMonthMinutes both 0.
+//   - MONTHLY_HOURS track-only (TRACK_ONLY or no monthly hours, Issue #494) → totalHours 0,
+//     confirmedMinutes/openMonthMinutes both 0.
 //   - SHIFT_BASED / FIXED_* / FLEXTIME / MONTHLY_HOURS(target>0) → live lifetime saldo.
 // Lifetime-correct: totalHours = last-snapshot carryOver (or full history from hireDate when no
 // snapshot) + Σ balances of ALL open months (complete + current partial) up to windowEnd. This is
@@ -202,7 +204,7 @@ export async function computeOvertimeBalanceBreakdown(
   // getEffectiveSchedule(app, employeeId, <that month's end>) — WR-01 (451-REVIEW.md): the same
   // `validFrom: { lte: monthEnd } }` rule month-saldo.ts uses for the Monatsbericht, not the
   // close paths' midpoint convention (see the WR-01 comment at the resolution site below).
-  // `schedule` survives only for the final TRACK_ONLY display rule at the end of this function,
+  // `schedule` survives only for the final track-only display rule at the end of this function,
   // which is deliberately a rule of the CURRENT (today's) contract, not a historical one.
 
   // Tenant config is needed by the closeEmployeeMonth branches
@@ -450,6 +452,10 @@ export async function computeOvertimeBalanceBreakdown(
   // (RESEARCH §2.6 — all models benefit from per-month snapshot guarantee).
 
   let accumulatedCarryOver = snapshotCarryOver;
+  // The running base of the live TOTAL. It resets to 0 after a track-only month exactly like that
+  // month's close resets the chain (`effectiveCarryOverOut = 0`), so live == Σ closes
+  // (Issue #494, D-10).
+  let liveBase = snapshotCarryOver;
   let openPeriodBalance = 0;
 
   for (let monthIndex = 0; monthIndex < completeOpenMonths.length; monthIndex++) {
@@ -550,8 +556,16 @@ export async function computeOvertimeBalanceBreakdown(
 
     // Thread carryOver for next month (§2.3 RESEARCH).
     accumulatedCarryOver = result.effectiveCarryOverOut;
-    // Accumulate complete-month balance (already net — do NOT also add via leave/absence path).
-    openPeriodBalance += result.balanceMinutes;
+    if (isTrackOnlySchedule(monthSchedule)) {
+      // Issue #494 (D-10): this unclosed month is track-only on ITS OWN contract, so its close
+      // would store carry-over 0 — the live total drops everything before it, exactly as the chain
+      // of closes would.
+      liveBase = 0;
+      openPeriodBalance = 0;
+    } else {
+      // Accumulate complete-month balance (already net — do NOT also add via leave/absence path).
+      openPeriodBalance += result.balanceMinutes;
+    }
   }
 
   // ── Current partial month: ONE closeEmployeeMonth() call (Phase 76.39, D-07) ─
@@ -796,12 +810,14 @@ export async function computeOvertimeBalanceBreakdown(
 
   // totalBalanceHours = (snapshotCarryOver from lastSnapshot) + openPeriodBalance
   // (complete-months loop threads effectiveCarryOverOut, but the final balance displayed
-  // to the user is always relative to the snapshotCarryOver base — SNAP-01).
-  const totalBalanceHours = (snapshotCarryOver + openPeriodBalance) / 60;
+  // to the user is always relative to the stored snapshot base `liveBase` — SNAP-01; it differs
+  // from `snapshotCarryOver` only after an unclosed track-only month, Issue #494 D-10).
+  const totalBalanceHours = (liveBase + openPeriodBalance) / 60;
 
-  // D-06: TRACK_ONLY mode — display balance as 0 (hours are tracked but not accumulated)
-  const isTrackOnly =
-    String(schedule.type) === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
+  // D-06: track-only mode (TRACK_ONLY, or MONTHLY_HOURS without monthly hours — Issue #494) —
+  // display balance as 0 (hours are tracked but not accumulated). Today's contract — deliberate,
+  // see the Issue #451 note above.
+  const isTrackOnly = isTrackOnlySchedule(schedule);
   const effectiveBalanceHours = isTrackOnly ? 0 : totalBalanceHours;
 
   // Phase 97-01 (SALDO-DISP-01/03) — confirmed/forecast decomposition of the SAME total.
@@ -809,9 +825,12 @@ export async function computeOvertimeBalanceBreakdown(
   // saldo core) — 97-CONTEXT's "one computation path" rule (Phase 98 exists precisely because a
   // value once had two owners that diverged silently; do not repeat that shape here).
   const hasClosedMonth = confirmed.hasClosedMonth;
-  // TRACK_ONLY already forces the reported total to 0 above; force BOTH split figures to 0 too
+  // Track-only already forces the reported total to 0 above; force BOTH split figures to 0 too
   // so a legacy non-zero snapshotCarryOver never surfaces as a phantom negative forecast
   // (naive 0 − confirmedMinutes would go negative). hasClosedMonth still reports the truth.
+  // `confirmedMinutes` deliberately keeps reading the STORED last closed carry (`snapshotCarryOver`),
+  // not `liveBase`: "Bestätigt" is the same figure `getConfirmedCarryOver` and the OVERTIME_COMP
+  // gate read, so zeroing it for an unclosed track-only month would contradict the stored snapshot.
   const confirmedMinutes = isTrackOnly ? 0 : snapshotCarryOver;
   const openMonthMinutes = isTrackOnly
     ? 0

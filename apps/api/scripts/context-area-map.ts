@@ -297,6 +297,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/working-time-account/snapshot-lock.ts": "arbeitszeitkonto", // "is this month closed?" Monatsabschluss primitive, derived from TimeEntry.isLocked
   "src/contexts/working-time-account/snapshot-period.ts": "arbeitszeitkonto", // SaldoSnapshot period-boundary calculation
   "src/contexts/working-time-account/timezone.ts": "arbeitszeitkonto", // calcLeaveAbsenceMinutesTz() — CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split"
+  "src/contexts/working-time-account/track-only-schedule.ts": "arbeitszeitkonto", // Issue #494 — the one track-only rule (isTrackOnlySchedule), read by the close core and the live saldo
   "src/contexts/working-time-account/vocational-school-saldo.ts": "arbeitszeitkonto", // Berufsschule minute contribution to workedMinutes/expectedMinutes — feeds overtime.ts and auto-close-month.ts's saldo math
 };
 

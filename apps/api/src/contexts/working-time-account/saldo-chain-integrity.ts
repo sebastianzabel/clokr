@@ -14,7 +14,7 @@
  *
  * This module performs NO I/O: no Prisma import, nothing async, no database
  * access. Callers are responsible for fetching rows and, where relevant, for
- * DB-aware exceptions (e.g. TRACK_ONLY zeroing — see `isTrackOnlySchedule` below).
+ * DB-aware exceptions (e.g. track-only zeroing — see `track-only-schedule.ts`).
  */
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup";
 
@@ -147,16 +147,6 @@ export function selectDuplicateMonthLinks(links: readonly ChainLink[]): ChainLin
   return links.filter((l) => l.kind === "duplicate_month");
 }
 
-/**
- * `closeEmployeeMonth()` forces `carryOver = 0` for MONTHLY_HOURS/TRACK_ONLY
- * employees regardless of `carryOverIn + balanceMinutes`
- * (`apps/api/src/utils/close-employee-month.ts`, `isTrackOnly` zeroing) — so
- * their links violate the identity BY DESIGN and must be filtered out by the
- * caller, which needs a DB lookup (WorkSchedule) and therefore cannot happen
- * inside this pure module.
- */
-export function isTrackOnlySchedule(
-  schedule: { type?: unknown; overtimeMode?: unknown } | null | undefined,
-): boolean {
-  return schedule?.type === "MONTHLY_HOURS" && schedule?.overtimeMode === "TRACK_ONLY";
-}
+// Re-export only: the track-only rule is defined in `track-only-schedule.ts` (Issue #494); this
+// keeps the import path of audit-saldo-chain-integrity.ts, migrate-opening-balances.ts and GT-98l.
+export { isTrackOnlySchedule, isTrackOnlyZeroingLink } from "./track-only-schedule";

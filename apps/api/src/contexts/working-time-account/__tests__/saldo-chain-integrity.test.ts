@@ -154,12 +154,39 @@ describe("GT-98 saldo chain-integrity core (pure, DB-free)", () => {
     expect(links[0].delta).toBe(-320);
   });
 
-  it("GT-98l isTrackOnlySchedule: only MONTHLY_HOURS + TRACK_ONLY returns true", () => {
-    expect(isTrackOnlySchedule({ type: "MONTHLY_HOURS", overtimeMode: "TRACK_ONLY" })).toBe(true);
-    expect(isTrackOnlySchedule({ type: "MONTHLY_HOURS", overtimeMode: "CARRY_FORWARD" })).toBe(
-      false,
-    );
-    expect(isTrackOnlySchedule({ type: "FIXED_SCHEDULE", overtimeMode: "TRACK_ONLY" })).toBe(false);
+  it("GT-98l isTrackOnlySchedule: MONTHLY_HOURS + (TRACK_ONLY or no monthly hours) returns true (Issue #494)", () => {
+    // #494 intended flip — owner decision 06.10.2026: a contract without monthly hours never carries a saldo
+    expect(
+      isTrackOnlySchedule({ type: "MONTHLY_HOURS", overtimeMode: "TRACK_ONLY", monthlyHours: 44 }),
+    ).toBe(true);
+    expect(
+      isTrackOnlySchedule({
+        type: "MONTHLY_HOURS",
+        overtimeMode: "CARRY_FORWARD",
+        monthlyHours: 44,
+      }),
+    ).toBe(false);
+    expect(
+      isTrackOnlySchedule({
+        type: "MONTHLY_HOURS",
+        overtimeMode: "CARRY_FORWARD",
+        monthlyHours: null,
+      }),
+    ).toBe(true);
+    expect(
+      isTrackOnlySchedule({
+        type: "MONTHLY_HOURS",
+        overtimeMode: "CARRY_FORWARD",
+        monthlyHours: 15,
+      }),
+    ).toBe(false);
+    expect(
+      isTrackOnlySchedule({
+        type: "FIXED_SCHEDULE",
+        overtimeMode: "TRACK_ONLY",
+        monthlyHours: null,
+      }),
+    ).toBe(false);
     expect(isTrackOnlySchedule(null)).toBe(false);
   });
 

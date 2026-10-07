@@ -300,6 +300,23 @@ export function usualWorkDaysMissing(
   return type === "SHIFT_BASED" && usualWorkDays.length === 0;
 }
 
+/** Issue #494 R5 — hint shown under the locked "Überstunden-Modus" select. */
+export const OVERTIME_MODE_LOCKED_HINT =
+  "Ohne Monatsstunden werden Stunden nur erfasst, nicht übertragen.";
+
+/**
+ * Issue #494 R5 — true when a MONTHLY_HOURS contract has no monthly hours (empty, null, 0, NaN),
+ * which the saldo already treats as TRACK_ONLY. Mirrors the monthly-hours clause of the server's
+ * `isTrackOnlySchedule()` (`!(Number(x ?? 0) > 0)`). Advisory, display only: the server decides
+ * on read, and the stored mode is sent unchanged by the form (D-05).
+ */
+export function overtimeModeLocked(
+  type: string | null | undefined,
+  monthlyHours: number | string | null | undefined,
+): boolean {
+  return type === "MONTHLY_HOURS" && !(Number(monthlyHours ?? 0) > 0);
+}
+
 /** Issue #481 R6/R7 — one row of GET /settings/work/:employeeId/history as the Nachtrag needs it. */
 export type ContractHistoryRow = {
   id: string;

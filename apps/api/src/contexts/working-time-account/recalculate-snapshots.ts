@@ -468,12 +468,13 @@ export async function recalculateSnapshots(
     } = r;
 
     // Apply the preserved injectedDelta on top of the freshly recomputed carryOver.
-    // Exception: MONTHLY_HOURS/TRACK_ONLY employees never carry ANY saldo — closeEmployeeMonth
-    // forces effectiveCarryOverOut to 0 for them regardless of carryOverIn+balanceMinutes
-    // (see close-employee-month.ts's isTrackOnly zeroing). Detect that zeroing by comparing
+    // Exception: track-only employees (isTrackOnlySchedule: TRACK_ONLY or no monthly hours,
+    // Issue #494) never carry ANY saldo — closeEmployeeMonth forces effectiveCarryOverOut to 0
+    // for them regardless of carryOverIn+balanceMinutes (see close-employee-month.ts's
+    // track-only zeroing). Detect that zeroing by comparing
     // effectiveCarryOverOut against the pre-zeroing carryOverOut; if it fired, preserve the
-    // 0 (matching the existing TRACK_ONLY contract) instead of re-introducing a carryOver via
-    // injectedDelta. A nonzero injectedDelta on a TRACK_ONLY employee is a data anomaly on its
+    // 0 (matching the track-only contract) instead of re-introducing a carryOver via
+    // injectedDelta. A nonzero injectedDelta on a track-only employee is a data anomaly on its
     // own (an opening balance was seeded for someone who structurally can't carry one) — surface
     // it via the same log line below rather than silently dropping or silently applying it.
     const isTrackOnlyZeroed = effectiveCarryOverOut !== carryOverOut;
@@ -483,7 +484,7 @@ export async function recalculateSnapshots(
 
     // Non-zero injectedDelta must be visible, not silent — this is exactly the class of value
     // that got silently destroyed on prod. Log it (truncated employeeId — no PII) so a
-    // preserved (or, for TRACK_ONLY, dropped-with-warning) injection is traceable.
+    // preserved (or, for track-only, dropped-with-warning) injection is traceable.
     if (injectedDelta !== 0) {
       const logPayload = {
         employeeId: employeeId.slice(0, 8),
@@ -495,7 +496,7 @@ export async function recalculateSnapshots(
       if (isTrackOnlyZeroed) {
         app.log.warn(
           logPayload,
-          "[recalculateSnapshots] non-zero injectedDelta on a TRACK_ONLY snapshot — dropped, not carried (TRACK_ONLY employees never hold a saldo)",
+          "[recalculateSnapshots] non-zero injectedDelta on a track-only snapshot (TRACK_ONLY or no monthly hours, Issue #494) — dropped, not carried (track-only employees never hold a saldo)",
         );
       } else {
         app.log.info(

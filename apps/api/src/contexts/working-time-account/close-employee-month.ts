@@ -65,6 +65,7 @@
 import type { FastifyInstance } from "fastify";
 import { findMissingWorkdays, type WorkdayGap } from "./find-missing-workdays";
 import { calcShiftBasedSaldo } from "./shift-based-saldo";
+import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
 import {
   getEffectiveBreakDuration, // Phase 101B (Issue #101, wave 8)
   getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1; THE SALDO INPUT (computeWeekProgress)
@@ -249,8 +250,8 @@ export type CloseMonthResult = {
   workedDays: number;
   expectedMinutes: number; // C_net for SHIFT_BASED; netExpected otherwise
   balanceMinutes: number; // D-01 two-clause for SHIFT_BASED; flat diff otherwise
-  carryOverOut: number; // carryOverIn + balanceMinutes (before TRACK_ONLY zeroing)
-  effectiveCarryOverOut: number; // 0 if TRACK_ONLY; else = carryOverOut
+  carryOverOut: number; // carryOverIn + balanceMinutes (before track-only zeroing)
+  effectiveCarryOverOut: number; // 0 if track-only (isTrackOnlySchedule); else = carryOverOut
   snapshotExpectedMinutes: number; // = expectedMinutes for SHIFT_BASED; netExpected otherwise
 
   /**
@@ -1241,9 +1242,14 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
 
   const carryOverOut = carryOverIn + balanceMinutes;
 
-  // TRACK_ONLY zeroing: MONTHLY_HOURS with overtimeMode=TRACK_ONLY → effectiveCarryOverOut = 0.
-  // Mirrors overtime.ts:1268–1269, auto-close-month.ts:618–620, recalculate-snapshots.ts:461.
-  const isTrackOnly = scheduleType === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
+  // Track-only zeroing: the rule lives only in `isTrackOnlySchedule()` (Issue #494). Manual
+  // close, cron, recalc and the live per-month loop all reach it through this core. The explicit
+  // object names `monthlyHours` because `schedule` is a `Record<string, unknown>`.
+  const isTrackOnly = isTrackOnlySchedule({
+    type: schedule.type,
+    overtimeMode: schedule.overtimeMode,
+    monthlyHours: schedule.monthlyHours,
+  });
   const effectiveCarryOverOut = isTrackOnly ? 0 : carryOverOut;
 
   // snapshotExpectedMinutes sentinel (RESEARCH §2 last row):

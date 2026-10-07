@@ -346,7 +346,17 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
 - `FIXED_WEEKLY` — fixed weekly hours with per-day allocation (e.g., 40h, Mo-Fr 8h)
 - `MONTHLY_HOURS` — monthly hour budget for Minijobber/flexible workers
   - `monthlyHours` is an OWED monthly Soll (Issue #433, owner decision 2026-10-03), not a budget
-    ceiling — null/0 stays pure time tracking without Soll comparison
+    ceiling — null/0 is pure time tracking without Soll comparison AND never accumulates a saldo
+    (Issue #494, owner decision 2026-10-06): `isTrackOnlySchedule()` in
+    `apps/api/src/contexts/working-time-account/track-only-schedule.ts` is the ONE place the rule
+    lives — a `MONTHLY_HOURS` contract with `monthlyHours` null/≤0 behaves exactly like
+    `overtimeMode = TRACK_ONLY` regardless of the stored mode (live saldo 0, Monatsabschluss
+    carry-over 0, an unclosed such month adds 0 to the live total). Its `monthlyHours` parameter
+    is required so no caller can forget it; no reader re-derives it. Close/cron/recalc decide by
+    the contract valid in the month, the live display by today's contract. Stored `overtimeMode`
+    values are never rewritten and closed months keep their carry-over
+    (`scripts/audit-494-track-only-carry.ts` lists them read-only); the admin form only DISPLAYS
+    the lock („Überstunden-Modus" → „Nur erfassen").
   - No daily targets, no daily +/- display in calendar
   - Effective leave (all types incl. SICK), imposed absences, and statutory/manual holidays on a
     contractual workday reduce the owed Soll by `monthlyHours × 60 ÷ (contractual workdays of the
