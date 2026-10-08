@@ -191,7 +191,7 @@ export function crossSalonSaveNotice(warnings: unknown): string | null {
     parts.push(
       "Gespeichert. Über beide Salons gerechnet fehlt für diesen Tag eine ausreichende Pause " +
         "(§ 4 ArbZG, salonübergreifend). Fahrzeit zwischen zwei Salons ist Arbeitszeit und " +
-        "keine Pause – eine tatsächlich genommene Pause kannst Du für den Tag eintragen.",
+        "keine Pause – eine tatsächlich genommene Pause kannst du für den Tag eintragen.",
     );
   }
   if (crossCodes.has("MAX_DAILY_EXCEEDED")) {

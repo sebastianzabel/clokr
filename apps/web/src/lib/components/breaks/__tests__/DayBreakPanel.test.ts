@@ -86,7 +86,7 @@ describe("DayBreakPanel", () => {
     expect(screen.queryByTestId("day-break-gap")).toBeNull();
     const text = container.textContent ?? "";
     expect(text).toContain(
-      "Einträge außerhalb Ihres Zuständigkeitsbereichs werden nicht angezeigt.",
+      "Einträge außerhalb des eigenen Zuständigkeitsbereichs werden nicht angezeigt.",
     );
     expect(text).toContain("Insgesamt 8,0 h gearbeitet");
   });

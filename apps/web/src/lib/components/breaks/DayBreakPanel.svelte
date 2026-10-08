@@ -160,7 +160,7 @@
         </ul>
       {:else}
         <p class="dbp-note">
-          Einträge außerhalb Ihres Zuständigkeitsbereichs werden nicht angezeigt.
+          Einträge außerhalb des eigenen Zuständigkeitsbereichs werden nicht angezeigt.
         </p>
       {/if}
 
