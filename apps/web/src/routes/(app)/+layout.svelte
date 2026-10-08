@@ -14,6 +14,7 @@
   import WhatsNewPanel from "$lib/components/layout/WhatsNewPanel.svelte";
   import { hasUnreadReleaseNotes, whatsNewOpen } from "$stores/release-notes";
   import { isMobileViewport } from "$lib/utils/viewport";
+  import { activeNavHref } from "$lib/nav/active-route";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -52,14 +53,12 @@
     "/admin": "Administration",
     "/settings": "Mein Profil",
   };
-  // Longest-prefix match (sort descending by length) so '/admin/employees' wins over '/admin'.
-  const SORTED_PREFIXES = Object.keys(PAGE_LABELS).sort((a, b) => b.length - a.length);
+  const PAGE_LABEL_KEYS = Object.keys(PAGE_LABELS);
 
+  // Longest matching key wins, so '/admin/employees' beats '/admin' (shared rule, $lib/nav/active-route).
   function labelForPath(path: string): string {
-    for (const prefix of SORTED_PREFIXES) {
-      if (path === prefix || path.startsWith(prefix + "/")) return PAGE_LABELS[prefix];
-    }
-    return "";
+    const key = activeNavHref(PAGE_LABEL_KEYS, path);
+    return key === null ? "" : PAGE_LABELS[key];
   }
 
   let currentPath = $derived($page.url.pathname);

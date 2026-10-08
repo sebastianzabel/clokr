@@ -2,6 +2,7 @@
   import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
   import { visibleTeamNavItems } from "$lib/nav/team-nav";
+  import { activeNavHref } from "$lib/nav/active-route";
   import MobileMoreSheet from "./MobileMoreSheet.svelte";
 
   interface Props {
@@ -73,15 +74,16 @@
 
   let sheetOpen = $state(false);
 
-  function isActive(href: string, path: string): boolean {
-    if (href === "/dashboard") return path === "/dashboard";
-    return path === href || path.startsWith(href + "/");
-  }
-
-  // The "Mehr" tab itself is considered active when the current path
-  // matches any of its overflow items — gives visual continuity when
-  // a user is sitting on (say) /admin/audit.
-  const moreActive = $derived(!sheetOpen && moreItems.some((it) => isActive(it.href, currentPath)));
+  // One decision for the whole bar (shared rule, $lib/nav/active-route): at most one item is
+  // current, whether it is a primary tab or an overflow item behind "Mehr".
+  const currentHref = $derived(
+    activeNavHref(
+      [...primaryTabs, ...moreItems].map((it) => it.href),
+      currentPath,
+    ),
+  );
+  // The overflow item that is the current page, if any — it is held by the "Mehr" trigger.
+  const moreCurrent = $derived(moreItems.find((it) => it.href === currentHref) ?? null);
 </script>
 
 {#snippet tabIcon(name: string)}
@@ -119,7 +121,7 @@
 
 <nav class="bottom-tab-bar" aria-label="Hauptnavigation (mobil)">
   {#each primaryTabs as tab (tab.href)}
-    {@const active = isActive(tab.href, currentPath)}
+    {@const active = tab.href === currentHref}
     <a
       href={tab.href}
       class="tab"
@@ -131,13 +133,21 @@
     </a>
   {/each}
 
+  <!--
+    The trigger holds the current page when it lives behind "Mehr": aria-current="true" ("the
+    current item within a set", ARIA 1.2) — it is not the page itself, the link in the sheet keeps
+    "page". Same split as the GOV.UK service navigation (group = true, page = page). Many mobile
+    screen readers do not announce aria-current, so the accessible name carries the location too;
+    it starts with the visible label "Mehr" (WCAG 2.5.3 Label in Name). #515
+  -->
   <button
     type="button"
     class="tab"
-    class:tab-active={sheetOpen || moreActive}
+    class:tab-active={sheetOpen || moreCurrent !== null}
     aria-haspopup="dialog"
     aria-expanded={sheetOpen}
-    aria-label="Weitere Navigation öffnen"
+    aria-current={moreCurrent ? "true" : undefined}
+    aria-label={moreCurrent ? `Mehr, aktuelle Seite: ${moreCurrent.label}` : "Mehr"}
     onclick={() => (sheetOpen = true)}
   >
     <span class="tab-icon" aria-hidden="true">{@render tabIcon("more")}</span>
@@ -171,6 +181,7 @@
   }
 
   .tab {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -204,6 +215,24 @@
   .tab-active {
     color: var(--brand);
     background: var(--brand-soft);
+  }
+
+  /* The current item is marked by more than colour (WCAG 1.4.1): a brand bar and a heavier label,
+     the same recipe as the desktop sidebar's .nav-item.active::before (Sidebar.svelte) and the
+     global .view-tab--active (app.css). The tint above stays; the bar carries the meaning. */
+  .tab[aria-current]::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 30%;
+    right: 30%;
+    height: 2px;
+    background: var(--brand);
+    border-radius: 0 0 1px 1px;
+  }
+
+  .tab[aria-current] .tab-label {
+    font-weight: 600;
   }
 
   .tab-icon {
