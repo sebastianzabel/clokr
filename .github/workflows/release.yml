@@ -41,9 +41,9 @@ on:
         required: true
         type: string
 
+# Least privilege: write scopes live on the jobs that need them.
 permissions:
-  contents: write # required for release asset upload via sbom-action
-  packages: write
+  contents: read
 
 # Serialize ALL release promotions globally so a later release (e.g. v1.8.1)
 # cannot race an in-flight earlier promote (v1.8.0) on the shared `:latest`
@@ -65,6 +65,9 @@ env:
 jobs:
   promote:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # anchore/sbom-action attaches the SBOM to the Release; gh api commit lookup
+      packages: write # crane copy re-tags the scanned image in GHCR
 
     strategy:
       fail-fast: false
@@ -233,6 +236,7 @@ jobs:
   smoke-test:
     needs: promote
     runs-on: ubuntu-latest
+    permissions: {} # one curl to vars.INT_BASE_URL, no checkout, no token
     if: ${{ vars.INT_BASE_URL != '' }}
     steps:
       - name: Version match assertion

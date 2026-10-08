@@ -17,6 +17,9 @@ spec:
         app: clokr-web
         {{- include "clokr-app.labels" . | nindent 8 }}
     spec:
+      # This pod (SvelteKit node server) never calls the Kubernetes API, so the service-account token
+      # would be pure attack surface.
+      automountServiceAccountToken: false
       containers:
       - name: clokr-web
         image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}/clokr-web:{{ .Values.image.tag }}"

@@ -4,18 +4,20 @@ on:
   pull_request:
     branches: [main, "release/**"]
 
+# Least-privilege default: every job states its own scopes below, see the job blocks.
 permissions:
   contents: read
-  packages: read
-  pull-requests: write
-  issues: write
-  security-events: write # required for SARIF uploads from codeql, secret-scan, trivy-fs (DEVOPS-V8-04)
-  actions: read # required for codeql-action/init (DEVOPS-V8-04)
 
 jobs:
   # ── Tests, Lint, Type-Check ──────────────────────────────────────────
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # actions/checkout
+      pull-requests: write # dorny/paths-filter lists the PR's changed files; Post PR Summary comment
+      issues: write # Post PR Summary uses the issues comments API on the PR
+      security-events: write # Trivy FS SARIF upload via codeql-action/upload-sarif (DEVOPS-V8-04)
+      actions: read # Post PR Summary (listJobsForWorkflowRun); upload-sarif run metadata
 
     services:
       postgres:
@@ -368,7 +370,7 @@ jobs:
         run: pnpm --filter @clokr/web exec eslint src/
 
       - name: Format check (Prettier)
-        run: npx prettier --check "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,svelte,css}" "packages/**/*.ts" "packages/**/*.json"
+        run: pnpm exec prettier --check "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,svelte,css}" "packages/**/*.ts" "packages/**/*.json"
 
       - name: Lint UI primitives usage
         run: pnpm --filter @clokr/web lint:ui
@@ -641,6 +643,8 @@ jobs:
   lighthouse:
     if: false
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # actions/checkout
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
@@ -673,6 +677,8 @@ jobs:
   # extending to authenticated pages remains open, not scheduled.
   axe-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # actions/checkout
     steps:
       - uses: actions/checkout@v6
 
@@ -729,6 +735,9 @@ jobs:
   # / .planning-only PRs skip this job entirely.
   visual-regression:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # actions/checkout
+      pull-requests: read # dorny/paths-filter lists the PR's changed files
     # Path filter: only run when the PR touches code that can affect rendered output.
     # GitHub does not support `on.pull_request.paths` PLUS per-job conditionals
     # cleanly; we use the dorny/paths-filter pattern instead. The pre-step decides
@@ -855,6 +864,8 @@ jobs:
   # `visual-regression`, same as those jobs today.
   e2e-ci:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # actions/checkout
     steps:
       - uses: actions/checkout@v6
 
@@ -936,6 +947,8 @@ jobs:
   docker:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # actions/checkout (the gha build cache uses the runtime token)
 
     strategy:
       matrix:
@@ -984,6 +997,7 @@ jobs:
     needs: docker
     if: always()
     runs-on: ubuntu-latest
+    permissions: {} # no checkout, only evaluates needs.docker.result
     steps:
       - name: Assert the docker matrix succeeded
         if: needs.docker.result != 'success'
