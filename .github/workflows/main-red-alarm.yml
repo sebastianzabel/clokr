@@ -1,0 +1,87 @@
+name: Main Red Alarm
+
+# Issue #507: between 30.09. and 08.10. 40 Build & Push runs on main in a row were red on the
+# Trivy scan and nobody noticed, so four releases were promoted from red builds. This workflow
+# keeps exactly one issue "main ist rot" (label bug) in sync with the newest completed
+# Build & Push run on main: created on the first failure, commented on further failures, closed
+# with a comment on the next green run. Decision logic: .github/scripts/main-red-alarm.mjs.
+#
+# A separate workflow_run workflow instead of a job inside build-push.yml, on purpose:
+#  - Build & Push never gets `issues: write`;
+#  - a broken alarm can never turn Build & Push red;
+#  - `branches: [main]` keeps release/** runs out of the alarm.
+#
+# The match below is on the workflow NAME of build-push.yml ("Build & Push"). Renaming that name
+# silently disables this alarm. workflow_run only ever runs the copy of this file that lives on
+# the default branch, so manual dispatch is only available after the merge.
+#
+# Replay / proof for one specific run (read-only unless dry_run=false):
+#   gh workflow run main-red-alarm.yml -f run_id=<id> -f dry_run=true
+# With an empty run_id the job reconciles against the newest completed run on main.
+on:
+  workflow_run:
+    workflows: ["Build & Push"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Build & Push Lauf-ID zum Wiederholen (leer = neuester abgeschlossener Lauf auf main)"
+        required: false
+        type: string
+      dry_run:
+        description: "Nur entscheiden und ausgeben, nichts schreiben"
+        required: false
+        type: boolean
+        default: true
+
+# Least privilege: nothing at workflow level, the single job states what it needs.
+permissions: {}
+
+# Serializes the read-then-write sequence so two alarm runs can never both create the issue.
+# GitHub keeps at most one pending run; because the script reconciles against the newest state,
+# that pending run still converges on the right answer.
+concurrency:
+  group: main-red-alarm
+  cancel-in-progress: false
+
+jobs:
+  alarm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout of .github/scripts
+      actions: read # read the Build & Push runs and their jobs
+      issues: write # create, comment on and close the alarm issue
+    steps:
+      # No `ref:` on purpose: a workflow_run job checks out the default branch, never the head of
+      # the triggering run. No artifacts are downloaded and no event text (commit messages,
+      # branch names) is used, which keeps the classic workflow_run privilege-escalation
+      # pattern out. Only numeric run ids ever leave the event.
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Mirror the newest Build & Push state into the alarm issue
+        env:
+          # WR-03: expressions go through env, never into the script text.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ inputs.run_id }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          echo "Ausgelöst durch Lauf: ${TRIGGER_RUN_ID:-manuell}"
+          args=()
+          if [ -n "${RUN_ID}" ]; then
+            args+=(--run-id "${RUN_ID}")
+          fi
+          if [ "${DRY_RUN}" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          node .github/scripts/main-red-alarm.mjs "${args[@]}"
