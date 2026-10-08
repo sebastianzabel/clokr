@@ -1,5 +1,6 @@
 import { Page, expect } from "@playwright/test";
 import { ADMIN_EMAIL, ADMIN_PASSWORD } from "../../../packages/db/src/seed-credentials";
+import type { TestTenant } from "../fixtures";
 
 // Phase 275 (D-03, GitHub #275): built from the single shared credentials module instead of a
 // process.env override. The override path is dropped without replacement — a stale, gitignored
@@ -21,6 +22,16 @@ export async function login(page: Page, email: string, password: string) {
 
 export async function loginAsAdmin(page: Page) {
   await login(page, TEST_ADMIN.email, TEST_ADMIN.password);
+}
+
+// Password of every bootstrap tenant's admin: TEST_PASSWORD in
+// apps/api/src/contexts/platform/api/test-bootstrap.ts. It is a fixed test constant of the
+// throwaway-tenant endpoint, unrelated to the seed admin's credentials above.
+export const TENANT_ADMIN_PASSWORD = "test1234";
+
+/** Log in through the UI as the bootstrap admin (admin@{tenantId}.test) of a fresh test tenant. */
+export async function loginAsTenantAdmin(page: Page, tenant: TestTenant) {
+  await login(page, `admin@${tenant.tenantId}.test`, TENANT_ADMIN_PASSWORD);
 }
 
 export async function logout(page: Page) {

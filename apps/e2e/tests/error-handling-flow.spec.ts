@@ -1,78 +1,11 @@
-import { test, expect } from "@playwright/test";
-import { loginAsAdmin, screenshotPage, TEST_ADMIN } from "./helpers";
+import { test, expect } from "../fixtures";
+import { loginAsAdmin, loginAsTenantAdmin, screenshotPage, TEST_ADMIN } from "./helpers";
 
 const WRONG_CURRENT_PASSWORD = "wrongcurrentpassword";
 
 test.describe("Error Handling + UX Plausibility", () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdmin(page);
-  });
-
-  test("leave form shows error for overlapping dates", async ({ page }) => {
-    await page.goto("/leave");
-    await page.waitForLoadState("networkidle");
-
-    const start = new Date();
-    start.setDate(start.getDate() + 60);
-    while (start.getDay() === 0 || start.getDay() === 6) start.setDate(start.getDate() + 1);
-    const startStr = start.toISOString().split("T")[0];
-
-    // Helper: open the form if not already open, then fill and submit
-    async function openAndSubmitForm() {
-      // The form dialog is visible when showForm=true
-      const formDialog = page.locator("[role='dialog']").first();
-      const formIsOpen = await formDialog.isVisible().catch(() => false);
-
-      if (!formIsOpen) {
-        // The "Neuer Antrag" button is only shown when the form is closed
-        await page
-          .getByText(/Neuer Antrag/)
-          .first()
-          .click();
-        // Wait for the dialog to actually appear
-        await page.locator("[role='dialog']").first().waitFor({ state: "visible" });
-      }
-
-      const startInput = page.locator("#f-start").first();
-      const endInput = page.locator("#f-end").first();
-
-      if (!(await startInput.isVisible())) return false;
-
-      await startInput.fill(startStr);
-      await endInput.fill(startStr);
-
-      const submit = page.getByRole("button", { name: /einreichen|antrag/i }).first();
-      if (await submit.isVisible()) {
-        // Wait for the leave POST response (success OR error) instead of an arbitrary delay.
-        await Promise.all([
-          page
-            .waitForResponse(
-              (r) => r.url().includes("/api/v1/leave") && r.request().method() === "POST",
-              { timeout: 5000 },
-            )
-            .catch(() => null),
-          submit.click(),
-        ]);
-      }
-      return true;
-    }
-
-    // Submit first request (might succeed or fail with overlap from a prior run)
-    const filled = await openAndSubmitForm();
-
-    if (filled) {
-      // Submit the same dates again to trigger overlap error
-      // If the first submit already failed with overlap, the form is still open — reuse it.
-      await openAndSubmitForm();
-
-      // Should show error
-      await screenshotPage(page, "flow-error-overlap");
-      const errorMsg = page.getByText(/Überschneidung|overlap/i);
-      // Error should be visible (either in dialog or toast)
-      if (await errorMsg.isVisible()) {
-        expect(await errorMsg.textContent()).toBeTruthy();
-      }
-    }
   });
 
   test("login shows clear error on wrong credentials", async ({ page }) => {
@@ -243,5 +176,73 @@ test.describe("Error Handling + UX Plausibility", () => {
     await expect(ctaBtn).toBeVisible();
 
     await screenshotPage(page, "flow-empty-state-guidance");
+  });
+});
+
+// Tests that write data run on a freshly bootstrapped tenant with no stored login: they neither
+// run as nor write onto the shared seed admin.
+test.describe("Error Handling — own tenant", () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  // A weekday ~3 weeks ahead. The time is pinned to local noon BEFORE formatting so toISOString()
+  // cannot cut the date over a UTC midnight straddle (issue #34).
+  function futureWeekday(offsetDays: number): string {
+    const d = new Date();
+    d.setHours(12, 0, 0, 0);
+    d.setDate(d.getDate() + offsetDays);
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  test("leave form shows error for overlapping dates", async ({ page, tenant }) => {
+    const day = futureWeekday(21);
+    const headers = { authorization: `Bearer ${tenant.adminToken}` };
+
+    // Precondition via the API: one SICK request on the day. SICK against an existing PENDING or
+    // APPROVED SICK is blocked in every status (leave.ts:582-599), so this does not depend on
+    // whether SICK auto-approves; SICK is also exempt from the lead-time and advance checks.
+    const created = await page.request.post("/api/v1/leave/requests", {
+      headers,
+      data: { type: "SICK", startDate: day, endDate: day },
+    });
+    expect(created.status()).toBe(201);
+
+    await loginAsTenantAdmin(page, tenant);
+    await page.goto("/leave");
+    await page.getByTestId("leave-new-request").click();
+    await expect(page.getByTestId("leave-form")).toBeVisible();
+
+    await page.getByTestId("leave-form-type").selectOption("SICK");
+    await page.getByTestId("leave-form-from").fill(day);
+    await page.getByTestId("leave-form-to").fill(day);
+
+    // Register the response wait BEFORE the click so a fast answer cannot be missed.
+    const responsePromise = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname === "/api/v1/leave/requests" && r.request().method() === "POST",
+    );
+    await page.getByTestId("leave-form-submit").click();
+    const response = await responsePromise;
+
+    // leave.ts:598-599 rejects the overlap with 409 and exactly this body.
+    expect(response.status()).toBe(409);
+    expect(await response.json()).toEqual({ error: "Überschneidung mit bestehendem Antrag" });
+
+    // LeaveRequestForm keeps the form open on an API error and shows the message inline
+    // (LeaveRequestForm.svelte:544-551/569-576). No zero-error-toast assertion: the appointment
+    // collision pre-check may legitimately raise a toast on a tenant without Phorest.
+    await expect(page.getByTestId("leave-form-error")).toContainText(
+      "Überschneidung mit bestehendem Antrag",
+    );
+    await expect(page.getByTestId("leave-form")).toBeVisible();
+    await expect(page.locator(".toast-success")).toHaveCount(0);
+
+    // The rejected submission must not have written a second row.
+    const list = await page.request.get("/api/v1/leave/requests", { headers });
+    expect(list.ok()).toBe(true);
+    const rows = (await list.json()) as { startDate: string }[];
+    expect(rows.filter((r) => r.startDate.slice(0, 10) === day)).toHaveLength(1);
+
+    await screenshotPage(page, "flow-error-overlap");
   });
 });
