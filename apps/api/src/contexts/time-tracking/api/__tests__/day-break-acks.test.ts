@@ -155,7 +155,7 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
         employeeIds: [],
       },
     });
-    return { token: await login(user.email), email: user.email };
+    return { token: await login(user.email), email: user.email, userId: user.id };
   }
 
   function postAck(token: string, body: Record<string, unknown>) {
@@ -229,6 +229,25 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
     });
   }
 
+  /** A cron-style cross-salon notification row, as `attendance-checker` writes it. */
+  async function seedViolationNotice(
+    userId: string,
+    employeeId: string,
+    day: string,
+    type = "BREAK_CROSS_SALON_VIOLATION",
+  ) {
+    return app.prisma.notification.create({
+      data: {
+        userId,
+        type,
+        title: "Pausenverstoß",
+        message: "x",
+        relatedType: "EmployeeDay",
+        relatedId: `${employeeId}:${day}`,
+      },
+    });
+  }
+
   beforeAll(async () => {
     app = await getTestApp();
     data = await seedTestData(app, "daybreakacks-80");
@@ -258,6 +277,12 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
   beforeEach(async () => {
     constructedDays.clear();
     const ids = [data.employee.id, data.adminEmployee.id, dataB.employee.id];
+    await app.prisma.notification.deleteMany({
+      where: {
+        relatedType: "EmployeeDay",
+        OR: ids.map((id) => ({ relatedId: { startsWith: `${id}:` } })),
+      },
+    });
     await app.prisma.dayBreakAck.deleteMany({ where: { employeeId: { in: ids } } });
     await app.prisma.dayBreak.deleteMany({ where: { employeeId: { in: ids } } });
   });
@@ -304,6 +329,53 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
       expect(newValue.date).toBe(DAY);
       expect(newValue.reason).toBe(REASON);
       expect(newValue.snapshot).toEqual(rows[0].snapshot);
+    });
+
+    it("dismisses the BREAK_CROSS_SALON_VIOLATION notices of exactly that employee day for every recipient", async () => {
+      twoSalonDay(data.employee.id);
+      const manager = await createScopedManager(
+        "ack-notice-peer",
+        ["time-entry:update:ZUGEWIESEN"],
+        [salonA, salonB],
+      );
+      const mine = await seedViolationNotice(data.adminUser.id, data.employee.id, DAY);
+      const peer = await seedViolationNotice(manager.userId, data.employee.id, DAY);
+      const otherDay = await seedViolationNotice(data.adminUser.id, data.employee.id, "2026-03-12");
+      const otherEmployee = await seedViolationNotice(
+        data.adminUser.id,
+        data.adminEmployee.id,
+        DAY,
+      );
+      const otherType = await seedViolationNotice(
+        data.adminUser.id,
+        data.employee.id,
+        DAY,
+        "BREAK_COMPLIANCE_ALERT",
+      );
+
+      expect((await postAck(data.adminToken, ackBody(data.employee.id))).statusCode).toBe(201);
+
+      const rows = await app.prisma.notification.findMany({
+        where: { id: { in: [mine.id, peer.id, otherDay.id, otherEmployee.id, otherType.id] } },
+      });
+      const dismissed = (id: string) => rows.find((r) => r.id === id)?.dismissedAt;
+      expect(dismissed(mine.id)).not.toBeNull();
+      expect(dismissed(peer.id)).not.toBeNull();
+      expect(dismissed(otherDay.id)).toBeNull();
+      expect(dismissed(otherEmployee.id)).toBeNull();
+      expect(dismissed(otherType.id)).toBeNull();
+    });
+
+    it("a rejected acknowledgement leaves the notices untouched", async () => {
+      // same-salon day: 409, nothing acknowledged
+      constructedDays.set(`${data.employee.id}:${DAY}`, [
+        row(data.employee.id, DAY, salonA, "08:00", "12:00"),
+        row(data.employee.id, DAY, salonA, "12:30", "16:30"),
+      ]);
+      const notice = await seedViolationNotice(data.adminUser.id, data.employee.id, DAY);
+      expect((await postAck(data.adminToken, ackBody(data.employee.id))).statusCode).toBe(409);
+      const stored = await app.prisma.notification.findUniqueOrThrow({ where: { id: notice.id } });
+      expect(stored.dismissedAt).toBeNull();
     });
 
     it("D-17: afterwards checkArbZG reports the finding as a waived cross-salon warning; the § 3 cap stays an error", async () => {
@@ -555,6 +627,34 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
       const again = await delAck(manager.token, ackId);
       expect(again.statusCode).toBe(404);
       expect(errorOf(again)).toBe("Quittung nicht gefunden");
+    });
+
+    it("a revoke does not resurrect the dismissed notices: the acknowledged day stays dismissed and nothing new is created", async () => {
+      twoSalonDay(data.employee.id);
+      const notice = await seedViolationNotice(data.adminUser.id, data.employee.id, DAY);
+      const created = await postAck(data.adminToken, ackBody(data.employee.id));
+      const ackId = (JSON.parse(created.body) as { acknowledgement: { id: string } })
+        .acknowledgement.id;
+      const before = await app.prisma.notification.findUniqueOrThrow({ where: { id: notice.id } });
+      expect(before.dismissedAt).not.toBeNull();
+
+      const manager = await createScopedManager(
+        "ack-revoke-notice",
+        ["time-entry:update:ZUGEWIESEN"],
+        [salonA, salonB],
+      );
+      expect((await delAck(manager.token, ackId)).statusCode).toBe(204);
+
+      const rows = await app.prisma.notification.findMany({
+        where: {
+          type: "BREAK_CROSS_SALON_VIOLATION",
+          relatedType: "EmployeeDay",
+          relatedId: `${data.employee.id}:${DAY}`,
+        },
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(notice.id);
+      expect(rows[0].dismissedAt?.getTime()).toBe(before.dismissedAt?.getTime());
     });
 
     it("on an 11 h day the revoke turns the downgraded § 4 finding back into an error", async () => {

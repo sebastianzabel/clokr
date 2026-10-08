@@ -461,7 +461,7 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         "Only a day with entries in several salons and a break shortfall can be acknowledged; the " +
         "§ 3 daily maximum is never downgraded. The caller needs time-entry:update with scope over " +
         "every closed entry of the day and cannot acknowledge their own day. The day's snapshot is " +
-        "stored; once the day changes the acknowledgement is stale. Never writes a time entry.",
+        "stored; once the day changes the acknowledgement is stale. Dismisses the open cross-salon break notices of that day for all recipients. Never writes a time entry.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requirePermission("time-entry:update:ZUGEWIESEN"),
@@ -538,6 +538,24 @@ export async function dayBreakRoutes(app: FastifyInstance) {
       });
       if (!created) {
         return reply.code(409).send({ error: ALREADY_ACKED_MESSAGE });
+      }
+      // The violation is documented, so the "break missing" notices of this day are settled for
+      // every recipient. Reactive (ADR 0002 Entscheidung 10): after the commit, a failure is
+      // logged and never undoes the acknowledgement. A later revoke does NOT resurrect them: the
+      // next-day cron dedupes on ANY existing notification row of the recipient and day, dismissed
+      // or not, so a revoked day stays visible only through the page, the check endpoint and the
+      // month-close blocker.
+      try {
+        await app.dismissByRelated(
+          "EmployeeDay",
+          `${body.employeeId}:${body.date}`,
+          "BREAK_CROSS_SALON_VIOLATION",
+        );
+      } catch (err) {
+        req.log.error(
+          { err, employeeId: body.employeeId, date: body.date },
+          "Day-break acknowledgement: dismissing the cross-salon notifications failed",
+        );
       }
       return reply.code(201).send({ acknowledgement: created });
     },
