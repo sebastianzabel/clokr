@@ -160,6 +160,22 @@ describe("crossSalonSaveNotice", () => {
     expect(text).toContain("keine Pause");
   });
 
+  it("is pronoun-free because employees AND managers (team page) read it", () => {
+    const texts = [
+      crossSalonSaveNotice([
+        { code: "BREAK_TOO_SHORT", severity: "warning", message: "x", crossSalon: true },
+        { code: "MAX_DAILY_EXCEEDED", severity: "error", message: "x", crossSalon: true },
+      ]),
+    ];
+    for (const text of texts) {
+      expect(text).not.toBeNull();
+      expect(text).not.toMatch(/\b(du|dir|dich|dein\w*|Sie|Ihnen?|Ihr\w*)\b/);
+    }
+    expect(texts[0]).toContain(
+      "eine tatsächlich genommene Pause kann für den Tag eingetragen werden.",
+    );
+  });
+
   it("names the 10-hour limit over the day sum for a cross-salon MAX_DAILY_EXCEEDED", () => {
     const text = crossSalonSaveNotice([
       { code: "MAX_DAILY_EXCEEDED", severity: "error", message: "x", crossSalon: true },
