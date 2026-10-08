@@ -8,42 +8,13 @@ test.describe("Error Handling + UX Plausibility", () => {
     await loginAsAdmin(page);
   });
 
-  test("login shows clear error on wrong credentials", async ({ page }) => {
-    await page.goto("/login");
-    await page.getByLabel("E-Mail").fill("wrong@test.de");
-    await page.getByLabel("Passwort", { exact: true }).fill("wrongpassword");
-    // Wait for the auth POST to resolve (it returns 401) before screenshotting.
-    await Promise.all([
-      page
-        .waitForResponse(
-          (r) => r.url().includes("/api/v1/auth/login") && r.request().method() === "POST",
-          { timeout: 5000 },
-        )
-        .catch(() => null),
-      page.getByRole("button", { name: /anmelden/i }).click(),
-    ]);
-
-    await screenshotPage(page, "flow-error-login");
-    // Should still be on login page
-    await expect(page).toHaveURL(/login/);
-  });
-
   test("profile password change — wrong current password shows error", async ({ page }) => {
     // Guard: this wrong value must never equal the seed admin's real password, otherwise the
     // request could succeed and rotate the credentials every other seed-login spec depends on.
     expect(WRONG_CURRENT_PASSWORD).not.toBe(TEST_ADMIN.password);
 
-    // Same stub as suppressWhatsNew() in apps/e2e/fixtures/tenant.ts (module-private, so inlined
-    // here). The What's-New drawer auto-opens for a user who never dismissed it — i.e. on every
-    // freshly seeded stack — and intercepts the pointer events aimed at the settings form.
-    await page.route("**/api/v1/release-notes*", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ releases: [] }),
-      }),
-    );
-
+    // The What's-New drawer, which would intercept the pointer events aimed at the settings form,
+    // is stubbed away by the `page` override of the `../fixtures` test.
     await page.goto("/settings");
 
     const curPw = page.locator("#cur-pw");
@@ -89,58 +60,73 @@ test.describe("Error Handling + UX Plausibility", () => {
 
   test("dashboard provides clear information hierarchy", async ({ page }) => {
     await page.goto("/dashboard");
-    await page.waitForLoadState("networkidle");
 
-    // Check information hierarchy
-    // 1. Greeting should be most prominent
-    const greeting = page.getByText(/Guten|Hallo/).first();
-    await expect(greeting).toBeVisible();
+    // 1. The page greets the user (PageHead h1 "Guten Morgen/Tag/Abend, <name>").
+    await expect(page.getByTestId("dashboard-page").getByRole("heading", { level: 1 })).toHaveText(
+      /Guten (Morgen|Tag|Abend)/,
+    );
 
-    // 2. Clock should be prominent
-    const clock = page.locator(".clock-time").first();
-    if (await clock.isVisible()) {
-      const fontSize = await clock.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-      expect(fontSize).toBeGreaterThanOrEqual(24); // At least 24px
-    }
+    // 2. The hero clock is prominent.
+    const clock = page.locator(".timer-card-wrap .timer-display");
+    await expect(clock).toBeVisible();
+    const fontSize = await clock.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    expect(fontSize).toBeGreaterThanOrEqual(24);
 
-    // 3. Summary cards should be visible above fold
-    const summaryCards = page.locator(".stat-card, .summary-card, .overview-card").first();
-    if (await summaryCards.isVisible()) {
-      const rect = await summaryCards.boundingBox();
-      if (rect) {
-        expect(rect.y).toBeLessThan(600); // Above the fold
-      }
-    }
+    // 3. The hero card and the KPI pair both start inside the device's first viewport. "Above the
+    // fold" is measured against the device viewport, not a fixed 600px, which was a desktop-only
+    // assumption: the layout goes single-column at max-width 900px (dashboard +page.svelte:2019),
+    // where the KPI pair is stacked under the hero on Pixel 7 and iPad. In the two-column layout
+    // both start in the same row, so "the KPI pair never starts above the hero" holds in both
+    // without a viewport branch.
+    const viewport = page.viewportSize();
+    expect(viewport).not.toBeNull();
+    const viewportHeight = viewport?.height ?? 0;
+
+    const hero = page.locator(".timer-card-wrap");
+    const kpiPair = page.locator(".kpi-pair");
+    await expect(hero).toBeVisible();
+    await expect(kpiPair).toBeVisible();
+    const heroBox = await hero.boundingBox();
+    const kpiBox = await kpiPair.boundingBox();
+    expect(heroBox).not.toBeNull();
+    expect(kpiBox).not.toBeNull();
+    expect(heroBox?.y ?? Infinity).toBeLessThan(viewportHeight);
+    expect(kpiBox?.y ?? Infinity).toBeLessThan(viewportHeight);
+    expect(kpiBox?.y ?? -Infinity).toBeGreaterThanOrEqual((heroBox?.y ?? Infinity) - 1);
 
     await screenshotPage(page, "flow-dashboard-hierarchy");
   });
 
   test("forms have clear labels and placeholders", async ({ page }) => {
-    // Check leave form
     await page.goto("/leave");
-    await page.waitForLoadState("networkidle");
-    await page
-      .getByText(/Neuer Antrag/)
-      .first()
-      .click();
-    // Wait for the form dialog to actually appear before inspecting inputs.
-    await page.locator("[role='dialog']").first().waitFor({ state: "visible" });
+    await page.getByTestId("leave-new-request").click();
+    const form = page.getByTestId("leave-form");
+    await expect(form).toBeVisible();
 
-    // Every visible input should have a label
-    const inputs = await page.locator("input:visible, select:visible").all();
-    for (const input of inputs) {
-      const id = await input.getAttribute("id");
-      if (id) {
-        const label = page.locator(`label[for="${id}"]`);
-        const hasLabel = await label.isVisible().catch(() => false);
-        const ariaLabel = await input.getAttribute("aria-label");
-        const placeholder = await input.getAttribute("placeholder");
-        // Should have at least one form of labeling
-        expect(
-          hasLabel || !!ariaLabel || !!placeholder,
-          `Input #${id} has no label/aria-label/placeholder`,
-        ).toBe(true);
-      }
+    // Type, Von, Bis and Anmerkung at least: proves the loop below does not run over nothing.
+    const controls = await form.locator("input:visible, select:visible, textarea:visible").all();
+    expect(controls.length).toBeGreaterThanOrEqual(4);
+
+    // Every visible control needs a label element (for= or wrapping), an aria-label, an
+    // aria-labelledby or a placeholder. Controls without an id are checked too: skipping them
+    // used to let the unlabelled ones through.
+    for (const control of controls) {
+      const result = await control.evaluate((el) => {
+        const field = el as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+        const labelled =
+          (field.labels?.length ?? 0) > 0 ||
+          !!el.getAttribute("aria-label")?.trim() ||
+          !!el.getAttribute("aria-labelledby")?.trim() ||
+          !!el.getAttribute("placeholder")?.trim();
+        return {
+          name: el.id || el.getAttribute("name") || el.outerHTML.slice(0, 80),
+          labelled,
+        };
+      });
+      expect(
+        result.labelled,
+        `Control ${result.name} has no label/aria-label/aria-labelledby/placeholder`,
+      ).toBe(true);
     }
   });
 
@@ -179,8 +165,8 @@ test.describe("Error Handling + UX Plausibility", () => {
   });
 });
 
-// Tests that write data run on a freshly bootstrapped tenant with no stored login: they neither
-// run as nor write onto the shared seed admin.
+// Tests that write data, or that must stay anonymous, run with no stored login: they neither run
+// as nor write onto the shared seed admin (the data-writing ones on a freshly bootstrapped tenant).
 test.describe("Error Handling — own tenant", () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
@@ -193,6 +179,38 @@ test.describe("Error Handling — own tenant", () => {
     while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
     return d.toISOString().slice(0, 10);
   }
+
+  test("login shows clear error on wrong credentials", async ({ page }) => {
+    await page.goto("/login");
+    await expect(page.getByLabel("E-Mail")).toBeVisible();
+    await expect(page.getByLabel("Passwort", { exact: true })).toBeVisible();
+    const submit = page.getByRole("button", { name: /anmelden/i });
+    await expect(submit).toBeVisible();
+
+    // An address no user owns: a KNOWN address with a wrong password raises that user's
+    // failedLoginAttempts and locks the account after 5 (auth.ts), which for the seed admin would
+    // break every seed-login spec.
+    await page.getByLabel("E-Mail").fill("wrong@test.de");
+    await page.getByLabel("Passwort", { exact: true }).fill("wrongpassword");
+
+    // Register the response wait BEFORE the click so a fast answer cannot be missed.
+    const responsePromise = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === "/api/v1/auth/login" && r.request().method() === "POST",
+    );
+    await submit.click();
+    const response = await responsePromise;
+
+    // auth.ts:67-69 answers an unknown user with 401 before any lockout bookkeeping.
+    expect(response.status()).toBe(401);
+    expect(await response.json()).toEqual({ error: "Ungültige Anmeldedaten" });
+
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Ungültige Anmeldedaten" }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(/\/login/);
+
+    await screenshotPage(page, "flow-error-login");
+  });
 
   test("leave form shows error for overlapping dates", async ({ page, tenant }) => {
     const day = futureWeekday(21);
