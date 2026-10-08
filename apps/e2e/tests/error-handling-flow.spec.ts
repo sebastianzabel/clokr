@@ -3,6 +3,17 @@ import { loginAsAdmin, loginAsTenantAdmin, screenshotPage, TEST_ADMIN } from "./
 
 const WRONG_CURRENT_PASSWORD = "wrongcurrentpassword";
 
+// Routes whose location the main navigation must mark (#515). The alternatives in `name` are the
+// two layouts' labels, not a branch: the sidebar says "Zeiterfassung" where the tab bar says
+// "Zeit", and on <=960px a page behind "Mehr" is held by the overflow trigger, whose accessible
+// name then reads "Mehr, aktuelle Seite: <Label>" instead of the sidebar link's plain label.
+const NAV_LOCATIONS: { route: string; name: RegExp }[] = [
+  { route: "/dashboard", name: /^Übersicht$/ },
+  { route: "/time-entries", name: /^Zeit(erfassung)?$/ },
+  { route: "/leave", name: /^Abwesenheiten$/ },
+  { route: "/admin/employees", name: /^(Mehr, aktuelle Seite: )?Mitarbeitende$/ },
+];
+
 test.describe("Error Handling + UX Plausibility", () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdmin(page);
@@ -143,17 +154,66 @@ test.describe("Error Handling + UX Plausibility", () => {
   });
 
   test("navigation is clear — user always knows where they are", async ({ page }) => {
-    const routes = ["/dashboard", "/time-entries", "/leave", "/admin/employees"];
-
-    for (const route of routes) {
+    for (const { route, name } of NAV_LOCATIONS) {
+      // No load-state wait: the web-first assertions below retry until the app has rendered.
       await page.goto(route);
-      await page.waitForLoadState("networkidle");
 
-      // Active nav item should be highlighted
-      const activeNav = page.locator(
-        ".nav-item--active, .mobile-nav-item--active, [aria-current='page']",
+      // Role locators skip display:none subtrees, so this resolves to exactly the navigation
+      // variant the viewport shows (desktop sidebar, or the tab bar at <=960px). It replaces the
+      // old first-match pick that landed on the hidden desktop sidebar on mobile and tablet.
+      const mainNav = page
+        .getByRole("complementary", { name: "Hauptnavigation", exact: true })
+        .or(page.getByRole("navigation", { name: "Hauptnavigation (mobil)", exact: true }));
+      await expect(mainNav, `${route}: exactly one visible main navigation`).toHaveCount(1);
+
+      // Exactly one element of that navigation carries the current-location state.
+      const current = mainNav.locator("[aria-current]");
+      await expect(current, `${route}: exactly one aria-current element`).toHaveCount(1);
+      await expect(current, `${route}: the current element is visible`).toBeVisible();
+
+      // It is this route's own link marked as the page, or the overflow trigger marked as
+      // containing it.
+      await expect(
+        mainNav.locator(`a[href="${route}"][aria-current="page"], button[aria-current="true"]`),
+        `${route}: the marked element is the page link or the overflow trigger`,
+      ).toHaveCount(1);
+      await expect(
+        current,
+        `${route}: the current element names the location`,
+      ).toHaveAccessibleName(name);
+
+      // toBeVisible alone does not prove the marking is visible. The unmarked sibling is the
+      // control: the current element must differ from it by background colour AND carry a
+      // ::before bar the sibling lacks, so the marking is not colour-only (WCAG 1.4.1).
+      const sibling = current.locator(
+        "xpath=(preceding-sibling::*|following-sibling::*)[not(@aria-current)][1]",
       );
-      await expect(activeNav.first()).toBeVisible();
+      await expect(sibling, `${route}: an unmarked sibling item exists as the control`).toHaveCount(
+        1,
+      );
+      const marking = (el: Element) => {
+        const content = getComputedStyle(el, "::before").content;
+        return {
+          background: getComputedStyle(el).backgroundColor,
+          hasBar: content !== "none" && content !== "normal",
+        };
+      };
+      await expect
+        .poll(
+          async () => {
+            const [cur, sib] = await Promise.all([
+              current.evaluate(marking),
+              sibling.evaluate(marking),
+            ]);
+            return {
+              backgroundDiffers: cur.background !== sib.background,
+              currentHasBar: cur.hasBar,
+              siblingHasBar: sib.hasBar,
+            };
+          },
+          { message: `${route}: the current item is visibly marked, not by colour alone` },
+        )
+        .toEqual({ backgroundDiffers: true, currentHasBar: true, siblingHasBar: false });
 
       // Page should have a clear title/heading
       const heading = page.locator("h1").first();
