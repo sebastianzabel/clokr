@@ -1,0 +1,116 @@
+name: Build & Push Reconcile
+
+# Issue #509: commits that Dependabot's `gh pr merge --auto` brings onto main are recorded under the
+# GITHUB_TOKEN identity, and GitHub starts no workflow from an event made with GITHUB_TOKEN (except
+# workflow_dispatch). Their push therefore never triggers build-push.yml: f1fbb71 (#491), e7684ce
+# (#486) and a2bd9c0 (#485) from 05.10.2026 have no Build & Push run, so they were never built or
+# Trivy-scanned on their own.
+#
+# This workflow compares STATE, not events: every 15 minutes it asks the Actions API whether the tip
+# of main has a Build & Push run. If it has none (in any state) and the commit is at least 5 minutes
+# old, build-push.yml is dispatched on main. Because it is state-based,
+#  - a skipped or late scheduled run is caught up by the next one,
+#  - any cause of a missing push run is covered, not only Dependabot,
+#  - it is idempotent: a tip that has a run in any state is never dispatched again.
+# Decision logic and tests: .github/scripts/build-push-reconcile.mjs.
+#
+# Only the TIP is dispatched. The dispatch API takes a branch, so it always builds main's tip; an
+# older commit's run would also become the newest Build & Push run on main and break the #507 alarm
+# invariant. A commit overtaken by a newer one gets no run of its own, its content is built and
+# scanned in the newer commit's run (the report says so).
+#
+# Two jobs on purpose: `decide` only reads, `dispatch` is the only place that holds `actions: write`
+# and runs only when `decide` said so. No GitHub App or personal token is used (a new long-lived
+# secret that would also have to be a Dependabot secret and that silently falls back into this gap
+# when it expires), and no `pull_request: closed` trigger either: that event is produced by the same
+# GITHUB_TOKEN merge and would start nothing.
+#
+# Schedule and manual dispatch run only the copy of this file on the default branch. Proof without
+# any write:
+#   gh workflow run build-push-reconcile.yml -f dry_run=true -f lookback=40
+on:
+  schedule:
+    - cron: "4,19,34,49 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Nur entscheiden und ausgeben, nichts anstoßen"
+        required: false
+        type: boolean
+        default: true
+      lookback:
+        description: "Anzahl der zu prüfenden Commits auf main (1-100, leer = 20)"
+        required: false
+        type: string
+
+# Least privilege: nothing at workflow level, each job states what it needs.
+permissions: {}
+
+# One reconcile at a time; a pending run converges on the same state-based answer.
+concurrency:
+  group: build-push-reconcile
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout of .github/scripts and the commit list of main
+      actions: read # read the Build & Push runs per commit
+    outputs:
+      dispatch: ${{ steps.decide.outputs.dispatch }}
+      sha: ${{ steps.decide.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Decide whether the tip of main needs a Build & Push run
+        id: decide
+        env:
+          # WR-03: expressions go through env, never into the script text.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          LOOKBACK: ${{ inputs.lookback }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "${LOOKBACK}" ]; then
+            args+=(--lookback "${LOOKBACK}")
+          fi
+          if [ "${DRY_RUN}" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          node .github/scripts/build-push-reconcile.mjs "${args[@]}"
+
+  dispatch:
+    needs: decide
+    if: needs.decide.outputs.dispatch == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout of .github/scripts and main's tip lookup
+      actions: write # dispatch build-push.yml (the narrowest scope GitHub offers for this)
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Dispatch Build & Push on main and confirm the run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ needs.decide.outputs.sha }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/build-push-reconcile.mjs --dispatch "${SHA}"

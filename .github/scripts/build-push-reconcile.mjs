@@ -24,10 +24,15 @@
 //
 // Usage: node .github/scripts/build-push-reconcile.mjs [--lookback <1-100>] [--grace-minutes <n>]
 //                                                      [--tip <40 hex>] [--dry-run]
+//        node .github/scripts/build-push-reconcile.mjs --dispatch <40 hex> [--dry-run]
 // Environment: GITHUB_REPOSITORY (owner/name), gh authenticated (GH_TOKEN) with contents: read and
-// actions: read for decide mode.
+// actions: read for decide mode; --dispatch additionally needs actions: write. A real (non
+// dry-run) --dispatch is refused unless GITHUB_ACTIONS is "true", so no local run can start a build
+// by accident. --dispatch re-reads main's tip and the tip's runs first and skips when main moved
+// on or a run appeared, then confirms that a workflow_dispatch run exists (exit 1 otherwise).
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -38,6 +43,9 @@ export const DEFAULT_LOOKBACK = 20;
 export const MAX_LOOKBACK = 100;
 export const DEFAULT_GRACE_MINUTES = 5;
 export const SHA_PATTERN = /^[0-9a-f]{40}$/;
+export const CONFIRM_TIMEOUT_MS = 180_000;
+export const CONFIRM_INTERVAL_MS = 10_000;
+export const DISPATCH_SKEW_MS = 60_000;
 
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const DIGITS_PATTERN = /^[0-9]+$/;
@@ -180,6 +188,81 @@ export function formatOutputs({ dispatch, sha }) {
   return `dispatch=${dispatch ? "true" : "false"}\nsha=${dispatch ? sha : ""}\n`;
 }
 
+/**
+ * Re-check right before dispatching (the decide job ran minutes earlier). A dispatch always builds
+ * the tip of main, so it is only allowed while `expectedSha` still IS the tip and still has no run.
+ */
+export function decideDispatch({ expectedSha, mainTipSha, runsForExpected }) {
+  if (mainTipSha !== expectedSha) {
+    return {
+      action: "skip",
+      reason: `main steht inzwischen auf ${sha7(mainTipSha)} statt ${sha7(expectedSha)}, ein Lauf würde den neueren Commit bauen; der nächste Abgleich entscheidet neu`,
+    };
+  }
+  const existing = newestRun((runsForExpected ?? []).filter((r) => r.path === BUILD_PUSH_PATH));
+  if (existing) {
+    return {
+      action: "skip",
+      reason: `Commit ${sha7(expectedSha)} hat inzwischen den Build & Push Lauf ${existing.id} (${describeRun(existing)})`,
+    };
+  }
+  return {
+    action: "dispatch",
+    reason: `Commit ${sha7(expectedSha)} ist weiterhin der Stand von main und hat keinen Build & Push Lauf`,
+  };
+}
+
+/**
+ * Extract the run id from the raw answer of the dispatch call. Current GitHub answers 200 with
+ * `workflow_run_id`; older behaviour is 204 with an empty body. Anything unusable yields null, and
+ * the caller then falls back to polling.
+ */
+export function parseDispatchResponse(raw) {
+  if (typeof raw !== "string" || raw.trim() === "") return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const id = parsed?.workflow_run_id;
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+/**
+ * The newest workflow_dispatch run of build-push.yml on main that was created at or after the
+ * dispatch (minus a clock-skew allowance), or null.
+ */
+export function findDispatchedRun(runs, { sinceMs }) {
+  const candidates = (runs ?? []).filter((r) => {
+    if (r.event !== "workflow_dispatch" || r.head_branch !== DISPATCH_REF) return false;
+    if (r.path !== BUILD_PUSH_PATH) return false;
+    return Date.parse(r.created_at) >= sinceMs - DISPATCH_SKEW_MS;
+  });
+  return newestRun(candidates);
+}
+
+/**
+ * Poll until the dispatched run shows up or the timeout is over. Errors from fetchRuns propagate,
+ * so an API failure can never be reported as a started build.
+ */
+export async function waitForDispatchedRun({
+  fetchRuns,
+  sleep,
+  now,
+  sinceMs,
+  timeoutMs = CONFIRM_TIMEOUT_MS,
+  intervalMs = CONFIRM_INTERVAL_MS,
+}) {
+  const start = now();
+  for (let attempts = 1; ; attempts += 1) {
+    const found = findDispatchedRun(await fetchRuns(), { sinceMs });
+    if (found) return { run: found, attempts };
+    if (now() - start >= timeoutMs) return { run: null, attempts };
+    await sleep(intervalMs);
+  }
+}
+
 function invalid(name, value, expectation) {
   return new Error(`Ungültiger Wert für ${name}: '${value}'. Erwartet wird ${expectation}.`);
 }
@@ -189,7 +272,6 @@ function invalid(name, value, expectation) {
  * before a single API call is made.
  */
 export function parseReconcileArgs(argv, env) {
-  void env;
   let values;
   try {
     ({ values } = parseArgs({
@@ -201,10 +283,40 @@ export function parseReconcileArgs(argv, env) {
         lookback: { type: "string" },
         "grace-minutes": { type: "string" },
         tip: { type: "string" },
+        dispatch: { type: "string" },
       },
     }));
   } catch (error) {
     throw new Error(`Ungültiger Aufruf: unbekannte oder unvollständige Option (${error.message}).`);
+  }
+
+  const dispatchSha = values.dispatch;
+  if (dispatchSha !== undefined) {
+    if (!SHA_PATTERN.test(dispatchSha)) {
+      throw new Error(
+        `Ungültige SHA '${dispatchSha}': erwartet werden genau 40 Hex-Zeichen in Kleinbuchstaben.`,
+      );
+    }
+    const extra = ["tip", "lookback", "grace-minutes"].filter((name) => values[name] !== undefined);
+    if (extra.length > 0) {
+      throw new Error(
+        `Ungültiger Aufruf: --dispatch lässt sich nicht mit --${extra.join(", --")} kombinieren.`,
+      );
+    }
+    const dryRunRequested = values["dry-run"] === true;
+    if (!dryRunRequested && env?.GITHUB_ACTIONS !== "true") {
+      throw new Error(
+        "Ungültiger Aufruf: --dispatch ohne --dry-run schreibt nach GitHub und ist nur innerhalb des Workflows (GITHUB_ACTIONS=true) erlaubt.",
+      );
+    }
+    return {
+      mode: "dispatch",
+      dryRun: dryRunRequested,
+      lookback: DEFAULT_LOOKBACK,
+      graceMinutes: DEFAULT_GRACE_MINUTES,
+      tip: undefined,
+      sha: dispatchSha,
+    };
   }
 
   let lookback = DEFAULT_LOOKBACK;
@@ -305,12 +417,96 @@ async function runDecide(args, env, repository) {
   return 0;
 }
 
+function workflowRunsEndpoint(repository, query) {
+  return `repos/${repository}/actions/workflows/${BUILD_PUSH_WORKFLOW_FILE}/runs?${query}`;
+}
+
+async function runDispatch(args, env, repository) {
+  const mainTip = ghGet(`repos/${repository}/commits/${DISPATCH_REF}`).sha;
+  if (!SHA_PATTERN.test(String(mainTip))) {
+    throw new Error(`Die Antwort der API enthält keinen lesbaren Stand von ${DISPATCH_REF}.`);
+  }
+  const runsForExpected =
+    ghGet(workflowRunsEndpoint(repository, `head_sha=${args.sha}&per_page=100`)).workflow_runs ??
+    [];
+  const decision = decideDispatch({
+    expectedSha: args.sha,
+    mainTipSha: mainTip,
+    runsForExpected,
+  });
+  const label = decision.action === "dispatch" ? "Build & Push anstoßen" : "nicht anstoßen";
+  const headline = `Entscheidung: ${label} – ${decision.reason}`;
+  console.log(headline);
+  appendTo(env.GITHUB_STEP_SUMMARY, `${headline}\n`);
+  if (decision.action === "skip") {
+    return 0;
+  }
+  if (args.dryRun) {
+    console.log("Probelauf: nichts angestoßen.");
+    return 0;
+  }
+
+  const sinceMs = Date.now();
+  // The answer is deliberately not JSON-parsed here: depending on the API version it is empty.
+  const raw = gh(
+    [
+      "api",
+      "--method",
+      "POST",
+      `repos/${repository}/actions/workflows/${BUILD_PUSH_WORKFLOW_FILE}/dispatches`,
+      "--input",
+      "-",
+    ],
+    JSON.stringify({ ref: DISPATCH_REF }),
+  );
+  const runId = parseDispatchResponse(raw);
+  let started;
+  if (runId !== null) {
+    started = ghGet(`repos/${repository}/actions/runs/${runId}`);
+  } else {
+    const waited = await waitForDispatchedRun({
+      fetchRuns: async () =>
+        ghGet(
+          workflowRunsEndpoint(
+            repository,
+            `event=workflow_dispatch&branch=${DISPATCH_REF}&per_page=20`,
+          ),
+        ).workflow_runs ?? [],
+      sleep: (ms) => delay(ms),
+      now: () => Date.now(),
+      sinceMs,
+    });
+    started = waited.run;
+  }
+
+  if (!started) {
+    const message =
+      `Der Aufruf für ${sha7(args.sha)} wurde abgeschickt, aber nach 3 Minuten ist kein Build & Push Lauf erschienen. ` +
+      "Prüfen mit: gh run list --workflow build-push.yml --branch main --event workflow_dispatch";
+    console.log(`::error title=Build & Push Abgleich::${escapeData(message)}`);
+    appendTo(env.GITHUB_STEP_SUMMARY, `${message}\n`);
+    return 1;
+  }
+  const line = `Build & Push angestoßen: Lauf ${started.id} (${started.html_url}), Commit ${sha7(started.head_sha)}`;
+  console.log(line);
+  appendTo(env.GITHUB_STEP_SUMMARY, `${line}\n`);
+  if (started.head_sha !== args.sha) {
+    const note = `Hinweis: main ist inzwischen weiter, gebaut wird ${sha7(started.head_sha)}.`;
+    console.log(note);
+    appendTo(env.GITHUB_STEP_SUMMARY, `${note}\n`);
+  }
+  return 0;
+}
+
 export async function main(argv, env) {
   try {
     const args = parseReconcileArgs(argv, env);
     const repository = env.GITHUB_REPOSITORY ?? "";
     if (!REPOSITORY_PATTERN.test(repository)) {
       throw new Error("GITHUB_REPOSITORY fehlt oder hat nicht die Form owner/name.");
+    }
+    if (args.mode === "dispatch") {
+      return await runDispatch(args, env, repository);
     }
     return await runDecide(args, env, repository);
   } catch (error) {
