@@ -3012,8 +3012,20 @@ beiden Modelle und ist kein Präzedenzfall für andere Tabellen.
 - Cron: 15 Integrationstests + 8 Builder-Tests; Empfängermatrix (Admin voll, Manager beider Salons
   voll, Manager eines Salons geschwärzt, Manager eines dritten Salons keine, der Mitarbeiter selbst
   keine).
-- Finaler Gate-Lauf auf dem gemergten Stand: siehe Zusammenfassung von Plan 80-12 (volle API-Suite,
-  Web-Suite mit Abdeckung, Skripttests, alle CI-Gates, beide Builds).
+- Finaler Gate-Lauf auf dem mit `origin/main` zusammengeführten Stand (Merge ohne Konflikt, keine
+  Phase-80-Datei betroffen): volle API-Suite 496 Dateien, 7984 bestanden, 3 übersprungen (7987
+  Tests), 0 Fehler; volle Web-Suite mit Abdeckung 109 Dateien, 1722 Tests; `test:scripts` 6
+  Dateien, 313 Tests. Alle CI-Gates grün: Typecheck, Lint (0 Fehler), `lint:tenant-scoping`,
+  Import-Ziele (2113 Spezifizierer), Facade-Signaturen (131 Funktionen, 17 Ausnahmen, 0 Funde),
+  fremder Kontextzugriff und Kontextgrenzen (`--check 0`), Import-Zyklen (`--cycles --check 22`),
+  Guard-Vakuität (963 Dateien, 0 vakuos), E2E-Spec-Registry (24 Dateien), T-100-09-Vollständigkeit
+  (98 Routen), Rollenprüfungen, Saldo-Lock-Herleitung, Kommentarsprache (0 neue Verstöße), beide
+  Builds. Der Gesamtlauf fand drei Dinge, die die Teilpläne nicht gesehen hatten: zwei
+  Zählpins (131 Fassadenfunktionen, 18 Advisory-Lock-Schlüssel — auf die neuen, im Pin
+  begründeten Werte gesetzt) und einen Zuwachs der Import-Zyklen von 22 auf 23 Module, den der
+  Detektor `cross-salon-days.ts` durch einen Rück-Import des Arbeitszeitkonto-Index auslöste; er
+  wurde an der Ursache beseitigt (der Tagesschlüssel wird dort direkt formatiert), der CI-Pin 22
+  blieb unberührt. `measure-saldo-path-parity.ts --check` gegen die unveränderte Baseline grün.
 
 ### Nachrechnen
 
