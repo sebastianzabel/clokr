@@ -42,6 +42,12 @@ thirteen cards would drown an Inbox meant for thinking. They are handled by rule
 For a **grouped** update, the reported type is the highest bump in the group, so a group
 containing one major is treated as major. The risk of a group is its riskiest member.
 
+An auto-merged update gets no push-triggered Build & Push run, because the `--auto` merge carries
+`GITHUB_TOKEN`'s identity and GitHub starts no workflow from it. `build-push-reconcile.yml` builds
+and scans such a commit within about 20-30 minutes; see
+[`release-process.md`](release-process.md) ("Every commit on main gets a Build & Push run") and
+Issue #509.
+
 They also do not count against the five-issue cap: dependency bumps are not the reason a sprint
 fails, and making them compete with real work is what causes them to be skipped.
 
@@ -241,11 +247,12 @@ Use `--dry-run` to see the shaped issue without creating it.
 
 ## What runs on its own
 
-| What                          | When                                                | Where                                          |
-| ----------------------------- | --------------------------------------------------- | ---------------------------------------------- |
-| Sprint checklist issue        | every second Monday, 07:00 Berlin (06:00 in winter) | `.github/workflows/sprint-rollover.yml`        |
-| Branch protection drift check | manual, on the sprint checklist                     | `scripts/apply-branch-protection.sh`           |
-| Release PR                    | on every push to `main`                             | see [`release-process.md`](release-process.md) |
+| What                                          | When                                                | Where                                          |
+| --------------------------------------------- | --------------------------------------------------- | ---------------------------------------------- |
+| Sprint checklist issue                        | every second Monday, 07:00 Berlin (06:00 in winter) | `.github/workflows/sprint-rollover.yml`        |
+| Branch protection drift check                 | manual, on the sprint checklist                     | `scripts/apply-branch-protection.sh`           |
+| Release PR                                    | on every push to `main`                             | see [`release-process.md`](release-process.md) |
+| Build & Push for commits without a push event | every 15 minutes                                    | `.github/workflows/build-push-reconcile.yml`   |
 
 Scheduled workflows and issue forms only ever run from the **default branch**. Both are inert
 anywhere else — this is why `main` was resynced onto the release line rather than left behind.

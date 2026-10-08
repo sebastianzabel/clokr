@@ -27,7 +27,9 @@ The shipping image is bit-identical to the image that passed the Trivy scan on m
 4. **`build-push.yml`** runs on the merge, builds both images, pushes
    `ghcr.io/{owner}/clokr-{api,web}:sha-{SHA}`, Trivy scans them. The API image also bakes
    `docs/release-notes/` into itself via `apps/api/Dockerfile` — the notes file from step 2 is
-   already on `main` by the time this build runs, so it is inside the image it describes.
+   already on `main` by the time this build runs, so it is inside the image it describes. A
+   commit that reaches `main` without a push event (the Dependabot auto-merge) is built by the
+   reconcile instead, see "Every commit on main gets a Build & Push run".
 5. **`release.yml` gates, then promotes — but check it actually started.** First the
    `build-push-gate` job requires the Build & Push run of the tagged commit to be `success`. It
    waits up to 45 min while that run is queued or running, and aborts with a German annotation
@@ -108,6 +110,57 @@ behind it instead of racing it.
   `gh workflow run main-red-alarm.yml -f run_id=<id> -f dry_run=true`. `dry_run` defaults to
   `true`; `dry_run=false` writes. An empty `run_id` reconciles against the newest run on `main`.
 - An open `main ist rot` issue means: no release. The gate would block it anyway.
+
+### Every commit on main gets a Build & Push run
+
+**The gap (Issue #509).** Dependabot's `gh pr merge --auto` merge is recorded under the
+`GITHUB_TOKEN` identity, and GitHub starts no workflow from an event made with that token (the
+same restriction as in "Why release.yml does not start by itself"). The push of such a merge
+therefore never triggers `build-push.yml`. Measured on 05.10.2026: `f1fbb71` (#491), `e7684ce`
+(#486) and `a2bd9c0` (#485) have no Build & Push run, so they were never built or Trivy-scanned on
+their own. `release-please.yml` does not run for those commits either; it simply catches up on the
+next push, nothing is lost there.
+
+**The fix.** `.github/workflows/build-push-reconcile.yml` compares state, not events:
+
+- Every 15 minutes the `decide` job (read-only) reads the last 20 first-parent commits of `main`
+  and the Build & Push runs per commit. If the tip of `main` has no Build & Push run in any state
+  (queued, running or completed with any conclusion) and is at least 5 minutes old, the `dispatch`
+  job re-checks, dispatches `build-push.yml` on `main` and confirms that the run appeared. A build
+  therefore arrives roughly 20-30 minutes after the merge. The `dispatch` job is the only one with
+  `actions: write` and runs only when `decide` said so.
+- A skipped or late scheduled run is caught up by the next one, and any other cause of a missing
+  push run is covered as well, not only Dependabot. A tip that already has a run is never
+  dispatched again, so repeated reconciles are idempotent.
+- The dispatched run is an ordinary Build & Push run: same steps, `:sha-<7>` of the commit and
+  `:main`, same Trivy gate, event `workflow_dispatch`, head branch `main`. The release gate (queries
+  by `head_sha`) and the `main ist rot` alarm (workflow name, head branch `main`) therefore count
+  it like a push run. A dispatch from any branch other than `main` is skipped by the job condition.
+
+**The one limit (accepted).** Only the tip of `main` is ever dispatched, because the dispatch API
+takes a branch, never a commit, and an older commit's run would become the newest Build & Push run
+on `main` and could close or open the alarm wrongly. A commit that is overtaken by a newer one
+before the reconcile reaches it gets no run of its own: its content is built and scanned in the
+newer commit's run, and the reconcile report lists it as `OHNE LAUF, Inhalt gebaut im Lauf von
+<sha>`. A red or cancelled run is not re-dispatched either; coverage is the reconcile's job, colour
+is the alarm's and the gate's (`gh run rerun <id> --failed`).
+
+**Why not the alternatives.** A `pull_request: closed` trigger on the Dependabot PR would be
+produced by the same `GITHUB_TOKEN` merge and start nothing. Merging with a GitHub App token or a
+personal access token needs a new long-lived secret that would also have to be a Dependabot secret,
+needs rotation, and when it expires the merge silently falls back to `GITHUB_TOKEN` and the gap
+returns unnoticed.
+
+**Commands.**
+
+- Write nothing, list the commits without a run:
+  `gh workflow run build-push-reconcile.yml -f dry_run=true -f lookback=40`
+- The same locally:
+  `GITHUB_REPOSITORY=sebastianzabel/clokr node .github/scripts/build-push-reconcile.mjs --lookback 40 --dry-run`
+- Replay how `main` looked at an earlier commit (`--dry-run` is mandatory with `--tip`):
+  `node .github/scripts/build-push-reconcile.mjs --tip <sha> --dry-run`
+- `gh workflow run build-push.yml --ref main` rebuilds and re-scans the tip of `main`; the newest run
+  counts. A dispatch on any other branch is skipped.
 
 ### Why release.yml does not start by itself
 
@@ -334,6 +387,12 @@ _that_ commit, and only then tag it.
   for a green Build & Push run" for the recovery per outcome.
 - **The `main ist rot` issue opens and closes itself.** Do not close it by hand and do not file a
   second one; the next green Build & Push run on `main` closes it. See "When main goes red".
+- **Build & Push runs with event `workflow_dispatch` by `github-actions[bot]`** come from the
+  reconcile, for a commit that had no push-triggered run. They are normal. See "Every commit on
+  main gets a Build & Push run".
+- **A red `Build & Push Reconcile` run means a dispatch produced no run**, not that `main` is red.
+  Check the command named in the annotation:
+  `gh run list --workflow build-push.yml --branch main --event workflow_dispatch`.
 - **Checks on the release-please branch arrive as `action_required`.** Another symptom of the
   `GITHUB_TOKEN` restriction described in "Why release.yml does not start by itself" above —
   they sit unstarted awaiting approval instead of running. Approve from the CLI, no UI needed:
@@ -378,8 +437,10 @@ pseudonymizer runs its own inline verification.
 - Workflow: `.github/workflows/build-push.yml`
 - Workflow: `.github/workflows/release-notes-guard.yml`
 - Workflow: `.github/workflows/main-red-alarm.yml`
+- Workflow: `.github/workflows/build-push-reconcile.yml`
 - Script: `.github/scripts/release-gate.mjs`
 - Script: `.github/scripts/main-red-alarm.mjs`
+- Script: `.github/scripts/build-push-reconcile.mjs`
 - Corpus: `docs/release-notes/README.md`
 - Research: `.planning/research/v1.8-pipeline-state.md` §5
 - Phase: `.planning/phases/69-pr-231-nachholen-runtime-version-image-promotion/`
