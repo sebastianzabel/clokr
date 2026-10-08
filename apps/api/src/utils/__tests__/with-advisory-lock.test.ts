@@ -74,10 +74,12 @@ describe("withAdvisoryLock", () => {
   // bringing the registry from 13 to 15 distinct keys. Phase 92-05 added
   // ATTENDANCE_BREAK_UNCONFIRMED (1016n), bringing it to 16. Phase 292 (GitHub issue #292)
   // added MONTH_CLOSE_DEFERRAL_REMINDER (1017n) for the weekly deferral escalation — 17.
-  it("registry exposes 17 distinct keys and tenantAdvisoryKey derives a bigint", () => {
+  // Phase 80 (Issue #80, D-10) added ATTENDANCE_BREAK_CROSS_SALON (1018n) for the next-day
+  // cross-salon break check — 18.
+  it("registry exposes 18 distinct keys and tenantAdvisoryKey derives a bigint", () => {
     const values = Object.values(ADVISORY_LOCK_KEYS);
-    expect(values).toHaveLength(17);
-    expect(new Set(values).size).toBe(17);
+    expect(values).toHaveLength(18);
+    expect(new Set(values).size).toBe(18);
     const key = tenantAdvisoryKey("123e4567-e89b-12d3-a456-426614174000");
     expect(typeof key).toBe("bigint");
     // Deterministic + stable across calls.
