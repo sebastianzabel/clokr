@@ -202,3 +202,33 @@ export function crossSalonSaveNotice(warnings: unknown): string | null {
   }
   return parts.length > 0 ? parts.join(" ") : null;
 }
+
+export interface MonthCloseHint {
+  label: string;
+  title: string;
+}
+
+/**
+ * The display-only chip of the admin month-close page for the days on which an employee's
+ * cross-salon § 4 ArbZG break is still missing and unacknowledged (D-09b / D-15). `days` is the
+ * API's `crossSalonBreakDays` ("YYYY-MM-DD"); a malformed entry is dropped rather than printed.
+ * Null when nothing is open — the chip then does not render. The chip decides nothing: whether
+ * the close is blocked is the server's rule (tenant flag), this only makes the reason visible.
+ */
+export function crossSalonMonthCloseHint(days: string[] | null | undefined): MonthCloseHint | null {
+  if (!Array.isArray(days)) return null;
+  const valid = days.filter((d) => typeof d === "string" && DAY_KEY.test(d));
+  if (valid.length === 0) return null;
+
+  const shown = valid
+    .slice(0, 3)
+    .map((d) => `${d.slice(8, 10)}.${d.slice(5, 7)}.`)
+    .join(", ");
+  const more = valid.length > 3 ? ` (+${valid.length - 3} weitere)` : "";
+  return {
+    label: `Pause fehlt (salonübergreifend) (${valid.length})`,
+    title:
+      `Salonübergreifend fehlende Pflichtpause (§ 4 ArbZG) an: ${shown}${more}; ` +
+      "vor dem Abschluss eine Pause erfassen oder quittieren.",
+  };
+}

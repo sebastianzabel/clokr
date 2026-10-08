@@ -11,6 +11,7 @@
   import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-fkz
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
+  import { toasts } from "$stores/toast";
   import DayBreakPanel from "$lib/components/breaks/DayBreakPanel.svelte"; // Issue #80
   // Issue #80 (D-09c/D-10/D-20) — the notification deep link and the server-computed day checks;
   // the browser never derives a cross-salon finding itself.
@@ -18,6 +19,7 @@
   import {
     type DayCheck,
     type DayChecksResponse,
+    crossSalonSaveNotice,
     isChecksRangeAllowed,
     mergeDayChecksIntoArbzgMap,
   } from "$lib/breaks/day-break-violation";
@@ -969,8 +971,11 @@
         endTime: new Date(`${formDate}T${b.end}:00`).toISOString(),
       }));
     try {
+      // Issue #80 (D-09a): the response carries the API's ArbZG warnings; only the cross-salon
+      // ones are surfaced here (the client-side calendar markers are unchanged).
+      let saved: { warnings?: unknown } | undefined;
       if (editEntry) {
-        await api.put(`/time-entries/${editEntry.id}`, {
+        saved = await api.put<{ warnings?: unknown }>(`/time-entries/${editEntry.id}`, {
           date: formDate,
           startTime: startISO,
           endTime: endISO,
@@ -981,7 +986,7 @@
           ...(isCorrectionEdit ? { reason: formReason.trim() } : {}),
         });
       } else {
-        await api.post("/time-entries", {
+        saved = await api.post<{ warnings?: unknown }>("/time-entries", {
           date: formDate,
           startTime: startISO,
           endTime: endISO,
@@ -994,6 +999,8 @@
       }
       closeModal();
       await loadAll();
+      const crossSalonNotice = crossSalonSaveNotice(saved?.warnings);
+      if (crossSalonNotice) toasts.warning(crossSalonNotice);
     } catch (e: unknown) {
       if (e instanceof Error && "status" in e && (e as { status: number }).status === 403) {
         saveError = "Monat ist gesperrt";

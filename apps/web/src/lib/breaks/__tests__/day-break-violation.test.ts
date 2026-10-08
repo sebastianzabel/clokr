@@ -11,6 +11,7 @@ import {
   dayCheckWarnings,
   mergeDayChecksIntoArbzgMap,
   crossSalonSaveNotice,
+  crossSalonMonthCloseHint,
 } from "../day-break-violation";
 
 function check(over: Partial<DayCheck> = {}): DayCheck {
@@ -175,5 +176,42 @@ describe("crossSalonSaveNotice", () => {
     expect(crossSalonSaveNotice(undefined)).toBeNull();
     expect(crossSalonSaveNotice("nope")).toBeNull();
     expect(crossSalonSaveNotice([null, 3, { code: 7 }])).toBeNull();
+  });
+});
+
+describe("crossSalonMonthCloseHint", () => {
+  it("labels one day with the count and names § 4 ArbZG and the date as DD.MM.", () => {
+    const hint = crossSalonMonthCloseHint(["2026-03-10"]);
+    expect(hint?.label).toBe("Pause fehlt (salonübergreifend) (1)");
+    expect(hint?.title).toContain("§ 4 ArbZG");
+    expect(hint?.title).toContain("10.03.");
+    expect(hint?.title).toContain("quittieren");
+  });
+
+  it("counts every day and lists the first three dates, then the remainder", () => {
+    const hint = crossSalonMonthCloseHint([
+      "2026-03-02",
+      "2026-03-10",
+      "2026-03-11",
+      "2026-03-20",
+      "2026-03-25",
+    ]);
+    expect(hint?.label).toBe("Pause fehlt (salonübergreifend) (5)");
+    expect(hint?.title).toContain("02.03., 10.03., 11.03.");
+    expect(hint?.title).toContain("+2");
+    expect(hint?.title).not.toContain("20.03.");
+  });
+
+  it("returns null for no days, undefined and null", () => {
+    expect(crossSalonMonthCloseHint([])).toBeNull();
+    expect(crossSalonMonthCloseHint(undefined)).toBeNull();
+    expect(crossSalonMonthCloseHint(null as unknown as undefined)).toBeNull();
+  });
+
+  it("ignores a malformed date instead of printing it", () => {
+    const hint = crossSalonMonthCloseHint(["nonsense", "2026-03-10"]);
+    expect(hint?.label).toBe("Pause fehlt (salonübergreifend) (1)");
+    expect(hint?.title).toContain("10.03.");
+    expect(hint?.title).not.toContain("nonsense");
   });
 });
