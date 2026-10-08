@@ -184,6 +184,16 @@ export interface DayBreakEvaluation {
 type Span = readonly [number, number];
 
 /** The union of `breaks` clipped to [from, to], as sorted, non-touching spans. */
+/**
+ * Ordinal (UTF-16 code unit) comparison for ids in the ack snapshot. Deliberately NOT
+ * localeCompare: the snapshot must sort identically on every runtime and locale, otherwise a
+ * current acknowledgement would read as stale (D-17). Same order as the default sort.
+ */
+function compareOrdinal(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 function unionClippedSpans(breaks: readonly DayBreakInterval[], from: Date, to: Date): Span[] {
   const lo = from.getTime();
   const hi = to.getTime();
@@ -319,10 +329,10 @@ export function evaluateDayBreaks(input: {
   const requiredBreakMin: 0 | 30 | 45 = netWorkedMin > 9 * 60 ? 45 : netWorkedMin > 6 * 60 ? 30 : 0;
   const breakShortfall = requiredBreakMin > 0 && totalBreakMin < requiredBreakMin;
 
-  const salonIds = [...new Set(rows.map((r) => r.salonId))].sort();
+  const salonIds = [...new Set(rows.map((r) => r.salonId))].sort(compareOrdinal);
   const crossSalon = salonIds.length >= 2;
   const snapshot: DaySnapshot = {
-    entryIds: rows.map((r) => r.id).sort(),
+    entryIds: rows.map((r) => r.id).sort(compareOrdinal),
     salonIds,
     netWorkedMin,
     totalBreakMin,
