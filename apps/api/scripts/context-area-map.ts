@@ -182,6 +182,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/break-effective.ts": "zeiterfassung", // effective break-minutes calculation
   "src/contexts/time-tracking/clock-out-debounce-message.ts": "zeiterfassung", // Phase 307 Plan 02 (D-03/D-05) — builds the German 409 message for a DEBOUNCE_NOOP clock-out over TimeEntry.startTime
   "src/contexts/time-tracking/day-break-rule.ts": "zeiterfassung", // Issue #80 (D-01/D-04/D-16/D-17) — pure day-level § 4/§ 3 kernel over the closed WORK entries of one day; TimeEntry vocabulary, no model access
+  "src/contexts/time-tracking/day-break-store.ts": "zeiterfassung", // Issue #80 (D-03/D-06) — reads DayBreak/DayBreakAck and the day's closed WORK rows
   "src/contexts/time-tracking/day-entries.ts": "zeiterfassung", // Phase 69b (Issue #69) — findEntriesOfDay, the single employee+day TimeEntry lookup
   "src/contexts/time-tracking/__tests__/fixtures/legacy-working-minutes-pre79.ts": "zeiterfassung", // Phase 79 Plan 01 (Issue #79), D-10/D-12 — frozen verbatim pre-79 working-time expressions (commit f1fbb71f) for the equivalence proof; test infra of this context, same category as the pre-436/pre-481 fixtures
   "src/contexts/time-tracking/__tests__/fixtures/legacy-day-warnings-pre80.ts": "zeiterfassung", // Issue #80 (80-AC6) — frozen verbatim pre-80 day-warning expressions (commit 73838040); test infra of this context

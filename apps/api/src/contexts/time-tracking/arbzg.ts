@@ -17,6 +17,7 @@ import { findEntriesOfDay } from "./day-entries"; // Phase 69b — the single da
 import { addWorkingMinutes } from "./entry-durations"; // Phase 79 (Issue #79), D-03/D-12
 import { evaluateDayBreaks } from "./day-break-rule"; // Issue #80 — the day-level § 4/§ 3 rule
 import type { DayBreakEvaluation, DayBreakRow } from "./day-break-rule"; // Issue #80
+import { listDayBreaksOfDay, listAcksOfDay } from "./day-break-store"; // Issue #80 (D-06)
 
 // Phase 69b: in-memory equivalents of the former `findFirst({ endTime: { not: null }, orderBy })`
 // rest-period lookups. Only closed rows count; the first maximum/minimum wins on ties.
@@ -225,8 +226,21 @@ export async function checkArbZG(
       breakStatus: s.breakStatus,
       salonId: s.salonId,
     }));
-    // Day breaks and acknowledgements are loaded in Phase 80 plan 03; until then they are empty.
-    const evaluation = evaluateDayBreaks({ rows, dayBreaks: [], acks: [] });
+    // Issue #80 (80-AC6): gap breaks and acknowledgements are read only when the day has two or
+    // more closed WORK rows — a single-entry day issues no extra query and stays unchanged.
+    const dayParams = { tenantId: employee.tenantId, employeeId, date: new Date(dateStr) };
+    const [dayBreaks, acks] =
+      rows.length >= 2
+        ? await Promise.all([
+            listDayBreaksOfDay(prisma, dayParams),
+            listAcksOfDay(prisma, dayParams),
+          ])
+        : [[], []];
+    const evaluation = evaluateDayBreaks({
+      rows,
+      dayBreaks,
+      acks: acks.map((a) => ({ snapshot: a.snapshot })),
+    });
     warnings.push(...dayLimitWarnings(evaluation, bsMinutesToday));
 
     // § 5 ArbZG – Mindestruhezeit (11h zwischen Arbeitstagen)

@@ -584,6 +584,11 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   // shared test database. Safe here (after prisma.timeEntry.deleteMany above, :540): TimeEntry
   // owns the FK to RetroEntryRequest, so no TimeEntry row still references one of these rows.
   await prisma.retroEntryRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Issue #80: DayBreak.employee and DayBreakAck.employee are onDelete: Restrict — must be deleted
+  // before prisma.employee.deleteMany below, or the delete fails and leaks fixture rows into the
+  // shared test database.
+  await prisma.dayBreakAck.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  await prisma.dayBreak.deleteMany({ where: { employeeId: { in: employeeIds } } });
   // Phase 67b (issue #67): EmployeeSalonAssignment.employee AND .salon are onDelete: Restrict
   // (D-01) — must be deleted before prisma.employee.deleteMany below, or the delete fails and
   // leaks fixture rows into the shared test database.
