@@ -8,6 +8,7 @@
   import { api } from "$api/client";
   import Icon from "$lib/components/Icon.svelte";
   import { visibleTeamNavItems } from "$lib/nav/team-nav";
+  import { activeNavHref } from "$lib/nav/active-route";
   import { onMount } from "svelte";
 
   interface Props {
@@ -135,10 +136,13 @@
     return out;
   });
 
-  function isActive(href: string, path: string): boolean {
-    if (href === "/dashboard") return path === "/dashboard";
-    return path === href || path.startsWith(href + "/");
-  }
+  // The one current item across all sections (shared rule, longest matching href wins).
+  const currentHref = $derived(
+    activeNavHref(
+      sections.flatMap((section) => section.items.map((item) => item.href)),
+      currentPath,
+    ),
+  );
 
   // Phase 73-05 (D-05) — derive a stable, predictable test-id slug from a
   // route href so every nav link is addressable as `nav-{slug}`.
@@ -180,7 +184,7 @@
       {/if}
       <nav class="sidebar-nav" aria-label={section.label}>
         {#each section.items as item (item.href)}
-          {@const active = isActive(item.href, currentPath)}
+          {@const active = item.href === currentHref}
           <a
             href={item.href}
             class="nav-item"
