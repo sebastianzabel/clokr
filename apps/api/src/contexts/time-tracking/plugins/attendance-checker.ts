@@ -6,11 +6,18 @@ import {
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
   isStammsalonScopeMatch, // Phase 91b Plan 09 (#91), D-10/D-17
   isTimeEntryInScope, // Phase 91b Plan 09 (#91), D-09/D-17
+  accessContextForJob, // Issue #80 (80-09), Feature 10
+  employeeScopeFor, // Issue #80 (80-09), Feature 10
 } from "../../platform";
 import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
+import { findUnacknowledgedCrossSalonDays } from "../cross-salon-days"; // Issue #80 (80-09)
+import { closedWorkRowsInRange } from "../day-break-store"; // Issue #80 (80-09)
+import { dayCoverage } from "../day-scope"; // Issue #80 (80-09)
+import { buildCrossSalonNotice } from "../cross-salon-notice"; // Issue #80 (80-09)
 import {
   getTenantTimezone,
   dateStrInTz,
+  timeStrInTz,
   monthRangeUtc,
   monthDayBounds,
   fetchCloseMonthData,
@@ -46,6 +53,9 @@ declare module "fastify" {
     tryMissingEntriesCheck: () => Promise<void>;
     /** Phase 75b (D-27): test invocability, pattern mirrors tryAutoInvalidate. */
     tryPendingLeaveReminder: () => Promise<void>;
+    /** Issue #80 (80-09, D-10): exposed for integration tests — invokes the next-day
+     *  cross-salon § 4 ArbZG violation notification scan (Feature 10) without cron/advisory-lock. */
+    tryCrossSalonBreakCheck: () => Promise<void>;
   }
 }
 
@@ -54,6 +64,8 @@ declare module "fastify" {
  * 1. Clock-out reminder: hourly check for open time entries
  * 2. Missing entries reminder: daily check for employees without recent entries
  * 3. Auto-invalidate stale open entries: hourly invalidation of entries without clock-out
+ * 10. Cross-salon § 4 ArbZG violation (Issue #80): daily 09:00 manager notification about
+ *     unacknowledged violations of the previous days (Feature 10)
  */
 export const attendanceCheckerPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
@@ -1131,6 +1143,190 @@ export const attendanceCheckerPlugin = fp(async (app) => {
     }
   }
 
+  /**
+   * Feature 10 (Issue #80, D-10/D-11/D-13): next-day notification about an unacknowledged
+   * cross-salon § 4 ArbZG violation — runs daily at 09:00, never on save.
+   *
+   * The scan covers yesterday plus a 3-day catch-up window, so a day whose run was missed (restart,
+   * lock contention) is still reported; the per-recipient dedup makes every re-run idempotent.
+   * "Violation" is `findUnacknowledgedCrossSalonDays` — the same detector the Monatsabschluss gates
+   * use, so a day the close would block on is a day the managers are told about, and an
+   * acknowledged, same-salon or § 3-only day produces nothing (D-18).
+   *
+   * Recipients (D-13): holders of `time-entry:update:ZUGEWIESEN` whose scope covers at least one
+   * entry of the day, tenant-wide holders included; the employee is never notified about their own
+   * day. The level of detail follows the recipient's own reach over the day (D-11): a recipient who
+   * covers every entry gets the salons and times, anyone else only the day total and the finding —
+   * the foreign salon's name and times never enter that recipient's title, message, link or email.
+   *
+   * Dedup: ONE notification per recipient, employee and day, ever — any existing row counts,
+   * a dismissed one included (relatedType "EmployeeDay", relatedId "<employeeId>:<YYYY-MM-DD>").
+   */
+  async function checkCrossSalonBreakViolations() {
+    app.log.info("Attendance-Checker: Prüfe salonübergreifende Pausenverstöße (Feature 10)");
+    try {
+      const now = new Date();
+      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+
+      for (const tenant of tenants) {
+        try {
+          const tz = await getTenantTimezone(app.prisma, tenant.id);
+
+          // Day keys: yesterday, 2 and 3 days ago, by calendar arithmetic on the tenant-local
+          // today string at 12:00 UTC (never the ISO rendering of a raw instant near midnight).
+          const todayNoon = new Date(`${dateStrInTz(now, tz)}T12:00:00Z`);
+          const dayKey = (daysAgo: number) =>
+            new Date(todayNoon.getTime() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+          const newest = dayKey(1);
+          const oldest = dayKey(3);
+
+          // Active, non-exempt employees. A planned or just-past exit date does not hide a day
+          // that was worked before it.
+          const employees = await app.prisma.employee.findMany({
+            where: {
+              tenantId: tenant.id,
+              isTimeTrackingExempt: false,
+              user: { isActive: true },
+              OR: [{ exitDate: null }, { exitDate: { gte: new Date(`${oldest}T00:00:00Z`) } }],
+            },
+            select: { id: true, firstName: true, lastName: true, userId: true },
+          });
+          if (employees.length === 0) continue;
+
+          const rows = await closedWorkRowsInRange(
+            app.prisma,
+            employeeScopeFor(accessContextForJob(tenant.id, "cross-salon-break-check"), {
+              employeeIds: employees.map((e) => e.id),
+            }),
+            new Date(`${oldest}T00:00:00Z`),
+            new Date(`${newest}T00:00:00Z`),
+          );
+          const violations = await findUnacknowledgedCrossSalonDays(app.prisma, {
+            tenantId: tenant.id,
+            rows,
+            tz,
+          });
+          if (violations.size === 0) continue;
+
+          // D-13: one holder lookup per tenant; narrowed per day below.
+          // Kept on one line so the recipient-site audit can grep the exact call.
+          // prettier-ignore
+          const holders = await userIdsHoldingPermission(app.prisma, tenant.id, "time-entry:update:ZUGEWIESEN");
+          if (holders.length === 0) continue;
+          // Same active-user filter as the BREAK_COMPLIANCE_ALERT recipient block.
+          const activeHolders = new Set(
+            (
+              await app.prisma.employee.findMany({
+                where: { tenantId: tenant.id, user: { isActive: true, id: { in: holders } } },
+                select: { userId: true },
+              })
+            ).map((e) => e.userId),
+          );
+          const candidateHolders = holders.filter((id) => activeHolders.has(id));
+
+          const employeeById = new Map(employees.map((e) => [e.id, e]));
+          for (const [employeeId, days] of violations) {
+            const employee = employeeById.get(employeeId);
+            if (!employee) continue;
+            for (const day of days) {
+              const coverageFacts = day.rows.map((r) => ({
+                salonId: r.salonId,
+                employeeId: r.employeeId,
+                date: r.date,
+              }));
+              // Recipients: the reach covers at least one entry of the day.
+              const recipients = await resolveScopedHolderIds(
+                app.prisma,
+                tenant.id,
+                candidateHolders,
+                "time-entry:update:ZUGEWIESEN",
+                async (reach) =>
+                  (await dayCoverage(app.prisma, tenant.id, reach, coverageFacts)) !== "none",
+              );
+              // Full detail only where the reach covers EVERY entry of the day (wholeTenant
+              // always does) — the narrowing function keeps exactly those.
+              const fullDetail = new Set(
+                await resolveScopedHolderIds(
+                  app.prisma,
+                  tenant.id,
+                  recipients,
+                  "time-entry:update:ZUGEWIESEN",
+                  async (reach) =>
+                    (await dayCoverage(app.prisma, tenant.id, reach, coverageFacts)) === "all",
+                ),
+              );
+
+              const relatedId = `${employeeId}:${day.date}`;
+              let salonNames: Map<string, string> | null = null; // read lazily, once per day
+              for (const userId of recipients) {
+                if (userId === employee.userId) continue; // D-09e: managers only
+                // Any existing row — dismissed or not — means this recipient was told already.
+                const existing = await app.prisma.notification.findFirst({
+                  where: {
+                    userId,
+                    type: "BREAK_CROSS_SALON_VIOLATION",
+                    relatedType: "EmployeeDay",
+                    relatedId,
+                  },
+                  select: { id: true },
+                });
+                if (existing) continue;
+
+                const full = fullDetail.has(userId);
+                if (full && salonNames === null) {
+                  const salons = await app.prisma.salon.findMany({
+                    where: {
+                      tenantId: tenant.id,
+                      id: { in: [...new Set(day.rows.map((r) => r.salonId))] },
+                    },
+                    select: { id: true, name: true },
+                  });
+                  salonNames = new Map(salons.map((s) => [s.id, s.name]));
+                }
+                const { title, message } = buildCrossSalonNotice({
+                  employeeName: `${employee.firstName} ${employee.lastName}`,
+                  date: day.date,
+                  evaluation: day.evaluation,
+                  detail: full ? "full" : "redacted",
+                  entries: full
+                    ? day.rows.map((r) => ({
+                        salonName: salonNames?.get(r.salonId) ?? "",
+                        startLocal: timeStrInTz(r.startTime, tz),
+                        endLocal: timeStrInTz(r.endTime, tz),
+                      }))
+                    : undefined,
+                });
+                await app.notify({
+                  userId,
+                  type: "BREAK_CROSS_SALON_VIOLATION",
+                  title,
+                  message,
+                  link: `/team/time-entries?employeeId=${employeeId}&date=${day.date}`,
+                  tenantId: tenant.id,
+                  relatedType: "EmployeeDay",
+                  relatedId,
+                  emailSubject: title, // neutral subject: a subject travels further than a body
+                });
+                app.log.info(
+                  { userId, employeeId, date: day.date, detail: full ? "full" : "redacted" },
+                  "Salonübergreifender Pausenverstoß gemeldet (BREAK_CROSS_SALON_VIOLATION, Feature 10)",
+                );
+              }
+            }
+          }
+        } catch (err) {
+          app.log.error(
+            { err, tenant: tenant.id },
+            "Salonübergreifender Pausenverstoß: Tenant fehlgeschlagen, fahre fort",
+          );
+          continue;
+        }
+      }
+    } catch (err) {
+      app.log.error({ err }, "Attendance-Checker: Fehler bei salonübergreifender Pausenprüfung");
+    }
+  }
+
   // Phase 76.21-08: expose autoInvalidateOpenEntries as a Fastify decorator so
   // integration tests can invoke the scan directly without cron/advisory-lock overhead.
   // Pattern mirrors tryAutoCloseMonth in auto-close-month.ts.
@@ -1154,6 +1350,9 @@ export const attendanceCheckerPlugin = fp(async (app) => {
   app.decorate("tryMissingEntriesCheck", checkMissingEntries);
   // Phase 75b (D-27): test invocability, pattern mirrors tryAutoInvalidate.
   app.decorate("tryPendingLeaveReminder", checkPendingLeaveRequests);
+
+  // Issue #80 (80-09, D-10): expose the cross-salon § 4 next-day scan for test invocability.
+  app.decorate("tryCrossSalonBreakCheck", checkCrossSalonBreakViolations);
 
   app.addHook("onReady", async () => {
     try {
@@ -1313,6 +1512,28 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       );
       tasks.push(breakUnconfirmedTask);
       app.log.info("Reminder: Pausen-Bestätigung Nudge geplant (täglich 09:00, kontinuierlich)");
+
+      // Feature 10 (Issue #80, D-10): next-day cross-salon § 4 violation notification — daily
+      // at 09:00 under its own advisory-lock key.
+      const crossSalonBreakTask = cron.schedule(
+        "0 9 * * *",
+        () => {
+          withAdvisoryLock(
+            app.prisma,
+            ADVISORY_LOCK_KEYS.ATTENDANCE_BREAK_CROSS_SALON,
+            () => checkCrossSalonBreakViolations(),
+            app.log,
+          ).catch((err) =>
+            app.log.error(
+              { err },
+              "Reminder: salonübergreifender Pausenverstoß Job fehlgeschlagen",
+            ),
+          );
+        },
+        { timezone: "Europe/Berlin", noOverlap: true },
+      );
+      tasks.push(crossSalonBreakTask);
+      app.log.info("Reminder: Salonübergreifende Pausenprüfung geplant (täglich 09:00)");
     } catch (err) {
       app.log.error({ err }, "Attendance-Checker konnte nicht gestartet werden");
     }

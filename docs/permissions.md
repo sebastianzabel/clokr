@@ -847,6 +847,7 @@ ohne neue Tabelle.
 | `contexts/time-tracking/plugins/attendance-checker.ts:308`                   | `OPEN_ENTRY_INVALIDATED`                                                   | A, M  | `team-overview:read`     | ZUGEWIESEN |
 | `contexts/time-tracking/plugins/attendance-checker.ts:418`                   | `PENDING_LEAVE_REMINDER`                                                   | A, M  | `leave-request:approve`  | ZUGEWIESEN |
 | `contexts/time-tracking/plugins/attendance-checker.ts:825`                   | `GAP_WARNING_MANAGER`                                                      | A, M  | `team-overview:read`     | ZUGEWIESEN |
+| `contexts/time-tracking/plugins/attendance-checker.ts:1214`                  | `BREAK_CROSS_SALON_VIOLATION`                                              | A, M  | `time-entry:update`      | ZUGEWIESEN |
 | `contexts/time-tracking/api/time-entries.ts:1451`                            | `RETRO_ENTRY_REQUESTED`                                                    | A, M  | `retro-request:approve`  | ZUGEWIESEN |
 | `contexts/time-tracking/api/time-entries.ts:1934`                            | `RETRO_ENTRY_UPDATED`                                                      | A, M  | `retro-request:approve`  | ZUGEWIESEN |
 | `contexts/time-tracking/api/time-entries.ts:2289`                            | `BREAK_COMPLIANCE_ALERT`                                                   | A, M  | `team-overview:read`     | ZUGEWIESEN |

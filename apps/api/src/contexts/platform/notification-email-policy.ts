@@ -49,6 +49,7 @@ const TOGGLE_ENTRIES: Record<string, EmailPolicy> = {
   GAP_WARNING_MANAGER:     { email: "toggle", field: "emailOnMissingEntries" },
   BREAK_UNCONFIRMED:       { email: "toggle", field: "emailOnMissingEntries" }, // Phase 92 (BREAK-06)
   BREAK_COMPLIANCE_ALERT:  { email: "toggle", field: "emailOnMissingEntries" }, // Phase 92 (BREAK-06)
+  BREAK_CROSS_SALON_VIOLATION: { email: "toggle", field: "emailOnMissingEntries" }, // Issue #80 (D-10)
   CLOCK_OUT_REMINDER:      { email: "toggle", field: "emailOnClockOutReminder" },
   MONTH_CLOSE_BLOCKED:     { email: "toggle", field: "emailOnMonthClose" }, // auto-close-month.ts
   // Phase 292 (#292): the weekly escalation for a Monatsabschluss that STAYS deferred. Same
