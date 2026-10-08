@@ -1,6 +1,6 @@
 # ── Stage 1: Install dependencies ───────────────────────────────────────────
 FROM node:24-alpine AS deps
-RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.6 --activate
 WORKDIR /app
 
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
@@ -126,15 +126,15 @@ RUN apk update && apk upgrade --no-cache \
 # affect corepack: corepack has no dependency on npm (verified — corepack's own package.json
 # declares none, and `corepack enable && corepack prepare pnpm@... --activate` succeeds
 # unmodified in an npm-free node:24-alpine image). Do NOT reinstall npm to "fix" a corepack
-# issue if one ever appears — look elsewhere first; see the pnpm-specific `.trivyignore`
-# exception for the one tar copy that remains (corepack's own pnpm@10.34.5 vendor copy, not
-# npm's, and not exploitable via the API's runtime invocation pattern).
+# issue if one ever appears — look elsewhere first. Corepack's pnpm 10.34.6 vendors tar 7.5.22
+# (measured), past CVE-2026-73566's 7.5.21 threshold, so no tar exception remains (see
+# docs/image-footprint.md, quick-261008-d41).
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
     /usr/local/lib/node_modules/corepack/shims/npm /usr/local/lib/node_modules/corepack/shims/npm.cmd \
     /usr/local/lib/node_modules/corepack/shims/npm.ps1 /usr/local/lib/node_modules/corepack/shims/npx \
     /usr/local/lib/node_modules/corepack/shims/npx.cmd /usr/local/lib/node_modules/corepack/shims/npx.ps1 \
     && rm -rf /tmp/* /root/.npm/_cacache
-RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.6 --activate
 WORKDIR /app
 
 # node_modules assembly: the production-scoped dependency closure (Stage 3) plus the

@@ -360,6 +360,9 @@ symlink during Task 1, confirming the gate genuinely discriminates broken from h
 
 ## IMG-04 — Per-CVE `.trivyignore` Disposition (Plan 04, Task 1)
 
+> Superseded on 2026-10-08 by the quick-261008-d41 section at the end of this file (pnpm 10.34.6):
+> the measurements below are historical and stay as recorded.
+
 Scanned images: `clokr-web:102-after` and `clokr-api:102-after` — the exact tags Plan 01/03
 smoke-tested and content-identity-verified (`102-03-SUMMARY.md`: `RootFS.Layers` byte-identical to
 the booted `clokr-api:latest`/`clokr-web:latest` compose containers). Trivy 0.74.0, vulnerability
@@ -562,6 +565,9 @@ that quietly stopped being true.
 
 ## IMG-05 — CVE-2026-73566 (node-tar, HIGH) Disposition (quick-260825-qx4)
 
+> Superseded on 2026-10-08 by the quick-261008-d41 section at the end of this file (pnpm 10.34.6):
+> the measurements below are historical and stay as recorded.
+
 Last gate before release v1.9.18. Trivy 0.74.0, images built locally
 (`clokr-api:qx4-test`, `clokr-web:qx4-test`) from the Dockerfiles as modified by this quick task,
 2026-08-25.
@@ -664,3 +670,147 @@ broken scan.
   running containers from both images.
 - Neither the running dev stack (`clokr-api-1`, `clokr-web-1`) nor its images were touched — all
   builds and scans used distinct `qx4-test` tags, removed after this task completed.
+
+## IMG-05 — pnpm 10.34.6 bump: CVE-2026-93748 exception and `.trivyignore` retirement (quick-261008-d41)
+
+Environment: Docker server 29.2.1, host `linux/arm64`, Trivy 0.70.0 (`aquasec/trivy:0.70.0`, DB
+version 2, `UpdatedAt` 2026-10-07T07:38:55Z, downloaded 2026-10-08T07:28:19Z; command:
+`docker run --rm -v trivy-cache:/root/.cache/trivy aquasec/trivy:0.70.0 version`), measured
+2026-10-08. Images `clokr-api:cve-test` and `clokr-web:cve-test` were built from the worktree root
+with `docker build --pull --no-cache-filter runtime -f apps/<app>/Dockerfile -t clokr-<app>:cve-test .`
+(`--no-cache-filter runtime` so the runtime stage's `apk update && apk upgrade` layer is not reused
+from an older local build). The "before" images are the CI images
+`ghcr.io/sebastianzabel/clokr-api:sha-461778b` and `ghcr.io/sebastianzabel/clokr-web:sha-461778b`
+(pnpm 10.34.5), scanned unignored with the same Trivy/DB. All scan commands are
+`docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache/trivy aquasec/trivy:0.70.0 image --quiet --scanners vuln --format json <image>`
+(no `--severity` flag for the "all severities" scans, `--severity CRITICAL,HIGH` for the gate-severity
+scans); raw JSON was kept under `.planning/quick/261008-d41-…/scans/` (gitignored).
+
+### Why
+
+The "Build & Push" workflow on `main` has been red since at least 2026-10-03: its Trivy image gate
+fails on three unignored HIGH findings, all inside corepack's pnpm 10.34.5 cache in the API runtime
+image — `CVE-2026-102276` and `CVE-2026-102278` (brace-expansion 2.1.2) and `CVE-2026-93748`
+(http-cache-semantics 4.2.0). The CI image `sha-461778b` additionally showed `CVE-2026-14257`,
+`CVE-2026-69152`, `CVE-2026-69192` and `CVE-2026-73566` at HIGH, which the old `.trivyignore`
+covered.
+
+### What pnpm 10.34.6 vendors
+
+Measured inside `clokr-api:cve-test` with
+`node -p 'require("/root/.cache/node/corepack/v1/pnpm/10.34.6/dist/node_modules/<pkg>/package.json").version'`
+(`pnpm --version` prints `10.34.6`; `ls /root/.cache/node/corepack/v1/pnpm/` lists exactly `10.34.6`).
+The 10.34.5 column is the version Trivy reported in the CI image `sha-461778b` (`PkgPath` under
+`…/pnpm/10.34.5/dist/node_modules/`).
+
+| Vendored package     | pnpm 10.34.5 | pnpm 10.34.6 | Relevant fix threshold                                                                                            |
+| -------------------- | ------------ | ------------ | ----------------------------------------------------------------------------------------------------------------- |
+| brace-expansion      | 2.1.2        | 2.1.7        | CVE-2026-102276 ≥ 2.1.5, CVE-2026-102278 ≥ 2.1.6, CVE-2026-14257 ≥ 2.1.3, CVE-2026-69152 ≥ 2.1.4, -102277 ≥ 2.1.7 |
+| tar                  | 7.5.19       | 7.5.22       | CVE-2026-73566 ≥ 7.5.21                                                                                           |
+| ip-address           | 10.2.0       | 10.7.2       | CVE-2026-69192 ≥ 10.3.1 (further MEDIUMs up to 10.7.1)                                                            |
+| picomatch            | not reported | 4.0.7        | no finding either side                                                                                            |
+| http-cache-semantics | 4.2.0        | 4.2.0        | CVE-2026-93748: none (see below)                                                                                  |
+
+### CVE-2026-93748 (http-cache-semantics, HIGH) — the one new exception
+
+**Advisory** (`gh api "advisories?cve_id=CVE-2026-93748"`, 2026-10-08): `GHSA-ch52-4w7c-c8xp`,
+severity high, `github_reviewed_at` 2026-10-02T22:36:42Z, `withdrawn_at` null, vulnerable range
+`<= 4.2.0`, `first_patched_version` null. Summary: max-stale handling can disclose cross-user cached
+responses (CWE-524).
+
+**Fix availability.** `npm view http-cache-semantics versions` now lists `4.3.0` (published
+2026-10-04T02:56Z). It is NOT a fix for this CVE: `diff -u` of `index.js` between the
+`npm pack http-cache-semantics@4.2.0` and `@4.3.0` tarballs changes only the `Vary` matching
+(the unrelated `CVE-2026-93750`), the response `status` accessor and JSDoc; the `max-stale` condition
+(`'max-stale' in requestCC && (true === requestCC['max-stale'] || requestCC['max-stale'] > this.age() - this.maxAge())`)
+is unchanged. Trivy 0.70.0 reports the id as `affected` with an empty `FixedVersion`. Even a fixed
+release could not be applied: the copy is vendored inside pnpm's own `dist/`, not in `pnpm-lock.yaml`,
+so `pnpm.overrides` does not reach it, and 10.34.6 is the newest 10.x release (registry dist-tag
+`latest-10`; pnpm stays on 10.x per D-05, Phase 102).
+
+**Location** (`find / -path '*/node_modules/http-cache-semantics/package.json'` in each image): API
+image — exactly one,
+`/root/.cache/node/corepack/v1/pnpm/10.34.6/dist/node_modules/http-cache-semantics`; web image —
+none (no corepack/pnpm cache: `find / -path '*/corepack/v1/pnpm'` as root returns nothing,
+`command -v pnpm` returns nothing). `grep -c http-cache-semantics pnpm-lock.yaml` → `0`.
+
+**Static chain** (scan of every `dist/node_modules/*/package.json` for the dependency): only
+`node-gyp@11.5.0` declares `make-fetch-happen`, and only `make-fetch-happen@14.0.3` declares
+`http-cache-semantics` — node-gyp's download path for native addon builds during `pnpm install`.
+`grep -o` counts in `dist/pnpm.cjs` and `dist/worker.js`: `http-cache-semantics` 0 and
+`make-fetch-happen` 0 in both.
+
+**Dynamic proof.** A `Module._resolveFilename` hook (`NODE_OPTIONS=--require=/hook/resolve-hook.cjs`)
+was attached to `pnpm tsx --version`, run with working directory `/app/apps/api` (the anonymizer
+CronJob's command shape, `charts/clokr-app/templates/cronjob-anonymizer.yaml:51`). Result: `tsx v4.23.15`
+printed, **837** resolution calls logged (hook demonstrably live), **0** referencing
+`http-cache-semantics`, **0** referencing `make-fetch-happen`. Exactly **1** line matches the broader
+pattern `node-gyp`: `node-gyp/bin/node-gyp → …/dist/node_modules/node-gyp/bin/node-gyp.js`, which is
+pnpm resolving the bin PATH into a constant at start-up (`dist/pnpm.cjs:98349`,
+`DEFAULT_NODE_GYP_PATH = resolveFrom(__dirname, "node-gyp/bin/node-gyp")`); no other file under
+`node_modules/node-gyp/` was resolved, i.e. node-gyp itself was never loaded and its dependency
+closure was never entered. `docker-entrypoint.sh` contains no pnpm invocation (its single `pnpm`
+mention is a comment, `# Find prisma binary (pnpm@10 hoists to root)`); the one runtime pnpm call is
+`pnpm tsx scripts/anonymize-dump.ts` (CronJob).
+
+### Per-id before / after
+
+"api before" = unignored full-severity scan of `ghcr.io/…/clokr-api:sha-461778b`; "api after" /
+"web after" = unignored full-severity scans of `clokr-api:cve-test` / `clokr-web:cve-test`. Counts are
+the number of findings with that `VulnerabilityID`. Web had zero findings of any listed id before and
+after (and zero HIGH/CRITICAL).
+
+| Id              | Package              | api before | api after | web after | Verdict                                                                              |
+| --------------- | -------------------- | ---------- | --------- | --------- | ------------------------------------------------------------------------------------ |
+| CVE-2025-69262  | pnpm                 | 0          | 0         | 0         | RETIRE (dead before this task — Trivy-silent already on pnpm 10.34.5)                |
+| CVE-2025-69263  | pnpm                 | 0          | 0         | 0         | RETIRE (dead before this task — Trivy-silent already on pnpm 10.34.5)                |
+| CVE-2026-55697  | pnpm                 | 0          | 0         | 0         | RETIRE (dead before this task — Trivy-silent already on pnpm 10.34.5)                |
+| CVE-2026-13149  | brace-expansion      | 0          | 0         | 0         | RETIRE (dead before this task — Trivy-silent already on pnpm 10.34.5)                |
+| CVE-2026-14257  | brace-expansion      | 1          | 0         | 0         | RETIRE (version-patched by 10.34.6: 2.1.2 → 2.1.7)                                   |
+| CVE-2026-69152  | brace-expansion      | 1          | 0         | 0         | RETIRE (version-patched by 10.34.6: 2.1.2 → 2.1.7)                                   |
+| CVE-2026-73566  | tar                  | 1          | 0         | 0         | RETIRE (version-patched by 10.34.6: 7.5.19 → 7.5.22)                                 |
+| CVE-2026-69192  | ip-address           | 1          | 0         | 0         | RETIRE (version-patched by 10.34.6: 10.2.0 → 10.7.2)                                 |
+| CVE-2026-102276 | brace-expansion      | 1          | 0         | 0         | not in the old `.trivyignore`; version-patched by 10.34.6 (the Build & Push blocker) |
+| CVE-2026-102278 | brace-expansion      | 1          | 0         | 0         | not in the old `.trivyignore`; version-patched by 10.34.6 (the Build & Push blocker) |
+| CVE-2026-93748  | http-cache-semantics | 1          | 1         | 0         | KEEP (new) — unfixable, measured non-reachable (above)                               |
+
+Remaining findings after the change (unignored): API — 13 MEDIUM/LOW in the application tree
+(`ip-address@10.4.0`, `stream-json`, `fast-xml-parser`, `decode-uri-component`, `fast-uri`,
+`esbuild`, `fast-copy`) plus the HIGH `CVE-2026-93748`; web — none. None is CRITICAL/HIGH, so none
+is gated.
+
+### DISC-01 — why the dead-exception rule also removes the three pnpm ids
+
+Phase 102 (IMG-04) kept `CVE-2025-69262`, `CVE-2025-69263` and `CVE-2026-55697` in `.trivyignore`
+although Trivy was already silent on them. That stance is reversed here. An ignore entry only acts on
+a finding Trivy actually produces; for an id Trivy does not report it protects nothing and can only
+hide the finding if a later DB update or a regression brings it back — the opposite of fail-closed.
+Removing it makes the gate the judge: if Trivy's DB ever flags pnpm 10.34.6 for `CVE-2026-55697`, the
+gate goes red and forces the re-decision. The IMG-04 analysis of the disputed `CVE-2026-55697` 10.x
+backport above stays valid history. The same rule retired the five ids that pnpm 10.34.6 itself
+patches.
+
+### DISC-02 — historical rows
+
+The IMG-04 and `quick-260825-qx4` sections above are NOT rewritten to say 10.34.6: this ledger's
+rule is not to hand-edit a measured number without re-running its command. They carry a
+"superseded" pointer to this section instead.
+
+### Gated scan (CI-equivalent)
+
+Command: `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache/trivy -v "$PWD/.trivyignore:/.trivyignore" aquasec/trivy:0.70.0 image --quiet --severity CRITICAL,HIGH --ignorefile /.trivyignore --scanners vuln --exit-code 1 <image>`
+with the new `.trivyignore` (severity filter unchanged).
+
+| Image                | Exit code |
+| -------------------- | --------- |
+| `clokr-api:cve-test` | 0         |
+| `clokr-web:cve-test` | 0         |
+
+### Functional proof
+
+- `pnpm install --frozen-lockfile` under pnpm 10.34.6 succeeded on the host (`Done in 3.9s using pnpm
+v10.34.6`) and in both Docker `deps` stages (both builds exit 0); `git diff pnpm-lock.yaml` is
+  empty.
+- `clokr-api:cve-test`: `pnpm tsx --version` from `/app/apps/api` → `tsx v4.23.15` / `node v24.21.0`,
+  exit 0.
+- `clokr-web:cve-test`: `command -v pnpm` returns nothing.
