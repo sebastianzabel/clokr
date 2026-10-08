@@ -27,13 +27,24 @@
  */
 
 import type { PrismaClient } from "@clokr/db";
-import { dateStrInTz } from "../working-time-account"; // Phase 101B
+import { formatInTimeZone } from "date-fns-tz";
 import { evaluateDayBreaks, type DayBreakEvaluation, type DayBreakRow } from "./day-break-rule";
 import {
   closedWorkRowsInRange,
   loadDayBreakDataForDays,
   type DayBreakStoreDb,
 } from "./day-break-store";
+
+/**
+ * The tenant-local calendar-day key ("YYYY-MM-DD") — the same format `dateStrInTz()` of the
+ * Arbeitszeitkonto produces. It is formatted here directly on purpose: this module is exported by
+ * `contexts/time-tracking/index.ts` and consumed by Arbeitszeitkonto, so importing that context's
+ * index back would add this module to the measured import cycle (CI gate `--cycles --check`,
+ * Issue #101) without any need.
+ */
+function dayKeyInTz(date: Date, tz: string): string {
+  return formatInTimeZone(date, tz, "yyyy-MM-dd");
+}
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -79,7 +90,7 @@ function candidateGroups(rows: readonly CrossSalonRow[], tz: string): DayGroup[]
   const byKey = new Map<string, DayGroup>();
   for (const row of rows) {
     if (row.endTime === null) continue; // open entries are not part of a day evaluation
-    const day = dateStrInTz(row.date, tz);
+    const day = dayKeyInTz(row.date, tz);
     const key = `${row.employeeId}\u0000${day}`;
     let group = byKey.get(key);
     if (!group) {
@@ -146,12 +157,12 @@ export async function findUnacknowledgedCrossSalonDays(
   });
   const breaksByKey = new Map<string, typeof dayBreaks>();
   for (const b of dayBreaks) {
-    const key = `${b.employeeId}\u0000${dateStrInTz(b.date, opts.tz)}`;
+    const key = `${b.employeeId}\u0000${dayKeyInTz(b.date, opts.tz)}`;
     breaksByKey.set(key, [...(breaksByKey.get(key) ?? []), b]);
   }
   const acksByKey = new Map<string, typeof acks>();
   for (const a of acks) {
-    const key = `${a.employeeId}\u0000${dateStrInTz(a.date, opts.tz)}`;
+    const key = `${a.employeeId}\u0000${dayKeyInTz(a.date, opts.tz)}`;
     acksByKey.set(key, [...(acksByKey.get(key) ?? []), a]);
   }
 
