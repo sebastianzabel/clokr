@@ -11,6 +11,16 @@
   import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-fkz
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
+  import DayBreakPanel from "$lib/components/breaks/DayBreakPanel.svelte"; // Issue #80
+  // Issue #80 (D-09c/D-10/D-20) — the notification deep link and the server-computed day checks;
+  // the browser never derives a cross-salon finding itself.
+  import { normalizeDateParam, normalizeEmployeeIdParam } from "$lib/breaks/deep-link";
+  import {
+    type DayCheck,
+    type DayChecksResponse,
+    isChecksRangeAllowed,
+    mergeDayChecksIntoArbzgMap,
+  } from "$lib/breaks/day-break-violation";
   import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   // Phase 116 (GitHub issue #119) — same module the own /time-entries page uses; one answer,
@@ -253,6 +263,9 @@
   // Korrektur (editEntry set AND the manager is not the entry's own employee).
   let formReason = $state("");
   let defaultBreakStart: string | null = $state(null);
+  // Issue #80 (D-20) — server day checks of the loaded range (multi-entry days only). For a
+  // partially scoped manager a day arrives redacted; the page renders it as received.
+  let dayChecks = $state<DayCheck[]>([]);
 
   // ── Employee selector state ────────────────────────────────────────────────
   let employees: Employee[] = $state([]);
@@ -275,7 +288,9 @@
     // Read URL params
     const viewParam = $page.url.searchParams.get("view");
     if (viewParam === "list") teView = "list";
-    const dateParam = $page.url.searchParams.get("date");
+    // Issue #80 (D-10): the param is untrusted text — an unreal day keeps the default month
+    // instead of reaching date-fns with an Invalid Date.
+    const dateParam = normalizeDateParam($page.url.searchParams.get("date"));
     if (dateParam) {
       selectedDate = dateParam;
       calMonth = new Date(dateParam + "T12:00:00");
@@ -293,7 +308,15 @@
     } catch {
       // Non-fatal — selector stays empty
     }
-    // Do NOT call loadAll() here — wait for employee selection
+    // Issue #80 (D-10): the BREAK_CROSS_SALON_VIOLATION notification link preselects the
+    // employee. Only an id present in the caller's own list counts — an unknown or foreign id
+    // leaves the selector empty without an error, and the server scopes every read anyway.
+    const linkedEmployeeId = normalizeEmployeeIdParam($page.url.searchParams.get("employeeId"));
+    if (linkedEmployeeId) {
+      const linked = employees.find((e) => e.id.toLowerCase() === linkedEmployeeId);
+      if (linked) await selectEmployee(linked);
+    }
+    // Without a (valid) employee link do NOT call loadAll() here — wait for employee selection
   });
 
   async function loadAll() {
@@ -313,6 +336,7 @@
       shiftMinByDate = new Map();
       monthSaldo = null;
       calendarDays = [];
+      dayChecks = [];
       // Phase 116 (issue #119) — clear the flag on the path that never sets it. `loading` now
       // starts TRUE (see its declaration), and this branch returns before the try/finally that
       // would otherwise clear it. Without this line the page would sit in a permanent skeleton
@@ -335,6 +359,7 @@
         rawEmployee,
         rawConfig,
         rawBsAbsences,
+        rawDayChecks,
       ] = await Promise.all([
         api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}&employeeId=${empId}`),
         settled(api.get<WorkSchedule>(`/settings/work/${empId}`)),
@@ -367,8 +392,18 @@
             `/vocational-school/upcoming?from=${fromDate}&to=${toDate}&employeeId=${empId}`,
           )
           .catch(() => [] as BsAbsence[]),
+        // Issue #80 (D-09c/D-20) — server day checks for the shown range. Non-fatal: a failed
+        // check must never break the page, and the call is skipped for a range the API refuses.
+        isChecksRangeAllowed(fromDate, toDate)
+          ? api
+              .get<DayChecksResponse>(
+                `/day-breaks/checks?employeeId=${empId}&from=${fromDate}&to=${toDate}`,
+              )
+              .catch(() => null)
+          : Promise.resolve(null),
       ]);
       entries = rawEntries;
+      dayChecks = rawDayChecks?.days ?? [];
       schedule = valueOr(rawSchedule, null);
       holidays = new Map(rawHolidays.map((h) => [h.date.split("T")[0], h.name]));
       absences = rawAbsences;
@@ -884,6 +919,37 @@
     }
   });
 
+  // ── Issue #80 — day breaks and acknowledgements of a multi-entry day ────────
+  // The panel hands over "HH:MM" on the check's day; the ISO conversion mirrors saveEntry() so a
+  // day break lines up with the entries it sits between. API errors are rethrown on purpose: the
+  // panel / ReasonDialog shows the German message.
+  async function addDayBreak(date: string, slot: { startLocal: string; endLocal: string }) {
+    if (!selectedEmployeeId) return;
+    await api.post("/day-breaks", {
+      employeeId: selectedEmployeeId,
+      date,
+      startTime: new Date(`${date}T${slot.startLocal}:00`).toISOString(),
+      endTime: new Date(`${date}T${slot.endLocal}:00`).toISOString(),
+    });
+    await loadAll();
+  }
+
+  async function deleteDayBreak(id: string, reason: string) {
+    await api.delete(`/day-breaks/${id}`, { reason });
+    await loadAll();
+  }
+
+  async function acknowledgeDay(date: string, reason: string) {
+    if (!selectedEmployeeId) return;
+    await api.post("/day-breaks/acks", { employeeId: selectedEmployeeId, date, reason });
+    await loadAll();
+  }
+
+  async function revokeDayAck(ackId: string, reason: string) {
+    await api.delete(`/day-breaks/acks/${ackId}`, { reason });
+    await loadAll();
+  }
+
   async function saveEntry() {
     // Quick 260824-cjd: Begründung ist Pflicht bei einer echten Korrektur —
     // client-seitig vorab geblockt, mit derselben Fehlermeldung wie die API.
@@ -1214,7 +1280,8 @@
       const warnings = checkArbZGFrontend(dayEntries);
       if (warnings.length > 0) map.set(dateStr, warnings);
     }
-    return map;
+    // Issue #80 (D-09c/D-20): multi-entry days carry the SERVER result instead of the client check.
+    return mergeDayChecksIntoArbzgMap(map, dayChecks);
   });
 
   // Legend is derived from what the displayed month actually contains, and split by the
@@ -1453,6 +1520,20 @@
       {loading}
     />
   </div>
+
+  <!-- Issue #80 — one panel per multi-entry day of the server's day check. The panel renders
+       nothing for a day without a cross-salon finding or a recorded day break, so single-entry
+       days look exactly as before. Acknowledge/revoke are offered only where the server's
+       mayAcknowledge allows (D-08); the page makes no permission decision of its own. -->
+  {#each dayChecks as dayCheck (dayCheck.date)}
+    <DayBreakPanel
+      check={dayCheck}
+      onAddBreak={(slot) => addDayBreak(dayCheck.date, slot)}
+      onDeleteBreak={deleteDayBreak}
+      onAcknowledge={(reason) => acknowledgeDay(dayCheck.date, reason)}
+      onRevoke={revokeDayAck}
+    />
+  {/each}
 
   <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
   {#if teView === "calendar"}
