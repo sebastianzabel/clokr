@@ -58,7 +58,7 @@ test.describe("Error Handling + UX Plausibility", () => {
     await screenshotPage(page, "flow-error-password-change");
   });
 
-  test("dashboard provides clear information hierarchy", async ({ page }) => {
+  test("dashboard provides clear information hierarchy", async ({ page }, testInfo) => {
     await page.goto("/dashboard");
 
     // 1. The page greets the user (PageHead h1 "Guten Morgen/Tag/Abend, <name>").
@@ -72,15 +72,24 @@ test.describe("Error Handling + UX Plausibility", () => {
     const fontSize = await clock.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
     expect(fontSize).toBeGreaterThanOrEqual(24);
 
-    // 3. The hero card and the KPI pair both start inside the device's first viewport. "Above the
-    // fold" is measured against the device viewport, not a fixed 600px, which was a desktop-only
-    // assumption: the layout goes single-column at max-width 900px (dashboard +page.svelte:2019),
-    // where the KPI pair is stacked under the hero on Pixel 7 and iPad. In the two-column layout
-    // both start in the same row, so "the KPI pair never starts above the hero" holds in both
-    // without a viewport branch.
+    // 3. Hierarchy: the hero starts inside the device's first viewport on EVERY project, and the
+    // KPI pair never starts above the hero. The layout goes single-column at max-width 900px
+    // (dashboard +page.svelte:2019): there the KPI pair is stacked under the hero, so it must start
+    // at or below the hero's bottom; in the two-column layout both start in the same row, so it
+    // must start at or below the hero's top.
+    //
+    // Decision for issue #506 (orchestrator, 2026-10-08): "KPI pair inside the first viewport" is
+    // NOT a requirement on the phone project. The calm mobile layout puts the clock first and lets
+    // the content follow by scrolling (measured on Pixel 7: KPI top ~1124px vs viewport 839px), and
+    // the former fixed 600px check never ran on mobile, so no such requirement was ever
+    // established. It still holds on desktop-chrome and tablet. The device distinction is this ONE
+    // bound; the mobile project is not skipped and still asserts the order above.
     const viewport = page.viewportSize();
     expect(viewport).not.toBeNull();
     const viewportHeight = viewport?.height ?? 0;
+    const singleColumn = (viewport?.width ?? 0) <= 900;
+    const kpiMustBeInFirstViewport = testInfo.project.name !== "mobile-chrome";
+    const kpiViewportBound = kpiMustBeInFirstViewport ? viewportHeight : Number.POSITIVE_INFINITY;
 
     const hero = page.locator(".timer-card-wrap");
     const kpiPair = page.locator(".kpi-pair");
@@ -90,9 +99,12 @@ test.describe("Error Handling + UX Plausibility", () => {
     const kpiBox = await kpiPair.boundingBox();
     expect(heroBox).not.toBeNull();
     expect(kpiBox).not.toBeNull();
-    expect(heroBox?.y ?? Infinity).toBeLessThan(viewportHeight);
-    expect(kpiBox?.y ?? Infinity).toBeLessThan(viewportHeight);
-    expect(kpiBox?.y ?? -Infinity).toBeGreaterThanOrEqual((heroBox?.y ?? Infinity) - 1);
+    const heroTop = heroBox?.y ?? Number.POSITIVE_INFINITY;
+    const heroBottom = heroTop + (heroBox?.height ?? Number.POSITIVE_INFINITY);
+    const kpiTop = kpiBox?.y ?? Number.NEGATIVE_INFINITY;
+    expect(heroTop).toBeLessThan(viewportHeight);
+    expect(kpiTop).toBeGreaterThanOrEqual(singleColumn ? heroBottom - 1 : heroTop - 1);
+    expect(kpiTop).toBeLessThan(kpiViewportBound);
 
     await screenshotPage(page, "flow-dashboard-hierarchy");
   });
