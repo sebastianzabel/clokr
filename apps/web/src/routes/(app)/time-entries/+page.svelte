@@ -6,6 +6,7 @@
   // edit modal provably share one mapping and the colour/copy contract is unit-testable.
   import { breakBadgeClass, breakBadgeLabel, isUnconfirmedBreak } from "$lib/breaks/break-badge";
   import UnconfirmedBreakPanel from "$lib/components/breaks/UnconfirmedBreakPanel.svelte";
+  import DayBreakPanel from "$lib/components/breaks/DayBreakPanel.svelte"; // Issue #80
   // Issue #80 (D-09d/D-20) — server-computed day checks; the browser never derives a
   // cross-salon finding itself.
   import {
@@ -1103,6 +1104,37 @@
     return { startISO, endISO, breaksPayload };
   }
 
+  // ── Issue #80 — day breaks and acknowledgements of a multi-entry day ─────────
+  // The panel hands over "HH:MM" on the check's day; the ISO conversion mirrors
+  // buildManualEntryFields() so a day break lines up with the entries it sits between.
+  // API errors are rethrown on purpose: the panel / ReasonDialog shows the German message.
+  async function addDayBreak(date: string, slot: { startLocal: string; endLocal: string }) {
+    if (!ownEmployeeId) return;
+    await api.post("/day-breaks", {
+      employeeId: ownEmployeeId,
+      date,
+      startTime: new Date(`${date}T${slot.startLocal}:00`).toISOString(),
+      endTime: new Date(`${date}T${slot.endLocal}:00`).toISOString(),
+    });
+    await loadAll();
+  }
+
+  async function deleteDayBreak(id: string, reason: string) {
+    await api.delete(`/day-breaks/${id}`, { reason });
+    await loadAll();
+  }
+
+  async function acknowledgeDay(date: string, reason: string) {
+    if (!ownEmployeeId) return;
+    await api.post("/day-breaks/acks", { employeeId: ownEmployeeId, date, reason });
+    await loadAll();
+  }
+
+  async function revokeDayAck(ackId: string, reason: string) {
+    await api.delete(`/day-breaks/acks/${ackId}`, { reason });
+    await loadAll();
+  }
+
   async function saveEntry() {
     saving = true;
     saveError = "";
@@ -1822,6 +1854,20 @@
       if (target) openEdit(target);
     }}
   />
+
+  <!-- Issue #80 — one panel per multi-entry day of the server's day check. The panel renders
+       nothing for a day without a cross-salon finding or a recorded day break, so single-entry
+       days look exactly as before. Acknowledge/revoke are passed so the server's flags and its
+       own 403 decide — the page makes no permission decision. -->
+  {#each dayChecks as dayCheck (dayCheck.date)}
+    <DayBreakPanel
+      check={dayCheck}
+      onAddBreak={(slot) => addDayBreak(dayCheck.date, slot)}
+      onDeleteBreak={deleteDayBreak}
+      onAcknowledge={(reason) => acknowledgeDay(dayCheck.date, reason)}
+      onRevoke={revokeDayAck}
+    />
+  {/each}
 
   <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
   {#if teView === "calendar"}

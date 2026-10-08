@@ -102,7 +102,7 @@ export function isChecksRangeAllowed(from: string, to: string): boolean {
 }
 
 /** Hours with one decimal and a German decimal comma, e.g. 480 -> "8,0". */
-function hoursDe(minutes: number): string {
+export function hoursDe(minutes: number): string {
   return (minutes / 60).toFixed(1).replace(".", ",");
 }
 
