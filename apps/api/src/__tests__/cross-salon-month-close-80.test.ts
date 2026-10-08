@@ -17,6 +17,7 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
+import { getDeferredMonthCloseState } from "../contexts/working-time-account/deferred-month-close";
 import { evaluateDayBreaks } from "../contexts/time-tracking/day-break-rule";
 
 vi.mock("../contexts/time-tracking/facade/time-entries", async (importOriginal) => {
@@ -114,6 +115,7 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
   async function createEmployee(
     label: string,
     scheduleType: "FIXED_SCHEDULE" | "MONTHLY_HOURS" = "FIXED_SCHEDULE",
+    opts: { skipDay?: string } = {},
   ): Promise<string> {
     const prisma = app.prisma;
     const s = `${label}-${++seq}-${Date.now().toString(36)}`;
@@ -157,6 +159,7 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
     // A complete month of real, single-salon entries (no gap). The violation day is replaced in
     // the T2 read by the constructed two-salon rows.
     for (const d of marchWorkdays()) {
+      if (d === opts.skipDay) continue;
       await prisma.timeEntry.create({
         data: {
           employeeId: emp.id,
@@ -396,6 +399,211 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
       const res = await closeMonth(empId);
 
       expect(res.statusCode, res.body).toBe(409);
+    });
+  });
+  // ── Status listing (D-15, OQ-3) ─────────────────────────────────────────────────────────────
+  describe("GET /overtime/close-month/status — crossSalonBreakDays", () => {
+    type StatusRow = { employeeId: string; status: string; crossSalonBreakDays?: string[] };
+
+    async function statusRows(): Promise<StatusRow[]> {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/overtime/close-month/status",
+        headers: { authorization: `Bearer ${adminToken}` },
+        query: { year: String(YEAR), month: String(MONTH) },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      return (JSON.parse(res.body) as { employees: StatusRow[] }).employees;
+    }
+
+    async function statusRow(employeeId: string): Promise<StatusRow> {
+      const row = (await statusRows()).find((e) => e.employeeId === employeeId);
+      expect(row, "employee must appear in the status response").toBeDefined();
+      return row!;
+    }
+
+    it("lists the violation day of a FIXED_SCHEDULE employee", async () => {
+      const empId = await createEmployee("st-fixed");
+      twoSalonDay(empId);
+      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([VIOLATION_DAY]);
+    });
+
+    it("lists it for a MONTHLY_HOURS employee too (gap-free branch, D-15)", async () => {
+      const empId = await createEmployee("st-monthly", "MONTHLY_HOURS");
+      twoSalonDay(empId);
+      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([VIOLATION_DAY]);
+    });
+
+    it("is [] for an employee without a cross-salon day", async () => {
+      const empId = await createEmployee("st-clean");
+      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([]);
+    });
+
+    it("is shown regardless of the block flag and of enforceBreakConfirmation (OQ-3)", async () => {
+      await setFlags({ blockMonthCloseOnUnconfirmedBreak: false, enforceBreakConfirmation: false });
+      const empId = await createEmployee("st-flagoff");
+      twoSalonDay(empId);
+      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([VIOLATION_DAY]);
+    });
+
+    it("is [] once a current acknowledgement exists and the day returns when it goes stale (D-17)", async () => {
+      const empId = await createEmployee("st-ack");
+      const rows = twoSalonDay(empId);
+      const snapshot = currentSnapshot(rows);
+      const ack = await app.prisma.dayBreakAck.create({
+        data: {
+          employeeId: empId,
+          date: dateOf(VIOLATION_DAY),
+          reason: "Kundentermin ohne Unterbrechung",
+          snapshot,
+          acknowledgedBy: adminUserId,
+        },
+      });
+      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([]);
+
+      await app.prisma.dayBreakAck.update({
+        where: { id: ack.id },
+        data: { snapshot: { ...snapshot, totalBreakMin: snapshot.totalBreakMin + 5 } },
+      });
+      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([VIOLATION_DAY]);
+    });
+
+    it("never lists a § 3-only day: enough break recorded, 11 h net across two salons (D-18)", async () => {
+      const empId = await createEmployee("st-s3only");
+      const rows = [
+        { ...row(empId, VIOLATION_DAY, salonA, "06:00", "12:00"), breakMinutes: 45 },
+        row(empId, VIOLATION_DAY, salonB, "12:30", "18:30"),
+      ] as T2Row[];
+      constructed.set(empId, rows);
+      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([]);
+      const res = await closeMonth(empId);
+      expect(res.statusCode, res.body).toBe(201);
+    });
+
+    it("is [] for a closed month", async () => {
+      const empId = await createEmployee("st-closed");
+      expect((await closeMonth(empId)).statusCode).toBe(201);
+      twoSalonDay(empId); // the day looks like a violation afterwards, but the month is closed
+      const closed = await statusRow(empId);
+      expect(closed.status).toBe("closed");
+      expect(closed.crossSalonBreakDays).toEqual([]);
+    });
+
+    it("issues no DayBreak / DayBreakAck query without a candidate day and exactly one per model with one", async () => {
+      await createEmployee("st-perf-clean");
+      const breakSpy = vi.spyOn(app.prisma.dayBreak, "findMany");
+      const ackSpy = vi.spyOn(app.prisma.dayBreakAck, "findMany");
+      try {
+        await statusRows();
+        expect(breakSpy).not.toHaveBeenCalled();
+        expect(ackSpy).not.toHaveBeenCalled();
+
+        twoSalonDay(await createEmployee("st-perf-a"));
+        twoSalonDay(await createEmployee("st-perf-b"));
+        await statusRows();
+        expect(breakSpy).toHaveBeenCalledTimes(1);
+        expect(ackSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        breakSpy.mockRestore();
+        ackSpy.mockRestore();
+      }
+    });
+  });
+
+  // ── Auto-close and deferred-close reporter (D-15) ────────────────────────────────────────────
+  describe("auto-close defer and deferred-close reason", () => {
+    const AFTER_WINDOW = new Date("2026-04-20T06:00:00.000Z");
+
+    async function runAutoClose() {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(AFTER_WINDOW);
+      try {
+        await app.tryAutoCloseMonth();
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+
+    function snapshotCount(employeeId: string) {
+      return app.prisma.saldoSnapshot.count({ where: { employeeId, periodType: "MONTHLY" } });
+    }
+
+    it("does not auto-close a month with an unacknowledged cross-salon § 4 day, but closes its clean sibling", async () => {
+      const violating = await createEmployee("ac-violating");
+      const clean = await createEmployee("ac-clean");
+      twoSalonDay(violating);
+
+      await runAutoClose();
+
+      expect(await snapshotCount(violating), "deferred: no snapshot").toBe(0);
+      expect(await snapshotCount(clean), "the clean employee still closes").toBe(1);
+    });
+
+    it("auto-closes once the day is acknowledged with a current snapshot", async () => {
+      const empId = await createEmployee("ac-acked");
+      const rows = twoSalonDay(empId);
+      await app.prisma.dayBreakAck.create({
+        data: {
+          employeeId: empId,
+          date: dateOf(VIOLATION_DAY),
+          reason: "Kundentermin ohne Unterbrechung",
+          snapshot: currentSnapshot(rows),
+          acknowledgedBy: adminUserId,
+        },
+      });
+
+      await runAutoClose();
+
+      expect(await snapshotCount(empId)).toBe(1);
+    });
+
+    it("auto-closes over the day when the block flag is off", async () => {
+      await setFlags({ blockMonthCloseOnUnconfirmedBreak: false });
+      const empId = await createEmployee("ac-flagoff");
+      twoSalonDay(empId);
+
+      await runAutoClose();
+
+      expect(await snapshotCount(empId)).toBe(1);
+    });
+
+    async function deferredEmployee(employeeId: string) {
+      const state = await getDeferredMonthCloseState(app.prisma, tenantId, {
+        now: AFTER_WINDOW,
+        detailed: true,
+        employeeIds: [employeeId],
+      });
+      return state.employees.find((e) => e.employeeId === employeeId);
+    }
+
+    it("the deferred-close reporter names CROSS_SALON_BREAKS with the violation days", async () => {
+      const empId = await createEmployee("dc-cross");
+      twoSalonDay(empId);
+
+      const entry = await deferredEmployee(empId);
+
+      expect(entry).toBeDefined();
+      expect(entry!.reason).toBe("CROSS_SALON_BREAKS");
+      expect(entry!.gapDates).toEqual([VIOLATION_DAY]);
+      expect(entry!.gapCount).toBe(1);
+    });
+
+    it("keeps today's precedence: a gap day wins over the cross-salon reason", async () => {
+      const empId = await createEmployee("dc-gap", "FIXED_SCHEDULE", { skipDay: "2026-03-12" });
+      twoSalonDay(empId);
+
+      const entry = await deferredEmployee(empId);
+
+      expect(entry!.reason).toBe("GAPS");
+      expect(entry!.gapDates).toEqual(["2026-03-12"]);
+    });
+
+    it("reports UNKNOWN when the block flag is off", async () => {
+      await setFlags({ blockMonthCloseOnUnconfirmedBreak: false });
+      const empId = await createEmployee("dc-flagoff");
+      twoSalonDay(empId);
+
+      expect((await deferredEmployee(empId))!.reason).toBe("UNKNOWN");
     });
   });
 });

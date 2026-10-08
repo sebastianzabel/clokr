@@ -17,7 +17,8 @@
  * The cron's `closeMonthWithGapsAllowed=false` branch is the most common cause of a permanent
  * deferral, but it is not the only one: `MONTHLY_HOURS`/`FLEXTIME` employees have no daily gap
  * rule at all ({@link detectMonthGaps} returns `gapRuleApplies: false`), unconfirmed mandatory
- * breaks defer on their own branch, and a run that threw for one employee simply leaves the month
+ * breaks defer on their own branch, an unacknowledged cross-salon § 4 violation (Issue #80, D-15)
+ * defers on another, and a run that threw for one employee simply leaves the month
  * open. Keying the state on gaps would have reported three of the four measured employees and
  * silently dropped the fourth. The state is therefore "months past their window, still unclosed";
  * the CAUSE is reported alongside it as {@link DeferralReason}, best-effort.
@@ -34,7 +35,10 @@
  */
 
 import type { PrismaClient } from "@clokr/db";
-import { findUnconfirmedBreakDays } from "../time-tracking";
+import {
+  findUnacknowledgedCrossSalonDaysForEmployee, // Issue #80 (D-09b/D-15)
+  findUnconfirmedBreakDays,
+} from "../time-tracking";
 import { detectMonthGaps } from "./month-gap-check";
 import {
   DEFAULT_RETRO_ENTRY_WINDOW_DAYS,
@@ -48,7 +52,7 @@ import { dateStrInTz, monthDayBounds, monthRangeUtc } from "./timezone";
 export type DeferredMonthCloseSeverity = "NONE" | "INFO" | "WARNING" | "CRITICAL";
 
 /** Why the oldest overdue month is still open, as far as it can be determined from the data. */
-export type DeferralReason = "GAPS" | "UNCONFIRMED_BREAKS" | "UNKNOWN";
+export type DeferralReason = "GAPS" | "UNCONFIRMED_BREAKS" | "CROSS_SALON_BREAKS" | "UNKNOWN";
 
 export type DeferredMonthCloseEmployee = {
   employeeId: string;
@@ -237,6 +241,20 @@ export async function getDeferredMonthCloseState(
           if (unconfirmed.length > 0) {
             reason = "UNCONFIRMED_BREAKS";
             gapDates = unconfirmed;
+          } else {
+            // Issue #80 (D-09b/D-15): same flag, but independent of enforceBreakConfirmation and
+            // of the schedule type — the cron defers on it, so the reporter must name it.
+            const crossSalon = await findUnacknowledgedCrossSalonDaysForEmployee(db, {
+              tenantId,
+              employeeId: emp.id,
+              monthFirstDay: firstDay,
+              monthLastDay: lastDay,
+              tz,
+            });
+            if (crossSalon.length > 0) {
+              reason = "CROSS_SALON_BREAKS";
+              gapDates = crossSalon;
+            }
           }
         }
       }
