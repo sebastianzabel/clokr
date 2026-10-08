@@ -28,17 +28,22 @@ The shipping image is bit-identical to the image that passed the Trivy scan on m
    `ghcr.io/{owner}/clokr-{api,web}:sha-{SHA}`, Trivy scans them. The API image also bakes
    `docs/release-notes/` into itself via `apps/api/Dockerfile` — the notes file from step 2 is
    already on `main` by the time this build runs, so it is inside the image it describes.
-5. **`release.yml` promotes — but check it actually started.** It **waits** for the `:sha-{SHA}`
-   image to appear (up to 30 min), then `crane copy`s it to `:X.Y.Z`, `:X.Y` and `:latest`. No
-   rebuild — the shipped image is bit-identical to the scanned one. Promotion is only automatic
-   once `RELEASE_PLEASE_TOKEN` exists (see "Why release.yml does not start by itself" below);
-   until then, verify a `Release — Promote & Publish` run exists for the tag and start one by
-   hand if not: `gh workflow run release.yml --ref main -f tag=vX.Y.Z`.
+5. **`release.yml` gates, then promotes — but check it actually started.** First the
+   `build-push-gate` job requires the Build & Push run of the tagged commit to be `success`. It
+   waits up to 45 min while that run is queued or running, and aborts with a German annotation
+   when the run is red (`Release-Gate: Build & Push rot`), missing (no run after 5 min,
+   `Release-Gate: Build & Push fehlt`) or still running at 45 min (`Release-Gate:
+Zeitüberschreitung`). Only then does `promote` `crane copy` the `:sha-{SHA}` image to
+   `:X.Y.Z`, `:X.Y` and `:latest`. No rebuild — the shipped image is bit-identical to the scanned
+   one. Promotion is only automatic once `RELEASE_PLEASE_TOKEN` exists (see "Why release.yml does
+   not start by itself" below); until then, verify a `Release — Promote & Publish` run exists for
+   the tag and start one by hand if not: `gh workflow run release.yml --ref main -f tag=vX.Y.Z`.
 6. **`release.yml`'s `publish-notes` job sets the GitHub Release title and body** from
    `docs/release-notes/vX.Y.Z.md` — the same file baked into the image in step 4. Nothing is
    written by hand at this point; this REPLACES the former manual step, it is not an extra one.
-7. **Verify:** `curl https://{your-host}/api/v1/version` returns `{"version":"X.Y.Z"}`. The
-   Sidebar shows `vX.Y.Z` below the logout button.
+7. **Verify after the pin.** The deployed version can only be seen once int and prod have been
+   pinned to the new tag — see "Getting the release onto int and prod" below for the manual
+   `curl` check after each pin.
 
 ### Why the notes moved in front of the build
 
@@ -57,17 +62,52 @@ This REPLACES a manual step; it does not add one. The rest of the pipeline is un
 version is still bumped before the tag (step 3), and promotion (step 5) is still a
 digest-preserving re-tag with no rebuild.
 
-### Why release.yml waits for the image
+### Why release.yml waits for a green Build & Push run
 
 The bump-before-tag rule below still holds — it is just enforced by machinery now instead of by
 memory. But automation changed the timing: a human cut the Release only _after_ Build & Push was
 green, so the `:sha-` image was always already there. release-please publishes the Release the
-instant its PR merges — the same push that _starts_ the build. Promote now reliably arrives
-first, so it polls for the image rather than failing on a source tag that does not exist yet.
-The two runs are triggered by different events and cannot `needs:` one another.
+instant its PR merges — the same push that _starts_ the build. `release.yml` therefore arrives
+first and has to wait. The two runs are triggered by different events, so a plain `needs:`
+between the workflows is impossible; the `build-push-gate` job polls the Build & Push run of the
+tagged commit through the Actions API instead (`.github/scripts/release-gate.mjs`).
 
-If that wait ever times out, Build & Push failed or never ran. Fix that; do not promote a
-different image.
+It waits for the **run to be green**, not for the image to exist, because `build-push.yml` pushes
+the `:sha-` image _before_ its Trivy step. An existing image proves nothing about the scan.
+Issue #507 is what happens otherwise: Build & Push was red on `main` from 30.09. to 08.10. (40
+runs in a row) and v1.13.1, v1.14.0, v1.14.1 and v1.15.0 were promoted anyway, because the only
+check was that the image exists. `promote` still has its own cheap existence check before the
+copy; it is a guard for the copy, not the gate.
+
+When the gate aborts, nothing has been promoted. Recovery per outcome:
+
+- **`Build & Push rot`** — open the named run. For a one-off failure re-run the failed jobs and
+  start the release again: `gh run rerun <id> --failed`, then
+  `gh workflow run release.yml --ref main -f tag=vX.Y.Z`. For a real finding fix it on `main` and
+  cut a new release. Never promote a different image by hand.
+- **`Build & Push fehlt`** — no Build & Push run exists for the tagged commit (for example a
+  commit that never triggered it). Find out why; never promote by hand.
+- **`Zeitüberschreitung`** — the run was still going after 45 min. Once it has finished, dispatch
+  again: `gh workflow run release.yml --ref main -f tag=vX.Y.Z`.
+
+The wait holds the workflow-wide `release-promote` concurrency group, so a later release queues
+behind it instead of racing it.
+
+### When main goes red
+
+`.github/workflows/main-red-alarm.yml` turns a red `main` into a visible signal:
+
+- It runs when **Build & Push** completes on `main`. `release/**` branches never count.
+- It keeps exactly one open issue titled `main ist rot` with the label `bug`. The first failed
+  run creates it, every further failed run adds a comment (run link and failed jobs), and the next
+  green run closes it with a comment. There is never a second issue, and the same run attempt is
+  never reported twice.
+- The issue mirrors the **newest completed** run, so runs finishing out of order can neither
+  close the alarm while `main` is still red nor reopen it for a stale run.
+- Replay or prove it for one specific run:
+  `gh workflow run main-red-alarm.yml -f run_id=<id> -f dry_run=true`. `dry_run` defaults to
+  `true`; `dry_run=false` writes. An empty `run_id` reconciles against the newest run on `main`.
+- An open `main ist rot` issue means: no release. The gate would block it anyway.
 
 ### Why release.yml does not start by itself
 
@@ -159,8 +199,9 @@ you believed was token-enabled, check whether the PAT expired and rotate it.
 
 One shared version across root, `apps/api` and `apps/web` — release-please bumps the root and
 carries the other two via `extra-files` (`release-please-config.json`). The version is a
-_deployment_ fact here, not a package fact: it is baked into the image and asserted against the
-tag by the smoke test, so letting the three drift apart would break that check. `packages/db`,
+_deployment_ fact here, not a package fact: it is baked into the image and compared with the
+tag by the manual version check after each pin, so letting the three drift apart would break
+that check. `packages/db`,
 `packages/types` and `packages/mcp` are internal and keep their own fixed versions.
 
 Only `feat`, `fix`, `perf` and `refactor` appear in the changelog. `docs`, `test`, `chore`,
@@ -190,9 +231,10 @@ in place so a maintenance line can be reopened without a workflow change.
 
 ## What `release.yml` now does (previously "not yet")
 
-All three items below have shipped:
+The items below have shipped:
 
-- **Post-promote smoke tests** — the `smoke-test` job in `release.yml` curls `/api/v1/health` + asserts `/api/v1/version` matches the tag (Phase 70, DEVOPS-V8-05). It runs against int (`vars.INT_BASE_URL`); prod stays manual per D-04.
+- **Build & Push gate** — the `build-push-gate` job in `release.yml` (Issue #507) must pass before `promote` starts: the Build & Push run of the tagged commit has to be `success`.
+- **Int probe after promote: removed (Issue #507).** The former `smoke-test` job (Phase 70, DEVOPS-V8-05) probed int's `/api/v1/version` right after promote. int is pinned by hand later, so the probe raced a human: on v1.14.0 the pin landed about 23 h after promote and the job was red; v1.14.1 and v1.15.0 were green only because the pin happened to land minutes before the probe. A job that waits for the pin has two choices at its timeout. Failing is a false red. Passing is a green tick that checked nothing. Either way the wait would hold the `release-promote` concurrency group and block the next release. The version check now happens at the moment int and prod are actually switched; see "Getting the release onto int and prod".
 - **SBOM generation** — `release.yml` runs `anchore/sbom-action` to generate an SBOM for the published images (Phase 70, DEVOPS-V8-04).
 - **Rollback automation** — shipped as the operator runbook `docs/prod-deploy.md` (there is no `docs/rollback.md`). It documents `crane copy` re-tag + `.env` image-var rollback paths (DEVOPS-V8-08).
 
@@ -218,6 +260,26 @@ Steps 1-7 above produce and publish the image. They do **not** deploy it. Two ma
 **Do not use `kubectl set image` on int.** The ArgoCD Application has `syncPolicy.automated` with
 `selfHeal: true`; an imperative image change is reverted within seconds and the rollout silently
 goes back to the pinned tag. The homelab repo is the only durable path.
+
+### Check the deployed version after each pin
+
+Check the version at the moment you switch each environment, not before:
+
+```bash
+curl -fsS https://{int-host}/api/v1/version    # after the int pin has synced
+curl -fsS https://{prod-host}/api/v1/version   # after the prod recreate
+```
+
+Use your own hostnames; the int host lives in k8s-homelab's `ingress.host` parameter and is not
+written into this public repo. Each call must return `{"version":"X.Y.Z"}`, and the Sidebar must
+show `vX.Y.Z`.
+
+- An **old version** right after the pin means the pin has not synced or the pods have not rolled
+  yet: check ArgoCD on int, the container recreate on prod.
+- A **mismatch after a clean sync** means "bump before tag" below was violated: the image was built
+  before the version bump.
+
+The repository variable that once held int's base URL is no longer read by any workflow.
 
 ## Upgrade path: do not skip a version on prod
 
@@ -259,7 +321,7 @@ pod's `migrate deploy` aborts and the pod never becomes healthy.
 The version is baked into the image at build time from `package.json`
 (`apps/api/src/app.ts:59-65`) and served by `GET /api/v1/version`. Promotion is a digest-preserving
 re-tag — **no rebuild** — so an image built _before_ the version bump keeps reporting the old
-version under the new tag, and the smoke test fails correctly.
+version under the new tag, and the manual version check after the pin shows the old version.
 
 On the patch line this is easy to get wrong, because there is no PR/merge step to force the order:
 push the `chore(release): bump version to X.Y.Z` commit, wait for **Build & Push** to go green on
@@ -267,9 +329,11 @@ _that_ commit, and only then tag it.
 
 ## Known behaviours that look like failures
 
-- **The `smoke-test` job is red on a first pass, by construction.** It probes int's
-  `/api/v1/version` right after promote, but int is only repointed in the manual step above. Re-run
-  it after bumping int if you want it green.
+- **A release run that is red in `build-push-gate` is the gate working**, not a pipeline bug. The
+  Build & Push run of that commit was red, missing or still running; see "Why release.yml waits
+  for a green Build & Push run" for the recovery per outcome.
+- **The `main ist rot` issue opens and closes itself.** Do not close it by hand and do not file a
+  second one; the next green Build & Push run on `main` closes it. See "When main goes red".
 - **Checks on the release-please branch arrive as `action_required`.** Another symptom of the
   `GITHUB_TOKEN` restriction described in "Why release.yml does not start by itself" above —
   they sit unstarted awaiting approval instead of running. Approve from the CLI, no UI needed:
@@ -313,6 +377,9 @@ pseudonymizer runs its own inline verification.
 - Workflow: `.github/workflows/release-please.yml`
 - Workflow: `.github/workflows/build-push.yml`
 - Workflow: `.github/workflows/release-notes-guard.yml`
+- Workflow: `.github/workflows/main-red-alarm.yml`
+- Script: `.github/scripts/release-gate.mjs`
+- Script: `.github/scripts/main-red-alarm.mjs`
 - Corpus: `docs/release-notes/README.md`
 - Research: `.planning/research/v1.8-pipeline-state.md` §5
 - Phase: `.planning/phases/69-pr-231-nachholen-runtime-version-image-promotion/`

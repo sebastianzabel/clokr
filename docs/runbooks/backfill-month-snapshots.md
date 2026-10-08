@@ -77,7 +77,8 @@ Before running on int:
 
 1. **Confirm int is on a version that contains the backfill script** (Phase 76.30 Plan 00). Since int
    tracks `release/1.9.x`, this is normally already the case — verify via the version check in Step 2.
-   Wait for ArgoCD to be Synced + Healthy and the smoke-test to pass before continuing.
+   Wait for ArgoCD to be Synced + Healthy and for int's `/api/v1/version` to report the expected
+   version (see `docs/release-process.md`) before continuing.
 2. **Verify cron parity** (see Step 2 below) — confirm int's `auto-close-month.ts` is the same
    version as prod (same commit SHA). A version drift here means the cron behaviour in int does
    not match prod.
