@@ -169,3 +169,36 @@ export function mergeDayChecksIntoArbzgMap(
   }
   return merged;
 }
+
+/**
+ * The toast text for a cross-salon finding that the API returned with a save (POST / PUT of an
+ * entry, clock-out) — D-09a. `warnings` is the raw response field and is read defensively: only a
+ * warning with `crossSalon: true` counts, anything else (no field, empty, malformed) yields null.
+ * The save itself has already succeeded; the notice only tells the employee what the day now
+ * lacks. Per-entry § 4 findings stay with the existing client-side modal warnings.
+ */
+export function crossSalonSaveNotice(warnings: unknown): string | null {
+  if (!Array.isArray(warnings)) return null;
+  const crossCodes = new Set<string>();
+  for (const w of warnings) {
+    if (typeof w !== "object" || w === null) continue;
+    const { code, crossSalon } = w as { code?: unknown; crossSalon?: unknown };
+    if (crossSalon === true && typeof code === "string") crossCodes.add(code);
+  }
+
+  const parts: string[] = [];
+  if (crossCodes.has("BREAK_TOO_SHORT")) {
+    parts.push(
+      "Gespeichert. Über beide Salons gerechnet fehlt für diesen Tag eine ausreichende Pause " +
+        "(§ 4 ArbZG, salonübergreifend). Fahrzeit zwischen zwei Salons ist Arbeitszeit und " +
+        "keine Pause – eine tatsächlich genommene Pause kannst Du für den Tag eintragen.",
+    );
+  }
+  if (crossCodes.has("MAX_DAILY_EXCEEDED")) {
+    parts.push(
+      "Gespeichert. Die salonübergreifende Tagessumme überschreitet die 10-Stunden-Grenze " +
+        "(§ 3 ArbZG).",
+    );
+  }
+  return parts.length > 0 ? parts.join(" ") : null;
+}

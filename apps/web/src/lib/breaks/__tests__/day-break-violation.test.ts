@@ -10,6 +10,7 @@ import {
   dayCheckBadge,
   dayCheckWarnings,
   mergeDayChecksIntoArbzgMap,
+  crossSalonSaveNotice,
 } from "../day-break-violation";
 
 function check(over: Partial<DayCheck> = {}): DayCheck {
@@ -144,5 +145,35 @@ describe("mergeDayChecksIntoArbzgMap", () => {
     const merged = mergeDayChecksIntoArbzgMap(client, [check({ date: "2026-03-10" })]);
     expect(merged.has("2026-03-10")).toBe(true);
     expect(client.size).toBe(0);
+  });
+});
+
+describe("crossSalonSaveNotice", () => {
+  it("names § 4 ArbZG, 'salonübergreifend' and that travel time is no break", () => {
+    const text = crossSalonSaveNotice([
+      { code: "BREAK_TOO_SHORT", severity: "warning", message: "x", crossSalon: true },
+    ]);
+    expect(text).toContain("§ 4 ArbZG");
+    expect(text).toContain("salonübergreifend");
+    expect(text).toContain("Fahrzeit");
+    expect(text).toContain("keine Pause");
+  });
+
+  it("names the 10-hour limit over the day sum for a cross-salon MAX_DAILY_EXCEEDED", () => {
+    const text = crossSalonSaveNotice([
+      { code: "MAX_DAILY_EXCEEDED", severity: "error", message: "x", crossSalon: true },
+    ]);
+    expect(text).toContain("10-Stunden-Grenze");
+    expect(text).toContain("Tagessumme");
+  });
+
+  it("returns null without a cross-salon warning, for empty, undefined and malformed input", () => {
+    expect(
+      crossSalonSaveNotice([{ code: "BREAK_TOO_SHORT", severity: "warning", message: "x" }]),
+    ).toBeNull();
+    expect(crossSalonSaveNotice([])).toBeNull();
+    expect(crossSalonSaveNotice(undefined)).toBeNull();
+    expect(crossSalonSaveNotice("nope")).toBeNull();
+    expect(crossSalonSaveNotice([null, 3, { code: 7 }])).toBeNull();
   });
 });

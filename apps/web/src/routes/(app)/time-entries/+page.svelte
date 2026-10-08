@@ -12,6 +12,7 @@
   import {
     type DayCheck,
     type DayChecksResponse,
+    crossSalonSaveNotice,
     isChecksRangeAllowed,
     mergeDayChecksIntoArbzgMap,
   } from "$lib/breaks/day-break-violation";
@@ -1140,8 +1141,11 @@
     saveError = "";
     const { startISO, endISO, breaksPayload } = buildManualEntryFields();
     try {
+      // Issue #80 (D-09a): the response carries the API's ArbZG warnings; only the cross-salon
+      // ones are surfaced here (the client-side modal warning list is unchanged).
+      let saved: { warnings?: unknown } | undefined;
       if (editEntry) {
-        await api.put(`/time-entries/${editEntry.id}`, {
+        saved = await api.put<{ warnings?: unknown }>(`/time-entries/${editEntry.id}`, {
           date: formDate,
           startTime: startISO,
           endTime: endISO,
@@ -1150,7 +1154,7 @@
           note: formNote || null,
         });
       } else {
-        await api.post("/time-entries", {
+        saved = await api.post<{ warnings?: unknown }>("/time-entries", {
           date: formDate,
           startTime: startISO,
           endTime: endISO,
@@ -1161,6 +1165,8 @@
       }
       closeModal();
       await loadAll();
+      const crossSalonNotice = crossSalonSaveNotice(saved?.warnings);
+      if (crossSalonNotice) toasts.warning(crossSalonNotice);
     } catch (e: unknown) {
       const apiErr = e as {
         status?: number;
