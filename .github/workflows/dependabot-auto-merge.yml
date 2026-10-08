@@ -25,6 +25,14 @@ name: Dependabot Auto-Merge
 # immediately, so a red build still blocks the bump. It needs `allow_auto_merge`
 # on the repository; without it this step fails loudly rather than merging
 # something unverified.
+#
+# KNOWN GAP (Issue #509)
+# The queued merge is recorded under GITHUB_TOKEN's identity, and GitHub starts no
+# workflow from an event made with that token. The push of such a merge therefore
+# starts neither Build & Push nor release-please. Build & Push for these commits
+# comes from build-push-reconcile.yml, which dispatches it for a main tip without
+# a run. Merging with a GitHub App or personal token instead was rejected: it needs
+# a new long-lived secret that would also have to be a Dependabot secret.
 
 on: pull_request
 
