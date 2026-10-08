@@ -3,6 +3,7 @@
   import { versionStore, loadVersion } from "$stores/version";
   import { hasUnreadReleaseNotes, loadReleaseNotesData, openWhatsNew } from "$stores/release-notes";
   import { onMount } from "svelte";
+  import { activeNavHref } from "$lib/nav/active-route";
 
   type NavItem = { href: string; label: string; icon: string };
 
@@ -49,10 +50,13 @@
     open = false;
   }
 
-  function isActive(href: string, path: string): boolean {
-    if (href === "/dashboard") return path === "/dashboard";
-    return path === href || path.startsWith(href + "/");
-  }
+  // Shared rule ($lib/nav/active-route): the same item is current here as in the tab bar.
+  const currentHref = $derived(
+    activeNavHref(
+      items.map((item) => item.href),
+      currentPath,
+    ),
+  );
 
   // Lock body scroll + mark sibling content inert while open.
   // Same pattern as Modal.svelte — see that file for the rationale on why
@@ -198,7 +202,7 @@
       <div class="mehr-sheet-body">
         <nav class="mehr-sheet-nav" aria-label="Weitere Navigation">
           {#each items as item (item.href)}
-            {@const active = isActive(item.href, currentPath)}
+            {@const active = item.href === currentHref}
             <a
               href={item.href}
               class="mehr-item"
@@ -332,6 +336,7 @@
   }
 
   .mehr-item {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 14px;
@@ -361,6 +366,24 @@
   .mehr-item-active {
     background: var(--brand-soft);
     color: var(--brand);
+  }
+
+  /* The current page is marked by more than colour (WCAG 1.4.1): a brand bar and a heavier label,
+     the same recipe as the desktop sidebar's .nav-item.active::before (Sidebar.svelte) and the
+     global .view-tab--active (app.css). The tint above stays; the bar carries the meaning. */
+  .mehr-item[aria-current="page"]::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 10px;
+    bottom: 10px;
+    width: 2px;
+    background: var(--brand);
+    border-radius: 0 1px 1px 0;
+  }
+
+  .mehr-item[aria-current="page"] .mehr-item-label {
+    font-weight: 600;
   }
 
   .mehr-item-icon {

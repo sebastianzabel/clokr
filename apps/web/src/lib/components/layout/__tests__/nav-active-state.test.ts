@@ -4,6 +4,10 @@
 // test "navigation is clear" and by the one-place source guard instead; BottomTabBar and
 // MobileMoreSheet have no `$app` import and are mounted here.
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/svelte";
 
@@ -19,6 +23,25 @@ vi.mock("$stores/auth", async () => {
 import { renderWithTheme } from "$tests/test-utils";
 import { authStore } from "$stores/auth";
 import BottomTabBar from "../BottomTabBar.svelte";
+import MobileMoreSheet from "../MobileMoreSheet.svelte";
+
+function readComponentFile(relativeFromHere: string, relativeFromCwd: string): string {
+  try {
+    return readFileSync(fileURLToPath(new URL(relativeFromHere, import.meta.url)), "utf8");
+  } catch {
+    // Fallback: `pnpm --filter @clokr/web test` runs with cwd `apps/web`.
+    return readFileSync(resolve(process.cwd(), relativeFromCwd), "utf8");
+  }
+}
+
+const BOTTOM_TAB_BAR = readComponentFile(
+  "../BottomTabBar.svelte",
+  "src/lib/components/layout/BottomTabBar.svelte",
+);
+const MOBILE_MORE_SHEET = readComponentFile(
+  "../MobileMoreSheet.svelte",
+  "src/lib/components/layout/MobileMoreSheet.svelte",
+);
 
 const ALL_TEAM_PERMISSIONS = [
   "leave-request:approve:ZUGEWIESEN",
@@ -109,3 +132,63 @@ describe("BottomTabBar — current location (#515)", () => {
 function isCurrent(el: Element): boolean {
   return el.hasAttribute("aria-current");
 }
+
+describe("MobileMoreSheet — current page (#515)", () => {
+  const items = [
+    { href: "/admin/employees", label: "Mitarbeitende", icon: "users" },
+    { href: "/admin/vacation", label: "Urlaubsverwaltung", icon: "umbrella" },
+  ];
+
+  function sheetDialog(): HTMLElement {
+    return screen.getByRole("dialog", { name: "Weitere Navigation" });
+  }
+
+  it("marks only the link that is the page, also from a nested path", () => {
+    renderWithTheme(MobileMoreSheet, {
+      open: true,
+      items,
+      currentPath: "/admin/employees/abc",
+    });
+    const dialog = sheetDialog();
+
+    expect(dialog.querySelectorAll("[aria-current]")).toHaveLength(1);
+    expect(within(dialog).getByRole("link", { name: "Mitarbeitende" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(dialog).getByRole("link", { name: "Urlaubsverwaltung" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
+  it("follows the current path to the other item", () => {
+    renderWithTheme(MobileMoreSheet, { open: true, items, currentPath: "/admin/vacation" });
+    const dialog = sheetDialog();
+
+    expect(within(dialog).getByRole("link", { name: "Urlaubsverwaltung" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(dialog).getByRole("link", { name: "Mitarbeitende" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
+  it("marks nothing when the path is none of the items", () => {
+    renderWithTheme(MobileMoreSheet, { open: true, items, currentPath: "/dashboard" });
+
+    expect(sheetDialog().querySelectorAll("[aria-current]")).toHaveLength(0);
+  });
+});
+
+// The sheet stays closed in the e2e test and a stylesheet rule is not observable in jsdom, so the
+// non-colour cue (WCAG 1.4.1) of both variants is pinned at the source.
+describe("non-colour marking of the current item (#515)", () => {
+  it("the tab bar draws a ::before bar on the current tab", () => {
+    expect(BOTTOM_TAB_BAR).toContain(".tab[aria-current]::before");
+  });
+
+  it("the Mehr sheet draws a ::before bar on the current item", () => {
+    expect(MOBILE_MORE_SHEET).toContain('.mehr-item[aria-current="page"]::before');
+  });
+});
