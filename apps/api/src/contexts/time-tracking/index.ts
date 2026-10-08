@@ -80,6 +80,16 @@ export {
   unconfirmedDaysFromEntries,
 } from "./find-unconfirmed-break-days";
 
+// ── Issue #80 (D-09b/D-15) — unacknowledged cross-salon § 4 days for the month close ──────────
+// The sibling of the Phase 92 detector above; consumed by the four Monatsabschluss paths in
+// working-time-account and (plan 80-09) the next-day cron. The saldo never imports it (D-05).
+export {
+  crossSalonCandidateDays,
+  findUnacknowledgedCrossSalonDays,
+  findUnacknowledgedCrossSalonDaysForEmployee,
+} from "./cross-salon-days";
+export type { CrossSalonRow, CrossSalonViolationDay } from "./cross-salon-days";
+
 // ── Phase 68b (issue #68) — the entry-salon rule ──────────────────────────────────────────────
 // The platform CSV importer creates TimeEntry rows too and must resolve their salon through the
 // same rule; importing it from this index needs no boundary exception.

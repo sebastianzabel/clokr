@@ -191,6 +191,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/entry-durations.ts": "zeiterfassung", // Phase 79 (Issue #79), D-03 — pure presence/working-time kernel, no model access; TimeEntry vocabulary
   "src/contexts/time-tracking/entry-invariants.ts": "zeiterfassung", // Phase 101B (Issue #101) — lifted out of api/time-entries.ts; one-per-day/overlap/month-lock/retro-window invariants + effective-schedule resolution over TimeEntry
   "src/contexts/time-tracking/entry-salon.ts": "zeiterfassung", // Phase 68b (issue #68) — resolveEntrySalon, the entry-salon rule; reads the Unterbau only through the platform index
+  "src/contexts/time-tracking/cross-salon-days.ts": "zeiterfassung", // Issue #80 (D-09b/D-15) — month-close/cron detector over TimeEntry + DayBreak/DayBreakAck
   "src/contexts/time-tracking/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry
   "src/contexts/time-tracking/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
   "src/contexts/time-tracking/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization
