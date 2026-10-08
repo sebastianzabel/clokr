@@ -57,9 +57,6 @@ const SALDO_FILES = [
   "apps/api/src/contexts/time-tracking/entry-durations.ts",
 ];
 
-/** Files the walk MUST reach — the saldo core sits at the top level, the gates in subfolders. */
-const MIN_WALKED_FILES = 20;
-
 function repoRel(absPath: string): string {
   return relative(REPO_ROOT, absPath).split("\\").join("/");
 }
@@ -106,10 +103,11 @@ describe("Issue #80 (D-05, 80-AC5) — the saldo never sees the day-break featur
 
   it("the walk sees the tree (a silently-empty walk would pass forever)", () => {
     expect(walked.length, "no file walked under working-time-account at all").toBeGreaterThan(0);
+    // Measured 2026-10-08: 30 non-test files under working-time-account; the floor is 20.
     expect(
       walked.length,
       "fewer files walked than the measured floor — the scan root moved or emptied",
-    ).toBeGreaterThan(MIN_WALKED_FILES);
+    ).toBeGreaterThan(20);
     for (const file of [...GATE_FILES, ...SALDO_FILES.filter((f) => f.startsWith(WTA_ROOT))]) {
       expect(walkedRel, `the walk did not reach ${file}`).toContain(file);
     }
