@@ -4,8 +4,8 @@
  * A break that lies BETWEEN two closed entries of one employee and one day (owner example: 13:00
  * to 14:00 = 30 min drive + 30 min lunch) hangs on the DAY, not on an entry, and is recorded here.
  * `checkArbZG` counts it (D-04); it never reduces working time and never touches a TimeEntry or a
- * Break row (D-05). Acknowledgements and the day check are added to this file by the later plans of
- * the phase. The routes live in their own file so `api/time-entries.ts` keeps its line-pinned
+ * Break row (D-05). The acknowledgement of a cross-salon violation (`POST /acks`, `DELETE
+ * /acks/:id`, D-08) lives here too; the day check is added by a later plan of the phase. The routes live in their own file so `api/time-entries.ts` keeps its line-pinned
  * tenant-scoping exceptions (D-21).
  *
  * Revisionssicherheit (D-06): create and delete each write their AuditLog row in the SAME
@@ -19,17 +19,23 @@
  */
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { DayBreak } from "@clokr/db";
+import type { DayBreak, DayBreakAck, Prisma } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import {
   permissionReach,
   accessContextFromRequest,
   resolveAccessReach,
+  requirePermission,
   auditReasonSchema,
 } from "../../platform";
 import { getTenantTimezone, isMonthClosed, monthRangeUtc } from "../../working-time-account";
-import { findGapForInterval, intervalsOverlap } from "../day-break-rule";
-import { closedWorkRowsOfDay, listDayBreaksOfDay } from "../day-break-store";
+import {
+  evaluateDayBreaks,
+  findGapForInterval,
+  intervalsOverlap,
+  isAckSnapshotCurrent,
+} from "../day-break-rule";
+import { closedWorkRowsOfDay, listAcksOfDay, listDayBreaksOfDay } from "../day-break-store";
 import { dayCoverage } from "../day-scope";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -44,6 +50,12 @@ const INVERTED_INTERVAL_MESSAGE = "Pausenende muss nach Pausenbeginn liegen";
 const NO_GAP_MESSAGE =
   "Die Pause muss vollständig in einer Lücke zwischen zwei abgeschlossenen Einträgen dieses Tages liegen.";
 const OVERLAP_MESSAGE = "Die Pause überschneidet sich mit einer bereits erfassten Tagespause.";
+const ACK_NOT_FOUND_MESSAGE = "Quittung nicht gefunden";
+/** D-14: nobody quits (or revokes) the break violation of their own day. */
+const SELF_ACK_MESSAGE = "Eigene Pausenverstöße können nicht selbst quittiert werden.";
+/** D-18: only a cross-salon day with a § 4 shortfall can be acknowledged. */
+const NO_VIOLATION_MESSAGE = "Für diesen Tag liegt kein salonübergreifender Pausenverstoß vor.";
+const ALREADY_ACKED_MESSAGE = "Der Pausenverstoß dieses Tages ist bereits quittiert.";
 
 /** A real calendar date in `YYYY-MM-DD` form (rejects 2026-02-30). */
 const dateKeySchema = z
@@ -56,6 +68,12 @@ const createDayBreakSchema = z.object({
   date: dateKeySchema,
   startTime: z.string().datetime(),
   endTime: z.string().datetime(),
+});
+
+const createAckSchema = z.object({
+  employeeId: z.string().uuid(),
+  date: dateKeySchema,
+  reason: auditReasonSchema,
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -161,6 +179,22 @@ function dayBreakFacts(row: Pick<DayBreak, "employeeId" | "date" | "startTime" |
     date: row.date.toISOString().slice(0, 10),
     startTime: row.startTime,
     endTime: row.endTime,
+  };
+}
+
+/**
+ * The facts of an acknowledgement that an audit row records. The reason is part of the "why" the
+ * trail must carry (Revisionssicherheit), exactly like every other audited reason; whether audit
+ * free text is redacted on anonymization is one system-wide rule (#512), not decided per entity.
+ */
+function ackFacts(
+  row: Pick<DayBreakAck, "employeeId" | "date" | "reason" | "snapshot">,
+): Record<string, unknown> {
+  return {
+    employeeId: row.employeeId,
+    date: row.date.toISOString().slice(0, 10),
+    reason: row.reason,
+    snapshot: row.snapshot,
   };
 }
 
@@ -317,6 +351,100 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         });
       });
       return reply.code(204).send();
+    },
+  });
+
+  // POST /api/v1/day-breaks/acks — a manager who sees the WHOLE day documents that the break of a
+  // cross-salon day was "worked through" (D-08). Valid for exactly the day state it was given for:
+  // the day's snapshot is stored and a changed day makes the acknowledgement stale (D-17).
+  app.post("/acks", {
+    schema: {
+      tags: ["Zeiterfassung"],
+      summary: "Acknowledge a cross-salon break violation of a day",
+      description:
+        "Documents that the § 4 ArbZG break of a cross-salon day was worked through (Issue #80). " +
+        "Only a day with entries in several salons and a break shortfall can be acknowledged; the " +
+        "§ 3 daily maximum is never downgraded. The caller needs time-entry:update with scope over " +
+        "every closed entry of the day and cannot acknowledge their own day. The day's snapshot is " +
+        "stored; once the day changes the acknowledgement is stale. Never writes a time entry.",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requirePermission("time-entry:update:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const body = createAckSchema.parse(req.body);
+      const tenantId = req.user.tenantId;
+
+      // A foreign tenant's employee and an unknown id answer identically.
+      const employee = await app.prisma.employee.findFirst({
+        where: { id: body.employeeId, tenantId },
+        select: { id: true },
+      });
+      if (!employee) {
+        return reply.code(404).send({ error: EMPLOYEE_NOT_FOUND_MESSAGE });
+      }
+
+      if (body.employeeId === req.user.employeeId) {
+        return reply.code(403).send({ error: SELF_ACK_MESSAGE });
+      }
+
+      const rows = await authorizeDayAction(app, req, reply, {
+        employeeId: body.employeeId,
+        dateKey: body.date,
+        notFoundMessage: ENTRY_NOT_FOUND_MESSAGE,
+      });
+      if (!rows) return;
+
+      const date = dayKeyToDate(body.date);
+      const dayParams = { tenantId, employeeId: body.employeeId, date };
+      const [dayBreaks, acks] = await Promise.all([
+        listDayBreaksOfDay(app.prisma, dayParams),
+        listAcksOfDay(app.prisma, dayParams),
+      ]);
+      const evaluation = evaluateDayBreaks({
+        rows,
+        dayBreaks,
+        acks: acks.map((a) => ({ snapshot: a.snapshot })),
+      });
+      // D-18: a same-salon day, a day without a § 4 shortfall and a pure § 3 day are not
+      // acknowledgeable. The § 3 finding is built from the day sum alone and never waived.
+      if (!evaluation.crossSalon || !evaluation.breakShortfall) {
+        return reply.code(409).send({ error: NO_VIOLATION_MESSAGE });
+      }
+      if (evaluation.acknowledged) {
+        return reply.code(409).send({ error: ALREADY_ACKED_MESSAGE });
+      }
+
+      const created = await app.prisma.$transaction(async (tx) => {
+        // Serialise concurrent acknowledgements of the same employee and day so two requests
+        // cannot both store a current acknowledgement.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`day-break-ack:${body.employeeId}:${body.date}`}))`;
+        const stored = await listAcksOfDay(tx, dayParams);
+        if (stored.some((a) => isAckSnapshotCurrent(a.snapshot, evaluation.snapshot))) return null;
+
+        const row = await tx.dayBreakAck.create({
+          data: {
+            employeeId: body.employeeId,
+            date,
+            reason: body.reason,
+            snapshot: evaluation.snapshot as unknown as Prisma.InputJsonValue,
+            acknowledgedBy: req.user.sub,
+          },
+        });
+        await app.audit({
+          userId: req.user.sub,
+          action: "DAY_BREAK_ACK",
+          entity: "DayBreakAck",
+          entityId: row.id,
+          newValue: ackFacts(row),
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          tx,
+        });
+        return row;
+      });
+      if (!created) {
+        return reply.code(409).send({ error: ALREADY_ACKED_MESSAGE });
+      }
+      return reply.code(201).send({ acknowledgement: created });
     },
   });
 }

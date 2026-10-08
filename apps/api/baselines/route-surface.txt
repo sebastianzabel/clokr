@@ -70,6 +70,7 @@
 │   └── /yaml (GET, HEAD)
 │   └── /year-status (GET, HEAD)
 │   ├── * (HEAD, GET)
+│   ├── /acks (POST)
 │   ├── /allowed-cards (GET, HEAD)
 │   ├── /bulk (POST)
 │   ├── /clock-in (POST)
