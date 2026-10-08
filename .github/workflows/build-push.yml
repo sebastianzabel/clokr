@@ -9,10 +9,18 @@ name: Build & Push
 # pipeline only re-tags an existing :sha image, it never rebuilds. Without this
 # trigger a v1.8.x tag would have no image to promote once main has moved on to
 # a newer minor.
+#
+# Issue #509: a push made with GITHUB_TOKEN (the Dependabot auto-merge) starts no workflow, so
+# such a commit gets no push-triggered run. build-push-reconcile.yml notices a main tip without a
+# run and dispatches THIS workflow on main. A dispatch always builds the tip of its ref
+# (github.sha), so :sha-<7> and :main are exactly what the push run would have produced. The job
+# condition below skips a dispatch from any other ref, so a feature branch can never push images.
+# The workflow name must stay "Build & Push": main-red-alarm.yml matches on it.
 
 on:
   push:
     branches: [main, "release/**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,6 +32,7 @@ env:
 
 jobs:
   build-push:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     strategy:
