@@ -116,6 +116,7 @@
 ├── /api/v1/avatars/:employeeId (POST, GET, HEAD, DELETE)
 ├── /api/v1/company-shutdowns (GET, HEAD, POST)
 ├── /api/v1/dashboard (GET, HEAD)
+├── /api/v1/day-breaks (POST)
 ├── /api/v1/employees (GET, HEAD, POST)
 ├── /api/v1/health (GET, HEAD)
 ├── /api/v1/holidays (GET, HEAD, POST)
