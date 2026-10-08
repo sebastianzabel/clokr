@@ -23,7 +23,10 @@ sowie der `role-assignment:manage`-Prüfung in `roles.ts` neu gemessen; die Zeil
 der D-10-Fix (`fix(78b-02)`) in `time-entries.ts` ausgelöst hat, wurde bewusst NICHT neu gezählt
 (dieselbe Konvention wie bei 91b/76b oben). Phase 79 (Issue #79) hat die Zeile `GET /summary`
 in `time-entries.ts` ergänzt; die dadurch verschobenen Zeilennummern der übrigen `time-entries.ts`-Zeilen wurden
-bewusst NICHT neu gezählt (dieselbe Konvention wie bei 91b/76b/78b oben).
+bewusst NICHT neu gezählt (dieselbe Konvention wie bei 91b/76b/78b oben). Phase 80 (Issue #80) hat die Zeilen für `day-breaks.ts`
+und den Empfänger `BREAK_CROSS_SALON_VIOLATION` in `attendance-checker.ts` ergänzt; die dadurch
+verschobenen Zeilennummern der übrigen Zeilen (`overtime.ts`, `attendance-checker.ts`) wurden bewusst
+NICHT neu gezählt (dieselbe Konvention wie bei 91b/76b/78b/79).
 
 Alle Datei- und Zeilenangaben in diesem Dokument beziehen sich auf diesen Commit. Sie sind Belege,
 keine Wegbeschreibung — in einem späteren Stand kann die Zeile verschoben sein, die Zuordnung muss
