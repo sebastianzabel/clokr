@@ -63,7 +63,47 @@ env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
+  # ── Build & Push gate (Issue #507) ────────────────────────────────────────────
+  # `promote` may only start when the Build & Push run of the tagged commit finished with
+  # conclusion `success`. build-push.yml pushes the `:sha-<7>` image BEFORE its Trivy step, so an
+  # image that exists proves nothing about the scan: between 30.09. and 08.10. 40 Build & Push
+  # runs on main were red on the scan, and v1.13.1, v1.14.0, v1.14.1 and v1.15.0 were promoted
+  # anyway because the only check was `crane manifest`.
+  #
+  # Its own job so promote's write scopes (contents/packages: write) stay away from the polling
+  # code, which only needs read scopes. The wait (up to 45 min while the run is queued or in
+  # progress) holds the workflow-wide `release-promote` concurrency group, just as the 30-min
+  # image wait inside promote does. Logic and exit codes: .github/scripts/release-gate.mjs.
+  build-push-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60 # hard cap above the script's own 45-min wait
+    permissions:
+      contents: read # checkout of .github/scripts and the tag-to-commit lookup
+      actions: read # list the Build & Push runs of the tagged commit
+    steps:
+      # No `ref:` on purpose: the gate script must come from the same commit as this workflow
+      # file (the tagged commit on a release event, the dispatched branch on workflow_dispatch),
+      # so dispatching an old tag from main still finds the script.
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Require a green Build & Push run for the tagged commit
+        env:
+          # WR-03: expressions go through env, never into the script text.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/release-gate.mjs --tag "$TAG"
+
   promote:
+    needs: build-push-gate
     runs-on: ubuntu-latest
     permissions:
       contents: write # anchore/sbom-action attaches the SBOM to the Release; gh api commit lookup
@@ -112,16 +152,15 @@ jobs:
       - name: Install crane
         uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
-      # Wait for build-push.yml to publish the image for this commit.
+      # Cheap existence check before the digest-preserving copy. The `build-push-gate` job has
+      # already waited for a GREEN Build & Push run of this commit (Issue #507), so the image is
+      # normally there at once; this loop only guards the copy against a missing source tag.
+      # It proves existence, not a green scan: the gate proves that.
       #
-      # Until release-please landed, a human cut the GitHub Release only after
-      # Build & Push had gone green, so the `:sha-` image was always already
-      # there. release-please publishes the Release the instant its PR merges —
-      # the same push that STARTS the build — so promote now reliably arrives
-      # first and `crane copy` would fail on a source tag that does not exist yet.
-      #
-      # Polling rather than a workflow dependency: the two runs are triggered by
-      # different events (push vs release) and cannot `needs:` each other.
+      # History: release-please publishes the Release the instant its PR merges — the same push
+      # that STARTS the build — so promote used to arrive first and `crane copy` would fail on a
+      # source tag that did not exist yet. Polling rather than a workflow dependency: the two
+      # runs are triggered by different events (push vs release) and cannot `needs:` each other.
       - name: Wait for the scanned image to exist
         env:
           OWNER: ${{ steps.meta.outputs.owner }}
