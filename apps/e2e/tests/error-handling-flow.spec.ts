@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
-import { loginAsAdmin, screenshotPage } from "./helpers";
+import { loginAsAdmin, screenshotPage, TEST_ADMIN } from "./helpers";
+
+const WRONG_CURRENT_PASSWORD = "wrongcurrentpassword";
 
 test.describe("Error Handling + UX Plausibility", () => {
   test.beforeEach(async ({ page }) => {
@@ -23,7 +25,10 @@ test.describe("Error Handling + UX Plausibility", () => {
 
       if (!formIsOpen) {
         // The "Neuer Antrag" button is only shown when the form is closed
-        await page.getByText(/Neuer Antrag/).first().click();
+        await page
+          .getByText(/Neuer Antrag/)
+          .first()
+          .click();
         // Wait for the dialog to actually appear
         await page.locator("[role='dialog']").first().waitFor({ state: "visible" });
       }
@@ -91,34 +96,62 @@ test.describe("Error Handling + UX Plausibility", () => {
   });
 
   test("profile password change — wrong current password shows error", async ({ page }) => {
+    // Guard: this wrong value must never equal the seed admin's real password, otherwise the
+    // request could succeed and rotate the credentials every other seed-login spec depends on.
+    expect(WRONG_CURRENT_PASSWORD).not.toBe(TEST_ADMIN.password);
+
+    // Same stub as suppressWhatsNew() in apps/e2e/fixtures/tenant.ts (module-private, so inlined
+    // here). The What's-New drawer auto-opens for a user who never dismissed it — i.e. on every
+    // freshly seeded stack — and intercepts the pointer events aimed at the settings form.
+    await page.route("**/api/v1/release-notes*", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ releases: [] }),
+      }),
+    );
+
     await page.goto("/settings");
-    await page.waitForLoadState("networkidle");
 
     const curPw = page.locator("#cur-pw");
     const newPw = page.locator("#new-pw");
     const confirmPw = page.locator("#confirm-pw");
 
-    if (await curPw.isVisible()) {
-      await curPw.fill("wrongcurrentpassword");
-      await newPw.fill("NewStr0ng!Pass#42");
-      await confirmPw.fill("NewStr0ng!Pass#42");
+    // A missing form must fail the test, never skip its body.
+    await expect(curPw).toBeVisible();
+    await expect(newPw).toBeVisible();
+    await expect(confirmPw).toBeVisible();
 
-      // Wait for the password-change request to resolve before screenshotting.
-      await Promise.all([
-        page
-          .waitForResponse(
-            (r) =>
-              r.url().includes("/api/v1") &&
-              (r.url().includes("password") || r.url().includes("me")) &&
-              ["POST", "PUT", "PATCH"].includes(r.request().method()),
-            { timeout: 5000 },
-          )
-          .catch(() => null),
-        page.getByRole("button", { name: /passwort ändern/i }).click(),
-      ]);
+    await curPw.fill(WRONG_CURRENT_PASSWORD);
+    await newPw.fill("NewStr0ng!Pass#42");
+    await confirmPw.fill("NewStr0ng!Pass#42");
 
-      await screenshotPage(page, "flow-error-password-change");
-    }
+    const submit = page.getByRole("button", { name: "Passwort ändern", exact: true });
+    await expect(submit).toBeEnabled();
+
+    // Register the response wait BEFORE the click so a fast answer cannot be missed.
+    const responsePromise = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname === "/api/v1/auth/change-password" &&
+        r.request().method() === "POST",
+    );
+    await submit.click();
+    const response = await responsePromise;
+
+    // auth.ts compares the current password with bcrypt and answers 400 BEFORE any update, so
+    // a wrong current password can never change the stored one. The route is rate-limited to
+    // 5 requests per 15 minutes per client IP; this test spends exactly one per project run.
+    expect(response.status()).toBe(400);
+    expect(await response.json()).toEqual({ error: "Aktuelles Passwort ist falsch" });
+
+    // Toasts carry no test id; the component renders `toast toast-{type}` (Toast.svelte).
+    await expect(
+      page.locator(".toast-error").filter({ hasText: "Aktuelles Passwort ist falsch" }),
+    ).toBeVisible();
+    // The success toast "Passwort geändert" must never appear.
+    await expect(page.locator(".toast-success")).toHaveCount(0);
+
+    await screenshotPage(page, "flow-error-password-change");
   });
 
   test("dashboard provides clear information hierarchy", async ({ page }) => {

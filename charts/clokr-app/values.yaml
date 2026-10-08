@@ -23,24 +23,38 @@ image:
 api:
   port: 4000
   replicas: 1
+  # The API writes nothing to the container filesystem in this chart's configuration: uploads
+  # (avatars, section 9 documents) are buffered in memory and stored in MinIO, PDFs and exports are
+  # streamed, and LOG_FILE is not set (stdout only). Ephemeral storage therefore covers the
+  # writable layer, Prisma's `migrate deploy` at start-up and the kubelet-rotated container logs.
+  # The limit is deliberately generous: exceeding it gets the API pod EVICTED. If LOG_FILE is ever
+  # pointed at a container path, raise the limit or mount a volume - pino-roll rotates daily
+  # without a size cap.
   resources:
     requests:
       memory: 128Mi
       cpu: 100m
+      ephemeral-storage: 128Mi
     limits:
       memory: 512Mi
       cpu: 500m
+      ephemeral-storage: 1Gi
 
 web:
   port: 3000
   replicas: 1
+  # The SvelteKit node server writes nothing to disk; ephemeral storage covers the writable layer
+  # and the rotated container logs. The limit is deliberately generous for the same reason as the
+  # API: exceeding it gets the web pod EVICTED.
   resources:
     requests:
       memory: 64Mi
       cpu: 50m
+      ephemeral-storage: 64Mi
     limits:
       memory: 256Mi
       cpu: 200m
+      ephemeral-storage: 512Mi
 
 postgres:
   enabled: true # set false on prod (prod uses docker-compose postgres service)
