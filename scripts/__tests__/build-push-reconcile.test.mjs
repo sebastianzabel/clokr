@@ -10,18 +10,25 @@ import { describe, expect, it } from "vitest";
 import {
   BUILD_PUSH_PATH,
   BUILD_PUSH_WORKFLOW_FILE,
+  CONFIRM_INTERVAL_MS,
+  CONFIRM_TIMEOUT_MS,
   DEFAULT_GRACE_MINUTES,
   DEFAULT_LOOKBACK,
   DISPATCH_REF,
+  DISPATCH_SKEW_MS,
   MAX_LOOKBACK,
   classifyCommits,
+  decideDispatch,
   decideReconcile,
+  findDispatchedRun,
   firstParentChain,
   formatOutputs,
   newestRun,
+  parseDispatchResponse,
   parseReconcileArgs,
   renderReport,
   sha7,
+  waitForDispatchedRun,
 } from "../../.github/scripts/build-push-reconcile.mjs";
 import { evaluateBuildPushRuns } from "../../.github/scripts/release-gate.mjs";
 import {
@@ -471,5 +478,208 @@ describe("dispatched run seen by the release gate and the main-red alarm", () =>
     const newest = selectNewestCompletedRun([RUN_TIP, dispatched]);
     expect(newest.id).toBe(dispatched.id);
     expect(() => assertReplayableRun(dispatched)).not.toThrow();
+  });
+});
+
+// ── dispatch path ────────────────────────────────────────────────────────────
+
+describe("decideDispatch", () => {
+  it("skips when main moved on and names the new tip", () => {
+    const decision = decideDispatch({
+      expectedSha: C_F1FB,
+      mainTipSha: TIP_TODAY,
+      runsForExpected: [],
+    });
+    expect(decision.action).toBe("skip");
+    expect(decision.reason).toContain("main steht inzwischen auf");
+    expect(decision.reason).toContain(sha7(TIP_TODAY));
+  });
+
+  it("skips when a Build & Push run appeared in the meantime and names it", () => {
+    const decision = decideDispatch({
+      expectedSha: TIP_TODAY,
+      mainTipSha: TIP_TODAY,
+      runsForExpected: [RUN_TIP],
+    });
+    expect(decision.action).toBe("skip");
+    expect(decision.reason).toContain("37769323260");
+  });
+
+  it("dispatches while the expected commit is still the tip and has no run", () => {
+    const decision = decideDispatch({
+      expectedSha: TIP_TODAY,
+      mainTipSha: TIP_TODAY,
+      runsForExpected: [],
+    });
+    expect(decision.action).toBe("dispatch");
+  });
+
+  it("ignores a run of another workflow", () => {
+    const decision = decideDispatch({
+      expectedSha: TIP_TODAY,
+      mainTipSha: TIP_TODAY,
+      runsForExpected: [run(9, 1, TIP_TODAY, { path: ".github/workflows/ci.yml" })],
+    });
+    expect(decision.action).toBe("dispatch");
+  });
+});
+
+describe("parseDispatchResponse", () => {
+  it("returns the run id of a 200 answer", () => {
+    expect(
+      parseDispatchResponse('{"workflow_run_id":37800000001,"run_url":"u","html_url":"h"}'),
+    ).toBe(37800000001);
+  });
+
+  it.each([
+    ["an empty body (204)", ""],
+    ["whitespace", "  \n"],
+    ["text that is not JSON", "not json"],
+    ["a string id", '{"workflow_run_id":"12"}'],
+    ["a zero id", '{"workflow_run_id":0}'],
+  ])("returns null for %s", (_label, raw) => {
+    expect(parseDispatchResponse(raw)).toBeNull();
+  });
+});
+
+describe("findDispatchedRun", () => {
+  const SINCE = Date.parse("2026-10-08T12:00:00Z");
+  const dispatched = (id, runNumber, overrides = {}) =>
+    run(id, runNumber, TIP_TODAY, {
+      event: "workflow_dispatch",
+      status: "queued",
+      conclusion: null,
+      created_at: "2026-10-08T12:00:05Z",
+      ...overrides,
+    });
+
+  it("returns the newest matching dispatched run", () => {
+    const found = findDispatchedRun([dispatched(1, 242), dispatched(2, 243)], { sinceMs: SINCE });
+    expect(found.id).toBe(2);
+  });
+
+  it("ignores push runs, other branches, other workflows and stale runs", () => {
+    const runs = [
+      run(10, 250, TIP_TODAY, { created_at: "2026-10-08T12:00:05Z" }),
+      dispatched(11, 251, { head_branch: "release/1.9.x" }),
+      dispatched(12, 252, { path: ".github/workflows/ci.yml" }),
+      dispatched(13, 253, { created_at: "2026-10-08T11:58:00Z" }),
+    ];
+    expect(findDispatchedRun(runs, { sinceMs: SINCE })).toBeNull();
+  });
+
+  it("accepts a run created up to 60 seconds before the dispatch (clock skew)", () => {
+    const found = findDispatchedRun([dispatched(1, 242, { created_at: "2026-10-08T11:59:30Z" })], {
+      sinceMs: SINCE,
+    });
+    expect(found.id).toBe(1);
+  });
+
+  it("returns null for an empty list", () => {
+    expect(findDispatchedRun([], { sinceMs: SINCE })).toBeNull();
+  });
+});
+
+describe("waitForDispatchedRun", () => {
+  function clock() {
+    let t = 0;
+    return {
+      now: () => t,
+      sleep: async (ms) => {
+        t += ms;
+      },
+    };
+  }
+
+  it("finds the run on the third attempt", async () => {
+    const { now, sleep } = clock();
+    let calls = 0;
+    const result = await waitForDispatchedRun({
+      fetchRuns: async () => {
+        calls += 1;
+        return calls < 3
+          ? []
+          : [
+              run(7, 242, TIP_TODAY, {
+                event: "workflow_dispatch",
+                created_at: "2026-10-08T12:00:05Z",
+              }),
+            ];
+      },
+      sleep,
+      now,
+      sinceMs: Date.parse("2026-10-08T12:00:00Z"),
+    });
+    expect(result.attempts).toBe(3);
+    expect(result.run.id).toBe(7);
+  });
+
+  it("gives up after the timeout with 19 attempts", async () => {
+    const { now, sleep } = clock();
+    const result = await waitForDispatchedRun({
+      fetchRuns: async () => [],
+      sleep,
+      now,
+      sinceMs: 0,
+    });
+    expect(result.run).toBeNull();
+    expect(result.attempts).toBe(19);
+    expect(CONFIRM_TIMEOUT_MS).toBe(180000);
+    expect(CONFIRM_INTERVAL_MS).toBe(10000);
+    expect(DISPATCH_SKEW_MS).toBe(60000);
+  });
+
+  it("lets an API error propagate instead of reporting success", async () => {
+    const { now, sleep } = clock();
+    await expect(
+      waitForDispatchedRun({
+        fetchRuns: async () => {
+          throw new Error("API down");
+        },
+        sleep,
+        now,
+        sinceMs: 0,
+      }),
+    ).rejects.toThrow("API down");
+  });
+});
+
+describe("parseReconcileArgs --dispatch", () => {
+  it("selects dispatch mode for a valid sha", () => {
+    const args = parseReconcileArgs(["--dispatch", TIP_TODAY], { GITHUB_ACTIONS: "true" });
+    expect(args.mode).toBe("dispatch");
+    expect(args.sha).toBe(TIP_TODAY);
+    expect(args.dryRun).toBe(false);
+  });
+
+  it("rejects an invalid sha", () => {
+    expect(() => parseReconcileArgs(["--dispatch", "x;y", "--dry-run"], {})).toThrow(
+      "Ungültige SHA",
+    );
+  });
+
+  it("rejects --dispatch combined with --tip or --lookback", () => {
+    expect(() =>
+      parseReconcileArgs(["--dispatch", TIP_TODAY, "--tip", C_F1FB, "--dry-run"], {}),
+    ).toThrow("Ungültiger Aufruf");
+    expect(() =>
+      parseReconcileArgs(["--dispatch", TIP_TODAY, "--lookback", "5", "--dry-run"], {}),
+    ).toThrow("Ungültiger Aufruf");
+  });
+
+  it("refuses to write outside GitHub Actions", () => {
+    expect(() => parseReconcileArgs(["--dispatch", TIP_TODAY], {})).toThrow(
+      "nur innerhalb des Workflows",
+    );
+    expect(() =>
+      parseReconcileArgs(["--dispatch", TIP_TODAY], { GITHUB_ACTIONS: "false" }),
+    ).toThrow("nur innerhalb des Workflows");
+  });
+
+  it("accepts a dry run anywhere and a real run inside GitHub Actions", () => {
+    expect(parseReconcileArgs(["--dispatch", TIP_TODAY, "--dry-run"], {}).dryRun).toBe(true);
+    expect(parseReconcileArgs(["--dispatch", TIP_TODAY], { GITHUB_ACTIONS: "true" }).mode).toBe(
+      "dispatch",
+    );
   });
 });
