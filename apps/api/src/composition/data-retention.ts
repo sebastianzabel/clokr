@@ -2,7 +2,7 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
 import { countSnapshotsBefore } from "../contexts/working-time-account"; // Phase 100B Plan 07 — W7
-import { archiveEntriesBefore } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T9
+import { archiveEntriesBefore, archiveDayBreakDataBefore } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T9; Issue #80 — T9b
 import { archiveAbsencesBefore, archiveLeaveRequestsBefore } from "../contexts/absence"; // Phase 100B Plan 12; Plan 13
 
 declare module "fastify" {
@@ -77,6 +77,15 @@ export const dataRetentionPlugin = fp(async (app) => {
           cutoffDate,
         );
 
+        // Soft-delete day breaks and their acknowledgements (Issue #80, D-06) on the same cutoff:
+        // they qualify the entries above and must not outlive them.
+        const archivedDayBreaksCount = await archiveDayBreakDataBefore(
+          app.prisma,
+          employeeIds,
+          tenant.id,
+          cutoffDate,
+        );
+
         // Soft-delete leave requests older than retention period
         // Phase 100B Plan 13 — contexts/absence facade.
         const archivedLeaveCount = await archiveLeaveRequestsBefore(
@@ -95,11 +104,15 @@ export const dataRetentionPlugin = fp(async (app) => {
           cutoffDate,
         );
 
-        const total = archivedEntriesCount + archivedLeaveCount + archivedAbsencesCount;
+        const total =
+          archivedEntriesCount +
+          archivedDayBreaksCount +
+          archivedLeaveCount +
+          archivedAbsencesCount;
 
         if (total > 0) {
           app.log.info(
-            `Data-Retention: Tenant ${tenant.name} — ${archivedEntriesCount} Zeiteinträge, ${archivedLeaveCount} Urlaubsanträge, ${archivedAbsencesCount} Abwesenheiten archiviert (vor ${cutoffYear})`,
+            `Data-Retention: Tenant ${tenant.name} — ${archivedEntriesCount} Zeiteinträge, ${archivedDayBreaksCount} Tagespausen/Quittungen, ${archivedLeaveCount} Urlaubsanträge, ${archivedAbsencesCount} Abwesenheiten archiviert (vor ${cutoffYear})`,
           );
 
           await app.audit({
@@ -112,6 +125,7 @@ export const dataRetentionPlugin = fp(async (app) => {
               cutoffDate: cutoffDate.toISOString(),
               retentionYears,
               archivedEntries: archivedEntriesCount,
+              archivedDayBreaks: archivedDayBreaksCount,
               archivedLeave: archivedLeaveCount,
               archivedAbsences: archivedAbsencesCount,
             },

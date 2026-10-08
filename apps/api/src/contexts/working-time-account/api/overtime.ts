@@ -41,6 +41,8 @@ import {
   getEffectiveSchedule,
   unconfirmedDaysFromEntries,
   findUnconfirmedBreakDays,
+  findUnacknowledgedCrossSalonDays, // Issue #80 (D-09b/D-15) — status listing
+  findUnacknowledgedCrossSalonDaysForEmployee, // Issue #80 (D-09b/D-15) — manual close
 } from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7/T8; Phase 101B wave 8 merged in
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
@@ -625,6 +627,19 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const monthFirstStr = dateStrInTz(monthFirstDay, tz);
       const monthLastStr = dateStrInTz(monthLastDay, tz);
 
+      // Issue #80 (D-09b/D-15): unacknowledged cross-salon § 4 days, detected ONCE per request over
+      // the SAME bulk-fetched rows (no per-employee read; with no two-salon day no DayBreak /
+      // DayBreakAck query at all — PERF-V1814-01). Shown regardless of the block flag, of
+      // enforceBreakConfirmation and of the schedule type: it is a statutory finding, not an
+      // opt-in confirmation workflow.
+      const crossSalonByEmp = await findUnacknowledgedCrossSalonDays(app.prisma, {
+        tenantId,
+        rows: employees.flatMap((e) => entriesByEmp.get(e.id) ?? []),
+        tz,
+      });
+      const crossSalonDaysOf = (employeeId: string): string[] =>
+        (crossSalonByEmp.get(employeeId) ?? []).map((d) => d.date);
+
       const result: {
         employeeId: string;
         employeeName: string;
@@ -633,6 +648,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         missingDates?: string[];
         snapshot?: Record<string, unknown>;
         unconfirmedBreakDays?: string[]; // Phase 92 (BREAK-05)
+        crossSalonBreakDays?: string[]; // Issue #80 (D-09b/D-15)
         karenzOverrunDays?: string[]; // Phase 104 (R4/D-21) — Hinweis, kein Gate
       }[] = [];
 
@@ -672,6 +688,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
               closedBy: existingSnapshot.closedBy,
             },
             unconfirmedBreakDays: [], // Pitfall 1 — closed months are done, never actionable
+            crossSalonBreakDays: [], // Issue #80 — likewise: a closed month is un-actionable
             karenzOverrunDays: [], // Phase 104 (D-21) — Pitfall 1: closed months are un-actionable
           });
           continue;
@@ -688,6 +705,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeNumber: emp.employeeNumber,
             status: "ready",
             unconfirmedBreakDays: [], // RESOLVED Q1 — no daily gate for flexible schedules
+            crossSalonBreakDays: crossSalonDaysOf(emp.id), // Issue #80 (D-15) — every schedule type
             karenzOverrunDays: [], // Phase 104 (D-21) — Karenz is a documentation rule, not a
             // daily-target rule; surfacing it for a Minijobber/flexible schedule would be noise.
           });
@@ -777,6 +795,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             status: "missing",
             missingDates,
             unconfirmedBreakDays,
+            crossSalonBreakDays: crossSalonDaysOf(emp.id),
             karenzOverrunDays,
           });
         } else {
@@ -786,6 +805,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeNumber: emp.employeeNumber,
             status: "ready",
             unconfirmedBreakDays,
+            crossSalonBreakDays: crossSalonDaysOf(emp.id),
             karenzOverrunDays,
           });
         }
@@ -1507,6 +1527,30 @@ export async function overtimeRoutes(app: FastifyInstance) {
             unconfirmedBreakCount: unconfirmedBreakDays.length,
             unconfirmedBreakDays,
             requiresBreakConfirmation: true,
+          });
+        }
+      }
+
+      // Issue #80 (D-09b/D-15): a cross-salon § 4 ArbZG violation that is not acknowledged blocks the
+      // close under the same tenant flag, but — unlike the Phase 92 block above — independent of
+      // enforceBreakConfirmation and of the schedule type: it is a statutory finding, not an opt-in
+      // confirmation workflow. A recorded day break cures it, a CURRENT acknowledgement waives it
+      // (D-17); like above there is no bypass field. Read-only, the saldo is never touched (D-05).
+      if (tenantConfig?.blockMonthCloseOnUnconfirmedBreak) {
+        const crossSalonBreakDays = await findUnacknowledgedCrossSalonDaysForEmployee(app.prisma, {
+          tenantId: req.user.tenantId,
+          employeeId,
+          monthFirstDay,
+          monthLastDay,
+          tz,
+        });
+        if (crossSalonBreakDays.length > 0) {
+          const n = crossSalonBreakDays.length;
+          return reply.code(409).send({
+            error: `${n} Tag${n === 1 ? "" : "e"} mit salonübergreifend fehlender Pflichtpause (§ 4 ArbZG). Bitte zuerst eine Pause erfassen oder als „durchgearbeitet" quittieren.`,
+            crossSalonBreakCount: n,
+            crossSalonBreakDays,
+            requiresCrossSalonAck: true,
           });
         }
       }

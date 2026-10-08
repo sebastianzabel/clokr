@@ -2877,3 +2877,165 @@ pnpm --filter @clokr/web exec vitest run src/lib/__tests__/vacation-base-default
 pnpm --filter @clokr/api test
 pnpm --filter @clokr/web test
 ```
+
+---
+
+## X — Tagesbezogene Pausenprüfung über Salongrenzen, Tagespause und Quittung am Tag (Phase 80, Issue #80)
+
+**Schwere: Semantikänderung des Unterbaus nach ADR 0002, Entscheidung 7, im Sinn einer neuen
+Fremdschlüssel-Referenz auf den Unterbau: `DayBreak.employeeId -> Employee` und
+`DayBreakAck.employeeId -> Employee` (beide `onDelete: Restrict`) sind eine neue
+Shared-Kernel-Abhängigkeit (ADR 0002, Entscheidung 4/7). Owner-Entscheidung = die Entscheidungs-
+kommentare auf Issue #80 vom 08.10.2026 (D-03). Dazu ein additiver Schlüssel
+`BREAK_CROSS_SALON_VIOLATION` in der `NOTIFICATION_EMAIL_POLICY` des Unterbaus (Erweiterung, kein
+bestehender Leser ändert sich) und ein bewusster Owner-Override von ADR 0002, Entscheidung 2 (D-02,
+siehe unten).**
+
+### Warum dieser Eintrag existiert
+
+Die Pausenprüfung rechnete pro Eintrag (und pro Eintrag mit Lücken im selben Eintrag): 4 h in Salon A
+plus 4 h in Salon B am selben Tag ohne Pause waren zwei unauffällige Einträge, obwohl § 4 ArbZG die
+Ruhepause je ARBEITSTAG verlangt, nicht je Arbeitsort. Solange #70 offen ist, gibt es pro Mitarbeiter
+und Tag nur einen Eintrag (partieller Unique-Index) — der Fehler ist heute nicht auslösbar, wird aber
+mit #70 sofort real. Phase 80 baut die Regel deshalb jetzt einmal richtig, mit dem Beweis, dass sich
+für alle heute möglichen Tage nichts ändert.
+
+**Owner-Override von ADR 0002, Entscheidung 2 („keine Verallgemeinerung auf Verdacht“) — D-02.**
+Die Tagespause (`DayBreak`) und ihre Quittung (`DayBreakAck`) sind Modelle für einen Fall, den es mit
+den heutigen Daten noch nie gibt (eine Lücke zwischen zwei Einträgen). Der Owner hat entschieden, sie
+trotzdem jetzt anzulegen: Das Recht (Pause je Arbeitstag, Fahrzeit ist Arbeitszeit, #92) steht fest,
+der Tag, an dem #70 den ersten echten Mehr-Eintrag-Tag erzeugt, soll nicht der Tag sein, an dem die
+Regel erst entworfen wird. Die Begründung ist Compliance, nicht Spekulation; sie gilt nur für diese
+beiden Modelle und ist kein Präzedenzfall für andere Tabellen.
+
+### Was sich geändert hat
+
+- **Kern (Pläne 01/02):** `evaluateDayBreaks()` (`contexts/time-tracking/day-break-rule.ts`) ist die
+  EINE Stelle der Tagesregel (§ 4 über alle Einträge des Tages, § 3 über die Tagessumme). Eine Lücke
+  zwischen Einträgen in VERSCHIEDENEN Salons zählt nie als Pause (D-01), eine Lücke im selben Salon
+  bis 120 Min zählt wie bisher. `checkArbZG` ruft den Kern, `dayLimitWarnings()` hält die § 3-Regel an
+  einer Stelle. Seit D-22 liefert der Kern zusätzlich die Intervallsicht — Pausensegmente mit
+  Herkunft (`entry-break`, `day-break`, `same-salon-gap`, `unplaced-entry-break`), Lücken und
+  Arbeitsblöcke —; die Warnungen lesen weiterhin nur die Minutensummen. § 4 Satz 2 und 3 (#511) sind
+  hier bewusst noch NICHT bewertet; #511 ergänzt sie als Regeln auf dieser Sicht, im selben Kern.
+- **Modelle (Plan 03):** `DayBreak` (Mitarbeiter + Tag + Zeitraum, kein Salon, kein Freitext) und
+  `DayBreakAck` (Begründung, Snapshot der Tagesfakten als JSON, `acknowledgedBy`), beide mit Soft
+  Delete und `onDelete: Restrict` auf `Employee`; Migration
+  `20261008142201_day_break_models` (2 `CREATE TABLE`, 2 `CREATE INDEX`, 2 `FOREIGN KEY`, sonst
+  nichts). Kein partieller Unique-Index auf `DayBreakAck`: ein solcher bräuchte handgeschriebenes
+  SQL, und eine Quittung gilt nur, solange ihr Snapshot zum Tag passt.
+- **Routen (Pläne 04/06/08):** `POST /api/v1/day-breaks`, `DELETE /api/v1/day-breaks/:id`,
+  `POST /api/v1/day-breaks/acks`, `DELETE /api/v1/day-breaks/acks/:id`, `GET /api/v1/day-breaks/checks`
+  in `api/day-breaks.ts`. Schreibzugriff über `time-entry:update`: EIGENE nur für den eigenen Tag,
+  ZUGEWIESEN nur mit Scope über ALLE Einträge des Tages (`dayCoverage()`, `day-scope.ts`); die
+  Quittung nie für den eigenen Tag; § 3 wird angezeigt, nie quittierbar. Jede Schreibaktion ist in
+  derselben Transaktion auditiert (`DAY_BREAK_CREATE`, `DAY_BREAK_DELETE`, `DAY_BREAK_ACK`,
+  `DAY_BREAK_ACK_REVOKE`, `SCOPE_ACCESS_DENIED`), ein Update gibt es nicht. `GET /checks` schwärzt
+  nach Reichweite aus einer Whitelist (Teil-Scope: nur Tagessumme und Verstoß). Die Quittung
+  verwirft die offenen `BREAK_CROSS_SALON_VIOLATION`-Mitteilungen dieses Mitarbeitertags für alle
+  Empfänger (reaktiv, nach dem Commit); ein Widerruf erweckt sie nicht wieder, weil der Cron auf
+  JEDE vorhandene Zeile deduped, auch eine verworfene.
+- **Compliance-Haken (Plan 05):** Anonymisierung nullt `DayBreakAck.reason` (Zeilen bleiben),
+  Hard-Delete räumt die Tagesmodelle vor dem Mitarbeiter, die jährliche Aufbewahrung archiviert sie
+  per Soft Delete mit den Einträgen (`archiveDayBreakDataBefore`, gezählt in `archivedDayBreaks`).
+  Alles über die Zeiterfassungs-Fassade, die der Unterbau ohnehin aufruft; `contexts/platform` ist
+  dafür unverändert.
+- **Monatsabschluss (Plan 07):** `cross-salon-days.ts` ist der eine Detektor. Unter
+  `blockMonthCloseOnUnconfirmedBreak` blockiert ein unquittierter Tag den manuellen Abschluss (409
+  `requiresCrossSalonAck`), verschiebt den automatischen und erscheint im Status als
+  `crossSalonBreakDays` für jeden Vertragstyp. Der Saldo bleibt unberührt (AST-Wächter,
+  byte-gleiche Saldodateien, unveränderte Vier-Pfad-Baseline).
+- **Mitteilung am Folgetag (Plan 09):** Feature 10 des Attendance-Checkers, täglich 09:00 in der
+  Mandantenzeitzone, schaut drei Tage zurück (Nachholen), meldet einmal je Empfänger, Mitarbeiter und
+  Tag; Volltext nur für Empfänger, deren eigene Reichweite den ganzen Tag abdeckt, sonst Summe und
+  Verstoß. Neutraler Mail-Betreff.
+- **Web (Pläne 10/11):** `DayBreakPanel` auf der eigenen Zeitenseite und der Team-Seite
+  (Deep-Link aus der Mitteilung), Hinweis beim Speichern, Chip im Monatsabschluss. Die Oberfläche
+  entscheidet nichts; Angebote kommen aus den Flags des Servers.
+
+### Was bewusst NICHT geschah
+
+- **Kein Aufheben von „ein Eintrag pro Tag“ (#70).** Mit den heutigen Daten kann eine Tagespause
+  deshalb nicht angelegt werden (die Route antwortet 409, es gibt keine Lücke); Monatsabschluss,
+  Mitteilung und Anzeige bleiben ohne Wirkung. Das ist gewollt: #70 ändert danach nichts mehr an
+  dieser Logik.
+- **Kein Fahrzeitmodell (#92)** und keine Ansicht für Salonleiter (#85).
+- **Keine automatische Korrektur.** Kein Zeiteintrag wird geschrieben, geändert oder gelöscht; die
+  Quittung dokumentiert nur.
+- **`api/time-entries.ts` unverändert**, ebenso die Neutralitätsaufzeichnungen
+  (`__tests__/neutrality/recorded`) und die Saldodateien.
+- **Keine neue Katalog-Permission** (die Routen nutzen `time-entry:update`/`read`) und kein
+  partieller Unique-Index (siehe oben).
+- **Freitext im Audit:** Die Begründung einer Quittung steht im Klartext im Audit-Eintrag, wie jede
+  andere auditierte Begründung. Ob Audit-Freitext bei der Anonymisierung geschwärzt wird, ist eine
+  systemweite Regel (#512) und wird hier nicht pro Entität vorweggenommen; `DayBreakAck.reason`
+  selbst wird anonymisiert. Die Lücke `TimeEntry.breakWaivedReason` bleibt bei #508.
+- **Keine Auswertung von § 4 Satz 2/3 ArbZG** (Aufteilung in Abschnitte von mindestens 15 Min;
+  nicht länger als sechs Stunden am Stück ohne Ruhepause): #511 baut darauf auf der Intervallsicht (D-22) auf. Pausen am Eintrag erscheinen dort
+  heute als „Lage unbekannt“, weil die Tagesabfrage die Einzelpausen nicht lädt.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** alles — Kern, beide Modelle, fünf Routen, Detektor, Cron-Mitteilung,
+  Compliance-Haken. Neue Mitteilungsart `BREAK_CROSS_SALON_VIOLATION`.
+- **Arbeitszeitkonto:** vier Monatsabschluss-Verbraucher (manueller Abschluss, Status,
+  Auto-Abschluss, Reporter für verschobene Abschlüsse) lesen den Detektor über
+  `contexts/time-tracking/index.ts` und blockieren oder verschieben nur; keine Saldo-Berechnung
+  ändert sich (`close-employee-month.ts`, `month-saldo.ts`, `overtime-balance.ts`, `timezone.ts`
+  byte-gleich zu `origin/main`).
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine.
+- **Unterbau:** zwei Rück-Relationen auf `Employee` (`dayBreaks`, `dayBreakAcks`) und der additive
+  Schlüssel in `NOTIFICATION_EMAIL_POLICY`; keine Feldänderung an einem bestehenden Modell, keine
+  geänderte Export-Signatur von `contexts/platform/index.ts`.
+- **Kompositionsschicht:** `data-retention.ts` ruft `archiveDayBreakDataBefore` über den
+  Zeiterfassungs-Index; die Wurzel `app.ts` registriert ein weiteres Routenmodul (Zähler der
+  Wurzel-Ausnahme 52 → 53, Eintrag H).
+
+### Gemessen
+
+- Äquivalenzbeweis (80-AC6): Der Kern gegen die eingefrorene Kopie der Tageswarnungen aus `73838040`
+  (Fixture und Test nur von `(80-01)`-Commits berührt): 6048 Ein-Eintrag-Fälle, 4000 Mehr-Eintrag-
+  Fälle im selben Salon, 5139 Salonwechselfälle mit Fahrzeit und 2861 ohne — null Abweichungen; ein
+  Sensitivitätstest (strikt `< 120`) unterscheidet sich in 40 Fällen. Ein Mutationsbeweis lässt die
+  Matrizen rot werden.
+- Intervallsicht (80-02): 28 Tests, 3000 Konsistenzfälle (1680 mit Salonwechsel-Lücke).
+- Migration: 46 Migrationen, `migrate diff --exit-code` gegen eine frische Shadow-DB: „No
+  difference detected“, Exit 0; `migrate status`: „Database schema is up to date!“.
+- Routen: 23 Tests (Anlegen/Löschen), 27 Tests (Quittung/Widerruf, einschließlich Mitteilungs-
+  Verwerfung), 23 Tests (Tagesprüfung inkl. Byte-Schwärzungsbeweis); T-100-09-Byte-Vergleich für
+  `DELETE /:id` und `DELETE /acks/:id`.
+- Monatsabschluss: 21 Integrationstests, 13 Detektor-Unit-Tests, Abfragebudget gemessen (0
+  zusätzliche Abfragen ohne Zwei-Salon-Tag, genau eine je Modell sonst); Saldo-Wächter über 30
+  Dateien mit Mutationsbeweis; `measure-saldo-path-parity.ts --check` gegen die unveränderte
+  Baseline grün.
+- Cron: 15 Integrationstests + 8 Builder-Tests; Empfängermatrix (Admin voll, Manager beider Salons
+  voll, Manager eines Salons geschwärzt, Manager eines dritten Salons keine, der Mitarbeiter selbst
+  keine).
+- Finaler Gate-Lauf auf dem mit `origin/main` zusammengeführten Stand (Merge ohne Konflikt, keine
+  Phase-80-Datei betroffen): volle API-Suite 496 Dateien, 7984 bestanden, 3 übersprungen (7987
+  Tests), 0 Fehler; volle Web-Suite mit Abdeckung 109 Dateien, 1722 Tests; `test:scripts` 6
+  Dateien, 313 Tests. Alle CI-Gates grün: Typecheck, Lint (0 Fehler), `lint:tenant-scoping`,
+  Import-Ziele (2113 Spezifizierer), Facade-Signaturen (131 Funktionen, 17 Ausnahmen, 0 Funde),
+  fremder Kontextzugriff und Kontextgrenzen (`--check 0`), Import-Zyklen (`--cycles --check 22`),
+  Guard-Vakuität (963 Dateien, 0 vakuos), E2E-Spec-Registry (24 Dateien), T-100-09-Vollständigkeit
+  (98 Routen), Rollenprüfungen, Saldo-Lock-Herleitung, Kommentarsprache (0 neue Verstöße), beide
+  Builds. Der Gesamtlauf fand drei Dinge, die die Teilpläne nicht gesehen hatten: zwei
+  Zählpins (131 Fassadenfunktionen, 18 Advisory-Lock-Schlüssel — auf die neuen, im Pin
+  begründeten Werte gesetzt) und einen Zuwachs der Import-Zyklen von 22 auf 23 Module, den der
+  Detektor `cross-salon-days.ts` durch einen Rück-Import des Arbeitszeitkonto-Index auslöste; er
+  wurde an der Ursache beseitigt (der Tagesschlüssel wird dort direkt formatiert), der CI-Pin 22
+  blieb unberührt. `measure-saldo-path-parity.ts --check` gegen die unveränderte Baseline grün.
+
+### Nachrechnen
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/contexts/time-tracking/__tests__/day-break-equivalence-80.test.ts src/contexts/time-tracking/__tests__/day-break-rule.test.ts src/contexts/time-tracking/__tests__/day-break-intervals.test.ts
+pnpm --filter @clokr/api exec vitest run src/contexts/time-tracking/api/__tests__/day-breaks.test.ts src/contexts/time-tracking/api/__tests__/day-break-acks.test.ts src/contexts/time-tracking/api/__tests__/day-break-checks.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/cross-salon-month-close-80.test.ts src/__tests__/cross-salon-saldo-isolation-80.test.ts src/__tests__/cross-salon-break-notifications-80.test.ts src/__tests__/day-break-compliance-80.test.ts
+pnpm --filter @clokr/api exec tsx scripts/measure-saldo-path-parity.ts --check
+pnpm --filter @clokr/db exec prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code   # SHADOW_DATABASE_URL gesetzt
+pnpm --filter @clokr/api test
+pnpm --filter @clokr/web test
+```

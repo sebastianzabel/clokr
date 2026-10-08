@@ -44,6 +44,21 @@ export function normalizeDateParam(raw: string | null | undefined): string | nul
   return day;
 }
 
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Reduces an `?employeeId=` URL parameter to a lowercase uuid, or `null` when it is unusable.
+ *
+ * Issue #80 (D-10): the BREAK_CROSS_SALON_VIOLATION notification links to
+ * `/team/time-entries?employeeId=<id>&date=<day>`. A URL param is untrusted text — it is only
+ * ever used to look an employee up in the caller's own `/employees` list, never sent to the API
+ * unchecked, and a shape that is not a uuid is ignored without breaking the page.
+ */
+export function normalizeEmployeeIdParam(raw: string | null | undefined): string | null {
+  if (!raw || !UUID_SHAPE.test(raw)) return null;
+  return raw.toLowerCase();
+}
+
 export interface FocusableEntry {
   id: string;
   /** Full ISO instant as sent by the API, or a plain day. */

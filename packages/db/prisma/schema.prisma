@@ -477,6 +477,10 @@ model Employee {
   salonAssignments         EmployeeSalonAssignment[]
   // Issue #468 — § 17 Abs. 1 BEEG Elternzeit-Kürzung rows (Restrict FK — never cascade-delete history)
   parentalLeaveReductions  ParentalLeaveReduction[]
+  // Issue #80 — day-level gap breaks and cross-salon acknowledgements (Restrict FK — never
+  // cascade-delete history); Prisma-only back-relations, no column
+  dayBreaks                DayBreak[]
+  dayBreakAcks             DayBreakAck[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -602,6 +606,49 @@ model Break {
   timeEntry TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
 
   @@index([timeEntryId])
+}
+
+// Issue #80 (D-03/D-05/D-19) — a break lying in a GAP between two closed entries of the day.
+// It hangs on the DAY (employee + date), never on an entry, and carries no salon. It never
+// reduces working time and is never written into TimeEntry.breakMinutes (D-04/D-05); it only
+// counts toward the § 4 ArbZG break total of the day. Create + soft delete only (D-19).
+// No free text: nothing to anonymize under DSGVO. The relation to Employee is Restrict and is
+// the FIRST (and only) relation so lint-tenant-scoping-model-graph resolves it through `employee`.
+model DayBreak {
+  id         String    @id @default(uuid())
+  employeeId String
+  date       DateTime  @db.Date
+  startTime  DateTime  @db.Timestamptz
+  endTime    DateTime  @db.Timestamptz
+  createdBy  String? // userId / API-key subject, plain string like TimeEntry.createdBy
+  createdAt  DateTime  @default(now()) @db.Timestamptz
+  deletedAt  DateTime? @db.Timestamptz // soft delete (D-06/D-19)
+  deletedBy  String?
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId, date])
+}
+
+// Issue #80 (D-08/D-17) — the day-level "durchgearbeitet" acknowledgement of a cross-salon § 4
+// finding. No salon, no FK to User. `snapshot` binds it to the day as it was acknowledged
+// (entryIds, salonIds, netWorkedMin, totalBreakMin); a changed day makes it stale (D-17).
+// No unique index: a partial unique index would need hand-edited SQL — any current ack counts.
+// `reason` is free text (required by the API) and is nulled by DSGVO anonymization (D-06).
+model DayBreakAck {
+  id             String    @id @default(uuid())
+  employeeId     String
+  date           DateTime  @db.Date
+  reason         String?
+  snapshot       Json
+  acknowledgedBy String
+  createdAt      DateTime  @default(now()) @db.Timestamptz
+  deletedAt      DateTime? @db.Timestamptz // revocation = soft delete
+  deletedBy      String?
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId, date])
 }
 
 // ─────────────────────────────────────────────

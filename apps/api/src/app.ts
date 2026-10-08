@@ -14,6 +14,7 @@ import { authRoutes } from "./contexts/platform/api/auth";
 import { employeeRoutes } from "./contexts/platform/api/employees";
 import { employeeWifiRoutes } from "./contexts/time-tracking/api/employee-wifi"; // Phase 243 Plan 02 (B2)
 import { timeEntryRoutes } from "./contexts/time-tracking/api/time-entries";
+import { dayBreakRoutes } from "./contexts/time-tracking/api/day-breaks"; // Issue #80 (D-02..D-06, D-21)
 import { leaveRoutes } from "./contexts/absence/api/leave";
 import { overtimeRoutes } from "./contexts/working-time-account/api/overtime";
 import { reportRoutes } from "./composition/reports";
@@ -303,6 +304,7 @@ export async function buildApp() {
   await app.register(authRoutes, { prefix: "/api/v1/auth" });
   await app.register(employeeRoutes, { prefix: "/api/v1/employees" });
   await app.register(timeEntryRoutes, { prefix: "/api/v1/time-entries" });
+  await app.register(dayBreakRoutes, { prefix: "/api/v1/day-breaks" }); // Issue #80 (D-02..D-06, D-21)
   await app.register(leaveRoutes, { prefix: "/api/v1/leave" });
   await app.register(retroEntryRequestRoutes, { prefix: "/api/v1/retro-entry-requests" });
   await app.register(overtimeRoutes, { prefix: "/api/v1/overtime" });

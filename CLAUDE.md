@@ -166,7 +166,7 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 
 - **Employee**: firstName → "Gelöscht", lastName/employeeNumber → "GELÖSCHT-XXX", nfcCardId → null
 - **User**: email → anonymized, passwordHash → "ANONYMIZED", isActive → false
-- **Notes**: All notes in TimeEntries, LeaveRequests, Absences are set to null
+- **Notes**: All notes in TimeEntries, LeaveRequests, Absences are set to null, and the reason of day-break acknowledgements (`DayBreakAck.reason`; rows kept)
 - **Documents**: Absence documentPath → null
 - **§ 9-Vorgänge**: Section9Credit documentPath → null, reason → null (Zeilen bleiben erhalten — Korrektureintrag nach R7)
 - **Auth tokens**: Invitations, OTP, RefreshTokens are hard-deleted (not retention-relevant)
@@ -264,6 +264,36 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   `apps/api/src/__tests__/working-time-formula-one-place-79.test.ts` fails on an inline copy. The
   JArbSchG pre-write plan values (`plannedNetMin…`, `correctedNetWorkMin`) and shift netto
   (`scheduling/shift-netto.ts`) are deliberately different calculations and stay as they are.
+- **Breaks are checked per day, across salons (Issue #80).** `evaluateDayBreaks()`
+  (`apps/api/src/contexts/time-tracking/day-break-rule.ts`) is the ONLY place the day-level § 4
+  rule and the § 3 day sum over several entries live — `checkArbZG`, the day-break routes
+  (`api/day-breaks.ts`), the month-close detector (`cross-salon-days.ts`) and the next-day cron all
+  call it, and `day-scope.ts` (`dayCoverage()`) is the only place "scope over every closed entry of a
+  day" is decided. It sums all closed WORK entries of the day regardless of salon; a gap between
+  entries in DIFFERENT salons never counts as a break (travel is working time, #92), a same-salon gap
+  ≤ 120 min still does. A break lying in a gap is a `DayBreak` (employee + date, no salon, never on an
+  entry, never in `TimeEntry.breakMinutes`, never reduces working time — the saldo is untouched, an
+  AST guard fails if a saldo file references the detector or the models). On a cross-salon day only a
+  current `DayBreakAck` waives (an entry-level WAIVED does not); an ack whose stored snapshot no
+  longer matches the day is stale (a stale, malformed or revoked ack never lets a day pass). Only a
+  manager with `time-entry:update:ZUGEWIESEN` scope over EVERY entry of the day may acknowledge, never
+  their own day; § 3 over the day sum is shown, never acknowledgeable. Acknowledging dismisses the
+  open `BREAK_CROSS_SALON_VIOLATION` notices of that employee day for every recipient (reactive,
+  after commit); a revoke does not resurrect them, because the cron dedupes on ANY existing row,
+  dismissed or not. `GET /api/v1/day-breaks/checks` is the one read endpoint of every UI place and
+  redacts by reach (partial scope: totals and the finding only, built from a whitelist object). The
+  month close blocks only under `blockMonthCloseOnUnconfirmedBreak`, for every schedule type, and
+  never edits the saldo. The 09:00 (tenant time zone) cron (Feature 10 of the attendance checker)
+  notifies once per recipient, employee and day for yesterday and the two days before it (3-day
+  catch-up), full text only for recipients whose own reach covers the whole day. With one entry per
+  day (#70 still open) every result equals the pre-80 behaviour, proven by the frozen-copy
+  equivalence test (`day-break-equivalence-80.test.ts`; its fixture and the test are never edited).
+  Since D-22 the kernel additionally returns the day's breaks as intervals with their source
+  (`entry-break`, `day-break`, `same-salon-gap`, `unplaced-entry-break` = legacy `breakMinutes`
+  without position, never placed), the gaps and the work blocks between breaks; Phase 80 warnings
+  read only the minute sums, and § 4 Satz 2/3 (#511) are to be added as rules on that view inside
+  the same kernel, never as a second evaluation elsewhere. Details and the Shared-Kernel dependency:
+  `docs/adr/0001-abweichungen.md` Eintrag X.
 
 ## Public Holidays
 

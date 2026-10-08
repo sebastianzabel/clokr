@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeDateParam, resolveFocusTarget } from "../deep-link";
+import { normalizeDateParam, normalizeEmployeeIdParam, resolveFocusTarget } from "../deep-link";
 
 // Phase 112 (GitHub issue #115) — receiver-side hardening. A `?date=` param is untrusted text;
 // before this module it went straight into `new Date(param + "T12:00:00")` and then into
@@ -114,5 +114,33 @@ describe("resolveFocusTarget", () => {
     const target = resolveFocusTarget(entries, "e1", "2026-08-06");
     expect(target.entryId).toBe("e1");
     expect(target.day).toBe("2026-08-05");
+  });
+});
+
+// Issue #80 (D-10) — the BREAK_CROSS_SALON_VIOLATION notification links to
+// /team/time-entries?employeeId=<id>&date=<day>. The employeeId is untrusted URL text too.
+describe("normalizeEmployeeIdParam", () => {
+  const UUID = "3f2b8c1e-9a4d-4e6b-8f10-2c7d5a9b1e44";
+
+  it("returns a lowercase uuid unchanged", () => {
+    expect(normalizeEmployeeIdParam(UUID)).toBe(UUID);
+  });
+
+  it("lowercases an uppercase uuid", () => {
+    expect(normalizeEmployeeIdParam(UUID.toUpperCase())).toBe(UUID);
+  });
+
+  it("yields null for empty-ish input", () => {
+    expect(normalizeEmployeeIdParam(null)).toBeNull();
+    expect(normalizeEmployeeIdParam(undefined)).toBeNull();
+    expect(normalizeEmployeeIdParam("")).toBeNull();
+  });
+
+  it("yields null for junk, trailing text and array-like strings", () => {
+    expect(normalizeEmployeeIdParam("abc")).toBeNull();
+    expect(normalizeEmployeeIdParam(`${UUID}x`)).toBeNull();
+    expect(normalizeEmployeeIdParam(`${UUID},${UUID}`)).toBeNull();
+    expect(normalizeEmployeeIdParam(`[${UUID}]`)).toBeNull();
+    expect(normalizeEmployeeIdParam(` ${UUID}`)).toBeNull();
   });
 });

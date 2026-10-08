@@ -6,6 +6,16 @@
   // edit modal provably share one mapping and the colour/copy contract is unit-testable.
   import { breakBadgeClass, breakBadgeLabel, isUnconfirmedBreak } from "$lib/breaks/break-badge";
   import UnconfirmedBreakPanel from "$lib/components/breaks/UnconfirmedBreakPanel.svelte";
+  import DayBreakPanel from "$lib/components/breaks/DayBreakPanel.svelte"; // Issue #80
+  // Issue #80 (D-09d/D-20) — server-computed day checks; the browser never derives a
+  // cross-salon finding itself.
+  import {
+    type DayCheck,
+    type DayChecksResponse,
+    crossSalonSaveNotice,
+    isChecksRangeAllowed,
+    mergeDayChecksIntoArbzgMap,
+  } from "$lib/breaks/day-break-violation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
@@ -183,6 +193,8 @@
   let saving = $state(false);
   let saveError = $state("");
   let arbzgEnabled = $state(true);
+  // Issue #80 (D-20) — server day checks of the loaded range (multi-entry days only).
+  let dayChecks = $state<DayCheck[]>([]);
   // Issue #433 (D-05) — TenantConfig.defaultWorkDays, the MONTHLY_HOURS workday fallback tier
   // (the retired per-tenant holiday-deduction switch, D-04, is gone).
   let defaultWorkDays: number[] | null = $state(null);
@@ -416,6 +428,7 @@
         rawEmployee,
         rawConfig,
         rawBsAbsences,
+        rawDayChecks,
       ] = await Promise.all([
         api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}`),
         activeEmpId
@@ -478,8 +491,18 @@
               )
               .catch(() => [] as BsAbsence[])
           : Promise.resolve([] as BsAbsence[]),
+        // Issue #80 (D-09d/D-20) — server day checks for the shown range. Non-fatal: a failed
+        // check must never break the page, and the call is skipped for a range the API refuses.
+        activeEmpId && isChecksRangeAllowed(fromDate, toDate)
+          ? api
+              .get<DayChecksResponse>(
+                `/day-breaks/checks?employeeId=${activeEmpId}&from=${fromDate}&to=${toDate}`,
+              )
+              .catch(() => null)
+          : Promise.resolve(null),
       ]);
       entries = rawEntries;
+      dayChecks = rawDayChecks?.days ?? [];
       schedule = valueOr(rawSchedule, null);
       holidays = new Map(rawHolidays.map((h) => [h.date.split("T")[0], h.name]));
       absences = rawAbsences;
@@ -1082,13 +1105,47 @@
     return { startISO, endISO, breaksPayload };
   }
 
+  // ── Issue #80 — day breaks and acknowledgements of a multi-entry day ─────────
+  // The panel hands over "HH:MM" on the check's day; the ISO conversion mirrors
+  // buildManualEntryFields() so a day break lines up with the entries it sits between.
+  // API errors are rethrown on purpose: the panel / ReasonDialog shows the German message.
+  async function addDayBreak(date: string, slot: { startLocal: string; endLocal: string }) {
+    if (!ownEmployeeId) return;
+    await api.post("/day-breaks", {
+      employeeId: ownEmployeeId,
+      date,
+      startTime: new Date(`${date}T${slot.startLocal}:00`).toISOString(),
+      endTime: new Date(`${date}T${slot.endLocal}:00`).toISOString(),
+    });
+    await loadAll();
+  }
+
+  async function deleteDayBreak(id: string, reason: string) {
+    await api.delete(`/day-breaks/${id}`, { reason });
+    await loadAll();
+  }
+
+  async function acknowledgeDay(date: string, reason: string) {
+    if (!ownEmployeeId) return;
+    await api.post("/day-breaks/acks", { employeeId: ownEmployeeId, date, reason });
+    await loadAll();
+  }
+
+  async function revokeDayAck(ackId: string, reason: string) {
+    await api.delete(`/day-breaks/acks/${ackId}`, { reason });
+    await loadAll();
+  }
+
   async function saveEntry() {
     saving = true;
     saveError = "";
     const { startISO, endISO, breaksPayload } = buildManualEntryFields();
     try {
+      // Issue #80 (D-09a): the response carries the API's ArbZG warnings; only the cross-salon
+      // ones are surfaced here (the client-side modal warning list is unchanged).
+      let saved: { warnings?: unknown } | undefined;
       if (editEntry) {
-        await api.put(`/time-entries/${editEntry.id}`, {
+        saved = await api.put<{ warnings?: unknown }>(`/time-entries/${editEntry.id}`, {
           date: formDate,
           startTime: startISO,
           endTime: endISO,
@@ -1097,7 +1154,7 @@
           note: formNote || null,
         });
       } else {
-        await api.post("/time-entries", {
+        saved = await api.post<{ warnings?: unknown }>("/time-entries", {
           date: formDate,
           startTime: startISO,
           endTime: endISO,
@@ -1108,6 +1165,8 @@
       }
       closeModal();
       await loadAll();
+      const crossSalonNotice = crossSalonSaveNotice(saved?.warnings);
+      if (crossSalonNotice) toasts.warning(crossSalonNotice);
     } catch (e: unknown) {
       const apiErr = e as {
         status?: number;
@@ -1603,7 +1662,8 @@
       const warnings = checkArbZGFrontend(dayEntries);
       if (warnings.length > 0) map.set(dateStr, warnings);
     }
-    return map;
+    // Issue #80 (D-09d/D-20): multi-entry days carry the SERVER result instead of the client check.
+    return mergeDayChecksIntoArbzgMap(map, dayChecks);
   });
 
   // Legend is derived from what the displayed month actually contains, and split by the
@@ -1800,6 +1860,20 @@
       if (target) openEdit(target);
     }}
   />
+
+  <!-- Issue #80 — one panel per multi-entry day of the server's day check. The panel renders
+       nothing for a day without a cross-salon finding or a recorded day break, so single-entry
+       days look exactly as before. Acknowledge/revoke are passed so the server's flags and its
+       own 403 decide — the page makes no permission decision. -->
+  {#each dayChecks as dayCheck (dayCheck.date)}
+    <DayBreakPanel
+      check={dayCheck}
+      onAddBreak={(slot) => addDayBreak(dayCheck.date, slot)}
+      onDeleteBreak={deleteDayBreak}
+      onAcknowledge={(reason) => acknowledgeDay(dayCheck.date, reason)}
+      onRevoke={revokeDayAck}
+    />
+  {/each}
 
   <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
   {#if teView === "calendar"}

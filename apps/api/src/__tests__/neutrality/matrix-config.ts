@@ -259,6 +259,56 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "430, Phase 468 and Phase 481 entries above: RECORD/MERGE mode refuses to run once the " +
       "role guard is gone.",
   },
+  {
+    route: "POST /api/v1/day-breaks",
+    reason:
+      "New route added in Phase 80 (Issue #80, D-02/D-06), long after the role guard " +
+      "(`requireRole`) was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`time-entry:update`, EIGENE vs ZUGEWIESEN) from its very first commit and never had " +
+      "role-based access behavior to compare. Same vacuous-satisfaction reasoning as the Phase " +
+      "430, Phase 468, Phase 481 and Phase 79 entries above: RECORD/MERGE mode refuses to run " +
+      "once the role guard is gone.",
+  },
+  {
+    route: "DELETE /api/v1/day-breaks/:id",
+    reason:
+      "New route added in Phase 80 (Issue #80, D-06/D-19), long after the role guard " +
+      "(`requireRole`) was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`time-entry:update`, EIGENE vs ZUGEWIESEN) from its very first commit and never had " +
+      "role-based access behavior to compare. Same vacuous-satisfaction reasoning as the " +
+      "`POST /api/v1/day-breaks` entry directly above: RECORD/MERGE mode refuses to run once the " +
+      "role guard is gone.",
+  },
+  {
+    route: "POST /api/v1/day-breaks/acks",
+    reason:
+      "New route added in Phase 80 (Issue #80, D-08/D-13), long after the role guard " +
+      "(`requireRole`) was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      '(`requirePermission("time-entry:update:ZUGEWIESEN")`) from its very first commit and ' +
+      "never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the `POST /api/v1/day-breaks` entry above: RECORD/MERGE mode refuses to run once the role " +
+      "guard is gone.",
+  },
+  {
+    route: "DELETE /api/v1/day-breaks/acks/:id",
+    reason:
+      "New route added in Phase 80 (Issue #80, D-06/D-14), long after the role guard " +
+      "(`requireRole`) was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      '(`requirePermission("time-entry:update:ZUGEWIESEN")`) from its very first commit and ' +
+      "never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the `POST /api/v1/day-breaks/acks` entry directly above: RECORD/MERGE mode refuses to run " +
+      "once the role guard is gone.",
+  },
+  {
+    route: "GET /api/v1/day-breaks/checks",
+    reason:
+      "New route added in Phase 80 (Issue #80, D-09/D-11/D-20), long after the role guard " +
+      "(`requireRole`) was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`time-entry:read`, EIGENE vs ZUGEWIESEN) from its very first commit and never had " +
+      "role-based access behavior to compare. Same vacuous-satisfaction reasoning as the " +
+      "`POST /api/v1/day-breaks` entry above: RECORD/MERGE mode refuses to run once the role " +
+      "guard is gone.",
+  },
 ];
 
 /** Routes declared in `app.ts` itself — invisible to the source parser, proven registered. */

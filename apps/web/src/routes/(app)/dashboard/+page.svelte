@@ -51,6 +51,7 @@
     type ClockDayEntry,
   } from "$lib/dashboard/day-state";
   import { interpretClockOut, type ClockOutResponse } from "$lib/dashboard/clock-out-result"; // Phase 307 Plan 02 (D-04)
+  import { crossSalonSaveNotice } from "$lib/breaks/day-break-violation"; // Issue #80 (D-09a)
   import { weekProgressDelta } from "$lib/dashboard/week-progress"; // Issue #451 (D-06)
   import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
@@ -896,6 +897,10 @@
         if (clockOutResult.kind === "not-closed") {
           toasts.error(clockOutResult.message);
         } else {
+          // Issue #80 (D-09a): a clock-out that completes a cross-salon day without enough break
+          // is saved either way; the API's warning is shown as a notice.
+          const crossSalonNotice = crossSalonSaveNotice(clockOutResponse.warnings);
+          if (crossSalonNotice) toasts.warning(crossSalonNotice);
           // Phase 115 (issue #118): clockedIn / activeEntryId / clockStart are $derived now.
           // They resolve to the closed state on their own once loadData() returns the closed
           // row, and the open-break $effect then clears breakStartedAt.

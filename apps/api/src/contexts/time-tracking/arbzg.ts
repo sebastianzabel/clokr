@@ -14,7 +14,10 @@ import {
 } from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 import type { TimeEntry } from "@clokr/db";
 import { findEntriesOfDay } from "./day-entries"; // Phase 69b — the single day lookup
-import { entryDurations, addWorkingMinutes } from "./entry-durations"; // Phase 79 (Issue #79), D-03/D-12
+import { addWorkingMinutes } from "./entry-durations"; // Phase 79 (Issue #79), D-03/D-12
+import { evaluateDayBreaks } from "./day-break-rule"; // Issue #80 — the day-level § 4/§ 3 rule
+import type { DayBreakEvaluation, DayBreakRow } from "./day-break-rule"; // Issue #80
+import { listDayBreaksOfDay, listAcksOfDay } from "./day-break-store"; // Issue #80 (D-06)
 
 // Phase 69b: in-memory equivalents of the former `findFirst({ endTime: { not: null }, orderBy })`
 // rest-period lookups. Only closed rows count; the first maximum/minimum wins on ties.
@@ -47,6 +50,62 @@ export interface ArbZGWarning {
    * existing consumers reading only .code/.severity/.message are unaffected.
    */
   waived?: boolean;
+  /**
+   * Issue #80 (D-01/D-18) — set to true only when the day's closed WORK entries lie in two or more
+   * salons. Additive like `waived`: absent otherwise, so existing consumers are unaffected.
+   */
+  crossSalon?: boolean;
+}
+
+/**
+ * Builds the § 4 (break) and § 3 (daily maximum) findings of one day from its evaluation.
+ *
+ * Message templates, severities and key order are the pre-80 ones. `crossSalon: true` is appended
+ * on a cross-salon day (D-01/D-18). MAX_DAILY_EXCEEDED is an "error" always — an acknowledgement
+ * waives only the § 4 finding, never the § 3 day sum (D-18).
+ */
+export function dayLimitWarnings(
+  evaluation: DayBreakEvaluation,
+  bsMinutesToday: number,
+): ArbZGWarning[] {
+  const warnings: ArbZGWarning[] = [];
+  const { netWorkedMin, totalBreakMin, waived, crossSalon } = evaluation;
+  const crossFlag = crossSalon ? { crossSalon: true as const } : {};
+
+  // § 4 ArbZG – Ruhepausenvorschrift
+  // Phase 91 (BREAK-03): a waived day downgrades the >9h branch from "error" to "warning" and flags
+  // waived:true — the >6h branch is already a "warning" and only gets the waived flag added.
+  if (evaluation.requiredBreakMin === 45 && evaluation.breakShortfall) {
+    warnings.push({
+      code: "BREAK_TOO_SHORT",
+      severity: waived ? "warning" : "error", // waived → downgrade from blocking error
+      message: `§ 4 ArbZG: Bei über 9 Stunden Arbeitszeit sind mindestens 45 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
+      ...(waived ? { waived: true } : {}),
+      ...crossFlag,
+    });
+  } else if (evaluation.requiredBreakMin === 30 && evaluation.breakShortfall) {
+    warnings.push({
+      code: "BREAK_TOO_SHORT",
+      severity: "warning",
+      message: `§ 4 ArbZG: Bei über 6 Stunden Arbeitszeit sind mindestens 30 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
+      ...(waived ? { waived: true } : {}),
+      ...crossFlag,
+    });
+  }
+
+  // § 3 ArbZG – Tägliche Höchstarbeitszeit (10h absolut, 8h nur als 24-Wochen-Schnitt relevant)
+  // Phase 63 D-06: mixed-day rule — BS-Zeit + WORK-Zeit > 10h → MAX_DAILY_EXCEEDED.
+  const dailyTotalMin = netWorkedMin + bsMinutesToday;
+  if (dailyTotalMin > 10 * 60) {
+    warnings.push({
+      code: "MAX_DAILY_EXCEEDED",
+      severity: "error",
+      message: `§ 3 ArbZG: Tägliche Höchstarbeitszeit von 10 Stunden überschritten. Erfasst: ${(dailyTotalMin / 60).toFixed(1)} h.`,
+      ...crossFlag,
+    });
+  }
+
+  return warnings;
 }
 
 /**
@@ -156,64 +215,33 @@ export async function checkArbZG(
   ).filter((e) => e.endTime !== null && e.type === "WORK");
 
   if (daySlots.length > 0) {
-    // Phase 91 (BREAK-03) — a WAIVED day ("durchgearbeitet") downgrades the §4
-    // BREAK_TOO_SHORT finding from a blocking error to a compliance-flag (BAG
-    // 12.02.2025, 5 AZR 51/24: time worked without a documented break is still
-    // payable, so it must not hard-block). One entry per day makes `some`/`every`
-    // equivalent here; `some` is used defensively.
-    // MULTI-ENTRY: with several entries per day `some` waives the whole day's § 4 check if ONE entry
-    // is waived, and the gap-as-break rule below decides how entry gaps count as breaks.
-    const dayIsWaived = daySlots.some((s) => s.breakStatus === "WAIVED");
-
-    // Net working time + explicit breaks
-    let netWorkedMin = 0;
-    let explicitBreakMin = 0;
-
-    for (const slot of daySlots) {
-      const d = entryDurations(slot);
-      explicitBreakMin += d.breakMinutes;
-      netWorkedMin += d.workingMinutes;
-    }
-
-    // Lücken zwischen Slots zählen als Pausen
-    let gapBreakMin = 0;
-    for (let i = 1; i < daySlots.length; i++) {
-      const gap = (daySlots[i].startTime.getTime() - daySlots[i - 1].endTime!.getTime()) / 60000;
-      if (gap > 0 && gap <= 120) gapBreakMin += gap; // Lücken > 2h sind separate Schichten, keine Pausen
-    }
-
-    const totalBreakMin = explicitBreakMin + gapBreakMin;
-
-    // § 4 ArbZG – Ruhepausenvorschrift
-    // Phase 91 (BREAK-03): WAIVED downgrades the >9h branch from "error" to
-    // "warning" and flags waived:true — the >6h branch is already a "warning"
-    // and only gets the waived flag added, not a further downgrade.
-    if (netWorkedMin > 9 * 60 && totalBreakMin < 45) {
-      warnings.push({
-        code: "BREAK_TOO_SHORT",
-        severity: dayIsWaived ? "warning" : "error", // waived → downgrade from blocking error
-        message: `§ 4 ArbZG: Bei über 9 Stunden Arbeitszeit sind mindestens 45 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
-        ...(dayIsWaived ? { waived: true } : {}),
-      });
-    } else if (netWorkedMin > 6 * 60 && totalBreakMin < 30) {
-      warnings.push({
-        code: "BREAK_TOO_SHORT",
-        severity: "warning",
-        message: `§ 4 ArbZG: Bei über 6 Stunden Arbeitszeit sind mindestens 30 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
-        ...(dayIsWaived ? { waived: true } : {}),
-      });
-    }
-
-    // § 3 ArbZG – Tägliche Höchstarbeitszeit (10h absolut, 8h nur als 24-Wochen-Schnitt relevant)
-    // Phase 63 D-06: mixed-day rule — BS-Zeit + WORK-Zeit > 10h → MAX_DAILY_EXCEEDED.
-    const dailyTotalMin = netWorkedMin + bsMinutesToday;
-    if (dailyTotalMin > 10 * 60) {
-      warnings.push({
-        code: "MAX_DAILY_EXCEEDED",
-        severity: "error",
-        message: `§ 3 ArbZG: Tägliche Höchstarbeitszeit von 10 Stunden überschritten. Erfasst: ${(dailyTotalMin / 60).toFixed(1)} h.`,
-      });
-    }
+    // MULTI-ENTRY: the gap rule (a gap between salons is travel, never a break) and the waiver rule
+    // (entry-level WAIVED never waives a cross-salon day) for several entries per day live in
+    // day-break-rule.ts (D-01/D-16); this branch only feeds it the closed WORK rows.
+    const rows: DayBreakRow[] = daySlots.map((s) => ({
+      id: s.id,
+      startTime: s.startTime,
+      endTime: s.endTime!,
+      breakMinutes: s.breakMinutes,
+      breakStatus: s.breakStatus,
+      salonId: s.salonId,
+    }));
+    // Issue #80 (80-AC6): gap breaks and acknowledgements are read only when the day has two or
+    // more closed WORK rows — a single-entry day issues no extra query and stays unchanged.
+    const dayParams = { tenantId: employee.tenantId, employeeId, date: new Date(dateStr) };
+    const [dayBreaks, acks] =
+      rows.length >= 2
+        ? await Promise.all([
+            listDayBreaksOfDay(prisma, dayParams),
+            listAcksOfDay(prisma, dayParams),
+          ])
+        : [[], []];
+    const evaluation = evaluateDayBreaks({
+      rows,
+      dayBreaks,
+      acks: acks.map((a) => ({ snapshot: a.snapshot })),
+    });
+    warnings.push(...dayLimitWarnings(evaluation, bsMinutesToday));
 
     // § 5 ArbZG – Mindestruhezeit (11h zwischen Arbeitstagen)
     // Previous day: its last closed slot (any type).

@@ -33,6 +33,7 @@ import {
   lockEntriesForMonth,
   getEffectiveSchedule,
   findUnconfirmedBreakDays, // Phase 92 Plan 04 — BREAK-05 single source of truth
+  findUnacknowledgedCrossSalonDaysForEmployee, // Issue #80 (D-09b/D-15) — cross-salon § 4 defer
 } from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7; Phase 101B wave 8 merged in
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
@@ -332,6 +333,36 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     year: monthKey.year,
                   });
                   break; // defer — never auto-finalize over unconfirmed breaks (F-02/B2 parity)
+                }
+
+                // ── Issue #80 (D-09b/D-15): cross-salon § 4 violation defer ──
+                // Same flag, but NOT gated by enforceBreakConfirmation or by the schedule type:
+                // a statutory finding blocks the automatic lock for every contract. A recorded day
+                // break cures the day, a CURRENT acknowledgement waives it (D-17). Read-only — the
+                // saldo input below is untouched (D-05).
+                const crossSalonBreakDays = await findUnacknowledgedCrossSalonDaysForEmployee(
+                  app.prisma,
+                  {
+                    tenantId: tenant.id,
+                    employeeId: emp.id,
+                    monthFirstDay,
+                    monthLastDay,
+                    tz,
+                  },
+                );
+
+                if (crossSalonBreakDays.length > 0) {
+                  app.log.warn(
+                    { employeeId: emp.id, month: monthKey.month, year: monthKey.year },
+                    "Auto-Monatsabschluss: salonübergreifend fehlende Pflichtpause — verschoben (manuell)",
+                  );
+                  missing.push({
+                    employee: emp,
+                    missingDates: crossSalonBreakDays,
+                    month: monthKey.month,
+                    year: monthKey.year,
+                  });
+                  break; // defer — never auto-finalize over an open § 4 finding
                 }
               }
 
