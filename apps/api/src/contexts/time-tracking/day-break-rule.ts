@@ -125,6 +125,24 @@ export interface DayGap {
   countsAsBreak: boolean;
 }
 
+/**
+ * A maximal continuous working stretch of the day between two placed breaks (D-22).
+ *
+ * A gap between different salons is travel and belongs to the block (D-01); only a recorded day
+ * break inside it interrupts the block. `minutes` is the wall-clock length of the block, exact.
+ * `positionUnknownBreakMinutes` is the sum of the "unplaced-entry-break" minutes of the entries
+ * the block touches: an entry's unplaced minutes can lie in any of its blocks, so EACH of its
+ * blocks carries them in full, and they never split a block.
+ */
+export interface DayWorkBlock {
+  startTime: Date;
+  endTime: Date;
+  minutes: number;
+  /** Ids of the entries that have working time inside the block, in entry order. */
+  entryIds: string[];
+  positionUnknownBreakMinutes: number;
+}
+
 /** Result of evaluating one day. All minute values are exact, unrounded floats. */
 export interface DayBreakEvaluation {
   /** Sum of the entries' working time (presence minus stored break); never reduced by day breaks (D-05). */
@@ -158,6 +176,8 @@ export interface DayBreakEvaluation {
   breakSegments: DayBreakSegment[];
   /** Every positive gap between consecutive entries, in entry order (D-22). */
   gaps: DayGap[];
+  /** The continuous working stretches between the placed breaks, in time order (D-22). */
+  workBlocks: DayWorkBlock[];
 }
 
 /** A half-open span [start, end) in epoch milliseconds. */
@@ -315,10 +335,13 @@ export function evaluateDayBreaks(input: {
   // D-22 interval view — built after the sums and read by nothing above this line.
   const placedSegments: DayBreakSegment[] = [];
   const unplacedSegments: DayBreakSegment[] = [];
+  const rowPlacedSpans: Span[][] = [];
+  const rowUnplacedMin: number[] = [];
   for (const row of rows) {
     const placedSpans = row.breaks?.length
       ? unionClippedSpans(row.breaks, row.startTime, row.endTime)
       : [];
+    rowPlacedSpans.push(placedSpans);
     let placedMs = 0;
     for (const [s, e] of placedSpans) {
       placedMs += e - s;
@@ -332,6 +355,7 @@ export function evaluateDayBreaks(input: {
     }
     // Stored break minutes that no Break row covers: position unknown, never placed (D-22).
     const unplacedMin = (entryDurations(row).breakMinutes * 60000 - placedMs) / 60000;
+    rowUnplacedMin.push(unplacedMin > 0 ? unplacedMin : 0);
     if (unplacedMin > 0) {
       unplacedSegments.push({
         source: "unplaced-entry-break",
@@ -366,6 +390,56 @@ export function evaluateDayBreaks(input: {
   placedSegments.sort((a, b) => (a.startTime as Date).getTime() - (b.startTime as Date).getTime());
   const breakSegments = [...placedSegments, ...unplacedSegments];
 
+  // Work blocks: the working pieces of every entry (its span minus its placed breaks) plus the
+  // travel between salons (a cross-salon gap minus the day breaks inside it), merged where they
+  // touch. A counting same-salon gap and a same-salon gap above two hours contribute nothing, so
+  // they end the block (D-01). Unplaced minutes have no position and split nothing.
+  const pieces: Array<{ span: Span; rowIndex: number | null }> = [];
+  rows.forEach((row, i) => {
+    let cursor = row.startTime.getTime();
+    const end = row.endTime.getTime();
+    for (const [s, e] of rowPlacedSpans[i]) {
+      if (s > cursor) pieces.push({ span: [cursor, s], rowIndex: i });
+      cursor = Math.max(cursor, e);
+    }
+    if (end > cursor) pieces.push({ span: [cursor, end], rowIndex: i });
+  });
+  for (const g of gapSpans) {
+    if (!g.crossSalon) continue;
+    let cursor = g.startTime.getTime();
+    const end = g.endTime.getTime();
+    for (const [s, e] of unionClippedSpans(dayBreaks, g.startTime, g.endTime)) {
+      if (s > cursor) pieces.push({ span: [cursor, s], rowIndex: null });
+      cursor = Math.max(cursor, e);
+    }
+    if (end > cursor) pieces.push({ span: [cursor, end], rowIndex: null });
+  }
+  pieces.sort((a, b) => a.span[0] - b.span[0]);
+  const workBlocks: DayWorkBlock[] = [];
+  let open: { start: number; end: number; rowIndexes: Set<number> } | null = null;
+  const closeBlock = (): void => {
+    if (open === null) return;
+    const indexes = [...open.rowIndexes].sort((a, b) => a - b);
+    workBlocks.push({
+      startTime: new Date(open.start),
+      endTime: new Date(open.end),
+      minutes: (open.end - open.start) / 60000,
+      entryIds: indexes.map((i) => rows[i].id),
+      positionUnknownBreakMinutes: indexes.reduce((sum, i) => sum + rowUnplacedMin[i], 0),
+    });
+    open = null;
+  };
+  for (const { span, rowIndex } of pieces) {
+    if (open !== null && span[0] <= open.end) {
+      if (span[1] > open.end) open.end = span[1];
+    } else {
+      closeBlock();
+      open = { start: span[0], end: span[1], rowIndexes: new Set() };
+    }
+    if (rowIndex !== null) open.rowIndexes.add(rowIndex);
+  }
+  closeBlock();
+
   return {
     netWorkedMin,
     explicitBreakMin,
@@ -380,6 +454,7 @@ export function evaluateDayBreaks(input: {
     waived,
     snapshot,
     breakSegments,
+    workBlocks,
     gaps: gapSpans.map((g) => ({
       previousEntryId: g.previous.id,
       nextEntryId: g.next.id,
