@@ -44,6 +44,7 @@
 │   └── /:id (DELETE)
 │   └── /:id (DELETE)
 │   └── /:id (DELETE)
+│   └── /:id (DELETE)
 │   └── /:id (GET, HEAD)
 │   └── /:id (GET, HEAD)
 │   └── /:id (GET, HEAD, PATCH)

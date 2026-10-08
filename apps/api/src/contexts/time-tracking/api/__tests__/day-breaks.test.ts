@@ -1,4 +1,4 @@
-// Issue #80 (D-02, D-05, D-06, D-21) — POST /api/v1/day-breaks (DELETE and D-19 follow in Task 2).
+// Issue #80 (D-02, D-05, D-06, D-19, D-21) — POST / DELETE /api/v1/day-breaks.
 //
 // A multi-entry day cannot exist in the database while the partial unique index
 // `TimeEntry_employeeId_date_unique_not_deleted` holds, so the day lookup `findEntriesOfDay` is
@@ -151,8 +151,33 @@ describe("Issue #80 — /api/v1/day-breaks", () => {
     });
   }
 
+  function del(
+    token: string,
+    id: string,
+    body: Record<string, unknown> = { reason: "Falsch erfasst" },
+  ) {
+    return app.inject({
+      method: "DELETE",
+      url: `/api/v1/day-breaks/${id}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: body,
+    });
+  }
+
   function gapBreak(employeeId: string, day = DAY, start = "12:00", end = "12:30") {
     return { employeeId, date: day, startTime: at(start, day), endTime: at(end, day) };
+  }
+
+  async function seedDayBreak(employeeId: string, day = DAY, start = "12:00", end = "12:30") {
+    return app.prisma.dayBreak.create({
+      data: {
+        employeeId,
+        date: dateOf(day),
+        startTime: new Date(at(start, day)),
+        endTime: new Date(at(end, day)),
+        createdBy: data.adminUser.id,
+      },
+    });
   }
 
   beforeAll(async () => {
@@ -409,6 +434,16 @@ describe("Issue #80 — /api/v1/day-breaks", () => {
         expect((JSON.parse(res.body) as { error: string }).error).toBe(
           "Monat ist abgeschlossen und kann nicht bearbeitet werden",
         );
+
+        // DELETE of a break inside the closed month answers the same
+        const existing = await seedDayBreak(data.employee.id, CLOSED_DAY);
+        const delRes = await del(data.empToken, existing.id);
+        expect(delRes.statusCode).toBe(403);
+        expect((JSON.parse(delRes.body) as { error: string }).error).toBe(
+          "Monat ist abgeschlossen und kann nicht bearbeitet werden",
+        );
+        const still = await app.prisma.dayBreak.findUniqueOrThrow({ where: { id: existing.id } });
+        expect(still.deletedAt).toBeNull();
       } finally {
         await app.prisma.saldoSnapshot.delete({ where: { id: snapshot.id } });
       }
@@ -421,6 +456,157 @@ describe("Issue #80 — /api/v1/day-breaks", () => {
       expect((JSON.parse(res.body) as { error: string }).error).toBe(
         "Eintrag ist gesperrt und kann nicht bearbeitet werden",
       );
+    });
+  });
+
+  // ── Task 2: DELETE ────────────────────────────────────────────────────────
+
+  describe("DELETE /:id — soft delete with a reason (D-06, D-19)", () => {
+    it("the owner deletes with a reason: 204, row kept with deletedAt/deletedBy, one audit row with before/after, second delete 404", async () => {
+      twoSalonDay(data.employee.id);
+      const created = await seedDayBreak(data.employee.id);
+
+      const res = await del(data.empToken, created.id, { reason: "Falsch erfasst" });
+      expect(res.statusCode).toBe(204);
+
+      const row = await app.prisma.dayBreak.findUniqueOrThrow({ where: { id: created.id } });
+      expect(row.deletedAt).not.toBeNull();
+      expect(row.deletedBy).toBe(data.empUser.id);
+
+      const audits = await app.prisma.auditLog.findMany({
+        where: { action: "DAY_BREAK_DELETE", entityId: created.id },
+      });
+      expect(audits).toHaveLength(1);
+      const oldValue = audits[0].oldValue as Record<string, string>;
+      expect(oldValue.employeeId).toBe(data.employee.id);
+      expect(oldValue.date).toBe(DAY);
+      expect(oldValue.startTime).toBe(at("12:00"));
+      expect(oldValue.endTime).toBe(at("12:30"));
+      const newValue = audits[0].newValue as Record<string, string>;
+      expect(newValue.auditReason).toBe("Falsch erfasst");
+      expect(newValue.deletedAt).toBeTruthy();
+
+      const again = await del(data.empToken, created.id);
+      expect(again.statusCode).toBe(404);
+      expect((JSON.parse(again.body) as { error: string }).error).toBe("Pause nicht gefunden");
+    });
+
+    it("a missing or blank reason is 400 before any lookup", async () => {
+      const created = await seedDayBreak(data.employee.id);
+      expect((await del(data.empToken, created.id, {})).statusCode).toBe(400);
+      const blank = await del(data.empToken, created.id, { reason: "   " });
+      expect(blank.statusCode).toBe(400);
+      expect(blank.body).toContain("Begründung ist erforderlich");
+      // even for an id that exists nowhere: validation first
+      expect((await del(data.empToken, randomUUID(), {})).statusCode).toBe(400);
+      const row = await app.prisma.dayBreak.findUniqueOrThrow({ where: { id: created.id } });
+      expect(row.deletedAt).toBeNull();
+    });
+
+    it("T-100-09: a foreign tenant's real id and an unknown id answer byte-identically; the cross-tenant audit exists only for the real one", async () => {
+      const foreignRow = await seedDayBreak(dataB.employee.id);
+      const unknownId = randomUUID();
+      const foreign = await del(data.adminToken, foreignRow.id);
+      const unknown = await del(data.adminToken, unknownId);
+      expect(foreign.statusCode).toBe(404);
+      expect(unknown.statusCode).toBe(foreign.statusCode);
+      expect(unknown.body).toBe(foreign.body);
+      expect((JSON.parse(foreign.body) as { error: string }).error).toBe("Pause nicht gefunden");
+
+      expect(
+        await app.prisma.auditLog.count({
+          where: {
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entity: "DayBreak",
+            entityId: foreignRow.id,
+          },
+        }),
+      ).toBe(1);
+      expect(
+        await app.prisma.auditLog.count({
+          where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: unknownId },
+        }),
+      ).toBe(0);
+      const untouched = await app.prisma.dayBreak.findUniqueOrThrow({
+        where: { id: foreignRow.id },
+      });
+      expect(untouched.deletedAt).toBeNull();
+    });
+
+    it("an EIGENE caller cannot delete another employee's break: 403", async () => {
+      const other = await seedDayBreak(data.adminEmployee.id);
+      const res = await del(data.empToken, other.id);
+      expect(res.statusCode).toBe(403);
+      expect((JSON.parse(res.body) as { error: string }).error).toBe("Kein Zugriff");
+    });
+
+    it("a manager scoped on salon A only: 404 plus SCOPE_ACCESS_DENIED; scoped on A and B: 204", async () => {
+      twoSalonDay(data.employee.id);
+      const created = await seedDayBreak(data.employee.id);
+      const partial = await createScopedManager(
+        "db-del-a",
+        ["time-entry:update:ZUGEWIESEN"],
+        [salonA],
+      );
+      const denied = await del(partial.token, created.id);
+      expect(denied.statusCode).toBe(404);
+      expect((JSON.parse(denied.body) as { error: string }).error).toBe("Pause nicht gefunden");
+      expect(
+        await app.prisma.auditLog.count({
+          where: {
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "EmployeeDay",
+            entityId: `${data.employee.id}:${DAY}`,
+          },
+        }),
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        (await app.prisma.dayBreak.findUniqueOrThrow({ where: { id: created.id } })).deletedAt,
+      ).toBeNull();
+
+      const full = await createScopedManager(
+        "db-del-ab",
+        ["time-entry:update:ZUGEWIESEN"],
+        [salonA, salonB],
+      );
+      expect((await del(full.token, created.id)).statusCode).toBe(204);
+    });
+
+    it("a locked entry of the day is 409", async () => {
+      twoSalonDay(data.employee.id, LOCKED_DAY, { isLocked: true });
+      const created = await seedDayBreak(data.employee.id, LOCKED_DAY);
+      const res = await del(data.empToken, created.id);
+      expect(res.statusCode).toBe(409);
+      expect((JSON.parse(res.body) as { error: string }).error).toBe(
+        "Eintrag ist gesperrt und kann nicht bearbeitet werden",
+      );
+    });
+
+    it("D-19: a correction is delete + create — the same slot can be recorded again after the delete", async () => {
+      twoSalonDay(data.employee.id);
+      const first = await post(data.empToken, gapBreak(data.employee.id));
+      expect(first.statusCode).toBe(201);
+      const firstId = (JSON.parse(first.body) as { dayBreak: { id: string } }).dayBreak.id;
+      expect((await post(data.empToken, gapBreak(data.employee.id))).statusCode).toBe(409);
+      expect((await del(data.empToken, firstId)).statusCode).toBe(204);
+      const second = await post(data.empToken, gapBreak(data.employee.id));
+      expect(second.statusCode).toBe(201);
+      expect((JSON.parse(second.body) as { dayBreak: { id: string } }).dayBreak.id).not.toBe(
+        firstId,
+      );
+    });
+
+    it("D-19: there is no update route — PATCH and PUT answer 404", async () => {
+      const created = await seedDayBreak(data.employee.id);
+      for (const method of ["PATCH", "PUT"] as const) {
+        const res = await app.inject({
+          method,
+          url: `/api/v1/day-breaks/${created.id}`,
+          headers: { authorization: `Bearer ${data.empToken}` },
+          payload: { startTime: at("12:05") },
+        });
+        expect(res.statusCode).toBe(404);
+      }
     });
   });
 });

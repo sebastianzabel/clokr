@@ -21,7 +21,12 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { DayBreak } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
-import { permissionReach, accessContextFromRequest, resolveAccessReach } from "../../platform";
+import {
+  permissionReach,
+  accessContextFromRequest,
+  resolveAccessReach,
+  auditReasonSchema,
+} from "../../platform";
 import { getTenantTimezone, isMonthClosed, monthRangeUtc } from "../../working-time-account";
 import { findGapForInterval, intervalsOverlap } from "../day-break-rule";
 import { closedWorkRowsOfDay, listDayBreaksOfDay } from "../day-break-store";
@@ -31,6 +36,7 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const NOT_ALLOWED_MESSAGE = "Kein Zugriff";
 const ENTRY_NOT_FOUND_MESSAGE = "Eintrag nicht gefunden";
+const BREAK_NOT_FOUND_MESSAGE = "Pause nicht gefunden";
 const EMPLOYEE_NOT_FOUND_MESSAGE = "Mitarbeiter nicht gefunden";
 const MONTH_CLOSED_MESSAGE = "Monat ist abgeschlossen und kann nicht bearbeitet werden";
 const ENTRY_LOCKED_MESSAGE = "Eintrag ist gesperrt und kann nicht bearbeitet werden";
@@ -51,6 +57,9 @@ const createDayBreakSchema = z.object({
   startTime: z.string().datetime(),
   endTime: z.string().datetime(),
 });
+
+const idParamSchema = z.object({ id: z.string().uuid() });
+const deleteBodySchema = z.object({ reason: auditReasonSchema });
 
 /** UTC midnight of a `YYYY-MM-DD` key — the equality contract of the `@db.Date` column. */
 function dayKeyToDate(key: string): Date {
@@ -237,6 +246,77 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: OVERLAP_MESSAGE });
       }
       return reply.code(201).send({ dayBreak: created });
+    },
+  });
+
+  // DELETE /api/v1/day-breaks/:id — soft delete with a mandatory reason. A correction of a day
+  // break is delete + create (D-19); there is no update route.
+  app.delete("/:id", {
+    schema: {
+      tags: ["Zeiterfassung"],
+      summary: "Delete a day break with a mandatory reason (soft delete)",
+      description:
+        "Marks a day-level break as deleted (Issue #80). The row is kept; the audit log records " +
+        "the before-values and the reason. Requires time-entry:update; a caller acting on " +
+        "someone else's day needs scope over every closed entry of that day.",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      // T-100-09: the body is parsed BEFORE the lookup so a minimal valid body reaches the tenant
+      // guard for a foreign or unknown id instead of 400-ing differently.
+      const { reason } = deleteBodySchema.parse(req.body);
+      const tenantId = req.user.tenantId;
+
+      const existing = await app.prisma.dayBreak.findFirst({
+        where: { id, deletedAt: null },
+        include: { employee: { select: { tenantId: true } } },
+      });
+      // Folded fetch-then-compare (T-100-09): a foreign tenant's real id and an unknown id answer
+      // byte-identically. The audit is nested so it fires only when the row exists — an audit row
+      // for an unknown id would reopen the oracle this guard closes.
+      if (!existing || existing.employee.tenantId !== tenantId) {
+        if (existing) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entity: "DayBreak",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
+        return reply.code(404).send({ error: BREAK_NOT_FOUND_MESSAGE });
+      }
+
+      if (!(await resolveActingReach(req, reply, existing.employeeId))) return;
+
+      const dateKey = existing.date.toISOString().slice(0, 10);
+      const rows = await authorizeDayAction(app, req, reply, {
+        employeeId: existing.employeeId,
+        dateKey,
+        notFoundMessage: BREAK_NOT_FOUND_MESSAGE,
+      });
+      if (!rows) return;
+
+      const deletedAt = new Date();
+      await app.prisma.$transaction(async (tx) => {
+        await tx.dayBreak.update({
+          where: { id },
+          data: { deletedAt, deletedBy: req.user.sub },
+        });
+        await app.audit({
+          userId: req.user.sub,
+          action: "DAY_BREAK_DELETE",
+          entity: "DayBreak",
+          entityId: id,
+          oldValue: dayBreakFacts(existing),
+          newValue: { deletedAt, auditReason: reason },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          tx,
+        });
+      });
+      return reply.code(204).send();
     },
   });
 }
