@@ -230,3 +230,45 @@ export function evaluateDayBreaks(input: {
     snapshot,
   };
 }
+
+/**
+ * True when the half-open intervals [a.start, a.end) and [b.start, b.end) share any time.
+ * Adjacent intervals (one ends exactly where the other starts) do not overlap.
+ */
+export function intervalsOverlap(a: DayBreakInterval, b: DayBreakInterval): boolean {
+  return a.startTime.getTime() < b.endTime.getTime() && b.startTime.getTime() < a.endTime.getTime();
+}
+
+/**
+ * Write-side validation of a day break (D-05): finds the gap between two consecutive entries
+ * (`rows` in start order) that fully contains `interval`. Returns the two neighbouring entry ids
+ * and whether the gap crosses a salon boundary, or null when the interval is empty or reversed,
+ * touches an entry, spans across one, lies before the first or after the last entry, or lies in a
+ * gap that is not positive.
+ *
+ * Used by `POST /api/v1/day-breaks`; the evaluation itself stays robust at read time by clipping
+ * every day break to its gap.
+ */
+export function findGapForInterval(
+  rows: readonly DayBreakRow[],
+  interval: DayBreakInterval,
+): { previousEntryId: string; nextEntryId: string; crossSalon: boolean } | null {
+  const start = interval.startTime.getTime();
+  const end = interval.endTime.getTime();
+  if (!(start < end)) return null;
+  for (let i = 1; i < rows.length; i++) {
+    const previous = rows[i - 1];
+    const next = rows[i];
+    const gapStart = previous.endTime.getTime();
+    const gapEnd = next.startTime.getTime();
+    if (!(gapEnd > gapStart)) continue;
+    if (gapStart <= start && end <= gapEnd) {
+      return {
+        previousEntryId: previous.id,
+        nextEntryId: next.id,
+        crossSalon: previous.salonId !== next.salonId,
+      };
+    }
+  }
+  return null;
+}
