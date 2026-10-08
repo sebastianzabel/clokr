@@ -697,6 +697,7 @@ schlägt fehl, wenn er oder ein Rollenvergleich zurückkommt (D-19).
 | `contexts/time-tracking/api/admin-presence-sources.ts:330` | `POST /:id/devices/:mac/assign`                 | A       | `presence-source:manage`       | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/admin-presence-sources.ts:417` | `DELETE /:id/devices/:mac`                      | A       | `presence-source:manage`       | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/day-breaks.ts:372`             | `POST /acks`                                    | A, M    | `time-entry:update`            | ZUGEWIESEN                                   |
+| `contexts/time-tracking/api/day-breaks.ts:464`             | `DELETE /acks/:id`                              | A, M    | `time-entry:update`            | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/retro-entry-requests.ts:190`   | `GET /`                                         | A, M    | `retro-request:read`           | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/terminals.ts:14`               | `GET /`                                         | A       | `terminal:manage`              | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/terminals.ts:35`               | `POST /`                                        | A       | `terminal:manage`              | ZUGEWIESEN                                   |

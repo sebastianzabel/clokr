@@ -447,4 +447,79 @@ export async function dayBreakRoutes(app: FastifyInstance) {
       return reply.code(201).send({ acknowledgement: created });
     },
   });
+
+  // DELETE /api/v1/day-breaks/acks/:id — revoke an acknowledgement: soft delete with a mandatory
+  // reason. Once revoked the violation counts again. There is no update route.
+  app.delete("/acks/:id", {
+    schema: {
+      tags: ["Zeiterfassung"],
+      summary: "Revoke an acknowledgement of a cross-salon break violation (soft delete)",
+      description:
+        "Marks an acknowledgement as revoked (Issue #80). The row is kept; the audit log records " +
+        "the before-values and the reason, and the day's § 4 finding counts again. Requires " +
+        "time-entry:update with scope over every closed entry of the day; the acknowledgement of " +
+        "one's own day cannot be revoked by oneself.",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requirePermission("time-entry:update:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      // T-100-09: the body is parsed BEFORE the lookup so a minimal valid body reaches the tenant
+      // guard for a foreign or unknown id instead of 400-ing differently.
+      const { reason } = deleteBodySchema.parse(req.body);
+      const tenantId = req.user.tenantId;
+
+      const existing = await app.prisma.dayBreakAck.findFirst({
+        where: { id, deletedAt: null },
+        include: { employee: { select: { tenantId: true } } },
+      });
+      // Folded fetch-then-compare (T-100-09): a foreign tenant's real id and an unknown id answer
+      // byte-identically. The audit is nested so it fires only when the row exists — an audit row
+      // for an unknown id would reopen the oracle this guard closes.
+      if (!existing || existing.employee.tenantId !== tenantId) {
+        if (existing) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entity: "DayBreakAck",
+            entityId: id,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
+        return reply.code(404).send({ error: ACK_NOT_FOUND_MESSAGE });
+      }
+
+      if (existing.employeeId === req.user.employeeId) {
+        return reply.code(403).send({ error: SELF_ACK_MESSAGE });
+      }
+
+      // An acknowledgement outside the caller's day-wide scope answers the SAME 404 as an unknown
+      // id, so scope does not become an existence oracle for acknowledgements (T-100-09).
+      const rows = await authorizeDayAction(app, req, reply, {
+        employeeId: existing.employeeId,
+        dateKey: existing.date.toISOString().slice(0, 10),
+        notFoundMessage: ACK_NOT_FOUND_MESSAGE,
+      });
+      if (!rows) return;
+
+      const deletedAt = new Date();
+      await app.prisma.$transaction(async (tx) => {
+        await tx.dayBreakAck.update({
+          where: { id },
+          data: { deletedAt, deletedBy: req.user.sub },
+        });
+        await app.audit({
+          userId: req.user.sub,
+          action: "DAY_BREAK_ACK_REVOKE",
+          entity: "DayBreakAck",
+          entityId: id,
+          oldValue: ackFacts(existing),
+          newValue: { deletedAt, auditReason: reason },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          tx,
+        });
+      });
+      return reply.code(204).send();
+    },
+  });
 }

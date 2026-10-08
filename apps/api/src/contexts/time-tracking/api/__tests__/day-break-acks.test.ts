@@ -7,7 +7,8 @@
 // assignments, the month lock, DayBreakAck rows and the audit log.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
-import { randomUUID } from "node:crypto";
+import bcrypt from "bcryptjs";
+import crypto, { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { TimeEntry } from "@clokr/db";
 import {
@@ -17,6 +18,8 @@ import {
   cleanupTestData,
   createTestSalon,
 } from "../../../../__tests__/setup";
+import { normalizeRolePermissions, roleNameKey } from "../../../platform";
+import { getTenantTimezone, monthRangeUtc } from "../../../working-time-account";
 
 vi.mock("../../day-entries", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../day-entries")>();
@@ -28,9 +31,15 @@ import { checkArbZG } from "../../arbzg";
 
 const PASSWORD = "test1234";
 const DAY = "2026-03-10"; // constructed two-salon day
+const LOCKED_DAY = "2026-03-11"; // constructed day with a locked entry
+const CLOSED_DAY = "2026-02-10"; // constructed day inside a closed month
 const mockedLookup = vi.mocked(findEntriesOfDay);
 
 const SELF_ACK_MESSAGE = "Eigene Pausenverstöße können nicht selbst quittiert werden.";
+const NO_VIOLATION_MESSAGE = "Für diesen Tag liegt kein salonübergreifender Pausenverstoß vor.";
+const ALREADY_ACKED_MESSAGE = "Der Pausenverstoß dieses Tages ist bereits quittiert.";
+const MONTH_CLOSED_MESSAGE = "Monat ist abgeschlossen und kann nicht bearbeitet werden";
+const ENTRY_LOCKED_MESSAGE = "Eintrag ist gesperrt und kann nicht bearbeitet werden";
 const REASON = "Kundentermin ohne Unterbrechung";
 
 function dateOf(day: string): Date {
@@ -101,6 +110,54 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
     ]);
   }
 
+  async function login(email: string): Promise<string> {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email, password: PASSWORD },
+    });
+    expect(res.statusCode).toBe(200);
+    return (JSON.parse(res.body) as { accessToken: string }).accessToken;
+  }
+
+  async function createScopedManager(label: string, permissions: string[], salonIds: string[]) {
+    const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const passwordHash = await bcrypt.hash(PASSWORD, 10);
+    const user = await app.prisma.user.create({
+      data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+    });
+    await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        employeeNumber: s.toUpperCase().slice(0, 20),
+        firstName: label,
+        lastName: "DayBreakAckTest",
+        hireDate: new Date("2020-01-01"),
+      },
+    });
+    const name = `DayBreakAck ${crypto.randomBytes(3).toString("hex")}`;
+    const role = await app.prisma.accessRole.create({
+      data: {
+        tenantId: data.tenant.id,
+        name,
+        nameKey: roleNameKey(name),
+        permissions: normalizeRolePermissions(permissions),
+      },
+    });
+    await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        accessRoleId: role.id,
+        scopeType: "SALONS",
+        salonIds,
+        employeeIds: [],
+      },
+    });
+    return { token: await login(user.email), email: user.email };
+  }
+
   function postAck(token: string, body: Record<string, unknown>) {
     return app.inject({
       method: "POST",
@@ -112,6 +169,64 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
 
   function ackBody(employeeId: string, day = DAY, reason = REASON) {
     return { employeeId, date: day, reason };
+  }
+
+  function delAck(
+    token: string,
+    id: string,
+    body: Record<string, unknown> = { reason: "Quittung war irrtümlich" },
+  ) {
+    return app.inject({
+      method: "DELETE",
+      url: `/api/v1/day-breaks/acks/${id}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: body,
+    });
+  }
+
+  /** A stored acknowledgement whose snapshot matches the constructed two-salon day. */
+  async function seedAck(employeeId: string, day = DAY) {
+    return app.prisma.dayBreakAck.create({
+      data: {
+        employeeId,
+        date: dateOf(day),
+        reason: REASON,
+        snapshot: { entryIds: [], salonIds: [], netWorkedMin: 0, totalBreakMin: 0 },
+        acknowledgedBy: data.adminUser.id,
+      },
+    });
+  }
+
+  async function seedDayBreak(employeeId: string, day: string, start: string, end: string) {
+    return app.prisma.dayBreak.create({
+      data: {
+        employeeId,
+        date: dateOf(day),
+        startTime: new Date(at(start, day)),
+        endTime: new Date(at(end, day)),
+        createdBy: data.adminUser.id,
+      },
+    });
+  }
+
+  async function closeMonth(employeeId: string, year: number, month: number) {
+    const tz = await getTenantTimezone(app.prisma, data.tenant.id);
+    const { start, end } = monthRangeUtc(year, month, tz);
+    return app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: start,
+        periodEnd: end,
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(),
+        closedBy: "test-system",
+        superseded: false,
+      },
+    });
   }
 
   beforeAll(async () => {
@@ -232,6 +347,359 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
       expect(
         await app.prisma.dayBreakAck.count({ where: { employeeId: data.adminEmployee.id } }),
       ).toBe(0);
+    });
+  });
+
+  // ── Task 2: negative matrix of POST and the revoke route ──────────────────
+
+  describe("POST /acks — guards (D-08, D-13, D-17, D-18)", () => {
+    it("D-18: a same-salon multi-entry day with a shortfall is 409 (no cross-salon violation)", async () => {
+      constructedDays.set(`${data.employee.id}:${DAY}`, [
+        row(data.employee.id, DAY, salonA, "08:00", "12:00"),
+        row(data.employee.id, DAY, salonA, "12:10", "17:00"),
+      ]);
+      const res = await postAck(data.adminToken, ackBody(data.employee.id));
+      expect(res.statusCode).toBe(409);
+      expect(errorOf(res)).toBe(NO_VIOLATION_MESSAGE);
+    });
+
+    it("D-18: a cross-salon day without a § 4 shortfall (recorded day break) is 409", async () => {
+      twoSalonDay(data.employee.id);
+      await seedDayBreak(data.employee.id, DAY, "12:00", "12:30");
+      const res = await postAck(data.adminToken, ackBody(data.employee.id));
+      expect(res.statusCode).toBe(409);
+      expect(errorOf(res)).toBe(NO_VIOLATION_MESSAGE);
+    });
+
+    it("D-18: a cross-salon 10.5 h day with its 45 min break (a pure § 3 finding) is 409 and stays an error", async () => {
+      constructedDays.set(`${data.employee.id}:${DAY}`, [
+        row(data.employee.id, DAY, salonA, "07:00", "12:00"),
+        row(data.employee.id, DAY, salonB, "12:45", "18:15"),
+      ]);
+      await seedDayBreak(data.employee.id, DAY, "12:00", "12:45");
+      const res = await postAck(data.adminToken, ackBody(data.employee.id));
+      expect(res.statusCode).toBe(409);
+      expect(errorOf(res)).toBe(NO_VIOLATION_MESSAGE);
+      const warnings = await checkArbZG(app.prisma, data.employee.id, dateOf(DAY));
+      expect(warnings.find((w) => w.code === "MAX_DAILY_EXCEEDED")?.severity).toBe("error");
+      expect(await app.prisma.dayBreakAck.count({ where: { employeeId: data.employee.id } })).toBe(
+        0,
+      );
+    });
+
+    it("a second acknowledgement while the first is current is 409", async () => {
+      twoSalonDay(data.employee.id);
+      expect((await postAck(data.adminToken, ackBody(data.employee.id))).statusCode).toBe(201);
+      const again = await postAck(data.adminToken, ackBody(data.employee.id));
+      expect(again.statusCode).toBe(409);
+      expect(errorOf(again)).toBe(ALREADY_ACKED_MESSAGE);
+      expect(await app.prisma.dayBreakAck.count({ where: { employeeId: data.employee.id } })).toBe(
+        1,
+      );
+    });
+
+    it("D-17: once the day's facts change the acknowledgement is stale — the violation is back and a new one is accepted", async () => {
+      twoSalonDay(data.employee.id);
+      expect((await postAck(data.adminToken, ackBody(data.employee.id))).statusCode).toBe(201);
+      const waived = await checkArbZG(app.prisma, data.employee.id, dateOf(DAY));
+      expect(waived.find((w) => w.code === "BREAK_TOO_SHORT")?.waived).toBe(true);
+
+      // the second entry now ends 15 minutes later: net working time changes
+      constructedDays.set(`${data.employee.id}:${DAY}`, [
+        row(data.employee.id, DAY, salonA, "08:00", "12:00"),
+        row(data.employee.id, DAY, salonB, "12:30", "16:45"),
+      ]);
+      const stale = await checkArbZG(app.prisma, data.employee.id, dateOf(DAY));
+      const short = stale.find((w) => w.code === "BREAK_TOO_SHORT");
+      expect(short?.waived).toBeUndefined();
+
+      const fresh = await postAck(data.adminToken, ackBody(data.employee.id, DAY, "Neuer Stand"));
+      expect(fresh.statusCode).toBe(201);
+      expect(await app.prisma.dayBreakAck.count({ where: { employeeId: data.employee.id } })).toBe(
+        2,
+      );
+      const after = await checkArbZG(app.prisma, data.employee.id, dateOf(DAY));
+      expect(after.find((w) => w.code === "BREAK_TOO_SHORT")?.waived).toBe(true);
+    });
+
+    it("a foreign tenant's employee and a random uuid answer identically (404)", async () => {
+      const foreign = await postAck(data.adminToken, ackBody(dataB.employee.id));
+      const unknown = await postAck(data.adminToken, ackBody(randomUUID()));
+      expect(foreign.statusCode).toBe(404);
+      expect(unknown.statusCode).toBe(foreign.statusCode);
+      expect(unknown.body).toBe(foreign.body);
+      expect(errorOf(foreign)).toBe("Mitarbeiter nicht gefunden");
+    });
+
+    it("D-13: a manager scoped on salon A only: 404 plus SCOPE_ACCESS_DENIED; scoped on A and B: 201", async () => {
+      twoSalonDay(data.employee.id);
+      const partial = await createScopedManager(
+        "ack-mgr-a",
+        ["time-entry:update:ZUGEWIESEN"],
+        [salonA],
+      );
+      const denied = await postAck(partial.token, ackBody(data.employee.id));
+      expect(denied.statusCode).toBe(404);
+      expect(errorOf(denied)).toBe("Eintrag nicht gefunden");
+      expect(
+        await app.prisma.auditLog.count({
+          where: {
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "EmployeeDay",
+            entityId: `${data.employee.id}:${DAY}`,
+          },
+        }),
+      ).toBe(1);
+      expect(await app.prisma.dayBreakAck.count({ where: { employeeId: data.employee.id } })).toBe(
+        0,
+      );
+
+      const full = await createScopedManager(
+        "ack-mgr-ab",
+        ["time-entry:update:ZUGEWIESEN"],
+        [salonA, salonB],
+      );
+      expect((await postAck(full.token, ackBody(data.employee.id))).statusCode).toBe(201);
+    });
+
+    it("a closed month is 403 with the entry wording", async () => {
+      twoSalonDay(data.employee.id, CLOSED_DAY);
+      const snapshot = await closeMonth(data.employee.id, 2026, 2);
+      try {
+        const res = await postAck(data.adminToken, ackBody(data.employee.id, CLOSED_DAY));
+        expect(res.statusCode).toBe(403);
+        expect(errorOf(res)).toBe(MONTH_CLOSED_MESSAGE);
+        expect(
+          await app.prisma.dayBreakAck.count({ where: { employeeId: data.employee.id } }),
+        ).toBe(0);
+      } finally {
+        await app.prisma.saldoSnapshot.delete({ where: { id: snapshot.id } });
+      }
+    });
+
+    it("a locked entry of the day is 409", async () => {
+      twoSalonDay(data.employee.id, LOCKED_DAY, { isLocked: true });
+      const res = await postAck(data.adminToken, ackBody(data.employee.id, LOCKED_DAY));
+      expect(res.statusCode).toBe(409);
+      expect(errorOf(res)).toBe(ENTRY_LOCKED_MESSAGE);
+    });
+
+    it("a missing or blank reason is 400 and nothing is stored", async () => {
+      twoSalonDay(data.employee.id);
+      expect(
+        (await postAck(data.adminToken, { employeeId: data.employee.id, date: DAY })).statusCode,
+      ).toBe(400);
+      const blank = await postAck(data.adminToken, ackBody(data.employee.id, DAY, "   "));
+      expect(blank.statusCode).toBe(400);
+      expect(blank.body).toContain("Begründung ist erforderlich");
+      expect(await app.prisma.dayBreakAck.count({ where: { employeeId: data.employee.id } })).toBe(
+        0,
+      );
+    });
+
+    it("80-AC5: acknowledging writes no TimeEntry and no Break row", async () => {
+      twoSalonDay(data.employee.id);
+      const entries = await app.prisma.timeEntry.count({ where: { employeeId: data.employee.id } });
+      const breaks = await app.prisma.break.count({
+        where: { timeEntry: { employeeId: data.employee.id } },
+      });
+      expect((await postAck(data.adminToken, ackBody(data.employee.id))).statusCode).toBe(201);
+      expect(await app.prisma.timeEntry.count({ where: { employeeId: data.employee.id } })).toBe(
+        entries,
+      );
+      expect(
+        await app.prisma.break.count({ where: { timeEntry: { employeeId: data.employee.id } } }),
+      ).toBe(breaks);
+    });
+  });
+
+  describe("DELETE /acks/:id — revoke with a reason (D-06, D-14, T-100-09)", () => {
+    it("another full-scope manager revokes with a reason: 204, row kept with deletedAt/deletedBy, one audit row with before/after, the violation is back, a second revoke is 404", async () => {
+      twoSalonDay(data.employee.id);
+      const created = await postAck(data.adminToken, ackBody(data.employee.id));
+      const ackId = (JSON.parse(created.body) as { acknowledgement: { id: string } })
+        .acknowledgement.id;
+      const manager = await createScopedManager(
+        "ack-revoker",
+        ["time-entry:update:ZUGEWIESEN"],
+        [salonA, salonB],
+      );
+
+      const res = await delAck(manager.token, ackId, { reason: "Quittung war irrtümlich" });
+      expect(res.statusCode).toBe(204);
+
+      const stored = await app.prisma.dayBreakAck.findUniqueOrThrow({ where: { id: ackId } });
+      expect(stored.deletedAt).not.toBeNull();
+      expect(stored.deletedBy).not.toBeNull();
+      expect(stored.reason).toBe(REASON); // the original reason is kept (soft delete)
+
+      const audits = await app.prisma.auditLog.findMany({
+        where: { action: "DAY_BREAK_ACK_REVOKE", entityId: ackId },
+      });
+      expect(audits).toHaveLength(1);
+      expect(audits[0].entity).toBe("DayBreakAck");
+      const oldValue = audits[0].oldValue as Record<string, unknown>;
+      expect(oldValue.employeeId).toBe(data.employee.id);
+      expect(oldValue.date).toBe(DAY);
+      expect(oldValue.reason).toBe(REASON);
+      expect(oldValue.snapshot).toEqual(stored.snapshot);
+      const newValue = audits[0].newValue as Record<string, unknown>;
+      expect(newValue.auditReason).toBe("Quittung war irrtümlich");
+      expect(newValue.deletedAt).toBeTruthy();
+
+      const warnings = await checkArbZG(app.prisma, data.employee.id, dateOf(DAY));
+      const short = warnings.find((w) => w.code === "BREAK_TOO_SHORT");
+      expect(short?.severity).toBe("warning"); // 8 h net: the > 6 h branch is a warning anyway
+      expect(short?.waived).toBeUndefined();
+
+      const again = await delAck(manager.token, ackId);
+      expect(again.statusCode).toBe(404);
+      expect(errorOf(again)).toBe("Quittung nicht gefunden");
+    });
+
+    it("on an 11 h day the revoke turns the downgraded § 4 finding back into an error", async () => {
+      elevenHourDay(data.employee.id);
+      const created = await postAck(data.adminToken, ackBody(data.employee.id));
+      expect(created.statusCode).toBe(201);
+      const ackId = (JSON.parse(created.body) as { acknowledgement: { id: string } })
+        .acknowledgement.id;
+      const waived = await checkArbZG(app.prisma, data.employee.id, dateOf(DAY));
+      expect(waived.find((w) => w.code === "BREAK_TOO_SHORT")?.severity).toBe("warning");
+
+      expect((await delAck(data.adminToken, ackId)).statusCode).toBe(204);
+      const back = await checkArbZG(app.prisma, data.employee.id, dateOf(DAY));
+      expect(back.find((w) => w.code === "BREAK_TOO_SHORT")?.severity).toBe("error");
+    });
+
+    it("a missing or blank reason is 400 before any lookup", async () => {
+      twoSalonDay(data.employee.id);
+      const ack = await seedAck(data.employee.id);
+      expect((await delAck(data.adminToken, ack.id, {})).statusCode).toBe(400);
+      const blank = await delAck(data.adminToken, ack.id, { reason: "   " });
+      expect(blank.statusCode).toBe(400);
+      expect(blank.body).toContain("Begründung ist erforderlich");
+      expect((await delAck(data.adminToken, randomUUID(), {})).statusCode).toBe(400);
+      expect(
+        (await app.prisma.dayBreakAck.findUniqueOrThrow({ where: { id: ack.id } })).deletedAt,
+      ).toBeNull();
+    });
+
+    it("T-100-09: a foreign tenant's real ack id and an unknown id answer byte-identically; the cross-tenant audit exists only for the real one", async () => {
+      const foreignAck = await seedAck(dataB.employee.id);
+      const unknownId = randomUUID();
+      const foreign = await delAck(data.adminToken, foreignAck.id);
+      const unknown = await delAck(data.adminToken, unknownId);
+      expect(foreign.statusCode).toBe(404);
+      expect(unknown.statusCode).toBe(foreign.statusCode);
+      expect(unknown.body).toBe(foreign.body);
+      expect(errorOf(foreign)).toBe("Quittung nicht gefunden");
+      expect(
+        await app.prisma.auditLog.count({
+          where: {
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entity: "DayBreakAck",
+            entityId: foreignAck.id,
+          },
+        }),
+      ).toBe(1);
+      expect(
+        await app.prisma.auditLog.count({
+          where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: unknownId },
+        }),
+      ).toBe(0);
+      expect(
+        (await app.prisma.dayBreakAck.findUniqueOrThrow({ where: { id: foreignAck.id } }))
+          .deletedAt,
+      ).toBeNull();
+    });
+
+    it("a caller holding only time-entry:update:EIGENE is 403 Forbidden", async () => {
+      const ack = await seedAck(data.employee.id);
+      const res = await delAck(data.empToken, ack.id);
+      expect(res.statusCode).toBe(403);
+      expect(errorOf(res)).toBe("Forbidden");
+    });
+
+    it("D-14: revoking the acknowledgement of the caller's OWN day is 403", async () => {
+      const own = await seedAck(data.adminEmployee.id);
+      const res = await delAck(data.adminToken, own.id);
+      expect(res.statusCode).toBe(403);
+      expect(errorOf(res)).toBe(SELF_ACK_MESSAGE);
+      expect(
+        (await app.prisma.dayBreakAck.findUniqueOrThrow({ where: { id: own.id } })).deletedAt,
+      ).toBeNull();
+    });
+
+    it("D-13: a manager scoped on salon A only gets the ack-not-found 404 plus SCOPE_ACCESS_DENIED; on A and B: 204", async () => {
+      twoSalonDay(data.employee.id);
+      const ack = await seedAck(data.employee.id);
+      const partial = await createScopedManager(
+        "ack-del-a",
+        ["time-entry:update:ZUGEWIESEN"],
+        [salonA],
+      );
+      const scopeDenials = () =>
+        app.prisma.auditLog.count({
+          where: {
+            action: "SCOPE_ACCESS_DENIED",
+            entity: "EmployeeDay",
+            entityId: `${data.employee.id}:${DAY}`,
+          },
+        });
+      const deniedBefore = await scopeDenials();
+      const denied = await delAck(partial.token, ack.id);
+      expect(denied.statusCode).toBe(404);
+      // identical to an unknown id: no within-tenant oracle on acknowledgements out of scope
+      const unknown = await delAck(partial.token, randomUUID());
+      expect(denied.body).toBe(unknown.body);
+      expect(errorOf(denied)).toBe("Quittung nicht gefunden");
+      expect(await scopeDenials()).toBe(deniedBefore + 1);
+      expect(
+        (await app.prisma.dayBreakAck.findUniqueOrThrow({ where: { id: ack.id } })).deletedAt,
+      ).toBeNull();
+
+      const full = await createScopedManager(
+        "ack-del-ab",
+        ["time-entry:update:ZUGEWIESEN"],
+        [salonA, salonB],
+      );
+      expect((await delAck(full.token, ack.id)).statusCode).toBe(204);
+    });
+
+    it("a closed month is 403 and a locked entry of the day is 409", async () => {
+      twoSalonDay(data.employee.id, CLOSED_DAY);
+      const closedAck = await seedAck(data.employee.id, CLOSED_DAY);
+      const snapshot = await closeMonth(data.employee.id, 2026, 2);
+      try {
+        const res = await delAck(data.adminToken, closedAck.id);
+        expect(res.statusCode).toBe(403);
+        expect(errorOf(res)).toBe(MONTH_CLOSED_MESSAGE);
+        expect(
+          (await app.prisma.dayBreakAck.findUniqueOrThrow({ where: { id: closedAck.id } }))
+            .deletedAt,
+        ).toBeNull();
+      } finally {
+        await app.prisma.saldoSnapshot.delete({ where: { id: snapshot.id } });
+      }
+
+      twoSalonDay(data.employee.id, LOCKED_DAY, { isLocked: true });
+      const lockedAck = await seedAck(data.employee.id, LOCKED_DAY);
+      const locked = await delAck(data.adminToken, lockedAck.id);
+      expect(locked.statusCode).toBe(409);
+      expect(errorOf(locked)).toBe(ENTRY_LOCKED_MESSAGE);
+    });
+
+    it("there is no update route — PATCH and PUT answer 404", async () => {
+      const ack = await seedAck(data.employee.id);
+      for (const method of ["PATCH", "PUT"] as const) {
+        const res = await app.inject({
+          method,
+          url: `/api/v1/day-breaks/acks/${ack.id}`,
+          headers: { authorization: `Bearer ${data.adminToken}` },
+          payload: { reason: "geändert" },
+        });
+        expect(res.statusCode).toBe(404);
+      }
     });
   });
 });

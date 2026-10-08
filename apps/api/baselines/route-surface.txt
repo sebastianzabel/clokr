@@ -35,6 +35,7 @@
 │       ├── /usual-work-days (PATCH)
 │       ├── /vocational-school-pattern (GET, HEAD, PUT)
 │   │       └── /:id (DELETE)
+│   │   └── /:id (DELETE)
 │   │   └── /:id (PUT, DELETE)
 │   │   └── /:id (PUT, DELETE)
 │   │   └── /devices (POST)
