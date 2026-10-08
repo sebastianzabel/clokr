@@ -31,6 +31,7 @@ import {
 } from "../../platform";
 import { getTenantTimezone, isMonthClosed, monthRangeUtc } from "../../working-time-account";
 import {
+  type DayBreakEvaluation,
   type DayBreakRow,
   evaluateDayBreaks,
   findGapForInterval,
@@ -213,6 +214,82 @@ function ackFacts(
     date: row.date.toISOString().slice(0, 10),
     reason: row.reason,
     snapshot: row.snapshot,
+  };
+}
+
+/** The figures every detail level of a day check carries - totals and the finding, no entry data. */
+function dayCheckTotals(evaluation: DayBreakEvaluation, dateKey: string, locked: boolean) {
+  return {
+    date: dateKey,
+    crossSalon: evaluation.crossSalon,
+    netWorkedMinutes: Math.round(evaluation.netWorkedMin),
+    totalBreakMinutes: Math.round(evaluation.totalBreakMin),
+    requiredBreakMinutes: evaluation.requiredBreakMin,
+    breakShortfall: evaluation.breakShortfall,
+    // The § 3 cap is the finding builder's rule (`dayLimitWarnings`); no second copy of it here.
+    maxDailyExceeded: dayLimitWarnings(evaluation, 0).some((w) => w.code === "MAX_DAILY_EXCEEDED"),
+    acknowledged: evaluation.acknowledged,
+    locked,
+  };
+}
+
+/**
+ * A day as a caller whose scope covers only part of its entries may see it (D-11): the day totals
+ * and the finding. Built from an explicit whitelist - the entry list, gaps, day breaks,
+ * acknowledgement and every id are fixed to null/false here, never removed from a fuller object,
+ * so a field added to the full shape can never leak into this one by omission.
+ */
+function redactedDayCheck(dateKey: string, evaluation: DayBreakEvaluation, locked: boolean) {
+  return {
+    detail: "redacted" as const,
+    ...dayCheckTotals(evaluation, dateKey, locked),
+    mayAcknowledge: false,
+    mayRecordDayBreak: false,
+    acknowledgement: null,
+    entries: null,
+    gaps: null,
+    dayBreaks: null,
+  };
+}
+
+/** A day with its complete detail: entries with salon, kernel gaps, day breaks, acknowledgement. */
+function fullDayCheck(params: {
+  dateKey: string;
+  evaluation: DayBreakEvaluation;
+  locked: boolean;
+  mayAcknowledge: boolean;
+  mayRecordDayBreak: boolean;
+  currentAck: DayBreakAck | undefined;
+  dayRows: ReadonlyArray<DayBreakRow>;
+  dayBreaksOfDay: ReadonlyArray<DayBreak>;
+}) {
+  const { evaluation, currentAck } = params;
+  return {
+    detail: "full" as const,
+    ...dayCheckTotals(evaluation, params.dateKey, params.locked),
+    mayAcknowledge: params.mayAcknowledge,
+    mayRecordDayBreak: params.mayRecordDayBreak,
+    acknowledgement: currentAck
+      ? { id: currentAck.id, createdAt: currentAck.createdAt, reason: currentAck.reason }
+      : null,
+    entries: params.dayRows.map((r) => ({
+      id: r.id,
+      startTime: r.startTime,
+      endTime: r.endTime,
+      salonId: r.salonId,
+    })),
+    // D-22: the gaps are the kernel's own list, never recomputed here.
+    gaps: evaluation.gaps.map((g) => ({
+      startTime: g.startTime,
+      endTime: g.endTime,
+      crossSalon: g.crossSalon,
+      countsAsBreak: g.countsAsBreak,
+    })),
+    dayBreaks: params.dayBreaksOfDay.map((b) => ({
+      id: b.id,
+      startTime: b.startTime,
+      endTime: b.endTime,
+    })),
   };
 }
 
@@ -637,16 +714,39 @@ export async function dayBreakRoutes(app: FastifyInstance) {
 
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const monthClosed = new Map<string, boolean>();
-      const days = [];
+
+      // What the caller may do to a day, in the terms of the write routes (T-80-54): the same
+      // permission and the same day-wide coverage those routes enforce. The routes decide
+      // independently; these flags only stop the UI from offering an action that would be refused.
+      const updateReach = await permissionReach(req, "time-entry:update");
+      // The read reach decides how much of someone else's day the caller sees (D-11); the update
+      // reach decides whether they may write to it (D-13).
+      const readScope = isOwnDay
+        ? null
+        : await resolveAccessReach(app.prisma, access, "time-entry:read:ZUGEWIESEN");
+      const updateScope =
+        !isOwnDay && updateReach === "ZUGEWIESEN"
+          ? await resolveAccessReach(app.prisma, access, "time-entry:update:ZUGEWIESEN")
+          : null;
+
+      const days: Array<ReturnType<typeof fullDayCheck> | ReturnType<typeof redactedDayCheck>> = [];
       for (const [dateKey, unsortedRows] of multiEntryDays) {
-        // Only the caller's own day is listed in this slice; coverage-based detail levels for
-        // other callers are added with the redaction.
-        if (!isOwnDay) continue;
+        const dayDate = dayKeyToDate(dateKey);
+        const coverageFacts = unsortedRows.map((r) => ({
+          salonId: r.salonId,
+          employeeId,
+          date: r.date,
+        }));
+        // The employee sees the own day completely; for anyone else the day is as visible as the
+        // read scope covers its entries: all -> full, part of them -> redacted, none -> absent.
+        const readCoverage = readScope
+          ? await dayCoverage(app.prisma, tenantId, readScope, coverageFacts)
+          : "all";
+        if (readCoverage === "none") continue;
 
         const dayRows = [...unsortedRows].sort(
           (a, b) => a.startTime.getTime() - b.startTime.getTime() || a.id.localeCompare(b.id),
         );
-        const dayDate = dayKeyToDate(dateKey);
         const dayBreaksOfDay = dayBreaks.filter((b) => b.date.getTime() === dayDate.getTime());
         const acksOfDay = acks.filter((a) => a.date.getTime() === dayDate.getTime());
         const evaluation = evaluateDayBreaks({
@@ -665,49 +765,51 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         }
         const locked = closed || dayRows.some((r) => r.isLocked);
 
+        if (readCoverage === "partial") {
+          days.push(redactedDayCheck(dateKey, evaluation, locked));
+          continue;
+        }
+
+        // Write offers (full detail only). The own day is never acknowledged (D-14); another
+        // employee's day needs the update reach over EVERY entry of the day (D-13), the rule
+        // `authorizeDayAction` applies on the write routes.
+        const hasGap = evaluation.gaps.length > 0;
+        let mayAcknowledge = false;
+        let mayRecordDayBreak = false;
+        if (!locked) {
+          if (isOwnDay) {
+            mayRecordDayBreak = updateReach !== null && hasGap;
+          } else if (updateScope) {
+            const updateCoverage = await dayCoverage(
+              app.prisma,
+              tenantId,
+              updateScope,
+              coverageFacts,
+            );
+            if (updateCoverage === "all") {
+              mayRecordDayBreak = hasGap;
+              // D-18: only a cross-salon day with a § 4 shortfall can be acknowledged (and an
+              // acknowledged day stays revocable - its shortfall does not go away).
+              mayAcknowledge = evaluation.crossSalon && evaluation.breakShortfall;
+            }
+          }
+        }
+
         const currentAck = evaluation.acknowledged
           ? acksOfDay.filter((a) => isAckSnapshotCurrent(a.snapshot, evaluation.snapshot)).at(-1)
           : undefined;
-
-        days.push({
-          date: dateKey,
-          detail: "full" as const,
-          crossSalon: evaluation.crossSalon,
-          netWorkedMinutes: Math.round(evaluation.netWorkedMin),
-          totalBreakMinutes: Math.round(evaluation.totalBreakMin),
-          requiredBreakMinutes: evaluation.requiredBreakMin,
-          breakShortfall: evaluation.breakShortfall,
-          // The § 3 cap is the kernel consumer's rule (`dayLimitWarnings`); no second copy here.
-          maxDailyExceeded: dayLimitWarnings(evaluation, 0).some(
-            (w) => w.code === "MAX_DAILY_EXCEEDED",
-          ),
-          acknowledged: evaluation.acknowledged,
-          locked,
-          // D-14: nobody acknowledges the own day.
-          mayAcknowledge: false,
-          mayRecordDayBreak: !locked && evaluation.gaps.length > 0,
-          acknowledgement: currentAck
-            ? { id: currentAck.id, createdAt: currentAck.createdAt, reason: currentAck.reason }
-            : null,
-          entries: dayRows.map((r) => ({
-            id: r.id,
-            startTime: r.startTime,
-            endTime: r.endTime,
-            salonId: r.salonId,
-          })),
-          // D-22: the gaps are the kernel's own list, never recomputed here.
-          gaps: evaluation.gaps.map((g) => ({
-            startTime: g.startTime,
-            endTime: g.endTime,
-            crossSalon: g.crossSalon,
-            countsAsBreak: g.countsAsBreak,
-          })),
-          dayBreaks: dayBreaksOfDay.map((b) => ({
-            id: b.id,
-            startTime: b.startTime,
-            endTime: b.endTime,
-          })),
-        });
+        days.push(
+          fullDayCheck({
+            dateKey,
+            evaluation,
+            locked,
+            mayAcknowledge,
+            mayRecordDayBreak,
+            currentAck,
+            dayRows,
+            dayBreaksOfDay,
+          }),
+        );
       }
       return { ...result, days };
     },
