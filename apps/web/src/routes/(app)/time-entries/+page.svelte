@@ -6,6 +6,14 @@
   // edit modal provably share one mapping and the colour/copy contract is unit-testable.
   import { breakBadgeClass, breakBadgeLabel, isUnconfirmedBreak } from "$lib/breaks/break-badge";
   import UnconfirmedBreakPanel from "$lib/components/breaks/UnconfirmedBreakPanel.svelte";
+  // Issue #80 (D-09d/D-20) — server-computed day checks; the browser never derives a
+  // cross-salon finding itself.
+  import {
+    type DayCheck,
+    type DayChecksResponse,
+    isChecksRangeAllowed,
+    mergeDayChecksIntoArbzgMap,
+  } from "$lib/breaks/day-break-violation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
@@ -183,6 +191,8 @@
   let saving = $state(false);
   let saveError = $state("");
   let arbzgEnabled = $state(true);
+  // Issue #80 (D-20) — server day checks of the loaded range (multi-entry days only).
+  let dayChecks = $state<DayCheck[]>([]);
   // Issue #433 (D-05) — TenantConfig.defaultWorkDays, the MONTHLY_HOURS workday fallback tier
   // (the retired per-tenant holiday-deduction switch, D-04, is gone).
   let defaultWorkDays: number[] | null = $state(null);
@@ -416,6 +426,7 @@
         rawEmployee,
         rawConfig,
         rawBsAbsences,
+        rawDayChecks,
       ] = await Promise.all([
         api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}`),
         activeEmpId
@@ -478,8 +489,18 @@
               )
               .catch(() => [] as BsAbsence[])
           : Promise.resolve([] as BsAbsence[]),
+        // Issue #80 (D-09d/D-20) — server day checks for the shown range. Non-fatal: a failed
+        // check must never break the page, and the call is skipped for a range the API refuses.
+        activeEmpId && isChecksRangeAllowed(fromDate, toDate)
+          ? api
+              .get<DayChecksResponse>(
+                `/day-breaks/checks?employeeId=${activeEmpId}&from=${fromDate}&to=${toDate}`,
+              )
+              .catch(() => null)
+          : Promise.resolve(null),
       ]);
       entries = rawEntries;
+      dayChecks = rawDayChecks?.days ?? [];
       schedule = valueOr(rawSchedule, null);
       holidays = new Map(rawHolidays.map((h) => [h.date.split("T")[0], h.name]));
       absences = rawAbsences;
@@ -1603,7 +1624,8 @@
       const warnings = checkArbZGFrontend(dayEntries);
       if (warnings.length > 0) map.set(dateStr, warnings);
     }
-    return map;
+    // Issue #80 (D-09d/D-20): multi-entry days carry the SERVER result instead of the client check.
+    return mergeDayChecksIntoArbzgMap(map, dayChecks);
   });
 
   // Legend is derived from what the displayed month actually contains, and split by the
