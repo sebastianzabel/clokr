@@ -88,7 +88,8 @@ export const OWNER_AREAS: readonly OwnerArea[] = [
  * today — 46 models, issue #99's table, extended by Phase 73b's `AccessRole` (#73), Phase 64b's
  * `Salon` (#64), Phase 74b's `RoleAssignment` (#74), Phase 67b's `EmployeeSalonAssignment` (#67)
  * and Phase 65b's `SalonCoupling` (#65), plus Issue #468's `ParentalLeaveReduction` (46 -> 47
- * models, absence 9 -> 10 — the new model itself, not a correction). `MODEL_OWNER`
+ * models, absence 9 -> 10 — the new model itself, not a correction) and Issue #80's `DayBreak` /
+ * `DayBreakAck` (47 -> 49 models, time-tracking 6 -> 8 — likewise the new models themselves). `MODEL_OWNER`
  * below is a `Record` over exactly this union with no default branch: a model added to the schema
  * later and not added here fails the TypeScript build, rather than silently falling through to
  * `platform` the way an enumerated allowlist is supposed to (see `context-area-map.ts`'s own
@@ -109,6 +110,8 @@ export type PrismaModelName =
   | "workSchedule"
   | "timeEntry"
   | "break"
+  | "dayBreak" // Issue #80 — day-level gap break
+  | "dayBreakAck" // Issue #80 — cross-salon acknowledgement
   | "saldoSnapshot"
   | "openingBalance"
   | "overtimeAccount"
@@ -167,9 +170,11 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   workSchedule: "platform",
   accessRole: "platform", // Phase 73b (#73) — named permission bundle, an Unterbau model
   roleAssignment: "platform", // Phase 74b (#74) — role assignment with scope, an Unterbau model
-  // time-tracking — 6
+  // time-tracking — 8 (Issue #80: + DayBreak, DayBreakAck, 6 -> 8)
   timeEntry: "time-tracking",
   break: "time-tracking",
+  dayBreak: "time-tracking", // Issue #80 — day-level gap break
+  dayBreakAck: "time-tracking", // Issue #80 — cross-salon acknowledgement
   presenceDevice: "time-tracking",
   presenceSource: "time-tracking",
   terminalApiKey: "time-tracking",

@@ -125,9 +125,10 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
 
   // Merge of Phase 65b (#65: + SalonCoupling, own), Phase 67b (#67: + EmployeeSalonAssignment,
   // own) — 44 -> 46 models, 18 -> 20 own — and Issue #468 (+ ParentalLeaveReduction, relation via
-  // `employee` -> Employee(own)) — 46 -> 47 models, own count unchanged at 20.
-  it("classifies exactly 47 models with no residual category (D-05)", () => {
-    expect(graph.size).toBe(47);
+  // `employee` -> Employee(own)) — 46 -> 47 models, own count unchanged at 20 — and Issue #80
+  // (+ DayBreak, DayBreakAck, both relation via `employee`) — 47 -> 49 models, own count unchanged.
+  it("classifies exactly 49 models with no residual category (D-05)", () => {
+    expect(graph.size).toBe(49);
     for (const [, tenancy] of graph) {
       expect(["own", "relation", "none"]).toContain(tenancy.kind);
     }
