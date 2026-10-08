@@ -74,6 +74,7 @@
 │   ├── /acks (POST)
 │   ├── /allowed-cards (GET, HEAD)
 │   ├── /bulk (POST)
+│   ├── /checks (GET, HEAD)
 │   ├── /clock-in (POST)
 │   ├── /conflicts (GET, HEAD)
 │   ├── /copy-week (POST)

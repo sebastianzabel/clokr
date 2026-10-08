@@ -24,18 +24,27 @@ import { requireAuth } from "../../../middleware/auth";
 import {
   permissionReach,
   accessContextFromRequest,
+  employeeScopeFor,
   resolveAccessReach,
   requirePermission,
   auditReasonSchema,
 } from "../../platform";
 import { getTenantTimezone, isMonthClosed, monthRangeUtc } from "../../working-time-account";
 import {
+  type DayBreakRow,
   evaluateDayBreaks,
   findGapForInterval,
   intervalsOverlap,
   isAckSnapshotCurrent,
 } from "../day-break-rule";
-import { closedWorkRowsOfDay, listAcksOfDay, listDayBreaksOfDay } from "../day-break-store";
+import {
+  closedWorkRowsInRange,
+  closedWorkRowsOfDay,
+  listAcksOfDay,
+  listDayBreaksOfDay,
+  loadDayBreakDataForDays,
+} from "../day-break-store";
+import { dayLimitWarnings } from "../arbzg";
 import { dayCoverage } from "../day-scope";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -75,6 +84,15 @@ const createAckSchema = z.object({
   date: dateKeySchema,
   reason: auditReasonSchema,
 });
+
+const checksQuerySchema = z.object({
+  employeeId: z.string().uuid("Ungültige Mitarbeiter-ID"),
+  from: dateKeySchema,
+  to: dateKeySchema,
+});
+
+/** Cap of the day-check window in inclusive days (D-20, T-80-31). */
+const CHECKS_MAX_RANGE_DAYS = 62;
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 const deleteBodySchema = z.object({ reason: auditReasonSchema });
@@ -520,6 +538,178 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         });
       });
       return reply.code(204).send();
+    },
+  });
+
+  // GET /api/v1/day-breaks/checks — the server-computed day check of one employee over a period,
+  // redacted by the caller's reach (D-11, D-20). The ONE read endpoint of every UI place: a
+  // salon-scoped manager's own entry list is partial, so a client-side sum would under-report the
+  // day.
+  app.get("/checks", {
+    schema: {
+      tags: ["Zeiterfassung"],
+      summary: "Day-level break checks of one employee over a period",
+      description:
+        "Returns the server-computed check of every day with two or more closed WORK entries of " +
+        "the employee (Issue #80); at most 62 days per request, read only. The employee and a " +
+        "caller whose read scope covers every entry of the day receive the full detail (entries " +
+        "with salon, gaps, day breaks, acknowledgement). A caller whose scope covers only part of " +
+        "the day receives the day totals and the finding only - never a time, salon or id of an " +
+        "entry outside their scope; a day none of whose entries is in scope is omitted. The gaps " +
+        "are the day-break kernel's own gap list. maxDailyExceeded compares the day's net working " +
+        "time of these entries only (no Berufsschule credit) against the § 3 ArbZG cap of 10 h.",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      // Authorization mirrors GET /time-entries/summary: no time-entry:read reach at all is a 403
+      // before anything else is looked at.
+      const readReach = await permissionReach(req, "time-entry:read");
+      if (readReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+
+      const q = checksQuerySchema.parse(req.query);
+
+      // #368 rule: an EIGENE caller naming another employee is a 403.
+      const isOwnDay = q.employeeId === req.user.employeeId;
+      if (readReach !== "ZUGEWIESEN" && !isOwnDay) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+
+      const fromDate = dayKeyToDate(q.from);
+      const toDate = dayKeyToDate(q.to);
+      if (fromDate.getTime() > toDate.getTime()) {
+        return reply.code(400).send({ error: "Startdatum darf nicht nach dem Enddatum liegen" });
+      }
+      const inclusiveDays = (toDate.getTime() - fromDate.getTime()) / 86_400_000 + 1;
+      if (inclusiveDays > CHECKS_MAX_RANGE_DAYS) {
+        return reply.code(400).send({ error: "Der Zeitraum darf höchstens 62 Tage umfassen" });
+      }
+
+      // A foreign tenant's employee and an unknown id answer identically.
+      const tenantId = req.user.tenantId;
+      const employeeId = q.employeeId;
+      const employee = await app.prisma.employee.findFirst({
+        where: { id: employeeId, tenantId },
+        select: { id: true },
+      });
+      if (!employee) {
+        return reply.code(404).send({ error: EMPLOYEE_NOT_FOUND_MESSAGE });
+      }
+
+      const access = accessContextFromRequest(req);
+      const rows = await closedWorkRowsInRange(
+        app.prisma,
+        employeeScopeFor(access, { employeeId }),
+        fromDate,
+        toDate,
+      );
+
+      // Group by calendar day (the @db.Date column is the UTC-midnight key) and keep the days with
+      // two or more closed WORK entries; a single-entry range stops here without a further query
+      // (80-AC6).
+      type CheckRow = DayBreakRow & { date: Date; employeeId: string; isLocked: boolean };
+      const byDay = new Map<string, CheckRow[]>();
+      for (const r of rows) {
+        // The range read selects closed entries only; the guard narrows the nullable column.
+        if (r.endTime === null) continue;
+        const key = r.date.toISOString().slice(0, 10);
+        const checkRow: CheckRow = { ...r, endTime: r.endTime };
+        const list = byDay.get(key);
+        if (list) list.push(checkRow);
+        else byDay.set(key, [checkRow]);
+      }
+      const multiEntryDays = [...byDay.entries()]
+        .filter(([, dayRows]) => dayRows.length >= 2)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+      const result = { employeeId, from: q.from, to: q.to };
+      if (multiEntryDays.length === 0) {
+        return { ...result, days: [] };
+      }
+
+      const { dayBreaks, acks } = await loadDayBreakDataForDays(app.prisma, {
+        tenantId,
+        employeeIds: [employeeId],
+        from: fromDate,
+        to: toDate,
+      });
+
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+      const monthClosed = new Map<string, boolean>();
+      const days = [];
+      for (const [dateKey, unsortedRows] of multiEntryDays) {
+        // Only the caller's own day is listed in this slice; coverage-based detail levels for
+        // other callers are added with the redaction.
+        if (!isOwnDay) continue;
+
+        const dayRows = [...unsortedRows].sort(
+          (a, b) => a.startTime.getTime() - b.startTime.getTime() || a.id.localeCompare(b.id),
+        );
+        const dayDate = dayKeyToDate(dateKey);
+        const dayBreaksOfDay = dayBreaks.filter((b) => b.date.getTime() === dayDate.getTime());
+        const acksOfDay = acks.filter((a) => a.date.getTime() === dayDate.getTime());
+        const evaluation = evaluateDayBreaks({
+          rows: dayRows,
+          dayBreaks: dayBreaksOfDay,
+          acks: acksOfDay.map((a) => ({ snapshot: a.snapshot })),
+        });
+
+        const monthKey = dateKey.slice(0, 7);
+        let closed = monthClosed.get(monthKey);
+        if (closed === undefined) {
+          const [year, month] = dateKey.split("-").map(Number);
+          const { start: monthStart } = monthRangeUtc(year, month, tz);
+          closed = await isMonthClosed(app.prisma, employeeId, tenantId, monthStart);
+          monthClosed.set(monthKey, closed);
+        }
+        const locked = closed || dayRows.some((r) => r.isLocked);
+
+        const currentAck = evaluation.acknowledged
+          ? acksOfDay.filter((a) => isAckSnapshotCurrent(a.snapshot, evaluation.snapshot)).at(-1)
+          : undefined;
+
+        days.push({
+          date: dateKey,
+          detail: "full" as const,
+          crossSalon: evaluation.crossSalon,
+          netWorkedMinutes: Math.round(evaluation.netWorkedMin),
+          totalBreakMinutes: Math.round(evaluation.totalBreakMin),
+          requiredBreakMinutes: evaluation.requiredBreakMin,
+          breakShortfall: evaluation.breakShortfall,
+          // The § 3 cap is the kernel consumer's rule (`dayLimitWarnings`); no second copy here.
+          maxDailyExceeded: dayLimitWarnings(evaluation, 0).some(
+            (w) => w.code === "MAX_DAILY_EXCEEDED",
+          ),
+          acknowledged: evaluation.acknowledged,
+          locked,
+          // D-14: nobody acknowledges the own day.
+          mayAcknowledge: false,
+          mayRecordDayBreak: !locked && evaluation.gaps.length > 0,
+          acknowledgement: currentAck
+            ? { id: currentAck.id, createdAt: currentAck.createdAt, reason: currentAck.reason }
+            : null,
+          entries: dayRows.map((r) => ({
+            id: r.id,
+            startTime: r.startTime,
+            endTime: r.endTime,
+            salonId: r.salonId,
+          })),
+          // D-22: the gaps are the kernel's own list, never recomputed here.
+          gaps: evaluation.gaps.map((g) => ({
+            startTime: g.startTime,
+            endTime: g.endTime,
+            crossSalon: g.crossSalon,
+            countsAsBreak: g.countsAsBreak,
+          })),
+          dayBreaks: dayBreaksOfDay.map((b) => ({
+            id: b.id,
+            startTime: b.startTime,
+            endTime: b.endTime,
+          })),
+        });
+      }
+      return { ...result, days };
     },
   });
 }
