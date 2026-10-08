@@ -18,6 +18,16 @@
  *   - D-18  the § 3 day sum is part of the evaluation; an acknowledgement never downgrades it
  *           (the caller builds the MAX_DAILY_EXCEEDED finding from `netWorkedMin` alone).
  *
+ *   - D-22  besides the minute sums the evaluation exposes the SAME day as time intervals: every
+ *           break with the source it comes from (`breakSegments`), every gap between consecutive
+ *           entries (`gaps`) and the continuous working stretches between the placed breaks
+ *           (`workBlocks`). The view exists for § 4 ArbZG Satz 2 (break segments of at least 15
+ *           minutes) and Satz 3 (no more than six hours in a row without a break), which are #511 —
+ *           Phase 80 evaluates neither and builds every warning from the minute sums alone, so the
+ *           interval view can never move a result. A segment with `source` "unplaced-entry-break"
+ *           means "position unknown": stored `breakMinutes` that no Break row covers. It must never
+ *           be read as proof of a break at a particular time, and it never splits a work block.
+ *
  * Input = the closed WORK entries of ONE employee and ONE day in start order, plus the day breaks
  * and acknowledgements recorded for that day. This module never computes presence or working time
  * itself (`entryDurations()` does) and never touches the database.
@@ -43,6 +53,12 @@ export interface DayBreakRow {
   breakStatus?: string | null;
   /** The salon the entry was worked in (decides whether a gap is travel, D-01). */
   salonId: string;
+  /**
+   * The entry's own Break rows, when the caller has loaded them (D-22). Absent or null means the
+   * positions are unknown, which is the case for every caller of Phase 80 (the day lookup does not
+   * load Break rows); #511 decides the loading. Never read by the minute sums.
+   */
+  breaks?: readonly DayBreakInterval[] | null;
 }
 
 /** A half-open time interval [startTime, endTime). */
@@ -71,6 +87,44 @@ export interface DaySnapshot {
   totalBreakMin: number;
 }
 
+/** Where a break segment of the day comes from (D-22). */
+export type DayBreakSegmentSource =
+  "entry-break" | "day-break" | "same-salon-gap" | "unplaced-entry-break";
+
+/**
+ * One break of the day as an interval with its source (D-22).
+ *
+ *   - "entry-break"          a Break row of an entry, clipped to that entry (`entryId` set)
+ *   - "day-break"            a recorded day break clipped to a gap that does not count by itself
+ *   - "same-salon-gap"       a same-salon gap of at most 120 minutes (D-01)
+ *   - "unplaced-entry-break" stored `breakMinutes` of an entry that no Break row covers
+ *
+ * `startTime` and `endTime` are null for "unplaced-entry-break" and only then. `entryId` is null
+ * for the two gap-based sources.
+ */
+export interface DayBreakSegment {
+  source: DayBreakSegmentSource;
+  entryId: string | null;
+  startTime: Date | null;
+  endTime: Date | null;
+  /** Exact minutes of the segment. */
+  minutes: number;
+}
+
+/** A positive gap between two consecutive entries of the day (D-22). */
+export interface DayGap {
+  previousEntryId: string;
+  nextEntryId: string;
+  startTime: Date;
+  endTime: Date;
+  /** Exact minutes of the gap. */
+  minutes: number;
+  /** True when the two entries were worked in different salons (travel, D-01). */
+  crossSalon: boolean;
+  /** True when the gap counts as a break by itself: same salon and at most 120 minutes (D-01). */
+  countsAsBreak: boolean;
+}
+
 /** Result of evaluating one day. All minute values are exact, unrounded floats. */
 export interface DayBreakEvaluation {
   /** Sum of the entries' working time (presence minus stored break); never reduced by day breaks (D-05). */
@@ -97,10 +151,20 @@ export interface DayBreakEvaluation {
   waived: boolean;
   /** The snapshot an acknowledgement of this evaluation would store. */
   snapshot: DaySnapshot;
+  /**
+   * Every break of the day as an interval with its source (D-22): placed segments ordered by start
+   * time, then the unplaced ones in entry order. Descriptive only — no minute sum is derived from it.
+   */
+  breakSegments: DayBreakSegment[];
+  /** Every positive gap between consecutive entries, in entry order (D-22). */
+  gaps: DayGap[];
 }
 
-/** Sum, in minutes, of the union of `breaks` clipped to [from, to]. */
-function unionClippedMinutes(breaks: readonly DayBreakInterval[], from: Date, to: Date): number {
+/** A half-open span [start, end) in epoch milliseconds. */
+type Span = readonly [number, number];
+
+/** The union of `breaks` clipped to [from, to], as sorted, non-touching spans. */
+function unionClippedSpans(breaks: readonly DayBreakInterval[], from: Date, to: Date): Span[] {
   const lo = from.getTime();
   const hi = to.getTime();
   const clipped: Array<[number, number]> = [];
@@ -110,25 +174,61 @@ function unionClippedMinutes(breaks: readonly DayBreakInterval[], from: Date, to
     if (e > s) clipped.push([s, e]);
   }
   clipped.sort((a, b) => a[0] - b[0]);
-  let totalMs = 0;
-  let curStart = 0;
-  let curEnd = 0;
-  let open = false;
+  const merged: Array<[number, number]> = [];
   for (const [s, e] of clipped) {
-    if (!open) {
-      curStart = s;
-      curEnd = e;
-      open = true;
-    } else if (s <= curEnd) {
-      if (e > curEnd) curEnd = e;
-    } else {
-      totalMs += curEnd - curStart;
-      curStart = s;
-      curEnd = e;
+    const last = merged[merged.length - 1];
+    if (last === undefined || s > last[1]) {
+      merged.push([s, e]);
+    } else if (e > last[1]) {
+      last[1] = e;
     }
   }
-  if (open) totalMs += curEnd - curStart;
+  return merged;
+}
+
+/** Sum, in minutes, of the union of `breaks` clipped to [from, to]. */
+function unionClippedMinutes(breaks: readonly DayBreakInterval[], from: Date, to: Date): number {
+  let totalMs = 0;
+  for (const [s, e] of unionClippedSpans(breaks, from, to)) totalMs += e - s;
   return totalMs / 60000;
+}
+
+/** A positive gap between two consecutive rows, with the D-01 classification. */
+interface GapSpan {
+  previous: DayBreakRow;
+  next: DayBreakRow;
+  startTime: Date;
+  endTime: Date;
+  minutes: number;
+  crossSalon: boolean;
+  countsAsBreak: boolean;
+}
+
+/**
+ * The ONE place that decides what a gap is: every positive gap between consecutive rows (start
+ * order), classified by D-01 — a gap between different salons is travel, a same-salon gap of at
+ * most 120 minutes counts as a break. Overlapping and adjacent rows yield no gap. Used by the
+ * evaluation (sums and interval view) and by the write-side `findGapForInterval`.
+ */
+function listGaps(rows: readonly DayBreakRow[]): GapSpan[] {
+  const gaps: GapSpan[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const previous = rows[i - 1];
+    const next = rows[i];
+    const minutes = (next.startTime.getTime() - previous.endTime.getTime()) / 60000;
+    if (!(minutes > 0)) continue;
+    const crossSalon = previous.salonId !== next.salonId;
+    gaps.push({
+      previous,
+      next,
+      startTime: previous.endTime,
+      endTime: next.startTime,
+      minutes,
+      crossSalon,
+      countsAsBreak: !crossSalon && minutes <= 120,
+    });
+  }
+  return gaps;
 }
 
 function isStringArray(v: unknown): v is string[] {
@@ -179,21 +279,18 @@ export function evaluateDayBreaks(input: {
   }
 
   // Gaps between consecutive entries.
+  const gapSpans = listGaps(rows);
   let gapBreakMin = 0;
   let dayBreakMin = 0;
-  for (let i = 1; i < rows.length; i++) {
-    const previous = rows[i - 1];
-    const next = rows[i];
-    const gap = (next.startTime.getTime() - previous.endTime.getTime()) / 60000;
-    if (!(gap > 0)) continue;
-    if (previous.salonId === next.salonId && gap <= 120) {
+  for (const g of gapSpans) {
+    if (g.countsAsBreak) {
       // Same salon, up to two hours: counts as a break exactly as before Phase 80 (D-01).
       // A recorded day break inside such a gap adds nothing (no double counting).
-      gapBreakMin += gap;
+      gapBreakMin += g.minutes;
     } else {
       // Travel between salons, or a same-salon gap above two hours (a separate shift): only a
       // recorded day break counts, clipped to the gap and merged where they overlap (D-04/D-05).
-      dayBreakMin += unionClippedMinutes(dayBreaks, previous.endTime, next.startTime);
+      dayBreakMin += unionClippedMinutes(dayBreaks, g.startTime, g.endTime);
     }
   }
 
@@ -215,6 +312,60 @@ export function evaluateDayBreaks(input: {
   // D-16: an entry-level WAIVED never waives a cross-salon day.
   const waived = crossSalon ? acknowledged : rows.some((r) => r.breakStatus === "WAIVED");
 
+  // D-22 interval view — built after the sums and read by nothing above this line.
+  const placedSegments: DayBreakSegment[] = [];
+  const unplacedSegments: DayBreakSegment[] = [];
+  for (const row of rows) {
+    const placedSpans = row.breaks?.length
+      ? unionClippedSpans(row.breaks, row.startTime, row.endTime)
+      : [];
+    let placedMs = 0;
+    for (const [s, e] of placedSpans) {
+      placedMs += e - s;
+      placedSegments.push({
+        source: "entry-break",
+        entryId: row.id,
+        startTime: new Date(s),
+        endTime: new Date(e),
+        minutes: (e - s) / 60000,
+      });
+    }
+    // Stored break minutes that no Break row covers: position unknown, never placed (D-22).
+    const unplacedMin = (entryDurations(row).breakMinutes * 60000 - placedMs) / 60000;
+    if (unplacedMin > 0) {
+      unplacedSegments.push({
+        source: "unplaced-entry-break",
+        entryId: row.id,
+        startTime: null,
+        endTime: null,
+        minutes: unplacedMin,
+      });
+    }
+  }
+  for (const g of gapSpans) {
+    if (g.countsAsBreak) {
+      placedSegments.push({
+        source: "same-salon-gap",
+        entryId: null,
+        startTime: g.startTime,
+        endTime: g.endTime,
+        minutes: g.minutes,
+      });
+    } else {
+      for (const [s, e] of unionClippedSpans(dayBreaks, g.startTime, g.endTime)) {
+        placedSegments.push({
+          source: "day-break",
+          entryId: null,
+          startTime: new Date(s),
+          endTime: new Date(e),
+          minutes: (e - s) / 60000,
+        });
+      }
+    }
+  }
+  placedSegments.sort((a, b) => (a.startTime as Date).getTime() - (b.startTime as Date).getTime());
+  const breakSegments = [...placedSegments, ...unplacedSegments];
+
   return {
     netWorkedMin,
     explicitBreakMin,
@@ -228,6 +379,16 @@ export function evaluateDayBreaks(input: {
     acknowledged,
     waived,
     snapshot,
+    breakSegments,
+    gaps: gapSpans.map((g) => ({
+      previousEntryId: g.previous.id,
+      nextEntryId: g.next.id,
+      startTime: g.startTime,
+      endTime: g.endTime,
+      minutes: g.minutes,
+      crossSalon: g.crossSalon,
+      countsAsBreak: g.countsAsBreak,
+    })),
   };
 }
 
@@ -256,17 +417,12 @@ export function findGapForInterval(
   const start = interval.startTime.getTime();
   const end = interval.endTime.getTime();
   if (!(start < end)) return null;
-  for (let i = 1; i < rows.length; i++) {
-    const previous = rows[i - 1];
-    const next = rows[i];
-    const gapStart = previous.endTime.getTime();
-    const gapEnd = next.startTime.getTime();
-    if (!(gapEnd > gapStart)) continue;
-    if (gapStart <= start && end <= gapEnd) {
+  for (const g of listGaps(rows)) {
+    if (g.startTime.getTime() <= start && end <= g.endTime.getTime()) {
       return {
-        previousEntryId: previous.id,
-        nextEntryId: next.id,
-        crossSalon: previous.salonId !== next.salonId,
+        previousEntryId: g.previous.id,
+        nextEntryId: g.next.id,
+        crossSalon: g.crossSalon,
       };
     }
   }
