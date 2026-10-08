@@ -248,10 +248,11 @@ own shell. The script's runtime configuration (target host, remote path) is pass
   promoted from `sha-{SHA}` to `X.Y.Z` (Phase 69).
 - [`docs/ci-branch-protection.md`](ci-branch-protection.md) — Branch protection + status checks
   (Phase 70-07).
-- [`.github/workflows/release.yml`](../.github/workflows/release.yml) — Post-release smoke-test
-  job for INT (Phase 70-05). It uses the same `/api/v1/health` + `/api/v1/version` probes as this
-  runbook but only targets `vars.INT_BASE_URL` (int). It does **NOT** run against prod (D-04: prod
-  stays manual).
+- [`.github/workflows/release.yml`](../.github/workflows/release.yml) — Gates promotion on a green
+  Build & Push run and promotes by digest-preserving copy. It probes neither int nor prod: int's
+  version check is the same manual `curl` of `/api/v1/version` as this runbook's, documented in
+  [`docs/release-process.md`](release-process.md) ("Getting the release onto int and prod"). Prod
+  stays manual (D-04).
 - [`docker-compose.prod.yml`](../docker-compose.prod.yml) — The actual compose file referenced by
   this runbook (pinned `image:` tags, zero Traefik labels, secrets via `${VAR}`).
 

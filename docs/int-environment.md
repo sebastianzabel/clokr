@@ -9,7 +9,7 @@ The `int` environment is the integration / pre-production cluster for clokr. It 
 - **Source of truth:** `https://github.com/sebastianzabel/clokr` (public), branch `release/1.9.x`
 - **Helm chart:** `charts/clokr-app/` in the clokr repo (single umbrella chart)
 - **ArgoCD Application:** `argocd-apps/clokr-app.yaml` in the `git.internal/home/homelab` repo
-- **Smoke-test gate:** `release.yml` → `smoke-test` job, activated by `vars.INT_BASE_URL`
+- **Version check:** manual `curl` of `/api/v1/version` after the int pin, see `docs/release-process.md` ("Getting the release onto int and prod")
 
 ## How int Differs From dev and prod
 
@@ -20,7 +20,7 @@ The `int` environment is the integration / pre-production cluster for clokr. It 
 | Data            | dev seeds            | anonymized prod (Phase 72)                                               | live customer data        |
 | Deploy trigger  | `pnpm dev`           | git push `release/1.9.x` → ArgoCD sync                                   | manual SSH (the operator) |
 | Update cadence  | dev workflow         | tracks `release/1.9.x` (imagePullPolicy=Always; `rollout restart` pulls) | release tag only          |
-| Smoke-test      | none                 | release.yml smoke-test job                                               | manual `curl` per runbook |
+| Version check   | none                 | manual `curl` after the pin                                              | manual `curl` per runbook |
 
 ## Architecture
 
@@ -35,9 +35,6 @@ clokr repo (release/1.9.x)
 │   └── templates/                  (Application)            ├── postgres-statefulset
 └── .github/workflows/                                       ├── ingress
     └── release.yml                                          └── service
-        └── smoke-test job
-            ↓ on release tag
-            curl ${INT_BASE_URL}/api/v1/health
 ```
 
 ## Deploy to int
@@ -74,25 +71,15 @@ Real secret values are injected via the **ArgoCD UI Parameters tab**:
 
 Alternative: create a Kubernetes Secret manually in the clokr namespace that the chart's `secret.yaml` template references. This survives Application deletion but requires manual maintenance.
 
-## Smoke-Test Gate
+## Version Check After a Release
 
-After every release tag push, `release.yml` runs the `smoke-test` job against `${INT_BASE_URL}`:
+`release.yml` no longer probes int after promotion (Issue #507): int is pinned by hand after the release, so a probe right after promote raced a human and was red or green by timing alone. After pinning int, check the deployed version by hand:
 
-```yaml
-# .github/workflows/release.yml (Phase 70-05)
-smoke-test:
-  needs: promote
-  if: ${{ vars.INT_BASE_URL != '' }}
-  steps:
-    - name: Health probe
-      run: curl -sf "${{ vars.INT_BASE_URL }}/api/v1/health"
-    - name: Version match
-      run: |
-        REMOTE_VERSION=$(curl -sf "${{ vars.INT_BASE_URL }}/api/v1/version" | jq -r .version)
-        [[ "$REMOTE_VERSION" == "${{ github.ref_name }}" ]] || exit 1
+```bash
+curl -fsS https://clokr-int.example.com/api/v1/version
 ```
 
-The job fails if either check fails. A failed smoke does NOT auto-rollback (per CONTEXT.md D-06) — the operator inspects and decides.
+It must return `{"version":"X.Y.Z"}` for the released version. Details and what a mismatch means: `docs/release-process.md` ("Getting the release onto int and prod").
 
 ## Rollback
 
@@ -133,15 +120,14 @@ Or via UI: ArgoCD UI → clokr → History and Rollback → pick a previous revi
 
 ## Operator Cheat-Sheet
 
-| Action                           | Command                                                                             |
-| -------------------------------- | ----------------------------------------------------------------------------------- |
-| Check sync status                | `argocd app get clokr`                                                              |
-| Tail API logs                    | `kubectl -n clokr logs deployment/clokr-api -f`                                     |
-| Connect to int Postgres          | `kubectl -n clokr port-forward statefulset/clokr-postgres 5432:5432`                |
-| Force re-sync                    | `argocd app sync clokr`                                                             |
-| Rollback                         | `argocd app rollback clokr <N>`                                                     |
-| Set repo variable for smoke gate | `gh variable set INT_BASE_URL --body 'https://clokr-int.example.com'` (already set) |
-| Verify smoke gate active         | `gh variable get INT_BASE_URL`                                                      |
+| Action                         | Command                                                              |
+| ------------------------------ | -------------------------------------------------------------------- |
+| Check sync status              | `argocd app get clokr`                                               |
+| Tail API logs                  | `kubectl -n clokr logs deployment/clokr-api -f`                      |
+| Connect to int Postgres        | `kubectl -n clokr port-forward statefulset/clokr-postgres 5432:5432` |
+| Force re-sync                  | `argocd app sync clokr`                                              |
+| Rollback                       | `argocd app rollback clokr <N>`                                      |
+| Check the deployed int version | `curl -fsS https://clokr-int.example.com/api/v1/version`             |
 
 ## Pre-Reqs (One-Time Setup)
 
@@ -162,7 +148,7 @@ These must be done before int is fully functional. Each should be ticked off:
 - `charts/clokr-app/` — The Helm chart deployed here
 - `homelab/argocd-apps/clokr-app.yaml` — The ArgoCD Application manifest
 - `docs/prod-deploy.md` — Prod-equivalent deploy doc (companion)
-- `.github/workflows/release.yml` — The smoke-test job that gates against int
+- `docs/release-process.md` — Release flow, gate, and the manual version check ("Getting the release onto int and prod")
 
 ## End-to-End Dry-Run
 
@@ -172,8 +158,8 @@ After all pre-reqs are ticked, run this dry-run to verify the full chain:
 2. ArgoCD picks it up, re-templates the Helm chart, applies changes
 3. Wait ~3 min for sync to settle (`argocd app get clokr` → Synced + Healthy)
 4. Push a release tag: `git tag v1.9.2-int-test && git push --tags`
-5. `release.yml` runs: build → promote → smoke-test
-6. Smoke-test hits `https://clokr-int.example.com/api/v1/health` → 200, version matches `v1.9.2-int-test`
-7. GitHub Actions → release.yml run → smoke-test job → green ✓
+5. `release.yml` runs: build-push-gate → promote
+6. Pin `image.tag` to the test tag in k8s-homelab and wait for the sync
+7. `curl -fsS https://clokr-int.example.com/api/v1/version` reports the test version
 
 If any step fails: read the failed step's log, fix the underlying issue, re-run.
