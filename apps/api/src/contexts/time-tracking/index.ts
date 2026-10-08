@@ -37,6 +37,7 @@ export {
   lockEntriesForMonth,
   unlockEntriesForMonth,
   archiveEntriesBefore,
+  archiveDayBreakDataBefore,
   clearEntryNotesForEmployee,
   hardDeleteTimeDataForEmployee,
   createImportedTimeEntry,

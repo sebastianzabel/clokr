@@ -492,6 +492,37 @@ export async function archiveEntriesBefore(
   return result.count;
 }
 
+/**
+ * T9b — Issue #80 (D-06): soft-deletes every non-deleted `DayBreak` and `DayBreakAck` of
+ * `employeeIds` dated on or before `cutoff`, returns the combined count. Same shape and same
+ * caller as T9 (`composition/data-retention.ts`, inside its per-tenant loop, right after
+ * `archiveEntriesBefore`) — the day rows follow the entries' retention period, so a day break
+ * never outlives the entry data it qualifies. `tenantId` is the same proven-redundant guard as in
+ * T9, kept so the query is tenant-bound on its own.
+ *
+ * Issue #370, D-09 applies unchanged: no per-row audit; the caller writes one aggregate
+ * `DataRetention` `ARCHIVE` audit carrying the count (`archivedDayBreaks`), and every archived row
+ * stays reconstructible (only `deletedAt` changes).
+ */
+export async function archiveDayBreakDataBefore(
+  db: Prisma.TransactionClient,
+  employeeIds: string[],
+  tenantId: string,
+  cutoff: Date,
+): Promise<number> {
+  if (employeeIds.length === 0) return 0;
+  const where = {
+    employeeId: { in: employeeIds },
+    employee: { tenantId },
+    deletedAt: null,
+    date: { lte: cutoff },
+  };
+  const archivedAt = new Date();
+  const breaks = await db.dayBreak.updateMany({ where, data: { deletedAt: archivedAt } });
+  const acks = await db.dayBreakAck.updateMany({ where, data: { deletedAt: archivedAt } });
+  return breaks.count + acks.count;
+}
+
 // ── T10 — DSGVO Art. 17: clear notes, deliberately reaching soft-deleted rows ────────────────
 
 /**
@@ -547,6 +578,10 @@ export async function clearEntryNotesForEmployee(
  * named `lint-facade-signatures` F3 exception for exactly that reason (same shape as plan 06's
  * `hardDeleteOvertimeDataForEmployee`).
  *
+ * Issue #80 (D-06): the employee's `DayBreakAck` and `DayBreak` rows are deleted FIRST, before
+ * `Break`/`TimeEntry` — both models are `onDelete: Restrict` onto Employee, so a surviving row
+ * would block the hard-delete sequence. Same no-per-row-audit rule as below.
+ *
  * Issue #370, D-09: no per-row audit, by owner decision — the rows are irrevocably gone after this
  * call returns, so a per-row audit could only be written BEFORE the delete and would merely
  * duplicate the `Employee` `HARD_DELETE` audit (with its own `oldValue`/`newValue`) that
@@ -557,6 +592,10 @@ export async function hardDeleteTimeDataForEmployee(
   db: Prisma.TransactionClient,
   employeeId: string,
 ): Promise<void> {
+  // Issue #80: `DayBreakAck` and `DayBreak` are `onDelete: Restrict` onto Employee like TimeEntry,
+  // so the day rows go first — otherwise the caller's final `employee.delete` fails on them.
+  await db.dayBreakAck.deleteMany({ where: { employeeId } });
+  await db.dayBreak.deleteMany({ where: { employeeId } });
   await db.break.deleteMany({ where: { timeEntry: { employeeId } } });
   await db.timeEntry.deleteMany({ where: { employeeId } });
 }
