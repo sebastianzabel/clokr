@@ -504,6 +504,12 @@ export async function archiveEntriesBefore(
  * tenant that the caller hasn't already fixed. Runs on the caller's own `tx` (the whole
  * anonymisation sequence is one transaction).
  *
+ * Issue #80 (D-06): also nulls `DayBreakAck.reason`, the only free text of the day-break models
+ * (`DayBreak` has none by design). Same rule as the notes: soft-deleted (revoked) acknowledgements
+ * are reached too, and the rows themselves are KEPT — they are retention-relevant evidence of a
+ * § 4 ArbZG decision; only the text goes. Living here, in the facade function the Unterbau
+ * already calls, means `platform/anonymize.ts` needs no change.
+ *
  * Issue #370, D-09: no per-row audit, by owner decision — this call is part of the DSGVO Art. 17
  * anonymisation transaction (`platform/anonymize.ts`), already covered by the `Employee`
  * `ANONYMIZE` audit that same transaction writes; a nulled note carries nothing left worth
@@ -516,6 +522,10 @@ export async function clearEntryNotesForEmployee(
   await db.timeEntry.updateMany({
     where: { employeeId, note: { not: null } },
     data: { note: null },
+  });
+  await db.dayBreakAck.updateMany({
+    where: { employeeId, reason: { not: null } },
+    data: { reason: null },
   });
 }
 
