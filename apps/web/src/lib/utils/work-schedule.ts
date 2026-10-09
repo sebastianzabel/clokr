@@ -37,6 +37,13 @@ function lastDayOfMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth() + 1, 0);
 }
 
+// Inline first-day-of-month at 00:00 — the month walks below compare against lastDayOfMonth() at
+// 00:00, so they must start on the 1st at 00:00 whatever Date within the month they were given
+// (quick 261009-bsb, Issue #80: a mid-month argument counted only the remaining days).
+function firstOfMonth(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
 // Inline yyyy-MM-dd formatter — equivalent to date-fns/format(date, "yyyy-MM-dd").
 // All three calendar pages already key holidays by this exact string.
 function ymd(date: Date): string {
@@ -190,6 +197,10 @@ export function getDayExpectedMinutes(
   return schedule?.type === "FLEXTIME" ? Math.round(hours * 60) : hours * 60;
 }
 
+/**
+ * Counts the schedule's workdays of the calendar month of `monthStart`. Any Date within the month
+ * is accepted; a mid-month Date is normalized to the 1st of its month.
+ */
 export function countWorkingDaysInMonth(
   schedule: WorkScheduleLike | null | undefined,
   monthStart: Date,
@@ -198,8 +209,9 @@ export function countWorkingDaysInMonth(
   if (!schedule) return 0;
   const exclude = new Set(excludeHolidays ?? []);
   let count = 0;
-  const end = lastDayOfMonth(monthStart);
-  const cur = new Date(monthStart);
+  const first = firstOfMonth(monthStart);
+  const end = lastDayOfMonth(first);
+  const cur = new Date(first);
   while (cur <= end) {
     if (isWorkDay(schedule, cur) && !exclude.has(ymd(cur))) {
       count++;
@@ -388,7 +400,8 @@ export function monthlyHoursWorkDays(
  * FLEXTIME helper above).
  *
  * @param schedule             the MONTHLY_HOURS schedule's workDays (see monthlyHoursWorkDays)
- * @param monthStart           any Date within the target calendar month (local time)
+ * @param monthStart           any Date within the target calendar month (local time); a
+ *                             mid-month Date is normalized to the 1st of its month
  * @param monthlyBudgetMinutes monthlyHours × 60 (caller resolves; <= 0 → returns 0)
  * @param defaultWorkDays      TenantConfig.defaultWorkDays — the D-05 fallback tier
  */
@@ -401,8 +414,9 @@ export function monthlyHoursDailyRateMinutes(
   if (!schedule || monthlyBudgetMinutes <= 0) return 0;
 
   const daySet = new Set(monthlyHoursWorkDays(schedule, defaultWorkDays));
-  const end = lastDayOfMonth(monthStart);
-  const cur = new Date(monthStart);
+  const first = firstOfMonth(monthStart);
+  const end = lastDayOfMonth(first);
+  const cur = new Date(first);
   let count = 0;
   while (cur <= end) {
     if (daySet.has(cur.getDay())) count++;

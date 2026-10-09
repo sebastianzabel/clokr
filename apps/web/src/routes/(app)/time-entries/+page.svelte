@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { page } from "$app/stores";
-  import { normalizeDateParam, resolveFocusTarget } from "$lib/breaks/deep-link";
+  import {
+    monthAnchorFromDay,
+    normalizeDateParam,
+    resolveFocusTarget,
+  } from "$lib/breaks/deep-link";
   // Phase 93 (BREAK-07) status-badge mapping — extracted in Phase 112 so the list cell and the
   // edit modal provably share one mapping and the colour/copy contract is unit-testable.
   import { breakBadgeClass, breakBadgeLabel, isUnconfirmedBreak } from "$lib/breaks/break-badge";
@@ -389,10 +393,12 @@
     // cannot point at a single entry, so an entry-targeted arrival opens the list.
     if (highlightParam) teView = "list";
 
+    // The calendar is anchored on the 1st of the linked month; the linked day stays selectedDate
+    // (quick 261009-bsb, Issue #80).
     const dayParam = normalizeDateParam($page.url.searchParams.get("date"));
     if (dayParam) {
       selectedDate = dayParam;
-      calMonth = new Date(`${dayParam}T12:00:00`);
+      calMonth = monthAnchorFromDay(dayParam);
       fromDate = format(startOfMonth(calMonth), "yyyy-MM-dd");
       toDate = format(endOfMonth(calMonth), "yyyy-MM-dd");
     }
@@ -662,7 +668,7 @@
 
   // ── Kalender-Tage aufbauen ─────────────────────────────────────────────────
   function buildCalendarDays(
-    monthStart: Date,
+    monthDate: Date,
     entries: TimeEntry[],
     sched: WorkSchedule | null,
     hols: Map<string, string>,
@@ -672,6 +678,11 @@
     shiftMinByDate: Map<string, number> = new Map(), // v1.8.8 — sum of durationMin per dateStr for SHIFT_BASED
     bsAbsenceList: BsAbsence[] = [], // bs-tage-in-calendar — Berufsschultage to mark in the calendar
   ): CalDay[] {
+    // Defense in depth (quick 261009-bsb, Issue #80): the padding before the 1st, the walk to
+    // endOfMonth and monthlyHoursDailyRateMinutes all assume the 1st; a mid-month argument
+    // truncated the grid and the summed Soll, so the month is normalized here and no caller can
+    // reintroduce it.
+    const monthStart = startOfMonth(monthDate);
     const byDate = new Map<string, TimeEntry[]>();
     for (const e of entries) {
       const key = (e.date ?? e.startTime).split("T")[0];
