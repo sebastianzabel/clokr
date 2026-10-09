@@ -290,9 +290,9 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
 
       expect(res.statusCode, res.body).toBe(409);
       const body = JSON.parse(res.body) as Record<string, unknown>;
-      expect(body.crossSalonBreakCount).toBe(1);
-      expect(body.crossSalonBreakDays).toEqual([VIOLATION_DAY]);
-      expect(body.requiresCrossSalonAck).toBe(true);
+      expect(body.breakFindingCount).toBe(1);
+      expect(body.breakFindingDays).toEqual([VIOLATION_DAY]);
+      expect(body.requiresBreakFindingAck).toBe(true);
       expect(body.error).toContain("§ 4 ArbZG");
       expect(
         await app.prisma.saldoSnapshot.count({ where: { employeeId: empId } }),
@@ -307,9 +307,9 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
       const res = await closeMonth(empId);
 
       expect(res.statusCode, res.body).toBe(409);
-      expect(
-        (JSON.parse(res.body) as { crossSalonBreakDays: string[] }).crossSalonBreakDays,
-      ).toEqual([VIOLATION_DAY]);
+      expect((JSON.parse(res.body) as { breakFindingDays: string[] }).breakFindingDays).toEqual([
+        VIOLATION_DAY,
+      ]);
     });
 
     it("does not answer this 409 when blockMonthCloseOnUnconfirmedBreak is false", async () => {
@@ -359,7 +359,7 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
 
       expect(res.statusCode, res.body).toBe(409);
       expect(
-        (JSON.parse(res.body) as { requiresCrossSalonAck?: boolean }).requiresCrossSalonAck,
+        (JSON.parse(res.body) as { requiresBreakFindingAck?: boolean }).requiresBreakFindingAck,
       ).toBe(true);
     });
 
@@ -402,8 +402,8 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
     });
   });
   // ── Status listing (D-15, OQ-3) ─────────────────────────────────────────────────────────────
-  describe("GET /overtime/close-month/status — crossSalonBreakDays", () => {
-    type StatusRow = { employeeId: string; status: string; crossSalonBreakDays?: string[] };
+  describe("GET /overtime/close-month/status — breakFindingDays", () => {
+    type StatusRow = { employeeId: string; status: string; breakFindingDays?: string[] };
 
     async function statusRows(): Promise<StatusRow[]> {
       const res = await app.inject({
@@ -425,25 +425,25 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
     it("lists the violation day of a FIXED_SCHEDULE employee", async () => {
       const empId = await createEmployee("st-fixed");
       twoSalonDay(empId);
-      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([VIOLATION_DAY]);
+      expect((await statusRow(empId)).breakFindingDays).toEqual([VIOLATION_DAY]);
     });
 
     it("lists it for a MONTHLY_HOURS employee too (gap-free branch, D-15)", async () => {
       const empId = await createEmployee("st-monthly", "MONTHLY_HOURS");
       twoSalonDay(empId);
-      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([VIOLATION_DAY]);
+      expect((await statusRow(empId)).breakFindingDays).toEqual([VIOLATION_DAY]);
     });
 
     it("is [] for an employee without a cross-salon day", async () => {
       const empId = await createEmployee("st-clean");
-      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([]);
+      expect((await statusRow(empId)).breakFindingDays).toEqual([]);
     });
 
     it("is shown regardless of the block flag and of enforceBreakConfirmation (OQ-3)", async () => {
       await setFlags({ blockMonthCloseOnUnconfirmedBreak: false, enforceBreakConfirmation: false });
       const empId = await createEmployee("st-flagoff");
       twoSalonDay(empId);
-      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([VIOLATION_DAY]);
+      expect((await statusRow(empId)).breakFindingDays).toEqual([VIOLATION_DAY]);
     });
 
     it("is [] once a current acknowledgement exists and the day returns when it goes stale (D-17)", async () => {
@@ -459,13 +459,13 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
           acknowledgedBy: adminUserId,
         },
       });
-      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([]);
+      expect((await statusRow(empId)).breakFindingDays).toEqual([]);
 
       await app.prisma.dayBreakAck.update({
         where: { id: ack.id },
         data: { snapshot: { ...snapshot, totalBreakMin: snapshot.totalBreakMin + 5 } },
       });
-      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([VIOLATION_DAY]);
+      expect((await statusRow(empId)).breakFindingDays).toEqual([VIOLATION_DAY]);
     });
 
     it("never lists a § 3-only day: enough break recorded, 11 h net across two salons (D-18)", async () => {
@@ -475,7 +475,7 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
         row(empId, VIOLATION_DAY, salonB, "12:30", "18:30"),
       ] as T2Row[];
       constructed.set(empId, rows);
-      expect((await statusRow(empId)).crossSalonBreakDays).toEqual([]);
+      expect((await statusRow(empId)).breakFindingDays).toEqual([]);
       const res = await closeMonth(empId);
       expect(res.statusCode, res.body).toBe(201);
     });
@@ -486,7 +486,7 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
       twoSalonDay(empId); // the day looks like a violation afterwards, but the month is closed
       const closed = await statusRow(empId);
       expect(closed.status).toBe("closed");
-      expect(closed.crossSalonBreakDays).toEqual([]);
+      expect(closed.breakFindingDays).toEqual([]);
     });
 
     it("issues no DayBreak / DayBreakAck query without a candidate day and exactly one per model with one", async () => {
@@ -604,6 +604,180 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
       twoSalonDay(empId);
 
       expect((await deferredEmployee(empId))!.reason).toBe("UNKNOWN");
+    });
+  });
+  // ── Issue #511 (D-12) — the generalised detector: a single-salon, single-entry Satz-3 day ─────
+  describe("Issue #511 (D-12) — single-salon break findings", () => {
+    // The harness entry of a day runs 07:00Z-15:30Z (08:00-16:30 Berlin) with breakMinutes 30. A
+    // break at 13:30Z-14:00Z leaves a 390 min block before it: Satz 1 is met, Satz 3 is violated.
+    const LATE_BREAK = ["13:30", "14:00"] as const;
+    const MOVED_BREAK = ["13:20", "13:50"] as const; // same minutes, other placement
+
+    const utc = (hhmm: string) => new Date(`${VIOLATION_DAY}T${hhmm}:00.000Z`);
+
+    function entryOf(employeeId: string) {
+      return app.prisma.timeEntry.findFirstOrThrow({
+        where: { employeeId, date: dateOf(VIOLATION_DAY), deletedAt: null },
+      });
+    }
+
+    async function addBreak(employeeId: string, [start, end]: readonly [string, string]) {
+      const entry = await entryOf(employeeId);
+      return app.prisma.break.create({
+        data: { timeEntryId: entry.id, startTime: utc(start), endTime: utc(end) },
+      });
+    }
+
+    /** The snapshot POST /day-breaks/acks would store for the employee's real day right now. */
+    async function realDaySnapshot(employeeId: string) {
+      const entry = await entryOf(employeeId);
+      const breaks = await app.prisma.break.findMany({ where: { timeEntryId: entry.id } });
+      const { snapshot } = evaluateDayBreaks({
+        rows: [
+          {
+            id: entry.id,
+            startTime: entry.startTime,
+            endTime: entry.endTime!,
+            breakMinutes: entry.breakMinutes,
+            breakStatus: entry.breakStatus,
+            salonId: entry.salonId,
+            breaks,
+          },
+        ],
+        dayBreaks: [],
+        acks: [],
+      });
+      return { ...snapshot };
+    }
+
+    async function ackRealDay(employeeId: string) {
+      await app.prisma.dayBreakAck.create({
+        data: {
+          employeeId,
+          date: dateOf(VIOLATION_DAY),
+          reason: "Kundentermin ohne Unterbrechung",
+          snapshot: await realDaySnapshot(employeeId),
+          acknowledgedBy: adminUserId,
+        },
+      });
+    }
+
+    async function findingDaysOf(employeeId: string): Promise<string[] | undefined> {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/overtime/close-month/status",
+        headers: { authorization: `Bearer ${adminToken}` },
+        query: { year: String(YEAR), month: String(MONTH) },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const rows = (
+        JSON.parse(res.body) as { employees: { employeeId: string; breakFindingDays?: string[] }[] }
+      ).employees;
+      const found = rows.find((e) => e.employeeId === employeeId);
+      expect(found, "employee must appear in the status response").toBeDefined();
+      return found!.breakFindingDays;
+    }
+
+    it("answers 409 for a Satz-3 day of a single entry, independent of enforceBreakConfirmation", async () => {
+      const empId = await createEmployee("p-block");
+      await addBreak(empId, LATE_BREAK);
+
+      const res = await closeMonth(empId);
+
+      expect(res.statusCode, res.body).toBe(409);
+      const body = JSON.parse(res.body) as Record<string, unknown>;
+      expect(body.breakFindingCount).toBe(1);
+      expect(body.breakFindingDays).toEqual([VIOLATION_DAY]);
+      expect(body.requiresBreakFindingAck).toBe(true);
+      expect(body.error).toContain("§ 11 JArbSchG");
+      expect(await app.prisma.saldoSnapshot.count({ where: { employeeId: empId } })).toBe(0);
+    });
+
+    it("a hint-only day (stored break sum, no Break rows) never blocks and is never listed (A5)", async () => {
+      const empId = await createEmployee("p-hint");
+
+      expect(await findingDaysOf(empId)).toEqual([]);
+      const res = await closeMonth(empId);
+
+      expect(res.statusCode, res.body).toBe(201);
+    });
+
+    it("a current acknowledgement clears the block; a moved break makes it stale again", async () => {
+      const acked = await createEmployee("p-acked");
+      await addBreak(acked, LATE_BREAK);
+      await ackRealDay(acked);
+      expect(await findingDaysOf(acked), "anti-vacuity: the ack is what clears it").toEqual([]);
+      expect((await closeMonth(acked)).statusCode).toBe(201);
+
+      const stale = await createEmployee("p-stale");
+      const moved = await addBreak(stale, LATE_BREAK);
+      await ackRealDay(stale);
+      await app.prisma.break.update({
+        where: { id: moved.id },
+        data: { startTime: utc(MOVED_BREAK[0]), endTime: utc(MOVED_BREAK[1]) },
+      });
+
+      const res = await closeMonth(stale);
+
+      expect(res.statusCode, res.body).toBe(409);
+      expect(JSON.parse(res.body)).toMatchObject({
+        breakFindingDays: [VIOLATION_DAY],
+        requiresBreakFindingAck: true,
+      });
+    });
+
+    it("an entry-level WAIVED (durchgearbeitet) resolves a single-salon day", async () => {
+      const empId = await createEmployee("p-waived");
+      await addBreak(empId, LATE_BREAK);
+      expect(await findingDaysOf(empId), "control: listed before the waiver").toEqual([
+        VIOLATION_DAY,
+      ]);
+      await app.prisma.timeEntry.updateMany({
+        where: { employeeId: empId, date: dateOf(VIOLATION_DAY) },
+        data: { breakStatus: "WAIVED" },
+      });
+
+      expect(await findingDaysOf(empId)).toEqual([]);
+      expect((await closeMonth(empId)).statusCode).toBe(201);
+    });
+
+    it("also blocks a MONTHLY_HOURS employee — statutory, every schedule type", async () => {
+      const empId = await createEmployee("p-monthly", "MONTHLY_HOURS");
+      await addBreak(empId, LATE_BREAK);
+
+      const res = await closeMonth(empId);
+
+      expect(res.statusCode, res.body).toBe(409);
+      expect((JSON.parse(res.body) as { breakFindingDays: string[] }).breakFindingDays).toEqual([
+        VIOLATION_DAY,
+      ]);
+    });
+
+    it("does not block when blockMonthCloseOnUnconfirmedBreak is false", async () => {
+      await setFlags({ blockMonthCloseOnUnconfirmedBreak: false });
+      const empId = await createEmployee("p-flagoff");
+      await addBreak(empId, LATE_BREAK);
+
+      expect((await closeMonth(empId)).statusCode).toBe(201);
+    });
+
+    it("the status lists the day regardless of the flag, [] for others and for a closed month", async () => {
+      await setFlags({ blockMonthCloseOnUnconfirmedBreak: false, enforceBreakConfirmation: false });
+      const finding = await createEmployee("p-st-finding");
+      const clean = await createEmployee("p-st-clean");
+      const monthly = await createEmployee("p-st-monthly", "MONTHLY_HOURS");
+      await addBreak(finding, LATE_BREAK);
+      await addBreak(monthly, LATE_BREAK);
+
+      expect(await findingDaysOf(finding)).toEqual([VIOLATION_DAY]);
+      expect(await findingDaysOf(monthly)).toEqual([VIOLATION_DAY]);
+      expect(await findingDaysOf(clean)).toEqual([]);
+
+      // A closed month is never re-evaluated (D-14): close the clean employee, then give the
+      // locked day a finding — the status still answers [].
+      expect((await closeMonth(clean)).statusCode).toBe(201);
+      await addBreak(clean, LATE_BREAK);
+      expect(await findingDaysOf(clean)).toEqual([]);
     });
   });
 });

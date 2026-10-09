@@ -90,6 +90,24 @@ export {
 } from "./cross-salon-days";
 export type { CrossSalonRow, CrossSalonViolationDay } from "./cross-salon-days";
 
+// ── Issue #511 (D-12) — unacknowledged § 4 ArbZG / § 11 JArbSchG break-finding days ──────────
+// Generalises the cross-salon detector above to Satz 2/3 placement findings on any day; consumed by
+// the four Monatsabschluss paths in working-time-account. The saldo never imports it (AK-5). The
+// age decision is injected by the caller, so this module imports neither the absence nor the
+// working-time-account context.
+export {
+  breakFindingCandidateDays,
+  evaluateBreakFindingDays,
+  findUnacknowledgedBreakFindingDays,
+  findUnacknowledgedBreakFindingDaysForEmployee,
+} from "./break-finding-days";
+export type {
+  BreakFindingDay,
+  BreakFindingRow,
+  EvaluatedBreakDay,
+  IsMinorAt,
+} from "./break-finding-days";
+
 // ── Phase 68b (issue #68) — the entry-salon rule ──────────────────────────────────────────────
 // The platform CSV importer creates TimeEntry rows too and must resolve their salon through the
 // same rule; importing it from this index needs no boundary exception.
