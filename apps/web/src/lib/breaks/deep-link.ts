@@ -44,6 +44,34 @@ export function normalizeDateParam(raw: string | null | undefined): string | nul
   return day;
 }
 
+/**
+ * Turns a deep-linked day into the calendar month anchor: local midnight of the 1st of that day's
+ * month.
+ *
+ * WHY (quick 261009-bsb, Issue #80): `buildCalendarDays` treats its first argument as the 1st of
+ * the month — it pads `firstDow` cells before it and walks on to the end of the month. Anchoring
+ * the calendar on the linked DAY instead truncated the grid to the remaining days and the summed
+ * Soll with it (measured: 7 cells and a Soll of 16 h instead of 136 h for `?date=2026-09-29`).
+ * The linked day itself is NOT the anchor; it belongs in the caller's `selectedDate`.
+ *
+ * Built from numeric components on purpose: parsing "YYYY-MM-DD" yields UTC midnight, which lands
+ * on the previous day (and possibly the previous month) west of UTC.
+ *
+ * The input is re-validated through `normalizeDateParam`; a rejected value throws a `RangeError`
+ * instead of producing an Invalid Date (the Issue #115 blank-page failure mode). Call sites pass a
+ * value `normalizeDateParam` already accepted, so the throw is unreachable there.
+ */
+export function monthAnchorFromDay(day: string): Date {
+  const valid = normalizeDateParam(day);
+  if (valid === null) {
+    throw new RangeError(
+      `monthAnchorFromDay expects a day already validated by normalizeDateParam, got "${day}"`,
+    );
+  }
+  const [year, month] = valid.split("-").map(Number);
+  return new Date(year, month - 1, 1);
+}
+
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**

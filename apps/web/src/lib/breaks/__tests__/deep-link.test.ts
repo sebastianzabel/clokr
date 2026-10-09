@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { normalizeDateParam, normalizeEmployeeIdParam, resolveFocusTarget } from "../deep-link";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import {
+  monthAnchorFromDay,
+  normalizeDateParam,
+  normalizeEmployeeIdParam,
+  resolveFocusTarget,
+} from "../deep-link";
 
 // Phase 112 (GitHub issue #115) — receiver-side hardening. A `?date=` param is untrusted text;
 // before this module it went straight into `new Date(param + "T12:00:00")` and then into
@@ -47,8 +52,8 @@ describe("normalizeDateParam", () => {
     for (const raw of inputs) {
       const day = normalizeDateParam(raw);
       expect(day).not.toBeNull();
-      // Reproduces time-entries/+page.svelte's own expression.
-      expect(Number.isNaN(new Date(day + "T12:00:00").getTime())).toBe(false);
+      // Reproduces the pages' own expression: the calendar anchor of the normalized day.
+      expect(Number.isNaN(monthAnchorFromDay(day as string).getTime())).toBe(false);
     }
   });
 });
@@ -142,5 +147,78 @@ describe("normalizeEmployeeIdParam", () => {
     expect(normalizeEmployeeIdParam(`${UUID},${UUID}`)).toBeNull();
     expect(normalizeEmployeeIdParam(`[${UUID}]`)).toBeNull();
     expect(normalizeEmployeeIdParam(` ${UUID}`)).toBeNull();
+  });
+});
+
+describe("monthAnchorFromDay (quick 261009-bsb, Issue #80)", () => {
+  // Process time zones the helper must be independent of. Europe/Berlin is the deployment zone
+  // (and has DST in March and October), America/New_York is a NEGATIVE UTC offset where parsing
+  // "YYYY-MM-DD" as UTC midnight lands on the previous day, Pacific/Auckland is far east.
+  const ZONES = ["Europe/Berlin", "America/New_York", "UTC", "Pacific/Auckland"];
+  const ORIGINAL_TZ = process.env.TZ;
+
+  beforeAll(() => {
+    // Sanity: the list above is what the loops below iterate over.
+    expect(ZONES).toHaveLength(4);
+  });
+
+  afterAll(() => {
+    if (ORIGINAL_TZ === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = ORIGINAL_TZ;
+    }
+  });
+
+  const CASES: Array<{ name: string; day: string; year: number; month0: number }> = [
+    { name: "mid-month (the measured case)", day: "2026-09-29", year: 2026, month0: 8 },
+    { name: "first day of a month", day: "2026-10-01", year: 2026, month0: 9 },
+    { name: "last day of a 31-day month", day: "2026-10-31", year: 2026, month0: 9 },
+    { name: "year end", day: "2026-12-31", year: 2026, month0: 11 },
+    { name: "leap day", day: "2024-02-29", year: 2024, month0: 1 },
+    { name: "DST start month (Europe/Berlin)", day: "2026-03-29", year: 2026, month0: 2 },
+    { name: "DST end month (Europe/Berlin)", day: "2026-10-25", year: 2026, month0: 9 },
+  ];
+
+  for (const zone of ZONES) {
+    describe(`process TZ ${zone}`, () => {
+      beforeAll(() => {
+        process.env.TZ = zone;
+      });
+
+      it("anti-vacuity: the TZ switch actually took effect", () => {
+        // UTC midnight of 1 Oct 2026 read through local accessors: 30 Sep in New York,
+        // so an implementation that parses the ISO string as UTC would be caught here.
+        const probe = new Date("2026-10-01T00:00:00Z");
+        if (zone === "America/New_York") {
+          expect(probe.getDate()).toBe(30);
+        } else if (zone === "Pacific/Auckland") {
+          expect(probe.getDate()).toBe(1);
+          expect(probe.getHours()).toBe(13);
+        } else if (zone === "Europe/Berlin") {
+          expect(probe.getHours()).toBe(2);
+        } else {
+          expect(probe.getHours()).toBe(0);
+        }
+      });
+
+      for (const c of CASES) {
+        it(`${c.name}: ${c.day} -> local 1st 00:00 of its month`, () => {
+          const anchor = monthAnchorFromDay(c.day);
+          expect(anchor.getFullYear()).toBe(c.year);
+          expect(anchor.getMonth()).toBe(c.month0);
+          expect(anchor.getDate()).toBe(1);
+          expect(anchor.getHours()).toBe(0);
+          expect(anchor.getMinutes()).toBe(0);
+          expect(anchor.getTime()).toBe(new Date(c.year, c.month0, 1).getTime());
+        });
+      }
+    });
+  }
+
+  it("a day normalizeDateParam rejects throws RangeError, never an Invalid Date", () => {
+    for (const bad of ["2026-02-30", "nonsense", ""]) {
+      expect(() => monthAnchorFromDay(bad)).toThrow(RangeError);
+    }
   });
 });

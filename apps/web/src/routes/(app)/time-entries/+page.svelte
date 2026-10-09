@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { page } from "$app/stores";
-  import { normalizeDateParam, resolveFocusTarget } from "$lib/breaks/deep-link";
+  import {
+    monthAnchorFromDay,
+    normalizeDateParam,
+    resolveFocusTarget,
+  } from "$lib/breaks/deep-link";
   // Phase 93 (BREAK-07) status-badge mapping — extracted in Phase 112 so the list cell and the
   // edit modal provably share one mapping and the colour/copy contract is unit-testable.
   import { breakBadgeClass, breakBadgeLabel, isUnconfirmedBreak } from "$lib/breaks/break-badge";
@@ -389,10 +393,12 @@
     // cannot point at a single entry, so an entry-targeted arrival opens the list.
     if (highlightParam) teView = "list";
 
+    // The calendar is anchored on the 1st of the linked month; the linked day stays selectedDate
+    // (quick 261009-bsb, Issue #80).
     const dayParam = normalizeDateParam($page.url.searchParams.get("date"));
     if (dayParam) {
       selectedDate = dayParam;
-      calMonth = new Date(`${dayParam}T12:00:00`);
+      calMonth = monthAnchorFromDay(dayParam);
       fromDate = format(startOfMonth(calMonth), "yyyy-MM-dd");
       toDate = format(endOfMonth(calMonth), "yyyy-MM-dd");
     }

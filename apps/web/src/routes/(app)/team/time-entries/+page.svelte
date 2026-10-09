@@ -15,7 +15,11 @@
   import DayBreakPanel from "$lib/components/breaks/DayBreakPanel.svelte"; // Issue #80
   // Issue #80 (D-09c/D-10/D-20) — the notification deep link and the server-computed day checks;
   // the browser never derives a cross-salon finding itself.
-  import { normalizeDateParam, normalizeEmployeeIdParam } from "$lib/breaks/deep-link";
+  import {
+    monthAnchorFromDay,
+    normalizeDateParam,
+    normalizeEmployeeIdParam,
+  } from "$lib/breaks/deep-link";
   import {
     type DayCheck,
     type DayChecksResponse,
@@ -291,11 +295,12 @@
     const viewParam = $page.url.searchParams.get("view");
     if (viewParam === "list") teView = "list";
     // Issue #80 (D-10): the param is untrusted text — an unreal day keeps the default month
-    // instead of reaching date-fns with an Invalid Date.
+    // instead of reaching date-fns with an Invalid Date. The calendar is anchored on the 1st of
+    // the linked month while the linked day stays selectedDate (quick 261009-bsb).
     const dateParam = normalizeDateParam($page.url.searchParams.get("date"));
     if (dateParam) {
       selectedDate = dateParam;
-      calMonth = new Date(dateParam + "T12:00:00");
+      calMonth = monthAnchorFromDay(dateParam);
       fromDate = format(startOfMonth(calMonth), "yyyy-MM-dd");
       toDate = format(endOfMonth(calMonth), "yyyy-MM-dd");
     }
