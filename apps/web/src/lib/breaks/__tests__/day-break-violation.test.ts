@@ -7,13 +7,11 @@
 import { describe, it, expect } from "vitest";
 import {
   type DayCheck,
-  type DayWarning,
   isChecksRangeAllowed,
   dayCheckBadge,
   type DayCheckWarning,
   dayCheckWarnings,
   dayChecksToArbzgMap,
-  mergeDayChecksIntoArbzgMap,
   breakFindingSaveNotice,
   breakFindingMonthCloseHint,
 } from "../day-break-violation";
@@ -179,32 +177,6 @@ describe("dayChecksToArbzgMap", () => {
       severity: "warning",
       message: "SERVER-TEXT § 4 ArbZG",
     });
-  });
-});
-
-describe("mergeDayChecksIntoArbzgMap", () => {
-  const clientWarning: DayWarning = { code: "§ 4", severity: "warning", message: "client" };
-
-  it("replaces the client warnings of a server day and removes the date on an empty result", () => {
-    const client = new Map<string, DayWarning[]>([
-      ["2026-03-10", [clientWarning]],
-      ["2026-03-11", [clientWarning]],
-      ["2026-03-12", [clientWarning]],
-    ]);
-    const merged = mergeDayChecksIntoArbzgMap(client, [
-      check({ date: "2026-03-10" }),
-      check({ date: "2026-03-11", warnings: [] }),
-    ]);
-    expect(merged.get("2026-03-10")?.[0].code).toBe("BREAK_TOO_SHORT");
-    expect(merged.has("2026-03-11")).toBe(false);
-    expect(merged.get("2026-03-12")).toEqual([clientWarning]);
-  });
-
-  it("adds a date the client map did not have and does not mutate the input", () => {
-    const client = new Map<string, DayWarning[]>();
-    const merged = mergeDayChecksIntoArbzgMap(client, [check({ date: "2026-03-10" })]);
-    expect(merged.has("2026-03-10")).toBe(true);
-    expect(client.size).toBe(0);
   });
 });
 

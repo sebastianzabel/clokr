@@ -173,25 +173,6 @@ export function dayChecksToArbzgMap(days: DayCheck[]): Map<string, DayWarning[]>
   return map;
 }
 
-/**
- * Overlays the server's day checks onto the client-computed marker map. For every server day the
- * client warnings of that date are REPLACED (an empty result removes the date); dates without a
- * server day are untouched. The input map is not mutated.
- */
-export function mergeDayChecksIntoArbzgMap(
-  clientMap: Map<string, DayWarning[]>,
-  days: DayCheck[],
-): Map<string, DayWarning[]> {
-  const merged = new Map(clientMap);
-  const server = dayChecksToArbzgMap(days);
-  for (const day of days) {
-    const warnings = server.get(day.date);
-    if (warnings) merged.set(day.date, warnings);
-    else merged.delete(day.date);
-  }
-  return merged;
-}
-
 /** The Satz-2/3 finding codes (§ 4 ArbZG / § 11 JArbSchG) a save response can return. */
 const PLACEMENT_CODES = new Set([
   "BREAK_SEGMENT_TOO_SHORT",
@@ -210,8 +191,8 @@ const PLACEMENT_CODES = new Set([
  *     server's own message follows "Pausenregel nicht eingehalten:", never a client-built text.
  * A hint (`hint: true`, e.g. the position of the break is not recorded) never shows a toast.
  * The save itself has already succeeded; the notice only tells what the day now lacks. It is shown
- * to employees AND managers (team page), so the text carries no pronoun. Per-entry § 4 findings
- * stay with the existing client-side modal warnings.
+ * to employees AND managers (team page), so the text carries no pronoun. The entry form's own
+ * findings come from the server preview before saving (day-break-preview.ts, Issue #511 D-18).
  */
 export function breakFindingSaveNotice(warnings: unknown): string | null {
   if (!Array.isArray(warnings)) return null;
