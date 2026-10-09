@@ -5,7 +5,7 @@
 // DayBreak or DayBreakAck and no audit row. All data is real (single entries per employee and day
 // satisfy the unique index); only the month lock is a SaldoSnapshot, as in the other day-break tests.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto, { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
@@ -430,6 +430,191 @@ describe("Issue #511 — POST /api/v1/day-breaks/preview", () => {
         payload: proposal(data.employee.id, "08:00", "15:00"),
       });
       expect(res.statusCode).toBe(401);
+    });
+  });
+  // ── The preview applies the automatic break the save would place (new entries only) ──────────
+  // `POST /time-entries` places an automatic break when the tenant has autoBreakEnabled and the
+  // caller sent no break slots and no break minutes. Without the same decision here the form would
+  // warn about a missing break that the save itself prevents. The decision is `planAutoBreak` /
+  // `autoBreakAppliesOnCreate` - the very functions the POST uses, not a copy. The PUT route places
+  // no automatic break (no call to the plan in the edit handler), so an edit is never simulated.
+  describe("automatic break of a new entry", () => {
+    interface PreviewAnswer {
+      warnings: PreviewWarning[];
+      autoBreakApplied: {
+        start: string;
+        end: string;
+        minutes: number;
+        segments: Array<{ start: string; end: string }>;
+      } | null;
+    }
+
+    async function answerOf(token: string, body: Record<string, unknown>): Promise<PreviewAnswer> {
+      const res = await preview(token, body);
+      expect(res.statusCode, res.body).toBe(200);
+      return JSON.parse(res.body) as PreviewAnswer;
+    }
+
+    async function setAutoBreak(enabled: boolean) {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: data.tenant.id },
+        data: {
+          autoBreakEnabled: enabled,
+          defaultBreakStart: null,
+          // The POST control below writes into the past.
+          retroEntryWindowDays: 3650,
+        },
+      });
+    }
+
+    afterEach(async () => {
+      await setAutoBreak(false);
+      await app.prisma.employee.update({
+        where: { id: data.employee.id },
+        data: { birthDate: null },
+      });
+    });
+
+    it("a new 08:00-17:00 entry without breaks is not warned about a missing break when the save would place one", async () => {
+      await setAutoBreak(true);
+
+      const answer = await answerOf(data.empToken, proposal(data.employee.id, "08:00", "17:00"));
+
+      const codes = answer.warnings.map((w) => w.code);
+      expect(codes).not.toContain("BREAK_TOO_SHORT");
+      expect(codes).not.toContain("BREAK_TOO_LATE");
+      expect(answer.autoBreakApplied).not.toBeNull();
+      expect(answer.autoBreakApplied!.minutes).toBeGreaterThan(0);
+      expect(answer.autoBreakApplied!.segments.length).toBeGreaterThan(0);
+      expect(answer.autoBreakApplied!.start).toBe(answer.autoBreakApplied!.segments[0].start);
+      expect(answer.autoBreakApplied!.end).toBe(
+        answer.autoBreakApplied!.segments[answer.autoBreakApplied!.segments.length - 1].end,
+      );
+    });
+
+    it("reports exactly the break the save then writes", async () => {
+      await setAutoBreak(true);
+      const answer = await answerOf(data.empToken, proposal(data.employee.id, "08:00", "17:00"));
+
+      // The control: the real POST of the same proposal on another day (no configured start, so
+      // the placement depends only on the entry's own times).
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: OTHER_DAY,
+          startTime: at("08:00", OTHER_DAY),
+          endTime: at("17:00", OTHER_DAY),
+          breakMinutes: 0,
+        },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      const written = await app.prisma.break.findMany({
+        where: { timeEntry: { employeeId: data.employee.id, date: dateOf(OTHER_DAY) } },
+        orderBy: { startTime: "asc" },
+      });
+      expect(written.length, "anti-vacuity: the save placed a break").toBeGreaterThan(0);
+
+      const dayShift = dateOf(OTHER_DAY).getTime() - dateOf(DAY).getTime();
+      expect(
+        answer.autoBreakApplied!.segments.map((g) => [
+          new Date(g.start).getTime() + dayShift,
+          new Date(g.end).getTime() + dayShift,
+        ]),
+      ).toEqual(written.map((b) => [b.startTime.getTime(), b.endTime.getTime()]));
+      const stored = await app.prisma.timeEntry.findFirstOrThrow({
+        where: { employeeId: data.employee.id, date: dateOf(OTHER_DAY) },
+      });
+      expect(answer.autoBreakApplied!.minutes).toBe(stored.breakMinutes);
+    });
+
+    it("with autoBreakEnabled off the findings stay and no automatic break is reported", async () => {
+      await setAutoBreak(false);
+
+      const answer = await answerOf(data.empToken, proposal(data.employee.id, "08:00", "17:00"));
+
+      const codes = answer.warnings.map((w) => w.code);
+      expect(codes).toContain("BREAK_TOO_SHORT");
+      expect(codes).toContain("BREAK_TOO_LATE");
+      expect(answer.autoBreakApplied).toBeNull();
+    });
+
+    it("explicit break slots or break minutes switch the simulation off (the save places none)", async () => {
+      await setAutoBreak(true);
+
+      const withSlot = await answerOf(
+        data.empToken,
+        proposal(data.employee.id, "08:00", "17:00", [slot("14:30", "14:45")]),
+      );
+      expect(withSlot.autoBreakApplied).toBeNull();
+      expect(
+        withSlot.warnings.map((w) => w.code),
+        "the 15 min slot is a real Satz-1 shortfall",
+      ).toContain("BREAK_TOO_SHORT");
+
+      const withMinutes = await answerOf(
+        data.empToken,
+        proposal(data.employee.id, "08:00", "17:00", [], { breakMinutes: 10 }),
+      );
+      expect(withMinutes.autoBreakApplied).toBeNull();
+      expect(withMinutes.warnings.map((w) => w.code)).toContain("BREAK_TOO_SHORT");
+    });
+
+    it("an edit (entryId) is never simulated: the PUT route places no automatic break", async () => {
+      await setAutoBreak(true);
+      const stored = await seedEntry(data.employee.id, DAY, "08:00", "17:00");
+
+      const answer = await answerOf(
+        data.empToken,
+        proposal(data.employee.id, "08:00", "17:00", [], { entryId: stored.id }),
+      );
+      expect(answer.autoBreakApplied).toBeNull();
+      expect(answer.warnings.map((w) => w.code)).toContain("BREAK_TOO_SHORT");
+
+      // The claim behind it, measured on the real edit route: it writes no Break row.
+      const put = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${stored.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { endTime: at("17:30"), reason: "Korrektur Endzeit" },
+      });
+      expect(put.statusCode, put.body).toBe(200);
+      expect(await app.prisma.break.count({ where: { timeEntryId: stored.id } })).toBe(0);
+    });
+
+    it("a minor gets the automatic break amount of § 11 JArbSchG in the preview, too", async () => {
+      await setAutoBreak(true);
+      await app.prisma.employee.update({
+        where: { id: data.employee.id },
+        data: { birthDate: new Date("2010-03-01T00:00:00.000Z") },
+      });
+
+      const answer = await answerOf(data.empToken, proposal(data.employee.id, "08:00", "13:00"));
+
+      expect(answer.autoBreakApplied?.minutes, "5 h presence: 30 min for a minor").toBe(30);
+      expect(answer.warnings.map((w) => w.code)).not.toContain("BREAK_TOO_SHORT");
+    });
+
+    it("writes nothing and audits nothing while simulating", async () => {
+      await setAutoBreak(true);
+      const stored = await seedEntry(data.employee.id, OTHER_DAY, "08:00", "12:00");
+      await app.prisma.break.create({
+        data: {
+          timeEntryId: stored.id,
+          startTime: new Date(at("10:00", OTHER_DAY)),
+          endTime: new Date(at("10:15", OTHER_DAY)),
+        },
+      });
+      const before = await writeCounts();
+      expect(before.entries).toBeGreaterThan(0);
+      expect(before.breaks).toBeGreaterThan(0);
+
+      const answer = await answerOf(data.empToken, proposal(data.employee.id, "08:00", "17:00"));
+      expect(answer.autoBreakApplied, "anti-vacuity: the simulation ran").toBeTruthy();
+
+      expect(await writeCounts()).toEqual(before);
     });
   });
 });

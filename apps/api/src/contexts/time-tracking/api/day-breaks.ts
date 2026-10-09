@@ -32,6 +32,7 @@ import {
 import { getTenantTimezone, isMonthClosed, monthRangeUtc } from "../../working-time-account";
 import {
   type DayBreakEvaluation,
+  type DayBreakInterval,
   type DayBreakRow,
   evaluateDayBreaks,
   findGapForInterval,
@@ -52,6 +53,7 @@ import {
 import { type ArbZGWarning, dayLimitWarnings, placementWarnings } from "../arbzg";
 import { dayCoverage } from "../day-scope";
 import { resolveEntrySalon } from "../entry-salon";
+import { planAutoBreak, autoBreakAppliesOnCreate } from "../auto-break-plan"; // Issue #511 (AK-4) — the save's own automatic-break decision
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -125,6 +127,8 @@ const previewBodySchema = z
     endTime: z.string().datetime(),
     salonId: z.string().uuid().nullable().optional(),
     breaks: z.array(previewIntervalSchema).max(PREVIEW_MAX_BREAKS),
+    /** Legacy break minutes without positions, as `POST /time-entries` accepts them. */
+    breakMinutes: z.number().int().min(0).default(0),
   })
   .refine((b) => new Date(b.startTime) < new Date(b.endTime), {
     message: "Ende muss nach dem Beginn liegen",
@@ -1037,7 +1041,10 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         "`entryId`) or time-entry:create (without); an EIGENE caller may name only themselves, a " +
         "ZUGEWIESEN caller on someone else's day needs scope over every other entry of the day. " +
         "A closed month answers 403; an employee exempt from time tracking (§ 18 ArbZG) gets no " +
-        "findings.",
+        "findings. For a NEW entry (no `entryId`) without break slots and break minutes the " +
+        "findings are computed with the automatic break the save would place when the tenant " +
+        "has it enabled, reported as `autoBreakApplied` (null otherwise); an edit is never " +
+        "simulated.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requireAuth,
@@ -1053,7 +1060,14 @@ export async function dayBreakRoutes(app: FastifyInstance) {
       // A foreign tenant's employee and an unknown id answer identically.
       const employee = await app.prisma.employee.findFirst({
         where: { id: body.employeeId, tenantId },
-        select: { id: true, birthDate: true, classification: true, isTimeTrackingExempt: true },
+        select: {
+          id: true,
+          birthDate: true,
+          classification: true,
+          isTimeTrackingExempt: true,
+          breakOver6hOverride: true, // Issue #511 (AK-4): the automatic-break amount reads them
+          breakOver9hOverride: true,
+        },
       });
       if (!employee) {
         return reply.code(404).send({ error: EMPLOYEE_NOT_FOUND_MESSAGE });
@@ -1114,27 +1128,76 @@ export async function dayBreakRoutes(app: FastifyInstance) {
 
       // § 18 ArbZG: the same exemption `checkArbZG` applies.
       if (employee.isTimeTrackingExempt) {
-        return { warnings: [] };
+        return { warnings: [], autoBreakApplied: null };
       }
 
       // The proposed row, shaped like a stored one. Its break total is the exact sum of the
-      // proposed slots, the write path's own rule. A replaced entry keeps its id so that a current
-      // acknowledgement of an unchanged day still reads as current.
-      const proposedBreakMinutes = body.breaks.reduce(
-        (sum, b) => sum + (new Date(b.endTime).getTime() - new Date(b.startTime).getTime()) / 60000,
-        0,
-      );
+      // proposed slots, the write path's own rule (legacy minutes only when there are no slots). A
+      // replaced entry keeps its id so that a current acknowledgement of an unchanged day still
+      // reads as current.
+      let proposedBreaks: DayBreakInterval[] = body.breaks.map((b) => ({
+        startTime: new Date(b.startTime),
+        endTime: new Date(b.endTime),
+      }));
+      let proposedBreakMinutes =
+        body.breaks.length > 0
+          ? body.breaks.reduce(
+              (sum, b) =>
+                sum + (new Date(b.endTime).getTime() - new Date(b.startTime).getTime()) / 60000,
+              0,
+            )
+          : body.breakMinutes;
+      let proposedBreakStatus = "CONFIRMED";
+
+      // The automatic break the SAVE would place (Issue #511, AK-4): a NEW entry with no break
+      // slots and no break minutes gets one from `POST /time-entries` when the tenant has the
+      // feature on. The form must not be warned about a break the save itself prevents, so the same
+      // functions decide it here - the rule (`autoBreakAppliesOnCreate`) and the break
+      // (`planAutoBreak`). An edit (`entryId`) is never simulated: the PUT route places no
+      // automatic break. Nothing is written; the answer names the break so the form can say so.
+      let autoBreakApplied: {
+        start: string;
+        end: string;
+        minutes: number;
+        segments: Array<{ start: string; end: string }>;
+      } | null = null;
+      if (
+        !body.entryId &&
+        autoBreakAppliesOnCreate({ slotCount: body.breaks.length, breakMinutes: body.breakMinutes })
+      ) {
+        const tenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
+        const plan = planAutoBreak({
+          employee,
+          tenantConfig,
+          start: startTime,
+          end: endTime,
+          entryDate: date,
+          tz,
+        });
+        if (plan) {
+          proposedBreaks = plan.segments;
+          proposedBreakMinutes = plan.amountMin;
+          proposedBreakStatus = "AUTO";
+          autoBreakApplied = {
+            start: plan.segments[0].startTime.toISOString(),
+            end: plan.segments[plan.segments.length - 1].endTime.toISOString(),
+            minutes: plan.amountMin,
+            segments: plan.segments.map((g) => ({
+              start: g.startTime.toISOString(),
+              end: g.endTime.toISOString(),
+            })),
+          };
+        }
+      }
+
       const proposed: DayBreakRow = {
         id: replaced?.id ?? PREVIEW_ROW_ID,
         startTime,
         endTime,
         breakMinutes: proposedBreakMinutes,
-        breakStatus: "CONFIRMED",
+        breakStatus: proposedBreakStatus,
         salonId,
-        breaks: body.breaks.map((b) => ({
-          startTime: new Date(b.startTime),
-          endTime: new Date(b.endTime),
-        })),
+        breaks: proposedBreaks,
       };
       const rows = [...otherRows, proposed].sort(
         (a, b) => a.startTime.getTime() - b.startTime.getTime() || a.id.localeCompare(b.id),
@@ -1158,6 +1221,7 @@ export async function dayBreakRoutes(app: FastifyInstance) {
           detail: "full",
           birthDateMissing: isApprenticeWithoutBirthDate(employee),
         }),
+        autoBreakApplied,
       };
     },
   });

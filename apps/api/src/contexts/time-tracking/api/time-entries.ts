@@ -17,9 +17,7 @@ import {
 import type { PermissionKey } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
-import { getEffectiveBreakDuration } from "../break-effective";
-import { breakRegimeFor, type BreakRegime } from "../break-regime"; // Issue #511 (D-05/D-17)
-import { placeAutoBreak, resolveDefaultBreakStart, autoBreakAmountFor } from "../place-auto-break"; // Issue #511 (AK-4, D-17/D-20)
+import { planAutoBreak, autoBreakAppliesOnCreate, type AutoBreakPlan } from "../auto-break-plan"; // Issue #511 (AK-4, D-17/D-20) — the one automatic-break decision, also used by the preview
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
 import { resolveEntrySalon } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
@@ -31,7 +29,6 @@ import type { ClockEvent } from "../../../services/clock/types";
 import {
   hasApprovedLeaveOnDate, // Phase 100B Plan 14 — D-05 (index is the public surface, AC-1)
   checkJArbSchG,
-  isMinorAtDate, // Issue #511 (D-05) — the one under-18 decision, decides the break regime
   DISPLAY_NAME, // Phase 100b Plan 14 (D-05) — renders hasApprovedLeaveOnDate's code
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 import {
@@ -71,51 +68,31 @@ export type { OvertimeBalanceBreakdown };
 
 /**
  * Issue #511 (AK-4, D-17): the ONE write of an automatic break, shared by the NFC clock-out, the
- * regular clock-out and the manual POST. The amount is decided by the caller; the position comes
- * from `placeAutoBreak` (tenant-zone start, conformant to § 4 Satz 2/3 ArbZG or § 11 JArbSchG).
- * Break rows and the entry's summary fields are written together or not at all. Returns the
- * minutes written; 0 when no conformant placement exists, in which case nothing is touched.
+ * regular clock-out and the manual POST. WHICH break (regime, amount, tenant-zone placement
+ * conformant to § 4 Satz 2/3 ArbZG or § 11 JArbSchG) is decided by `planAutoBreak`, the same
+ * function the entry-form preview simulates it with. Break rows and the entry's summary fields are
+ * written together or not at all. Returns the minutes written.
  */
 async function autoInsertBreak(
   app: FastifyInstance,
-  params: {
-    entryId: string;
-    start: Date;
-    end: Date;
-    amountMin: number;
-    tenantConfig: { defaultBreakStart: string | null };
-    tz: string;
-    regime: BreakRegime;
-  },
+  params: { entryId: string; plan: AutoBreakPlan },
 ): Promise<number> {
-  const segments = placeAutoBreak({
-    start: params.start,
-    end: params.end,
-    amountMin: params.amountMin,
-    preferredStart: resolveDefaultBreakStart({
-      entryStart: params.start,
-      hhmm: params.tenantConfig.defaultBreakStart,
-      tz: params.tz,
-    }),
-    regime: params.regime,
-  });
-  if (segments.length === 0) return 0;
-
+  const { entryId, plan } = params;
   await app.prisma.$transaction([
     app.prisma.break.createMany({
-      data: segments.map((s) => ({
-        timeEntryId: params.entryId,
+      data: plan.segments.map((s) => ({
+        timeEntryId: entryId,
         startTime: s.startTime,
         endTime: s.endTime,
       })),
     }),
     // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
     app.prisma.timeEntry.update({
-      where: { id: params.entryId },
-      data: { breakMinutes: params.amountMin, breakStatus: "AUTO" },
+      where: { id: entryId },
+      data: { breakMinutes: plan.amountMin, breakStatus: "AUTO" },
     }),
   ]);
-  return params.amountMin;
+  return plan.amountMin;
 }
 
 const nfcPunchSchema = z.object({
@@ -472,37 +449,25 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             where: { id: clockedOutEntryId },
           });
           if (entryForBreak?.startTime && entryForBreak?.endTime) {
-            const workDurationMin =
-              (entryForBreak.endTime.getTime() - entryForBreak.startTime.getTime()) / 60000;
             const employeeBreakFields = await app.prisma.employee.findUnique({
               where: { id: entryForBreak.employeeId },
               select: { breakOver6hOverride: true, breakOver9hOverride: true, birthDate: true },
             });
             // Issue #511 (D-20): a minor gets at least the § 11 JArbSchG amount, decided on the
             // work date of the entry; adults keep the configured amount unchanged (D-17).
-            const regime = breakRegimeFor(
-              isMinorAtDate(employeeBreakFields?.birthDate, entryForBreak.date),
-            );
-            const autoBreakMin = autoBreakAmountFor({
-              configuredMin: getEffectiveBreakDuration(
-                employeeBreakFields ?? { breakOver6hOverride: null, breakOver9hOverride: null },
-                tenantConfig,
-                workDurationMin,
-              ),
-              presenceMin: workDurationMin,
-              regime,
+            const plan = planAutoBreak({
+              employee: employeeBreakFields ?? {
+                breakOver6hOverride: null,
+                breakOver9hOverride: null,
+                birthDate: null,
+              },
+              tenantConfig,
+              start: entryForBreak.startTime,
+              end: entryForBreak.endTime,
+              entryDate: entryForBreak.date,
+              tz,
             });
-            if (autoBreakMin > 0) {
-              await autoInsertBreak(app, {
-                entryId: clockedOutEntryId,
-                start: entryForBreak.startTime,
-                end: entryForBreak.endTime,
-                amountMin: autoBreakMin,
-                tenantConfig,
-                tz,
-                regime,
-              });
-            }
+            if (plan) await autoInsertBreak(app, { entryId: clockedOutEntryId, plan });
           }
         }
       }
@@ -809,26 +774,16 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           where: { id: closedEntryId },
         });
         if (closedEntry?.startTime && closedEntry?.endTime) {
-          const workDurationMin =
-            (closedEntry.endTime.getTime() - closedEntry.startTime.getTime()) / 60000;
           // Issue #511 (D-20): minors get at least the § 11 JArbSchG amount; adults unchanged.
-          const regime = breakRegimeFor(isMinorAtDate(targetEmployee.birthDate, closedEntry.date));
-          const autoBreakMin = autoBreakAmountFor({
-            configuredMin: getEffectiveBreakDuration(targetEmployee, tenantConfig, workDurationMin),
-            presenceMin: workDurationMin,
-            regime,
+          const plan = planAutoBreak({
+            employee: targetEmployee,
+            tenantConfig,
+            start: closedEntry.startTime,
+            end: closedEntry.endTime,
+            entryDate: closedEntry.date,
+            tz,
           });
-          if (autoBreakMin > 0) {
-            await autoInsertBreak(app, {
-              entryId: closedEntryId,
-              start: closedEntry.startTime,
-              end: closedEntry.endTime,
-              amountMin: autoBreakMin,
-              tenantConfig,
-              tz,
-              regime,
-            });
-          }
+          if (plan) await autoInsertBreak(app, { entryId: closedEntryId, plan });
         }
       }
 
@@ -1569,7 +1524,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             endTime: b.endTime,
           })),
         });
-      } else if (newEnd && finalBreakMinutes === 0) {
+      } else if (
+        newEnd &&
+        autoBreakAppliesOnCreate({ slotCount: breakSlots.length, breakMinutes: finalBreakMinutes })
+      ) {
         // Auto-break: check tenant config
         const tenantConfig = targetEmployee
           ? await app.prisma.tenantConfig.findUnique({
@@ -1577,40 +1535,22 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             })
           : null;
 
-        if (tenantConfig?.autoBreakEnabled) {
-          const workDurationMin = (newEnd.getTime() - newStart.getTime()) / 60000;
-          // Phase 64 (D-04, BREAK-03): effective break = employee override → tenant default → 0.
-          // targetEmployee is loaded earlier without `select` → carries the two override fields.
-          // Issue #511 (D-20): minors get at least the § 11 JArbSchG amount; adults unchanged.
-          const regime = breakRegimeFor(isMinorAtDate(targetEmployee?.birthDate, entry.date));
-          const autoBreakMin = targetEmployee
-            ? autoBreakAmountFor({
-                configuredMin: getEffectiveBreakDuration(
-                  targetEmployee,
-                  tenantConfig,
-                  workDurationMin,
-                ),
-                presenceMin: workDurationMin,
-                regime,
-              })
-            : 0;
-
-          if (autoBreakMin > 0) {
-            const written = await autoInsertBreak(app, {
-              entryId: entry.id,
-              start: newStart,
-              end: newEnd,
-              amountMin: autoBreakMin,
-              tenantConfig,
-              tz,
-              regime,
-            });
-            if (written > 0) {
-              // Update entry object for response
-              entry.breakMinutes = written;
-              entry.breakStatus = "AUTO";
-            }
-          }
+        // Phase 64 (D-04, BREAK-03): effective break = employee override → tenant default → 0.
+        // targetEmployee is loaded earlier without `select` → carries the two override fields.
+        // Issue #511 (D-20): minors get at least the § 11 JArbSchG amount; adults unchanged.
+        const plan = planAutoBreak({
+          employee: targetEmployee,
+          tenantConfig,
+          start: newStart,
+          end: newEnd,
+          entryDate: entry.date,
+          tz,
+        });
+        if (plan) {
+          const written = await autoInsertBreak(app, { entryId: entry.id, plan });
+          // Update entry object for response
+          entry.breakMinutes = written;
+          entry.breakStatus = "AUTO";
         }
       }
 
