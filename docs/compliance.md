@@ -12,14 +12,18 @@ Implementiert in [`apps/api/src/contexts/time-tracking/arbzg.ts`](../apps/api/sr
 
 ### Regelwerk
 
-| Paragraph     | Regel                                                            | Implementierung                                                    | Severity        |
-| ------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------ | --------------- |
-| **§ 3 ArbZG** | Tägliche Höchstarbeitszeit netto **10h absolut**                 | `if (netWorkedMin > 10 * 60)` → `MAX_DAILY_EXCEEDED`               | `error`         |
-| **§ 3 ArbZG** | 8h-Regel = 24-Wochen-/6-Monats-Durchschnitt, **kein** Tageslimit | Keine Tageswarnung für 8–10h Tage — nur als Rolling-Average prüfen | `warning` (avg) |
-| **§ 3 ArbZG** | Wöchentliche Höchstarbeitszeit **48h** (Mo–Sa = 6 Werktage)      | `if (weekMin > 48 * 60)` → `MAX_WEEKLY_EXCEEDED`                   | `error`         |
-| **§ 4 ArbZG** | Bei **>6h** Arbeit: min. **30min Pause**                         | `if (netWorked > 6h && totalBreak < 30)` → `BREAK_TOO_SHORT`       | `warning`       |
-| **§ 4 ArbZG** | Bei **>9h** Arbeit: min. **45min Pause**                         | `if (netWorked > 9h && totalBreak < 45)` → `BREAK_TOO_SHORT`       | `error`         |
-| **§ 5 ArbZG** | **11h Mindestruhe** zwischen Arbeitsende und nächstem Beginn     | Prüfung gegen Vortag UND Folgetag                                  | `warning`       |
+| Paragraph                                  | Regel                                                                                                                                                                 | Implementierung                                                                                                           | Severity                    |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| **§ 3 ArbZG**                              | Tägliche Höchstarbeitszeit netto **10h absolut**                                                                                                                      | `if (netWorkedMin > 10 * 60)` → `MAX_DAILY_EXCEEDED`                                                                      | `error`                     |
+| **§ 3 ArbZG**                              | 8h-Regel = 24-Wochen-/6-Monats-Durchschnitt, **kein** Tageslimit                                                                                                      | Keine Tageswarnung für 8–10h Tage — nur als Rolling-Average prüfen                                                        | `warning` (avg)             |
+| **§ 3 ArbZG**                              | Wöchentliche Höchstarbeitszeit **48h** (Mo–Sa = 6 Werktage)                                                                                                           | `if (weekMin > 48 * 60)` → `MAX_WEEKLY_EXCEEDED`                                                                          | `error`                     |
+| **§ 4 ArbZG**                              | Bei **>6h** Arbeit: min. **30min Pause**                                                                                                                              | `if (netWorked > 6h && totalBreak < 30)` → `BREAK_TOO_SHORT`                                                              | `warning`                   |
+| **§ 4 ArbZG**                              | Bei **>9h** Arbeit: min. **45min Pause**                                                                                                                              | `if (netWorked > 9h && totalBreak < 45)` → `BREAK_TOO_SHORT`                                                              | `error`                     |
+| **§ 5 ArbZG**                              | **11h Mindestruhe** zwischen Arbeitsende und nächstem Beginn                                                                                                          | Prüfung gegen Vortag UND Folgetag                                                                                         | `warning`                   |
+| **§ 4 S. 2 ArbZG**                         | Ein Pausenabschnitt unter **15 Min** zählt nicht als Ruhepause (ebenso nicht am ersten Beginn oder letzten Ende des Arbeitstags)                                      | `evaluatePlacement()` → `BREAK_SEGMENT_TOO_SHORT`                                                                         | `warning`                   |
+| **§ 4 S. 3 ArbZG**                         | Höchstens **6h am Stück** ohne Ruhepause von mind. 15 Min — auch wenn die Summe nach Satz 1 erreicht ist                                                              | `evaluatePlacement()` → `BREAK_TOO_LATE`                                                                                  | `warning`                   |
+| **§ 11 JArbSchG** (über § 18 Abs. 2 ArbZG) | Unter 18 am Arbeitstag: **30 Min** ab 4,5h, **60 Min** ab 6h, Abschnitte mind. 15 Min, höchstens **4,5h am Stück**, keine Ruhepause in der ersten oder letzten Stunde | `BREAK_REGIMES.JARBSCHG_11` → `BREAK_TOO_SHORT`, `BREAK_SEGMENT_TOO_SHORT`, `BREAK_TOO_LATE`, `BREAK_OUTSIDE_WINDOW`      | `warning` (60 Min: `error`) |
+| Hinweis                                    | Pause nur als Summe gespeichert (`breakMinutes` ohne Pausenzeilen): Lage unbekannt                                                                                    | `BREAK_POSITION_UNKNOWN` — nie ein Verstoß, nie ein Kalendermarker, nie eine Mitteilung, sperrt den Monatsabschluss nicht | Hinweis                     |
 
 ### Pausenzählung (`totalBreakMin`)
 
@@ -29,19 +33,34 @@ Eine Pause ist die Summe aus:
 2. **Implizite Gaps:** Lücken zwischen aufeinanderfolgenden Slots am selben Tag
    - Gap **> 0 und ≤ 2h** → zählt als Pause
    - Gap **> 2h** → gilt als separate Schicht, NICHT als Pause
+3. **Abschnittsregel (§ 4 Satz 2, seit Phase 511):** Für die Lage-Prüfung zählt ein Pausenabschnitt nur, wenn er mindestens **15 Min** lang ist, im Arbeitszeitraum des Tages liegt und weder den ersten Beginn noch das letzte Ende berührt (Jugendliche: zusätzlich nicht in der ersten oder letzten Stunde). Aneinandergrenzende Abschnitte gelten als eine Ruhepause. Ein nicht zählender Abschnitt bleibt Arbeitszeit für die Compliance-Zahl; der Saldo ändert sich nicht.
+4. **Lücken zwischen Einträgen:** Im selben Salon zählt eine Lücke bis 120 Min wie bisher. Zwischen **verschiedenen Salons** zählt eine Lücke nie als Pause (Fahrzeit ist Arbeitszeit), es sei denn, die freie Zeit ist als Tagespause erfasst. Weil das System die Aufteilung in Fahrzeit und freie Zeit nicht kennt, rechnet es zwei Grenzfälle: ganze Lücke Arbeitszeit, freier Anteil am Anfang und am Ende der Lücke. Beide regelkonform → konform; beide verletzt → Verstoß; sonst Befund mit Sicherheit `UNCLEAR` („Klärung nötig: Fahrzeit oder Pause?“). Aufgelöst wird durch eine erfasste Tagespause oder eine Quittung der Führungskraft.
 
 ### Auto-Break (opt-in pro Tenant)
 
-Wenn `TenantConfig.autoBreakEnabled = true` und beim Clock-out **keine manuelle Pause eingetragen** wurde, setzt Clokr automatisch:
+Wenn `TenantConfig.autoBreakEnabled = true` und beim Clock-out (oder beim manuellen Anlegen) **keine Pause eingetragen** wurde, setzt Clokr automatisch:
 
 - `30min` bei >6h Arbeit
 - `45min` bei >9h Arbeit
+- **Jugendliche (unter 18 am Arbeitstag):** mindestens die Menge nach § 11 JArbSchG — `30min` ab 4,5h, `60min` ab 6h; größer als die konfigurierte Menge wird sie angehoben, kleiner nie. Die Pause greift für Jugendliche schon ab 4,5h Anwesenheit und wirkt auf den Saldo nur bei künftigen automatischen Pausen.
 
-Eingefügt mittig in den Eintrag (oder zu `TenantConfig.defaultBreakStart`, falls gesetzt). Sobald MA bereits eine Pause eingegeben hat (z.B. nur 15min), greift Auto-Break NICHT — nur die ArbZG-Warnung erscheint.
+**Lage (seit Phase 511):** Die Pause wird in **Mandantenzeit** gesetzt und ist konform zu § 4 Satz 2/3 ArbZG (bzw. § 11 JArbSchG): jedes Teilstück mindestens 15 Min, kein Arbeitsblock über 6h (Jugendliche 4,5h), keine Pause am Anfang oder Ende (Jugendliche: nicht in der ersten oder letzten Stunde). Gewählt wird die konforme Lage, die der konfigurierten `TenantConfig.defaultBreakStart` am nächsten liegt, sonst die Mitte des Eintrags. Bei sehr langen Tagen entstehen mehrere Teilstücke gleicher Gesamtminutenzahl. Die Minutenzahl (und damit der Saldo) bleibt für Erwachsene unverändert. Vor Phase 511 wurde `defaultBreakStart` als Serverzeit (im Container UTC) gelesen — ein Berliner Mandant mit „12:00“ bekam die Pause im Sommer um 14:00.
+
+Sobald MA bereits eine Pause eingegeben hat (z.B. nur 15min), greift Auto-Break NICHT — nur die ArbZG-Warnung erscheint. Das Erfassungsformular zeigt in der Vorschau „mit automatischer Pause“, wenn die Speicherung eine Pause setzen wird.
 
 ### Bekanntes Edge-Case-Verhalten
 
 **Bei eingetragener kürzerer Pause als gesetzlich vorgeschrieben:** ERROR-Warnung erscheint im Eintrag, aber Speichern wird zugelassen. Begründung: Korrektur-Workflow für Manager (z.B. Notfall, falsche Slot-Zeit) darf nicht hart blockiert werden. Der Verstoß ist im AuditLog dokumentiert und kann via Reports nachvollzogen werden.
+
+### Bekannte Grenzen der Pausenprüfung
+
+- **„Im Voraus feststehend“ (§ 4 Satz 1):** Die Pausen müssen im Voraus feststehen. Das lässt sich aus Zeitstempeln nicht prüfen; ein erfasstes, abgeschlossenes Pausensegment gilt als Ruhepause.
+- **Ältere Einträge ohne Pausenlage:** Nur als Summe gespeicherte Pausen erzeugen den Hinweis `BREAK_POSITION_UNKNOWN`, nie einen Verstoß. Vor dem Einschalten von `blockMonthCloseOnUnconfirmedBreak` den Probelauf `audit-511-break-placement.ts` lesen.
+- **Lücke im selben Salon über 120 Min:** zählt für Satz 1 weiterhin nicht als Pause, obwohl eine Ruhepause keine Höchstdauer hat (Issue #523, Owner-Entscheidung offen). Für Satz 3 beendet sie einen Arbeitsblock.
+- **Fahrzeit zwischen Salons:** wird nicht erfasst (Issue #92); die Prüfung rechnet deshalb die beiden Grenzfälle (`UNCLEAR`).
+- **Jugendliche:** § 8 JArbSchG (Tages- und Wochenhöchstzeit) wird nicht geprüft (Issue #524). Fehlt das Geburtsdatum, gilt § 4 ArbZG; bei Auszubildenden weist der Befund darauf hin.
+- **Geschlossene Monate** werden nie neu bewertet.
+- **Rechtsgrund im Befund:** Der Verweis auf § 11 JArbSchG im Befundtext lässt auf Minderjährigkeit schließen; Geburtsdatum und Alter werden nie ausgegeben.
 
 ---
 

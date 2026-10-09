@@ -2917,7 +2917,8 @@ beiden Modelle und ist kein Präzedenzfall für andere Tabellen.
   einer Stelle. Seit D-22 liefert der Kern zusätzlich die Intervallsicht — Pausensegmente mit
   Herkunft (`entry-break`, `day-break`, `same-salon-gap`, `unplaced-entry-break`), Lücken und
   Arbeitsblöcke —; die Warnungen lesen weiterhin nur die Minutensummen. § 4 Satz 2 und 3 (#511) sind
-  hier bewusst noch NICHT bewertet; #511 ergänzt sie als Regeln auf dieser Sicht, im selben Kern.
+  hier bewusst noch NICHT bewertet; #511 ergänzt sie als Regeln auf dieser Sicht, im selben Kern
+  (seit Phase 511 bewertet, siehe Nachtrag am Ende dieses Eintrags).
 - **Modelle (Plan 03):** `DayBreak` (Mitarbeiter + Tag + Zeitraum, kein Salon, kein Freitext) und
   `DayBreakAck` (Begründung, Snapshot der Tagesfakten als JSON, `acknowledgedBy`), beide mit Soft
   Delete und `onDelete: Restrict` auf `Employee`; Migration
@@ -2972,7 +2973,8 @@ beiden Modelle und ist kein Präzedenzfall für andere Tabellen.
   selbst wird anonymisiert. Die Lücke `TimeEntry.breakWaivedReason` bleibt bei #508.
 - **Keine Auswertung von § 4 Satz 2/3 ArbZG** (Aufteilung in Abschnitte von mindestens 15 Min;
   nicht länger als sechs Stunden am Stück ohne Ruhepause): #511 baut darauf auf der Intervallsicht (D-22) auf. Pausen am Eintrag erscheinen dort
-  heute als „Lage unbekannt“, weil die Tagesabfrage die Einzelpausen nicht lädt.
+  heute als „Lage unbekannt“, weil die Tagesabfrage die Einzelpausen nicht lädt (seit Phase 511 geladen
+  und bewertet, siehe Nachtrag am Ende dieses Eintrags).
 
 ### Auswirkung auf die Kontexte
 
@@ -3036,6 +3038,147 @@ pnpm --filter @clokr/api exec vitest run src/contexts/time-tracking/api/__tests_
 pnpm --filter @clokr/api exec vitest run src/__tests__/cross-salon-month-close-80.test.ts src/__tests__/cross-salon-saldo-isolation-80.test.ts src/__tests__/cross-salon-break-notifications-80.test.ts src/__tests__/day-break-compliance-80.test.ts
 pnpm --filter @clokr/api exec tsx scripts/measure-saldo-path-parity.ts --check
 pnpm --filter @clokr/db exec prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code   # SHADOW_DATABASE_URL gesetzt
+pnpm --filter @clokr/api test
+pnpm --filter @clokr/web test
+```
+
+### Nachtrag 2026-10-09 (Phase 511, Issue #511): Satz 2 und 3, § 11 JArbSchG, Lage der automatischen Pause
+
+**Schwere: Erweiterung des Unterbaus nach ADR 0002, Entscheidung 7 — ein additiver Schlüssel
+`BREAK_PLACEMENT_VIOLATION` in der `NOTIFICATION_EMAIL_POLICY` (Schalter `emailOnMissingEntries`,
+gleichgebaut wie der Schlüssel aus Phase 80); kein bestehender Leser ändert sich. Dazu ein additiver
+Export `isMinorAtDate` im Index des Abwesenheitskontexts (`contexts/absence/minor-at-date.ts`, von
+`jarbschg.ts` und `arbzg.ts` gelesen). Keine Schemaänderung, keine Migration, keine neue
+Katalog-Permission (die neue Route `POST /api/v1/day-breaks/preview` nutzt `time-entry:update` bzw.
+`time-entry:create`).**
+
+**Was jetzt bewertet wird.** Der Tageskern (`evaluateDayBreaks()`) ruft `evaluatePlacement()`
+(`contexts/time-tracking/day-break-placement.ts`) auf seiner Intervallsicht (D-22 aus Phase 80). Das ist
+die EINE Stelle für § 4 Satz 2 ArbZG (Pausenabschnitt unter 15 Min zählt nicht; ein Abschnitt am
+ersten Beginn oder letzten Ende zählt nie), § 4 Satz 3 ArbZG (höchstens sechs Stunden am Stück ohne
+Ruhepause von mindestens 15 Min — auch dann, wenn die Summe nach Satz 1 erreicht ist) und für
+Beschäftigte unter 18 am Arbeitstag § 11 JArbSchG über § 18 Abs. 2 ArbZG (30 Min ab 4,5 h, 60 Min ab
+6 h, Abschnitte von mindestens 15 Min, höchstens 4,5 h am Stück, keine Ruhepause in der ersten oder
+letzten Stunde). Die Schwellen stehen genau einmal in `break-regime.ts` (`BREAK_REGIMES`); das Regime
+ist Eingabe des Kerns (`breakRegimeFor(isMinorAtDate(...))`, Alter am Arbeitstag, bei fehlendem
+Geburtsdatum offen nach § 4 ArbZG, bei einem AZUBI mit Hinweis im Befund). Neue Warncodes
+(`BREAK_SEGMENT_TOO_SHORT`, `BREAK_TOO_LATE`, `BREAK_OUTSIDE_WINDOW`, Hinweis
+`BREAK_POSITION_UNKNOWN`) sind additive Mitglieder der bestehenden Union, Schwere stets `warning`
+(Speichern wird nie blockiert). Die Summenprüfung nach Satz 1 bleibt die Compliance-Zahl; ein nicht
+zählender Abschnitt ist nur dort Arbeitszeit, der Saldo (`entryDurations()`, Saldodateien) bleibt
+unberührt. Der Kern bleibt für alle bisherigen Tage ausgabegleich: 6048 Ein-Eintrag-Fälle gegen die
+eingefrorene Kopie von Phase 80, null Abweichungen der bisherigen Warnungen.
+
+**Bewusste Abweichungen und Grenzen.**
+
+- **Grenzen der Salonwechsel-Lücke (D-07).** Eine Lücke zwischen Einträgen verschiedener Salons
+  enthält Fahrzeit (Arbeitszeit) und möglicherweise freie Zeit; das System kennt die Aufteilung nicht
+  (#92). Der Kern rechnet deshalb zwei Grenzfälle (ganze Lücke Arbeitszeit; freier Anteil am Anfang
+  und am Ende der Lücke). Beide regelkonform: konform. Beide verletzt: `VIOLATION`. Sonst
+  `UNCLEAR` („Klärung nötig: Fahrzeit oder Pause?“). Aufgelöst wird nur durch eine erfasste
+  `DayBreak` in der Lücke oder eine Quittung; ein Manager kann eine Lücke nicht ohne eines von beiden
+  als konform markieren.
+- **A4: Satz 1 bei Salonwechsel bleibt streng.** Die Minutenregel nach Satz 1 für Salonwechseltage
+  (Phase 80) behält `VIOLATION` und kann damit zu streng sein — dieselbe Klasse wie die 120-Min-Grenze
+  unten. Nur die neuen Satz-2/3-Befunde tragen `UNCLEAR`.
+- **D-16: 120-Min-Grenze im selben Salon unverändert.** Eine Lücke im selben Salon über 120 Min zählt
+  für Satz 1 weiterhin nicht als Pause, obwohl eine Ruhepause nach § 4 ArbZG keine Höchstdauer hat
+  (BAG 25.02.2015 – 5 AZR 886/12). Die Änderung würde die eingefrorene Äquivalenz-Fixture von Phase 80
+  berühren (nie editiert) und braucht eine Owner-Entscheidung: Issue #523. Für Satz 3 beendet eine
+  Lücke über 120 Min im selben Salon einen Arbeitsblock (schon vorher so).
+- **D-08: „im Voraus feststehend“ nicht prüfbar.** § 4 Satz 1 verlangt, dass die Pausen im Voraus
+  feststehen. Das lässt sich aus Zeitstempeln nicht erkennen; ein erfasstes, abgeschlossenes
+  Pausensegment gilt als Ruhepause. Bekannte Grenze, auch in `docs/compliance.md`.
+- **Ältere Pausen nur als Summe.** Ein Eintrag mit `breakMinutes`, aber ohne Break-Zeilen, hat keine
+  bekannte Lage: Hinweis `BREAK_POSITION_UNKNOWN`, nie Verstoß, nie Kalendermarker, nie Mitteilung,
+  nie Sperre des Monatsabschlusses (A5). Der Probelauf zählt diese Tage getrennt.
+- **WAIVED am Einzelsalon-Tag.** Ein „durchgearbeitet“ am Eintrag (`breakStatus = WAIVED`) löst am
+  Tag mit einem Salon die Listung im Monatsabschluss auf (Entscheidung im Detektor, dokumentiert:
+  der Verzicht ist eine Entscheidung, der Befund bleibt sichtbar). Am Salonwechseltag gilt wie bisher
+  nur eine aktuelle Quittung.
+- **Quittung für jeden Befundtag (D-12).** Die Quittung gilt jetzt für jeden Tag mit quittierbarem
+  Befund (`hasAckableFinding()`), auch mit einem Salon. Ihr Snapshot trägt einen Lageschlüssel (A8).
+  Folge: eine vor Phase 511 gespeicherte Quittung eines Tages, der jetzt einen Lagebefund zeigt, liest
+  sich als veraltet und öffnet den Tag erneut. Der Probelauf zählt das je Mandant (`staleAckTotal`);
+  erwartet wird null oder nahe null, weil mit #70 offen kaum Salonwechseltage existieren.
+- **D-20: Auto-Pause für Jugendliche.** Für Beschäftigte unter 18 ist die automatische Pause
+  `max(konfiguriert, § 11 JArbSchG)` (30 Min ab 4,5 h, 60 Min ab 6 h) und greift schon ab 4,5 h
+  Anwesenheit. Saldo-Wirkung nur für KÜNFTIGE automatische Pausen; gespeicherte Pausen und
+  geschlossene Monate bleiben. Erwachsene: Menge unverändert.
+- **Lage der automatischen Pause (D-17/D-19).** `placeAutoBreak()` setzt die Pause in
+  Mandantenzeit (vorher wirkte `defaultBreakStart` als Serverzeit, im Container also UTC: ein
+  Berliner Mandant mit „12:00“ bekam die Pause im Sommer um 14:00) und regelkonform zu Satz 2/3 an
+  der Stelle nächst der konfigurierten Zeit; die Minutenzahl (und damit der Saldo) bleibt für
+  Erwachsene gleich. Die Pause wird mit dem Eintrag in einer Transaktion geschrieben.
+- **Nicht Teil dieser Phase.** § 8 JArbSchG (Tages- und Wochenhöchstzeit Jugendlicher) → #524;
+  Fahrzeit-Erfassung → #92; verbleibende Client-Logik zu § 4 (Dashboard-Callout, Pausenvorschlag) →
+  #525, bis dahin zwei benannte Ausnahmen im Web-Quellwächter.
+- **Offenlegung der Minderjährigkeit.** Der Rechtsgrund im Befundtext („§ 11 JArbSchG“) lässt auf
+  Minderjährigkeit schließen. Das ist angenommen; Geburtsdatum und Alter werden nie ausgegeben, und
+  der geschwärzte Text (Teil-Reichweite) enthält weder Uhrzeit noch Salon.
+
+**Mitteilung und Monatsabschluss.** Der Detektor heißt jetzt `break-finding-days.ts` (vorher
+`cross-salon-days.ts`, ohne Alias; Wire-Felder `breakFindingDays`, `breakFindingCount`,
+`requiresBreakFindingAck`, Aufschubgrund `BREAK_PLACEMENT`). Er listet jeden Tag mit quittierbarem,
+nicht aufgelöstem Befund. Feature 10 (09:00 Mandantenzeit, 3-Tage-Nachholen) meldet dieselben Tage:
+`BREAK_PLACEMENT_VIOLATION` für Satz 2/3 und § 11, `BREAK_CROSS_SALON_VIOLATION` (Text unverändert)
+für die Satz-1-Lücke am Salonwechseltag; höchstens eine Mitteilung je Empfänger, Mitarbeiter und Tag
+über beide Arten. Der Saldo bleibt unberührt (Wächter über die Saldodateien, byte-gleiche Dateien,
+unveränderte Vier-Pfad-Baseline).
+
+### Auswirkung auf die Kontexte (Nachtrag Phase 511)
+
+- **Zeiterfassung:** Kern (`day-break-placement.ts`, `break-regime.ts`, `day-break-rule.ts`), Lader
+  (`loadBreaksOfEntries`), `checkArbZG`, Routen (`acks`, `checks`, neu `preview`),
+  Auto-Pausen-Lage (`place-auto-break.ts`, `auto-break-plan.ts`), Detektor, Cron-Mitteilung.
+- **Abwesenheiten:** ein additiver Export (`isMinorAtDate` im Index); `jarbschg.ts` liest ihn. Sonst
+  keine Änderung.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** die vier Monatsabschluss-Verbraucher (manueller Abschluss, Status,
+  Auto-Abschluss, Reporter) lesen den umbenannten Detektor über den Zeiterfassungs-Index und
+  blockieren oder verschieben nur; keine Saldo-Berechnung ändert sich (`close-employee-month.ts`,
+  `month-saldo.ts`, `overtime-balance.ts`, `timezone.ts`, `entry-durations.ts`, `break-effective.ts`
+  byte-gleich zu `origin/main`).
+- **Unterbau:** ein additiver Schlüssel in `NOTIFICATION_EMAIL_POLICY`; kein Modell, kein Feld, keine
+  geänderte Export-Signatur.
+- **Kompositionsschicht:** keine.
+
+### Gemessen (Nachtrag Phase 511)
+
+- Kern: Grenzmatrix 27 Fälle (0 Abweichungen, Kontrolllauf mit vier verfälschten Regeltabellen: jeweils
+  mindestens 1 Abweichung); Äquivalenz 511: 6048 Ein-Eintrag-Fälle, Satz-1-Warnungen byte-gleich zur
+  eingefrorenen Kopie, 756 Prädikat-Abweichungen bei verfälschtem Blocklimit.
+- Auto-Pause: 6216 Platzierungen (3096 Erwachsene, 3120 Jugendliche, vier Startzeitpunkte inklusive
+  beider Zeitumstellungen 2026), jede vom Kern ohne Satz-2/3-/Fensterbefund bewertet; Orakel-Kontrolle
+  und Mutationsbeweis.
+- Gate-Läufe auf dem Endstand (gegen `origin/main`, nichts nachzuführen): `test:scripts` 6 Dateien /
+  314 Tests; Web 115 Dateien / 1835 Tests mit Abdeckung; Typecheck, Lint (0 Fehler),
+  `lint:tenant-scoping` (515 Aufrufe, 45 Ausnahmen, 0 Funde), Import-Ziele (2175), Facade-Signaturen
+  (131 Funktionen, 17 Ausnahmen, 0 Funde), fremder Kontextzugriff `--check 0` (201 Dateien),
+  Kontextgrenzen `--check 0` (209 Dateien, 58 mit Ausnahme), Import-Zyklen `--cycles --check 22`,
+  Guard-Vakuität (989 Dateien, 51 Guards, 0 vakuos), E2E-Spec-Registry (24 Dateien),
+  T-100-09-Vollständigkeit (98 Routen), Rollenprüfungen (0 Funde), Saldo-Lock-Herleitung,
+  Kommentarsprache (0 neue Verstöße), Web-Gates (`lint:ui`, `lint:ui-classes`, `lint:tokens`,
+  `lint:save-pattern`, `lint:role-checks`), beide Builds, Prettier.
+- Schema: `git diff origin/main -- packages/db/prisma` leer; `migrate diff --exit-code` gegen frische
+  Shadow-DB „No difference detected“; `migrate status`: 46 Migrationen, „Database schema is up to
+  date!“. `measure-saldo-path-parity.ts --check` gegen die unveränderte Baseline grün.
+- Probelauf `audit-511-break-placement.ts` gegen die lokale Entwicklungsdatenbank (zwei Mandanten,
+  17 Beschäftigte, Zeitraum 01.07. bis 08.10.2026): 0 Befunde, 1 Hinweistag `BREAK_POSITION_UNKNOWN` in
+  einem geschlossenen Monat, `divergent=0`, `wouldBlock=0`, `staleAckTotal` 0. Die Entwicklungsdaten
+  sagen nichts über das Volumen auf int und prod; dort ist der Lauf vor dem Deploy zu machen.
+
+### Nachrechnen (Nachtrag Phase 511)
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/contexts/time-tracking/__tests__/day-break-placement-511.test.ts src/contexts/time-tracking/__tests__/day-break-placement-equivalence-511.test.ts src/contexts/time-tracking/__tests__/break-regime.test.ts src/contexts/time-tracking/__tests__/day-break-equivalence-80.test.ts
+pnpm --filter @clokr/api exec vitest run src/contexts/time-tracking/__tests__/place-auto-break.test.ts src/__tests__/auto-break-placement-511.test.ts src/contexts/time-tracking/__tests__/auto-break-plan.test.ts
+pnpm --filter @clokr/api exec vitest run src/contexts/time-tracking/api/__tests__/day-break-acks.test.ts src/contexts/time-tracking/api/__tests__/day-break-checks.test.ts src/contexts/time-tracking/api/__tests__/day-break-preview.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/cross-salon-month-close-80.test.ts src/__tests__/cross-salon-saldo-isolation-80.test.ts src/__tests__/cross-salon-break-notifications-80.test.ts src/contexts/time-tracking/__tests__/break-finding-days.test.ts
+pnpm --filter @clokr/api exec tsx scripts/measure-saldo-path-parity.ts --check
+pnpm --filter @clokr/api exec tsx scripts/audit-511-break-placement.ts --all-tenants --from <JJJJ-MM-TT> --to <JJJJ-MM-TT>   # nur lesend
+pnpm --filter @clokr/web exec vitest run src/lib/breaks
 pnpm --filter @clokr/api test
 pnpm --filter @clokr/web test
 ```
