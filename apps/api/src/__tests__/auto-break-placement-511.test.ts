@@ -8,6 +8,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
+import { createHash, randomBytes } from "crypto";
+import { todayInTz } from "../contexts/working-time-account";
 
 describe("auto-break placement (#511)", () => {
   let app: FastifyInstance;
@@ -131,6 +133,186 @@ describe("auto-break placement (#511)", () => {
       expect(breaks[0].startTime.toISOString()).toBe("2025-07-16T09:15:00.000Z");
       expect(breaks[0].endTime.toISOString()).toBe("2025-07-16T09:45:00.000Z");
       expect(stored.breakMinutes).toBe(30);
+    });
+  });
+
+  // ── D-20: clock-out and NFC clock-out of a minor ───────────────────────────────────────────
+  describe("clock-out sites: employee under 18 (D-20) and adults unchanged", () => {
+    const NFC_CARD_ID = "NFC-ABP511-CARD";
+    let terminalApiKey: string;
+    let originalBirthDate: Date | null = null;
+
+    function minutesFromStart(entry: { startTime: Date | null }, d: Date): number {
+      return (d.getTime() - entry.startTime!.getTime()) / 60_000;
+    }
+
+    async function setBirthDate(years: number | null) {
+      const today = todayInTz("Europe/Berlin");
+      await app.prisma.employee.update({
+        where: { id: data.employee.id },
+        data: {
+          birthDate:
+            years === null
+              ? null
+              : new Date(
+                  Date.UTC(today.getUTCFullYear() - years, today.getUTCMonth(), today.getUTCDate()),
+                ),
+        },
+      });
+    }
+
+    async function openEntry(hoursAgo: number, source: "MANUAL" | "NFC" = "MANUAL") {
+      return app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: todayInTz("Europe/Berlin"),
+          startTime: new Date(Date.now() - hoursAgo * 3_600_000),
+          source,
+          salonId: data.salonId,
+        },
+      });
+    }
+
+    beforeAll(async () => {
+      originalBirthDate = (
+        await app.prisma.employee.findUniqueOrThrow({ where: { id: data.employee.id } })
+      ).birthDate;
+      await app.prisma.employee.updateMany({
+        where: { nfcCardId: NFC_CARD_ID },
+        data: { nfcCardId: null },
+      });
+      await app.prisma.employee.update({
+        where: { id: data.employee.id },
+        data: { nfcCardId: NFC_CARD_ID },
+      });
+      terminalApiKey = `clk_${randomBytes(32).toString("hex")}`;
+      await app.prisma.terminalApiKey.create({
+        data: {
+          tenantId: data.tenant.id,
+          name: "abp511 terminal",
+          keyHash: createHash("sha256").update(terminalApiKey).digest("hex"),
+          keyPrefix: terminalApiKey.substring(0, 12) + "...",
+        },
+      });
+    });
+
+    beforeEach(async () => {
+      await setConfig(null);
+    });
+
+    afterAll(async () => {
+      await app.prisma.employee.update({
+        where: { id: data.employee.id },
+        data: { birthDate: originalBirthDate },
+      });
+      await app.prisma.terminalApiKey.deleteMany({ where: { tenantId: data.tenant.id } });
+    });
+
+    it("clock-out of a 17-year-old after 5 h: one 30-min AUTO break, 1 h clear of both edges", async () => {
+      await setBirthDate(17);
+      const entry = await openEntry(5);
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/time-entries/${entry.id}/clock-out`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(200);
+      const stored = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
+      const breaks = await app.prisma.break.findMany({ where: { timeEntryId: entry.id } });
+      expect(breaks).toHaveLength(1);
+      expect(stored.breakMinutes).toBe(30);
+      expect(stored.breakStatus).toBe("AUTO");
+      expect(minutesFromStart(stored, breaks[0].startTime)).toBeGreaterThanOrEqual(60);
+      expect(
+        minutesFromStart(stored, stored.endTime!) - minutesFromStart(stored, breaks[0].endTime),
+      ).toBeGreaterThanOrEqual(60);
+    });
+
+    it("clock-out of a minor after 7 h gets 60 minutes, split so no block exceeds 4.5 h", async () => {
+      await setBirthDate(16);
+      const entry = await openEntry(7);
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/time-entries/${entry.id}/clock-out`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(200);
+      const stored = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
+      const breaks = await app.prisma.break.findMany({
+        where: { timeEntryId: entry.id },
+        orderBy: { startTime: "asc" },
+      });
+      // The configured tenant amount for 7 h is 30 min; a minor gets the § 11 minimum of 60.
+      expect(stored.breakMinutes).toBe(60);
+      const total = breaks.reduce(
+        (sum, b) => sum + (b.endTime.getTime() - b.startTime.getTime()),
+        0,
+      );
+      expect(total / 60_000).toBe(60);
+      // Every stretch of work between the segments (and to both edges) is at most 4.5 h.
+      const edges = [
+        stored.startTime!.getTime(),
+        ...breaks.flatMap((b) => [b.startTime.getTime(), b.endTime.getTime()]),
+        stored.endTime!.getTime(),
+      ];
+      for (let i = 0; i < edges.length; i += 2) {
+        expect(edges[i + 1] - edges[i]).toBeLessThanOrEqual(270 * 60_000);
+      }
+    });
+
+    it("NFC clock-out of a minor after 5 h writes the 30-min break through the same helper", async () => {
+      await setBirthDate(17);
+      // The toggle only closes an entry opened by the same source (state machine).
+      const entry = await openEntry(5, "NFC");
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/nfc-punch",
+        headers: { authorization: `Bearer ${terminalApiKey}` },
+        payload: { nfcCardId: NFC_CARD_ID },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).action).toBe("OUT");
+      const stored = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
+      const breaks = await app.prisma.break.findMany({ where: { timeEntryId: entry.id } });
+      expect(breaks).toHaveLength(1);
+      expect(stored.breakMinutes).toBe(30);
+      expect(stored.breakStatus).toBe("AUTO");
+      expect(minutesFromStart(stored, breaks[0].startTime)).toBeGreaterThanOrEqual(60);
+    });
+
+    it("an adult after 5 h gets no automatic break (unchanged)", async () => {
+      await setBirthDate(30);
+      const entry = await openEntry(5);
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/time-entries/${entry.id}/clock-out`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(200);
+      const breaks = await app.prisma.break.findMany({ where: { timeEntryId: entry.id } });
+      expect(breaks).toHaveLength(0);
+    });
+
+    it("an adult after 7 h keeps the configured amount and the centred break", async () => {
+      await setBirthDate(30);
+      const entry = await openEntry(7);
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/time-entries/${entry.id}/clock-out`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(200);
+      const stored = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
+      const breaks = await app.prisma.break.findMany({ where: { timeEntryId: entry.id } });
+      expect(breaks).toHaveLength(1);
+      expect(stored.breakMinutes).toBe(30);
+      const offset = minutesFromStart(stored, breaks[0].startTime);
+      const presence = minutesFromStart(stored, stored.endTime!);
+      expect(offset).toBeCloseTo((presence - 30) / 2, 3);
     });
   });
 
