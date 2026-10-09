@@ -1,6 +1,6 @@
 // Issue #80 (D-03/D-06) — the Zeiterfassung-internal reads of the day-break feature: the day's gap
-// breaks (DayBreak), the day's cross-salon acknowledgements (DayBreakAck) and the day's closed
-// WORK rows.
+// breaks (DayBreak), the day's cross-salon acknowledgements (DayBreakAck), the day's closed
+// WORK rows and, since Issue #511 (D-15), the Break rows of those entries.
 //
 // This is NOT a facade: no foreign context calls it. Foreign callers go through
 // `contexts/time-tracking/index.ts`. Every read carries `deletedAt: null` (soft delete, D-06) and
@@ -10,7 +10,7 @@ import type { DayBreak, DayBreakAck, Prisma } from "@clokr/db";
 import { findEntriesOfDay, type DayEntriesDb } from "./day-entries";
 import { getWorkedEntriesInRange } from "./facade/time-entries";
 import type { EmployeeScope } from "../platform";
-import type { DayBreakRow } from "./day-break-rule";
+import type { DayBreakInterval, DayBreakRow } from "./day-break-rule";
 
 /** `app.prisma` or the `tx` handle inside `$transaction(async (tx) => …)`. */
 export type DayBreakStoreDb = DayEntriesDb;
@@ -93,26 +93,62 @@ export async function loadDayBreakDataForDays(
 }
 
 /**
- * The closed WORK rows of one day, in start order, typed for the kernel. This is the day-break
- * routes' day lookup — the same filter `checkArbZG` applies to `findEntriesOfDay`; never a second
- * `timeEntry.find*`.
+ * Issue #511 (D-15) — the ONE read of Break rows for the § 4 evaluation. Returns the Break rows of
+ * the given entries grouped by entry id, each group in start order. An empty `entryIds` returns an
+ * empty map without a query; otherwise exactly one `break.findMany`, bound to `tenantId` through
+ * the entry's employee, so an entry id of another tenant yields nothing.
+ *
+ * `Break` has no soft delete (hard cascade from `TimeEntry`): the caller passes the ids of entries
+ * it already read as non-deleted (`findEntriesOfDay` and the facade filter `deletedAt: null`).
+ */
+export async function loadBreaksOfEntries(
+  db: DayBreakStoreDb,
+  params: { tenantId: string; entryIds: readonly string[] },
+): Promise<Map<string, DayBreakInterval[]>> {
+  const byEntry = new Map<string, DayBreakInterval[]>();
+  if (params.entryIds.length === 0) return byEntry;
+  const breaks = await db.break.findMany({
+    where: {
+      timeEntryId: { in: [...params.entryIds] },
+      timeEntry: { employee: { tenantId: params.tenantId } },
+    },
+    select: { timeEntryId: true, startTime: true, endTime: true },
+    orderBy: [{ startTime: "asc" }, { id: "asc" }],
+  });
+  for (const b of breaks) {
+    const list = byEntry.get(b.timeEntryId) ?? [];
+    list.push({ startTime: b.startTime, endTime: b.endTime });
+    byEntry.set(b.timeEntryId, list);
+  }
+  return byEntry;
+}
+
+/**
+ * The closed WORK rows of one day, in start order, typed for the kernel, each carrying its Break
+ * rows (`breaks`, Issue #511 D-15). This is the day-break routes' day lookup — the same filter
+ * `checkArbZG` applies to `findEntriesOfDay`; never a second `timeEntry.find*`.
  */
 export async function closedWorkRowsOfDay(
   db: DayBreakStoreDb,
   params: DayParams,
 ): Promise<Array<DayBreakRow & { isLocked: boolean }>> {
-  const rows = await findEntriesOfDay(db, params);
-  return rows
-    .filter((e) => e.endTime !== null && e.type === "WORK")
-    .map((e) => ({
-      id: e.id,
-      startTime: e.startTime,
-      endTime: e.endTime!,
-      breakMinutes: e.breakMinutes,
-      breakStatus: e.breakStatus,
-      salonId: e.salonId,
-      isLocked: e.isLocked,
-    }));
+  const rows = (await findEntriesOfDay(db, params)).filter(
+    (e) => e.endTime !== null && e.type === "WORK",
+  );
+  const breaksByEntry = await loadBreaksOfEntries(db, {
+    tenantId: params.tenantId,
+    entryIds: rows.map((e) => e.id),
+  });
+  return rows.map((e) => ({
+    id: e.id,
+    startTime: e.startTime,
+    endTime: e.endTime!,
+    breakMinutes: e.breakMinutes,
+    breakStatus: e.breakStatus,
+    salonId: e.salonId,
+    isLocked: e.isLocked,
+    breaks: breaksByEntry.get(e.id) ?? [],
+  }));
 }
 
 /**

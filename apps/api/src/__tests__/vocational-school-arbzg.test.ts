@@ -255,7 +255,7 @@ describe("checkArbZG VOCATIONAL_SCHOOL integration (Phase 63 Plan 03 — BERSCH-
       expect(warnings.find((x) => x.code === "MAX_WEEKLY_EXCEEDED")).toBeUndefined();
     });
 
-    it("returns ONLY codes from the existing 5-code enum (D-08)", async () => {
+    it("returns no Berufsschule-specific code: only the five Phase-63 codes plus the four Issue #511 placement codes (D-08)", async () => {
       // Mixed-day with BS to fire MAX_DAILY_EXCEEDED + plausible §5 warning
       await seedTimeEntry(
         app,
@@ -272,6 +272,12 @@ describe("checkArbZG VOCATIONAL_SCHOOL integration (Phase 63 Plan 03 — BERSCH-
         "MAX_DAILY_AVG_EXCEEDED",
         "MAX_WEEKLY_EXCEEDED",
         "MIN_REST_VIOLATED",
+        // Issue #511: the Satz-2/3 placement findings are break-rule codes, not Berufsschule ones;
+        // D-08 (ArbZG does not care WHY a day is over the limit) still holds.
+        "BREAK_SEGMENT_TOO_SHORT",
+        "BREAK_TOO_LATE",
+        "BREAK_OUTSIDE_WINDOW",
+        "BREAK_POSITION_UNKNOWN",
       ]);
       for (const w of warnings) {
         expect(allowedCodes.has(w.code)).toBe(true);

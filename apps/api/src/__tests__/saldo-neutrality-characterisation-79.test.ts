@@ -573,13 +573,26 @@ describe("Phase 79 D-10 — saldo-neutrality characterisation (frozen on the unt
     });
   });
 
+  const PLACEMENT_CODES_511 = new Set<string>([
+    "BREAK_SEGMENT_TOO_SHORT",
+    "BREAK_TOO_LATE",
+    "BREAK_OUTSIDE_WINDOW",
+    "BREAK_POSITION_UNKNOWN",
+  ]);
+
   describe("ArbZG — clock 2026-04-15T10:00:00Z", () => {
     // The fixture stays below the 48h weekly and 8h-average thresholds, so S11 (weekly) and S12
     // (24-week average) emit nothing here; their arithmetic is covered by the 79-01 matrices.
     async function warningsOn(day: string) {
       vi.setSystemTime(new Date("2026-04-15T10:00:00.000Z"));
       const warnings = await checkArbZG(app.prisma, a.id, new Date(`${day}T00:00:00Z`));
-      return warnings.map((w) => ({ code: w.code, severity: w.severity, message: w.message }));
+      // Issue #511 added four additive Satz-2/3 placement codes. This characterisation pins the
+      // Phase-79 minute figures (the Satz-1 / § 3 / § 5 warnings), which #511 does not touch, so the
+      // goldens below stay as recorded and only the new codes are filtered out; the placement
+      // findings have their own tests (arbzg-placement-511, placement-warnings-511).
+      return warnings
+        .filter((w) => !PLACEMENT_CODES_511.has(w.code))
+        .map((w) => ({ code: w.code, severity: w.severity, message: w.message }));
     }
 
     it("2026-03-17 (Break[] rows, S10)", async () => {

@@ -1,5 +1,5 @@
 import { PrismaClient } from "@clokr/db";
-import { fromZonedTime } from "date-fns-tz";
+import { fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import {
   getTenantTimezone,
   dateStrInTz,
@@ -17,7 +17,9 @@ import { findEntriesOfDay } from "./day-entries"; // Phase 69b — the single da
 import { addWorkingMinutes } from "./entry-durations"; // Phase 79 (Issue #79), D-03/D-12
 import { evaluateDayBreaks } from "./day-break-rule"; // Issue #80 — the day-level § 4/§ 3 rule
 import type { DayBreakEvaluation, DayBreakRow } from "./day-break-rule"; // Issue #80
-import { listDayBreaksOfDay, listAcksOfDay } from "./day-break-store"; // Issue #80 (D-06)
+import { listDayBreaksOfDay, listAcksOfDay, loadBreaksOfEntries } from "./day-break-store"; // Issue #80 (D-06), #511 (D-15)
+import { BREAK_REGIMES } from "./break-regime"; // Issue #511 — the thresholds the messages quote
+import type { PlacementCertainty, PlacementFinding } from "./day-break-placement"; // Issue #511
 
 // Phase 69b: in-memory equivalents of the former `findFirst({ endTime: { not: null }, orderBy })`
 // rest-period lookups. Only closed rows count; the first maximum/minimum wins on ties.
@@ -40,7 +42,11 @@ export interface ArbZGWarning {
     | "MAX_DAILY_EXCEEDED"
     | "MAX_DAILY_AVG_EXCEEDED"
     | "MAX_WEEKLY_EXCEEDED"
-    | "MIN_REST_VIOLATED";
+    | "MIN_REST_VIOLATED"
+    | "BREAK_SEGMENT_TOO_SHORT"
+    | "BREAK_TOO_LATE"
+    | "BREAK_OUTSIDE_WINDOW"
+    | "BREAK_POSITION_UNKNOWN";
   severity: "warning" | "error";
   message: string;
   /**
@@ -55,6 +61,19 @@ export interface ArbZGWarning {
    * salons. Additive like `waived`: absent otherwise, so existing consumers are unaffected.
    */
   crossSalon?: boolean;
+  /**
+   * Issue #511 (D-10, D-07) — how certain a Satz-2/3 finding is: VIOLATION, or UNCLEAR when the
+   * unrecorded travel between salons decides it. Absent on every Phase-80 finding and on the
+   * position-unknown hint. Additive like `waived`.
+   */
+  certainty?: PlacementCertainty;
+  /** Issue #511 (D-10) — display text of the provision the finding rests on; never a control value. */
+  legalBasis?: string;
+  /**
+   * Issue #511 (D-06) — true only on BREAK_POSITION_UNKNOWN: a hint that the stored break has no
+   * position, never a violation.
+   */
+  hint?: true;
 }
 
 /**
@@ -106,6 +125,123 @@ export function dayLimitWarnings(
   }
 
   return warnings;
+}
+
+const CLARIFICATION_NOTE = "Klärung nötig: Fahrzeit oder Pause?";
+const BIRTH_DATE_MISSING_NOTE =
+  "Geburtsdatum nicht hinterlegt – geprüft nach § 4 ArbZG, für Jugendliche gilt § 11 JArbSchG.";
+
+/** "6" / "4,5": a whole number of hours without a trailing zero, German decimal comma. */
+function hoursText(minutes: number): string {
+  return String(minutes / 60).replace(".", ",");
+}
+
+/** "Pause" for one, "Pausen" for any other count. */
+function pauseCount(n: number): string {
+  return n === 1 ? "1 Pause" : `${n} Pausen`;
+}
+
+/** Rounds UP to a whole minute so a violation never prints as exactly the limit ("6:00"). */
+function ceilMinutes(minutes: number): number {
+  return Math.ceil(minutes - 1e-9);
+}
+
+/** Renders the finding's intervals as "08:00–14:01, 15:00–21:30" in the tenant time zone. */
+function rangesText(finding: PlacementFinding, tz: string): string {
+  return finding.intervals
+    .map(
+      (i) =>
+        `${formatInTimeZone(i.startTime, tz, "HH:mm")}–${formatInTimeZone(i.endTime, tz, "HH:mm")}`,
+    )
+    .join(", ");
+}
+
+/**
+ * Builds the Satz-2/3 findings of one day (Issue #511, D-02, D-07, D-10, D-11) from the placement
+ * result of the day kernel, one item per finding. It RENDERS findings and decides nothing: Satz 2
+ * and Satz 3 live only in `day-break-placement.ts`, and every number printed here comes from the
+ * finding or from the regime table, never from a literal threshold.
+ *
+ * All items are severity "warning" (D-11): a placement finding never blocks a save, and a waiver
+ * (`waived: true`) documents the decision without changing the finding.
+ *
+ * `detail: "redacted"` is for readers whose reach does not cover the whole day: the text is built
+ * from counts, durations and the legal basis only — no clock time, no time range, no salon and no
+ * id — so it cannot reveal more than the caller may see. `birthDateMissing` appends the note to
+ * the full variant only.
+ */
+export function placementWarnings(
+  evaluation: DayBreakEvaluation,
+  options: { tz: string; detail: "full" | "redacted"; birthDateMissing?: boolean },
+): ArbZGWarning[] {
+  const { placement } = evaluation;
+  const rules = BREAK_REGIMES[placement.regime];
+  const full = options.detail === "full";
+  const minSegmentMin = rules.minSegmentMs / 60_000;
+
+  return placement.findings.map((finding): ArbZGWarning => {
+    let text: string;
+    switch (finding.code) {
+      case "BREAK_TOO_LATE": {
+        const longest = ceilMinutes(finding.longestBlockMin ?? 0);
+        const duration = full
+          ? `${Math.floor(longest / 60)}:${String(longest % 60).padStart(2, "0")} Std.`
+          : `${Math.floor(longest / 60)} Std. ${longest % 60} Min`;
+        text =
+          `${finding.legalBasis}: ${duration} am Stück ohne Ruhepause von mindestens ` +
+          `${minSegmentMin} Min${full ? ` (${rangesText(finding, options.tz)})` : ""}. ` +
+          `Zulässig sind höchstens ${hoursText(rules.maxBlockMin)} Std.`;
+        break;
+      }
+      case "BREAK_SEGMENT_TOO_SHORT": {
+        const nc = finding.nonCounted ?? { tooShort: 0, edge: 0, outsideWindow: 0 };
+        const parts: string[] = [];
+        if (nc.tooShort > 0) {
+          parts.push(`${pauseCount(nc.tooShort)} unter ${minSegmentMin} Min nicht angerechnet`);
+        }
+        if (nc.edge > 0) {
+          parts.push(
+            `${pauseCount(nc.edge)} am Beginn oder Ende der Arbeitszeit nicht angerechnet`,
+          );
+        }
+        text =
+          `${finding.legalBasis}: ${parts.join(", ")} – angerechnet ` +
+          `${Math.round(finding.qualifyingMin ?? 0)} Min Ruhepause, vorgeschrieben ` +
+          `${Math.round(finding.requiredMin ?? 0)} Min.`;
+        break;
+      }
+      case "BREAK_OUTSIDE_WINDOW": {
+        const n = finding.nonCounted?.outsideWindow ?? 0;
+        const window =
+          rules.windowMin === 60
+            ? "in der ersten oder letzten Stunde"
+            : `in den ersten oder letzten ${rules.windowMin} Minuten`;
+        text =
+          `${finding.legalBasis}: ${pauseCount(n)} ${window} der Arbeitszeit nicht angerechnet` +
+          `${full ? ` (${rangesText(finding, options.tz)})` : ""}.`;
+        break;
+      }
+      case "BREAK_POSITION_UNKNOWN":
+        text =
+          `${finding.legalBasis}: Lage der Pause nicht erfasst – Aufteilung in Abschnitte von ` +
+          `mindestens ${minSegmentMin} Min und Höchstdauer am Stück nicht prüfbar.`;
+        break;
+    }
+    if (finding.certainty === "UNCLEAR") text += ` ${CLARIFICATION_NOTE}`;
+    if (full && options.birthDateMissing) text += ` ${BIRTH_DATE_MISSING_NOTE}`;
+
+    const isHint = finding.code === "BREAK_POSITION_UNKNOWN";
+    return {
+      code: finding.code,
+      severity: "warning",
+      message: text,
+      ...(finding.certainty !== null ? { certainty: finding.certainty } : {}),
+      legalBasis: finding.legalBasis,
+      ...(isHint ? { hint: true as const } : {}),
+      ...(evaluation.waived ? { waived: true } : {}),
+      ...(evaluation.crossSalon ? { crossSalon: true } : {}),
+    };
+  });
 }
 
 /**
@@ -218,6 +354,12 @@ export async function checkArbZG(
     // MULTI-ENTRY: the gap rule (a gap between salons is travel, never a break) and the waiver rule
     // (entry-level WAIVED never waives a cross-salon day) for several entries per day live in
     // day-break-rule.ts (D-01/D-16); this branch only feeds it the closed WORK rows.
+    // Issue #511 (D-15): the Break rows of the day's entries come from the store's one loader, so
+    // the kernel can place the breaks (Satz 2/3); the day lookup itself stays untouched.
+    const breaksByEntry = await loadBreaksOfEntries(prisma, {
+      tenantId: employee.tenantId,
+      entryIds: daySlots.map((s) => s.id),
+    });
     const rows: DayBreakRow[] = daySlots.map((s) => ({
       id: s.id,
       startTime: s.startTime,
@@ -225,6 +367,7 @@ export async function checkArbZG(
       breakMinutes: s.breakMinutes,
       breakStatus: s.breakStatus,
       salonId: s.salonId,
+      breaks: breaksByEntry.get(s.id) ?? [],
     }));
     // Issue #80 (80-AC6): gap breaks and acknowledgements are read only when the day has two or
     // more closed WORK rows — a single-entry day issues no extra query and stays unchanged.
@@ -242,6 +385,8 @@ export async function checkArbZG(
       acks: acks.map((a) => ({ snapshot: a.snapshot })),
     });
     warnings.push(...dayLimitWarnings(evaluation, bsMinutesToday));
+    // Issue #511 (D-10): the Satz-2/3 findings, appended after the Phase-80 ones.
+    warnings.push(...placementWarnings(evaluation, { tz, detail: "full" }));
 
     // § 5 ArbZG – Mindestruhezeit (11h zwischen Arbeitstagen)
     // Previous day: its last closed slot (any type).
