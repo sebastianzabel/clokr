@@ -51,6 +51,7 @@ import {
 } from "../day-break-store";
 import { type ArbZGWarning, dayLimitWarnings, placementWarnings } from "../arbzg";
 import { dayCoverage } from "../day-scope";
+import { resolveEntrySalon } from "../entry-salon";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -101,6 +102,35 @@ const checksQuerySchema = z.object({
   to: dateKeySchema,
 });
 
+/** Id of the proposed row when it replaces no stored entry; never a real TimeEntry id. */
+const PREVIEW_ROW_ID = "__preview__";
+
+/** Cap of the breaks one preview body may carry (Issue #511 D-18, T-511-20). */
+const PREVIEW_MAX_BREAKS = 20;
+
+const previewIntervalSchema = z
+  .object({ startTime: z.string().datetime(), endTime: z.string().datetime() })
+  .refine((b) => new Date(b.startTime) < new Date(b.endTime), {
+    message: INVERTED_INTERVAL_MESSAGE,
+  });
+
+/** Issue #511 D-18: the entry form's proposal for one day, evaluated and never stored. */
+const previewBodySchema = z
+  .object({
+    employeeId: z.string().uuid(),
+    date: dateKeySchema,
+    /** The stored entry the proposal replaces (edit form); omitted for a new entry. */
+    entryId: z.string().uuid().optional(),
+    startTime: z.string().datetime(),
+    endTime: z.string().datetime(),
+    salonId: z.string().uuid().nullable().optional(),
+    breaks: z.array(previewIntervalSchema).max(PREVIEW_MAX_BREAKS),
+  })
+  .refine((b) => new Date(b.startTime) < new Date(b.endTime), {
+    message: "Ende muss nach dem Beginn liegen",
+    path: ["endTime"],
+  });
+
 /** Cap of the day-check window in inclusive days (D-20, T-80-31). */
 const CHECKS_MAX_RANGE_DAYS = 62;
 
@@ -123,6 +153,24 @@ async function resolveActingReach(
   employeeId: string,
 ): Promise<"ZUGEWIESEN" | "EIGENE" | null> {
   const reach = await permissionReach(req, "time-entry:update");
+  if (reach === null || (reach !== "ZUGEWIESEN" && employeeId !== req.user.employeeId)) {
+    reply.code(403).send({ error: NOT_ALLOWED_MESSAGE });
+    return null;
+  }
+  return reach;
+}
+
+/**
+ * The caller's reach for previewing a NEW entry of `employeeId`'s day (Issue #511 D-18, A11): the
+ * write route's own permission, `time-entry:create`. Null after the 403 reply when the caller holds
+ * none or is EIGENE-only and names another employee.
+ */
+async function resolveCreatingReach(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  employeeId: string,
+): Promise<"ZUGEWIESEN" | "EIGENE" | null> {
+  const reach = await permissionReach(req, "time-entry:create");
   if (reach === null || (reach !== "ZUGEWIESEN" && employeeId !== req.user.employeeId)) {
     reply.code(403).send({ error: NOT_ALLOWED_MESSAGE });
     return null;
@@ -970,6 +1018,147 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         );
       }
       return { ...result, days };
+    },
+  });
+
+  // POST /api/v1/day-breaks/preview — Issue #511 D-18: the entry form asks the server kernel which
+  // findings the PROPOSED entry would produce together with the day's other closed entries. It
+  // evaluates and answers; it never writes a TimeEntry, Break, DayBreak or DayBreakAck and never
+  // audits (a preview is not an access attempt on stored data).
+  app.post("/preview", {
+    schema: {
+      tags: ["Zeiterfassung"],
+      summary: "Preview the break findings of a proposed entry (no write)",
+      description:
+        "Evaluates a proposed entry (start, end, breaks, optional salon) together with the " +
+        "employee's other closed WORK entries of the day through the day-break kernel and returns " +
+        "the server-built findings (Issue #511 D-18). With `entryId` the proposal replaces that " +
+        "stored entry. Writes nothing and writes no audit row. Requires time-entry:update (with " +
+        "`entryId`) or time-entry:create (without); an EIGENE caller may name only themselves, a " +
+        "ZUGEWIESEN caller on someone else's day needs scope over every other entry of the day. " +
+        "A closed month answers 403; an employee exempt from time tracking (§ 18 ArbZG) gets no " +
+        "findings.",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const body = previewBodySchema.parse(req.body);
+      const tenantId = req.user.tenantId;
+
+      const reach = body.entryId
+        ? await resolveActingReach(req, reply, body.employeeId)
+        : await resolveCreatingReach(req, reply, body.employeeId);
+      if (!reach) return;
+
+      // A foreign tenant's employee and an unknown id answer identically.
+      const employee = await app.prisma.employee.findFirst({
+        where: { id: body.employeeId, tenantId },
+        select: { id: true, birthDate: true, classification: true, isTimeTrackingExempt: true },
+      });
+      if (!employee) {
+        return reply.code(404).send({ error: EMPLOYEE_NOT_FOUND_MESSAGE });
+      }
+
+      const date = dayKeyToDate(body.date);
+      const startTime = new Date(body.startTime);
+      const endTime = new Date(body.endTime);
+      const storedRows = await closedWorkRowsOfDay(app.prisma, {
+        tenantId,
+        employeeId: body.employeeId,
+        date,
+      });
+      const replaced = body.entryId ? storedRows.find((r) => r.id === body.entryId) : undefined;
+      const otherRows = storedRows.filter((r) => r.id !== replaced?.id);
+
+      // The salon the saved entry would get: an explicit one is validated like the write route
+      // does (its error is passed through), else the replaced entry keeps its own, else the
+      // write route's derivation.
+      let salonId: string;
+      if (!body.salonId && replaced) {
+        salonId = replaced.salonId;
+      } else {
+        const resolved = await resolveEntrySalon(app.prisma, {
+          tenantId,
+          employeeId: body.employeeId,
+          startTime,
+          explicitSalonId: body.salonId ?? undefined,
+        });
+        if (!resolved.ok) return reply.code(resolved.status).send(resolved.body);
+        salonId = resolved.salonId;
+      }
+
+      // Another employee's day: scope over every OTHER entry of the day and the proposed salon,
+      // else the identical entry-404 of the write routes - without a SCOPE_ACCESS_DENIED row,
+      // because a preview is not an access attempt on stored data.
+      if (body.employeeId !== req.user.employeeId) {
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          accessContextFromRequest(req),
+          body.entryId ? "time-entry:update:ZUGEWIESEN" : "time-entry:create:ZUGEWIESEN",
+        );
+        const coverage = await dayCoverage(app.prisma, tenantId, scopeReach, [
+          ...otherRows.map((r) => ({ salonId: r.salonId, employeeId: body.employeeId, date })),
+          { salonId, employeeId: body.employeeId, date },
+        ]);
+        if (coverage !== "all") {
+          return reply.code(404).send({ error: ENTRY_NOT_FOUND_MESSAGE });
+        }
+      }
+
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+      const [year, month] = body.date.split("-").map(Number);
+      const { start: monthStart } = monthRangeUtc(year, month, tz);
+      if (await isMonthClosed(app.prisma, body.employeeId, tenantId, monthStart)) {
+        return reply.code(403).send({ error: MONTH_CLOSED_MESSAGE });
+      }
+
+      // § 18 ArbZG: the same exemption `checkArbZG` applies.
+      if (employee.isTimeTrackingExempt) {
+        return { warnings: [] };
+      }
+
+      // The proposed row, shaped like a stored one. Its break total is the exact sum of the
+      // proposed slots, the write path's own rule. A replaced entry keeps its id so that a current
+      // acknowledgement of an unchanged day still reads as current.
+      const proposedBreakMinutes = body.breaks.reduce(
+        (sum, b) => sum + (new Date(b.endTime).getTime() - new Date(b.startTime).getTime()) / 60000,
+        0,
+      );
+      const proposed: DayBreakRow = {
+        id: replaced?.id ?? PREVIEW_ROW_ID,
+        startTime,
+        endTime,
+        breakMinutes: proposedBreakMinutes,
+        breakStatus: "CONFIRMED",
+        salonId,
+        breaks: body.breaks.map((b) => ({
+          startTime: new Date(b.startTime),
+          endTime: new Date(b.endTime),
+        })),
+      };
+      const rows = [...otherRows, proposed].sort(
+        (a, b) => a.startTime.getTime() - b.startTime.getTime() || a.id.localeCompare(b.id),
+      );
+
+      const dayParams = { tenantId, employeeId: body.employeeId, date };
+      const [dayBreaks, acks] = await Promise.all([
+        listDayBreaksOfDay(app.prisma, dayParams),
+        listAcksOfDay(app.prisma, dayParams),
+      ]);
+      const evaluation = evaluateDayBreaks({
+        rows,
+        dayBreaks,
+        acks: acks.map((a) => ({ snapshot: a.snapshot })),
+        regime: breakRegimeFor(isMinorAtDate(employee.birthDate, date)),
+      });
+      // § 3 without the Berufsschule credit - the same documented limitation as GET /checks.
+      return {
+        warnings: dayWarnings(evaluation, {
+          tz,
+          detail: "full",
+          birthDateMissing: isApprenticeWithoutBirthDate(employee),
+        }),
+      };
     },
   });
 }

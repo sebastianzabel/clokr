@@ -309,6 +309,16 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "`POST /api/v1/day-breaks` entry above: RECORD/MERGE mode refuses to run once the role " +
       "guard is gone.",
   },
+  {
+    route: "POST /api/v1/day-breaks/preview",
+    reason:
+      "New route added in Issue #511 (D-18, A11), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — built permission-gated (`time-entry:update` " +
+      "with `entryId`, `time-entry:create` without, EIGENE vs ZUGEWIESEN) from its very first " +
+      "commit and never had role-based access behavior to compare. Same vacuous-satisfaction " +
+      "reasoning as the `GET /api/v1/day-breaks/checks` entry above: RECORD/MERGE mode refuses " +
+      "to run once the role guard is gone.",
+  },
 ];
 
 /** Routes declared in `app.ts` itself — invisible to the source parser, proven registered. */
