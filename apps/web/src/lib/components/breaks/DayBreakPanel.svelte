@@ -1,13 +1,16 @@
 <script lang="ts">
   /**
-   * DayBreakPanel — Issue #80 (D-02, D-05, D-08, D-11).
+   * DayBreakPanel — Issue #80 (D-02, D-05, D-08, D-11), generalised by Issue #511 (D-12, D-18).
    *
-   * The action path for a multi-entry day. The validity of a break is a property of the DAY, not
-   * of one entry: two entries in two salons can each be short and still add up to a § 4 ArbZG
-   * violation, and the drive between the salons is working time, not a break. The panel shows the
-   * server-computed day check (totals, finding), lets the employee record a break inside a gap
-   * and delete a recorded one (both with a reason on delete, D-05/D-06), and offers the
-   * acknowledgement of a cross-salon violation only where the server says the caller may (D-08).
+   * The action path for a day with a break finding. The validity of a break is a property of the
+   * DAY, not of one entry: two entries in two salons can each be short and still add up to a § 4
+   * ArbZG violation, and the drive between the salons is working time, not a break; a single
+   * entry can break the Satz-2/3 rules on the placement of its breaks. The panel shows the
+   * server-computed day check (totals, the server's finding messages), lets the employee record a
+   * break inside a gap and delete a recorded one (both with a reason on delete, D-05/D-06), and
+   * offers the acknowledgement of a finding only where the server says the caller may (D-08,
+   * D-12). A single-entry finding day renders only when the caller can act on it or an
+   * acknowledgement exists; the employee's own open single-entry day stays a calendar marker.
    *
    * Everything shown comes from the server's `DayCheck`; the browser derives nothing. A REDACTED
    * check (D-11, the caller's reach covers only part of the day) renders totals and the finding
@@ -34,10 +37,18 @@
   const badge = $derived(dayCheckBadge(check));
   const dayBreaks = $derived(check.dayBreaks ?? []);
   const isFull = $derived(check.detail === "full");
-  // A day is shown for a cross-salon finding (open or acknowledged), a cross-salon § 3 breach or
-  // as soon as a day break is recorded on it; anything else is the old single-entry behaviour.
+  const warnings = $derived((check.warnings ?? []).filter((w) => !w.hint));
+  const hints = $derived((check.warnings ?? []).filter((w) => w.hint));
+  // The server already sent its § 3 sentence; the fixed one below is only the fallback.
+  const hasDailyLimitWarning = $derived(warnings.some((w) => w.code === "MAX_DAILY_EXCEEDED"));
+  // A cross-salon day is shown for a finding (open or acknowledged), a cross-salon § 3 breach or
+  // as soon as a day break is recorded on it. A single-entry finding day is shown only when the
+  // caller can act on it (acknowledge, record a break) or an acknowledgement exists.
   const visible = $derived(
-    badge !== null || dayBreaks.length > 0 || (check.crossSalon && check.maxDailyExceeded),
+    (check.crossSalon && (check.breakFinding || check.maxDailyExceeded)) ||
+      dayBreaks.length > 0 ||
+      (check.breakFinding &&
+        (check.mayAcknowledge || check.mayRecordDayBreak || check.acknowledged)),
   );
   const dayLabel = $derived(check.date.split("-").reverse().join("."));
   const totalsLine = $derived(
@@ -134,12 +145,27 @@
         {#if badge}<span class="badge {badge.cls}">{badge.label}</span>{/if}
       </p>
 
-      <p>
-        An diesem Tag sind Zeiten in mehreren Salons erfasst. Die Pause nach § 4 ArbZG gilt für den
-        ganzen Arbeitstag. Fahrzeit zwischen zwei Salons ist Arbeitszeit und zählt nicht als Pause.
-      </p>
+      {#if check.crossSalon}
+        <p>
+          An diesem Tag sind Zeiten in mehreren Salons erfasst. Die Pause nach § 4 ArbZG gilt für
+          den ganzen Arbeitstag. Fahrzeit zwischen zwei Salons ist Arbeitszeit und zählt nicht als
+          Pause.
+        </p>
+      {:else}
+        <p>Zu den Pausen dieses Tages liegt ein Befund nach § 4 ArbZG bzw. § 11 JArbSchG vor.</p>
+      {/if}
       <p class="dbp-totals">{totalsLine}</p>
-      {#if check.maxDailyExceeded}
+      {#if warnings.length > 0}
+        <ul class="dbp-list" aria-label="Befunde des Tages">
+          {#each warnings as warning, index (`${warning.code}-${index}`)}
+            <li data-testid="day-break-warning">{warning.message}</li>
+          {/each}
+        </ul>
+      {/if}
+      {#each hints as hint, index (`${hint.code}-${index}`)}
+        <p class="text-muted" data-testid="day-break-hint">{hint.message}</p>
+      {/each}
+      {#if check.maxDailyExceeded && !hasDailyLimitWarning}
         <p>Die Tagessumme liegt über der Höchstarbeitszeit von 10 Stunden (§ 3 ArbZG).</p>
       {/if}
 
