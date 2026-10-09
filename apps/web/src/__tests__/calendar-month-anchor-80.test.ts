@@ -115,3 +115,37 @@ describe("calMonth is always anchored on the 1st of a month (quick 261009-bsb, I
     });
   }
 });
+
+describe("buildCalendarDays normalizes its month argument first (quick 261009-bsb, Issue #80)", () => {
+  for (const { name, source } of PAGES) {
+    describe(name, () => {
+      const start = source.indexOf("function buildCalendarDays(");
+      const end = source.indexOf("function makeCalDay(");
+
+      it("anti-vacuity: both slice markers are found and the slice is non-empty", () => {
+        expect(start).toBeGreaterThanOrEqual(0);
+        expect(end).toBeGreaterThan(start);
+        expect(end - start).toBeGreaterThan(200);
+      });
+
+      const slice = source.slice(start, end);
+
+      it("declares the first parameter as monthDate: Date", () => {
+        expect(slice).toMatch(/function buildCalendarDays\(\s*monthDate: Date,/);
+      });
+
+      it("the first statement of the body is const monthStart = startOfMonth(monthDate);", () => {
+        const code = stripComments(slice);
+        const bodyStart = code.indexOf("): CalDay[] {");
+        expect(bodyStart, `${name}: signature end not found`).toBeGreaterThan(0);
+        const body = code.slice(bodyStart + "): CalDay[] {".length).trim();
+        expect(body.startsWith("const monthStart = startOfMonth(monthDate);")).toBe(true);
+      });
+
+      it("monthDate occurs exactly twice (parameter + normalization) — no later raw read", () => {
+        const occurrences = stripComments(slice).match(/\bmonthDate\b/g) ?? [];
+        expect(occurrences).toHaveLength(2);
+      });
+    });
+  }
+});

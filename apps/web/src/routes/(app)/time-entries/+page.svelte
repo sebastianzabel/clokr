@@ -668,7 +668,7 @@
 
   // ── Kalender-Tage aufbauen ─────────────────────────────────────────────────
   function buildCalendarDays(
-    monthStart: Date,
+    monthDate: Date,
     entries: TimeEntry[],
     sched: WorkSchedule | null,
     hols: Map<string, string>,
@@ -678,6 +678,11 @@
     shiftMinByDate: Map<string, number> = new Map(), // v1.8.8 — sum of durationMin per dateStr for SHIFT_BASED
     bsAbsenceList: BsAbsence[] = [], // bs-tage-in-calendar — Berufsschultage to mark in the calendar
   ): CalDay[] {
+    // Defense in depth (quick 261009-bsb, Issue #80): the padding before the 1st, the walk to
+    // endOfMonth and monthlyHoursDailyRateMinutes all assume the 1st; a mid-month argument
+    // truncated the grid and the summed Soll, so the month is normalized here and no caller can
+    // reintroduce it.
+    const monthStart = startOfMonth(monthDate);
     const byDate = new Map<string, TimeEntry[]>();
     for (const e of entries) {
       const key = (e.date ?? e.startTime).split("T")[0];

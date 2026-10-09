@@ -157,6 +157,21 @@ describe("work-schedule helper (Phase 76.3 SALDO-V19-01)", () => {
     // June 4 2026 is a Thursday
     expect(countWorkingDaysInMonth(sched, monthStart, ["2026-06-04"])).toBe(21);
   });
+
+  it("countWorkingDaysInMonth: a mid-month argument counts the FULL month (quick 261009-bsb, Issue #80) — 'any Date within the target calendar month'", () => {
+    const sched = build({
+      type: "FIXED_SCHEDULE",
+      workDays: [1, 2, 3, 4, 5],
+      mondayHours: 8,
+      tuesdayHours: 8,
+      wednesdayHours: 8,
+      thursdayHours: 8,
+      fridayHours: 8,
+    });
+    const midMonth = new Date(2026, 5, 15, 12, 0); // 15 June 2026, noon
+    expect(countWorkingDaysInMonth(sched, midMonth)).toBe(22);
+    expect(countWorkingDaysInMonth(sched, midMonth, ["2026-06-04"])).toBe(21);
+  });
 });
 
 // MONTHLY_HOURS day rate — display mirror of the server (Issue #433, D-05/D-06).
@@ -196,6 +211,16 @@ describe("MONTHLY_HOURS day rate — display mirror of the server (Issue #433, D
   it("monthlyHoursDailyRateMinutes: Mo-Fr schedule, June 2026, 2640 budget -> 120 (22 workdays)", () => {
     const june = new Date(2026, 5, 1);
     expect(monthlyHoursDailyRateMinutes({ workDays: [1, 2, 3, 4, 5] }, june, 2640)).toBe(120);
+  });
+
+  it("monthlyHoursDailyRateMinutes: a mid-month argument yields the rate of the 1st (quick 261009-bsb, Issue #80) — 'any Date within the target calendar month'", () => {
+    const midMonth = new Date(2026, 5, 15, 12, 0); // used to count only the remaining workdays
+    expect(monthlyHoursDailyRateMinutes({ workDays: [1, 2, 3, 4, 5] }, midMonth, 2640)).toBe(120);
+  });
+
+  it("monthlyHoursDailyRateMinutes: the last day of the month as argument yields the rate of the 1st (quick 261009-bsb, Issue #80)", () => {
+    const lastDay = new Date(2026, 5, 30, 12, 0);
+    expect(monthlyHoursDailyRateMinutes({ workDays: [1, 2, 3, 4, 5] }, lastDay, 2640)).toBe(120);
   });
 
   it("monthlyHoursDailyRateMinutes: a holiday on a workday does NOT change the rate — there is no holiday parameter any more; holidays stay in the denominator (D-06)", () => {
