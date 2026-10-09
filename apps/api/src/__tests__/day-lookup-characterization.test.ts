@@ -33,7 +33,21 @@ import {
   salonIdForEmployee,
 } from "./setup";
 import { TEST_TZ, todayStr, addDaysStr, utcMidnight, holidayFreeMondayStr } from "./test-dates";
-import { checkArbZG } from "../contexts/time-tracking/arbzg";
+import { checkArbZG as checkArbZGWithPlacement } from "../contexts/time-tracking/arbzg";
+
+// Issue #511 added four additive Satz-2/3 placement codes to checkArbZG. This characterisation pins
+// the day LOOKUP (which rows feed the § 3 / § 4 sum / § 5 rest-period checks), which #511 does not
+// touch, so the pinned snapshots below stay as recorded and only the new codes are filtered out;
+// the placement findings have their own tests (arbzg-placement-511, placement-warnings-511).
+const PLACEMENT_CODES_511 = new Set<string>([
+  "BREAK_SEGMENT_TOO_SHORT",
+  "BREAK_TOO_LATE",
+  "BREAK_OUTSIDE_WINDOW",
+  "BREAK_POSITION_UNKNOWN",
+]);
+async function checkArbZG(...args: Parameters<typeof checkArbZGWithPlacement>) {
+  return (await checkArbZGWithPlacement(...args)).filter((w) => !PLACEMENT_CODES_511.has(w.code));
+}
 import { resolveClockEvent } from "../services/clock/resolver";
 import type { ClockEvent, ClockIntent } from "../services/clock/types";
 
