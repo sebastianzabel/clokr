@@ -14,7 +14,7 @@ import {
   dayCheckWarnings,
   dayChecksToArbzgMap,
   mergeDayChecksIntoArbzgMap,
-  crossSalonSaveNotice,
+  breakFindingSaveNotice,
   breakFindingMonthCloseHint,
 } from "../day-break-violation";
 
@@ -210,9 +210,9 @@ describe("mergeDayChecksIntoArbzgMap", () => {
 
 const PRONOUN = /\b(du|dir|dich|dein\w*|Sie|Ihnen?|Ihr\w*)\b/;
 
-describe("crossSalonSaveNotice", () => {
-  it("names § 4 ArbZG, 'salonübergreifend' and that travel time is no break", () => {
-    const text = crossSalonSaveNotice([
+describe("breakFindingSaveNotice", () => {
+  it("names § 4 ArbZG, 'salonübergreifend' and that travel time is no break (#80 text)", () => {
+    const text = breakFindingSaveNotice([
       { code: "BREAK_TOO_SHORT", severity: "warning", message: "x", crossSalon: true },
     ]);
     expect(text).toContain("§ 4 ArbZG");
@@ -223,14 +223,17 @@ describe("crossSalonSaveNotice", () => {
 
   it("is pronoun-free because employees AND managers (team page) read it", () => {
     const texts = [
-      crossSalonSaveNotice([
+      breakFindingSaveNotice([
         { code: "BREAK_TOO_SHORT", severity: "warning", message: "x", crossSalon: true },
         { code: "MAX_DAILY_EXCEEDED", severity: "error", message: "x", crossSalon: true },
+      ]),
+      breakFindingSaveNotice([
+        { code: "BREAK_TOO_LATE", severity: "warning", message: "Pause fehlt am Stück." },
       ]),
     ];
     for (const text of texts) {
       expect(text).not.toBeNull();
-      expect(text).not.toMatch(/\b(du|dir|dich|dein\w*|Sie|Ihnen?|Ihr\w*)\b/);
+      expect(text).not.toMatch(PRONOUN);
     }
     expect(texts[0]).toContain(
       "eine tatsächlich genommene Pause kann für den Tag eingetragen werden.",
@@ -238,21 +241,71 @@ describe("crossSalonSaveNotice", () => {
   });
 
   it("names the 10-hour limit over the day sum for a cross-salon MAX_DAILY_EXCEEDED", () => {
-    const text = crossSalonSaveNotice([
+    const text = breakFindingSaveNotice([
       { code: "MAX_DAILY_EXCEEDED", severity: "error", message: "x", crossSalon: true },
     ]);
-    expect(text).toContain("10-Stunden-Grenze");
-    expect(text).toContain("Tagessumme");
+    expect(text).toBe(
+      "Gespeichert. Die salonübergreifende Tagessumme überschreitet die 10-Stunden-Grenze " +
+        "(§ 3 ArbZG).",
+    );
   });
 
-  it("returns null without a cross-salon warning, for empty, undefined and malformed input", () => {
+  it("quotes the server message of a placement finding behind 'Gespeichert.'", () => {
+    const text = breakFindingSaveNotice([
+      {
+        code: "BREAK_TOO_LATE",
+        severity: "warning",
+        message: "§ 4 Satz 3 ArbZG: 6:10 Std. am Stück ohne Ruhepause von mindestens 15 Min.",
+      },
+    ]);
+    expect(text).toBe(
+      "Gespeichert. Pausenregel nicht eingehalten: " +
+        "§ 4 Satz 3 ArbZG: 6:10 Std. am Stück ohne Ruhepause von mindestens 15 Min.",
+    );
+  });
+
+  it("handles all three placement codes and joins several messages with a space", () => {
+    for (const code of ["BREAK_SEGMENT_TOO_SHORT", "BREAK_TOO_LATE", "BREAK_OUTSIDE_WINDOW"]) {
+      expect(breakFindingSaveNotice([{ code, severity: "warning", message: "m" }])).toContain(
+        "Pausenregel nicht eingehalten: m",
+      );
+    }
+    const both = breakFindingSaveNotice([
+      { code: "BREAK_SEGMENT_TOO_SHORT", severity: "warning", message: "m1" },
+      { code: "BREAK_OUTSIDE_WINDOW", severity: "warning", message: "m2" },
+    ]);
+    expect(both).toBe("Gespeichert. Pausenregel nicht eingehalten: m1 m2");
+  });
+
+  it("appends the placement part to the cross-salon text without a second 'Gespeichert.'", () => {
+    const text = breakFindingSaveNotice([
+      { code: "BREAK_TOO_SHORT", severity: "warning", message: "x", crossSalon: true },
+      { code: "BREAK_TOO_LATE", severity: "warning", message: "Spät." },
+    ]) as string;
+    expect(text.startsWith("Gespeichert. Über beide Salons gerechnet")).toBe(true);
+    expect(text.endsWith(" Pausenregel nicht eingehalten: Spät.")).toBe(true);
+    expect(text.match(/Gespeichert\./g)).toHaveLength(1);
+  });
+
+  it("shows nothing for a hint alone, even one carrying a placement code", () => {
     expect(
-      crossSalonSaveNotice([{ code: "BREAK_TOO_SHORT", severity: "warning", message: "x" }]),
+      breakFindingSaveNotice([
+        { code: "BREAK_POSITION_UNKNOWN", severity: "warning", message: "h", hint: true },
+        { code: "BREAK_TOO_LATE", severity: "warning", message: "h2", hint: true },
+      ]),
     ).toBeNull();
-    expect(crossSalonSaveNotice([])).toBeNull();
-    expect(crossSalonSaveNotice(undefined)).toBeNull();
-    expect(crossSalonSaveNotice("nope")).toBeNull();
-    expect(crossSalonSaveNotice([null, 3, { code: 7 }])).toBeNull();
+  });
+
+  it("returns null without a cross-salon or placement warning, for empty, undefined and malformed input", () => {
+    expect(
+      breakFindingSaveNotice([{ code: "BREAK_TOO_SHORT", severity: "warning", message: "x" }]),
+    ).toBeNull();
+    expect(breakFindingSaveNotice([])).toBeNull();
+    expect(breakFindingSaveNotice(undefined)).toBeNull();
+    expect(breakFindingSaveNotice("nope")).toBeNull();
+    expect(breakFindingSaveNotice([null, 3, { code: 7 }])).toBeNull();
+    // A placement warning without a usable message cannot be quoted.
+    expect(breakFindingSaveNotice([{ code: "BREAK_TOO_LATE", message: 5 }])).toBeNull();
   });
 });
 

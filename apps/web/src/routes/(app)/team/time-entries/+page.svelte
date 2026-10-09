@@ -23,7 +23,7 @@
   import {
     type DayCheck,
     type DayChecksResponse,
-    crossSalonSaveNotice,
+    breakFindingSaveNotice,
     isChecksRangeAllowed,
     mergeDayChecksIntoArbzgMap,
   } from "$lib/breaks/day-break-violation";
@@ -1009,8 +1009,8 @@
       }
       closeModal();
       await loadAll();
-      const crossSalonNotice = crossSalonSaveNotice(saved?.warnings);
-      if (crossSalonNotice) toasts.warning(crossSalonNotice);
+      const breakFindingNotice = breakFindingSaveNotice(saved?.warnings);
+      if (breakFindingNotice) toasts.warning(breakFindingNotice);
     } catch (e: unknown) {
       if (e instanceof Error && "status" in e && (e as { status: number }).status === 403) {
         saveError = "Monat ist gesperrt";

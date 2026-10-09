@@ -192,20 +192,44 @@ export function mergeDayChecksIntoArbzgMap(
   return merged;
 }
 
+/** The Satz-2/3 finding codes (§ 4 ArbZG / § 11 JArbSchG) a save response can return. */
+const PLACEMENT_CODES = new Set([
+  "BREAK_SEGMENT_TOO_SHORT",
+  "BREAK_TOO_LATE",
+  "BREAK_OUTSIDE_WINDOW",
+]);
+
 /**
- * The toast text for a cross-salon finding that the API returned with a save (POST / PUT of an
- * entry, clock-out) — D-09a. `warnings` is the raw response field and is read defensively: only a
- * warning with `crossSalon: true` counts, anything else (no field, empty, malformed) yields null.
+ * The toast text for a break finding that the API returned with a save (POST / PUT of an entry,
+ * clock-out) — Issue #80 D-09a + Issue #511 D-10. `warnings` is the raw response field and is read
+ * defensively: anything that is not an object with a string code (no field, empty, malformed)
+ * yields null. Two kinds of finding count:
+ *   - a warning with `crossSalon: true` (BREAK_TOO_SHORT / MAX_DAILY_EXCEEDED) — the fixed #80
+ *     texts, byte-identical;
+ *   - a Satz-2/3 warning (BREAK_SEGMENT_TOO_SHORT, BREAK_TOO_LATE, BREAK_OUTSIDE_WINDOW) — the
+ *     server's own message follows "Pausenregel nicht eingehalten:", never a client-built text.
+ * A hint (`hint: true`, e.g. the position of the break is not recorded) never shows a toast.
  * The save itself has already succeeded; the notice only tells what the day now lacks. It is shown
- * to employees AND managers (team page), so the text carries no pronoun. Per-entry § 4 findings stay with the existing client-side modal warnings.
+ * to employees AND managers (team page), so the text carries no pronoun. Per-entry § 4 findings
+ * stay with the existing client-side modal warnings.
  */
-export function crossSalonSaveNotice(warnings: unknown): string | null {
+export function breakFindingSaveNotice(warnings: unknown): string | null {
   if (!Array.isArray(warnings)) return null;
   const crossCodes = new Set<string>();
+  const placementMessages: string[] = [];
   for (const w of warnings) {
     if (typeof w !== "object" || w === null) continue;
-    const { code, crossSalon } = w as { code?: unknown; crossSalon?: unknown };
-    if (crossSalon === true && typeof code === "string") crossCodes.add(code);
+    const { code, crossSalon, hint, message } = w as {
+      code?: unknown;
+      crossSalon?: unknown;
+      hint?: unknown;
+      message?: unknown;
+    };
+    if (typeof code !== "string" || hint === true) continue;
+    if (crossSalon === true) crossCodes.add(code);
+    if (PLACEMENT_CODES.has(code) && typeof message === "string" && message.length > 0) {
+      placementMessages.push(message);
+    }
   }
 
   const parts: string[] = [];
@@ -221,6 +245,10 @@ export function crossSalonSaveNotice(warnings: unknown): string | null {
       "Gespeichert. Die salonübergreifende Tagessumme überschreitet die 10-Stunden-Grenze " +
         "(§ 3 ArbZG).",
     );
+  }
+  if (placementMessages.length > 0) {
+    const prefix = parts.length === 0 ? "Gespeichert. " : "";
+    parts.push(`${prefix}Pausenregel nicht eingehalten: ${placementMessages.join(" ")}`);
   }
   return parts.length > 0 ? parts.join(" ") : null;
 }
