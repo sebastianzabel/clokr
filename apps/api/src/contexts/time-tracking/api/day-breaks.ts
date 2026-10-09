@@ -36,8 +36,11 @@ import {
   evaluateDayBreaks,
   findGapForInterval,
   intervalsOverlap,
+  hasAckableFinding,
   isAckSnapshotCurrent,
 } from "../day-break-rule";
+import { breakRegimeFor } from "../break-regime";
+import { isMinorAtDate } from "../../absence";
 import {
   closedWorkRowsInRange,
   closedWorkRowsOfDay,
@@ -63,8 +66,13 @@ const OVERLAP_MESSAGE = "Die Pause überschneidet sich mit einer bereits erfasst
 const ACK_NOT_FOUND_MESSAGE = "Quittung nicht gefunden";
 /** D-14: nobody quits (or revokes) the break violation of their own day. */
 const SELF_ACK_MESSAGE = "Eigene Pausenverstöße können nicht selbst quittiert werden.";
-/** D-18: only a cross-salon day with a § 4 shortfall can be acknowledged. */
-const NO_VIOLATION_MESSAGE = "Für diesen Tag liegt kein salonübergreifender Pausenverstoß vor.";
+/** Issue #511 D-12: only a day with an ackable § 4 ArbZG / § 11 JArbSchG finding can be acknowledged. */
+const NO_VIOLATION_MESSAGE = "Für diesen Tag liegt kein quittierbarer Pausenverstoß vor.";
+/** The notice types an acknowledgement settles for an employee day (Issue #511 D-13). */
+const ACK_DISMISSED_NOTICE_TYPES = [
+  "BREAK_CROSS_SALON_VIOLATION",
+  "BREAK_PLACEMENT_VIOLATION",
+] as const;
 const ALREADY_ACKED_MESSAGE = "Der Pausenverstoß dieses Tages ist bereits quittiert.";
 
 /** A real calendar date in `YYYY-MM-DD` form (rejects 2026-02-30). */
@@ -455,13 +463,14 @@ export async function dayBreakRoutes(app: FastifyInstance) {
   app.post("/acks", {
     schema: {
       tags: ["Zeiterfassung"],
-      summary: "Acknowledge a cross-salon break violation of a day",
+      summary: "Acknowledge a break violation of a day",
       description:
-        "Documents that the § 4 ArbZG break of a cross-salon day was worked through (Issue #80). " +
-        "Only a day with entries in several salons and a break shortfall can be acknowledged; the " +
+        "Documents that the break of a day was worked through (Issue #80, generalised by Issue #511 D-12). " +
+        "Any day with an ackable § 4 ArbZG / § 11 JArbSchG finding can be acknowledged - a cross-salon " +
+        "break shortfall or a placement finding (Satz 2/3), single-salon days included; the " +
         "§ 3 daily maximum is never downgraded. The caller needs time-entry:update with scope over " +
         "every closed entry of the day and cannot acknowledge their own day. The day's snapshot is " +
-        "stored; once the day changes the acknowledgement is stale. Dismisses the open cross-salon break notices of that day for all recipients. Never writes a time entry.",
+        "stored; once the day changes the acknowledgement is stale. Dismisses the open break notices (cross-salon and placement) of that day for all recipients. Never writes a time entry.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requirePermission("time-entry:update:ZUGEWIESEN"),
@@ -472,7 +481,7 @@ export async function dayBreakRoutes(app: FastifyInstance) {
       // A foreign tenant's employee and an unknown id answer identically.
       const employee = await app.prisma.employee.findFirst({
         where: { id: body.employeeId, tenantId },
-        select: { id: true },
+        select: { id: true, birthDate: true },
       });
       if (!employee) {
         return reply.code(404).send({ error: EMPLOYEE_NOT_FOUND_MESSAGE });
@@ -499,10 +508,13 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         rows,
         dayBreaks,
         acks: acks.map((a) => ({ snapshot: a.snapshot })),
+        // Issue #511 D-05: the regime follows the employee's age on the work date.
+        regime: breakRegimeFor(isMinorAtDate(employee.birthDate, date)),
       });
-      // D-18: a same-salon day, a day without a § 4 shortfall and a pure § 3 day are not
-      // acknowledgeable. The § 3 finding is built from the day sum alone and never waived.
-      if (!evaluation.crossSalon || !evaluation.breakShortfall) {
+      // Issue #511 D-12 (generalising #80 D-18): any day with an ackable § 4 / § 11 finding can be
+      // acknowledged, single-salon days included; a finding-free day, a position-unknown hint and a
+      // pure § 3 day cannot. The § 3 finding is built from the day sum alone and never waived.
+      if (!hasAckableFinding(evaluation)) {
         return reply.code(409).send({ error: NO_VIOLATION_MESSAGE });
       }
       if (evaluation.acknowledged) {
@@ -545,16 +557,15 @@ export async function dayBreakRoutes(app: FastifyInstance) {
       // next-day cron dedupes on ANY existing notification row of the recipient and day, dismissed
       // or not, so a revoked day stays visible only through the page, the check endpoint and the
       // month-close blocker.
+      // Issue #511 D-13 (Pitfall 12): both notice types of the employee day are settled.
       try {
-        await app.dismissByRelated(
-          "EmployeeDay",
-          `${body.employeeId}:${body.date}`,
-          "BREAK_CROSS_SALON_VIOLATION",
-        );
+        for (const noticeType of ACK_DISMISSED_NOTICE_TYPES) {
+          await app.dismissByRelated("EmployeeDay", `${body.employeeId}:${body.date}`, noticeType);
+        }
       } catch (err) {
         req.log.error(
           { err, employeeId: body.employeeId, date: body.date },
-          "Day-break acknowledgement: dismissing the cross-salon notifications failed",
+          "Day-break acknowledgement: dismissing the break notifications failed",
         );
       }
       return reply.code(201).send({ acknowledgement: created });
