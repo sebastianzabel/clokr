@@ -1,9 +1,14 @@
-// Issue #80 (D-11) — the pure manager-notification text of the next-day cross-salon § 4 job.
+// Issue #80 (D-11) / #511 (D-13) — the pure manager-notification texts of the next-day break-finding job.
 // DB-free. The redacted variant must hold no salon name and no clock time by construction, even
 // when a caller passes the entries by mistake (T-80-37).
 
 import { describe, it, expect } from "vitest";
-import { buildCrossSalonNotice, CROSS_SALON_NOTICE_TITLE } from "../cross-salon-notice";
+import {
+  buildCrossSalonNotice,
+  CROSS_SALON_NOTICE_TITLE,
+  buildBreakPlacementNotice,
+  BREAK_PLACEMENT_NOTICE_TITLE,
+} from "../break-finding-notice";
 import { evaluateDayBreaks } from "../day-break-rule";
 
 const CLOCK_TIME = /\d{1,2}:\d{2}/;
@@ -144,5 +149,36 @@ describe("buildCrossSalonNotice", () => {
     expect(message).toBe(
       "Fixture Alpha: Am 10.03.2026 insgesamt 8 h ohne 30 Min Pause, salonübergreifend.",
     );
+  });
+});
+
+describe("buildBreakPlacementNotice (Issue #511, D-13)", () => {
+  it("joins the finding messages behind the employee and the German date", () => {
+    const { title, message } = buildBreakPlacementNotice({
+      employeeName: "Fixture Alpha",
+      date: "2026-03-10",
+      findingMessages: ["§ 4 Satz 3 ArbZG: Erste Meldung.", "§ 4 Satz 2 ArbZG: Zweite Meldung."],
+    });
+
+    expect(title).toBe(BREAK_PLACEMENT_NOTICE_TITLE);
+    expect(message).toBe(
+      "Fixture Alpha: Am 10.03.2026 § 4 Satz 3 ArbZG: Erste Meldung. § 4 Satz 2 ArbZG: Zweite Meldung.",
+    );
+  });
+
+  it("uses a neutral title that differs from the cross-salon one and holds no clock time", () => {
+    expect(BREAK_PLACEMENT_NOTICE_TITLE).toBe("Pausenverstoß (Pausenlage)");
+    expect(BREAK_PLACEMENT_NOTICE_TITLE).not.toBe(CROSS_SALON_NOTICE_TITLE);
+    expect(BREAK_PLACEMENT_NOTICE_TITLE).not.toMatch(CLOCK_TIME);
+  });
+
+  it("adds no time of its own: a redacted finding text stays free of clock times", () => {
+    const { message } = buildBreakPlacementNotice({
+      employeeName: "Fixture Alpha",
+      date: "2026-03-10",
+      findingMessages: ["§ 4 Satz 3 ArbZG: 6 Std. 30 Min am Stück ohne Ruhepause."],
+    });
+
+    expect(message).not.toMatch(CLOCK_TIME);
   });
 });

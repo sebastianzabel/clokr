@@ -10,10 +10,11 @@ import {
   employeeScopeFor, // Issue #80 (80-09), Feature 10
 } from "../../platform";
 import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
-import { findUnacknowledgedCrossSalonDays } from "../cross-salon-days"; // Issue #80 (80-09)
+import { findUnacknowledgedBreakFindingDays } from "../break-finding-days"; // Issue #511 (D-13)
 import { closedWorkRowsInRange } from "../day-break-store"; // Issue #80 (80-09)
 import { dayCoverage } from "../day-scope"; // Issue #80 (80-09)
-import { buildCrossSalonNotice } from "../cross-salon-notice"; // Issue #80 (80-09)
+import { buildCrossSalonNotice, buildBreakPlacementNotice } from "../break-finding-notice"; // Issue #80 (80-09), #511 (D-13)
+import { placementWarnings } from "../arbzg"; // Issue #511 (D-13)
 import {
   getTenantTimezone,
   dateStrInTz,
@@ -27,6 +28,7 @@ import {
 import { invalidReasonFields } from "../invalid-reason";
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import {
+  isMinorAtDate, // Issue #511 (D-05) — the age decision of the § 11 JArbSchG break regime
   getVacationEntitlementsForYearByCode, // Phase 205 Plan 02 (Issue #205, finding 1) — code-based
   getStalePendingLeaveRequestsForReminder, // Phase 100B Plan 13 — A7b
   getLeaveStartingInWindow, // Phase 100B Plan 13 — A9
@@ -53,9 +55,9 @@ declare module "fastify" {
     tryMissingEntriesCheck: () => Promise<void>;
     /** Phase 75b (D-27): test invocability, pattern mirrors tryAutoInvalidate. */
     tryPendingLeaveReminder: () => Promise<void>;
-    /** Issue #80 (80-09, D-10): exposed for integration tests — invokes the next-day
-     *  cross-salon § 4 ArbZG violation notification scan (Feature 10) without cron/advisory-lock. */
-    tryCrossSalonBreakCheck: () => Promise<void>;
+    /** Issue #80 (80-09, D-10) / #511 (D-13): exposed for integration tests — invokes the next-day
+     *  break-finding notification scan (Feature 10) without cron/advisory-lock. */
+    tryBreakFindingCheck: () => Promise<void>;
   }
 }
 
@@ -64,8 +66,8 @@ declare module "fastify" {
  * 1. Clock-out reminder: hourly check for open time entries
  * 2. Missing entries reminder: daily check for employees without recent entries
  * 3. Auto-invalidate stale open entries: hourly invalidation of entries without clock-out
- * 10. Cross-salon § 4 ArbZG violation (Issue #80): daily 09:00 manager notification about
- *     unacknowledged violations of the previous days (Feature 10)
+ * 10. Break findings (Issue #80, #511): daily 09:00 manager notification about unacknowledged
+ *     § 4 ArbZG / § 11 JArbSchG break findings of the previous days (Feature 10)
  */
 export const attendanceCheckerPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
@@ -1144,26 +1146,32 @@ export const attendanceCheckerPlugin = fp(async (app) => {
   }
 
   /**
-   * Feature 10 (Issue #80, D-10/D-11/D-13): next-day notification about an unacknowledged
-   * cross-salon § 4 ArbZG violation — runs daily at 09:00, never on save.
+   * Feature 10 (Issue #80, D-10/D-11/D-13; generalised by Issue #511, D-13): next-day notification
+   * about an unacknowledged break finding — runs daily at 09:00, never on save.
    *
    * The scan covers yesterday plus a 3-day catch-up window, so a day whose run was missed (restart,
    * lock contention) is still reported; the per-recipient dedup makes every re-run idempotent.
-   * "Violation" is `findUnacknowledgedCrossSalonDays` — the same detector the Monatsabschluss gates
+   * "Finding" is `findUnacknowledgedBreakFindingDays` — the same detector the Monatsabschluss gates
    * use, so a day the close would block on is a day the managers are told about, and an
-   * acknowledged, same-salon or § 3-only day produces nothing (D-18).
+   * acknowledged, waived, hint-only or § 3-only day produces nothing (D-18, A5).
+   *
+   * Two notification types, one per recipient, employee and day (A10): a cross-salon Satz-1
+   * shortfall keeps `BREAK_CROSS_SALON_VIOLATION` with its Issue #80 text, every other finding
+   * (Satz 2 / Satz 3 ArbZG, § 11 JArbSchG) is `BREAK_PLACEMENT_VIOLATION`.
    *
    * Recipients (D-13): holders of `time-entry:update:ZUGEWIESEN` whose scope covers at least one
    * entry of the day, tenant-wide holders included; the employee is never notified about their own
    * day. The level of detail follows the recipient's own reach over the day (D-11): a recipient who
-   * covers every entry gets the salons and times, anyone else only the day total and the finding —
-   * the foreign salon's name and times never enter that recipient's title, message, link or email.
+   * covers every entry gets the salons and times, anyone else only counts, durations and the legal
+   * basis — the foreign salon's name and times never enter that recipient's title, message, link
+   * or email.
    *
-   * Dedup: ONE notification per recipient, employee and day, ever — any existing row counts,
-   * a dismissed one included (relatedType "EmployeeDay", relatedId "<employeeId>:<YYYY-MM-DD>").
+   * Dedup: ONE notification per recipient, employee and day across both types, ever — any
+   * existing row counts, a dismissed one included (relatedType "EmployeeDay", relatedId
+   * "<employeeId>:<YYYY-MM-DD>").
    */
-  async function checkCrossSalonBreakViolations() {
-    app.log.info("Attendance-Checker: Prüfe salonübergreifende Pausenverstöße (Feature 10)");
+  async function checkBreakFindings() {
+    app.log.info("Attendance-Checker: Prüfe Pausenverstöße (Feature 10)");
     try {
       const now = new Date();
       const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
@@ -1189,22 +1197,24 @@ export const attendanceCheckerPlugin = fp(async (app) => {
               user: { isActive: true },
               OR: [{ exitDate: null }, { exitDate: { gte: new Date(`${oldest}T00:00:00Z`) } }],
             },
-            select: { id: true, firstName: true, lastName: true, userId: true },
+            select: { id: true, firstName: true, lastName: true, userId: true, birthDate: true },
           });
           if (employees.length === 0) continue;
 
           const rows = await closedWorkRowsInRange(
             app.prisma,
-            employeeScopeFor(accessContextForJob(tenant.id, "cross-salon-break-check"), {
+            employeeScopeFor(accessContextForJob(tenant.id, "break-finding-check"), {
               employeeIds: employees.map((e) => e.id),
             }),
             new Date(`${oldest}T00:00:00Z`),
             new Date(`${newest}T00:00:00Z`),
           );
-          const violations = await findUnacknowledgedCrossSalonDays(app.prisma, {
+          const violations = await findUnacknowledgedBreakFindingDays(app.prisma, {
             tenantId: tenant.id,
             rows,
             tz,
+            birthDates: new Map(employees.map((e) => [e.id, e.birthDate])),
+            isMinorAt: isMinorAtDate,
           });
           if (violations.size === 0) continue;
 
@@ -1257,6 +1267,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
               );
 
               const relatedId = `${employeeId}:${day.date}`;
+              const crossSalon = day.kind === "CROSS_SALON"; // else a Satz 2 / Satz 3 / § 11 finding
               let salonNames: Map<string, string> | null = null; // read lazily, once per day
               for (const userId of recipients) {
                 if (userId === employee.userId) continue; // D-09e: managers only
@@ -1264,7 +1275,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                 const existing = await app.prisma.notification.findFirst({
                   where: {
                     userId,
-                    type: "BREAK_CROSS_SALON_VIOLATION",
+                    type: { in: ["BREAK_CROSS_SALON_VIOLATION", "BREAK_PLACEMENT_VIOLATION"] },
                     relatedType: "EmployeeDay",
                     relatedId,
                   },
@@ -1273,7 +1284,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                 if (existing) continue;
 
                 const full = fullDetail.has(userId);
-                if (full && salonNames === null) {
+                if (crossSalon && full && salonNames === null) {
                   const salons = await app.prisma.salon.findMany({
                     where: {
                       tenantId: tenant.id,
@@ -1283,22 +1294,36 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                   });
                   salonNames = new Map(salons.map((s) => [s.id, s.name]));
                 }
-                const { title, message } = buildCrossSalonNotice({
-                  employeeName: `${employee.firstName} ${employee.lastName}`,
-                  date: day.date,
-                  evaluation: day.evaluation,
-                  detail: full ? "full" : "redacted",
-                  entries: full
-                    ? day.rows.map((r) => ({
-                        salonName: salonNames?.get(r.salonId) ?? "",
-                        startLocal: timeStrInTz(r.startTime, tz),
-                        endLocal: timeStrInTz(r.endTime, tz),
-                      }))
-                    : undefined,
-                });
+                const employeeName = `${employee.firstName} ${employee.lastName}`;
+                const { title, message } = crossSalon
+                  ? buildCrossSalonNotice({
+                      employeeName,
+                      date: day.date,
+                      evaluation: day.evaluation,
+                      detail: full ? "full" : "redacted",
+                      entries: full
+                        ? day.rows.map((r) => ({
+                            salonName: salonNames?.get(r.salonId) ?? "",
+                            startLocal: timeStrInTz(r.startTime, tz),
+                            endLocal: timeStrInTz(r.endTime, tz),
+                          }))
+                        : undefined,
+                    })
+                  : buildBreakPlacementNotice({
+                      employeeName,
+                      date: day.date,
+                      // The position-unknown hint never notifies (A5); the redacted level holds
+                      // counts, durations and the legal basis only.
+                      findingMessages: placementWarnings(day.evaluation, {
+                        tz,
+                        detail: full ? "full" : "redacted",
+                      })
+                        .filter((w) => !w.hint)
+                        .map((w) => w.message),
+                    });
                 await app.notify({
                   userId,
-                  type: "BREAK_CROSS_SALON_VIOLATION",
+                  type: crossSalon ? "BREAK_CROSS_SALON_VIOLATION" : "BREAK_PLACEMENT_VIOLATION",
                   title,
                   message,
                   link: `/team/time-entries?employeeId=${employeeId}&date=${day.date}`,
@@ -1308,8 +1333,14 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                   emailSubject: title, // neutral subject: a subject travels further than a body
                 });
                 app.log.info(
-                  { userId, employeeId, date: day.date, detail: full ? "full" : "redacted" },
-                  "Salonübergreifender Pausenverstoß gemeldet (BREAK_CROSS_SALON_VIOLATION, Feature 10)",
+                  {
+                    userId,
+                    employeeId,
+                    date: day.date,
+                    kind: day.kind,
+                    detail: full ? "full" : "redacted",
+                  },
+                  "Pausenverstoß gemeldet (Feature 10)",
                 );
               }
             }
@@ -1317,13 +1348,13 @@ export const attendanceCheckerPlugin = fp(async (app) => {
         } catch (err) {
           app.log.error(
             { err, tenant: tenant.id },
-            "Salonübergreifender Pausenverstoß: Tenant fehlgeschlagen, fahre fort",
+            "Pausenverstoß: Tenant fehlgeschlagen, fahre fort",
           );
           continue;
         }
       }
     } catch (err) {
-      app.log.error({ err }, "Attendance-Checker: Fehler bei salonübergreifender Pausenprüfung");
+      app.log.error({ err }, "Attendance-Checker: Fehler bei Pausenverstoß-Prüfung");
     }
   }
 
@@ -1351,8 +1382,8 @@ export const attendanceCheckerPlugin = fp(async (app) => {
   // Phase 75b (D-27): test invocability, pattern mirrors tryAutoInvalidate.
   app.decorate("tryPendingLeaveReminder", checkPendingLeaveRequests);
 
-  // Issue #80 (80-09, D-10): expose the cross-salon § 4 next-day scan for test invocability.
-  app.decorate("tryCrossSalonBreakCheck", checkCrossSalonBreakViolations);
+  // Issue #80 (80-09, D-10) / #511 (D-13): expose the break-finding next-day scan for test invocability.
+  app.decorate("tryBreakFindingCheck", checkBreakFindings);
 
   app.addHook("onReady", async () => {
     try {
@@ -1513,27 +1544,22 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       tasks.push(breakUnconfirmedTask);
       app.log.info("Reminder: Pausen-Bestätigung Nudge geplant (täglich 09:00, kontinuierlich)");
 
-      // Feature 10 (Issue #80, D-10): next-day cross-salon § 4 violation notification — daily
-      // at 09:00 under its own advisory-lock key.
-      const crossSalonBreakTask = cron.schedule(
+      // Feature 10 (Issue #80, D-10; #511, D-13): next-day break-finding notification — daily
+      // at 09:00 under its own advisory-lock key (the key name predates the generalisation).
+      const breakFindingTask = cron.schedule(
         "0 9 * * *",
         () => {
           withAdvisoryLock(
             app.prisma,
             ADVISORY_LOCK_KEYS.ATTENDANCE_BREAK_CROSS_SALON,
-            () => checkCrossSalonBreakViolations(),
+            () => checkBreakFindings(),
             app.log,
-          ).catch((err) =>
-            app.log.error(
-              { err },
-              "Reminder: salonübergreifender Pausenverstoß Job fehlgeschlagen",
-            ),
-          );
+          ).catch((err) => app.log.error({ err }, "Reminder: Pausenverstoß Job fehlgeschlagen"));
         },
         { timezone: "Europe/Berlin", noOverlap: true },
       );
-      tasks.push(crossSalonBreakTask);
-      app.log.info("Reminder: Salonübergreifende Pausenprüfung geplant (täglich 09:00)");
+      tasks.push(breakFindingTask);
+      app.log.info("Reminder: Pausenverstoß-Prüfung geplant (täglich 09:00)");
     } catch (err) {
       app.log.error({ err }, "Attendance-Checker konnte nicht gestartet werden");
     }
