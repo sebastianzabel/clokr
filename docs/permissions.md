@@ -26,7 +26,10 @@ in `time-entries.ts` ergänzt; die dadurch verschobenen Zeilennummern der übrig
 bewusst NICHT neu gezählt (dieselbe Konvention wie bei 91b/76b/78b oben). Phase 80 (Issue #80) hat die Zeilen für `day-breaks.ts`
 und den Empfänger `BREAK_CROSS_SALON_VIOLATION` in `attendance-checker.ts` ergänzt; die dadurch
 verschobenen Zeilennummern der übrigen Zeilen (`overtime.ts`, `attendance-checker.ts`) wurden bewusst
-NICHT neu gezählt (dieselbe Konvention wie bei 91b/76b/78b/79).
+NICHT neu gezählt (dieselbe Konvention wie bei 91b/76b/78b/79). Phase 511 (Issue #511) hat die
+Vorschau-Zeile in `day-breaks.ts` ergänzt und am selben Empfängerort in `attendance-checker.ts` den
+zweiten Benachrichtigungstyp `BREAK_PLACEMENT_VIOLATION` (gleiche Berechtigung, gleicher Holder-Lookup);
+verschobene Zeilennummern wurden bewusst NICHT neu gezählt (dieselbe Konvention wie bei 91b/76b/78b/79/80).
 
 Alle Datei- und Zeilenangaben in diesem Dokument beziehen sich auf diesen Commit. Sie sind Belege,
 keine Wegbeschreibung — in einem späteren Stand kann die Zeile verschoben sein, die Zuordnung muss
@@ -851,7 +854,7 @@ ohne neue Tabelle.
 | `contexts/time-tracking/plugins/attendance-checker.ts:308`                   | `OPEN_ENTRY_INVALIDATED`                                                   | A, M  | `team-overview:read`     | ZUGEWIESEN |
 | `contexts/time-tracking/plugins/attendance-checker.ts:418`                   | `PENDING_LEAVE_REMINDER`                                                   | A, M  | `leave-request:approve`  | ZUGEWIESEN |
 | `contexts/time-tracking/plugins/attendance-checker.ts:825`                   | `GAP_WARNING_MANAGER`                                                      | A, M  | `team-overview:read`     | ZUGEWIESEN |
-| `contexts/time-tracking/plugins/attendance-checker.ts:1214`                  | `BREAK_CROSS_SALON_VIOLATION`                                              | A, M  | `time-entry:update`      | ZUGEWIESEN |
+| `contexts/time-tracking/plugins/attendance-checker.ts:1214`                  | `BREAK_CROSS_SALON_VIOLATION`, `BREAK_PLACEMENT_VIOLATION`                 | A, M  | `time-entry:update`      | ZUGEWIESEN |
 | `contexts/time-tracking/api/time-entries.ts:1451`                            | `RETRO_ENTRY_REQUESTED`                                                    | A, M  | `retro-request:approve`  | ZUGEWIESEN |
 | `contexts/time-tracking/api/time-entries.ts:1934`                            | `RETRO_ENTRY_UPDATED`                                                      | A, M  | `retro-request:approve`  | ZUGEWIESEN |
 | `contexts/time-tracking/api/time-entries.ts:2289`                            | `BREAK_COMPLIANCE_ALERT`                                                   | A, M  | `team-overview:read`     | ZUGEWIESEN |

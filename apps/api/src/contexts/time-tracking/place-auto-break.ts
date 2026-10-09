@@ -8,7 +8,7 @@
  * window finding in what the system wrote itself.
  *
  * Pure: no Prisma, no Fastify, no context import (in particular not working-time-account — the
- * time zone is a parameter and `date-fns-tz` is used directly, like `cross-salon-days.ts`). All
+ * time zone is a parameter and `date-fns-tz` is used directly, like the break-finding detector). All
  * arithmetic is in epoch milliseconds, so a DST day or a cross-midnight entry needs no special
  * case: the presence is `end − start` and nothing else.
  */
