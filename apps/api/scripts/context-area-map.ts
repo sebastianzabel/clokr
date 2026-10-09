@@ -239,6 +239,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/leave-self-heal.ts": "abwesenheiten", // LeaveEntitlement/LeaveRequest/LeaveType self-heal
   "src/contexts/absence/leave-type.ts": "abwesenheiten", // LeaveTypeCode -> German display-name registry
   "src/contexts/absence/load-bs-slot-overrides.ts": "abwesenheiten", // EmployeeVocationalSchoolPattern slot overrides
+  "src/contexts/absence/minor-at-date.ts": "abwesenheiten", // Issue #511 (D-05) — isMinorAtDate, the under-18 decision for the § 11 JArbSchG break regime; pure, no model access
   "src/contexts/absence/parental-leave-reduction.ts": "abwesenheiten", // Issue #468 (D-08) — pure month/rounding functions + read-only preview builder for the Elternzeit-Kürzung (§ 17 Abs. 1 BEEG)
   "src/contexts/absence/section9-credit-days.ts": "abwesenheiten", // Section9Credit day counting
   "src/contexts/absence/section9-detect.ts": "abwesenheiten", // § 9 BUrlG "krank im Urlaub" detection

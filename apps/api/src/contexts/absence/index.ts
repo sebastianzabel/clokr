@@ -205,6 +205,8 @@ export {
 } from "./leave-days";
 export type { LeaveDaysForCode } from "./leave-days"; // Issue #451 (D-01)
 export { checkJArbSchG } from "./jarbschg";
+// Under-18 decision of the JArbSchG rules (§ 9 Berufsschule block, § 11 break regime).
+export { isMinorAtDate } from "./minor-at-date"; // Issue #511 (D-05) — the age decision of the § 11 JArbSchG break regime
 export { buildSlotOverrideHierarchy, resolveBsTagSlot } from "./bs-slot-resolver";
 export type { WeekContext } from "./bs-slot-resolver";
 export { selfHealUsedDays, loadVacationTypeMeta } from "./leave-self-heal";
