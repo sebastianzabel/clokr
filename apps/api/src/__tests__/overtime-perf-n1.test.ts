@@ -11,13 +11,18 @@
  * GREEN state (after Task 3): bulk-fetch-then-join (fetchCloseMonthData)
  * → each model's findMany called exactly once → assertions pass.
  *
+ * Issue #511 (D-12, D-15): the status listing additionally runs the break-finding detector. Its
+ * reads (`break`, `dayBreak`, `dayBreakAck`) are bulk reads over the whole listing and are spied
+ * here too, on a month that really contains finding days — a spy on a month without candidate days
+ * would pass vacuously.
+ *
  * Phase 71b (issue #71): `employeeSalonAssignment` and `salon` were added when
  * `fetchCloseMonthData()`'s tenant-wide `publicHoliday` query became ONE batched
  * `holidaysAtWorkLocation()` call — that resolver issues its own bounded query set
  * (contexts/platform), and this guard proves it stays bounded here too.
  */
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
 import type { FastifyInstance } from "fastify";
 
 /** Create a non-exempt FIXED_WEEKLY employee in the given tenant. */
@@ -99,6 +104,9 @@ describe("PERF-V1814-01 — close-month N+1 query regression guard", () => {
       holidays: vi.spyOn(app.prisma.publicHoliday, "findMany"),
       assignments: vi.spyOn(app.prisma.employeeSalonAssignment, "findMany"),
       salons: vi.spyOn(app.prisma.salon, "findMany"),
+      breaks: vi.spyOn(app.prisma.break, "findMany"), // Issue #511 (D-15)
+      dayBreaks: vi.spyOn(app.prisma.dayBreak, "findMany"), // Issue #511 (D-12)
+      dayBreakAcks: vi.spyOn(app.prisma.dayBreakAck, "findMany"), // Issue #511 (D-12)
     };
 
     // January 2026 is a past month — handler processes it without "future" guard.
@@ -117,6 +125,62 @@ describe("PERF-V1814-01 — close-month N+1 query regression guard", () => {
     expect(spies.holidays.mock.calls.length).toBeLessThanOrEqual(1);
     expect(spies.assignments.mock.calls.length).toBeLessThanOrEqual(1);
     expect(spies.salons.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(spies.breaks.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(spies.dayBreaks.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(spies.dayBreakAcks.mock.calls.length).toBeLessThanOrEqual(1);
+  });
+
+  // ── Test 1b (Issue #511, D-12/D-15): a month WITH finding days ────────────────
+  // Every employee gets a single 8 h entry without any Break row on one day of a past month: a
+  // Satz-3 finding the detector must evaluate. The Break rows are read once for all of them, and so
+  // are the day breaks and acknowledgements — never once per employee.
+
+  it("close-month/status: the break-finding detector reads Break, DayBreak and DayBreakAck exactly once for many finding days", async () => {
+    const salon = await createTestSalon(app.prisma, data.tenant.id, { name: "Perf Salon" });
+    const employees = await app.prisma.employee.findMany({
+      where: { tenantId: data.tenant.id, isTimeTrackingExempt: false },
+      select: { id: true },
+    });
+    expect(employees.length, "the scale proof needs several employees").toBeGreaterThanOrEqual(6);
+    for (const e of employees) {
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: e.id,
+          date: new Date("2026-04-14T00:00:00.000Z"),
+          startTime: new Date("2026-04-14T06:00:00.000Z"),
+          endTime: new Date("2026-04-14T14:00:00.000Z"),
+          breakMinutes: 0,
+          type: "WORK",
+          salonId: salon.id,
+        },
+      });
+    }
+
+    const spies = {
+      entries: vi.spyOn(app.prisma.timeEntry, "findMany"),
+      breaks: vi.spyOn(app.prisma.break, "findMany"),
+      dayBreaks: vi.spyOn(app.prisma.dayBreak, "findMany"),
+      dayBreakAcks: vi.spyOn(app.prisma.dayBreakAck, "findMany"),
+    };
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/overtime/close-month/status?year=2026&month=4",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const listed = (
+      JSON.parse(res.body) as { employees: { employeeId: string; breakFindingDays?: string[] }[] }
+    ).employees.filter((e) => (e.breakFindingDays ?? []).length > 0);
+    expect(
+      listed.length,
+      "anti-vacuity: the detector must really have evaluated finding days",
+    ).toBeGreaterThanOrEqual(6);
+    expect(spies.entries.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(spies.breaks.mock.calls.length).toBe(1);
+    expect(spies.dayBreaks.mock.calls.length).toBe(1);
+    expect(spies.dayBreakAcks.mock.calls.length).toBe(1);
   });
 
   // ── Test 2: close-month/year-status ─────────────────────────────────────────
@@ -163,6 +227,9 @@ describe("PERF-V1814-01 — close-month N+1 query regression guard", () => {
       holidays: vi.spyOn(app.prisma.publicHoliday, "findMany"),
       assignments: vi.spyOn(app.prisma.employeeSalonAssignment, "findMany"),
       salons: vi.spyOn(app.prisma.salon, "findMany"),
+      breaks: vi.spyOn(app.prisma.break, "findMany"), // Issue #511 (D-15)
+      dayBreaks: vi.spyOn(app.prisma.dayBreak, "findMany"), // Issue #511 (D-12)
+      dayBreakAcks: vi.spyOn(app.prisma.dayBreakAck, "findMany"), // Issue #511 (D-12)
     };
 
     // February 2026 — different month from Test 1 to avoid any caching effects.
@@ -179,6 +246,9 @@ describe("PERF-V1814-01 — close-month N+1 query regression guard", () => {
     expect(statusSpies.holidays.mock.calls.length).toBeLessThanOrEqual(1);
     expect(statusSpies.assignments.mock.calls.length).toBeLessThanOrEqual(1);
     expect(statusSpies.salons.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(statusSpies.breaks.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(statusSpies.dayBreaks.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(statusSpies.dayBreakAcks.mock.calls.length).toBeLessThanOrEqual(1);
 
     // Reset spies before testing year-status.
     vi.restoreAllMocks();
