@@ -18,6 +18,8 @@ import type { PermissionKey } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
 import { getEffectiveBreakDuration } from "../break-effective";
+import { breakRegimeFor, type BreakRegime } from "../break-regime"; // Issue #511 (D-05/D-17)
+import { placeAutoBreak, resolveDefaultBreakStart } from "../place-auto-break"; // Issue #511 (AK-4)
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
 import { resolveEntrySalon } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
@@ -29,6 +31,7 @@ import type { ClockEvent } from "../../../services/clock/types";
 import {
   hasApprovedLeaveOnDate, // Phase 100B Plan 14 — D-05 (index is the public surface, AC-1)
   checkJArbSchG,
+  isMinorAtDate, // Issue #511 (D-05) — the one under-18 decision, decides the break regime
   DISPLAY_NAME, // Phase 100b Plan 14 (D-05) — renders hasApprovedLeaveOnDate's code
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 import {
@@ -65,6 +68,55 @@ import {
 export { validateTimeEntryInvariants, getEffectiveSchedule };
 export { updateOvertimeAccount, computeOvertimeBalanceBreakdown, computeOvertimeBalanceHours };
 export type { OvertimeBalanceBreakdown };
+
+/**
+ * Issue #511 (AK-4, D-17): the ONE write of an automatic break, shared by the NFC clock-out, the
+ * regular clock-out and the manual POST. The amount is decided by the caller; the position comes
+ * from `placeAutoBreak` (tenant-zone start, conformant to § 4 Satz 2/3 ArbZG or § 11 JArbSchG).
+ * Break rows and the entry's summary fields are written together or not at all. Returns the
+ * minutes written; 0 when no conformant placement exists, in which case nothing is touched.
+ */
+async function autoInsertBreak(
+  app: FastifyInstance,
+  params: {
+    entryId: string;
+    start: Date;
+    end: Date;
+    amountMin: number;
+    tenantConfig: { defaultBreakStart: string | null };
+    tz: string;
+    regime: BreakRegime;
+  },
+): Promise<number> {
+  const segments = placeAutoBreak({
+    start: params.start,
+    end: params.end,
+    amountMin: params.amountMin,
+    preferredStart: resolveDefaultBreakStart({
+      entryStart: params.start,
+      hhmm: params.tenantConfig.defaultBreakStart,
+      tz: params.tz,
+    }),
+    regime: params.regime,
+  });
+  if (segments.length === 0) return 0;
+
+  await app.prisma.$transaction([
+    app.prisma.break.createMany({
+      data: segments.map((s) => ({
+        timeEntryId: params.entryId,
+        startTime: s.startTime,
+        endTime: s.endTime,
+      })),
+    }),
+    // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
+    app.prisma.timeEntry.update({
+      where: { id: params.entryId },
+      data: { breakMinutes: params.amountMin, breakStatus: "AUTO" },
+    }),
+  ]);
+  return params.amountMin;
+}
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -1572,39 +1624,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             : 0;
 
           if (autoBreakMin > 0) {
-            // Determine break start time
-            let breakStartTime: Date;
-            if (tenantConfig.defaultBreakStart) {
-              const [hh, mm] = tenantConfig.defaultBreakStart.split(":").map(Number);
-              breakStartTime = new Date(newStart);
-              breakStartTime.setHours(hh, mm, 0, 0);
-              // If configured break start is outside work period, use middle
-              if (breakStartTime <= newStart || breakStartTime >= newEnd) {
-                const midMs = newStart.getTime() + (newEnd.getTime() - newStart.getTime()) / 2;
-                breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
-              }
-            } else {
-              const midMs = newStart.getTime() + (newEnd.getTime() - newStart.getTime()) / 2;
-              breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
+            const written = await autoInsertBreak(app, {
+              entryId: entry.id,
+              start: newStart,
+              end: newEnd,
+              amountMin: autoBreakMin,
+              tenantConfig,
+              tz,
+              regime: breakRegimeFor(isMinorAtDate(targetEmployee?.birthDate, entry.date)),
+            });
+            if (written > 0) {
+              // Update entry object for response
+              entry.breakMinutes = written;
+              entry.breakStatus = "AUTO";
             }
-            const breakEndTime = new Date(breakStartTime.getTime() + autoBreakMin * 60000);
-
-            await app.prisma.break.create({
-              data: {
-                timeEntryId: entry.id,
-                startTime: breakStartTime,
-                endTime: breakEndTime,
-              },
-            });
-
-            // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
-            await app.prisma.timeEntry.update({
-              where: { id: entry.id },
-              data: { breakMinutes: autoBreakMin, breakStatus: "AUTO" },
-            });
-            // Update entry object for response
-            entry.breakMinutes = autoBreakMin;
-            entry.breakStatus = "AUTO";
           }
         }
       }
