@@ -39,16 +39,17 @@ import {
   hasAckableFinding,
   isAckSnapshotCurrent,
 } from "../day-break-rule";
-import { breakRegimeFor } from "../break-regime";
+import { breakRegimeFor, isApprenticeWithoutBirthDate } from "../break-regime";
 import { isMinorAtDate } from "../../absence";
 import {
   closedWorkRowsInRange,
   closedWorkRowsOfDay,
   listAcksOfDay,
   listDayBreaksOfDay,
+  loadBreaksOfEntries,
   loadDayBreakDataForDays,
 } from "../day-break-store";
-import { dayLimitWarnings } from "../arbzg";
+import { type ArbZGWarning, dayLimitWarnings, placementWarnings } from "../arbzg";
 import { dayCoverage } from "../day-scope";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -225,8 +226,18 @@ function ackFacts(
   };
 }
 
-/** The figures every detail level of a day check carries - totals and the finding, no entry data. */
-function dayCheckTotals(evaluation: DayBreakEvaluation, dateKey: string, locked: boolean) {
+/**
+ * The figures every detail level of a day check carries - totals, the finding and the server-built
+ * messages, no entry data. `warnings` is the day's complete finding list (§ 3, § 4 / § 11 and the
+ * Satz-2/3 placement items); the web renders it and computes no § 4 figure of its own (Issue #511
+ * D-18).
+ */
+function dayCheckTotals(
+  evaluation: DayBreakEvaluation,
+  dateKey: string,
+  locked: boolean,
+  warnings: ArbZGWarning[],
+) {
   return {
     date: dateKey,
     crossSalon: evaluation.crossSalon,
@@ -235,22 +246,52 @@ function dayCheckTotals(evaluation: DayBreakEvaluation, dateKey: string, locked:
     requiredBreakMinutes: evaluation.requiredBreakMin,
     breakShortfall: evaluation.breakShortfall,
     // The § 3 cap is the finding builder's rule (`dayLimitWarnings`); no second copy of it here.
-    maxDailyExceeded: dayLimitWarnings(evaluation, 0).some((w) => w.code === "MAX_DAILY_EXCEEDED"),
+    maxDailyExceeded: warnings.some((w) => w.code === "MAX_DAILY_EXCEEDED"),
+    // Issue #511 D-12: the day carries a finding a manager can acknowledge (hasAckableFinding).
+    breakFinding: hasAckableFinding(evaluation),
+    positionUnknown: evaluation.placement.positionUnknown,
+    warnings,
     acknowledged: evaluation.acknowledged,
     locked,
   };
 }
 
 /**
- * A day as a caller whose scope covers only part of its entries may see it (D-11): the day totals
- * and the finding. Built from an explicit whitelist - the entry list, gaps, day breaks,
- * acknowledgement and every id are fixed to null/false here, never removed from a fuller object,
- * so a field added to the full shape can never leak into this one by omission.
+ * The day's findings as messages, built by the one finding builders. The redacted variant carries
+ * no clock time, salon or id and no birth-date note (Issue #511 D-18, T-511-17).
  */
-function redactedDayCheck(dateKey: string, evaluation: DayBreakEvaluation, locked: boolean) {
+function dayWarnings(
+  evaluation: DayBreakEvaluation,
+  options: { tz: string; detail: "full" | "redacted"; birthDateMissing: boolean },
+): ArbZGWarning[] {
+  const full = options.detail === "full";
+  const birthDateMissing = full && options.birthDateMissing;
+  return [
+    ...dayLimitWarnings(evaluation, 0, { birthDateMissing }),
+    ...placementWarnings(evaluation, { tz: options.tz, detail: options.detail, birthDateMissing }),
+  ];
+}
+
+/**
+ * A day as a caller whose scope covers only part of its entries may see it (D-11): the day totals,
+ * the finding and the redacted messages. Built from an explicit whitelist - the entry list, gaps,
+ * day breaks, acknowledgement and every id are fixed to null/false here, never removed from a
+ * fuller object, so a field added to the full shape can never leak into this one by omission.
+ */
+function redactedDayCheck(
+  dateKey: string,
+  evaluation: DayBreakEvaluation,
+  locked: boolean,
+  tz: string,
+) {
   return {
     detail: "redacted" as const,
-    ...dayCheckTotals(evaluation, dateKey, locked),
+    ...dayCheckTotals(
+      evaluation,
+      dateKey,
+      locked,
+      dayWarnings(evaluation, { tz, detail: "redacted", birthDateMissing: false }),
+    ),
     mayAcknowledge: false,
     mayRecordDayBreak: false,
     acknowledgement: null,
@@ -270,11 +311,22 @@ function fullDayCheck(params: {
   currentAck: DayBreakAck | undefined;
   dayRows: ReadonlyArray<DayBreakRow>;
   dayBreaksOfDay: ReadonlyArray<DayBreak>;
+  tz: string;
+  birthDateMissing: boolean;
 }) {
   const { evaluation, currentAck } = params;
   return {
     detail: "full" as const,
-    ...dayCheckTotals(evaluation, params.dateKey, params.locked),
+    ...dayCheckTotals(
+      evaluation,
+      params.dateKey,
+      params.locked,
+      dayWarnings(evaluation, {
+        tz: params.tz,
+        detail: "full",
+        birthDateMissing: params.birthDateMissing,
+      }),
+    ),
     mayAcknowledge: params.mayAcknowledge,
     mayRecordDayBreak: params.mayRecordDayBreak,
     acknowledgement: currentAck
@@ -656,11 +708,18 @@ export async function dayBreakRoutes(app: FastifyInstance) {
       tags: ["Zeiterfassung"],
       summary: "Day-level break checks of one employee over a period",
       description:
-        "Returns the server-computed check of every day with two or more closed WORK entries of " +
-        "the employee (Issue #80); at most 62 days per request, read only. The employee and a " +
+        "Returns the server-computed check of every day of the employee that carries a break or " +
+        "daily-maximum finding (Issue #80, widened by Issue #511 D-18): a day with two or more " +
+        "closed WORK entries, a § 4 ArbZG / § 11 JArbSchG shortfall, a § 3 day above 10 h or an " +
+        "ackable Satz-2/3 placement finding. A day that carries only the position-unknown hint is " +
+        "not listed. Every day carries the server-built `warnings` (code, severity, message, " +
+        "certainty, legalBasis, hint, waived), `breakFinding` and `positionUnknown`; at most 62 " +
+        "days per request, read only. An employee exempt from time tracking (§ 18 ArbZG) gets no " +
+        "days. The employee and a " +
         "caller whose read scope covers every entry of the day receive the full detail (entries " +
         "with salon, gaps, day breaks, acknowledgement). A caller whose scope covers only part of " +
-        "the day receives the day totals and the finding only - never a time, salon or id of an " +
+        "the day receives the day totals, the finding and the redacted warnings only - never a " +
+        "time, salon or id of an " +
         "entry outside their scope; a day none of whose entries is in scope is omitted. The gaps " +
         "are the day-break kernel's own gap list. maxDailyExceeded compares the day's net working " +
         "time of these entries only (no Berufsschule credit) against the § 3 ArbZG cap of 10 h.",
@@ -698,11 +757,18 @@ export async function dayBreakRoutes(app: FastifyInstance) {
       const employeeId = q.employeeId;
       const employee = await app.prisma.employee.findFirst({
         where: { id: employeeId, tenantId },
-        select: { id: true },
+        select: { id: true, birthDate: true, classification: true, isTimeTrackingExempt: true },
       });
       if (!employee) {
         return reply.code(404).send({ error: EMPLOYEE_NOT_FOUND_MESSAGE });
       }
+      const result = { employeeId, from: q.from, to: q.to };
+      // § 18 ArbZG: an employee exempt from time tracking is exempt from every day check, the same
+      // rule `checkArbZG` applies.
+      if (employee.isTimeTrackingExempt) {
+        return { ...result, days: [] };
+      }
+      const birthDateMissing = isApprenticeWithoutBirthDate(employee);
 
       const access = accessContextFromRequest(req);
       const rows = await closedWorkRowsInRange(
@@ -712,34 +778,103 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         toDate,
       );
 
-      // Group by calendar day (the @db.Date column is the UTC-midnight key) and keep the days with
-      // two or more closed WORK entries; a single-entry range stops here without a further query
-      // (80-AC6).
+      // Issue #511 D-15: the Break rows of every row of the range, in ONE read, so the kernel can
+      // place the breaks (Satz 2/3) of single-entry days too.
+      const closedRows = rows.filter((r) => r.endTime !== null);
+      const breaksByEntry = await loadBreaksOfEntries(app.prisma, {
+        tenantId,
+        entryIds: closedRows.map((r) => r.id),
+      });
+
+      // Group by calendar day (the @db.Date column is the UTC-midnight key). Every day is kept:
+      // whether a day is listed is decided by its evaluation below (Issue #511 D-18, Pitfall 5).
       type CheckRow = DayBreakRow & { date: Date; employeeId: string; isLocked: boolean };
       const byDay = new Map<string, CheckRow[]>();
-      for (const r of rows) {
-        // The range read selects closed entries only; the guard narrows the nullable column.
-        if (r.endTime === null) continue;
+      for (const r of closedRows) {
         const key = r.date.toISOString().slice(0, 10);
-        const checkRow: CheckRow = { ...r, endTime: r.endTime };
+        const checkRow: CheckRow = {
+          ...r,
+          endTime: r.endTime!,
+          breaks: breaksByEntry.get(r.id) ?? [],
+        };
         const list = byDay.get(key);
         if (list) list.push(checkRow);
         else byDay.set(key, [checkRow]);
       }
-      const multiEntryDays = [...byDay.entries()]
-        .filter(([, dayRows]) => dayRows.length >= 2)
-        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-      const result = { employeeId, from: q.from, to: q.to };
-      if (multiEntryDays.length === 0) {
+      const candidateDays = [...byDay.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+
+      // First pass: the evaluation of each day from its entries alone. The regime follows the
+      // employee's age on the day (Issue #511 D-05).
+      const regimeOf = (dateKey: string) =>
+        breakRegimeFor(isMinorAtDate(employee.birthDate, dayKeyToDate(dateKey)));
+      const sortRows = (dayRows: CheckRow[]) =>
+        [...dayRows].sort(
+          (a, b) => a.startTime.getTime() - b.startTime.getTime() || a.id.localeCompare(b.id),
+        );
+      const firstPass = new Map(
+        candidateDays.map(([dateKey, dayRows]) => [
+          dateKey,
+          evaluateDayBreaks({
+            rows: sortRows(dayRows),
+            dayBreaks: [],
+            acks: [],
+            regime: regimeOf(dateKey),
+          }),
+        ]),
+      );
+
+      // Day breaks and acknowledgements are read once, and only when some day can carry them: a
+      // multi-entry day (gaps) or a day with an ackable finding. A range of finding-free
+      // single-entry days issues neither read (80-AC6 intent).
+      const needsDayData = candidateDays.some(
+        ([dateKey, dayRows]) => dayRows.length >= 2 || hasAckableFinding(firstPass.get(dateKey)!),
+      );
+      const { dayBreaks, acks } = needsDayData
+        ? await loadDayBreakDataForDays(app.prisma, {
+            tenantId,
+            employeeIds: [employeeId],
+            from: fromDate,
+            to: toDate,
+          })
+        : { dayBreaks: [], acks: [] };
+
+      // Issue #511 D-18 (Pitfall 5): the days the removed browser check used to mark, and no more:
+      // several entries, a legacy § 4 shortfall, a § 3 day above 10 h, an ackable finding. A day
+      // that carries only the position-unknown hint is never listed (A5).
+      const listedDays: Array<{
+        dateKey: string;
+        rows: CheckRow[];
+        evaluation: DayBreakEvaluation;
+      }> = [];
+      for (const [dateKey, unsortedRows] of candidateDays) {
+        const dayRows = sortRows(unsortedRows);
+        const dayDate = dayKeyToDate(dateKey);
+        const dayBreaksOfDay = dayBreaks.filter((b) => b.date.getTime() === dayDate.getTime());
+        const acksOfDay = acks.filter((a) => a.date.getTime() === dayDate.getTime());
+        const evaluation =
+          dayBreaksOfDay.length === 0 && acksOfDay.length === 0
+            ? firstPass.get(dateKey)!
+            : evaluateDayBreaks({
+                rows: dayRows,
+                dayBreaks: dayBreaksOfDay,
+                acks: acksOfDay.map((a) => ({ snapshot: a.snapshot })),
+                regime: regimeOf(dateKey),
+              });
+        const exceedsDailyMax = dayLimitWarnings(evaluation, 0).some(
+          (w) => w.code === "MAX_DAILY_EXCEEDED",
+        );
+        if (
+          dayRows.length >= 2 ||
+          evaluation.breakShortfall ||
+          exceedsDailyMax ||
+          hasAckableFinding(evaluation)
+        ) {
+          listedDays.push({ dateKey, rows: dayRows, evaluation });
+        }
+      }
+      if (listedDays.length === 0) {
         return { ...result, days: [] };
       }
-
-      const { dayBreaks, acks } = await loadDayBreakDataForDays(app.prisma, {
-        tenantId,
-        employeeIds: [employeeId],
-        from: fromDate,
-        to: toDate,
-      });
 
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const monthClosed = new Map<string, boolean>();
@@ -759,9 +894,9 @@ export async function dayBreakRoutes(app: FastifyInstance) {
           : null;
 
       const days: Array<ReturnType<typeof fullDayCheck> | ReturnType<typeof redactedDayCheck>> = [];
-      for (const [dateKey, unsortedRows] of multiEntryDays) {
+      for (const { dateKey, rows: dayRows, evaluation } of listedDays) {
         const dayDate = dayKeyToDate(dateKey);
-        const coverageFacts = unsortedRows.map((r) => ({
+        const coverageFacts = dayRows.map((r) => ({
           salonId: r.salonId,
           employeeId,
           date: r.date,
@@ -773,16 +908,8 @@ export async function dayBreakRoutes(app: FastifyInstance) {
           : "all";
         if (readCoverage === "none") continue;
 
-        const dayRows = [...unsortedRows].sort(
-          (a, b) => a.startTime.getTime() - b.startTime.getTime() || a.id.localeCompare(b.id),
-        );
         const dayBreaksOfDay = dayBreaks.filter((b) => b.date.getTime() === dayDate.getTime());
         const acksOfDay = acks.filter((a) => a.date.getTime() === dayDate.getTime());
-        const evaluation = evaluateDayBreaks({
-          rows: dayRows,
-          dayBreaks: dayBreaksOfDay,
-          acks: acksOfDay.map((a) => ({ snapshot: a.snapshot })),
-        });
 
         const monthKey = dateKey.slice(0, 7);
         let closed = monthClosed.get(monthKey);
@@ -795,7 +922,7 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         const locked = closed || dayRows.some((r) => r.isLocked);
 
         if (readCoverage === "partial") {
-          days.push(redactedDayCheck(dateKey, evaluation, locked));
+          days.push(redactedDayCheck(dateKey, evaluation, locked, tz));
           continue;
         }
 
@@ -817,9 +944,9 @@ export async function dayBreakRoutes(app: FastifyInstance) {
             );
             if (updateCoverage === "all") {
               mayRecordDayBreak = hasGap;
-              // D-18: only a cross-salon day with a § 4 shortfall can be acknowledged (and an
-              // acknowledged day stays revocable - its shortfall does not go away).
-              mayAcknowledge = evaluation.crossSalon && evaluation.breakShortfall;
+              // Issue #511 D-12: the one ack predicate (an acknowledged day stays revocable - its
+              // finding does not go away).
+              mayAcknowledge = hasAckableFinding(evaluation);
             }
           }
         }
@@ -837,6 +964,8 @@ export async function dayBreakRoutes(app: FastifyInstance) {
             currentAck,
             dayRows,
             dayBreaksOfDay,
+            tz,
+            birthDateMissing,
           }),
         );
       }
