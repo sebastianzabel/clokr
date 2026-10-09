@@ -316,6 +316,9 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
         salonIds: [salonA, salonB].sort(),
         netWorkedMin: 480,
         totalBreakMin: 0,
+        // Issue #511 A8: the A+B day (08-12 / 15-19 with no recorded break) now also carries the
+        // placement key of its UNCLEAR Satz-3 finding.
+        placementKey: expect.stringMatching(/^ARBZG_4\|BREAK_TOO_LATE:UNCLEAR:\d+-\d+$/),
       });
 
       const audits = await app.prisma.auditLog.findMany({

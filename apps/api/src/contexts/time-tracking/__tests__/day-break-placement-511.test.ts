@@ -5,6 +5,8 @@
 import { describe, it, expect } from "vitest";
 import {
   evaluateDayBreaks,
+  hasAckableFinding,
+  isAckSnapshotCurrent,
   type DayBreakRow,
   type DayBreakInterval,
   type DayBreakEvaluation,
@@ -366,6 +368,122 @@ describe("placementKey", () => {
     const mk = () => evaluate([row(A, "08:00", "16:00", { breakMinutes: 0, id: "k1" })]);
     expect(placementKey(mk().placement)).not.toBe("");
     expect(placementKey(mk().placement)).toBe(placementKey(mk().placement));
+  });
+});
+
+// ── Acknowledgement and the ackable predicate (D-12, A8) ──────────────────────────────────────
+
+describe("D-12 / A8 — the snapshot sees the placement", () => {
+  const tooLateDay = (breakStart: string, breakEnd: string, id = "k1"): DayBreakRow =>
+    row(A, "08:00", "15:00", { id, breakMinutes: 30, breaks: [brk(breakStart, breakEnd)] });
+
+  it("stores a placement key only when the day has a finding with a certainty", () => {
+    const withFinding = evaluate([tooLateDay("14:01", "14:31")]).snapshot;
+    expect(typeof withFinding.placementKey).toBe("string");
+    expect(withFinding.placementKey).not.toBe("");
+    const clean = evaluate([row(A, "08:00", "12:00", { id: "c1" })]).snapshot;
+    expect("placementKey" in clean).toBe(false);
+    expect(Object.keys(clean).sort()).toEqual([
+      "entryIds",
+      "netWorkedMin",
+      "salonIds",
+      "totalBreakMin",
+    ]);
+    const hint = evaluate([row(A, "08:00", "16:00", { id: "h1", breakMinutes: 30 })]).snapshot;
+    expect("placementKey" in hint).toBe(false);
+  });
+
+  it("a current acknowledgement acknowledges and waives a single-salon day with a finding", () => {
+    const rows = [tooLateDay("14:01", "14:31")];
+    const snapshot = evaluate(rows).snapshot;
+    const ev = evaluateDayBreaks({ rows, dayBreaks: [], acks: [{ snapshot }] });
+    expect(ev.acknowledged).toBe(true);
+    expect(ev.waived).toBe(true);
+    // The findings themselves stay (a waiver documents, it does not make the day compliant).
+    expect(codes(ev)).toContain("BREAK_TOO_LATE");
+  });
+
+  it("moving a break by ten minutes with identical totals makes the acknowledgement stale", () => {
+    const snapshot = evaluate([tooLateDay("14:01", "14:31")]).snapshot;
+    const moved = [tooLateDay("14:11", "14:41")];
+    expect(evaluate(moved).snapshot.netWorkedMin).toBe(snapshot.netWorkedMin);
+    expect(evaluate(moved).snapshot.totalBreakMin).toBe(snapshot.totalBreakMin);
+    const ev = evaluateDayBreaks({ rows: moved, dayBreaks: [], acks: [{ snapshot }] });
+    expect(ev.acknowledged).toBe(false);
+    expect(ev.waived).toBe(false);
+  });
+
+  it("an acknowledgement stored without a key stays current on a day without findings", () => {
+    const rows = [row(A, "08:00", "12:00", { id: "x1" }), row(B, "15:00", "19:00", { id: "x2" })];
+    const dayBreaks = [brk("12:30", "14:30")];
+    const current = evaluate(rows, dayBreaks).snapshot;
+    expect("placementKey" in current).toBe(false);
+    const ev = evaluateDayBreaks({ rows, dayBreaks, acks: [{ snapshot: { ...current } }] });
+    expect(ev.acknowledged).toBe(true);
+  });
+
+  it("an acknowledgement stored without a key is stale once the day has a finding", () => {
+    const rows = [tooLateDay("14:01", "14:31")];
+    const legacyShape: Record<string, unknown> = { ...evaluate(rows).snapshot };
+    delete legacyShape.placementKey;
+    const ev = evaluateDayBreaks({ rows, dayBreaks: [], acks: [{ snapshot: legacyShape }] });
+    expect(ev.acknowledged).toBe(false);
+  });
+
+  it("a placement key that is not a string is never current", () => {
+    const current = evaluate([tooLateDay("14:01", "14:31")]).snapshot;
+    for (const bad of [42, null, ["a"], {}, true]) {
+      expect(isAckSnapshotCurrent({ ...current, placementKey: bad }, current)).toBe(false);
+    }
+    expect(isAckSnapshotCurrent({ ...current }, current)).toBe(true);
+  });
+
+  it("an acknowledgement does nothing on a single-salon day without findings", () => {
+    const rows = [row(A, "08:00", "12:00", { id: "n1" })];
+    const snapshot = evaluate(rows).snapshot;
+    expect(evaluateDayBreaks({ rows, dayBreaks: [], acks: [{ snapshot }] }).acknowledged).toBe(
+      false,
+    );
+  });
+});
+
+describe("D-12 — hasAckableFinding is the one predicate", () => {
+  it("is true for any placement finding with a certainty", () => {
+    expect(hasAckableFinding(evaluate([row(A, "08:00", "16:00")]))).toBe(true);
+    const unclear = evaluate([row(A, "08:00", "12:00"), row(B, "15:00", "19:00")]);
+    expect(findings(unclear)).toEqual([["BREAK_TOO_LATE", "UNCLEAR"]]);
+    expect(hasAckableFinding(unclear)).toBe(true);
+  });
+
+  it("is true for a cross-salon Satz-1 shortfall even without a placement finding", () => {
+    const ev = evaluate(
+      [row(A, "08:00", "12:00"), row(B, "12:20", "18:20")],
+      [brk("12:00", "12:20")],
+    );
+    expect(ev.placement.findings).toEqual([]);
+    expect(ev.crossSalon && ev.breakShortfall).toBe(true);
+    expect(hasAckableFinding(ev)).toBe(true);
+  });
+
+  it("is false for a hint-only day, a finding-free day and a single-salon Satz-1 shortfall", () => {
+    expect(hasAckableFinding(evaluate([row(A, "08:00", "16:00", { breakMinutes: 30 })]))).toBe(
+      false,
+    );
+    expect(hasAckableFinding(evaluate([row(A, "08:00", "12:00")]))).toBe(false);
+    const shortfallOnly = evaluate([
+      row(A, "08:00", "15:00", { breakMinutes: 20, breaks: [brk("12:00", "12:20")] }),
+    ]);
+    expect(shortfallOnly.breakShortfall).toBe(true);
+    expect(shortfallOnly.placement.findings).toEqual([]);
+    expect(hasAckableFinding(shortfallOnly)).toBe(false);
+  });
+
+  it("an acknowledged day stays ackable so the acknowledgement can be revoked", () => {
+    const rows = [row(A, "08:00", "16:00", { id: "r1" })];
+    const snapshot = evaluate(rows).snapshot;
+    const ev = evaluateDayBreaks({ rows, dayBreaks: [], acks: [{ snapshot }] });
+    expect(ev.acknowledged).toBe(true);
+    expect(hasAckableFinding(ev)).toBe(true);
   });
 });
 

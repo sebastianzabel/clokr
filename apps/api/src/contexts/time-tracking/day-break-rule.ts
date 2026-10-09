@@ -14,7 +14,9 @@
  *   - D-16  an entry-level WAIVED ("durchgearbeitet") waives a single-salon day exactly as before;
  *           on a cross-salon day only an acknowledgement of the current day state waives it.
  *   - D-17  an acknowledgement is valid only while its stored snapshot (entry ids, salon ids,
- *           net working minutes, total break minutes) equals the day's current snapshot.
+ *           net working minutes, total break minutes and, since #511, the placement key) equals the
+ *           day's current snapshot. The key makes a moved break stale although every minute sum is
+ *           unchanged.
  *   - D-18  the § 3 day sum is part of the evaluation; an acknowledgement never downgrades it
  *           (the caller builds the MAX_DAILY_EXCEEDED finding from `netWorkedMin` alone).
  *
@@ -43,7 +45,7 @@
  */
 import { entryDurations } from "./entry-durations";
 import { BREAK_REGIMES, requiredBreakFor, type BreakRegime } from "./break-regime";
-import { evaluatePlacement, type PlacementEvaluation } from "./day-break-placement";
+import { evaluatePlacement, placementKey, type PlacementEvaluation } from "./day-break-placement";
 
 /** One closed WORK entry of the day, as the evaluation needs it. */
 export interface DayBreakRow {
@@ -91,6 +93,12 @@ export interface DaySnapshot {
   netWorkedMin: number;
   /** Total break minutes counted for the day (entry breaks + same-salon gaps + day breaks). */
   totalBreakMin: number;
+  /**
+   * Issue #511, D-12 / A8: canonical serialisation of the day's placement findings that carry a
+   * certainty (`placementKey()`). Absent when there is none, so an acknowledgement stored before
+   * #511 stays comparable on every day without a placement finding.
+   */
+  placementKey?: string;
 }
 
 /** Where a break segment of the day comes from (D-22). */
@@ -172,9 +180,16 @@ export interface DayBreakEvaluation {
   requiredBreakMin: number;
   /** True when a break is required and totalBreakMin is below it. */
   breakShortfall: boolean;
-  /** True when a cross-salon day has an acknowledgement matching the current snapshot (D-17). */
+  /**
+   * True when the day can carry an acknowledgement (cross-salon, or a placement finding with a
+   * certainty) and one matches the current snapshot (D-17, #511 D-12).
+   */
   acknowledged: boolean;
-  /** True when the § 4 finding is waived: acknowledgement on a cross-salon day, entry WAIVED otherwise (D-16). */
+  /**
+   * True when the § 4 finding is waived: an acknowledgement on a cross-salon day (an entry-level
+   * WAIVED never waives it, D-16); otherwise an entry-level WAIVED or a current acknowledgement.
+   * A waiver documents the decision and never changes a finding (#511 D-11).
+   */
   waived: boolean;
   /** The snapshot an acknowledgement of this evaluation would store. */
   snapshot: DaySnapshot;
@@ -293,11 +308,14 @@ export function isAckSnapshotCurrent(stored: unknown, current: DaySnapshot): boo
   const s = stored as Record<string, unknown>;
   if (!isStringArray(s.entryIds) || !isStringArray(s.salonIds)) return false;
   if (typeof s.netWorkedMin !== "number" || typeof s.totalBreakMin !== "number") return false;
+  // A stored key is a string or absent; anything else is damaged or hand-edited (T-511-01).
+  if (s.placementKey !== undefined && typeof s.placementKey !== "string") return false;
   return (
     sameStrings(s.entryIds, current.entryIds) &&
     sameStrings(s.salonIds, current.salonIds) &&
     s.netWorkedMin === current.netWorkedMin &&
-    s.totalBreakMin === current.totalBreakMin
+    s.totalBreakMin === current.totalBreakMin &&
+    (s.placementKey ?? "") === (current.placementKey ?? "")
   );
 }
 
@@ -348,16 +366,6 @@ export function evaluateDayBreaks(input: {
 
   const salonIds = [...new Set(rows.map((r) => r.salonId))].sort(compareOrdinal);
   const crossSalon = salonIds.length >= 2;
-  const snapshot: DaySnapshot = {
-    entryIds: rows.map((r) => r.id).sort(compareOrdinal),
-    salonIds,
-    netWorkedMin,
-    totalBreakMin,
-  };
-
-  const acknowledged = crossSalon && acks.some((a) => isAckSnapshotCurrent(a.snapshot, snapshot));
-  // D-16: an entry-level WAIVED never waives a cross-salon day.
-  const waived = crossSalon ? acknowledged : rows.some((r) => r.breakStatus === "WAIVED");
 
   // D-22 interval view — built after the sums and read by nothing above this line.
   const placedSegments: DayBreakSegment[] = [];
@@ -489,6 +497,28 @@ export function evaluateDayBreaks(input: {
     BREAK_REGIMES[regime],
   );
 
+  // The snapshot an acknowledgement binds to (D-17): the minute sums, the entries and salons, and
+  // — only when the day has a certain placement finding — the placement key (#511 A8).
+  const key = placementKey(placement);
+  const snapshot: DaySnapshot = {
+    entryIds: rows.map((r) => r.id).sort(compareOrdinal),
+    salonIds,
+    netWorkedMin,
+    totalBreakMin,
+    ...(key !== "" ? { placementKey: key } : {}),
+  };
+
+  // An acknowledgement counts on a cross-salon day and on any day with a placement finding that
+  // carries a certainty; on a finding-free single-salon day it does nothing.
+  const acknowledged =
+    (crossSalon || placement.findings.some((f) => f.certainty !== null)) &&
+    acks.some((a) => isAckSnapshotCurrent(a.snapshot, snapshot));
+  // D-16: an entry-level WAIVED never waives a cross-salon day. D-11: a waiver documents, the
+  // findings stay.
+  const waived = crossSalon
+    ? acknowledged
+    : rows.some((r) => r.breakStatus === "WAIVED") || acknowledged;
+
   return {
     netWorkedMin,
     explicitBreakMin,
@@ -507,6 +537,21 @@ export function evaluateDayBreaks(input: {
     gaps: gapViews,
     placement,
   };
+}
+
+/**
+ * Issue #511, D-12: the ONE predicate that decides whether a day carries a finding a manager can
+ * acknowledge — the acknowledgement route, `GET /day-breaks/checks` (`mayAcknowledge`), the
+ * month-close detector and the next-day job all call it. A cross-salon Satz-1 shortfall or any
+ * placement finding with a certainty (VIOLATION or UNCLEAR) qualifies; the position-unknown hint
+ * (no certainty) never does (A5). An already acknowledged day stays ackable so that the
+ * acknowledgement can be revoked.
+ */
+export function hasAckableFinding(evaluation: DayBreakEvaluation): boolean {
+  return (
+    (evaluation.crossSalon && evaluation.breakShortfall) ||
+    evaluation.placement.findings.some((f) => f.certainty !== null)
+  );
 }
 
 /**
