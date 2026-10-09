@@ -779,5 +779,102 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
       await addBreak(clean, LATE_BREAK);
       expect(await findingDaysOf(clean)).toEqual([]);
     });
+
+    // ── Auto-close defer and the deferred-close reason (D-12) ──────────────────────────────────
+    describe("auto-close defer and deferred-close reason BREAK_PLACEMENT", () => {
+      const AFTER_WINDOW_511 = new Date("2026-04-20T06:00:00.000Z");
+
+      async function runAutoClose511() {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(AFTER_WINDOW_511);
+        try {
+          await app.tryAutoCloseMonth();
+        } finally {
+          vi.useRealTimers();
+        }
+      }
+
+      const snapshots = (employeeId: string) =>
+        app.prisma.saldoSnapshot.count({ where: { employeeId, periodType: "MONTHLY" } });
+
+      async function reasonOf(employeeId: string) {
+        const state = await getDeferredMonthCloseState(app.prisma, tenantId, {
+          now: AFTER_WINDOW_511,
+          detailed: true,
+          employeeIds: [employeeId],
+        });
+        return state.employees.find((e) => e.employeeId === employeeId);
+      }
+
+      it("defers a month with a Satz-3 day, closes its clean sibling, and closes once acknowledged", async () => {
+        const finding = await createEmployee("p-ac-finding");
+        const clean = await createEmployee("p-ac-clean");
+        const acked = await createEmployee("p-ac-acked");
+        await addBreak(finding, LATE_BREAK);
+        await addBreak(acked, LATE_BREAK);
+        await ackRealDay(acked);
+
+        await runAutoClose511();
+
+        expect(await snapshots(finding), "deferred: no snapshot").toBe(0);
+        expect(await snapshots(clean), "the clean employee still closes").toBe(1);
+        expect(await snapshots(acked), "a current acknowledgement lets it close").toBe(1);
+      });
+
+      it("auto-closes over the day when the block flag is off", async () => {
+        await setFlags({ blockMonthCloseOnUnconfirmedBreak: false });
+        const empId = await createEmployee("p-ac-flagoff");
+        await addBreak(empId, LATE_BREAK);
+
+        await runAutoClose511();
+
+        expect(await snapshots(empId)).toBe(1);
+      });
+
+      it("the reporter names BREAK_PLACEMENT with the finding day", async () => {
+        const empId = await createEmployee("p-dc-placement");
+        await addBreak(empId, LATE_BREAK);
+
+        const entry = await reasonOf(empId);
+
+        expect(entry).toBeDefined();
+        expect(entry!.reason).toBe("BREAK_PLACEMENT");
+        expect(entry!.gapDates).toEqual([VIOLATION_DAY]);
+        expect(entry!.gapCount).toBe(1);
+      });
+
+      it("a cross-salon Satz-1 day keeps CROSS_SALON_BREAKS, also when a placement day exists", async () => {
+        const crossOnly = await createEmployee("p-dc-cross");
+        twoSalonDay(crossOnly);
+        expect((await reasonOf(crossOnly))!.reason).toBe("CROSS_SALON_BREAKS");
+
+        const both = await createEmployee("p-dc-both");
+        // 2026-03-10: cross-salon Satz-1 shortfall; 2026-03-11: single-salon Satz-3 day.
+        twoSalonDay(both);
+        const wednesday = await app.prisma.timeEntry.findFirstOrThrow({
+          where: { employeeId: both, date: dateOf("2026-03-11") },
+        });
+        await app.prisma.break.create({
+          data: {
+            timeEntryId: wednesday.id,
+            startTime: new Date("2026-03-11T13:30:00.000Z"),
+            endTime: new Date("2026-03-11T14:00:00.000Z"),
+          },
+        });
+        const entry = (await reasonOf(both))!;
+        expect(entry.reason).toBe("CROSS_SALON_BREAKS");
+        expect(entry.gapDates).toEqual([VIOLATION_DAY, "2026-03-11"]);
+      });
+
+      it("keeps the GAPS precedence over BREAK_PLACEMENT", async () => {
+        const empId = await createEmployee("p-dc-gap", "FIXED_SCHEDULE", { skipDay: "2026-03-12" });
+        await addBreak(empId, LATE_BREAK);
+
+        const entry = (await reasonOf(empId))!;
+
+        expect(entry.reason).toBe("GAPS");
+        expect(entry.gapDates).toEqual(["2026-03-12"]);
+      });
+    });
   });
 });
