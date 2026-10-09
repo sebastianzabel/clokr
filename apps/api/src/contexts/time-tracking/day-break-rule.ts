@@ -21,13 +21,17 @@
  *   - D-22  besides the minute sums the evaluation exposes the SAME day as time intervals: every
  *           break with the source it comes from (`breakSegments`), every gap between consecutive
  *           entries (`gaps`) and the continuous working stretches between the placed breaks
- *           (`workBlocks`). The view exists for § 4 ArbZG Satz 2 (break segments of at least 15
- *           minutes) and Satz 3 (no more than six hours in a row without a break), which are #511 —
- *           Phase 80 evaluates neither and builds every warning from the minute sums alone, so the
- *           interval view can never move a result. A segment with `source` "unplaced-entry-break"
- *           means "position unknown": stored `breakMinutes` that no Break row covers. It must never
- *           be read as proof of a break at a particular time, and it never splits a work block.
- *
+ *           (`workBlocks`). § 4 ArbZG Satz 2 (break segments of at least 15 minutes) and Satz 3 (no
+ *           more than six hours in a row without a break) are evaluated on this view by
+ *           `day-break-placement.ts` (Issue #511) and returned as the additive field `placement`;
+ *           the interval view and `placement` are built after the minute sums and every warning of
+ *           Phase 80 is still built from the minute sums alone, so neither can move a result. A
+ *           segment with `source` "unplaced-entry-break" means "position unknown": stored
+ *           `breakMinutes` that no Break row covers. It must never be read as proof of a break at a
+ *           particular time, and it never splits a work block.
+ *   - #511  `regime` selects the thresholds (adult § 4 ArbZG by default, § 11 JArbSchG for minors);
+ *           the table lives in `break-regime.ts`.
+
  * Input = the closed WORK entries of ONE employee and ONE day in start order, plus the day breaks
  * and acknowledgements recorded for that day. This module never computes presence or working time
  * itself (`entryDurations()` does) and never touches the database.
@@ -38,6 +42,8 @@
  * The only import is the working-time kernel on purpose: no Prisma, no Fastify, no other context.
  */
 import { entryDurations } from "./entry-durations";
+import { BREAK_REGIMES, requiredBreakFor, type BreakRegime } from "./break-regime";
+import { evaluatePlacement, type PlacementEvaluation } from "./day-break-placement";
 
 /** One closed WORK entry of the day, as the evaluation needs it. */
 export interface DayBreakRow {
@@ -159,8 +165,11 @@ export interface DayBreakEvaluation {
   salonIds: string[];
   /** True when the entries lie in two or more salons. */
   crossSalon: boolean;
-  /** § 4 ArbZG minimum break for netWorkedMin: 45 above 9 h, 30 above 6 h, else 0 (strict). */
-  requiredBreakMin: 0 | 30 | 45;
+  /**
+   * The break duty for netWorkedMin under the evaluated regime (strict `>`): 45 above 9 h and 30
+   * above 6 h for § 4 ArbZG, 60 above 6 h and 30 above 4.5 h for § 11 JArbSchG, else 0.
+   */
+  requiredBreakMin: number;
   /** True when a break is required and totalBreakMin is below it. */
   breakShortfall: boolean;
   /** True when a cross-salon day has an acknowledgement matching the current snapshot (D-17). */
@@ -178,6 +187,11 @@ export interface DayBreakEvaluation {
   gaps: DayGap[];
   /** The continuous working stretches between the placed breaks, in time order (D-22). */
   workBlocks: DayWorkBlock[];
+  /**
+   * § 4 Satz 2/3 ArbZG (§ 11 JArbSchG for minors) evaluated on the interval view above (Issue #511,
+   * D-10). Additive: read by no minute sum and by no field above this one.
+   */
+  placement: PlacementEvaluation;
 }
 
 /** A half-open span [start, end) in epoch milliseconds. */
@@ -295,8 +309,11 @@ export function evaluateDayBreaks(input: {
   rows: readonly DayBreakRow[];
   dayBreaks: readonly DayBreakInterval[];
   acks: readonly DayBreakAckInput[];
+  /** The break regime of the day; omitted means the adult § 4 ArbZG rules (Issue #511, D-05). */
+  regime?: BreakRegime;
 }): DayBreakEvaluation {
   const { rows, dayBreaks, acks } = input;
+  const regime: BreakRegime = input.regime ?? "ARBZG_4";
 
   // Net working time + explicit breaks — the statements and their order are the pre-80 ones; the
   // float association is part of the contract (Issue #79).
@@ -326,7 +343,7 @@ export function evaluateDayBreaks(input: {
 
   const totalBreakMin = explicitBreakMin + gapBreakMin + dayBreakMin;
 
-  const requiredBreakMin: 0 | 30 | 45 = netWorkedMin > 9 * 60 ? 45 : netWorkedMin > 6 * 60 ? 30 : 0;
+  const requiredBreakMin = requiredBreakFor(BREAK_REGIMES[regime], netWorkedMin);
   const breakShortfall = requiredBreakMin > 0 && totalBreakMin < requiredBreakMin;
 
   const salonIds = [...new Set(rows.map((r) => r.salonId))].sort(compareOrdinal);
@@ -450,6 +467,28 @@ export function evaluateDayBreaks(input: {
   }
   closeBlock();
 
+  const gapViews: DayGap[] = gapSpans.map((g) => ({
+    previousEntryId: g.previous.id,
+    nextEntryId: g.next.id,
+    startTime: g.startTime,
+    endTime: g.endTime,
+    minutes: g.minutes,
+    crossSalon: g.crossSalon,
+    countsAsBreak: g.countsAsBreak,
+  }));
+
+  // Issue #511: Satz 2/3 on the view above; runs after every sum and changes none of them.
+  const placement = evaluatePlacement(
+    {
+      rows,
+      breakSegments,
+      gaps: gapViews,
+      netWorkedMin,
+      legacyBreakShortfall: breakShortfall,
+    },
+    BREAK_REGIMES[regime],
+  );
+
   return {
     netWorkedMin,
     explicitBreakMin,
@@ -465,15 +504,8 @@ export function evaluateDayBreaks(input: {
     snapshot,
     breakSegments,
     workBlocks,
-    gaps: gapSpans.map((g) => ({
-      previousEntryId: g.previous.id,
-      nextEntryId: g.next.id,
-      startTime: g.startTime,
-      endTime: g.endTime,
-      minutes: g.minutes,
-      crossSalon: g.crossSalon,
-      countsAsBreak: g.countsAsBreak,
-    })),
+    gaps: gapViews,
+    placement,
   };
 }
 
