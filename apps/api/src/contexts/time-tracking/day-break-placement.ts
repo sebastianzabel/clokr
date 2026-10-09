@@ -138,6 +138,15 @@ interface CaseResult {
 
 const MS_PER_MIN = 60_000;
 
+/**
+ * Not a break rule. The stored `breakMinutes` of an entry is the ROUNDED minute total of its Break
+ * rows (`services/clock/consolidate.ts`), so the kernel's unplaced remainder of an entry whose
+ * breaks are all positioned can be up to half a minute positive. That is rounding, not a sum-only
+ * break; read as one it would hide every Satz-3 finding of the entry behind "position unknown".
+ * A genuine sum-only break is a whole number of minutes of at least one.
+ */
+const UNPLACED_ROUNDING_NOISE_MIN = 0.5;
+
 /** Merges touching or overlapping candidates in start order (D-22a A1). */
 function coalesce(candidates: Candidate[]): Candidate[] {
   const sorted = [...candidates].sort((a, b) => a.start - b.start || a.end - b.end);
@@ -170,6 +179,7 @@ function runCase(
   const unplacedByEntry = new Map<string, number>();
   for (const seg of input.breakSegments) {
     if (seg.source === "unplaced-entry-break" || seg.startTime === null || seg.endTime === null) {
+      if (seg.minutes <= UNPLACED_ROUNDING_NOISE_MIN) continue;
       unplacedMin += seg.minutes;
       if (seg.entryId !== null) {
         unplacedByEntry.set(seg.entryId, (unplacedByEntry.get(seg.entryId) ?? 0) + seg.minutes);
@@ -296,7 +306,63 @@ function runCase(
     });
   }
 
+  // Satz 2: segments below the minimum do not count, so a day whose stored sum looks sufficient can
+  // still lack the duty. When the minute sum itself is short, BREAK_TOO_SHORT already says so.
+  if (shortfall && !input.legacyBreakShortfall && nonCounted.tooShort + nonCounted.edge > 0) {
+    findings.push({
+      code: "BREAK_SEGMENT_TOO_SHORT",
+      certainty: "VIOLATION",
+      legalBasis: rules.legalBasis.segment,
+      intervals: restPeriods
+        .filter((p) => p.status === "TOO_SHORT" || p.status === "EDGE")
+        .map((p) => ({ startTime: p.startTime, endTime: p.endTime })),
+      nonCounted,
+      requiredMin,
+      qualifyingMin,
+    });
+  }
+
+  // Minors only: a pause outside the window of § 11 Abs. 2 S. 1 is reported and not counted.
+  if (nonCounted.outsideWindow > 0 && requiredMin > 0) {
+    findings.push({
+      code: "BREAK_OUTSIDE_WINDOW",
+      certainty: "VIOLATION",
+      legalBasis: rules.legalBasis.window ?? rules.legalBasis.segment,
+      intervals: restPeriods
+        .filter((p) => p.status === "OUTSIDE_WINDOW")
+        .map((p) => ({ startTime: p.startTime, endTime: p.endTime })),
+      nonCounted,
+      requiredMin,
+      qualifyingMin,
+    });
+  }
+
   return { restPeriods, blocks, compliance, nonCounted, findings };
+}
+
+/**
+ * The unrecorded remainder of every gap between different salons: the gap minus the recorded day
+ * breaks inside it (D-07). Travel is working time, but part of the gap may have been free; the
+ * kernel cannot know which part, so the remainder is the span whose status is open.
+ */
+function crossSalonRemainders(input: PlacementInput): Array<[number, number]> {
+  const recorded = input.breakSegments
+    .filter((seg) => seg.source === "day-break" && seg.startTime !== null && seg.endTime !== null)
+    .map((seg) => [(seg.startTime as Date).getTime(), (seg.endTime as Date).getTime()] as const)
+    .sort((a, b) => a[0] - b[0]);
+  const remainders: Array<[number, number]> = [];
+  for (const gap of input.gaps) {
+    if (!gap.crossSalon) continue;
+    const gapEnd = gap.endTime.getTime();
+    let cursor = gap.startTime.getTime();
+    for (const [s, e] of recorded) {
+      if (e <= cursor || s >= gapEnd) continue;
+      if (s > cursor) remainders.push([cursor, s]);
+      cursor = Math.max(cursor, e);
+    }
+    if (gapEnd > cursor) remainders.push([cursor, gapEnd]);
+  }
+  return remainders;
 }
 
 /**
@@ -323,13 +389,72 @@ export function evaluatePlacement(
       positionUnknown: false,
     };
   }
-  const run = runCase(input, rules, []);
+  // Worst case: every unrecorded minute between salons is working time (travel).
+  const worst = runCase(input, rules, []);
+  let findings = worst.findings;
+
+  // Best case (D-07, D-22a A3): the whole unrecorded remainder is free time. The free share placed
+  // at the start or at the end of a gap collapses to this one case, because the share is the whole
+  // remainder. A finding present in both cases is certain, one only in the worst case is unclear,
+  // one only in the best case is dropped.
+  const remainders = crossSalonRemainders(input);
+  if (remainders.length > 0) {
+    const best = runCase(input, rules, remainders);
+    findings = worst.findings.map((f) => ({
+      ...f,
+      certainty: best.findings.some((b) => b.code === f.code) ? "VIOLATION" : "UNCLEAR",
+    }));
+  }
+
+  // D-06: breaks without a position decide the result only when a block over the limit carries
+  // them, or when the duty is met only because of them. Never a violation, never silently fine.
+  const limitMs = rules.maxBlockMin * MS_PER_MIN;
+  const { compliance } = worst;
+  const positionUnknown =
+    !input.legacyBreakShortfall &&
+    compliance.unplacedMin > 0 &&
+    (worst.blocks.some(
+      (b) =>
+        b.endTime.getTime() - b.startTime.getTime() > limitMs && b.positionUnknownBreakMinutes > 0,
+    ) ||
+      (compliance.requiredMin > 0 && compliance.qualifyingMin < compliance.requiredMin));
+  if (positionUnknown) {
+    findings = [
+      ...findings,
+      {
+        code: "BREAK_POSITION_UNKNOWN",
+        certainty: null,
+        legalBasis: `${rules.legalBasis.segment} und ${rules.legalBasis.block}`,
+        intervals: [],
+      },
+    ];
+  }
+
   return {
     regime: rules.regime,
-    restPeriods: run.restPeriods,
-    blocks: run.blocks,
-    compliance: run.compliance,
-    findings: run.findings,
-    positionUnknown: false,
+    restPeriods: worst.restPeriods,
+    blocks: worst.blocks,
+    compliance,
+    findings,
+    positionUnknown,
   };
+}
+
+/**
+ * The canonical serialisation of the day's non-hint findings, bound into an acknowledgement
+ * snapshot (D-12, D-22a A8): a break that moves changes it, so the acknowledgement goes stale. Empty
+ * when the day has no finding with a certainty. Locale-free on purpose (plain code-unit order, the
+ * same reason as the ordinal id sort of the kernel): the key must be identical on every runtime.
+ */
+export function placementKey(p: PlacementEvaluation): string {
+  const certain = p.findings.filter((f) => f.certainty !== null);
+  if (certain.length === 0) return "";
+  const parts = certain
+    .map(
+      (f) =>
+        `${f.code}:${f.certainty}:` +
+        f.intervals.map((i) => `${i.startTime.getTime()}-${i.endTime.getTime()}`).join(","),
+    )
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return `${p.regime}|${parts.join("|")}`;
 }
