@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.16.0](https://github.com/sebastianzabel/clokr/compare/v1.15.0...v1.16.0) (2026-10-09)
+
+
+### Features
+
+* **80:** Tagesbezogene Pausenprüfung über Salongrenzen hinweg ([#519](https://github.com/sebastianzabel/clokr/issues/519)) ([a74c4e1](https://github.com/sebastianzabel/clokr/commit/a74c4e168569b4cfd8f3cd9114f20f4f82520c1a))
+
+
+### Bug Fixes
+
+* **515:** aktueller Ort in der Navigation auf Mobile und Tablet sichtbar und für Screenreader markiert ([#517](https://github.com/sebastianzabel/clokr/issues/517)) ([f58d695](https://github.com/sebastianzabel/clokr/commit/f58d69574ec65c13c3b3211fe080b2b4b08a96a0))
+* **80:** Kalender bei Deep-Link mit ?date= am Monatsersten verankern ([#520](https://github.com/sebastianzabel/clokr/issues/520)) ([d01fa2c](https://github.com/sebastianzabel/clokr/commit/d01fa2c57d118d3c5abffceac45681b1a91e8ad6))
+* **deps:** raise fast-jwt override to &gt;=6.3.4 (GHSA-ww5h-9m49-7xx4 and three high advisories) ([#521](https://github.com/sebastianzabel/clokr/issues/521)) ([3d213ac](https://github.com/sebastianzabel/clokr/commit/3d213aceaf2eb0d91cb58b83d01eef776db0d175))
+
 ## [1.15.0](https://github.com/sebastianzabel/clokr/compare/v1.14.1...v1.15.0) (2026-10-07)
 
 
