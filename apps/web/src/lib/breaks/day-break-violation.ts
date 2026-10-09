@@ -1,10 +1,12 @@
 /**
  * day-break-violation.ts
  *
- * Issue #80 (D-09 / D-11 / D-20) — presentation helpers for the SERVER-computed day check
- * (`GET /api/v1/day-breaks/checks`). The browser never computes a cross-salon finding itself:
- * a salon-scoped manager's entry list is partial, so a client-side sum would under-report the
- * day, and a redacted day deliberately carries no times to compute from.
+ * Issue #80 (D-09 / D-11 / D-20) + Issue #511 (D-10 / D-12 / D-18) — presentation helpers for the
+ * SERVER-computed day check (`GET /api/v1/day-breaks/checks`). The browser never computes a break
+ * finding itself, neither the cross-salon sum nor the § 4 Satz 2/3 placement: a salon-scoped
+ * manager's entry list is partial, so a client-side sum would under-report the day, and a redacted
+ * day deliberately carries no times to compute from. Markers, badges, toasts and chips are built
+ * from the day check's `warnings` and `breakFinding`; no threshold and no § 4 sentence lives here.
  *
  * Lives in `$lib` because route pages cannot be mounted in this repo's vitest setup
  * (apps/web/vitest.config.ts deliberately excludes the SvelteKit pipeline). Pure module: type
@@ -42,6 +44,23 @@ export interface DayCheckAcknowledgement {
 }
 
 /**
+ * One server-built finding of a day (mirror of `ArbZGWarning` as `GET /day-breaks/checks` and the
+ * save responses return it). The `message` is final text; the browser renders it as it is.
+ */
+export interface DayCheckWarning {
+  code: string;
+  severity: "warning" | "error";
+  message: string;
+  /** Satz-2/3 findings only: a certain violation or one that unrecorded travel decides. */
+  certainty?: "VIOLATION" | "UNCLEAR";
+  legalBasis?: string;
+  /** A hint (position of the break not recorded) never counts as a finding or a marker. */
+  hint?: true;
+  waived?: true;
+  crossSalon?: true;
+}
+
+/**
  * Mirror of the `DayCheck` of `apps/api/src/contexts/time-tracking/api/day-breaks.ts`.
  * `detail: "redacted"` means the caller's reach covers only part of the day: totals and the
  * finding are present, `entries`, `gaps`, `dayBreaks` and `acknowledgement` are null.
@@ -56,6 +75,12 @@ export interface DayCheck {
   requiredBreakMinutes: number;
   breakShortfall: boolean;
   maxDailyExceeded: boolean;
+  /** The day carries a finding a manager can acknowledge (cross-salon shortfall or Satz 2/3). */
+  breakFinding: boolean;
+  /** A break exists whose position is not recorded, so Satz 2/3 could not be checked. */
+  positionUnknown: boolean;
+  /** The day's complete server-built finding list (§ 3, § 4 / § 11 and placement items). */
+  warnings: DayCheckWarning[];
   acknowledged: boolean;
   locked: boolean;
   mayAcknowledge: boolean;
@@ -107,49 +132,45 @@ export function hoursDe(minutes: number): string {
 }
 
 /**
- * The badge a cross-salon § 4 finding gets on its day; null when there is no such finding.
- * An acknowledged day keeps a quiet marker so the trail stays visible (D-08, Revisionssicherheit).
+ * The badge a day with a break finding gets; null when the server reports no finding. The #80
+ * cross-salon labels stay as they were; every other finding (Satz 2/3 on a single-salon day, or
+ * on a cross-salon day without a Satz-1 shortfall) reads "Pausenregel verletzt", or "Pause:
+ * Klärung nötig" while an UNCLEAR finding is open. An acknowledged day keeps a quiet marker so
+ * the trail stays visible (D-08, Revisionssicherheit).
  */
 export function dayCheckBadge(check: DayCheck): DayCheckBadge | null {
-  if (!check.crossSalon || !check.breakShortfall) return null;
-  return check.acknowledged
-    ? { cls: "badge-gray", label: "Salonübergreifend: quittiert" }
-    : { cls: "badge-yellow", label: "Salonübergreifend: Pause fehlt" };
+  if (!check.breakFinding) return null;
+  if (check.crossSalon && check.breakShortfall) {
+    return check.acknowledged
+      ? { cls: "badge-gray", label: "Salonübergreifend: quittiert" }
+      : { cls: "badge-yellow", label: "Salonübergreifend: Pause fehlt" };
+  }
+  if (check.acknowledged) return { cls: "badge-gray", label: "Pausenverstoß: quittiert" };
+  const unclear = (check.warnings ?? []).some((w) => !w.hint && w.certainty === "UNCLEAR");
+  return unclear
+    ? { cls: "badge-yellow", label: "Pause: Klärung nötig" }
+    : { cls: "badge-yellow", label: "Pausenregel verletzt" };
 }
 
 /**
- * The calendar-marker warnings of one server day. § 4 is downgraded to a warning once the day is
- * acknowledged (the API waives only the § 4 finding); the § 3 daily cap is never waived (D-18).
+ * The calendar-marker warnings of one server day: the server's `warnings` in server order, hints
+ * excluded (a hint never becomes a marker, A5). Nothing is composed or compared here; an API
+ * without the field yields [].
  */
 export function dayCheckWarnings(check: DayCheck): DayWarning[] {
-  const warnings: DayWarning[] = [];
-  const cross = check.crossSalon ? " (salonübergreifend)" : "";
+  return (check.warnings ?? [])
+    .filter((w) => !w.hint)
+    .map((w) => ({ code: w.code, severity: w.severity, message: w.message }));
+}
 
-  if (check.breakShortfall) {
-    const severity: DayWarning["severity"] =
-      check.requiredBreakMinutes === 45 && !check.acknowledged ? "error" : "warning";
-    const acked = check.acknowledged ? " – quittiert" : "";
-    warnings.push({
-      code: "BREAK_TOO_SHORT",
-      severity,
-      message:
-        `§ 4 ArbZG${cross}: Insgesamt ${hoursDe(check.netWorkedMinutes)} h gearbeitet, ` +
-        `${Math.round(check.totalBreakMinutes)} Min Pause erfasst, ` +
-        `${check.requiredBreakMinutes} Min vorgeschrieben${acked}.`,
-    });
+/** Date -> marker warnings for every server day that has at least one non-hint warning. */
+export function dayChecksToArbzgMap(days: DayCheck[]): Map<string, DayWarning[]> {
+  const map = new Map<string, DayWarning[]>();
+  for (const day of days) {
+    const warnings = dayCheckWarnings(day);
+    if (warnings.length > 0) map.set(day.date, warnings);
   }
-
-  if (check.maxDailyExceeded) {
-    warnings.push({
-      code: "MAX_DAILY_EXCEEDED",
-      severity: "error",
-      message:
-        `§ 3 ArbZG${cross}: Tägliche Höchstarbeitszeit von 10 Stunden überschritten ` +
-        `(${hoursDe(check.netWorkedMinutes)} h).`,
-    });
-  }
-
-  return warnings;
+  return map;
 }
 
 /**
@@ -162,9 +183,10 @@ export function mergeDayChecksIntoArbzgMap(
   days: DayCheck[],
 ): Map<string, DayWarning[]> {
   const merged = new Map(clientMap);
+  const server = dayChecksToArbzgMap(days);
   for (const day of days) {
-    const warnings = dayCheckWarnings(day);
-    if (warnings.length > 0) merged.set(day.date, warnings);
+    const warnings = server.get(day.date);
+    if (warnings) merged.set(day.date, warnings);
     else merged.delete(day.date);
   }
   return merged;
@@ -210,12 +232,15 @@ export interface MonthCloseHint {
 
 /**
  * The display-only chip of the admin month-close page for the days on which an employee's
- * cross-salon § 4 ArbZG break is still missing and unacknowledged (D-09b / D-15). `days` is the
- * API's `crossSalonBreakDays` ("YYYY-MM-DD"); a malformed entry is dropped rather than printed.
- * Null when nothing is open — the chip then does not render. The chip decides nothing: whether
- * the close is blocked is the server's rule (tenant flag), this only makes the reason visible.
+ * § 4 ArbZG / § 11 JArbSchG break finding is still open and unacknowledged (D-09b / D-12 / D-15).
+ * `days` is the API's `breakFindingDays` ("YYYY-MM-DD"); a malformed entry is dropped rather than
+ * printed. Null when nothing is open — the chip then does not render. The chip decides nothing:
+ * whether the close is blocked is the server's rule (tenant flag), this only makes the reason
+ * visible.
  */
-export function crossSalonMonthCloseHint(days: string[] | null | undefined): MonthCloseHint | null {
+export function breakFindingMonthCloseHint(
+  days: string[] | null | undefined,
+): MonthCloseHint | null {
   if (!Array.isArray(days)) return null;
   const valid = days.filter((d) => typeof d === "string" && DAY_KEY.test(d));
   if (valid.length === 0) return null;
@@ -226,9 +251,9 @@ export function crossSalonMonthCloseHint(days: string[] | null | undefined): Mon
     .join(", ");
   const more = valid.length > 3 ? ` (+${valid.length - 3} weitere)` : "";
   return {
-    label: `Pause fehlt (salonübergreifend) (${valid.length})`,
+    label: `Pausenverstoß offen (${valid.length})`,
     title:
-      `Salonübergreifend fehlende Pflichtpause (§ 4 ArbZG) an: ${shown}${more}; ` +
-      "vor dem Abschluss eine Pause erfassen oder quittieren.",
+      `Offener Pausenverstoß (§ 4 ArbZG / § 11 JArbSchG) an: ${shown}${more}; ` +
+      "vor dem Abschluss eine Pause erfassen oder den Tag quittieren.",
   };
 }

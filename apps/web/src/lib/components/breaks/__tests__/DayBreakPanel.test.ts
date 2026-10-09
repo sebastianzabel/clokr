@@ -18,6 +18,9 @@ function check(over: Partial<DayCheck> = {}): DayCheck {
     requiredBreakMinutes: 30,
     breakShortfall: true,
     maxDailyExceeded: false,
+    breakFinding: true,
+    positionUnknown: false,
+    warnings: [],
     acknowledged: false,
     locked: false,
     mayAcknowledge: false,
@@ -56,7 +59,12 @@ const redacted = (over: Partial<DayCheck> = {}) =>
 describe("DayBreakPanel", () => {
   it("renders nothing without a cross-salon finding and without a recorded day break", () => {
     renderWithTheme(DayBreakPanel, {
-      check: check({ crossSalon: false, breakShortfall: false, dayBreaks: [] }),
+      check: check({
+        crossSalon: false,
+        breakShortfall: false,
+        breakFinding: false,
+        dayBreaks: [],
+      }),
     });
     expect(screen.queryByTestId("day-break-panel")).toBeNull();
   });
