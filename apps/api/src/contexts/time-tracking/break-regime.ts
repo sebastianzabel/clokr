@@ -106,3 +106,16 @@ export function breakRegimeFor(minorOnWorkDate: boolean): BreakRegime {
 export const LOWEST_BREAK_DUTY_MIN: number = Math.min(
   ...Object.values(BREAK_REGIMES).flatMap((rules) => rules.thresholds.map((band) => band.overMin)),
 );
+
+/**
+ * True when an apprentice has no birth date on file (Issue #511, D-05). Only for an apprentice is a
+ * missing birth date a likely § 11 JArbSchG gap worth naming in a finding: the regime falls back to
+ * § 4 ArbZG (fail-open) and the finding says so. "AZUBI" is the enum value of
+ * `Employee.classification`, not a display string.
+ */
+export function isApprenticeWithoutBirthDate(employee: {
+  classification: string | null | undefined;
+  birthDate: Date | null | undefined;
+}): boolean {
+  return employee.classification === "AZUBI" && !employee.birthDate;
+}

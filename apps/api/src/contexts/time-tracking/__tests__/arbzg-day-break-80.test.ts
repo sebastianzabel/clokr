@@ -222,11 +222,40 @@ describe("checkArbZG honours real DayBreak and DayBreakAck rows (Issue #80)", ()
     });
   });
 
-  it("80-AC6: a single-entry day issues no day-break and no acknowledgement read", async () => {
-    serveDay([row(salonA, "08:00", "16:00")]);
+  // Issue #511 (D-12): the original 80-AC6 case used 08:00-16:00 without a break. That day now
+  // carries an ackable Satz-3 finding (8 h in a row), so by design it reads the acknowledgements.
+  // The intent of 80-AC6 — a day WITHOUT a finding issues no extra query — moves to a finding-free
+  // 08:00-14:00 day; the finding day gets its own case below. Nothing is weakened: both counts of
+  // the original assertion are still 0 for the day the rule is about.
+  it("80-AC6: a finding-free single-entry day issues no day-break and no acknowledgement read", async () => {
+    serveDay([row(salonA, "08:00", "14:00")]);
     await checkArbZG(app.prisma, data.employee.id, DAY_DATE);
     expect(breakSpy).toHaveBeenCalledTimes(0);
     expect(ackSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("D-12: a single-entry day with a Satz-3 finding issues exactly one acknowledgement read and no day-break read", async () => {
+    serveDay([row(salonA, "08:00", "16:00")]);
+    await checkArbZG(app.prisma, data.employee.id, DAY_DATE);
+    expect(breakSpy).toHaveBeenCalledTimes(0);
+    expect(ackSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("D-12: a current acknowledgement on a single-entry finding day marks BREAK_TOO_LATE waived", async () => {
+    const rows = [row(salonA, "08:00", "16:00")];
+    serveDay(rows);
+    const before = await checkArbZG(app.prisma, data.employee.id, DAY_DATE);
+    // anti-vacuity: without the acknowledgement the finding stands and is not waived
+    const lateBefore = before.filter((w) => w.code === "BREAK_TOO_LATE");
+    expect(lateBefore).toHaveLength(1);
+    expect("waived" in lateBefore[0]).toBe(false);
+
+    await makeAck(snapshotOf(rows));
+    const after = await checkArbZG(app.prisma, data.employee.id, DAY_DATE);
+    const late = after.filter((w) => w.code === "BREAK_TOO_LATE");
+    expect(late).toHaveLength(1);
+    expect(late[0].waived).toBe(true);
+    expect(late[0].severity).toBe("warning");
   });
 
   it("80-AC6: a two-entry day issues exactly one day-break and one acknowledgement read", async () => {

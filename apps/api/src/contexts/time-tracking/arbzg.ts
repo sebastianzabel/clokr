@@ -11,14 +11,15 @@ import {
   hasVocationalSchoolDay, // Phase 100B Plan 12 — A6
   getVocationalSchoolDays, // Phase 100B Plan 12 — A6
   BS_DAILY_DEFAULT_MIN,
+  isMinorAtDate, // Issue #511 (D-05) — the one under-18 decision
 } from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 import type { TimeEntry } from "@clokr/db";
 import { findEntriesOfDay } from "./day-entries"; // Phase 69b — the single day lookup
 import { addWorkingMinutes } from "./entry-durations"; // Phase 79 (Issue #79), D-03/D-12
-import { evaluateDayBreaks } from "./day-break-rule"; // Issue #80 — the day-level § 4/§ 3 rule
+import { evaluateDayBreaks, hasAckableFinding } from "./day-break-rule"; // Issue #80 — the day-level § 4/§ 3 rule, #511 D-12
 import type { DayBreakEvaluation, DayBreakRow } from "./day-break-rule"; // Issue #80
 import { listDayBreaksOfDay, listAcksOfDay, loadBreaksOfEntries } from "./day-break-store"; // Issue #80 (D-06), #511 (D-15)
-import { BREAK_REGIMES } from "./break-regime"; // Issue #511 — the thresholds the messages quote
+import { BREAK_REGIMES, breakRegimeFor, isApprenticeWithoutBirthDate } from "./break-regime"; // Issue #511 — the thresholds the messages quote, D-05 regime
 import type { PlacementCertainty, PlacementFinding } from "./day-break-placement"; // Issue #511
 
 // Phase 69b: in-memory equivalents of the former `findFirst({ endTime: { not: null }, orderBy })`
@@ -76,57 +77,6 @@ export interface ArbZGWarning {
   hint?: true;
 }
 
-/**
- * Builds the § 4 (break) and § 3 (daily maximum) findings of one day from its evaluation.
- *
- * Message templates, severities and key order are the pre-80 ones. `crossSalon: true` is appended
- * on a cross-salon day (D-01/D-18). MAX_DAILY_EXCEEDED is an "error" always — an acknowledgement
- * waives only the § 4 finding, never the § 3 day sum (D-18).
- */
-export function dayLimitWarnings(
-  evaluation: DayBreakEvaluation,
-  bsMinutesToday: number,
-): ArbZGWarning[] {
-  const warnings: ArbZGWarning[] = [];
-  const { netWorkedMin, totalBreakMin, waived, crossSalon } = evaluation;
-  const crossFlag = crossSalon ? { crossSalon: true as const } : {};
-
-  // § 4 ArbZG – Ruhepausenvorschrift
-  // Phase 91 (BREAK-03): a waived day downgrades the >9h branch from "error" to "warning" and flags
-  // waived:true — the >6h branch is already a "warning" and only gets the waived flag added.
-  if (evaluation.requiredBreakMin === 45 && evaluation.breakShortfall) {
-    warnings.push({
-      code: "BREAK_TOO_SHORT",
-      severity: waived ? "warning" : "error", // waived → downgrade from blocking error
-      message: `§ 4 ArbZG: Bei über 9 Stunden Arbeitszeit sind mindestens 45 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
-      ...(waived ? { waived: true } : {}),
-      ...crossFlag,
-    });
-  } else if (evaluation.requiredBreakMin === 30 && evaluation.breakShortfall) {
-    warnings.push({
-      code: "BREAK_TOO_SHORT",
-      severity: "warning",
-      message: `§ 4 ArbZG: Bei über 6 Stunden Arbeitszeit sind mindestens 30 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
-      ...(waived ? { waived: true } : {}),
-      ...crossFlag,
-    });
-  }
-
-  // § 3 ArbZG – Tägliche Höchstarbeitszeit (10h absolut, 8h nur als 24-Wochen-Schnitt relevant)
-  // Phase 63 D-06: mixed-day rule — BS-Zeit + WORK-Zeit > 10h → MAX_DAILY_EXCEEDED.
-  const dailyTotalMin = netWorkedMin + bsMinutesToday;
-  if (dailyTotalMin > 10 * 60) {
-    warnings.push({
-      code: "MAX_DAILY_EXCEEDED",
-      severity: "error",
-      message: `§ 3 ArbZG: Tägliche Höchstarbeitszeit von 10 Stunden überschritten. Erfasst: ${(dailyTotalMin / 60).toFixed(1)} h.`,
-      ...crossFlag,
-    });
-  }
-
-  return warnings;
-}
-
 const CLARIFICATION_NOTE = "Klärung nötig: Fahrzeit oder Pause?";
 const BIRTH_DATE_MISSING_NOTE =
   "Geburtsdatum nicht hinterlegt – geprüft nach § 4 ArbZG, für Jugendliche gilt § 11 JArbSchG.";
@@ -154,6 +104,76 @@ function rangesText(finding: PlacementFinding, tz: string): string {
         `${formatInTimeZone(i.startTime, tz, "HH:mm")}–${formatInTimeZone(i.endTime, tz, "HH:mm")}`,
     )
     .join(", ");
+}
+
+/**
+ * Builds the § 4 (break) and § 3 (daily maximum) findings of one day from its evaluation.
+ *
+ * Message templates, severities and key order are the pre-80 ones. `crossSalon: true` is appended
+ * on a cross-salon day (D-01/D-18). MAX_DAILY_EXCEEDED is an "error" always — an acknowledgement
+ * waives only the § 4 finding, never the § 3 day sum (D-18).
+ */
+export function dayLimitWarnings(
+  evaluation: DayBreakEvaluation,
+  bsMinutesToday: number,
+  options?: { birthDateMissing?: boolean },
+): ArbZGWarning[] {
+  const warnings: ArbZGWarning[] = [];
+  const { netWorkedMin, totalBreakMin, waived, crossSalon } = evaluation;
+  const crossFlag = crossSalon ? { crossSalon: true as const } : {};
+  const birthDateNote = options?.birthDateMissing ? ` ${BIRTH_DATE_MISSING_NOTE}` : "";
+
+  // Issue #511 (D-05): an employee under 18 on the work date is checked under § 11 Abs. 1 JArbSchG.
+  // The adult branches below are untouched, so the two-argument call for an adult day returns the
+  // pre-80 strings byte for byte (day-break-equivalence-80).
+  const minorRules = BREAK_REGIMES.JARBSCHG_11;
+  if (evaluation.placement.regime === "JARBSCHG_11") {
+    if (evaluation.breakShortfall) {
+      // The matched duty band; the highest band is the one that blocks (mirror of the adult 45 min).
+      const band = minorRules.thresholds.find((b) => b.requiredMin === evaluation.requiredBreakMin);
+      const highest = minorRules.thresholds[0];
+      warnings.push({
+        code: "BREAK_TOO_SHORT",
+        severity: band === highest && !waived ? "error" : "warning",
+        message: `§ 11 Abs. 1 JArbSchG: Bei mehr als ${hoursText(band?.overMin ?? 0)} Stunden Arbeitszeit sind mindestens ${evaluation.requiredBreakMin} Minuten Ruhepause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
+        ...(waived ? { waived: true } : {}),
+        ...crossFlag,
+      });
+    }
+  } else if (evaluation.requiredBreakMin === 45 && evaluation.breakShortfall) {
+    // § 4 ArbZG – Ruhepausenvorschrift
+    // Phase 91 (BREAK-03): a waived day downgrades the >9h branch from "error" to "warning" and flags
+    // waived:true — the >6h branch is already a "warning" and only gets the waived flag added.
+    warnings.push({
+      code: "BREAK_TOO_SHORT",
+      severity: waived ? "warning" : "error", // waived → downgrade from blocking error
+      message: `§ 4 ArbZG: Bei über 9 Stunden Arbeitszeit sind mindestens 45 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.${birthDateNote}`,
+      ...(waived ? { waived: true } : {}),
+      ...crossFlag,
+    });
+  } else if (evaluation.requiredBreakMin === 30 && evaluation.breakShortfall) {
+    warnings.push({
+      code: "BREAK_TOO_SHORT",
+      severity: "warning",
+      message: `§ 4 ArbZG: Bei über 6 Stunden Arbeitszeit sind mindestens 30 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.${birthDateNote}`,
+      ...(waived ? { waived: true } : {}),
+      ...crossFlag,
+    });
+  }
+
+  // § 3 ArbZG – Tägliche Höchstarbeitszeit (10h absolut, 8h nur als 24-Wochen-Schnitt relevant)
+  // Phase 63 D-06: mixed-day rule — BS-Zeit + WORK-Zeit > 10h → MAX_DAILY_EXCEEDED.
+  const dailyTotalMin = netWorkedMin + bsMinutesToday;
+  if (dailyTotalMin > 10 * 60) {
+    warnings.push({
+      code: "MAX_DAILY_EXCEEDED",
+      severity: "error",
+      message: `§ 3 ArbZG: Tägliche Höchstarbeitszeit von 10 Stunden überschritten. Erfasst: ${(dailyTotalMin / 60).toFixed(1)} h.`,
+      ...crossFlag,
+    });
+  }
+
+  return warnings;
 }
 
 /**
@@ -272,6 +292,8 @@ export async function checkArbZG(
     select: {
       tenantId: true,
       isTimeTrackingExempt: true, // Phase 76.7 (D-05, ARBZG-V19-01)
+      birthDate: true, // Issue #511 (D-05) — decides the § 11 JArbSchG break regime
+      classification: true, // Issue #511 (D-05) — only an apprentice's missing birth date is noted
       workSchedules: {
         orderBy: { validFrom: "desc" },
         take: 1,
@@ -372,6 +394,10 @@ export async function checkArbZG(
     // Issue #80 (80-AC6): gap breaks and acknowledgements are read only when the day has two or
     // more closed WORK rows — a single-entry day issues no extra query and stays unchanged.
     const dayParams = { tenantId: employee.tenantId, employeeId, date: new Date(dateStr) };
+    // Issue #511 (D-05): the regime follows the employee's age ON THE WORK DATE (UTC-midnight date
+    // of the tenant-local day); a missing birth date is the adult regime, noted for apprentices.
+    const regime = breakRegimeFor(isMinorAtDate(employee.birthDate, dayParams.date));
+    const birthDateMissing = isApprenticeWithoutBirthDate(employee);
     const [dayBreaks, acks] =
       rows.length >= 2
         ? await Promise.all([
@@ -379,14 +405,27 @@ export async function checkArbZG(
             listAcksOfDay(prisma, dayParams),
           ])
         : [[], []];
-    const evaluation = evaluateDayBreaks({
+    let evaluation = evaluateDayBreaks({
       rows,
       dayBreaks,
       acks: acks.map((a) => ({ snapshot: a.snapshot })),
+      regime,
     });
-    warnings.push(...dayLimitWarnings(evaluation, bsMinutesToday));
+    // Issue #511 (D-12): a single-entry day can carry an ackable placement finding. Only such a day
+    // reads its acknowledgements (and re-evaluates with them); a finding-free single-entry day
+    // still issues no extra query (80-AC6 intent). A single entry has no gap, so no day breaks.
+    if (rows.length === 1 && hasAckableFinding(evaluation)) {
+      const singleDayAcks = await listAcksOfDay(prisma, dayParams);
+      evaluation = evaluateDayBreaks({
+        rows,
+        dayBreaks,
+        acks: singleDayAcks.map((a) => ({ snapshot: a.snapshot })),
+        regime,
+      });
+    }
+    warnings.push(...dayLimitWarnings(evaluation, bsMinutesToday, { birthDateMissing }));
     // Issue #511 (D-10): the Satz-2/3 findings, appended after the Phase-80 ones.
-    warnings.push(...placementWarnings(evaluation, { tz, detail: "full" }));
+    warnings.push(...placementWarnings(evaluation, { tz, detail: "full", birthDateMissing }));
 
     // § 5 ArbZG – Mindestruhezeit (11h zwischen Arbeitstagen)
     // Previous day: its last closed slot (any type).

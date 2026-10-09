@@ -6,7 +6,8 @@ import { describe, it, expect } from "vitest";
 import { fromZonedTime } from "date-fns-tz";
 import { evaluateDayBreaks } from "../day-break-rule";
 import type { DayBreakRow, DayBreakInterval } from "../day-break-rule";
-import { placementWarnings } from "../arbzg";
+import { placementWarnings, dayLimitWarnings } from "../arbzg";
+import { isApprenticeWithoutBirthDate } from "../break-regime";
 
 const TZ = "Europe/Berlin";
 const DAY = "2026-03-23";
@@ -185,5 +186,81 @@ describe("placementWarnings (Issue #511)", () => {
     const without = placementWarnings(ev, { tz: TZ, detail: "full" });
     expect(withNote.every((w) => w.message.includes("Geburtsdatum nicht hinterlegt"))).toBe(true);
     expect(without.some((w) => w.message.includes("Geburtsdatum nicht hinterlegt"))).toBe(false);
+  });
+});
+
+describe("dayLimitWarnings — § 11 JArbSchG branch and the birth-date note (Issue #511, D-05)", () => {
+  function minorDay(rows: DayBreakRow[]) {
+    return evaluateDayBreaks({ rows, dayBreaks: [], acks: [], regime: "JARBSCHG_11" });
+  }
+
+  it("above 6 h: BREAK_TOO_SHORT cites § 11 Abs. 1, names 60 minutes and is an error", () => {
+    const ev = minorDay([entry("e1", "08:00", "15:00", 30)]);
+    const out = dayLimitWarnings(ev, 0);
+    const short = out.filter((w) => w.code === "BREAK_TOO_SHORT");
+    expect(short).toHaveLength(1);
+    expect(short[0].severity).toBe("error");
+    expect(short[0].message).toBe(
+      "§ 11 Abs. 1 JArbSchG: Bei mehr als 6 Stunden Arbeitszeit sind mindestens 60 Minuten Ruhepause vorgeschrieben. Erfasst: 30 Min.",
+    );
+  });
+
+  it("between 4.5 h and 6 h: 30 minutes are required and the finding is a warning", () => {
+    const ev = minorDay([entry("e1", "08:00", "13:30", 0)]);
+    const short = dayLimitWarnings(ev, 0).filter((w) => w.code === "BREAK_TOO_SHORT");
+    expect(short).toHaveLength(1);
+    expect(short[0].severity).toBe("warning");
+    expect(short[0].message).toContain("Bei mehr als 4,5 Stunden");
+    expect(short[0].message).toContain("mindestens 30 Minuten");
+  });
+
+  it("a waived minor day downgrades the 60-minute band to a warning and flags waived", () => {
+    const waivedRow = { ...entry("e1", "08:00", "15:00", 30), breakStatus: "WAIVED" };
+    const short = dayLimitWarnings(minorDay([waivedRow]), 0).filter(
+      (w) => w.code === "BREAK_TOO_SHORT",
+    );
+    expect(short).toHaveLength(1);
+    expect(short[0].severity).toBe("warning");
+    expect(short[0].waived).toBe(true);
+  });
+
+  it("the same day under the adult regime keeps the pre-80 strings (two-argument call)", () => {
+    const ev = evaluate([entry("e1", "08:00", "15:00", 10)]);
+    const short = dayLimitWarnings(ev, 0).filter((w) => w.code === "BREAK_TOO_SHORT");
+    expect(short).toHaveLength(1);
+    expect(short[0].message).toBe(
+      "§ 4 ArbZG: Bei über 6 Stunden Arbeitszeit sind mindestens 30 Minuten Pause vorgeschrieben. Erfasst: 10 Min.",
+    );
+    expect(Object.keys(short[0])).toEqual(["code", "severity", "message"]);
+  });
+
+  it("birthDateMissing appends the note to BREAK_TOO_SHORT only, never to MAX_DAILY_EXCEEDED", () => {
+    // 11 h presence, 45 min break: net 10 h 15 min -> MAX_DAILY_EXCEEDED; a short break too.
+    const ev = evaluate([entry("e1", "06:00", "17:30", 10)]);
+    const out = dayLimitWarnings(ev, 0, { birthDateMissing: true });
+    const short = out.find((w) => w.code === "BREAK_TOO_SHORT");
+    const max = out.find((w) => w.code === "MAX_DAILY_EXCEEDED");
+    expect(short?.message).toContain("Geburtsdatum nicht hinterlegt");
+    expect(max).toBeDefined();
+    expect(max?.message).not.toContain("Geburtsdatum");
+    // without the option the strings are the pre-80 ones
+    const plain = dayLimitWarnings(ev, 0);
+    expect(plain.find((w) => w.code === "BREAK_TOO_SHORT")?.message).not.toContain("Geburtsdatum");
+  });
+});
+
+describe("isApprenticeWithoutBirthDate (Issue #511, D-05)", () => {
+  it("is true only for an AZUBI without a birth date", () => {
+    expect(isApprenticeWithoutBirthDate({ classification: "AZUBI", birthDate: null })).toBe(true);
+    expect(isApprenticeWithoutBirthDate({ classification: "AZUBI", birthDate: undefined })).toBe(
+      true,
+    );
+    expect(
+      isApprenticeWithoutBirthDate({ classification: "AZUBI", birthDate: new Date("2009-01-01") }),
+    ).toBe(false);
+    expect(isApprenticeWithoutBirthDate({ classification: "VOLLZEIT", birthDate: null })).toBe(
+      false,
+    );
+    expect(isApprenticeWithoutBirthDate({ classification: null, birthDate: null })).toBe(false);
   });
 });

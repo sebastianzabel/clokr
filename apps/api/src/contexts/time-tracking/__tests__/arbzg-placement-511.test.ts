@@ -2,7 +2,7 @@
 // store, checkArbZG appends the Satz-2/3 findings, and POST /time-entries returns them in its
 // `warnings`. Real database; the tenant time zone is Europe/Berlin (schema default).
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { fromZonedTime } from "date-fns-tz";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
@@ -159,6 +159,74 @@ describe("checkArbZG reports Satz-2/3 findings from the day's Break rows (Issue 
     ]) {
       expect(warnings.some((w) => w.code === code)).toBe(false);
     }
+  });
+
+  describe("regime from the birth date (D-05)", () => {
+    const WORK_DAY = "2026-04-06";
+
+    async function setEmployee(fields: {
+      birthDate: Date | null;
+      classification?: "AZUBI" | "VOLLZEIT";
+    }) {
+      await app.prisma.employee.update({
+        where: { id: data.employee.id },
+        data: { birthDate: fields.birthDate, classification: fields.classification ?? "VOLLZEIT" },
+      });
+    }
+
+    afterEach(async () => {
+      await setEmployee({ birthDate: null, classification: "VOLLZEIT" });
+    });
+
+    it("two days before the 18th birthday: § 11 JArbSchG, 60 minutes above 6 h, no Satz-3 finding at 180/210", async () => {
+      await setEmployee({ birthDate: new Date("2008-04-08T00:00:00.000Z") });
+      await insertEntry(WORK_DAY, "08:00", "15:00", 30, [["11:00", "11:30"]]);
+      const warnings = await checkArbZG(app.prisma, data.employee.id, new Date(WORK_DAY));
+      const short = warnings.filter((w) => w.code === "BREAK_TOO_SHORT");
+      expect(short).toHaveLength(1);
+      expect(short[0].message.startsWith("§ 11 Abs. 1 JArbSchG")).toBe(true);
+      expect(short[0].message).toContain("60 Minuten");
+      expect(warnings.some((w) => w.code === "BREAK_TOO_LATE")).toBe(false);
+    });
+
+    it("a 271-minute block is a § 11 Abs. 2 S. 2 JArbSchG finding although the 60 minutes are met", async () => {
+      await setEmployee({ birthDate: new Date("2008-04-08T00:00:00.000Z") });
+      await insertEntry(WORK_DAY, "08:00", "15:00", 60, [["12:31", "13:31"]]);
+      const warnings = await checkArbZG(app.prisma, data.employee.id, new Date(WORK_DAY));
+      expect(warnings.some((w) => w.code === "BREAK_TOO_SHORT")).toBe(false);
+      const late = warnings.filter((w) => w.code === "BREAK_TOO_LATE");
+      expect(late).toHaveLength(1);
+      expect(late[0].legalBasis).toBe("§ 11 Abs. 2 S. 2 JArbSchG");
+      expect(late[0].message).toContain("4:31");
+    });
+
+    it("on the 18th birthday the day is checked under § 4 ArbZG only", async () => {
+      await setEmployee({ birthDate: new Date("2008-04-06T00:00:00.000Z") });
+      await insertEntry(WORK_DAY, "08:00", "16:00", 0);
+      const warnings = await checkArbZG(app.prisma, data.employee.id, new Date(WORK_DAY));
+      expect(warnings.some((w) => w.code === "BREAK_TOO_SHORT")).toBe(true);
+      expect(warnings.some((w) => w.code === "BREAK_TOO_LATE")).toBe(true);
+      expect(warnings.some((w) => w.message.includes("JArbSchG"))).toBe(false);
+    });
+
+    it("an apprentice without a birth date is checked under § 4 ArbZG and the note names the gap", async () => {
+      await setEmployee({ birthDate: null, classification: "AZUBI" });
+      await insertEntry(WORK_DAY, "08:00", "16:00", 0);
+      const warnings = await checkArbZG(app.prisma, data.employee.id, new Date(WORK_DAY));
+      const short = warnings.find((w) => w.code === "BREAK_TOO_SHORT");
+      const late = warnings.find((w) => w.code === "BREAK_TOO_LATE");
+      expect(short?.message.startsWith("§ 4 ArbZG")).toBe(true);
+      expect(short?.message).toContain("Geburtsdatum nicht hinterlegt");
+      expect(late?.message).toContain("Geburtsdatum nicht hinterlegt");
+    });
+
+    it("a non-apprentice without a birth date gets no note", async () => {
+      await setEmployee({ birthDate: null, classification: "VOLLZEIT" });
+      await insertEntry(WORK_DAY, "08:00", "16:00", 0);
+      const warnings = await checkArbZG(app.prisma, data.employee.id, new Date(WORK_DAY));
+      expect(warnings.length).toBeGreaterThan(0);
+      expect(warnings.some((w) => w.message.includes("Geburtsdatum"))).toBe(false);
+    });
   });
 
   describe("loadBreaksOfEntries (D-15, T-511-06)", () => {
