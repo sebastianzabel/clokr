@@ -478,38 +478,47 @@ describe("Phase 292 B — der zurückgestellte Monatsabschluss ist ein abfragbar
   }, 120_000);
 
   it("S7: GET /overtime/close-month/deferred liefert den Zustand; EMPLOYEE darf nicht", async () => {
-    const loginRes = await app.inject({
-      method: "POST",
-      url: "/api/v1/auth/login",
-      payload: { email: adminEmail, password: "test1234" },
-    });
-    const token = JSON.parse(loginRes.body).accessToken as string;
-    expect(token).toBeTruthy();
+    // The route reads the real clock. Pin only `Date` to the measured instant S1 uses, so the
+    // fixture's backlog (May–August) is what the route sees — without the pin, every further month
+    // that passes its day-10 window adds employees and turns this test red on the calendar alone
+    // (it did on 2026-10-11, when September crossed day 10).
+    vi.useFakeTimers({ toFake: ["Date"], now: MEASURED_NOW });
+    try {
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: adminEmail, password: "test1234" },
+      });
+      const token = JSON.parse(loginRes.body).accessToken as string;
+      expect(token).toBeTruthy();
 
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/overtime/close-month/deferred?detailed=true",
-      headers: { authorization: `Bearer ${token}` },
-    });
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body);
-    expect(body.employeeCount).toBe(4);
-    expect(body.oldestOpenMonth).toEqual({ year: 2026, month: 5 });
-    expect(body.severity).toBe("CRITICAL");
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/overtime/close-month/deferred?detailed=true",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.employeeCount).toBe(4);
+      expect(body.oldestOpenMonth).toEqual({ year: 2026, month: 5 });
+      expect(body.severity).toBe("CRITICAL");
 
-    // An employee-role token must not read the tenant-wide state.
-    const empLogin = await app.inject({
-      method: "POST",
-      url: "/api/v1/auth/login",
-      payload: { email: plainEmail, password: "test1234" },
-    });
-    const empToken = JSON.parse(empLogin.body).accessToken as string;
-    const forbidden = await app.inject({
-      method: "GET",
-      url: "/api/v1/overtime/close-month/deferred",
-      headers: { authorization: `Bearer ${empToken}` },
-    });
-    expect(forbidden.statusCode).toBe(403);
+      // An employee-role token must not read the tenant-wide state.
+      const empLogin = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: plainEmail, password: "test1234" },
+      });
+      const empToken = JSON.parse(empLogin.body).accessToken as string;
+      const forbidden = await app.inject({
+        method: "GET",
+        url: "/api/v1/overtime/close-month/deferred",
+        headers: { authorization: `Bearer ${empToken}` },
+      });
+      expect(forbidden.statusCode).toBe(403);
+    } finally {
+      vi.useRealTimers();
+    }
   }, 120_000);
 });
 
