@@ -16,7 +16,8 @@
     "leaveRequest",
     "parentalLeaveReduction",
     "dayBreak",
-    "dayBreakAck"
+    "dayBreakAck",
+    "timeEntryActivityShare"
   ],
   "exceptions": [
     {

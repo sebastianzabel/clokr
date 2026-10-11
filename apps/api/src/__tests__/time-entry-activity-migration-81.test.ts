@@ -2,7 +2,7 @@
  * Issue #81 — AK-4 / D-03 / D-19 and the data-path tracer of the activity kind.
  *
  * Executes the REAL migration text (never a restatement of it): the file is resolved by the
- * hard-coded directory constant below (never `readdirSync`), and the replay runs inside a
+ * hard-coded directory constant below (never a directory listing), and the replay runs inside a
  * `$transaction` that always ends by throwing a module-private sentinel, so nothing the replay does
  * lands in the shared test database. Same technique as `time-entry-salon-migration.test.ts` (Phase
  * 68b): assertions run AFTER the rejection, on values captured outside the callback (an assertion
