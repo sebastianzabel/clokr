@@ -181,6 +181,15 @@ const PLACEMENT_CODES = new Set([
 ]);
 
 /**
+ * Whether a day check carries a Satz-2/3 (§ 11 JArbSchG) placement finding. On such a day a break
+ * was usually TAKEN — too short, too late or outside the window — so the acknowledgement must not
+ * read "durchgearbeitet": that would record a false statement in an audit-relevant row.
+ */
+export function hasPlacementFinding(check: Pick<DayCheck, "warnings">): boolean {
+  return (check.warnings ?? []).some((w) => !w.hint && PLACEMENT_CODES.has(w.code));
+}
+
+/**
  * The toast text for a break finding that the API returned with a save (POST / PUT of an entry,
  * clock-out) — Issue #80 D-09a + Issue #511 D-10. `warnings` is the raw response field and is read
  * defensively: anything that is not an object with a string code (no field, empty, malformed)

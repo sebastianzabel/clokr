@@ -351,4 +351,27 @@ describe("DayBreakPanel", () => {
     expect(text).toContain("SERVER § 3 ArbZG zehn Stunden");
     expect(text).not.toContain("Die Tagessumme liegt über der Höchstarbeitszeit");
   });
+  // Issue #511 (Sichtprüfung 11.10.): on a placement finding a break was taken but does not count,
+  // so "durchgearbeitet" would put a false statement into the acknowledgement.
+  it("names a placement acknowledgement „Pausenverstoß quittieren“, never „durchgearbeitet“", async () => {
+    renderWithTheme(DayBreakPanel, {
+      check: single({ mayAcknowledge: true }),
+      onAcknowledge: vi.fn().mockResolvedValue(undefined),
+    });
+    const button = screen.getByTestId("day-break-ack");
+    expect(button.textContent?.trim()).toBe("Pausenverstoß quittieren");
+    await fireEvent.click(button);
+    expect(await screen.findByText("Pausenverstoß quittieren?")).toBeTruthy();
+    expect(screen.queryByText(/durchgearbeitet/)).toBeNull();
+  });
+
+  it("keeps „durchgearbeitet“ for the cross-salon Satz-1 day without a placement finding", () => {
+    renderWithTheme(DayBreakPanel, {
+      check: check({ mayAcknowledge: true, warnings: [] }),
+      onAcknowledge: vi.fn(),
+    });
+    expect(screen.getByTestId("day-break-ack").textContent?.trim()).toBe(
+      "Als „durchgearbeitet“ quittieren",
+    );
+  });
 });

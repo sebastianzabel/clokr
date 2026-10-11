@@ -18,7 +18,12 @@
    * flags `mayAcknowledge` / `mayRecordDayBreak`; the routes enforce them independently.
    */
   import ReasonDialog from "$components/ui/ReasonDialog.svelte";
-  import { dayCheckBadge, hoursDe, type DayCheck } from "$lib/breaks/day-break-violation";
+  import {
+    dayCheckBadge,
+    hasPlacementFinding,
+    hoursDe,
+    type DayCheck,
+  } from "$lib/breaks/day-break-violation";
 
   interface Props {
     check: DayCheck;
@@ -109,19 +114,27 @@
     dialogOpen = true;
   }
 
+  // A placement finding (Satz 2/3, § 11 JArbSchG) means a break was taken but does not count —
+  // "durchgearbeitet" would be untrue there; only the cross-salon Satz-1 case keeps that wording.
+  const placementFinding = $derived(hasPlacementFinding(check));
+
   const dialogTitle = $derived(
     action?.kind === "delete"
       ? "Tagespause löschen?"
       : action?.kind === "revoke"
         ? "Quittung widerrufen?"
-        : "Ohne ausreichende Pause durchgearbeitet bestätigen?",
+        : placementFinding
+          ? "Pausenverstoß quittieren?"
+          : "Ohne ausreichende Pause durchgearbeitet bestätigen?",
   );
   const dialogDescription = $derived(
     action?.kind === "delete"
       ? "Die Pause wird nicht mehr gezählt. Der Eintrag bleibt zur Nachvollziehbarkeit gespeichert."
       : action?.kind === "revoke"
         ? "Der Pausenverstoß dieses Tages gilt danach wieder als offen."
-        : "Die Quittung ersetzt keine Pause. Sie hält fest, dass der Tag ohne ausreichende Pause geleistet wurde.",
+        : placementFinding
+          ? "Die Quittung ändert keinen Eintrag und ersetzt keine Pause. Sie hält fest, dass der Befund geprüft und begründet wurde; der Verstoß bleibt dokumentiert."
+          : "Die Quittung ersetzt keine Pause. Sie hält fest, dass der Tag ohne ausreichende Pause geleistet wurde.",
   );
   const dialogConfirmLabel = $derived(
     action?.kind === "delete" ? "Löschen" : action?.kind === "revoke" ? "Widerrufen" : "Quittieren",
@@ -242,7 +255,7 @@
             data-testid="day-break-ack"
             onclick={() => askReason({ kind: "acknowledge" })}
           >
-            Als „durchgearbeitet“ quittieren
+            {placementFinding ? "Pausenverstoß quittieren" : "Als „durchgearbeitet“ quittieren"}
           </button>
         </div>
       {/if}
