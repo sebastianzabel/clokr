@@ -849,7 +849,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const entry = await app.prisma.timeEntry.findFirst({
         where: { id, deletedAt: null },
-        include: { employee: { select: { tenantId: true } } },
+        include: {
+          employee: { select: { tenantId: true } },
+          // Issue #81 (D-05): the stored breaks and shares, for the check before the append.
+          breaks: { select: { startTime: true, endTime: true } },
+          activityShares: { select: { kind: true, minutes: true } },
+        },
       });
       // T-100-09 cross-tenant existence oracle (Issue #310): folded into one condition so an
       // unknown id and a real id in a foreign tenant answer with the identical 404 — the previous
@@ -945,6 +950,27 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       } else if (breakEnd.getTime() > now.getTime() + FUTURE_TOLERANCE_MS) {
         return reply.code(400).send({ error: "Pausenende darf nicht in der Zukunft liegen" });
+      }
+
+      // Issue #81 (D-05): an appended break shrinks the working time; stop BEFORE it is written when
+      // the allocation would no longer fit. Same rounding as the recompute below, so the check sees
+      // the value that will be stored.
+      if (entry.activityShares.length > 0) {
+        const activityCheck = validateActivityState(
+          {
+            kind: entry.activityKind,
+            shares: entry.activityShares,
+            startTime: entry.startTime,
+            endTime: entry.endTime,
+            breakMinutes: Math.round(
+              calcBreakMinutes([...entry.breaks, { startTime: breakStart, endTime: breakEnd }]),
+            ),
+          },
+          { sharesWritten: false, wasClosed: entry.endTime !== null },
+        );
+        if (!activityCheck.ok) {
+          return reply.code(activityCheck.status).send(activityCheck.body);
+        }
       }
 
       const created = await app.prisma.break.create({
@@ -2303,7 +2329,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const existing = await app.prisma.timeEntry.findUnique({
         where: { id },
-        include: { employee: { select: { tenantId: true } } },
+        include: {
+          employee: { select: { tenantId: true } },
+          // Issue #81 (D-05): the stored allocation, for the check on a correction and the audit.
+          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+        },
       });
       if (!existing || existing.deletedAt)
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
@@ -2379,13 +2409,34 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           revalidateTz,
         );
         if (overlap) return reply.code(409).send({ error: overlap });
+
+        // Issue #81 (D-05): a correction that shrinks the working time (or reopens the entry) may
+        // not leave the shares above it; checked on the resulting state before anything is written.
+        if (existing.activityShares.length > 0) {
+          const activityCheck = validateActivityState(
+            {
+              kind: existing.activityKind,
+              shares: existing.activityShares,
+              startTime: newStart,
+              endTime: newEnd,
+              breakMinutes: body.breakMinutes ?? existing.breakMinutes,
+            },
+            { sharesWritten: false, wasClosed: existing.endTime !== null },
+          );
+          if (!activityCheck.ok) {
+            return reply.code(activityCheck.status).send(activityCheck.body);
+          }
+        }
       }
       if ("note" in body) updateData.note = body.note ?? null;
 
       const updated = await app.prisma.timeEntry.update({
         where: { id },
         data: updateData,
-        include: { breaks: { orderBy: { startTime: "asc" } } },
+        include: {
+          breaks: { orderBy: { startTime: "asc" } },
+          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+        },
       });
 
       await updateOvertimeAccount(app, existing.employeeId);
@@ -2417,7 +2468,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const existing = await app.prisma.timeEntry.findUnique({
         where: { id },
-        include: { employee: { select: { tenantId: true } } },
+        include: {
+          employee: { select: { tenantId: true } },
+          // Issue #81 (D-07): the soft delete keeps the share rows; the DELETE audit's oldValue
+          // carries them so the allocation stays reconstructable.
+          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+        },
       });
       if (!existing || existing.deletedAt)
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });

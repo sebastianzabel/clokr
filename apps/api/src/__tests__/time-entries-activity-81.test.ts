@@ -49,6 +49,7 @@ describe("Issue #81 (Phase 81 Plan 02) — activity kind and shares on the entry
       kind?: ActivityKind;
       shares?: { kind: ActivityKind; minutes: number }[];
       isLocked?: boolean;
+      isInvalid?: boolean;
     } = {},
   ) {
     const end = opts.end === undefined ? "17:00:00Z" : opts.end;
@@ -63,6 +64,7 @@ describe("Issue #81 (Phase 81 Plan 02) — activity kind and shares on the entry
         type: "WORK",
         source: "MANUAL",
         isLocked: opts.isLocked ?? false,
+        isInvalid: opts.isInvalid ?? false,
         activityKind: opts.kind ?? "UNSPECIFIED",
         ...(opts.breaks
           ? {
@@ -603,6 +605,114 @@ describe("Issue #81 (Phase 81 Plan 02) — activity kind and shares on the entry
       expect(row.source).toBe("CORRECTION");
       expect(row.activityKind).toBe("SETUP_CLEANING");
       expect(row.activityShares).toEqual([{ kind: "PRODUCTIVE", minutes: 200 }]);
+    });
+  });
+  describe("remaining shrink sites and the soft delete (D-05, D-07)", () => {
+    function appendBreak(token: string, id: string, date: string, from: string, to: string) {
+      return app.inject({
+        method: "POST",
+        url: `/api/v1/time-entries/${id}/breaks`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { startTime: `${date}T${from}:00.000Z`, endTime: `${date}T${to}:00.000Z` },
+      });
+    }
+
+    function revalidate(id: string, payload: Record<string, unknown>) {
+      return app.inject({
+        method: "PATCH",
+        url: `/api/v1/time-entries/${id}/revalidate`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload,
+      });
+    }
+
+    async function classified(
+      date: string,
+      minutes: number,
+      extra: { isInvalid?: boolean; isLocked?: boolean } = {},
+    ) {
+      return createEntry(date, {
+        kind: "PRODUCTIVE",
+        shares: [{ kind: "SETUP_CLEANING", minutes }],
+        breaks: [{ start: "12:00:00Z", end: "12:30:00Z" }],
+        breakMinutes: 30,
+        ...extra,
+      });
+    }
+
+    it("an appended break that pushes the working time below the shares answers 409 and writes nothing", async () => {
+      const date = nextDate();
+      const entry = await classified(date, 500);
+      const res = await appendBreak(data.adminToken, entry.id, date, "15:00", "15:30");
+      expect(res.statusCode).toBe(409);
+      expect((JSON.parse(res.body) as { error: string }).error).toBe(SUM_MESSAGE);
+      const row = await stored(entry.id);
+      expect(row.breaks).toHaveLength(1);
+      expect(row.breakMinutes).toBe(30);
+    });
+
+    it("an appended break that still fits is stored", async () => {
+      const date = nextDate();
+      const entry = await classified(date, 400);
+      const res = await appendBreak(data.adminToken, entry.id, date, "15:00", "15:30");
+      expect(res.statusCode).toBe(200);
+      const row = await stored(entry.id);
+      expect(row.breaks).toHaveLength(2);
+      expect(row.breakMinutes).toBe(60);
+    });
+
+    it("a locked entry still answers the existing 409 before the share check", async () => {
+      const date = nextDate();
+      const entry = await classified(date, 500, { isLocked: true });
+      const res = await appendBreak(data.adminToken, entry.id, date, "15:00", "15:30");
+      expect(res.statusCode).toBe(409);
+      expect((JSON.parse(res.body) as { error: string }).error).not.toBe(SUM_MESSAGE);
+      expect((await stored(entry.id)).breaks).toHaveLength(1);
+    });
+
+    it("a revalidation correction below the shares answers 409 and leaves the entry invalid", async () => {
+      const date = nextDate();
+      const entry = await classified(date, 400, { isInvalid: true });
+      const shorter = await revalidate(entry.id, { endTime: `${date}T14:00:00.000Z` });
+      expect(shorter.statusCode).toBe(409);
+      const reopen = await revalidate(entry.id, { endTime: null });
+      expect(reopen.statusCode).toBe(409);
+      const row = await stored(entry.id);
+      expect(row.isInvalid).toBe(true);
+      expect(row.endTime?.toISOString()).toBe(`${date}T17:00:00.000Z`);
+    });
+
+    it("a fitting revalidation correction keeps the shares; a plain revalidation is not checked", async () => {
+      const date = nextDate();
+      const entry = await classified(date, 400, { isInvalid: true });
+      const fitting = await revalidate(entry.id, { endTime: `${date}T16:00:00.000Z` });
+      expect(fitting.statusCode).toBe(200);
+      const row = await stored(entry.id);
+      expect(row.isInvalid).toBe(false);
+      expect(row.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 400 }]);
+
+      const plainEntry = await classified(nextDate(), 400, { isInvalid: true });
+      const plain = await revalidate(plainEntry.id, {});
+      expect(plain.statusCode).toBe(200);
+    });
+
+    it("DELETE keeps the share rows and the audit oldValue carries them", async () => {
+      const entry = await classified(nextDate(), 100);
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/time-entries/${entry.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
+      });
+      expect(res.statusCode).toBe(204);
+      const row = await stored(entry.id);
+      expect(row.deletedAt).not.toBeNull();
+      expect(row.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 100 }]);
+      const audit = await newestAudit(entry.id);
+      expect(audit.action).toBe("DELETE");
+      expect((audit.oldValue as { activityShares: unknown[] }).activityShares).toEqual([
+        { kind: "SETUP_CLEANING", minutes: 100 },
+      ]);
     });
   });
 });
