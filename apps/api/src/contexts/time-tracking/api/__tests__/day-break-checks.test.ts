@@ -70,6 +70,17 @@ interface DayCheckBody {
   requiredBreakMinutes: number;
   breakShortfall: boolean;
   maxDailyExceeded: boolean;
+  breakFinding: boolean;
+  positionUnknown: boolean;
+  warnings: Array<{
+    code: string;
+    severity: string;
+    message: string;
+    certainty?: string;
+    legalBasis?: string;
+    hint?: true;
+    waived?: true;
+  }>;
   acknowledged: boolean;
   locked: boolean;
   mayAcknowledge: boolean;
@@ -363,6 +374,12 @@ describe("Issue #80 — GET /api/v1/day-breaks/checks", () => {
         requiredBreakMinutes: 30,
         breakShortfall: true,
         maxDailyExceeded: false,
+        // Issue #511 D-18: the server-built finding list and the two flags are part of the shape.
+        breakFinding: true,
+        positionUnknown: false,
+        warnings: expect.arrayContaining([
+          expect.objectContaining({ code: "BREAK_TOO_SHORT", severity: "warning" }),
+        ]),
         acknowledged: false,
         locked: false,
         mayAcknowledge: false,
@@ -478,6 +495,11 @@ describe("Issue #80 — GET /api/v1/day-breaks/checks", () => {
           requiredBreakMinutes: 30,
           breakShortfall: true,
           maxDailyExceeded: false,
+          breakFinding: true,
+          positionUnknown: false,
+          warnings: expect.arrayContaining([
+            expect.objectContaining({ code: "BREAK_TOO_SHORT", severity: "warning" }),
+          ]),
           acknowledged: false,
           locked: false,
           mayAcknowledge: false,
@@ -676,6 +698,224 @@ describe("Issue #80 — GET /api/v1/day-breaks/checks", () => {
       elevenHourDay(data.employee.id);
       const days = (await checksOf(data.adminToken, data.employee.id)).days;
       expect(days.map((d) => d.date)).toEqual(["2026-03-05", DAY, ELEVEN_HOUR_DAY]);
+    });
+  });
+
+  // ── Issue #511 D-18: every finding day, server-built warnings ────────────
+
+  describe("all finding days (Issue #511 D-18, Pitfall 5, A5)", () => {
+    const D1 = "2026-04-07"; // real single entry 08:00-15:00, no break
+    const D2 = "2026-04-08"; // real single entry 06:00-17:00 with a conformant break
+    const D3 = "2026-04-09"; // hint-only: 08:00-16:00, 30 min stored, no positions
+    const REAL_DAYS = [D1, D2, D3];
+    const RANGE = { from: "2026-04-01", to: "2026-04-30" };
+    const TIME_RANGE = /\d{1,2}:\d{2}–\d{1,2}:\d{2}/;
+
+    async function seedEntry(
+      employeeId: string,
+      day: string,
+      start: string,
+      end: string,
+      breakMinutes: number,
+      breaks: Array<[string, string]> = [],
+    ) {
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId,
+          date: dateOf(day),
+          startTime: new Date(at(start, day)),
+          endTime: new Date(at(end, day)),
+          breakMinutes,
+          type: "WORK",
+          source: "MANUAL",
+          salonId: salonA,
+        },
+      });
+      for (const [bs, be] of breaks) {
+        await app.prisma.break.create({
+          data: {
+            timeEntryId: entry.id,
+            startTime: new Date(at(bs, day)),
+            endTime: new Date(at(be, day)),
+          },
+        });
+      }
+      return entry;
+    }
+
+    async function cleanReal() {
+      await app.prisma.break.deleteMany({
+        where: { timeEntry: { employeeId: data.employee.id, date: { in: REAL_DAYS.map(dateOf) } } },
+      });
+      await app.prisma.timeEntry.deleteMany({
+        where: { employeeId: data.employee.id, date: { in: REAL_DAYS.map(dateOf) } },
+      });
+    }
+
+    beforeEach(cleanReal);
+    afterAll(cleanReal);
+
+    it("a real single entry 08:00-15:00 without a break is listed with the Satz-1 and Satz-3 server messages", async () => {
+      await seedEntry(data.employee.id, D1, "08:00", "15:00", 0);
+      const body = await checksOf(data.empToken, data.employee.id, RANGE.from, RANGE.to);
+      expect(body.days.map((d) => d.date)).toEqual([D1]);
+      const day = body.days[0];
+      expect(day).toMatchObject({
+        detail: "full",
+        crossSalon: false,
+        breakShortfall: true,
+        breakFinding: true,
+        maxDailyExceeded: false,
+      });
+      const codes = day.warnings.map((w) => w.code);
+      expect(codes).toContain("BREAK_TOO_SHORT");
+      expect(codes).toContain("BREAK_TOO_LATE");
+      for (const w of day.warnings) expect(w.message.length).toBeGreaterThan(10);
+    });
+
+    it("a real single entry 06:00-17:00 with a conformant 45 min break is listed for § 3 only: maxDailyExceeded without a break finding", async () => {
+      await seedEntry(data.employee.id, D2, "06:00", "17:00", 45, [["11:00", "11:45"]]);
+      const body = await checksOf(data.empToken, data.employee.id, RANGE.from, RANGE.to);
+      expect(body.days.map((d) => d.date)).toEqual([D2]);
+      expect(body.days[0]).toMatchObject({
+        maxDailyExceeded: true,
+        breakShortfall: false,
+        breakFinding: false,
+      });
+      expect(body.days[0].warnings.map((w) => w.code)).toEqual(["MAX_DAILY_EXCEEDED"]);
+    });
+
+    it("A5: a hint-only day (sum-only 8 h / 30 min) is never listed, even next to a listed day; the day data is read once", async () => {
+      await seedEntry(data.employee.id, D3, "08:00", "16:00", 30);
+      expect((await checksOf(data.empToken, data.employee.id, RANGE.from, RANGE.to)).days).toEqual(
+        [],
+      );
+      expect(mockedBulk).not.toHaveBeenCalled();
+
+      await seedEntry(data.employee.id, D1, "08:00", "15:00", 0);
+      const body = await checksOf(data.empToken, data.employee.id, RANGE.from, RANGE.to);
+      expect(body.days.map((d) => d.date)).toEqual([D1]);
+      expect(mockedBulk).toHaveBeenCalledTimes(1);
+    });
+
+    it("a partially covered A+B day carries redacted warnings: no clock time, no salon, no id", async () => {
+      twoSalonDay(data.employee.id);
+      const partial = await createScopedManager(
+        "chk-mgr-red",
+        ["time-entry:read:ZUGEWIESEN"],
+        [salonA],
+      );
+      const res = await getChecks(partial.token, data.employee.id);
+      expect(res.statusCode).toBe(200);
+      const day = (JSON.parse(res.body) as ChecksBody).days[0];
+      expect(day.detail).toBe("redacted");
+      // Anti-vacuity: the redacted day has findings to redact.
+      expect(day.warnings.length).toBeGreaterThan(0);
+      expect(day.warnings.map((w) => w.code)).toContain("BREAK_TOO_LATE");
+      for (const w of day.warnings) {
+        expect(w.message).not.toMatch(TIME_RANGE);
+        expect(w.message).not.toMatch(/\d{1,2}:\d{2}/);
+        expect(w.message).not.toContain("Zweiter Salon");
+        expect(w.message).not.toContain(salonB);
+      }
+      // The same day in full detail does print the ranges - the control for the regex above.
+      const full = (await checksOf(data.adminToken, data.employee.id)).days[0];
+      expect(full.warnings.some((w) => TIME_RANGE.test(w.message))).toBe(true);
+    });
+
+    it("mayAcknowledge is the one ack predicate: a manager on a single-entry Satz-3 day may, the employee on the own day may not", async () => {
+      await seedEntry(data.employee.id, D1, "08:00", "15:00", 0);
+      const asManager = (
+        await checksOf(data.adminToken, data.employee.id, RANGE.from, RANGE.to)
+      ).days.find((d) => d.date === D1);
+      expect(asManager).toMatchObject({ breakFinding: true, mayAcknowledge: true });
+      const asOwner = (
+        await checksOf(data.empToken, data.employee.id, RANGE.from, RANGE.to)
+      ).days.find((d) => d.date === D1);
+      expect(asOwner).toMatchObject({ breakFinding: true, mayAcknowledge: false });
+    });
+
+    it("a manager whose read scope covers none of the single-entry day's salon does not see the day", async () => {
+      await seedEntry(data.employee.id, D1, "08:00", "15:00", 0);
+      const other = await createTestSalon(app.prisma, data.tenant.id, { name: "Vierter Salon" });
+      const none = await createScopedManager(
+        "chk-mgr-single-none",
+        ["time-entry:read:ZUGEWIESEN"],
+        [other.id],
+      );
+      expect((await checksOf(none.token, data.employee.id, RANGE.from, RANGE.to)).days).toEqual([]);
+    });
+
+    it("§ 18 ArbZG: an employee exempt from time tracking gets no days", async () => {
+      await seedEntry(data.employee.id, D1, "08:00", "15:00", 0);
+      await app.prisma.employee.update({
+        where: { id: data.employee.id },
+        data: { isTimeTrackingExempt: true },
+      });
+      try {
+        const body = await checksOf(data.adminToken, data.employee.id, RANGE.from, RANGE.to);
+        expect(body.days).toEqual([]);
+      } finally {
+        await app.prisma.employee.update({
+          where: { id: data.employee.id },
+          data: { isTimeTrackingExempt: false },
+        });
+      }
+      // Control: the same entry is listed once the exemption is gone.
+      expect(
+        (await checksOf(data.adminToken, data.employee.id, RANGE.from, RANGE.to)).days,
+      ).toHaveLength(1);
+    });
+
+    it("a single-entry day with a current acknowledgement stays listed, acknowledged and revocable; a stale snapshot does not count", async () => {
+      const entry = await seedEntry(data.employee.id, D1, "08:00", "15:00", 0);
+      const list = async () =>
+        (await checksOf(data.adminToken, data.employee.id, RANGE.from, RANGE.to)).days[0];
+      expect((await list()).acknowledged).toBe(false);
+
+      const stale = await app.prisma.dayBreakAck.create({
+        data: {
+          employeeId: data.employee.id,
+          date: dateOf(D1),
+          reason: REASON,
+          snapshot: { entryIds: [], salonIds: [], netWorkedMin: 0, totalBreakMin: 0 },
+          acknowledgedBy: data.adminUser.id,
+        },
+      });
+      expect((await list()).acknowledged).toBe(false);
+      await app.prisma.dayBreakAck.delete({ where: { id: stale.id } });
+
+      const { snapshot } = evaluateDayBreaks({
+        rows: [
+          {
+            id: entry.id,
+            startTime: entry.startTime,
+            endTime: entry.endTime!,
+            breakMinutes: 0,
+            breakStatus: entry.breakStatus,
+            salonId: salonA,
+            breaks: [],
+          },
+        ],
+        dayBreaks: [],
+        acks: [],
+      });
+      expect(snapshot.placementKey).toBeTruthy();
+      await app.prisma.dayBreakAck.create({
+        data: {
+          employeeId: data.employee.id,
+          date: dateOf(D1),
+          reason: REASON,
+          snapshot: snapshot as unknown as Prisma.InputJsonValue,
+          acknowledgedBy: data.adminUser.id,
+        },
+      });
+      const current = await list();
+      expect(current).toMatchObject({ acknowledged: true, mayAcknowledge: true });
+      expect(current.acknowledgement?.reason).toBe(REASON);
+      expect(current.warnings.every((w) => w.code !== "BREAK_TOO_LATE" || w.waived === true)).toBe(
+        true,
+      );
     });
   });
 

@@ -1,13 +1,19 @@
 /**
- * cross-salon-notice.ts
+ * break-finding-notice.ts
  *
- * Issue #80 (D-11) — the ONE builder of the manager notification text for an unacknowledged
- * cross-salon § 4 ArbZG violation (sent by the next-day cron, Feature 10 of the attendance checker).
+ * Issue #80 (D-11) and Issue #511 (D-13) — the ONE module that builds the manager notification
+ * texts of the next-day break-finding job (Feature 10 of the attendance checker):
+ *   - `buildCrossSalonNotice`   the cross-salon § 4 Satz 1 ArbZG shortfall (Issue #80 wording,
+ *                               pinned by the unit tests);
+ *   - `buildBreakPlacementNotice` every other finding, i.e. a Satz 2 / Satz 3 ArbZG or § 11 JArbSchG
+ *                               placement finding.
  *
  * Two levels of detail, decided by the CALLER from the recipient's reach over the day:
- *   - "redacted"  the day total and the finding only. The redacted text contains no salon name and
- *                 no clock time BY CONSTRUCTION: this function never reads `entries` for it, so a
- *                 caller that passes them by mistake still cannot leak them (T-80-37).
+ *   - "redacted"  the day total and the finding only. The redacted cross-salon text contains no
+ *                 salon name and no clock time BY CONSTRUCTION: this function never reads `entries`
+ *                 for it, so a caller that passes them by mistake still cannot leak them (T-80-37).
+ *                 The placement builder adds no time of its own; the caller hands it messages that
+ *                 were already rendered at the recipient's detail level (T-511-29).
  *   - "full"      the same sentence plus the salons and the times of the day.
  *
  * Pure module: type-only imports, no Prisma, no Fastify, no clock. The caller formats the
@@ -76,4 +82,32 @@ export function buildCrossSalonNotice(input: CrossSalonNoticeInput): {
     return { title: CROSS_SALON_NOTICE_TITLE, message: `${core} (${parts.join(", ")}).` };
   }
   return { title: CROSS_SALON_NOTICE_TITLE, message: `${core}.` };
+}
+
+/** Neutral title; also used as the email subject, because a subject travels further than a body. */
+export const BREAK_PLACEMENT_NOTICE_TITLE = "Pausenverstoß (Pausenlage)";
+
+export interface BreakPlacementNoticeInput {
+  employeeName: string;
+  /** Calendar day, "YYYY-MM-DD". */
+  date: string;
+  /**
+   * The finding texts of the day, already rendered at the recipient's detail level by the
+   * placement renderer. This builder adds no time, salon or id of its own.
+   */
+  findingMessages: readonly string[];
+}
+
+/**
+ * Builds the title and message of the Satz 2 / Satz 3 placement notification (Issue #511, D-13):
+ * the employee and the day in front of the finding texts, joined by a space.
+ */
+export function buildBreakPlacementNotice(input: BreakPlacementNoticeInput): {
+  title: string;
+  message: string;
+} {
+  return {
+    title: BREAK_PLACEMENT_NOTICE_TITLE,
+    message: `${input.employeeName}: Am ${germanDate(input.date)} ${input.findingMessages.join(" ")}`,
+  };
 }

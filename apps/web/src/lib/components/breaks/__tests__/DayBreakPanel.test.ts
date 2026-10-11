@@ -1,4 +1,5 @@
-// Issue #80 (D-02, D-05, D-08, D-11) — the action path for a multi-entry day. The route page
+// Issue #80 (D-02, D-05, D-08, D-11) + Issue #511 (D-12, D-18) — the action path for a day with a
+// break finding. The route page
 // cannot be mounted, so the panel is the unit that carries the contract: what it shows for a
 // full and a redacted day, and which actions it offers from the SERVER's flags.
 
@@ -6,7 +7,7 @@ import { describe, it, expect, vi } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import DayBreakPanel from "../DayBreakPanel.svelte";
-import type { DayCheck } from "$lib/breaks/day-break-violation";
+import type { DayCheck, DayCheckWarning } from "$lib/breaks/day-break-violation";
 
 function check(over: Partial<DayCheck> = {}): DayCheck {
   return {
@@ -18,6 +19,9 @@ function check(over: Partial<DayCheck> = {}): DayCheck {
     requiredBreakMinutes: 30,
     breakShortfall: true,
     maxDailyExceeded: false,
+    breakFinding: true,
+    positionUnknown: false,
+    warnings: [],
     acknowledged: false,
     locked: false,
     mayAcknowledge: false,
@@ -56,7 +60,12 @@ const redacted = (over: Partial<DayCheck> = {}) =>
 describe("DayBreakPanel", () => {
   it("renders nothing without a cross-salon finding and without a recorded day break", () => {
     renderWithTheme(DayBreakPanel, {
-      check: check({ crossSalon: false, breakShortfall: false, dayBreaks: [] }),
+      check: check({
+        crossSalon: false,
+        breakShortfall: false,
+        breakFinding: false,
+        dayBreaks: [],
+      }),
     });
     expect(screen.queryByTestId("day-break-panel")).toBeNull();
   });
@@ -190,5 +199,179 @@ describe("DayBreakPanel", () => {
     });
     expect(screen.queryByTestId("day-break-ack")).toBeNull();
     expect(screen.queryByTestId("day-break-revoke")).toBeNull();
+  });
+
+  // ── Issue #511 (D-12 / D-18): every finding day, server-built warnings ─────────────────────────
+
+  const warning = (over: Partial<DayCheckWarning> = {}): DayCheckWarning => ({
+    code: "BREAK_TOO_LATE",
+    severity: "warning",
+    message: "SERVER § 4 Satz 3 ArbZG: 6:10 Std. am Stück ohne Ruhepause",
+    certainty: "VIOLATION",
+    ...over,
+  });
+
+  /** One entry in one salon, a Satz-2/3 finding, nothing else. */
+  const single = (over: Partial<DayCheck> = {}) =>
+    check({
+      crossSalon: false,
+      breakShortfall: false,
+      breakFinding: true,
+      warnings: [warning()],
+      entries: [
+        {
+          id: "e1",
+          startTime: "2026-03-10T08:00:00",
+          endTime: "2026-03-10T16:30:00",
+          salonId: "s1",
+        },
+      ],
+      gaps: [],
+      ...over,
+    });
+
+  it("renders a single-entry finding day for a manager: badge, totals, server warnings, acknowledge", () => {
+    const { container } = renderWithTheme(DayBreakPanel, {
+      check: single({ mayAcknowledge: true }),
+      onAcknowledge: vi.fn(),
+    });
+    expect(screen.getByTestId("day-break-panel")).toBeTruthy();
+    const badge = screen.getByText("Pausenregel verletzt");
+    expect(badge.className).toContain("badge-yellow");
+    const text = container.textContent ?? "";
+    expect(text).toContain("Insgesamt 8,0 h gearbeitet");
+    expect(screen.getAllByTestId("day-break-warning").map((li) => li.textContent?.trim())).toEqual([
+      "SERVER § 4 Satz 3 ArbZG: 6:10 Std. am Stück ohne Ruhepause",
+    ]);
+    expect(screen.getByTestId("day-break-ack")).toBeTruthy();
+    // A one-salon day must not claim that times lie in several salons.
+    expect(text).not.toContain("mehreren Salons");
+  });
+
+  it("does not render the employee's own single-entry finding day (calendar marker only)", () => {
+    renderWithTheme(DayBreakPanel, {
+      check: single({ mayAcknowledge: false, mayRecordDayBreak: false }),
+      onAcknowledge: vi.fn(),
+    });
+    expect(screen.queryByTestId("day-break-panel")).toBeNull();
+  });
+
+  it("renders an acknowledged single-entry day with the gray badge, and revoke only where allowed", () => {
+    const acknowledged = {
+      acknowledged: true,
+      acknowledgement: { id: "ack9", createdAt: "2026-03-11T08:00:00Z", reason: "ok" },
+    };
+    const own = renderWithTheme(DayBreakPanel, {
+      check: single({ ...acknowledged, mayAcknowledge: false }),
+      onRevoke: vi.fn(),
+    });
+    expect(screen.getByTestId("day-break-panel")).toBeTruthy();
+    expect(screen.getByText("Pausenverstoß: quittiert").className).toContain("badge-gray");
+    expect(screen.queryByTestId("day-break-revoke")).toBeNull();
+    own.unmount();
+
+    renderWithTheme(DayBreakPanel, {
+      check: single({ ...acknowledged, mayAcknowledge: true }),
+      onRevoke: vi.fn(),
+    });
+    expect(screen.getByTestId("day-break-revoke")).toBeTruthy();
+  });
+
+  it("asks for clarification on an UNCLEAR finding", () => {
+    renderWithTheme(DayBreakPanel, {
+      check: single({
+        mayAcknowledge: true,
+        warnings: [warning({ code: "BREAK_SEGMENT_TOO_SHORT", certainty: "UNCLEAR" })],
+      }),
+      onAcknowledge: vi.fn(),
+    });
+    expect(screen.getByText("Pause: Klärung nötig").className).toContain("badge-yellow");
+  });
+
+  it("shows a hint as a muted note only when the panel renders, and a hint never renders it", () => {
+    const hint = warning({
+      code: "BREAK_POSITION_UNKNOWN",
+      message: "HINT Lage der Pause nicht erfasst",
+      certainty: undefined,
+      hint: true,
+    });
+    // Panel renders (finding + manager): hint appears as a note, not in the warning list.
+    const shown = renderWithTheme(DayBreakPanel, {
+      check: single({ mayAcknowledge: true, warnings: [warning(), hint] }),
+      onAcknowledge: vi.fn(),
+    });
+    expect(screen.getAllByTestId("day-break-warning")).toHaveLength(1);
+    const note = screen.getByTestId("day-break-hint");
+    expect(note.textContent).toContain("HINT Lage der Pause nicht erfasst");
+    expect(note.className).toContain("text-muted");
+    shown.unmount();
+
+    // Hint only (no finding): even a manager with every flag gets no panel.
+    renderWithTheme(DayBreakPanel, {
+      check: single({
+        breakFinding: false,
+        positionUnknown: true,
+        mayAcknowledge: true,
+        mayRecordDayBreak: true,
+        warnings: [hint],
+      }),
+    });
+    expect(screen.queryByTestId("day-break-panel")).toBeNull();
+  });
+
+  it("renders the redacted server warnings without any time, and offers no action", () => {
+    const { container } = renderWithTheme(DayBreakPanel, {
+      check: redacted({
+        warnings: [warning({ message: "§ 4 Satz 3 ArbZG: 6 Std. 10 Min am Stück ohne Ruhepause" })],
+      }),
+      onAcknowledge: vi.fn(),
+      onAddBreak: vi.fn(),
+    });
+    expect(screen.getAllByTestId("day-break-warning")).toHaveLength(1);
+    expect(container.textContent ?? "").not.toMatch(/\d{1,2}:\d{2}/);
+    expect(screen.queryByTestId("day-break-ack")).toBeNull();
+    expect(screen.queryByTestId("day-break-add")).toBeNull();
+  });
+
+  it("does not repeat the 10-hour sentence when the server already sent its § 3 warning", () => {
+    const { container } = renderWithTheme(DayBreakPanel, {
+      check: check({
+        maxDailyExceeded: true,
+        warnings: [
+          warning({
+            code: "MAX_DAILY_EXCEEDED",
+            severity: "error",
+            message: "SERVER § 3 ArbZG zehn Stunden",
+            certainty: undefined,
+          }),
+        ],
+      }),
+    });
+    const text = container.textContent ?? "";
+    expect(text).toContain("SERVER § 3 ArbZG zehn Stunden");
+    expect(text).not.toContain("Die Tagessumme liegt über der Höchstarbeitszeit");
+  });
+  // Issue #511 (Sichtprüfung 11.10.): on a placement finding a break was taken but does not count,
+  // so "durchgearbeitet" would put a false statement into the acknowledgement.
+  it("names a placement acknowledgement „Pausenverstoß quittieren“, never „durchgearbeitet“", async () => {
+    renderWithTheme(DayBreakPanel, {
+      check: single({ mayAcknowledge: true }),
+      onAcknowledge: vi.fn().mockResolvedValue(undefined),
+    });
+    const button = screen.getByTestId("day-break-ack");
+    expect(button.textContent?.trim()).toBe("Pausenverstoß quittieren");
+    await fireEvent.click(button);
+    expect(await screen.findByText("Pausenverstoß quittieren?")).toBeTruthy();
+    expect(screen.queryByText(/durchgearbeitet/)).toBeNull();
+  });
+
+  it("keeps „durchgearbeitet“ for the cross-salon Satz-1 day without a placement finding", () => {
+    renderWithTheme(DayBreakPanel, {
+      check: check({ mayAcknowledge: true, warnings: [] }),
+      onAcknowledge: vi.fn(),
+    });
+    expect(screen.getByTestId("day-break-ack").textContent?.trim()).toBe(
+      "Als „durchgearbeitet“ quittieren",
+    );
   });
 });

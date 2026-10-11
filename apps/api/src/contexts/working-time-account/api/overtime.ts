@@ -41,14 +41,15 @@ import {
   getEffectiveSchedule,
   unconfirmedDaysFromEntries,
   findUnconfirmedBreakDays,
-  findUnacknowledgedCrossSalonDays, // Issue #80 (D-09b/D-15) — status listing
-  findUnacknowledgedCrossSalonDaysForEmployee, // Issue #80 (D-09b/D-15) — manual close
+  findUnacknowledgedBreakFindingDays, // Issue #511 (D-12) — status listing
+  findUnacknowledgedBreakFindingDaysForEmployee, // Issue #511 (D-12) — manual close
 } from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7/T8; Phase 101B wave 8 merged in
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
   getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2; Issue #446 — effective leave
   karenzOverrunFromRequests, // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
   loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
+  isMinorAtDate, // Issue #511 (D-05) — injected into the break-finding detector
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
 
 const createPlanSchema = z.object({
@@ -627,18 +628,21 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const monthFirstStr = dateStrInTz(monthFirstDay, tz);
       const monthLastStr = dateStrInTz(monthLastDay, tz);
 
-      // Issue #80 (D-09b/D-15): unacknowledged cross-salon § 4 days, detected ONCE per request over
-      // the SAME bulk-fetched rows (no per-employee read; with no two-salon day no DayBreak /
-      // DayBreakAck query at all — PERF-V1814-01). Shown regardless of the block flag, of
-      // enforceBreakConfirmation and of the schedule type: it is a statutory finding, not an
-      // opt-in confirmation workflow.
-      const crossSalonByEmp = await findUnacknowledgedCrossSalonDays(app.prisma, {
+      // Issue #511 (D-12; generalises Issue #80 D-09b/D-15): unacknowledged § 4 ArbZG / § 11 JArbSchG
+      // break-finding days, detected ONCE per request over the SAME bulk-fetched rows (one Break
+      // read, at most one DayBreak / DayBreakAck read, no per-employee read — PERF-V1814-01). Shown
+      // regardless of the block flag, of enforceBreakConfirmation and of the schedule type: it is
+      // a statutory finding, not an opt-in confirmation workflow. The minor decision is injected so
+      // the detector never imports the absence context.
+      const breakFindingsByEmp = await findUnacknowledgedBreakFindingDays(app.prisma, {
         tenantId,
         rows: employees.flatMap((e) => entriesByEmp.get(e.id) ?? []),
         tz,
+        birthDates: new Map(employees.map((e) => [e.id, e.birthDate])),
+        isMinorAt: isMinorAtDate,
       });
-      const crossSalonDaysOf = (employeeId: string): string[] =>
-        (crossSalonByEmp.get(employeeId) ?? []).map((d) => d.date);
+      const breakFindingDaysOf = (employeeId: string): string[] =>
+        (breakFindingsByEmp.get(employeeId) ?? []).map((d) => d.date);
 
       const result: {
         employeeId: string;
@@ -648,7 +652,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         missingDates?: string[];
         snapshot?: Record<string, unknown>;
         unconfirmedBreakDays?: string[]; // Phase 92 (BREAK-05)
-        crossSalonBreakDays?: string[]; // Issue #80 (D-09b/D-15)
+        breakFindingDays?: string[]; // Issue #511 (D-12), generalises Issue #80
         karenzOverrunDays?: string[]; // Phase 104 (R4/D-21) — Hinweis, kein Gate
       }[] = [];
 
@@ -688,7 +692,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
               closedBy: existingSnapshot.closedBy,
             },
             unconfirmedBreakDays: [], // Pitfall 1 — closed months are done, never actionable
-            crossSalonBreakDays: [], // Issue #80 — likewise: a closed month is un-actionable
+            breakFindingDays: [], // Issue #511 — likewise: a closed month is un-actionable
             karenzOverrunDays: [], // Phase 104 (D-21) — Pitfall 1: closed months are un-actionable
           });
           continue;
@@ -705,7 +709,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeNumber: emp.employeeNumber,
             status: "ready",
             unconfirmedBreakDays: [], // RESOLVED Q1 — no daily gate for flexible schedules
-            crossSalonBreakDays: crossSalonDaysOf(emp.id), // Issue #80 (D-15) — every schedule type
+            breakFindingDays: breakFindingDaysOf(emp.id), // Issue #511 (D-12) — every schedule type
             karenzOverrunDays: [], // Phase 104 (D-21) — Karenz is a documentation rule, not a
             // daily-target rule; surfacing it for a Minijobber/flexible schedule would be noise.
           });
@@ -795,7 +799,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             status: "missing",
             missingDates,
             unconfirmedBreakDays,
-            crossSalonBreakDays: crossSalonDaysOf(emp.id),
+            breakFindingDays: breakFindingDaysOf(emp.id),
             karenzOverrunDays,
           });
         } else {
@@ -805,7 +809,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeNumber: emp.employeeNumber,
             status: "ready",
             unconfirmedBreakDays,
-            crossSalonBreakDays: crossSalonDaysOf(emp.id),
+            breakFindingDays: breakFindingDaysOf(emp.id),
             karenzOverrunDays,
           });
         }
@@ -1531,26 +1535,29 @@ export async function overtimeRoutes(app: FastifyInstance) {
         }
       }
 
-      // Issue #80 (D-09b/D-15): a cross-salon § 4 ArbZG violation that is not acknowledged blocks the
+      // Issue #511 (D-12; generalises Issue #80 D-09b/D-15): an unacknowledged § 4 ArbZG / § 11
+      // JArbSchG break finding (Satz 2/3 on any day, the cross-salon Satz-1 shortfall) blocks the
       // close under the same tenant flag, but — unlike the Phase 92 block above — independent of
       // enforceBreakConfirmation and of the schedule type: it is a statutory finding, not an opt-in
-      // confirmation workflow. A recorded day break cures it, a CURRENT acknowledgement waives it
-      // (D-17); like above there is no bypass field. Read-only, the saldo is never touched (D-05).
+      // confirmation workflow. A recorded break cures it, a CURRENT acknowledgement or an
+      // entry-level "durchgearbeitet" waives it; like above there is no bypass field. A hint-only
+      // day never blocks. Read-only, the saldo is never touched.
       if (tenantConfig?.blockMonthCloseOnUnconfirmedBreak) {
-        const crossSalonBreakDays = await findUnacknowledgedCrossSalonDaysForEmployee(app.prisma, {
+        const breakFindings = await findUnacknowledgedBreakFindingDaysForEmployee(app.prisma, {
           tenantId: req.user.tenantId,
           employeeId,
           monthFirstDay,
           monthLastDay,
           tz,
+          isMinorAt: isMinorAtDate,
         });
-        if (crossSalonBreakDays.length > 0) {
-          const n = crossSalonBreakDays.length;
+        if (breakFindings.length > 0) {
+          const n = breakFindings.length;
           return reply.code(409).send({
-            error: `${n} Tag${n === 1 ? "" : "e"} mit salonübergreifend fehlender Pflichtpause (§ 4 ArbZG). Bitte zuerst eine Pause erfassen oder als „durchgearbeitet" quittieren.`,
-            crossSalonBreakCount: n,
-            crossSalonBreakDays,
-            requiresCrossSalonAck: true,
+            error: `${n} Tag${n === 1 ? "" : "e"} mit offenem Pausenverstoß (§ 4 ArbZG / § 11 JArbSchG). Bitte zuerst eine Pause erfassen oder den Tag quittieren.`,
+            breakFindingCount: n,
+            breakFindingDays: breakFindings.map((d) => d.date),
+            requiresBreakFindingAck: true,
           });
         }
       }

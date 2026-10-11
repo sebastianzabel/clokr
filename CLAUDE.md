@@ -291,9 +291,35 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   Since D-22 the kernel additionally returns the day's breaks as intervals with their source
   (`entry-break`, `day-break`, `same-salon-gap`, `unplaced-entry-break` = legacy `breakMinutes`
   without position, never placed), the gaps and the work blocks between breaks; Phase 80 warnings
-  read only the minute sums, and § 4 Satz 2/3 (#511) are to be added as rules on that view inside
-  the same kernel, never as a second evaluation elsewhere. Details and the Shared-Kernel dependency:
+  read only the minute sums, and § 4 Satz 2/3 are evaluated on that view inside the same kernel
+  (next bullet, #511), never as a second evaluation elsewhere. The month-close detector is
+  `break-finding-days.ts` (renamed from `cross-salon-days.ts`; wire fields `breakFindingDays` /
+  `requiresBreakFindingAck`) and the cron emits `BREAK_CROSS_SALON_VIOLATION` or
+  `BREAK_PLACEMENT_VIOLATION` per day. Details and the Shared-Kernel dependency:
   `docs/adr/0001-abweichungen.md` Eintrag X.
+- **Break placement is checked in the same kernel (Issue #511).** `evaluatePlacement()`
+  (`contexts/time-tracking/day-break-placement.ts`, called by `evaluateDayBreaks`) is the ONLY place
+  § 4 Satz 2/3 ArbZG and § 11 JArbSchG are evaluated; the thresholds live once in `break-regime.ts`
+  (`BREAK_REGIMES`). The regime is an input of the kernel, never read inside it:
+  `breakRegimeFor(isMinorAtDate(birthDate, workDate))` (`contexts/absence/minor-at-date.ts`,
+  fail-open to § 4 ArbZG; an AZUBI without a birth date gets a note in the finding). A break
+  segment counts only if it is at least 15:00 exactly, lies inside the work period and touches
+  neither the first start nor the last end (minors: also not in the first or last hour); a segment
+  that does not count is working time for the compliance figure only, the saldo and
+  `entryDurations()` stay untouched. A work block above 6 h (minors 4.5 h) without a counting
+  segment is a finding independent of Satz 1. Legacy `breakMinutes` without Break rows give the
+  hint `BREAK_POSITION_UNKNOWN`, never a violation, never a marker, notice or month-close block. A
+  cross-salon gap is evaluated worst case and best case: `certainty` `VIOLATION` or `UNCLEAR`
+  („Klärung nötig: Fahrzeit oder Pause?“), resolved only by a recorded `DayBreak` or an
+  acknowledgement. The acknowledgement covers every day with an ackable finding
+  (`hasAckableFinding()`, single-salon days included), its snapshot carries a placement key, and the
+  web computes no § 4 at all (`GET /day-breaks/checks`, `POST /day-breaks/preview`; source guard
+  `apps/web/src/lib/breaks/__tests__/arbzg-threshold-guard.test.ts` with two tracked exceptions,
+  #525). The automatic break is placed by `placeAutoBreak()` at the conformant position nearest to
+  `defaultBreakStart` in the TENANT time zone (minors: at least the § 11 amount, from 4.5 h);
+  `scripts/audit-511-break-placement.ts` is the read-only dry run; closed months are never
+  re-evaluated. The 120-min same-salon cap of Phase 80 is unchanged (#523), § 8 JArbSchG is not
+  checked (#524). Details: `docs/adr/0001-abweichungen.md` Eintrag X, Nachtrag Phase 511.
 
 ## Public Holidays
 
@@ -331,6 +357,13 @@ These rules MUST be followed when implementing or modifying ArbZG compliance che
   - Do NOT show warnings for individual days between 8h and 10h
 - **§ 3 Weekly max: 48h** — hard weekly cap (Mo-Sa = 6 Werktage)
 - **§ 4 Breaks**: >6h work = min 30min break; >9h work = min 45min break
+- **§ 4 Satz 2**: a break segment shorter than 15 min is not a Ruhepause and does not count
+  towards the 30/45 min (and never at the very start or end of the work period)
+- **§ 4 Satz 3**: at most 6 h in a row without a Ruhepause of at least 15 min — also when the Satz 1
+  sum is met (30 min at 14:00 after 08:00 is fine, 30 min at 14:30 is not)
+- **§ 18 Abs. 2 ArbZG / § 11 JArbSchG**: for an employee under 18 on the work day § 11 JArbSchG
+  replaces § 4 (> 4.5 h → 30 min, > 6 h → 60 min, segments of at least 15 min, at most 4.5 h in a
+  row, no Ruhepause in the first or last hour); the age is decided per work date, not per today
 - **§ 5 Rest period**: min 11h between end of work and start of next day
 - **§ 8 BUrlG**: Leave and time tracking interaction rules:
   - **APPROVED leave**: Time entry creation is BLOCKED. Employee must request cancellation first.

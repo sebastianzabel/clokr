@@ -24,7 +24,6 @@
 import type { PrismaClient, ScheduleType } from "@clokr/db";
 import {
   JARBSCHG_MAX_WORK_ON_BS_DAY_MIN,
-  JARBSCHG_MINOR_AGE_THRESHOLD,
   JARBSCHG_LONG_DAY_INSTRUCTION_MIN,
   BS_DAILY_DEFAULT_MIN,
 } from "./vocational-school-constants.js";
@@ -38,8 +37,9 @@ import { BS_PATTERN_ORDER_BY } from "./vocational-school-pattern-order.js";
 // Issue #435 — ageAtDate moved to a zero-import leaf (D-07/D-08) so vacation-calc.ts can use it
 // without importing this file's "../working-time-account" dependency (RESEARCH.md Pitfall 1).
 // Re-exported here verbatim for existing callers (e.g. vocational-school-jarbschg.test.ts).
-import { ageAtDate } from "./age-at-date";
 export { ageAtDate } from "./age-at-date";
+// Issue #511 (D-05): the under-18 decision is shared with the § 11 JArbSchG break regime.
+import { isMinorAtDate } from "./minor-at-date";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -189,8 +189,7 @@ export async function checkJArbSchG(
     return { blocked: false, message: null };
   }
 
-  const age = ageAtDate(employee.birthDate, args.date);
-  if (age < JARBSCHG_MINOR_AGE_THRESHOLD) {
+  if (isMinorAtDate(employee.birthDate, args.date)) {
     // Hard block — D-11 verbatim message.
     return { blocked: true, message: HARD_BLOCK_MESSAGE };
   }

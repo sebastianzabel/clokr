@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
@@ -22,11 +22,22 @@
   } from "$lib/breaks/deep-link";
   import {
     type DayCheck,
+    type DayCheckWarning,
     type DayChecksResponse,
-    crossSalonSaveNotice,
+    type DayWarning,
+    breakFindingSaveNotice,
+    dayChecksToArbzgMap,
     isChecksRangeAllowed,
-    mergeDayChecksIntoArbzgMap,
   } from "$lib/breaks/day-break-violation";
+  // Issue #511 D-18 — the edit form's findings come from the server preview, never from a
+  // browser-side rule.
+  import {
+    type DayPreviewAutoBreak,
+    type DayPreviewRequest,
+    type DayPreviewResponse,
+    buildDayPreviewRequest,
+    createDayPreviewRunner,
+  } from "$lib/breaks/day-break-preview";
   import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   // Phase 116 (GitHub issue #119) — same module the own /time-entries page uses; one answer,
@@ -146,12 +157,6 @@
     | (TimeEntry & { kind: "TE" })
     | { kind: "BS"; id: string; date: string; source: "PATTERN" | "MANUAL" };
 
-  interface ArbZGWarning {
-    code: string;
-    severity: "warning" | "error";
-    message: string;
-  }
-
   interface Employee {
     id: string;
     firstName: string;
@@ -269,8 +274,9 @@
   // Korrektur (editEntry set AND the manager is not the entry's own employee).
   let formReason = $state("");
   let defaultBreakStart: string | null = $state(null);
-  // Issue #80 (D-20) — server day checks of the loaded range (multi-entry days only). For a
-  // partially scoped manager a day arrives redacted; the page renders it as received.
+  // Issue #80 (D-20) + Issue #511 D-18 — the server's day checks of the loaded range: the only
+  // source of the calendar markers and of the day panels. For a partially scoped manager a day
+  // arrives redacted; the page renders it as received and computes no finding itself.
   let dayChecks = $state<DayCheck[]>([]);
 
   // ── Employee selector state ────────────────────────────────────────────────
@@ -962,6 +968,21 @@
     await loadAll();
   }
 
+  // Converts the current form state (date, times, break slots) into the ISO fields
+  // POST/PUT /time-entries expects. Shared by the save and the findings preview, so the preview
+  // evaluates exactly what the save would send.
+  function buildManualEntryFields() {
+    const startISO = new Date(`${formDate}T${formStart}:00`).toISOString();
+    const endISO = formHasEnd ? new Date(`${formDate}T${formEnd}:00`).toISOString() : null;
+    const breaksPayload = formBreaks
+      .filter((b) => b.start && b.end)
+      .map((b) => ({
+        startTime: new Date(`${formDate}T${b.start}:00`).toISOString(),
+        endTime: new Date(`${formDate}T${b.end}:00`).toISOString(),
+      }));
+    return { startISO, endISO, breaksPayload };
+  }
+
   async function saveEntry() {
     // Quick 260824-cjd: Begründung ist Pflicht bei einer echten Korrektur —
     // client-seitig vorab geblockt, mit derselben Fehlermeldung wie die API.
@@ -971,18 +992,11 @@
     }
     saving = true;
     saveError = "";
-    const startISO = new Date(`${formDate}T${formStart}:00`).toISOString();
-    const endISO = formHasEnd ? new Date(`${formDate}T${formEnd}:00`).toISOString() : null;
-    // Convert break slots to full ISO timestamps
-    const breaksPayload = formBreaks
-      .filter((b) => b.start && b.end)
-      .map((b) => ({
-        startTime: new Date(`${formDate}T${b.start}:00`).toISOString(),
-        endTime: new Date(`${formDate}T${b.end}:00`).toISOString(),
-      }));
+    const { startISO, endISO, breaksPayload } = buildManualEntryFields();
     try {
-      // Issue #80 (D-09a): the response carries the API's ArbZG warnings; only the cross-salon
-      // ones are surfaced here (the client-side calendar markers are unchanged).
+      // Issue #80 (D-09a) + Issue #511 D-10: the response carries the server's break findings;
+      // the notice below names the cross-salon and the Satz-2/3 ones. The form's own findings
+      // came from the preview before saving.
       let saved: { warnings?: unknown } | undefined;
       if (editEntry) {
         saved = await api.put<{ warnings?: unknown }>(`/time-entries/${editEntry.id}`, {
@@ -1009,8 +1023,8 @@
       }
       closeModal();
       await loadAll();
-      const crossSalonNotice = crossSalonSaveNotice(saved?.warnings);
-      if (crossSalonNotice) toasts.warning(crossSalonNotice);
+      const breakFindingNotice = breakFindingSaveNotice(saved?.warnings);
+      if (breakFindingNotice) toasts.warning(breakFindingNotice);
     } catch (e: unknown) {
       if (e instanceof Error && "status" in e && (e as { status: number }).status === 403) {
         saveError = "Monat ist gesperrt";
@@ -1057,55 +1071,6 @@
 
   // D-06: Derive lock state from entry data already loaded — no extra API request
   let monthIsLocked = $derived(entries.some((e) => e.isLocked === true));
-
-  // ArbZG-Prüfung für den ausgewählten Tag (Frontend-seitig, sofort)
-  function checkArbZGFrontend(slots: TimeEntry[]): ArbZGWarning[] {
-    const warnings: ArbZGWarning[] = [];
-    const done = slots.filter((s) => s.endTime && !s.isInvalid);
-    if (done.length === 0) return [];
-
-    const sorted = [...done].sort(
-      (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
-    );
-
-    let netMin = 0,
-      explicitBreak = 0;
-    for (const s of sorted) {
-      const slotMin = (new Date(s.endTime!).getTime() - new Date(s.startTime).getTime()) / 60000;
-      explicitBreak += s.breakMinutes ?? 0;
-      netMin += slotMin - (s.breakMinutes ?? 0);
-    }
-    let gapBreak = 0;
-    for (let i = 1; i < sorted.length; i++) {
-      const gap =
-        (new Date(sorted[i].startTime).getTime() - new Date(sorted[i - 1].endTime!).getTime()) /
-        60000;
-      if (gap > 0 && gap <= 120) gapBreak += gap; // Lücken > 2h sind separate Schichten, keine Pausen
-    }
-    const totalBreak = explicitBreak + gapBreak;
-
-    if (netMin > 9 * 60 && totalBreak < 45)
-      warnings.push({
-        code: "BREAK_TOO_SHORT",
-        severity: "error",
-        message: `Bei über 9h Arbeitszeit mind. 45 Min. Pause erforderlich (${Math.round(totalBreak)} Min. erfasst)`,
-      });
-    else if (netMin > 6 * 60 && totalBreak < 30)
-      warnings.push({
-        code: "BREAK_TOO_SHORT",
-        severity: "warning",
-        message: `Bei über 6h Arbeitszeit mind. 30 Min. Pause erforderlich (${Math.round(totalBreak)} Min. erfasst)`,
-      });
-
-    if (netMin > 10 * 60)
-      warnings.push({
-        code: "MAX_DAILY_EXCEEDED",
-        severity: "error",
-        message: `Tägliche Höchstarbeitszeit von 10h überschritten (${(netMin / 60).toFixed(1)}h)`,
-      });
-
-    return warnings;
-  }
 
   // ── Reaktive Ableitungen ───────────────────────────────────────────────────
   let isMonthlyHours = $derived(schedule?.type === "MONTHLY_HOURS");
@@ -1269,37 +1234,50 @@
     };
   });
   let runningCount = $derived(entries.filter((e) => !e.endTime).length);
-  // ArbZG live check for the modal: existing entries for formDate + current form values
-  let modalWarnings = $derived.by(() => {
-    if (!arbzgEnabled || !modalOpen || !formHasEnd || !formStart || !formEnd) return [];
-    const otherSlots = entries
-      .filter((e) => (e.date ?? e.startTime).split("T")[0] === formDate)
-      .filter((e) => !editEntry || e.id !== editEntry.id);
-    const formEntry = {
-      id: "__form__",
-      startTime: `${formDate}T${formStart}:00`,
-      endTime: `${formDate}T${formEnd}:00`,
-      breakMinutes: formBreakTotal,
-    } as TimeEntry;
-    return checkArbZGFrontend([...otherSlots, formEntry]);
-  });
-  // ArbZG-Verstoß-Map: dateStr → warnings[]
-  let arbzgDayMap = $derived.by(() => {
-    if (!arbzgEnabled) return new Map<string, ArbZGWarning[]>();
-    const map = new Map<string, ArbZGWarning[]>();
-    const byDate = new Map<string, TimeEntry[]>();
-    for (const e of entries) {
-      const d = (e.date ?? e.startTime).split("T")[0];
-      if (!byDate.has(d)) byDate.set(d, []);
-      byDate.get(d)!.push(e);
+  // Issue #511 D-18 — the modal's findings are the server's answer for the PROPOSED entry together
+  // with the day's other entries (POST /day-breaks/preview, debounced, a stale answer is dropped).
+  // A failed preview leaves the list empty and never blocks saving. A hint (position of a break
+  // not recorded) is shown as a muted note by the template, never as a finding.
+  let modalWarnings = $state<DayCheckWarning[]>([]);
+  // The automatic break a NEW entry without any break gets on save; the preview already counted it,
+  // so the form says so instead of reporting a missing break.
+  let modalAutoBreak = $state<DayPreviewAutoBreak | null>(null);
+  let modalFindings = $derived(modalWarnings.filter((w) => !w.hint));
+  let modalHints = $derived(modalWarnings.filter((w) => w.hint));
+  const previewRunner = createDayPreviewRunner((path, body) =>
+    api.post<DayPreviewResponse>(path, body),
+  );
+  onDestroy(() => previewRunner.dispose());
+  $effect(() => {
+    const active = arbzgEnabled && modalOpen && formHasEnd && !!formStart && !!formEnd;
+    let body: DayPreviewRequest | null = null;
+    if (active && selectedEmployeeId && formDate) {
+      try {
+        const { startISO, endISO, breaksPayload } = buildManualEntryFields();
+        body = buildDayPreviewRequest({
+          employeeId: selectedEmployeeId,
+          date: formDate,
+          entryId: editEntry?.id,
+          startISO,
+          endISO,
+          breaks: breaksPayload,
+          breakMinutes: formBreakTotal,
+        });
+      } catch {
+        // A half-typed time cannot be converted; nothing to evaluate yet.
+        body = null;
+      }
     }
-    for (const [dateStr, dayEntries] of byDate) {
-      const warnings = checkArbZGFrontend(dayEntries);
-      if (warnings.length > 0) map.set(dateStr, warnings);
-    }
-    // Issue #80 (D-09c/D-20): multi-entry days carry the SERVER result instead of the client check.
-    return mergeDayChecksIntoArbzgMap(map, dayChecks);
+    previewRunner.request(body, (warnings, autoBreakApplied) => {
+      modalWarnings = warnings;
+      modalAutoBreak = autoBreakApplied;
+    });
   });
+  // Calendar and list markers: dateStr → warnings[]. The server decides which days carry a
+  // finding (Issue #80 day checks + Issue #511 D-18); the browser only maps the answer.
+  let arbzgDayMap = $derived(
+    arbzgEnabled ? dayChecksToArbzgMap(dayChecks) : new Map<string, DayWarning[]>(),
+  );
 
   // Legend is derived from what the displayed month actually contains, and split by the
   // three encoding channels — quick task 260820-1i7. Colour = Soll status (left edge),
@@ -1966,14 +1944,16 @@
   {#if formNetMin !== null}
     <div class="net-display">
       <span class="net-label">Netto</span>
-      <span class="net-value {modalWarnings.some((w) => w.code === '§3') ? 'net-over' : ''}"
-        >{fmtMin(formNetMin)}<span class="net-unit">h</span></span
+      <span
+        class="net-value {modalWarnings.some((w) => w.code === 'MAX_DAILY_EXCEEDED')
+          ? 'net-over'
+          : ''}">{fmtMin(formNetMin)}<span class="net-unit">h</span></span
       >
     </div>
   {/if}
-  {#if modalWarnings.length > 0}
+  {#if modalFindings.length > 0}
     <div class="modal-arbzg-warnings">
-      {#each modalWarnings as w (w.code)}
+      {#each modalFindings as w, i (i)}
         <div class="arbzg-alert arbzg-{w.severity}" role="alert">
           <span class="arbzg-icon">{w.severity === "error" ? "⛔" : "⚠️"}</span>
           <span>{w.message}</span>
@@ -1981,6 +1961,14 @@
       {/each}
     </div>
   {/if}
+  {#if modalAutoBreak}
+    <p class="text-muted">
+      Mit automatischer Pause: beim Speichern wird eine Pause von {modalAutoBreak.minutes} Min. eingetragen.
+    </p>
+  {/if}
+  {#each modalHints as h, i (i)}
+    <p class="text-muted">{h.message}</p>
+  {/each}
   {#snippet footer()}
     <button class="btn btn-ghost" onclick={closeModal} disabled={saving}>Abbrechen</button>
     <button class="btn btn-primary" onclick={saveEntry} disabled={saving}>

@@ -2,7 +2,10 @@
  * Issue #80 (D-05, 80-AC5, RESEARCH V-2) — the day-break feature never reaches the saldo.
  *
  * The cross-salon § 4 detector and the DayBreak / DayBreakAck models feed exactly the Monatsabschluss
- * GATES (status listing and manual close in `api/overtime.ts`, the automatic close in
+ * GATES. Since Issue #511 the generalised break-finding detector, the Break-row loader, the placement
+ * evaluation and the shared break-rule predicate feed them too and are guarded by name and by module
+ * specifier as well — the former detector names stay on the list, because a rename that dropped them
+ * would leave the guard watching dead names (silent vacuity) (status listing and manual close in `api/overtime.ts`, the automatic close in
  * `plugins/auto-close-month.ts`, the deferred-close reporter). They must never be read by the saldo
  * itself: a day reduces Soll exactly once, and Ist comes from `entryDurations()` over the recorded
  * entries only. A saldo that looked at a day break or an acknowledgement would change a closed
@@ -36,10 +39,19 @@ const FORBIDDEN_NAMES = new Set([
   "evaluateDayBreaks",
   "dayBreak",
   "dayBreakAck",
+  // Issue #511 — the generalised detector, the Break-row loader and the placement predicates.
+  "findUnacknowledgedBreakFindingDays",
+  "findUnacknowledgedBreakFindingDaysForEmployee",
+  "breakFindingCandidateDays",
+  "evaluateBreakFindingDays",
+  "loadBreaksOfEntries",
+  "evaluatePlacement",
+  "hasAckableFinding",
 ]);
 
-/** Module specifiers that name the detector or the day-break modules. */
-const FORBIDDEN_SPECIFIER = /(?:^|\/)(?:cross-salon-days|day-break-rule|day-break-store)$/;
+/** Module specifiers that name the detector, the placement modules or the day-break modules. */
+const FORBIDDEN_SPECIFIER =
+  /(?:^|\/)(?:cross-salon-days|day-break-rule|day-break-store|break-finding-days|day-break-placement|break-regime)$/;
 
 /** The only walked files that may reference them — the Monatsabschluss gates. */
 const GATE_FILES = [
@@ -135,6 +147,34 @@ describe("Issue #80 (D-05, 80-AC5) — the saldo never sees the day-break featur
     ).toEqual([]);
   });
 
+  it("positive control (Issue #511): every new name and specifier is caught", () => {
+    const newNames = [
+      "findUnacknowledgedBreakFindingDays",
+      "findUnacknowledgedBreakFindingDaysForEmployee",
+      "breakFindingCandidateDays",
+      "evaluateBreakFindingDays",
+      "loadBreaksOfEntries",
+      "evaluatePlacement",
+      "hasAckableFinding",
+    ];
+    for (const name of newNames) {
+      expect(
+        forbiddenReferences("x.ts", `import { ${name} } from "../time-tracking";`),
+        `the guard does not catch ${name}`,
+      ).toEqual([name]);
+    }
+    for (const specifier of [
+      "../time-tracking/break-finding-days",
+      "../time-tracking/day-break-placement",
+      "../time-tracking/break-regime",
+    ]) {
+      expect(
+        forbiddenReferences("x.ts", `import { x } from "${specifier}";`),
+        `the guard does not catch the specifier ${specifier}`,
+      ).toEqual([specifier]);
+    }
+  });
+
   it("only the Monatsabschluss gates reference the detector or the day-break models", () => {
     const offenders = [...referencesByFile.entries()]
       .filter(([file, refs]) => refs.length > 0 && !GATE_FILES.includes(file))
@@ -149,7 +189,7 @@ describe("Issue #80 (D-05, 80-AC5) — the saldo never sees the day-break featur
     for (const file of GATE_FILES) {
       expect(
         referencesByFile.get(file) ?? [],
-        `${file} no longer references the cross-salon detector — update the gate list`,
+        `${file} no longer references the break-finding detector — update the gate list`,
       ).not.toEqual([]);
     }
   });

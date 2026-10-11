@@ -5,7 +5,7 @@
   import Spinner from "$components/ui/Spinner.svelte";
   import ToolPage from "$lib/components/admin/ToolPage.svelte";
   import Section from "$lib/components/admin/Section.svelte";
-  import { crossSalonMonthCloseHint } from "$lib/breaks/day-break-violation";
+  import { breakFindingMonthCloseHint } from "$lib/breaks/day-break-violation";
 
   interface MissingEmployee {
     employeeName: string;
@@ -39,10 +39,11 @@
      *  Reiner Hinweis, KEIN Gate: der Abschluss bleibt in jedem Fall möglich. Für
      *  abgeschlossene Monate und flexible Verträge liefert der Server bewusst []. */
     karenzOverrunDays?: string[];
-    /** Issue #80 (D-09b/D-15): days on which the cross-salon § 4 ArbZG break is missing and not
-     *  acknowledged. Blocks the close only while the tenant's break-confirmation flag is on, but
-     *  is shown regardless; display-only here. Empty for a closed month. */
-    crossSalonBreakDays?: string[];
+    /** Issue #80 (D-09b/D-15) + #511 (D-12): days with an open, unacknowledged § 4 ArbZG /
+     *  § 11 JArbSchG break finding (cross-salon shortfall or Satz 2/3). Blocks the close only
+     *  while the tenant's break-confirmation flag is on, but is shown regardless; display-only
+     *  here. Empty for a closed month. */
+    breakFindingDays?: string[];
   }
 
   interface MonthDetailResponse {
@@ -57,7 +58,7 @@
     employeeName: string;
     oldestOpenMonth: { year: number; month: number };
     monthsBehind: number;
-    reason: "GAPS" | "UNCONFIRMED_BREAKS" | "CROSS_SALON_BREAKS" | "UNKNOWN";
+    reason: "GAPS" | "UNCONFIRMED_BREAKS" | "CROSS_SALON_BREAKS" | "BREAK_PLACEMENT" | "UNKNOWN";
     gapDates: string[];
     gapCount: number;
   }
@@ -872,17 +873,17 @@
                                             Attest fehlt ({emp.karenzOverrunDays.length})
                                           </span>
                                         {/if}
-                                        <!-- Issue #80 (D-09b): display-only chip, no control -->
-                                        {#if crossSalonMonthCloseHint(emp.crossSalonBreakDays)}
-                                          {@const crossSalonHint = crossSalonMonthCloseHint(
-                                            emp.crossSalonBreakDays,
+                                        <!-- Issue #80 (D-09b) / #511 (D-12): display-only chip, no control -->
+                                        {#if breakFindingMonthCloseHint(emp.breakFindingDays)}
+                                          {@const breakFindingHint = breakFindingMonthCloseHint(
+                                            emp.breakFindingDays,
                                           )}
                                           <span
                                             class="chip chip-warn karenz-chip"
-                                            data-testid="cross-salon-break-hint"
-                                            title={crossSalonHint?.title}
+                                            data-testid="break-finding-hint"
+                                            title={breakFindingHint?.title}
                                           >
-                                            {crossSalonHint?.label}
+                                            {breakFindingHint?.label}
                                           </span>
                                         {/if}
                                       </td>

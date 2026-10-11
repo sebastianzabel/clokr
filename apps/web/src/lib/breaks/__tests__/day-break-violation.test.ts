@@ -1,18 +1,29 @@
-// Issue #80 (D-09/D-11/D-20) — the presentation helpers for the server-computed day check.
-// The browser never computes a cross-salon finding itself, so these tests pin the mapping from
-// the API's DayCheck to badge, warnings and calendar-marker merge.
+// Issue #80 (D-09/D-11/D-20) + Issue #511 (D-10/D-12/D-18) — the presentation helpers for the
+// server-computed day check. The browser computes no § 4 / § 11 finding itself, so these tests pin
+// the mapping from the API's DayCheck (its `warnings`, `breakFinding`) to badge, calendar markers,
+// toast and month-close chip. The former client-built § 4 message expectations are gone on
+// purpose: D-18 makes the server's message the only message.
 
 import { describe, it, expect } from "vitest";
 import {
   type DayCheck,
-  type DayWarning,
   isChecksRangeAllowed,
   dayCheckBadge,
+  type DayCheckWarning,
   dayCheckWarnings,
-  mergeDayChecksIntoArbzgMap,
-  crossSalonSaveNotice,
-  crossSalonMonthCloseHint,
+  dayChecksToArbzgMap,
+  breakFindingSaveNotice,
+  breakFindingMonthCloseHint,
 } from "../day-break-violation";
+
+function serverWarning(over: Partial<DayCheckWarning> = {}): DayCheckWarning {
+  return {
+    code: "BREAK_TOO_SHORT",
+    severity: "warning",
+    message: "SERVER-TEXT § 4 ArbZG",
+    ...over,
+  };
+}
 
 function check(over: Partial<DayCheck> = {}): DayCheck {
   return {
@@ -24,6 +35,9 @@ function check(over: Partial<DayCheck> = {}): DayCheck {
     requiredBreakMinutes: 30,
     breakShortfall: true,
     maxDailyExceeded: false,
+    breakFinding: true,
+    positionUnknown: false,
+    warnings: [serverWarning({ crossSalon: true })],
     acknowledged: false,
     locked: false,
     mayAcknowledge: false,
@@ -55,103 +69,122 @@ describe("isChecksRangeAllowed", () => {
 });
 
 describe("dayCheckBadge", () => {
-  it("marks an open cross-salon shortfall as yellow 'Pause fehlt'", () => {
+  it("marks an open cross-salon shortfall as yellow 'Pause fehlt' (#80 label unchanged)", () => {
     expect(dayCheckBadge(check())).toEqual({
       cls: "badge-yellow",
       label: "Salonübergreifend: Pause fehlt",
     });
   });
 
-  it("marks an acknowledged cross-salon day as gray 'quittiert'", () => {
+  it("marks an acknowledged cross-salon day as gray 'quittiert' (#80 label unchanged)", () => {
     expect(dayCheckBadge(check({ acknowledged: true }))).toEqual({
       cls: "badge-gray",
       label: "Salonübergreifend: quittiert",
     });
   });
 
-  it("returns null without a cross-salon finding", () => {
-    expect(dayCheckBadge(check({ crossSalon: false }))).toBeNull();
-    expect(dayCheckBadge(check({ breakShortfall: false }))).toBeNull();
+  it("returns null without a break finding", () => {
+    expect(dayCheckBadge(check({ breakFinding: false }))).toBeNull();
+    expect(
+      dayCheckBadge(check({ crossSalon: false, breakShortfall: false, breakFinding: false })),
+    ).toBeNull();
+  });
+
+  it("marks a single-salon placement finding as yellow 'Pausenregel verletzt'", () => {
+    const single = check({
+      crossSalon: false,
+      breakShortfall: false,
+      warnings: [
+        serverWarning({ code: "BREAK_TOO_LATE", certainty: "VIOLATION", legalBasis: "§ 4 ArbZG" }),
+      ],
+    });
+    expect(dayCheckBadge(single)).toEqual({ cls: "badge-yellow", label: "Pausenregel verletzt" });
+  });
+
+  it("marks an acknowledged single-salon finding as gray 'Pausenverstoß: quittiert'", () => {
+    const single = check({
+      crossSalon: false,
+      breakShortfall: false,
+      acknowledged: true,
+      warnings: [serverWarning({ code: "BREAK_TOO_LATE", certainty: "VIOLATION" })],
+    });
+    expect(dayCheckBadge(single)).toEqual({
+      cls: "badge-gray",
+      label: "Pausenverstoß: quittiert",
+    });
+  });
+
+  it("asks for clarification when a finding is UNCLEAR and the day is not acknowledged", () => {
+    const unclear = check({
+      crossSalon: false,
+      breakShortfall: false,
+      warnings: [serverWarning({ code: "BREAK_SEGMENT_TOO_SHORT", certainty: "UNCLEAR" })],
+    });
+    expect(dayCheckBadge(unclear)).toEqual({
+      cls: "badge-yellow",
+      label: "Pause: Klärung nötig",
+    });
+    // Once acknowledged the quiet marker wins: the decision is documented.
+    expect(dayCheckBadge({ ...unclear, acknowledged: true })?.cls).toBe("badge-gray");
   });
 });
 
 describe("dayCheckWarnings", () => {
-  it("maps a 30 minute shortfall to one BREAK_TOO_SHORT warning naming the numbers", () => {
-    const w = dayCheckWarnings(check({ totalBreakMinutes: 10 }));
-    expect(w).toHaveLength(1);
-    expect(w[0].code).toBe("BREAK_TOO_SHORT");
-    expect(w[0].severity).toBe("warning");
-    expect(w[0].message).toContain("§ 4 ArbZG");
-    expect(w[0].message).toContain("salonübergreifend");
-    expect(w[0].message).toContain("8,0 h");
-    expect(w[0].message).toContain("10 Min");
-    expect(w[0].message).toContain("30 Min");
-  });
-
-  it("maps a 45 minute shortfall to an error unless the day is acknowledged", () => {
-    const open = dayCheckWarnings(check({ netWorkedMinutes: 600, requiredBreakMinutes: 45 }));
-    expect(open[0].severity).toBe("error");
-    const acked = dayCheckWarnings(
-      check({ netWorkedMinutes: 600, requiredBreakMinutes: 45, acknowledged: true }),
-    );
-    expect(acked[0].severity).toBe("warning");
-    expect(acked[0].message).toContain("quittiert");
-  });
-
-  it("omits the 'salonübergreifend' wording on a single-salon day", () => {
-    const w = dayCheckWarnings(check({ crossSalon: false }));
-    expect(w[0].message).not.toContain("salonübergreifend");
-  });
-
-  it("maps maxDailyExceeded to an error with the day total, even when acknowledged", () => {
+  it("passes the server warnings through, in server order, without hints", () => {
     const w = dayCheckWarnings(
       check({
-        breakShortfall: false,
-        maxDailyExceeded: true,
-        netWorkedMinutes: 660,
-        acknowledged: true,
+        warnings: [
+          serverWarning({ code: "MAX_DAILY_EXCEEDED", severity: "error", message: "A" }),
+          serverWarning({ code: "BREAK_POSITION_UNKNOWN", message: "H", hint: true }),
+          serverWarning({ code: "BREAK_TOO_LATE", message: "B", certainty: "VIOLATION" }),
+        ],
       }),
     );
+    expect(w).toEqual([
+      { code: "MAX_DAILY_EXCEEDED", severity: "error", message: "A" },
+      { code: "BREAK_TOO_LATE", severity: "warning", message: "B" },
+    ]);
+  });
+
+  it("composes no text of its own: the message is the server's message, whatever the totals say", () => {
+    const w = dayCheckWarnings(check({ netWorkedMinutes: 9999, requiredBreakMinutes: 45 }));
     expect(w).toHaveLength(1);
-    expect(w[0].code).toBe("MAX_DAILY_EXCEEDED");
-    expect(w[0].severity).toBe("error");
-    expect(w[0].message).toContain("11,0 h");
+    expect(w[0].message).toBe("SERVER-TEXT § 4 ArbZG");
+    expect(w[0].severity).toBe("warning");
   });
 
-  it("returns no warnings for a day without a finding", () => {
-    expect(dayCheckWarnings(check({ breakShortfall: false }))).toEqual([]);
+  it("returns [] for a day without warnings and for a stale API without the field", () => {
+    expect(dayCheckWarnings(check({ warnings: [] }))).toEqual([]);
+    const stale = check() as unknown as Record<string, unknown>;
+    delete stale.warnings;
+    expect(dayCheckWarnings(stale as unknown as DayCheck)).toEqual([]);
   });
 });
 
-describe("mergeDayChecksIntoArbzgMap", () => {
-  const clientWarning: DayWarning = { code: "§ 4", severity: "warning", message: "client" };
-
-  it("replaces the client warnings of a server day and removes the date on an empty result", () => {
-    const client = new Map<string, DayWarning[]>([
-      ["2026-03-10", [clientWarning]],
-      ["2026-03-11", [clientWarning]],
-      ["2026-03-12", [clientWarning]],
-    ]);
-    const merged = mergeDayChecksIntoArbzgMap(client, [
+describe("dayChecksToArbzgMap", () => {
+  it("maps date to the server warnings and leaves out hint-only and warning-free days", () => {
+    const map = dayChecksToArbzgMap([
       check({ date: "2026-03-10" }),
-      check({ date: "2026-03-11", breakShortfall: false }),
+      check({
+        date: "2026-03-11",
+        warnings: [serverWarning({ code: "BREAK_POSITION_UNKNOWN", hint: true })],
+      }),
+      check({ date: "2026-03-12", warnings: [] }),
     ]);
-    expect(merged.get("2026-03-10")?.[0].code).toBe("BREAK_TOO_SHORT");
-    expect(merged.has("2026-03-11")).toBe(false);
-    expect(merged.get("2026-03-12")).toEqual([clientWarning]);
-  });
-
-  it("adds a date the client map did not have and does not mutate the input", () => {
-    const client = new Map<string, DayWarning[]>();
-    const merged = mergeDayChecksIntoArbzgMap(client, [check({ date: "2026-03-10" })]);
-    expect(merged.has("2026-03-10")).toBe(true);
-    expect(client.size).toBe(0);
+    expect([...map.keys()]).toEqual(["2026-03-10"]);
+    expect(map.get("2026-03-10")?.[0]).toEqual({
+      code: "BREAK_TOO_SHORT",
+      severity: "warning",
+      message: "SERVER-TEXT § 4 ArbZG",
+    });
   });
 });
 
-describe("crossSalonSaveNotice", () => {
-  it("names § 4 ArbZG, 'salonübergreifend' and that travel time is no break", () => {
-    const text = crossSalonSaveNotice([
+const PRONOUN = /\b(du|dir|dich|dein\w*|Sie|Ihnen?|Ihr\w*)\b/;
+
+describe("breakFindingSaveNotice", () => {
+  it("names § 4 ArbZG, 'salonübergreifend' and that travel time is no break (#80 text)", () => {
+    const text = breakFindingSaveNotice([
       { code: "BREAK_TOO_SHORT", severity: "warning", message: "x", crossSalon: true },
     ]);
     expect(text).toContain("§ 4 ArbZG");
@@ -162,14 +195,17 @@ describe("crossSalonSaveNotice", () => {
 
   it("is pronoun-free because employees AND managers (team page) read it", () => {
     const texts = [
-      crossSalonSaveNotice([
+      breakFindingSaveNotice([
         { code: "BREAK_TOO_SHORT", severity: "warning", message: "x", crossSalon: true },
         { code: "MAX_DAILY_EXCEEDED", severity: "error", message: "x", crossSalon: true },
+      ]),
+      breakFindingSaveNotice([
+        { code: "BREAK_TOO_LATE", severity: "warning", message: "Pause fehlt am Stück." },
       ]),
     ];
     for (const text of texts) {
       expect(text).not.toBeNull();
-      expect(text).not.toMatch(/\b(du|dir|dich|dein\w*|Sie|Ihnen?|Ihr\w*)\b/);
+      expect(text).not.toMatch(PRONOUN);
     }
     expect(texts[0]).toContain(
       "eine tatsächlich genommene Pause kann für den Tag eingetragen werden.",
@@ -177,56 +213,108 @@ describe("crossSalonSaveNotice", () => {
   });
 
   it("names the 10-hour limit over the day sum for a cross-salon MAX_DAILY_EXCEEDED", () => {
-    const text = crossSalonSaveNotice([
+    const text = breakFindingSaveNotice([
       { code: "MAX_DAILY_EXCEEDED", severity: "error", message: "x", crossSalon: true },
     ]);
-    expect(text).toContain("10-Stunden-Grenze");
-    expect(text).toContain("Tagessumme");
+    expect(text).toBe(
+      "Gespeichert. Die salonübergreifende Tagessumme überschreitet die 10-Stunden-Grenze " +
+        "(§ 3 ArbZG).",
+    );
   });
 
-  it("returns null without a cross-salon warning, for empty, undefined and malformed input", () => {
+  it("quotes the server message of a placement finding behind 'Gespeichert.'", () => {
+    const text = breakFindingSaveNotice([
+      {
+        code: "BREAK_TOO_LATE",
+        severity: "warning",
+        message: "§ 4 Satz 3 ArbZG: 6:10 Std. am Stück ohne Ruhepause von mindestens 15 Min.",
+      },
+    ]);
+    expect(text).toBe(
+      "Gespeichert. Pausenregel nicht eingehalten: " +
+        "§ 4 Satz 3 ArbZG: 6:10 Std. am Stück ohne Ruhepause von mindestens 15 Min.",
+    );
+  });
+
+  it("handles all three placement codes and joins several messages with a space", () => {
+    for (const code of ["BREAK_SEGMENT_TOO_SHORT", "BREAK_TOO_LATE", "BREAK_OUTSIDE_WINDOW"]) {
+      expect(breakFindingSaveNotice([{ code, severity: "warning", message: "m" }])).toContain(
+        "Pausenregel nicht eingehalten: m",
+      );
+    }
+    const both = breakFindingSaveNotice([
+      { code: "BREAK_SEGMENT_TOO_SHORT", severity: "warning", message: "m1" },
+      { code: "BREAK_OUTSIDE_WINDOW", severity: "warning", message: "m2" },
+    ]);
+    expect(both).toBe("Gespeichert. Pausenregel nicht eingehalten: m1 m2");
+  });
+
+  it("appends the placement part to the cross-salon text without a second 'Gespeichert.'", () => {
+    const text = breakFindingSaveNotice([
+      { code: "BREAK_TOO_SHORT", severity: "warning", message: "x", crossSalon: true },
+      { code: "BREAK_TOO_LATE", severity: "warning", message: "Spät." },
+    ]) as string;
+    expect(text.startsWith("Gespeichert. Über beide Salons gerechnet")).toBe(true);
+    expect(text.endsWith(" Pausenregel nicht eingehalten: Spät.")).toBe(true);
+    expect(text.match(/Gespeichert\./g)).toHaveLength(1);
+  });
+
+  it("shows nothing for a hint alone, even one carrying a placement code", () => {
     expect(
-      crossSalonSaveNotice([{ code: "BREAK_TOO_SHORT", severity: "warning", message: "x" }]),
+      breakFindingSaveNotice([
+        { code: "BREAK_POSITION_UNKNOWN", severity: "warning", message: "h", hint: true },
+        { code: "BREAK_TOO_LATE", severity: "warning", message: "h2", hint: true },
+      ]),
     ).toBeNull();
-    expect(crossSalonSaveNotice([])).toBeNull();
-    expect(crossSalonSaveNotice(undefined)).toBeNull();
-    expect(crossSalonSaveNotice("nope")).toBeNull();
-    expect(crossSalonSaveNotice([null, 3, { code: 7 }])).toBeNull();
+  });
+
+  it("returns null without a cross-salon or placement warning, for empty, undefined and malformed input", () => {
+    expect(
+      breakFindingSaveNotice([{ code: "BREAK_TOO_SHORT", severity: "warning", message: "x" }]),
+    ).toBeNull();
+    expect(breakFindingSaveNotice([])).toBeNull();
+    expect(breakFindingSaveNotice(undefined)).toBeNull();
+    expect(breakFindingSaveNotice("nope")).toBeNull();
+    expect(breakFindingSaveNotice([null, 3, { code: 7 }])).toBeNull();
+    // A placement warning without a usable message cannot be quoted.
+    expect(breakFindingSaveNotice([{ code: "BREAK_TOO_LATE", message: 5 }])).toBeNull();
   });
 });
 
-describe("crossSalonMonthCloseHint", () => {
-  it("labels one day with the count and names § 4 ArbZG and the date as DD.MM.", () => {
-    const hint = crossSalonMonthCloseHint(["2026-03-10"]);
-    expect(hint?.label).toBe("Pause fehlt (salonübergreifend) (1)");
-    expect(hint?.title).toContain("§ 4 ArbZG");
-    expect(hint?.title).toContain("10.03.");
-    expect(hint?.title).toContain("quittieren");
+describe("breakFindingMonthCloseHint", () => {
+  it("labels one day with the count and names the statutes and the date as DD.MM.", () => {
+    const hint = breakFindingMonthCloseHint(["2026-03-10"]);
+    expect(hint?.label).toBe("Pausenverstoß offen (1)");
+    expect(hint?.title).toBe(
+      "Offener Pausenverstoß (§ 4 ArbZG / § 11 JArbSchG) an: 10.03.; " +
+        "vor dem Abschluss eine Pause erfassen oder den Tag quittieren.",
+    );
+    expect(hint?.title).not.toMatch(PRONOUN);
   });
 
   it("counts every day and lists the first three dates, then the remainder", () => {
-    const hint = crossSalonMonthCloseHint([
+    const hint = breakFindingMonthCloseHint([
       "2026-03-02",
       "2026-03-10",
       "2026-03-11",
       "2026-03-20",
       "2026-03-25",
     ]);
-    expect(hint?.label).toBe("Pause fehlt (salonübergreifend) (5)");
+    expect(hint?.label).toBe("Pausenverstoß offen (5)");
     expect(hint?.title).toContain("02.03., 10.03., 11.03.");
     expect(hint?.title).toContain("+2");
     expect(hint?.title).not.toContain("20.03.");
   });
 
   it("returns null for no days, undefined and null", () => {
-    expect(crossSalonMonthCloseHint([])).toBeNull();
-    expect(crossSalonMonthCloseHint(undefined)).toBeNull();
-    expect(crossSalonMonthCloseHint(null as unknown as undefined)).toBeNull();
+    expect(breakFindingMonthCloseHint([])).toBeNull();
+    expect(breakFindingMonthCloseHint(undefined)).toBeNull();
+    expect(breakFindingMonthCloseHint(null as unknown as undefined)).toBeNull();
   });
 
   it("ignores a malformed date instead of printing it", () => {
-    const hint = crossSalonMonthCloseHint(["nonsense", "2026-03-10"]);
-    expect(hint?.label).toBe("Pause fehlt (salonübergreifend) (1)");
+    const hint = breakFindingMonthCloseHint(["nonsense", "2026-03-10"]);
+    expect(hint?.label).toBe("Pausenverstoß offen (1)");
     expect(hint?.title).toContain("10.03.");
     expect(hint?.title).not.toContain("nonsense");
   });

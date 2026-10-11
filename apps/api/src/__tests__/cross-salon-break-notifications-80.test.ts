@@ -1,7 +1,8 @@
 /**
- * Issue #80 (D-09e, D-10, D-11, D-13, D-18) — the next-day cron that tells managers about an
- * unacknowledged cross-salon § 4 ArbZG violation of a previous day, once per recipient, employee
- * and day.
+ * Issue #80 (D-09e, D-10, D-11, D-13, D-18) and Issue #511 (D-13) — the next-day cron that tells
+ * managers about an unacknowledged § 4 ArbZG / § 11 JArbSchG break finding of a previous day, once
+ * per recipient, employee and day: the cross-salon Satz-1 shortfall as
+ * BREAK_CROSS_SALON_VIOLATION, every other finding (Satz 2 / Satz 3) as BREAK_PLACEMENT_VIOLATION.
  *
  * A multi-entry day cannot exist in the database while the partial unique index
  * `TimeEntry_employeeId_date_unique_not_deleted` holds, so the closed-WORK-entry read of the
@@ -21,7 +22,10 @@ import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./se
 import { daysAgoStrInTz } from "./test-dates";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import { evaluateDayBreaks } from "../contexts/time-tracking/day-break-rule";
-import { CROSS_SALON_NOTICE_TITLE } from "../contexts/time-tracking/cross-salon-notice";
+import {
+  CROSS_SALON_NOTICE_TITLE,
+  BREAK_PLACEMENT_NOTICE_TITLE,
+} from "../contexts/time-tracking/break-finding-notice";
 
 // The transporter is built inline in the notify plugin through a dynamic import, so mocking
 // nodemailer captures the real mail that would leave the server (subject and HTML body).
@@ -42,6 +46,7 @@ import { getWorkedEntriesInRange } from "../contexts/time-tracking/facade/time-e
 const TZ = "Europe/Berlin";
 const PASSWORD = "test1234";
 const NOTIFICATION_TYPE = "BREAK_CROSS_SALON_VIOLATION";
+const PLACEMENT_TYPE = "BREAK_PLACEMENT_VIOLATION";
 const CLOCK_TIME = /\d{1,2}:\d{2}/;
 const SMTP_CONFIGURED = {
   smtpHost: "smtp.test.local",
@@ -188,6 +193,61 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
     });
   }
 
+  function notificationsOfType(type: string, userId: string, employeeId: string, day: string) {
+    return app.prisma.notification.findMany({
+      where: { userId, type, relatedType: "EmployeeDay", relatedId: `${employeeId}:${day}` },
+    });
+  }
+
+  /**
+   * A real single-salon entry of `day` (salon A) with real Break rows — the Break rows hang on a
+   * persisted entry id, so this day is NOT constructed through the mocked facade read.
+   */
+  async function realDay(
+    employeeId: string,
+    day: string,
+    start: string,
+    end: string,
+    breaks: [string, string][],
+    breakMinutes = 30,
+  ) {
+    const entry = await app.prisma.timeEntry.create({
+      data: {
+        employeeId,
+        date: dateOf(day),
+        startTime: localInstant(day, start),
+        endTime: localInstant(day, end),
+        breakMinutes,
+        breakStatus: "CONFIRMED",
+        type: "WORK",
+        salonId: salonA,
+      },
+    });
+    for (const [bStart, bEnd] of breaks) {
+      await app.prisma.break.create({
+        data: {
+          timeEntryId: entry.id,
+          startTime: localInstant(day, bStart),
+          endTime: localInstant(day, bEnd),
+        },
+      });
+    }
+    return entry;
+  }
+
+  /**
+   * A cross-salon day whose only finding is Satz 3: entry A (real, salon A, 08:00-16:00, Break
+   * 14:30-15:00 = 6 h 30 min before it) plus a constructed entry B (salon B, 16:00-16:30). The
+   * recorded 30 min meet Satz 1, so the day is a PLACEMENT finding spread over two salons.
+   */
+  async function crossSalonPlacementDay(employeeId: string, day: string) {
+    const entry = await realDay(employeeId, day, "08:00", "16:00", [["14:30", "15:00"]]);
+    addRows(employeeId, [
+      { ...row(employeeId, day, salonA, "08:00", "16:00", 30), id: entry.id },
+      row(employeeId, day, salonB, "16:00", "16:30"),
+    ]);
+  }
+
   beforeAll(async () => {
     app = await getTestApp();
     const prisma = app.prisma;
@@ -259,7 +319,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
       const day = yesterday();
       twoSalonDay(x.employee.id, day);
 
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
 
       const rows = await notificationsFor(adminUserId, x.employee.id, day);
       expect(rows).toHaveLength(1);
@@ -281,7 +341,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
       const day = yesterday();
       twoSalonDay(x.employee.id, day);
 
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
 
       const own = await app.prisma.notification.count({
         where: { userId: x.user.id, type: NOTIFICATION_TYPE },
@@ -294,8 +354,8 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
       const day = yesterday();
       twoSalonDay(x.employee.id, day);
 
-      await app.tryCrossSalonBreakCheck();
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
+      await app.tryBreakFindingCheck();
 
       expect(await notificationsFor(adminUserId, x.employee.id, day)).toHaveLength(1);
     });
@@ -307,7 +367,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
       const day = yesterday();
       twoSalonDay(x.employee.id, day);
 
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
 
       const [n] = await notificationsFor(mgrA.user.id, x.employee.id, day);
       expect(n, "the salon-A manager is a recipient").toBeDefined();
@@ -351,7 +411,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
       const day = yesterday();
       twoSalonDay(x.employee.id, day);
 
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
 
       const [n] = await notificationsFor(mgrAB.user.id, x.employee.id, day);
       expect(n).toBeDefined();
@@ -366,7 +426,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
       const day = yesterday();
       twoSalonDay(x.employee.id, day);
 
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
 
       expect(await notificationsFor(mgrC.user.id, x.employee.id, day)).toHaveLength(0);
       expect(await notificationsFor(mgrA.user.id, x.employee.id, day)).toHaveLength(1);
@@ -379,7 +439,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
       const day = yesterday();
       twoSalonDay(x.employee.id, day);
 
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
 
       const own = await app.prisma.notification.count({
         where: { userId: x.user.id, type: NOTIFICATION_TYPE },
@@ -395,7 +455,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
       const day = yesterday();
       twoSalonDay(x.employee.id, day);
 
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
       await app.prisma.notification.updateMany({
         where: {
           userId: adminUserId,
@@ -404,7 +464,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
         },
         data: { dismissedAt: new Date() },
       });
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
 
       const rows = await notificationsFor(adminUserId, x.employee.id, day);
       expect(rows).toHaveLength(1);
@@ -416,8 +476,8 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
       const day = daysAgoStrInTz(new Date(), 2, TZ);
       twoSalonDay(x.employee.id, day);
 
-      await app.tryCrossSalonBreakCheck();
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
+      await app.tryBreakFindingCheck();
 
       expect(await notificationsFor(adminUserId, x.employee.id, day)).toHaveLength(1);
     });
@@ -427,7 +487,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
       const day = daysAgoStrInTz(new Date(), 5, TZ);
       twoSalonDay(x.employee.id, day);
 
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
 
       expect(await notificationsFor(adminUserId, x.employee.id, day)).toHaveLength(0);
     });
@@ -460,7 +520,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
         },
       });
 
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
 
       expect(await notificationsFor(adminUserId, x.employee.id, day)).toHaveLength(0);
     });
@@ -479,7 +539,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
         },
       });
 
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
 
       expect(await notificationsFor(adminUserId, x.employee.id, day)).toHaveLength(1);
     });
@@ -493,7 +553,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
         row(x.employee.id, day, salonA, "12:10", "16:00"),
       ]);
 
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
 
       expect(await notificationsFor(adminUserId, x.employee.id, day)).toHaveLength(0);
     });
@@ -506,9 +566,279 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
         row(x.employee.id, day, salonB, "11:30", "17:45", 45),
       ]);
 
-      await app.tryCrossSalonBreakCheck();
+      await app.tryBreakFindingCheck();
 
       expect(await notificationsFor(adminUserId, x.employee.id, day)).toHaveLength(0);
+    });
+  });
+
+  describe("Issue #511 (D-13) — Satz 2 / Satz 3 findings notify as BREAK_PLACEMENT_VIOLATION", () => {
+    it("notifies the tenant-wide manager about a single-salon Satz-3 day with the full finding text", async () => {
+      const x = await createEmployee("place-x");
+      const day = yesterday();
+      // 08:00-16:00 with a 30 min break at 14:30: 6 h 30 min at a stretch before it.
+      await realDay(x.employee.id, day, "08:00", "16:00", [["14:30", "15:00"]]);
+
+      await app.tryBreakFindingCheck();
+
+      const rows = await notificationsOfType(PLACEMENT_TYPE, adminUserId, x.employee.id, day);
+      expect(rows).toHaveLength(1);
+      const n = rows[0];
+      expect(n.title).toBe(BREAK_PLACEMENT_NOTICE_TITLE);
+      expect(n.link).toBe(`/team/time-entries?employeeId=${x.employee.id}&date=${day}`);
+      expect(n.message.startsWith(`Fixture place-x: Am ${germanDate(day)} § 4`)).toBe(true);
+      expect(n.message).toContain("08:00–14:30");
+      // The cross-salon type is NOT used for a single-salon day.
+      expect(await notificationsFor(adminUserId, x.employee.id, day)).toHaveLength(0);
+      console.info(`[511-06 full placement notice] ${n.title} | ${n.message}`);
+    });
+
+    it("a partial-reach manager gets the redacted text: no clock time, no salon, no entry id", async () => {
+      const x = await createEmployee("place-redact");
+      const day = yesterday();
+      await crossSalonPlacementDay(x.employee.id, day);
+
+      await app.tryBreakFindingCheck();
+
+      const [partial] = await notificationsOfType(PLACEMENT_TYPE, mgrA.user.id, x.employee.id, day);
+      expect(partial, "the salon-A manager covers one of the two entries").toBeDefined();
+      expect(partial.title).toBe(BREAK_PLACEMENT_NOTICE_TITLE);
+      expect(partial.message.startsWith(`Fixture place-redact: Am ${germanDate(day)} § 4`)).toBe(
+        true,
+      );
+      const visible = [partial.title, partial.message, partial.link ?? ""].join("\n");
+      expect(visible).not.toMatch(CLOCK_TIME);
+      for (const forbidden of [salonName.A, salonName.B, salonA, salonB]) {
+        expect(visible, `redacted notification must not contain "${forbidden}"`).not.toContain(
+          forbidden,
+        );
+      }
+      console.info(`[511-06 redacted placement notice] ${partial.title} | ${partial.message}`);
+
+      // The A+B manager and the tenant-wide manager cover the whole day: full text with the range.
+      const [full] = await notificationsOfType(PLACEMENT_TYPE, mgrAB.user.id, x.employee.id, day);
+      expect(full.message).toContain("08:00–14:30");
+      // A manager outside both salons is not a recipient.
+      expect(
+        await notificationsOfType(PLACEMENT_TYPE, mgrC.user.id, x.employee.id, day),
+      ).toHaveLength(0);
+    });
+
+    it("sends once, never to the employee, and a dismissed notice is not re-created", async () => {
+      const x = await createEmployee("place-once");
+      await assignScopedRole(x.user.id, [salonA]);
+      const day = yesterday();
+      await realDay(x.employee.id, day, "08:00", "16:00", [["14:30", "15:00"]]);
+
+      await app.tryBreakFindingCheck();
+      await app.tryBreakFindingCheck();
+      expect(
+        await notificationsOfType(PLACEMENT_TYPE, adminUserId, x.employee.id, day),
+      ).toHaveLength(1);
+
+      await app.prisma.notification.updateMany({
+        where: { userId: adminUserId, type: PLACEMENT_TYPE, relatedId: `${x.employee.id}:${day}` },
+        data: { dismissedAt: new Date() },
+      });
+      await app.tryBreakFindingCheck();
+      const rows = await notificationsOfType(PLACEMENT_TYPE, adminUserId, x.employee.id, day);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].dismissedAt).not.toBeNull();
+
+      // x holds the permission over salon A and hears about other employees' days, never their own.
+      const own = await app.prisma.notification.count({
+        where: {
+          userId: x.user.id,
+          type: { in: [PLACEMENT_TYPE, NOTIFICATION_TYPE] },
+          relatedId: `${x.employee.id}:${day}`,
+        },
+      });
+      expect(own).toBe(0);
+      expect(
+        await notificationsOfType(PLACEMENT_TYPE, mgrA.user.id, x.employee.id, day),
+      ).toHaveLength(1);
+    });
+
+    it("an existing cross-salon notice for the day blocks a placement notice (A10)", async () => {
+      const x = await createEmployee("place-a10-pre");
+      const day = yesterday();
+      await realDay(x.employee.id, day, "08:00", "16:00", [["14:30", "15:00"]]);
+      await app.prisma.notification.create({
+        data: {
+          userId: adminUserId,
+          type: NOTIFICATION_TYPE,
+          title: CROSS_SALON_NOTICE_TITLE,
+          message: "vorhanden",
+          relatedType: "EmployeeDay",
+          relatedId: `${x.employee.id}:${day}`,
+          dismissedAt: new Date(),
+        },
+      });
+
+      await app.tryBreakFindingCheck();
+
+      expect(
+        await notificationsOfType(PLACEMENT_TYPE, adminUserId, x.employee.id, day),
+      ).toHaveLength(0);
+      // The other recipients were not told yet and still get theirs.
+      expect(
+        await notificationsOfType(PLACEMENT_TYPE, mgrA.user.id, x.employee.id, day),
+      ).toHaveLength(1);
+    });
+
+    it("an existing placement notice for the day blocks a cross-salon notice (A10)", async () => {
+      const x = await createEmployee("place-a10-post");
+      const day = yesterday();
+      twoSalonDay(x.employee.id, day);
+      await app.prisma.notification.create({
+        data: {
+          userId: adminUserId,
+          type: PLACEMENT_TYPE,
+          title: BREAK_PLACEMENT_NOTICE_TITLE,
+          message: "vorhanden",
+          relatedType: "EmployeeDay",
+          relatedId: `${x.employee.id}:${day}`,
+        },
+      });
+
+      await app.tryBreakFindingCheck();
+
+      expect(await notificationsFor(adminUserId, x.employee.id, day)).toHaveLength(0);
+      expect(await notificationsFor(mgrA.user.id, x.employee.id, day)).toHaveLength(1);
+    });
+
+    it("a cross-salon Satz-1 day keeps the cross-salon type and produces no placement notice", async () => {
+      const x = await createEmployee("place-cross");
+      const day = yesterday();
+      twoSalonDay(x.employee.id, day);
+
+      await app.tryBreakFindingCheck();
+
+      expect(await notificationsFor(adminUserId, x.employee.id, day)).toHaveLength(1);
+      expect(
+        await notificationsOfType(PLACEMENT_TYPE, adminUserId, x.employee.id, day),
+      ).toHaveLength(0);
+    });
+
+    it("a hint-only day (stored break sum, no placed break) notifies nobody (A5)", async () => {
+      const x = await createEmployee("place-hint");
+      const day = yesterday();
+      await realDay(x.employee.id, day, "08:00", "16:30", [], 30);
+
+      await app.tryBreakFindingCheck();
+
+      expect(
+        await app.prisma.notification.count({
+          where: { type: PLACEMENT_TYPE, relatedId: `${x.employee.id}:${day}` },
+        }),
+      ).toBe(0);
+    });
+
+    it("a day with a current acknowledgement notifies nobody", async () => {
+      const x = await createEmployee("place-acked");
+      const day = yesterday();
+      const entry = await realDay(x.employee.id, day, "08:00", "16:00", [["14:30", "15:00"]]);
+      const breaks = await app.prisma.break.findMany({ where: { timeEntryId: entry.id } });
+      const { snapshot } = evaluateDayBreaks({
+        rows: [
+          {
+            id: entry.id,
+            startTime: entry.startTime,
+            endTime: entry.endTime!,
+            breakMinutes: entry.breakMinutes,
+            breakStatus: entry.breakStatus,
+            salonId: entry.salonId,
+            breaks,
+          },
+        ],
+        dayBreaks: [],
+        acks: [],
+      });
+      await app.prisma.dayBreakAck.create({
+        data: {
+          employeeId: x.employee.id,
+          date: dateOf(day),
+          reason: "Kundentermin ohne Unterbrechung",
+          snapshot: { ...snapshot },
+          acknowledgedBy: adminUserId,
+        },
+      });
+
+      await app.tryBreakFindingCheck();
+
+      expect(
+        await app.prisma.notification.count({
+          where: { type: PLACEMENT_TYPE, relatedId: `${x.employee.id}:${day}` },
+        }),
+      ).toBe(0);
+    });
+
+    it("a minor's 4 h 31 min block is notified under § 11 JArbSchG; the same day of an adult is not", async () => {
+      const day = yesterday();
+      const minor = await createEmployee("place-minor");
+      const adult = await createEmployee("place-adult");
+      const sixteen = new Date(dateOf(day));
+      sixteen.setUTCFullYear(sixteen.getUTCFullYear() - 16);
+      await app.prisma.employee.update({
+        where: { id: minor.employee.id },
+        data: { birthDate: sixteen },
+      });
+      // 08:00-14:00, 30 min break at 12:31: 4 h 31 min before it (limit 4 h 30 min for a minor).
+      for (const e of [minor, adult]) {
+        await realDay(e.employee.id, day, "08:00", "14:00", [["12:31", "13:01"]]);
+      }
+
+      await app.tryBreakFindingCheck();
+
+      const [n] = await notificationsOfType(PLACEMENT_TYPE, adminUserId, minor.employee.id, day);
+      expect(n, "the minor's day is a finding").toBeDefined();
+      expect(n.message).toContain("JArbSchG");
+      expect(
+        await notificationsOfType(PLACEMENT_TYPE, adminUserId, adult.employee.id, day),
+      ).toHaveLength(0);
+    });
+  });
+
+  describe("Issue #511 (D-13) — the placement mail (T-511-29)", () => {
+    it("carries the neutral placement subject; the partial-reach manager's mail holds no time or salon", async () => {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId },
+        data: { ...SMTP_CONFIGURED, emailNotificationsEnabled: true, emailOnMissingEntries: true },
+      });
+      try {
+        sendMailMock.mockReset();
+        sendMailMock.mockResolvedValue({ messageId: "test-message-id" });
+        const x = await createEmployee("place-mail");
+        const day = yesterday();
+        await crossSalonPlacementDay(x.employee.id, day);
+
+        await app.tryBreakFindingCheck();
+
+        const notified = await app.prisma.notification.count({
+          where: { type: PLACEMENT_TYPE, relatedId: `${x.employee.id}:${day}` },
+        });
+        expect(notified).toBeGreaterThanOrEqual(3);
+        await vi.waitFor(() => expect(sendMailMock).toHaveBeenCalledTimes(notified));
+        const mailTo = (email: string) =>
+          sendMailMock.mock.calls
+            .map((c) => c[0] as { to: string; subject: string; html: string })
+            .filter((m) => m.to === email);
+
+        const [partial] = mailTo(mgrA.user.email);
+        expect(partial.subject).toBe(`${BREAK_PLACEMENT_NOTICE_TITLE} – Clokr`);
+        expect(partial.subject).not.toMatch(CLOCK_TIME);
+        for (const forbidden of [salonName.A, salonName.B, salonA, salonB, "14:30", "08:00"]) {
+          expect(partial.html, `mail must not contain "${forbidden}"`).not.toContain(forbidden);
+        }
+        const [full] = mailTo(adminEmail);
+        expect(full.subject).toBe(`${BREAK_PLACEMENT_NOTICE_TITLE} – Clokr`);
+        expect(full.html).toContain("08:00–14:30");
+      } finally {
+        await app.prisma.tenantConfig.update({
+          where: { tenantId },
+          data: { emailNotificationsEnabled: false, emailOnMissingEntries: false },
+        });
+      }
     });
   });
 
@@ -525,7 +855,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
         const day = yesterday();
         twoSalonDay(x.employee.id, day);
 
-        await app.tryCrossSalonBreakCheck();
+        await app.tryBreakFindingCheck();
 
         // One mail per notification: the tenant-wide admin, the A+B manager and the A-only manager,
         // plus any earlier fixture user who holds the permission over both salons.

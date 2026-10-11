@@ -80,15 +80,23 @@ export {
   unconfirmedDaysFromEntries,
 } from "./find-unconfirmed-break-days";
 
-// ── Issue #80 (D-09b/D-15) — unacknowledged cross-salon § 4 days for the month close ──────────
-// The sibling of the Phase 92 detector above; consumed by the four Monatsabschluss paths in
-// working-time-account and (plan 80-09) the next-day cron. The saldo never imports it (D-05).
+// ── Issue #80 (D-09b/D-15), #511 (D-12) — unacknowledged break-finding days ─────────────
+// The cross-salon Satz-1 shortfall of Issue #80 plus Satz 2/3 placement findings on any day;
+// consumed by the four Monatsabschluss paths in working-time-account and the next-day cron. The
+// saldo never imports it (D-05, AK-5). The age decision is injected by the caller, so this module
+// imports neither the absence nor the working-time-account context.
 export {
-  crossSalonCandidateDays,
-  findUnacknowledgedCrossSalonDays,
-  findUnacknowledgedCrossSalonDaysForEmployee,
-} from "./cross-salon-days";
-export type { CrossSalonRow, CrossSalonViolationDay } from "./cross-salon-days";
+  breakFindingCandidateDays,
+  evaluateBreakFindingDays,
+  findUnacknowledgedBreakFindingDays,
+  findUnacknowledgedBreakFindingDaysForEmployee,
+} from "./break-finding-days";
+export type {
+  BreakFindingDay,
+  BreakFindingRow,
+  EvaluatedBreakDay,
+  IsMinorAt,
+} from "./break-finding-days";
 
 // ── Phase 68b (issue #68) — the entry-salon rule ──────────────────────────────────────────────
 // The platform CSV importer creates TimeEntry rows too and must resolve their salon through the

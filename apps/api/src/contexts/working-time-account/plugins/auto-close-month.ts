@@ -33,12 +33,13 @@ import {
   lockEntriesForMonth,
   getEffectiveSchedule,
   findUnconfirmedBreakDays, // Phase 92 Plan 04 — BREAK-05 single source of truth
-  findUnacknowledgedCrossSalonDaysForEmployee, // Issue #80 (D-09b/D-15) — cross-salon § 4 defer
+  findUnacknowledgedBreakFindingDaysForEmployee, // Issue #511 (D-12) — break-finding defer
 } from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7; Phase 101B wave 8 merged in
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
   getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2; Issue #446 — effective leave
   loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
+  isMinorAtDate, // Issue #511 (D-05) — injected into the break-finding detector
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 
 declare module "fastify" {
@@ -335,12 +336,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   break; // defer — never auto-finalize over unconfirmed breaks (F-02/B2 parity)
                 }
 
-                // ── Issue #80 (D-09b/D-15): cross-salon § 4 violation defer ──
+                // ── Issue #511 (D-12; generalises Issue #80 D-09b/D-15): break-finding defer ──
                 // Same flag, but NOT gated by enforceBreakConfirmation or by the schedule type:
-                // a statutory finding blocks the automatic lock for every contract. A recorded day
-                // break cures the day, a CURRENT acknowledgement waives it (D-17). Read-only — the
-                // saldo input below is untouched (D-05).
-                const crossSalonBreakDays = await findUnacknowledgedCrossSalonDaysForEmployee(
+                // a statutory § 4 ArbZG / § 11 JArbSchG finding blocks the automatic lock for every
+                // contract. A recorded break cures the day, a CURRENT acknowledgement or an
+                // entry-level "durchgearbeitet" waives it; a hint-only day never defers. Read-only —
+                // the saldo input below is untouched.
+                const breakFindings = await findUnacknowledgedBreakFindingDaysForEmployee(
                   app.prisma,
                   {
                     tenantId: tenant.id,
@@ -348,21 +350,22 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     monthFirstDay,
                     monthLastDay,
                     tz,
+                    isMinorAt: isMinorAtDate,
                   },
                 );
 
-                if (crossSalonBreakDays.length > 0) {
+                if (breakFindings.length > 0) {
                   app.log.warn(
                     { employeeId: emp.id, month: monthKey.month, year: monthKey.year },
-                    "Auto-Monatsabschluss: salonübergreifend fehlende Pflichtpause — verschoben (manuell)",
+                    "Auto-Monatsabschluss: offener Pausenverstoß (§ 4 ArbZG / § 11 JArbSchG) — verschoben (manuell)",
                   );
                   missing.push({
                     employee: emp,
-                    missingDates: crossSalonBreakDays,
+                    missingDates: breakFindings.map((d) => d.date),
                     month: monthKey.month,
                     year: monthKey.year,
                   });
-                  break; // defer — never auto-finalize over an open § 4 finding
+                  break; // defer — never auto-finalize over an open § 4 / § 11 finding
                 }
               }
 

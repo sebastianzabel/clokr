@@ -36,7 +36,7 @@ const CLOSED_DAY = "2026-02-10"; // constructed day inside a closed month
 const mockedLookup = vi.mocked(findEntriesOfDay);
 
 const SELF_ACK_MESSAGE = "Eigene Pausenverstöße können nicht selbst quittiert werden.";
-const NO_VIOLATION_MESSAGE = "Für diesen Tag liegt kein salonübergreifender Pausenverstoß vor.";
+const NO_VIOLATION_MESSAGE = "Für diesen Tag liegt kein quittierbarer Pausenverstoß vor.";
 const ALREADY_ACKED_MESSAGE = "Der Pausenverstoß dieses Tages ist bereits quittiert.";
 const MONTH_CLOSED_MESSAGE = "Monat ist abgeschlossen und kann nicht bearbeitet werden";
 const ENTRY_LOCKED_MESSAGE = "Eintrag ist gesperrt und kann nicht bearbeitet werden";
@@ -66,7 +66,7 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
     salonId: string,
     start: string,
     end: string,
-    opts: { isLocked?: boolean } = {},
+    opts: { isLocked?: boolean; breakMinutes?: number } = {},
   ): TimeEntry {
     return {
       id: randomUUID(),
@@ -74,7 +74,7 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
       date: dateOf(day),
       startTime: new Date(at(start, day)),
       endTime: new Date(at(end, day)),
-      breakMinutes: 0,
+      breakMinutes: opts.breakMinutes ?? 0,
       type: "WORK",
       source: "MANUAL",
       note: null,
@@ -316,6 +316,9 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
         salonIds: [salonA, salonB].sort(),
         netWorkedMin: 480,
         totalBreakMin: 0,
+        // Issue #511 A8: the A+B day (08-12 / 15-19 with no recorded break) now also carries the
+        // placement key of its UNCLEAR Satz-3 finding.
+        placementKey: expect.stringMatching(/^ARBZG_4\|BREAK_TOO_LATE:UNCLEAR:\d+-\d+$/),
       });
 
       const audits = await app.prisma.auditLog.findMany({
@@ -422,15 +425,104 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
     });
   });
 
+  // ── Issue #511 D-12: any day with an ackable § 4 / § 11 finding ───────────
+
+  describe("POST /acks — single-entry days with an ackable placement finding (Issue #511 D-12)", () => {
+    /** One 8 h entry without any break: Satz 1 (legacy shortfall) and Satz 3 (no pause at all). */
+    function singleEntryDay(employeeId: string, day = DAY, breakMinutes = 0) {
+      constructedDays.set(`${employeeId}:${day}`, [
+        row(employeeId, day, salonA, "08:00", "16:00", { breakMinutes }),
+      ]);
+    }
+
+    it("a manager with day-wide scope acknowledges a single-entry Satz-3 day: 201, the stored snapshot carries the placement key, a second POST is 409", async () => {
+      singleEntryDay(data.employee.id);
+      const res = await postAck(data.adminToken, ackBody(data.employee.id));
+      expect(res.statusCode).toBe(201);
+      const stored = await app.prisma.dayBreakAck.findMany({
+        where: { employeeId: data.employee.id },
+      });
+      expect(stored).toHaveLength(1);
+      expect(stored[0].snapshot).toMatchObject({
+        placementKey: expect.stringContaining("BREAK_TOO_LATE"),
+      });
+      const again = await postAck(data.adminToken, ackBody(data.employee.id));
+      expect(again.statusCode).toBe(409);
+      expect(errorOf(again)).toBe(ALREADY_ACKED_MESSAGE);
+    });
+
+    it("the employee's own single-entry day is 403 with the self-acknowledgement wording", async () => {
+      singleEntryDay(data.adminEmployee.id);
+      const res = await postAck(data.adminToken, ackBody(data.adminEmployee.id));
+      expect(res.statusCode).toBe(403);
+      expect(errorOf(res)).toBe(SELF_ACK_MESSAGE);
+    });
+
+    it("A5: a hint-only day (30 min stored, no positions) and a finding-free day are 409", async () => {
+      singleEntryDay(data.employee.id, DAY, 30);
+      const hintOnly = await postAck(data.adminToken, ackBody(data.employee.id));
+      expect(hintOnly.statusCode).toBe(409);
+      expect(errorOf(hintOnly)).toBe(NO_VIOLATION_MESSAGE);
+
+      constructedDays.set(`${data.employee.id}:2026-03-12`, [
+        row(data.employee.id, "2026-03-12", salonA, "08:00", "12:00"),
+      ]);
+      const free = await postAck(data.adminToken, ackBody(data.employee.id, "2026-03-12"));
+      expect(free.statusCode).toBe(409);
+      expect(errorOf(free)).toBe(NO_VIOLATION_MESSAGE);
+      expect(await app.prisma.dayBreakAck.count({ where: { employeeId: data.employee.id } })).toBe(
+        0,
+      );
+    });
+
+    it("D-12 / Pitfall 12: the acknowledgement dismisses the employee-day notices of BOTH types; another day and another type stay", async () => {
+      singleEntryDay(data.employee.id);
+      const cross = await seedViolationNotice(data.adminUser.id, data.employee.id, DAY);
+      const placement = await seedViolationNotice(
+        data.adminUser.id,
+        data.employee.id,
+        DAY,
+        "BREAK_PLACEMENT_VIOLATION",
+      );
+      const otherDay = await seedViolationNotice(
+        data.adminUser.id,
+        data.employee.id,
+        "2026-03-12",
+        "BREAK_PLACEMENT_VIOLATION",
+      );
+      const otherType = await seedViolationNotice(
+        data.adminUser.id,
+        data.employee.id,
+        DAY,
+        "BREAK_COMPLIANCE_ALERT",
+      );
+      expect((await postAck(data.adminToken, ackBody(data.employee.id))).statusCode).toBe(201);
+      const rows = await app.prisma.notification.findMany({
+        where: { id: { in: [cross.id, placement.id, otherDay.id, otherType.id] } },
+      });
+      const dismissed = (id: string) => rows.find((r) => r.id === id)?.dismissedAt;
+      expect(dismissed(cross.id)).not.toBeNull();
+      expect(dismissed(placement.id)).not.toBeNull();
+      expect(dismissed(otherDay.id)).toBeNull();
+      expect(dismissed(otherType.id)).toBeNull();
+    });
+  });
+
   // ── Task 2: negative matrix of POST and the revoke route ──────────────────
 
   describe("POST /acks — guards (D-08, D-13, D-17, D-18)", () => {
-    it("D-18: a same-salon multi-entry day with a shortfall is 409 (no cross-salon violation)", async () => {
+    it("D-18 narrowed by Issue #511 D-12: a same-salon multi-entry day with a shortfall and a 10 min gap is now acknowledgeable (a certain Satz-2/3 finding), a same-salon day with a conformant 30 min gap is still 409", async () => {
       constructedDays.set(`${data.employee.id}:${DAY}`, [
         row(data.employee.id, DAY, salonA, "08:00", "12:00"),
         row(data.employee.id, DAY, salonA, "12:10", "17:00"),
       ]);
-      const res = await postAck(data.adminToken, ackBody(data.employee.id));
+      expect((await postAck(data.adminToken, ackBody(data.employee.id))).statusCode).toBe(201);
+
+      constructedDays.set(`${data.employee.id}:2026-03-12`, [
+        row(data.employee.id, "2026-03-12", salonA, "08:00", "12:00"),
+        row(data.employee.id, "2026-03-12", salonA, "12:30", "16:30"),
+      ]);
+      const res = await postAck(data.adminToken, ackBody(data.employee.id, "2026-03-12"));
       expect(res.statusCode).toBe(409);
       expect(errorOf(res)).toBe(NO_VIOLATION_MESSAGE);
     });
