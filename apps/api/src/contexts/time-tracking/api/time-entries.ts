@@ -1346,6 +1346,65 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           .send({ error: "JARBSCHG_MINOR_LIMIT", message: jarbSchgPost.message });
       }
 
+      // Issue #81 (D-18): the ONE automatic-break plan, computed BEFORE the write so the share
+      // check below sees the break that will actually be stored; the post-create block writes this
+      // very plan object (prediction equals outcome by construction, no second `planAutoBreak`
+      // call). `new Date(body.date)` is the same UTC-midnight instant the create stores as
+      // `entry.date`.
+      let autoBreakPlanOnCreate: AutoBreakPlan | null = null;
+      if (
+        newEnd &&
+        autoBreakAppliesOnCreate({ slotCount: breakSlots.length, breakMinutes: finalBreakMinutes })
+      ) {
+        // Auto-break: check tenant config
+        const tenantConfig = targetEmployee
+          ? await app.prisma.tenantConfig.findUnique({
+              where: { tenantId: targetEmployee.tenantId },
+            })
+          : null;
+
+        // Phase 64 (D-04, BREAK-03): effective break = employee override → tenant default → 0.
+        // targetEmployee is loaded earlier without `select` → carries the two override fields.
+        // Issue #511 (D-20): minors get at least the § 11 JArbSchG amount; adults unchanged.
+        autoBreakPlanOnCreate = planAutoBreak({
+          employee: targetEmployee,
+          tenantConfig,
+          start: newStart,
+          end: newEnd,
+          entryDate: new Date(body.date),
+          tz,
+        });
+      }
+
+      // Issue #81 (D-05/D-06/D-18): kind and shares are judged against the working time the entry
+      // will have, including the predicted automatic break. Runs BEFORE the grant flip, the
+      // RetroEntryRequest create and the plain create, so a rejection leaves zero state change
+      // (same promise as the salon resolution above).
+      if (body.activityKind !== undefined || body.activityShares !== undefined) {
+        const activityWrite = mergeActivityWrite(body, null);
+        const activityCheck = validateActivityState(
+          {
+            kind: activityWrite.kind,
+            shares: activityWrite.shares,
+            startTime: newStart,
+            endTime: newEnd,
+            breakMinutes: autoBreakPlanOnCreate?.amountMin ?? finalBreakMinutes,
+          },
+          { sharesWritten: activityWrite.sharesWritten, wasClosed: false },
+        );
+        if (!activityCheck.ok) {
+          return reply.code(activityCheck.status).send(activityCheck.body);
+        }
+      }
+      // Issue #81 (D-06): the same fields on all three create branches (grant, pending Nachtrag,
+      // plain); the shares are a nested write, so they exist with the entry or not at all.
+      const activityCreateData = {
+        ...(body.activityKind !== undefined ? { activityKind: body.activityKind } : {}),
+        ...(body.activityShares && body.activityShares.length > 0
+          ? { activityShares: activitySharesCreate(body.activityShares) }
+          : {}),
+      };
+
       // Phase 76.29 Plan 03 — race-safe single-use grant consumption.
       // When a resolvedGrantId is present, the grant flip and the TimeEntry create
       // run inside one $transaction, in that order (grant flip FIRST). The conditional
@@ -1414,6 +1473,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 createdBy: user.sub,
                 isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
                 salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
+                ...activityCreateData, // Issue #81 (D-06)
                 ...(manualLeave
                   ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
                   : CLEARED_INVALID_REASON),
@@ -1467,6 +1527,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 createdBy: user.sub,
                 isInvalid: true,
                 salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
+                ...activityCreateData, // Issue #81 (D-06)
                 ...invalidReasonFields("RETRO_APPROVAL_PENDING"),
                 retroRequestId: request.id,
               },
@@ -1497,6 +1558,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               createdBy: user.sub,
               isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
               salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
+              ...activityCreateData, // Issue #81 (D-06)
               ...(manualLeave
                 ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
                 : CLEARED_INVALID_REASON),
@@ -1539,34 +1601,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             endTime: b.endTime,
           })),
         });
-      } else if (
-        newEnd &&
-        autoBreakAppliesOnCreate({ slotCount: breakSlots.length, breakMinutes: finalBreakMinutes })
-      ) {
-        // Auto-break: check tenant config
-        const tenantConfig = targetEmployee
-          ? await app.prisma.tenantConfig.findUnique({
-              where: { tenantId: targetEmployee.tenantId },
-            })
-          : null;
-
-        // Phase 64 (D-04, BREAK-03): effective break = employee override → tenant default → 0.
-        // targetEmployee is loaded earlier without `select` → carries the two override fields.
-        // Issue #511 (D-20): minors get at least the § 11 JArbSchG amount; adults unchanged.
-        const plan = planAutoBreak({
-          employee: targetEmployee,
-          tenantConfig,
-          start: newStart,
-          end: newEnd,
-          entryDate: entry.date,
-          tz,
+      } else if (autoBreakPlanOnCreate) {
+        // Issue #81 (D-18): write the plan computed before the create — no second planAutoBreak.
+        const written = await autoInsertBreak(app, {
+          entryId: entry.id,
+          plan: autoBreakPlanOnCreate,
         });
-        if (plan) {
-          const written = await autoInsertBreak(app, { entryId: entry.id, plan });
-          // Update entry object for response
-          entry.breakMinutes = written;
-          entry.breakStatus = "AUTO";
-        }
+        // Update entry object for response
+        entry.breakMinutes = written;
+        entry.breakStatus = "AUTO";
       }
 
       await updateOvertimeAccount(app, employeeId);
@@ -1590,7 +1633,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Re-fetch entry with breaks for response
       const entryWithBreaks = await app.prisma.timeEntry.findUnique({
         where: { id: entry.id },
-        include: { breaks: { orderBy: { startTime: "asc" } } },
+        include: {
+          breaks: { orderBy: { startTime: "asc" } },
+          // Issue #81 (D-06): the response and the CREATE audit carry the allocation.
+          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+        },
       });
 
       await app.audit({

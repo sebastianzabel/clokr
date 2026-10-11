@@ -20,7 +20,17 @@ const REASON = "Korrektur nach Rückfrage";
 describe("Issue #81 (Phase 81 Plan 02) — activity kind and shares on the entry write surface", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
+  // A second tenant with the automatic break switched on, so the first tenant's entries stay
+  // untouched by it.
+  let autoData: Awaited<ReturnType<typeof seedTestData>>;
   let dayCounter = 0;
+  let postDayCounter = 0;
+
+  /** A fresh April 2026 day for the POST cases (the PUT cases use March). */
+  function nextPostDate(): string {
+    postDayCounter += 1;
+    return new Date(Date.UTC(2026, 3, 1 + postDayCounter)).toISOString().slice(0, 10);
+  }
 
   /** A fresh calendar day per call (one entry per employee and day). March 2026, far in the past. */
   function nextDate(): string {
@@ -100,12 +110,18 @@ describe("Issue #81 (Phase 81 Plan 02) — activity kind and shares on the entry
     vi.setSystemTime(new Date("2026-06-15T10:00:00.000Z"));
     app = await getTestApp();
     data = await seedTestData(app, "act81w");
+    autoData = await seedTestData(app, "act81a");
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: autoData.tenant.id },
+      data: { autoBreakEnabled: true, defaultBreakStart: "12:00" },
+    });
   });
 
   afterAll(async () => {
     vi.useRealTimers();
     try {
       await cleanupTestData(app, data.tenant.id);
+      await cleanupTestData(app, autoData.tenant.id);
     } catch (err) {
       console.error("time-entries-activity-81 cleanup failed:", err);
     }
@@ -397,6 +413,196 @@ describe("Issue #81 (Phase 81 Plan 02) — activity kind and shares on the entry
       });
       expect(res.statusCode).toBe(200);
       expect(await read()).toEqual(before);
+    });
+  });
+  describe("POST — kind and shares on create (D-06, D-18)", () => {
+    function post(token: string, payload: Record<string, unknown>) {
+      return app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${token}` },
+        payload,
+      });
+    }
+
+    async function rowsOn(employeeId: string, date: string) {
+      return app.prisma.timeEntry.findMany({
+        where: { employeeId, date: new Date(`${date}T00:00:00Z`) },
+        include: { activityShares: { select: { kind: true, minutes: true } } },
+      });
+    }
+
+    it("stores kind and shares with the entry; response and CREATE audit carry them", async () => {
+      const date = nextPostDate();
+      const res = await post(data.adminToken, {
+        employeeId: data.employee.id,
+        date,
+        startTime: `${date}T08:00:00.000Z`,
+        endTime: `${date}T17:00:00.000Z`,
+        breaks: [{ startTime: `${date}T12:00:00.000Z`, endTime: `${date}T12:45:00.000Z` }],
+        activityKind: "PRODUCTIVE",
+        activityShares: [{ kind: "SETUP_CLEANING", minutes: 60 }],
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body) as {
+        entry: { id: string; activityKind: string; activityShares: unknown[] };
+      };
+      expect(body.entry.activityKind).toBe("PRODUCTIVE");
+      expect(body.entry.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 60 }]);
+      const audit = await app.prisma.auditLog.findFirstOrThrow({
+        where: { entity: "TimeEntry", entityId: body.entry.id, action: "CREATE" },
+      });
+      expect((audit.newValue as { activityShares: unknown[] }).activityShares).toEqual([
+        { kind: "SETUP_CLEANING", minutes: 60 },
+      ]);
+    });
+
+    it("an entry written without activity input reads UNSPECIFIED with no shares (D-03)", async () => {
+      const date = nextPostDate();
+      const res = await post(data.adminToken, {
+        employeeId: data.employee.id,
+        date,
+        startTime: `${date}T08:00:00.000Z`,
+        endTime: `${date}T16:00:00.000Z`,
+        breakMinutes: 30,
+      });
+      expect(res.statusCode).toBe(201);
+      const rows = await rowsOn(data.employee.id, date);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].activityKind).toBe("UNSPECIFIED");
+      expect(rows[0].activityShares).toEqual([]);
+    });
+
+    it("shares on an entry without an end answer 409 and create no row; a kind alone is allowed", async () => {
+      // An open entry overlaps every later entry of its owner, so it goes on the last allowed
+      // day (the fake "today") of an employee whose other entries all lie earlier.
+      const date = "2026-06-15";
+      const payload = {
+        employeeId: autoData.employee.id,
+        date,
+        startTime: `${date}T08:00:00.000Z`,
+      };
+      const withShare = await post(autoData.adminToken, {
+        ...payload,
+        activityShares: [{ kind: "SETUP_CLEANING", minutes: 10 }],
+      });
+      expect(withShare.statusCode).toBe(409);
+      expect((JSON.parse(withShare.body) as { error: string }).error).toBe(OPEN_MESSAGE);
+      expect(await rowsOn(autoData.employee.id, date)).toHaveLength(0);
+
+      const kindOnly = await post(autoData.adminToken, { ...payload, activityKind: "PRODUCTIVE" });
+      expect(kindOnly.statusCode).toBe(201);
+      const [row] = await rowsOn(autoData.employee.id, date);
+      expect(row.activityKind).toBe("PRODUCTIVE");
+    });
+
+    it("shares above the explicit working time answer 409 and create no row", async () => {
+      const date = nextPostDate();
+      const res = await post(data.adminToken, {
+        employeeId: data.employee.id,
+        date,
+        startTime: `${date}T08:00:00.000Z`,
+        endTime: `${date}T09:00:00.000Z`,
+        activityKind: "PRODUCTIVE",
+        activityShares: [{ kind: "SETUP_CLEANING", minutes: 90 }],
+      });
+      expect(res.statusCode).toBe(409);
+      expect((JSON.parse(res.body) as { error: string }).error).toBe(SUM_MESSAGE);
+      expect(await rowsOn(data.employee.id, date)).toHaveLength(0);
+    });
+
+    it("D-18: shares equal to the presence of an auto-break entry are rejected against the PREDICTED break", async () => {
+      // 08:00-15:00 is 420 min of presence; the tenant default break for > 6 h is 30 min, so the
+      // stored working time is 390. Judged against the presence (the break not yet written) the
+      // 420 min would pass — only the predicted plan makes it a 409.
+      const date = nextPostDate();
+      const res = await post(autoData.adminToken, {
+        employeeId: autoData.employee.id,
+        date,
+        startTime: `${date}T08:00:00.000Z`,
+        endTime: `${date}T15:00:00.000Z`,
+        activityKind: "PRODUCTIVE",
+        activityShares: [{ kind: "SETUP_CLEANING", minutes: 420 }],
+      });
+      expect(res.statusCode).toBe(409);
+      expect((JSON.parse(res.body) as { error: string }).error).toBe(SUM_MESSAGE);
+      expect(await rowsOn(autoData.employee.id, date)).toHaveLength(0);
+    });
+
+    it("D-18: a share that fits the planned break is stored and the break equals the one written without shares", async () => {
+      const withDate = nextPostDate();
+      const withoutDate = nextPostDate();
+      const input = (date: string) => ({
+        employeeId: autoData.employee.id,
+        date,
+        startTime: `${date}T08:00:00.000Z`,
+        endTime: `${date}T15:00:00.000Z`,
+      });
+      const withShares = await post(autoData.adminToken, {
+        ...input(withDate),
+        activityKind: "PRODUCTIVE",
+        activityShares: [{ kind: "SETUP_CLEANING", minutes: 380 }],
+      });
+      expect(withShares.statusCode).toBe(201);
+      const without = await post(autoData.adminToken, input(withoutDate));
+      expect(without.statusCode).toBe(201);
+
+      const [stored1] = await rowsOn(autoData.employee.id, withDate);
+      const [stored2] = await rowsOn(autoData.employee.id, withoutDate);
+      expect(stored1.breakMinutes).toBe(30);
+      expect(stored1.breakMinutes).toBe(stored2.breakMinutes);
+      const { entryDurations } = await import("../contexts/time-tracking");
+      const working = entryDurations(stored1).workingMinutes;
+      const sum = stored1.activityShares.reduce((acc, share) => acc + share.minutes, 0);
+      expect(working).toBe(390);
+      expect(sum).toBe(380);
+      expect(sum).toBeLessThanOrEqual(working);
+    });
+
+    it("the pending Zeitnachtrag branch carries the share on the coupled invalid entry", async () => {
+      const res = await post(data.empToken, {
+        date: "2026-05-01",
+        startTime: "2026-05-01T08:00:00.000Z",
+        endTime: "2026-05-01T16:00:00.000Z",
+        breakMinutes: 30,
+        reason: "vergessen einzutragen",
+        activityKind: "PRODUCTIVE",
+        activityShares: [{ kind: "SETUP_CLEANING", minutes: 45 }],
+      });
+      expect(res.statusCode).toBe(201);
+      const [row] = await rowsOn(data.employee.id, "2026-05-01");
+      expect(row.isInvalid).toBe(true);
+      expect(row.retroRequestId).not.toBeNull();
+      expect(row.activityKind).toBe("PRODUCTIVE");
+      expect(row.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 45 }]);
+    });
+
+    it("the grant branch carries kind and share on the CORRECTION entry", async () => {
+      const grant = await app.prisma.retroEntryRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          targetDate: new Date("2026-05-04T00:00:00Z"),
+          reason: "Freigabe fuer Nachtrag",
+          startTime: "08:00",
+          endTime: "16:00",
+          breakMinutes: 30,
+          status: "APPROVED",
+        },
+      });
+      const res = await post(data.empToken, {
+        date: "2026-05-04",
+        startTime: "2026-05-04T08:00:00.000Z",
+        endTime: "2026-05-04T16:00:00.000Z",
+        breakMinutes: 30,
+        grantId: grant.id,
+        activityKind: "SETUP_CLEANING",
+        activityShares: [{ kind: "PRODUCTIVE", minutes: 200 }],
+      });
+      expect(res.statusCode).toBe(201);
+      const [row] = await rowsOn(data.employee.id, "2026-05-04");
+      expect(row.source).toBe("CORRECTION");
+      expect(row.activityKind).toBe("SETUP_CLEANING");
+      expect(row.activityShares).toEqual([{ kind: "PRODUCTIVE", minutes: 200 }]);
     });
   });
 });
