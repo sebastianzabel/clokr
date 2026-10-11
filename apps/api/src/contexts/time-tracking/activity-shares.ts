@@ -213,3 +213,39 @@ export function isActivityOnlyPut(body: ActivityPutBody, existing: ActivityPutEx
 
   return true;
 }
+
+/**
+ * Issue #81 (D-07) — turns an entry's classified remainder into an explicit share before the clock
+ * extends the entry with time nobody classified.
+ *
+ * Under the remainder model (D-01) all unallocated working time of an entry counts as its kind. A
+ * clock re-open or a consolidation adds working time AFTER a classification was recorded; letting
+ * that time inherit the kind would fabricate a classification nobody made. This function keeps the
+ * recorded statement exactly (never lose) and leaves the added time unspecified (never fabricate):
+ * the remainder measured on the closed entry BEFORE the extension (whole minutes, floor) becomes a
+ * share of the entry's kind, and the entry kind becomes UNSPECIFIED. A remainder below one minute
+ * is dropped, and the kind still becomes UNSPECIFIED.
+ *
+ * Callers: the clock re-open (`services/clock/resolver.ts`) and the consolidation target
+ * (`services/clock/consolidate.ts`). A user edit (PUT) that extends an entry is a deliberate act on
+ * the classified entry and is not materialised. The clock paths never write a classification of
+ * their own.
+ *
+ * Returns null when there is nothing to keep: the entry is UNSPECIFIED or still open.
+ *
+ * Known limit: when a stored `breakMinutes` is lower than the sum of the entry's Break rows (only a
+ * legacy row or a revalidation that set a break sum without rows), the clock re-open recomputes the
+ * break from the rows and the working time after the next clock-out can fall below the shares. The
+ * clock never rejects a punch, so `activityMinutes()` reports the negative remainder as-is (never
+ * clamped, D-05); the next PUT that touches times or shares must resolve it.
+ */
+export function materializeRemainder(
+  state: ActivityState,
+): { kind: "UNSPECIFIED"; shares: ActivityShareInput[] } | null {
+  if (state.kind === "UNSPECIFIED" || state.endTime === null) return null;
+  const allocated = state.shares.reduce((acc, share) => acc + share.minutes, 0);
+  const whole = Math.floor(entryDurations(state).workingMinutes - allocated + SUM_EPSILON);
+  const shares = state.shares.map((share) => ({ kind: share.kind, minutes: share.minutes }));
+  if (whole >= 1) shares.push({ kind: state.kind, minutes: whole });
+  return { kind: "UNSPECIFIED", shares };
+}

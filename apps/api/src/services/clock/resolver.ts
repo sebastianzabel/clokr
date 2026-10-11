@@ -16,6 +16,11 @@ import {
 } from "../../contexts/time-tracking/invalid-reason";
 import { findEntriesOfDay } from "../../contexts/time-tracking/day-entries"; // Phase 69b
 import { resolveEntrySalon } from "../../contexts/time-tracking/entry-salon"; // Phase 68b
+import {
+  materializeRemainder,
+  activitySharesReplace,
+} from "../../contexts/time-tracking/activity-shares"; // Issue #81
+import { loadSharesOfEntry } from "../../contexts/time-tracking/activity-store"; // Issue #81
 
 export async function resolveClockEvent(
   app: FastifyInstance,
@@ -239,6 +244,17 @@ export async function resolveClockEvent(
             return { kind: "CONFLICT", reason: "MONTH_LOCKED" } as const;
           }
           const gapBreakStart = closedEntry!.endTime!; // old endTime = start of gap break
+          // Issue #81 (D-07): the classified remainder of the CLOSED entry (values before the gap
+          // break) becomes an explicit share, so the time worked after the re-open is never
+          // attributed to a kind nobody chose. Null for an unclassified entry — then nothing changes.
+          const sharesBefore = await loadSharesOfEntry(tx, event.tenantId, decision.entryId);
+          const materialized = materializeRemainder({
+            kind: closedEntry!.activityKind,
+            shares: sharesBefore,
+            startTime: closedEntry!.startTime,
+            endTime: closedEntry!.endTime,
+            breakMinutes: closedEntry!.breakMinutes,
+          });
           // 1. Create Break for the gap (old endTime → new START timestamp)
           const breakRow = await tx.break.create({
             data: {
@@ -252,15 +268,36 @@ export async function resolveClockEvent(
           const totalBreakMins = Math.round(calcBreakMinutesLocal(allBreaks));
           const reopened = await tx.timeEntry.update({
             where: { id: decision.entryId },
-            data: { endTime: null, breakMinutes: totalBreakMins },
+            data: {
+              endTime: null,
+              breakMinutes: totalBreakMins,
+              ...(materialized && {
+                activityKind: materialized.kind,
+                activityShares: activitySharesReplace(materialized.shares),
+              }),
+            },
           });
           // D-01c: audit the reopen with the dedicated CLOCK_REOPEN action
           const audit = await emitClockAudit(tx, {
             action: "CLOCK_REOPEN",
             entity: "TimeEntry",
             entityId: reopened.id,
-            oldValue: { endTime: gapBreakStart.toISOString() },
-            newValue: { endTime: null, gapBreakId: breakRow.id, breakMinutes: totalBreakMins },
+            oldValue: {
+              endTime: gapBreakStart.toISOString(),
+              ...(materialized && {
+                activityKind: closedEntry!.activityKind,
+                activityShares: sharesBefore,
+              }),
+            },
+            newValue: {
+              endTime: null,
+              gapBreakId: breakRow.id,
+              breakMinutes: totalBreakMins,
+              ...(materialized && {
+                activityKind: materialized.kind,
+                activityShares: materialized.shares,
+              }),
+            },
             actor: event.actor,
             req,
           });

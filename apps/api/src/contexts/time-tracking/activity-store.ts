@@ -48,3 +48,19 @@ export async function loadActivityRowsForEntries(
   }
   return rows;
 }
+
+/**
+ * Issue #81 (D-07) — the stored shares of one entry, for the clock writers that extend it. Bound to
+ * the tenant and to a live (not soft-deleted) entry like every read of this module.
+ */
+export async function loadSharesOfEntry(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  entryId: string,
+): Promise<ActivityShareInput[]> {
+  return db.timeEntryActivityShare.findMany({
+    where: { timeEntryId: entryId, timeEntry: { deletedAt: null, employee: { tenantId } } },
+    select: { kind: true, minutes: true },
+    orderBy: { kind: "asc" },
+  });
+}

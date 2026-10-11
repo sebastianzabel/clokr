@@ -14,6 +14,7 @@ import {
   activitySharesCreate,
   activitySharesReplace,
   isActivityOnlyPut,
+  materializeRemainder,
   mergeActivityWrite,
   validateActivityState,
   type ActivityState,
@@ -388,5 +389,64 @@ describe("isActivityOnlyPut (D-20)", () => {
     expect(isActivityOnlyPut({ ...act, note: "x" }, stored)).toBe(false);
     expect(isActivityOnlyPut({ ...act, note: null }, { ...stored, note: "x" })).toBe(false);
     expect(isActivityOnlyPut({ ...act, note: "x" }, { ...stored, note: "x" })).toBe(true);
+  });
+});
+
+describe("materializeRemainder (D-07)", () => {
+  const morning = (over: Partial<ActivityState> = {}): ActivityState => ({
+    kind: "PRODUCTIVE",
+    shares: [{ kind: "SETUP_CLEANING", minutes: 60 }],
+    startTime: d("2026-03-10T08:00:00.000Z"),
+    endTime: d("2026-03-10T12:00:00.000Z"),
+    breakMinutes: 0,
+    ...over,
+  });
+
+  it("turns the classified remainder into a share and sets the kind to UNSPECIFIED", () => {
+    expect(materializeRemainder(morning())).toEqual({
+      kind: "UNSPECIFIED",
+      shares: [
+        { kind: "SETUP_CLEANING", minutes: 60 },
+        { kind: "PRODUCTIVE", minutes: 180 },
+      ],
+    });
+  });
+
+  it("returns null for an UNSPECIFIED entry and for an open entry", () => {
+    expect(materializeRemainder(morning({ kind: "UNSPECIFIED" }))).toBeNull();
+    expect(materializeRemainder(morning({ endTime: null }))).toBeNull();
+  });
+
+  it("floors a fractional remainder to whole minutes", () => {
+    // 239.6 working minutes, no shares.
+    const r = materializeRemainder(
+      morning({
+        kind: "SETUP_CLEANING",
+        shares: [],
+        endTime: d("2026-03-10T11:59:36.000Z"),
+      }),
+    );
+    expect(r).toEqual({ kind: "UNSPECIFIED", shares: [{ kind: "SETUP_CLEANING", minutes: 239 }] });
+  });
+
+  it("drops a remainder below one minute but still unclassifies the entry", () => {
+    const r = materializeRemainder(morning({ shares: [{ kind: "SETUP_CLEANING", minutes: 240 }] }));
+    expect(r).toEqual({ kind: "UNSPECIFIED", shares: [{ kind: "SETUP_CLEANING", minutes: 240 }] });
+  });
+
+  it("the result always passes the validator on the closed state", () => {
+    for (const state of [
+      morning(),
+      morning({ shares: [] }),
+      morning({ kind: "SETUP_CLEANING", shares: [{ kind: "PRODUCTIVE", minutes: 17 }] }),
+    ]) {
+      const r = materializeRemainder(state)!;
+      expect(
+        validateActivityState(
+          { ...state, kind: r.kind, shares: r.shares },
+          { sharesWritten: true, wasClosed: true },
+        ),
+      ).toEqual({ ok: true });
+    }
   });
 });
