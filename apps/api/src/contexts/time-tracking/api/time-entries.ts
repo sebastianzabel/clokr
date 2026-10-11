@@ -22,6 +22,14 @@ import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
 import { resolveEntrySalon } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
 import { entryDurations } from "../entry-durations"; // Phase 79 (Issue #79), D-06/D-14 — per-entry presence/working time
+import { activityKindSchema, activitySharesSchema } from "../activity-kind"; // Issue #81 (D-06)
+import {
+  validateActivityState,
+  mergeActivityWrite,
+  isActivityOnlyPut,
+  activitySharesReplace,
+  activitySharesCreate,
+} from "../activity-shares"; // Issue #81 (D-05/D-06/D-20) — the one share validator and the nested-write builders
 import { getValidWorkedEntriesInRange } from "../facade/time-entries"; // Phase 79 (#79), D-07 — T1, the saldo's own entry set
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
@@ -137,6 +145,10 @@ const manualEntrySchema = z.object({
   // a caller either names a salon or leaves the field out entirely. Validated tenant-scoped and
   // active-only by `resolveEntrySalon`.
   salonId: z.string().uuid().optional(),
+  // Issue #81 (D-06): omitted = unchanged (UNSPECIFIED / no shares on create), [] = clear, list =
+  // full replacement; `null` is not accepted.
+  activityKind: activityKindSchema.optional(),
+  activityShares: activitySharesSchema.optional(),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -188,6 +200,9 @@ const updateEntrySchema = z.object({
   // Phase 68b (issue #68), D-12: an entry's salon may be changed. `null` is deliberately not
   // accepted — a caller either names a (possibly unchanged) salon or leaves the field out.
   salonId: z.string().uuid().optional(),
+  // Issue #81 (D-06): omitted = unchanged, [] = clear, list = full replacement; `null` is not accepted.
+  activityKind: activityKindSchema.optional(),
+  activityShares: activitySharesSchema.optional(),
 });
 
 // ── Pausen-Minuten aus Break-Slots berechnen ──────────────────────────────────
@@ -1668,6 +1683,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           // verify the coupled request is still PENDING (strictness, Pitfall 2) — not
           // just that a retroRequestId happens to be set.
           retroRequest: { select: { status: true } },
+          // Issue #81 (D-05/D-06): the stored allocation, for the merged-state check and the audit.
+          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
         },
       });
       if (!existing) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
@@ -1792,13 +1809,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const overlapDate = body.date ? new Date(body.date) : existing.date;
       const overlapTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
       const putIsCorrectionByManager = isManager && existing.employeeId !== user.employeeId;
+      // Issue #81 (D-20): a PUT that changes nothing but the activity classification is not a
+      // correction of recorded time — no Begründung, no `source: CORRECTION`, no MANAGER_CORRECTION
+      // audit. Retro window, month lock and permission still apply to it exactly like any PUT.
+      const activityOnlyPut = isActivityOnlyPut(body, existing);
+      const putIsTimeCorrection = putIsCorrectionByManager && !activityOnlyPut;
 
       // Quick 260824-cjd — a manager correcting ANOTHER employee's entry must supply a
       // Begründung. Conditional (cannot be a plain Zod field, see updateEntrySchema
       // comment) — enforced here, right after putIsCorrectionByManager is known and
       // after the isLocked gate above, before any other guard runs.
       let putAuditReason: string | undefined;
-      if (putIsCorrectionByManager) {
+      if (putIsTimeCorrection) {
         const putReasonCheck = auditReasonSchema.safeParse(body.reason ?? "");
         if (!putReasonCheck.success) {
           return reply.code(400).send({ error: AUDIT_REASON_REQUIRED });
@@ -1903,6 +1925,35 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           .send({ error: "JARBSCHG_MINOR_LIMIT", message: jarbSchgPut.message });
       }
 
+      // Issue #81 (D-05): the share sum may never exceed the working minutes the entry WILL have —
+      // judged on the merged state (body wins, omitted keeps the stored value) before anything is
+      // written. Runs BEFORE the salon block and the break replacement below (the non-grant path
+      // deletes and recreates Break rows outside any transaction), so a rejection changes nothing.
+      // A note-only or date-only PUT touches neither times nor breaks and is not re-validated.
+      const activityWrite = mergeActivityWrite(body, existing);
+      if (
+        body.activityKind !== undefined ||
+        body.activityShares !== undefined ||
+        body.startTime !== undefined ||
+        "endTime" in body ||
+        body.breakMinutes !== undefined ||
+        body.breaks !== undefined
+      ) {
+        const activityCheck = validateActivityState(
+          {
+            kind: activityWrite.kind,
+            shares: activityWrite.shares,
+            startTime: updatedStart,
+            endTime: updatedEnd,
+            breakMinutes: editBreakMinutes,
+          },
+          { sharesWritten: activityWrite.sharesWritten, wasClosed: existing.endTime !== null },
+        );
+        if (!activityCheck.ok) {
+          return reply.code(activityCheck.status).send(activityCheck.body);
+        }
+      }
+
       // Phase 68b (issue #68), D-12: a salon change is validated only when a DIFFERENT salon is
       // requested — the existing.isLocked gate above already rejected locked entries, so the same
       // value is an accepted no-op even if that salon is inactive now (a form that re-sends the
@@ -1929,10 +1980,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Patch-Objekt explizit aufbauen um TS-Spread-Probleme zu vermeiden
       // Only set source to CORRECTION when a manager edits another employee's entry, OR when a
       // grant-backed edit is performed (putResolvedGrantId present — grant edits are always corrections).
-      // putIsCorrectionByManager is already computed above (before the invariant call) —
-      // reuse it here so the patch and the retro-window exemption stay in sync.
+      // putIsCorrectionByManager is already computed above (before the invariant call) and keeps
+      // driving the retro-window exemption; the patch uses putIsTimeCorrection instead, which
+      // differs only for an activity-only PUT (Issue #81, D-20: a classification is not a time
+      // correction, so it does not flip the source).
       const patch: Record<string, unknown> =
-        putIsCorrectionByManager || putResolvedGrantId ? { source: "CORRECTION" } : {};
+        putIsTimeCorrection || putResolvedGrantId ? { source: "CORRECTION" } : {};
       if (resolvedSalonId !== undefined) patch.salonId = resolvedSalonId; // Phase 68b (issue #68), D-12
       if (body.date) patch.date = new Date(body.date);
       if (body.startTime) patch.startTime = new Date(body.startTime);
@@ -1959,6 +2012,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // until a manager decides via PATCH /retro-entry-requests/:id/review. Do not add
       // an isInvalid-clearing branch here for the Nachtrag reason without going through
       // that endpoint (Elevation-of-Privilege guard, T-96-12).
+
+      // Issue #81 (D-06): the activity fields are written as nested writes inside the entry update,
+      // so kind and shares change atomically with the row. An activity-only PUT writes ONLY these
+      // fields (D-20) — no source, no breakStatus, no revalidation side effect.
+      const activityPatch: Record<string, unknown> = {};
+      if (body.activityKind !== undefined) activityPatch.activityKind = body.activityKind;
+      if (body.activityShares !== undefined) {
+        activityPatch.activityShares = activitySharesReplace(body.activityShares);
+      }
 
       // Handle break slots update (non-grant path: runs before the update, as before)
       // For the grant path, break-slots are handled inside the $transaction below.
@@ -1994,6 +2056,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       }
 
+      // Built AFTER the break-slot block above, which still writes `patch.breakMinutes`.
+      const putData = activityOnlyPut ? activityPatch : { ...patch, ...activityPatch };
+
       // Phase 76.29.1 Plan 02 — race-safe single-use grant consumption on PUT.
       // When a putResolvedGrantId is present, the TimeEntry update + grant flip + audit run
       // inside one $transaction, mirroring the POST grant path (~:1095–1134).
@@ -2018,8 +2083,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             const txUpdated = await tx.timeEntry.update({
               where: { id },
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              data: patch as any,
-              include: { breaks: { orderBy: { startTime: "asc" } } },
+              data: putData as any,
+              include: {
+                breaks: { orderBy: { startTime: "asc" } },
+                activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+              },
             });
 
             // Conditional flip: only succeeds if still APPROVED (single-use guard).
@@ -2052,8 +2120,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           updated = await app.prisma.timeEntry.update({
             where: { id },
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            data: patch as any,
-            include: { breaks: { orderBy: { startTime: "asc" } } },
+            data: putData as any,
+            include: {
+              breaks: { orderBy: { startTime: "asc" } },
+              activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+            },
           });
         }
       } catch (err) {
@@ -2082,13 +2153,14 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       await app.audit({
         userId: user.sub,
-        action: putIsCorrectionByManager ? "MANAGER_CORRECTION" : "UPDATE",
+        action: putIsTimeCorrection ? "MANAGER_CORRECTION" : "UPDATE",
         entity: "TimeEntry",
         entityId: id,
         oldValue: existing,
         // Quick 260824-cjd: auditReason only on the MANAGER_CORRECTION branch — the
-        // plain self-edit UPDATE path never carries one.
-        newValue: putIsCorrectionByManager ? { ...updated, auditReason: putAuditReason } : updated,
+        // plain self-edit UPDATE path never carries one. Issue #81: both sides carry the activity
+        // kind and shares through the includes above.
+        newValue: putIsTimeCorrection ? { ...updated, auditReason: putAuditReason } : updated,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 

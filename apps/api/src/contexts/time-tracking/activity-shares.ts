@@ -145,3 +145,71 @@ export function activitySharesReplace(shares: readonly ActivityShareInput[]): {
 } {
   return { deleteMany: {}, create: shares.map(({ kind, minutes }) => ({ kind, minutes })) };
 }
+
+/** The part of the PUT body the D-20 predicate looks at (mirrors the route's schema output). */
+export type ActivityPutBody = {
+  activityKind?: ActivityKind;
+  activityShares?: readonly ActivityShareInput[];
+  date?: string;
+  startTime?: string;
+  endTime?: string | null;
+  breakMinutes?: number;
+  breaks?: readonly unknown[];
+  grantId?: string;
+  note?: string | null;
+  type?: string;
+  salonId?: string;
+};
+
+/** The stored entry fields the predicate compares the body against. */
+export type ActivityPutExisting = {
+  date: Date;
+  startTime: Date;
+  endTime: Date | null;
+  note: string | null;
+  type: string;
+  salonId: string;
+};
+
+/**
+ * D-20: true when a PUT changes nothing but the activity classification.
+ *
+ * A classification is not a correction of recorded time, so such a PUT is neither flagged
+ * `source: CORRECTION` nor does it need the manager's correction Begründung; it is still audited,
+ * still refused on a locked entry and still bound by the retro window. The predicate only
+ * classifies the body — it never decides permissions, the retro window or the lock.
+ *
+ * Decided per field:
+ * - `breakMinutes`, `breaks` and `grantId` present => never activity-only (they confirm the
+ *   break or consume a retro grant, even when the value equals the stored one);
+ * - `date`, `startTime`, `endTime`, `note`, `type` and `salonId` count only when their value
+ *   differs from the stored one, so a form that re-sends the unchanged values stays
+ *   activity-only. `"endTime" in body` / `"note" in body` decide presence exactly like the route.
+ */
+export function isActivityOnlyPut(body: ActivityPutBody, existing: ActivityPutExisting): boolean {
+  if (body.activityKind === undefined && body.activityShares === undefined) return false;
+
+  if (body.breakMinutes !== undefined || body.breaks !== undefined || body.grantId !== undefined) {
+    return false;
+  }
+
+  if (body.date !== undefined && body.date !== existing.date.toISOString().slice(0, 10)) {
+    return false;
+  }
+  if (
+    body.startTime !== undefined &&
+    new Date(body.startTime).getTime() !== existing.startTime.getTime()
+  ) {
+    return false;
+  }
+  if ("endTime" in body) {
+    const bodyEnd = body.endTime ? new Date(body.endTime).getTime() : null;
+    const storedEnd = existing.endTime ? existing.endTime.getTime() : null;
+    if (bodyEnd !== storedEnd) return false;
+  }
+  if ("note" in body && (body.note ?? null) !== existing.note) return false;
+  if (body.type !== undefined && body.type !== existing.type) return false;
+  if (body.salonId !== undefined && body.salonId !== existing.salonId) return false;
+
+  return true;
+}

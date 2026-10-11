@@ -13,6 +13,7 @@ import { ACTIVITY_SHARE_KINDS, activityKindSchema, activitySharesSchema } from "
 import {
   activitySharesCreate,
   activitySharesReplace,
+  isActivityOnlyPut,
   mergeActivityWrite,
   validateActivityState,
   type ActivityState,
@@ -334,5 +335,58 @@ describe("nested-write builders", () => {
       create: [{ kind: "SETUP_CLEANING", minutes: 60 }],
     });
     expect(activitySharesReplace([])).toEqual({ deleteMany: {}, create: [] });
+  });
+});
+
+describe("isActivityOnlyPut (D-20)", () => {
+  const stored = {
+    date: d("2026-03-10T00:00:00.000Z"),
+    startTime: START,
+    endTime: END,
+    note: null as string | null,
+    type: "WORK",
+    salonId: "salon-1",
+  };
+  const act = { activityKind: "PRODUCTIVE" as const };
+
+  it("an activity field alone is activity-only", () => {
+    expect(isActivityOnlyPut(act, stored)).toBe(true);
+    expect(isActivityOnlyPut({ activityShares: [] }, stored)).toBe(true);
+  });
+
+  it("a body without any activity field is never activity-only", () => {
+    expect(isActivityOnlyPut({}, stored)).toBe(false);
+    expect(isActivityOnlyPut({ note: "x" }, stored)).toBe(false);
+  });
+
+  it("breakMinutes, breaks and grantId confirm a break or consume a grant, even when equal", () => {
+    expect(isActivityOnlyPut({ ...act, breakMinutes: 45 }, stored)).toBe(false);
+    expect(isActivityOnlyPut({ ...act, breaks: [] }, stored)).toBe(false);
+    expect(isActivityOnlyPut({ ...act, grantId: "g" }, stored)).toBe(false);
+  });
+
+  it("scalars count only when they differ from the stored value", () => {
+    expect(isActivityOnlyPut({ ...act, date: "2026-03-10" }, stored)).toBe(true);
+    expect(isActivityOnlyPut({ ...act, date: "2026-03-11" }, stored)).toBe(false);
+    expect(isActivityOnlyPut({ ...act, startTime: "2026-03-10T08:00:00Z" }, stored)).toBe(true);
+    expect(isActivityOnlyPut({ ...act, startTime: "2026-03-10T08:30:00Z" }, stored)).toBe(false);
+    expect(isActivityOnlyPut({ ...act, endTime: "2026-03-10T17:00:00.000Z" }, stored)).toBe(true);
+    expect(isActivityOnlyPut({ ...act, endTime: "2026-03-10T16:00:00.000Z" }, stored)).toBe(false);
+    expect(isActivityOnlyPut({ ...act, type: "WORK" }, stored)).toBe(true);
+    expect(isActivityOnlyPut({ ...act, type: "OVERTIME" }, stored)).toBe(false);
+    expect(isActivityOnlyPut({ ...act, salonId: "salon-1" }, stored)).toBe(true);
+    expect(isActivityOnlyPut({ ...act, salonId: "salon-2" }, stored)).toBe(false);
+  });
+
+  it("endTime null reopens a closed entry, so it is not activity-only; null on an open one is", () => {
+    expect(isActivityOnlyPut({ ...act, endTime: null }, stored)).toBe(false);
+    expect(isActivityOnlyPut({ ...act, endTime: null }, { ...stored, endTime: null })).toBe(true);
+  });
+
+  it("note null against a stored null is unchanged, a different note is not", () => {
+    expect(isActivityOnlyPut({ ...act, note: null }, stored)).toBe(true);
+    expect(isActivityOnlyPut({ ...act, note: "x" }, stored)).toBe(false);
+    expect(isActivityOnlyPut({ ...act, note: null }, { ...stored, note: "x" })).toBe(false);
+    expect(isActivityOnlyPut({ ...act, note: "x" }, { ...stored, note: "x" })).toBe(true);
   });
 });
