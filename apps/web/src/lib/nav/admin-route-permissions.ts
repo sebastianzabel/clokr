@@ -23,120 +23,105 @@ export interface AdminRoutePermission {
 
 const Z = (resourceAction: string) => `${resourceAction}:ZUGEWIESEN`;
 
+/** One navigable route: group, label, icon and the alternatives (each an all-of key set). */
+function navRoute(
+  href: string,
+  group: string,
+  label: string,
+  icon: string,
+  ...requires: string[][]
+): AdminRoutePermission {
+  return { href, requires, inNav: true, nav: { group, label, icon } };
+}
+
+/** An alias route that only redirects; never shown in a navigation. */
+function aliasRoute(href: string, ...requires: string[][]): AdminRoutePermission {
+  return { href, requires, inNav: false };
+}
+
+// Each line names the API guard(s) its page calls.
 export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
-  // GET /employees — employee:read
-  {
-    href: "/admin/employees",
-    nav: { group: "PERSONAL", label: "Mitarbeitende", icon: "users" },
-    requires: [[Z("employee:read")]],
-    inNav: true,
-  },
-  // No read guard exists; the page's writes decide (PUT /settings/work, /settings/leave-types).
-  {
-    href: "/admin/vacation",
-    nav: { group: "PERSONAL", label: "Urlaubsverwaltung", icon: "umbrella" },
-    requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
-    inNav: true,
-  },
-  // Writes /company-shutdowns — company-shutdown:manage
-  {
-    href: "/admin/shutdowns",
-    nav: { group: "PERSONAL", label: "Betriebsurlaub", icon: "calendar" },
-    requires: [[Z("company-shutdown:manage")]],
-    inNav: true,
-  },
-  // Promise.all of templates/coverage (shift-config), week (shift:read), patterns (shift-pattern:read)
-  {
-    href: "/admin/shifts",
-    nav: { group: "PLANUNG", label: "Schichtplan", icon: "grid" },
-    requires: [[Z("shift-config:manage"), Z("shift:read"), Z("shift-pattern:read")]],
-    inNav: true,
-  },
-  // GET /employees (employee:read) plus GET/PUT /employees/:id/availability
-  {
-    href: "/admin/availability",
-    nav: { group: "PLANUNG", label: "Verfügbarkeit", icon: "calendar-check" },
-    requires: [
-      [Z("employee:read"), Z("availability:read")],
-      [Z("employee:read"), Z("availability:update")],
-    ],
-    inNav: true,
-  },
-  // GET /overtime/close-month/status — month-close:read
-  {
-    href: "/admin/month-close",
-    nav: { group: "COMPLIANCE", label: "Monatsabschluss", icon: "lock" },
-    requires: [[Z("month-close:read")]],
-    inNav: true,
-  },
-  // GET /audit-logs — audit-log:read
-  {
-    href: "/admin/audit",
-    nav: { group: "COMPLIANCE", label: "Audit & Log", icon: "shield" },
-    requires: [[Z("audit-log:read")]],
-    inNav: true,
-  },
-  // POST /imports/employees — employee:import; POST /imports/time-entries — time-entry:import
-  {
-    href: "/admin/import",
-    nav: { group: "DATEN", label: "CSV Import", icon: "upload" },
-    requires: [[Z("employee:import")], [Z("time-entry:import")]],
-    inNav: true,
-  },
-  // GET /reports/datev — report:export
-  {
-    href: "/admin/export",
-    nav: { group: "DATEN", label: "DATEV Export", icon: "download" },
-    requires: [[Z("report:export")]],
-    inNav: true,
-  },
-  // Tabs: settings (tenant-settings), terminals (terminal:manage), API keys (api-key:manage)
-  {
-    href: "/admin/system",
-    nav: { group: "SYSTEM", label: "Allgemein", icon: "settings" },
-    requires: [
-      [Z("tenant-settings:read")],
-      [Z("tenant-settings:update")],
-      [Z("terminal:manage")],
-      [Z("api-key:manage")],
-    ],
-    inNav: true,
-  },
-  // No API guard (writes /me/preferences); grouped with the tenant settings it belongs to.
-  {
-    href: "/admin/themes",
-    nav: { group: "SYSTEM", label: "Branding & Themes", icon: "palette" },
-    requires: [[Z("tenant-settings:read")], [Z("tenant-settings:update")]],
-    inNav: true,
-  },
-  // /presence-sources — presence-source:manage
-  {
-    href: "/admin/integrations",
-    nav: { group: "SYSTEM", label: "Integrationen", icon: "wifi" },
-    requires: [[Z("presence-source:manage")]],
-    inNav: true,
-  },
-  // /integrations/phorest — integration:manage
-  {
-    href: "/admin/phorest",
-    nav: { group: "SYSTEM", label: "Phorest", icon: "calendar" },
-    requires: [[Z("integration:manage")]],
-    inNav: true,
-  },
-  // GET /roles — role:read; GET /role-assignments — role-assignment:manage
-  {
-    href: "/admin/roles",
-    nav: { group: "SYSTEM", label: "Rollen & Rechte", icon: "key" },
-    requires: [[Z("role:read")], [Z("role-assignment:manage")]],
-    inNav: true,
-  },
-  // Aliases that redirect to a route above.
-  {
-    href: "/admin/special-leave",
-    requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
-    inNav: false,
-  },
-  { href: "/admin/wifi-presence", requires: [[Z("presence-source:manage")]], inNav: false },
+  // GET /employees
+  navRoute("/admin/employees", "PERSONAL", "Mitarbeitende", "users", [Z("employee:read")]),
+  // no read guard; the page's writes decide (PUT /settings/work, /settings/leave-types)
+  navRoute(
+    "/admin/vacation",
+    "PERSONAL",
+    "Urlaubsverwaltung",
+    "umbrella",
+    [Z("tenant-settings:update")],
+    [Z("leave-config:manage")],
+  ),
+  // writes /company-shutdowns
+  navRoute("/admin/shutdowns", "PERSONAL", "Betriebsurlaub", "calendar", [
+    Z("company-shutdown:manage"),
+  ]),
+  // Promise.all of templates/coverage, week, patterns
+  navRoute("/admin/shifts", "PLANUNG", "Schichtplan", "grid", [
+    Z("shift-config:manage"),
+    Z("shift:read"),
+    Z("shift-pattern:read"),
+  ]),
+  // GET /employees plus GET/PUT /employees/:id/availability
+  navRoute(
+    "/admin/availability",
+    "PLANUNG",
+    "Verfügbarkeit",
+    "calendar-check",
+    [Z("employee:read"), Z("availability:read")],
+    [Z("employee:read"), Z("availability:update")],
+  ),
+  // GET /overtime/close-month/status
+  navRoute("/admin/month-close", "COMPLIANCE", "Monatsabschluss", "lock", [Z("month-close:read")]),
+  // GET /audit-logs
+  navRoute("/admin/audit", "COMPLIANCE", "Audit & Log", "shield", [Z("audit-log:read")]),
+  // POST /imports/employees, POST /imports/time-entries
+  navRoute(
+    "/admin/import",
+    "DATEN",
+    "CSV Import",
+    "upload",
+    [Z("employee:import")],
+    [Z("time-entry:import")],
+  ),
+  // GET /reports/datev
+  navRoute("/admin/export", "DATEN", "DATEV Export", "download", [Z("report:export")]),
+  // tabs: settings, terminals, API keys
+  navRoute(
+    "/admin/system",
+    "SYSTEM",
+    "Allgemein",
+    "settings",
+    [Z("tenant-settings:read")],
+    [Z("tenant-settings:update")],
+    [Z("terminal:manage")],
+    [Z("api-key:manage")],
+  ),
+  // no API guard (writes /me/preferences); grouped with the tenant settings
+  navRoute(
+    "/admin/themes",
+    "SYSTEM",
+    "Branding & Themes",
+    "palette",
+    [Z("tenant-settings:read")],
+    [Z("tenant-settings:update")],
+  ),
+  // /presence-sources
+  navRoute("/admin/integrations", "SYSTEM", "Integrationen", "wifi", [Z("presence-source:manage")]),
+  // /integrations/phorest
+  navRoute("/admin/phorest", "SYSTEM", "Phorest", "calendar", [Z("integration:manage")]),
+  // GET /roles, GET /role-assignments
+  navRoute(
+    "/admin/roles",
+    "SYSTEM",
+    "Rollen & Rechte",
+    "key",
+    [Z("role:read")],
+    [Z("role-assignment:manage")],
+  ),
+  // aliases that redirect to a route above
+  aliasRoute("/admin/special-leave", [Z("tenant-settings:update")], [Z("leave-config:manage")]),
+  aliasRoute("/admin/wifi-presence", [Z("presence-source:manage")]),
 ];
 
 const HREFS = ADMIN_ROUTE_PERMISSIONS.map((entry) => entry.href);
