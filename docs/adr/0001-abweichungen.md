@@ -1096,6 +1096,34 @@ Mandanten gehört — sonst hätte eine Schicht einen Salon eines fremden Mandan
 **Phorest:** Bis #65 schreibt die Synchronisation den Default-Salon; ohne aktiven Salon bricht der Lauf
 mit Fehler ab, bestehende Schichten werden nie umgehängt.
 
+### Nachtrag 2026-10-12 — Phase 87b (Issue #87)
+
+**Was sich geändert hat:** Neuer Export des Unterbaus `currentAndFutureAssignmentSalonIds()` in
+`contexts/platform/facade/salon-assignments.ts`, re-exportiert aus `contexts/platform/index.ts`. Er
+beantwortet, welche Salons die laufenden und künftigen Salonzuordnungen eines Mitarbeiters nennen:
+stornierte und beendete Zeilen sind ausgeschlossen, einen Aktivitätsfilter gibt es nicht. Additiv, damit
+eine Erweiterung nach ADR 0002 Entscheidung 7; vor dem Bau auf #87 angekündigt. `contextSalonIds()` nutzt
+dieselbe Funktion, die Gültigkeitsregel einer Zuordnung existiert damit genau einmal. Der Fassadenzähler
+steigt von 132 auf 133.
+
+**Warum nicht in der Zeiterfassung:** Eine lokale Kopie wäre eine zweite Gültigkeitsregel für
+Salonzuordnungen neben dem Unterbau (Owner-Entscheidung D-10). `clockSalonChoice()` in der Zeiterfassung
+liest die Funktion nur.
+
+**Auswirkung auf die Kontexte:**
+
+- Zeiterfassung: `clockSalonChoice()` (`contexts/time-tracking/clock-salon-choice.ts`) liest den Export, um
+  zu entscheiden, ob beim Stempeln im Web eine Salonwahl angeboten wird.
+- Abwesenheiten: keine.
+- Schichtplanung: keine.
+- Arbeitszeitkonto: keine.
+- Kompositionsschicht: keine.
+
+**Was bewusst NICHT geschah:** Keine Schemaänderung und keine Migration. NFC und WLAN nehmen weiter keine
+Salonangabe entgegen; die Bindung eines Terminals an einen Salon ist #541. Kein zweiter Salon je Tag und
+Mitarbeiter: ein erneutes Stempeln öffnet den Eintrag des Tages und lässt dessen Salon unverändert, ein
+ausdrücklich abweichender Salon ist 409 `SALON_DIFFERS_FROM_DAY_ENTRY` (#70).
+
 ---
 
 ## M — Phorest-Filiale je Salon: `SalonCoupling` löst `TenantConfig.phorestBranchId` ab (Phase 65b, Issue #65)
