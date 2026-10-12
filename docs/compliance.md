@@ -60,7 +60,38 @@ Sobald MA bereits eine Pause eingegeben hat (z.B. nur 15min), greift Auto-Break 
 - **Fahrzeit zwischen Salons:** wird nicht erfasst (Issue #92); die Prüfung rechnet deshalb die beiden Grenzfälle (`UNCLEAR`).
 - **Jugendliche:** § 8 JArbSchG (Tages- und Wochenhöchstzeit) wird nicht geprüft (Issue #524). Fehlt das Geburtsdatum, gilt § 4 ArbZG; bei Auszubildenden weist der Befund darauf hin.
 - **Geschlossene Monate** werden nie neu bewertet.
+- **Tätigkeitsart (#81):** Die Tätigkeitsart ändert keine Arbeitszeit-, Pausen- oder Ruhezeitprüfung.
 - **Rechtsgrund im Befund:** Der Verweis auf § 11 JArbSchG im Befundtext lässt auf Minderjährigkeit schließen; Geburtsdatum und Alter werden nie ausgegeben.
+
+---
+
+## Tätigkeitsart am Zeiteintrag (Issue #81) — Auswertungsdimension
+
+Ein Zeiteintrag trägt eine Tätigkeitsart (`nicht angegeben`, `Produktive Zeit am Kunden`, `Rüst-, Reinigungs- und Vorbereitungszeit`) und optional Minutenanteile je Art. Die Unterscheidung ist eine reine Auswertungsdimension, keine Bewertung.
+
+### Arbeitszeit
+
+- Rüst-, Umkleide- und Reinigungszeit ist **vergütungspflichtige Arbeitszeit**: BAG 19.09.2012 – 5 AZR 678/11, BAG 26.10.2016 – 5 AZR 168/16, BAG 10.11.2009 – 1 ABR 54/08. Dass sie für § 3 / § 4 / § 5 ArbZG voll zählt, folgt aus § 2 Abs. 1 ArbZG (Arbeitszeit = Zeit vom Beginn bis zum Ende der Arbeit ohne Ruhepausen).
+- Saldo, Monatsabschluss, Berichte und die Prüfungen nach § 3 / § 4 / § 5 ArbZG lesen die Tätigkeitsart **nie**. Abgesichert durch einen Quelltext-Wächter (`activity-kind-saldo-isolation-81.test.ts`) und einen Vorher-Nachher-Vergleich aller Kennzahlen samt Monatsabschluss (`activity-kind-saldo-equality-81.test.ts`).
+- Bestandsdaten bekommen den Vorgabewert „nicht angegeben“; kein Datensatz wird umgeschrieben, kein Saldo ändert sich.
+
+### Mitbestimmung
+
+- Minuten produktiver Zeit je Person sind **objektiv geeignet**, Leistung oder Verhalten zu überwachen; nach § 87 Abs. 1 Nr. 6 BetrVG kommt es auf diese Eignung an, nicht auf die Absicht (BAG 08.03.2022 – 1 ABR 20/21).
+- Die Tätigkeitsart gehört nicht zur gesetzlichen Pflicht der Arbeitszeiterfassung (zu dieser Pflicht BAG 13.09.2022 – 1 ABR 22/21); sie ist eine freiwillige Erweiterung.
+- Ein Mandant mit Betriebsrat beteiligt diesen, **bevor** Erfassung oder Auswertung der Tätigkeitsart genutzt wird.
+
+### Datenschutz
+
+- Rechtsgrundlage ist Art. 6 Abs. 1 lit. b bzw. f DSGVO unmittelbar; § 26 Abs. 1 S. 1 BDSG bleibt unangewendet (EuGH 30.03.2023 – C-34/21; BAG 08.05.2025 – 8 AZR 209/21).
+- Die Beschäftigten sind nach **Art. 13 DSGVO** über Zweck und Umfang zu informieren (Zweck: Auswertungsdimension, keine Leistungsbewertung).
+- Datenminimierung und datenschutzfreundliche Voreinstellungen (Art. 5 Abs. 1 lit. c, Art. 25 DSGVO): Vorgabe „nicht angegeben“; erfasst wird nur, was ein Client ausdrücklich sendet; die Auswertung liefert nur Minuten, keine Quoten, Beträge oder Ranglisten; es gelten dieselben Leserechte wie für die Zeiteinträge selbst.
+- Ob eine Datenschutz-Folgenabschätzung (Art. 35 DSGVO) nötig ist, beurteilt der Mandant als Verantwortlicher. Personenbezogene Ranglisten, die jemand aus den Daten bildet, sind eine Verarbeitung des Mandanten.
+- Kein Freitext — bei der Anonymisierung (Art. 17) ist nichts zu tun; die Anteile werden wie der Eintrag aufbewahrt.
+
+### Mandantenschalter
+
+Diese Version hat keine Oberfläche für die Tätigkeitsart. Erfassung und Auswertung in der Oberfläche kommen mit einem Schalter je Mandant, Vorgabe **aus**, samt Hinweis auf Betriebsrat und Art. 13 DSGVO: Issue #529.
 
 ---
 
