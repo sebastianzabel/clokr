@@ -115,7 +115,7 @@ export const SCOPE_FILES = [
 ];
 
 /** (file, exact trimmed line text) pairs that read the compat role for a display LABEL only and
- *  decide nothing (Sidebar's role badge) — converted with D-11 (a) of #83. Since Phase 83 the
+ *  decide nothing (Sidebar's role badge) — converted with #538. Since Phase 83 the
  *  admin gates are permission-based, so no access exception remains. A stale entry fails the run
  *  (`staleAllowlistEntries`): a dead exception is a check that sees nothing. */
 export const ALLOWLIST = new Set([

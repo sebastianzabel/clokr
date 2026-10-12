@@ -222,7 +222,7 @@ reproduziert es exakt; `src/contexts/platform/__tests__/system-roles.test.ts` pr
 dieses Dokument, die Neutralitätsmatrix (`src/__tests__/permission-neutrality-matrix.test.ts`) jede
 Route. Jeder Nutzer mit Mitarbeiter hat seit der Migration von #75 eine Zuweisung mit Scope Mandant
 auf die Systemrolle seiner Alt-Rolle; ein Nutzer ganz ohne gespeicherte Zuweisung erhält sie
-implizit aus `User.role` (Altrollen-Rückfall, D-08, entfällt mit #83). `User.role` und der
+implizit aus `User.role` (Altrollen-Rückfall, D-08, entfällt mit #539). `User.role` und der
 JWT-Claim `role` sind nur noch Kompatibilitätsfelder für das Frontend: Sie werden an genau einer
 Stelle aus den Zuweisungen abgeleitet (`contexts/platform/compat-role.ts`), die Spalte wird bei jeder
 Änderung über Mitarbeiterformular, Import und `/role-assignments` zurückgeschrieben (die
@@ -956,7 +956,7 @@ Speicherung sie nicht, wird `confirm: true` ignoriert und nicht vermerkt — kei
 Bestätigung für eine bereits bestätigte oder unveränderte Kombination. Die bestehenden Prüfungen
 (Validierung, Namenskonflikt, Systemrolle, eigene Rolle #354, Lockout-Schutz) laufen zuerst und
 haben Vorrang, wenn mehrere zugleich zuträfen. Die Kontrolle erfolgt über den Code, nie über den
-Nachrichtentext. Die Oberfläche für diese Bestätigung ist #83.
+Nachrichtentext. Die Oberfläche für diese Bestätigung ist #83 (Rollen-Editor, `/admin/roles`).
 
 **Systemrollen:** Von den sieben Systemrollen halten nur Admin, Manager (#75 — rechteneutrale
 Altrolle: erfasst heute eigene Nachträge im Nachtragsfenster und genehmigt fremde Zeitnachträge,

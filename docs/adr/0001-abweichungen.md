@@ -1274,6 +1274,12 @@ nicht behauptet, sondern gegen eine Aufnahme des alten Codes geprüft (unten, �
   `test-bootstrap.ts`) und für die Zeit eines Rolling Deploys. Eine einzige gespeicherte Zeile
   schaltet ihn ab, auch eine fehlerhafte (die trägt dann nichts bei). Der Rückfall wird mit
   `User.role` in #83 entfernt.
+  **Nachtrag Phase 83 (12.10.2026):** #83 hat die Oberfläche geliefert, nämlich Rollen- und
+  Zuweisungsverwaltung und den Admin-Bereich nach Permissions (`admin-route-permissions.ts`). Das
+  Entfernen von `User.role`, Enum `Role` und dem Altrollen-Rückfall ist eine Semantikänderung im
+  Unterbau mit destruktiver Migration (ADR 0002 Entscheidung 7) und liegt seitdem bei #539, das die
+  Owner-Entscheidung braucht. Die übrigen seiteninternen Rollenprüfungen der Oberfläche stehen in
+  #538. Die Verweise im Code zeigen seit Phase 83 auf diese beiden Issues.
 - **Materialisierung beim ersten Schreiben** (D-26): Ändert ein Schreibweg die Zuweisungen eines
   Nutzers ohne gespeicherte Zuweisung, legt er zuerst in derselben Transaktion die Rückfall-Zuweisung
   als echte Zeile an (Audit mit `reason: "Übernahme der Alt-Rolle (#75)"`,
