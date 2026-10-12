@@ -170,6 +170,16 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
         "2026-02-03",
         "2026-02-04",
       ]);
+      // Issue #84 (D-15): the recorded read carries the entry's salon, additively.
+      expect(Object.keys(rows[0]).sort((a, b) => a.localeCompare(b))).toEqual([
+        "breakMinutes",
+        "date",
+        "employeeId",
+        "endTime",
+        "isInvalid",
+        "salonId",
+        "startTime",
+      ]);
     });
 
     it("getClaimedEntryDatesInRange ALSO includes the non-WORK (OVERTIME) row, still excludes the soft-deleted one", async () => {

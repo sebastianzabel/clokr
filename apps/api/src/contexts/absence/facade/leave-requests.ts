@@ -435,6 +435,56 @@ export async function getLeaveStartingInWindow(
   });
 }
 
+// ── Team upcoming leave — the dashboard card's own question (Issue #84, D-08/D-18) ───────────────
+
+export interface TeamUpcomingLeave {
+  id: string;
+  employeeId: string;
+  startDate: Date;
+  endDate: Date;
+  days: Prisma.Decimal;
+  leaveType: { name: string; code: LeaveTypeCode | null };
+  employee: { firstName: string; lastName: string };
+}
+
+/**
+ * Issue #84 (D-08/D-18) — every `APPROVED`, non-deleted `LeaveRequest` of the scope's persons whose
+ * `endDate` is on or after `fromDay`, ordered by `startDate` then `id`. It answers the dashboard
+ * team card's "Anstehende Urlaube" question and replaces that card's use of the general leave list
+ * (`GET /leave/requests`, which stays as it is).
+ *
+ * `fromDay` is a CALENDAR-DAY bound (UTC midnight of the tenant-local day, Issue #493), never an
+ * instant: `endDate` is a `@db.Date` column, so a request that ends today must still match. The
+ * set is `APPROVED` only, like the list it replaces — deliberately not `EFFECTIVE_LEAVE_STATUSES`:
+ * a leave under `CANCELLATION_REQUESTED` is not shown as upcoming on that card today.
+ *
+ * No limit here: the caller filters by Stammsalon first and slices afterwards.
+ */
+export async function getApprovedLeaveEndingOnOrAfter(
+  db: Prisma.TransactionClient,
+  scope: EmployeeScope,
+  fromDay: Date,
+): Promise<TeamUpcomingLeave[]> {
+  return db.leaveRequest.findMany({
+    where: {
+      ...employeeScopeWhere(scope),
+      status: "APPROVED",
+      deletedAt: null,
+      endDate: { gte: fromDay },
+    },
+    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      employeeId: true,
+      startDate: true,
+      endDate: true,
+      days: true,
+      leaveType: { select: { name: true, code: true } },
+      employee: { select: { firstName: true, lastName: true } },
+    },
+  });
+}
+
 // ── A10a/A10b/A10c — three activity-feed questions, NOT one (see module header) ──────────────────
 
 export interface OwnLeaveActivityItem {

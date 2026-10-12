@@ -24,6 +24,7 @@ import {
   getPendingLeaveDaysInYear,
   countPendingApprovals,
   getLeaveStartingInWindow,
+  getApprovedLeaveEndingOnOrAfter,
   getOwnLeaveActivity,
   getReviewedLeaveActivity,
   getTeamLeaveSubmissions,
@@ -228,6 +229,104 @@ describe("Abwesenheiten facade — LeaveRequest (Phase 100B Plan 13)", () => {
     it("A9 (startDate-in-window) does NOT return the straddling request — it started before the window", async () => {
       const rows = await getLeaveStartingInWindow(app.prisma, data.tenant.id, windowFrom, windowTo);
       expect(rows.some((r) => r.id === straddlingId)).toBe(false);
+    });
+  });
+
+  // ── Issue #84 (D-08) — the dashboard team card's upcoming-leave read ───────────────────────────
+
+  describe("getApprovedLeaveEndingOnOrAfter (Issue #84)", () => {
+    const fromDay = utcDate(2029, 2, 10);
+    let endsOnFromDayId: string;
+    let laterId: string;
+    let sameStartHigherIdId: string;
+
+    beforeAll(async () => {
+      const make = (
+        employeeId: string,
+        leaveTypeId: string,
+        start: Date,
+        end: Date,
+        extra: { status?: "APPROVED" | "PENDING"; deletedAt?: Date } = {},
+      ) =>
+        app.prisma.leaveRequest.create({
+          data: {
+            employeeId,
+            leaveTypeId,
+            startDate: start,
+            endDate: end,
+            days: 1,
+            status: "APPROVED",
+            ...extra,
+          },
+        });
+      // Ends exactly on fromDay: a calendar-day bound must keep it.
+      endsOnFromDayId = (
+        await make(
+          data.employee.id,
+          data.vacationType.id,
+          utcDate(2029, 2, 10),
+          utcDate(2029, 2, 10),
+        )
+      ).id;
+      laterId = (
+        await make(data.employee.id, data.vacationType.id, utcDate(2029, 3, 5), utcDate(2029, 3, 6))
+      ).id;
+      sameStartHigherIdId = (
+        await make(
+          data.adminEmployee.id,
+          data.vacationType.id,
+          utcDate(2029, 3, 5),
+          utcDate(2029, 3, 5),
+        )
+      ).id;
+      // Never listed: ended the day before, still pending, soft-deleted, foreign tenant.
+      await make(data.employee.id, data.vacationType.id, utcDate(2029, 2, 9), utcDate(2029, 2, 9));
+      await make(data.employee.id, data.vacationType.id, utcDate(2029, 4, 1), utcDate(2029, 4, 1), {
+        status: "PENDING",
+      });
+      await make(data.employee.id, data.vacationType.id, utcDate(2029, 4, 2), utcDate(2029, 4, 2), {
+        deletedAt: new Date(),
+      });
+      await make(
+        otherData.employee.id,
+        otherData.vacationType.id,
+        utcDate(2029, 3, 1),
+        utcDate(2029, 3, 1),
+      );
+    });
+
+    it("returns only APPROVED, non-deleted rows ending on or after the day, in the scope's tenant", async () => {
+      const rows = await getApprovedLeaveEndingOnOrAfter(
+        app.prisma,
+        { kind: "tenant", tenantId: data.tenant.id },
+        fromDay,
+      );
+      const mine = rows.filter((r) =>
+        [endsOnFromDayId, laterId, sameStartHigherIdId].includes(r.id),
+      );
+      expect(mine).toHaveLength(3);
+      // Nothing of the other tenant, nothing pending or deleted, nothing that ended before.
+      expect(rows.every((r) => r.endDate.getTime() >= fromDay.getTime())).toBe(true);
+      expect(rows.some((r) => r.employeeId === otherData.employee.id)).toBe(false);
+    });
+
+    it("orders by startDate then id, with the employee name and the leave type", async () => {
+      const rows = await getApprovedLeaveEndingOnOrAfter(
+        app.prisma,
+        { kind: "tenant", tenantId: data.tenant.id },
+        fromDay,
+      );
+      for (let i = 1; i < rows.length; i++) {
+        const a = rows[i - 1];
+        const b = rows[i];
+        const byStart = a.startDate.getTime() - b.startDate.getTime();
+        expect(byStart < 0 || (byStart === 0 && a.id.localeCompare(b.id) <= 0)).toBe(true);
+      }
+      expect(rows[0].id).toBe(endsOnFromDayId);
+      const sample = rows.find((r) => r.id === laterId);
+      expect(sample?.employee.firstName).toBeTruthy();
+      expect(sample?.leaveType.name).toBeTruthy();
+      expect(Number(sample?.days)).toBe(1);
     });
   });
 

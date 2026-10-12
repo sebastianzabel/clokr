@@ -517,7 +517,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // facade (`contexts/time-tracking/facade/time-entries.ts`, retention archive of DayBreak /
   // DayBreakAck, same shape as `archiveEntriesBefore`) — passes F1/F2/F3 directly, no new
   // exception; exceptions unchanged at 17.
-  it("the real tree has exactly 133 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  it("the real tree has exactly 135 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -562,9 +562,12 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // vacationBalanceForRow + getVacationBalance — 128 -> 130.
     // Issue #82 (D-03): contexts/platform/facade/role-assignments.ts gained one new exported
     // facade function, contextSalonIds — 131 -> 132.
-    // Issue #87 (D-10): contexts/platform/facade/salon-assignments.ts gained one exported facade
-    // function, currentAndFutureAssignmentSalonIds — 132 -> 133. Exceptions stay 17.
-    expect(functions).toHaveLength(133);
+    // Issue #84 (D-13, 2026-10-12): +1 homeSalonsForDays (platform/facade/salon-assignments.ts),
+    // the batched homeSalonAt — 132 -> 133. The exception count stays 17.
+    // Issue #84 (D-08, 2026-10-12): +1 getApprovedLeaveEndingOnOrAfter (absence/facade/leave-requests.ts) — 133 -> 134.
+    // Issue #87 (D-10, 2026-10-13): +1 currentAndFutureAssignmentSalonIds
+    // (platform/facade/salon-assignments.ts) — 134 -> 135 after merging Phase 84.
+    expect(functions).toHaveLength(135);
 
     const rawExceptions = JSON.parse(
       readFileSync(

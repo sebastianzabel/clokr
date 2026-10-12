@@ -694,14 +694,25 @@ import { readFileSync } from "node:fs";
 // `it.each(` per file — 4, 5, 5; no existing file changed its case count. Same lower-bound
 // convention as above; not a re-measure-to-actual sweep.
 //
+// Phase 84 (issue #84), 2026-10-12: 7 new test files — `src/composition/__tests__/dashboard-team-week-frozen-84`,
+// `reports-monthly-frozen-84`, `dashboard-team-trend-84`, `dashboard-team-salon-filter-84`,
+// `src/contexts/absence/__tests__/sick-leave-days`, `src/contexts/platform/__tests__/home-salons-for-days-84`
+// and `src/__tests__/dashboard-salon-manipulation-84` — MIN_FILES rises from 359 to 366. MIN_TESTS
+// rises from 6185 to 6254: +69 cases, measured by counting `it(` / `it.each(` per file in the blob at
+// a0258a8d vs HEAD — new files 1, 1, 16, 14, 16, 10, 9 (the probe file's cases loop over the three
+// endpoints, so the reporter counts more than the source does); existing files
+// `src/contexts/absence/__tests__/facade-leave-requests` 19 -> 21 (+2),
+// `src/contexts/time-tracking/__tests__/facade-time-entries` 19 -> 19 and
+// `scripts/__tests__/lint-facade-signatures` 21 -> 21 (assertions changed in existing cases only).
+// Same lower-bound convention as above; not a re-measure-to-actual sweep.
 // Phase 87b (issue #87), 2026-10-13: 3 new test files — `src/contexts/platform/__tests__/assignment-salon-ids-87`,
-// `src/__tests__/clock-in-salon-87` and `src/__tests__/clock-salon-choice-87` — MIN_FILES rises from
-// 359 to 362. MIN_TESTS rises from 6185 to 6225: +40 cases, measured by counting `it(` / `it.each(`
+// `src/__tests__/clock-in-salon-87` and `src/__tests__/clock-salon-choice-87` — MIN_FILES rises by 3. MIN_TESTS rises by +40 cases, measured by counting `it(` / `it.each(`
 // per file — 8, 14, 18; the edited files `time-entry-salon-clock` (12 -> 12, one case rewritten 1:1)
 // and `time-entry-day-lookup-guard` (6 -> 6) kept their case count. Same lower-bound convention as
 // above; not a re-measure-to-actual sweep.
-const MIN_FILES = 362;
-const MIN_TESTS = 6225;
+// Merged after Phase 84 (2026-10-13): Phase 84's 366/6254 plus Phase 87b's +3 files / +40 cases.
+const MIN_FILES = 369;
+const MIN_TESTS = 6294;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

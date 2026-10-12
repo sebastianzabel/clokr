@@ -1731,6 +1731,79 @@ pnpm --filter @clokr/api exec vitest run src/contexts/platform/__tests__/user-id
 pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest run src/__tests__/notification-recipients-neutrality.test.ts
 ```
 
+### Nachtrag 2026-10-12 (Phase 84, Issue #84) — Stammsalon je Tag als Sammelabfrage; Krankheitstage-Zählung zieht aus der Kompositionsschicht
+
+**Schwere: informativ. Unterbau-Erweiterung (additiv) nach ADR 0002, Entscheidung 7 — angekündigt auf #84.**
+
+Das Dashboard des Inhabers zeigt den Team-Block seit Phase 84 wahlweise für einen einzelnen Salon.
+Dafür brauchte es zwei Bausteine, die nicht in die Kompositionsschicht gehören, und ein Lesefeld.
+
+**Was sich geändert hat:**
+
+- `homeSalonsForDays()` (`contexts/platform/facade/salon-assignments.ts`, einziger neuer Export von
+  `contexts/platform/index.ts`) ist die Sammelfassung von `homeSalonAt`: der Stammsalon je Person und
+  Kalendertag über einen Zeitraum, mit genau EINER Abfrage statt einer je Tag. Die Auflösung (HOME-Zeilen,
+  `validFrom` aufsteigend, dann Id; DEPLOYMENT-Zeilen zählen nicht; keine Untergrenze am Eintrittsdatum;
+  ein inzwischen deaktivierter Salon antwortet weiter) ist durch einen Paritätstest gegen `homeSalonAt`
+  über jeden Tag eines Monats mit Stammsalonwechsel gesichert. `homeSalonAt`, `salonForDay` und
+  `contextSalonIds` selbst sind unverändert.
+- `getRecordedWorkEntriesInRange()` (Zeiterfassung, Fassade) liefert zusätzlich das Feld `salonId`
+  (additiv: kein bestehender Leser muss sich ändern; der Schlüsselsatz ist im Fassadentest festgehalten).
+- `sickLeaveDayCounts()` (`contexts/absence/sick-leave-days.ts`, über den Absence-Index) zählt die
+  Krankheitstage und zog dafür aus `composition/reports.ts` in den Abwesenheiten-Kontext um — eine
+  Fachregel gehört nicht in die Kompositionsschicht (ADR 0002, Entscheidung 9). Der Bericht
+  `/reports/monthly` (JSON und beide PDFs) ruft sie unverändert auf; sein Ergebnis ist durch ein
+  eingefrorenes Literal aus der Zeit VOR dem Umzug festgehalten
+  (`reports-monthly-frozen-84.test.ts`). Optional nimmt sie ein Prädikat je Tag (`countsDay`), mit dem
+  das Dashboard einen Tag dem Stammsalon dieses Tages zuordnet.
+- Die Abwesenheiten-Fassade bekam `getApprovedLeaveEndingOnOrAfter()` (genehmigter Urlaub, der heute
+  oder später endet) für `GET /dashboard/team-upcoming-leave`. Die Untergrenze ist seitdem der
+  Kalendertag in der Zeitzone des Mandanten statt des UTC-Datums; das ist die tatsächliche Änderung
+  gegenüber der bisherigen Liste (`/leave/requests?status=APPROVED&upcoming=true`), sichtbar zwischen
+  22 und 24 Uhr UTC im Sommer. Ein Antrag, der heute endet, steht in beiden Listen. (Die Begründung
+  in der Entscheidung D-18, `endDate >= new Date()` verwerfe einen heute endenden Antrag nach 00:00
+  UTC, war ungenau: Prisma vergleicht bei `@db.Date` den Kalendertag.)
+- Kompositionsschicht: `GET /dashboard/team-trend` und `GET /dashboard/team-upcoming-leave` sind neu,
+  `GET /dashboard/team-week` nimmt optional `salonId` an. Alle drei prüfen `salonId` im modulprivaten
+  `resolveTeamSalonFilter()` (aktiv, gleicher Mandant, innerhalb der Team-Übersichts-Reichweite des
+  Aufrufers; jede Ablehnung ist derselbe 404-Körper). Es entsteht keine eigene Fachregel in der
+  Schicht: Ist kommt aus `computeMonthReportFigures` bzw. den erfassten Einträgen, Krankheitstage aus
+  `sickLeaveDayCounts`, der Stammsalon je Tag aus `homeSalonsForDays`.
+
+**Auswirkung auf die Kontexte:**
+
+- Zeiterfassung: nur das zusätzliche Feld `salonId` im Lesezugriff auf erfasste Einträge.
+- Abwesenheiten: die Krankheitstage-Zählung (`sickLeaveDayCounts`) und der neue Lesezugriff
+  `getApprovedLeaveEndingOnOrAfter`; Genehmigung, Anspruch und Übertrag unberührt.
+- Schichtplanung: keine.
+- Arbeitszeitkonto: keine (nur Leser von `computeMonthReportFigures`; `calcLeaveAbsenceMinutesTz` und
+  die einmalige Soll-Minderung pro Tag sind nicht berührt).
+- Kompositionsschicht: drei Dashboard-Endpunkte mit `salonId`, keine eigene Regel; die
+  Krankheitstage-Regel verlässt die Schicht.
+
+**Was bewusst NICHT geschah:**
+
+- Kein Schlüssel, der Soll oder Saldo auf Salons aufteilt: beides sind Vertragsgrößen. Unter einem
+  Salonfilter sind sie `null` mit `sollUnavailableReason` `SALON_FILTER`; ohne Filter entsprechen die
+  Werte dem Monatsbericht, einschließlich der Berufsschul-Gutschrift, die keinem Salon zugeordnet wird.
+- Kein Salonfilter in `/reports` (Monatsbericht, Anwesenheit heute, Saldenübersicht) — als eigenes
+  Folge-Issue erfasst, nicht Teil dieser Phase.
+- Keine Änderung von `homeSalonAt`, `salonForDay` oder `contextSalonIds`, keine Semantikänderung eines
+  bestehenden Unterbau-Exports.
+- Die Reichweite eines Salonmanagers bleibt unverändert nach 91b D-09/D-10 (Stammsalon-Personen sind
+  samt ihrer in anderen Salons erfassten Stunden sichtbar); die Prüfung je Zeiteintrag gehört zu #85.
+  Die drei neuen Pfade sind dort als zu überprüfen vermerkt.
+- Die Anwesenheitsanzeige und die Feiertage nutzen weiterhin ALLE Einträge einer Person, damit ein
+  Tag in einem anderen Salon kein falsches „Fehlt“ erzeugt.
+
+### Nachrechnen (Issue #84)
+
+```bash
+pnpm --filter @clokr/api run lint:facade-signatures   # 134 Funktionen (132 vor Phase 84, +homeSalonsForDays, +getApprovedLeaveEndingOnOrAfter)
+pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest run src/contexts/platform/__tests__/home-salons-for-days-84.test.ts src/contexts/absence/__tests__/sick-leave-days.test.ts src/composition/__tests__/reports-monthly-frozen-84.test.ts src/composition/__tests__/dashboard-team-week-frozen-84.test.ts src/composition/__tests__/dashboard-team-trend-84.test.ts src/composition/__tests__/dashboard-team-salon-filter-84.test.ts src/__tests__/dashboard-salon-manipulation-84.test.ts
+grep -n "resolveTeamSalonFilter" apps/api/src/composition/dashboard.ts   # Definition + drei Aufrufe
+```
+
 ## Q — Systemrollen-Templates und zwei Saldo-Gates (Phase 76b, Issue #76)
 
 **Schwere: informativ. Unterbau-Erweiterung nach ADR 0002, Entscheidung 7 (additiv, kein

@@ -96,11 +96,15 @@ export type {
 // Phase 67b (issue #67) — salon assignment read surface; the lock-checked write functions
 // (plan 02) are deliberately NOT re-exported, because they import the working-time-account index
 // and this file must not transitively load another context.
+// Issue #84 (D-13) — Unterbau-Erweiterung, additive: the batched Stammsalon per calendar day for
+// the dashboard's per-day absence attribution (ADR 0002 Entscheidung 7; announced on #84 with its
+// per-context impact section).
 // Phase 87b (Issue #87, D-10) — additive Unterbau-Erweiterung: the salons of an employee's current
 // and future assignments.
 export {
   salonForDay,
   listSalonAssignments,
+  homeSalonsForDays,
   currentAndFutureAssignmentSalonIds,
 } from "./facade/salon-assignments";
 export type { SalonForDay } from "./facade/salon-assignments";
