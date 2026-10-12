@@ -450,4 +450,229 @@ describe("Issue #84 — dashboard team-trend", () => {
       expect(three.months).toEqual(six.months.slice(3));
     });
   });
+
+  // ── Task 3 — with salonId ─────────────────────────────────────────────────────────────────
+
+  describe("with salonId: time by entry salon, sick days by Stammsalon per day, no per-salon Soll (D-02..D-05, D-12, D-13, D-16)", () => {
+    const NOT_FOUND_BODY = JSON.stringify({ error: "Salon nicht gefunden" });
+    let data: Awaited<ReturnType<typeof seedTestData>>;
+    let foreign: Awaited<ReturnType<typeof seedTestData>>;
+    let salonA: { id: string };
+    let salonB: { id: string };
+    let salonGone: { id: string };
+    let overviewOnlyToken: string;
+    let salonManagerToken: string;
+
+    beforeAll(async () => {
+      data = await seedTestData(app, "tt84b");
+      foreign = await seedTestData(app, "tt84c");
+      salonA = { id: data.salonId };
+      salonB = await createTestSalon(app.prisma, data.tenant.id, { name: "Trend84 B2" });
+      salonGone = await createTestSalon(app.prisma, data.tenant.id, { name: "Trend84 C2" });
+      await app.prisma.salon.update({ where: { id: salonGone.id }, data: { isActive: false } });
+      const sick = await app.prisma.leaveType.create({
+        data: { tenantId: data.tenant.id, ...leaveTypeFields("SICK"), color: "#EF4444" },
+      });
+
+      // P: Stammsalon A, 360 min in A and 180 min in B in June; sick 11.-13.05. (3 days, A).
+      const p = await createPerson(data.tenant.id, "p");
+      await home(data.tenant.id, p.employee.id, salonA.id);
+      await entry(p.employee.id, salonA.id, "2026-06-08", "08:00", "14:00");
+      await entry(p.employee.id, salonB.id, "2026-06-09", "08:00", "11:00");
+      await leave(p.employee.id, sick.id, "2026-05-11", "2026-05-13");
+
+      // Q: Stammsalon B, 240 min in B; sick 18.-19.05. (2 days, B).
+      const q = await createPerson(data.tenant.id, "q");
+      await home(data.tenant.id, q.employee.id, salonB.id);
+      await entry(q.employee.id, salonB.id, "2026-06-10", "08:00", "12:00");
+      await leave(q.employee.id, sick.id, "2026-05-18", "2026-05-19");
+
+      // R: Stammsalon A until 10.04., B from 11.04.; sick 08.-12.04. splits 3 / 2.
+      const r = await createPerson(data.tenant.id, "r");
+      await app.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: data.tenant.id,
+          employeeId: r.employee.id,
+          salonId: salonA.id,
+          kind: "HOME",
+          validFrom: new Date("2024-01-01T00:00:00Z"),
+          validUntil: new Date("2026-04-10T00:00:00Z"),
+        },
+      });
+      await home(data.tenant.id, r.employee.id, salonB.id, "2026-04-11");
+      await leave(r.employee.id, sick.id, "2026-04-08", "2026-04-12");
+
+      // S: entries that must never count in June: closed today (the live saldo never includes
+      // today, #438), an invalid one and an open one.
+      const sPerson = await createPerson(data.tenant.id, "s");
+      await home(data.tenant.id, sPerson.employee.id, salonA.id);
+      await entry(sPerson.employee.id, salonA.id, "2026-06-15", "08:00", "09:00");
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: sPerson.employee.id,
+          salonId: salonA.id,
+          date: new Date("2026-06-11T00:00:00Z"),
+          startTime: new Date("2026-06-11T08:00:00Z"),
+          endTime: new Date("2026-06-11T10:00:00Z"),
+          breakMinutes: 0,
+          type: "WORK",
+          source: "MANUAL",
+          isInvalid: true,
+        },
+      });
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: sPerson.employee.id,
+          salonId: salonA.id,
+          date: new Date("2026-06-12T00:00:00Z"),
+          startTime: new Date("2026-06-12T08:00:00Z"),
+          endTime: null,
+          breakMinutes: 0,
+          type: "WORK",
+          source: "MANUAL",
+        },
+      });
+
+      // Azubi with a Berufsschule day on 20.05. and 480 min in A on 19.05.: the Berufsschule
+      // credit is no salon time.
+      const azubi = await createPerson(data.tenant.id, "azubi");
+      await app.prisma.employee.update({
+        where: { id: azubi.employee.id },
+        data: { classification: "AZUBI", birthDate: new Date("2010-06-01") },
+      });
+      await home(data.tenant.id, azubi.employee.id, salonA.id);
+      await entry(azubi.employee.id, salonA.id, "2026-05-19", "08:00", "16:00");
+      await app.prisma.absence.create({
+        data: {
+          employeeId: azubi.employee.id,
+          type: "VOCATIONAL_SCHOOL",
+          source: "PATTERN",
+          startDate: new Date("2026-05-20T00:00:00.000Z"),
+          endDate: new Date("2026-05-20T00:00:00.000Z"),
+          days: 1,
+          halfDay: false,
+          createdBy: "system",
+        },
+      });
+
+      const overviewOnly = await createPerson(data.tenant.id, "overview-only2", {
+        schedule: "NONE",
+      });
+      const roleOverview = await customRole(data.tenant.id, ["team-overview:read:ZUGEWIESEN"]);
+      await assign(data.tenant.id, overviewOnly.user.id, roleOverview.id, {
+        scopeType: "TENANT",
+      });
+      overviewOnlyToken = await login(overviewOnly.user.email);
+
+      const manager = await createPerson(data.tenant.id, "salon-manager2", { schedule: "NONE" });
+      await assign(data.tenant.id, manager.user.id, SYSTEM_ROLE_IDS.SALON_MANAGER, {
+        scopeType: "SALONS",
+        salonIds: [salonA.id],
+      });
+      salonManagerToken = await login(manager.user.email);
+    });
+
+    afterAll(async () => {
+      try {
+        await app.prisma.roleAssignment.deleteMany({ where: { tenantId: data.tenant.id } });
+        await app.prisma.accessRole.deleteMany({ where: { tenantId: data.tenant.id } });
+        await cleanupTestData(app, data.tenant.id);
+        await cleanupTestData(app, foreign.tenant.id);
+      } catch (err) {
+        console.error("dashboard-team-trend-84 filter cleanup failed:", err);
+      }
+    });
+
+    const byMonth = (t: Trend, month: string) => t.months.find((m) => m.month === month)!;
+
+    it("attributes June time to the entry's salon: unfiltered 780, A 360, B 420", async () => {
+      const all = await trend(data.adminToken);
+      const a = await trend(data.adminToken, `?salonId=${salonA.id}`);
+      const b = await trend(data.adminToken, `?salonId=${salonB.id}`);
+      expect(byMonth(all, "2026-06").workedMinutes).toBe(780);
+      expect(byMonth(a, "2026-06").workedMinutes).toBe(360);
+      expect(byMonth(b, "2026-06").workedMinutes).toBe(420);
+    });
+
+    it("attributes sick days to the Stammsalon per day: May 5 / 3 / 2, April 5 / 3 / 2 across a change on the 11th", async () => {
+      const all = await trend(data.adminToken);
+      const a = await trend(data.adminToken, `?salonId=${salonA.id}`);
+      const b = await trend(data.adminToken, `?salonId=${salonB.id}`);
+      expect([
+        byMonth(all, "2026-05").sickDays,
+        byMonth(a, "2026-05").sickDays,
+        byMonth(b, "2026-05").sickDays,
+      ]).toEqual([5, 3, 2]);
+      expect([
+        byMonth(all, "2026-04").sickDays,
+        byMonth(a, "2026-04").sickDays,
+        byMonth(b, "2026-04").sickDays,
+      ]).toEqual([5, 3, 2]);
+    });
+
+    it("sums over the active salons to the unfiltered figure (AC-3), except the Berufsschule credit", async () => {
+      const all = await trend(data.adminToken);
+      const a = await trend(data.adminToken, `?salonId=${salonA.id}`);
+      const b = await trend(data.adminToken, `?salonId=${salonB.id}`);
+      for (const m of MONTHS) {
+        expect(byMonth(a, m).sickDays + byMonth(b, m).sickDays, `${m} sick`).toBe(
+          byMonth(all, m).sickDays,
+        );
+        if (m === "2026-05") continue;
+        expect(byMonth(a, m).workedMinutes + byMonth(b, m).workedMinutes, `${m} worked`).toBe(
+          byMonth(all, m).workedMinutes,
+        );
+      }
+    });
+
+    it("attributes the Berufsschule credit to no salon: May is entry minutes only and below the account's Ist", async () => {
+      const all = await trend(data.adminToken);
+      const a = await trend(data.adminToken, `?salonId=${salonA.id}`);
+      const b = await trend(data.adminToken, `?salonId=${salonB.id}`);
+      expect(byMonth(a, "2026-05").workedMinutes + byMonth(b, "2026-05").workedMinutes).toBe(480);
+      expect(byMonth(all, "2026-05").workedMinutes).toBeGreaterThan(480);
+    });
+
+    it("counts neither today's closed entry, nor an invalid one, nor an open one", async () => {
+      const a = await trend(data.adminToken, `?salonId=${salonA.id}`);
+      // P's 360 only; S's three entries (60 + 120 + open) add nothing.
+      expect(byMonth(a, "2026-06").workedMinutes).toBe(360);
+    });
+
+    it("never splits Soll: filtered responses carry no Soll and name the reason (D-05)", async () => {
+      const admin = await trend(data.adminToken, `?salonId=${salonA.id}`);
+      expect(admin.salonId).toBe(salonA.id);
+      expect(admin.workedBasis).toBe("SALON_ENTRIES");
+      expect(admin.sollUnavailableReason).toBe("SALON_FILTER");
+      expect(admin.months.every((m) => m.shouldMinutes === null)).toBe(true);
+
+      const overview = await trend(overviewOnlyToken, `?salonId=${salonA.id}`);
+      expect(overview.sollUnavailableReason).toBe("NO_PERMISSION");
+      expect(overview.months.every((m) => m.shouldMinutes === null)).toBe(true);
+    });
+
+    it("answers a foreign, unknown, inactive and out-of-reach salon with the byte-identical 404", async () => {
+      const probes: Array<[string, string, string]> = [
+        ["foreign tenant's salon", data.adminToken, foreign.salonId],
+        ["unknown id", data.adminToken, crypto.randomUUID()],
+        ["own deactivated salon", data.adminToken, salonGone.id],
+        ["salon B for the Salonmanager of A", salonManagerToken, salonB.id],
+      ];
+      for (const [label, token, salonId] of probes) {
+        const res = await get(token, `/api/v1/dashboard/team-trend?salonId=${salonId}`);
+        expect(res.statusCode, label).toBe(404);
+        expect(res.body, label).toBe(NOT_FOUND_BODY);
+      }
+    });
+
+    it("lets the Salonmanager of A filter on A, and rejects a malformed id with 400", async () => {
+      const res = await get(salonManagerToken, `/api/v1/dashboard/team-trend?salonId=${salonA.id}`);
+      expect(res.statusCode, res.body).toBe(200);
+      const body = JSON.parse(res.body) as Trend;
+      expect(body.sollUnavailableReason).toBe("NO_PERMISSION");
+      expect(byMonth(body, "2026-06").workedMinutes).toBe(360);
+      const bad = await get(data.adminToken, "/api/v1/dashboard/team-trend?salonId=not-a-uuid");
+      expect(bad.statusCode).toBe(400);
+    });
+  });
 });

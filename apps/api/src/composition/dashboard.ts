@@ -11,6 +11,9 @@ import {
   hasPermission,
   resolveAccessReach, // Phase 91b Plan 06 (#91), D-09/D-10/D-13
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 06 (#91), D-10/D-13
+  findSalon, // Issue #84 (D-16) — salon filter validation
+  homeSalonsForDays, // Issue #84 (D-13) — batched Stammsalon per day
+  type AccessReach,
 } from "../contexts/platform";
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -68,6 +71,7 @@ import {
 // Issue #84 (D-07): 1..12 months, default 6 — the bound keeps the per-person saldo fan-out finite.
 const teamTrendQuerySchema = z.object({
   months: z.coerce.number().int().min(1).max(12).default(6),
+  salonId: z.string().uuid().optional(),
 });
 
 export async function dashboardRoutes(app: FastifyInstance) {
@@ -1621,6 +1625,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard/team-trend — the team charts' six-month series, aggregated on the server
   // (Issue #84, D-07). Replaces the browser's six /reports/monthly calls; the figures come from
   // the owning contexts only.
+  //
+  // Unfiltered, every figure is the one the monthly report prints (Ist/Soll from the
+  // working-time account, sick days from the absence kernel). With `salonId` (D-02..D-05, D-12,
+  // D-13): Ist is the recorded working time of closed, valid entries in that salon through the
+  // tenant-local yesterday, sick days follow the Stammsalon of each counted day, and Soll is never
+  // computed — it is a contract figure of a person, not divisible by salon.
   app.get("/team-trend", {
     schema: {
       tags: ["Dashboard"],
@@ -1629,16 +1639,21 @@ export async function dashboardRoutes(app: FastifyInstance) {
       description:
         "Per month of the window: the worked minutes and the target minutes from the working-time " +
         "account and the sick days from the absence context, over the persons in the caller's " +
-        "team-overview reach. Target minutes only with overtime:read covering every shown person.",
+        "team-overview reach. Target minutes only with overtime:read covering every shown person " +
+        "and never together with a salon filter.",
     },
     preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
-    handler: async (req) => {
-      const { months } = teamTrendQuerySchema.parse(req.query);
+    handler: async (req, reply) => {
+      const { months, salonId } = teamTrendQuerySchema.parse(req.query);
       const tenantId = req.user.tenantId;
       const access = accessContextFromRequest(req);
       const tz = await getTenantTimezone(app.prisma, tenantId);
 
       const reach = await resolveAccessReach(app.prisma, access, "team-overview:read:ZUGEWIESEN");
+      // D-02/D-16: validated before any data read; one body for every rejection cause.
+      const filter = await resolveTeamSalonFilter(app.prisma, tenantId, reach, salonId);
+      if (!filter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
+      const filterSalonId = filter.salonId;
       const scopedAccess = { ...access, reach };
 
       // Soll is a contract figure: only with overtime:read, and only when that reach covers
@@ -1651,21 +1666,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       // The window: the `months` calendar months ending with the tenant-local current month.
       const today = todayInTz(tz);
-      const window: Array<{ year: number; month: number; key: string }> = [];
+      const window: Array<{
+        year: number;
+        month: number;
+        key: string;
+        firstDay: Date;
+        lastDay: Date;
+        ids: string[];
+      }> = [];
       for (let back = months - 1; back >= 0; back--) {
         const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - back, 1));
         const year = d.getUTCFullYear();
         const month = d.getUTCMonth() + 1;
-        window.push({ year, month, key: `${year}-${String(month).padStart(2, "0")}` });
-      }
-
-      const series: Array<{
-        month: string;
-        workedMinutes: number;
-        shouldMinutes: number | null;
-        sickDays: number;
-      }> = [];
-      for (const { year, month, key } of window) {
         // Same population and Stichtag as GET /reports/monthly (month end).
         const { end } = monthRangeUtc(year, month, tz);
         const { firstDay, lastDay } = monthDateRange(year, month, tz);
@@ -1682,7 +1694,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           },
           select: { id: true },
         });
-        const ids = people.map((p) => p.id).sort();
+        const ids = people.map((p) => p.id).sort((a, b) => a.localeCompare(b));
 
         if (overtimeReach && overtimeReach.kind === "scoped") {
           const covered = await resolveStammsalonScopedEmployeeIds(
@@ -1693,13 +1705,61 @@ export async function dashboardRoutes(app: FastifyInstance) {
           );
           if (covered !== "all" && !ids.every((id) => covered.includes(id))) sollCovered = false;
         }
+        window.push({
+          year,
+          month,
+          key: `${year}-${String(month).padStart(2, "0")}`,
+          firstDay,
+          lastDay,
+          ids,
+        });
+      }
 
+      // D-13: exact per-day Stammsalon of every shown person, one Unterbau call for the window.
+      const dayString = (d: Date) => d.toISOString().slice(0, 10);
+      const homeByPerson =
+        filterSalonId === null
+          ? null
+          : await homeSalonsForDays(
+              app.prisma,
+              tenantId,
+              Array.from(new Set(window.flatMap((w) => w.ids))),
+              dayString(window[0].firstDay),
+              dayString(window[window.length - 1].lastDay),
+            );
+      const yesterday = new Date(today.getTime() - 86_400_000);
+
+      const series: Array<{
+        month: string;
+        workedMinutes: number;
+        shouldMinutes: number | null;
+        sickDays: number;
+      }> = [];
+      for (const { year, month, key, firstDay, lastDay, ids } of window) {
         let worked = 0;
         let should = 0;
-        for (const id of ids) {
-          const figures = await computeMonthReportFigures(app, id, year, month);
-          worked += figures.workedMinutes;
-          should += figures.expectedMinutes;
+        if (filterSalonId === null) {
+          for (const id of ids) {
+            const figures = await computeMonthReportFigures(app, id, year, month);
+            worked += figures.workedMinutes;
+            should += figures.expectedMinutes;
+          }
+        } else {
+          // D-03/D-12: recorded working time in this salon only, through tenant-local yesterday
+          // (today never counts, #438); the Berufsschule credit is attributed to no salon and
+          // there is no Soll under a filter (D-05).
+          const upper = lastDay < yesterday ? lastDay : yesterday;
+          if (ids.length > 0 && upper >= firstDay) {
+            const entries = await getRecordedWorkEntriesInRange(
+              app.prisma,
+              employeeScopeFor(scopedAccess, { employeeIds: ids }),
+              firstDay,
+              upper,
+            );
+            worked = entries
+              .filter((e) => !e.isInvalid && e.endTime !== null && e.salonId === filterSalonId)
+              .reduce((sum: number, e) => addWorkingMinutes(sum, e), 0);
+          }
         }
 
         let sickDays = 0;
@@ -1716,8 +1776,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
             if (list) list.push(row);
             else byPerson.set(row.employeeId, [row]);
           }
-          for (const personRows of byPerson.values()) {
-            sickDays += sickLeaveDayCounts(personRows, firstDay, lastDay).sickDays;
+          for (const [personId, personRows] of byPerson) {
+            // D-04/D-13: an absence follows the Stammsalon of each counted day.
+            const personHome = homeByPerson?.get(personId);
+            sickDays += sickLeaveDayCounts(
+              personRows,
+              firstDay,
+              lastDay,
+              filterSalonId === null
+                ? {}
+                : { countsDay: (day: string) => personHome?.get(day) === filterSalonId },
+            ).sickDays;
           }
         }
 
@@ -1729,15 +1798,44 @@ export async function dashboardRoutes(app: FastifyInstance) {
         });
       }
 
-      const sollVisible = canSeeSoll && sollCovered;
+      // D-05: under a filter Soll is never shown, whatever the caller may otherwise see.
+      const sollVisible = canSeeSoll && sollCovered && filterSalonId === null;
       return {
-        salonId: null,
-        workedBasis: "ACCOUNT" as const,
-        sollUnavailableReason: sollVisible ? null : ("NO_PERMISSION" as const),
+        salonId: filterSalonId,
+        workedBasis: filterSalonId === null ? ("ACCOUNT" as const) : ("SALON_ENTRIES" as const),
+        sollUnavailableReason: sollVisible
+          ? null
+          : canSeeSoll && sollCovered
+            ? ("SALON_FILTER" as const)
+            : ("NO_PERMISSION" as const),
         months: series.map((m) => ({ ...m, shouldMinutes: sollVisible ? m.shouldMinutes : null })),
       };
     },
   });
+}
+
+// Issue #84 (D-02/D-16): one body for every rejection cause of a salon filter — a foreign
+// tenant's salon, an unknown id, an inactive salon and a salon outside the caller's reach are
+// indistinguishable (T-100-09).
+const TEAM_SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
+
+/**
+ * Issue #84 (D-02/D-16) — the salon filter of the team views is a narrowing of the view, never an
+ * access boundary (#82 D-05): it must name an ACTIVE salon of the caller's tenant that lies inside
+ * the caller's reach for the endpoint's permission, and it can never widen that reach. Runs
+ * before any data read. A PERSONS-only reach names no salons and therefore rejects every salon.
+ */
+async function resolveTeamSalonFilter(
+  db: FastifyInstance["prisma"],
+  tenantId: string,
+  reach: AccessReach,
+  salonId: string | undefined,
+): Promise<{ ok: true; salonId: string | null } | { ok: false }> {
+  if (salonId === undefined) return { ok: true, salonId: null };
+  const salon = await findSalon(db, tenantId, salonId);
+  if (!salon || !salon.isActive) return { ok: false };
+  if (reach.kind === "scoped" && !reach.salonIds.includes(salon.id)) return { ok: false };
+  return { ok: true, salonId: salon.id };
 }
 
 function round(n: number): number {

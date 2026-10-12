@@ -170,6 +170,9 @@ export async function getWorkedEntriesInRange(
  * covers (`dashboard.ts`'s team-week calendar, team-today presence board, personal week view, and
  * the missing-workdays detector's `entryDates` set) and why each of them observably needs the open
  * rows T2's `endTime: { not: null }` clause would silently drop.
+ *
+ * Issue #84 (D-15): `salonId` is selected additively for the dashboard's salon filter — every
+ * existing reader ignores it.
  */
 export async function getRecordedWorkEntriesInRange(
   db: Prisma.TransactionClient,
@@ -191,6 +194,7 @@ export async function getRecordedWorkEntriesInRange(
       endTime: true,
       breakMinutes: true,
       isInvalid: true,
+      salonId: true,
     },
   });
 }
