@@ -693,8 +693,20 @@ import { readFileSync } from "node:fs";
 // rises from 356 to 359. MIN_TESTS rises from 6171 to 6185: +14 cases, measured by counting `it(` /
 // `it.each(` per file — 4, 5, 5; no existing file changed its case count. Same lower-bound
 // convention as above; not a re-measure-to-actual sweep.
-const MIN_FILES = 359;
-const MIN_TESTS = 6185;
+//
+// Phase 84 (issue #84), 2026-10-12: 7 new test files — `src/composition/__tests__/dashboard-team-week-frozen-84`,
+// `reports-monthly-frozen-84`, `dashboard-team-trend-84`, `dashboard-team-salon-filter-84`,
+// `src/contexts/absence/__tests__/sick-leave-days`, `src/contexts/platform/__tests__/home-salons-for-days-84`
+// and `src/__tests__/dashboard-salon-manipulation-84` — MIN_FILES rises from 359 to 366. MIN_TESTS
+// rises from 6185 to 6254: +69 cases, measured by counting `it(` / `it.each(` per file in the blob at
+// a0258a8d vs HEAD — new files 1, 1, 16, 14, 16, 10, 9 (the probe file's cases loop over the three
+// endpoints, so the reporter counts more than the source does); existing files
+// `src/contexts/absence/__tests__/facade-leave-requests` 19 -> 21 (+2),
+// `src/contexts/time-tracking/__tests__/facade-time-entries` 19 -> 19 and
+// `scripts/__tests__/lint-facade-signatures` 21 -> 21 (assertions changed in existing cases only).
+// Same lower-bound convention as above; not a re-measure-to-actual sweep.
+const MIN_FILES = 366;
+const MIN_TESTS = 6254;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
