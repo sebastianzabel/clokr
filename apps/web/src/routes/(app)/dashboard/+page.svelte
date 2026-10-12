@@ -2386,6 +2386,9 @@
     z-index: 1;
     margin-top: 18px;
     padding-top: 18px;
+    /* .card-foot sets a muted grey for light cards; the salon label and the booked-day note
+       inherit this colour and must stay readable on the dark clock card (Issue #87). */
+    color: rgba(255, 255, 255, 0.9);
   }
   :global(.timer-card-wrap .timer-cta-primary) {
     background: white;

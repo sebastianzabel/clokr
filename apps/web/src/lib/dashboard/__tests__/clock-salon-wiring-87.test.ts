@@ -97,4 +97,13 @@ describe("clock salon wiring (Issue #87)", () => {
     expect(reopen).toContain("performClockIn()");
     expect(reopen).not.toMatch(/salonId/);
   });
+
+  it("the clock card footer sets a light text colour, because the salon label and the booked-day note inherit it", () => {
+    // Found in the visual check: .card-foot sets a muted grey that is unreadable on the dark card.
+    const rule = PAGE.match(/:global\(\.timer-card-wrap \.timer-foot\)\s*\{[^}]*\}/);
+    expect(rule, "the .timer-foot rule must exist").not.toBeNull();
+    expect(rule![0]).toMatch(/\bcolor:\s*rgba\(255,\s*255,\s*255,/);
+    // Positive control: the component really inherits instead of fixing its own colour.
+    expect(COMPONENT).toMatch(/color:\s*inherit/);
+  });
 });
