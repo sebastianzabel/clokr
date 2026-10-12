@@ -365,6 +365,16 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "access behavior to compare. Same vacuous-satisfaction reasoning as the " +
       "`GET /api/v1/role-assignments/people` entry above.",
   },
+  {
+    route: "GET /api/v1/time-entries/clock-salon",
+    reason:
+      "New route added in Phase 87b (Issue #87, D-02/D-03), long after the role guard " +
+      "(`requireRole`) was deleted from middleware/auth.ts (#75b) — built permission-gated " +
+      "(`time-entry:create` in either reach) from its very first commit, answers only the " +
+      "caller's own clock (no employee parameter) and never had role-based access behavior to " +
+      "compare. Same vacuous-satisfaction reasoning as the Phase 83 entries directly above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
 ];
 
 /** Routes declared in `app.ts` itself — invisible to the source parser, proven registered. */

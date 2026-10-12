@@ -22,6 +22,13 @@ import {
 } from "../../contexts/time-tracking/activity-shares"; // Issue #81
 import { loadSharesOfEntry } from "../../contexts/time-tracking/activity-store"; // Issue #81
 
+// Issue #87 (D-12): maps the rejection status of `resolveEntrySalon` to the clock conflict reason.
+function salonConflictReason(status: 404 | 400 | 409) {
+  if (status === 404) return "SALON_NOT_FOUND" as const;
+  if (status === 400) return "SALON_INACTIVE" as const;
+  return "NO_ACTIVE_SALON" as const;
+}
+
 export async function resolveClockEvent(
   app: FastifyInstance,
   event: ClockEvent,
@@ -180,13 +187,15 @@ export async function resolveClockEvent(
       switch (decision.kind) {
         case "START": {
           // Phase 68b (issue #68, D-08/D-09): the salon of a NEW entry is resolved here, inside
-          // the transaction, from the punch INSTANT (never `event.date`). Clock paths accept no
-          // explicit salon (#87), so the only possible non-ok result is NO_ACTIVE_SALON. REOPEN,
-          // STOP, CONFIRM and consolidation never re-derive the salon of an existing entry.
+          // the transaction, from the punch INSTANT (never `event.date`). The explicit salon of the
+          // web clock-in (Issue #87, D-01) is validated by the same rule; without one the pattern
+          // -> default salon chain applies (D-07: NFC and WIFI never send one). REOPEN, STOP,
+          // CONFIRM and consolidation never re-derive the salon of an existing entry.
           const salon = await resolveEntrySalon(tx, {
             tenantId: event.tenantId,
             employeeId: event.employeeId,
             startTime: event.timestamp,
+            ...(event.salonId !== undefined && { explicitSalonId: event.salonId }),
           });
           if (!salon.ok) {
             app.log.warn(
@@ -194,11 +203,11 @@ export async function resolveClockEvent(
                 employeeId: event.employeeId,
                 source: event.source,
                 intent: event.intent,
-                reason: "NO_ACTIVE_SALON",
+                reason: salonConflictReason(salon.status),
               },
               "clock_event_conflict",
             );
-            return { kind: "CONFLICT", reason: "NO_ACTIVE_SALON" } as const;
+            return { kind: "CONFLICT", reason: salonConflictReason(salon.status) } as const;
           }
           const entry = await tx.timeEntry.create({
             data: {
@@ -235,6 +244,45 @@ export async function resolveClockEvent(
         }
 
         case "REOPEN": {
+          // Issue #87 (D-04/D-12): one entry per day — a re-clock-in reopens the day's entry and
+          // never changes its salon (Phase 68b D-09). A differing explicit salon is refused instead
+          // of silently booking time to the wrong work location (§ 2 EFZG holiday basis, salon
+          // views). The salon is validated FIRST, before this comparison and before the locked
+          // guard below, so a foreign and an unknown id answer the identical 404 (and an inactive
+          // one 400) whatever state the day is in (T-100-09). Nothing is written before this point.
+          // MULTI-ENTRY: with several entries per day (#70) a different salon would start a new entry instead of this 409.
+          if (event.salonId !== undefined) {
+            const chosen = await resolveEntrySalon(tx, {
+              tenantId: event.tenantId,
+              employeeId: event.employeeId,
+              startTime: event.timestamp,
+              explicitSalonId: event.salonId,
+            });
+            if (!chosen.ok) {
+              app.log.warn(
+                {
+                  employeeId: event.employeeId,
+                  source: event.source,
+                  entryId: closedEntry!.id,
+                  reason: salonConflictReason(chosen.status),
+                },
+                "clock_event_conflict",
+              );
+              return { kind: "CONFLICT", reason: salonConflictReason(chosen.status) } as const;
+            }
+            if (chosen.salonId !== closedEntry!.salonId) {
+              app.log.warn(
+                {
+                  employeeId: event.employeeId,
+                  source: event.source,
+                  entryId: closedEntry!.id,
+                  reason: "SALON_DIFFERS_FROM_DAY_ENTRY",
+                },
+                "clock_event_conflict",
+              );
+              return { kind: "CONFLICT", reason: "SALON_DIFFERS_FROM_DAY_ENTRY" } as const;
+            }
+          }
           // D-01b: locked-month guard (mirrors STOP branch — never mutate a locked entry)
           if (closedEntry!.isLocked) {
             app.log.warn(

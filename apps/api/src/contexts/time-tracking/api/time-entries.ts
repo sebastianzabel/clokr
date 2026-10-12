@@ -5,6 +5,7 @@ import { requireAuth } from "../../../middleware/auth";
 import {
   permissionReach,
   requirePermission,
+  requireAnyPermission, // Issue #87 (Phase 87b-03), D-03 — the clock-salon read route
   userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
   accessContextFromRequest, // Phase 91b Plan 03 (#91), D-09/D-14
   employeeScopeFor, // Phase 79 (#79), D-13 — summary route's T1 scope
@@ -21,7 +22,8 @@ import { checkArbZG } from "../arbzg";
 import { planAutoBreak, autoBreakAppliesOnCreate, type AutoBreakPlan } from "../auto-break-plan"; // Issue #511 (AK-4, D-17/D-20) — the one automatic-break decision, also used by the preview
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
-import { resolveEntrySalon } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
+import { resolveEntrySalon, SALON_NOT_FOUND_BODY, SALON_INACTIVE_BODY } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
+import { clockSalonChoice } from "../clock-salon-choice"; // Issue #87 (Phase 87b-03), D-02/D-11 — the one clock-salon decision
 import { entryDurations } from "../entry-durations"; // Phase 79 (Issue #79), D-06/D-14 — per-entry presence/working time
 import { activityKindSchema, activitySharesSchema } from "../activity-kind"; // Issue #81 (D-06)
 import { activityMinutes } from "../activity-minutes"; // Issue #81 (D-09) — minutes per kind
@@ -115,6 +117,9 @@ const clockInSchema = z.object({
   nfcCardId: z.string().optional(),
   source: z.nativeEnum(TimeEntrySource).default("MANUAL"),
   note: z.string().optional(),
+  // Issue #87 (D-01): the salon the web clock-in books to. Optional only — a null salon stays a
+  // 400 (Phase 68b D-07); the web omits the key when nothing was chosen.
+  salonId: z.string().uuid().optional(),
 });
 
 // No `breakMinutes` here on purpose (Phase 129, issue #129): the value is derived from the
@@ -571,6 +576,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         date: todayInTz(tz),
         dateStr: dateStrInTz(now, tz),
         note: body.note,
+        // Issue #87 (D-01): set only by this adapter; NFC and presence build events without it.
+        salonId: body.salonId,
         actor: resolveActor(req),
         // Phase 307 (D-01): interactive. Currently inert — `decide()` (state-machine.ts) never
         // returns STOP for `intent: "IN"`, so the debounce guard is never consulted here — but
@@ -609,6 +616,23 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           return reply.code(409).send({
             error: "Kein aktiver Salon vorhanden.",
             code: "NO_ACTIVE_SALON",
+            resolution,
+          });
+        }
+        // Issue #87 (D-12): the exported bodies of entry-salon.ts, byte for byte, with no
+        // `resolution` echo — so the answer equals POST /time-entries' (T-100-09).
+        if (resolution.reason === "SALON_NOT_FOUND") {
+          return reply.code(404).send(SALON_NOT_FOUND_BODY);
+        }
+        if (resolution.reason === "SALON_INACTIVE") {
+          return reply.code(400).send(SALON_INACTIVE_BODY);
+        }
+        // Issue #87 (D-04): a reopened entry never changes its salon.
+        if (resolution.reason === "SALON_DIFFERS_FROM_DAY_ENTRY") {
+          return reply.code(409).send({
+            error:
+              "Für heute ist bereits ein Eintrag in einem anderen Salon erfasst. Ein zweiter Salon am selben Tag ist noch nicht möglich.",
+            code: "SALON_DIFFERS_FROM_DAY_ENTRY",
             resolution,
           });
         }
@@ -2892,6 +2916,32 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           UNSPECIFIED: Math.round(perKind.UNSPECIFIED),
         },
       };
+    },
+  });
+
+  // ── GET /api/v1/time-entries/clock-salon — the salon preselection of the caller's own clock (Issue #87, Phase 87b-03) ──
+  app.get("/clock-salon", {
+    schema: {
+      tags: ["Zeiterfassung"],
+      summary: "Salon preselection of the caller's own clock",
+      description:
+        "Answers for the calling employee only (no employee parameter): the pattern salon of today as a " +
+        "preselection, whether a salon choice is offered at all, the active salons (ids and names) when it " +
+        "is, or the salon today's existing entry is fixed to. Any active salon may be chosen at clock-in; a " +
+        "deviation from the pattern is not an error.",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requireAnyPermission("time-entry:create:EIGENE", "time-entry:create:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const { tenantId, employeeId } = req.user;
+      if (!employeeId) return reply.code(400).send({ error: "Mitarbeiter nicht gefunden" });
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+      return clockSalonChoice(app.prisma, {
+        tenantId,
+        employeeId,
+        now: new Date(),
+        today: todayInTz(tz),
+      });
     },
   });
 }

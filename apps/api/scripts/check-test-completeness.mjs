@@ -705,8 +705,14 @@ import { readFileSync } from "node:fs";
 // `src/contexts/time-tracking/__tests__/facade-time-entries` 19 -> 19 and
 // `scripts/__tests__/lint-facade-signatures` 21 -> 21 (assertions changed in existing cases only).
 // Same lower-bound convention as above; not a re-measure-to-actual sweep.
-const MIN_FILES = 366;
-const MIN_TESTS = 6254;
+// Phase 87b (issue #87), 2026-10-13: 3 new test files — `src/contexts/platform/__tests__/assignment-salon-ids-87`,
+// `src/__tests__/clock-in-salon-87` and `src/__tests__/clock-salon-choice-87` — MIN_FILES rises by 3. MIN_TESTS rises by +40 cases, measured by counting `it(` / `it.each(`
+// per file — 8, 14, 18; the edited files `time-entry-salon-clock` (12 -> 12, one case rewritten 1:1)
+// and `time-entry-day-lookup-guard` (6 -> 6) kept their case count. Same lower-bound convention as
+// above; not a re-measure-to-actual sweep.
+// Merged after Phase 84 (2026-10-13): Phase 84's 366/6254 plus Phase 87b's +3 files / +40 cases.
+const MIN_FILES = 369;
+const MIN_TESTS = 6294;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

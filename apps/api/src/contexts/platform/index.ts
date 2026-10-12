@@ -99,7 +99,14 @@ export type {
 // Issue #84 (D-13) — Unterbau-Erweiterung, additive: the batched Stammsalon per calendar day for
 // the dashboard's per-day absence attribution (ADR 0002 Entscheidung 7; announced on #84 with its
 // per-context impact section).
-export { salonForDay, listSalonAssignments, homeSalonsForDays } from "./facade/salon-assignments";
+// Phase 87b (Issue #87, D-10) — additive Unterbau-Erweiterung: the salons of an employee's current
+// and future assignments.
+export {
+  salonForDay,
+  listSalonAssignments,
+  homeSalonsForDays,
+  currentAndFutureAssignmentSalonIds,
+} from "./facade/salon-assignments";
 export type { SalonForDay } from "./facade/salon-assignments";
 // Phase 73b (#73): the role-permission resolution path #74 calls, plus the case-insensitive
 // name identity #74's own role-assignment lookups reuse.

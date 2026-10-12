@@ -31,6 +31,7 @@
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import MyShiftsWeek from "$lib/components/dashboard/MyShiftsWeek.svelte";
   import MyWeekView from "$lib/components/dashboard/MyWeekView.svelte";
+  import ClockSalonSelect from "$lib/components/dashboard/ClockSalonSelect.svelte"; // Issue #87
   import Icon from "$lib/components/Icon.svelte";
   import {
     summarizeKarenzOverrun,
@@ -53,6 +54,14 @@
   import { interpretClockOut, type ClockOutResponse } from "$lib/dashboard/clock-out-result"; // Phase 307 Plan 02 (D-04)
   import { breakFindingSaveNotice } from "$lib/breaks/day-break-violation"; // Issue #80 (D-09a), #511 (D-10)
   import { weekProgressDelta } from "$lib/dashboard/week-progress"; // Issue #451 (D-06)
+  import {
+    clockInBlocked,
+    clockInBody,
+    clockSalonView,
+    initialClockSalonSelection,
+    loadClockSalonChoice,
+    type ClockSalonChoice,
+  } from "$lib/dashboard/clock-salon"; // Issue #87
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
   import { salonContext } from "$stores/salon-context"; // Issue #84 (D-01)
@@ -217,6 +226,20 @@
     day.kind === "running" && day.entry ? new Date(day.entry.startTime) : null,
   );
 
+  // Issue #87: re-fetched only when the day state changes, never by the 5 s poll (a pick survives it).
+  let clockSalon = $state<ClockSalonChoice | null>(null);
+  let clockSalonId = $state<string | null>(null);
+  let dayKind = $derived(day.kind);
+  let clockSalonViewState = $derived(clockSalonView(clockSalon, dayKind));
+  $effect(() => {
+    void dayKind;
+    untrack(() => {
+      void loadClockSalonChoice().then((choice) => {
+        clockSalon = choice;
+        clockSalonId = initialClockSalonSelection(choice);
+      });
+    });
+  });
   // Phase 116 (issue #119) — starts TRUE. `onMount` (:339) awaits `loadData()` unconditionally and
   // `loadData` is `loading = true` → try → `finally { loading = false }` with no early return, so
   // the page cannot be stranded. This also removes the only real defect at the single consumer
@@ -874,9 +897,10 @@
   // REOPEN (services/clock/state-machine.ts:18-22) — and we simply adopt the entry it
   // returns, which is what makes the timer correct in both cases.
   async function performClockIn(): Promise<void> {
-    const res = await api.post<ClockInResponse>("/time-entries/clock-in", {
-      source: "MOBILE",
-    });
+    const res = await api.post<ClockInResponse>(
+      "/time-entries/clock-in",
+      clockInBody(clockSalonViewState, clockSalonId),
+    );
     // Phase 76.2 D-03 unified shape — reads from res.resolution.entry
     // (the legacy `res.entry` shape is gone, see Plan 2 SUMMARY).
     // CONFLICT branches reach us as thrown ApiError (HTTP 409) — defensive
@@ -1392,10 +1416,16 @@
           {/if}
 
           <div class="card-foot timer-foot">
+            <ClockSalonSelect
+              view={clockSalonViewState}
+              value={clockSalonId}
+              disabled={clockLoading}
+              onselect={(id) => (clockSalonId = id)}
+            />
             {#if primaryLabel}
               <button
                 onclick={handleClock}
-                disabled={clockLoading}
+                disabled={clockLoading || clockInBlocked(clockSalonViewState, clockSalonId)}
                 class="btn btn-primary timer-cta-primary"
                 type="button"
               >
@@ -2429,6 +2459,9 @@
     z-index: 1;
     margin-top: 18px;
     padding-top: 18px;
+    /* .card-foot sets a muted grey for light cards; the salon label and the booked-day note
+       inherit this colour and must stay readable on the dark clock card (Issue #87). */
+    color: rgba(255, 255, 255, 0.9);
   }
   :global(.timer-card-wrap .timer-cta-primary) {
     background: white;

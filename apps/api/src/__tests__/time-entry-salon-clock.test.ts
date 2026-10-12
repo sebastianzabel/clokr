@@ -1,7 +1,8 @@
 /**
  * Phase 68b (issue #68), D-08/D-09 — NFC and WIFI clock paths take the salon of the day exactly
- * like MOBILE already does (68b-01's tracer, `time-entry-salon.test.ts`); a `salonId` sent in ANY
- * clock request body is silently ignored (Zod strips unknown keys); NFC and WIFI answer their
+ * like MOBILE already does (68b-01's tracer, `time-entry-salon.test.ts`); a `salonId` sent in an NFC or
+ * WIFI request body is silently ignored (Zod strips unknown keys; since Issue #87 only the web
+ * clock-in, source MOBILE, honours an explicit salon); NFC and WIFI answer their
  * existing NO_ACTIVE_SALON/200 contracts correctly with no row written; clock-out (STOP), a break
  * append, a same-day re-clock-in (REOPEN) and consolidation never re-home an existing entry, even
  * after the assignment that produced its salon is deleted afterward; an instant before the
@@ -272,7 +273,7 @@ describe("Phase 68b — NFC and WIFI take the salon of the day; a request-body s
     }
   });
 
-  it("a salonId sent in the MOBILE clock-in body is ignored (Wednesday -> HOME A, never Salon C)", async () => {
+  it("a salonId sent in the MOBILE clock-in body is honoured (Wednesday -> Salon C, not HOME A) — Issue #87", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(instant(mobileWednesday, "09:00"));
     try {
@@ -284,8 +285,9 @@ describe("Phase 68b — NFC and WIFI take the salon of the day; a request-body s
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body) as { resolution: { entry: { salonId: string } } };
-      expect(body.resolution.entry.salonId).toBe(salonA.id);
-      expect(body.resolution.entry.salonId).not.toBe(salonC.id);
+      // C is honoured although it is never assigned to the employee (the Springer case).
+      expect(body.resolution.entry.salonId).toBe(salonC.id);
+      expect(body.resolution.entry.salonId).not.toBe(salonA.id);
     } finally {
       vi.useRealTimers();
     }
