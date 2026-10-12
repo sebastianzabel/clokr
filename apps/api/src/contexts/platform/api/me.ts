@@ -1,6 +1,9 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
+import { API_KEY_SUBJECT_PREFIX, accessContextFromRequest } from "../access-context";
+import { contextSalonIds } from "../facade/role-assignments";
+import { isMultiSalonTenant, listSalons } from "../facade/salons";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -196,6 +199,51 @@ export async function meRoutes(app: FastifyInstance) {
       // PUT /api/v1/me/preferences above, which stores comparable per-user UI state and also
       // writes no audit row.
       return { lastSeenVersion: user.lastSeenReleaseVersion };
+    },
+  });
+
+  // ── Salon context (Phase 82, Issue #82) ─────────────────────────────────────
+
+  // GET /api/v1/me/context
+  app.get("/context", {
+    preHandler: requireAuth, // own data — no permission row (docs/permissions.md convention)
+    schema: {
+      tags: ["Mein Bereich"],
+      description:
+        "Get the caller's tenant and the active salons it can reach. A presentation context only — every endpoint decides access itself.",
+      security: [{ bearerAuth: [] }],
+    },
+    handler: async (req, reply) => {
+      if (req.user.sub.startsWith(API_KEY_SUBJECT_PREFIX)) {
+        return reply.code(400).send({ error: "API-Keys haben keinen Benutzerkontext" });
+      }
+      const user = await app.prisma.user.findUnique({
+        where: { id: req.user.sub },
+        select: { id: true },
+      });
+      if (!user) return reply.code(404).send({ error: "Benutzer nicht gefunden" });
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: req.user.tenantId },
+        select: { id: true, name: true },
+      });
+      if (!tenant) return reply.code(404).send({ error: "Mandant nicht gefunden" });
+
+      // D-05: nothing reads this context back — a later view passes at most a `salonId`
+      // parameter that the target endpoint validates itself.
+      const reach = await contextSalonIds(app.prisma, accessContextFromRequest(req), new Date());
+      const reachable = new Set(reach.salonIds);
+      const salons = (await listSalons(app.prisma, tenant.id, { includeInactive: false }))
+        .filter((salon) => reachable.has(salon.id))
+        // D-02: ids and names only (Art. 5 Abs. 1 lit. c DSGVO).
+        .map((salon) => ({ id: salon.id, name: salon.name }))
+        .sort((a, b) => a.name.localeCompare(b.name, "de") || (a.id < b.id ? -1 : 1));
+
+      return {
+        tenant: { id: tenant.id, name: tenant.name },
+        isMultiSalon: await isMultiSalonTenant(app.prisma, tenant.id),
+        homeSalonId: reach.homeSalonId,
+        salons,
+      };
     },
   });
 }
