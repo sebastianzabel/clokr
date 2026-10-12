@@ -681,8 +681,14 @@ import { readFileSync } from "node:fs";
 // 34 -> 34, `time-entries-durations-79` 3 -> 3, `time-entries-summary-79` 11 -> 11,
 // `facade-time-entries` 19 -> 19 (assertions added to existing cases only). Same lower-bound
 // convention as above; not a re-measure-to-actual sweep.
-const MIN_FILES = 353;
-const MIN_TESTS = 6139;
+//
+// Phase 82 (issue #82), 2026-10-12: 3 new test files — `src/__tests__/me-context-82`,
+// `salon-context-manipulation-82` and `src/contexts/platform/__tests__/context-salon-ids-82` —
+// MIN_FILES rises from 353 to 356. MIN_TESTS rises from 6139 to 6171: +32 cases, measured by
+// counting `it(` / `it.each(` per file — 13, 7, 12; no existing file changed its case count. Same
+// lower-bound convention as above; not a re-measure-to-actual sweep.
+const MIN_FILES = 356;
+const MIN_TESTS = 6171;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
