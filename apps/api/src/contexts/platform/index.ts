@@ -96,7 +96,13 @@ export type {
 // Phase 67b (issue #67) — salon assignment read surface; the lock-checked write functions
 // (plan 02) are deliberately NOT re-exported, because they import the working-time-account index
 // and this file must not transitively load another context.
-export { salonForDay, listSalonAssignments } from "./facade/salon-assignments";
+// Phase 87b (Issue #87, D-10) — additive Unterbau-Erweiterung: the salons of an employee's current
+// and future assignments.
+export {
+  salonForDay,
+  listSalonAssignments,
+  currentAndFutureAssignmentSalonIds,
+} from "./facade/salon-assignments";
 export type { SalonForDay } from "./facade/salon-assignments";
 // Phase 73b (#73): the role-permission resolution path #74 calls, plus the case-insensitive
 // name identity #74's own role-assignment lookups reuse.

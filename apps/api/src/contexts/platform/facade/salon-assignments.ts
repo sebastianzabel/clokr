@@ -181,6 +181,45 @@ export async function salonForDay(
 }
 
 /**
+ * Phase 87b (Issue #87, D-10): the salons the employee's current and future salon assignments
+ * name — ascending, de-duplicated, as of the tenant-local calendar day of `date`.
+ *
+ * - A row counts when it has not ended before that day (`validUntil` null or on/after the day).
+ *   A FUTURE row (`validFrom` after the day) counts too — it is a future assignment. Both kinds
+ *   (HOME and DEPLOYMENT) count.
+ * - A voided row (D-03, {@link isVoided}) is effective on no day and never counts.
+ * - No `isActive` filter: the answer is assignment history, the caller decides about activity.
+ * - No hire-date floor and no employee lookup: a foreign or unknown employee id simply has no rows
+ *   in this tenant and answers `[]` through the same code path (T-100-09).
+ *
+ * Read by `contextSalonIds` (Phase 82, the caller's own salons) and by the clock-salon choice of
+ * Zeiterfassung (Phase 87b), so the assignment-validity rule exists exactly once. Additive
+ * Unterbau-Erweiterung (ADR 0002 Entscheidung 7).
+ */
+export async function currentAndFutureAssignmentSalonIds(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  employeeId: string,
+  date: Date,
+): Promise<string[]> {
+  const tz = await readTenantTimezone(db, tenantId);
+  const dayAsDate = dayToDate(tenantLocalDay(date, tz));
+
+  const rows = await db.employeeSalonAssignment.findMany({
+    where: {
+      tenantId,
+      employeeId,
+      OR: [{ validUntil: null }, { validUntil: { gte: dayAsDate } }],
+    },
+    select: { salonId: true, validFrom: true, validUntil: true },
+  });
+
+  const salonIds = new Set(rows.filter((row) => !isVoided(row)).map((row) => row.salonId));
+  // Explicit comparator (UTF-16 code unit order): a comparator-less sort is a Sonar S2871 finding.
+  return [...salonIds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/**
  * Phase 71b (issue #71, D-04): the BATCHED form of {@link salonForDay} — the central holiday
  * resolver's (`facade/holiday-resolution.ts`) no-entry fallback needs "which salon for employee E
  * on day D" for many employees and many days at once, and must never turn into an N+1 of
