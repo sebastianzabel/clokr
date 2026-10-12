@@ -76,6 +76,7 @@
 │   ├── /bulk (POST)
 │   ├── /checks (GET, HEAD)
 │   ├── /clock-in (POST)
+│   ├── /clock-salon (GET, HEAD)
 │   ├── /conflicts (GET, HEAD)
 │   ├── /copy-week (POST)
 │   ├── /coverage-rules (GET, HEAD, POST)

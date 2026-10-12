@@ -5,6 +5,7 @@ import { requireAuth } from "../../../middleware/auth";
 import {
   permissionReach,
   requirePermission,
+  requireAnyPermission, // Issue #87 (Phase 87b-03), D-03 — the clock-salon read route
   userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
   accessContextFromRequest, // Phase 91b Plan 03 (#91), D-09/D-14
   employeeScopeFor, // Phase 79 (#79), D-13 — summary route's T1 scope
@@ -22,6 +23,7 @@ import { planAutoBreak, autoBreakAppliesOnCreate, type AutoBreakPlan } from "../
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
 import { resolveEntrySalon, SALON_NOT_FOUND_BODY, SALON_INACTIVE_BODY } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
+import { clockSalonChoice } from "../clock-salon-choice"; // Issue #87 (Phase 87b-03), D-02/D-11 — the one clock-salon decision
 import { entryDurations } from "../entry-durations"; // Phase 79 (Issue #79), D-06/D-14 — per-entry presence/working time
 import { activityKindSchema, activitySharesSchema } from "../activity-kind"; // Issue #81 (D-06)
 import { activityMinutes } from "../activity-minutes"; // Issue #81 (D-09) — minutes per kind
@@ -2914,6 +2916,32 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           UNSPECIFIED: Math.round(perKind.UNSPECIFIED),
         },
       };
+    },
+  });
+
+  // ── GET /api/v1/time-entries/clock-salon — the salon preselection of the caller's own clock (Issue #87, Phase 87b-03) ──
+  app.get("/clock-salon", {
+    schema: {
+      tags: ["Zeiterfassung"],
+      summary: "Salon preselection of the caller's own clock",
+      description:
+        "Answers for the calling employee only (no employee parameter): the pattern salon of today as a " +
+        "preselection, whether a salon choice is offered at all, the active salons (ids and names) when it " +
+        "is, or the salon today's existing entry is fixed to. Any active salon may be chosen at clock-in; a " +
+        "deviation from the pattern is not an error.",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requireAnyPermission("time-entry:create:EIGENE", "time-entry:create:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const { tenantId, employeeId } = req.user;
+      if (!employeeId) return reply.code(400).send({ error: "Mitarbeiter nicht gefunden" });
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+      return clockSalonChoice(app.prisma, {
+        tenantId,
+        employeeId,
+        now: new Date(),
+        today: todayInTz(tz),
+      });
     },
   });
 }
