@@ -1,0 +1,151 @@
+// Issue #84 (D-11, D-12) — the decisions behind the dashboard's Team block, outside the page
+// (the page imports `$app/*` and cannot be mounted here).
+//
+// Why the filter needs the showSalonOptions() guard (D-11): the salon-context store preselects the
+// sole reachable salon (`resolveSelection`), so `selectedSalonId()` alone would put every one-salon
+// tenant and every single-salon caller into filtered mode and hide their Soll — the AC-6 break.
+import { describe, expect, it, vi } from "vitest";
+
+// The store imports the api client, which pulls in the auth store and its localStorage bootstrap;
+// a stand-in (as in salon-context.test.ts) keeps this file free of that. The factory defines
+// ApiError itself because vi.mock is hoisted above any top-level class.
+vi.mock("$api/client", () => ({
+  api: { get: vi.fn() },
+  ApiError: class ApiError extends Error {
+    constructor(
+      public status: number,
+      message = "err",
+    ) {
+      super(message);
+    }
+  },
+}));
+vi.mock("$lib/utils/logger", () => ({ clientLogger: { warn: vi.fn(), error: vi.fn() } }));
+
+import {
+  TEAM_SALDO_NOT_ATTRIBUTABLE_NOTE,
+  TEAM_SOLL_NOT_ATTRIBUTABLE_NOTE,
+  teamSalonFilter,
+  teamTrendView,
+  withSalonId,
+  type TeamTrendResponse,
+} from "../team-view";
+
+const A = { id: "salon-a", name: "Salon Nord" };
+const B = { id: "salon-b", name: "Salon Ost" };
+
+describe("teamSalonFilter — D-11: the only place the dashboard decides whether it filters", () => {
+  it("a one-salon tenant sends no salonId although the store preselects its salon", () => {
+    expect(teamSalonFilter({ isMultiSalon: false, salons: [A], selection: A.id })).toBeNull();
+  });
+
+  it("a multi-salon tenant whose caller reaches one salon sends no salonId", () => {
+    expect(teamSalonFilter({ isMultiSalon: true, salons: [A], selection: A.id })).toBeNull();
+  });
+
+  it('"Alle Salons" sends no salonId', () => {
+    expect(teamSalonFilter({ isMultiSalon: true, salons: [A, B], selection: "ALL" })).toBeNull();
+  });
+
+  it("a listed salon with options shown is sent", () => {
+    expect(teamSalonFilter({ isMultiSalon: true, salons: [A, B], selection: A.id })).toBe(A.id);
+  });
+
+  it("a context that is not loaded yet sends no salonId", () => {
+    expect(teamSalonFilter({ isMultiSalon: false, salons: [], selection: null })).toBeNull();
+  });
+
+  it("a selection that is not listed sends no salonId", () => {
+    expect(teamSalonFilter({ isMultiSalon: true, salons: [A, B], selection: "gone" })).toBeNull();
+  });
+});
+
+describe("withSalonId", () => {
+  it("leaves the path alone without a salon", () => {
+    expect(withSalonId("/dashboard/team-trend?months=6", null)).toBe(
+      "/dashboard/team-trend?months=6",
+    );
+  });
+
+  it("appends with & when the path already has a query", () => {
+    expect(withSalonId("/dashboard/team-trend?months=6", "abc")).toBe(
+      "/dashboard/team-trend?months=6&salonId=abc",
+    );
+  });
+
+  it("appends with ? and encodes the value", () => {
+    expect(withSalonId("/dashboard/team-upcoming-leave", "a b")).toBe(
+      "/dashboard/team-upcoming-leave?salonId=a%20b",
+    );
+  });
+});
+
+function response(overrides: Partial<TeamTrendResponse> = {}): TeamTrendResponse {
+  return {
+    salonId: null,
+    workedBasis: "ACCOUNT",
+    sollUnavailableReason: null,
+    months: [
+      { month: "2026-05", workedMinutes: 125, shouldMinutes: 180, sickDays: 1 },
+      { month: "2026-06", workedMinutes: 600, shouldMinutes: 600, sickDays: 0.5 },
+    ],
+    ...overrides,
+  };
+}
+
+describe("teamTrendView — driven by the response codes, never by a display string", () => {
+  it("unfiltered: Ist and Soll in hours, one decimal, German month labels", () => {
+    const view = teamTrendView(response());
+    expect(view.months.map((m) => m.label)).toEqual(["Mai 26", "Juni 26"]);
+    expect(view.months.map((m) => m.month)).toEqual(["2026-05", "2026-06"]);
+    expect(view.workedHours).toEqual([2.1, 10]);
+    expect(view.shouldHours).toEqual([3, 10]);
+    expect(view.sickDays).toEqual([1, 0.5]);
+    expect(view.workedSeriesLabel).toBe("Ist (h)");
+    expect(view.chartSub).toBe("Letzte 6 Monate");
+    expect(view.sollNote).toBeNull();
+    expect(view.trendNote).toBeNull();
+  });
+
+  it("filtered: no Soll series, the basis is named, both notes are set", () => {
+    const view = teamTrendView(
+      response({
+        salonId: A.id,
+        workedBasis: "SALON_ENTRIES",
+        sollUnavailableReason: "SALON_FILTER",
+        months: [{ month: "2026-05", workedMinutes: 90, shouldMinutes: null, sickDays: 2 }],
+      }),
+    );
+    expect(view.shouldHours).toBeNull();
+    expect(view.workedHours).toEqual([1.5]);
+    expect(view.workedSeriesLabel).toBe("Erfasste Arbeitszeit im Salon (h)");
+    expect(view.chartSub).toBe("Erfasste Arbeitszeit im Salon · Letzte 6 Monate");
+    expect(view.sollNote).toBe(TEAM_SOLL_NOT_ATTRIBUTABLE_NOTE);
+    expect(view.trendNote).toBe(TEAM_SALDO_NOT_ATTRIBUTABLE_NOTE);
+  });
+
+  it("no permission for Soll: the series is hidden without any note", () => {
+    const view = teamTrendView(
+      response({
+        sollUnavailableReason: "NO_PERMISSION",
+        months: [{ month: "2026-05", workedMinutes: 60, shouldMinutes: null, sickDays: 0 }],
+      }),
+    );
+    expect(view.shouldHours).toBeNull();
+    expect(view.sollNote).toBeNull();
+    expect(view.trendNote).toBeNull();
+    expect(view.workedSeriesLabel).toBe("Ist (h)");
+  });
+
+  it("any month without a Soll value hides the whole Soll series", () => {
+    const view = teamTrendView(
+      response({
+        months: [
+          { month: "2026-05", workedMinutes: 60, shouldMinutes: 60, sickDays: 0 },
+          { month: "2026-06", workedMinutes: 60, shouldMinutes: null, sickDays: 0 },
+        ],
+      }),
+    );
+    expect(view.shouldHours).toBeNull();
+  });
+});

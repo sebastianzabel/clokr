@@ -17,7 +17,7 @@
 </script>
 
 <script lang="ts">
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onMount, onDestroy, tick, untrack } from "svelte";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
@@ -53,8 +53,16 @@
   import { interpretClockOut, type ClockOutResponse } from "$lib/dashboard/clock-out-result"; // Phase 307 Plan 02 (D-04)
   import { breakFindingSaveNotice } from "$lib/breaks/day-break-violation"; // Issue #80 (D-09a), #511 (D-10)
   import { weekProgressDelta } from "$lib/dashboard/week-progress"; // Issue #451 (D-06)
-  import { format, subMonths } from "date-fns";
+  import { format } from "date-fns";
   import { de } from "date-fns/locale";
+  import { salonContext } from "$stores/salon-context"; // Issue #84 (D-01)
+  import {
+    teamSalonFilter,
+    teamTrendView,
+    withSalonId,
+    type TeamTrendResponse,
+    type TeamTrendView,
+  } from "$lib/dashboard/team-view"; // Issue #84 (D-07, D-11, D-12)
   import {
     Chart,
     BarController,
@@ -335,23 +343,15 @@
   }
   let upcomingLeaves: UpcomingLeave[] = $state([]);
 
-  interface MonthlyReportRow {
-    workedHours: number;
-    shouldHours: number;
-    sickDays: number;
-    vacationDays: number;
-    totalAbsenceDays: number;
-  }
-  interface MonthlyReportResponse {
-    rows: MonthlyReportRow[];
-  }
-  interface MonthlyReport {
-    workedMinutes: number;
-    shouldMinutes: number;
-    sickDays: number;
-    vacationDays: number;
-    otherAbsenceDays: number;
-  }
+  // Issue #84 (D-01, D-11): the Team block follows the salon context of #82 through ONE guarded
+  // decision. `teamFilter` is a primitive (a salon id or null), so a navigation reload that sets an
+  // equal context state re-runs nothing. `teamGeneration` lets every loader drop a result that
+  // belongs to an older selection (also the 5 s poll).
+  const teamFilter = $derived(teamSalonFilter($salonContext));
+  const teamContextReady = $derived($salonContext.loaded);
+  let teamGeneration = 0;
+  let lastTeamFilterKey: string | null | undefined = undefined;
+  let trendView = $state<TeamTrendView | null>(null);
 
   interface OvertimeTrendResponse {
     snapshots: { month: string; teamCarryOverMinutes: number }[];
@@ -365,7 +365,7 @@
   // assignment, #76) holds `team-overview:read:ZUGEWIESEN` but resolves to compat role EMPLOYEE
   // (#357), so the old check (compat role in the ADMIN/MANAGER set) never saw them. The
   // Überstunden-Trend saldo card inside this block already handles a holder without
-  // `overtime:read` gracefully (see `loadCharts()`'s `overtimeTrendAvailable` below, Phase 76b
+  // `overtime:read` gracefully (see `loadTeamCharts()`'s `overtimeTrendAvailable` below, Phase 76b
   // D-15) — opening this gate to `team-overview:read` therefore satisfies AK-378-1's "keine
   // Saldo-Karten" via that EXISTING fail-safe, not a new one.
   const canSeeTeamBereich = $derived(
@@ -500,20 +500,17 @@
         activityItems = [];
       }
 
-      // Team-Wochenübersicht für Manager/Admin
-      if (canSeeTeamBereich) {
-        await loadTeamWeek();
-      }
-
-      // Load chart data (last 6 months)
-      loadCharts();
+      // Issue #84: the Team block (charts, upcoming leave, week grid) is loaded by the salon-context
+      // effect above, not here; only the personal next leave belongs to this load.
+      loadMyNextLeave();
     } finally {
       loading = false;
     }
   }
 
   async function pollDashboard() {
-    if (canSeeTeamBereich) await loadTeamWeek(); // only Team-Bereich holders need team-week data
+    // only Team-Bereich holders need team-week data, and only once the salon context is known
+    if (canSeeTeamBereich && teamContextReady) await loadTeamWeek();
     // Also refresh clock-in status
     try {
       const today = format(new Date(), "yyyy-MM-dd");
@@ -523,12 +520,41 @@
     }
   }
 
+  // Issue #84 (D-01): reloads the whole Team block for the current salon selection. Bumping the
+  // generation makes every loader still in flight drop its result (also the 5 s poll).
+  async function reloadTeam() {
+    teamGeneration++;
+    teamWeek = null;
+    teamPage = 1;
+    upcomingLeaves = [];
+    await Promise.allSettled([loadTeamWeek(), loadTeamCharts(), loadUpcomingLeaves()]);
+  }
+
+  // The first team load waits until the salon context is known (no unfiltered-then-filtered double
+  // load); afterwards it runs only when the guarded filter value actually changes. `untrack`
+  // because the loaders read `weekOffset` and other state synchronously.
+  $effect(() => {
+    if (!canSeeTeamBereich || !teamContextReady) return;
+    const key = teamFilter;
+    if (key === lastTeamFilterKey) return;
+    lastTeamFilterKey = key;
+    untrack(() => {
+      void reloadTeam();
+    });
+  });
+
   async function loadTeamWeek() {
+    const filter = teamFilter;
+    const generation = teamGeneration;
     try {
       const refDate = new Date();
       refDate.setDate(refDate.getDate() + weekOffset * 7);
       const dateParam = refDate.toISOString().split("T")[0];
-      teamWeek = await api.get<TeamWeek>(`/dashboard/team-week?date=${dateParam}`);
+      const week = await api.get<TeamWeek>(
+        withSalonId(`/dashboard/team-week?date=${dateParam}`, filter),
+      );
+      if (generation !== teamGeneration) return;
+      teamWeek = week;
     } catch (err) {
       console.error("Failed to load team week:", err);
     }
@@ -547,77 +573,51 @@
     loadTeamWeek();
   }
 
-  async function loadCharts() {
-    // ── Phase 1: fetch data ────────────────────────────────────────────────────
-    let reports: MonthlyReport[] = [];
+  // Issue #84 (D-07): the three team charts come from ONE server call; the browser sums nothing.
+  async function loadTeamCharts() {
+    const filter = teamFilter;
+    const generation = teamGeneration;
+    chartsLoading = true;
+    let view: TeamTrendView | null = null;
     let labels: string[] = [];
     let brandColor = "";
-    const now = new Date();
-    const months: { label: string; month: string }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = subMonths(now, i);
-      months.push({
-        label: format(d, "MMM yy", { locale: de }),
-        month: format(d, "yyyy-MM"),
-      });
-    }
     let overtimeTrend: OvertimeTrendResponse = {
       snapshots: [],
       currentTeamBalanceMinutes: 0,
     };
 
     try {
-      for (const m of months) {
-        try {
-          const [y, mo] = m.month.split("-");
-          const resp = await api.get<MonthlyReportResponse>(
-            `/reports/monthly?year=${y}&month=${mo}`,
-          );
-          // Aggregate all employee rows into totals
-          const agg = (resp.rows ?? []).reduce(
-            (acc, r) => ({
-              workedMinutes: acc.workedMinutes + (r.workedHours ?? 0) * 60,
-              shouldMinutes: acc.shouldMinutes + (r.shouldHours ?? 0) * 60,
-              sickDays: acc.sickDays + (r.sickDays ?? 0),
-              vacationDays: acc.vacationDays + (r.vacationDays ?? 0),
-              otherAbsenceDays:
-                acc.otherAbsenceDays +
-                ((r.totalAbsenceDays ?? 0) - (r.sickDays ?? 0) - (r.vacationDays ?? 0)),
-            }),
-            {
-              workedMinutes: 0,
-              shouldMinutes: 0,
-              sickDays: 0,
-              vacationDays: 0,
-              otherAbsenceDays: 0,
-            },
-          );
-          reports.push(agg);
-        } catch (err) {
-          console.error(`Failed to load chart report for month:`, err);
-          reports.push({
-            workedMinutes: 0,
-            shouldMinutes: 0,
-            sickDays: 0,
-            vacationDays: 0,
-            otherAbsenceDays: 0,
-          });
-        }
-      }
+      const resp = await api.get<TeamTrendResponse>(
+        withSalonId("/dashboard/team-trend?months=6", filter),
+      );
+      if (generation !== teamGeneration) return;
+      view = teamTrendView(resp);
+      trendView = view;
+      const months = view.months;
 
-      // Load team overtime trend from the dedicated endpoint
-      try {
-        overtimeTrend = await api.get<OvertimeTrendResponse>("/dashboard/overtime-trend");
-        overtimeTrendAvailable = true;
-      } catch (err) {
+      // D-05: the saldo is a contract figure of a person and cannot be attributed to a salon, so
+      // under a filter the trend card shows a note instead and the endpoint is not requested.
+      if (filter !== null) {
         overtimeTrendAvailable = false;
-        // Phase 76b (Issue #76), D-15: the endpoint now requires overtime:read, and a 403 for a
-        // caller without it is expected (Mitarbeiter, Salonmanager template, …) — not an error to
-        // report. Every other failure (network, 500, …) still logs as before.
-        if (!(err instanceof ApiError && err.status === 403)) {
-          console.error("Failed to load overtime trend:", err);
+        overtimeChart?.destroy();
+        overtimeChart = null;
+      }
+      if (filter === null) {
+        // Load team overtime trend from the dedicated endpoint
+        try {
+          overtimeTrend = await api.get<OvertimeTrendResponse>("/dashboard/overtime-trend");
+          overtimeTrendAvailable = true;
+        } catch (err) {
+          overtimeTrendAvailable = false;
+          // Phase 76b (Issue #76), D-15: the endpoint now requires overtime:read, and a 403 for a
+          // caller without it is expected (Mitarbeiter, Salonmanager template, …) — not an error to
+          // report. Every other failure (network, 500, …) still logs as before.
+          if (!(err instanceof ApiError && err.status === 403)) {
+            console.error("Failed to load overtime trend:", err);
+          }
         }
       }
+      if (generation !== teamGeneration) return;
 
       labels = months.map((m) => m.label);
       brandColor =
@@ -626,13 +626,21 @@
       console.error("Failed to load chart data:", err);
     } finally {
       // CRITICAL: flip loading flag BEFORE Chart.js instantiation so canvases render into the DOM.
-      chartsLoading = false;
+      // A superseded load leaves the flag to the newer one.
+      if (generation === teamGeneration) chartsLoading = false;
     }
+    if (generation !== teamGeneration) return;
+    if (view === null) {
+      trendView = null;
+      return;
+    }
+    const drawn: TeamTrendView = view;
 
     // ── Phase 2: wait for Svelte to render the {:else} branch (canvases) ──────
     // Without this tick(), chartsLoading has been set to false but the DOM has not
     // yet been updated — bind:this refs (weeklyChartEl etc.) are still undefined.
     await tick();
+    if (generation !== teamGeneration) return;
 
     // ── Phase 3: instantiate charts ────────────────────────────────────────────
 
@@ -647,21 +655,26 @@
         data: {
           labels,
           datasets: [
-            // Soll first → renders behind as the "track"
-            {
-              label: "Soll (h)",
-              data: reports.map((r) => +(r.shouldMinutes / 60).toFixed(1)),
-              backgroundColor: bgSubtle,
-              borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 },
-              borderSkipped: false,
-              order: 2,
-              stack: "wochenbilanz",
-              grouped: false,
-            },
+            // Soll first → renders behind as the "track". D-05: only when the server delivers a
+            // Soll (never under a salon filter).
+            ...(drawn.shouldHours !== null
+              ? [
+                  {
+                    label: "Soll (h)",
+                    data: drawn.shouldHours,
+                    backgroundColor: bgSubtle,
+                    borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 },
+                    borderSkipped: false as const,
+                    order: 2,
+                    stack: "wochenbilanz",
+                    grouped: false,
+                  },
+                ]
+              : []),
             // Ist on top, overlapping inside Soll → matches Wochenbilanz fill-in-track look
             {
-              label: "Ist (h)",
-              data: reports.map((r) => +(r.workedMinutes / 60).toFixed(1)),
+              label: drawn.workedSeriesLabel,
+              data: drawn.workedHours,
               backgroundColor: brandLight,
               borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 },
               borderSkipped: false,
@@ -701,12 +714,12 @@
       //   - Else → fill-forward from the previous resolved value (or 0 for the leading edge)
       let lastKnown = 0;
       const absoluteHours: number[] = [];
-      for (let i = 0; i < months.length; i++) {
-        const isCurrent = i === months.length - 1;
+      for (let i = 0; i < drawn.months.length; i++) {
+        const isCurrent = i === drawn.months.length - 1;
         if (isCurrent) {
           lastKnown = overtimeTrend.currentTeamBalanceMinutes / 60;
         } else {
-          const snap = snapshotByMonth.get(months[i].month);
+          const snap = snapshotByMonth.get(drawn.months[i].month);
           if (snap !== undefined) lastKnown = snap / 60;
           // else: fill-forward — lastKnown stays unchanged
         }
@@ -753,7 +766,7 @@
           datasets: [
             {
               label: "Krankheitstage",
-              data: reports.map((r) => r.sickDays),
+              data: drawn.sickDays,
               borderColor: "#ef4444",
               backgroundColor: "rgba(239, 68, 68, 0.1)",
               fill: true,
@@ -778,9 +791,10 @@
         },
       });
     }
+  }
 
-    // ── Phase 4: side fetches (leave data) ─────────────────────────────────────
-
+  // Own next leave (personal, for all users) — unrelated to the salon filter.
+  async function loadMyNextLeave() {
     // Load own next leave (for all users)
     try {
       const myEmployeeId = $authStore.user?.employeeId;
@@ -801,8 +815,10 @@
     } catch {
       /* ignore */
     }
+  }
 
-    // Load upcoming leaves
+  async function loadUpcomingLeaves() {
+    const generation = teamGeneration;
     if (canSeeTeamBereich) {
       try {
         const leaves = await api.get<
@@ -814,6 +830,7 @@
             leaveType: { name: string };
           }[]
         >("/leave/requests?status=APPROVED&upcoming=true");
+        if (generation !== teamGeneration) return;
         upcomingLeaves = (leaves ?? [])
           .map((l) => ({
             employeeName: `${l.employee?.firstName ?? ""} ${l.employee?.lastName ?? ""}`.trim(),
@@ -1735,7 +1752,7 @@
     <!-- Charts (Team-Aggregation) -->
     <div class="charts-grid">
       <Card animate class="chart-card" style="--card-idx: 7;">
-        <CardHeader title="Arbeitsstunden" sub="Letzte 6 Monate" />
+        <CardHeader title="Arbeitsstunden" sub={trendView?.chartSub ?? "Letzte 6 Monate"} />
         <div class="chart-wrap">
           {#if chartsLoading}
             <div class="chart-skeleton" aria-hidden="true"></div>
