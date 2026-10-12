@@ -16,6 +16,13 @@ import { de } from "date-fns/locale";
 import { ApiError } from "$api/client";
 import { selectedSalonId, showSalonOptions, type SalonContextState } from "$stores/salon-context";
 
+/**
+ * What the #64 rule and the selection need from the store. Derived from `showSalonOptions` so this
+ * module never names the rule's input itself (salon-context-wiring-82.test.ts: one owner).
+ */
+type TeamContextState = Parameters<typeof showSalonOptions>[0] &
+  Pick<SalonContextState, "salons" | "selection">;
+
 /** One month of `GET /dashboard/team-trend` (Issue #84, D-07). */
 export interface TeamTrendMonth {
   /** "YYYY-MM" */
@@ -62,9 +69,7 @@ export const TEAM_SALDO_NOT_ATTRIBUTABLE_NOTE =
  * preselects the sole reachable salon, so `selectedSalonId()` alone would put a one-salon tenant
  * into filtered mode and hide its Soll — this guard is the only place that decision is made.
  */
-export function teamSalonFilter(
-  state: Pick<SalonContextState, "isMultiSalon" | "salons" | "selection">,
-): string | null {
+export function teamSalonFilter(state: TeamContextState): string | null {
   return showSalonOptions(state) ? selectedSalonId(state) : null;
 }
 
@@ -125,9 +130,7 @@ export const TEAM_SALON_UNAVAILABLE_TEXT =
  * D-01: what the Team divider says the figures refer to — null while no salon options are shown
  * (as before #84). The salon name is display only and never compared.
  */
-export function teamViewLabel(
-  state: Pick<SalonContextState, "isMultiSalon" | "salons" | "selection">,
-): string | null {
+export function teamViewLabel(state: TeamContextState): string | null {
   if (!showSalonOptions(state)) return null;
   const salonId = teamSalonFilter(state);
   if (salonId === null) return "Alle Salons";
