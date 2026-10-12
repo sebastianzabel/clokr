@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../contexts/platform";
 import {
@@ -10,6 +11,9 @@ import {
   hasPermission,
   resolveAccessReach, // Phase 91b Plan 06 (#91), D-09/D-10/D-13
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 06 (#91), D-10/D-13
+  findSalon, // Issue #84 (D-16) — salon filter validation
+  homeSalonsForDays, // Issue #84 (D-13) — batched Stammsalon per day
+  type AccessReach,
 } from "../contexts/platform";
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -50,6 +54,7 @@ import {
   resolveMissingEntriesDays,
   computeOvertimeBalanceBreakdown,
   monthlyHoursMonthSollMinutes, // Issue #433 (D-11)
+  computeMonthReportFigures, // Issue #451 (D-03), Issue #84 (D-07) — the one Soll/Ist source
   computeWeekProgress, // Issue #451 (D-06) — whole-week Soll + to-date pair from the saldo core
   type OvertimeBalanceBreakdown,
 } from "../contexts/working-time-account"; // Phase 100B Plan 06 — W8/W9/W10; Plan 07 — W5/W6; Phase 101B
@@ -60,7 +65,21 @@ import {
   getOwnPendingLeaveRequests, // Phase 100B Plan 13 — A7a
   countPendingApprovals, // Phase 100B Plan 13 — A8
   vocationalSchoolDisplacesLeave, // Issue #448 (D-05) — composition applies, never redefines, the rule
+  sickLeaveDayCounts, // Issue #84 (D-14) — the one sick-day counting rule
+  getApprovedLeaveEndingOnOrAfter, // Issue #84 (D-08) — the team card's upcoming leave
 } from "../contexts/absence";
+
+// Issue #84 (D-07): 1..12 months, default 6 — the bound keeps the per-person saldo fan-out finite.
+const teamTrendQuerySchema = z.object({
+  months: z.coerce.number().int().min(1).max(12).default(6),
+  salonId: z.string().uuid().optional(),
+});
+
+// Issue #84 (D-02): the optional salon filter of the team views. Unknown query keys (`date`) are
+// stripped by zod, a malformed id answers 400 through the global handler.
+const teamSalonQuerySchema = z.object({
+  salonId: z.string().uuid().optional(),
+});
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -425,11 +444,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
   app.get("/team-week", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const access = accessContextFromRequest(req);
       const tenantId = req.user.tenantId;
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const query = req.query as { date?: string };
+      const { salonId } = teamSalonQuerySchema.parse(req.query);
       const refDate = query.date ? new Date(query.date) : new Date();
 
       // Stichtag + `validFrom` (Timestamptz) keep the instant `weekEnd`; the `@db.Date` facade
@@ -453,6 +473,10 @@ export async function dashboardRoutes(app: FastifyInstance) {
         access,
         "team-overview:read:ZUGEWIESEN",
       );
+      // D-02/D-16: validated before any data read; one body for every rejection cause.
+      const salonFilter = await resolveTeamSalonFilter(app.prisma, tenantId, scopeReach, salonId);
+      if (!salonFilter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
+      const filterSalonId = salonFilter.salonId;
       const scopedAccess = { ...access, reach: scopeReach };
       const teamWeekScopedIds =
         scopeReach.kind === "wholeTenant"
@@ -550,16 +574,48 @@ export async function dashboardRoutes(app: FastifyInstance) {
         orderBy: { validFrom: "desc" },
       });
 
+      // Issue #84 (D-03/D-06/D-15): under a salon filter, MEMBERSHIP follows the entry or the
+      // Stammsalon (a person is listed when they recorded time in the salon this week or are homed
+      // there on at least one week day), HOURS follow the entry's salon, and presence, holidays,
+      // leave, absences and shifts keep using ALL of a person's data — a Springer working in
+      // another salon is never shown as missing. The filter only removes rows, it never adds one
+      // outside the reach resolved above.
+      let shownEmployees = employees;
+      if (filterSalonId !== null) {
+        const homeByPerson = await homeSalonsForDays(
+          app.prisma,
+          tenantId,
+          teamWeekEmployeeIds,
+          weekDays[0],
+          weekDays[6],
+        );
+        const enteredInSalon = new Set(
+          timeEntries.filter((e) => e.salonId === filterSalonId).map((e) => e.employeeId),
+        );
+        shownEmployees = employees.filter((emp) => {
+          if (enteredInSalon.has(emp.id)) return true;
+          const dayMap = homeByPerson.get(emp.id);
+          return dayMap ? weekDays.some((d) => dayMap.get(d) === filterSalonId) : false;
+        });
+      }
+
       // Pro Mitarbeiter die Woche aufbereiten
-      const team = employees.map((emp) => {
+      const team = shownEmployees.map((emp) => {
         const days = weekDays.map((dayStr) => {
           const dayEntries = timeEntries.filter(
             (e) => e.employeeId === emp.id && dateStrInTz(e.date, tz) === dayStr,
           );
-          // workedMinutes: only valid (non-invalid) entries count
+          // workedMinutes: only valid (non-invalid) entries count; under a salon filter only the
+          // entries of that salon, and `workedElsewhere` marks a day with valid time elsewhere.
           let workedMinutes = 0;
+          let workedElsewhere = false;
           for (const e of dayEntries) {
-            if (!e.isInvalid && e.endTime) {
+            if (e.isInvalid) continue;
+            if (filterSalonId !== null && e.salonId !== filterSalonId) {
+              workedElsewhere = true;
+              continue;
+            }
+            if (e.endTime) {
               workedMinutes += entryDurations(e).workingMinutes;
             }
           }
@@ -694,6 +750,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
             shift,
             isWorkday,
             expectedHours,
+            ...(filterSalonId !== null ? { workedElsewhere } : {}),
           };
         });
 
@@ -705,7 +762,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
         };
       });
 
-      return { weekStart: weekDays[0], weekEnd: weekDays[6], weekDays, team };
+      return {
+        weekStart: weekDays[0],
+        weekEnd: weekDays[6],
+        weekDays,
+        ...(filterSalonId !== null ? { salonId: filterSalonId } : {}),
+        team,
+      };
     },
   });
   // GET /api/v1/dashboard/today-attendance — Tages-Anwesenheitsübersicht (RPT-03)
@@ -1609,6 +1672,315 @@ export async function dashboardRoutes(app: FastifyInstance) {
       return { snapshots, currentTeamBalanceMinutes };
     },
   });
+
+  // GET /api/v1/dashboard/team-trend — the team charts' six-month series, aggregated on the server
+  // (Issue #84, D-07). Replaces the browser's six /reports/monthly calls; the figures come from
+  // the owning contexts only.
+  //
+  // Unfiltered, every figure is the one the monthly report prints (Ist/Soll from the
+  // working-time account, sick days from the absence kernel). With `salonId` (D-02..D-05, D-12,
+  // D-13): Ist is the recorded working time of closed, valid entries in that salon through the
+  // tenant-local yesterday, sick days follow the Stammsalon of each counted day, and Soll is never
+  // computed — it is a contract figure of a person, not divisible by salon.
+  app.get("/team-trend", {
+    schema: {
+      tags: ["Dashboard"],
+      security: [{ bearerAuth: [] }],
+      summary: "Team trend of worked time, target time and sick days per month",
+      description:
+        "Per month of the window: the worked minutes and the target minutes from the working-time " +
+        "account and the sick days from the absence context, over the persons in the caller's " +
+        "team-overview reach. Target minutes only with overtime:read covering every shown person " +
+        "and never together with a salon filter.",
+    },
+    preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const { months, salonId } = teamTrendQuerySchema.parse(req.query);
+      const tenantId = req.user.tenantId;
+      const access = accessContextFromRequest(req);
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+
+      const reach = await resolveAccessReach(app.prisma, access, "team-overview:read:ZUGEWIESEN");
+      // D-02/D-16: validated before any data read; one body for every rejection cause.
+      const filter = await resolveTeamSalonFilter(app.prisma, tenantId, reach, salonId);
+      if (!filter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
+      const filterSalonId = filter.salonId;
+      const scopedAccess = { ...access, reach };
+
+      // Soll is a contract figure: only with overtime:read, and only when that reach covers
+      // every person shown (D-17); a narrower reach on either permission only ever narrows.
+      const canSeeSoll = await hasPermission(req, "overtime:read:ZUGEWIESEN");
+      const overtimeReach = canSeeSoll
+        ? await resolveAccessReach(app.prisma, access, "overtime:read:ZUGEWIESEN")
+        : null;
+      let sollCovered = canSeeSoll;
+
+      // The window: the `months` calendar months ending with the tenant-local current month.
+      const today = todayInTz(tz);
+      const window: Array<{
+        year: number;
+        month: number;
+        key: string;
+        firstDay: Date;
+        lastDay: Date;
+        ids: string[];
+      }> = [];
+      for (let back = months - 1; back >= 0; back--) {
+        const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - back, 1));
+        const year = d.getUTCFullYear();
+        const month = d.getUTCMonth() + 1;
+        // Same population and Stichtag as GET /reports/monthly (month end).
+        const { end } = monthRangeUtc(year, month, tz);
+        const { firstDay, lastDay } = monthDateRange(year, month, tz);
+        const scopedIds =
+          reach.kind === "wholeTenant"
+            ? "all"
+            : await resolveStammsalonScopedEmployeeIds(app.prisma, tenantId, reach, end);
+        const people = await app.prisma.employee.findMany({
+          where: {
+            tenantId,
+            exitDate: null,
+            user: { isActive: true },
+            ...(scopedIds === "all" ? {} : { id: { in: scopedIds } }),
+          },
+          select: { id: true },
+        });
+        const ids = people.map((p) => p.id).sort((a, b) => a.localeCompare(b));
+
+        if (overtimeReach && overtimeReach.kind === "scoped") {
+          const covered = await resolveStammsalonScopedEmployeeIds(
+            app.prisma,
+            tenantId,
+            overtimeReach,
+            end,
+          );
+          if (covered !== "all" && !ids.every((id) => covered.includes(id))) sollCovered = false;
+        }
+        window.push({
+          year,
+          month,
+          key: `${year}-${String(month).padStart(2, "0")}`,
+          firstDay,
+          lastDay,
+          ids,
+        });
+      }
+
+      // D-13: exact per-day Stammsalon of every shown person, one Unterbau call for the window.
+      const dayString = (d: Date) => d.toISOString().slice(0, 10);
+      const homeByPerson =
+        filterSalonId === null
+          ? null
+          : await homeSalonsForDays(
+              app.prisma,
+              tenantId,
+              Array.from(new Set(window.flatMap((w) => w.ids))),
+              dayString(window[0].firstDay),
+              dayString(window[window.length - 1].lastDay),
+            );
+      const yesterday = new Date(today.getTime() - 86_400_000);
+
+      const series: Array<{
+        month: string;
+        workedMinutes: number;
+        shouldMinutes: number | null;
+        sickDays: number;
+      }> = [];
+      for (const { year, month, key, firstDay, lastDay, ids } of window) {
+        let worked = 0;
+        let should = 0;
+        if (filterSalonId === null) {
+          for (const id of ids) {
+            const figures = await computeMonthReportFigures(app, id, year, month);
+            worked += figures.workedMinutes;
+            should += figures.expectedMinutes;
+          }
+        } else {
+          // D-03/D-12: recorded working time in this salon only, through tenant-local yesterday
+          // (today never counts, #438); the Berufsschule credit is attributed to no salon and
+          // there is no Soll under a filter (D-05).
+          const upper = lastDay < yesterday ? lastDay : yesterday;
+          if (ids.length > 0 && upper >= firstDay) {
+            const entries = await getRecordedWorkEntriesInRange(
+              app.prisma,
+              employeeScopeFor(scopedAccess, { employeeIds: ids }),
+              firstDay,
+              upper,
+            );
+            worked = entries
+              .filter((e) => !e.isInvalid && e.endTime !== null && e.salonId === filterSalonId)
+              .reduce((sum: number, e) => addWorkingMinutes(sum, e), 0);
+          }
+        }
+
+        let sickDays = 0;
+        if (ids.length > 0) {
+          const rows = await getActiveLeaveOverlapping(
+            app.prisma,
+            employeeScopeFor(scopedAccess, { employeeIds: ids }),
+            firstDay,
+            lastDay,
+          );
+          const byPerson = new Map<string, typeof rows>();
+          for (const row of rows) {
+            const list = byPerson.get(row.employeeId);
+            if (list) list.push(row);
+            else byPerson.set(row.employeeId, [row]);
+          }
+          for (const [personId, personRows] of byPerson) {
+            // D-04/D-13: an absence follows the Stammsalon of each counted day.
+            const personHome = homeByPerson?.get(personId);
+            sickDays += sickLeaveDayCounts(
+              personRows,
+              firstDay,
+              lastDay,
+              filterSalonId === null
+                ? {}
+                : { countsDay: (day: string) => personHome?.get(day) === filterSalonId },
+            ).sickDays;
+          }
+        }
+
+        series.push({
+          month: key,
+          workedMinutes: Math.round(worked),
+          shouldMinutes: Math.round(should),
+          sickDays,
+        });
+      }
+
+      // D-05: under a filter Soll is never shown, whatever the caller may otherwise see.
+      const sollVisible = canSeeSoll && sollCovered && filterSalonId === null;
+      return {
+        salonId: filterSalonId,
+        workedBasis: filterSalonId === null ? ("ACCOUNT" as const) : ("SALON_ENTRIES" as const),
+        sollUnavailableReason: sollVisible
+          ? null
+          : canSeeSoll && sollCovered
+            ? ("SALON_FILTER" as const)
+            : ("NO_PERMISSION" as const),
+        months: series.map((m) => ({ ...m, shouldMinutes: sollVisible ? m.shouldMinutes : null })),
+      };
+    },
+  });
+
+  // GET /api/v1/dashboard/team-upcoming-leave — the team's next approved leave for the dashboard
+  // card (Issue #84, D-08); replaces the card's use of /leave/requests, which stays unchanged.
+  //
+  // "Upcoming" means the request ends on or after the tenant-local today as a calendar-day bound
+  // (D-18, #493): a leave that ends today is still listed. Under a salon filter an absence follows
+  // the Stammsalon of its remaining days (D-04): a request is kept when the person is homed in the
+  // salon on at least one day from the later of its start and today to its end, so a request that
+  // spans a Stammsalon change appears under both salons. The limit applies after the filter.
+  app.get("/team-upcoming-leave", {
+    schema: {
+      tags: ["Dashboard"],
+      security: [{ bearerAuth: [] }],
+      summary: "Upcoming approved leave of the team",
+      description:
+        "The next approved leave requests of the persons in the caller's team-overview reach, " +
+        "ending today or later, ordered by start date, at most eight. With salonId only requests " +
+        "of persons whose Stammsalon is that salon on at least one remaining day.",
+    },
+    preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const { salonId } = teamSalonQuerySchema.parse(req.query);
+      const tenantId = req.user.tenantId;
+      const access = accessContextFromRequest(req);
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+
+      const reach = await resolveAccessReach(app.prisma, access, "team-overview:read:ZUGEWIESEN");
+      // D-02/D-16: validated before any data read; one body for every rejection cause.
+      const filter = await resolveTeamSalonFilter(app.prisma, tenantId, reach, salonId);
+      if (!filter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
+      const filterSalonId = filter.salonId;
+      const scopedAccess = { ...access, reach };
+
+      const today = todayInTz(tz);
+      const dayString = (d: Date) => d.toISOString().slice(0, 10);
+      const todayDay = dayString(today);
+
+      // A scoped reach names an explicit person set (Stammsalon today); a whole-tenant reach is
+      // the tenant scope. An empty set answers without a read.
+      const scopedIds = await resolveStammsalonScopedEmployeeIds(
+        app.prisma,
+        tenantId,
+        reach,
+        today,
+      );
+      if (scopedIds !== "all" && scopedIds.length === 0) {
+        return { salonId: filterSalonId, items: [] };
+      }
+      const scope =
+        scopedIds === "all"
+          ? employeeScopeFor(scopedAccess)
+          : employeeScopeFor(scopedAccess, { employeeIds: scopedIds });
+
+      let rows = await getApprovedLeaveEndingOnOrAfter(app.prisma, scope, today);
+      if (filterSalonId !== null && rows.length > 0) {
+        const latestEndDay = rows.reduce((max, r) => {
+          const end = dayString(r.endDate);
+          return end > max ? end : max;
+        }, todayDay);
+        const homeByPerson = await homeSalonsForDays(
+          app.prisma,
+          tenantId,
+          Array.from(new Set(rows.map((r) => r.employeeId))),
+          todayDay,
+          latestEndDay,
+        );
+        rows = rows.filter((r) => {
+          const dayMap = homeByPerson.get(r.employeeId);
+          if (!dayMap) return false;
+          const startDay = dayString(r.startDate);
+          const from = startDay > todayDay ? startDay : todayDay;
+          const to = dayString(r.endDate);
+          for (const [day, homeSalon] of dayMap) {
+            if (day >= from && day <= to && homeSalon === filterSalonId) return true;
+          }
+          return false;
+        });
+      }
+
+      return {
+        salonId: filterSalonId,
+        items: rows.slice(0, 8).map((r) => ({
+          id: r.id,
+          employeeId: r.employeeId,
+          employeeName: `${r.employee.firstName} ${r.employee.lastName}`,
+          startDate: dayString(r.startDate),
+          endDate: dayString(r.endDate),
+          days: Number(r.days),
+          leaveTypeName: r.leaveType.name,
+          leaveTypeCode: r.leaveType.code,
+        })),
+      };
+    },
+  });
+}
+
+// Issue #84 (D-02/D-16): one body for every rejection cause of a salon filter — a foreign
+// tenant's salon, an unknown id, an inactive salon and a salon outside the caller's reach are
+// indistinguishable (T-100-09).
+const TEAM_SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
+
+/**
+ * Issue #84 (D-02/D-16) — the salon filter of the team views is a narrowing of the view, never an
+ * access boundary (#82 D-05): it must name an ACTIVE salon of the caller's tenant that lies inside
+ * the caller's reach for the endpoint's permission, and it can never widen that reach. Runs
+ * before any data read. A PERSONS-only reach names no salons and therefore rejects every salon.
+ */
+async function resolveTeamSalonFilter(
+  db: FastifyInstance["prisma"],
+  tenantId: string,
+  reach: AccessReach,
+  salonId: string | undefined,
+): Promise<{ ok: true; salonId: string | null } | { ok: false }> {
+  if (salonId === undefined) return { ok: true, salonId: null };
+  const salon = await findSalon(db, tenantId, salonId);
+  if (!salon || !salon.isActive) return { ok: false };
+  if (reach.kind === "scoped" && !reach.salonIds.includes(salon.id)) return { ok: false };
+  return { ok: true, salonId: salon.id };
 }
 
 function round(n: number): number {

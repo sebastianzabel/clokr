@@ -112,6 +112,8 @@ export const SCOPE_FILES = [
   "apps/web/src/lib/components/admin/roles/AssignmentsTab.svelte",
   "apps/web/src/lib/components/admin/roles/AssignmentDialog.svelte",
   "apps/web/src/lib/components/ui/CommandPalette.svelte",
+  // Phase 84 (#84): the Team block's salon filter and trend-card decisions.
+  "apps/web/src/lib/dashboard/team-view.ts",
 ];
 
 /** (file, exact trimmed line text) pairs that read the compat role for a display LABEL only and

@@ -197,6 +197,14 @@ Current: recalculated from hire date on every request (does not scale). Target a
   reports/DATEV go only through `leaveDaysByCodeWithin`/`leaveRequestDaysWithin`
   (`contexts/absence/leave-days.ts`) — the same priced, §9-netted day-counting kernel the absence
   context's own vacation calculation uses, never a separate calendar walk.
+- **Sick days are counted in one place (Issue #84, D-14).** `sickLeaveDayCounts()`
+  (`contexts/absence/sick-leave-days.ts`, exported via `contexts/absence/index.ts`) is the ONLY
+  place the sick-day figure is derived: calendar days including weekends, clipped to the range, a
+  half day counts 0.5, the attest split, the § 9 shift, sick leave type codes and
+  `EFFECTIVE_LEAVE_STATUSES` only, with an optional per-day `countsDay` predicate (the dashboard
+  uses it to attribute a day to a salon). `/reports/monthly` (JSON and both PDFs) and the dashboard
+  team trend both call it — it used to live in `composition/reports.ts`, a business rule in the
+  composition layer. `Absence` rows (imposed absences) never count as sick days.
 - **`@db.Date` columns get calendar-day bounds, never a month/week instant (Issue #493).**
   `monthRangeUtc()` / `weekRangeUtc()` return tenant-local boundaries as UTC instants (local 1 Oct
   00:00 = `2026-09-30T22:00Z`); a Prisma filter or a JS clip on a `@db.Date` column
@@ -881,6 +889,23 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   that takes `salonId` validates it itself — proof: `salon-context-manipulation-82.test.ts`. The
   salon admin screen of #89 calls `salonContext.load(…, { force: true })` after
   create/deactivate/activate.
+- **The dashboard Team block follows the salon context (Issue #84).** The web decides whether to
+  filter only through `teamSalonFilter()` (`apps/web/src/lib/dashboard/team-view.ts`): it is guarded
+  by `showSalonOptions`, because the store preselects a sole reachable salon and that preselection
+  must not turn into a filter (D-11). `GET /dashboard/team-trend`, `/team-week` and
+  `/team-upcoming-leave` validate `salonId` in the module-private `resolveTeamSalonFilter()`
+  (`composition/dashboard.ts`): the salon must be active, belong to the tenant and lie inside the
+  caller's team-overview reach; every rejection is the same 404 body, before any read — the filter
+  narrows, it never widens. Attribution under a filter: working time follows the ENTRY's salon
+  (closed, valid WORK entries through the tenant-local yesterday, summed with `addWorkingMinutes`),
+  absences follow the Stammsalon per calendar day (`homeSalonsForDays()`, Unterbau, D-13). Soll and
+  saldo are contract figures and are NEVER split by salon: under a filter they are `null` with
+  `sollUnavailableReason` `SALON_FILTER`, and Soll is shown at all only with `overtime:read`
+  covering every shown person (`NO_PERMISSION` otherwise, D-17). Unfiltered figures equal
+  `/reports/monthly` (`computeMonthReportFigures`, including the snapshot and the Berufsschule
+  credit, which no salon receives). Presence status and holidays use ALL of a person's entries, so a
+  day worked in another salon is never a false „Fehlt“ (D-15); `workedElsewhere` and `salonId` appear
+  in the team-week response only under a filter. `/reports` has no salon filter yet (follow-up issue).
 
 ### Tenant-scoping gate (Issue #204)
 

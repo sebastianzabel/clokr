@@ -38,6 +38,7 @@ import {
   addDays,
   dateToDay,
   dayToDate,
+  isEffectiveOn,
   isVoided,
   pickSalonForDay,
   tenantLocalDay,
@@ -316,6 +317,71 @@ export async function homeSalonAt(
   if (!home) return null;
 
   return { salonId: home.salonId, assignmentId: home.id };
+}
+
+/**
+ * Issue #84 (D-13) — the BATCHED form of {@link homeSalonAt}: the Stammsalon per employee and
+ * calendar day over `[fromDay, toDay]`, from ONE assignment query.
+ *
+ * Why it exists: the dashboard attributes absence days to the Stammsalon per day (a mid-month
+ * change must not move a whole month of sick days); calling `homeSalonAt` per person and day over
+ * a six-month window would be an N+1 explosion. The contract is parity — for every employee and
+ * day the answer equals `homeSalonAt`'s.
+ *
+ * Same rule as `homeSalonAt`: HOME rows only (a DEPLOYMENT row never answers, unlike
+ * {@link salonForDay}), rows ordered `validFrom` ascending then `id`, the first row for which
+ * `isEffectiveOn` holds wins, no hire-date floor, no `isActive` filter on the salon (history). No
+ * rule is re-derived here — the per-day pick is the rules module's `isEffectiveOn`.
+ *
+ * Every requested id gets a day map: a person without a HOME row and a foreign or unknown id are
+ * all-null and never distinguishable (T-100-09). Days are calendar-day strings; the caller
+ * converts its own bounds. An empty id list or `fromDay > toDay` answers an empty map without a
+ * query.
+ */
+export async function homeSalonsForDays(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  employeeIds: readonly string[],
+  fromDay: CalendarDay,
+  toDay: CalendarDay,
+): Promise<Map<string, Map<CalendarDay, string | null>>> {
+  const result = new Map<string, Map<CalendarDay, string | null>>();
+  if (employeeIds.length === 0 || fromDay > toDay) return result;
+
+  const idList = [...employeeIds];
+  const rows = await db.employeeSalonAssignment.findMany({
+    where: {
+      tenantId,
+      kind: "HOME",
+      employeeId: { in: idList },
+      validFrom: { lte: dayToDate(toDay) },
+      OR: [{ validUntil: null }, { validUntil: { gte: dayToDate(fromDay) } }],
+    },
+    orderBy: [{ validFrom: "asc" }, { id: "asc" }],
+  });
+  const rowsByEmployee = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const list = rowsByEmployee.get(row.employeeId);
+    if (list) {
+      list.push(row);
+    } else {
+      rowsByEmployee.set(row.employeeId, [row]);
+    }
+  }
+
+  const days: CalendarDay[] = [];
+  for (let day = fromDay; day <= toDay; day = addDays(day, 1)) days.push(day);
+
+  for (const employeeId of idList) {
+    const employeeRows = rowsByEmployee.get(employeeId) ?? [];
+    const dayMap = new Map<CalendarDay, string | null>();
+    for (const day of days) {
+      dayMap.set(day, employeeRows.find((row) => isEffectiveOn(row, day))?.salonId ?? null);
+    }
+    result.set(employeeId, dayMap);
+  }
+
+  return result;
 }
 
 // ── Phase 67b Plan 03 (issue #67) additions — the employee-lifecycle write helpers ───────────────

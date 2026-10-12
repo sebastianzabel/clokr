@@ -96,7 +96,10 @@ export type {
 // Phase 67b (issue #67) — salon assignment read surface; the lock-checked write functions
 // (plan 02) are deliberately NOT re-exported, because they import the working-time-account index
 // and this file must not transitively load another context.
-export { salonForDay, listSalonAssignments } from "./facade/salon-assignments";
+// Issue #84 (D-13) — Unterbau-Erweiterung, additive: the batched Stammsalon per calendar day for
+// the dashboard's per-day absence attribution (ADR 0002 Entscheidung 7; announced on #84 with its
+// per-context impact section).
+export { salonForDay, listSalonAssignments, homeSalonsForDays } from "./facade/salon-assignments";
 export type { SalonForDay } from "./facade/salon-assignments";
 // Phase 73b (#73): the role-permission resolution path #74 calls, plus the case-insensitive
 // name identity #74's own role-assignment lookups reuse.
