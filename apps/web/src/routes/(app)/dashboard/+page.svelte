@@ -57,11 +57,16 @@
   import { de } from "date-fns/locale";
   import { salonContext } from "$stores/salon-context"; // Issue #84 (D-01)
   import {
+    TEAM_SALON_UNAVAILABLE_TEXT,
+    isTeamSalonRejected,
     teamSalonFilter,
     teamTrendView,
+    teamViewLabel,
+    upcomingFromResponse,
     withSalonId,
     type TeamTrendResponse,
     type TeamTrendView,
+    type TeamUpcomingLeaveResponse,
   } from "$lib/dashboard/team-view"; // Issue #84 (D-07, D-11, D-12)
   import {
     Chart,
@@ -149,6 +154,9 @@
     shift?: { startTime: string; endTime: string; label: string | null; color: string | null };
     isWorkday?: boolean;
     expectedHours?: number;
+    // Issue #84 (D-03/D-15): present only under a salon filter — the person has valid working time
+    // on this day in another salon (so a 0 h cell is not an absence).
+    workedElsewhere?: boolean;
   }
 
   interface TeamMember {
@@ -335,6 +343,7 @@
   let sickChart: Chart | null = null;
 
   interface UpcomingLeave {
+    id: string;
     employeeName: string;
     startDate: string;
     endDate: string;
@@ -352,6 +361,9 @@
   let teamGeneration = 0;
   let lastTeamFilterKey: string | null | undefined = undefined;
   let trendView = $state<TeamTrendView | null>(null);
+  const teamLabel = $derived(teamViewLabel($salonContext));
+  // D-16: the server rejected the selected salon (404); calm empty state, no further polling.
+  let teamUnavailable = $state(false);
 
   interface OvertimeTrendResponse {
     snapshots: { month: string; teamCarryOverMinutes: number }[];
@@ -509,8 +521,11 @@
   }
 
   async function pollDashboard() {
-    // only Team-Bereich holders need team-week data, and only once the salon context is known
-    if (canSeeTeamBereich && teamContextReady) await loadTeamWeek();
+    // only Team-Bereich holders need team-week data, once the salon context is known; a salon
+    // the server rejected is not polled again until the selection changes
+    if (canSeeTeamBereich && teamContextReady && !teamUnavailable) {
+      await loadTeamWeek();
+    }
     // Also refresh clock-in status
     try {
       const today = format(new Date(), "yyyy-MM-dd");
@@ -524,6 +539,7 @@
   // generation makes every loader still in flight drop its result (also the 5 s poll).
   async function reloadTeam() {
     teamGeneration++;
+    teamUnavailable = false;
     teamWeek = null;
     teamPage = 1;
     upcomingLeaves = [];
@@ -556,6 +572,12 @@
       if (generation !== teamGeneration) return;
       teamWeek = week;
     } catch (err) {
+      if (isTeamSalonRejected(err)) {
+        if (generation === teamGeneration) {
+          teamUnavailable = true;
+        }
+        return;
+      }
       console.error("Failed to load team week:", err);
     }
   }
@@ -623,7 +645,13 @@
       brandColor =
         getComputedStyle(document.documentElement).getPropertyValue("--brand").trim() || "#80377B";
     } catch (err) {
-      console.error("Failed to load chart data:", err);
+      if (isTeamSalonRejected(err)) {
+        if (generation === teamGeneration) {
+          teamUnavailable = true;
+        }
+      } else {
+        console.error("Failed to load chart data:", err);
+      }
     } finally {
       // CRITICAL: flip loading flag BEFORE Chart.js instantiation so canvases render into the DOM.
       // A superseded load leaves the flag to the newer one.
@@ -818,32 +846,24 @@
   }
 
   async function loadUpcomingLeaves() {
+    const filter = teamFilter;
     const generation = teamGeneration;
-    if (canSeeTeamBereich) {
-      try {
-        const leaves = await api.get<
-          {
-            startDate: string;
-            endDate: string;
-            days: number;
-            employee: { firstName: string; lastName: string };
-            leaveType: { name: string };
-          }[]
-        >("/leave/requests?status=APPROVED&upcoming=true");
-        if (generation !== teamGeneration) return;
-        upcomingLeaves = (leaves ?? [])
-          .map((l) => ({
-            employeeName: `${l.employee?.firstName ?? ""} ${l.employee?.lastName ?? ""}`.trim(),
-            startDate: l.startDate?.split("T")[0] ?? "",
-            endDate: l.endDate?.split("T")[0] ?? "",
-            days: Number(l.days ?? 0),
-            type: l.leaveType?.name ?? "Urlaub",
-          }))
-          .slice(0, 8);
-      } catch (err) {
-        console.error("Failed to load upcoming leaves:", err);
-        upcomingLeaves = [];
+    if (!canSeeTeamBereich) return;
+    try {
+      const resp = await api.get<TeamUpcomingLeaveResponse>(
+        withSalonId("/dashboard/team-upcoming-leave", filter),
+      );
+      if (generation !== teamGeneration) return;
+      upcomingLeaves = upcomingFromResponse(resp.items);
+    } catch (err) {
+      if (isTeamSalonRejected(err)) {
+        if (generation === teamGeneration) {
+          teamUnavailable = true;
+        }
+        return;
       }
+      console.error("Failed to load upcoming leaves:", err);
+      if (generation === teamGeneration) upcomingLeaves = [];
     }
   }
 
@@ -1746,260 +1766,296 @@
        see team charts, upcoming leaves, or team-week table. -->
   {#if canSeeTeamBereich}
     <div class="team-divider">
-      <span class="team-divider-label">Team</span>
+      <span class="team-divider-label">{teamLabel === null ? "Team" : `Team · ${teamLabel}`}</span>
     </div>
 
-    <!-- Charts (Team-Aggregation) -->
-    <div class="charts-grid">
-      <Card animate class="chart-card" style="--card-idx: 7;">
-        <CardHeader title="Arbeitsstunden" sub={trendView?.chartSub ?? "Letzte 6 Monate"} />
-        <div class="chart-wrap">
-          {#if chartsLoading}
-            <div class="chart-skeleton" aria-hidden="true"></div>
-          {:else}
-            <canvas
-              bind:this={weeklyChartEl}
-              role="img"
-              aria-label="Balkendiagramm: gearbeitete Stunden der letzten 6 Monate"
-            ></canvas>
-          {/if}
-        </div>
+    {#if teamUnavailable}
+      <Card animate class="card-body" style="--card-idx: 7;">
+        <p class="callout brand">{TEAM_SALON_UNAVAILABLE_TEXT}</p>
       </Card>
-
-      {#if chartsLoading || overtimeTrendAvailable}
-        <Card animate class="chart-card" style="--card-idx: 8;">
-          <CardHeader title="Überstunden-Trend" sub="Saldo-Verlauf" />
+    {:else}
+      <!-- Charts (Team-Aggregation) -->
+      <div class="charts-grid">
+        <Card animate class="chart-card" style="--card-idx: 7;">
+          <CardHeader title="Arbeitsstunden" sub={trendView?.chartSub ?? "Letzte 6 Monate"} />
           <div class="chart-wrap">
             {#if chartsLoading}
               <div class="chart-skeleton" aria-hidden="true"></div>
             {:else}
               <canvas
-                bind:this={overtimeChartEl}
+                bind:this={weeklyChartEl}
                 role="img"
-                aria-label="Liniendiagramm: Überstunden-Verlauf der letzten 6 Monate"
+                aria-label="Balkendiagramm: gearbeitete Stunden der letzten 6 Monate"
+              ></canvas>
+            {/if}
+          </div>
+          {#if trendView?.sollNote}
+            <p class="chart-note">{trendView.sollNote}</p>
+          {/if}
+        </Card>
+
+        {#if chartsLoading || overtimeTrendAvailable || trendView?.trendNote}
+          <Card animate class="chart-card" style="--card-idx: 8;">
+            <CardHeader title="Überstunden-Trend" sub="Saldo-Verlauf" />
+            <div class="chart-wrap">
+              {#if chartsLoading}
+                <div class="chart-skeleton" aria-hidden="true"></div>
+              {:else if trendView?.trendNote}
+                <p class="callout brand">{trendView.trendNote}</p>
+              {:else}
+                <canvas
+                  bind:this={overtimeChartEl}
+                  role="img"
+                  aria-label="Liniendiagramm: Überstunden-Verlauf der letzten 6 Monate"
+                ></canvas>
+              {/if}
+            </div>
+          </Card>
+        {/if}
+
+        <Card animate class="chart-card" style="--card-idx: 9;">
+          <CardHeader title="Krankheitstage" sub="Letzte 6 Monate" />
+          <div class="chart-wrap">
+            {#if chartsLoading}
+              <div class="chart-skeleton" aria-hidden="true"></div>
+            {:else}
+              <canvas
+                bind:this={sickChartEl}
+                role="img"
+                aria-label="Balkendiagramm: Krankheitstage der letzten 6 Monate"
               ></canvas>
             {/if}
           </div>
         </Card>
+      </div>
+
+      <!-- Anstehende Urlaube -->
+      {#if upcomingLeaves.length > 0}
+        <Card animate class="upcoming-section card-body" style="--card-idx: 10;">
+          <div class="widget-header">
+            <h3 class="widget-title">Anstehende Urlaube</h3>
+            <a href="/leave" class="widget-action">Urlaube →</a>
+          </div>
+          <div class="upcoming-list">
+            {#each upcomingLeaves as leave (leave.id)}
+              <div class="upcoming-item">
+                <span class="upcoming-name">{leave.employeeName}</span>
+                <span class="upcoming-dates">
+                  {new Date(leave.startDate).toLocaleDateString("de-DE", {
+                    day: "2-digit",
+                    month: "2-digit",
+                  })}
+                  – {new Date(leave.endDate).toLocaleDateString("de-DE", {
+                    day: "2-digit",
+                    month: "2-digit",
+                  })}
+                </span>
+                <span class="upcoming-days">{leave.days} {leave.days === 1 ? "Tag" : "Tage"}</span>
+                <span class="upcoming-type badge badge-blue">{leave.type}</span>
+              </div>
+            {/each}
+          </div>
+        </Card>
       {/if}
 
-      <Card animate class="chart-card" style="--card-idx: 9;">
-        <CardHeader title="Krankheitstage" sub="Letzte 6 Monate" />
-        <div class="chart-wrap">
-          {#if chartsLoading}
-            <div class="chart-skeleton" aria-hidden="true"></div>
-          {:else}
-            <canvas
-              bind:this={sickChartEl}
-              role="img"
-              aria-label="Balkendiagramm: Krankheitstage der letzten 6 Monate"
-            ></canvas>
-          {/if}
-        </div>
-      </Card>
-    </div>
+      <!-- Team Wochenübersicht -->
+      {#if teamWeek}
+        <Card animate class="team-section" style="--card-idx: 11;">
+          <CardHeader
+            title="Team-Wochenübersicht"
+            sub={`KW ${getWeekNumber(teamWeek.weekStart)}: ${formatShortDate(teamWeek.weekStart)} – ${formatShortDate(teamWeek.weekEnd)}`}
+          >
+            {#snippet actions()}
+              <button class="btn btn-sm btn-ghost" onclick={prevWeek} title="Vorherige Woche"
+                >‹</button
+              >
+              <button class="btn btn-sm btn-ghost" onclick={currentWeek} disabled={weekOffset === 0}
+                >Heute</button
+              >
+              <button class="btn btn-sm btn-ghost" onclick={nextWeek} title="Nächste Woche"
+                >›</button
+              >
+            {/snippet}
+          </CardHeader>
 
-    <!-- Anstehende Urlaube -->
-    {#if upcomingLeaves.length > 0}
-      <Card animate class="upcoming-section card-body" style="--card-idx: 10;">
-        <div class="widget-header">
-          <h3 class="widget-title">Anstehende Urlaube</h3>
-          <a href="/leave" class="widget-action">Urlaube →</a>
-        </div>
-        <div class="upcoming-list">
-          {#each upcomingLeaves as leave (`${leave.employeeName}-${leave.startDate}`)}
-            <div class="upcoming-item">
-              <span class="upcoming-name">{leave.employeeName}</span>
-              <span class="upcoming-dates">
-                {new Date(leave.startDate).toLocaleDateString("de-DE", {
-                  day: "2-digit",
-                  month: "2-digit",
-                })}
-                – {new Date(leave.endDate).toLocaleDateString("de-DE", {
-                  day: "2-digit",
-                  month: "2-digit",
-                })}
-              </span>
-              <span class="upcoming-days">{leave.days} {leave.days === 1 ? "Tag" : "Tage"}</span>
-              <span class="upcoming-type badge badge-blue">{leave.type}</span>
-            </div>
-          {/each}
-        </div>
-      </Card>
-    {/if}
-
-    <!-- Team Wochenübersicht -->
-    {#if teamWeek}
-      <Card animate class="team-section" style="--card-idx: 11;">
-        <CardHeader
-          title="Team-Wochenübersicht"
-          sub={`KW ${getWeekNumber(teamWeek.weekStart)}: ${formatShortDate(teamWeek.weekStart)} – ${formatShortDate(teamWeek.weekEnd)}`}
-        >
-          {#snippet actions()}
-            <button class="btn btn-sm btn-ghost" onclick={prevWeek} title="Vorherige Woche"
-              >‹</button
-            >
-            <button class="btn btn-sm btn-ghost" onclick={currentWeek} disabled={weekOffset === 0}
-              >Heute</button
-            >
-            <button class="btn btn-sm btn-ghost" onclick={nextWeek} title="Nächste Woche">›</button>
-          {/snippet}
-        </CardHeader>
-
-        <div class="team-grid-wrap">
-          <table class="team-grid">
-            <thead>
-              <tr>
-                <th class="team-grid__name">Mitarbeiter</th>
-                {#each teamWeek.weekDays as day (day)}
-                  <th class="team-grid__day" class:team-grid__day--today={isToday(day)}>
-                    <span class="day-label">{dayLabel(day)}</span>
-                    <span class="day-num">{dayNum(day)}</span>
-                  </th>
-                {/each}
-              </tr>
-            </thead>
-            <tbody>
-              {#each pagedTeam as member (member.id)}
+          <div class="team-grid-wrap">
+            <table class="team-grid">
+              <thead>
                 <tr>
-                  <td class="team-grid__name">
-                    <span class="member-name">{member.name}</span>
-                  </td>
-                  {#each member.days as day (day.date)}
-                    <td class="team-grid__cell" class:team-grid__day--today={isToday(day.date)}>
-                      {#if day.status === "present"}
-                        <span
-                          class="cell-badge cell-badge--present"
-                          title="{fmtHours(day.workedHours)} gearbeitet"
-                        >
-                          {fmtHours(day.workedHours)}
-                        </span>
-                        {#if day.shift}
-                          <span
-                            class="shift-label"
-                            style={day.shift.color ? `color: ${day.shift.color}` : ""}
-                          >
-                            {day.shift.startTime}–{day.shift.endTime}
-                          </span>
-                        {/if}
-                      {:else if day.status === "clocked_in"}
-                        <span class="cell-badge cell-badge--active" title="Eingestempelt">
-                          <Icon name="circle-fill" size={14} />
-                        </span>
-                      {:else if day.status === "absent"}
-                        <span
-                          class="cell-badge cell-badge--absent"
-                          class:cell-badge--bs={day.absenceType === "VOCATIONAL_SCHOOL"}
-                          title={day.reason ?? "Abwesend"}
-                        >
-                          {#if day.leaveTypeCode === "SICK" || day.absenceType === "SICK" || day.leaveTypeCode === "SICK_CHILD" || day.absenceType === "SICK_CHILD"}
-                            <Icon name="medical" size={14} title={day.reason ?? "Krank"} />
-                          {:else if day.leaveTypeCode === "MATERNITY" || day.absenceType === "MATERNITY"}
-                            <Icon name="heart" size={14} title="Mutterschutz" />
-                          {:else if day.leaveTypeCode === "PARENTAL" || day.absenceType === "PARENTAL"}
-                            <Icon name="users" size={14} title="Elternzeit" />
-                          {:else if day.absenceType === "VOCATIONAL_SCHOOL"}
-                            <Icon name="graduation-cap" size={14} title="Berufsschule" />
-                          {:else}
-                            <Icon name="umbrella" size={14} title={day.reason ?? "Urlaub"} />
-                          {/if}
-                        </span>
-                      {:else if day.status === "holiday"}
-                        <span
-                          class="cell-badge cell-badge--holiday"
-                          title={day.reason ?? "Feiertag"}
-                        >
-                          <Icon name="sun" size={14} title={day.reason ?? "Feiertag"} />
-                        </span>
-                      {:else if day.status === "missing"}
-                        <span
-                          class="cell-badge cell-badge--missing"
-                          title="Fehlt! {day.shift
-                            ? day.shift.startTime + '–' + day.shift.endTime
-                            : 'Arbeitstag'}"
-                        >
-                          <Icon name="alert" size={14} title="Fehlt" />
-                        </span>
-                      {:else if day.status === "scheduled"}
-                        <span
-                          class="cell-badge cell-badge--scheduled"
-                          title={day.shift
-                            ? (day.shift.label ?? day.shift.startTime + "–" + day.shift.endTime)
-                            : "Arbeitstag"}
-                          style={day.shift?.color ? `border-color: ${day.shift.color}` : ""}
-                        >
-                          {#if day.shift}
-                            <span class="shift-time">{day.shift.startTime}–{day.shift.endTime}</span
-                            >
-                          {:else}
-                            <span class="shift-time">{fmtHours(day.expectedHours)}</span>
-                          {/if}
-                        </span>
-                      {:else if day.status === "requested"}
-                        <span
-                          class="cell-badge cell-badge--requested"
-                          title={day.reason ?? "Antrag offen"}
-                        >
-                          <Icon name="clock" size={14} title="beantragt" />
-                        </span>
-                      {:else}
-                        <span class="cell-badge cell-badge--none" title="Frei">–</span>
-                      {/if}
-                    </td>
+                  <th class="team-grid__name">Mitarbeiter</th>
+                  {#each teamWeek.weekDays as day (day)}
+                    <th class="team-grid__day" class:team-grid__day--today={isToday(day)}>
+                      <span class="day-label">{dayLabel(day)}</span>
+                      <span class="day-num">{dayNum(day)}</span>
+                    </th>
                   {/each}
                 </tr>
-              {/each}
-            </tbody>
-          </table>
-          <Pagination
-            total={teamWeek.team.length}
-            bind:page={teamPage}
-            bind:pageSize={teamPageSize}
-          />
-        </div>
+              </thead>
+              <tbody>
+                {#each pagedTeam as member (member.id)}
+                  <tr>
+                    <td class="team-grid__name">
+                      <span class="member-name">{member.name}</span>
+                    </td>
+                    {#each member.days as day (day.date)}
+                      <td class="team-grid__cell" class:team-grid__day--today={isToday(day.date)}>
+                        {#if day.status === "present"}
+                          {#if day.workedElsewhere && day.workedHours === 0}
+                            <span
+                              class="cell-badge cell-badge--elsewhere"
+                              title="In einem anderen Salon gearbeitet">anderer Salon</span
+                            >
+                          {:else}
+                            <span
+                              class="cell-badge cell-badge--present"
+                              title="{fmtHours(day.workedHours)} gearbeitet{day.workedElsewhere
+                                ? ', außerdem in einem anderen Salon gearbeitet'
+                                : ''}"
+                            >
+                              {fmtHours(day.workedHours)}
+                            </span>
+                          {/if}
+                          {#if day.shift}
+                            <span
+                              class="shift-label"
+                              style={day.shift.color ? `color: ${day.shift.color}` : ""}
+                            >
+                              {day.shift.startTime}–{day.shift.endTime}
+                            </span>
+                          {/if}
+                        {:else if day.status === "clocked_in"}
+                          <span
+                            class="cell-badge cell-badge--active"
+                            title={day.workedElsewhere
+                              ? "Eingestempelt (anderer Salon)"
+                              : "Eingestempelt"}
+                          >
+                            <Icon name="circle-fill" size={14} />
+                          </span>
+                        {:else if day.status === "absent"}
+                          <span
+                            class="cell-badge cell-badge--absent"
+                            class:cell-badge--bs={day.absenceType === "VOCATIONAL_SCHOOL"}
+                            title={day.reason ?? "Abwesend"}
+                          >
+                            {#if day.leaveTypeCode === "SICK" || day.absenceType === "SICK" || day.leaveTypeCode === "SICK_CHILD" || day.absenceType === "SICK_CHILD"}
+                              <Icon name="medical" size={14} title={day.reason ?? "Krank"} />
+                            {:else if day.leaveTypeCode === "MATERNITY" || day.absenceType === "MATERNITY"}
+                              <Icon name="heart" size={14} title="Mutterschutz" />
+                            {:else if day.leaveTypeCode === "PARENTAL" || day.absenceType === "PARENTAL"}
+                              <Icon name="users" size={14} title="Elternzeit" />
+                            {:else if day.absenceType === "VOCATIONAL_SCHOOL"}
+                              <Icon name="graduation-cap" size={14} title="Berufsschule" />
+                            {:else}
+                              <Icon name="umbrella" size={14} title={day.reason ?? "Urlaub"} />
+                            {/if}
+                          </span>
+                        {:else if day.status === "holiday"}
+                          <span
+                            class="cell-badge cell-badge--holiday"
+                            title={day.reason ?? "Feiertag"}
+                          >
+                            <Icon name="sun" size={14} title={day.reason ?? "Feiertag"} />
+                          </span>
+                        {:else if day.status === "missing"}
+                          <span
+                            class="cell-badge cell-badge--missing"
+                            title="Fehlt! {day.shift
+                              ? day.shift.startTime + '–' + day.shift.endTime
+                              : 'Arbeitstag'}"
+                          >
+                            <Icon name="alert" size={14} title="Fehlt" />
+                          </span>
+                        {:else if day.status === "scheduled"}
+                          <span
+                            class="cell-badge cell-badge--scheduled"
+                            title={day.shift
+                              ? (day.shift.label ?? day.shift.startTime + "–" + day.shift.endTime)
+                              : "Arbeitstag"}
+                            style={day.shift?.color ? `border-color: ${day.shift.color}` : ""}
+                          >
+                            {#if day.shift}
+                              <span class="shift-time"
+                                >{day.shift.startTime}–{day.shift.endTime}</span
+                              >
+                            {:else}
+                              <span class="shift-time">{fmtHours(day.expectedHours)}</span>
+                            {/if}
+                          </span>
+                        {:else if day.status === "requested"}
+                          <span
+                            class="cell-badge cell-badge--requested"
+                            title={day.reason ?? "Antrag offen"}
+                          >
+                            <Icon name="clock" size={14} title="beantragt" />
+                          </span>
+                        {:else}
+                          <span class="cell-badge cell-badge--none" title="Frei">–</span>
+                        {/if}
+                      </td>
+                    {/each}
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+            <Pagination
+              total={teamWeek.team.length}
+              bind:page={teamPage}
+              bind:pageSize={teamPageSize}
+            />
+          </div>
 
-        <div class="legend">
-          <span class="legend-item">
-            <span class="cell-badge cell-badge--present">5.0</span> Anwesend
-          </span>
-          <span class="legend-item">
-            <span class="cell-badge cell-badge--active"><Icon name="circle-fill" size={12} /></span>
-            Eingestempelt
-          </span>
-          <span class="legend-item">
-            <span class="cell-badge cell-badge--absent"><Icon name="umbrella" size={12} /></span>
-            Urlaub
-          </span>
-          <span class="legend-item">
-            <span class="cell-badge cell-badge--absent"><Icon name="medical" size={12} /></span>
-            Krank
-          </span>
-          <span class="legend-item">
-            <span class="cell-badge cell-badge--absent cell-badge--bs"
-              ><Icon name="graduation-cap" size={12} /></span
-            >
-            Berufsschule
-          </span>
-          <span class="legend-item">
-            <span class="cell-badge cell-badge--missing"><Icon name="alert" size={12} /></span>
-            Fehlt
-          </span>
-          <span class="legend-item">
-            <span class="cell-badge cell-badge--holiday"><Icon name="sun" size={12} /></span>
-            Feiertag
-          </span>
-          <span class="legend-item">
-            <span class="cell-badge cell-badge--scheduled">9–17</span> Geplant
-          </span>
-          <span class="legend-item">
-            <span class="cell-badge cell-badge--requested"><Icon name="clock" size={12} /></span>
-            Beantragt
-          </span>
-          <span class="legend-item">
-            <span class="cell-badge cell-badge--none">–</span> Keine Daten
-          </span>
-        </div>
-      </Card>
+          <div class="legend">
+            <span class="legend-item">
+              <span class="cell-badge cell-badge--present">5.0</span> Anwesend
+            </span>
+            <span class="legend-item">
+              <span class="cell-badge cell-badge--active"
+                ><Icon name="circle-fill" size={12} /></span
+              >
+              Eingestempelt
+            </span>
+            <span class="legend-item">
+              <span class="cell-badge cell-badge--absent"><Icon name="umbrella" size={12} /></span>
+              Urlaub
+            </span>
+            <span class="legend-item">
+              <span class="cell-badge cell-badge--absent"><Icon name="medical" size={12} /></span>
+              Krank
+            </span>
+            <span class="legend-item">
+              <span class="cell-badge cell-badge--absent cell-badge--bs"
+                ><Icon name="graduation-cap" size={12} /></span
+              >
+              Berufsschule
+            </span>
+            <span class="legend-item">
+              <span class="cell-badge cell-badge--missing"><Icon name="alert" size={12} /></span>
+              Fehlt
+            </span>
+            <span class="legend-item">
+              <span class="cell-badge cell-badge--holiday"><Icon name="sun" size={12} /></span>
+              Feiertag
+            </span>
+            <span class="legend-item">
+              <span class="cell-badge cell-badge--scheduled">9–17</span> Geplant
+            </span>
+            <span class="legend-item">
+              <span class="cell-badge cell-badge--requested"><Icon name="clock" size={12} /></span>
+              Beantragt
+            </span>
+            <span class="legend-item">
+              <span class="cell-badge cell-badge--none">–</span> Keine Daten
+            </span>
+            {#if teamFilter !== null}
+              <span class="legend-item">
+                <span class="cell-badge cell-badge--elsewhere">anderer Salon</span> In einem anderen Salon
+                gearbeitet
+              </span>
+            {/if}
+          </div>
+        </Card>
+      {/if}
     {/if}
   {/if}
 </div>
@@ -2698,6 +2754,12 @@
     margin-top: 4px;
   }
 
+  .chart-note {
+    margin: 0.5rem 0 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+
   .chart-skeleton {
     width: 100%;
     height: 100%;
@@ -2916,6 +2978,16 @@
     color: var(--bad);
     border: 1px solid var(--bad-soft);
     font-size: 0.875rem;
+  }
+
+  /* Issue #84: worked in another salon only (salon filter) — not an absence, not a missing day. */
+  .cell-badge--elsewhere {
+    background: var(--bg-subtle);
+    color: var(--text-muted);
+    border: 1px dashed var(--border);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    white-space: nowrap;
   }
 
   .cell-badge--scheduled {

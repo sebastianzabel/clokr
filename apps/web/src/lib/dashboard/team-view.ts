@@ -13,6 +13,7 @@
  */
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
+import { ApiError } from "$api/client";
 import { selectedSalonId, showSalonOptions, type SalonContextState } from "$stores/salon-context";
 
 /** One month of `GET /dashboard/team-trend` (Issue #84, D-07). */
@@ -114,4 +115,50 @@ export function teamTrendView(resp: TeamTrendResponse): TeamTrendView {
     trendNote:
       resp.sollUnavailableReason === "SALON_FILTER" ? TEAM_SALDO_NOT_ATTRIBUTABLE_NOTE : null,
   };
+}
+
+/** D-16: shown instead of the Team block when the server rejects the selected salon (404). */
+export const TEAM_SALON_UNAVAILABLE_TEXT =
+  "Für diesen Salon liegt keine Teamansicht vor. Wählen Sie in der Kopfleiste „Alle Salons“ oder einen anderen Salon.";
+
+/**
+ * D-01: what the Team divider says the figures refer to — null while no salon options are shown
+ * (as before #84). The salon name is display only and never compared.
+ */
+export function teamViewLabel(
+  state: Pick<SalonContextState, "isMultiSalon" | "salons" | "selection">,
+): string | null {
+  if (!showSalonOptions(state)) return null;
+  const salonId = teamSalonFilter(state);
+  if (salonId === null) return "Alle Salons";
+  return state.salons.find((salon) => salon.id === salonId)?.name ?? "Alle Salons";
+}
+
+/**
+ * D-16: every rejection cause of a `salonId` (foreign, unknown, inactive, out of reach) answers the
+ * same 404; any other failure keeps its usual handling.
+ */
+export function isTeamSalonRejected(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 404;
+}
+
+export interface UpcomingLeaveCard {
+  id: string;
+  employeeName: string;
+  startDate: string;
+  endDate: string;
+  days: number;
+  type: string;
+}
+
+/** Maps the server items of `team-upcoming-leave` to the card's shape. */
+export function upcomingFromResponse(items: TeamUpcomingLeaveItem[]): UpcomingLeaveCard[] {
+  return items.map((item) => ({
+    id: item.id,
+    employeeName: item.employeeName,
+    startDate: item.startDate,
+    endDate: item.endDate,
+    days: item.days,
+    type: item.leaveTypeName,
+  }));
 }

@@ -22,11 +22,16 @@ vi.mock("$api/client", () => ({
 }));
 vi.mock("$lib/utils/logger", () => ({ clientLogger: { warn: vi.fn(), error: vi.fn() } }));
 
+import { ApiError } from "$api/client";
 import {
   TEAM_SALDO_NOT_ATTRIBUTABLE_NOTE,
+  TEAM_SALON_UNAVAILABLE_TEXT,
   TEAM_SOLL_NOT_ATTRIBUTABLE_NOTE,
+  isTeamSalonRejected,
   teamSalonFilter,
   teamTrendView,
+  teamViewLabel,
+  upcomingFromResponse,
   withSalonId,
   type TeamTrendResponse,
 } from "../team-view";
@@ -147,5 +152,72 @@ describe("teamTrendView — driven by the response codes, never by a display str
       }),
     );
     expect(view.shouldHours).toBeNull();
+  });
+});
+
+describe("teamViewLabel — D-01: what the divider says the figures refer to", () => {
+  it("no salon options: nothing extra", () => {
+    expect(teamViewLabel({ isMultiSalon: false, salons: [A], selection: A.id })).toBeNull();
+    expect(teamViewLabel({ isMultiSalon: true, salons: [A], selection: A.id })).toBeNull();
+  });
+
+  it('options with "Alle Salons"', () => {
+    expect(teamViewLabel({ isMultiSalon: true, salons: [A, B], selection: "ALL" })).toBe(
+      "Alle Salons",
+    );
+  });
+
+  it("options with a salon: its name", () => {
+    expect(teamViewLabel({ isMultiSalon: true, salons: [A, B], selection: B.id })).toBe(B.name);
+  });
+});
+
+describe("isTeamSalonRejected — D-16: only a 404 is the calm empty state", () => {
+  it("404 is a rejected salon", () => {
+    expect(isTeamSalonRejected(new ApiError(404, "Salon nicht gefunden"))).toBe(true);
+  });
+
+  it("403, 500 and a plain Error are not", () => {
+    expect(isTeamSalonRejected(new ApiError(403, "x"))).toBe(false);
+    expect(isTeamSalonRejected(new ApiError(500, "x"))).toBe(false);
+    expect(isTeamSalonRejected(new Error("404"))).toBe(false);
+  });
+
+  it("the empty-state text is the agreed German sentence", () => {
+    expect(TEAM_SALON_UNAVAILABLE_TEXT).toBe(
+      "Für diesen Salon liegt keine Teamansicht vor. Wählen Sie in der Kopfleiste „Alle Salons“ oder einen anderen Salon.",
+    );
+  });
+});
+
+describe("upcomingFromResponse", () => {
+  it("maps the server items to the card shape and keeps the id as key", () => {
+    expect(
+      upcomingFromResponse([
+        {
+          id: "l1",
+          employeeId: "e1",
+          employeeName: "Max Muster",
+          startDate: "2026-07-01",
+          endDate: "2026-07-05",
+          days: 3,
+          leaveTypeName: "Urlaub",
+          leaveTypeCode: "VACATION",
+        },
+      ]),
+    ).toEqual([
+      {
+        id: "l1",
+        employeeName: "Max Muster",
+        startDate: "2026-07-01",
+        endDate: "2026-07-05",
+        days: 3,
+        type: "Urlaub",
+      },
+    ]);
+  });
+
+  it("an empty list stays empty", () => {
+    expect(upcomingFromResponse([])).toEqual([]);
   });
 });
