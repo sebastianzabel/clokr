@@ -13,7 +13,7 @@
  * The API gate can scan its whole `src/` because Phase 75b converted EVERY access decision in the
  * API before it landed. The web has not had that pass yet: `/admin/*`, `/reports`' internal
  * `isManager`, `/settings`' role label, and other pre-existing role checks are deliberately
- * UNTOUCHED by Phase 378 (out of scope — #83 owns the role-management UI they belong to; see
+ * UNTOUCHED by Phase 378 (out of scope at the time; Phase 83 (#83) since converted the /admin area; see
  * `378-CONTEXT.md` D-03). A repo-wide gate would fail on all of those on day one with no way to
  * tell a legitimate pre-existing check from a regression. `SCOPE_FILES` below is exactly the set
  * of files Phase 378 converted; a file joins this list only when it is actually migrated off
@@ -97,17 +97,31 @@ export const SCOPE_FILES = [
   "apps/web/src/lib/components/layout/Sidebar.svelte",
   "apps/web/src/lib/nav/team-nav.ts",
   "apps/web/src/lib/permissions.ts",
+  // Phase 83 (#83): the /admin route guard, index redirect, the three former page-level role
+  // redirects, the route map and the role UI.
+  "apps/web/src/routes/(app)/admin/+layout.svelte",
+  "apps/web/src/routes/(app)/admin/+page.svelte",
+  "apps/web/src/routes/(app)/admin/shifts/+page.svelte",
+  "apps/web/src/routes/(app)/admin/availability/+page.svelte",
+  "apps/web/src/routes/(app)/admin/availability/[employeeId]/+page.svelte",
+  "apps/web/src/routes/(app)/admin/roles/+page.svelte",
+  "apps/web/src/lib/nav/admin-route-permissions.ts",
+  "apps/web/src/lib/api/roles.ts",
+  "apps/web/src/lib/components/admin/roles/RolesTab.svelte",
+  "apps/web/src/lib/components/admin/roles/RoleEditor.svelte",
+  "apps/web/src/lib/components/admin/roles/AssignmentsTab.svelte",
+  "apps/web/src/lib/components/admin/roles/AssignmentDialog.svelte",
 ];
 
 /** (file, exact trimmed line text) pairs that are read-but-decide-nothing (a display label) or
  *  are the documented `/admin/*`-only exception (#83 scope, Phase 378 D-03) — never a Team-Bereich
  *  visibility decision. See the module docblock. */
 const ALLOWLIST = new Set([
-  'apps/web/src/lib/components/layout/Sidebar.svelte::const role = $authStore.user?.role; // ADMIN sub-groups gate only (#83 scope) — see comment above',
+  "apps/web/src/lib/components/layout/Sidebar.svelte::const role = $authStore.user?.role; // ADMIN sub-groups gate only (#83 scope) — see comment above",
   'apps/web/src/lib/components/layout/Sidebar.svelte::if (role === "ADMIN") {',
   'apps/web/src/lib/components/layout/Sidebar.svelte::{#if $authStore.user.role === "ADMIN"}',
   'apps/web/src/lib/components/layout/Sidebar.svelte::{:else if $authStore.user.role === "MANAGER"}',
-  'apps/web/src/lib/components/layout/BottomTabBar.svelte::const role = $authStore.user?.role; // ADMIN-only /admin/* items gate — see comment above',
+  "apps/web/src/lib/components/layout/BottomTabBar.svelte::const role = $authStore.user?.role; // ADMIN-only /admin/* items gate — see comment above",
   'apps/web/src/lib/components/layout/BottomTabBar.svelte::? role === "ADMIN"',
 ]);
 
@@ -137,7 +151,9 @@ const PATTERNS = [
 ];
 
 /** Every finding in `text` (one file's full content, script + template), as `{ line, shape,
- *  text }`. Pure — no file I/O, so it is unit-testable against fixture strings. */
+ *  text }`. Pure — no file I/O, so it is unit-testable against fixture strings.
+ * @param {string} text
+ * @returns {{ line: number, shape: string, text: string }[]} */
 export function findRoleChecks(text) {
   const lines = text.split("\n");
   const findings = [];
@@ -175,7 +191,7 @@ function run() {
 
   if (findings.length > 0) {
     console.error(
-      `lint:role-checks: FAILED — ${findings.length} role check(s) in Phase-378-converted files (Issue #378):`,
+      `lint:role-checks: FAILED — ${findings.length} role check(s) in converted files (Issues #378, #83):`,
     );
     for (const f of findings) console.error(`  ${f.file}:${f.line}: ${f.shape} — ${f.text}`);
     console.error(

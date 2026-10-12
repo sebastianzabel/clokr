@@ -10,9 +10,7 @@
 
   import { onMount } from "svelte";
   import { page } from "$app/stores";
-  import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
-  import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
@@ -159,12 +157,7 @@
   }
 
   onMount(() => {
-    // Client-side UX redirect — server still enforces 403.
-    const role = $authStore.user?.role;
-    if (role === "EMPLOYEE") {
-      void goto("/availability");
-      return;
-    }
+    // Issue #83 (D-13): access is decided by the admin layout guard; the API answers 403 regardless.
 
     void (async () => {
       loading = true;

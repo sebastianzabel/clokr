@@ -1,8 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { goto } from "$app/navigation";
   import { api } from "$api/client";
-  import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
@@ -57,20 +55,9 @@
     "Sonntag",
   ];
 
-  // ── Role gate ───────────────────────────────────────────────
-  let gated = $state(false);
-
+  // Issue #83 (D-13): access is decided by the admin layout guard (admin-route-permissions.ts);
+  // the API answers 403 regardless.
   onMount(() => {
-    const role = $authStore.user?.role;
-    if (role !== "ADMIN") {
-      gated = true;
-      if (role === "MANAGER") {
-        goto("/shifts");
-      } else {
-        goto("/dashboard");
-      }
-      return;
-    }
     void loadAll();
   });
 
@@ -149,7 +136,6 @@
 
   // ── Load all config ─────────────────────────────────────────
   async function loadAll() {
-    if (gated) return;
     loading = true;
     error = "";
     try {
