@@ -13,6 +13,7 @@ import {
   scopedTimeEntryIds, // Phase 91b Plan 03 (#91), D-09
   isStammsalonScopeMatch, // Phase 91b Plan 09 (#91), D-10/D-17
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
+  findSalon, // Phase 81 (#81), D-09 — summary salon filter, identical 404
 } from "../../platform";
 import type { PermissionKey } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
@@ -22,6 +23,16 @@ import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
 import { resolveEntrySalon } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
 import { entryDurations } from "../entry-durations"; // Phase 79 (Issue #79), D-06/D-14 — per-entry presence/working time
+import { activityKindSchema, activitySharesSchema } from "../activity-kind"; // Issue #81 (D-06)
+import { activityMinutes } from "../activity-minutes"; // Issue #81 (D-09) — minutes per kind
+import { loadActivityRowsForEntries } from "../activity-store"; // Issue #81 (D-09)
+import {
+  validateActivityState,
+  mergeActivityWrite,
+  isActivityOnlyPut,
+  activitySharesReplace,
+  activitySharesCreate,
+} from "../activity-shares"; // Issue #81 (D-05/D-06/D-20) — the one share validator and the nested-write builders
 import { getValidWorkedEntriesInRange } from "../facade/time-entries"; // Phase 79 (#79), D-07 — T1, the saldo's own entry set
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
@@ -137,6 +148,10 @@ const manualEntrySchema = z.object({
   // a caller either names a salon or leaves the field out entirely. Validated tenant-scoped and
   // active-only by `resolveEntrySalon`.
   salonId: z.string().uuid().optional(),
+  // Issue #81 (D-06): omitted = unchanged (UNSPECIFIED / no shares on create), [] = clear, list =
+  // full replacement; `null` is not accepted.
+  activityKind: activityKindSchema.optional(),
+  activityShares: activitySharesSchema.optional(),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -155,6 +170,8 @@ const timeEntrySummaryQuerySchema = z.object({
   employeeId: z.string().uuid("Ungültige Mitarbeiter-ID"),
   from: isoDateParam,
   to: isoDateParam,
+  // Issue #81 (D-09/D-17): narrows every figure of the body to that salon; `null` is not accepted.
+  salonId: z.string().uuid("Ungültige Salon-ID").optional(),
 });
 
 // D-09: the summary reads one bounded findMany; cap the window at a leap year (inclusive days).
@@ -188,6 +205,9 @@ const updateEntrySchema = z.object({
   // Phase 68b (issue #68), D-12: an entry's salon may be changed. `null` is deliberately not
   // accepted — a caller either names a (possibly unchanged) salon or leaves the field out.
   salonId: z.string().uuid().optional(),
+  // Issue #81 (D-06): omitted = unchanged, [] = clear, list = full replacement; `null` is not accepted.
+  activityKind: activityKindSchema.optional(),
+  activityShares: activitySharesSchema.optional(),
 });
 
 // ── Pausen-Minuten aus Break-Slots berechnen ──────────────────────────────────
@@ -834,7 +854,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const entry = await app.prisma.timeEntry.findFirst({
         where: { id, deletedAt: null },
-        include: { employee: { select: { tenantId: true } } },
+        include: {
+          employee: { select: { tenantId: true } },
+          // Issue #81 (D-05): the stored breaks and shares, for the check before the append.
+          breaks: { select: { startTime: true, endTime: true } },
+          activityShares: { select: { kind: true, minutes: true } },
+        },
       });
       // T-100-09 cross-tenant existence oracle (Issue #310): folded into one condition so an
       // unknown id and a real id in a foreign tenant answer with the identical 404 — the previous
@@ -930,6 +955,27 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       } else if (breakEnd.getTime() > now.getTime() + FUTURE_TOLERANCE_MS) {
         return reply.code(400).send({ error: "Pausenende darf nicht in der Zukunft liegen" });
+      }
+
+      // Issue #81 (D-05): an appended break shrinks the working time; stop BEFORE it is written when
+      // the allocation would no longer fit. Same rounding as the recompute below, so the check sees
+      // the value that will be stored.
+      if (entry.activityShares.length > 0) {
+        const activityCheck = validateActivityState(
+          {
+            kind: entry.activityKind,
+            shares: entry.activityShares,
+            startTime: entry.startTime,
+            endTime: entry.endTime,
+            breakMinutes: Math.round(
+              calcBreakMinutes([...entry.breaks, { startTime: breakStart, endTime: breakEnd }]),
+            ),
+          },
+          { sharesWritten: false, wasClosed: entry.endTime !== null },
+        );
+        if (!activityCheck.ok) {
+          return reply.code(activityCheck.status).send(activityCheck.body);
+        }
       }
 
       const created = await app.prisma.break.create({
@@ -1074,6 +1120,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         include: {
           employee: { select: { firstName: true, lastName: true } },
           breaks: { orderBy: { startTime: "asc" } },
+          // Issue #81 (D-11): the wire shape equals the write shape — a later UI can send the list
+          // back unchanged.
+          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
         },
         take: TIME_ENTRIES_MAX,
         orderBy: { date: "desc" },
@@ -1331,6 +1380,65 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           .send({ error: "JARBSCHG_MINOR_LIMIT", message: jarbSchgPost.message });
       }
 
+      // Issue #81 (D-18): the ONE automatic-break plan, computed BEFORE the write so the share
+      // check below sees the break that will actually be stored; the post-create block writes this
+      // very plan object (prediction equals outcome by construction, no second `planAutoBreak`
+      // call). `new Date(body.date)` is the same UTC-midnight instant the create stores as
+      // `entry.date`.
+      let autoBreakPlanOnCreate: AutoBreakPlan | null = null;
+      if (
+        newEnd &&
+        autoBreakAppliesOnCreate({ slotCount: breakSlots.length, breakMinutes: finalBreakMinutes })
+      ) {
+        // Auto-break: check tenant config
+        const tenantConfig = targetEmployee
+          ? await app.prisma.tenantConfig.findUnique({
+              where: { tenantId: targetEmployee.tenantId },
+            })
+          : null;
+
+        // Phase 64 (D-04, BREAK-03): effective break = employee override → tenant default → 0.
+        // targetEmployee is loaded earlier without `select` → carries the two override fields.
+        // Issue #511 (D-20): minors get at least the § 11 JArbSchG amount; adults unchanged.
+        autoBreakPlanOnCreate = planAutoBreak({
+          employee: targetEmployee,
+          tenantConfig,
+          start: newStart,
+          end: newEnd,
+          entryDate: new Date(body.date),
+          tz,
+        });
+      }
+
+      // Issue #81 (D-05/D-06/D-18): kind and shares are judged against the working time the entry
+      // will have, including the predicted automatic break. Runs BEFORE the grant flip, the
+      // RetroEntryRequest create and the plain create, so a rejection leaves zero state change
+      // (same promise as the salon resolution above).
+      if (body.activityKind !== undefined || body.activityShares !== undefined) {
+        const activityWrite = mergeActivityWrite(body, null);
+        const activityCheck = validateActivityState(
+          {
+            kind: activityWrite.kind,
+            shares: activityWrite.shares,
+            startTime: newStart,
+            endTime: newEnd,
+            breakMinutes: autoBreakPlanOnCreate?.amountMin ?? finalBreakMinutes,
+          },
+          { sharesWritten: activityWrite.sharesWritten, wasClosed: false },
+        );
+        if (!activityCheck.ok) {
+          return reply.code(activityCheck.status).send(activityCheck.body);
+        }
+      }
+      // Issue #81 (D-06): the same fields on all three create branches (grant, pending Nachtrag,
+      // plain); the shares are a nested write, so they exist with the entry or not at all.
+      const activityCreateData = {
+        ...(body.activityKind !== undefined ? { activityKind: body.activityKind } : {}),
+        ...(body.activityShares && body.activityShares.length > 0
+          ? { activityShares: activitySharesCreate(body.activityShares) }
+          : {}),
+      };
+
       // Phase 76.29 Plan 03 — race-safe single-use grant consumption.
       // When a resolvedGrantId is present, the grant flip and the TimeEntry create
       // run inside one $transaction, in that order (grant flip FIRST). The conditional
@@ -1399,6 +1507,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 createdBy: user.sub,
                 isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
                 salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
+                ...activityCreateData, // Issue #81 (D-06)
                 ...(manualLeave
                   ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
                   : CLEARED_INVALID_REASON),
@@ -1452,6 +1561,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 createdBy: user.sub,
                 isInvalid: true,
                 salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
+                ...activityCreateData, // Issue #81 (D-06)
                 ...invalidReasonFields("RETRO_APPROVAL_PENDING"),
                 retroRequestId: request.id,
               },
@@ -1482,6 +1592,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               createdBy: user.sub,
               isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
               salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
+              ...activityCreateData, // Issue #81 (D-06)
               ...(manualLeave
                 ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
                 : CLEARED_INVALID_REASON),
@@ -1524,34 +1635,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             endTime: b.endTime,
           })),
         });
-      } else if (
-        newEnd &&
-        autoBreakAppliesOnCreate({ slotCount: breakSlots.length, breakMinutes: finalBreakMinutes })
-      ) {
-        // Auto-break: check tenant config
-        const tenantConfig = targetEmployee
-          ? await app.prisma.tenantConfig.findUnique({
-              where: { tenantId: targetEmployee.tenantId },
-            })
-          : null;
-
-        // Phase 64 (D-04, BREAK-03): effective break = employee override → tenant default → 0.
-        // targetEmployee is loaded earlier without `select` → carries the two override fields.
-        // Issue #511 (D-20): minors get at least the § 11 JArbSchG amount; adults unchanged.
-        const plan = planAutoBreak({
-          employee: targetEmployee,
-          tenantConfig,
-          start: newStart,
-          end: newEnd,
-          entryDate: entry.date,
-          tz,
+      } else if (autoBreakPlanOnCreate) {
+        // Issue #81 (D-18): write the plan computed before the create — no second planAutoBreak.
+        const written = await autoInsertBreak(app, {
+          entryId: entry.id,
+          plan: autoBreakPlanOnCreate,
         });
-        if (plan) {
-          const written = await autoInsertBreak(app, { entryId: entry.id, plan });
-          // Update entry object for response
-          entry.breakMinutes = written;
-          entry.breakStatus = "AUTO";
-        }
+        // Update entry object for response
+        entry.breakMinutes = written;
+        entry.breakStatus = "AUTO";
       }
 
       await updateOvertimeAccount(app, employeeId);
@@ -1575,7 +1667,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Re-fetch entry with breaks for response
       const entryWithBreaks = await app.prisma.timeEntry.findUnique({
         where: { id: entry.id },
-        include: { breaks: { orderBy: { startTime: "asc" } } },
+        include: {
+          breaks: { orderBy: { startTime: "asc" } },
+          // Issue #81 (D-06): the response and the CREATE audit carry the allocation.
+          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+        },
       });
 
       await app.audit({
@@ -1668,6 +1764,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           // verify the coupled request is still PENDING (strictness, Pitfall 2) — not
           // just that a retroRequestId happens to be set.
           retroRequest: { select: { status: true } },
+          // Issue #81 (D-05/D-06): the stored allocation, for the merged-state check and the audit.
+          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
         },
       });
       if (!existing) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
@@ -1792,13 +1890,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const overlapDate = body.date ? new Date(body.date) : existing.date;
       const overlapTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
       const putIsCorrectionByManager = isManager && existing.employeeId !== user.employeeId;
+      // Issue #81 (D-20): a PUT that changes nothing but the activity classification is not a
+      // correction of recorded time — no Begründung, no `source: CORRECTION`, no MANAGER_CORRECTION
+      // audit. Retro window, month lock and permission still apply to it exactly like any PUT.
+      const activityOnlyPut = isActivityOnlyPut(body, existing);
+      const putIsTimeCorrection = putIsCorrectionByManager && !activityOnlyPut;
 
       // Quick 260824-cjd — a manager correcting ANOTHER employee's entry must supply a
       // Begründung. Conditional (cannot be a plain Zod field, see updateEntrySchema
       // comment) — enforced here, right after putIsCorrectionByManager is known and
       // after the isLocked gate above, before any other guard runs.
       let putAuditReason: string | undefined;
-      if (putIsCorrectionByManager) {
+      if (putIsTimeCorrection) {
         const putReasonCheck = auditReasonSchema.safeParse(body.reason ?? "");
         if (!putReasonCheck.success) {
           return reply.code(400).send({ error: AUDIT_REASON_REQUIRED });
@@ -1903,6 +2006,35 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           .send({ error: "JARBSCHG_MINOR_LIMIT", message: jarbSchgPut.message });
       }
 
+      // Issue #81 (D-05): the share sum may never exceed the working minutes the entry WILL have —
+      // judged on the merged state (body wins, omitted keeps the stored value) before anything is
+      // written. Runs BEFORE the salon block and the break replacement below (the non-grant path
+      // deletes and recreates Break rows outside any transaction), so a rejection changes nothing.
+      // A note-only or date-only PUT touches neither times nor breaks and is not re-validated.
+      const activityWrite = mergeActivityWrite(body, existing);
+      if (
+        body.activityKind !== undefined ||
+        body.activityShares !== undefined ||
+        body.startTime !== undefined ||
+        "endTime" in body ||
+        body.breakMinutes !== undefined ||
+        body.breaks !== undefined
+      ) {
+        const activityCheck = validateActivityState(
+          {
+            kind: activityWrite.kind,
+            shares: activityWrite.shares,
+            startTime: updatedStart,
+            endTime: updatedEnd,
+            breakMinutes: editBreakMinutes,
+          },
+          { sharesWritten: activityWrite.sharesWritten, wasClosed: existing.endTime !== null },
+        );
+        if (!activityCheck.ok) {
+          return reply.code(activityCheck.status).send(activityCheck.body);
+        }
+      }
+
       // Phase 68b (issue #68), D-12: a salon change is validated only when a DIFFERENT salon is
       // requested — the existing.isLocked gate above already rejected locked entries, so the same
       // value is an accepted no-op even if that salon is inactive now (a form that re-sends the
@@ -1929,10 +2061,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Patch-Objekt explizit aufbauen um TS-Spread-Probleme zu vermeiden
       // Only set source to CORRECTION when a manager edits another employee's entry, OR when a
       // grant-backed edit is performed (putResolvedGrantId present — grant edits are always corrections).
-      // putIsCorrectionByManager is already computed above (before the invariant call) —
-      // reuse it here so the patch and the retro-window exemption stay in sync.
+      // putIsCorrectionByManager is already computed above (before the invariant call) and keeps
+      // driving the retro-window exemption; the patch uses putIsTimeCorrection instead, which
+      // differs only for an activity-only PUT (Issue #81, D-20: a classification is not a time
+      // correction, so it does not flip the source).
       const patch: Record<string, unknown> =
-        putIsCorrectionByManager || putResolvedGrantId ? { source: "CORRECTION" } : {};
+        putIsTimeCorrection || putResolvedGrantId ? { source: "CORRECTION" } : {};
       if (resolvedSalonId !== undefined) patch.salonId = resolvedSalonId; // Phase 68b (issue #68), D-12
       if (body.date) patch.date = new Date(body.date);
       if (body.startTime) patch.startTime = new Date(body.startTime);
@@ -1959,6 +2093,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // until a manager decides via PATCH /retro-entry-requests/:id/review. Do not add
       // an isInvalid-clearing branch here for the Nachtrag reason without going through
       // that endpoint (Elevation-of-Privilege guard, T-96-12).
+
+      // Issue #81 (D-06): the activity fields are written as nested writes inside the entry update,
+      // so kind and shares change atomically with the row. An activity-only PUT writes ONLY these
+      // fields (D-20) — no source, no breakStatus, no revalidation side effect.
+      const activityPatch: Record<string, unknown> = {};
+      if (body.activityKind !== undefined) activityPatch.activityKind = body.activityKind;
+      if (body.activityShares !== undefined) {
+        activityPatch.activityShares = activitySharesReplace(body.activityShares);
+      }
 
       // Handle break slots update (non-grant path: runs before the update, as before)
       // For the grant path, break-slots are handled inside the $transaction below.
@@ -1994,6 +2137,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       }
 
+      // Built AFTER the break-slot block above, which still writes `patch.breakMinutes`.
+      const putData = activityOnlyPut ? activityPatch : { ...patch, ...activityPatch };
+
       // Phase 76.29.1 Plan 02 — race-safe single-use grant consumption on PUT.
       // When a putResolvedGrantId is present, the TimeEntry update + grant flip + audit run
       // inside one $transaction, mirroring the POST grant path (~:1095–1134).
@@ -2018,8 +2164,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             const txUpdated = await tx.timeEntry.update({
               where: { id },
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              data: patch as any,
-              include: { breaks: { orderBy: { startTime: "asc" } } },
+              data: putData as any,
+              include: {
+                breaks: { orderBy: { startTime: "asc" } },
+                activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+              },
             });
 
             // Conditional flip: only succeeds if still APPROVED (single-use guard).
@@ -2052,8 +2201,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           updated = await app.prisma.timeEntry.update({
             where: { id },
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            data: patch as any,
-            include: { breaks: { orderBy: { startTime: "asc" } } },
+            data: putData as any,
+            include: {
+              breaks: { orderBy: { startTime: "asc" } },
+              activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+            },
           });
         }
       } catch (err) {
@@ -2082,13 +2234,14 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       await app.audit({
         userId: user.sub,
-        action: putIsCorrectionByManager ? "MANAGER_CORRECTION" : "UPDATE",
+        action: putIsTimeCorrection ? "MANAGER_CORRECTION" : "UPDATE",
         entity: "TimeEntry",
         entityId: id,
         oldValue: existing,
         // Quick 260824-cjd: auditReason only on the MANAGER_CORRECTION branch — the
-        // plain self-edit UPDATE path never carries one.
-        newValue: putIsCorrectionByManager ? { ...updated, auditReason: putAuditReason } : updated,
+        // plain self-edit UPDATE path never carries one. Issue #81: both sides carry the activity
+        // kind and shares through the includes above.
+        newValue: putIsTimeCorrection ? { ...updated, auditReason: putAuditReason } : updated,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
@@ -2184,7 +2337,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const existing = await app.prisma.timeEntry.findUnique({
         where: { id },
-        include: { employee: { select: { tenantId: true } } },
+        include: {
+          employee: { select: { tenantId: true } },
+          // Issue #81 (D-05): the stored allocation, for the check on a correction and the audit.
+          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+        },
       });
       if (!existing || existing.deletedAt)
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
@@ -2260,13 +2417,34 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           revalidateTz,
         );
         if (overlap) return reply.code(409).send({ error: overlap });
+
+        // Issue #81 (D-05): a correction that shrinks the working time (or reopens the entry) may
+        // not leave the shares above it; checked on the resulting state before anything is written.
+        if (existing.activityShares.length > 0) {
+          const activityCheck = validateActivityState(
+            {
+              kind: existing.activityKind,
+              shares: existing.activityShares,
+              startTime: newStart,
+              endTime: newEnd,
+              breakMinutes: body.breakMinutes ?? existing.breakMinutes,
+            },
+            { sharesWritten: false, wasClosed: existing.endTime !== null },
+          );
+          if (!activityCheck.ok) {
+            return reply.code(activityCheck.status).send(activityCheck.body);
+          }
+        }
       }
       if ("note" in body) updateData.note = body.note ?? null;
 
       const updated = await app.prisma.timeEntry.update({
         where: { id },
         data: updateData,
-        include: { breaks: { orderBy: { startTime: "asc" } } },
+        include: {
+          breaks: { orderBy: { startTime: "asc" } },
+          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+        },
       });
 
       await updateOvertimeAccount(app, existing.employeeId);
@@ -2298,7 +2476,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const existing = await app.prisma.timeEntry.findUnique({
         where: { id },
-        include: { employee: { select: { tenantId: true } } },
+        include: {
+          employee: { select: { tenantId: true } },
+          // Issue #81 (D-07): the soft delete keeps the share rows; the DELETE audit's oldValue
+          // carries them so the allocation stays reconstructable.
+          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+        },
       });
       if (!existing || existing.deletedAt)
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
@@ -2583,12 +2766,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
   app.get("/summary", {
     schema: {
       tags: ["Zeiterfassung"],
-      summary: "Presence, working and break minutes of one employee over a period",
+      summary:
+        "Presence, working and break minutes of one employee over a period, and working minutes per activity kind",
       description:
         "Sums over the entry set the working-time account counts: closed, valid WORK entries that are not deleted. " +
         "Open, invalid, deleted and non-WORK entries are excluded. A SALONS/PERSONS-scoped manager receives the sum " +
         "over the entries GET /time-entries would list for them (a partial sum by design). Minutes are exact sums, " +
-        "rounded once at the end. At most 366 days per request.",
+        "rounded once at the end. At most 366 days per request. " +
+        "activityMinutes: working minutes per activity kind (PRODUCTIVE, SETUP_CLEANING, UNSPECIFIED) over the " +
+        "same entries — minutes only, never amounts, rates or ratios; the three values sum to workingMinutes " +
+        "before rounding, each is rounded once. Optional salonId (a salon of the caller's tenant; a foreign or " +
+        "unknown id answers 404) narrows every figure of the body to that salon's entries.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requireAuth,
@@ -2630,6 +2818,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
+      // Issue #81 (D-09): one null path for a foreign AND an unknown salon id (T-100-09 style). No
+      // isActive requirement — the history of a deactivated salon stays reportable.
+      if (q.salonId) {
+        const salon = await findSalon(app.prisma, tenantId, q.salonId);
+        if (!salon) {
+          return reply.code(404).send({ error: "Salon nicht gefunden" });
+        }
+      }
+
       // D-07: T1 is the saldo's own entry set; no Berufsschule credit, no hire/exit-span clamp.
       const access = accessContextFromRequest(req);
       let entries = await getValidWorkedEntriesInRange(
@@ -2649,15 +2846,35 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       }
 
+      // Issue #81 (D-09): the activity fields come from a second, tenant-bound read by entry id —
+      // the saldo's T1 select is never widened (D-12). An entry whose activity row is not returned
+      // (deleted in between) is dropped from EVERY sum, so the body stays internally consistent.
+      const activityRows = await loadActivityRowsForEntries(
+        app.prisma,
+        tenantId,
+        entries.map((e) => e.id),
+      );
+      entries = entries.filter((e) => activityRows.has(e.id));
+      // Issue #81 (D-17): the salon filter narrows the whole body, so Σ activityMinutes = working.
+      if (q.salonId) {
+        entries = entries.filter((e) => activityRows.get(e.id)?.salonId === q.salonId);
+      }
+
       // Exact per-entry values summed, rounded once at the end.
       let presence = 0;
       let working = 0;
       let breaks = 0;
+      const perKind = { PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 0 };
       for (const e of entries) {
         const d = entryDurations(e);
         presence += d.presenceMinutes;
         working += d.workingMinutes;
         breaks += d.breakMinutes;
+        const row = activityRows.get(e.id)!;
+        const m = activityMinutes({ ...e, activityKind: row.activityKind }, row.shares);
+        perKind.PRODUCTIVE += m.PRODUCTIVE;
+        perKind.SETUP_CLEANING += m.SETUP_CLEANING;
+        perKind.UNSPECIFIED += m.UNSPECIFIED;
       }
 
       return {
@@ -2668,6 +2885,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         workingMinutes: Math.round(working),
         breakMinutes: Math.round(breaks),
         entryCount: entries.length,
+        // Issue #81 (D-10): minutes only — never amounts, rates or ratios.
+        activityMinutes: {
+          PRODUCTIVE: Math.round(perKind.PRODUCTIVE),
+          SETUP_CLEANING: Math.round(perKind.SETUP_CLEANING),
+          UNSPECIFIED: Math.round(perKind.UNSPECIFIED),
+        },
       };
     },
   });

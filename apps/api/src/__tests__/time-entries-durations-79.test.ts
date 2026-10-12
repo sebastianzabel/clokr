@@ -129,6 +129,8 @@ describe("Issue #79 — per-entry presence and working time on GET /time-entries
       include: {
         employee: { select: { firstName: true, lastName: true } },
         breaks: { orderBy: { startTime: "asc" } },
+        // Issue #81 (D-11): the list include gained the activity shares.
+        activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
       },
     });
     expect(rest).toEqual(JSON.parse(JSON.stringify(row)));

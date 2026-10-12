@@ -575,13 +575,16 @@ model TimeEntry {
   breakStatus       BreakStatus @default(CONFIRMED) // Phase 91 (BREAK-01)
   breakWaivedReason String? // Phase 91 (BREAK-03)
 
+  activityKind ActivityKind @default(UNSPECIFIED) // Issue #81 (D-01/D-03) — remainder kind of the entry's working time; evaluation only
+
   retroRequestId String? @unique // Phase 96 (RETRO-18) — 1:1 coupling to the Nachtrag request
 
   salonId String // Phase 68b (issue #68) — see the `salon` relation below
 
-  employee     Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  breaks       Break[]
-  retroRequest RetroEntryRequest? @relation(fields: [retroRequestId], references: [id], onDelete: Restrict)
+  employee       Employee                 @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  breaks         Break[]
+  activityShares TimeEntryActivityShare[] // Issue #81 (D-01)
+  retroRequest   RetroEntryRequest?       @relation(fields: [retroRequestId], references: [id], onDelete: Restrict)
   // Phase 68b (issue #68): where the work was done (the Ist-Ort). Same tenant as the employee —
   // enforced by the application through resolveEntrySalon, not by the database. Hangs on the ENTRY,
   // not on the day, so several entries per day in different salons (#70) stay possible. Restrict
@@ -589,7 +592,7 @@ model TimeEntry {
   // Declared AFTER `employee` on purpose: lint-tenant-scoping-model-graph classifies a model by its
   // first tenant-bearing relation in declaration order, and TimeEntry/Break must keep resolving
   // through `employee`.
-  salon        Salon              @relation(fields: [salonId], references: [id], onDelete: Restrict)
+  salon          Salon                    @relation(fields: [salonId], references: [id], onDelete: Restrict)
 
   @@unique([employeeId, date], map: "TimeEntry_employeeId_date_unique_not_deleted")
   @@index([date])
@@ -606,6 +609,25 @@ model Break {
   timeEntry TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
 
   @@index([timeEntryId])
+}
+
+// Issue #81 (D-01/D-19) — a whole-minute allocation of part of an entry's working time to a kind
+// different from the entry's own kind (remainder kind). At most one row per kind per entry. "Never
+// UNSPECIFIED" and "minutes >= 1" are API rules (no DB CHECK: `migrate diff` cannot model one and
+// the migration SQL is never hand-edited). Cascade like Break (D-19): entries are never hard-deleted
+// and a share has no meaning without its entry. No free text: nothing to anonymize under DSGVO
+// (D-08). `timeEntry` is its first and only relation, so lint-tenant-scoping-model-graph resolves it
+// through timeEntry -> employee.
+model TimeEntryActivityShare {
+  id          String       @id @default(uuid())
+  timeEntryId String
+  kind        ActivityKind
+  minutes     Int
+  createdAt   DateTime     @default(now()) @db.Timestamptz
+
+  timeEntry TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+
+  @@unique([timeEntryId, kind])
 }
 
 // Issue #80 (D-03/D-05/D-19) — a break lying in a GAP between two closed entries of the day.
@@ -1400,6 +1422,14 @@ enum BreakStatus {
   AUTO
   CONFIRMED
   WAIVED
+}
+
+// Issue #81 (D-02) — kind of recorded working time; an evaluation dimension only, never read by the
+// working-time account. UNSPECIFIED is the default for existing and new rows (D-03).
+enum ActivityKind {
+  UNSPECIFIED
+  PRODUCTIVE
+  SETUP_CLEANING
 }
 
 // Phase 96 (AC-1) — the stable, untranslated meaning of TimeEntry.isInvalid. The German text in

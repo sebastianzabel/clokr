@@ -135,6 +135,14 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
         select: { id: true },
       });
       expect(rows.map((r) => r.id)).toEqual([validEntry.id]);
+      // Issue #81 (D-12): the saldo input never carries the activity dimension.
+      expect(Object.keys(rows[0]).sort()).toEqual([
+        "breakMinutes",
+        "date",
+        "endTime",
+        "id",
+        "startTime",
+      ]);
     });
 
     it("T2 getWorkedEntriesInRange returns the valid AND invalid closed rows, never the open/deleted/non-WORK ones", async () => {
@@ -644,6 +652,11 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
       });
       expect(created.type).toBe("WORK");
       expect(created.source).toBe("MANUAL");
+      // Issue #81 (D-03): an imported entry is unclassified and carries no share.
+      expect(created.activityKind).toBe("UNSPECIFIED");
+      expect(
+        await app.prisma.timeEntryActivityShare.count({ where: { timeEntryId: created.id } }),
+      ).toBe(0);
     });
   });
 
@@ -684,6 +697,10 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
           endTime: new Date("2026-08-01T12:30:00Z"),
         },
       });
+      // Issue #81 (D-19): a share row goes with its entry (Cascade) on the DSGVO hard delete.
+      await app.prisma.timeEntryActivityShare.create({
+        data: { timeEntryId: entry.id, kind: "SETUP_CLEANING", minutes: 30 },
+      });
 
       await expect(
         app.prisma.$transaction(async (tx) => {
@@ -704,6 +721,10 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
       expect(entryGone).toBeNull();
       const breakGone = await app.prisma.break.count({ where: { timeEntryId: entry.id } });
       expect(breakGone).toBe(0);
+      const sharesGone = await app.prisma.timeEntryActivityShare.count({
+        where: { timeEntryId: entry.id },
+      });
+      expect(sharesGone).toBe(0);
 
       await app.prisma.employee.delete({ where: { id: employee.id } });
       await app.prisma.user.delete({ where: { id: user.id } });

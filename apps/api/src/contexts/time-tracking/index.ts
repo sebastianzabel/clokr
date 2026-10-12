@@ -124,3 +124,11 @@ export { countEntriesForSalon } from "./facade/time-entries";
 // this index (D-05).
 export { entryDurations, addWorkingMinutes } from "./entry-durations";
 export type { EntryDurationInput, EntryDurations } from "./entry-durations";
+
+// ── Phase 81 (Issue #81) — activity kind of an entry (D-04) ─────────────────────────────────────
+// The per-kind derivation on top of entryDurations() and the display labels. The share validator
+// and the tenant-bound store stay module-internal (same reason as validateTimeEntryInvariants): the
+// write rules belong to this context's routes, not to a foreign caller.
+export { activityMinutes } from "./activity-minutes";
+export type { ActivityMinutes, ActivityShareInput } from "./activity-minutes";
+export { ACTIVITY_KIND_LABEL } from "./activity-kind";

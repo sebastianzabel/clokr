@@ -670,8 +670,19 @@ import { readFileSync } from "node:fs";
 // Phase 71b without re-tightening this floor to the exact total (the check is `<` MIN_*, a lower
 // bound, not an equality); this plan's own action is the mechanical +4 documented above, not a
 // re-measure-to-actual sweep, which is out of this phase's scope.
-const MIN_FILES = 346;
-const MIN_TESTS = 6023;
+//
+// Phase 81 (issue #81), 2026-10-12: 7 new test files — `src/__tests__/activity-kind-saldo-equality-81`,
+// `activity-kind-saldo-isolation-81`, `time-entries-activity-81`, `time-entries-activity-summary-81`,
+// `time-entry-activity-migration-81`, `time-entry-activity-writers-81` and
+// `src/contexts/time-tracking/__tests__/activity-81` — MIN_FILES rises from 346 to 353. MIN_TESTS rises
+// from 6023 to 6139: +116 cases, measured by counting `it(` / `it.each(` per file in the blob at
+// a750044f vs HEAD — new files 5, 5, 31, 11, 8, 13, 42; edited files
+// `scripts/__tests__/lint-tenant-scoping-model-graph` 19 -> 20 (+1), `measure-foreign-context-access`
+// 34 -> 34, `time-entries-durations-79` 3 -> 3, `time-entries-summary-79` 11 -> 11,
+// `facade-time-entries` 19 -> 19 (assertions added to existing cases only). Same lower-bound
+// convention as above; not a re-measure-to-actual sweep.
+const MIN_FILES = 353;
+const MIN_TESTS = 6139;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

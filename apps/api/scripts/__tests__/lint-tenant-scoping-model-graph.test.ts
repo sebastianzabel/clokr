@@ -126,9 +126,11 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
   // Merge of Phase 65b (#65: + SalonCoupling, own), Phase 67b (#67: + EmployeeSalonAssignment,
   // own) — 44 -> 46 models, 18 -> 20 own — and Issue #468 (+ ParentalLeaveReduction, relation via
   // `employee` -> Employee(own)) — 46 -> 47 models, own count unchanged at 20 — and Issue #80
-  // (+ DayBreak, DayBreakAck, both relation via `employee`) — 47 -> 49 models, own count unchanged.
-  it("classifies exactly 49 models with no residual category (D-05)", () => {
-    expect(graph.size).toBe(49);
+  // (+ DayBreak, DayBreakAck, both relation via `employee`) — 47 -> 49 models, own count unchanged —
+  // and Issue #81 (+ TimeEntryActivityShare, relation via `timeEntry` -> `employee`) — 49 -> 50
+  // models, own count unchanged.
+  it("classifies exactly 50 models with no residual category (D-05)", () => {
+    expect(graph.size).toBe(50);
     for (const [, tenancy] of graph) {
       expect(["own", "relation", "none"]).toContain(tenancy.kind);
     }
@@ -147,6 +149,13 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
       .sort();
     const expectedDelegateNames = EXPECTED_OWN_MODELS.map((n) => delegateName(n)).sort();
     expect(ownDelegateNames).toEqual(expectedDelegateNames);
+  });
+
+  it("Issue #81: classifies TimeEntryActivityShare as relation via timeEntry -> employee (its first and only relation)", () => {
+    expect(graph.get("timeEntryActivityShare")).toEqual({
+      kind: "relation",
+      path: ["timeEntry", "employee"],
+    });
   });
 
   it("marks exactly Tenant as none — every other model reaches tenantId directly or via relation", () => {

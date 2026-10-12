@@ -264,6 +264,25 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   `apps/api/src/__tests__/working-time-formula-one-place-79.test.ts` fails on an inline copy. The
   JArbSchG pre-write plan values (`plannedNetMin…`, `correctedNetWorkMin`) and shift netto
   (`scheduling/shift-netto.ts`) are deliberately different calculations and stay as they are.
+- **Activity kind is an evaluation dimension, never working-time arithmetic (Issue #81).**
+  `TimeEntry.activityKind` (`UNSPECIFIED` | `PRODUCTIVE` | `SETUP_CLEANING`, default `UNSPECIFIED`
+  for existing and new rows — no classification is invented) is the kind of the entry's remaining
+  working time; `TimeEntryActivityShare` rows (one per kind, whole minutes ≥ 1, never `UNSPECIFIED`,
+  never the entry's own kind, `onDelete: Cascade` like `Break`) allocate parts of it to another
+  kind. `activityMinutes()` (`contexts/time-tracking/activity-minutes.ts`, via `index.ts`) is the
+  ONLY per-kind derivation — it reads `entryDurations()`, nothing is stored;
+  `validateActivityState()` (`activity-shares.ts`) is the ONLY place Σ shares ≤ working minutes is
+  enforced (409 with `maxShareMinutes`, never clamped) — PUT, POST (automatic break planned once
+  before the write), `POST /:id/breaks`, revalidate and the retro approval call it. Written only
+  through `POST`/`PUT /time-entries` (no own route or permission); an activity-only PUT is not a
+  correction (no `CORRECTION` source, no Begründung, still audited and lock-bound). Clock paths write
+  no classification; a clock re-open or a consolidation first turns a classified remainder into an
+  explicit share (`materializeRemainder()`), so later time stays `UNSPECIFIED`, and a merge that
+  would soft-delete an allocated entry is skipped. `GET /time-entries/summary` returns
+  `activityMinutes` (optional `salonId` narrows the whole body; foreign or unknown salon → the same
+  404) — minutes only, never amounts, rates or ratios. The working-time account, reports and the day
+  kernel never read it (`activity-kind-saldo-isolation-81.test.ts`); saldo equality:
+  `activity-kind-saldo-equality-81.test.ts`. UI and tenant switch (default off): #529.
 - **Breaks are checked per day, across salons (Issue #80).** `evaluateDayBreaks()`
   (`apps/api/src/contexts/time-tracking/day-break-rule.ts`) is the ONLY place the day-level § 4
   rule and the § 3 day sum over several entries live — `checkArbZG`, the day-break routes
