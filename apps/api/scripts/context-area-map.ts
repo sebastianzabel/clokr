@@ -251,6 +251,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/section9-credit-days.ts": "abwesenheiten", // Section9Credit day counting
   "src/contexts/absence/section9-detect.ts": "abwesenheiten", // § 9 BUrlG "krank im Urlaub" detection
   "src/contexts/absence/shift-leave-recalc-resolver.ts": "abwesenheiten", // writes LeaveRequest.daysProvisional when a roster change triggers recalculation (Phase 107) — LeaveRequest is the written model even though the trigger originates in Schichtplanung
+  "src/contexts/absence/sick-leave-days.ts": "abwesenheiten", // Issue #84 (D-14) — the one sick-day counting rule (calendar days, half day, clip, attest split, § 9 shift), moved out of composition/reports.ts
   "src/contexts/absence/vacation-calc.ts": "abwesenheiten", // BUrlG vacation-entitlement calculation
   "src/contexts/absence/__tests__/fixtures/legacy-shift-based-kernel-pre436.ts": "abwesenheiten", // Phase 436 Plan 01 (Issue #436), D-05 — frozen verbatim pre-436 kernel copy for the equivalence proof; test infra specific to this context's own test suite, same category as services/phorest/__tests__/helpers.ts below
   "src/contexts/absence/__tests__/fixtures/legacy-shift-based-kernel-pre481.ts": "abwesenheiten", // Phase 481 Plan 01 (Issue #481), R3 — frozen verbatim pre-481 kernel copy (commit 973553f0) for the single-contract equivalence proof; same category as the pre-436 fixture above

@@ -167,6 +167,10 @@ export {
 // `apps/api/scripts/context-boundary-import-exceptions.json`).
 export { loadBsSlotOverrides } from "./load-bs-slot-overrides";
 export { DISPLAY_NAME, isSickLeaveTypeCode } from "./leave-type";
+// Issue #84 (D-14) — the one sick-day counting rule; consumed by composition/reports.ts and composition/dashboard.ts
+export { sickLeaveDayCounts } from "./sick-leave-days";
+export type { SickLeaveDayRow, SickLeaveDayCounts } from "./sick-leave-days";
+
 export { mondayOfWeekUtc } from "./vacation-calc";
 // Issue #429 (D-01): the shared week-counting kernel's per-week/per-date breakdown — the saldo
 // side (Arbeitszeitkonto, plan 429-02) and Phase 430 both consume this through this index.
