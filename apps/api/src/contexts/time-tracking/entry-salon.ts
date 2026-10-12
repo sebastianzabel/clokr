@@ -1,7 +1,8 @@
 /**
  * Phase 68b (issue #68), D-06/D-07/D-08/D-16 — the ONE place the entry-salon rule lives.
  *
- * Every TimeEntry creation path (the clock resolver's START branch for NFC/MOBILE/WIFI, the three
+ * Every TimeEntry creation path (the clock resolver's START branch for NFC/MOBILE/WIFI — only the web clock-in, MOBILE, may pass an
+ * explicit salon (Issue #87), NFC and WIFI never do — the three
  * `POST /time-entries` branches, the CSV importer) calls {@link resolveEntrySalon}; none rebuilds
  * the rule inline.
  *
@@ -35,12 +36,15 @@ export type ResolveEntrySalonInput = {
   employeeId: string;
   /** The entry's start instant — never the day-only `date`. */
   startTime: Date;
-  /** An explicitly requested salon (manual / Zeitnachtrag / grant / CSV paths only). */
+  /** An explicitly requested salon (manual / Zeitnachtrag / grant / CSV paths and, since Issue #87, the web clock-in; never NFC or WIFI). */
   explicitSalonId?: string;
 };
 
-const SALON_NOT_FOUND_BODY = { error: "Salon nicht gefunden" } as const;
-const SALON_INACTIVE_BODY = { error: "Salon ist deaktiviert", code: "SALON_INACTIVE" } as const;
+export const SALON_NOT_FOUND_BODY = { error: "Salon nicht gefunden" } as const;
+export const SALON_INACTIVE_BODY = {
+  error: "Salon ist deaktiviert",
+  code: "SALON_INACTIVE",
+} as const;
 const NO_ACTIVE_SALON_BODY = {
   error: "Kein aktiver Salon vorhanden.",
   code: "NO_ACTIVE_SALON",

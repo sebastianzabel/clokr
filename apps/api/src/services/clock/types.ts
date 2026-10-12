@@ -43,6 +43,11 @@ export type ClockEvent = {
   note?: string;
   actor: Actor;
   interactive?: boolean;
+  // Issue #87 (D-01/D-07): an explicitly chosen salon for a NEW entry. Set ONLY by the `/clock-in`
+  // adapter (the web clock-in); NFC, WIFI and clock-out never set it, so their START keeps the
+  // pattern derivation. Optional for the same reason as `interactive`: future-source.test.ts
+  // builds a ClockEvent literal without it.
+  salonId?: string;
 };
 
 export type ConflictReason =
@@ -59,7 +64,15 @@ export type ConflictReason =
   // Phase 68b (issue #68, D-08): the employee has no salon for the day and the tenant has no
   // active salon to fall back to — a new entry cannot carry the required salonId. NOT produced
   // by `decide()`, but by the resolver's START branch before it writes anything.
-  | "NO_ACTIVE_SALON";
+  | "NO_ACTIVE_SALON"
+  // Issue #87 (D-12): the explicit salon of the event is unknown or belongs to another tenant
+  // (one reason for both, T-100-09). Produced by the resolver, never by `decide()`.
+  | "SALON_NOT_FOUND"
+  // Issue #87 (D-12): the explicit salon exists but is deactivated. Resolver-produced.
+  | "SALON_INACTIVE"
+  // Issue #87 (D-04): re-clocking a finished day names a salon that differs from the day entry's
+  // salon. A reopened entry never changes its salon, so this is refused. Resolver-produced.
+  | "SALON_DIFFERS_FROM_DAY_ENTRY";
 
 export type ClockState =
   | { kind: "NO_OPEN_ENTRY" }
