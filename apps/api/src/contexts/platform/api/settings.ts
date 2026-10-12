@@ -176,7 +176,7 @@ const tenantConfigSchema = z
     // rejects out of this whole settings section (review WR-03; D-04: legacy values are not
     // re-validated). `TenantConfig.storeHours` is DEPRECATED — since Phase 325 (issue #325) the
     // shift store-hours check reads the shift's own salon instead; this PUT is the only remaining
-    // writer, mirroring a CHANGED value into a tenant's sole active salon (D-16) until #82 removes both.
+    // writer, mirroring a CHANGED value into a tenant's sole active salon (D-16) until #89 removes both.
     storeHours: z
       .array(
         z.object({

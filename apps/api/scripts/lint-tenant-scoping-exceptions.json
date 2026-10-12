@@ -337,14 +337,14 @@
   },
   {
     "file": "apps/api/src/contexts/platform/facade/role-assignments.ts",
-    "handler": "resolveAccessReach() legacy-role fallback (shared facade function, not one route — called from every context that resolves an AccessReach, e.g. GET /api/v1/time-entries and GET/PATCH /api/v1/retro-entry-requests as of Phase 91b Plan 03)",
+    "handler": "contextSalonIds() own-reach employee lookup (shared facade function, not one route — its only caller is GET /api/v1/me/context, Phase 82)",
     "validatedAt": null,
     "calls": [
       {
-        "call": "user.findUnique",
-        "line": 192
+        "call": "employee.findFirst",
+        "line": 379
       }
     ],
-    "reason": "Pre-existing since Phase 91b Plan 01 (commit cda00791), discovered while running this gate for Plan 91b-03's own Task 3 — not caused by Task 3's edits, which never touch this file. The `userId` looked up here is `ctx.actor.userId`, which `resolveAccessReach`'s only caller shape (`ctx.actor.kind !== \"user\"` short-circuits to wholeTenant first) can only ever be: every AccessContext with a `user` actor is built exclusively by `accessContextFromRequest()` (access-context.ts), which sets `userId` to `req.user.sub` — the JWT's own authenticated subject, never a client-supplied path/body parameter. `accessContextForJob()`, the only other AccessContext constructor in the codebase, builds a `system` actor and never reaches this branch at all. The call therefore always fetches the CALLER's OWN user row (to resolve THEIR OWN legacy-role fallback, D-08 of Phase 75b, identical to the already-established `resolveGrants()`/`userIdsHoldingPermission()` pattern this function's own comment cites) and returns nothing beyond a `role` enum used only to compute that same caller's reach — there is no other tenant's row ever read or exposed, so no `where.tenantId` filter is meaningful here, the same category as the pre-authentication self-identity lookups already exempted above (auth.ts) though this one runs post-authentication."
+    "reason": "Phase 82 (Issue #82, 2026-10-12). This entry replaces the former resolveAccessReach() legacy-role fallback entry (Phase 91b Plan 01, user.findUnique at line 192): Phase 82 moved that call verbatim into the module-private helper loadLegacyFallbackRole(), whose parameters the gate does not treat as request-bound (it seeds only EXPORTED facade functions), so it is no finding any more — measured, the old entry turned STALE. The call named here, employee.findFirst in contextSalonIds(), filters `where: { tenantId, userId, ...NOT_ANONYMIZED_EMPLOYEE_WHERE }` — it IS constrained to the tenant, but `tenantId` and `userId` are read off `ctx: AccessContext` (`ctx.tenantId`, `ctx.actor.userId`), which the gate cannot bind to req.user. Every AccessContext with a `user` actor is built exclusively by accessContextFromRequest() (access-context.ts), which sets tenantId from req.user.tenantId and userId from req.user.sub — the JWT's own authenticated subject, never a client-supplied parameter; a non-user actor returns before this line. The call therefore reads only the CALLER's OWN employee row in the CALLER's tenant, and returns only its id. Same category and same reasoning as the resolveAccessReach() entry it replaces."
   }
 ]

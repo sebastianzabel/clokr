@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { beforeNavigate, goto } from "$app/navigation";
+  import { afterNavigate, beforeNavigate, goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
+  import { salonContext } from "$stores/salon-context";
   import { clearUnsaved, hasUnsaved } from "$stores/unsaved";
   import Sidebar from "$lib/components/layout/Sidebar.svelte";
   import Topbar from "$lib/components/layout/Topbar.svelte";
@@ -157,11 +158,24 @@
     // Fire-and-forget — UI shouldn't block on this; store fails open.
     void tenantFeatures.fetch();
 
+    // Issue #82 (D-10): the tenant and salon context, forced once per mount. Fire-and-forget; the
+    // store fails closed for presentation and never gates data — the server decides every request.
+    void salonContext.load($authStore.user?.id ?? null, { force: true });
+
     // Start inactivity timer
     resetInactivityTimer();
     for (const evt of ACTIVITY_EVENTS) {
       document.addEventListener(evt, resetInactivityTimer, { passive: true });
     }
+  });
+
+  // Issue #82 (D-10 adaptation): apps/web has no salon admin screen yet (#89 will call
+  // `salonContext.load(..., { force: true })` itself after create/deactivate/activate), so the
+  // context is re-validated after in-app navigation — throttled by the store, so options appear or
+  // vanish at a later page change without a reload. The initial mount is covered by onMount.
+  afterNavigate((navigation) => {
+    if (navigation.from === null || !$authStore.accessToken) return;
+    void salonContext.load($authStore.user?.id ?? null);
   });
 
   onDestroy(() => {

@@ -8,6 +8,7 @@ import { prefsHydrated } from "$stores/prefs-state";
 import { fetchPreferences } from "$api/preferences";
 import { ApiError, loadPermissionsIfMissing } from "$api/client";
 import { clientLogger } from "$lib/utils/logger";
+import { salonContext } from "$stores/salon-context";
 
 export interface AuthUser {
   id: string;
@@ -169,6 +170,10 @@ function createAuthStore() {
       // Stop background PUTs for the previous user. The next login will re-hydrate
       // and flip this back to true once values from the server are applied.
       prefsHydrated.set(false);
+      // Issue #82 (D-09): the salon selection belongs to the person — forget it and every stored
+      // selection on this device. Runtime-only call: this module and salon-context.ts reach each
+      // other through $api/client, safe because neither calls the other during module evaluation.
+      salonContext.reset();
       set({ accessToken: null, refreshToken: null, user: null });
     },
   };

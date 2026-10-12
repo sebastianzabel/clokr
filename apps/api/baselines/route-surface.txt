@@ -149,6 +149,7 @@
 ├── /api/v1/leave/section9 (GET, HEAD)
 ├── /api/v1/logs/client (POST)
 ├── /api/v1/me/availability (GET, HEAD, PUT)
+├── /api/v1/me/context (GET, HEAD)
 ├── /api/v1/me/preferences (GET, HEAD, PUT)
 ├── /api/v1/me/release-notes-seen (GET, HEAD, PUT)
 ├── /api/v1/notifications (GET, HEAD)

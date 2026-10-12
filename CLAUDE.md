@@ -863,6 +863,24 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   fails on one); jobs use `accessContextForJob(tenantId, job)`. Both, like `employeeScopeWhere()`,
   throw `AccessContextError` on an empty tenant (500 via `app.ts`; a foreign id stays 404). Keep
   `const tenantId = req.user.tenantId` for Prisma filters — the gate below reads only that (#226).
+- **The salon context in the web is presentation, never an access boundary (Issue #82, DSGVO
+  Art. 32).** `GET /api/v1/me/context` (`requireAuth`, own data, API key → 400) returns the tenant,
+  `isMultiSalon` (`isMultiSalonTenant()`, #64), `homeSalonId` and the ACTIVE salons the caller
+  reaches — `id` and `name` only. `contextSalonIds()` (`contexts/platform/facade/role-assignments.ts`,
+  not re-exported from `index.ts`) is the ONLY place "salons the caller can reach" is computed: the
+  managed part from the same building blocks and the same legacy-role fallback
+  (`loadLegacyFallbackRole`) as `resolveAccessReach`, pinned equal over every ZUGEWIESEN key by
+  `context-salon-ids-82.test.ts`, plus the salons of the caller's own current or future salon
+  assignments. In the web, `$stores/salon-context` holds the selection: `showSalonOptions()` is the
+  ONLY place of the #64 rule (options only with more than one active salon in the tenant AND more
+  than one reachable), one reachable salon is preselected without a choice, several default to
+  "Alle Salons". The stored value (`localStorage` `clokr.salonContext.<tenantId>.<userId>`, removed on
+  logout) is re-validated against the fresh list on every load (forced on mount, throttled after
+  in-app navigation), and `selectedSalonId()` is the value a view passes as `salonId` (`null` = every
+  reachable salon). No endpoint reads a salon context from a header, cookie or session; an endpoint
+  that takes `salonId` validates it itself — proof: `salon-context-manipulation-82.test.ts`. The
+  salon admin screen of #89 calls `salonContext.load(…, { force: true })` after
+  create/deactivate/activate.
 
 ### Tenant-scoping gate (Issue #204)
 

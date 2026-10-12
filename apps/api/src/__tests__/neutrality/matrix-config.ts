@@ -319,6 +319,15 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "reasoning as the `GET /api/v1/day-breaks/checks` entry above: RECORD/MERGE mode refuses " +
       "to run once the role guard is gone.",
   },
+  {
+    route: "GET /api/v1/me/context",
+    reason:
+      "New route added in Phase 82 (Issue #82, D-01), long after the role guard (`requireRole`) " +
+      "was deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it answers the " +
+      "caller's own salon context, takes no permission decision and has no role-based access " +
+      "behavior to compare (an API key gets 400). Same vacuous-satisfaction reasoning as the " +
+      "Phase 430 entry above: RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
 ];
 
 /** Routes declared in `app.ts` itself — invisible to the source parser, proven registered. */

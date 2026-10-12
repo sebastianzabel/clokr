@@ -168,7 +168,7 @@ export async function importRoutes(app: FastifyInstance) {
       const warnings = unknownColumnHints(headers, EMPLOYEE_COLUMN_ALIASES);
 
       // Phase 67b Plan 03 (D-23, issue #67): every imported employee needs a Stammsalon (HOME)
-      // row, and this endpoint has no per-row salon column (deferred to #82) — so it only works
+      // row, and this endpoint has no per-row salon column (deferred to #531) — so it only works
       // when the tenant has EXACTLY ONE active salon, checked up front, before ANY row is
       // written. Zero or several active salons rejects the WHOLE import; no IMPORT audit row.
       const activeSalons = await listSalons(app.prisma, req.user.tenantId, {

@@ -1083,6 +1083,10 @@ den Salon, kein fachliches Lesen. Die Schichtplanungsseite liest `storeHours` we
 geschlossener Wochentage (D-16), ebenfalls bis #82. `store-hours-readers.test.ts` erlaubt nur noch
 `settings.ts`.
 
+Nachtrag Phase 82 (12.10.2026): #82 hat den Mandanten- und Salon-Kontext im Frontend geliefert, keine
+Öffnungszeiten-Oberfläche je Salon. Spiegel und `TenantConfig.storeHours` bleiben deshalb bis #89
+(Salon pflegen inklusive Öffnungszeiten); die Verweise im Code zeigen seit Phase 82 auf #89.
+
 **Mandantengrenze:** kein Datenbank-Trigger (eine Instanz pro Kunde, #226); die Anwendung prüft über
 `findSalon()` mandantengebunden, fremde und nicht existierende Salon-IDs werden byte-gleich mit 404
 abgelehnt (T-100-09). `POST /api/v1/shifts/bulk` prüft seit #325 zusätzlich, dass jeder Mitarbeiter zum

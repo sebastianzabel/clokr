@@ -36,7 +36,9 @@ import { roleGrants } from "../access-role";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter";
 import { systemRoleIdForLegacyRole } from "../compat-role";
 import { SYSTEM_ROLE_IDS } from "../system-roles";
-import { findSalon } from "./salons";
+import { findSalon, listSalons } from "./salons";
+import { homeSalonAt, readTenantTimezone } from "./salon-assignments";
+import { dayToDate, isVoided, tenantLocalDay } from "../salon-assignment-rules";
 import {
   RoleLockoutError,
   countHoldersPerGuardedPermission,
@@ -135,6 +137,38 @@ export async function userMayApply(
 // ── Reach resolution (Phase 91b, Issue #91, D-03/D-04) ──────────────────────────────────────────
 
 /**
+ * The legacy-role fallback ("Altrollen-Rückfall", Phase 75b D-08) of the two reach functions,
+ * {@link resolveAccessReach} and {@link contextSalonIds}: for a user with no stored
+ * `RoleAssignment`, the system role of `User.role` stands in as one implicit TENANT assignment.
+ * One rule in one place, so the reach the endpoints enforce and the salon context the web shows
+ * (Phase 82, Issue #82, D-03) can never drift apart. `null` for a deleted user (no `User` row) —
+ * each caller fails closed on it. A missing system-role row throws (Issue #359: an incomplete
+ * migration must surface, never read as "no reach"); `caller` prefixes the message.
+ *
+ * Private on purpose: it answers nothing on its own — only its two callers know what an implicit
+ * TENANT assignment means for their question.
+ */
+async function loadLegacyFallbackRole(
+  db: Prisma.TransactionClient,
+  userId: string,
+  caller: string,
+): Promise<{ id: string; tenantId: string | null; permissions: string[] } | null> {
+  const user = await db.user.findUnique({ where: { id: userId }, select: { role: true } });
+  if (!user) return null;
+  const fallbackRoleId = systemRoleIdForLegacyRole(user.role);
+  const fallbackRole = await db.accessRole.findUnique({
+    where: { id: fallbackRoleId },
+    select: { id: true, tenantId: true, permissions: true },
+  });
+  if (!fallbackRole) {
+    throw new Error(
+      `${caller}: system role ${fallbackRoleId} is missing — the migration that inserts the system roles has not been applied`,
+    );
+  }
+  return fallbackRole;
+}
+
+/**
  * D-04: how far does `ctx.actor` reach for `permission`, right now?
  *
  * Reach depends on WHICH permission is asked about — a SALONS assignment might grant
@@ -189,22 +223,10 @@ export async function resolveAccessReach(
   if (assignments.length === 0) {
     // The "Altrollen-Rückfall" (D-08 of Phase 75b) — identical fallback rule to
     // `resolveGrants()`/`userIdsHoldingPermission()`. Never diverge from it here.
-    const user = await db.user.findUnique({ where: { id: userId }, select: { role: true } });
-    if (!user) {
+    const fallbackRole = await loadLegacyFallbackRole(db, userId, "resolveAccessReach");
+    if (!fallbackRole) {
       // Deleted user, still-valid token — fail closed, exactly like the two sibling resolvers.
       return { kind: "scoped", salonIds: [], employeeIds: [] };
-    }
-    const fallbackRoleId = systemRoleIdForLegacyRole(user.role);
-    const fallbackRole = await db.accessRole.findUnique({
-      where: { id: fallbackRoleId },
-      select: { id: true, tenantId: true, permissions: true },
-    });
-    if (!fallbackRole) {
-      // Issue #359's fix, mirrored: a missing system-role row must surface the incomplete
-      // migration, never silently resolve to "no reach".
-      throw new Error(
-        `resolveAccessReach: system role ${fallbackRoleId} is missing — the migration that inserts the system roles has not been applied`,
-      );
     }
     return roleGrants(fallbackRole, permission)
       ? { kind: "wholeTenant" }
@@ -242,6 +264,148 @@ export async function resolveAccessReach(
     salonIds: activeSalonIds.sort(),
     employeeIds: [...employeeIds].sort(),
   };
+}
+
+// ── Salon context (Phase 82, Issue #82, D-03/D-04) ───────────────────────────────────────────────
+
+/** The salons a caller can reach, as {@link contextSalonIds} answers it (ids ascending). */
+export type ContextSalonIds = {
+  /** Union of `managedSalonIds` and `ownSalonIds`. */
+  salonIds: string[];
+  /** Reach of the caller's role assignments (or the legacy-role fallback). */
+  managedSalonIds: string[];
+  /** Salons of the caller's own current and future salon assignments. */
+  ownSalonIds: string[];
+  /** The caller's HOME salon on `today`, only when it is in `salonIds`. */
+  homeSalonId: string | null;
+};
+
+/** Ascending by UTF-16 code unit — the same order as a bare `.sort()`, stated explicitly. */
+function byCodeUnit(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
+/** Every ZUGEWIESEN key of the catalog — "grants at least one of these" makes a role managing. */
+const ZUGEWIESEN_KEYS: readonly PermissionKey[] = PERMISSIONS.filter(
+  (permission) => permission.reach === "ZUGEWIESEN",
+).map(permissionKey);
+
+/**
+ * Phase 82 (Issue #82, D-03): the ACTIVE salons of `ctx.tenantId` the caller can reach — the input
+ * of the web's salon context (`GET /api/v1/me/context`). A PRESENTATION context only, never an
+ * access decision: every endpoint keeps resolving its own reach per permission
+ * ({@link resolveAccessReach}), and nothing reads this answer back (D-05).
+ *
+ * The union of two parts:
+ * - **managed:** every well-formed assignment whose role (system or this tenant's) grants at least
+ *   one ZUGEWIESEN key — TENANT → every active salon, SALONS → those of its salons that are active
+ *   in this tenant, PERSONS → none (a person list is not a salon). No stored assignment → the same
+ *   legacy-role fallback as {@link resolveAccessReach} ({@link loadLegacyFallbackRole}); a deleted
+ *   user reaches nothing. A non-user actor (API key, job) reaches every active salon, mirroring
+ *   `resolveAccessReach`'s `wholeTenant` answer.
+ * - **own:** salons of the caller's own `EmployeeSalonAssignment` rows (any kind) that are valid on
+ *   the tenant-local day of `today` or later, voided rows excluded, active salons only — an
+ *   employee working in two salons reaches its own data in both (EIGENE reach).
+ *
+ * `context-salon-ids-82.test.ts` pins the managed part EQUAL to the union of `resolveAccessReach`
+ * over every ZUGEWIESEN key, so the two can never drift apart. Not re-exported from
+ * `contexts/platform/index.ts` — only platform's own `me.ts` reads it, so it is no Unterbau change
+ * in the sense of ADR 0002 Entscheidung 7.
+ */
+export async function contextSalonIds(
+  db: Prisma.TransactionClient,
+  ctx: AccessContext,
+  today: Date,
+): Promise<ContextSalonIds> {
+  const tenantId = ctx.tenantId;
+  const activeSalonIds = async (): Promise<string[]> =>
+    (await listSalons(db, tenantId, { includeInactive: false }))
+      .map((salon) => salon.id)
+      .sort(byCodeUnit);
+
+  if (ctx.actor.kind !== "user") {
+    return {
+      salonIds: await activeSalonIds(),
+      managedSalonIds: await activeSalonIds(),
+      ownSalonIds: [],
+      homeSalonId: null,
+    };
+  }
+  const userId = ctx.actor.userId;
+  const grantsAnyZugewiesen = (role: { tenantId: string | null; permissions: readonly string[] }) =>
+    ZUGEWIESEN_KEYS.some((key) => roleGrants(role, key));
+
+  let managed: string[] = [];
+  const assignments = await db.roleAssignment.findMany({
+    where: { tenantId, userId },
+    include: { accessRole: true },
+  });
+  if (assignments.length === 0) {
+    const fallbackRole = await loadLegacyFallbackRole(db, userId, "contextSalonIds");
+    if (!fallbackRole) {
+      return { salonIds: [], managedSalonIds: [], ownSalonIds: [], homeSalonId: null };
+    }
+    if (grantsAnyZugewiesen(fallbackRole)) managed = await activeSalonIds();
+  } else {
+    const collected = new Set<string>();
+    let wholeTenant = false;
+    for (const assignment of assignments) {
+      const accessRole = assignment.accessRole;
+      const roleBelongsHere = accessRole.tenantId === null || accessRole.tenantId === tenantId;
+      if (!roleBelongsHere) continue;
+      if (!grantsAnyZugewiesen(accessRole)) continue;
+      const scope = storedRoleAssignmentScope(assignment);
+      if (scope === null) continue;
+      if (scope.scopeType === "TENANT") {
+        wholeTenant = true;
+        break;
+      }
+      for (const salonId of scope.salonIds) collected.add(salonId);
+    }
+    if (wholeTenant) {
+      managed = await activeSalonIds();
+    } else if (collected.size > 0) {
+      const salons = await db.salon.findMany({
+        where: { tenantId, id: { in: [...collected] }, isActive: true },
+        select: { id: true },
+      });
+      managed = salons.map((salon) => salon.id).sort(byCodeUnit);
+    }
+  }
+
+  let own: string[] = [];
+  let homeSalonId: string | null = null;
+  const employee = await db.employee.findFirst({
+    where: { tenantId, userId, ...NOT_ANONYMIZED_EMPLOYEE_WHERE },
+    select: { id: true },
+  });
+  if (employee) {
+    const day = dayToDate(tenantLocalDay(today, await readTenantTimezone(db, tenantId)));
+    const rows = await db.employeeSalonAssignment.findMany({
+      where: {
+        tenantId,
+        employeeId: employee.id,
+        OR: [{ validUntil: null }, { validUntil: { gte: day } }],
+      },
+      select: { salonId: true, validFrom: true, validUntil: true },
+    });
+    const candidateIds = [...new Set(rows.filter((row) => !isVoided(row)).map((r) => r.salonId))];
+    if (candidateIds.length > 0) {
+      const salons = await db.salon.findMany({
+        where: { tenantId, id: { in: candidateIds }, isActive: true },
+        select: { id: true },
+      });
+      own = salons.map((salon) => salon.id).sort(byCodeUnit);
+    }
+  }
+
+  const salonIds = [...new Set([...managed, ...own])].sort(byCodeUnit);
+  if (employee) {
+    const home = await homeSalonAt(db, tenantId, employee.id, today);
+    if (home && salonIds.includes(home.salonId)) homeSalonId = home.salonId;
+  }
+  return { salonIds, managedSalonIds: managed, ownSalonIds: own, homeSalonId };
 }
 
 // ── DSGVO removal (Phase 74b, D-22) ─────────────────────────────────────────────────────────────
