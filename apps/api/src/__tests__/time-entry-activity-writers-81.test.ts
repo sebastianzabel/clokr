@@ -14,6 +14,7 @@ import { resolveClockEvent } from "../services/clock/resolver";
 import { consolidateSameDayEntries } from "../services/clock/consolidate";
 import type { ClockEvent, ClockIntent } from "../services/clock/types";
 import { activityMinutes, entryDurations } from "../contexts/time-tracking";
+import { invalidReasonFields } from "../contexts/time-tracking/invalid-reason";
 
 const ANCHOR = (() => {
   const d = new Date();
@@ -328,5 +329,150 @@ describe("Issue #81 (D-07) — consolidation never drops nor stretches an alloca
     expect(after.activityShares).toEqual([]);
     expect(after.endTime?.getTime()).toBe(at(day, "17:00").getTime());
     expect((await row(second.id)).deletedAt).not.toBeNull();
+  });
+});
+
+describe("Issue #81 (D-05, D-07) — retro approval with a manager correction obeys the share rule", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+  // A past day well inside the month that is not closed (no lock in this tenant).
+  const targetDate = (() => {
+    const d = new Date(ANCHOR.getTime() - 20 * 86_400_000);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "act81ret");
+  });
+
+  afterAll(async () => {
+    try {
+      await app.prisma.timeEntry.deleteMany({ where: { employeeId: data.employee.id } });
+      await app.prisma.retroEntryRequest.deleteMany({ where: { employeeId: data.employee.id } });
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("time-entry-activity-writers-81 retro cleanup failed:", err);
+    }
+  });
+
+  beforeEach(async () => {
+    await app.prisma.timeEntry.deleteMany({ where: { employeeId: data.employee.id } });
+    await app.prisma.retroEntryRequest.deleteMany({ where: { employeeId: data.employee.id } });
+  });
+
+  /** A coupled pending Nachtrag (08:00–17:00Z, 45 min break) with kind PRODUCTIVE + share 400. */
+  async function pendingWithShare() {
+    const request = await app.prisma.retroEntryRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        targetDate: new Date(targetDate),
+        reason: "Issue 81 fixture: pending Nachtrag with an activity share",
+        startTime: "08:00",
+        endTime: "17:00",
+        breakMinutes: 45,
+        status: "PENDING",
+      },
+    });
+    const entry = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: data.employee.id,
+        salonId: data.salonId,
+        date: new Date(targetDate),
+        startTime: new Date(`${targetDate}T08:00:00.000Z`),
+        endTime: new Date(`${targetDate}T17:00:00.000Z`),
+        breakMinutes: 45,
+        source: "MANUAL",
+        isInvalid: true,
+        ...invalidReasonFields("RETRO_APPROVAL_PENDING"),
+        retroRequestId: request.id,
+        activityKind: "PRODUCTIVE",
+        activityShares: { create: [{ kind: "SETUP_CLEANING", minutes: 400 }] },
+      },
+    });
+    return { request, entry };
+  }
+
+  async function review(id: string, payload: Record<string, unknown>) {
+    return app.inject({
+      method: "PATCH",
+      url: `/api/v1/retro-entry-requests/${id}/review`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload,
+    });
+  }
+
+  async function entryWithShares(id: string) {
+    return app.prisma.timeEntry.findUniqueOrThrow({
+      where: { id },
+      include: { activityShares: { select: { kind: true, minutes: true } } },
+    });
+  }
+
+  it("a correction below the shares answers 409 before any write", async () => {
+    const { request, entry } = await pendingWithShare();
+    const res = await review(request.id, {
+      status: "APPROVED",
+      startTime: "08:00",
+      endTime: "14:00",
+    });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(JSON.parse(res.body).error).toBe(
+      "Die zugeordnete Tätigkeitszeit übersteigt die Arbeitszeit des Eintrags.",
+    );
+    const reqAfter = await app.prisma.retroEntryRequest.findUniqueOrThrow({
+      where: { id: request.id },
+    });
+    expect(reqAfter.status).toBe("PENDING");
+    const after = await entryWithShares(entry.id);
+    expect(after.isInvalid).toBe(true);
+    expect(after.startTime.getTime()).toBe(entry.startTime.getTime());
+    expect(after.endTime?.getTime()).toBe(entry.endTime?.getTime());
+    expect(after.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 400 }]);
+  });
+
+  it("a fitting correction releases the entry with its shares; the audit carries them", async () => {
+    const { request, entry } = await pendingWithShare();
+    const res = await review(request.id, {
+      status: "APPROVED",
+      startTime: "08:00",
+      endTime: "17:00",
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const after = await entryWithShares(entry.id);
+    expect(after.isInvalid).toBe(false);
+    expect(after.activityKind).toBe("PRODUCTIVE");
+    expect(after.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 400 }]);
+    const audit = await app.prisma.auditLog.findFirstOrThrow({
+      where: { entityId: entry.id, action: "MANAGER_CORRECTION" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(audit.oldValue).toMatchObject({
+      activityShares: [{ kind: "SETUP_CLEANING", minutes: 400 }],
+    });
+    expect(audit.newValue).toMatchObject({
+      activityShares: [{ kind: "SETUP_CLEANING", minutes: 400 }],
+    });
+  });
+
+  it("an approval without correction keeps the shares (no check needed)", async () => {
+    const { request, entry } = await pendingWithShare();
+    const res = await review(request.id, { status: "APPROVED" });
+    expect(res.statusCode, res.body).toBe(200);
+    const after = await entryWithShares(entry.id);
+    expect(after.isInvalid).toBe(false);
+    expect(after.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 400 }]);
+  });
+
+  it("a rejection soft-deletes the entry and keeps its share rows (never lost)", async () => {
+    const { request, entry } = await pendingWithShare();
+    const res = await review(request.id, {
+      status: "REJECTED",
+      reviewNote: "Nicht nachvollziehbar",
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const after = await entryWithShares(entry.id);
+    expect(after.deletedAt).not.toBeNull();
+    expect(after.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 400 }]);
   });
 });

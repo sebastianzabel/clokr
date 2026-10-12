@@ -15,6 +15,7 @@ import {
 } from "../../platform";
 import { checkArbZG, ArbZGWarning } from "../arbzg";
 import { checkJArbSchG } from "../../absence"; // Phase 101B (Issue #101, wave 7)
+import { validateActivityState } from "../activity-shares"; // Issue #81
 import { getTenantTimezone, dateStrInTz, todayInTz } from "../../working-time-account"; // Phase 101B
 import { computeEntryAgeInDays } from "../retro-config";
 import { CLEARED_INVALID_REASON } from "../invalid-reason"; // Phase 96 (T1)
@@ -275,7 +276,13 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         where: { id, deletedAt: null },
         include: {
           employee: { select: { tenantId: true, userId: true } },
-          timeEntry: true, // Phase 96 (RETRO-11) — coupled entry-first pending entry, if any
+          // Phase 96 (RETRO-11) — coupled entry-first pending entry, if any. Issue #81 (D-05/D-07):
+          // with its activity shares, for the share check on a correction and the audit.
+          timeEntry: {
+            include: {
+              activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+            },
+          },
         },
       });
       if (!existing) {
@@ -441,6 +448,24 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
               .send({ error: "JARBSCHG_MINOR_LIMIT", message: jarbSchgApprove.message });
           }
           correctionSoftWarn = jarbSchgApprove.softWarn;
+
+          // Issue #81 (D-05): the corrected times may not leave the shares above the working
+          // time — refused before the transaction, the request stays PENDING.
+          if (coupledEntry.activityShares.length > 0) {
+            const activityCheck = validateActivityState(
+              {
+                kind: coupledEntry.activityKind,
+                shares: coupledEntry.activityShares,
+                startTime: correctedStart,
+                endTime: correctedEnd,
+                breakMinutes: correctedFields.breakMinutes ?? coupledEntry.breakMinutes,
+              },
+              { sharesWritten: false, wasClosed: coupledEntry.endTime !== null },
+            );
+            if (!activityCheck.ok) {
+              return reply.code(activityCheck.status).send(activityCheck.body);
+            }
+          }
         }
 
         // Release the coupled entry atomically with the approval: isInvalid flips
@@ -473,6 +498,9 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
             const entryAfter = await tx.timeEntry.update({
               where: { id: entryIdToRelease },
               data: { isInvalid: false, ...CLEARED_INVALID_REASON, ...correctedFields },
+              include: {
+                activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+              },
             });
 
             await app.audit({
