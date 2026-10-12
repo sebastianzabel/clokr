@@ -122,7 +122,7 @@ describe("SalonSwitcher (Issue #82)", () => {
   });
 
   it("a manipulated stored value shows „Alle Salons“ after the load", async () => {
-    localStorage.setItem(KEY, "9b2f6a8e-3c1d-4e5f-8a7b-0c1d2e3f4a5b");
+    localStorage.setItem(KEY, crypto.randomUUID()); // a uuid that is not in the list
     render(SalonSwitcher);
     await loadWith(answer());
     expect((screen.getByRole("combobox", { name: "Salon" }) as HTMLSelectElement).value).toBe(

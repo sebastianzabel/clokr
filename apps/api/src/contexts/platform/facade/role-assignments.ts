@@ -280,6 +280,12 @@ export type ContextSalonIds = {
   homeSalonId: string | null;
 };
 
+/** Ascending by UTF-16 code unit — the same order as a bare `.sort()`, stated explicitly. */
+function byCodeUnit(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 /** Every ZUGEWIESEN key of the catalog — "grants at least one of these" makes a role managing. */
 const ZUGEWIESEN_KEYS: readonly PermissionKey[] = PERMISSIONS.filter(
   (permission) => permission.reach === "ZUGEWIESEN",
@@ -314,7 +320,9 @@ export async function contextSalonIds(
 ): Promise<ContextSalonIds> {
   const tenantId = ctx.tenantId;
   const activeSalonIds = async (): Promise<string[]> =>
-    (await listSalons(db, tenantId, { includeInactive: false })).map((salon) => salon.id).sort();
+    (await listSalons(db, tenantId, { includeInactive: false }))
+      .map((salon) => salon.id)
+      .sort(byCodeUnit);
 
   if (ctx.actor.kind !== "user") {
     return {
@@ -362,7 +370,7 @@ export async function contextSalonIds(
         where: { tenantId, id: { in: [...collected] }, isActive: true },
         select: { id: true },
       });
-      managed = salons.map((salon) => salon.id).sort();
+      managed = salons.map((salon) => salon.id).sort(byCodeUnit);
     }
   }
 
@@ -388,11 +396,11 @@ export async function contextSalonIds(
         where: { tenantId, id: { in: candidateIds }, isActive: true },
         select: { id: true },
       });
-      own = salons.map((salon) => salon.id).sort();
+      own = salons.map((salon) => salon.id).sort(byCodeUnit);
     }
   }
 
-  const salonIds = [...new Set([...managed, ...own])].sort();
+  const salonIds = [...new Set([...managed, ...own])].sort(byCodeUnit);
   if (employee) {
     const home = await homeSalonAt(db, tenantId, employee.id, today);
     if (home && salonIds.includes(home.salonId)) homeSalonId = home.salonId;

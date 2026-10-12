@@ -15,3 +15,8 @@
 #   gitleaks detect --report-format json --report-path /tmp/leaks.json
 #   jq -r '.[].Fingerprint' /tmp/leaks.json
 # and append the resulting `<sha>:<file>:<rule>:<line>` lines here.
+
+# Phase 82 (Issue #82), 2026-10-12: false positive (generic-api-key) — a hard-coded random uuid used
+# as a manipulated localStorage value in a web unit test, no secret. The test now generates the
+# uuid at runtime; this fingerprint covers the already-pushed commit.
+5abaa16d4ab886e4281e12f2162093aeea44508e:apps/web/src/lib/components/layout/__tests__/SalonSwitcher.test.ts:generic-api-key:125
