@@ -51,6 +51,9 @@
     "/admin/shutdowns": "Betriebsurlaub",
     "/admin/special-leave": "Sonderurlaub",
     "/admin/vacation": "Urlaub",
+    "/admin/roles": "Rollen & Rechte",
+    "/admin/availability": "Verfügbarkeit",
+    "/admin/phorest": "Phorest",
     "/admin": "Administration",
     "/settings": "Mein Profil",
   };
