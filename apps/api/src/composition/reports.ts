@@ -48,8 +48,9 @@ import {
   leaveDaysByCodeWithin, // Issue #451 (D-01) — the DATEV export's VACATION Lohnart line
   type LeaveDaysForCode, // Issue #451 (D-01)
   leaveRequestDaysWithin, // Issue #451 (D-02) — the Urlaubsliste / Urlaubs-PDF list's per-period priced days
+  sickLeaveDayCounts, // Issue #84 (D-14) — the one sick-day / § 9 counting rule
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
-import type { LeaveTypeCode } from "@clokr/db";
+import type { LeaveRequestStatus, LeaveTypeCode } from "@clokr/db";
 
 // ── Month name lookup ─────────────────────────────────────────────────────────
 const MONTH_NAMES = [
@@ -80,7 +81,7 @@ type LeaveRequestWithType = {
   id: string;
   startDate: Date;
   endDate: Date;
-  status: string;
+  status: LeaveRequestStatus;
   deletedAt: Date | null;
   halfDay: boolean;
   attestPresent: boolean;
@@ -158,8 +159,9 @@ type EmployeeWithIncludes = {
 //
 // Issue #451 (D-03): this function computes NO Soll/Ist/Überstunden any more — all three GET
 // handlers below call `computeMonthReportFigures` (the working-time-account's own month result)
-// directly for those. The day-iterating helper left here (`daysInRange`) exists ONLY for the
-// sick-day / § 9 day counts, which are calendar-day spans, not Soll minutes.
+// directly for those. Issue #84 (D-14): the sick-day / § 9 day counts (calendar-day spans, not Soll
+// minutes) come from the absence context's `sickLeaveDayCounts` — this function carries no
+// day-counting rule of its own any more.
 // Bounds are UTC-midnight calendar days (monthDateRange) because they reach @db.Date columns / date
 // clipping — never a monthRangeUtc instant (Issue #493, D-01).
 function computeEmployeeSummary(
@@ -197,51 +199,12 @@ function computeEmployeeSummary(
     note?: string;
   }>;
 } {
-  // ── Days in range clamped to [firstDay, lastDay] ─────────────────────────
-  function daysInRange(from: Date, to: Date): number {
-    const s = from < firstDay ? firstDay : from;
-    const e2 = to > lastDay ? lastDay : to;
-    return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
-  }
-
-  // ── Sick days ────────────────────────────────────────────────────────────
-  // Single source of truth: sick days are counted exclusively from LeaveRequest
-  // records whose LeaveType.code is one of the two sickness codes (with attest metadata).
-  // The Absence model (SICK / SICK_CHILD) is used for document tracking
-  // (AU-Bescheinigung path) and must NOT contribute to these counters —
-  // adding both would double-count days for the same sick event.
-  // sickDaysAbsence is retained here as a reference for future use (e.g.,
-  // cross-checking), but is intentionally excluded from sickDaysWithoutAttest.
-  const _sickDaysAbsence = emp.absences
-    .filter((a) => a.type === "SICK" || a.type === "SICK_CHILD")
-    .reduce((sum, a) => {
-      const s = a.startDate < firstDay ? firstDay : a.startDate;
-      const e2 = a.endDate > lastDay ? lastDay : a.endDate;
-      return sum + Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
-    }, 0);
-
-  const sickLeaveRequests = emp.leaveRequests.filter((lr) =>
-    isSickLeaveTypeCode(lr.leaveType.code),
-  );
-
-  let sickDaysWithAttest = 0;
-  let sickDaysWithoutAttest = 0; // seeded from LeaveRequests only (not Absence) to avoid double-count
-
-  for (const lr of sickLeaveRequests) {
-    const factor = lr.halfDay ? 0.5 : 1;
-    const totalDays = daysInRange(lr.startDate, lr.endDate) * factor;
-    if (lr.attestPresent && lr.attestValidFrom && lr.attestValidTo) {
-      const attestFrom = lr.attestValidFrom > lr.startDate ? lr.attestValidFrom : lr.startDate;
-      const attestTo = lr.attestValidTo < lr.endDate ? lr.attestValidTo : lr.endDate;
-      const attestDays = daysInRange(attestFrom, attestTo) * factor;
-      sickDaysWithAttest += attestDays;
-      sickDaysWithoutAttest += Math.max(0, totalDays - attestDays);
-    } else if (lr.attestPresent) {
-      sickDaysWithAttest += totalDays;
-    } else {
-      sickDaysWithoutAttest += totalDays;
-    }
-  }
+  // ── Sick days and § 9 shift (Issue #84, D-14) ─────────────────────────────
+  // The absence context's one counting rule (calendar days, half day, clip, attest split, § 9
+  // shift). Absence rows (the AU document path) deliberately never contribute — see the kernel's
+  // own docblock.
+  const { sickDays, sickDaysWithAttest, sickDaysWithoutAttest, section9DaysThisMonth } =
+    sickLeaveDayCounts(emp.leaveRequests, firstDay, lastDay, { section9Credits });
 
   // ── Absence breakdown (Issue #451, D-02) ─────────────────────────────────
   // Every per-type leave count, and totalAbsenceDays, comes from the absence context's own
@@ -276,34 +239,6 @@ function computeEmployeeSummary(
   }
   totalAbsenceDays = Math.round(totalAbsenceDays * 100) / 100;
 
-  // Phase 104 (D-30): gutgeschriebene § 9-Tage wandern von Urlaub nach Krank-mit-
-  // Attest. Sie sind per Definition attestiert — ohne ärztliches Zeugnis gäbe es die
-  // Gutschrift nicht (section9Credits is already CONFIRMED-only, filtered by the
-  // caller). daysInRange() clips each credit to the report month, mirroring the day
-  // rule the surrounding sick-day computation already uses (no third rule).
-  //
-  // [Rule 1 fix] D-02 keeps the underlying SICK LeaveRequest's own attestPresent flag
-  // untouched by a § 9 confirm — a manager confirms via the dedicated "AU liegt vor"
-  // flow, not the older PATCH /requests/:id/attest endpoint. Without shifting these
-  // days OUT of sickDaysWithoutAttest first, a credited day would count TWICE in the
-  // sick total (once from the sickLeaveRequests loop above, once here) and break the
-  // "sickDays = sickDaysWithAttest + sickDaysWithoutAttest" invariant this file's own
-  // tests assert.
-  //
-  // [Phase 104 review WR-02] The subtraction was clamped but the addition was not, so a
-  // Krankmeldung that ALREADY carries attestPresent (set independently via
-  // PATCH /requests/:id/attest, which D-02 keeps orthogonal to § 9) had its days counted
-  // in sickDaysWithAttest by the loop above AND added again here — a 2-day sickness with a
-  // full attest and both days § 9-confirmed reported sickDays = 4. Only days that were
-  // actually IN the without-attest bucket may be shifted, so the two buckets move as one
-  // transfer and their sum is invariant.
-  const section9DaysThisMonth = section9Credits.reduce(
-    (s, c) => s + daysInRange(c.creditedStart, c.creditedEnd),
-    0,
-  );
-  const section9DaysShiftedToAttest = Math.min(sickDaysWithoutAttest, section9DaysThisMonth);
-  sickDaysWithoutAttest -= section9DaysShiftedToAttest;
-  sickDaysWithAttest += section9DaysShiftedToAttest;
   // Issue #451 (D-02): vacationDays/totalAbsenceDays are already §9-netted by leaveDaysByCode
   // (the absence context's own netDays) — no second subtraction here.
 
@@ -318,7 +253,7 @@ function computeEmployeeSummary(
   }));
 
   return {
-    sickDays: sickDaysWithAttest + sickDaysWithoutAttest,
+    sickDays,
     sickDaysWithAttest,
     sickDaysWithoutAttest,
     vacationDays,
