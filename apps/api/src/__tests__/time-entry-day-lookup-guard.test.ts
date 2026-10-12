@@ -53,7 +53,7 @@ const REQUIRED_MARKERS: Record<string, number> = {
   "apps/api/src/contexts/time-tracking/entry-invariants.ts": 1,
   "apps/api/src/contexts/time-tracking/api/presence.ts": 3,
   "apps/api/src/contexts/time-tracking/api/time-entries.ts": 1,
-  "apps/api/src/services/clock/resolver.ts": 3,
+  "apps/api/src/services/clock/resolver.ts": 4,
   "apps/api/src/services/clock/consolidate.ts": 1,
   "apps/api/src/contexts/platform/facade/holiday-resolution.ts": 1,
 };

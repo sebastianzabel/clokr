@@ -244,6 +244,45 @@ export async function resolveClockEvent(
         }
 
         case "REOPEN": {
+          // Issue #87 (D-04/D-12): one entry per day — a re-clock-in reopens the day's entry and
+          // never changes its salon (Phase 68b D-09). A differing explicit salon is refused instead
+          // of silently booking time to the wrong work location (§ 2 EFZG holiday basis, salon
+          // views). The salon is validated FIRST, before this comparison and before the locked
+          // guard below, so a foreign and an unknown id answer the identical 404 (and an inactive
+          // one 400) whatever state the day is in (T-100-09). Nothing is written before this point.
+          // MULTI-ENTRY: with several entries per day (#70) a different salon would start a new entry instead of this 409.
+          if (event.salonId !== undefined) {
+            const chosen = await resolveEntrySalon(tx, {
+              tenantId: event.tenantId,
+              employeeId: event.employeeId,
+              startTime: event.timestamp,
+              explicitSalonId: event.salonId,
+            });
+            if (!chosen.ok) {
+              app.log.warn(
+                {
+                  employeeId: event.employeeId,
+                  source: event.source,
+                  entryId: closedEntry!.id,
+                  reason: salonConflictReason(chosen.status),
+                },
+                "clock_event_conflict",
+              );
+              return { kind: "CONFLICT", reason: salonConflictReason(chosen.status) } as const;
+            }
+            if (chosen.salonId !== closedEntry!.salonId) {
+              app.log.warn(
+                {
+                  employeeId: event.employeeId,
+                  source: event.source,
+                  entryId: closedEntry!.id,
+                  reason: "SALON_DIFFERS_FROM_DAY_ENTRY",
+                },
+                "clock_event_conflict",
+              );
+              return { kind: "CONFLICT", reason: "SALON_DIFFERS_FROM_DAY_ENTRY" } as const;
+            }
+          }
           // D-01b: locked-month guard (mirrors STOP branch — never mutate a locked entry)
           if (closedEntry!.isLocked) {
             app.log.warn(
