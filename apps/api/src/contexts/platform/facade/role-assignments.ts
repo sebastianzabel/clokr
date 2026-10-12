@@ -37,8 +37,7 @@ import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter"
 import { systemRoleIdForLegacyRole } from "../compat-role";
 import { SYSTEM_ROLE_IDS } from "../system-roles";
 import { findSalon, listSalons } from "./salons";
-import { homeSalonAt, readTenantTimezone } from "./salon-assignments";
-import { dayToDate, isVoided, tenantLocalDay } from "../salon-assignment-rules";
+import { currentAndFutureAssignmentSalonIds, homeSalonAt } from "./salon-assignments";
 import {
   RoleLockoutError,
   countHoldersPerGuardedPermission,
@@ -304,9 +303,10 @@ const ZUGEWIESEN_KEYS: readonly PermissionKey[] = PERMISSIONS.filter(
  *   legacy-role fallback as {@link resolveAccessReach} ({@link loadLegacyFallbackRole}); a deleted
  *   user reaches nothing. A non-user actor (API key, job) reaches every active salon, mirroring
  *   `resolveAccessReach`'s `wholeTenant` answer.
- * - **own:** salons of the caller's own `EmployeeSalonAssignment` rows (any kind) that are valid on
- *   the tenant-local day of `today` or later, voided rows excluded, active salons only — an
- *   employee working in two salons reaches its own data in both (EIGENE reach).
+ * - **own:** the salons of the caller's own current and future salon assignments
+ *   ({@link currentAndFutureAssignmentSalonIds}, Phase 87b D-10 — the validity rule lives there
+ *   only), filtered to active salons — an employee working in two salons reaches its own data in
+ *   both (EIGENE reach).
  *
  * `context-salon-ids-82.test.ts` pins the managed part EQUAL to the union of `resolveAccessReach`
  * over every ZUGEWIESEN key, so the two can never drift apart. Not re-exported from
@@ -381,16 +381,7 @@ export async function contextSalonIds(
     select: { id: true },
   });
   if (employee) {
-    const day = dayToDate(tenantLocalDay(today, await readTenantTimezone(db, tenantId)));
-    const rows = await db.employeeSalonAssignment.findMany({
-      where: {
-        tenantId,
-        employeeId: employee.id,
-        OR: [{ validUntil: null }, { validUntil: { gte: day } }],
-      },
-      select: { salonId: true, validFrom: true, validUntil: true },
-    });
-    const candidateIds = [...new Set(rows.filter((row) => !isVoided(row)).map((r) => r.salonId))];
+    const candidateIds = await currentAndFutureAssignmentSalonIds(db, tenantId, employee.id, today);
     if (candidateIds.length > 0) {
       const salons = await db.salon.findMany({
         where: { tenantId, id: { in: candidateIds }, isActive: true },
