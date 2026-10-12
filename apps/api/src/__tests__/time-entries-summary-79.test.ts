@@ -198,6 +198,8 @@ describe("Issue #79 (Phase 79 Plan 04) — GET /api/v1/time-entries/summary", ()
         workingMinutes: 450,
         breakMinutes: 30,
         entryCount: 1,
+        // Issue #81 (D-09): the body gained activityMinutes — an additive contract change.
+        activityMinutes: { PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 450 },
       });
     });
   });
@@ -231,6 +233,7 @@ describe("Issue #79 (Phase 79 Plan 04) — GET /api/v1/time-entries/summary", ()
         workingMinutes: 918,
         breakMinutes: 75,
         entryCount: 2,
+        activityMinutes: { PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 918 },
       };
       const own = await summary(
         await login(user.email),
@@ -361,6 +364,7 @@ describe("Issue #79 (Phase 79 Plan 04) — GET /api/v1/time-entries/summary", ()
         workingMinutes: 450,
         breakMinutes: 30,
         entryCount: 1,
+        activityMinutes: { PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 450 },
       });
       // The list shows the same single entry.
       const list = await app.inject({
@@ -381,6 +385,7 @@ describe("Issue #79 (Phase 79 Plan 04) — GET /api/v1/time-entries/summary", ()
         workingMinutes: 0,
         breakMinutes: 0,
         entryCount: 0,
+        activityMinutes: { PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 0 },
       });
 
       // PERSONS manager on [X]: both of X's entries. Presence 480 + 480 = 960, break 30,
@@ -402,6 +407,7 @@ describe("Issue #79 (Phase 79 Plan 04) — GET /api/v1/time-entries/summary", ()
         workingMinutes: 930,
         breakMinutes: 30,
         entryCount: 2,
+        activityMinutes: { PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 930 },
       });
     });
   });

@@ -13,6 +13,7 @@ import {
   scopedTimeEntryIds, // Phase 91b Plan 03 (#91), D-09
   isStammsalonScopeMatch, // Phase 91b Plan 09 (#91), D-10/D-17
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
+  findSalon, // Phase 81 (#81), D-09 — summary salon filter, identical 404
 } from "../../platform";
 import type { PermissionKey } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
@@ -23,6 +24,8 @@ import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; //
 import { resolveEntrySalon } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
 import { entryDurations } from "../entry-durations"; // Phase 79 (Issue #79), D-06/D-14 — per-entry presence/working time
 import { activityKindSchema, activitySharesSchema } from "../activity-kind"; // Issue #81 (D-06)
+import { activityMinutes } from "../activity-minutes"; // Issue #81 (D-09) — minutes per kind
+import { loadActivityRowsForEntries } from "../activity-store"; // Issue #81 (D-09)
 import {
   validateActivityState,
   mergeActivityWrite,
@@ -167,6 +170,8 @@ const timeEntrySummaryQuerySchema = z.object({
   employeeId: z.string().uuid("Ungültige Mitarbeiter-ID"),
   from: isoDateParam,
   to: isoDateParam,
+  // Issue #81 (D-09/D-17): narrows every figure of the body to that salon; `null` is not accepted.
+  salonId: z.string().uuid("Ungültige Salon-ID").optional(),
 });
 
 // D-09: the summary reads one bounded findMany; cap the window at a leap year (inclusive days).
@@ -2758,12 +2763,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
   app.get("/summary", {
     schema: {
       tags: ["Zeiterfassung"],
-      summary: "Presence, working and break minutes of one employee over a period",
+      summary:
+        "Presence, working and break minutes of one employee over a period, and working minutes per activity kind",
       description:
         "Sums over the entry set the working-time account counts: closed, valid WORK entries that are not deleted. " +
         "Open, invalid, deleted and non-WORK entries are excluded. A SALONS/PERSONS-scoped manager receives the sum " +
         "over the entries GET /time-entries would list for them (a partial sum by design). Minutes are exact sums, " +
-        "rounded once at the end. At most 366 days per request.",
+        "rounded once at the end. At most 366 days per request. " +
+        "activityMinutes: working minutes per activity kind (PRODUCTIVE, SETUP_CLEANING, UNSPECIFIED) over the " +
+        "same entries — minutes only, never amounts, rates or ratios; the three values sum to workingMinutes " +
+        "before rounding, each is rounded once. Optional salonId (a salon of the caller's tenant; a foreign or " +
+        "unknown id answers 404) narrows every figure of the body to that salon's entries.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requireAuth,
@@ -2805,6 +2815,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
+      // Issue #81 (D-09): one null path for a foreign AND an unknown salon id (T-100-09 style). No
+      // isActive requirement — the history of a deactivated salon stays reportable.
+      if (q.salonId) {
+        const salon = await findSalon(app.prisma, tenantId, q.salonId);
+        if (!salon) {
+          return reply.code(404).send({ error: "Salon nicht gefunden" });
+        }
+      }
+
       // D-07: T1 is the saldo's own entry set; no Berufsschule credit, no hire/exit-span clamp.
       const access = accessContextFromRequest(req);
       let entries = await getValidWorkedEntriesInRange(
@@ -2824,15 +2843,35 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       }
 
+      // Issue #81 (D-09): the activity fields come from a second, tenant-bound read by entry id —
+      // the saldo's T1 select is never widened (D-12). An entry whose activity row is not returned
+      // (deleted in between) is dropped from EVERY sum, so the body stays internally consistent.
+      const activityRows = await loadActivityRowsForEntries(
+        app.prisma,
+        tenantId,
+        entries.map((e) => e.id),
+      );
+      entries = entries.filter((e) => activityRows.has(e.id));
+      // Issue #81 (D-17): the salon filter narrows the whole body, so Σ activityMinutes = working.
+      if (q.salonId) {
+        entries = entries.filter((e) => activityRows.get(e.id)?.salonId === q.salonId);
+      }
+
       // Exact per-entry values summed, rounded once at the end.
       let presence = 0;
       let working = 0;
       let breaks = 0;
+      const perKind = { PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 0 };
       for (const e of entries) {
         const d = entryDurations(e);
         presence += d.presenceMinutes;
         working += d.workingMinutes;
         breaks += d.breakMinutes;
+        const row = activityRows.get(e.id)!;
+        const m = activityMinutes({ ...e, activityKind: row.activityKind }, row.shares);
+        perKind.PRODUCTIVE += m.PRODUCTIVE;
+        perKind.SETUP_CLEANING += m.SETUP_CLEANING;
+        perKind.UNSPECIFIED += m.UNSPECIFIED;
       }
 
       return {
@@ -2843,6 +2882,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         workingMinutes: Math.round(working),
         breakMinutes: Math.round(breaks),
         entryCount: entries.length,
+        // Issue #81 (D-10): minutes only — never amounts, rates or ratios.
+        activityMinutes: {
+          PRODUCTIVE: Math.round(perKind.PRODUCTIVE),
+          SETUP_CLEANING: Math.round(perKind.SETUP_CLEANING),
+          UNSPECIFIED: Math.round(perKind.UNSPECIFIED),
+        },
       };
     },
   });
