@@ -310,6 +310,17 @@ describe("Issue #81 (AK-6, D-13) — classification leaves every figure surface 
     return JSON.parse(res.body) as unknown;
   }
 
+  /**
+   * Team-week bodies list the members in an order the endpoint does not guarantee (it differed
+   * between two identical calls in CI), so the comparison keys them by member id. Every value of
+   * every member is still compared; only the position no longer matters.
+   */
+  function byMember(body: unknown): unknown {
+    const b = body as { team?: Array<{ id: string }> } & Record<string, unknown>;
+    if (!Array.isArray(b.team)) return body;
+    return { ...b, team: [...b.team].sort((x, y) => x.id.localeCompare(y.id)) };
+  }
+
   /** Every saldo / figure / day-kernel surface, each at the clock test 79 uses for it. */
   async function capture() {
     const out: Record<string, unknown> = {};
@@ -357,14 +368,14 @@ describe("Issue #81 (AK-6, D-13) — classification leaves every figure surface 
     for (const e of [a, b]) {
       out[`balance:${e.id}`] = await get(admin, `/api/v1/overtime/${e.id}`);
     }
-    out.teamWeek2303 = await get(admin, "/api/v1/dashboard/team-week?date=2026-03-25");
+    out.teamWeek2303 = byMember(await get(admin, "/api/v1/dashboard/team-week?date=2026-03-25"));
 
     vi.setSystemTime(CLOCK_DASHBOARD);
     admin = await loginAs(app, adminEmail);
     const emp = await loginAs(app, a.email);
     out.dashboard = await get(emp, "/api/v1/dashboard");
     out.myWeek = await get(emp, "/api/v1/dashboard/my-week?date=2026-03-18");
-    out.teamWeek1603 = await get(admin, "/api/v1/dashboard/team-week?date=2026-03-18");
+    out.teamWeek1603 = byMember(await get(admin, "/api/v1/dashboard/team-week?date=2026-03-18"));
 
     vi.setSystemTime(CLOCK_SALDO);
     return out;
