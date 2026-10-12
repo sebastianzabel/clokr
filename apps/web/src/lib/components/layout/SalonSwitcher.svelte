@@ -18,12 +18,14 @@
 {#if visible}
   <label class="salon-switcher">
     <span class="salon-switcher-label">Salon</span>
-    <select class="select filter-select salon-switcher-select" {value} onchange={handleChange}>
-      <option value={ALL_SALONS}>Alle Salons</option>
-      {#each $salonContext.salons as salon (salon.id)}
-        <option value={salon.id}>{salon.name}</option>
-      {/each}
-    </select>
+    <span class="salon-switcher-field">
+      <select class="select filter-select salon-switcher-select" {value} onchange={handleChange}>
+        <option value={ALL_SALONS}>Alle Salons</option>
+        {#each $salonContext.salons as salon (salon.id)}
+          <option value={salon.id}>{salon.name}</option>
+        {/each}
+      </select>
+    </span>
   </label>
 {/if}
 
@@ -40,10 +42,29 @@
     color: var(--text-muted);
     white-space: nowrap;
   }
+  /* The global .select recipe draws no chevron; in the Topbar the label may be hidden, so the
+     control shows its own to read as a choice. */
+  .salon-switcher-field {
+    position: relative;
+    display: inline-flex;
+    min-width: 0;
+  }
+  .salon-switcher-field::after {
+    content: "";
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid var(--text-muted);
+    border-bottom: 1.5px solid var(--text-muted);
+    transform: translateY(-70%) rotate(45deg);
+    pointer-events: none;
+  }
   .salon-switcher-select {
     max-width: 220px;
     min-height: 36px;
-    padding: 0.375rem 0.75rem;
+    padding: 0.375rem 2rem 0.375rem 0.75rem;
     font-size: 14px;
     text-overflow: ellipsis;
   }
