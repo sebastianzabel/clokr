@@ -32,8 +32,10 @@ import {
   seedTestData,
   cleanupTestData,
   createTestSalon,
+  reissueTokenNow,
 } from "./../../__tests__/setup";
 import { leaveTypeFields } from "../../contexts/absence/leave-type";
+import { SYSTEM_ROLE_IDS } from "../../contexts/platform";
 
 const PASSWORD = "test1234";
 const WEEK_URL = "/api/v1/dashboard/team-week?date=2026-06-11";
@@ -352,6 +354,205 @@ describe("Issue #84 — dashboard team views with a salon filter", () => {
       expect(JSON.parse(unknown.body)).toEqual({ error: "Salon nicht gefunden" });
       const malformed = await get(data.adminToken, `${WEEK_URL}&salonId=not-a-uuid`);
       expect(malformed.statusCode).toBe(400);
+    });
+  });
+
+  // ── Task 2 — team-upcoming-leave ──────────────────────────────────────────────────────────
+
+  describe("team-upcoming-leave", () => {
+    type Item = {
+      id: string;
+      employeeId: string;
+      employeeName: string;
+      startDate: string;
+      endDate: string;
+      days: number;
+      leaveTypeName: string;
+      leaveTypeCode: string | null;
+    };
+    type Upcoming = { salonId: string | null; items: Item[] };
+
+    let data: Awaited<ReturnType<typeof seedTestData>>;
+    let salonA: string;
+    let salonB: string;
+    let managerToken: string;
+    let xToday = "";
+    let xJuly = "";
+    let yId = "";
+    let zId = "";
+    let zEmployee = "";
+    let xEmployee = "";
+
+    async function upcoming(token: string | null, salonId?: string) {
+      return get(
+        token,
+        salonId
+          ? `/api/v1/dashboard/team-upcoming-leave?salonId=${salonId}`
+          : "/api/v1/dashboard/team-upcoming-leave",
+      );
+    }
+    async function items(token: string, salonId?: string): Promise<Upcoming> {
+      const res = await upcoming(token, salonId);
+      expect(res.statusCode, res.body).toBe(200);
+      return JSON.parse(res.body) as Upcoming;
+    }
+
+    beforeAll(async () => {
+      data = await seedTestData(app, "tf84u");
+      salonA = data.salonId;
+      salonB = (await createTestSalon(app.prisma, data.tenant.id, { name: "Tf84u B" })).id;
+      const tenantId = data.tenant.id;
+      const vacation = data.vacationType.id;
+
+      // X: Stammsalon A. One vacation that ends today and one in July.
+      const x = await createPerson(tenantId, "X");
+      xEmployee = x.employee.id;
+      await home(tenantId, x.employee.id, salonA);
+      xToday = (await leave(x.employee.id, vacation, "2026-06-11", "2026-06-11")).id;
+      xJuly = (await leave(x.employee.id, vacation, "2026-07-01", "2026-07-03", { days: 3 })).id;
+      // Never listed: pending, soft-deleted, ended yesterday.
+      await leave(x.employee.id, vacation, "2026-08-01", "2026-08-01", { status: "PENDING" });
+      await leave(x.employee.id, vacation, "2026-08-03", "2026-08-03", { deletedAt: new Date() });
+      await leave(x.employee.id, vacation, "2026-06-10", "2026-06-10");
+
+      // Y: Stammsalon B.
+      const y = await createPerson(tenantId, "Y");
+      await home(tenantId, y.employee.id, salonB);
+      yId = (await leave(y.employee.id, vacation, "2026-06-20", "2026-06-22", { days: 3 })).id;
+
+      // Z: Stammsalon A until 30.06., B from 01.07.; the request spans the change.
+      const z = await createPerson(tenantId, "Z");
+      zEmployee = z.employee.id;
+      await home(tenantId, z.employee.id, salonA, "2024-01-01", "2026-06-30");
+      await home(tenantId, z.employee.id, salonB, "2026-07-01");
+      zId = (await leave(z.employee.id, vacation, "2026-06-29", "2026-07-02", { days: 4 })).id;
+
+      // A Salonmanager of A (an employee of its own with no Stammsalon: not in anyone's reach).
+      const manager = await createPerson(tenantId, "M");
+      await app.prisma.roleAssignment.create({
+        data: {
+          tenantId,
+          userId: manager.user.id,
+          accessRoleId: SYSTEM_ROLE_IDS.SALON_MANAGER,
+          scopeType: "SALONS",
+          salonIds: [salonA],
+          employeeIds: [],
+        },
+      });
+      const login = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: manager.user.email, password: PASSWORD },
+      });
+      managerToken = (JSON.parse(login.body) as { accessToken: string }).accessToken;
+    });
+
+    afterAll(async () => {
+      try {
+        await app.prisma.roleAssignment.deleteMany({ where: { tenantId: data.tenant.id } });
+        await cleanupTestData(app, data.tenant.id);
+      } catch (err) {
+        console.error("dashboard-team-salon-filter-84 upcoming cleanup failed:", err);
+      }
+    });
+
+    it("unfiltered: ends-today included, ordered by start date, exact item shape, salonId null", async () => {
+      const body = await items(data.adminToken);
+      expect(body.salonId).toBeNull();
+      expect(body.items.map((i) => i.id)).toEqual([xToday, yId, zId, xJuly]);
+      expect(Object.keys(body.items[0]).sort()).toEqual(
+        [
+          "days",
+          "employeeId",
+          "employeeName",
+          "endDate",
+          "id",
+          "leaveTypeCode",
+          "leaveTypeName",
+          "startDate",
+        ].sort(),
+      );
+      expect(body.items[0]).toMatchObject({
+        employeeId: xEmployee,
+        employeeName: "X X-Tf84",
+        startDate: "2026-06-11",
+        endDate: "2026-06-11",
+        days: 1,
+        leaveTypeCode: "VACATION",
+      });
+      expect(body.items[3].days).toBe(3);
+    });
+
+    it("unfiltered equals the old leave list at midday (same ids, same order)", async () => {
+      const old = await get(
+        data.adminToken,
+        "/api/v1/leave/requests?status=APPROVED&upcoming=true",
+      );
+      expect(old.statusCode, old.body).toBe(200);
+      const oldIds = (JSON.parse(old.body) as Array<{ id: string }>).map((r) => r.id);
+      const mine = (await items(data.adminToken)).items.map((i) => i.id);
+      expect(oldIds).toContain(xToday);
+      expect(mine).toEqual(oldIds);
+    });
+
+    it("the tenant-local day decides, not the UTC date (D-18)", async () => {
+      // 22:30 UTC on 11.06. is 00:30 on 12.06. in the tenant time zone: the request that ended on
+      // 11.06. is no longer upcoming. The old list compares the UTC date and still returns it.
+      vi.setSystemTime(new Date("2026-06-11T22:30:00.000Z"));
+      try {
+        const token = reissueTokenNow(app, data.adminToken);
+        const old = await get(token, "/api/v1/leave/requests?status=APPROVED&upcoming=true");
+        expect(old.statusCode, old.body).toBe(200);
+        const oldIds = (JSON.parse(old.body) as Array<{ id: string }>).map((r) => r.id);
+        const mine = (await items(token)).items.map((i) => i.id);
+        expect(oldIds).toContain(xToday);
+        expect(mine).not.toContain(xToday);
+        expect(mine).toEqual([yId, zId, xJuly]);
+      } finally {
+        vi.setSystemTime(new Date("2026-06-11T10:00:00.000Z"));
+      }
+    });
+
+    it("salon A keeps the Stammsalon A person and the request spanning the change", async () => {
+      const body = await items(data.adminToken, salonA);
+      expect(body.salonId).toBe(salonA);
+      expect(body.items.map((i) => i.id)).toEqual([xToday, zId, xJuly]);
+    });
+
+    it("salon B keeps the other person and the request spanning the change", async () => {
+      const body = await items(data.adminToken, salonB);
+      expect(body.items.map((i) => i.id)).toEqual([yId, zId]);
+    });
+
+    it("a Salonmanager of A sees only persons homed in A today", async () => {
+      const body = await items(managerToken);
+      expect(body.items.map((i) => i.id)).toEqual([xToday, zId, xJuly]);
+      expect(body.items.some((i) => i.id === yId)).toBe(false);
+    });
+
+    it("plain employee 403, no token 401", async () => {
+      expect((await upcoming(data.empToken)).statusCode).toBe(403);
+      expect((await upcoming(null)).statusCode).toBe(401);
+    });
+
+    it("answers at most eight items, the eight earliest, after the filter", async () => {
+      const vacation = data.vacationType.id;
+      // Ten further requests of X (Stammsalon A) in September, one day each.
+      for (let day = 1; day <= 10; day++) {
+        const d = `2026-09-${String(day).padStart(2, "0")}`;
+        await leave(xEmployee, vacation, d, d);
+      }
+      const all = await items(data.adminToken);
+      expect(all.items).toHaveLength(8);
+      const starts = all.items.map((i) => i.startDate);
+      expect(starts).toEqual([...starts].sort());
+      expect(all.items.map((i) => i.id).slice(0, 4)).toEqual([xToday, yId, zId, xJuly]);
+      const filtered = await items(data.adminToken, salonA);
+      expect(filtered.items).toHaveLength(8);
+      expect(filtered.items.map((i) => i.id).slice(0, 3)).toEqual([xToday, zId, xJuly]);
+      expect(
+        filtered.items.every((i) => i.employeeId === xEmployee || i.employeeId === zEmployee),
+      ).toBe(true);
     });
   });
 });

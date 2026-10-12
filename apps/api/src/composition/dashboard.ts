@@ -66,6 +66,7 @@ import {
   countPendingApprovals, // Phase 100B Plan 13 — A8
   vocationalSchoolDisplacesLeave, // Issue #448 (D-05) — composition applies, never redefines, the rule
   sickLeaveDayCounts, // Issue #84 (D-14) — the one sick-day counting rule
+  getApprovedLeaveEndingOnOrAfter, // Issue #84 (D-08) — the team card's upcoming leave
 } from "../contexts/absence";
 
 // Issue #84 (D-07): 1..12 months, default 6 — the bound keeps the per-person saldo fan-out finite.
@@ -1859,6 +1860,100 @@ export async function dashboardRoutes(app: FastifyInstance) {
             ? ("SALON_FILTER" as const)
             : ("NO_PERMISSION" as const),
         months: series.map((m) => ({ ...m, shouldMinutes: sollVisible ? m.shouldMinutes : null })),
+      };
+    },
+  });
+
+  // GET /api/v1/dashboard/team-upcoming-leave — the team's next approved leave for the dashboard
+  // card (Issue #84, D-08); replaces the card's use of /leave/requests, which stays unchanged.
+  //
+  // "Upcoming" means the request ends on or after the tenant-local today as a calendar-day bound
+  // (D-18, #493): a leave that ends today is still listed. Under a salon filter an absence follows
+  // the Stammsalon of its remaining days (D-04): a request is kept when the person is homed in the
+  // salon on at least one day from the later of its start and today to its end, so a request that
+  // spans a Stammsalon change appears under both salons. The limit applies after the filter.
+  app.get("/team-upcoming-leave", {
+    schema: {
+      tags: ["Dashboard"],
+      security: [{ bearerAuth: [] }],
+      summary: "Upcoming approved leave of the team",
+      description:
+        "The next approved leave requests of the persons in the caller's team-overview reach, " +
+        "ending today or later, ordered by start date, at most eight. With salonId only requests " +
+        "of persons whose Stammsalon is that salon on at least one remaining day.",
+    },
+    preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const { salonId } = teamSalonQuerySchema.parse(req.query);
+      const tenantId = req.user.tenantId;
+      const access = accessContextFromRequest(req);
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+
+      const reach = await resolveAccessReach(app.prisma, access, "team-overview:read:ZUGEWIESEN");
+      // D-02/D-16: validated before any data read; one body for every rejection cause.
+      const filter = await resolveTeamSalonFilter(app.prisma, tenantId, reach, salonId);
+      if (!filter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
+      const filterSalonId = filter.salonId;
+      const scopedAccess = { ...access, reach };
+
+      const today = todayInTz(tz);
+      const dayString = (d: Date) => d.toISOString().slice(0, 10);
+      const todayDay = dayString(today);
+
+      // A scoped reach names an explicit person set (Stammsalon today); a whole-tenant reach is
+      // the tenant scope. An empty set answers without a read.
+      const scopedIds = await resolveStammsalonScopedEmployeeIds(
+        app.prisma,
+        tenantId,
+        reach,
+        today,
+      );
+      if (scopedIds !== "all" && scopedIds.length === 0) {
+        return { salonId: filterSalonId, items: [] };
+      }
+      const scope =
+        scopedIds === "all"
+          ? employeeScopeFor(scopedAccess)
+          : employeeScopeFor(scopedAccess, { employeeIds: scopedIds });
+
+      let rows = await getApprovedLeaveEndingOnOrAfter(app.prisma, scope, today);
+      if (filterSalonId !== null && rows.length > 0) {
+        const latestEndDay = rows.reduce((max, r) => {
+          const end = dayString(r.endDate);
+          return end > max ? end : max;
+        }, todayDay);
+        const homeByPerson = await homeSalonsForDays(
+          app.prisma,
+          tenantId,
+          Array.from(new Set(rows.map((r) => r.employeeId))),
+          todayDay,
+          latestEndDay,
+        );
+        rows = rows.filter((r) => {
+          const dayMap = homeByPerson.get(r.employeeId);
+          if (!dayMap) return false;
+          const startDay = dayString(r.startDate);
+          const from = startDay > todayDay ? startDay : todayDay;
+          const to = dayString(r.endDate);
+          for (const [day, homeSalon] of dayMap) {
+            if (day >= from && day <= to && homeSalon === filterSalonId) return true;
+          }
+          return false;
+        });
+      }
+
+      return {
+        salonId: filterSalonId,
+        items: rows.slice(0, 8).map((r) => ({
+          id: r.id,
+          employeeId: r.employeeId,
+          employeeName: `${r.employee.firstName} ${r.employee.lastName}`,
+          startDate: dayString(r.startDate),
+          endDate: dayString(r.endDate),
+          days: Number(r.days),
+          leaveTypeName: r.leaveType.name,
+          leaveTypeCode: r.leaveType.code,
+        })),
       };
     },
   });

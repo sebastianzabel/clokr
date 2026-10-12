@@ -67,6 +67,7 @@ export {
   getPendingLeaveDaysInYear,
   countPendingApprovals,
   getLeaveStartingInWindow,
+  getApprovedLeaveEndingOnOrAfter, // Issue #84 (D-08)
   getOwnLeaveActivity,
   getReviewedLeaveActivity,
   getTeamLeaveSubmissions,
@@ -81,6 +82,7 @@ export type {
   StalePendingLeaveRequestForReminder,
   PendingLeaveDaysInYear,
   UpcomingApprovedLeave,
+  TeamUpcomingLeave, // Issue #84 (D-08)
   OwnLeaveActivityItem,
   ReviewedLeaveActivityItem,
   TeamLeaveSubmissionItem,
