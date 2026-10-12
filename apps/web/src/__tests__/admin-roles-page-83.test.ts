@@ -69,9 +69,11 @@ function asUser(permissions: string[]) {
 beforeEach(() => {
   apiGet.mockReset();
   markUnsaved("admin-roles", false);
-  apiGet.mockImplementation((path: string) =>
-    Promise.resolve(path === "/roles/permission-catalog" ? CATALOG : ROLES),
-  );
+  apiGet.mockImplementation((path: string) => {
+    if (path === "/roles/permission-catalog") return Promise.resolve(CATALOG);
+    if (path === "/roles") return Promise.resolve(ROLES);
+    return Promise.resolve([]);
+  });
 });
 
 describe("/admin/roles page (Issue #83)", () => {
@@ -110,5 +112,36 @@ describe("/admin/roles page (Issue #83)", () => {
     await waitFor(() => expect(hasUnsaved()).toBe(true));
     await fireEvent.click(screen.getByRole("button", { name: "Verwerfen" }));
     await waitFor(() => expect(hasUnsaved()).toBe(false));
+  });
+
+  it("tabs follow the permissions: Rollen and Zuweisungen, only one of them, in that order", async () => {
+    asUser(["role:read:ZUGEWIESEN", "role-assignment:manage:ZUGEWIESEN"]);
+    const first = renderWithTheme(RolesPage, {});
+    expect(screen.getAllByRole("tab").map((t) => t.textContent?.trim())).toEqual([
+      "Rollen",
+      "Zuweisungen",
+    ]);
+    first.unmount();
+
+    asUser(["role-assignment:manage:ZUGEWIESEN"]);
+    const second = renderWithTheme(RolesPage, {});
+    expect(screen.getAllByRole("tab").map((t) => t.textContent?.trim())).toEqual(["Zuweisungen"]);
+    second.unmount();
+
+    asUser(["role:read:ZUGEWIESEN"]);
+    renderWithTheme(RolesPage, {});
+    expect(screen.getAllByRole("tab").map((t) => t.textContent?.trim())).toEqual(["Rollen"]);
+  });
+
+  it("a new role draft survives switching to Zuweisungen and back", async () => {
+    asUser(["role:read:ZUGEWIESEN", "role:manage:ZUGEWIESEN", "role-assignment:manage:ZUGEWIESEN"]);
+    renderWithTheme(RolesPage, {});
+    await screen.findByText("Teamleitung");
+    await fireEvent.click(screen.getByRole("button", { name: "Neue Rolle" }));
+    await fireEvent.input(screen.getByLabelText("Name der Rolle"), { target: { value: "Probe" } });
+    await fireEvent.click(screen.getByRole("tab", { name: "Zuweisungen" }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Rollen" }));
+    expect(await screen.findByLabelText("Name der Rolle")).toHaveValue("Probe");
+    await waitFor(() => expect(hasUnsaved()).toBe(true));
   });
 });

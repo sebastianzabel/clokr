@@ -6,6 +6,8 @@
 <script lang="ts">
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import RolesTab from "$lib/components/admin/roles/RolesTab.svelte";
+  import AssignmentsTab from "$lib/components/admin/roles/AssignmentsTab.svelte";
+  import { salonContext } from "$stores/salon-context";
   import { draftDirty, type RoleDraft } from "$lib/components/admin/roles/role-draft";
   import { authStore } from "$stores/auth";
   import { markUnsaved } from "$stores/unsaved";
@@ -13,8 +15,12 @@
 
   let canReadRoles = $derived(hasPermission($authStore.user, "role:read:ZUGEWIESEN"));
   let canManage = $derived(hasPermission($authStore.user, "role:manage:ZUGEWIESEN"));
+  let canAssign = $derived(hasPermission($authStore.user, "role-assignment:manage:ZUGEWIESEN"));
 
-  let tabs = $derived(canReadRoles ? [{ id: "roles", label: "Rollen" }] : []);
+  let tabs = $derived([
+    ...(canReadRoles ? [{ id: "roles", label: "Rollen" }] : []),
+    ...(canAssign ? [{ id: "zuweisungen", label: "Zuweisungen" }] : []),
+  ]);
   let activeTab = $state<string | undefined>(undefined);
 
   let draft = $state<RoleDraft | null>(null);
@@ -38,6 +44,12 @@
   {#snippet tabContent(tab)}
     {#if tab === "roles"}
       <RolesTab {canManage} bind:draft onReady={() => (snapshotsReady = true)} />
+    {:else if tab === "zuweisungen"}
+      <AssignmentsTab
+        {canReadRoles}
+        salons={$salonContext.salons}
+        salonsLoaded={$salonContext.loaded}
+      />
     {/if}
   {/snippet}
   {#if tabs.length === 0}
