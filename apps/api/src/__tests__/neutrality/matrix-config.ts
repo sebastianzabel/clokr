@@ -347,6 +347,15 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "had role-based access behavior to compare. Same vacuous-satisfaction reasoning as the " +
       "`GET /api/v1/roles/permission-catalog` entry directly above.",
   },
+  {
+    route: "GET /api/v1/dashboard/team-trend",
+    reason:
+      "New route added in Phase 84 (Issue #84, D-07), long after the role guard (`requireRole`) " +
+      "was deleted from middleware/auth.ts (#75b) — built permission-gated " +
+      "(`team-overview:read:ZUGEWIESEN`) from its very first commit and never had role-based " +
+      "access behavior to compare. Same vacuous-satisfaction reasoning as the " +
+      "`GET /api/v1/role-assignments/people` entry directly above.",
+  },
 ];
 
 /** Routes declared in `app.ts` itself — invisible to the source parser, proven registered. */

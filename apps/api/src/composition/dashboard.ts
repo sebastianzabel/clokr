@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../contexts/platform";
 import {
@@ -50,6 +51,7 @@ import {
   resolveMissingEntriesDays,
   computeOvertimeBalanceBreakdown,
   monthlyHoursMonthSollMinutes, // Issue #433 (D-11)
+  computeMonthReportFigures, // Issue #451 (D-03), Issue #84 (D-07) — the one Soll/Ist source
   computeWeekProgress, // Issue #451 (D-06) — whole-week Soll + to-date pair from the saldo core
   type OvertimeBalanceBreakdown,
 } from "../contexts/working-time-account"; // Phase 100B Plan 06 — W8/W9/W10; Plan 07 — W5/W6; Phase 101B
@@ -60,7 +62,13 @@ import {
   getOwnPendingLeaveRequests, // Phase 100B Plan 13 — A7a
   countPendingApprovals, // Phase 100B Plan 13 — A8
   vocationalSchoolDisplacesLeave, // Issue #448 (D-05) — composition applies, never redefines, the rule
+  sickLeaveDayCounts, // Issue #84 (D-14) — the one sick-day counting rule
 } from "../contexts/absence";
+
+// Issue #84 (D-07): 1..12 months, default 6 — the bound keeps the per-person saldo fan-out finite.
+const teamTrendQuerySchema = z.object({
+  months: z.coerce.number().int().min(1).max(12).default(6),
+});
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -1607,6 +1615,127 @@ export async function dashboardRoutes(app: FastifyInstance) {
       );
 
       return { snapshots, currentTeamBalanceMinutes };
+    },
+  });
+
+  // GET /api/v1/dashboard/team-trend — the team charts' six-month series, aggregated on the server
+  // (Issue #84, D-07). Replaces the browser's six /reports/monthly calls; the figures come from
+  // the owning contexts only.
+  app.get("/team-trend", {
+    schema: {
+      tags: ["Dashboard"],
+      security: [{ bearerAuth: [] }],
+      summary: "Team trend of worked time, target time and sick days per month",
+      description:
+        "Per month of the window: the worked minutes and the target minutes from the working-time " +
+        "account and the sick days from the absence context, over the persons in the caller's " +
+        "team-overview reach. Target minutes only with overtime:read covering every shown person.",
+    },
+    preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
+    handler: async (req) => {
+      const { months } = teamTrendQuerySchema.parse(req.query);
+      const tenantId = req.user.tenantId;
+      const access = accessContextFromRequest(req);
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+
+      const reach = await resolveAccessReach(app.prisma, access, "team-overview:read:ZUGEWIESEN");
+      const scopedAccess = { ...access, reach };
+
+      // Soll is a contract figure: only with overtime:read, and only when that reach covers
+      // every person shown (D-17); a narrower reach on either permission only ever narrows.
+      const canSeeSoll = await hasPermission(req, "overtime:read:ZUGEWIESEN");
+      const overtimeReach = canSeeSoll
+        ? await resolveAccessReach(app.prisma, access, "overtime:read:ZUGEWIESEN")
+        : null;
+      let sollCovered = canSeeSoll;
+
+      // The window: the `months` calendar months ending with the tenant-local current month.
+      const today = todayInTz(tz);
+      const window: Array<{ year: number; month: number; key: string }> = [];
+      for (let back = months - 1; back >= 0; back--) {
+        const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - back, 1));
+        const year = d.getUTCFullYear();
+        const month = d.getUTCMonth() + 1;
+        window.push({ year, month, key: `${year}-${String(month).padStart(2, "0")}` });
+      }
+
+      const series: Array<{
+        month: string;
+        workedMinutes: number;
+        shouldMinutes: number | null;
+        sickDays: number;
+      }> = [];
+      for (const { year, month, key } of window) {
+        // Same population and Stichtag as GET /reports/monthly (month end).
+        const { end } = monthRangeUtc(year, month, tz);
+        const { firstDay, lastDay } = monthDateRange(year, month, tz);
+        const scopedIds =
+          reach.kind === "wholeTenant"
+            ? "all"
+            : await resolveStammsalonScopedEmployeeIds(app.prisma, tenantId, reach, end);
+        const people = await app.prisma.employee.findMany({
+          where: {
+            tenantId,
+            exitDate: null,
+            user: { isActive: true },
+            ...(scopedIds === "all" ? {} : { id: { in: scopedIds } }),
+          },
+          select: { id: true },
+        });
+        const ids = people.map((p) => p.id).sort();
+
+        if (overtimeReach && overtimeReach.kind === "scoped") {
+          const covered = await resolveStammsalonScopedEmployeeIds(
+            app.prisma,
+            tenantId,
+            overtimeReach,
+            end,
+          );
+          if (covered !== "all" && !ids.every((id) => covered.includes(id))) sollCovered = false;
+        }
+
+        let worked = 0;
+        let should = 0;
+        for (const id of ids) {
+          const figures = await computeMonthReportFigures(app, id, year, month);
+          worked += figures.workedMinutes;
+          should += figures.expectedMinutes;
+        }
+
+        let sickDays = 0;
+        if (ids.length > 0) {
+          const rows = await getActiveLeaveOverlapping(
+            app.prisma,
+            employeeScopeFor(scopedAccess, { employeeIds: ids }),
+            firstDay,
+            lastDay,
+          );
+          const byPerson = new Map<string, typeof rows>();
+          for (const row of rows) {
+            const list = byPerson.get(row.employeeId);
+            if (list) list.push(row);
+            else byPerson.set(row.employeeId, [row]);
+          }
+          for (const personRows of byPerson.values()) {
+            sickDays += sickLeaveDayCounts(personRows, firstDay, lastDay).sickDays;
+          }
+        }
+
+        series.push({
+          month: key,
+          workedMinutes: Math.round(worked),
+          shouldMinutes: Math.round(should),
+          sickDays,
+        });
+      }
+
+      const sollVisible = canSeeSoll && sollCovered;
+      return {
+        salonId: null,
+        workedBasis: "ACCOUNT" as const,
+        sollUnavailableReason: sollVisible ? null : ("NO_PERMISSION" as const),
+        months: series.map((m) => ({ ...m, shouldMinutes: sollVisible ? m.shouldMinutes : null })),
+      };
     },
   });
 }
