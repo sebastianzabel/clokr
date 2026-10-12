@@ -17,30 +17,45 @@ export interface AdminRoutePermission {
   requires: PermissionAlternatives;
   /** False for alias routes that only redirect (not shown in any navigation). */
   inNav: boolean;
+  /** Group, label and icon of a navigable route (docs/ADMIN_STRUCTURE.md §1). */
+  nav?: { group: string; label: string; icon: string };
 }
 
 const Z = (resourceAction: string) => `${resourceAction}:ZUGEWIESEN`;
 
 export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
   // GET /employees — employee:read
-  { href: "/admin/employees", requires: [[Z("employee:read")]], inNav: true },
+  {
+    href: "/admin/employees",
+    nav: { group: "PERSONAL", label: "Mitarbeitende", icon: "users" },
+    requires: [[Z("employee:read")]],
+    inNav: true,
+  },
   // No read guard exists; the page's writes decide (PUT /settings/work, /settings/leave-types).
   {
     href: "/admin/vacation",
+    nav: { group: "PERSONAL", label: "Urlaubsverwaltung", icon: "umbrella" },
     requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
     inNav: true,
   },
   // Writes /company-shutdowns — company-shutdown:manage
-  { href: "/admin/shutdowns", requires: [[Z("company-shutdown:manage")]], inNav: true },
+  {
+    href: "/admin/shutdowns",
+    nav: { group: "PERSONAL", label: "Betriebsurlaub", icon: "calendar" },
+    requires: [[Z("company-shutdown:manage")]],
+    inNav: true,
+  },
   // Promise.all of templates/coverage (shift-config), week (shift:read), patterns (shift-pattern:read)
   {
     href: "/admin/shifts",
+    nav: { group: "PLANUNG", label: "Schichtplan", icon: "grid" },
     requires: [[Z("shift-config:manage"), Z("shift:read"), Z("shift-pattern:read")]],
     inNav: true,
   },
   // GET /employees (employee:read) plus GET/PUT /employees/:id/availability
   {
     href: "/admin/availability",
+    nav: { group: "PLANUNG", label: "Verfügbarkeit", icon: "calendar-check" },
     requires: [
       [Z("employee:read"), Z("availability:read")],
       [Z("employee:read"), Z("availability:update")],
@@ -48,20 +63,37 @@ export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
     inNav: true,
   },
   // GET /overtime/close-month/status — month-close:read
-  { href: "/admin/month-close", requires: [[Z("month-close:read")]], inNav: true },
+  {
+    href: "/admin/month-close",
+    nav: { group: "COMPLIANCE", label: "Monatsabschluss", icon: "lock" },
+    requires: [[Z("month-close:read")]],
+    inNav: true,
+  },
   // GET /audit-logs — audit-log:read
-  { href: "/admin/audit", requires: [[Z("audit-log:read")]], inNav: true },
+  {
+    href: "/admin/audit",
+    nav: { group: "COMPLIANCE", label: "Audit & Log", icon: "shield" },
+    requires: [[Z("audit-log:read")]],
+    inNav: true,
+  },
   // POST /imports/employees — employee:import; POST /imports/time-entries — time-entry:import
   {
     href: "/admin/import",
+    nav: { group: "DATEN", label: "CSV Import", icon: "upload" },
     requires: [[Z("employee:import")], [Z("time-entry:import")]],
     inNav: true,
   },
   // GET /reports/datev — report:export
-  { href: "/admin/export", requires: [[Z("report:export")]], inNav: true },
+  {
+    href: "/admin/export",
+    nav: { group: "DATEN", label: "DATEV Export", icon: "download" },
+    requires: [[Z("report:export")]],
+    inNav: true,
+  },
   // Tabs: settings (tenant-settings), terminals (terminal:manage), API keys (api-key:manage)
   {
     href: "/admin/system",
+    nav: { group: "SYSTEM", label: "Allgemein", icon: "settings" },
     requires: [
       [Z("tenant-settings:read")],
       [Z("tenant-settings:update")],
@@ -73,16 +105,28 @@ export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
   // No API guard (writes /me/preferences); grouped with the tenant settings it belongs to.
   {
     href: "/admin/themes",
+    nav: { group: "SYSTEM", label: "Branding & Themes", icon: "palette" },
     requires: [[Z("tenant-settings:read")], [Z("tenant-settings:update")]],
     inNav: true,
   },
   // /presence-sources — presence-source:manage
-  { href: "/admin/integrations", requires: [[Z("presence-source:manage")]], inNav: true },
+  {
+    href: "/admin/integrations",
+    nav: { group: "SYSTEM", label: "Integrationen", icon: "wifi" },
+    requires: [[Z("presence-source:manage")]],
+    inNav: true,
+  },
   // /integrations/phorest — integration:manage
-  { href: "/admin/phorest", requires: [[Z("integration:manage")]], inNav: true },
+  {
+    href: "/admin/phorest",
+    nav: { group: "SYSTEM", label: "Phorest", icon: "calendar" },
+    requires: [[Z("integration:manage")]],
+    inNav: true,
+  },
   // GET /roles — role:read; GET /role-assignments — role-assignment:manage
   {
     href: "/admin/roles",
+    nav: { group: "SYSTEM", label: "Rollen & Rechte", icon: "key" },
     requires: [[Z("role:read")], [Z("role-assignment:manage")]],
     inNav: true,
   },
@@ -165,51 +209,20 @@ export interface AdminNavGroup {
 }
 
 /**
- * The five admin groups of docs/ADMIN_STRUCTURE.md §1 — moved verbatim from the Sidebar, plus
- * „Rollen & Rechte“ as the fifth SYSTEM entry (#83). Sidebar and the mobile Mehr sheet show the
- * same items; each is filtered by the route map above.
+ * The five admin groups of docs/ADMIN_STRUCTURE.md §1, derived from the route map above (one list,
+ * so a route and its nav item cannot drift apart). Sidebar and the mobile Mehr sheet show the same
+ * items; each is filtered by the route map.
  */
-export const ADMIN_NAV_GROUPS: readonly AdminNavGroup[] = [
-  {
-    label: "PERSONAL",
-    items: [
-      { href: "/admin/employees", label: "Mitarbeitende", icon: "users" },
-      { href: "/admin/vacation", label: "Urlaubsverwaltung", icon: "umbrella" },
-      { href: "/admin/shutdowns", label: "Betriebsurlaub", icon: "calendar" },
-    ],
-  },
-  {
-    label: "PLANUNG",
-    items: [
-      { href: "/admin/shifts", label: "Schichtplan", icon: "grid" },
-      { href: "/admin/availability", label: "Verfügbarkeit", icon: "calendar-check" },
-    ],
-  },
-  {
-    label: "COMPLIANCE",
-    items: [
-      { href: "/admin/month-close", label: "Monatsabschluss", icon: "lock" },
-      { href: "/admin/audit", label: "Audit & Log", icon: "shield" },
-    ],
-  },
-  {
-    label: "DATEN",
-    items: [
-      { href: "/admin/import", label: "CSV Import", icon: "upload" },
-      { href: "/admin/export", label: "DATEV Export", icon: "download" },
-    ],
-  },
-  {
-    label: "SYSTEM",
-    items: [
-      { href: "/admin/system", label: "Allgemein", icon: "settings" },
-      { href: "/admin/themes", label: "Branding & Themes", icon: "palette" },
-      { href: "/admin/integrations", label: "Integrationen", icon: "wifi" },
-      { href: "/admin/phorest", label: "Phorest", icon: "calendar" },
-      { href: "/admin/roles", label: "Rollen & Rechte", icon: "key" },
-    ],
-  },
-];
+export const ADMIN_NAV_GROUPS: readonly AdminNavGroup[] = ADMIN_ROUTE_PERMISSIONS.reduce<
+  AdminNavGroup[]
+>((groups, entry) => {
+  if (!entry.inNav || !entry.nav) return groups;
+  const item = { href: entry.href, label: entry.nav.label, icon: entry.nav.icon };
+  const last = groups[groups.length - 1];
+  if (last && last.label === entry.nav.group) last.items.push(item);
+  else groups.push({ label: entry.nav.group, items: [item] });
+  return groups;
+}, []);
 
 /** The admin groups the user may open; a group whose items are all hidden is dropped. */
 export function visibleAdminNavGroups(
