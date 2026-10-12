@@ -20,7 +20,7 @@
  * no foreign row, and the ADMIN feed must differ from the MANAGER feed (the exclusivity is visible).
  *
  * ── Token role (AC-75-14, AC-75-5, C-4) ────────────────────────────────────────────────────────
- * The frontend decides its UI from the role it receives until #83. For every migrated user, every
+ * The frontend decides its UI from the role it receives until #538. For every migrated user, every
  * fallback user and a user WITHOUT an Employee (role ADMIN, AC-75-5), the test logs in and records
  * the body's `user.role` and the access token's `role` claim (plus its tenant and employee claim,
  * as labels), then refreshes and records the new access token's `role` claim — the refresh body

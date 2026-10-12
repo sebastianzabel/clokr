@@ -39,6 +39,7 @@ const REGISTERED: Record<string, string> = {
   "export/+page.svelte": "admin-export",
   "audit/+page.svelte": "admin-audit",
   "availability/[employeeId]/+page.svelte": "admin-availability-detail",
+  "roles/+page.svelte": "admin-roles",
 };
 
 // Pages that CANNOT hold unsaved state, with the reason. A marker that can never appear is

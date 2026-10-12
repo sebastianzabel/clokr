@@ -328,6 +328,25 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "behavior to compare (an API key gets 400). Same vacuous-satisfaction reasoning as the " +
       "Phase 430 entry above: RECORD/MERGE mode refuses to run once the role guard is gone.",
   },
+  {
+    route: "GET /api/v1/roles/permission-catalog",
+    reason:
+      "New route added in Phase 83 (Issue #83, D-02), long after the role guard (`requireRole`) " +
+      "was deleted from middleware/auth.ts (#75b) — built permission-gated " +
+      "(`role:read:ZUGEWIESEN`) from its very first commit, serves static catalog data and never " +
+      "had role-based access behavior to compare. Same vacuous-satisfaction reasoning as the Phase " +
+      "430, Phase 468 and Phase 481 entries above: RECORD/MERGE mode refuses to run once the role " +
+      "guard is gone.",
+  },
+  {
+    route: "GET /api/v1/role-assignments/people",
+    reason:
+      "New route added in Phase 83 (Issue #83, D-04), long after the role guard (`requireRole`) " +
+      "was deleted from middleware/auth.ts (#75b) — built permission-gated " +
+      "(`role-assignment:manage:ZUGEWIESEN`) from its very first commit, names only, and never " +
+      "had role-based access behavior to compare. Same vacuous-satisfaction reasoning as the " +
+      "`GET /api/v1/roles/permission-catalog` entry directly above.",
+  },
 ];
 
 /** Routes declared in `app.ts` itself — invisible to the source parser, proven registered. */

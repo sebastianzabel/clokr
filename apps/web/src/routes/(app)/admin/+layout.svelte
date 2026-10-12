@@ -1,28 +1,64 @@
 <script lang="ts">
-  import { authStore } from "$stores/auth";
-  import { goto } from "$app/navigation";
+  // Issue #83 (D-10/D-16): the admin area is guarded by permission through the one route map —
+  // children render only after "allow", a cached session without a permission list waits for its
+  // refresh, everything else redirects. A UX gate only; the API answers 403 regardless.
   import { onMount } from "svelte";
+  import { get } from "svelte/store";
+  import { goto } from "$app/navigation";
+  import { page } from "$app/stores";
+  import { authStore } from "$stores/auth";
+  import { loadPermissionsIfMissing } from "$api/client";
+  import { adminGuardDecision } from "$lib/nav/admin-route-permissions";
+  import Spinner from "$components/ui/Spinner.svelte";
+
   interface Props {
     children?: import("svelte").Snippet;
   }
 
   let { children }: Props = $props();
 
-  onMount(() => {
-    const role = $authStore.user?.role ?? "";
-    if (!["ADMIN", "MANAGER"].includes(role)) {
-      goto("/dashboard");
+  let refreshFailed = $state(false);
+  const decision = $derived(
+    refreshFailed ? "deny" : adminGuardDecision($authStore.user, $page.url.pathname),
+  );
+
+  $effect(() => {
+    if (decision === "deny") void goto("/dashboard", { replaceState: true });
+  });
+
+  onMount(async () => {
+    const user = get(authStore).user;
+    if (user && user.permissions === undefined) {
+      const refreshed = await loadPermissionsIfMissing();
+      if (!refreshed && get(authStore).user?.permissions === undefined) refreshFailed = true;
     }
   });
 </script>
 
-<div class="admin-shell">
-  <div class="admin-content">
-    {@render children?.()}
+{#if decision === "allow"}
+  <div class="admin-shell">
+    <div class="admin-content">
+      {@render children?.()}
+    </div>
   </div>
-</div>
+{:else if decision === "wait"}
+  <div class="admin-shell">
+    <div role="status" aria-live="polite" class="admin-wait">
+      <Spinner />
+      <span>Berechtigungen werden geladen …</span>
+    </div>
+  </div>
+{/if}
 
 <style>
+  .admin-wait {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 24px 0;
+    color: var(--text-muted);
+  }
+
   .admin-shell {
     /* max-width inherited from .app-main (1600px) */
   }

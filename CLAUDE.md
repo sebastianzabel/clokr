@@ -937,7 +937,7 @@ Since Phase 75b the API decides access by permission, never by role. `User.role`
 `deriveCompatRole()` in `apps/api/src/contexts/platform/compat-role.ts` after every assignment
 change, read only for display, logging and the legacy-role fallback (a user with no stored
 assignment resolves through the system role of `User.role`). Both the column and the fallback are
-removed with #83. A role comparison, a `requireRole(` call or a Prisma `where` on a role value in
+removed with #539. A role comparison, a `requireRole(` call or a Prisma `where` on a role value in
 non-test `apps/api/src` fails CI and `.husky/pre-commit`:
 
 | Source | What it governs |
@@ -953,6 +953,23 @@ Verify with `pnpm --filter @clokr/api run lint:role-checks` and (after `test:set
 **Never re-record a neutrality file to make it green** — the recorders refuse once `requireRole`
 is gone, and a red VERIFY is a finding (an access change), not a stale fixture. A new route gets
 `requirePermission` and a row in `docs/permissions.md`; a new role check is never the answer.
+
+### Role management UI and the admin area (Issue #83)
+
+- **Permission labels live once, on the server.** `contexts/platform/permission-labels.ts` holds the
+  German heading per resource (the `docs/permissions.md` headings) and the German label per catalog
+  key; `GET /api/v1/roles/permission-catalog` (`role:read`) serves them. `permission-labels.test.ts`
+  pins the label set equal to the catalog; the web never names a permission
+  (`permission-labels-one-place-83.test.ts`). A new catalog key needs a label in the same commit.
+- **The four-eyes rule of #78 stays in the API.** The role editor (`/admin/roles`) reacts only to the
+  409 code `FOUR_EYES_CONFIRMATION_REQUIRED` (create, update and copy) and resends with
+  `confirm: true` after an explicit confirmation; every other rejection shows the server's message.
+- **The web decides `/admin` access by permission, in one module.**
+  `apps/web/src/lib/nav/admin-route-permissions.ts` maps every admin route to alternatives of all-of
+  permission sets derived from the API guards its page calls; the admin layout guard, Sidebar, the
+  mobile „Mehr“ sheet and the command palette read it. A new admin route needs an entry
+  (`admin-route-permissions.test.ts` fails otherwise). Page-internal role checks that change content
+  are #538; removing `User.role` and the fallback is #539 (owner decision, Unterbau Semantikänderung).
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->

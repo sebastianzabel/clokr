@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { Prisma } from "@clokr/db";
 import { hasPermission, requirePermission } from "../request-permissions";
+import { permissionCatalogGroups } from "../permission-labels";
 import {
   ROLE_NAME_MAX_LENGTH,
   roleNameKey,
@@ -144,6 +145,10 @@ function isPrismaErrorCode(err: unknown, code: string): boolean {
     (err as { code: unknown }).code === code
   );
 }
+
+// Issue #83 (D-02): static catalog data with its German labels, computed once — a missing label
+// fails at boot, never as an empty label in the editor.
+const PERMISSION_CATALOG_RESPONSE = permissionCatalogGroups();
 
 export async function roleRoutes(app: FastifyInstance) {
   // GET /api/v1/roles — every system role plus the caller's own customer roles (AK-73-3).
@@ -584,5 +589,19 @@ export async function roleRoutes(app: FastifyInstance) {
         throw err;
       }
     },
+  });
+
+  // GET /api/v1/roles/permission-catalog — the catalog with its German labels for the role editor
+  // (Issue #83, D-02/D-03).
+  app.get("/permission-catalog", {
+    schema: {
+      tags: ["Rollen"],
+      security: [{ bearerAuth: [] }],
+      summary: "List the permission catalog with German labels",
+      description:
+        "Returns every catalog permission grouped by resource in catalog order, each with its German label, reach and relation. A MANDANT permission takes effect only through a TENANT-scope assignment.",
+    },
+    preHandler: requirePermission("role:read:ZUGEWIESEN"),
+    handler: async () => PERMISSION_CATALOG_RESPONSE,
   });
 }

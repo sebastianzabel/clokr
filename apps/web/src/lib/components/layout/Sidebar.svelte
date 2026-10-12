@@ -8,6 +8,7 @@
   import { api } from "$api/client";
   import Icon from "$lib/components/Icon.svelte";
   import { visibleTeamNavItems } from "$lib/nav/team-nav";
+  import { visibleAdminNavGroups } from "$lib/nav/admin-route-permissions";
   import { activeNavHref } from "$lib/nav/active-route";
   import { onMount } from "svelte";
 
@@ -34,9 +35,6 @@
   // an admin sub-group (e.g. "PERSONAL", "PLANUNG"). The `isAdminGroup` flag
   // drives which label class to render.
   type NavSection = { label: string; items: NavItem[]; isAdminGroup?: boolean };
-  // NavGroup represents one of the 5 uppercase-labeled admin sub-groups defined
-  // in docs/ADMIN_STRUCTURE.md §1.
-  type NavGroup = { label: string; items: NavItem[] };
 
   // German labels match docs/design/reference/i18n.js DE entries verbatim.
   // Routes map to nearest existing screens; new routes may land in Phase 30-32.
@@ -52,66 +50,15 @@
   // filtered per-item instead of an all-or-nothing role block, so a Salonmanager or Ausbilder
   // (Salon-/Personen-Scope role assignment, #76) sees exactly the items their permissions allow.
 
-  // 5-group admin nav per docs/ADMIN_STRUCTURE.md §1 (Phase 51 Regulatorium).
-  // Labels are UPPERCASE visual-only section headers — never clickable.
-  // SYSTEM group entries use Phase-52 labels: Allgemein / Branding & Themes / Integrationen.
-  // Phorest added Phase 85.1-03 (D-10: own admin tab, extracted from Allgemein).
-  const adminNav: NavGroup[] = [
-    {
-      label: "PERSONAL",
-      items: [
-        { href: "/admin/employees", label: "Mitarbeitende", icon: "users" },
-        // Sonderurlaubs-Typen merged into /admin/vacation as the "Sonderurlaub" tab.
-        // The old route still resolves and redirects (apps/web/src/routes/(app)/admin/special-leave).
-        { href: "/admin/vacation", label: "Urlaubsverwaltung", icon: "umbrella" },
-        { href: "/admin/shutdowns", label: "Betriebsurlaub", icon: "calendar" },
-      ],
-    },
-    {
-      label: "PLANUNG",
-      items: [
-        { href: "/admin/shifts", label: "Schichtplan", icon: "grid" },
-        { href: "/admin/availability", label: "Verfügbarkeit", icon: "calendar-check" },
-      ],
-    },
-    {
-      label: "COMPLIANCE",
-      items: [
-        { href: "/admin/month-close", label: "Monatsabschluss", icon: "lock" },
-        { href: "/admin/audit", label: "Audit & Log", icon: "shield" },
-      ],
-    },
-    {
-      label: "DATEN",
-      items: [
-        { href: "/admin/import", label: "CSV Import", icon: "upload" },
-        { href: "/admin/export", label: "DATEV Export", icon: "download" },
-      ],
-    },
-    {
-      label: "SYSTEM",
-      items: [
-        { href: "/admin/system", label: "Allgemein", icon: "settings" },
-        { href: "/admin/themes", label: "Branding & Themes", icon: "palette" },
-        { href: "/admin/integrations", label: "Integrationen", icon: "wifi" },
-        // Phase 85.1-03 (D-10): dedicated Phorest admin tab, extracted from Allgemein.
-        { href: "/admin/phorest", label: "Phorest", icon: "calendar" },
-      ],
-    },
-  ];
-
-  // Section visibility for "Mein Bereich" and "Team" is gated by the caller's PERMISSIONS
-  // (Phase 378, #378) — server-side permission guards still enforce authorization on every
-  // protected endpoint, this is a UI-only display gate. The 5 admin sub-groups below are
-  // deliberately NOT part of that conversion: they are `/admin/*`-only, out of this issue's scope
-  // (#83 owns the role-management UI these sub-groups belong to), and the ADMIN check that gates
-  // them is a legitimate, documented exception in the web's role-check lint (Phase 378, D-03).
+  // Section visibility is gated by the caller's PERMISSIONS: "Mein Bereich" and "Team" since
+  // Phase 378 (#378), the five admin groups since Phase 83 (#83) — each admin item is filtered by the
+  // permissions its page needs (`$lib/nav/admin-route-permissions.ts`, the same map the admin route
+  // guard reads). A UI-only display gate; server-side permission guards still decide every request.
   //
   // The Verfügbarkeits-System (Phase 47.3) is gated by a tenant feature flag.
   // While `$tenantFeatures.loaded === false` the flag is treated as on
   // (fail-open) so nav doesn't flash hidden→visible during initial load.
   const sections = $derived.by((): NavSection[] => {
-    const role = $authStore.user?.role; // ADMIN sub-groups gate only (#83 scope) — see comment above
     const availabilityOn = $tenantFeatures.availabilityEnabled;
     const filterAvailability = (items: NavItem[]): NavItem[] =>
       availabilityOn
@@ -123,15 +70,10 @@
     if (teamItems.length > 0) {
       out.push({ label: "Team", items: teamItems });
     }
-    if (role === "ADMIN") {
-      // Expand each NavGroup into its own NavSection (isAdminGroup: true) so the
-      // render loop can apply the correct label class for the 5 admin sub-groups.
-      for (const group of adminNav) {
-        const filtered = filterAvailability(group.items);
-        if (filtered.length > 0) {
-          out.push({ label: group.label, items: filtered, isAdminGroup: true });
-        }
-      }
+    for (const group of visibleAdminNavGroups($authStore.user, {
+      availabilityEnabled: availabilityOn,
+    })) {
+      out.push({ label: group.label, items: group.items, isAdminGroup: true });
     }
     return out;
   });

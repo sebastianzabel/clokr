@@ -68,7 +68,9 @@ function currentElements(nav: HTMLElement): Element[] {
 
 describe("BottomTabBar — current location (#515)", () => {
   beforeEach(() => {
-    signInAs("ADMIN", ALL_TEAM_PERMISSIONS);
+    // Since #83 the admin items behind „Mehr“ are permission-gated (admin-route-permissions.ts),
+    // so the admin fixture also holds the right its /admin/employees page needs.
+    signInAs("ADMIN", [...ALL_TEAM_PERMISSIONS, "employee:read:ZUGEWIESEN"]);
   });
 
   it("marks a primary route as the page and leaves Mehr unmarked, named exactly Mehr", () => {

@@ -5,7 +5,7 @@
  * Since #75 every access decision in the API asks for a catalog permission
  * (`requirePermission` / `requireAnyPermission` / `hasPermission` / `permissionReach` /
  * `userIdsHoldingPermission`, all from `contexts/platform`). The legacy role value (`User.role`,
- * the JWT claim `role`) survives only as a compat field until #83. This gate keeps it that way: a
+ * the JWT claim `role`) survives only as a compat field until #539. This gate keeps it that way: a
  * role check that comes back — in a guard, in a handler, or in a Prisma predicate — fails CI and
  * `.husky/pre-commit`, not just review.
  *

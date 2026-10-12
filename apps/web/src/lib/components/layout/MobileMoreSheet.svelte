@@ -108,6 +108,9 @@
     {:else if name === "calendar"}
       <rect x="3" y="5" width="18" height="16" rx="2" />
       <path d="M16 3v4M8 3v4M3 10h18" />
+    {:else if name === "key"}
+      <circle cx="8" cy="15" r="4" />
+      <path d="M11 12l9-9M17 6l3 3M14 9l2 2" />
     {:else if name === "calendar-check"}
       <rect x="3" y="5" width="18" height="16" rx="2" />
       <path d="M16 3v4M8 3v4M3 10h18" />

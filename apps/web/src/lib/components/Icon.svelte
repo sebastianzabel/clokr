@@ -67,6 +67,9 @@
   {:else if name === "upload"}
     <path d="M12 21V9m0 0l-4 4m4-4l4 4" />
     <path d="M4 5h16" />
+  {:else if name === "key"}
+    <circle cx="8" cy="15" r="4" />
+    <path d="M11 12l9-9M17 6l3 3M14 9l2 2" />
   {:else if name === "lock"}
     <rect x="5" y="11" width="14" height="10" rx="2" />
     <path d="M8 11V7a4 4 0 0 1 8 0v4" />

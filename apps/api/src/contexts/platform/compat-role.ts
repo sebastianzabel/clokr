@@ -5,7 +5,7 @@
  * Since #75 no access decision reads a role value any more (D-12): guards and handler checks ask
  * `request-permissions.ts` for catalog permissions. The legacy value survives only as a compat
  * field — the JWT claim `role` and the login body `user.role`, which the frontend still consumes
- * until #83 removes `User.role` and the enum. This module is the allowlisted exception of the
+ * until #539 removes `User.role` and the enum. This module is the allowlisted exception of the
  * role-check gate (D-19): every comparison of a role value, in either direction, lives here.
  *
  * Two directions:
@@ -47,7 +47,7 @@
  * None of them audits: this module has no `app`. Each returns what it wrote, and the caller (a
  * route with the request's actor) writes the audit rows inside the same transaction.
  *
- * Removed together with `User.role` in #83.
+ * Removed together with `User.role` in #539.
  */
 import type { Prisma, Role, RoleAssignmentScopeType } from "@clokr/db";
 import { roleGrants } from "./access-role";

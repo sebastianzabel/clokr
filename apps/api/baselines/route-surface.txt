@@ -90,6 +90,8 @@
 │   ├── /opted-in (GET, HEAD)
 │   ├── /overtime-overview (GET, HEAD)
 │   ├── /overtime-trend (GET, HEAD)
+│   ├── /permission-catalog (GET, HEAD)
+│   ├── /people (GET, HEAD)
 │   ├── /planning-overview (GET, HEAD)
 │   ├── /preview (POST)
 │   ├── /range (GET, HEAD)

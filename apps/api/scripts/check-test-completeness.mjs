@@ -687,8 +687,14 @@ import { readFileSync } from "node:fs";
 // MIN_FILES rises from 353 to 356. MIN_TESTS rises from 6139 to 6171: +32 cases, measured by
 // counting `it(` / `it.each(` per file — 13, 7, 12; no existing file changed its case count. Same
 // lower-bound convention as above; not a re-measure-to-actual sweep.
-const MIN_FILES = 356;
-const MIN_TESTS = 6171;
+//
+// Phase 83 (issue #83), 2026-10-12: 3 new test files — `src/__tests__/roles-permission-catalog-83`,
+// `role-assignments-people-83` and `src/contexts/platform/__tests__/permission-labels` — MIN_FILES
+// rises from 356 to 359. MIN_TESTS rises from 6171 to 6185: +14 cases, measured by counting `it(` /
+// `it.each(` per file — 4, 5, 5; no existing file changed its case count. Same lower-bound
+// convention as above; not a re-measure-to-actual sweep.
+const MIN_FILES = 359;
+const MIN_TESTS = 6185;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

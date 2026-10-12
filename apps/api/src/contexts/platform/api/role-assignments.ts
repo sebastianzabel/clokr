@@ -589,4 +589,44 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       }
     },
   });
+
+  // GET /api/v1/role-assignments/people — the tenant's people by name for the assignee and
+  // person-scope pickers (Issue #83, D-04).
+  app.get("/people", {
+    schema: {
+      tags: ["Rollenzuweisungen"],
+      security: [{ bearerAuth: [] }],
+      summary: "List the people role assignments can target",
+      description:
+        "Returns the caller tenant's non-anonymized employees with their user id and whether the user account is active — names only, no contract or contact data (data minimisation).",
+    },
+    preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
+    handler: async (req) => {
+      const tenantId = req.user.tenantId;
+      const rows = await app.prisma.employee.findMany({
+        where: { tenantId, ...NOT_ANONYMIZED_EMPLOYEE_WHERE },
+        select: {
+          id: true,
+          userId: true,
+          firstName: true,
+          lastName: true,
+          user: { select: { isActive: true } },
+        },
+      });
+      return rows
+        .map((row) => ({
+          employeeId: row.id,
+          userId: row.userId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          isActive: row.user.isActive,
+        }))
+        .sort(
+          (a, b) =>
+            a.lastName.localeCompare(b.lastName, "de") ||
+            a.firstName.localeCompare(b.firstName, "de") ||
+            a.employeeId.localeCompare(b.employeeId),
+        );
+    },
+  });
 }

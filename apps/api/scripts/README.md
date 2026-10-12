@@ -695,7 +695,7 @@ Since Phase 75b every access decision in the API asks for a catalog permission â
 `requirePermission` / `requireAnyPermission` (route guards), `hasPermission` / `permissionReach`
 (handler checks) and `userIdsHoldingPermission` (notification recipients), all from
 `contexts/platform`. The legacy role (`User.role`, the JWT claim `role`) survives only as a compat
-field for the frontend until #83. This gate keeps role checks from coming back (D-19, AC-75-2).
+field for the frontend until #539. This gate keeps role checks from coming back (D-19, AC-75-2).
 
 **What is flagged** (AST via `ts.createSourceFile` â€” comments and string literals never count), in
 every `.ts` file under `apps/api/src` outside `__tests__/` and `*.test.ts`:
