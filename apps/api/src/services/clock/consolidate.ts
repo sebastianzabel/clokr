@@ -9,6 +9,12 @@ import type { Prisma, TimeEntry } from "@clokr/db";
 import type { FastifyBaseLogger } from "fastify";
 import { MIN_MERGE_PREDECESSOR_DURATION_MS } from "./thresholds";
 import { findEntriesOfDay } from "../../contexts/time-tracking/day-entries"; // Phase 69b
+import type { ActivityShareInput } from "../../contexts/time-tracking/activity-minutes"; // Issue #81
+import {
+  materializeRemainder,
+  activitySharesReplace,
+} from "../../contexts/time-tracking/activity-shares"; // Issue #81
+import { loadSharesOfEntry } from "../../contexts/time-tracking/activity-store"; // Issue #81
 
 export function calcBreakMinutesLocal(breaks: { startTime: Date; endTime: Date }[]): number {
   return breaks.reduce((sum, b) => sum + (b.endTime.getTime() - b.startTime.getTime()) / 60000, 0);
@@ -20,8 +26,9 @@ export type ConsolidateResult =
       merged: true;
       targetEntryId: string;
       breakId: string;
-      before: TimeEntry;
-      after: TimeEntry;
+      // Issue #81: both sides carry the target's activity shares for the CLOCK_OUT audit.
+      before: TimeEntry & { activityShares: ActivityShareInput[] };
+      after: TimeEntry & { activityShares: ActivityShareInput[] };
       deletedEntryId: string;
       deletedEntryBefore: TimeEntry;
     };
@@ -49,7 +56,8 @@ export async function consolidateSameDayEntries(
   //   invalidated row is a real attendance row).
   // - The latest-ending candidate wins.
   // MULTI-ENTRY: consolidation merges two same-day rows into one — its whole premise is one entry
-  // per day; #70 must decide whether it still merges, and with which predecessor.
+  // per day; #70 must decide whether it still merges, and with which predecessor. An entry that
+  // carries a recorded activity allocation is never merged away (Issue #81).
   const dayEntries = await findEntriesOfDay(tx, {
     tenantId,
     employeeId: openEntry.employeeId,
@@ -113,6 +121,34 @@ export async function consolidateSameDayEntries(
     return { merged: false };
   }
 
+  // Issue #81 (D-07): decided before any write. Soft-deleting an entry that carries a recorded
+  // allocation would drop it from every evaluation, so the merge is skipped; the clock-out itself
+  // has already been written, only the merge does not happen.
+  const openShares = await loadSharesOfEntry(tx, tenantId, openEntry.id);
+  if (openEntry.activityKind !== "UNSPECIFIED" || openShares.length > 0) {
+    log.info(
+      {
+        employeeId: openEntry.employeeId,
+        date: openEntry.date,
+        previousEntryId: previousEntry.id,
+        openEntryId: openEntry.id,
+        reason: "activity_allocated",
+      },
+      "merge_skipped",
+    );
+    return { merged: false };
+  }
+  // Issue #81 (D-07): the target's classified remainder (values before the extension) becomes an
+  // explicit share, so the merged-in time is never attributed to a kind nobody chose.
+  const targetShares = await loadSharesOfEntry(tx, tenantId, previousEntry.id);
+  const materialized = materializeRemainder({
+    kind: previousEntry.activityKind,
+    shares: targetShares,
+    startTime: previousEntry.startTime,
+    endTime: previousEntry.endTime,
+    breakMinutes: previousEntry.breakMinutes,
+  });
+
   try {
     // 1. Create Break row for the gap
     const breakRow = await tx.break.create({
@@ -135,6 +171,13 @@ export async function consolidateSameDayEntries(
       data: {
         endTime: openEntry.endTime,
         breakMinutes: totalBreakMins,
+        ...(materialized && {
+          activityKind: materialized.kind,
+          activityShares: activitySharesReplace(materialized.shares),
+        }),
+      },
+      include: {
+        activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
       },
     });
 
@@ -148,7 +191,7 @@ export async function consolidateSameDayEntries(
       merged: true,
       targetEntryId: previousEntry.id,
       breakId: breakRow.id,
-      before: previousEntry,
+      before: { ...previousEntry, activityShares: targetShares },
       after,
       deletedEntryId: openEntry.id,
       deletedEntryBefore: openEntry,

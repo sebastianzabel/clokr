@@ -11,6 +11,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import { resolveClockEvent } from "../services/clock/resolver";
+import { consolidateSameDayEntries } from "../services/clock/consolidate";
 import type { ClockEvent, ClockIntent } from "../services/clock/types";
 import { activityMinutes, entryDurations } from "../contexts/time-tracking";
 
@@ -182,5 +183,150 @@ describe("Issue #81 (D-07) — clock re-open of a classified entry", () => {
     });
     expect(entry.activityKind).toBe("UNSPECIFIED");
     expect(await sharesOf(entry.id)).toEqual([]);
+  });
+
+  it("POST /clock-in ignores an activityKind in the body (D-03, Zod strips the key)", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/time-entries/clock-in",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { activityKind: "PRODUCTIVE" },
+    });
+    expect(res.statusCode, res.body).toBeLessThan(300);
+    const entry = await app.prisma.timeEntry.findFirstOrThrow({
+      where: { employeeId: data.employee.id, deletedAt: null },
+    });
+    expect(entry.activityKind).toBe("UNSPECIFIED");
+    expect(await sharesOf(entry.id)).toEqual([]);
+  });
+});
+
+describe("Issue #81 (D-07) — consolidation never drops nor stretches an allocation", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+  // A fixed past day and another day for the second real row (the partial unique index forbids two
+  // live rows on one day — same technique as time-entry-salon-clock.test.ts).
+  const day = "2026-02-10";
+  const otherDay = "2026-02-11";
+  const at = (d: string, hm: string) => new Date(`${d}T${hm}:00.000Z`);
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "act81con");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("time-entry-activity-writers-81 cleanup failed:", err);
+    }
+  });
+
+  beforeEach(async () => {
+    const entries = await app.prisma.timeEntry.findMany({
+      where: { employeeId: data.employee.id },
+      select: { id: true },
+    });
+    const ids = entries.map((e) => e.id);
+    await app.prisma.break.deleteMany({ where: { timeEntryId: { in: ids } } });
+    await app.prisma.timeEntry.deleteMany({ where: { employeeId: data.employee.id } });
+  });
+
+  /** Predecessor 08:00–12:00 on `day`, second real row passed as 13:00–17:00 on `day`. */
+  async function pair(opts: {
+    predecessor?: Record<string, unknown>;
+    second?: Record<string, unknown>;
+  }) {
+    const predecessor = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: data.employee.id,
+        salonId: data.salonId,
+        date: new Date(`${day}T00:00:00Z`),
+        startTime: at(day, "08:00"),
+        endTime: at(day, "12:00"),
+        ...opts.predecessor,
+      },
+    });
+    const second = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: data.employee.id,
+        salonId: data.salonId,
+        date: new Date(`${otherDay}T00:00:00Z`),
+        startTime: at(otherDay, "13:00"),
+        endTime: at(otherDay, "17:00"),
+        ...opts.second,
+      },
+    });
+    const result = await app.prisma.$transaction((tx) =>
+      consolidateSameDayEntries(
+        tx,
+        data.tenant.id,
+        {
+          ...second,
+          date: new Date(`${day}T00:00:00Z`),
+          startTime: at(day, "13:00"),
+          endTime: at(day, "17:00"),
+        } as never,
+        4,
+        app.log,
+      ),
+    );
+    return { predecessor, second, result };
+  }
+
+  async function row(id: string) {
+    return app.prisma.timeEntry.findUniqueOrThrow({
+      where: { id },
+      include: {
+        activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+      },
+    });
+  }
+
+  it("a classified second row is not merged away (kind set)", async () => {
+    const { predecessor, second, result } = await pair({
+      second: { activityKind: "SETUP_CLEANING" },
+    });
+    expect(result.merged).toBe(false);
+    expect((await row(second.id)).deletedAt).toBeNull();
+    expect((await row(predecessor.id)).endTime?.getTime()).toBe(at(day, "12:00").getTime());
+  });
+
+  it("an UNSPECIFIED second row with a share is not merged away", async () => {
+    const { second, result } = await pair({
+      second: { activityShares: { create: [{ kind: "SETUP_CLEANING", minutes: 30 }] } },
+    });
+    expect(result.merged).toBe(false);
+    const after = await row(second.id);
+    expect(after.deletedAt).toBeNull();
+    expect(after.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 30 }]);
+  });
+
+  it("a classified predecessor keeps its minutes as a share; the merged-in time is UNSPECIFIED", async () => {
+    const { predecessor, result } = await pair({ predecessor: { activityKind: "PRODUCTIVE" } });
+    expect(result.merged).toBe(true);
+    const after = await row(predecessor.id);
+    expect(after.activityKind).toBe("UNSPECIFIED");
+    expect(after.activityShares).toEqual([{ kind: "PRODUCTIVE", minutes: 240 }]);
+    expect(activityMinutes(after, after.activityShares)).toEqual({
+      PRODUCTIVE: 240,
+      SETUP_CLEANING: 0,
+      UNSPECIFIED: 240,
+    });
+    if (result.merged) {
+      expect(result.after.activityShares).toEqual([{ kind: "PRODUCTIVE", minutes: 240 }]);
+      expect(result.before.activityShares).toEqual([]);
+    }
+  });
+
+  it("two unclassified rows merge exactly as before", async () => {
+    const { predecessor, second, result } = await pair({});
+    expect(result.merged).toBe(true);
+    const after = await row(predecessor.id);
+    expect(after.activityKind).toBe("UNSPECIFIED");
+    expect(after.activityShares).toEqual([]);
+    expect(after.endTime?.getTime()).toBe(at(day, "17:00").getTime());
+    expect((await row(second.id)).deletedAt).not.toBeNull();
   });
 });
