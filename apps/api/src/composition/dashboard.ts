@@ -74,6 +74,12 @@ const teamTrendQuerySchema = z.object({
   salonId: z.string().uuid().optional(),
 });
 
+// Issue #84 (D-02): the optional salon filter of the team views. Unknown query keys (`date`) are
+// stripped by zod, a malformed id answers 400 through the global handler.
+const teamSalonQuerySchema = z.object({
+  salonId: z.string().uuid().optional(),
+});
+
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
   app.get("/", {
@@ -437,11 +443,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
   app.get("/team-week", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const access = accessContextFromRequest(req);
       const tenantId = req.user.tenantId;
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const query = req.query as { date?: string };
+      const { salonId } = teamSalonQuerySchema.parse(req.query);
       const refDate = query.date ? new Date(query.date) : new Date();
 
       // Stichtag + `validFrom` (Timestamptz) keep the instant `weekEnd`; the `@db.Date` facade
@@ -465,6 +472,10 @@ export async function dashboardRoutes(app: FastifyInstance) {
         access,
         "team-overview:read:ZUGEWIESEN",
       );
+      // D-02/D-16: validated before any data read; one body for every rejection cause.
+      const salonFilter = await resolveTeamSalonFilter(app.prisma, tenantId, scopeReach, salonId);
+      if (!salonFilter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
+      const filterSalonId = salonFilter.salonId;
       const scopedAccess = { ...access, reach: scopeReach };
       const teamWeekScopedIds =
         scopeReach.kind === "wholeTenant"
@@ -562,16 +573,48 @@ export async function dashboardRoutes(app: FastifyInstance) {
         orderBy: { validFrom: "desc" },
       });
 
+      // Issue #84 (D-03/D-06/D-15): under a salon filter, MEMBERSHIP follows the entry or the
+      // Stammsalon (a person is listed when they recorded time in the salon this week or are homed
+      // there on at least one week day), HOURS follow the entry's salon, and presence, holidays,
+      // leave, absences and shifts keep using ALL of a person's data — a Springer working in
+      // another salon is never shown as missing. The filter only removes rows, it never adds one
+      // outside the reach resolved above.
+      let shownEmployees = employees;
+      if (filterSalonId !== null) {
+        const homeByPerson = await homeSalonsForDays(
+          app.prisma,
+          tenantId,
+          teamWeekEmployeeIds,
+          weekDays[0],
+          weekDays[6],
+        );
+        const enteredInSalon = new Set(
+          timeEntries.filter((e) => e.salonId === filterSalonId).map((e) => e.employeeId),
+        );
+        shownEmployees = employees.filter((emp) => {
+          if (enteredInSalon.has(emp.id)) return true;
+          const dayMap = homeByPerson.get(emp.id);
+          return dayMap ? weekDays.some((d) => dayMap.get(d) === filterSalonId) : false;
+        });
+      }
+
       // Pro Mitarbeiter die Woche aufbereiten
-      const team = employees.map((emp) => {
+      const team = shownEmployees.map((emp) => {
         const days = weekDays.map((dayStr) => {
           const dayEntries = timeEntries.filter(
             (e) => e.employeeId === emp.id && dateStrInTz(e.date, tz) === dayStr,
           );
-          // workedMinutes: only valid (non-invalid) entries count
+          // workedMinutes: only valid (non-invalid) entries count; under a salon filter only the
+          // entries of that salon, and `workedElsewhere` marks a day with valid time elsewhere.
           let workedMinutes = 0;
+          let workedElsewhere = false;
           for (const e of dayEntries) {
-            if (!e.isInvalid && e.endTime) {
+            if (e.isInvalid) continue;
+            if (filterSalonId !== null && e.salonId !== filterSalonId) {
+              workedElsewhere = true;
+              continue;
+            }
+            if (e.endTime) {
               workedMinutes += entryDurations(e).workingMinutes;
             }
           }
@@ -706,6 +749,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
             shift,
             isWorkday,
             expectedHours,
+            ...(filterSalonId !== null ? { workedElsewhere } : {}),
           };
         });
 
@@ -717,7 +761,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
         };
       });
 
-      return { weekStart: weekDays[0], weekEnd: weekDays[6], weekDays, team };
+      return {
+        weekStart: weekDays[0],
+        weekEnd: weekDays[6],
+        weekDays,
+        ...(filterSalonId !== null ? { salonId: filterSalonId } : {}),
+        team,
+      };
     },
   });
   // GET /api/v1/dashboard/today-attendance — Tages-Anwesenheitsübersicht (RPT-03)
