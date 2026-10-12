@@ -53,7 +53,7 @@ export const PERMISSION_LABELS: Readonly<Record<PermissionKey, string>> = {
   // ── Unterbau ──
   "employee:read:EIGENE": "Eigene Stammdaten lesen",
   "employee:read:ZUGEWIESEN": "Mitarbeiterliste und Stammdaten im zugewiesenen Bereich lesen",
-  "employee:create:ZUGEWIESEN": "Mitarbeiter anlegen",
+  "employee:create:ZUGEWIESEN": "Neue Mitarbeiter anlegen und einladen",
   "employee:update:ZUGEWIESEN": "Stammdaten und Salonzuordnungen im zugewiesenen Bereich ändern",
   "employee:manage-access:ZUGEWIESEN":
     "Zugänge im zugewiesenen Bereich sperren, entsperren und einladen",
