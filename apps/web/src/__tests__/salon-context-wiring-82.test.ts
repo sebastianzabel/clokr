@@ -71,6 +71,32 @@ describe("Issue #82 — salon context wiring", () => {
   });
 });
 
+describe("Issue #82 — SalonSwitcher in the Topbar", () => {
+  const TOPBAR = readSource(
+    "../lib/components/layout/Topbar.svelte",
+    "src/lib/components/layout/Topbar.svelte",
+  );
+  const SWITCHER = readSource(
+    "../lib/components/layout/SalonSwitcher.svelte",
+    "src/lib/components/layout/SalonSwitcher.svelte",
+  );
+
+  it("the Topbar renders the switcher before its actions", () => {
+    expect(TOPBAR).toContain('import SalonSwitcher from "./SalonSwitcher.svelte";');
+    const header = TOPBAR.indexOf('<header class="topbar">');
+    const switcher = TOPBAR.indexOf("<SalonSwitcher />", header);
+    expect(header).toBeGreaterThan(-1);
+    expect(switcher).toBeGreaterThan(header);
+    expect(switcher).toBeLessThan(TOPBAR.indexOf('<div class="topbar-actions">', header));
+  });
+
+  it("the switcher stays mountable: no $app import, no fetch, no own rule", () => {
+    expect(SWITCHER).not.toMatch(/from "\$app\//);
+    expect(SWITCHER).not.toMatch(/\bapi\.|fetch\(/);
+    expect(SWITCHER).toContain("showSalonOptions(");
+  });
+});
+
 describe("Issue #82 — one module owns the context (guard)", () => {
   /**
    * Protects: the #64 rule (`isMultiSalon`), the storage key prefix and the context fetch living in

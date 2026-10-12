@@ -8,6 +8,7 @@
   import { api } from "$api/client";
   import { fetchAvatarObjectUrl } from "$api/avatar";
   import LanguageToggle from "$lib/components/ui/LanguageToggle.svelte";
+  import SalonSwitcher from "./SalonSwitcher.svelte";
 
   interface Props {
     currentPath: string;
@@ -258,6 +259,7 @@
 {/snippet}
 
 <header class="topbar">
+  <div class="topbar-context"><SalonSwitcher /></div>
   <div class="topbar-actions">
     <button
       class="icon-btn"
@@ -461,6 +463,11 @@
     font-size: 11px;
     letter-spacing: 0.05em;
     color: var(--text-faint);
+  }
+  .topbar-context {
+    display: flex;
+    align-items: center;
+    min-width: 0;
   }
   .topbar-actions {
     margin-left: auto;
