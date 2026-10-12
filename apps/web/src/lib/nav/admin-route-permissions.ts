@@ -150,3 +150,85 @@ export function adminGuardDecision(
   if (user.permissions === undefined) return "wait";
   return canAccessAdminPath(user, pathname) ? "allow" : "deny";
 }
+
+// ── Admin navigation (Phase 83, #83) ──────────────────────────────────────────
+
+export interface AdminNavItem {
+  href: string;
+  label: string;
+  icon: string;
+}
+
+export interface AdminNavGroup {
+  label: string;
+  items: AdminNavItem[];
+}
+
+/**
+ * The five admin groups of docs/ADMIN_STRUCTURE.md §1 — moved verbatim from the Sidebar, plus
+ * „Rollen & Rechte“ as the fifth SYSTEM entry (#83). Sidebar and the mobile Mehr sheet show the
+ * same items; each is filtered by the route map above.
+ */
+export const ADMIN_NAV_GROUPS: readonly AdminNavGroup[] = [
+  {
+    label: "PERSONAL",
+    items: [
+      { href: "/admin/employees", label: "Mitarbeitende", icon: "users" },
+      { href: "/admin/vacation", label: "Urlaubsverwaltung", icon: "umbrella" },
+      { href: "/admin/shutdowns", label: "Betriebsurlaub", icon: "calendar" },
+    ],
+  },
+  {
+    label: "PLANUNG",
+    items: [
+      { href: "/admin/shifts", label: "Schichtplan", icon: "grid" },
+      { href: "/admin/availability", label: "Verfügbarkeit", icon: "calendar-check" },
+    ],
+  },
+  {
+    label: "COMPLIANCE",
+    items: [
+      { href: "/admin/month-close", label: "Monatsabschluss", icon: "lock" },
+      { href: "/admin/audit", label: "Audit & Log", icon: "shield" },
+    ],
+  },
+  {
+    label: "DATEN",
+    items: [
+      { href: "/admin/import", label: "CSV Import", icon: "upload" },
+      { href: "/admin/export", label: "DATEV Export", icon: "download" },
+    ],
+  },
+  {
+    label: "SYSTEM",
+    items: [
+      { href: "/admin/system", label: "Allgemein", icon: "settings" },
+      { href: "/admin/themes", label: "Branding & Themes", icon: "palette" },
+      { href: "/admin/integrations", label: "Integrationen", icon: "wifi" },
+      { href: "/admin/phorest", label: "Phorest", icon: "calendar" },
+      { href: "/admin/roles", label: "Rollen & Rechte", icon: "key" },
+    ],
+  },
+];
+
+/** The admin groups the user may open; a group whose items are all hidden is dropped. */
+export function visibleAdminNavGroups(
+  user: PermissionHolder | null | undefined,
+  options: { availabilityEnabled: boolean },
+): AdminNavGroup[] {
+  return ADMIN_NAV_GROUPS.map((group) => ({
+    label: group.label,
+    items: group.items.filter(
+      (item) =>
+        (options.availabilityEnabled || item.href !== "/admin/availability") &&
+        canAccessAdminPath(user, item.href),
+    ),
+  })).filter((group) => group.items.length > 0);
+}
+
+export function visibleAdminNavItems(
+  user: PermissionHolder | null | undefined,
+  options: { availabilityEnabled: boolean },
+): AdminNavItem[] {
+  return visibleAdminNavGroups(user, options).flatMap((group) => group.items);
+}

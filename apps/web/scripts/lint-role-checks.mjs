@@ -111,19 +111,41 @@ export const SCOPE_FILES = [
   "apps/web/src/lib/components/admin/roles/RoleEditor.svelte",
   "apps/web/src/lib/components/admin/roles/AssignmentsTab.svelte",
   "apps/web/src/lib/components/admin/roles/AssignmentDialog.svelte",
+  "apps/web/src/lib/components/ui/CommandPalette.svelte",
 ];
 
-/** (file, exact trimmed line text) pairs that are read-but-decide-nothing (a display label) or
- *  are the documented `/admin/*`-only exception (#83 scope, Phase 378 D-03) — never a Team-Bereich
- *  visibility decision. See the module docblock. */
-const ALLOWLIST = new Set([
-  "apps/web/src/lib/components/layout/Sidebar.svelte::const role = $authStore.user?.role; // ADMIN sub-groups gate only (#83 scope) — see comment above",
-  'apps/web/src/lib/components/layout/Sidebar.svelte::if (role === "ADMIN") {',
+/** (file, exact trimmed line text) pairs that read the compat role for a display LABEL only and
+ *  decide nothing (Sidebar's role badge) — converted with D-11 (a) of #83. Since Phase 83 the
+ *  admin gates are permission-based, so no access exception remains. A stale entry fails the run
+ *  (`staleAllowlistEntries`): a dead exception is a check that sees nothing. */
+export const ALLOWLIST = new Set([
   'apps/web/src/lib/components/layout/Sidebar.svelte::{#if $authStore.user.role === "ADMIN"}',
   'apps/web/src/lib/components/layout/Sidebar.svelte::{:else if $authStore.user.role === "MANAGER"}',
-  "apps/web/src/lib/components/layout/BottomTabBar.svelte::const role = $authStore.user?.role; // ADMIN-only /admin/* items gate — see comment above",
-  'apps/web/src/lib/components/layout/BottomTabBar.svelte::? role === "ADMIN"',
 ]);
+
+/**
+ * ALLOWLIST entries whose file is not in scope or whose text matches no trimmed line of that file.
+ * Pure — `readFile` is injected so it is unit-testable.
+ * @param {Iterable<string>} allowlist
+ * @param {readonly string[]} scopeFiles
+ * @param {(file: string) => string} readFile
+ * @returns {string[]}
+ */
+export function staleAllowlistEntries(allowlist, scopeFiles, readFile) {
+  const stale = [];
+  for (const entry of allowlist) {
+    const [file, text] = entry.split("::");
+    if (!scopeFiles.includes(file)) {
+      stale.push(entry);
+      continue;
+    }
+    const lines = readFile(file)
+      .split("\n")
+      .map((line) => line.trim());
+    if (!lines.includes(text)) stale.push(entry);
+  }
+  return stale;
+}
 
 const ROLE_LITERALS = ["ADMIN", "MANAGER", "EMPLOYEE"];
 const ROLE_LITERAL_ALT = ROLE_LITERALS.join("|");
@@ -180,6 +202,16 @@ function run() {
     process.exit(1);
   }
 
+  const stale = staleAllowlistEntries(ALLOWLIST, SCOPE_FILES, (file) =>
+    readFileSync(resolve(repoRoot, file), "utf8"),
+  );
+  if (stale.length > 0) {
+    for (const entry of stale) {
+      console.error(`lint:role-checks: FAILED — stale ALLOWLIST entry ${entry}`);
+    }
+    process.exit(1);
+  }
+
   const findings = [];
   for (const file of SCOPE_FILES) {
     const text = readFileSync(resolve(repoRoot, file), "utf8");
@@ -203,7 +235,7 @@ function run() {
   }
 
   console.log(
-    `lint:role-checks: OK — 0 finding(s) in ${SCOPE_FILES.length} file(s) (Phase 378 scope)`,
+    `lint:role-checks: OK — 0 finding(s) in ${SCOPE_FILES.length} file(s) (Issues #378, #83)`,
   );
   process.exit(0);
 }

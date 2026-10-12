@@ -14,7 +14,7 @@
 
 ### 1.1 The 5 Groups
 
-The admin sidebar is divided into **5 named groups**. Section labels are UPPERCASE, letter-spaced, and **visual-only** — they are never clickable. Each group contains 2–4 leaf entries.
+The admin sidebar is divided into **5 named groups**. Section labels are UPPERCASE, letter-spaced, and **visual-only** — they are never clickable. Each group contains 2–5 leaf entries.
 
 ```
 PERSONAL
@@ -39,6 +39,7 @@ SYSTEM
   Branding & Themes
   Integrationen
   Phorest
+  Rollen & Rechte
 ```
 
 These 5 groups and their exact entries are the authoritative target structure for Phase 51 (sidebar regrouping). No entries may be added, removed, or renamed without updating this Regulatorium first.
@@ -46,6 +47,8 @@ These 5 groups and their exact entries are the authoritative target structure fo
 > **Note (v1.6.1 closing decision):** Sonderurlaubs-Typen consolidated into `/admin/vacation#sonderurlaub` (Phase 57). The standalone `/admin/special-leave` route is now a redirect-only stub kept for old deep links. The PERSONAL group went from 4 to 3 entries as a result.
 
 > **Note (Phase 85.1-03):** Phorest configuration/test/staff-mapping/sync/observability UI was extracted out of `/admin/system` (D-10 — dedicated admin tab) into its own `/admin/phorest` route. The SYSTEM group went from 3 to 4 entries as a result.
+
+> **Note (Phase 83, #83):** „Rollen & Rechte“ (`/admin/roles`, tabs Rollen / Zuweisungen) is the fifth SYSTEM entry; the SYSTEM group is now at the §1.3 maximum.
 
 ### 1.2 Group → Pages Mapping
 
@@ -64,6 +67,7 @@ These 5 groups and their exact entries are the authoritative target structure fo
 | SYSTEM     | Branding & Themes | /admin/themes       | —                                                                                       |
 | SYSTEM     | Integrationen     | /admin/integrations | /admin/wifi-presence (renamed in Phase 52; 301 redirect — see §8)                       |
 | SYSTEM     | Phorest           | /admin/phorest      | — (extracted out of /admin/system in Phase 85.1-03; D-10)                               |
+| SYSTEM     | Rollen & Rechte   | /admin/roles        | — (new in Phase 83, #83)                                                                |
 
 ### 1.3 Section Label Rules
 
@@ -88,6 +92,14 @@ Examples of valid matches:
 Any mismatch between sidebar label and PageHead title is a **Regulatorium violation**. The planned `lint:admin-layout` script (ADMIN-LINT-01, v2 backlog) will automatically detect this; until that script ships, Regulatorium compliance is self-enforced by phase executors.
 
 ---
+
+### 1.5 Visibility by Permission (Phase 83, #83)
+
+Every admin route has exactly one entry in `apps/web/src/lib/nav/admin-route-permissions.ts`: a list
+of alternatives, each a set of permissions that must all be held, derived from the API guards its
+page calls. The Sidebar, the mobile „Mehr“ sheet, the command palette and the admin route guard read
+it. An item the user may not open is not shown, and its URL redirects to `/dashboard`. A new admin
+route without an entry fails `admin-route-permissions.test.ts`.
 
 ## 2. Page Templates
 
@@ -1113,6 +1125,7 @@ All 13 admin pages, their template assignment, migration phase, and requirement 
 | SYSTEM     | Branding & Themes | /admin/themes       | Section-Stack                                                                    | 52    | ADMIN-MIG-02                                         |
 | SYSTEM     | Integrationen     | /admin/integrations | Section-Stack                                                                    | 52    | ADMIN-MIG-03                                         |
 | SYSTEM     | Phorest           | /admin/phorest      | Section-Stack                                                                    | 85.1  | D-10 (85.1-CONTEXT.md)                               |
+| SYSTEM     | Rollen & Rechte   | /admin/roles        | Section-Stack (tabs)                                                             | 83    | #83 (D-01)                                           |
 
 **Reading this table:**
 

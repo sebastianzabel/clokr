@@ -2,6 +2,7 @@
   import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
   import { focusTrap } from "$lib/utils/focus-trap";
+  import { canAccessAdminPath, isAdminHref } from "$lib/nav/admin-route-permissions";
 
   interface Action {
     id: string;
@@ -10,7 +11,6 @@
     icon: string;
     href: string;
     group: string;
-    adminOnly?: boolean;
   }
 
   interface ActionGroup {
@@ -58,7 +58,6 @@
       icon: "settings",
       href: "/admin",
       group: "Navigation",
-      adminOnly: true,
     },
     {
       id: "admin-shifts",
@@ -67,7 +66,6 @@
       icon: "calendar",
       href: "/admin/shifts",
       group: "Admin",
-      adminOnly: true,
     },
     {
       id: "admin-vacation",
@@ -76,7 +74,14 @@
       icon: "settings",
       href: "/admin/vacation",
       group: "Admin",
-      adminOnly: true,
+    },
+    {
+      id: "admin-roles",
+      label: "Rollen & Rechte",
+      description: "Rollen anlegen und zuweisen",
+      icon: "settings",
+      href: "/admin/roles",
+      group: "Admin",
     },
   ];
 
@@ -85,16 +90,16 @@
   let selectedIndex = $state(0);
   let inputRef: HTMLInputElement | undefined = $state();
 
-  let isManager = $derived(["ADMIN", "MANAGER"].includes($authStore.user?.role ?? ""));
+  // Issue #83: an admin action is offered only when the admin route map lets the user open it.
+  const offered = (a: Action) =>
+    !isAdminHref(a.href) || canAccessAdminPath($authStore.user, a.href);
 
   let filtered = $derived(
-    allActions
-      .filter((a) => !a.adminOnly || isManager)
-      .filter((a) => {
-        if (!query.trim()) return true;
-        const q = query.toLowerCase();
-        return a.label.toLowerCase().includes(q) || a.description.toLowerCase().includes(q);
-      }),
+    allActions.filter(offered).filter((a) => {
+      if (!query.trim()) return true;
+      const q = query.toLowerCase();
+      return a.label.toLowerCase().includes(q) || a.description.toLowerCase().includes(q);
+    }),
   );
 
   let grouped = $derived(

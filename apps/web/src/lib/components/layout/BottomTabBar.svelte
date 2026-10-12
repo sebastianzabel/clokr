@@ -3,6 +3,7 @@
   import { tenantFeatures } from "$stores/tenant-features";
   import { visibleTeamNavItems } from "$lib/nav/team-nav";
   import { activeNavHref } from "$lib/nav/active-route";
+  import { visibleAdminNavItems } from "$lib/nav/admin-route-permissions";
   import MobileMoreSheet from "./MobileMoreSheet.svelte";
 
   interface Props {
@@ -34,42 +35,26 @@
   // reachable for EMPLOYEEs via direct URL (EMP-06 personal monthly closes), but neither
   // Systemrollen-Template without `report:read:ZUGEWIESEN` gets a nav entry for it either.
 
-  // adminMore: flat list for mobile (12 entries). Group restructure deferred to ADMIN-MIG-14
-  // (v2 backlog) — mobile users see the same flat list as today.
-  const adminMore: NavItem[] = [
-    { href: "/admin/employees", label: "Mitarbeitende", icon: "users" },
-    { href: "/admin/vacation", label: "Urlaubsverwaltung", icon: "umbrella" },
-    { href: "/admin/special-leave", label: "Sonderurlaubs-Typen", icon: "star" },
-    { href: "/admin/shutdowns", label: "Betriebsurlaub", icon: "calendar" },
-    { href: "/admin/shifts", label: "Schichtplan", icon: "grid" },
-    { href: "/admin/month-close", label: "Monatsabschluss", icon: "lock" },
-    { href: "/admin/audit", label: "Audit & Log", icon: "shield" },
-    { href: "/admin/integrations", label: "Integrationen", icon: "wifi" },
-    { href: "/admin/system", label: "Allgemein", icon: "settings" },
-    { href: "/admin/themes", label: "Branding & Themes", icon: "palette" },
-    { href: "/admin/import", label: "CSV Import", icon: "upload" },
-    { href: "/admin/export", label: "DATEV Export", icon: "download" },
-  ];
-
-  // moreItems is reactive to the caller's PERMISSIONS (Phase 378, #378) for the team items, and
-  // to `role` only for the `/admin/*` items (out of this issue's scope, #83 owns that UI — same
-  // documented exception as Sidebar.svelte's admin sub-groups); server-side permission guards
-  // still enforce actual authorization on every protected route.
+  // moreItems follows the caller's PERMISSIONS: the team items since Phase 378 (#378), the admin
+  // items since Phase 83 (#83) — the same per-item filter and order as the Sidebar
+  // (`$lib/nav/admin-route-permissions.ts`), independent of whether team items exist. A UI-only
+  // display gate; server-side permission guards still decide every request.
   //
-  // Verfügbarkeits-System (Phase 47.3): the /availability entry is hidden
-  // when the tenant feature flag is off. Fail-open while the store is loading.
+  // Verfügbarkeits-System (Phase 47.3): the /availability entries are hidden when the tenant
+  // feature flag is off. Fail-open while the store is loading.
   const moreItems = $derived.by((): NavItem[] => {
-    const role = $authStore.user?.role; // ADMIN-only /admin/* items gate — see comment above
     const availabilityOn = $tenantFeatures.availabilityEnabled;
     const teamItems = visibleTeamNavItems($authStore.user);
     const settingsItem: NavItem = { href: "/settings", label: "Mein Profil", icon: "settings" };
     const base: NavItem[] =
       teamItems.length > 0
-        ? role === "ADMIN"
-          ? [...teamItems, settingsItem, ...adminMore]
-          : [...teamItems, settingsItem]
+        ? [...teamItems, settingsItem]
         : [{ href: "/availability", label: "Verfügbarkeit", icon: "calendar-check" }, settingsItem];
-    return availabilityOn ? base : base.filter((it) => it.href !== "/availability");
+    const own = availabilityOn ? base : base.filter((it) => it.href !== "/availability");
+    return [
+      ...own,
+      ...visibleAdminNavItems($authStore.user, { availabilityEnabled: availabilityOn }),
+    ];
   });
 
   let sheetOpen = $state(false);
