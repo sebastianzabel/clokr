@@ -418,4 +418,37 @@ describe("Issue #81 — GET /api/v1/time-entries/summary per activity kind", () 
       expect(kindSum(body)).toBe(body.workingMinutes);
     });
   });
+
+  describe("list items expose kind and shares (D-11)", () => {
+    it("GET /time-entries returns activityKind and activityShares in the write shape", async () => {
+      const { user, employee } = await createEmployee("list");
+      const classified = await createEntry(employee.id, data.salonId, "2026-06-03", {
+        end: "17:00:00Z",
+        breakMinutes: 45,
+        activityKind: "PRODUCTIVE",
+        shares: [{ kind: "SETUP_CLEANING", minutes: 60 }],
+      });
+      const plain = await createEntry(employee.id, data.salonId, "2026-06-04");
+      for (const token of [data.adminToken, await login(user.email)]) {
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/time-entries?employeeId=${employee.id}&from=2026-06-01&to=2026-06-30`,
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect(res.statusCode, res.body).toBe(200);
+        const items = JSON.parse(res.body) as Array<{
+          id: string;
+          activityKind: string;
+          activityShares: Array<Record<string, unknown>>;
+        }>;
+        const c = items.find((i) => i.id === classified.id)!;
+        expect(c.activityKind).toBe("PRODUCTIVE");
+        expect(c.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 60 }]);
+        expect(Object.keys(c.activityShares[0]).sort()).toEqual(["kind", "minutes"]);
+        const p = items.find((i) => i.id === plain.id)!;
+        expect(p.activityKind).toBe("UNSPECIFIED");
+        expect(p.activityShares).toEqual([]);
+      }
+    });
+  });
 });

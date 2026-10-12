@@ -1120,6 +1120,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         include: {
           employee: { select: { firstName: true, lastName: true } },
           breaks: { orderBy: { startTime: "asc" } },
+          // Issue #81 (D-11): the wire shape equals the write shape — a later UI can send the list
+          // back unchanged.
+          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
         },
         take: TIME_ENTRIES_MAX,
         orderBy: { date: "desc" },
