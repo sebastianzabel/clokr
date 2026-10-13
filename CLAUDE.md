@@ -589,13 +589,18 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   1st; at most 12 months ahead; 400 otherwise) — a working-time change must be communicated at the
   latest on the day it takes effect, so it is never retroactive. Only `FIXED_SCHEDULE` contracts and
   employees without a contract are candidates; a contract that differs from the stored defaults
-  (`INDIVIDUAL`) is excluded unless the admin ticks it. The config save, the new rows, one
-  `CREATE WorkSchedule` audit per employee and one ids-only `BULK_APPLY` audit row run in ONE
-  transaction serialised by a `FOR NO KEY UPDATE` lock on the Tenant row; the #450 vacation recompute
-  stays reactive after commit. The rule lives ONLY in `contexts/platform/bulk-apply-defaults.ts`; the
+  (`INDIVIDUAL`: hours, threshold, payout flag or the `workDays` set — a legacy row whose `workDays`
+  diverge from its day-hours is never silently "corrected") is excluded unless the admin ticks it.
+  A contract's `validFrom` is compared with `effectiveFrom` by its tenant-LOCAL calendar day (it is
+  an instant), never by its UTC day. The config save, the new rows, one `CREATE WorkSchedule` audit
+  per employee and one ids-only `BULK_APPLY` audit row run in ONE transaction serialised by a
+  `FOR NO KEY UPDATE` lock on the Tenant row AND on the selected Employee rows (ordered by id; the
+  per-employee `PUT /settings/work/:employeeId` takes the same Employee row lock and answers 409
+  `CONTRACT_CHANGED_CONCURRENTLY` when the row at `validFrom` changed under it); the #450 vacation
+  recompute and the saldo recalculation stay reactive after commit. The rule lives ONLY in `contexts/platform/bulk-apply-defaults.ts`; the
   web dialog (`BulkApplyDialog.svelte`) only chooses inside the preview and computes no date. Past
   applies are listed read-only by `scripts/audit-568-bulk-apply-history.ts`. Per-employee changes
-  (`PUT /settings/work/:employeeId`) are unchanged.
+  (`PUT /settings/work/:employeeId`) keep their rules (retroactive corrections stay possible there).
 
 ## UI Consistency Rules
 
