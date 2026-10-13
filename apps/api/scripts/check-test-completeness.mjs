@@ -802,9 +802,11 @@ import { readFileSync } from "node:fs";
 // Issue #568 (2026-10-13): measured on `fix/568-bulk-apply-preview`, full run (`test:coverage`) - 571 test files,
 // 9093 tests (9090 passed, 3 skipped). New files: bulk-apply-defaults.test.ts, bulk-apply-preview-568.test.ts,
 // audit-568-bulk-apply-history.test.ts, plus the cases added to the six migrated bulk-apply files. Both floors are
-// set to exactly these numbers; MIN_FILES 568 -> 571, MIN_TESTS 9031 -> 9093, never lowered.
+// set to exactly these numbers; MIN_FILES 568 -> 571, MIN_TESTS 9031 -> 9093, never lowered. After the review
+// fixes (tenant-local day compare, workDays, row locks) re-measured: 571 files, 9110 tests (9107 passed, 3 skipped)
+// -> MIN_TESTS 9093 -> 9110.
 const MIN_FILES = 571;
-const MIN_TESTS = 9093;
+const MIN_TESTS = 9110;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
