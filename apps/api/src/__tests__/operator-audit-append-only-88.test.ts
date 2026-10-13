@@ -9,7 +9,13 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
-import { OPERATOR_AUDIT_ACTIONS, recordOperatorAudit } from "../contexts/platform/operator-audit";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
+import {
+  OPERATOR_AUDIT_ACTIONS,
+  purgeExpiredOperatorAudit,
+  recordOperatorAudit,
+} from "../contexts/platform/operator-audit";
 
 let app: FastifyInstance;
 let tenantId: string;
@@ -22,6 +28,22 @@ async function createOperator() {
       passwordHash: "x",
     },
   });
+}
+
+/** `months` calendar months before now, shifted by `extraDays` further days into the past. */
+function monthsAgo(months: number, extraDays = 0): Date {
+  const d = new Date();
+  d.setUTCMonth(d.getUTCMonth() - months);
+  d.setUTCDate(d.getUTCDate() - extraDays);
+  return d;
+}
+
+async function insertBackdated(action: string, createdAt: Date): Promise<string> {
+  const row = await app.prisma.operatorAuditLog.create({
+    data: { action, entity: "OperatorAccount", createdAt },
+    select: { id: true },
+  });
+  return row.id;
 }
 
 beforeAll(async () => {
@@ -82,5 +104,154 @@ describe("Phase 88 tracer — operator audit writer", () => {
     expect(row).not.toBeNull();
     expect(row?.subjectTenantId).toBe(subject);
     expect(row?.operatorId).toBeNull();
+  });
+});
+
+describe("Phase 88 — append-only enforcement (D-07a)", () => {
+  it("rejects a Prisma update of an audit row", async () => {
+    const id = await insertBackdated("OPERATOR_LOGIN", new Date());
+    await expect(
+      app.prisma.operatorAuditLog.update({ where: { id }, data: { entity: "Tampered" } }),
+    ).rejects.toThrow(/append-only/);
+    const row = await app.prisma.operatorAuditLog.findUniqueOrThrow({ where: { id } });
+    expect(row.entity).toBe("OperatorAccount");
+  });
+
+  it("rejects a raw UPDATE of an audit row", async () => {
+    const id = await insertBackdated("OPERATOR_LOGIN", new Date());
+    await expect(
+      app.prisma.$executeRawUnsafe(
+        `UPDATE "OperatorAuditLog" SET "entity" = 'Tampered' WHERE "id" = $1`,
+        id,
+      ),
+    ).rejects.toThrow(/append-only/);
+  });
+
+  it("rejects a Prisma delete without the retention flag", async () => {
+    const id = await insertBackdated("OPERATOR_LOGIN", monthsAgo(13));
+    await expect(app.prisma.operatorAuditLog.delete({ where: { id } })).rejects.toThrow(
+      /append-only/,
+    );
+    expect(await app.prisma.operatorAuditLog.findUnique({ where: { id } })).not.toBeNull();
+  });
+
+  it("rejects a raw DELETE without the retention flag", async () => {
+    const id = await insertBackdated("OPERATOR_LOGIN", monthsAgo(13));
+    await expect(
+      app.prisma.$executeRawUnsafe(`DELETE FROM "OperatorAuditLog" WHERE "id" = $1`, id),
+    ).rejects.toThrow(/append-only/);
+  });
+
+  it("rejects a flagged DELETE of a row younger than 12 months (database floor)", async () => {
+    const id = await insertBackdated("OPERATOR_LOGIN", monthsAgo(1));
+    await expect(
+      app.prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL clokr.operator_audit_retention = 'on'`);
+        await tx.operatorAuditLog.delete({ where: { id } });
+      }),
+    ).rejects.toThrow(/append-only/);
+    expect(await app.prisma.operatorAuditLog.findUnique({ where: { id } })).not.toBeNull();
+  });
+
+  it("rejects TRUNCATE with the trigger error, not with the test's own rollback", async () => {
+    const sentinel = new Error("sentinel-rollback");
+    const outcome = await app.prisma
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`TRUNCATE "OperatorAuditLog"`);
+        throw sentinel;
+      })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(outcome).not.toBeNull();
+    expect(outcome).not.toBe(sentinel);
+    expect(String(outcome)).toMatch(/append-only/);
+  });
+});
+
+describe("Phase 88 — retention purge (D-07a)", () => {
+  it("deletes only expired rows per retention class and reports the count", async () => {
+    const expiredAuth = await insertBackdated(OPERATOR_AUDIT_ACTIONS.OPERATOR_LOGIN, monthsAgo(13));
+    const oldLifecycle = await insertBackdated(
+      OPERATOR_AUDIT_ACTIONS.TENANT_CREATED,
+      monthsAgo(13),
+    );
+    const youngAuth = await insertBackdated(OPERATOR_AUDIT_ACTIONS.OPERATOR_LOGIN, monthsAgo(1));
+
+    const result = await purgeExpiredOperatorAudit(app.prisma, new Date());
+
+    expect(result.deleted).toBeGreaterThanOrEqual(1);
+    expect(await app.prisma.operatorAuditLog.findUnique({ where: { id: expiredAuth } })).toBeNull();
+    expect(
+      await app.prisma.operatorAuditLog.findUnique({ where: { id: oldLifecycle } }),
+    ).not.toBeNull();
+    expect(
+      await app.prisma.operatorAuditLog.findUnique({ where: { id: youngAuth } }),
+    ).not.toBeNull();
+  });
+
+  it("counts exactly the removed rows", async () => {
+    const before = await app.prisma.operatorAuditLog.count();
+    await insertBackdated(OPERATOR_AUDIT_ACTIONS.OPERATOR_LOCKED, monthsAgo(14));
+    await insertBackdated(OPERATOR_AUDIT_ACTIONS.OPERATOR_MFA_FAILED, monthsAgo(24));
+    const result = await purgeExpiredOperatorAudit(app.prisma, new Date());
+    const after = await app.prisma.operatorAuditLog.count();
+    expect(result.deleted).toBe(before + 2 - after);
+    expect(result.deleted).toBeGreaterThanOrEqual(2);
+  });
+
+  it("purges a lifecycle row only after 120 months", async () => {
+    const id = await insertBackdated(OPERATOR_AUDIT_ACTIONS.TENANT_DEACTIVATED, monthsAgo(121));
+    await purgeExpiredOperatorAudit(app.prisma, new Date());
+    expect(await app.prisma.operatorAuditLog.findUnique({ where: { id } })).toBeNull();
+  });
+});
+
+describe("Phase 88 — source scan: the audit delegate has one writer file", () => {
+  const SRC_ROOT = resolve(__dirname, "..");
+  const WRITER = "contexts/platform/operator-audit.ts";
+
+  function walk(dir: string): string[] {
+    const out: string[] = [];
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) {
+        if (name === "__tests__" || name === "node_modules") continue;
+        out.push(...walk(full));
+      } else if (name.endsWith(".ts") && !name.endsWith(".test.ts")) {
+        out.push(full);
+      }
+    }
+    return out;
+  }
+
+  const files = walk(SRC_ROOT).map((f) => ({
+    rel: relative(SRC_ROOT, f).split("\\").join("/"),
+    text: readFileSync(f, "utf8"),
+  }));
+
+  it("scans a non-empty tree that contains the writer file", () => {
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.some((f) => f.rel === WRITER)).toBe(true);
+  });
+
+  it("names the operatorAuditLog delegate only in the writer file", () => {
+    const offenders = files
+      .filter((f) => f.rel !== WRITER && /operatorAuditLog/.test(f.text))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("never updates, upserts or deletes through the delegate; deleteMany only in the purge", () => {
+    const writer = files.find((f) => f.rel === WRITER);
+    expect(writer).toBeDefined();
+    const text = writer?.text ?? "";
+    expect(text).not.toMatch(/operatorAuditLog\s*\.\s*(update|updateMany|upsert|delete)\s*\(/);
+    const purgeStart = text.indexOf("export async function purgeExpiredOperatorAudit");
+    expect(purgeStart).toBeGreaterThan(-1);
+    const deleteManyAt = text.indexOf("operatorAuditLog.deleteMany");
+    expect(deleteManyAt).toBeGreaterThan(purgeStart);
+    expect(text.indexOf("operatorAuditLog.deleteMany", deleteManyAt + 1)).toBe(-1);
   });
 });

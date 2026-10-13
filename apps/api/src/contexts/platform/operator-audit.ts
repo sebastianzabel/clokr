@@ -16,7 +16,7 @@
  * Callers pass their transaction client so the audit row and the audited action commit atomically.
  */
 
-import type { Prisma } from "@clokr/db";
+import type { Prisma, PrismaClient } from "@clokr/db";
 
 /** Every audited operator action. The names are control values; never match on display strings. */
 export const OPERATOR_AUDIT_ACTIONS = {
@@ -128,5 +128,53 @@ export async function recordOperatorAudit(
       userAgent,
     },
     select: { id: true },
+  });
+}
+
+/** `months` UTC calendar months before `from` (day of month clamped to the target month's length). */
+function subtractUtcMonths(from: Date, months: number): Date {
+  const result = new Date(from.getTime());
+  const day = result.getUTCDate();
+  result.setUTCDate(1);
+  result.setUTCMonth(result.getUTCMonth() - months);
+  const lastDay = new Date(
+    Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  result.setUTCDate(Math.min(day, lastDay));
+  return result;
+}
+
+function actionsOfClass(retentionClass: OperatorAuditRetentionClass): string[] {
+  return Object.values(OPERATOR_AUDIT_ACTIONS).filter(
+    (action) => OPERATOR_AUDIT_RETENTION_CLASS[action] === retentionClass,
+  );
+}
+
+/**
+ * The only deletion path of OperatorAuditLog: removes rows whose retention class has expired at `now`.
+ * Called by the data-retention job (wired in 88-12). The statement runs in a transaction that sets the
+ * transaction-local flag `clokr.operator_audit_retention`, which the append-only trigger requires for any
+ * DELETE; the trigger additionally refuses rows younger than 12 months, so even a misused flag cannot
+ * erase recent events.
+ */
+export async function purgeExpiredOperatorAudit(
+  db: PrismaClient,
+  now: Date,
+): Promise<{ deleted: number }> {
+  return db.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL clokr.operator_audit_retention = 'on'`);
+    const { count } = await tx.operatorAuditLog.deleteMany({
+      where: {
+        OR: (Object.keys(OPERATOR_AUDIT_RETENTION_MONTHS) as OperatorAuditRetentionClass[]).map(
+          (retentionClass) => ({
+            action: { in: actionsOfClass(retentionClass) },
+            createdAt: {
+              lt: subtractUtcMonths(now, OPERATOR_AUDIT_RETENTION_MONTHS[retentionClass]),
+            },
+          }),
+        ),
+      },
+    });
+    return { deleted: count };
   });
 }
