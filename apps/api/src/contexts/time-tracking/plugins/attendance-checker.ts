@@ -8,6 +8,7 @@ import {
   isTimeEntryInScope, // Phase 91b Plan 09 (#91), D-09/D-17
   accessContextForJob, // Issue #80 (80-09), Feature 10
   employeeScopeFor, // Issue #80 (80-09), Feature 10
+  ACTIVE_TENANT_WHERE, // Phase 88 (D-05a): a deactivated tenant is a suspended customer — no notifications
 } from "../../platform";
 import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
 import { findUnacknowledgedBreakFindingDays } from "../break-finding-days"; // Issue #511 (D-13)
@@ -86,6 +87,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
 
     try {
       const tenants = await app.prisma.tenant.findMany({
+        where: ACTIVE_TENANT_WHERE,
         select: { id: true },
       });
 
@@ -167,6 +169,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
 
     try {
       const tenants = await app.prisma.tenant.findMany({
+        where: ACTIVE_TENANT_WHERE,
         select: { id: true },
       });
 
@@ -303,6 +306,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
 
     try {
       const tenants = await app.prisma.tenant.findMany({
+        where: ACTIVE_TENANT_WHERE,
         select: { id: true },
       });
 
@@ -452,7 +456,10 @@ export const attendanceCheckerPlugin = fp(async (app) => {
   async function checkPendingLeaveRequests() {
     app.log.info("Reminder: Prüfe offene Urlaubsanträge");
     try {
-      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+      const tenants = await app.prisma.tenant.findMany({
+        where: ACTIVE_TENANT_WHERE,
+        select: { id: true },
+      });
       for (const tenant of tenants) {
         try {
           const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId: tenant.id } });
@@ -549,7 +556,10 @@ export const attendanceCheckerPlugin = fp(async (app) => {
   async function checkUpcomingAbsences() {
     app.log.info("Reminder: Prüfe bevorstehende Abwesenheiten");
     try {
-      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+      const tenants = await app.prisma.tenant.findMany({
+        where: ACTIVE_TENANT_WHERE,
+        select: { id: true },
+      });
       for (const tenant of tenants) {
         try {
           const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId: tenant.id } });
@@ -608,7 +618,10 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       const currentMonth = new Date().getMonth() + 1; // 1-12
       const currentYear = new Date().getFullYear();
 
-      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+      const tenants = await app.prisma.tenant.findMany({
+        where: ACTIVE_TENANT_WHERE,
+        select: { id: true },
+      });
       for (const tenant of tenants) {
         try {
           const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId: tenant.id } });
@@ -672,7 +685,10 @@ export const attendanceCheckerPlugin = fp(async (app) => {
     app.log.info("Attendance-Checker: Prüfe Monatsend-Lückenerinnerungen (Feature 7)");
     try {
       const now = new Date();
-      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+      const tenants = await app.prisma.tenant.findMany({
+        where: ACTIVE_TENANT_WHERE,
+        select: { id: true },
+      });
 
       for (const tenant of tenants) {
         try {
@@ -821,7 +837,10 @@ export const attendanceCheckerPlugin = fp(async (app) => {
     app.log.info("Attendance-Checker: Prüfe Monatsanfang-Lückenerinnerungen (Feature 8)");
     try {
       const now = new Date();
-      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+      const tenants = await app.prisma.tenant.findMany({
+        where: ACTIVE_TENANT_WHERE,
+        select: { id: true },
+      });
 
       for (const tenant of tenants) {
         try {
@@ -1051,7 +1070,10 @@ export const attendanceCheckerPlugin = fp(async (app) => {
     app.log.info("Attendance-Checker: Prüfe unbestätigte Pflichtpausen (Feature 9)");
     try {
       const now = new Date();
-      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+      const tenants = await app.prisma.tenant.findMany({
+        where: ACTIVE_TENANT_WHERE,
+        select: { id: true },
+      });
 
       for (const tenant of tenants) {
         try {
@@ -1178,7 +1200,10 @@ export const attendanceCheckerPlugin = fp(async (app) => {
     app.log.info("Attendance-Checker: Prüfe Pausenverstöße (Feature 10)");
     try {
       const now = new Date();
-      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+      const tenants = await app.prisma.tenant.findMany({
+        where: ACTIVE_TENANT_WHERE,
+        select: { id: true },
+      });
 
       for (const tenant of tenants) {
         try {
