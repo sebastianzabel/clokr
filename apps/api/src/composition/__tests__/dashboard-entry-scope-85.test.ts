@@ -76,6 +76,8 @@ describe("Issue #85 — team-week per entry", () => {
   let salonB: string;
   let managerToken: string;
   const ids: Record<"A1" | "S" | "E" | "Q", string> = { A1: "", S: "", E: "", Q: "" };
+  // S2 is kept out of `ids` on purpose: the week-grid cases above list fixture persons from `ids`.
+  let s2Id = "";
 
   async function createPerson(tenantId: string, label: string) {
     const s = uniqueSuffix(label);
@@ -240,6 +242,23 @@ describe("Issue #85 — team-week per entry", () => {
     await entry(q.employee.id, salonB, "2026-06-16", "08:00", null);
     await entry(q.employee.id, salonA, "2026-06-17", "07:00", "09:00");
 
+    // S2: a second Springer homed in B with a closed entry TODAY (Wed 17.06) in A, an approved
+    // vacation tomorrow and the same FIXED Mon-Fri contract.
+    const s2 = await createPerson(tenantId, "S2");
+    s2Id = s2.employee.id;
+    await home(tenantId, s2.employee.id, salonB);
+    await entry(s2.employee.id, salonA, "2026-06-17", "06:00", "09:00");
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: s2.employee.id,
+        leaveTypeId: vacation.id,
+        startDate: new Date("2026-06-18T00:00:00Z"),
+        endDate: new Date("2026-06-18T00:00:00Z"),
+        days: 1,
+        status: "APPROVED",
+      },
+    });
+
     // E: homed in B, entries only in B: never visible to the Salonmanager of A.
     const e = await createPerson(tenantId, "E");
     ids.E = e.employee.id;
@@ -348,6 +367,85 @@ describe("Issue #85 — team-week per entry", () => {
       expect(dayOf(q, "2026-06-16")?.status).toBe("present");
       expect(dayOf(q, "2026-06-17")?.workedHours).toBe(2);
       expect(rowOf(body, ids.E)).toBeUndefined();
+    });
+  });
+
+  describe("today-attendance (D-04)", () => {
+    type Attendance = {
+      date: string;
+      employees: {
+        id: string;
+        name: string;
+        employeeNumber: string | null;
+        status: string;
+        reason: string | null;
+      }[];
+      summary: {
+        present: number;
+        absent: number;
+        clockedIn: number;
+        missing: number;
+        holiday: number;
+      };
+    };
+
+    async function attendance(token: string): Promise<Attendance> {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      return JSON.parse(res.body) as Attendance;
+    }
+    const allIds = () => ({ ...ids, S2: s2Id });
+    const listed = (body: Attendance) =>
+      Object.entries(allIds())
+        .filter(([, id]) => body.employees.some((r) => r.id === id))
+        .map(([key]) => key)
+        .sort();
+
+    it("lists S2 by the in-scope entry today, status from that entry only, no planning data", async () => {
+      const body = await attendance(managerToken);
+      expect(body.date).toBe("2026-06-17");
+      const s2 = body.employees.find((r) => r.id === s2Id);
+      expect(s2?.status).toBe("present");
+      expect(s2?.reason).toBeNull();
+      expect(s2?.employeeNumber).toBeNull();
+    });
+
+    it("does not list S (only today's entry is an open one in B) nor E", async () => {
+      const body = await attendance(managerToken);
+      expect(listed(body)).toEqual(["A1", "Q", "S2"]);
+      expect(JSON.stringify(body)).not.toContain(ids.S);
+      expect(JSON.stringify(body)).not.toContain(ids.E);
+    });
+
+    it("the Stammsalon person A1 has the same status as for the tenant admin", async () => {
+      const mine = (await attendance(managerToken)).employees.find((r) => r.id === ids.A1);
+      const admin = (await attendance(data.adminToken)).employees.find((r) => r.id === ids.A1);
+      expect(mine).toEqual(admin);
+    });
+
+    it("the summary counters equal the counts of the manager's own rows", async () => {
+      const body = await attendance(managerToken);
+      const count = (status: string) => body.employees.filter((r) => r.status === status).length;
+      expect(body.summary).toEqual({
+        present: count("present"),
+        absent: count("absent"),
+        clockedIn: count("clocked_in"),
+        missing: count("missing"),
+        holiday: count("holiday"),
+      });
+      expect(count("present")).toBeGreaterThanOrEqual(2);
+    });
+
+    it("control: the tenant admin sees every person with the unchanged statuses", async () => {
+      const body = await attendance(data.adminToken);
+      expect(listed(body)).toEqual(["A1", "E", "Q", "S", "S2"]);
+      expect(body.employees.find((r) => r.id === ids.S)?.status).toBe("clocked_in");
+      expect(body.employees.find((r) => r.id === s2Id)?.status).toBe("present");
+      expect(body.employees.find((r) => r.id === s2Id)?.employeeNumber).not.toBeNull();
     });
   });
 });

@@ -850,10 +850,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const today = todayInTz(tz);
       const todayStr = dateStrInTz(today, tz);
 
-      // Phase 91b Plan 06 (Issue #91), D-09/D-10/D-13 — same resolver-choice justification as
-      // GET /team-week above: `employeeScopeFor` only accepts an employeeId/employeeIds target, so
-      // the employee-level `resolveStammsalonScopedEmployeeIds` (Stichtag = today) is the only
-      // resolver that composes with the 3 `employeeScopeFor` call sites below.
+      // Phase 91b Plan 06 (Issue #91), D-09/D-10/D-13, Issue #85 (D-04) — the Stammsalon persons
+      // (employee-level `resolveStammsalonScopedEmployeeIds`, Stichtag = today) feed every
+      // planning read below, because `employeeScopeFor` only accepts an employeeId/employeeIds
+      // target. The per-entry rule is layered on top: persons with an in-scope entry today join
+      // the population, and what a scoped caller sees of a person's day is the in-scope entries.
       const attendanceScopeReach = await resolveAccessReach(
         app.prisma,
         access,
@@ -870,19 +871,50 @@ export async function dashboardRoutes(app: FastifyInstance) {
               today,
             );
 
+      // Issue #85 (D-04): for a scoped caller the entry decides. The Unterbau names today's
+      // in-scope entries; the population is the Stammsalon persons (as before) PLUS every person
+      // with at least one of those entries, and the status of such a person comes from them only.
+      let inScopeRows: Awaited<ReturnType<typeof getRecordedWorkEntriesByIds>> | null = null;
+      if (attendanceScopeReach.kind === "scoped") {
+        const inScopeIds = await scopedTimeEntryIds(
+          app.prisma,
+          tenantId,
+          attendanceScopeReach,
+          today,
+          today,
+        );
+        // "all" is whole-tenant only; for a scoped reach it cannot occur, and fails closed.
+        inScopeRows = await getRecordedWorkEntriesByIds(
+          app.prisma,
+          tenantId,
+          inScopeIds === "all" ? [] : inScopeIds,
+        );
+      }
+      const attendancePopulationIds =
+        attendanceScopedIds === "all"
+          ? "all"
+          : [...attendanceScopedIds, ...distinctEmployeeIds(inScopeRows ?? [])];
+
       // Bulk fetch 1 — active employees for this tenant
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
           exitDate: null,
           user: { isActive: true },
-          ...(attendanceScopedIds !== "all" ? { id: { in: attendanceScopedIds } } : {}),
+          ...(attendancePopulationIds !== "all" ? { id: { in: attendancePopulationIds } } : {}),
         },
         select: { id: true, firstName: true, lastName: true, employeeNumber: true },
         orderBy: { lastName: "asc" },
       });
 
-      const employeeIds = employees.map((e) => e.id);
+      // Planning data (holidays, leave, absences, contracts) belongs to the Stammsalon persons
+      // only: a person listed purely by an in-scope entry carries none of it.
+      const attendanceStammSet = new Set(attendanceScopedIds === "all" ? [] : attendanceScopedIds);
+      const employeeIds = (
+        attendanceScopedIds === "all"
+          ? employees
+          : employees.filter((e) => attendanceStammSet.has(e.id))
+      ).map((e) => e.id);
 
       // Holidays by work location, for today (Phase 71b, issue #71) — per employee, fed with a
       // dedicated T2 read (see the team-week handler above for why this is separate from
@@ -948,8 +980,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
       });
 
       // Build lookup maps (employeeId → first match)
+      // Scoped callers: the status of every person is built from the in-scope rows (Issue #85).
       const entriesByEmp = new Map<string, typeof timeEntries>();
-      for (const e of timeEntries) {
+      for (const e of inScopeRows ?? timeEntries) {
         const list = entriesByEmp.get(e.employeeId) ?? [];
         list.push(e);
         entriesByEmp.set(e.employeeId, list);
@@ -971,6 +1004,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       // DOW for today (needed once — all employees share the same day)
       const dow = getDayOfWeekInTz(today, tz);
+
+      // Issue #85 (D-05): valid entries of a Stammsalon person today that lie outside the reach.
+      // For today this is empty by construction (the Stichtag is the entry date), but the generic
+      // path is used rather than a special case. A population-only person has no row in
+      // `timeEntries`, so its count is always 0.
+      const attendanceHiddenCounts =
+        inScopeRows !== null
+          ? outOfScopeValidCounts(timeEntries, inScopeRows, () => todayStr)
+          : new Map<string, number>();
 
       // Summary counters
       let present = 0;
@@ -1005,10 +1047,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
         });
 
         const rawEntries = entriesByEmp.get(emp.id) ?? [];
-        const presenceEntries: PresenceEntry[] = rawEntries.map((e) => ({
-          endTime: e.endTime,
-          isInvalid: e.isInvalid,
-        }));
+        // Hidden valid time of a Stammsalon person enters as a CLOSED stand-in: the day reads as
+        // present, and an out-of-scope open entry never reads as "clocked_in" (D-05).
+        const presenceEntries: PresenceEntry[] = presenceEntriesWithStandIns(
+          rawEntries,
+          attendanceHiddenCounts.get(personDayKey(emp.id, todayStr)) ?? 0,
+        );
 
         const rawLeave = leaveByEmp.get(emp.id) ?? null;
         const presenceLeave: PresenceLeave | null = rawLeave
@@ -1046,7 +1090,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
         return {
           id: emp.id,
           name: `${emp.firstName} ${emp.lastName}`,
-          employeeNumber: emp.employeeNumber,
+          // A person listed only by an in-scope entry is not a Stammsalon person: no number.
+          employeeNumber:
+            attendanceScopedIds === "all" || attendanceStammSet.has(emp.id)
+              ? emp.employeeNumber
+              : null,
           status,
           reason,
         };
