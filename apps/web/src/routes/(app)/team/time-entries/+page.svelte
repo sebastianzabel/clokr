@@ -56,11 +56,13 @@
   // Phase 116 (GitHub issue #119) — same module the own /time-entries page uses; one answer,
   // two callers, no drift.
   import {
-    settled,
+    settledAllowDenied,
+    isDenied,
     valueOr,
     anyFailed,
     resolveMonthListState,
     resolveSaldoCardState,
+    istOnlyMonthMetrics,
   } from "$lib/time-entries/month-view-state";
   import {
     getDayExpectedMinutes,
@@ -188,6 +190,12 @@
   // Phase 116 (issue #119) — true when /settings/work/:id, /overtime/:id or
   // /overtime/month-saldo/:id FAILED, as opposed to legitimately returning nothing.
   let saldoFetchFailed = $state(false);
+  // Issue #85 (Phase 76b note) — the server refused the contract, saldo or month-saldo read for
+  // this person (403, or the identical 404 of an out-of-scope person). A refusal is not a failure:
+  // the cards that depend on it disappear silently and the month card shows only the Ist of the
+  // entries the server returned for the caller's scope. `overtimeDenied` hides the Konto card.
+  let saldoDenied = $state(false);
+  let overtimeDenied = $state(false);
   let saving = $state(false);
   let saveError = $state("");
   let arbzgEnabled = $state(true);
@@ -445,6 +453,8 @@
     loading = true;
     error = "";
     saldoFetchFailed = false;
+    saldoDenied = false;
+    overtimeDenied = false;
     try {
       const year = calMonth.getFullYear();
       const empId = selectedEmployeeId;
@@ -460,12 +470,12 @@
         rawDayChecks,
       ] = await Promise.all([
         api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}&employeeId=${empId}`),
-        settled(api.get<WorkSchedule>(`/settings/work/${empId}`)),
+        settledAllowDenied(api.get<WorkSchedule>(`/settings/work/${empId}`)),
         api.get<PublicHoliday[]>(`/holidays?year=${year}`).catch(() => [] as PublicHoliday[]),
         api
           .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${empId}`)
           .catch(() => [] as Absence[]),
-        settled(
+        settledAllowDenied(
           api.get<{
             balanceHours: number;
             // Phase 97-05 (SALDO-DISP-01/03/04/07) — additive split fields.
@@ -518,6 +528,8 @@
       // turns into `sollToDateMin: 0`, which SollIstBar prints as "noch keine Sollzeit in diesem
       // Monat". Now it reaches MonatSaldoCard's existing error branch instead.
       saldoFetchFailed = anyFailed(rawSchedule, rawOvertime);
+      overtimeDenied = isDenied(rawOvertime);
+      saldoDenied = isDenied(rawSchedule, rawOvertime);
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
@@ -537,13 +549,14 @@
         // Phase 116 (issue #119) — for SHIFT_BASED this endpoint is THE source of every figure
         // MonatSaldoCard shows. On failure monthMetrics silently fell through to the
         // FIXED_*/FLEXTIME branch and rendered a DIFFERENT, wrong number as fact.
-        const rawMonthSaldo = await settled(
+        const rawMonthSaldo = await settledAllowDenied(
           api.get<MonthSaldo>(
             `/overtime/month-saldo/${empId}?year=${calMonth.getFullYear()}&month=${calMonth.getMonth() + 1}`,
           ),
         );
         monthSaldo = valueOr(rawMonthSaldo, null);
         if (anyFailed(rawMonthSaldo)) saldoFetchFailed = true;
+        if (isDenied(rawMonthSaldo)) saldoDenied = true;
         // Issue #433 (D-11) — a MONTHLY_HOURS-with-target response missing monthSollMinutes must
         // never render as a fabricated 0; route it into the same error branch as a failed fetch.
         if (isMonthlyHoursWithTarget && monthSaldo && monthSaldo.monthSollMinutes === undefined) {
@@ -1254,6 +1267,13 @@
     noSollTarget: boolean;
   };
   let monthMetrics: MonthMetrics = $derived.by(() => {
+    // Issue #85 (Phase 76b note) — a refused read hides its cards instead of erroring. The Ist
+    // shown comes from the entries the server returned for the caller's scope; no Soll and no
+    // saldo are computed or implied.
+    if (saldoDenied) {
+      return istOnlyMonthMetrics({ istMin: totalWorked, workdaysSoFar: workedEntryDays });
+    }
+
     if (!schedule) {
       return {
         sollToDateMin: 0,
@@ -1612,7 +1632,7 @@
   <!-- Metrics row (design variant 1c "Fortschritt", quick 260820-fkz).
        Mirrors /time-entries (commit d88cdcba). Rendered ONLY with an employee
        selected (D-01); the no-employee branch keeps its own bare nav card. -->
-  <div class="te-metrics">
+  <div class="te-metrics" class:te-metrics--single={overtimeDenied}>
     <MonatSaldoCard
       sollToDateMin={monthMetrics.sollToDateMin}
       istMin={monthMetrics.istMin}
@@ -1627,15 +1647,22 @@
       onRetry={loadAll}
       monthNav={monthNavBar}
     />
-    <KontoSaldoCard
-      totalHours={overtimeTotalHours}
-      confirmedMinutes={overtimeConfirmedMinutes}
-      openMonthMinutes={overtimeOpenMonthMinutes}
-      hasClosedMonth={overtimeHasClosedMonth}
-      rosterIncomplete={overtimeRosterIncomplete}
-      {loading}
-    />
+    {#if !overtimeDenied}
+      <KontoSaldoCard
+        totalHours={overtimeTotalHours}
+        confirmedMinutes={overtimeConfirmedMinutes}
+        openMonthMinutes={overtimeOpenMonthMinutes}
+        hasClosedMonth={overtimeHasClosedMonth}
+        rosterIncomplete={overtimeRosterIncomplete}
+        {loading}
+      />
+    {/if}
   </div>
+  {#if saldoDenied && !loading}
+    <p class="text-muted te-denied-note">
+      Soll und Saldo dieser Person sehen Inhaber, Personalabteilung und die Person selbst.
+    </p>
+  {/if}
 
   <!-- Issue #80 — one panel per multi-entry day of the server's day check. The panel renders
        nothing for a day without a cross-salon finding or a recorded day break, so single-entry
@@ -2143,6 +2170,15 @@
     .te-metrics {
       grid-template-columns: 1fr;
     }
+  }
+
+  /* Issue #85 — without the Konto card (refused saldo read) the month card takes the full row. */
+  .te-metrics--single {
+    grid-template-columns: 1fr;
+  }
+  .te-denied-note {
+    margin: calc(-1 * var(--s-2)) 0 18px;
+    font-size: 0.875rem;
   }
 
   /* MonthBar owns its 18px 24px inner padding by default; reset it here since it now
