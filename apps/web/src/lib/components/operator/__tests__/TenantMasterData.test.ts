@@ -63,29 +63,12 @@ function mount(tenant: OperatorTenant, overrides: Partial<Callbacks> = {}) {
   return callbacks;
 }
 
-// ReasonDialog and ConfirmDialog keep themselves open by RETHROWING the callback's error out of
-// their click handler, which surfaces as an unhandled rejection. Swallow exactly the errors a test
-// provokes; anything else is re-raised.
-const provoked = new Set<string>();
-function onUnhandled(reason: unknown) {
-  if (reason instanceof Error && provoked.has(reason.message)) return;
-  throw reason;
-}
-
-beforeEach(() => {
-  provoked.clear();
-  process.on("unhandledRejection", onUnhandled);
-});
-
-afterEach(async () => {
-  await new Promise((r) => setTimeout(r, 0));
-  process.off("unhandledRejection", onUnhandled);
+afterEach(() => {
   document.body.innerHTML = "";
 });
 
-/** Rejects like the operator client does, and registers the error as expected. */
+/** Rejects like the operator client does. */
 function apiError(status: number, code: string | undefined, message = "Server-Text") {
-  provoked.add(message);
   return new OperatorApiError(status, code, message);
 }
 
@@ -196,7 +179,6 @@ describe("TenantMasterData - deactivate", () => {
 
   it("rejects a two-character reason inside the dialog without calling onDeactivate", async () => {
     const { onDeactivate } = mount(ACTIVE);
-    provoked.add("Die Begründung muss 3 bis 500 Zeichen lang sein.");
     const dialog = await openDialog("op-tenant-deactivate", TITLE);
     await submitReason(dialog, "ab");
 
@@ -209,7 +191,6 @@ describe("TenantMasterData - deactivate", () => {
 
   it("measures the trimmed reason: spaces around two characters do not pass", async () => {
     const { onDeactivate } = mount(ACTIVE);
-    provoked.add("Die Begründung muss 3 bis 500 Zeichen lang sein.");
     const dialog = await openDialog("op-tenant-deactivate", TITLE);
     await submitReason(dialog, "   ab   ");
     expect(onDeactivate).not.toHaveBeenCalled();
@@ -217,7 +198,6 @@ describe("TenantMasterData - deactivate", () => {
 
   it("rejects a reason of 501 characters and accepts 500", async () => {
     const { onDeactivate } = mount(ACTIVE);
-    provoked.add("Die Begründung muss 3 bis 500 Zeichen lang sein.");
     const dialog = await openDialog("op-tenant-deactivate", TITLE);
     await submitReason(dialog, "x".repeat(501));
     expect(onDeactivate).not.toHaveBeenCalled();
@@ -238,7 +218,6 @@ describe("TenantMasterData - deactivate", () => {
 
   it("words an API failure by its code inside the open dialog", async () => {
     const onDeactivate = vi.fn().mockRejectedValue(apiError(409, "ALREADY_DEACTIVATED"));
-    provoked.add("Der Mandant ist bereits deaktiviert.");
     mount(ACTIVE, { onDeactivate });
     const dialog = await openDialog("op-tenant-deactivate", TITLE);
     await submitReason(dialog, "Vertrag beendet");

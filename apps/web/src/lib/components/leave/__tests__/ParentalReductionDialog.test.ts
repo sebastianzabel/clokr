@@ -235,59 +235,40 @@ describe("ParentalReductionDialog", () => {
   });
 
   it("a rejected revoke (409) stays inline in the ReasonDialog and keeps it open", async () => {
-    // Svelte's onclick handler does NOT await async handlers, so ConfirmDialog's own
-    // `handleConfirm` rejection (because `await onConfirm()` throws — the documented
-    // throw-keeps-open contract) leaks as an unhandled rejection in vitest. Same idiom as
-    // `ConfirmDialog.test.ts`'s own "onConfirm throws" test: suppress the EXPECTED leak only,
-    // for the duration of this test.
     const expected = new Error("Die Kürzung ist bereits widerrufen.");
-    const onUnhandled = (reason: unknown) => {
-      if (reason === expected) return;
-      throw reason;
-    };
-    process.on("unhandledRejection", onUnhandled);
-
-    try {
-      const activePreview = twoYearPreview({
-        year2026: {
-          existing: {
-            id: "red-1",
-            status: "ACTIVE",
-            months: 3,
-            reducedDays: 7,
-            declaredAt: "2026-09-01",
-            revokedAt: null,
-          },
-          committable: false,
+    const activePreview = twoYearPreview({
+      year2026: {
+        existing: {
+          id: "red-1",
+          status: "ACTIVE",
+          months: 3,
+          reducedDays: 7,
+          declaredAt: "2026-09-01",
+          revokedAt: null,
         },
-      });
-      apiGet.mockResolvedValue(activePreview);
-      apiPost.mockRejectedValueOnce(expected);
-      const onChanged = vi.fn();
-      renderWithTheme(ParentalReductionDialog, { open: true, request: REQUEST, onChanged });
+        committable: false,
+      },
+    });
+    apiGet.mockResolvedValue(activePreview);
+    apiPost.mockRejectedValueOnce(expected);
+    const onChanged = vi.fn();
+    renderWithTheme(ParentalReductionDialog, { open: true, request: REQUEST, onChanged });
 
-      const row2026 = await screen.findByTestId("parental-reduction-row-2026");
-      await fireEvent.click(within(row2026).getByRole("button", { name: "Widerrufen" }));
+    const row2026 = await screen.findByTestId("parental-reduction-row-2026");
+    await fireEvent.click(within(row2026).getByRole("button", { name: "Widerrufen" }));
 
-      const revokeHeading = await screen.findByText("Elternzeit-Kürzung widerrufen");
-      const revokeDialog = revokeHeading.closest(".modal") as HTMLElement;
-      await fireEvent.input(within(revokeDialog).getByLabelText(/Begründung/), {
-        target: { value: "Test" },
-      });
-      await fireEvent.click(within(revokeDialog).getByRole("button", { name: "Widerrufen" }));
+    const revokeHeading = await screen.findByText("Elternzeit-Kürzung widerrufen");
+    const revokeDialog = revokeHeading.closest(".modal") as HTMLElement;
+    await fireEvent.input(within(revokeDialog).getByLabelText(/Begründung/), {
+      target: { value: "Test" },
+    });
+    await fireEvent.click(within(revokeDialog).getByRole("button", { name: "Widerrufen" }));
 
-      await waitFor(() =>
-        expect(within(revokeDialog).getByText("Die Kürzung ist bereits widerrufen.")).toBeTruthy(),
-      );
-      expect(onChanged).not.toHaveBeenCalled();
-      expect(screen.getByText("Elternzeit-Kürzung widerrufen")).toBeTruthy();
-
-      // Drain any pending microtasks so the expected unhandled rejection fires while our
-      // listener is still attached.
-      await new Promise((r) => setTimeout(r, 0));
-    } finally {
-      process.off("unhandledRejection", onUnhandled);
-    }
+    await waitFor(() =>
+      expect(within(revokeDialog).getByText("Die Kürzung ist bereits widerrufen.")).toBeTruthy(),
+    );
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(screen.getByText("Elternzeit-Kürzung widerrufen")).toBeTruthy();
   });
 
   it("a REVOKED year shows 'widerrufen am', no checkbox and no Widerrufen button", async () => {
