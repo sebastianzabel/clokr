@@ -71,13 +71,24 @@ const TWO: OperatorSalon[] = [...ONE, salon({ id: "s2", name: "Zweitsalon" })];
 function mount(salons: OperatorSalon[] = TWO, overrides: Record<string, unknown> = {}) {
   const onCreate = vi.fn().mockResolvedValue({});
   const onUpdate = vi.fn().mockResolvedValue({});
+  const onDeactivate = vi.fn().mockResolvedValue({});
+  const onActivate = vi.fn().mockResolvedValue({});
   const onReload = vi.fn().mockResolvedValue(undefined);
   renderWithTheme(
     SalonsSection,
-    { tenantId: "t1", salons, onCreate, onUpdate, onReload, ...overrides },
+    {
+      tenantId: "t1",
+      salons,
+      onCreate,
+      onUpdate,
+      onDeactivate,
+      onActivate,
+      onReload,
+      ...overrides,
+    },
     "nacht",
   );
-  return { onCreate, onUpdate, onReload };
+  return { onCreate, onUpdate, onDeactivate, onActivate, onReload };
 }
 
 let toastMessages: string[] = [];
@@ -232,5 +243,218 @@ describe("SalonsSection", () => {
   it("offers no delete anywhere", () => {
     mount();
     expect(document.body.textContent).not.toMatch(/löschen|entfernen/i);
+  });
+
+  describe("deactivate and activate", () => {
+    const refusal = (code: string, message = "server text") =>
+      new OperatorApiError(409, code, message);
+
+    async function openDeactivate(id = "s2") {
+      await fireEvent.click(el(`op-salon-deactivate-${id}`));
+      await settle();
+    }
+
+    async function confirmDeactivate() {
+      const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
+      const button = Array.from(dialog.querySelectorAll("button")).find(
+        (b) => b.textContent?.trim() === "Salon deaktivieren",
+      ) as HTMLElement;
+      await fireEvent.click(button);
+      await settle();
+    }
+
+    it("deactivate asks first: a danger dialog names the salon and the consequences", async () => {
+      const { onDeactivate } = mount();
+      await openDeactivate();
+      const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
+      expect(dialog).toHaveTextContent("Salon deaktivieren?");
+      expect(dialog).toHaveTextContent("„Zweitsalon“ wird deaktiviert.");
+      expect(dialog).toHaveTextContent("Laufende Einsatzsalon-Zuordnungen enden.");
+      expect(dialog).toHaveTextContent("nicht wiederhergestellt");
+      expect(dialog.querySelector(".btn-danger")).toHaveTextContent("Salon deaktivieren");
+      expect(onDeactivate).not.toHaveBeenCalled();
+    });
+
+    it("a confirmed deactivation calls the callback, closes, toasts and reloads once", async () => {
+      const { onDeactivate, onReload } = mount();
+      await openDeactivate();
+      await confirmDeactivate();
+      expect(onDeactivate).toHaveBeenCalledWith("t1", "s2");
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(toastMessages).toContain("Salon deaktiviert.");
+      expect(onReload).toHaveBeenCalledTimes(1);
+    });
+
+    it("HOME_SALON_IN_USE stays inside the open dialog with its code, no toast, no reload", async () => {
+      const { onDeactivate, onReload } = mount();
+      onDeactivate.mockRejectedValue(refusal("HOME_SALON_IN_USE"));
+      await openDeactivate();
+      await confirmDeactivate();
+      const error = el("op-salon-deactivate-error");
+      expect(error).toHaveAttribute("data-code", "HOME_SALON_IN_USE");
+      expect(error).toHaveTextContent("noch Stammsalon von Mitarbeitenden");
+      expect(error.textContent).not.toMatch(/\d/);
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+      expect(toastMessages).not.toContain("Salon deaktiviert.");
+      expect(onReload).not.toHaveBeenCalled();
+      expect(byId("op-salons-notice")).toBeNull();
+    });
+
+    it("LAST_ACTIVE_SALON from a stale page is shown in the dialog", async () => {
+      const { onDeactivate } = mount();
+      onDeactivate.mockRejectedValue(refusal("LAST_ACTIVE_SALON"));
+      await openDeactivate();
+      await confirmDeactivate();
+      expect(el("op-salon-deactivate-error")).toHaveAttribute("data-code", "LAST_ACTIVE_SALON");
+      expect(el("op-salon-deactivate-error")).toHaveTextContent("letzte aktive Salon");
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    });
+
+    it("a dialog error is gone when the dialog is opened again", async () => {
+      const { onDeactivate } = mount();
+      onDeactivate.mockRejectedValueOnce(refusal("HOME_SALON_IN_USE"));
+      await openDeactivate();
+      await confirmDeactivate();
+      expect(byId("op-salon-deactivate-error")).not.toBeNull();
+      const cancel = Array.from(document.querySelectorAll("button")).find(
+        (b) => b.textContent?.trim() === "Abbrechen",
+      ) as HTMLElement;
+      await fireEvent.click(cancel);
+      await settle();
+      await openDeactivate();
+      expect(byId("op-salon-deactivate-error")).toBeNull();
+    });
+
+    it("ALREADY_INACTIVE on deactivate closes the dialog, shows the notice and reloads", async () => {
+      const { onDeactivate, onReload } = mount();
+      onDeactivate.mockRejectedValue(refusal("ALREADY_INACTIVE"));
+      await openDeactivate();
+      await confirmDeactivate();
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      const notice = el("op-salons-notice");
+      expect(notice).toHaveAttribute("data-code", "ALREADY_INACTIVE");
+      expect(notice).toHaveAttribute("role", "alert");
+      expect(notice).toHaveTextContent("Salon „Zweitsalon“: Der Salon ist bereits deaktiviert.");
+      expect(onReload).toHaveBeenCalledTimes(1);
+    });
+
+    it("activation needs no confirmation: callback, toast and reload", async () => {
+      const salons = [...TWO, salon({ id: "s3", name: "Altsalon", isActive: false })];
+      const { onActivate, onReload } = mount(salons);
+      await fireEvent.click(el("op-salon-activate-s3"));
+      await settle();
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(onActivate).toHaveBeenCalledWith("t1", "s3");
+      expect(toastMessages).toContain("Salon aktiviert.");
+      expect(onReload).toHaveBeenCalledTimes(1);
+    });
+
+    it("ALREADY_ACTIVE lands in the notice with its code and reloads; a later success clears it", async () => {
+      const salons = [...TWO, salon({ id: "s3", name: "Altsalon", isActive: false })];
+      const { onActivate, onReload } = mount(salons);
+      onActivate.mockRejectedValueOnce(refusal("ALREADY_ACTIVE"));
+      await fireEvent.click(el("op-salon-activate-s3"));
+      await settle();
+      const notice = el("op-salons-notice");
+      expect(notice).toHaveAttribute("data-code", "ALREADY_ACTIVE");
+      expect(notice).toHaveTextContent("Salon „Altsalon“: Der Salon ist bereits aktiv.");
+      expect(onReload).toHaveBeenCalledTimes(1);
+      expect(toastMessages).not.toContain("Salon aktiviert.");
+
+      await fireEvent.click(el("op-salon-activate-s3"));
+      await settle();
+      expect(byId("op-salons-notice")).toBeNull();
+      expect(toastMessages).toContain("Salon aktiviert.");
+    });
+
+    it("a missing salon (404) lands in the notice as SALON_NOT_FOUND", async () => {
+      const salons = [...TWO, salon({ id: "s3", name: "Altsalon", isActive: false })];
+      const { onActivate } = mount(salons);
+      onActivate.mockRejectedValue(new OperatorApiError(404, undefined, "Salon nicht gefunden"));
+      await fireEvent.click(el("op-salon-activate-s3"));
+      await settle();
+      const notice = el("op-salons-notice");
+      expect(notice).toHaveAttribute("data-code", "SALON_NOT_FOUND");
+      expect(notice).toHaveTextContent("Salon „Altsalon“: Salon nicht gefunden.");
+    });
+
+    it("TENANT_DEACTIVATED on activate shows the notice and reloads", async () => {
+      const salons = [...TWO, salon({ id: "s3", name: "Altsalon", isActive: false })];
+      const { onActivate, onReload } = mount(salons);
+      onActivate.mockRejectedValue(refusal("TENANT_DEACTIVATED"));
+      await fireEvent.click(el("op-salon-activate-s3"));
+      await settle();
+      expect(el("op-salons-notice")).toHaveAttribute("data-code", "TENANT_DEACTIVATED");
+      expect(onReload).toHaveBeenCalledTimes(1);
+    });
+
+    it("a second click while an activation is in flight is ignored", async () => {
+      const salons = [...TWO, salon({ id: "s3", name: "Altsalon", isActive: false })];
+      let release!: () => void;
+      const { onActivate } = mount(salons);
+      onActivate.mockImplementation(
+        () =>
+          new Promise<void>((r) => {
+            release = r;
+          }),
+      );
+      await fireEvent.click(el("op-salon-activate-s3"));
+      await fireEvent.click(el("op-salon-activate-s3"));
+      expect(onActivate).toHaveBeenCalledTimes(1);
+      release();
+      await settle();
+    });
+
+    it("exactly one active salon: note visible, Deaktivieren aria-disabled and silent", async () => {
+      const { onDeactivate } = mount(ONE);
+      expect(el("op-salons-last-active-note")).toBeVisible();
+      await fireEvent.click(el("op-salon-deactivate-s1"));
+      await settle();
+      expect(el("op-salon-deactivate-s1")).toHaveAttribute("aria-disabled", "true");
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(onDeactivate).not.toHaveBeenCalled();
+    });
+
+    it("two active salons: no last-active note", () => {
+      mount(TWO);
+      expect(byId("op-salons-last-active-note")).toBeNull();
+    });
+
+    it("a deactivated tenant freezes create, edit, deactivate and activate with the hint as reason", async () => {
+      const salons = [...TWO, salon({ id: "s3", name: "Altsalon", isActive: false })];
+      const props = mount(salons, { tenantDeactivated: true });
+      const hint = el("op-salons-tenant-frozen-hint");
+      expect(hint).toHaveTextContent(
+        "Der Mandant ist deaktiviert. Änderungen sind erst nach der Reaktivierung möglich.",
+      );
+      for (const id of [
+        "op-salon-create",
+        "op-salon-edit-s1",
+        "op-salon-deactivate-s2",
+        "op-salon-activate-s3",
+      ]) {
+        const control = el<HTMLButtonElement>(id);
+        expect(control.disabled).toBe(true);
+        expect(control.getAttribute("aria-describedby")).toBe(hint.id);
+        // HTMLElement.click() honours `disabled` like a real click; a dispatched event would not.
+        control.click();
+      }
+      await settle();
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(props.onActivate).not.toHaveBeenCalled();
+      expect(props.onDeactivate).not.toHaveBeenCalled();
+    });
+
+    it("an active tenant shows no frozen hint and enabled controls", () => {
+      mount(TWO);
+      expect(byId("op-salons-tenant-frozen-hint")).toBeNull();
+      expect(el<HTMLButtonElement>("op-salon-create").disabled).toBe(false);
+    });
+
+    it("the section offers no delete anywhere, also with a dialog open", async () => {
+      mount();
+      await openDeactivate();
+      expect(document.body.textContent).not.toMatch(/löschen|entfernen|delete/i);
+    });
   });
 });

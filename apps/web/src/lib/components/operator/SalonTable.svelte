@@ -2,8 +2,12 @@
   SalonTable - the salons of one tenant as seen by the operator (Issue #89).
 
   Name (with the Standardsalon badge), address line, Bundesland, coupling and status. With `onEdit`
-  each row ends in a "Bearbeiten" action (always visible, 44 px). Up to 639 px the table becomes a stacked
-  list by CSS only (same markup), so a phone never scrolls sideways.
+  each row ends in a "Bearbeiten" action (always visible, 44 px), with `onDeactivate` / `onActivate` in
+  the same cell: an active salon offers "Deaktivieren", a deactivated one "Salon aktivieren". There is
+  deliberately no destructive row action (D-08). With exactly one active salon its "Deaktivieren" is
+  aria-disabled (the server's LAST_ACTIVE_SALON stays authoritative) and a note says why. `frozen`
+  (deactivated tenant) disables every action. Up to 639 px the table becomes a stacked list by CSS only
+  (same markup), so a phone never scrolls sideways.
 -->
 <script lang="ts">
   import { federalStateLabel } from "$lib/operator/labels";
@@ -13,9 +17,29 @@
     salons: OperatorSalon[];
     /** Opens the edit dialog for a salon; without it the table has no action column. */
     onEdit?: (salon: OperatorSalon) => void;
+    /** Asks to deactivate an active salon. */
+    onDeactivate?: (salon: OperatorSalon) => void;
+    /** Reactivates a deactivated salon. */
+    onActivate?: (salon: OperatorSalon) => void;
+    /** The tenant is deactivated: every action is disabled. */
+    frozen?: boolean;
+    /** Id of the element that explains why the actions are disabled (`aria-describedby`). */
+    frozenHintId?: string;
   }
 
-  let { salons, onEdit }: Props = $props();
+  let { salons, onEdit, onDeactivate, onActivate, frozen = false, frozenHintId }: Props = $props();
+
+  const LAST_ACTIVE_NOTE_ID = "op-salons-last-active-note";
+
+  const showActions = $derived(Boolean(onEdit || onDeactivate || onActivate));
+  const soleActive = $derived(salons.filter((s) => s.isActive).length === 1);
+  const describedBy = $derived(frozen ? frozenHintId : undefined);
+
+  function deactivate(salon: OperatorSalon) {
+    // aria-disabled keeps the control focusable and announced, so it must not act.
+    if (soleActive) return;
+    onDeactivate?.(salon);
+  }
 
   /** "Straße, PLZ Ort" with missing parts omitted; null when nothing is known. */
   function addressLine(salon: OperatorSalon): string | null {
@@ -43,7 +67,7 @@
           <th scope="col">Bundesland</th>
           <th scope="col">Kopplung</th>
           <th scope="col">Status</th>
-          {#if onEdit}<th scope="col"><span class="sr-only">Aktionen</span></th>{/if}
+          {#if showActions}<th scope="col"><span class="sr-only">Aktionen</span></th>{/if}
         </tr>
       </thead>
       <tbody>
@@ -88,16 +112,47 @@
                 >{salon.isActive ? "Aktiv" : "Deaktiviert"}</span
               >
             </td>
-            {#if onEdit}
+            {#if showActions}
               <td class="cell-actions">
-                <button
-                  type="button"
-                  class="btn btn-outline btn-sm"
-                  aria-haspopup="dialog"
-                  aria-label={`Salon ${salon.name} bearbeiten`}
-                  data-testid={`op-salon-edit-${salon.id}`}
-                  onclick={() => onEdit(salon)}>Bearbeiten</button
-                >
+                {#if onEdit}
+                  <button
+                    type="button"
+                    class="btn btn-outline btn-sm"
+                    aria-haspopup="dialog"
+                    aria-label={`Salon ${salon.name} bearbeiten`}
+                    aria-describedby={describedBy}
+                    disabled={frozen}
+                    data-testid={`op-salon-edit-${salon.id}`}
+                    onclick={() => onEdit(salon)}>Bearbeiten</button
+                  >
+                {/if}
+                {#if salon.isActive && onDeactivate}
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm danger"
+                    aria-haspopup="dialog"
+                    aria-label={`Salon ${salon.name} deaktivieren`}
+                    aria-describedby={frozen
+                      ? frozenHintId
+                      : soleActive
+                        ? LAST_ACTIVE_NOTE_ID
+                        : undefined}
+                    aria-disabled={soleActive ? "true" : undefined}
+                    disabled={frozen}
+                    data-testid={`op-salon-deactivate-${salon.id}`}
+                    onclick={() => deactivate(salon)}>Deaktivieren</button
+                  >
+                {:else if !salon.isActive && onActivate}
+                  <button
+                    type="button"
+                    class="btn btn-outline btn-sm"
+                    aria-label={`Salon ${salon.name} aktivieren`}
+                    aria-describedby={describedBy}
+                    disabled={frozen}
+                    data-testid={`op-salon-activate-${salon.id}`}
+                    onclick={() => onActivate(salon)}>Salon aktivieren</button
+                  >
+                {/if}
               </td>
             {/if}
           </tr>
@@ -105,6 +160,11 @@
       </tbody>
     </table>
   </div>
+  {#if onDeactivate && soleActive}
+    <p class="note" id={LAST_ACTIVE_NOTE_ID} data-testid="op-salons-last-active-note">
+      Der letzte aktive Salon lässt sich nicht deaktivieren.
+    </p>
+  {/if}
 {/if}
 
 <style>
@@ -129,6 +189,25 @@
 
   .cell-actions {
     white-space: nowrap;
+  }
+
+  .cell-actions .btn + .btn {
+    margin-left: 8px;
+  }
+
+  .danger {
+    color: var(--bad-text);
+  }
+
+  .btn[aria-disabled="true"] {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .note {
+    margin: 12px 0 0;
+    font-size: 13px;
+    color: var(--text-muted);
   }
 
   /* The v1.5 .btn recipe resets min-height to 0; row actions keep the 44 px touch target. */

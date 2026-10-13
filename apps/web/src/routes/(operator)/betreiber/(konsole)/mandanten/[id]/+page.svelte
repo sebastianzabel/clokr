@@ -93,6 +93,9 @@
       {salons}
       onCreate={operatorApi.createSalon}
       onUpdate={operatorApi.updateSalon}
+      onDeactivate={operatorApi.deactivateSalon}
+      onActivate={operatorApi.activateSalon}
+      tenantDeactivated={tenant.deactivatedAt !== null}
       onReload={() => load(true)}
     />
   {:else}

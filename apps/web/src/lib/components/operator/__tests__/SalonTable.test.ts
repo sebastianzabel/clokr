@@ -176,4 +176,92 @@ describe("SalonTable - edit action", () => {
     expect(getComputedStyle(button).cursor).toBe("pointer");
     expect(getComputedStyle(control).cursor).not.toBe("pointer");
   });
+
+  describe("lifecycle actions", () => {
+    const actions = (extra: Record<string, unknown> = {}) => ({
+      salons: SALONS,
+      onEdit: vi.fn(),
+      onDeactivate: vi.fn(),
+      onActivate: vi.fn(),
+      ...extra,
+    });
+
+    it("active rows offer Deaktivieren, the inactive row offers Salon aktivieren, never both", () => {
+      renderWithTheme(SalonTable, actions(), "nacht");
+      for (const id of ["s-default", "s-coupled"]) {
+        const deactivate = byId(`op-salon-deactivate-${id}`);
+        expect(deactivate).toHaveTextContent("Deaktivieren");
+        expect(byId(`op-salon-activate-${id}`)).toBeNull();
+      }
+      expect(byId("op-salon-deactivate-s-off")).toBeNull();
+      expect(byId("op-salon-activate-s-off")).toHaveTextContent("Salon aktivieren");
+      expect(byId("op-salon-deactivate-s-default")).toHaveAttribute(
+        "aria-label",
+        "Salon Hauptsalon deaktivieren",
+      );
+      expect(byId("op-salon-activate-s-off")).toHaveAttribute(
+        "aria-label",
+        "Salon Altsalon aktivieren",
+      );
+    });
+
+    it("calls back with the clicked salon", async () => {
+      const props = actions();
+      renderWithTheme(SalonTable, props, "nacht");
+      await fireEvent.click(byId("op-salon-deactivate-s-coupled") as HTMLElement);
+      await fireEvent.click(byId("op-salon-activate-s-off") as HTMLElement);
+      expect(props.onDeactivate).toHaveBeenCalledWith(expect.objectContaining({ id: "s-coupled" }));
+      expect(props.onActivate).toHaveBeenCalledWith(expect.objectContaining({ id: "s-off" }));
+    });
+
+    it("has no delete control, label or menu entry", () => {
+      renderWithTheme(SalonTable, actions(), "nacht");
+      expect(document.body.textContent).not.toMatch(/löschen|entfernen|delete/i);
+      expect(
+        document.querySelector('[aria-label*="löschen" i], [data-testid*="delete" i]'),
+      ).toBeNull();
+    });
+
+    it("with exactly one active salon its Deaktivieren is aria-disabled, silent, and explained by a note", async () => {
+      const props = actions({
+        salons: [salon({ id: "only", name: "Einziger" }), salon({ id: "off", isActive: false })],
+      });
+      renderWithTheme(SalonTable, props, "nacht");
+      const control = byId("op-salon-deactivate-only") as HTMLElement;
+      expect(control).toHaveAttribute("aria-disabled", "true");
+      await fireEvent.click(control);
+      expect(props.onDeactivate).not.toHaveBeenCalled();
+      const note = byId("op-salons-last-active-note");
+      expect(note).toHaveTextContent("Der letzte aktive Salon lässt sich nicht deaktivieren.");
+      expect(control.getAttribute("aria-describedby")).toBe(note?.id);
+      // The inactive salon can still be activated.
+      await fireEvent.click(byId("op-salon-activate-off") as HTMLElement);
+      expect(props.onActivate).toHaveBeenCalledTimes(1);
+    });
+
+    it("with several active salons there is no note and the control is not aria-disabled", () => {
+      renderWithTheme(SalonTable, actions(), "nacht");
+      expect(byId("op-salons-last-active-note")).toBeNull();
+      expect(byId("op-salon-deactivate-s-default")).not.toHaveAttribute("aria-disabled");
+    });
+
+    it("frozen disables every action and points at the hint", () => {
+      const props = actions({ frozen: true, frozenHintId: "hint-id" });
+      renderWithTheme(SalonTable, props, "nacht");
+      for (const id of [
+        "op-salon-edit-s-default",
+        "op-salon-deactivate-s-default",
+        "op-salon-activate-s-off",
+      ]) {
+        const control = byId(id) as HTMLButtonElement;
+        expect(control.disabled).toBe(true);
+        expect(control.getAttribute("aria-describedby")).toBe("hint-id");
+        // HTMLElement.click() honours `disabled` like a real click; a dispatched event would not.
+        control.click();
+      }
+      expect(props.onEdit).not.toHaveBeenCalled();
+      expect(props.onDeactivate).not.toHaveBeenCalled();
+      expect(props.onActivate).not.toHaveBeenCalled();
+    });
+  });
 });

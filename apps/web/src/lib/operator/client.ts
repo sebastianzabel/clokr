@@ -151,4 +151,14 @@ export const operatorApi = {
       `/tenants/${encodeURIComponent(tenantId)}/salons/${encodeURIComponent(salonId)}`,
       { body: patch },
     ),
+  deactivateSalon: (tenantId: string, salonId: string) =>
+    request<OperatorSalon>(
+      "POST",
+      `/tenants/${encodeURIComponent(tenantId)}/salons/${encodeURIComponent(salonId)}/deactivate`,
+    ),
+  activateSalon: (tenantId: string, salonId: string) =>
+    request<OperatorSalon>(
+      "POST",
+      `/tenants/${encodeURIComponent(tenantId)}/salons/${encodeURIComponent(salonId)}/activate`,
+    ),
 };

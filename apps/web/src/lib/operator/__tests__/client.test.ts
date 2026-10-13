@@ -239,6 +239,25 @@ describe("operatorApi", () => {
     expect(init.body).toBe(JSON.stringify({ coupling: null }));
   });
 
+  it("deactivateSalon and activateSalon POST to the salon lifecycle routes without a body", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(jsonResponse({ id: "s1" }));
+
+    await operatorApi.deactivateSalon("a/b", "s/1");
+    await operatorApi.activateSalon("a/b", "s/1");
+
+    const [deactivateUrl, deactivateInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(deactivateUrl).toBe("/api/v1/operator/tenants/a%2Fb/salons/s%2F1/deactivate");
+    expect(deactivateInit.method).toBe("POST");
+    expect(deactivateInit.body).toBeUndefined();
+    const [activateUrl, activateInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(activateUrl).toBe("/api/v1/operator/tenants/a%2Fb/salons/s%2F1/activate");
+    expect(activateInit.method).toBe("POST");
+    expect(activateInit.body).toBeUndefined();
+    expect((activateInit.headers as Record<string, string>).Authorization).toBe("Bearer op-token");
+  });
+
   it("never sends the tenant localStorage token, in any header", async () => {
     local.setItem("accessToken", "tenant-token");
     local.setItem("refreshToken", "tenant-refresh");
