@@ -342,7 +342,7 @@ export async function operatorSalonRoutes(app: FastifyInstance, opts: OperatorSa
       const { id: tenantId } = tenantParamSchema.parse(req.params);
       const { coupling, ...fields } = createOperatorSalonSchema.parse(req.body);
       const operatorId = req.operator.sub;
-      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId, request: req });
+      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId });
 
       let result;
       try {
@@ -452,7 +452,7 @@ export async function operatorSalonRoutes(app: FastifyInstance, opts: OperatorSa
       // The facade writes the rest of the patch straight into Prisma: the coupling must not reach it.
       const { coupling, ...patch } = parsed;
       const operatorId = req.operator.sub;
-      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId, request: req });
+      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId });
 
       let result;
       try {
@@ -616,7 +616,7 @@ export async function operatorSalonRoutes(app: FastifyInstance, opts: OperatorSa
     handler: async (req, reply) => {
       const { id: tenantId, salonId } = salonParamSchema.parse(req.params);
       const operatorId = req.operator.sub;
-      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId, request: req });
+      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId });
 
       const result = await app.prisma.$transaction(async (tx) => {
         const gate = await tenantGate(tx, tenantId);
@@ -697,7 +697,7 @@ export async function operatorSalonRoutes(app: FastifyInstance, opts: OperatorSa
     handler: async (req, reply) => {
       const { id: tenantId, salonId } = salonParamSchema.parse(req.params);
       const operatorId = req.operator.sub;
-      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId, request: req });
+      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId });
 
       const result = await app.prisma.$transaction(async (tx) => {
         const gate = await tenantGate(tx, tenantId);

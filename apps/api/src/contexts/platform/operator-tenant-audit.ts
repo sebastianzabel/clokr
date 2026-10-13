@@ -22,14 +22,14 @@
  *
  * The writer honours the caller's transaction (`tx`), so the tenant row rolls back together with
  * the change it describes.
+ *
+ * Data minimisation (Art. 5(1)(c) GDPR): the tenant row never carries the operator's IP address or
+ * user agent. The tenant needs to know that the operator changed something and what, not from where;
+ * the operator's request metadata stays in the operator's own `OperatorAuditLog` row only, and
+ * `operatorId` links the two records.
  */
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
-
-type AuditRequestLike = {
-  ip: string;
-  headers: Record<string, string | string[] | undefined>;
-};
 
 export type OperatorTenantAuditEntry = {
   action: string;
@@ -47,7 +47,7 @@ export type OperatorTenantAuditWriter = (
 /** Builds the writer for one operator acting on one tenant. */
 export function operatorTenantAudit(
   app: FastifyInstance,
-  input: { operatorId: string; tenantId: string; request?: AuditRequestLike },
+  input: { operatorId: string; tenantId: string },
 ): OperatorTenantAuditWriter {
   const actor = {
     type: "OPERATOR" as const,
@@ -62,7 +62,6 @@ export function operatorTenantAudit(
       entityId: entry.entityId,
       oldValue: entry.oldValue,
       newValue: { ...(entry.newValue ?? {}), actor },
-      request: input.request,
       tx,
     });
 }

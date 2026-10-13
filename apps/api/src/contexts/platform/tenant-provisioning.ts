@@ -114,12 +114,11 @@ type AuditRequestLike = {
  */
 export function operatorEmployeeCreationAudit(
   app: FastifyInstance,
-  input: { operatorId: string; tenantId: string; request?: AuditRequestLike },
+  input: { operatorId: string; tenantId: string },
 ): EmployeeCreationAudit {
   const write = operatorTenantAudit(app, {
     operatorId: input.operatorId,
     tenantId: input.tenantId,
-    request: input.request,
   });
 
   return {

@@ -280,6 +280,10 @@ describe("POST /api/v1/operator/tenants/:id/salons", () => {
       operatorId,
       tenantId: dataA.tenant.id,
     });
+    // Data minimisation: the operator's request metadata stays in the operator's own row
+    // (asserted truthy above); the tenant's row never carries it.
+    expect(tenantRows[0].ipAddress).toBeNull();
+    expect(tenantRows[0].userAgent).toBeNull();
   });
 
   it("couples the salon to Phorest when a coupling is given and audits it on both sides", async () => {

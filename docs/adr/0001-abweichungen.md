@@ -3773,6 +3773,7 @@ operatorId, tenantId }`. `GET /api/v1/audit-logs` (Liste und Einzelabruf) liest 
   die Mandantenrouten und der Betreiber-Anschluss (`composition/operator-salon-ports.ts`) nutzen dieselbe
   Umsetzung.
 - **D-07a — Bundesland ist Pflicht** beim Anlegen eines Salons durch den Betreiber (keine stille Vererbung).
+- **Datenminimierung im Mandanten-Protokoll (Verifikation Phase 89).** Die Zeile im `AuditLog` des Mandanten trägt weder IP-Adresse noch User-Agent des Betreibers (Art. 5 Abs. 1 lit. c DSGVO). Der Mandant erfährt, dass der Betreiber etwas geändert hat und was. Die Anfrage-Metadaten stehen nur in der eigenen `OperatorAuditLog`-Zeile, beide Datensätze verbindet die `operatorId`. Belegt durch `operator-salons-89.test.ts`.
 - **Spiegel und Öffnungszeiten (Nachtrag zu Eintrag L).** Der Betreiber bearbeitet seit Phase 89
   `Salon.openingHours`; der Hinweis bei genau einem aktiven Salon erklärt den Spiegel. Eine Oberfläche für
   die Salonverwaltung im Mandanten und der Wegfall des Spiegels gehören zu #563.
