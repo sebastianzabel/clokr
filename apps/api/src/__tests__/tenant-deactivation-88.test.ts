@@ -1,0 +1,232 @@
+/**
+ * Phase 88 plan 06 (AC-88-07/08/09, D-05/D-07/D-09) — a tenant is deactivated, never deleted, and every
+ * credential path the platform owns refuses its users while it is.
+ */
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import type { FastifyInstance } from "fastify";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  seedOperator,
+  cleanupTestData,
+  type SeededOperator,
+} from "./setup";
+import {
+  TENANT_DEACTIVATED_ERROR,
+  deactivateTenant,
+  reactivateTenant,
+  isTenantDeactivated,
+  isTenantRowActive,
+  ACTIVE_TENANT_WHERE,
+} from "../contexts/platform/tenant-status";
+
+let app: FastifyInstance;
+let data: Awaited<ReturnType<typeof seedTestData>>;
+let operator: SeededOperator;
+let addressCounter = 0;
+
+/** Every request carries its own remote address so the fixed per-route rate limits never interfere. */
+function uniqueAddress(): string {
+  const n = addressCounter++;
+  return `10.88.${Math.floor(n / 250) % 250}.${(n % 250) + 1}`;
+}
+
+function post(url: string, payload: unknown, headers: Record<string, string> = {}) {
+  return app.inject({
+    method: "POST",
+    url,
+    payload: payload as object,
+    headers,
+    remoteAddress: uniqueAddress(),
+  });
+}
+
+const request = { ip: "203.0.113.7", headers: { "user-agent": "vitest" } };
+
+async function deactivate(reason = "Vertrag beendet") {
+  return app.prisma.$transaction((tx) =>
+    deactivateTenant(tx, data.tenant.id, { operatorId: operator.id, reason, request }),
+  );
+}
+
+async function reactivate() {
+  return app.prisma.$transaction((tx) =>
+    reactivateTenant(tx, data.tenant.id, { operatorId: operator.id, request }),
+  );
+}
+
+async function loginAs(email: string, password = "test1234") {
+  return post("/api/v1/auth/login", { email, password });
+}
+
+async function tenantRowCounts() {
+  const tenantId = data.tenant.id;
+  const [employees, users, timeEntries, salons, configs, leaveRequests] = await Promise.all([
+    app.prisma.employee.count({ where: { tenantId } }),
+    app.prisma.user.count({ where: { employee: { tenantId } } }),
+    app.prisma.timeEntry.count({ where: { employee: { tenantId } } }),
+    app.prisma.salon.count({ where: { tenantId } }),
+    app.prisma.tenantConfig.count({ where: { tenantId } }),
+    app.prisma.leaveRequest.count({ where: { employee: { tenantId } } }),
+  ]);
+  return { employees, users, timeEntries, salons, configs, leaveRequests };
+}
+
+beforeAll(async () => {
+  app = await getTestApp();
+  data = await seedTestData(app, "td88");
+  operator = await seedOperator(app);
+});
+
+afterAll(async () => {
+  try {
+    await cleanupTestData(app, data.tenant.id);
+  } catch (err) {
+    console.error("Test cleanup failed:", err);
+  }
+  await closeTestApp();
+});
+
+describe("tenant-status helpers", () => {
+  it("ACTIVE_TENANT_WHERE is the one spelling of an active tenant", () => {
+    expect(ACTIVE_TENANT_WHERE).toEqual({ deactivatedAt: null });
+  });
+
+  it("isTenantRowActive treats a missing row as active", () => {
+    expect(isTenantRowActive(null)).toBe(true);
+    expect(isTenantRowActive(undefined)).toBe(true);
+    expect(isTenantRowActive({ deactivatedAt: null })).toBe(true);
+    expect(isTenantRowActive({ deactivatedAt: new Date() })).toBe(false);
+  });
+
+  it("isTenantDeactivated answers false for blank and unknown tenant ids (#551 stays untouched, D-10)", async () => {
+    expect(await isTenantDeactivated(app.prisma, "")).toBe(false);
+    expect(await isTenantDeactivated(app.prisma, "   ")).toBe(false);
+    expect(await isTenantDeactivated(app.prisma, null)).toBe(false);
+    expect(await isTenantDeactivated(app.prisma, undefined)).toBe(false);
+    expect(await isTenantDeactivated(app.prisma, "no-such-tenant-id")).toBe(false);
+    expect(await isTenantDeactivated(app.prisma, data.tenant.id)).toBe(false);
+  });
+});
+
+describe("deactivation core and the login refusal (tracer)", () => {
+  it("login works before deactivation and leaves an open refresh token", async () => {
+    const res = await loginAs(data.adminUser.email);
+    expect(res.statusCode).toBe(200);
+    const open = await app.prisma.refreshToken.count({
+      where: { revokedAt: null, user: { employee: { tenantId: data.tenant.id } } },
+    });
+    expect(open).toBeGreaterThan(0);
+  });
+
+  it("deactivating a tenant that does not exist answers NOT_FOUND and writes no audit row", async () => {
+    const before = await app.prisma.operatorAuditLog.count({
+      where: { action: "TENANT_DEACTIVATED", subjectTenantId: "no-such-tenant-id" },
+    });
+    const result = await app.prisma.$transaction((tx) =>
+      deactivateTenant(tx, "no-such-tenant-id", { operatorId: operator.id, reason: "x", request }),
+    );
+    expect(result.status).toBe("NOT_FOUND");
+    const after = await app.prisma.operatorAuditLog.count({
+      where: { action: "TENANT_DEACTIVATED", subjectTenantId: "no-such-tenant-id" },
+    });
+    expect(after).toBe(before);
+  });
+
+  it("reactivating an active tenant answers NOT_DEACTIVATED", async () => {
+    const result = await reactivate();
+    expect(result.status).toBe("NOT_DEACTIVATED");
+  });
+
+  it("deactivation sets the columns, revokes open refresh tokens and leaves the data intact", async () => {
+    const countsBefore = await tenantRowCounts();
+    expect(countsBefore.employees).toBeGreaterThan(0);
+
+    const result = await deactivate("Vertrag beendet");
+    expect(result.status).toBe("OK");
+    if (result.status !== "OK") return;
+    expect(result.revokedRefreshTokens).toBeGreaterThan(0);
+
+    const tenant = await app.prisma.tenant.findUniqueOrThrow({ where: { id: data.tenant.id } });
+    expect(tenant.deactivatedAt).toBeInstanceOf(Date);
+    expect(tenant.deactivatedReason).toBe("Vertrag beendet");
+    expect(tenant.deactivatedByOperatorId).toBe(operator.id);
+
+    const stillOpen = await app.prisma.refreshToken.count({
+      where: { revokedAt: null, user: { employee: { tenantId: data.tenant.id } } },
+    });
+    expect(stillOpen).toBe(0);
+
+    expect(await tenantRowCounts()).toEqual(countsBefore);
+  });
+
+  it("writes exactly one TENANT_DEACTIVATED operator audit row with subject, operator and values", async () => {
+    const rows = await app.prisma.operatorAuditLog.findMany({
+      where: { action: "TENANT_DEACTIVATED", subjectTenantId: data.tenant.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].operatorId).toBe(operator.id);
+    expect(rows[0].entity).toBe("Tenant");
+    expect(rows[0].entityId).toBe(data.tenant.id);
+    expect(rows[0].oldValue).toEqual({ deactivatedAt: null });
+    const newValue = rows[0].newValue as Record<string, unknown>;
+    expect(newValue.reason).toBe("Vertrag beendet");
+    expect(typeof newValue.deactivatedAt).toBe("string");
+    expect(typeof newValue.revokedRefreshTokens).toBe("number");
+  });
+
+  it("deactivating twice answers ALREADY_DEACTIVATED and writes no second row", async () => {
+    const result = await deactivate("noch einmal");
+    expect(result.status).toBe("ALREADY_DEACTIVATED");
+    const count = await app.prisma.operatorAuditLog.count({
+      where: { action: "TENANT_DEACTIVATED", subjectTenantId: data.tenant.id },
+    });
+    expect(count).toBe(1);
+  });
+
+  it("login with the correct password is refused with 403 and the one German body", async () => {
+    const res = await loginAs(data.adminUser.email);
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body)).toEqual(TENANT_DEACTIVATED_ERROR);
+    expect(res.body).not.toContain("accessToken");
+  });
+
+  it("login with a WRONG password keeps the unchanged 401 (no tenant-state oracle)", async () => {
+    const res = await loginAs(data.adminUser.email, "definitely-wrong");
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.body)).toEqual({ error: "Ungültige Anmeldedaten" });
+  });
+
+  it("a refused login is traceable in the tenant AuditLog as LOGIN_REFUSED", async () => {
+    const rows = await app.prisma.auditLog.findMany({
+      where: { action: "LOGIN_REFUSED", userId: data.adminUser.id },
+    });
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0].entity).toBe("User");
+    expect(rows[0].entityId).toBe(data.adminUser.id);
+    expect(rows[0].newValue).toEqual({ reason: "TENANT_DEACTIVATED" });
+    expect(rows[0].ipAddress).toBeTruthy();
+  });
+
+  it("reactivation clears the columns, audits TENANT_REACTIVATED and restores login", async () => {
+    const result = await reactivate();
+    expect(result.status).toBe("OK");
+
+    const tenant = await app.prisma.tenant.findUniqueOrThrow({ where: { id: data.tenant.id } });
+    expect(tenant.deactivatedAt).toBeNull();
+    expect(tenant.deactivatedReason).toBeNull();
+    expect(tenant.deactivatedByOperatorId).toBeNull();
+
+    const rows = await app.prisma.operatorAuditLog.findMany({
+      where: { action: "TENANT_REACTIVATED", subjectTenantId: data.tenant.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].operatorId).toBe(operator.id);
+    expect(rows[0].oldValue).toMatchObject({ deactivatedReason: "Vertrag beendet" });
+    expect(rows[0].newValue).toEqual({ deactivatedAt: null });
+
+    const res = await loginAs(data.adminUser.email);
+    expect(res.statusCode).toBe(200);
+  });
+});

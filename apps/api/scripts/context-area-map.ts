@@ -162,8 +162,9 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/scope-filter.ts": "unterbau", // Phase 91b (Issue #91), D-07 — the ONE shared module every context's scope check calls (TimeEntry/EmployeeSalonAssignment/Shift/Employee reads on behalf of all four contexts, per its own module docblock); same category as access-context.ts/request-permissions.ts — shared Unterbau substrate, owned by no single context, per ADR 0002
   "src/contexts/platform/usual-work-days.ts": "unterbau", // Phase 436 (Issue #436), D-01 — validateUsualWorkDays(), the one write-path validation for WorkSchedule.usualWorkDays, an Unterbau model
   "src/contexts/platform/tenant-provisioning.ts": "unterbau", // Phase 88 plan 05 (D-04/D-04a) — the one tenant-skeleton rule (Tenant + TenantConfig + default salon), Unterbau models only
-  "src/contexts/platform/operator-audit.ts": "unterbau", // Phase 88 (operator account) — operator audit helpers, Unterbau-owned; mapped here because the exhaustiveness test was red for it since the earlier 88 plans
-  "src/contexts/platform/operator-credentials.ts": "unterbau", // Phase 88 (operator account) — operator credential handling, Unterbau-owned; mapped here for the same reason as operator-audit.ts
+  "src/contexts/platform/operator-audit.ts": "unterbau", // Phase 88 plan 01 (D-07/D-07a) — create-only writer, retention classes and flagged retention purge of OperatorAuditLog, an append-only Unterbau model that belongs to no business context
+  "src/contexts/platform/operator-credentials.ts": "unterbau", // Phase 88 plan 02 (D-03/D-03a) — operator account credentials and lifecycle (password policy, lockout, TOTP, recovery codes, create/MFA reset/deactivate); OperatorAccount and OperatorAuditLog are Unterbau models
+  "src/contexts/platform/tenant-status.ts": "unterbau", // Phase 88 plan 06 (D-05, AC-88-07/08) — tenant deactivation/reactivation (Tenant columns, refresh-token revocation, operator audit) and the one refusal body of the credential paths; Tenant, RefreshToken and OperatorAuditLog are Unterbau models
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────

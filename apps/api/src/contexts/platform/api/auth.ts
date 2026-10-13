@@ -12,6 +12,7 @@ import { isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 09 (
 import { readTenantTimezone } from "../facade/salon-assignments";
 import { dayToDate, tenantLocalDay } from "../salon-assignment-rules";
 import { config } from "../../../config";
+import { TENANT_DEACTIVATED_ERROR, isTenantRowActive } from "../tenant-status"; // Phase 88 (#88), AC-88-08
 
 /** SHA-256 hash for tokens stored in DB (refresh tokens, reset tokens). */
 function hashToken(token: string): string {
@@ -180,6 +181,22 @@ export async function authRoutes(app: FastifyInstance) {
           where: { id: user.id },
           data: { failedLoginAttempts: 0, lockedUntil: null, lastFailedLoginAt: null },
         });
+      }
+
+      // Phase 88 (AC-88-08): a deactivated tenant's users cannot sign in. The check sits AFTER the
+      // password comparison on purpose — a wrong password keeps the unchanged 401, so an
+      // unauthenticated caller learns nothing about the tenant's state. The refusal is the user's own
+      // action, so it lands in the tenant AuditLog.
+      if (!isTenantRowActive(user.employee?.tenant)) {
+        await app.audit({
+          userId: user.id,
+          action: "LOGIN_REFUSED",
+          entity: "User",
+          entityId: user.id,
+          newValue: { reason: "TENANT_DEACTIVATED" },
+          request: { ip: req.ip, headers: req.headers },
+        });
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
       }
 
       // 2FA prüfen
