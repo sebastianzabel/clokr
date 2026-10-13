@@ -376,6 +376,16 @@ found 0 `.ts` files (#229's same stance, one layer earlier than the pre-existing
 calls" check below it). Both fire before any candidate/finding count is computed and both are
 surfaced as a gate `error`, never softened by `LINT_TENANT_SCOPING_SOFT`.
 
+**Two inline forms recognised since Phase 89 (GitHub #89).** `OR: [...]` in a `where` counts as
+tenant-scoped only if EVERY branch is itself an object literal scoped by the existing rules; one
+unscoped branch keeps the call a finding. A Json-path constraint counts only in the exact form
+`<field>: { path: [..., "tenantId"], equals: <req.user.tenantId or an alias> }` — the last path
+element literally `"tenantId"`, `equals` the principal's tenant, and no other key (`not`,
+`string_contains`, `mode`, a missing `equals` all fail). Together they make the tenant audit read
+(`user.employee.tenantId` OR the operator stamp `newValue.actor.tenantId`) verifiable. The gate
+still does not follow helper functions, so an `OR` is spelled inline at the call site. Cases:
+`__tests__/lint-tenant-scoping-verdict.test.ts` (`shape8*`, `unscoped-or-*`, `unscoped-json-path-*`).
+
 **A hit on a clean tree is a FINDING, not an exception candidate.** Per Issue #204 (D-08): file a
 GitHub issue and leave the handler alone. Only add an exception entry once you have actually
 understood WHY the site is safe and can write that reason down — adding an entry to make the run

@@ -1092,7 +1092,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses an AuditLog, not Employee/LeaveType — fixture cannot produce a foreign instance. audit-logs.ts:60-63 uses a SCOPED `findFirst({id, user: {employee: {tenantId}}})`, byte-identical `{ error: \"Audit-Eintrag nicht gefunden\" }` 404 — conformant.",
+      "reason": "`:id` addresses an AuditLog, not Employee/LeaveType — fixture cannot produce a foreign instance. the lookup in audit-logs.ts (an inline `OR`, recognised by lint:tenant-scoping since Phase 89) has two tenant-bound branches, both constrained to `req.user.tenantId`: a row written by a tenant user (`user.employee.tenantId`) or an operator-written row stamped with the caller's own tenant (`newValue.actor.tenantId`, Phase 89 D-09a). A foreign tenant's row of either kind, an operator row without a stamp and an unknown id all answer the byte-identical `{ error: \"Audit-Eintrag nicht gefunden\" }` 404 — conformant, proven by audit-log-operator-visibility-89.test.ts.",
       "ticket": null,
       "validatedAt": null
     },
