@@ -9,8 +9,10 @@
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { fromZonedTime } from "date-fns-tz";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData, reissueTokenNow } from "./setup";
 import {
+  TEST_TZ,
   earliestBulkEffectiveFromStr,
   firstOfNextMonthInstant,
   midMonthInstant,
@@ -235,6 +237,40 @@ describe("Issue #568 — bulk apply preview and guarded apply", () => {
       });
       expect(res.statusCode, res.body).toBe(400);
       expect(JSON.parse(res.body).code).toBe("BULK_APPLY_NOT_MONTH_FIRST");
+    });
+
+    it("P5: a contract stored at the LOCAL midnight of effectiveFrom (previous UTC day) is at the date, not a candidate (review WR-01)", async () => {
+      const effectiveFrom = monthFirstAheadStr(2);
+      const hireId = await mkEmployee(data.tenant.id, "Hir", "none");
+      // A hire contract of the 1st: employee creation stores validFrom = new Date(hireDate), an
+      // instant — local midnight Europe/Berlin is 22:00 or 23:00 UTC of the PREVIOUS day.
+      const localMidnight = fromZonedTime(`${effectiveFrom}T00:00:00`, TEST_TZ);
+      expect(localMidnight.toISOString().slice(0, 10) < effectiveFrom).toBe(true);
+      await app.prisma.workSchedule.create({
+        data: {
+          employeeId: hireId,
+          weeklyHours: 16,
+          mondayHours: 4,
+          tuesdayHours: 4,
+          wednesdayHours: 4,
+          thursdayHours: 4,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          workDays: [1, 2, 3, 4],
+          validFrom: localMidnight,
+        },
+      });
+      const body = await previewBulkApply(app, data.adminToken, {
+        defaults: DEFAULTS_40,
+        effectiveFrom,
+      });
+      expect(body.candidates.map((c) => c.employeeId)).not.toContain(hireId);
+      expect(
+        body.nonCandidates
+          .find((g) => g.reason === "CONTRACT_AT_DATE_EXISTS")
+          ?.employees.map((e) => e.employeeId),
+      ).toContain(hireId);
     });
 
     it("P4: a caller without tenant-settings:update gets 403", async () => {

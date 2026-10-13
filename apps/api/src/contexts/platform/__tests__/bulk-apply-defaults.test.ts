@@ -35,6 +35,7 @@ function dec(n: number | string) {
 
 const STORED: WorkingTimeDefaults = { ...SCHEMA_WORKING_TIME_DEFAULTS };
 const EFFECTIVE = "2026-11-01";
+const TZ = "Europe/Berlin";
 
 function row(over: Partial<BulkScheduleRow> & { id: string }): BulkScheduleRow {
   return {
@@ -82,7 +83,13 @@ const PROPOSED: WorkingTimeDefaults = {
 };
 
 function classify(employees: BulkEmployeeInput[], proposed = PROPOSED, stored = STORED) {
-  return classifyBulkApplyCandidates({ employees, stored, proposed, effectiveFrom: EFFECTIVE });
+  return classifyBulkApplyCandidates({
+    employees,
+    stored,
+    proposed,
+    effectiveFrom: EFFECTIVE,
+    timeZone: TZ,
+  });
 }
 
 describe("effectiveFromWindow", () => {
@@ -329,6 +336,60 @@ describe("classifyBulkApplyCandidates", () => {
     expect(c.before?.weeklyHours).toBe(20);
   });
 
+  // Review WR-01: `validFrom` is an instant. A hire contract of 1 Nov (Europe/Berlin) can be stored
+  // as 2026-10-31T23:00:00Z; compared by UTC day it would look like an October contract.
+  describe("tenant-local calendar day of validFrom (WR-01)", () => {
+    const localMidnight = new Date("2026-10-31T23:00:00Z"); // = 2026-11-01 00:00 Europe/Berlin
+
+    it("a FIXED contract at the local midnight of effectiveFrom is CONTRACT_AT_DATE_EXISTS, not a candidate", () => {
+      const r = classify([emp("a", [row({ id: "r1", validFrom: localMidnight })])]);
+      expect(r.candidates).toHaveLength(0);
+      expect(r.nonCandidates.map((g) => g.reason)).toEqual(["CONTRACT_AT_DATE_EXISTS"]);
+    });
+
+    it("a MONTHLY_HOURS contract at the local midnight of effectiveFrom is SAME_MONTH_MODEL_SWITCH", () => {
+      const r = classify([
+        emp("a", [
+          row({ id: "r1" }),
+          row({ id: "r2", type: "MONTHLY_HOURS", validFrom: localMidnight }),
+        ]),
+      ]);
+      expect(r.nonCandidates.map((g) => g.reason)).toEqual(["SAME_MONTH_MODEL_SWITCH"]);
+    });
+
+    it("a contract at the local midnight of the NEXT month is FUTURE_CONTRACT", () => {
+      const r = classify([
+        emp("a", [row({ id: "r1", validFrom: new Date("2026-11-30T23:00:00Z") })]),
+      ]);
+      expect(r.nonCandidates.map((g) => g.reason)).toEqual(["FUTURE_CONTRACT"]);
+    });
+
+    it("a contract at 2026-11-01T00:00Z (still 1 Nov local) is at the date, not before it", () => {
+      const r = classify([emp("a", [row({ id: "r1", validFrom: utc("2026-11-01") })])]);
+      expect(r.nonCandidates.map((g) => g.reason)).toEqual(["CONTRACT_AT_DATE_EXISTS"]);
+    });
+
+    it("a contract at the local midnight of the previous month-first is valid at effectiveFrom", () => {
+      const [c] = classify([
+        emp("a", [row({ id: "r1", validFrom: new Date("2026-09-30T22:00:00Z") })]),
+      ]).candidates;
+      expect(c.comparedRow?.id).toBe("r1");
+      expect(c.before?.validFrom).toBe("2026-10-01");
+    });
+
+    it("the same instant is a different local day in another timezone", () => {
+      const r = classifyBulkApplyCandidates({
+        employees: [emp("a", [row({ id: "r1", validFrom: localMidnight })])],
+        stored: STORED,
+        proposed: PROPOSED,
+        effectiveFrom: EFFECTIVE,
+        timeZone: "UTC",
+      });
+      expect(r.candidates).toHaveLength(1);
+      expect(r.candidates[0].before?.validFrom).toBe("2026-10-31");
+    });
+  });
+
   it("groups appear in precedence order, sorted candidates by last name", () => {
     const r = classify([
       emp("z", [row({ id: "z1", type: "SHIFT_BASED" })], "Zed"),
@@ -385,6 +446,7 @@ describe("bulkApplyFingerprint", () => {
       stored,
       proposed,
       effectiveFrom,
+      timeZone: TZ,
     });
     return bulkApplyFingerprint({
       tenantId: over.tenantId ?? "tenant-1",

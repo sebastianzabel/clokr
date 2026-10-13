@@ -27,6 +27,9 @@
 import { createHash } from "node:crypto";
 import { isMonthFirstDate, MONTH_FIRST_ERROR, snapToMonthFirstUtc } from "./month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "./calculate-work-days";
+// Pure date formatter of the Arbeitszeitkonto timezone module — the one place a tenant-local
+// calendar day is derived from an instant (Issue #568 review WR-01).
+import { dateStrInTz } from "../working-time-account";
 
 // ── German messages ──────────────────────────────────────────────────────────────────────────
 
@@ -423,8 +426,14 @@ export function classifyBulkApplyCandidates(input: {
   proposed: WorkingTimeDefaults;
   /** "YYYY-MM-DD" */
   effectiveFrom: string;
+  /**
+   * The tenant timezone. A contract's `validFrom` is an instant (a hire contract can be stored as
+   * the previous UTC day's 23:00 for a Europe/Berlin hire on the 1st) and is compared with
+   * `effectiveFrom` by its tenant-LOCAL calendar day — never by its UTC day (Issue #568 review WR-01).
+   */
+  timeZone: string;
 }): BulkApplyClassification {
-  const { employees, stored, proposed, effectiveFrom } = input;
+  const { employees, stored, proposed, effectiveFrom, timeZone } = input;
   const storedContract = defaultsAsContract(stored);
   const after = proposedContractValues(proposed);
   const candidates: BulkCandidate[] = [];
@@ -438,7 +447,7 @@ export function classifyBulkApplyCandidates(input: {
       employeeNumber: employee.employeeNumber,
     };
     const rows = [...employee.workSchedules].sort(byValidFromDescThenId);
-    const dayOf = (row: BulkScheduleRow) => dayString(row.validFrom);
+    const dayOf = (row: BulkScheduleRow) => dateStrInTz(row.validFrom, timeZone);
     // The compared row: the newest contract that is valid at `effectiveFrom`.
     const comparedRow = rows.find((row) => dayOf(row) <= effectiveFrom) ?? null;
 

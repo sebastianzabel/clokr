@@ -658,6 +658,7 @@ async function computeBulkApplyState(
   db: Prisma.TransactionClient,
   tenantId: string,
   effectiveFrom: string,
+  timeZone: string,
   body: Partial<WorkingTimeDefaults>,
 ): Promise<{
   stored: WorkingTimeDefaults;
@@ -677,6 +678,7 @@ async function computeBulkApplyState(
     stored,
     proposed,
     effectiveFrom,
+    timeZone,
   });
   const fingerprint = bulkApplyFingerprint({
     tenantId,
@@ -846,6 +848,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       // a non-retroactive effective date. All of it is refused HERE, before anything is written.
       // Without `applyToExisting` the three fields are ignored and this path is unchanged.
       let bulkEffectiveFrom: string | undefined;
+      let bulkTimeZone: string | undefined;
       if (applyToExisting === true) {
         if (
           !applyEmployeeIds ||
@@ -866,6 +869,7 @@ export async function settingsRoutes(app: FastifyInstance) {
             .send({ error: rejection.message, code: rejection.code });
         }
         bulkEffectiveFrom = effectiveFrom;
+        bulkTimeZone = tz;
       }
 
       // Phase 104 review (WR-08): the Zod field now accepts an explicit null (Clokr frontends
@@ -913,7 +917,7 @@ export async function settingsRoutes(app: FastifyInstance) {
                   selection: string[];
                 }
               | undefined;
-            if (bulkEffectiveFrom && applyEmployeeIds && previewFingerprint) {
+            if (bulkEffectiveFrom && bulkTimeZone && applyEmployeeIds && previewFingerprint) {
               // Serialises concurrent applies of this tenant: the Tenant row always exists (a
               // TenantConfig row may not), and everything below reads the state AFTER the lock.
               // NO KEY UPDATE, not UPDATE: it still conflicts with a second apply, but not with
@@ -924,6 +928,7 @@ export async function settingsRoutes(app: FastifyInstance) {
                 tx,
                 tenantId,
                 bulkEffectiveFrom,
+                bulkTimeZone,
                 configBody,
               );
               if (state.fingerprint !== previewFingerprint) {
@@ -1196,7 +1201,13 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       const { effectiveFrom: _ignored, ...proposedBody } = body;
       void _ignored;
-      const state = await computeBulkApplyState(app.prisma, tenantId, effectiveFrom, proposedBody);
+      const state = await computeBulkApplyState(
+        app.prisma,
+        tenantId,
+        effectiveFrom,
+        tz,
+        proposedBody,
+      );
       return {
         effectiveFrom,
         earliestEffectiveFrom: window.earliest,
