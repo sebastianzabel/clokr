@@ -215,6 +215,17 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
     route: "GET /api/v1/release-notes",
     reason: "Public baked release notes (release-notes.ts), no authentication at all.",
   },
+  ...[
+    "POST /api/v1/operator/auth/login",
+    "POST /api/v1/operator/auth/verify",
+    "GET /api/v1/operator/auth/me",
+  ].map((route) => ({
+    route,
+    reason:
+      "Operator-authenticated (separate principal with its own signing secret, requireOperator, " +
+      "Phase 88 #88) — no tenant actor can be a matrix cell; the tenant-token refusal is proven in " +
+      "operator-auth-88.test.ts.",
+  })),
   {
     route: "GET /api/v1/shifts/planning-overview",
     reason:

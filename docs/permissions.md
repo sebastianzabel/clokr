@@ -977,6 +977,29 @@ Kombination nicht und sind bewusst keine eigenen Permissions — für eine über
 `confirm: true` bestätigte Kombinationsrolle bleiben sie in Kraft, geprüft in
 `four-eyes-runtime-locks.test.ts`.
 
+## Betreiber-Endpunkte (außerhalb des Katalogs)
+
+Der Betreiberzugang oberhalb des Mandanten (#88) ist ein eigener Principal mit eigenem Signierschlüssel
+(`OPERATOR_JWT_SECRET`), kein Benutzer mit besonderer Rolle. Seine Endpunkte kennen deshalb keine
+Katalog-Permission und stehen in keiner der Tabellen oben; die Zugangsentscheidung trifft allein der Guard
+`requireOperator` (`contexts/platform/operator-auth.ts`).
+
+| Endpunkt                            | Guard                            | Hinweis                                                                                |
+| ----------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------- |
+| `POST /api/v1/operator/auth/login`  | keiner (öffentlich)              | Schritt 1: Passwort, liefert ein 5-Minuten-Challenge-Token                             |
+| `POST /api/v1/operator/auth/verify` | keiner (Challenge-Token im Body) | Schritt 2: TOTP-Code oder Wiederherstellungscode, liefert das 15-Minuten-Zugriffstoken |
+| `GET /api/v1/operator/auth/me`      | `requireOperator`                | Das angemeldete Betreiberkonto                                                         |
+
+- **Ein Mandanten-Token ist hier kein Zugang:** Ein gültiges Mandanten-Token auf einem geschützten
+  Betreiber-Endpunkt wird mit 403 beantwortet und als `TENANT_PRINCIPAL_REFUSED` im Betreiber-Audit
+  festgehalten (höchstens eine Zeile je Token-Inhaber und Route und Minute, mit der Zahl der
+  unterdrückten Wiederholungen); alles Nichtprüfbare ergibt 401.
+- **Umgekehrt** liest kein Mandanten-Code das Betreiber-Token: der Betreiber-Verifier schreibt
+  `req.operator`, `req.user` bleibt leer.
+- **Ohne `OPERATOR_JWT_SECRET`** sind diese Endpunkte gar nicht registriert (404); die
+  Mandanten-Seite verhält sich unverändert.
+- Alle Anmeldeausgänge landen im `OperatorAuditLog`, nie im Mandanten-`AuditLog`.
+
 ## Pflege
 
 Dieses Dokument wird von drei Tests und einem Lint-Gate gegen den Code gehalten:
