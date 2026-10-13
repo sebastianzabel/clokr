@@ -1,0 +1,6 @@
+{
+  "amendments": [
+    {"date": "2026-10-13", "from": {"status":200,"bodyRole":"ADMIN","tokenRole":"ADMIN","tokenTenant":"<empty>","tokenEmployee":"<none>"}, "issue": 551, "key": "auth | A.noEmployee | login", "reason": "Issue #551: Ein Benutzer ohne Employee hat keinen Mandanten und erhaelt keinen Token mehr. login antwortet nach erfolgreichem Passwortvergleich mit 403 TENANT_REQUIRED (und schreibt einen LOGIN_REFUSED-Audit-Eintrag); vorher wurde ein JWT mit leerer tenantId ausgestellt, der ueber den Altrollen-Rueckfall Berechtigungspruefungen passierte (88-13: 40 Routen 200, 35 Routen 500). Alle Principals mit Employee sind unveraendert -- diese Aufzeichnung bleibt fuer sie bytegleich.", "to": {"status":403}},
+    {"date": "2026-10-13", "from": {"status":200,"tokenRole":"ADMIN"}, "issue": 551, "key": "auth | A.noEmployee | refresh", "reason": "Issue #551: Weil der Login dieses Benutzers ohne Employee keinen Refresh-Token mehr ausgibt, hat die Aufzeichnung keinen Token zum Erneuern; der Request ohne refreshToken endet im Schema-400. Die eigentliche Sperre eines gespeicherten Refresh-Tokens (403 TENANT_REQUIRED, Token weder widerrufen noch rotiert) beweist tenant-required-551.test.ts.", "to": {"status":400}}
+  ]
+}

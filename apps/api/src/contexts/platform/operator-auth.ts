@@ -27,6 +27,7 @@
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { isBlankTenantId } from "./access-context-error";
 import { OPERATOR_AUDIT_ACTIONS, recordPrincipalRefusal } from "./operator-audit";
 
 export const OPERATOR_TOKEN_KIND = "operator";
@@ -162,8 +163,9 @@ function verifiedTenantClaims(
   try {
     const claims = req.server.jwt.verify<{ sub?: unknown; tenantId?: unknown }>(token);
     if (typeof claims.sub !== "string" || claims.sub.length === 0) return null;
+    // The one blank-tenant rule (#551): a blank claim names no tenant for the audit subject.
     const tenantId =
-      typeof claims.tenantId === "string" && claims.tenantId.trim().length > 0
+      typeof claims.tenantId === "string" && !isBlankTenantId(claims.tenantId)
         ? claims.tenantId
         : null;
     return { sub: claims.sub, tenantId };

@@ -101,7 +101,7 @@ describe("tenant-status helpers", () => {
     expect(isTenantRowActive({ deactivatedAt: new Date() })).toBe(false);
   });
 
-  it("isTenantDeactivated answers false for blank and unknown tenant ids (#551 stays untouched, D-10)", async () => {
+  it("isTenantDeactivated answers false for blank and unknown tenant ids (D-10; the blank-tenant refusal lives in requireAuth since #551)", async () => {
     expect(await isTenantDeactivated(app.prisma, "")).toBe(false);
     expect(await isTenantDeactivated(app.prisma, "   ")).toBe(false);
     expect(await isTenantDeactivated(app.prisma, null)).toBe(false);

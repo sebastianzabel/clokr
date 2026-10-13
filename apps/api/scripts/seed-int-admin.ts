@@ -9,8 +9,10 @@
  *
  * It does NOT create a new person: it re-enables an EXISTING ADMIN user, so the
  * employee/tenant wiring stays exactly as the refreshed data has it. Which user
- * is picked is deterministic (lowest id among active ADMINs) unless --email pins
- * one explicitly.
+ * is picked is deterministic (lowest id among active ADMINs that have an Employee)
+ * unless --email pins one explicitly. Since Issue #551 a user WITHOUT an Employee has no tenant and
+ * cannot sign in (403 TENANT_REQUIRED), so restoring its password would hand out a login that does
+ * not work: the default pick skips such users, and a pinned --email of one is refused before any write.
  *
  * If the picked admin's tenant has 2FA enabled, a fresh password alone will not
  * be enough to log in (`POST /auth/login` returns 202 `{ requiresOtp: true }`
@@ -85,7 +87,8 @@ async function main(): Promise<void> {
           },
         })
       : await prisma.user.findFirst({
-          where: { role: "ADMIN", isActive: true },
+          // Issue #551: an admin without an Employee cannot sign in any more, so it is never picked.
+          where: { role: "ADMIN", isActive: true, employee: { isNot: null } },
           orderBy: { id: "asc" },
           include: {
             employee: {
@@ -101,7 +104,15 @@ async function main(): Promise<void> {
       console.error(
         pinnedEmail
           ? `[seed-int-admin] no user with email ${pinnedEmail}`
-          : "[seed-int-admin] no active ADMIN user found — is the database refreshed?",
+          : "[seed-int-admin] no active ADMIN user with an Employee found — is the database refreshed?",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    if (!user.employee) {
+      console.error(
+        `[seed-int-admin] ${user.email} has no Employee, hence no tenant — since Issue #551 such a ` +
+          "user cannot sign in (403 TENANT_REQUIRED). Pick an admin that has an Employee. Nothing written.",
       );
       process.exitCode = 1;
       return;

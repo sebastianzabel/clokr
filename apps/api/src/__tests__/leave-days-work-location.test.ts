@@ -10,6 +10,7 @@
 import type { FastifyInstance } from "fastify";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
+import { createHash, randomBytes } from "node:crypto";
 import {
   getTestApp,
   seedTestData,
@@ -17,6 +18,7 @@ import {
   cleanupTestData,
   createTestSalon,
 } from "./setup";
+import { TENANT_REQUIRED_ERROR } from "../contexts/platform/tenant-status";
 
 describe("Leave days by work location (Phase 71b Plan 03, issue #71, AC-5/AC-7)", () => {
   let app: FastifyInstance;
@@ -26,7 +28,10 @@ describe("Leave days by work location (Phase 71b Plan 03, issue #71, AC-5/AC-7)"
   let depToken: string; // HOME B + DEPLOYMENT A on Thursdays
   let ctlToken: string; // HOME B only
   let homeAToken: string; // HOME A only
-  let adminNoProfileToken: string; // no Employee row at all
+  let apiKeyToken: string; // no Employee row at all: an API key of the tenant (Issue #551)
+  let adminNoProfileLoginStatus: number; // a profile-less admin can no longer sign in (Issue #551)
+  let adminNoProfileLoginBody: unknown;
+  let profileLessUserId: string;
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -154,22 +159,60 @@ describe("Leave days by work location (Phase 71b Plan 03, issue #71, AC-5/AC-7)"
       },
     });
 
-    // Profile-less admin (GET /leave/calendar's requester-work-location fallback): no Employee
-    // row at all, so the tenant's default salon (B) stands in for every day.
+    // Manual holiday on the DEFAULT salon (B) only, on a June-2026 Wednesday no other assertion of
+    // this file uses (the vacation ranges cover 06-01..05 and 06-08..12). It makes the default-salon
+    // fallback assertion below non-vacuous: the fallback caller must SEE this day.
+    await app.prisma.publicHoliday.create({
+      data: {
+        tenantId,
+        salonId: salonBId,
+        date: new Date("2026-06-17"), // Wednesday
+        name: "Stadtfest B",
+        federalState: "NIEDERSACHSEN",
+        year: 2026,
+      },
+    });
+
+    // Requester without an Employee (GET /leave/calendar's requester-work-location fallback), so the
+    // tenant's default salon (B) stands in for every day. Since Issue #551 a profile-less USER can no
+    // longer sign in (403 TENANT_REQUIRED); the only principal that still reaches that fallback is an
+    // API key of the tenant, which carries no employeeId.
     const adminEmail = `lwl-admin-noprofile-${Date.now().toString(36)}@test.de`;
-    await app.prisma.user.create({
+    const profileLessUser = await app.prisma.user.create({
       data: { email: adminEmail, passwordHash, role: "ADMIN", isActive: true },
     });
+    profileLessUserId = profileLessUser.id;
     const adminLoginRes = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
       payload: { email: adminEmail, password: "test1234" },
     });
-    adminNoProfileToken = JSON.parse(adminLoginRes.body).accessToken;
+    adminNoProfileLoginStatus = adminLoginRes.statusCode;
+    adminNoProfileLoginBody = JSON.parse(adminLoginRes.body);
+
+    apiKeyToken = `clk_${randomBytes(24).toString("hex")}`;
+    await app.prisma.apiKey.create({
+      data: {
+        tenantId,
+        name: `lwl-551-${Date.now().toString(36)}`,
+        keyHash: createHash("sha256").update(apiKeyToken).digest("hex"),
+        keyPrefix: apiKeyToken.slice(0, 8),
+        scopes: ["admin"],
+        createdBy: seed.adminUser.id,
+      },
+    });
   });
 
   afterAll(async () => {
     try {
+      // The profile-less user is not reachable through an Employee, so cleanupTestData misses it; its
+      // refused login left a LOGIN_REFUSED audit row (Issue #551).
+      if (profileLessUserId) {
+        await app.prisma.auditLog.deleteMany({
+          where: { OR: [{ userId: profileLessUserId }, { entityId: profileLessUserId }] },
+        });
+        await app.prisma.user.deleteMany({ where: { id: profileLessUserId } });
+      }
       await cleanupTestData(app, tenantId);
     } catch (err) {
       console.error("leave-days-work-location cleanup failed:", err);
@@ -248,10 +291,18 @@ describe("Leave days by work location (Phase 71b Plan 03, issue #71, AC-5/AC-7)"
     expect(ctlHolidays).not.toContain("2026-06-04");
     expect(ctlHolidays).not.toContain("2026-06-10");
 
-    // Profile-less admin: no employee to resolve a work location for -> the tenant's default
-    // salon (B, NIEDERSACHSEN) stands in, same as ctl -> sees neither.
-    const adminHolidays = await holidayDatesFor(adminNoProfileToken);
-    expect(adminHolidays).not.toContain("2026-06-04");
-    expect(adminHolidays).not.toContain("2026-06-10");
+    // A requester without an Employee (an API key — a profile-less user cannot sign in since
+    // Issue #551): no employee to resolve a work location for -> the tenant's default salon (B,
+    // NIEDERSACHSEN) stands in, same as ctl -> sees neither Bavarian day, but DOES see B's own
+    // manual holiday (non-vacuous: proves the fallback resolves to B and not to "nothing").
+    const keyHolidays = await holidayDatesFor(apiKeyToken);
+    expect(keyHolidays).toContain("2026-06-17");
+    expect(keyHolidays).not.toContain("2026-06-04");
+    expect(keyHolidays).not.toContain("2026-06-10");
+  });
+
+  it("a profile-less user can no longer sign in: 403 TENANT_REQUIRED (Issue #551)", () => {
+    expect(adminNoProfileLoginStatus).toBe(403);
+    expect(adminNoProfileLoginBody).toEqual(TENANT_REQUIRED_ERROR);
   });
 });

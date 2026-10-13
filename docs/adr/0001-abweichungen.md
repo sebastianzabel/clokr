@@ -1422,6 +1422,78 @@ nicht behauptet, sondern gegen eine Aufnahme des alten Codes geprüft (unten, �
   bestanden, 3 übersprungen); davon zehn neue Testdateien der Phase mit 1886 Fällen, 1707 davon die
   Matrix.
 
+### Nachtrag 2026-10-13 (Issue #551) — Ein Mandanten-Token ohne Mandant wird vor jeder Permission-Prüfung abgewiesen
+
+**Messung (Phase 88, Plan 13).** Ein Mandanten-JWT mit `tenantId: ""` (ein Benutzer ohne Employee, der
+Alt-Admin) passierte `requirePermission` über den Altrollen-Rückfall des Resolvers: 40 Routen
+antworteten 200 (leer/Standard), 35 antworteten 500 und erreichten die Datenbank; Schreibzugriffe
+scheiterten nur zufällig am Fremdschlüssel auf `Tenant`. Das ist keine Sperre, sondern ein Unfall.
+
+**Entscheidung (D-01 bis D-04, autonom nach der Regel „Gesetz zuerst, nachhaltig statt billig“, begründet
+als Kommentar am Issue #551).**
+
+- **D-01, eine Stelle.** `requireAuth` weist ein verifiziertes Mandanten-Token (JWT und API-Schlüssel), dessen
+  Mandantenwert leer, nur Leerzeichen, fehlend oder kein String ist, mit 403
+  `{ error, code: "TENANT_REQUIRED" }` ab. Reihenfolge: `jwtVerify`, Betreiber-Claims, leerer Mandant,
+  `tenantIsActive`. `requirePermission`/`requireAnyPermission` rufen `requireAuth` zuerst auf, die
+  Abweisung kommt also vor jeder Berechtigung und vor jeder Abfrage. Der Code ist der Steuerwert, der
+  deutsche Text nur Anzeige.
+- **D-02, kein neues Token ohne Mandant.** `login` (nach dem Passwortvergleich, daher kein Orakel; mit
+  Audit `LOGIN_REFUSED`/`TENANT_REQUIRED`, vor jedem OTP), `verify-otp`, `resend-otp` (vor Code und Mail),
+  `refresh` (vor der Rotation, das gespeicherte Token bleibt unberührt) und `change-password` (hat einen
+  eigenen preHandler und umgeht `requireAuth`) antworten mit demselben 403. `issueTokens()` wirft, statt
+  einen leeren Mandanten zu signieren. Passwort-Zurücksetzen und Einladung stellen kein Token aus und
+  bleiben unverändert.
+- **D-03, Tiefenverteidigung im Unterbau.** `effectiveGrants`, `hasPermission` und
+  `effectivePermissionKeysForUser` gewähren einem leeren Mandanten nichts: kein Altrollen-Rückfall, keine
+  Abfrage. Das ändert die Bedeutung von drei Exporten von `contexts/platform/index.ts` bzw. ihrer
+  Hilfsfunktionen für genau einen Fall (leerer Mandant) und ist damit eine **Unterbau-Semantikänderung**;
+  die Entscheidung ist am Issue #551 dokumentiert (Autonomie-Regel des Owners).
+- **D-04, die Regel steht einmal.** `isBlankTenantId()` (nicht-String oder nach dem Kürzen leer) ist die
+  einzige Stelle, die „leerer Mandant“ entscheidet. Sie ist im importfreien Blatt
+  `contexts/platform/access-context-error.ts` definiert (der Reinheitstest `access-context.test.ts` hält
+  dieses Blatt frei von Imports, daher kann sie nicht in `tenant-status.ts` stehen) und von
+  `tenant-status.ts` wieder ausgeführt; die Middleware bekommt sie über die Dekoration des
+  Tenant-Status-Plugins (`middleware/auth.ts` importiert nichts aus `contexts/`). `requireTenantId`,
+  `isTenantDeactivated`, `tenantIsActive` und der Resolver rufen sie auf. `tenantIsActive("")` antwortet
+  weiterhin `true`, `isTenantDeactivated("")` weiterhin `false`.
+
+**Auswirkung auf die Kontexte.**
+
+| Kontext             | Wirkung                                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------ |
+| Zeiterfassung       | keine fachliche Wirkung: nur ein Principal ohne Employee, der nie Zeitbuchungen hatte, wird abgewiesen |
+| Abwesenheiten       | keine fachliche Wirkung: dieselbe Begründung, ein Benutzer ohne Employee hat keine Anträge             |
+| Schichtplanung      | keine fachliche Wirkung: dieselbe Begründung                                                           |
+| Arbeitszeitkonto    | keine fachliche Wirkung: dieselbe Begründung                                                           |
+| Kompositionsschicht | keine fachliche Wirkung: keine Regel wandert, die Abweisung geschieht vor jedem Handler                |
+
+Jeder Principal mit Employee ist unverändert; das beweisen die unveränderten Aufzeichnungen
+`matrix.json`, `recipients.json` und `activity-auth.json` (alle byte-gleich).
+
+**Geänderte Aufzeichnung, über ein Register statt Neuaufnahme.** Zwei Zellen von
+`activity-auth-neutrality.test.ts` betreffen den Benutzer ohne Employee: `auth | A.noEmployee | login`
+(200 → 403) und `auth | A.noEmployee | refresh` (200 → 400, weil der Login keinen Refresh-Token mehr
+ausgibt). Sie stehen in `neutrality/recorded/activity-auth-amendments.json` (Issue 551, Grund, Datum;
+`from` ist byte-genau an die Aufzeichnung gebunden); `activity-auth.json` bleibt unverändert. Das Register
+hat dieselbe Form und dieselben Regeln wie `recipients-amendments.json` und `matrix-amendments.json`.
+
+**Betreiberschritt.** `apps/api/scripts/audit-551-users-without-employee.ts` listet jeden Benutzer ohne
+Employee (Id, Rolle, aktiv, offene Refresh-Tokens, Rollenzuweisungen; nur lesend, keine Mail, kein Name).
+Vor dem Deployment des Releases einmal auf int und prod ausführen: jeder aufgeführte aktive Benutzer kann
+sich danach nicht mehr anmelden. Folge für die int-Auffrischung: `seed-int-admin.ts` (Schritt 8 von
+`docs/data-refresh-process.md`) wählt nur noch Admins mit Employee und verweigert einen gepinnten
+`--email` ohne Employee vor jedem Schreiben.
+
+**Nachweise.** `tenant-required-551.test.ts` (Helfer, `requireAuth`-Sperre ohne Abfrage für vier
+Token-Formen auf einer `requireAuth`- und einer Permission-Route, API-Schlüssel-Zweig, Resolver, jeder
+Anmeldepfad), `operator-tenant-boundary-sweep-88.test.ts` (212 Routen, leer/Leerzeichen/fehlend: überall
+403 `TENANT_REQUIRED`, kein Prisma-Aufruf), `access-context-missing.test.ts` (äußere Sperre und innere
+Schicht), `request-permissions.test.ts`, `audit-551-users-without-employee.test.ts` sowie die angepassten
+Tests (`compat-role`, `shifts-my-week`, `leave-days-work-location`, `activity-auth-neutrality`).
+Mutationsprobe: ohne die Sperre in `requireAuth` werden die Fälle von `tenant-required-551.test.ts` und
+der Sweep rot (siehe Summary der Quick-Task 261013-bhk).
+
 ---
 
 ## O — Bundesland und manuelle Feiertage wandern an den Salon (Phase 71b, Issue #71)
@@ -3561,10 +3633,11 @@ erreichbar wird.
 - **Zustands-Cache höchstens 10 Sekunden je Prozess.** Aktivierung und Deaktivierung verwerfen den Eintrag
   im Prozess der Anfrage sofort (`app.invalidateTenantState()`); ein weiterer API-Prozess sieht die
   Änderung spätestens nach 10 Sekunden.
-- **Die Lücke `tenantId: ""` ist nur festgehalten, nicht behoben (D-10, Issue #551).** Ein Benutzer ohne
-  Employee hat keinen Mandanten; ein leerer Mandantenwert antwortet „nicht deaktiviert“. Der
-  Randtest `operator-tenant-boundary-sweep-88.test.ts` beschreibt das Verhalten, damit eine spätere
-  Änderung sichtbar wird.
+- **Die Lücke `tenantId: ""` ist mit #551 geschlossen (D-10, Issue #551; siehe Eintrag N, Nachtrag Issue #551).**
+  Ein Benutzer ohne Employee hat keinen Mandanten; `isTenantDeactivated` antwortet für einen leeren
+  Mandantenwert weiterhin „nicht deaktiviert“, weil Deaktivierung und Mandantenbesitz zwei getrennte
+  Fragen sind. Ein solches Token wird aber früher abgewiesen, in `requireAuth`, mit 403 `TENANT_REQUIRED`.
+  Der Randtest `operator-tenant-boundary-sweep-88.test.ts` beweist es auf jeder abgeleiteten Route.
 - **Aufbewahrung des Betreiberprotokolls (D-07a).** Anmeldeereignisse 12 Monate, Lebenszyklus-Aktionen
   (Anlegen, Umbenennen, Deaktivieren, Reaktivieren, Konto-Verwaltung) 10 Jahre; die Löschung läuft mit
   der täglichen Aufbewahrungsprüfung (`composition/data-retention.ts`). Grundlage für die kurze Frist:

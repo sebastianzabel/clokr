@@ -19,6 +19,9 @@
  * - `eigene`: EIGENE keys, from any well-formed assignment; they apply to `ownEmployeeId` only.
  *
  * Sources, in this order:
+ * - A blank tenant (empty, whitespace-only, absent) → nothing, for a user and an API key alike: no
+ *   legacy-role fallback and no query (#551, D-03). `requireAuth` already refuses such a token before
+ *   any guard runs; this is defence in depth in the Unterbau.
  * - API key (detected by `req.apiKeyScopes`, which only the key path of `requireAuth` sets — never
  *   by reading the role on `req.user`, D-12): the Admin system role when the scopes include
  *   `admin`, else the Manager system role, with the role's FULL set (EIGENE included) and
@@ -39,8 +42,9 @@
  *   `lint-facade-signatures` (F2) forbids there. Other contexts import it only through
  *   `contexts/platform/index.ts`.
  * - Does not build a 77b access context (`access-context.ts`): its request constructor throws on an
- *   empty tenant, and a user without Employee legitimately carries `tenantId: ""` — the legacy role
- *   guard let them through, so the resolver must too (falling back to their column's system role).
+ *   empty tenant. A user without Employee carries a blank tenant; since #551 `requireAuth` refuses
+ *   such a token with 403 `TENANT_REQUIRED` before any guard runs, and the resolver itself grants a
+ *   blank tenant nothing (no legacy-role fallback) instead of throwing.
  * - Does not re-check `User.isActive`: a valid access token of a since-deactivated user passed the
  *   legacy guard; changing that is not neutral and is deferred hardening (D-10).
  * - Memoized per request in a `WeakMap`, never globally: a cache of role rows would hide a role
@@ -52,6 +56,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Prisma } from "@clokr/db";
 import { requireAuth } from "../../middleware/auth";
 import { roleGrants } from "./access-role";
+import { isBlankTenantId } from "./tenant-status";
 import { systemRoleIdForLegacyRole } from "./compat-role";
 import {
   PERMISSIONS,
@@ -164,6 +169,9 @@ async function computeGrantsForUser(
   const zugewiesenAnyScope = new Set<PermissionKey>();
   const eigene = new Set<PermissionKey>();
 
+  // #551, D-03: a blank tenant holds nothing — no legacy-role fallback, no query.
+  if (isBlankTenantId(tenantId)) return { zugewiesen, zugewiesenAnyScope, eigene };
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
@@ -199,6 +207,16 @@ async function computeGrantsForUser(
 }
 
 async function resolveGrants(req: FastifyRequest): Promise<EffectiveGrants> {
+  // #551, D-03: a blank tenant holds nothing, before the API-key branch and before any query.
+  if (isBlankTenantId(req.user.tenantId)) {
+    return {
+      zugewiesen: new Set<PermissionKey>(),
+      zugewiesenAnyScope: new Set<PermissionKey>(),
+      eigene: new Set<PermissionKey>(),
+      ownEmployeeId: undefined,
+    };
+  }
+
   if (req.apiKeyScopes !== undefined) {
     const zugewiesen = new Set<PermissionKey>();
     const zugewiesenAnyScope = new Set<PermissionKey>();

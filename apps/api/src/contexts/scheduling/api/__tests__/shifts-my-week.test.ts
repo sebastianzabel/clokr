@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
+import { createHash, randomBytes } from "node:crypto";
 import {
   getTestApp,
   closeTestApp,
@@ -7,12 +8,17 @@ import {
   cleanupTestData,
 } from "../../../../__tests__/setup";
 import { futureDateStr, nextWeekdayStr, dowOf } from "../../../../__tests__/test-dates";
+import { TENANT_REQUIRED_ERROR } from "../../../platform/tenant-status";
 import type { FastifyInstance } from "fastify";
 
 /**
  * Phase 49-01 — GET /api/v1/shifts/my-week
  * Employee self-view: own shifts + anonymized colleague list (firstName only).
  * 410 Gone for users without employeeId or non-SHIFT_BASED schedule.
+ *
+ * Issue #551: a User without an Employee can no longer sign in (403 TENANT_REQUIRED), so the "no
+ * employeeId" 410 branch is reached by the only principal that still lacks an employeeId — an API
+ * key of the tenant. The orphan's login refusal is asserted here as well.
  */
 describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
   let app: FastifyInstance;
@@ -29,7 +35,9 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
   let employeeCId: string; // FIXED_SCHEDULE, should get 410
   let tokenC: string;
   let userOrphanId: string; // User without employee
-  let orphanToken: string;
+  let orphanLoginStatus: number;
+  let orphanLoginBody: unknown;
+  let apiKeyToken: string; // API key of the tenant: has no employeeId
   let templateId: string;
 
   beforeAll(async () => {
@@ -226,7 +234,21 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
       url: "/api/v1/auth/login",
       payload: { email: `orphan-${suffix}@test.de`, password: "test1234" },
     });
-    orphanToken = JSON.parse(loginOrphan.body).accessToken;
+    orphanLoginStatus = loginOrphan.statusCode;
+    orphanLoginBody = JSON.parse(loginOrphan.body);
+
+    // An API key passes requireAuth without an employeeId — the 410 branch's remaining caller.
+    apiKeyToken = `clk_${randomBytes(24).toString("hex")}`;
+    await prisma.apiKey.create({
+      data: {
+        tenantId,
+        name: `my-week-551-${suffix}`,
+        keyHash: createHash("sha256").update(apiKeyToken).digest("hex"),
+        keyPrefix: apiKeyToken.slice(0, 8),
+        scopes: ["admin"],
+        createdBy: data.adminUser.id,
+      },
+    });
   });
 
   afterAll(async () => {
@@ -291,11 +313,16 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
     expect(res.json().error).toBe("Nicht im Schichtsystem");
   });
 
-  it("returns 410 for user without employeeId", async () => {
+  it("refuses the login of a user without an Employee with 403 TENANT_REQUIRED (#551)", () => {
+    expect(orphanLoginStatus).toBe(403);
+    expect(orphanLoginBody).toEqual(TENANT_REQUIRED_ERROR);
+  });
+
+  it("returns 410 for a caller without employeeId (an API key — the only such principal since #551)", async () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/shifts/my-week",
-      headers: { authorization: `Bearer ${orphanToken}` },
+      headers: { authorization: `Bearer ${apiKeyToken}` },
     });
     expect(res.statusCode).toBe(410);
     expect(res.json().error).toBe("Kein Mitarbeiter-Profil verknüpft");

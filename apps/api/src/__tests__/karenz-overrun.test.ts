@@ -19,6 +19,8 @@ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import bcrypt from "bcryptjs";
+import { createHash, randomBytes } from "node:crypto";
+import { TENANT_REQUIRED_ERROR } from "../contexts/platform/tenant-status";
 import type { FastifyInstance } from "fastify";
 import {
   getTestApp,
@@ -862,7 +864,7 @@ describe("Self-service Hinweis (D-21)", () => {
     }
   });
 
-  it("Test 6: a caller with no linked employee record (bare ADMIN) gets 200 with an empty result, not a 500", async () => {
+  it("Test 6: a caller with no linked employee record (an API key) gets 200 with an empty result, not a 500; a bare ADMIN user can no longer sign in (#551)", async () => {
     const fx = await seedKarenzFixture(app, "d21-6");
     let bareAdminUserId: string | null = null;
     try {
@@ -876,17 +878,34 @@ describe("Self-service Hinweis (D-21)", () => {
       });
       bareAdminUserId = bareAdminUser.id;
 
+      // Issue #551: a user without an Employee has no tenant, so the login is refused and no token
+      // exists. Before #551 this test logged such a user in and called the route with its token.
       const loginRes = await app.inject({
         method: "POST",
         url: "/api/v1/auth/login",
         payload: { email: bareAdminUser.email, password: "test1234" },
       });
-      const { accessToken: bareToken } = JSON.parse(loginRes.body);
+      expect(loginRes.statusCode).toBe(403);
+      expect(JSON.parse(loginRes.body)).toEqual(TENANT_REQUIRED_ERROR);
+
+      // The route's "no employeeId" branch is still reachable by the only principal without an
+      // employeeId that carries a tenant: an API key of the tenant.
+      const rawKey = `clk_${randomBytes(24).toString("hex")}`;
+      await app.prisma.apiKey.create({
+        data: {
+          tenantId: fx.tenant.id,
+          name: `karenz-d21-6-${Date.now().toString(36)}`,
+          keyHash: createHash("sha256").update(rawKey).digest("hex"),
+          keyPrefix: rawKey.slice(0, 8),
+          scopes: ["admin"],
+          createdBy: fx.adminEmployee.userId,
+        },
+      });
 
       const res = await app.inject({
         method: "GET",
         url: "/api/v1/leave/karenz-overrun",
-        headers: { authorization: `Bearer ${bareToken}` },
+        headers: { authorization: `Bearer ${rawKey}` },
       });
       expect(res.statusCode).toBe(200);
       const body = res.json();
@@ -895,7 +914,13 @@ describe("Self-service Hinweis (D-21)", () => {
       expect(typeof body.graceDays).toBe("number");
     } finally {
       if (bareAdminUserId) {
-        // Not tied to any tenant/employee — cleanupTestData below only sweeps fx.tenant.id.
+        // Not tied to any tenant/employee — cleanupTestData below only sweeps fx.tenant.id. The
+        // refused login left a LOGIN_REFUSED audit row (#551).
+        await app.prisma.auditLog
+          .deleteMany({
+            where: { OR: [{ userId: bareAdminUserId }, { entityId: bareAdminUserId }] },
+          })
+          .catch(() => undefined);
         await app.prisma.user.delete({ where: { id: bareAdminUserId } }).catch(() => undefined);
       }
       await cleanupTestData(app, fx.tenant.id);
