@@ -29,10 +29,10 @@ export function personDayKey(employeeId: string, dayStr: string): string {
  * count — they are not working time and not presence. Only person-days with a positive remainder
  * appear in the map; a person-day covered completely is absent.
  */
-export function outOfScopeValidCounts<R extends ScopedEntryRow>(
-  allRows: readonly R[],
-  inScopeRows: readonly R[],
-  dayKeyOf: (row: R) => string,
+export function outOfScopeValidCounts<A extends ScopedEntryRow, B extends ScopedEntryRow>(
+  allRows: readonly A[],
+  inScopeRows: readonly B[],
+  dayKeyOf: (row: A | B) => string,
 ): Map<string, number> {
   const remaining = new Map<string, number>();
   for (const row of allRows) {

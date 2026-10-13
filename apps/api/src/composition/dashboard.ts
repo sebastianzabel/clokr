@@ -16,7 +16,12 @@ import {
   scopedTimeEntryIds, // Issue #85 (D-04) — the one per-entry scope resolver
 } from "../contexts/platform";
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
-import { distinctEmployeeIds, personDayKey } from "./team-entry-scope"; // Issue #85 (D-04/D-05)
+import {
+  distinctEmployeeIds,
+  outOfScopeValidCounts,
+  personDayKey,
+  presenceEntriesWithStandIns,
+} from "./team-entry-scope"; // Issue #85 (D-04/D-05)
 import {
   getWorkedEntriesInRange,
   getRecordedWorkEntriesInRange,
@@ -643,9 +648,19 @@ export async function dashboardRoutes(app: FastifyInstance) {
         else inScopeByPersonDay.set(key, [row]);
       }
 
+      // Issue #85 (D-05): per person-day, how many valid entries of a Stammsalon person lie
+      // outside the caller's reach. They are never shown as hours, times or a live clock-in; they
+      // only mark the day as worked elsewhere and keep the person from reading as absent. A
+      // population-only person has no row in `timeEntries`, so its count is always 0.
+      const hiddenCounts =
+        inScopeRows !== null
+          ? outOfScopeValidCounts(timeEntries, inScopeRows, (e) => dateStrInTz(e.date, tz))
+          : new Map<string, number>();
+
       // Pro Mitarbeiter die Woche aufbereiten
       const team = shownEmployees.map((emp) => {
         const days = weekDays.map((dayStr) => {
+          const hiddenValid = hiddenCounts.get(personDayKey(emp.id, dayStr)) ?? 0;
           const dayEntries =
             inScopeRows !== null
               ? (inScopeByPersonDay.get(personDayKey(emp.id, dayStr)) ?? [])
@@ -754,10 +769,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
           const isFuture = !isDue;
 
           // Build typed inputs for the presence resolver
-          const presenceEntries: PresenceEntry[] = dayEntries.map((e) => ({
-            endTime: e.endTime,
-            isInvalid: e.isInvalid,
-          }));
+          // Scoped callers: hidden valid time enters as CLOSED stand-ins, so an out-of-scope open
+          // entry never reads as "clocked_in" (Issue #85, D-05).
+          const presenceEntries: PresenceEntry[] = presenceEntriesWithStandIns(
+            dayEntries,
+            hiddenValid,
+          );
 
           const presenceLeave: PresenceLeave | null = effectiveLeave
             ? {
@@ -797,7 +814,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
             shift,
             isWorkday,
             expectedHours,
-            ...(filterSalonId !== null || inScopeRows !== null ? { workedElsewhere } : {}),
+            ...(filterSalonId !== null || inScopeRows !== null
+              ? { workedElsewhere: workedElsewhere || hiddenValid > 0 }
+              : {}),
           };
         });
 
