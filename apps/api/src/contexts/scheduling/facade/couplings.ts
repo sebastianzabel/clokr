@@ -7,6 +7,7 @@
  * entry — the caller audits (the operator writes `OperatorAuditLog`, a tenant route `AuditLog`).
  */
 import type { Prisma } from "@clokr/db";
+import { uniqueViolationTarget } from "../../../utils/prisma-unique-violation.js";
 
 /** All coupling rows of a tenant, ordered deterministically (`salonId`, then `id`). */
 export async function listSalonCouplings(db: Prisma.TransactionClient, tenantId: string) {
@@ -69,23 +70,16 @@ export type RemoveSalonCouplingResult =
 /**
  * Classify a Prisma P2002 by the violated unique index; `null` when `err` is not a P2002.
  *
- * The index name is read from the structured `meta` only (`meta.target`, or the driver-adapter
- * `cause.constraint.index` / `originalMessage`). `err.message` is deliberately NOT searched: Prisma
- * echoes the failed invocation there, including the `externalBranchId` the caller passed, so a salon
- * collision would read as a branch collision.
+ * The index name comes from `uniqueViolationTarget` (`utils/prisma-unique-violation.ts`), which reads
+ * structured metadata only. `err.message` is deliberately NOT searched: Prisma echoes the failed
+ * invocation there, including the `externalBranchId` the caller passed, so a salon collision would
+ * read as a branch collision.
  */
 function conflictFromUniqueViolation(
   err: unknown,
 ): "SALON_ALREADY_COUPLED" | "BRANCH_ALREADY_COUPLED" | null {
-  if (err === null || typeof err !== "object" || (err as { code?: unknown }).code !== "P2002") {
-    return null;
-  }
-  const meta = (err as { meta?: Record<string, unknown> }).meta ?? {};
-  const cause = (meta.driverAdapterError as { cause?: Record<string, unknown> } | undefined)?.cause;
-  const constraint = cause?.constraint as { index?: unknown; fields?: unknown } | undefined;
-  const target = [meta.target, constraint?.index, constraint?.fields, cause?.originalMessage]
-    .map((part) => String(part ?? ""))
-    .join(" ");
+  const target = uniqueViolationTarget(err);
+  if (target === null) return null;
   // The branch index is (tenantId, provider, externalBranchId); the salon index is `salonId` alone.
   return target.includes("externalBranchId") ? "BRANCH_ALREADY_COUPLED" : "SALON_ALREADY_COUPLED";
 }
