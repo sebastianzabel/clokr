@@ -211,6 +211,8 @@ export async function operatorAuthRoutes(app: FastifyInstance) {
         await auditFailure(account.isActive ? "LOCKED" : "INACTIVE", account.id);
         return reply.code(401).send(GENERIC_FAILURE);
       }
+      // `operatorTokenIsCurrent` re-checks `isActive`, but the explicit branch above keeps the distinct
+      // INACTIVE / LOCKED audit reasons; do not fold it into the version check below.
       // A challenge issued before a reset or deactivation is dead (Issue #557). This is not a guessing
       // attempt, so no failure is registered and no TOTP step is consumed.
       if (!operatorTokenIsCurrent(challenge, account)) {
@@ -308,6 +310,18 @@ export async function operatorAuthRoutes(app: FastifyInstance) {
       }
 
       if (!consumed) {
+        // Zero rows matched. Either the step / recovery code was used in parallel (a replay, counted as a
+        // failure), or a reset or deactivation committed after the account read and bumped the version
+        // (Issue #557): that is the same stale challenge as above, so it is neither counted nor called a
+        // replay.
+        const latest = await app.prisma.operatorAccount.findUnique({
+          where: { id: account.id },
+          select: { isActive: true, tokenVersion: true },
+        });
+        if (!operatorTokenIsCurrent(challenge, latest)) {
+          await auditFailure("STALE_CHALLENGE", account.id);
+          return reply.code(401).send(GENERIC_FAILURE);
+        }
         await registerFailure(account, req);
         await auditFailure("REPLAY", account.id);
         return reply.code(401).send(GENERIC_FAILURE);

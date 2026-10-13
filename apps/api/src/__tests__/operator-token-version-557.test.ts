@@ -10,7 +10,7 @@
  * Every refusal is paired with a positive control (the same token or code was valid just before), so a red
  * "401" can never be a token that was broken for another reason.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { TOTP, Secret } from "otpauth";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedOperator, type SeededOperator } from "./setup";
@@ -171,6 +171,61 @@ describe("a pending challenge dies with the reset", () => {
     expect(ok.statusCode, ok.body).toBe(200);
     expect(decodedVer((JSON.parse(ok.body) as { accessToken: string }).accessToken)).toBe(1);
   });
+});
+
+describe("a reset racing the second factor", () => {
+  // The reset commits AFTER /verify read the account and BEFORE it consumes the step or recovery code:
+  // the version-bound consume matches no row, and the refusal is the stale challenge it is — not a
+  // replay, and no failure counted against the freshly reset account (review WR-01/WR-02).
+  it.each(["totp", "recovery_code"] as const)(
+    "is refused as STALE_CHALLENGE without counting a failure (%s)",
+    async (method) => {
+      const op = await seedOperator(app);
+      const challenge = await loginChallenge(op.email, op.password);
+      const delegate = app.prisma.operatorAccount;
+      const original = delegate.findUnique.bind(delegate);
+      let resetRan = false;
+      const spy = vi.spyOn(delegate, "findUnique").mockImplementation((async (
+        args: Parameters<typeof original>[0],
+      ) => {
+        const row = await original(args);
+        if (!resetRan && (args.where as { id?: string }).id === op.id) {
+          resetRan = true;
+          await reset(op);
+        }
+        return row;
+      }) as never);
+      let res;
+      try {
+        res =
+          method === "totp"
+            ? await verify(challenge, op.totpFor(0))
+            : await post("/api/v1/operator/auth/verify", {
+                challengeToken: challenge,
+                recoveryCode: op.recoveryCodes[0],
+              });
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(resetRan).toBe(true);
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.body)).toEqual({ error: "Anmeldung fehlgeschlagen" });
+      expect(await storedVersion(op.id)).toBe(1);
+      const failures = await app.prisma.operatorAuditLog.findMany({
+        where: { action: "OPERATOR_MFA_FAILED", entityId: op.id },
+      });
+      expect(failures.map((r) => (r.newValue as { reason?: string }).reason)).toEqual([
+        "STALE_CHALLENGE",
+      ]);
+      const logins = await app.prisma.operatorAuditLog.count({
+        where: { action: "OPERATOR_LOGIN", entityId: op.id },
+      });
+      expect(logins).toBe(0);
+      const account = await app.prisma.operatorAccount.findUniqueOrThrow({ where: { id: op.id } });
+      expect(account.failedLoginAttempts).toBe(0);
+    },
+  );
 });
 
 describe("deactivation revokes every issued token", () => {

@@ -13,8 +13,8 @@
  * Every lifecycle step (create, MFA reset, deactivate) writes exactly one `OperatorAuditLog` row in the
  * SAME transaction as the change (D-07) — never a tenant `AuditLog` row. An MFA reset (and, since Issue
  * #557, a deactivation) increments `OperatorAccount.tokenVersion` in that same transaction, which ends every
- * operator token already issued. The constants below are the ONE
- * place the operator password policy, lockout thresholds and TOTP parameters live.
+ * operator token already issued. The constants below are the ONE place the operator password policy,
+ * lockout thresholds and TOTP parameters live.
  */
 
 import { createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";

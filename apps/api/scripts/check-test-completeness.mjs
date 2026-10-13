@@ -766,9 +766,9 @@ import { readFileSync } from "node:fs";
 // reporter) - MIN_FILES rises from 396 to 397 and MIN_TESTS from 6638 to 6649. The edited files
 // `operator-auth-88`, `tenant-principal-guard-88`, `operator-tenants-88` and
 // `operator-tenant-boundary-sweep-88` kept their case count (delta 0). Merged after PR #559 (Issue #551): both
-// deltas add up (398 + 1 files, 6674 + 11 cases). Same lower-bound convention as above.
+// deltas add up (398 + 1 files, 6674 + 11 cases; +2 for the reset-race cases of the review, WR-02). Same lower-bound convention as above.
 const MIN_FILES = 399;
-const MIN_TESTS = 6685;
+const MIN_TESTS = 6687;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
