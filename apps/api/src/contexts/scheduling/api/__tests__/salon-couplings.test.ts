@@ -46,7 +46,6 @@ describe("Phorest salon coupling CRUD (Phase 65b, issue #65, D-14..D-17)", () =>
     return createTestSalon(app.prisma, tenantA.tenant.id, {
       name,
       isActive: overrides?.isActive,
-      createdAt: new Date(Date.now() + Math.floor(Math.random() * 1000) + 1),
     });
   }
 

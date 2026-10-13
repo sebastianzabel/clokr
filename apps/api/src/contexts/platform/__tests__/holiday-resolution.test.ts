@@ -37,12 +37,7 @@ describe("holidaysAtWorkLocation — tracer (Phase 71b Plan 02, issue #71, D-04,
     const seed = await seedTestData(app, "hr-tracer", { withDefaultSalon: false });
     tenantId = seed.tenant.id;
 
-    // createdAt has millisecond resolution, so two back-to-back creates often tie and the default
-    // salon (earliest createdAt, then id) would fall to a random id; pin B explicitly earlier.
-    const salonB = await createTestSalon(app.prisma, tenantId, {
-      federalState: "NIEDERSACHSEN",
-      createdAt: new Date(Date.now() - 60_000),
-    });
+    const salonB = await createTestSalon(app.prisma, tenantId, { federalState: "NIEDERSACHSEN" });
     salonBId = salonB.id;
     const salonA = await createTestSalon(app.prisma, tenantId, { federalState: "BAYERN" });
     salonAId = salonA.id;
@@ -221,12 +216,7 @@ describe("Resolver behaviour matrix — AC-5/AC-6/AC-7, holidaysForSalon, fail-c
     const seed = await seedTestData(app, "hr-matrix", { withDefaultSalon: false });
     tenantId = seed.tenant.id;
 
-    // createdAt has millisecond resolution, so two back-to-back creates often tie and the default
-    // salon (earliest createdAt, then id) would fall to a random id; pin B explicitly earlier.
-    const salonB = await createTestSalon(app.prisma, tenantId, {
-      federalState: "NIEDERSACHSEN",
-      createdAt: new Date(Date.now() - 60_000),
-    });
+    const salonB = await createTestSalon(app.prisma, tenantId, { federalState: "NIEDERSACHSEN" });
     salonBId = salonB.id;
     const salonA = await createTestSalon(app.prisma, tenantId, { federalState: "BAYERN" });
     salonAId = salonA.id;
