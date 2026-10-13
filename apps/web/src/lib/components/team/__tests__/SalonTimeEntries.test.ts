@@ -1,0 +1,82 @@
+// Issue #85 D-09 — the mountable Salonansicht. The route page cannot be mounted ($app imports and
+// a dozen requests on mount), so the component carries the rendering contract.
+
+import { describe, it, expect, vi } from "vitest";
+
+// The grouping module imports `withSalonId` from team-view, which pulls in the api client, the auth
+// store and its localStorage bootstrap; a stand-in (as in team-view.test.ts) keeps this file free
+// of that.
+vi.mock("$api/client", () => ({
+  api: { get: vi.fn() },
+  ApiError: class ApiError extends Error {},
+}));
+vi.mock("$lib/utils/logger", () => ({ clientLogger: { warn: vi.fn(), error: vi.fn() } }));
+import { screen } from "@testing-library/svelte";
+import { renderWithTheme } from "$tests/test-utils";
+import SalonTimeEntries from "../SalonTimeEntries.svelte";
+import { groupSalonEntries, type SalonViewEntry } from "$lib/team/salon-time-entries";
+
+function entry(over: Partial<SalonViewEntry> & { id: string }): SalonViewEntry {
+  return {
+    employeeId: "e1",
+    date: "2026-06-15T00:00:00.000Z",
+    startTime: "2026-06-15T08:00:00.000Z",
+    endTime: "2026-06-15T16:00:00.000Z",
+    breakMinutes: 30,
+    isInvalid: false,
+    salonId: "s1",
+    employee: { firstName: "Anna", lastName: "Berg" },
+    workingMinutes: 450,
+    ...over,
+  };
+}
+
+const days = groupSalonEntries([
+  entry({ id: "1" }),
+  entry({
+    id: "2",
+    employeeId: "e2",
+    employee: { firstName: "Bernd", lastName: "Adler" },
+    endTime: null,
+    workingMinutes: null,
+  }),
+  entry({
+    id: "3",
+    date: "2026-06-16T00:00:00.000Z",
+    startTime: "2026-06-16T08:00:00.000Z",
+    endTime: "2026-06-16T12:00:00.000Z",
+    isInvalid: true,
+    workingMinutes: 210,
+  }),
+]);
+
+describe("SalonTimeEntries — rows", () => {
+  it("renders the column headers, the persons, offen and ungültig, and no sum", () => {
+    renderWithTheme(SalonTimeEntries, {
+      days,
+      status: "rows",
+      capReached: false,
+      salonName: "Hauptsalon",
+    });
+    for (const header of ["Mitarbeiter", "Beginn", "Ende", "Pause", "Arbeitszeit"]) {
+      expect(screen.getAllByText(header).length).toBeGreaterThan(0);
+    }
+    expect(screen.getByText("Mo, 15.06.2026")).toBeTruthy();
+    expect(screen.getByText("Di, 16.06.2026")).toBeTruthy();
+    expect(screen.getByText("Adler, Bernd")).toBeTruthy();
+    expect(screen.getAllByText("Berg, Anna").length).toBe(2);
+    expect(screen.getByText("offen")).toBeTruthy();
+    expect(screen.getByText("ungültig")).toBeTruthy();
+    expect(document.body.textContent ?? "").not.toMatch(/Summe|Gesamt/);
+  });
+
+  it("shows the loading text", () => {
+    renderWithTheme(SalonTimeEntries, {
+      days: [],
+      status: "loading",
+      capReached: false,
+      salonName: null,
+    });
+    expect(screen.getByText("Wird geladen …")).toBeTruthy();
+  });
+});
