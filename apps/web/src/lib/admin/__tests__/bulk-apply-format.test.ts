@@ -46,14 +46,10 @@ describe("formatWorkDays", () => {
 
 describe("formatContract", () => {
   it("combines weekly hours and weekdays", () => {
-    expect(
-      formatContract({ ...values(16, [1, 2, 3, 4]), type: "FIXED_SCHEDULE", validFrom: "" }),
-    ).toBe("16 h · Mo–Do");
+    expect(formatContract(values(16, [1, 2, 3, 4]))).toBe("16 h · Mo–Do");
   });
   it("uses the German decimal comma", () => {
-    expect(formatContract({ ...values(7.5, [1]), type: "FIXED_SCHEDULE", validFrom: "" })).toBe(
-      "7,5 h · Mo",
-    );
+    expect(formatContract(values(7.5, [1]))).toBe("7,5 h · Mo");
   });
   it("names a missing weekly hours value", () => {
     expect(formatContract(values(null, [1, 2]))).toBe("Wochenstunden fehlen · Mo–Di");
