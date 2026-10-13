@@ -777,8 +777,10 @@ import { readFileSync } from "node:fs";
 // (9 cases, single-file run) - MIN_FILES rises from 401 to 402 and MIN_TESTS from 6703 to 6712. The same task
 // teaches lint:tenant-scoping the OR / Json-path form: 9 new fixture cases in `lint-tenant-scoping-verdict.test.ts`
 // (19 -> 28 tests, no new test file), MIN_TESTS 6712 -> 6721. Same convention.
-const MIN_FILES = 402;
-const MIN_TESTS = 6721;
+// Phase 89 plan 07 task 1 (2026-10-13): one new test FILE, `src/contexts/scheduling/__tests__/facade-couplings.test.ts`
+// (15 cases, single-file run) - MIN_FILES rises from 402 to 403 and MIN_TESTS from 6721 to 6736. Same convention.
+const MIN_FILES = 403;
+const MIN_TESTS = 6736;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

@@ -35,8 +35,21 @@ export {
   cancelOrphanShifts,
 } from "./facade/shifts";
 export { getEmployeeAvailability } from "./facade/availability";
-// Phase 89 (#89, D-12a) — the coupling read for other contexts (operator composition port).
-export { listSalonCouplings } from "./facade/couplings";
+// Phase 89 (#89, D-12a) — the coupling rules for other contexts (operator composition port).
+export {
+  listSalonCouplings,
+  createSalonCoupling,
+  setSalonCoupling,
+  removeSalonCoupling,
+  SalonCouplingConflictError,
+} from "./facade/couplings";
+export type {
+  CouplingSalon,
+  CouplingRow,
+  CreateSalonCouplingResult,
+  SetSalonCouplingResult,
+  RemoveSalonCouplingResult,
+} from "./facade/couplings";
 // Phase 430 (D-02) — shared audit+notify helper for BOTH conflict directions (leave-approval
 // reverse-hook + the new shift-creation-time check). Not a facade export (it takes `app:
 // FastifyInstance`, not `db: Prisma.TransactionClient` — see the module's own docblock). This IS
