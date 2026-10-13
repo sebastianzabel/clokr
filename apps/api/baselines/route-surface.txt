@@ -1,4 +1,6 @@
+│               └── /activate (POST)
 │               └── /assign (POST)
+│               ├── /deactivate (POST)
 │           └── /:employeeId (DELETE)
 │           └── /:mac (DELETE)
 │       │   └── /:assignmentId/end (POST)

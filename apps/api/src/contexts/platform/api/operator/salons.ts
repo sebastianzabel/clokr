@@ -4,6 +4,11 @@
  *   GET  /    all salons of one tenant (inactive included), master data plus the Phorest coupling
  *   POST /    create a salon (Bundesland and opening hours required) with an optional coupling
  *   PATCH /:salonId  edit master data, opening hours, Bundesland and the coupling (set, replace, remove)
+ *   POST /:salonId/deactivate  deactivate a salon (never delete), ending its Einsatzsalon assignments
+ *   POST /:salonId/activate    reactivate an inactive salon (ended assignments are not restored)
+ *
+ * There is deliberately NO DELETE route (D-08): a salon is deactivated, never removed, with or
+ * without time data.
  *
  * Mounted at `/api/v1/operator/tenants/:id/salons`; `:id` is the tenant. Every route is guarded by
  * `requireOperator`; a tenant token is refused with 403 and an audit row. The response is the
@@ -23,7 +28,7 @@
  * `{ error, code }` with count-free sentences (D-14a). Request parameters and bodies are parsed
  * inside the handler, after the guard.
  */
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { FederalState } from "@clokr/db";
 import type { Prisma } from "@clokr/db";
@@ -31,9 +36,12 @@ import { config } from "../../../../config";
 import { OPERATOR_AUDIT_ACTIONS, recordOperatorAudit } from "../../operator-audit";
 import { requireOperator } from "../../operator-auth";
 import { operatorTenantAudit } from "../../operator-tenant-audit";
+import { toAssignmentDto } from "../../salon-assignment-rules";
 import {
+  activateSalon,
   createSalon,
   createSalonSchema,
+  deactivateSalon,
   findSalon,
   listSalons,
   updateSalon,
@@ -128,6 +136,30 @@ const OPERATOR_SALON_REPLIES = {
       error: "Diese Filialkennung ist bereits einem anderen Salon zugeordnet.",
       code: "BRANCH_ALREADY_COUPLED",
     },
+  },
+  HOME_SALON_IN_USE: {
+    status: 409,
+    body: {
+      error:
+        "Der Salon ist noch Stammsalon von Mitarbeitenden. Die Mitarbeitenden müssen zuerst einem anderen Stammsalon zugeordnet werden.",
+      code: "HOME_SALON_IN_USE",
+    },
+  },
+  LAST_ACTIVE_SALON: {
+    status: 409,
+    body: {
+      error:
+        "Das ist der letzte aktive Salon des Mandanten. Ein Mandant braucht mindestens einen aktiven Salon.",
+      code: "LAST_ACTIVE_SALON",
+    },
+  },
+  ALREADY_INACTIVE: {
+    status: 409,
+    body: { error: "Der Salon ist bereits deaktiviert.", code: "ALREADY_INACTIVE" },
+  },
+  ALREADY_ACTIVE: {
+    status: 409,
+    body: { error: "Der Salon ist bereits aktiv.", code: "ALREADY_ACTIVE" },
   },
   TENANT_DEACTIVATED: {
     status: 409,
@@ -240,6 +272,30 @@ const updateOperatorSalonSchema = updateSalonSchema.extend({
     .nullable()
     .optional(),
 });
+
+type StateChangeResult =
+  | { status: "NOT_FOUND" | "SALON_NOT_FOUND" | "TENANT_DEACTIVATED" }
+  | { status: "ALREADY_INACTIVE" | "ALREADY_ACTIVE" | "LAST_ACTIVE_SALON" | "HOME_SALON_IN_USE" }
+  | { status: "OK"; dto: ReturnType<typeof toOperatorSalonDto> };
+
+/**
+ * Maps the outcome of a deactivate / activate transaction to its reply. The handlers return only
+ * the status of a refusal, so the facade's `HOME_SALON_IN_USE` count never reaches the body (D-14a).
+ */
+function replyForStateChange(reply: FastifyReply, result: StateChangeResult) {
+  switch (result.status) {
+    case "NOT_FOUND":
+      return reply.code(404).send(TENANT_NOT_FOUND);
+    case "SALON_NOT_FOUND":
+      return reply.code(404).send(SALON_NOT_FOUND);
+    case "OK":
+      return result.dto;
+    default: {
+      const refusal = OPERATOR_SALON_REPLIES[result.status];
+      return reply.code(refusal.status).send(refusal.body);
+    }
+  }
+}
 
 export async function operatorSalonRoutes(app: FastifyInstance, opts: OperatorSalonRoutesOptions) {
   // GET /api/v1/operator/tenants/:id/salons
@@ -545,6 +601,154 @@ export async function operatorSalonRoutes(app: FastifyInstance, opts: OperatorSa
         default:
           return result.dto;
       }
+    },
+  });
+
+  // POST /api/v1/operator/tenants/:id/salons/:salonId/deactivate — never deletes (D-08)
+  app.post("/:salonId/deactivate", {
+    config: mutationRateLimit,
+    schema: {
+      tags: ["Betreiber"],
+      description:
+        "Deactivates a salon (never deletes it) and ends its Einsatzsalon assignments, audited on both sides.",
+    },
+    preHandler: requireOperator,
+    handler: async (req, reply) => {
+      const { id: tenantId, salonId } = salonParamSchema.parse(req.params);
+      const operatorId = req.operator.sub;
+      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId, request: req });
+
+      const result = await app.prisma.$transaction(async (tx) => {
+        const gate = await tenantGate(tx, tenantId);
+        if (gate !== "OK") return { status: gate } as const;
+
+        const [defaultBefore] = await listSalons(tx, tenantId, { includeInactive: false });
+        const change = await deactivateSalon(tx, tenantId, salonId);
+        // The facade writes nothing for a refusal, so returning here commits nothing.
+        if (change.status === "NOT_FOUND") return { status: "SALON_NOT_FOUND" } as const;
+        if (change.status !== "OK") return { status: change.status } as const;
+
+        const [defaultAfter] = await listSalons(tx, tenantId, { includeInactive: false });
+        await recordOperatorAudit(tx, {
+          action: OPERATOR_AUDIT_ACTIONS.SALON_DEACTIVATED,
+          operatorId,
+          subjectTenantId: tenantId,
+          entity: "Salon",
+          entityId: salonId,
+          oldValue: toOperatorSalonFields(change.existing, {
+            isDefault: defaultBefore?.id === salonId,
+          }),
+          newValue: toOperatorSalonFields(change.updated, {
+            isDefault: defaultAfter?.id === salonId,
+          }),
+          request: req,
+        });
+        await writeTenantAudit(
+          {
+            action: "DEACTIVATE",
+            entity: "Salon",
+            entityId: salonId,
+            oldValue: change.existing,
+            newValue: change.updated,
+          },
+          tx,
+        );
+        // One END row per Einsatzsalon assignment the deactivation ended or voided, next to the
+        // salon's own DEACTIVATE row (same shapes as the tenant's own route).
+        for (const { before, after } of change.endedAssignments) {
+          await writeTenantAudit(
+            {
+              action: "END",
+              entity: "EmployeeSalonAssignment",
+              entityId: before.id,
+              oldValue: toAssignmentDto(before),
+              newValue: { ...toAssignmentDto(after), trigger: "SALON_DEACTIVATED" },
+            },
+            tx,
+          );
+        }
+
+        const couplingNow = (await opts.ports.coupling.list(tx, tenantId)).find(
+          (c) => c.salonId === salonId,
+        );
+        return {
+          status: "OK",
+          dto: toOperatorSalonDto(change.updated, {
+            isDefault: defaultAfter?.id === salonId,
+            coupling: couplingNow
+              ? { provider: couplingNow.provider, externalBranchId: couplingNow.externalBranchId }
+              : null,
+          }),
+        } as const;
+      });
+
+      return replyForStateChange(reply, result);
+    },
+  });
+
+  // POST /api/v1/operator/tenants/:id/salons/:salonId/activate — ended assignments stay ended
+  app.post("/:salonId/activate", {
+    config: mutationRateLimit,
+    schema: {
+      tags: ["Betreiber"],
+      description: "Reactivates an inactive salon, audited on both sides.",
+    },
+    preHandler: requireOperator,
+    handler: async (req, reply) => {
+      const { id: tenantId, salonId } = salonParamSchema.parse(req.params);
+      const operatorId = req.operator.sub;
+      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId, request: req });
+
+      const result = await app.prisma.$transaction(async (tx) => {
+        const gate = await tenantGate(tx, tenantId);
+        if (gate !== "OK") return { status: gate } as const;
+
+        const [defaultBefore] = await listSalons(tx, tenantId, { includeInactive: false });
+        const change = await activateSalon(tx, tenantId, salonId);
+        if (change.status === "NOT_FOUND") return { status: "SALON_NOT_FOUND" } as const;
+        if (change.status !== "OK") return { status: change.status } as const;
+
+        const [defaultAfter] = await listSalons(tx, tenantId, { includeInactive: false });
+        await recordOperatorAudit(tx, {
+          action: OPERATOR_AUDIT_ACTIONS.SALON_ACTIVATED,
+          operatorId,
+          subjectTenantId: tenantId,
+          entity: "Salon",
+          entityId: salonId,
+          oldValue: toOperatorSalonFields(change.existing, {
+            isDefault: defaultBefore?.id === salonId,
+          }),
+          newValue: toOperatorSalonFields(change.updated, {
+            isDefault: defaultAfter?.id === salonId,
+          }),
+          request: req,
+        });
+        await writeTenantAudit(
+          {
+            action: "ACTIVATE",
+            entity: "Salon",
+            entityId: salonId,
+            oldValue: change.existing,
+            newValue: change.updated,
+          },
+          tx,
+        );
+
+        const couplingNow = (await opts.ports.coupling.list(tx, tenantId)).find(
+          (c) => c.salonId === salonId,
+        );
+        return {
+          status: "OK",
+          dto: toOperatorSalonDto(change.updated, {
+            isDefault: defaultAfter?.id === salonId,
+            coupling: couplingNow
+              ? { provider: couplingNow.provider, externalBranchId: couplingNow.externalBranchId }
+              : null,
+          }),
+        } as const;
+      });
+
+      return replyForStateChange(reply, result);
     },
   });
 }

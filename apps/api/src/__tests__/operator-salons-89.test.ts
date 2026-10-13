@@ -4,7 +4,9 @@
  * inactive salons included, metadata only) and creates one through POST on the same path (Bundesland
  * and opening hours required, optional coupling, both audit trails in one transaction). Plan 89-09
  * adds PATCH on /:salonId: master data, opening hours, Bundesland and the coupling (set, replace,
- * remove) in one request, audited on both sides, nothing persisted when any part is refused.
+ * remove) in one request, audited on both sides, nothing persisted when any part is refused. Plan
+ * 89-10 adds POST /:salonId/deactivate and /activate: facade rules, END rows with the operator
+ * actor, count-free refusals, and never a delete.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -1308,6 +1310,304 @@ describe("PATCH /api/v1/operator/tenants/:id/salons/:salonId — atomicity and c
       expect(Object.keys(JSON.parse(ok.body)).sort(byKey)).toEqual(DTO_KEYS);
     } finally {
       await cleanupTestData(app, dead.tenant.id);
+    }
+  });
+});
+
+// ── POST /:salonId/deactivate and /activate (plan 89-10) ─────────────────────────────────────
+
+function postAction(
+  tenantId: string,
+  salonId: string,
+  action: "deactivate" | "activate",
+  token: string | undefined = operatorToken,
+) {
+  return app.inject({
+    method: "POST",
+    url: `${salonsUrl(tenantId)}/${salonId}/${action}`,
+    headers: {
+      "user-agent": "vitest-operator-salons",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    remoteAddress: uniqueAddress(),
+  });
+}
+
+const STATE_TEXT = {
+  HOME_SALON_IN_USE:
+    "Der Salon ist noch Stammsalon von Mitarbeitenden. Die Mitarbeitenden müssen zuerst einem anderen Stammsalon zugeordnet werden.",
+  LAST_ACTIVE_SALON:
+    "Das ist der letzte aktive Salon des Mandanten. Ein Mandant braucht mindestens einen aktiven Salon.",
+  ALREADY_INACTIVE: "Der Salon ist bereits deaktiviert.",
+  ALREADY_ACTIVE: "Der Salon ist bereits aktiv.",
+} as const;
+
+async function auditRowCount(tenantId: string, salonId: string) {
+  const operatorRows = await app.prisma.operatorAuditLog.count({
+    where: { subjectTenantId: tenantId, entityId: salonId },
+  });
+  const tenantRows = await app.prisma.auditLog.count({
+    where: { entity: "Salon", entityId: salonId },
+  });
+  return { operatorRows, tenantRows };
+}
+
+describe("POST /api/v1/operator/tenants/:id/salons/:salonId/deactivate and /activate", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("deactivates a salon, ends its Einsatzsalon assignment and audits all of it on both sides", async () => {
+    const salon = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Zu deaktivieren" });
+    const assignment = await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: dataA.tenant.id,
+        employeeId: dataA.employee.id,
+        salonId: salon.id,
+        kind: "DEPLOYMENT",
+        validFrom: new Date("2020-01-01"),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
+
+    const res = await postAction(dataA.tenant.id, salon.id, "deactivate");
+    expect(res.statusCode, res.body).toBe(200);
+    const dto = JSON.parse(res.body) as SalonDto;
+    expect(Object.keys(dto).sort(byKey)).toEqual(DTO_KEYS);
+    expect(dto).toMatchObject({ id: salon.id, isActive: false });
+    expect(dto.deactivatedAt).toBeTruthy();
+
+    // Never deleted.
+    const row = await app.prisma.salon.findUniqueOrThrow({ where: { id: salon.id } });
+    expect(row.isActive).toBe(false);
+
+    const opRows = await operatorActions(dataA.tenant.id, [salon.id]);
+    expect(opRows).toHaveLength(1);
+    expect(opRows[0]).toMatchObject({
+      action: "SALON_DEACTIVATED",
+      operatorId,
+      entity: "Salon",
+    });
+    expect(opRows[0].oldValue).toMatchObject({ id: salon.id, isActive: true });
+    expect(opRows[0].newValue).toMatchObject({ id: salon.id, isActive: false });
+    expect(opRows[0].oldValue).not.toHaveProperty("coupling");
+
+    const tenantRows = await app.prisma.auditLog.findMany({
+      where: { entity: "Salon", entityId: salon.id },
+    });
+    expect(tenantRows).toHaveLength(1);
+    expect(tenantRows[0]).toMatchObject({ action: "DEACTIVATE", userId: null });
+    expect(tenantRows[0].newValue).toMatchObject({
+      isActive: false,
+      actor: { type: "OPERATOR", operatorId, tenantId: dataA.tenant.id },
+    });
+
+    const endRows = await app.prisma.auditLog.findMany({
+      where: { entity: "EmployeeSalonAssignment", entityId: assignment.id },
+    });
+    expect(endRows).toHaveLength(1);
+    expect(endRows[0]).toMatchObject({ action: "END", userId: null });
+    expect(endRows[0].oldValue).toMatchObject({ id: assignment.id, validUntil: null });
+    expect(endRows[0].newValue).toMatchObject({
+      id: assignment.id,
+      trigger: "SALON_DEACTIVATED",
+      actor: { type: "OPERATOR", operatorId, tenantId: dataA.tenant.id },
+    });
+    const ended = await app.prisma.employeeSalonAssignment.findUniqueOrThrow({
+      where: { id: assignment.id },
+    });
+    expect(ended.validUntil).not.toBeNull();
+  });
+
+  it("deactivates a salon with time entries without deleting or touching them", async () => {
+    const salon = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Mit Zeitdaten" });
+    const entry = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: dataA.employee.id,
+        salonId: salon.id,
+        date: new Date("2025-03-12T00:00:00Z"),
+        startTime: new Date("2025-03-12T08:00:00Z"),
+        endTime: new Date("2025-03-12T16:00:00Z"),
+        breakMinutes: 30,
+      },
+    });
+
+    const res = await postAction(dataA.tenant.id, salon.id, "deactivate");
+    expect(res.statusCode, res.body).toBe(200);
+
+    expect(await app.prisma.salon.count({ where: { id: salon.id } })).toBe(1);
+    const after = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    expect(after).toEqual(entry);
+  });
+
+  it("refuses a salon that is still a Stammsalon with the count-free fixed body and writes nothing", async () => {
+    const home = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Stammsalon" });
+    await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: dataA.tenant.id,
+        employeeId: dataA.employee.id,
+        salonId: home.id,
+        kind: "HOME",
+        validFrom: new Date("2020-01-01"),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
+
+    const res = await postAction(dataA.tenant.id, home.id, "deactivate");
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as { error: string; code: string };
+    expect(body).toEqual({ error: STATE_TEXT.HOME_SALON_IN_USE, code: "HOME_SALON_IN_USE" });
+    expect(/\d/.test(body.error)).toBe(false);
+    expect(Object.keys(body).sort(byKey)).toEqual(["code", "error"]);
+
+    expect((await app.prisma.salon.findUniqueOrThrow({ where: { id: home.id } })).isActive).toBe(
+      true,
+    );
+    expect(await auditRowCount(dataA.tenant.id, home.id)).toEqual({
+      operatorRows: 0,
+      tenantRows: 0,
+    });
+  });
+
+  it("refuses the last active salon of a tenant and an already inactive salon, writing nothing", async () => {
+    const solo = await seedTestData(app, "os89g");
+    try {
+      const only = await app.prisma.salon.findFirstOrThrow({
+        where: { tenantId: solo.tenant.id, isActive: true },
+      });
+      const last = await postAction(solo.tenant.id, only.id, "deactivate");
+      expect(last.statusCode).toBe(409);
+      expect(JSON.parse(last.body)).toEqual({
+        error: STATE_TEXT.LAST_ACTIVE_SALON,
+        code: "LAST_ACTIVE_SALON",
+      });
+      expect(await auditRowCount(solo.tenant.id, only.id)).toEqual({
+        operatorRows: 0,
+        tenantRows: 0,
+      });
+
+      const inactive = await createTestSalon(app.prisma, solo.tenant.id, {
+        name: "Schon inaktiv",
+        isActive: false,
+      });
+      const already = await postAction(solo.tenant.id, inactive.id, "deactivate");
+      expect(already.statusCode).toBe(409);
+      expect(JSON.parse(already.body)).toEqual({
+        error: STATE_TEXT.ALREADY_INACTIVE,
+        code: "ALREADY_INACTIVE",
+      });
+      expect(await auditRowCount(solo.tenant.id, inactive.id)).toEqual({
+        operatorRows: 0,
+        tenantRows: 0,
+      });
+    } finally {
+      await cleanupTestData(app, solo.tenant.id);
+    }
+  });
+
+  it("reactivates an inactive salon, audits it and does not restore ended assignments", async () => {
+    const salon = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Wieder aktiv" });
+    const assignment = await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: dataA.tenant.id,
+        employeeId: dataA.employee.id,
+        salonId: salon.id,
+        kind: "DEPLOYMENT",
+        validFrom: new Date("2020-01-01"),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
+    expect((await postAction(dataA.tenant.id, salon.id, "deactivate")).statusCode).toBe(200);
+    const endedRow = await app.prisma.employeeSalonAssignment.findUniqueOrThrow({
+      where: { id: assignment.id },
+    });
+    expect(endedRow.validUntil).not.toBeNull();
+
+    const res = await postAction(dataA.tenant.id, salon.id, "activate");
+    expect(res.statusCode, res.body).toBe(200);
+    const dto = JSON.parse(res.body) as SalonDto;
+    expect(Object.keys(dto).sort(byKey)).toEqual(DTO_KEYS);
+    expect(dto).toMatchObject({ id: salon.id, isActive: true, deactivatedAt: null });
+
+    const opRows = await operatorActions(dataA.tenant.id, [salon.id]);
+    expect(opRows.map((r) => r.action)).toEqual(["SALON_DEACTIVATED", "SALON_ACTIVATED"]);
+    expect(opRows[1]).toMatchObject({ operatorId, entity: "Salon" });
+    const tenantRows = await app.prisma.auditLog.findMany({
+      where: { entity: "Salon", entityId: salon.id },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(tenantRows.map((r) => r.action)).toEqual(["DEACTIVATE", "ACTIVATE"]);
+    expect(tenantRows[1].newValue).toMatchObject({
+      actor: { type: "OPERATOR", operatorId, tenantId: dataA.tenant.id },
+    });
+
+    const afterActivate = await app.prisma.employeeSalonAssignment.findUniqueOrThrow({
+      where: { id: assignment.id },
+    });
+    expect(afterActivate).toEqual(endedRow);
+  });
+
+  it("refuses to reactivate an active salon without writing a row", async () => {
+    const salon = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Schon aktiv" });
+    const res = await postAction(dataA.tenant.id, salon.id, "activate");
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: STATE_TEXT.ALREADY_ACTIVE,
+      code: "ALREADY_ACTIVE",
+    });
+    expect(await auditRowCount(dataA.tenant.id, salon.id)).toEqual({
+      operatorRows: 0,
+      tenantRows: 0,
+    });
+  });
+
+  it("rolls the deactivation back when an END audit row cannot be written", async () => {
+    const salon = await createTestSalon(app.prisma, dataA.tenant.id, { name: "END-Audit" });
+    const assignment = await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: dataA.tenant.id,
+        employeeId: dataA.employee.id,
+        salonId: salon.id,
+        kind: "DEPLOYMENT",
+        validFrom: new Date("2020-01-01"),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
+    const realAudit = app.audit.bind(app);
+    vi.spyOn(app, "audit").mockImplementation(async (entry) => {
+      if (entry.entity === "EmployeeSalonAssignment")
+        throw new Error("forced audit failure (test)");
+      return realAudit(entry);
+    });
+
+    const res = await postAction(dataA.tenant.id, salon.id, "deactivate");
+    expect(res.statusCode).toBe(500);
+
+    expect((await app.prisma.salon.findUniqueOrThrow({ where: { id: salon.id } })).isActive).toBe(
+      true,
+    );
+    expect(
+      (await app.prisma.employeeSalonAssignment.findUniqueOrThrow({ where: { id: assignment.id } }))
+        .validUntil,
+    ).toBeNull();
+    expect(await auditRowCount(dataA.tenant.id, salon.id)).toEqual({
+      operatorRows: 0,
+      tenantRows: 0,
+    });
+  });
+
+  it("answers an unknown salon id and an unknown tenant with the fixed 404 bodies", async () => {
+    for (const action of ["deactivate", "activate"] as const) {
+      const salon = await postAction(dataA.tenant.id, randomUUID(), action);
+      expect(salon.statusCode).toBe(404);
+      expect(JSON.parse(salon.body)).toEqual({ error: "Salon nicht gefunden" });
+      const tenant = await postAction(randomUUID(), randomUUID(), action);
+      expect(tenant.statusCode).toBe(404);
+      expect(JSON.parse(tenant.body)).toEqual({ error: "Mandant nicht gefunden" });
     }
   });
 });

@@ -1195,6 +1195,26 @@
       "reason": "The salon is looked up with the tenant-scoped `findSalon(tx, tenantId, salonId)` whose single null path makes another tenant's salon and an unknown id byte-identical (404 `Salon nicht gefunden`) - proven by operator-salons-89.test.ts; the operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. requireOperator runs first and an unknown tenant answers the one fixed 404 `Mandant nicht gefunden`.",
       "ticket": null,
       "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/operator/tenants/:id/salons/:salonId/deactivate",
+      "file": "apps/api/src/contexts/platform/api/operator/salons.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The salon is looked up inside the facade `deactivateSalon(tx, tenantId, salonId)` with `{ id: salonId, tenantId }` and one null path (NOT_FOUND), so another tenant's salon and an unknown id are byte-identical (404 `Salon nicht gefunden`) - proven by operator-salons-89.test.ts and operator-salons-boundary-89.test.ts; the operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. requireOperator runs first and an unknown tenant answers the one fixed 404 `Mandant nicht gefunden`.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/operator/tenants/:id/salons/:salonId/activate",
+      "file": "apps/api/src/contexts/platform/api/operator/salons.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The salon is looked up inside the facade `activateSalon(tx, tenantId, salonId)` with `{ id: salonId, tenantId }` and one null path (NOT_FOUND), so another tenant's salon and an unknown id are byte-identical (404 `Salon nicht gefunden`) - proven by operator-salons-89.test.ts and operator-salons-boundary-89.test.ts; the operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. requireOperator runs first and an unknown tenant answers the one fixed 404 `Mandant nicht gefunden`.",
+      "ticket": null,
+      "validatedAt": null
     }
   ]
 }

@@ -789,8 +789,10 @@ import { readFileSync } from "node:fs";
 // PATCH atomicity describe adds 4) - MIN_FILES stays 403, MIN_TESTS rises from 6759 to 6763. Same convention.
 // Phase 89 plan 10 refactor (2026-10-13): `operator-salons-89.test.ts` grows from 34 to 35 cases (SALON_UPDATED carries no
 // coupling value) - MIN_FILES stays 403, MIN_TESTS rises from 6763 to 6764. Same convention.
+// Phase 89 plan 10 task 1 (2026-10-13): `operator-salons-89.test.ts` grows from 35 to 43 cases (single-file run: the
+// deactivate / activate describe adds 8) - MIN_FILES stays 403, MIN_TESTS rises from 6764 to 6772. Same convention.
 const MIN_FILES = 403;
-const MIN_TESTS = 6764;
+const MIN_TESTS = 6772;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
