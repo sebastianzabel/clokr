@@ -14,7 +14,7 @@
  * which no longer references `TenantConfig.storeHours` at all (only `shiftStoreHoursMode`, D-10).
  * `settings.ts` is the ONLY reader left — it keeps writing `TenantConfig.storeHours` for
  * `PUT /api/v1/settings/work` (the only opening-hours UI today) and mirroring that write into a
- * tenant's SOLE active salon (D-13) until #89 removes both the mirror and this file's own
+ * tenant's SOLE active salon (D-13) until #563 removes both the mirror and this file's own
  * allowlist. The web shift page's own `storeHours` display read (`+page.svelte`) is a display-only
  * hint outside this API-only guard (D-16) and is unaffected either way.
  *
@@ -42,7 +42,7 @@ const SCAN_ROOT = join(API_ROOT, "src");
 const ALLOWED_STORE_HOURS_READERS = [
   // The tenant write path: PUT /api/v1/settings/work's Zod field (now salonOpeningHoursSchema),
   // its GET defaults, and the D-16 syncSoleActiveSalonOpeningHours mirror call (Phase 64b Plan 04)
-  // — kept until #89 removes both the mirror and the salon opening-hours UI it stands in for
+  // — kept until #563 removes both the mirror and the salon opening-hours UI it stands in for
   // (Phase 325, issue #325, D-13).
   "src/contexts/platform/api/settings.ts",
 ].sort();

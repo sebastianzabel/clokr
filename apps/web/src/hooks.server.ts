@@ -19,6 +19,12 @@ function log(level: string, msg: string, data?: Record<string, unknown>) {
   }
 }
 
+// The operator console carries destructive controls (deactivate a tenant, change a salon); a
+// hostile page must not be able to frame it (clickjacking, T-89-10).
+function isOperatorPath(pathname: string): boolean {
+  return pathname === "/betreiber" || pathname.startsWith("/betreiber/");
+}
+
 export const handle: Handle = async ({ event, resolve }) => {
   const start = Date.now();
 
@@ -88,6 +94,14 @@ export const handle: Handle = async ({ event, resolve }) => {
     response.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   }
 
+  const operatorPath = isOperatorPath(event.url.pathname);
+
+  // Legacy framing header, sent whatever CSP_MODE says: a deployment with the CSP switched off or
+  // in report-only mode (which ignores the framing directive) is still protected.
+  if (operatorPath) {
+    response.headers.set("X-Frame-Options", "DENY");
+  }
+
   // Content Security Policy
   const cspMode = process.env.CSP_MODE || "enforce"; // "off", "report-only", "enforce"
   if (cspMode !== "off") {
@@ -102,6 +116,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",
+      ...(operatorPath ? ["frame-ancestors 'none'"] : []),
     ].join("; ");
     const headerName =
       cspMode === "report-only" ? "Content-Security-Policy-Report-Only" : "Content-Security-Policy";

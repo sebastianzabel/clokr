@@ -14,6 +14,10 @@
  * app-bug-proof, NOT insider-proof: the table owner can drop it.
  *
  * Callers pass their transaction client so the audit row and the audited action commit atomically.
+ *
+ * Phase 89 (#89) adds the salon and coupling lifecycle of a customer tenant (create, update,
+ * deactivate, activate, Phorest coupling set/removed), written by the operator salon routes. Each
+ * of those actions is also written to the tenant's own AuditLog through `operator-tenant-audit.ts`.
  */
 
 import type { Prisma, PrismaClient } from "@clokr/db";
@@ -35,6 +39,12 @@ export const OPERATOR_AUDIT_ACTIONS = {
   TENANT_DEACTIVATED: "TENANT_DEACTIVATED",
   TENANT_REACTIVATED: "TENANT_REACTIVATED",
   ADMIN_INVITATION_RESENT: "ADMIN_INVITATION_RESENT",
+  SALON_CREATED: "SALON_CREATED",
+  SALON_UPDATED: "SALON_UPDATED",
+  SALON_DEACTIVATED: "SALON_DEACTIVATED",
+  SALON_ACTIVATED: "SALON_ACTIVATED",
+  SALON_COUPLING_SET: "SALON_COUPLING_SET",
+  SALON_COUPLING_REMOVED: "SALON_COUPLING_REMOVED",
 } as const;
 
 export type OperatorAuditAction =
@@ -66,6 +76,12 @@ export const OPERATOR_AUDIT_RETENTION_CLASS: Record<
   TENANT_DEACTIVATED: "LIFECYCLE",
   TENANT_REACTIVATED: "LIFECYCLE",
   ADMIN_INVITATION_RESENT: "LIFECYCLE",
+  SALON_CREATED: "LIFECYCLE",
+  SALON_UPDATED: "LIFECYCLE",
+  SALON_DEACTIVATED: "LIFECYCLE",
+  SALON_ACTIVATED: "LIFECYCLE",
+  SALON_COUPLING_SET: "LIFECYCLE",
+  SALON_COUPLING_REMOVED: "LIFECYCLE",
 };
 
 /**

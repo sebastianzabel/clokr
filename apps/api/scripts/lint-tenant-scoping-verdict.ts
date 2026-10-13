@@ -124,12 +124,25 @@ function getCallModelAndMethod(node: ts.CallExpression): { model: string; method
  * Returns null when it does not — NOT `false`, so the caller can try the other ways.
  *
  * Walks the `where` object literal's property tree through plain nested
- * `ObjectLiteralExpression`s and through `AND: [...]` array elements ONLY. `NOT:` and `OR:` are
- * deliberately NOT descended into: a `tenantId` key nested inside either does not necessarily
- * constrain every result the query can return (T-204-16) — e.g. `OR: [{ tenantId: x }, { id: y }]`
- * does not require `tenantId` to match at all. Implementing full boolean reasoning over
- * arbitrary `where` trees is disproportionate to what this codebase's measured idiom needs
- * (204-RESEARCH.md §Architecture Patterns Shapes 1/2/2b are all plain nested objects or `AND`).
+ * `ObjectLiteralExpression`s and through `AND: [...]` array elements. `NOT:` is never descended
+ * into, and `OR:` only under the strict rule below: a `tenantId` key nested inside either does not
+ * necessarily constrain every result the query can return (T-204-16) — e.g.
+ * `OR: [{ tenantId: x }, { id: y }]` does not require `tenantId` to match at all. Implementing
+ * full boolean reasoning over arbitrary `where` trees is disproportionate to what this codebase's
+ * measured idiom needs (204-RESEARCH.md §Architecture Patterns Shapes 1/2/2b are all plain nested
+ * objects or `AND`).
+ *
+ * Phase 89 (#89) extends this in exactly two, deliberately narrow ways:
+ *   - `OR: [...]` counts as scoped ONLY if EVERY branch is itself an object literal scoped by
+ *     these same rules (a disjunction of tenant-bound branches stays inside the tenant; one
+ *     unscoped branch makes the whole `OR` unscoped and the call stays a finding).
+ *   - A Json-path constraint counts as a tenant constraint only in the exact form
+ *     `<field>: { path: [..., "tenantId"], equals: <req.user.tenantId or an alias> }` — the last
+ *     path element literally "tenantId", `equals` an accepted principal TENANT expression, and no
+ *     other key (`not`, `string_contains`, `mode`, a missing `equals` all fail). This is the shape
+ *     of the operator-stamped `AuditLog.newValue.actor.tenantId` read.
+ * The gate still does not follow helper functions: a scope built in another function is not
+ * recognised, so the `OR` must be spelled inline at the call site.
  */
 export function findInlineScoping(
   whereArg: ts.Expression | null,
@@ -153,7 +166,34 @@ export function findInlineScoping(
 
   if (!whereArg || !ts.isObjectLiteralExpression(whereArg)) return null;
 
-  type Acceptance = { field: string; depth: number; path: readonly string[] };
+  type Acceptance = {
+    field: string;
+    depth: number;
+    path: readonly string[];
+    /** True when the constraint is a Json-path equality on the row itself (Phase 89). */
+    jsonPath?: boolean;
+  };
+
+  /**
+   * Phase 89: `{ path: [..., "tenantId"], equals: <principal tenant> }` and nothing else. Returns
+   * the accepted principal field ("tenantId") or null.
+   */
+  function jsonPathTenantConstraint(objLit: ts.ObjectLiteralExpression): "tenantId" | null {
+    let pathNode: ts.Expression | null = null;
+    let equalsNode: ts.Expression | null = null;
+    for (const prop of objLit.properties) {
+      if (!ts.isPropertyAssignment(prop) || !ts.isIdentifier(prop.name)) return null;
+      if (prop.name.text === "path") pathNode = prop.initializer;
+      else if (prop.name.text === "equals") equalsNode = prop.initializer;
+      else return null; // any other operator (not, string_contains, mode, ...) does not count
+    }
+    if (!pathNode || !equalsNode || !ts.isArrayLiteralExpression(pathNode)) return null;
+    const last = pathNode.elements[pathNode.elements.length - 1];
+    if (!last || !ts.isStringLiteralLike(last) || last.text !== "tenantId") return null;
+    return isPrincipalExpression(equalsNode, bindings, sourceFile) === "tenantId"
+      ? "tenantId"
+      : null;
+  }
 
   function walk(
     objLit: ts.ObjectLiteralExpression,
@@ -164,7 +204,29 @@ export function findInlineScoping(
       if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
         const name = prop.name.text;
 
-        if (name === "NOT" || name === "OR") continue; // T-204-16: never descend
+        if (name === "NOT") continue; // T-204-16: never descend
+
+        if (name === "OR") {
+          // Phase 89: scoped only if EVERY branch is itself scoped; the weakest (deepest) branch
+          // decides the label. One unscoped branch, or a non-literal branch, rejects the whole OR.
+          if (!ts.isArrayLiteralExpression(prop.initializer)) continue;
+          const elements = prop.initializer.elements;
+          if (elements.length === 0) continue;
+          let weakest: Acceptance | null = null;
+          let allScoped = true;
+          for (const element of elements) {
+            const branch = ts.isObjectLiteralExpression(element)
+              ? walk(element, depth, path)
+              : null;
+            if (!branch) {
+              allScoped = false;
+              break;
+            }
+            if (!weakest || branch.depth > weakest.depth) weakest = branch;
+          }
+          if (allScoped && weakest) return weakest;
+          continue;
+        }
 
         if (name === "AND" && ts.isArrayLiteralExpression(prop.initializer)) {
           for (const element of prop.initializer.elements) {
@@ -183,6 +245,8 @@ export function findInlineScoping(
         }
 
         if (ts.isObjectLiteralExpression(prop.initializer)) {
+          const jsonField = jsonPathTenantConstraint(prop.initializer);
+          if (jsonField) return { field: jsonField, depth, path, jsonPath: true };
           const nested = walk(prop.initializer, depth + 1, [...path, name]);
           if (nested) return nested;
         }
@@ -207,7 +271,9 @@ export function findInlineScoping(
     return {
       scoped: true,
       via: "inline-tenant-id",
-      detail: `where.tenantId constrained to req.user.tenantId`,
+      detail: accepted.jsonPath
+        ? `where Json-path constraint on "tenantId" equals req.user.tenantId`
+        : `where.tenantId constrained to req.user.tenantId`,
     };
   }
 

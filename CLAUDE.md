@@ -596,6 +596,11 @@ Read these before modifying any page in `apps/web` — they are checked in, unli
 
 Reuse an existing recipe from `app.css` before inventing a class or a token.
 
+`ConfirmDialog` swallows a refused `onConfirm` (Phase 89): the dialog stays open, the button is
+re-enabled and nothing is rethrown, so a refusal is no unhandled rejection and needs no
+`process.on("unhandledRejection")` allow-list in a test. `ReasonDialog` still throws to its
+`ConfirmDialog` to keep its inline error.
+
 Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes` + `lint:save-pattern`. Note
 that `lint:ui-classes` only scans `lib/components/ui/` and `lib/components/layout/` — components
 elsewhere (`lib/components/saldo/`, `calendar/`, `breaks/`, …) are outside that gate and need their
@@ -909,7 +914,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   in-app navigation), and `selectedSalonId()` is the value a view passes as `salonId` (`null` = every
   reachable salon). No endpoint reads a salon context from a header, cookie or session; an endpoint
   that takes `salonId` validates it itself — proof: `salon-context-manipulation-82.test.ts`. The
-  salon admin screen of #89 calls `salonContext.load(…, { force: true })` after
+  tenant-side salon admin screen of #563 calls `salonContext.load(…, { force: true })` after
   create/deactivate/activate.
 - **The dashboard Team block follows the salon context (Issue #84).** The web decides whether to
   filter only through `teamSalonFilter()` (`apps/web/src/lib/dashboard/team-view.ts`): it is guarded
@@ -985,8 +990,35 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   `req.user`, never build an access context (`employeeScopeFor`, `accessContextFromRequest`), never call
   `app.audit()` and never read `user`, `employee` or `auditLog`; every route carries a rate limit. A
   source scan in `operator-auth-88.test.ts` fails on a violation. Operator responses carry tenant
-  metadata only; support access to tenant data is #93, not here. The one place the operator writes a
-  tenant `AuditLog` row is the employee-creation audit port of the first admin (actor `OPERATOR`).
+  metadata and, since Phase 89, salon master data including the Phorest branch id — never employee
+  data and never counts (no time-entry, assignment or employee numbers, Issue #89 D-14a); support
+  access to tenant data is #93, not here. The ONE FILE that writes operator-actor rows into a
+  tenant `AuditLog` is `contexts/platform/operator-tenant-audit.ts` (first-admin creation, salon and
+  coupling changes; actor `{ type: "OPERATOR", operatorId, tenantId }`; guard
+  `operator-tenant-audit-89.test.ts` fails on any other file spelling that actor shape). Rows
+  written since Phase 89 carry `actor.tenantId`, and the tenant `GET /audit-logs` shows them
+  labelled „Betreiber“ — the salon and coupling rows as well as the first-admin creation rows of a
+  tenant the operator created. Operator rows written before Phase 89 carry no stamp and stay
+  invisible to the tenant (append-only, not backfilled).
+- **The operator console (Phase 89, Issue #89).** The UI lives at `/betreiber` in the same web app
+  as the route group `(operator)`, with its own `sessionStorage` session (`$stores/operator-auth`,
+  keys `clokr.operator.accessToken` / `.expiresAt`) and its own client `lib/operator/client.ts`
+  without a refresh: a 401/403 sends the browser to `/betreiber/anmelden` with a `safeNext()` next
+  path. The isolation scan `operator-isolation-89.test.ts` fails when an operator file imports the
+  tenant session, client, logger or salon context. `hooks.server.ts` sets `frame-ancestors 'none'`
+  and `X-Frame-Options: DENY` on `/betreiber`; the client logger drops its queue there, so operator
+  errors never reach the tenant log endpoint. Nothing in the tenant app links to `/betreiber`, and
+  the console pins theme nacht / skin editorial / comfortable without writing the device's stored
+  preferences (it restores them on leaving). Logout clears the tab's session but cannot revoke the
+  15-minute token server-side (accepted, T-89-14). The salon routes
+  (`contexts/platform/api/operator/salons.ts`) call only the Unterbau salon facade and the coupling
+  port of `composition/operator-salon-ports.ts` (Schichtplanung `facade/couplings.ts`); every
+  change writes the `OperatorAuditLog` rows AND the tenant `AuditLog` rows in one transaction; a
+  salon is never deleted (deactivate/activate only); the Bundesland is required on create; the
+  coupling is Phorest or none. The `.card-animate` transform traps fixed dialogs inside an animated
+  `Section` (#570) — the tenant page's „Mandant“ section therefore has no `animate`. Follow-ups:
+  #567 (tenant-create SLUG/EMAIL conflict classification), #563 (tenant-side salon admin and
+  removal of the `storeHours` mirror), #566 (packages per tenant).
 - **Tenants are deactivated, never deleted.** `ACTIVE_TENANT_WHERE` (`contexts/platform/tenant-status.ts`)
   is the one spelling of "active tenant" in a query. A deactivated tenant is refused on every credential
   path (login after the password matched, OTP, refresh, password reset, invitation accept) and on every
@@ -1029,6 +1061,10 @@ Prisma model without constraining it to `req.user.tenantId` fails CI, not just r
 | `apps/api/scripts/lint-tenant-scoping-exceptions.json` | Every deliberate exception, each with a mandatory reason |
 | `apps/api/scripts/lint-tenant-scoping-nullish-tenant.ts` | The nullish-tenant rule (Phase 88): an optional tenant value reaching a Prisma call fails the same gate |
 | `apps/api/scripts/README.md` § Lint gates | How to add a justified exception, and when NOT to |
+
+Since Phase 89 the gate also accepts two strict inline forms: an `OR` only when every branch is
+itself scoped, and a Json-path stamp `{ path: [..., "tenantId"], equals: <principal tenant> }` with
+no other key (`apps/api/scripts/README.md` § `lint-tenant-scoping.ts`).
 
 Verify with `pnpm --filter @clokr/api run lint:tenant-scoping`. A hit on a clean tree is a
 finding to report (Issue #204), not an exception to add.

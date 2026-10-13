@@ -84,7 +84,7 @@ describe("employee creation: one implementation (Phase 88 plan 10)", () => {
           tenant: { name: `Tenant ${slug}`, slug, federalState: "HESSEN" },
           admin: { email, firstName: "Erste", lastName: "Leitung" },
         },
-        operatorEmployeeCreationAudit(app, { operatorId }),
+        (tenantId) => operatorEmployeeCreationAudit(app, { operatorId, tenantId }),
       ),
     );
     if (result.status !== "OK") throw new Error(`provisioning failed: ${result.status}`);

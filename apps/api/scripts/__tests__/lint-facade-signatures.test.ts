@@ -517,7 +517,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // facade (`contexts/time-tracking/facade/time-entries.ts`, retention archive of DayBreak /
   // DayBreakAck, same shape as `archiveEntriesBefore`) — passes F1/F2/F3 directly, no new
   // exception; exceptions unchanged at 17.
-  it("the real tree has exactly 138 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  it("the real tree has exactly 142 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -530,6 +530,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/platform/facade/holiday-resolution.ts",
         "apps/api/src/contexts/scheduling/facade/shifts.ts",
         "apps/api/src/contexts/scheduling/facade/availability.ts",
+        "apps/api/src/contexts/scheduling/facade/couplings.ts",
         "apps/api/src/contexts/time-tracking/facade/presence-devices.ts",
         "apps/api/src/contexts/time-tracking/facade/time-entries.ts",
         "apps/api/src/contexts/working-time-account/facade/overtime-account.ts",
@@ -574,7 +575,10 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // Phase 88 (#88, plan 11): +1 ensureDefaultLeaveTypes
     // (absence/facade/leave-types.ts, the default leave types of a new tenant) — 137 -> 138;
     // passes F1/F2/F3 directly, exceptions unchanged at 17.
-    expect(functions).toHaveLength(138);
+    // Phase 89 (#89, plans 01 and 07): new file contexts/scheduling/facade/couplings.ts, the one
+    // SalonCoupling access path (listSalonCouplings, createSalonCoupling, setSalonCoupling,
+    // removeSalonCoupling) — 138 -> 142; all four pass F1/F2/F3 directly, exceptions unchanged at 17.
+    expect(functions).toHaveLength(142);
 
     const rawExceptions = JSON.parse(
       readFileSync(

@@ -166,12 +166,15 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/employee-creation.ts": "unterbau", // Phase 88 plan 10 (D-04a) — the one place employee creation lives (User/Employee/WorkSchedule/OvertimeAccount/role assignment/Stammsalon/Invitation), extracted from POST /employees; Unterbau models are the primary subject, the vacation entitlement and OvertimeAccount writes go through the owning contexts' facades
   "src/contexts/platform/tenant-provisioning.ts": "unterbau", // Phase 88 plan 05 (D-04/D-04a) — the one tenant-skeleton rule (Tenant + TenantConfig + default salon), Unterbau models only
   "src/contexts/platform/operator-audit.ts": "unterbau", // Phase 88 plan 01 (D-07/D-07a) — create-only writer, retention classes and flagged retention purge of OperatorAuditLog, an append-only Unterbau model that belongs to no business context
+  "src/contexts/platform/operator-tenant-audit.ts": "unterbau", // Phase 89 (#89) — the one writer of operator-actor rows in a tenant's AuditLog; AuditLog is an Unterbau model
   "src/contexts/platform/operator-credentials.ts": "unterbau", // Phase 88 plan 02 (D-03/D-03a) — operator account credentials and lifecycle (password policy, lockout, TOTP, recovery codes, create/MFA reset/deactivate); OperatorAccount and OperatorAuditLog are Unterbau models
   "src/contexts/platform/operator-auth.ts": "unterbau", // Phase 88 plan 08 (D-01/D-02/D-02a, AC-88-01/02/10) — operator token signing/verification, the requireOperator guard and the cross-principal refusal; reads OperatorAccount, writes OperatorAuditLog, both Unterbau models
   "src/composition/tenant-onboarding.ts": "komposition", // Phase 88 (#88) — hands the operator tenant-create transaction the absence context's default leave types; owns no model, carries no rule
   "src/contexts/platform/api/operator/tenants.ts": "unterbau", // Phase 88 plan 11 (D-04/D-05/D-07) — operator tenant lifecycle (create, list, get, rename, deactivate, reactivate, resend first-admin invitation); reads and writes the Tenant model and platform functions only
   "src/contexts/platform/api/operator/auth.ts": "unterbau", // Phase 88 plan 08 (D-02/D-03/D-03a) — operator sign-in (password, TOTP/recovery code, me); reads and writes OperatorAccount and OperatorAuditLog, Unterbau models that belong to no business context
   "src/contexts/platform/tenant-status.ts": "unterbau", // Phase 88 plan 06 (D-05, AC-88-07/08) — tenant deactivation/reactivation (Tenant columns, refresh-token revocation, operator audit) and the one refusal body of the credential paths; Tenant, RefreshToken and OperatorAuditLog are Unterbau models
+  "src/contexts/platform/api/operator/salons.ts": "unterbau", // Phase 89 (#89, D-05/D-06/D-07) — operator salon routes (list now, mutations in later plans); reads Salon through the Unterbau facade and gets coupling and time-entry count through a port from the composition root
+  "src/composition/operator-salon-ports.ts": "komposition", // Phase 89 (#89, D-07/D-12) — maps the time-tracking and scheduling index exports onto the operator salon port; owns no model, carries no rule
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────
@@ -278,6 +281,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    services/phorest/** (D-16 prefix rule) ────────────────────────────────────────────────
   "src/contexts/scheduling/facade/shifts.ts": "schichtplanung", // Phase 100B Plan 05 — S1/S2/S3, Shift's only external access path
   "src/contexts/scheduling/facade/availability.ts": "schichtplanung", // Phase 100B Plan 05 — S4, EmployeeAvailability's only external access path
+  "src/contexts/scheduling/facade/couplings.ts": "schichtplanung", // Phase 89 (#89, D-12a) — SalonCoupling's only external access path
   "src/contexts/scheduling/api/availability.ts": "schichtplanung", // writes EmployeeAvailability
   "src/contexts/scheduling/api/me-availability.ts": "schichtplanung", // Phase 243 Plan 02 (B3) — moved from contexts/platform/api/me.ts: the caller's own EmployeeAvailability, resolved from JWT.employeeId; the /me URL prefix is a UI grouping, not a context boundary
   "src/contexts/scheduling/api/integrations.ts": "schichtplanung", // writes PhorestStaffMapping (Phorest scheduling-integration settings)

@@ -1097,6 +1097,12 @@ Nachtrag Phase 82 (12.10.2026): #82 hat den Mandanten- und Salon-Kontext im Fron
 Öffnungszeiten-Oberfläche je Salon. Spiegel und `TenantConfig.storeHours` bleiben deshalb bis #89
 (Salon pflegen inklusive Öffnungszeiten); die Verweise im Code zeigen seit Phase 82 auf #89.
 
+Nachtrag Phase 89 (13.10.2026): #89 liefert die Salonverwaltung des Betreibers, der seit Phase 89
+`Salon.openingHours` bearbeitet; die Salonverwaltung im Mandanten gehört nicht dazu. Spiegel und
+`TenantConfig.storeHours` bleiben deshalb bis #563 (Unterbau-Semantikänderung, Entscheidung des Eigentümers
+vor `Ready`); die Verweise im Code zeigen seit Phase 89 auf #563. Der Hinweis bei genau einem aktiven Salon
+in der Betreiberoberfläche erklärt den Spiegel.
+
 **Mandantengrenze:** kein Datenbank-Trigger (eine Instanz pro Kunde, #226); die Anwendung prüft über
 `findSalon()` mandantengebunden, fremde und nicht existierende Salon-IDs werden byte-gleich mit 404
 abgelehnt (T-100-09). `POST /api/v1/shifts/bulk` prüft seit #325 zusätzlich, dass jeder Mitarbeiter zum
@@ -3707,3 +3713,95 @@ verlor den Zugriff also nicht sofort (Art. 32 DSGVO: Fähigkeit, die Kontrolle w
 
 `operator-token-version-557` (Zugriffstoken und Challenge nach Rücksetzung und Deaktivierung, Anspruchsformen
 mit Gegenprobe, Atomarität der Transaktion, vier Mutationsproben).
+
+### Nachtrag (Phase 89, Issue #89, 2026-10-13): Betreiberkonsole `/betreiber`, Salon- und Kopplungsverwaltung durch den Betreiber
+
+**Schwere: informativ. Unterbau-Erweiterung nach ADR 0002, Entscheidung 7 (additiv; kein bestehender Leser
+muss sich ändern; die Freigabe ist das Erreichen von `Ready`).**
+
+Phase 89 liefert die Oberfläche des Betreibers (`/betreiber`: Mandantenliste, Mandant anlegen, umbenennen,
+deaktivieren, reaktivieren, Einladung erneut senden) und die Salonverwaltung je Mandant (anlegen, bearbeiten,
+deaktivieren, reaktivieren; Phorest-Kopplung setzen, ersetzen, entfernen). Ein Salon wird nie gelöscht.
+
+#### Was sich geändert hat
+
+- **D-01 — gleicher Ursprung, Restrisiko.** Die Konsole ist die Routengruppe `(operator)` derselben
+  SvelteKit-Anwendung. Ein Skript, das im Mandanten-Frontend (XSS) läuft, teilt damit den Ursprung mit der
+  Konsole und könnte deren Token lesen. Gemindert durch die vorhandene Nonce-CSP (`hooks.server.ts`), das
+  Token in `sessionStorage` (endet mit dem Tab) mit 15 Minuten Laufzeit ohne Auffrischung, durch das Fehlen
+  jedes `{@html}` in der Konsole und durch `frame-ancestors 'none'` samt `X-Frame-Options: DENY` auf
+  `/betreiber`. Das Restrisiko bleibt bewusst bestehen (T-89-53, akzeptiert). **Option:** ein eigener Host
+  für die Betreiberoberfläche, falls das Risiko als zu hoch bewertet wird; das berührt Routing, Build und
+  Deployment, aber keine Daten.
+- **Erweiterung des Betreiber→Mandant-Audit-Anschlusses.** Der Betreiber schreibt jetzt nicht mehr nur die
+  Zeile zur Anlage der ersten Administration in den Mandanten-`AuditLog`, sondern auch Salon- und
+  Kopplungsänderungen (`CREATE`/`UPDATE`/`DEACTIVATE`/`ACTIVATE` auf `Salon`, `CREATE`/`DELETE` auf
+  `SalonCoupling`, `END` auf `EmployeeSalonAssignment` bei der Deaktivierung eines Salons). **Grund:**
+  Diese Änderungen betreffen die Stammdaten des Mandanten (Bundesland = Feiertagsort nach § 2 EFZG,
+  Einsatzsalon-Zuordnungen). Sie müssen innerhalb der eigenen Aufzeichnungen des Mandanten nachvollziehbar
+  sein (Revisionssicherheit, § 147 AO / GoBD), nicht nur im Betreiberprotokoll. Jede Änderung schreibt die
+  `SALON_*`-Zeilen des `OperatorAuditLog` und die Mandanten-Zeilen in derselben Transaktion; schlägt eine
+  der beiden fehl, bleibt nichts bestehen (Rücknahmetests je Route).
+- **D-09a — Sichtbarkeit für den Mandanten.** Die Zeilen tragen `newValue.actor = { type: "OPERATOR",
+operatorId, tenantId }`. `GET /api/v1/audit-logs` (Liste und Einzelabruf) liest zusätzlich genau die
+  Zeilen mit diesem Stempel für den eigenen Mandanten; die Auditseite beschriftet den Akteur mit
+  „Betreiber“. Das gilt für Salon- und Kopplungszeilen **und seit Phase 89 auch für die Zeilen zur Anlage
+  der ersten Administration** eines vom Betreiber angelegten Mandanten (Revision R-1): eine Fabrik, die
+  `provisionTenantWithAdmin` aufruft, sobald die Mandantenzeile existiert, setzt den Stempel. Vor Phase 89
+  geschriebene Betreiberzeilen tragen keinen Stempel und bleiben für den Mandanten unsichtbar (der
+  `AuditLog` ist anfügend, es gibt keine Nachbefüllung). Eine echte Spalte `AuditLog.tenantId` wäre das
+  sauberere Modell, ist aber eine spätere Unterbau-Änderung (etwa 15 Leser unter dem Tenant-Scoping-Gate).
+- **D-09b — eine Schreibdatei.** `contexts/platform/operator-tenant-audit.ts` ist die einzige Datei, die
+  Betreiberzeilen in einen Mandanten-`AuditLog` schreibt (der Satz „die einzige Stelle“ in diesem Eintrag
+  gilt jetzt für diese Datei, nicht mehr für den Anschluss der Mitarbeiteranlage allein).
+  `operator-tenant-audit-89.test.ts` fällt, sobald eine zweite Datei die Akteurform schreibt. Die
+  Betreiber-Routen rufen den Schreiber direkt auf, kein `app.audit(` in Betreiberdateien.
+- **Tenant-Scoping-Gate.** Der Leseweg braucht zwei Formen, die das Gate vorher nicht erkannte: ein `OR`
+  zählt nur, wenn jeder Zweig mandantengebunden ist, und ein Json-Pfad-Stempel nur in der Form
+  `{ path: [..., "tenantId"], equals: <Mandant des Aufrufers> }` ohne weiteren Schlüssel. Das Gate folgt
+  weiterhin keinen Hilfsfunktionen; die Ausnahmeliste ist unverändert (neun neue Gate-Fälle,
+  `lint-tenant-scoping-verdict.test.ts`).
+- **D-14a — keine Zahlen in Betreiberantworten.** Die Betreiber-Salon-Antworten tragen stammdatenartige
+  Felder des Salons einschließlich der Filialkennung der Kopplung, aber keine Zählwerte über Mandantendaten.
+  Eine Ablehnung (`HOME_SALON_IN_USE`, `LAST_ACTIVE_SALON`, `FEDERAL_STATE_IN_USE`, …) hat genau die
+  Schlüssel `error` und `code`; die Zähler der Fassade erreichen die Antwort nie. Die Zeiterfassungs-
+  Zählfunktion wird über den Port gelesen, ihr Ergebnis dient nur der Entscheidung.
+- **D-11 — Phorest oder keine Kopplung.** Studiolution erscheint erst mit seiner Integration (Eintrag M);
+  eine Auswahl ohne Wirkung wäre ein totes Bedienelement.
+- **D-12a — Kopplung eingebettet.** Die Kopplung wird in `POST`/`PATCH` des Salons mitgeschrieben
+  (`coupling: null | { externalBranchId }`), die Regeln stehen einmal in `scheduling/facade/couplings.ts`;
+  die Mandantenrouten und der Betreiber-Anschluss (`composition/operator-salon-ports.ts`) nutzen dieselbe
+  Umsetzung.
+- **D-07a — Bundesland ist Pflicht** beim Anlegen eines Salons durch den Betreiber (keine stille Vererbung).
+- **Datenminimierung im Mandanten-Protokoll (Verifikation Phase 89).** Die Zeile im `AuditLog` des Mandanten trägt weder IP-Adresse noch User-Agent des Betreibers (Art. 5 Abs. 1 lit. c DSGVO). Der Mandant erfährt, dass der Betreiber etwas geändert hat und was. Die Anfrage-Metadaten stehen nur in der eigenen `OperatorAuditLog`-Zeile, beide Datensätze verbindet die `operatorId`. Belegt durch `operator-salons-89.test.ts`.
+- **Spiegel und Öffnungszeiten (Nachtrag zu Eintrag L).** Der Betreiber bearbeitet seit Phase 89
+  `Salon.openingHours`; der Hinweis bei genau einem aktiven Salon erklärt den Spiegel. Eine Oberfläche für
+  die Salonverwaltung im Mandanten und der Wegfall des Spiegels gehören zu #563.
+
+#### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine — nur die Zählfunktion der Einträge je Salon wird über den Port gelesen.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** Kopplungs-Fassade `facade/couplings.ts` mit denselben Regeln wie zuvor in der
+  Mandantenroute; Drahtverhalten der Mandantenrouten unverändert.
+- **Arbeitszeitkonto:** keine.
+- **Kompositionsschicht:** ein Port-Bündel (`operator-salon-ports.ts`), keine Fachregel.
+- **Unterbau:** neue Betreiberrouten, sechs neue Audit-Aktionen (`SALON_*`), ein zusätzlicher Lesezweig in
+  `GET /audit-logs` (Mandanten sehen zusätzlich die Betreiberzeilen des eigenen Mandanten).
+
+#### Grenzen
+
+- **Abmelden widerruft das Token nicht serverseitig.** „Abmelden“ löscht die Sitzung des Tabs; das Token
+  verfällt nach seiner Laufzeit von 15 Minuten (T-89-14, akzeptiert). Eine MFA-Rücksetzung oder Deaktivierung
+  beendet es sofort (Nachtrag #557).
+- **Offene Folgearbeiten:** #567 (Klassifizierung von `SLUG_TAKEN`/`EMAIL_TAKEN`, wenn Prisma kein
+  `meta.target` liefert), #570 (`.card-animate` hält eine Transformation, die feststehende Dialoge in der
+  Karte einfängt), #563 (Salonverwaltung im Mandanten, Wegfall von `storeHours`), #566 (Pakete je Mandant).
+
+#### Nachweis
+
+`operator-salons-89`, `operator-salons-boundary-89`, `operator-tenant-audit-89`,
+`audit-log-operator-visibility-89`, `facade-couplings`, `lint-tenant-scoping-verdict` (web:
+`operator-isolation-89`, `hooks-frame-ancestors-89`) sowie die Playwright-Spezifikation
+`operator-console.spec.ts` (Anmeldung, Mandanten- und Salonlebenszyklus, Geometrie von 1440 bis 360 px,
+axe in hell und dunkel). Die Neutralitätsmatrix (1712 Zellen) ist unverändert.

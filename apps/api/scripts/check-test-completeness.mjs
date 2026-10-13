@@ -767,8 +767,38 @@ import { readFileSync } from "node:fs";
 // `operator-auth-88`, `tenant-principal-guard-88`, `operator-tenants-88` and
 // `operator-tenant-boundary-sweep-88` kept their case count (delta 0). Merged after PR #559 (Issue #551): both
 // deltas add up (398 + 1 files, 6674 + 11 cases; +2 for the reset-race cases of the review, WR-02). Same lower-bound convention as above.
-const MIN_FILES = 399;
-const MIN_TESTS = 6687;
+// Phase 89 plan 01 (Issue #89, 2026-10-13), on `feat/89-betreiber-ui` (based on origin/main @ adac8e59): one
+// new test FILE, `src/__tests__/operator-salons-89.test.ts` (7 cases, as reported by its single-file
+// run) - MIN_FILES rises from 399 to 400 and MIN_TESTS from 6687 to 6694. Same lower-bound convention as above.
+// Phase 89 plan 06 task 1 (Issue #89, 2026-10-13): one new test FILE, `src/__tests__/operator-tenant-audit-89.test.ts`
+// (8 cases, single-file run), plus 1 new case in `operator-audit-append-only-88.test.ts` (15 -> 16) - MIN_FILES rises
+// from 400 to 401 and MIN_TESTS from 6694 to 6703. Same lower-bound convention as above.
+// Phase 89 plan 06 task 2 (2026-10-13): one new test FILE, `src/__tests__/audit-log-operator-visibility-89.test.ts`
+// (9 cases, single-file run) - MIN_FILES rises from 401 to 402 and MIN_TESTS from 6703 to 6712. The same task
+// teaches lint:tenant-scoping the OR / Json-path form: 9 new fixture cases in `lint-tenant-scoping-verdict.test.ts`
+// (19 -> 28 tests, no new test file), MIN_TESTS 6712 -> 6721. Same convention.
+// Phase 89 plan 07 task 1 (2026-10-13): one new test FILE, `src/contexts/scheduling/__tests__/facade-couplings.test.ts`
+// (15 cases, single-file run) - MIN_FILES rises from 402 to 403 and MIN_TESTS from 6721 to 6736. Same convention.
+// Phase 89 plan 08 task 1 (2026-10-13): no new test file; `operator-salons-89.test.ts` grows from 7 to 15 cases (single-file
+// run: the POST describe adds 8) - MIN_FILES stays 403, MIN_TESTS rises from 6736 to 6744. Same convention.
+// Phase 89 plan 08 task 2 (2026-10-13): `operator-salons-89.test.ts` grows from 15 to 19 cases (single-file run: the
+// atomicity describe adds 4) - MIN_FILES stays 403, MIN_TESTS rises from 6744 to 6748. Same convention.
+// Phase 89 plan 09 task 1 (2026-10-13): `operator-salons-89.test.ts` grows from 19 to 30 cases (single-file run: the
+// PATCH describe adds 11) - MIN_FILES stays 403, MIN_TESTS rises from 6748 to 6759. Same convention.
+// Phase 89 plan 09 task 2 (2026-10-13): `operator-salons-89.test.ts` grows from 30 to 34 cases (single-file run: the
+// PATCH atomicity describe adds 4) - MIN_FILES stays 403, MIN_TESTS rises from 6759 to 6763. Same convention.
+// Phase 89 plan 10 refactor (2026-10-13): `operator-salons-89.test.ts` grows from 34 to 35 cases (SALON_UPDATED carries no
+// coupling value) - MIN_FILES stays 403, MIN_TESTS rises from 6763 to 6764. Same convention.
+// Phase 89 plan 10 task 1 (2026-10-13): `operator-salons-89.test.ts` grows from 35 to 43 cases (single-file run: the
+// deactivate / activate describe adds 8) - MIN_FILES stays 403, MIN_TESTS rises from 6764 to 6772. Same convention.
+// Phase 89 plan 10 task 2 (2026-10-13): one new test FILE (`operator-salons-boundary-89.test.ts`, 8 cases in a single-file
+// run) - MIN_FILES rises from 403 to 404, MIN_TESTS rises from 6772 to 6780. Same convention.
+// Phase 89 plan 15 (2026-10-13): measured on `feat/89-betreiber-ui` after 89-15, full run - the whole
+// API suite run alone reports 567 test files and 9030 tests (9027 passed, 3 skipped). Both floors are set to
+// exactly these numbers (earlier floors followed the lower-bound convention above and had fallen far
+// behind the real totals); no floor is lowered.
+const MIN_FILES = 567;
+const MIN_TESTS = 9030;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

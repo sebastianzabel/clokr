@@ -188,14 +188,6 @@
     gap: 1.125rem;
   }
 
-  .otp-input {
-    text-align: center;
-    font-size: 2rem;
-    font-weight: 700;
-    letter-spacing: 0.5rem;
-    font-variant-numeric: tabular-nums;
-  }
-
   .login-submit {
     width: 100%;
     padding: 0.7rem 1.25rem;

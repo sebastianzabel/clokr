@@ -641,6 +641,16 @@ button {
   cursor: not-allowed;
 }
 
+/* One-time-code field (tenant /otp page and the operator sign-in, Issue #89). The compound
+   selector keeps the specificity the former page-scoped rule had. */
+.form-input.otp-input {
+  text-align: center;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
 /* iOS Safari zooms inputs that resolve to < 16px font-size on focus.
    Anchor the size on mobile so this never regresses if root font-size
    shifts (e.g. via density tokens). */

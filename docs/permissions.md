@@ -984,18 +984,23 @@ Der Betreiberzugang oberhalb des Mandanten (#88) ist ein eigener Principal mit e
 Katalog-Permission und stehen in keiner der Tabellen oben; die Zugangsentscheidung trifft allein der Guard
 `requireOperator` (`contexts/platform/operator-auth.ts`).
 
-| Endpunkt                                                    | Guard                            | Hinweis                                                                                                                             |
-| ----------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /api/v1/operator/auth/login`                          | keiner (öffentlich)              | Schritt 1: Passwort, liefert ein 5-Minuten-Challenge-Token                                                                          |
-| `POST /api/v1/operator/auth/verify`                         | keiner (Challenge-Token im Body) | Schritt 2: TOTP-Code oder Wiederherstellungscode, liefert das 15-Minuten-Zugriffstoken                                              |
-| `GET /api/v1/operator/auth/me`                              | `requireOperator`                | Das angemeldete Betreiberkonto                                                                                                      |
-| `GET /api/v1/operator/tenants`                              | `requireOperator`                | Alle Mandanten, nur Metadaten (Id, Name, Kurzname, Bundesland, Anlage, Deaktivierung)                                               |
-| `GET /api/v1/operator/tenants/:id`                          | `requireOperator`                | Ein Mandant, nur Metadaten; unbekannte Id: 404                                                                                      |
-| `POST /api/v1/operator/tenants`                             | `requireOperator`                | Legt Mandant, Konfiguration, Standard-Salon, ersten Administrator und Einladung in einer Transaktion an; Audit `TENANT_CREATED`     |
-| `PATCH /api/v1/operator/tenants/:id`                        | `requireOperator`                | Benennt den Mandanten um (nur `name`); Audit `TENANT_RENAMED`, nur bei Änderung                                                     |
-| `POST /api/v1/operator/tenants/:id/deactivate`              | `requireOperator`                | Deaktiviert mit Begründung, nie löschen; sofort wirksam; Audit `TENANT_DEACTIVATED`                                                 |
-| `POST /api/v1/operator/tenants/:id/reactivate`              | `requireOperator`                | Hebt die Deaktivierung auf; Audit `TENANT_REACTIVATED`                                                                              |
-| `POST /api/v1/operator/tenants/:id/resend-admin-invitation` | `requireOperator`                | Stellt die Einladung des ersten Administrators neu aus, nur solange niemand im Mandanten aktiv ist; Audit `ADMIN_INVITATION_RESENT` |
+| Endpunkt                                                       | Guard                            | Hinweis                                                                                                                               |
+| -------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/v1/operator/auth/login`                             | keiner (öffentlich)              | Schritt 1: Passwort, liefert ein 5-Minuten-Challenge-Token                                                                            |
+| `POST /api/v1/operator/auth/verify`                            | keiner (Challenge-Token im Body) | Schritt 2: TOTP-Code oder Wiederherstellungscode, liefert das 15-Minuten-Zugriffstoken                                                |
+| `GET /api/v1/operator/auth/me`                                 | `requireOperator`                | Das angemeldete Betreiberkonto                                                                                                        |
+| `GET /api/v1/operator/tenants`                                 | `requireOperator`                | Alle Mandanten, nur Metadaten (Id, Name, Kurzname, Bundesland, Anlage, Deaktivierung)                                                 |
+| `GET /api/v1/operator/tenants/:id`                             | `requireOperator`                | Ein Mandant, nur Metadaten; unbekannte Id: 404                                                                                        |
+| `POST /api/v1/operator/tenants`                                | `requireOperator`                | Legt Mandant, Konfiguration, Standard-Salon, ersten Administrator und Einladung in einer Transaktion an; Audit `TENANT_CREATED`       |
+| `PATCH /api/v1/operator/tenants/:id`                           | `requireOperator`                | Benennt den Mandanten um (nur `name`); Audit `TENANT_RENAMED`, nur bei Änderung                                                       |
+| `POST /api/v1/operator/tenants/:id/deactivate`                 | `requireOperator`                | Deaktiviert mit Begründung, nie löschen; sofort wirksam; Audit `TENANT_DEACTIVATED`                                                   |
+| `POST /api/v1/operator/tenants/:id/reactivate`                 | `requireOperator`                | Hebt die Deaktivierung auf; Audit `TENANT_REACTIVATED`                                                                                |
+| `POST /api/v1/operator/tenants/:id/resend-admin-invitation`    | `requireOperator`                | Stellt die Einladung des ersten Administrators neu aus, nur solange niemand im Mandanten aktiv ist; Audit `ADMIN_INVITATION_RESENT`   |
+| `GET /api/v1/operator/tenants/:id/salons`                      | `requireOperator`                | Alle Salons des Mandanten mit Kopplung, inaktive eingeschlossen; nur Stammdaten, keine Zählungen; unbekannter Mandant: 404            |
+| `POST /api/v1/operator/tenants/:id/salons`                     | `requireOperator`                | Legt einen Salon an (Bundesland, Öffnungszeiten Pflicht; Phorest-Kopplung optional); Audit `SALON_CREATED`, `SALON_COUPLING_SET`      |
+| `PATCH /api/v1/operator/tenants/:id/salons/:salonId`           | `requireOperator`                | Ändert Stammdaten, Öffnungszeiten, Bundesland und Kopplung; Audit `SALON_UPDATED`, `SALON_COUPLING_SET`, `SALON_COUPLING_REMOVED`     |
+| `POST /api/v1/operator/tenants/:id/salons/:salonId/deactivate` | `requireOperator`                | Deaktiviert einen Salon, löscht nie; Einsatzsalon-Zuordnungen enden; Audit `SALON_DEACTIVATED` und Mandanten-Audit inkl. `END`-Zeilen |
+| `POST /api/v1/operator/tenants/:id/salons/:salonId/activate`   | `requireOperator`                | Aktiviert einen deaktivierten Salon wieder, beendete Zuordnungen kommen nicht zurück; Audit `SALON_ACTIVATED`                         |
 
 - **Ein Mandanten-Token ist hier kein Zugang:** Ein gültiges Mandanten-Token auf einem geschützten
   Betreiber-Endpunkt wird mit 403 beantwortet und als `TENANT_PRINCIPAL_REFUSED` im Betreiber-Audit
@@ -1008,8 +1013,31 @@ Katalog-Permission und stehen in keiner der Tabellen oben; die Zugangsentscheidu
 - Alle Anmeldeausgänge landen im `OperatorAuditLog`, nie im Mandanten-`AuditLog`.
 - **Mandanten-Verwaltung liefert nur Metadaten** (Beschluss 2026-08-27; Support-Zugriff ist #93): keine
   Mitarbeiterlisten, Zählungen oder sonstigen Mandantendaten. Das rohe Einladungstoken steht nur in der
-  Mail, nie in einer Antwort. Es gibt keine Löschroute; jede Änderung schreibt genau eine Zeile in den
-  `OperatorAuditLog`.
+  Mail, nie in einer Antwort. Es gibt keine Löschroute. Eine Mandanten-Änderung schreibt genau eine
+  Zeile in den `OperatorAuditLog`; eine Salon-Anfrage kann mehrere Aktionen schreiben (ersetzt sie eine
+  Kopplung, stehen `SALON_COUPLING_REMOVED` und `SALON_COUPLING_SET` nebeneinander, ein Bearbeiten mit
+  Namensänderung und Kopplung `SALON_UPDATED` plus die Kopplungszeile).
+- **Salon-Antworten liefern Salon-Stammdaten, keine Zählungen** (Phase 89, D-14a): Name, Anschrift,
+  Öffnungszeiten, Bundesland, Standard- und Aktiv-Kennzeichen und die Filialkennung der Kopplung, nie
+  Mitarbeiterdaten und nie Zahlen über Einträge oder Zuordnungen. Jede Änderung schreibt zusätzlich eine
+  Zeile in den `AuditLog` des Mandanten (Akteur `OPERATOR` mit dem Mandantenstempel, ohne Benutzer; der
+  Mandant sieht sie als „Betreiber“, nur Zeilen seit Phase 89).
+- **Salon-Anlage des Betreibers steht in beiden Protokollen** (Phase 89): je Anlage eine Zeile
+  `SALON_CREATED` (bei Kopplung zusätzlich `SALON_COUPLING_SET`) im `OperatorAuditLog` und eine
+  Zeile im Audit-Protokoll des Mandanten (Akteur `OPERATOR`, ohne Benutzer), beide in derselben
+  Transaktion wie der Salon. Fehlschläge nennen keine Zählungen.
+- **Salon-Änderung des Betreibers ebenso** (Phase 89): Stammdaten, Öffnungszeiten, Bundesland und
+  Kopplung ändern sich in einer Anfrage und einer Transaktion (das Bundesland nur, solange
+  nichts den Salon referenziert); je Änderung eine Zeile `SALON_UPDATED`,
+  `SALON_COUPLING_SET` oder `SALON_COUPLING_REMOVED` im `OperatorAuditLog` und eine Zeile im
+  Audit-Protokoll des Mandanten. Eine Kopplungsänderung (ersetzen) steht als Entfernen plus Anlegen
+  in beiden Protokollen. Wird ein Teil der Anfrage abgelehnt, bleibt nichts davon bestehen.
+- **Salons werden nie gelöscht** (Phase 89, D-08): Es gibt keine DELETE-Route unter
+  `/api/v1/operator`. Das Deaktivieren läuft über dieselbe Fassade wie die Mandanten-Route
+  (Stammsalon-Schutz, letzter aktiver Salon, bereits deaktiviert) und beendet die
+  Einsatzsalon-Zuordnungen; je beendeter Zuordnung steht eine `END`-Zeile (Akteur `OPERATOR`) im
+  Audit-Protokoll des Mandanten, neben `SALON_DEACTIVATED` im `OperatorAuditLog`, alles in einer
+  Transaktion. Ablehnungen nennen keine Zählungen und schreiben keine Audit-Zeile.
 
 ## Pflege
 

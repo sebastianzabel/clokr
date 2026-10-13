@@ -661,7 +661,7 @@ function assertShiftNotPast(iso: string): { code: "SHIFT_PAST_IMMUTABLE"; messag
  * `TenantConfig` here (unchanged). `PUT /api/v1/settings/work` still mirrors a `storeHours` write
  * into a tenant's sole active salon (D-13) — that mirror is why a one-salon tenant's behavior is
  * unchanged by this switch (D-11); the mirror itself is removed together with the salon
- * opening-hours UI, #89.
+ * opening-hours UI, #563.
  * D-11 preserves every OLD null-return exactly: no TenantConfig row -> null (mirrors the old
  * combined `!cfg?.storeHours` branch — a tenant whose config row does not exist gets no check at
  * all, regardless of what its salon's hours say); mode OFF -> null; hours not a real array -> null

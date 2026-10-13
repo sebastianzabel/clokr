@@ -712,7 +712,7 @@
         "salonId": "salon"
       },
       "minimalBody": null,
-      "reason": "Phase 65b Plan 03 (Issue #65, D-16): ONE tenant-scoped `salonCoupling.findFirst({ where: { salonId, tenantId } })` returns null for a foreign tenant's real salon, an id that exists nowhere, AND an own salon that was never coupled — all three are indistinguishable by construction, and the route answers the byte-identical 404 `{ error: \"Kopplung nicht gefunden\" }` for all of them. No body is parsed by this route. Body/query-carried salon ids on the OTHER coupling-adjacent routes (POST /phorest/couplings, POST /phorest/test, GET /phorest/staff, GET /phorest/appointment-collisions) are outside this register's path-parameter scope (they never appear as a `:param`) and are pinned directly in the API tests (salon-couplings.test.ts, integrations-phorest.test.ts, appointment-collisions.test.ts) instead.",
+      "reason": "Phase 65b Plan 03 (Issue #65, D-16): ONE tenant-scoped `salonCoupling.findFirst({ where: { salonId, tenantId } })`, now inside `removeSalonCoupling` (`contexts/scheduling/facade/couplings.ts`, Phase 89 plan 07), returns null for a foreign tenant's real salon, an id that exists nowhere, AND an own salon that was never coupled — all three are indistinguishable by construction, and the route answers the byte-identical 404 `{ error: \"Kopplung nicht gefunden\" }` for all of them. No body is parsed by this route. Body/query-carried salon ids on the OTHER coupling-adjacent routes (POST /phorest/couplings, POST /phorest/test, GET /phorest/staff, GET /phorest/appointment-collisions) are outside this register's path-parameter scope (they never appear as a `:param`) and are pinned directly in the API tests (salon-couplings.test.ts, integrations-phorest.test.ts, appointment-collisions.test.ts) instead.",
       "ticket": null,
       "validatedAt": null
     },
@@ -1092,7 +1092,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses an AuditLog, not Employee/LeaveType — fixture cannot produce a foreign instance. audit-logs.ts:60-63 uses a SCOPED `findFirst({id, user: {employee: {tenantId}}})`, byte-identical `{ error: \"Audit-Eintrag nicht gefunden\" }` 404 — conformant.",
+      "reason": "`:id` addresses an AuditLog, not Employee/LeaveType — fixture cannot produce a foreign instance. the lookup in audit-logs.ts (an inline `OR`, recognised by lint:tenant-scoping since Phase 89) has two tenant-bound branches, both constrained to `req.user.tenantId`: a row written by a tenant user (`user.employee.tenantId`) or an operator-written row stamped with the caller's own tenant (`newValue.actor.tenantId`, Phase 89 D-09a). A foreign tenant's row of either kind, an operator row without a stamp and an unknown id all answer the byte-identical `{ error: \"Audit-Eintrag nicht gefunden\" }` 404 — conformant, proven by audit-log-operator-visibility-89.test.ts.",
       "ticket": null,
       "validatedAt": null
     },
@@ -1163,6 +1163,56 @@
       "params": null,
       "minimalBody": null,
       "reason": "`:id` addresses a Tenant by the operator principal, which sits above the tenant: there is no caller tenant whose foreign instance could be told apart from an unknown id. requireOperator runs first; an unknown id answers the same plain 404 `Mandant nicht gefunden` for every operator, and the handler reads the `tenant` model only (tenants.ts `tenant.findUnique({ id })`), so it is not a tenant-membership oracle.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/operator/tenants/:id/salons",
+      "file": "apps/api/src/contexts/platform/api/operator/salons.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Tenant by the operator principal, which sits above the tenant: there is no caller tenant whose foreign instance could be told apart from an unknown id. requireOperator runs first; an unknown id answers the same plain 404 `Mandant nicht gefunden` for every operator, and the salons are read with the tenant-scoped `listSalons(db, tenantId)` (salons.ts), so it is not a tenant-membership oracle. Proven by operator-salons-89.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/operator/tenants/:id/salons",
+      "file": "apps/api/src/contexts/platform/api/operator/salons.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` is the Tenant addressed by the operator principal, which sits above the tenant: there is no caller tenant whose foreign instance could be told apart from an unknown id, and no salon id is in the path. requireOperator runs first; an unknown id answers the one fixed 404 `Mandant nicht gefunden` for every operator, and the salon is created with the tenant-scoped `createSalon(tx, tenantId, …)` from the path tenant, never from the body. Proven by operator-salons-89.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/operator/tenants/:id/salons/:salonId",
+      "file": "apps/api/src/contexts/platform/api/operator/salons.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The salon is looked up with the tenant-scoped `findSalon(tx, tenantId, salonId)` whose single null path makes another tenant's salon and an unknown id byte-identical (404 `Salon nicht gefunden`) - proven by operator-salons-89.test.ts; the operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. requireOperator runs first and an unknown tenant answers the one fixed 404 `Mandant nicht gefunden`.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/operator/tenants/:id/salons/:salonId/deactivate",
+      "file": "apps/api/src/contexts/platform/api/operator/salons.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The salon is looked up inside the facade `deactivateSalon(tx, tenantId, salonId)` with `{ id: salonId, tenantId }` and one null path (NOT_FOUND), so another tenant's salon and an unknown id are byte-identical (404 `Salon nicht gefunden`) - proven by operator-salons-89.test.ts and operator-salons-boundary-89.test.ts; the operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. requireOperator runs first and an unknown tenant answers the one fixed 404 `Mandant nicht gefunden`.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/operator/tenants/:id/salons/:salonId/activate",
+      "file": "apps/api/src/contexts/platform/api/operator/salons.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The salon is looked up inside the facade `activateSalon(tx, tenantId, salonId)` with `{ id: salonId, tenantId }` and one null path (NOT_FOUND), so another tenant's salon and an unknown id are byte-identical (404 `Salon nicht gefunden`) - proven by operator-salons-89.test.ts and operator-salons-boundary-89.test.ts; the operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. requireOperator runs first and an unknown tenant answers the one fixed 404 `Mandant nicht gefunden`.",
       "ticket": null,
       "validatedAt": null
     }

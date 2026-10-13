@@ -117,6 +117,32 @@ const CASES: readonly Case[] = [
     via: "guard-fetch",
   },
   {
+    file: "shape8-or-all-branches-scoped.ts",
+    model: "auditLog",
+    scoped: true,
+    via: "inline-relation-filter",
+  },
+  {
+    file: "shape8b-json-path-equals-principal.ts",
+    model: "auditLog",
+    scoped: true,
+    via: "inline-tenant-id",
+  },
+  ...[
+    "unscoped-or-one-branch-unscoped.ts",
+    "unscoped-or-all-branches-unscoped-json.ts",
+    "unscoped-json-path-not-tenantid.ts",
+    "unscoped-json-path-not-null.ts",
+    "unscoped-json-path-extra-operator.ts",
+    "unscoped-json-path-missing-equals.ts",
+    "unscoped-json-path-equals-non-principal.ts",
+  ].map((file): Case => ({
+    file,
+    model: "auditLog",
+    scoped: false,
+    detailContains: ["no tenant scoping found"],
+  })),
+  {
     file: "shape7-chained-validation.ts",
     model: "break",
     scoped: false,
