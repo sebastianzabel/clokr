@@ -18,6 +18,7 @@
 │       └── /revalidate (PATCH)
 │       └── /review (PATCH)
 │       └── /salons (GET, HEAD, POST)
+│           └── /:salonId (PATCH)
 │       ├── /break-status (PATCH)
 │       ├── /breaks (POST)
 │       ├── /clock-out (POST)

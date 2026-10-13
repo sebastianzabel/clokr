@@ -3,6 +3,7 @@
  *
  *   GET  /    all salons of one tenant (inactive included), master data plus the Phorest coupling
  *   POST /    create a salon (Bundesland and opening hours required) with an optional coupling
+ *   PATCH /:salonId  edit master data, opening hours, Bundesland and the coupling (set, replace, remove)
  *
  * Mounted at `/api/v1/operator/tenants/:id/salons`; `:id` is the tenant. Every route is guarded by
  * `requireOperator`; a tenant token is refused with 403 and an audit row. The response is the
@@ -30,7 +31,14 @@ import { config } from "../../../../config";
 import { OPERATOR_AUDIT_ACTIONS, recordOperatorAudit } from "../../operator-audit";
 import { requireOperator } from "../../operator-auth";
 import { operatorTenantAudit } from "../../operator-tenant-audit";
-import { createSalon, createSalonSchema, listSalons } from "../../facade/salons";
+import {
+  createSalon,
+  createSalonSchema,
+  findSalon,
+  listSalons,
+  updateSalon,
+  updateSalonSchema,
+} from "../../facade/salons";
 
 /** A coupling row as the port hands it back (structural; the Unterbau imports no context). */
 interface PortCouplingRow {
@@ -83,7 +91,12 @@ const mutationRateLimit = {
 
 const tenantParamSchema = z.object({ id: z.string().uuid() });
 
+const salonParamSchema = z.object({ id: z.string().uuid(), salonId: z.string().uuid() });
+
 const TENANT_NOT_FOUND = { error: "Mandant nicht gefunden" };
+/** One body for a foreign and an unknown salon id (D-06, T-100-09): the lookup has one null path. */
+const SALON_NOT_FOUND = { error: "Salon nicht gefunden" };
+const NO_CHANGES = { error: "Keine Änderungen angegeben." };
 
 /**
  * Every refusal the salon routes can answer, keyed by `code` (UI-SPEC "Reason texts"). The bodies
@@ -199,6 +212,19 @@ export function toOperatorSalonDto(
  */
 const createOperatorSalonSchema = createSalonSchema.omit({ isActive: true }).extend({
   federalState: z.nativeEnum(FederalState),
+  coupling: z
+    .object({ externalBranchId: z.string().trim().min(1).max(100) })
+    .strict()
+    .nullable()
+    .optional(),
+});
+
+/**
+ * Edit body: the facade's strict update schema plus the embedded coupling. `coupling` absent keeps
+ * the coupling, an object sets or replaces it, `null` removes it (D-12a). `isActive` is not part of
+ * the schema, so activation stays on its own routes (T-89-30b).
+ */
+const updateOperatorSalonSchema = updateSalonSchema.extend({
   coupling: z
     .object({ externalBranchId: z.string().trim().min(1).max(100) })
     .strict()
@@ -343,6 +369,187 @@ export async function operatorSalonRoutes(app: FastifyInstance, opts: OperatorSa
         return reply.code(refusal.status).send(refusal.body);
       }
       return reply.code(201).send(result.dto);
+    },
+  });
+
+  // PATCH /api/v1/operator/tenants/:id/salons/:salonId
+  app.patch("/:salonId", {
+    config: mutationRateLimit,
+    schema: {
+      tags: ["Betreiber"],
+      description:
+        "Edits a salon's master data, opening hours, Bundesland and Phorest coupling in one audited request.",
+    },
+    preHandler: requireOperator,
+    handler: async (req, reply) => {
+      const { id: tenantId, salonId } = salonParamSchema.parse(req.params);
+      const parsed = updateOperatorSalonSchema.parse(req.body);
+      // The facade writes the rest of the patch straight into Prisma: the coupling must not reach it.
+      const { coupling, ...patch } = parsed;
+      const operatorId = req.operator.sub;
+      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId, request: req });
+
+      let result;
+      try {
+        result = await app.prisma.$transaction(async (tx) => {
+          const gate = await tenantGate(tx, tenantId);
+          if (gate !== "OK") return { status: gate } as const;
+
+          const existing = await findSalon(tx, tenantId, salonId);
+          if (!existing) return { status: "SALON_NOT_FOUND" } as const;
+
+          if (Object.keys(patch).length === 0 && coupling === undefined) {
+            return { status: "NO_CHANGES" } as const;
+          }
+          if (coupling && !existing.isActive) {
+            return { status: "REFUSED", code: "SALON_INACTIVE" } as const;
+          }
+
+          const [firstActive] = await listSalons(tx, tenantId, { includeInactive: false });
+          const isDefault = firstActive?.id === salonId;
+          const couplingBefore = (await opts.ports.coupling.list(tx, tenantId)).find(
+            (c) => c.salonId === salonId,
+          );
+
+          let current = existing;
+          if (Object.keys(patch).length > 0) {
+            const outcome = await updateSalon(tx, tenantId, salonId, patch, (countDb) =>
+              opts.ports.countTimeEntriesForSalon(countDb, tenantId, salonId),
+            );
+            // The facade writes nothing for these two, so the plain return commits nothing.
+            if (outcome.status === "NOT_FOUND") return { status: "SALON_NOT_FOUND" } as const;
+            if (outcome.status === "FEDERAL_STATE_IN_USE") {
+              return { status: "REFUSED", code: "FEDERAL_STATE_IN_USE" } as const;
+            }
+            current = outcome.updated;
+            const beforeCoupling = couplingBefore
+              ? {
+                  provider: couplingBefore.provider,
+                  externalBranchId: couplingBefore.externalBranchId,
+                }
+              : null;
+            await recordOperatorAudit(tx, {
+              action: OPERATOR_AUDIT_ACTIONS.SALON_UPDATED,
+              operatorId,
+              subjectTenantId: tenantId,
+              entity: "Salon",
+              entityId: salonId,
+              oldValue: toOperatorSalonDto(outcome.existing, {
+                isDefault,
+                coupling: beforeCoupling,
+              }),
+              newValue: toOperatorSalonDto(outcome.updated, {
+                isDefault,
+                coupling: beforeCoupling,
+              }),
+              request: req,
+            });
+            await writeTenantAudit(
+              {
+                action: "UPDATE",
+                entity: "Salon",
+                entityId: salonId,
+                oldValue: outcome.existing,
+                newValue: outcome.updated,
+              },
+              tx,
+            );
+          }
+
+          const couplingAudit = async (
+            kind: "SET" | "REMOVED",
+            row: PortCouplingRow,
+          ): Promise<void> => {
+            const value = {
+              salonId: row.salonId,
+              provider: row.provider,
+              externalBranchId: row.externalBranchId,
+            };
+            await recordOperatorAudit(tx, {
+              action:
+                kind === "SET"
+                  ? OPERATOR_AUDIT_ACTIONS.SALON_COUPLING_SET
+                  : OPERATOR_AUDIT_ACTIONS.SALON_COUPLING_REMOVED,
+              operatorId,
+              subjectTenantId: tenantId,
+              entity: "SalonCoupling",
+              entityId: row.id,
+              ...(kind === "SET" ? { newValue: value } : { oldValue: value }),
+              request: req,
+            });
+            await writeTenantAudit(
+              kind === "SET"
+                ? { action: "CREATE", entity: "SalonCoupling", entityId: row.id, newValue: value }
+                : { action: "DELETE", entity: "SalonCoupling", entityId: row.id, oldValue: value },
+              tx,
+            );
+          };
+
+          if (coupling) {
+            const outcome = await opts.ports.coupling.set(
+              tx,
+              tenantId,
+              { id: current.id, isActive: current.isActive },
+              coupling.externalBranchId,
+            );
+            // A salon update may already be written: throw so the transaction rolls it back.
+            if (
+              outcome.status === "BRANCH_ALREADY_COUPLED" ||
+              outcome.status === "SALON_INACTIVE"
+            ) {
+              throw new OperatorSalonRejection(outcome.status);
+            }
+            if (outcome.status === "CREATED") await couplingAudit("SET", outcome.coupling);
+            if (outcome.status === "REPLACED") {
+              await couplingAudit("REMOVED", outcome.removed);
+              await couplingAudit("SET", outcome.created);
+            }
+          } else if (coupling === null) {
+            const outcome = await opts.ports.coupling.remove(tx, tenantId, salonId);
+            if (outcome.status === "REMOVED") await couplingAudit("REMOVED", outcome.removed);
+          }
+
+          const couplingNow = (await opts.ports.coupling.list(tx, tenantId)).find(
+            (c) => c.salonId === salonId,
+          );
+          const fresh = (await findSalon(tx, tenantId, salonId)) ?? current;
+          return {
+            status: "OK",
+            dto: toOperatorSalonDto(fresh, {
+              isDefault,
+              coupling: couplingNow
+                ? { provider: couplingNow.provider, externalBranchId: couplingNow.externalBranchId }
+                : null,
+            }),
+          } as const;
+        });
+      } catch (err) {
+        const code = replyCodeOf(err);
+        if (code) {
+          const refusal = OPERATOR_SALON_REPLIES[code];
+          return reply.code(refusal.status).send(refusal.body);
+        }
+        throw err;
+      }
+
+      switch (result.status) {
+        case "NOT_FOUND":
+          return reply.code(404).send(TENANT_NOT_FOUND);
+        case "SALON_NOT_FOUND":
+          return reply.code(404).send(SALON_NOT_FOUND);
+        case "TENANT_DEACTIVATED": {
+          const refusal = OPERATOR_SALON_REPLIES.TENANT_DEACTIVATED;
+          return reply.code(refusal.status).send(refusal.body);
+        }
+        case "NO_CHANGES":
+          return reply.code(400).send(NO_CHANGES);
+        case "REFUSED": {
+          const refusal = OPERATOR_SALON_REPLIES[result.code];
+          return reply.code(refusal.status).send(refusal.body);
+        }
+        default:
+          return result.dto;
+      }
     },
   });
 }

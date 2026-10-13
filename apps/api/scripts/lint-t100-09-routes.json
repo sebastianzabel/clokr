@@ -1185,6 +1185,16 @@
       "reason": "`:id` is the Tenant addressed by the operator principal, which sits above the tenant: there is no caller tenant whose foreign instance could be told apart from an unknown id, and no salon id is in the path. requireOperator runs first; an unknown id answers the one fixed 404 `Mandant nicht gefunden` for every operator, and the salon is created with the tenant-scoped `createSalon(tx, tenantId, …)` from the path tenant, never from the body. Proven by operator-salons-89.test.ts.",
       "ticket": null,
       "validatedAt": null
+    },
+    {
+      "route": "PATCH /api/v1/operator/tenants/:id/salons/:salonId",
+      "file": "apps/api/src/contexts/platform/api/operator/salons.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The salon is looked up with the tenant-scoped `findSalon(tx, tenantId, salonId)` whose single null path makes another tenant's salon and an unknown id byte-identical (404 `Salon nicht gefunden`) - proven by operator-salons-89.test.ts; the operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. requireOperator runs first and an unknown tenant answers the one fixed 404 `Mandant nicht gefunden`.",
+      "ticket": null,
+      "validatedAt": null
     }
   ]
 }

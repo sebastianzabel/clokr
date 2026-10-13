@@ -998,6 +998,7 @@ Katalog-Permission und stehen in keiner der Tabellen oben; die Zugangsentscheidu
 | `POST /api/v1/operator/tenants/:id/resend-admin-invitation` | `requireOperator`                | Stellt die Einladung des ersten Administrators neu aus, nur solange niemand im Mandanten aktiv ist; Audit `ADMIN_INVITATION_RESENT` |
 | `GET /api/v1/operator/tenants/:id/salons`                   | `requireOperator`                | Alle Salons des Mandanten mit Kopplung, inaktive eingeschlossen; nur Stammdaten, keine Zählungen; unbekannter Mandant: 404          |
 | `POST /api/v1/operator/tenants/:id/salons`                  | `requireOperator`                | Legt einen Salon an (Bundesland, Öffnungszeiten Pflicht; Phorest-Kopplung optional); Audit `SALON_CREATED`, `SALON_COUPLING_SET`    |
+| `PATCH /api/v1/operator/tenants/:id/salons/:salonId`        | `requireOperator`                | Ändert Stammdaten, Öffnungszeiten, Bundesland und Kopplung; Audit `SALON_UPDATED`, `SALON_COUPLING_SET`, `SALON_COUPLING_REMOVED`   |
 
 - **Ein Mandanten-Token ist hier kein Zugang:** Ein gültiges Mandanten-Token auf einem geschützten
   Betreiber-Endpunkt wird mit 403 beantwortet und als `TENANT_PRINCIPAL_REFUSED` im Betreiber-Audit
@@ -1016,6 +1017,12 @@ Katalog-Permission und stehen in keiner der Tabellen oben; die Zugangsentscheidu
   `SALON_CREATED` (bei Kopplung zusätzlich `SALON_COUPLING_SET`) im `OperatorAuditLog` und eine
   Zeile im Audit-Protokoll des Mandanten (Akteur `OPERATOR`, ohne Benutzer), beide in derselben
   Transaktion wie der Salon. Fehlschläge nennen keine Zählungen.
+- **Salon-Änderung des Betreibers ebenso** (Phase 89): Stammdaten, Öffnungszeiten, Bundesland und
+  Kopplung ändern sich in einer Anfrage und einer Transaktion (das Bundesland nur, solange
+  nichts den Salon referenziert); je Änderung eine Zeile `SALON_UPDATED`,
+  `SALON_COUPLING_SET` oder `SALON_COUPLING_REMOVED` im `OperatorAuditLog` und eine Zeile im
+  Audit-Protokoll des Mandanten. Eine Kopplungsänderung (ersetzen) steht als Entfernen plus Anlegen
+  in beiden Protokollen. Wird ein Teil der Anfrage abgelehnt, bleibt nichts davon bestehen.
 
 ## Pflege
 
