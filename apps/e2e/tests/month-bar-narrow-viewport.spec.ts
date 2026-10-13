@@ -1,5 +1,6 @@
 /**
- * Issue #553 — the month bar fits narrow phone viewports on every page that has one.
+ * Issue #553 — the month bar fits narrow phone viewports on every page that uses MonthBar or the
+ * .cal-monthbar recipe (/shifts has its own week header and is not covered here).
  *
  * Before the fix, at 390 px every page with a MonthBar / .cal-monthbar was wider than the phone
  * (editorial skin: horizontal scroll, 410-514 px) or had "Heute" cut off (modern skin). This spec
@@ -32,7 +33,10 @@ import type { TestTenant } from "../fixtures";
 const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:4001";
 const PASSWORD = "test1234";
 
-/** Two widths are pass/fail (360x800 is one of the most common Android sizes). 320 is report-only. */
+/**
+ * Two widths are pass/fail (360x800 is one of the most common Android sizes). 320 px is not
+ * covered yet: it still overflows outside the bar on /leave and /team/leave (Issue #564).
+ */
 const VIEWPORTS = [
   { width: 390, height: 844 },
   { width: 360, height: 800 },
