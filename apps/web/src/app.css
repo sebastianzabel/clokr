@@ -1889,7 +1889,8 @@ textarea.form-input {
    Shared by /leave + /team/leave calendar / list views. Sits as its own
    .card above the calendar grid card. The eyebrow + serif title pattern
    matches /time-entries MonthBar. Per-page scoped overrides of these
-   classes are forbidden (see CLAUDE.md UI Consistency Rules). */
+   classes are forbidden (see CLAUDE.md UI Consistency Rules). The narrow-viewport
+   layout (Issue #553) follows after .cal-monthbar-today. */
 .cal-monthbar {
   display: flex;
   align-items: center;
@@ -1956,6 +1957,44 @@ textarea.form-input {
 }
 .cal-monthbar-today {
   margin-left: 4px;
+}
+
+/* Narrow viewports (Issue #553, D-02/D-04/D-05) — twin of the narrow blocks in
+   ui/MonthBar.svelte, keep both in lockstep. Arrows and title share one grid row, the
+   centre loses its 200 px floor, "Heute" gets its own centred row (never hidden or
+   abbreviated); the .vac-stats row keeps wrapping below as before. The nav row spans the
+   bar so the grid has the full width. Without nowrap the title wraps onto two lines at
+   360 px in the modern skin (measured 52 px tall); the primitive's label is always nowrap. */
+@media (max-width: 640px) {
+  .cal-monthbar-nav {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    flex: 1 1 100%;
+  }
+  .cal-monthbar-center {
+    min-width: 0;
+  }
+  .cal-monthbar-title {
+    white-space: nowrap;
+  }
+  /* 44px = the min-height of the neighbouring .nav-btn arrows (WCAG 2.5.5). The compound
+     selector (0,2,0) is required: this block sits before the v1.5 `.btn { min-height: 0 }`
+     (0,1,0) further down, so a bare `.cal-monthbar-today` would lose. The leave pages'
+     scoped `.btn-sm` sets only padding and font-size, so nothing else competes. */
+  .cal-monthbar .cal-monthbar-today {
+    grid-column: 1 / -1;
+    justify-self: center;
+    margin-left: 0;
+    min-height: 44px;
+  }
+}
+/* 26px fits between the arrows from 481 to 640 px. Below that 20px (the serif
+   .mini-stat .value size) clears the arrows at 360 px in both skins; same value and source
+   as the MonthBar primitive's label. */
+@media (max-width: 480px) {
+  .cal-monthbar-title {
+    font-size: 20px;
+  }
 }
 
 /* ── Widget Action Links (Phase 9) ──────────────────────────────── */

@@ -27,6 +27,11 @@
       "reason": "Selected for the e2e-ci Playwright project via D-06's fallback list (7 date references but reproducibly green): 6/6 pass once the shared What's-New-drawer mock removed the pointer-interception failures it previously hit on 3 of 6 tests (measured, 275-03)."
     },
     {
+      "file": "apps/e2e/tests/month-bar-narrow-viewport.spec.ts",
+      "category": "in-ci",
+      "reason": "Issue #553 narrow-viewport gate for every month bar consumer (6 surfaces x editorial/modern x 390 and 360 px). Needs only the tenant fixture, no seed, and no date dependency because the browser clock is fixed at 2026-09-16 (widest German month label). Measured RED on the unfixed tree: 21 of 24 fail (20 with the Heute button plus the modern /leave year bar at 360 px, where the nav row sits 1 px outside the bar); 24/24 green after the fix."
+    },
+    {
       "file": "apps/e2e/tests/accessibility.spec.ts",
       "category": "später-seed",
       "reason": "Imports ./helpers and authenticates through the seeded admin (admin@clokr.de via TEST_ADMIN), which requires the setup Playwright project's storageState; the e2e-ci selection deliberately avoids depending on the seed-login group (D-01/D-06) since local seed drift was itself part of this phase's own finding."
