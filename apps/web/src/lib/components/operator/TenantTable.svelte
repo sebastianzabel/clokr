@@ -85,7 +85,7 @@
 
 <style>
   .name {
-    color: var(--brand);
+    color: var(--op-brand-text, var(--brand));
     font-weight: 600;
     overflow-wrap: anywhere;
     min-width: 0;
