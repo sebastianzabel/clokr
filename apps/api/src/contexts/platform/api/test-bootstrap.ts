@@ -41,9 +41,10 @@ import { z } from "zod";
 import { config } from "../../../config.js";
 // eslint-disable-next-line no-restricted-imports -- E-8: test-fixture route only, never registered on int or prod. Permanent named exception — same precedent as Phase 100b's D-03 for this same file. ADR 0001 Eintrag H.
 import { leaveTypeFields } from "../../absence/leave-type.js";
-import { DEFAULT_SALON_OPENING_HOURS, listSalons } from "../facade/salons.js";
+import { listSalons } from "../facade/salons.js";
 import { readTenantTimezone } from "../facade/salon-assignments.js";
 import { dayToDate, tenantLocalDay } from "../salon-assignment-rules.js";
+import { provisionTenant } from "../tenant-provisioning.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -111,44 +112,23 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
       const tenantId = newTenantId();
       const prisma = app.prisma;
 
-      const tenant = await prisma.tenant.create({
-        data: {
-          id: tenantId,
-          name: `Test ${tenantId}`,
-          slug: tenantId,
-          federalState: "NIEDERSACHSEN",
-        },
-      });
-
-      // Hoisted so both the TenantConfig write below and the D-24 Stammsalon
+      // Hoisted so both the TenantConfig write inside provisionTenant and the D-24 Stammsalon
       // row further down agree on the same tenant-local timezone value.
       const timezone = "Europe/Berlin";
 
-      await prisma.tenantConfig.create({
-        data: {
-          tenantId: tenant.id,
-          defaultVacationDays: 30,
-          timezone,
-        },
-      });
-
-      // D-18 (Phase 64b, issue #64): every code path that creates a tenant for
-      // real use also creates its default salon, in the same step, mirroring
-      // the plan-01 migration's rule for tenants that already existed. No audit
-      // trail write here (research Pitfall 5) — this handler has no request
-      // principal, same as every other seeding call in this test-only route.
-      // TenantConfig above carries the storeHours column default (no explicit
-      // value); DEFAULT_SALON_OPENING_HOURS equals that default by construction
-      // (pinned in salon-migration.test.ts), so tenant and salon agree here too.
-      const salon = await prisma.salon.create({
-        data: {
-          tenantId: tenant.id,
-          name: tenant.name,
-          // Phase 71b (issue #71), D-01: the bootstrap tenant's salon inherits the tenant's state.
-          federalState: tenant.federalState,
-          openingHours: DEFAULT_SALON_OPENING_HOURS,
-          isActive: true,
-        },
+      // D-18 (Phase 64b, issue #64) + Phase 88 (D-04/D-04a): Tenant, TenantConfig and the default
+      // salon come from the one provisioning function, in the same step as for every other code
+      // path that creates a tenant for real use. No audit trail write here (research Pitfall 5) —
+      // this handler has no request principal, same as every other seeding call in this test-only
+      // route. The salon carries the requested state (Phase 71b, issue #71) and
+      // DEFAULT_SALON_OPENING_HOURS, which equals the TenantConfig.storeHours column default by
+      // construction (pinned in salon-migration.test.ts), so tenant and salon agree here too.
+      const { tenant, salon } = await provisionTenant(prisma, {
+        id: tenantId,
+        name: `Test ${tenantId}`,
+        slug: tenantId,
+        federalState: "NIEDERSACHSEN",
+        timezone,
       });
 
       const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
