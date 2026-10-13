@@ -308,11 +308,14 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   open `BREAK_CROSS_SALON_VIOLATION` notices of that employee day for every recipient (reactive,
   after commit); a revoke does not resurrect them, because the cron dedupes on ANY existing row,
   dismissed or not. `GET /api/v1/day-breaks/checks` is the one read endpoint of every UI place and
-  redacts by reach (partial scope: totals and the finding only, built from a whitelist object). The
+  redacts by reach (partial scope: one neutral hint only - no totals, no finding category, no
+  sum-bearing text, built from a number-free whitelist object; Issue #85 D-07). The
   month close blocks only under `blockMonthCloseOnUnconfirmedBreak`, for every schedule type, and
   never edits the saldo. The 09:00 (tenant time zone) cron (Feature 10 of the attendance checker)
   notifies once per recipient, employee and day for yesterday and the two days before it (3-day
-  catch-up), full text only for recipients whose own reach covers the whole day. With one entry per
+  catch-up), full text only for recipients whose own reach covers the whole day (every other recipient
+  gets the same neutral text as the redacted day check, title and mail subject included; Issue #85
+  D-07). With one entry per
   day (#70 still open) every result equals the pre-80 behaviour, proven by the frozen-copy
   equivalence test (`day-break-equivalence-80.test.ts`; its fixture and the test are never edited).
   Since D-22 the kernel additionally returns the day's breaks as intervals with their source
@@ -347,6 +350,15 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   `scripts/audit-511-break-placement.ts` is the read-only dry run; closed months are never
   re-evaluated. The 120-min same-salon cap of Phase 80 is unchanged (#523), § 8 JArbSchG is not
   checked (#524). Details: `docs/adr/0001-abweichungen.md` Eintrag X, Nachtrag Phase 511.
+- **Save responses show ArbZG warnings only within the reader's reach (Issue #85, D-12).**
+  `warningsVisibleToCaller()` (`contexts/time-tracking/warning-visibility.ts`) is the ONE place: `PUT`
+  and `POST /time-entries`, the on-behalf clock-out and the retro approval pass their warnings
+  through it. A warning stays only when every non-deleted entry of the person inside its own window
+  (day, day-1..day+1 for rest, the ISO week, 168 days for the 24-week average) is in the caller's
+  `time-entry:read` reach; all withheld warnings collapse into one neutral `FINDING_WITHHELD` item.
+  The person themself and a whole-tenant caller are unchanged. Accepted residuals: that a finding
+  exists (notices, save responses) and the notification family stored as `type` - never a minute or
+  a threshold.
 
 ## Public Holidays
 
@@ -906,6 +918,37 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   credit, which no salon receives). Presence status and holidays use ALL of a person's entries, so a
   day worked in another salon is never a false „Fehlt“ (D-15); `workedElsewhere` and `salonId` appear
   in the team-week response only under a filter. `/reports` has no salon filter yet (follow-up issue).
+  **Scoped callers follow the per-entry rule (Issue #85, D-04/D-06),** which replaces the Phase 84
+  "the filter only removes rows" reading for them: on `/team-week`, `/today-attendance` and
+  `/team-trend` the population is the Stammsalon persons UNION the persons with an in-scope entry
+  (`scopedTimeEntryIds` + `getRecordedWorkEntriesByIds`), contract, leave, absences and holidays
+  are read for the Stammsalon persons only, shifts are read for every listed person and shown only
+  if `isShiftInScope` admits them (Phase 91b D-11: the shift's own salon or a person in reach,
+  never the Stammsalon, so a Springer listed by an in-scope entry sees the reach's own shifts), a
+  day whose only shift is out of scope reads exactly like a day without a shift (no `shift`, no
+  SHIFT_BASED workday, no due time, no marker), a row listed only by an entry is never „Fehlt“
+  (its absence reasons are held by the Stammsalon; an in-scope shift not yet due makes it
+  „Geplant“, Issue #548), and hours come only from in-scope entries.
+  Time the caller cannot see is a neutral `workedElsewhere` and never a live clock-in. The account
+  Ist is used only for a person-month whose every entry is in scope; otherwise the in-scope sum is
+  shown and `workedBasis` is `SCOPE_ENTRIES` (Soll then `null`, `sollUnavailableReason`
+  `SCOPE_ENTRIES`). Whole-tenant callers run the unchanged statements. The web reads the new values
+  in `team-view.ts` only.
+- **The employee list follows the master-data rule (Issue #547).** `GET /employees` narrows a scoped
+  `employee:read` reach with `resolvePersonScopedEmployeeIds` (the single view's rule) plus the
+  caller's own row, and returns `overtimeAccount.balanceHours` only under an `overtime:read` reach
+  that covers the person, else `null`. A Salonmanager therefore sees neither a foreign salon's
+  people nor their saldo in the list.
+- **The Salonansicht (Issue #85, D-08/D-09/D-13).** `GET /time-entries?salonId&from&to` (at most 31
+  days, `time-entry:read:ZUGEWIESEN` only) returns every in-scope entry recorded in that salon for
+  all persons, Springer included, with no sums. `resolveSalonInReach()`
+  (`contexts/platform/facade/salons.ts`) is the ONE validator of a chosen salon - the dashboard's
+  team endpoints and the salon view both call it, every rejection is the same 404 body before any
+  read, and nothing else may rebuild that check. In the web `/team/time-entries` decides the salon
+  only through `teamSalonViewSalon()` (`apps/web/src/lib/dashboard/team-view.ts`), never through the
+  raw selection getter; a break-notification link to a person outside the narrowed list opens the
+  Salonansicht of the linked month (D-14). A role without saldo rights sees the person view without
+  the saldo cards, Ist only (a 403/404 on the saldo reads is a calm state, not an error).
 
 ### Tenant-scoping gate (Issue #204)
 

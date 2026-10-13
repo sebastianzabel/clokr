@@ -29,6 +29,7 @@ export {
   getValidWorkedEntriesInRange,
   getWorkedEntriesInRange,
   getRecordedWorkEntriesInRange,
+  getRecordedWorkEntriesByIds, // Issue #85 (D-04): in-scope rows by id for the per-entry aggregates
   getClaimedEntryDatesInRange,
   countLockedEntries,
   getInvalidEntries,

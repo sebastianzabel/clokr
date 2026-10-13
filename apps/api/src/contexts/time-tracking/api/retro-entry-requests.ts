@@ -14,6 +14,7 @@ import {
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
 } from "../../platform";
 import { checkArbZG, ArbZGWarning } from "../arbzg";
+import { warningsVisibleToCaller } from "../warning-visibility"; // Issue #85 (D-12) — ArbZG warnings only as far as the caller's reach covers them
 import { checkJArbSchG } from "../../absence"; // Phase 101B (Issue #101, wave 7)
 import { validateActivityState } from "../activity-shares"; // Issue #81
 import { getTenantTimezone, dateStrInTz, todayInTz } from "../../working-time-account"; // Phase 101B
@@ -542,7 +543,15 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         // Phase 96-review (WR-02) — surface the same §3/§4/§5 ArbZG feedback a PUT
         // with these times would return, now that the correction is committed.
         if (hasManagerCorrection) {
-          approveWarnings = await checkArbZG(app.prisma, existing.employeeId, existing.targetDate);
+          approveWarnings = await warningsVisibleToCaller(app.prisma, {
+            tenantId: user.tenantId,
+            access: accessContextFromRequest(req),
+            callerEmployeeId: user.employeeId ?? null,
+            employeeId: existing.employeeId,
+            date: existing.targetDate,
+            tz,
+            warnings: await checkArbZG(app.prisma, existing.employeeId, existing.targetDate),
+          });
           if (correctionSoftWarn) {
             approveWarnings.push(correctionSoftWarn);
           }

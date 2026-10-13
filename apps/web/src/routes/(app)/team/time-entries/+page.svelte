@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
@@ -12,6 +12,19 @@
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import { toasts } from "$stores/toast";
+  import { salonContext } from "$stores/salon-context";
+  // Issue #85 D-09/D-14/D-15 — the Salonansicht. The salon decision lives in team-view.ts (never
+  // the raw selection getter); the server decides which entries are visible.
+  import { isTeamSalonRejected, teamSalonViewSalon } from "$lib/dashboard/team-view";
+  import SalonTimeEntries from "$lib/components/team/SalonTimeEntries.svelte";
+  import {
+    type SalonViewDay,
+    type SalonViewEntry,
+    type SalonViewStatus,
+    groupSalonEntries,
+    salonViewCapReached,
+    salonViewRequestPath,
+  } from "$lib/team/salon-time-entries";
   import DayBreakPanel from "$lib/components/breaks/DayBreakPanel.svelte"; // Issue #80
   // Issue #80 (D-09c/D-10/D-20) — the notification deep link and the server-computed day checks;
   // the browser never derives a cross-salon finding itself.
@@ -43,11 +56,13 @@
   // Phase 116 (GitHub issue #119) — same module the own /time-entries page uses; one answer,
   // two callers, no drift.
   import {
-    settled,
+    settledAllowDenied,
+    isDenied,
     valueOr,
     anyFailed,
     resolveMonthListState,
     resolveSaldoCardState,
+    istOnlyMonthMetrics,
   } from "$lib/time-entries/month-view-state";
   import {
     getDayExpectedMinutes,
@@ -175,6 +190,12 @@
   // Phase 116 (issue #119) — true when /settings/work/:id, /overtime/:id or
   // /overtime/month-saldo/:id FAILED, as opposed to legitimately returning nothing.
   let saldoFetchFailed = $state(false);
+  // Issue #85 (Phase 76b note) — the server refused the contract, saldo or month-saldo read for
+  // this person (403, or the identical 404 of an out-of-scope person). A refusal is not a failure:
+  // the cards that depend on it disappear silently and the month card shows only the Ist of the
+  // entries the server returned for the caller's scope. `overtimeDenied` hides the Konto card.
+  let saldoDenied = $state(false);
+  let overtimeDenied = $state(false);
   let saving = $state(false);
   let saveError = $state("");
   let arbzgEnabled = $state(true);
@@ -287,6 +308,70 @@
 
   let selectedEmployee = $derived(employees.find((e) => e.id === selectedEmployeeId) ?? null);
 
+  // ── Salonansicht (Issue #85, D-09) ────────────────────────────────────────
+  // "person" = the per-person view (unchanged); "salon" = every entry recorded in one salon for the
+  // shown month. `mode=salon` in the URL selects the salon view.
+  let teamMode = $state<"person" | "salon">("person");
+  let salonViewDays = $state<SalonViewDay[]>([]);
+  let salonViewStatus = $state<SalonViewStatus>("prompt");
+  let salonViewCapHit = $state(false);
+  let salonViewError = $state("");
+  // A response of an older request (older salon or month) must never overwrite a newer one.
+  let salonViewGeneration = 0;
+  // The salon comes ONLY from the guarded decision in team-view.ts; primitives keep the effect
+  // from re-running on an equal context state.
+  const salonViewSalonId = $derived(teamSalonViewSalon($salonContext));
+  const salonViewSalonName = $derived(
+    $salonContext.salons.find((salon) => salon.id === salonViewSalonId)?.name ?? null,
+  );
+  const salonViewFrom = $derived(format(startOfMonth(calMonth), "yyyy-MM-dd"));
+  const salonViewTo = $derived(format(endOfMonth(calMonth), "yyyy-MM-dd"));
+
+  $effect(() => {
+    if (teamMode !== "salon" || !$salonContext.loaded) return;
+    const salonId = salonViewSalonId;
+    const from = salonViewFrom;
+    const to = salonViewTo;
+    untrack(() => {
+      void loadSalonView(salonId, from, to);
+    });
+  });
+
+  async function loadSalonView(salonId: string | null, from: string, to: string) {
+    const generation = ++salonViewGeneration;
+    salonViewError = "";
+    salonViewCapHit = false;
+    if (salonId === null) {
+      salonViewDays = [];
+      salonViewStatus = "prompt";
+      return;
+    }
+    salonViewStatus = "loading";
+    try {
+      const rows = await api.get<SalonViewEntry[]>(salonViewRequestPath(from, to, salonId));
+      if (generation !== salonViewGeneration) return;
+      salonViewDays = groupSalonEntries(rows);
+      salonViewCapHit = salonViewCapReached(rows);
+      salonViewStatus = rows.length === 0 ? "empty" : "rows";
+    } catch (err) {
+      if (generation !== salonViewGeneration) return;
+      salonViewDays = [];
+      if (isTeamSalonRejected(err)) {
+        salonViewStatus = "rejected";
+        return;
+      }
+      salonViewStatus = "empty";
+      salonViewError = err instanceof Error ? err.message : "Fehler beim Laden";
+    }
+  }
+
+  async function setTeamMode(mode: "person" | "salon") {
+    if (teamMode === mode) return;
+    teamMode = mode;
+    // The person view skips its month loads while the salon view is shown; catch up on return.
+    if (mode === "person") await loadAll();
+  }
+
   let filteredEmployees = $derived(
     employees.filter((e) => {
       if (!empSearch.trim()) return true;
@@ -300,6 +385,7 @@
     // Read URL params
     const viewParam = $page.url.searchParams.get("view");
     if (viewParam === "list") teView = "list";
+    if ($page.url.searchParams.get("mode") === "salon") teamMode = "salon";
     // Issue #80 (D-10): the param is untrusted text — an unreal day keeps the default month
     // instead of reaching date-fns with an Invalid Date. The calendar is anchored on the 1st of
     // the linked month while the linked day stays selectedDate (quick 261009-bsb).
@@ -323,16 +409,23 @@
     }
     // Issue #80 (D-10): the BREAK_CROSS_SALON_VIOLATION notification link preselects the
     // employee. Only an id present in the caller's own list counts — an unknown or foreign id
-    // leaves the selector empty without an error, and the server scopes every read anyway.
+    // selects nobody, and the server scopes every read anyway.
     const linkedEmployeeId = normalizeEmployeeIdParam($page.url.searchParams.get("employeeId"));
     if (linkedEmployeeId) {
       const linked = employees.find((e) => e.id.toLowerCase() === linkedEmployeeId);
       if (linked) await selectEmployee(linked);
+      // Issue #85 (D-14): the employee list is narrowed to the caller's master-data reach (#547),
+      // while a manager of the Einsatzsalon still sees that salon's entries of the linked day. A
+      // linked person outside the list therefore opens the Salonansicht of the linked month
+      // (already anchored by the `date` param above) instead of doing nothing.
+      else teamMode = "salon";
     }
     // Without a (valid) employee link do NOT call loadAll() here — wait for employee selection
   });
 
   async function loadAll() {
+    // The salon view loads its own month (see the effect above); nothing to do for the person view.
+    if (teamMode === "salon") return;
     if (!selectedEmployeeId) {
       entries = [];
       schedule = null;
@@ -360,6 +453,8 @@
     loading = true;
     error = "";
     saldoFetchFailed = false;
+    saldoDenied = false;
+    overtimeDenied = false;
     try {
       const year = calMonth.getFullYear();
       const empId = selectedEmployeeId;
@@ -375,12 +470,12 @@
         rawDayChecks,
       ] = await Promise.all([
         api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}&employeeId=${empId}`),
-        settled(api.get<WorkSchedule>(`/settings/work/${empId}`)),
+        settledAllowDenied(api.get<WorkSchedule>(`/settings/work/${empId}`)),
         api.get<PublicHoliday[]>(`/holidays?year=${year}`).catch(() => [] as PublicHoliday[]),
         api
           .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${empId}`)
           .catch(() => [] as Absence[]),
-        settled(
+        settledAllowDenied(
           api.get<{
             balanceHours: number;
             // Phase 97-05 (SALDO-DISP-01/03/04/07) — additive split fields.
@@ -433,6 +528,8 @@
       // turns into `sollToDateMin: 0`, which SollIstBar prints as "noch keine Sollzeit in diesem
       // Monat". Now it reaches MonatSaldoCard's existing error branch instead.
       saldoFetchFailed = anyFailed(rawSchedule, rawOvertime);
+      overtimeDenied = isDenied(rawOvertime);
+      saldoDenied = isDenied(rawSchedule, rawOvertime);
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
@@ -452,13 +549,14 @@
         // Phase 116 (issue #119) — for SHIFT_BASED this endpoint is THE source of every figure
         // MonatSaldoCard shows. On failure monthMetrics silently fell through to the
         // FIXED_*/FLEXTIME branch and rendered a DIFFERENT, wrong number as fact.
-        const rawMonthSaldo = await settled(
+        const rawMonthSaldo = await settledAllowDenied(
           api.get<MonthSaldo>(
             `/overtime/month-saldo/${empId}?year=${calMonth.getFullYear()}&month=${calMonth.getMonth() + 1}`,
           ),
         );
         monthSaldo = valueOr(rawMonthSaldo, null);
         if (anyFailed(rawMonthSaldo)) saldoFetchFailed = true;
+        if (isDenied(rawMonthSaldo)) saldoDenied = true;
         // Issue #433 (D-11) — a MONTHLY_HOURS-with-target response missing monthSollMinutes must
         // never render as a fabricated 0; route it into the same error branch as a failed fetch.
         if (isMonthlyHoursWithTarget && monthSaldo && monthSaldo.monthSollMinutes === undefined) {
@@ -1169,6 +1267,13 @@
     noSollTarget: boolean;
   };
   let monthMetrics: MonthMetrics = $derived.by(() => {
+    // Issue #85 (Phase 76b note) — a refused read hides its cards instead of erroring. The Ist
+    // shown comes from the entries the server returned for the caller's scope; no Soll and no
+    // saldo are computed or implied.
+    if (saldoDenied) {
+      return istOnlyMonthMetrics({ istMin: totalWorked, workdaysSoFar: workedEntryDays });
+    }
+
     if (!schedule) {
       return {
         sollToDateMin: 0,
@@ -1375,7 +1480,7 @@
 
 <PageHead eyebrow="Team" title="Team-Zeiten" accent="Zeiten">
   {#snippet actions()}
-    {#if selectedEmployee}
+    {#if teamMode === "person" && selectedEmployee}
       <!-- quick 260820-fkz — Gesamt-Saldo moved OUT of the page head entirely, into the
            quiet Konto card in the metrics row below (see KontoSaldoCard). -->
       <button class="btn btn-primary" onclick={() => openAdd()}>
@@ -1385,69 +1490,91 @@
   {/snippet}
 </PageHead>
 
-<!-- ── Mitarbeiter-Auswahl ─────────────────────────────────────────── -->
-<div class="employee-selector">
-  <div class="emp-combobox" class:emp-combobox--open={empDropdownOpen}>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="emp-input-wrap" onclick={() => (empDropdownOpen = !empDropdownOpen)}>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <input
-        class="emp-search-input"
-        type="text"
-        placeholder={selectedEmployee
-          ? `${selectedEmployee.firstName} ${selectedEmployee.lastName}`
-          : "Mitarbeiter auswählen…"}
-        bind:value={empSearch}
-        onclick={(e) => {
-          e.stopPropagation();
-          empDropdownOpen = true;
-        }}
-        onfocus={() => (empDropdownOpen = true)}
-        oninput={() => (empDropdownOpen = true)}
-        aria-label="Mitarbeiter suchen"
-        autocomplete="off"
-      />
-      <svg
-        class="emp-chevron"
-        class:emp-chevron--up={empDropdownOpen}
-        width="16"
-        height="16"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.5"
-        aria-hidden="true"
-      >
-        <polyline points="6 9 12 15 18 9" />
-      </svg>
-    </div>
-    {#if empDropdownOpen}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="emp-backdrop" onclick={() => (empDropdownOpen = false)}></div>
-      <ul class="emp-dropdown" role="listbox" aria-label="Mitarbeiterliste">
-        {#if filteredEmployees.length === 0}
-          <li class="emp-dropdown-empty">Keine Treffer</li>
-        {:else}
-          {#each filteredEmployees as emp (emp.id)}
-            <li
-              class="emp-dropdown-item"
-              class:emp-dropdown-item--active={emp.id === selectedEmployeeId}
-              role="option"
-              aria-selected={emp.id === selectedEmployeeId}
-              tabindex="0"
-              onclick={() => selectEmployee(emp)}
-              onkeydown={(e) => {
-                if (e.key === "Enter" || e.key === " ") selectEmployee(emp);
-              }}
-            >
-              {emp.lastName}, {emp.firstName}
-            </li>
-          {/each}
-        {/if}
-      </ul>
-    {/if}
-  </div>
+<!-- ── Ansicht: Person oder Salon (Issue #85, D-09) ───────────────────── -->
+<div class="view-tabs" role="group" aria-label="Ansicht">
+  <button
+    class="view-tab"
+    class:view-tab--active={teamMode === "person"}
+    aria-pressed={teamMode === "person"}
+    onclick={() => setTeamMode("person")}
+  >
+    Personenansicht
+  </button>
+  <button
+    class="view-tab"
+    class:view-tab--active={teamMode === "salon"}
+    aria-pressed={teamMode === "salon"}
+    onclick={() => setTeamMode("salon")}
+  >
+    Salonansicht
+  </button>
 </div>
+
+{#if teamMode === "person"}
+  <!-- ── Mitarbeiter-Auswahl ─────────────────────────────────────────── -->
+  <div class="employee-selector">
+    <div class="emp-combobox" class:emp-combobox--open={empDropdownOpen}>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="emp-input-wrap" onclick={() => (empDropdownOpen = !empDropdownOpen)}>
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <input
+          class="emp-search-input"
+          type="text"
+          placeholder={selectedEmployee
+            ? `${selectedEmployee.firstName} ${selectedEmployee.lastName}`
+            : "Mitarbeiter auswählen…"}
+          bind:value={empSearch}
+          onclick={(e) => {
+            e.stopPropagation();
+            empDropdownOpen = true;
+          }}
+          onfocus={() => (empDropdownOpen = true)}
+          oninput={() => (empDropdownOpen = true)}
+          aria-label="Mitarbeiter suchen"
+          autocomplete="off"
+        />
+        <svg
+          class="emp-chevron"
+          class:emp-chevron--up={empDropdownOpen}
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          aria-hidden="true"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </div>
+      {#if empDropdownOpen}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="emp-backdrop" onclick={() => (empDropdownOpen = false)}></div>
+        <ul class="emp-dropdown" role="listbox" aria-label="Mitarbeiterliste">
+          {#if filteredEmployees.length === 0}
+            <li class="emp-dropdown-empty">Keine Treffer</li>
+          {:else}
+            {#each filteredEmployees as emp (emp.id)}
+              <li
+                class="emp-dropdown-item"
+                class:emp-dropdown-item--active={emp.id === selectedEmployeeId}
+                role="option"
+                aria-selected={emp.id === selectedEmployeeId}
+                tabindex="0"
+                onclick={() => selectEmployee(emp)}
+                onkeydown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") selectEmployee(emp);
+                }}
+              >
+                {emp.lastName}, {emp.firstName}
+              </li>
+            {/each}
+          {/if}
+        </ul>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 <!-- ── Month navigation (quick 260820-fkz) ─────────────────────────────
      Bare nav only — no stats/statRenders/extraActions, so MonthBar's tile cluster stays
@@ -1465,7 +1592,21 @@
   />
 {/snippet}
 
-{#if selectedEmployee}
+{#if teamMode === "salon"}
+  <Card animate class="te-monthbar-card">
+    {@render monthNavBar()}
+  </Card>
+  {#if salonViewError}
+    <div class="alert alert-error" role="alert"><span>⚠</span><span>{salonViewError}</span></div>
+  {:else}
+    <SalonTimeEntries
+      days={salonViewDays}
+      status={salonViewStatus}
+      capReached={salonViewCapHit}
+      salonName={salonViewSalonName}
+    />
+  {/if}
+{:else if selectedEmployee}
   <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
   <div class="view-tabs">
     <button
@@ -1491,7 +1632,7 @@
   <!-- Metrics row (design variant 1c "Fortschritt", quick 260820-fkz).
        Mirrors /time-entries (commit d88cdcba). Rendered ONLY with an employee
        selected (D-01); the no-employee branch keeps its own bare nav card. -->
-  <div class="te-metrics">
+  <div class="te-metrics" class:te-metrics--single={overtimeDenied}>
     <MonatSaldoCard
       sollToDateMin={monthMetrics.sollToDateMin}
       istMin={monthMetrics.istMin}
@@ -1506,15 +1647,22 @@
       onRetry={loadAll}
       monthNav={monthNavBar}
     />
-    <KontoSaldoCard
-      totalHours={overtimeTotalHours}
-      confirmedMinutes={overtimeConfirmedMinutes}
-      openMonthMinutes={overtimeOpenMonthMinutes}
-      hasClosedMonth={overtimeHasClosedMonth}
-      rosterIncomplete={overtimeRosterIncomplete}
-      {loading}
-    />
+    {#if !overtimeDenied}
+      <KontoSaldoCard
+        totalHours={overtimeTotalHours}
+        confirmedMinutes={overtimeConfirmedMinutes}
+        openMonthMinutes={overtimeOpenMonthMinutes}
+        hasClosedMonth={overtimeHasClosedMonth}
+        rosterIncomplete={overtimeRosterIncomplete}
+        {loading}
+      />
+    {/if}
   </div>
+  {#if saldoDenied && !loading}
+    <p class="text-muted te-denied-note">
+      Soll und Saldo dieser Person sehen Inhaber, Personalabteilung und die Person selbst.
+    </p>
+  {/if}
 
   <!-- Issue #80 — one panel per multi-entry day of the server's day check. The panel renders
        nothing for a day without a cross-salon finding or a recorded day break, so single-entry
@@ -2022,6 +2170,15 @@
     .te-metrics {
       grid-template-columns: 1fr;
     }
+  }
+
+  /* Issue #85 — without the Konto card (refused saldo read) the month card takes the full row. */
+  .te-metrics--single {
+    grid-template-columns: 1fr;
+  }
+  .te-denied-note {
+    margin: calc(-1 * var(--s-2)) 0 18px;
+    font-size: 0.875rem;
   }
 
   /* MonthBar owns its 18px 24px inner padding by default; reset it here since it now

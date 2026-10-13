@@ -13,12 +13,14 @@
  *    internally — both rows survived the forced rollback in that version, exactly R1's hazard.
  *    Reverted immediately after confirming red; see 100B-08-SUMMARY.md for the transcript.
  */
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import {
   getValidWorkedEntriesInRange,
   getWorkedEntriesInRange,
   getRecordedWorkEntriesInRange,
+  getRecordedWorkEntriesByIds,
   getClaimedEntryDatesInRange,
   countLockedEntries,
   getInvalidEntries,
@@ -738,6 +740,124 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
 
       await app.prisma.employee.delete({ where: { id: employee.id } });
       await app.prisma.user.delete({ where: { id: user.id } });
+    });
+  });
+
+  describe("getRecordedWorkEntriesByIds (Issue #85, D-04)", () => {
+    const day = (n: number) => new Date(`2026-09-${String(n).padStart(2, "0")}T00:00:00Z`);
+    const ids: Record<string, string> = {};
+
+    async function make(
+      key: string,
+      employeeId: string,
+      salonId: string,
+      date: Date,
+      overrides: Record<string, unknown> = {},
+    ) {
+      const created = await app.prisma.timeEntry.create({
+        data: {
+          employeeId,
+          date,
+          startTime: new Date(date.getTime() + 8 * 3_600_000),
+          endTime: new Date(date.getTime() + 16 * 3_600_000),
+          breakMinutes: 30,
+          type: "WORK",
+          salonId,
+          ...overrides,
+        },
+      });
+      ids[key] = created.id;
+    }
+
+    beforeAll(async () => {
+      await make("closedA", data.employee.id, data.salonId, day(1));
+      await make("closedB", data.employee.id, data.salonId, day(2));
+      await make("open", data.employee.id, data.salonId, day(3), { endTime: null });
+      await make("invalid", data.employee.id, data.salonId, day(4), { isInvalid: true });
+      await make("deleted", data.employee.id, data.salonId, day(7), { deletedAt: new Date() });
+      await make("overtime", data.employee.id, data.salonId, day(8), { type: "OVERTIME" });
+      await make("foreign", otherTenantData.employee.id, otherTenantData.salonId, day(1));
+    });
+
+    it("returns the rows of two closed and one open entry with exactly the documented key set", async () => {
+      const rows = await getRecordedWorkEntriesByIds(app.prisma, data.tenant.id, [
+        ids.closedA,
+        ids.closedB,
+        ids.open,
+      ]);
+      expect(rows.map((r) => r.id).sort((a, b) => a.localeCompare(b))).toEqual(
+        [ids.closedA, ids.closedB, ids.open].sort((a, b) => a.localeCompare(b)),
+      );
+      for (const row of rows) {
+        expect(Object.keys(row).sort((a, b) => a.localeCompare(b))).toEqual(
+          [
+            "breakMinutes",
+            "date",
+            "employeeId",
+            "endTime",
+            "id",
+            "isInvalid",
+            "salonId",
+            "startTime",
+          ].sort((a, b) => a.localeCompare(b)),
+        );
+        expect(row.salonId).toBe(data.salonId);
+        expect(row.employeeId).toBe(data.employee.id);
+      }
+      expect(rows.find((r) => r.id === ids.open)?.endTime).toBeNull();
+    });
+
+    it("returns an invalid entry with isInvalid true", async () => {
+      const rows = await getRecordedWorkEntriesByIds(app.prisma, data.tenant.id, [ids.invalid]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].isInvalid).toBe(true);
+    });
+
+    it("never returns a soft-deleted or a non-WORK entry", async () => {
+      const rows = await getRecordedWorkEntriesByIds(app.prisma, data.tenant.id, [
+        ids.deleted,
+        ids.overtime,
+        ids.closedA,
+      ]);
+      expect(rows.map((r) => r.id)).toEqual([ids.closedA]);
+    });
+
+    it("never returns an entry of another tenant, whichever tenantId is passed", async () => {
+      const own = await getRecordedWorkEntriesByIds(app.prisma, data.tenant.id, [
+        ids.foreign,
+        ids.closedA,
+      ]);
+      expect(own.map((r) => r.id)).toEqual([ids.closedA]);
+      const theirs = await getRecordedWorkEntriesByIds(app.prisma, otherTenantData.tenant.id, [
+        ids.foreign,
+        ids.closedA,
+      ]);
+      expect(theirs.map((r) => r.id)).toEqual([ids.foreign]);
+    });
+
+    it("returns [] for an empty id list without issuing a query", async () => {
+      const failing = {
+        timeEntry: {
+          findMany: () => {
+            throw new Error("no query expected for an empty id list");
+          },
+        },
+      } as never;
+      expect(await getRecordedWorkEntriesByIds(failing, data.tenant.id, [])).toEqual([]);
+    });
+
+    it("handles 6001 ids in chunks without a Postgres parameter error", async () => {
+      const many = [
+        ids.closedA,
+        ids.closedB,
+        ids.open,
+        ...Array.from({ length: 5998 }, () => randomUUID()),
+      ];
+      expect(many).toHaveLength(6001);
+      const rows = await getRecordedWorkEntriesByIds(app.prisma, data.tenant.id, many);
+      expect(rows.map((r) => r.id).sort((a, b) => a.localeCompare(b))).toEqual(
+        [ids.closedA, ids.closedB, ids.open].sort((a, b) => a.localeCompare(b)),
+      );
     });
   });
 });

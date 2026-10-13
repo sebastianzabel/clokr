@@ -517,7 +517,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // facade (`contexts/time-tracking/facade/time-entries.ts`, retention archive of DayBreak /
   // DayBreakAck, same shape as `archiveEntriesBefore`) — passes F1/F2/F3 directly, no new
   // exception; exceptions unchanged at 17.
-  it("the real tree has exactly 135 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  it("the real tree has exactly 137 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -567,7 +567,11 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // Issue #84 (D-08, 2026-10-12): +1 getApprovedLeaveEndingOnOrAfter (absence/facade/leave-requests.ts) — 133 -> 134.
     // Issue #87 (D-10, 2026-10-13): +1 currentAndFutureAssignmentSalonIds
     // (platform/facade/salon-assignments.ts) — 134 -> 135 after merging Phase 84.
-    expect(functions).toHaveLength(135);
+    // Issue #85 (D-13, 2026-10-13): +1 resolveSalonInReach
+    // (platform/facade/salons.ts), moved out of composition/dashboard.ts — 135 -> 136.
+    // Issue #85 (D-04, 2026-10-13): +1 getRecordedWorkEntriesByIds
+    // (time-tracking/facade/time-entries.ts) — 136 -> 137.
+    expect(functions).toHaveLength(137);
 
     const rawExceptions = JSON.parse(
       readFileSync(

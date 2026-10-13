@@ -2,6 +2,8 @@
 // findings. Pure: evaluations are constructed with the real kernel from Break rows, nothing here
 // touches the database. The builder renders findings; it decides nothing.
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import { fromZonedTime } from "date-fns-tz";
 import { evaluateDayBreaks } from "../day-break-rule";
@@ -59,7 +61,7 @@ function evaluate(rows: DayBreakRow[]) {
 describe("placementWarnings (Issue #511)", () => {
   it("BREAK_TOO_LATE: a 6:01 block names duration, legal basis and the block range", () => {
     const ev = evaluate([entry("e1", "08:00", "15:00", 30, [iv("14:01", "14:31")])]);
-    const out = placementWarnings(ev, { tz: TZ, detail: "full" });
+    const out = placementWarnings(ev, { tz: TZ });
     const late = out.filter((w) => w.code === "BREAK_TOO_LATE");
     expect(late).toHaveLength(1);
     expect(late[0].severity).toBe("warning");
@@ -72,7 +74,7 @@ describe("placementWarnings (Issue #511)", () => {
 
   it("BREAK_TOO_LATE: absent for a block of exactly six hours", () => {
     const ev = evaluate([entry("e1", "08:00", "15:00", 30, [iv("14:00", "14:30")])]);
-    const out = placementWarnings(ev, { tz: TZ, detail: "full" });
+    const out = placementWarnings(ev, { tz: TZ });
     expect(out.some((w) => w.code === "BREAK_TOO_LATE")).toBe(false);
   });
 
@@ -84,7 +86,7 @@ describe("placementWarnings (Issue #511)", () => {
         iv("13:00", "13:10"),
       ]),
     ]);
-    const out = placementWarnings(ev, { tz: TZ, detail: "full" });
+    const out = placementWarnings(ev, { tz: TZ });
     const short = out.filter((w) => w.code === "BREAK_SEGMENT_TOO_SHORT");
     expect(short).toHaveLength(1);
     expect(short[0].message).toContain("3 Pausen unter 15 Min nicht angerechnet");
@@ -97,7 +99,7 @@ describe("placementWarnings (Issue #511)", () => {
     const ev = evaluate([
       entry("e1", "08:00", "15:00", 34, [iv("08:00", "08:20"), iv("11:00", "11:14")]),
     ]);
-    const short = placementWarnings(ev, { tz: TZ, detail: "full" }).filter(
+    const short = placementWarnings(ev, { tz: TZ }).filter(
       (w) => w.code === "BREAK_SEGMENT_TOO_SHORT",
     );
     expect(short).toHaveLength(1);
@@ -106,7 +108,7 @@ describe("placementWarnings (Issue #511)", () => {
 
   it("BREAK_SEGMENT_TOO_SHORT: an edge segment is named separately", () => {
     const ev = evaluate([entry("e1", "08:00", "15:00", 30, [iv("08:00", "08:30")])]);
-    const short = placementWarnings(ev, { tz: TZ, detail: "full" }).filter(
+    const short = placementWarnings(ev, { tz: TZ }).filter(
       (w) => w.code === "BREAK_SEGMENT_TOO_SHORT",
     );
     expect(short).toHaveLength(1);
@@ -115,7 +117,7 @@ describe("placementWarnings (Issue #511)", () => {
 
   it("BREAK_POSITION_UNKNOWN: carries hint true and no certainty, never a violation (AK-3)", () => {
     const ev = evaluate([entry("e1", "08:00", "15:00", 30)]);
-    const out = placementWarnings(ev, { tz: TZ, detail: "full" });
+    const out = placementWarnings(ev, { tz: TZ });
     const hint = out.filter((w) => w.code === "BREAK_POSITION_UNKNOWN");
     expect(hint).toHaveLength(1);
     expect(hint[0].hint).toBe(true);
@@ -131,9 +133,7 @@ describe("placementWarnings (Issue #511)", () => {
       entry("e1", "08:00", "11:00", 0, undefined, SALON_A),
       entry("e2", "15:00", "19:00", 0, undefined, SALON_B),
     ]);
-    const late = placementWarnings(ev, { tz: TZ, detail: "full" }).filter(
-      (w) => w.code === "BREAK_TOO_LATE",
-    );
+    const late = placementWarnings(ev, { tz: TZ }).filter((w) => w.code === "BREAK_TOO_LATE");
     expect(late).toHaveLength(1);
     expect(late[0].certainty).toBe("UNCLEAR");
     expect(late[0].message.endsWith("Klärung nötig: Fahrzeit oder Pause?")).toBe(true);
@@ -149,15 +149,20 @@ describe("placementWarnings (Issue #511)", () => {
       acks: [{ snapshot: base.snapshot }],
     });
     expect(ev.waived).toBe(true);
-    const late = placementWarnings(ev, { tz: TZ, detail: "full" }).filter(
-      (w) => w.code === "BREAK_TOO_LATE",
-    );
+    const late = placementWarnings(ev, { tz: TZ }).filter((w) => w.code === "BREAK_TOO_LATE");
     expect(late).toHaveLength(1);
     expect(late[0].waived).toBe(true);
     expect(late[0].severity).toBe("warning");
   });
 
-  it("redacted detail carries no clock time, no time range and no id (T-511-07)", () => {
+  // Amended 2026-10-13 (Phase 85b, Issue #85 D-07): this case used to pin the count-and-duration
+  // "redacted" variant of placementWarnings(). A partially covered day now carries one neutral
+  // hint only (redactedDayCheck in api/day-breaks.ts), no production caller used the variant any
+  // more, and its sum-bearing text must not be reusable by accident - so the variant was removed
+  // and the case pins the removal. The T-511-07 intent (a reduced-reach reader never receives
+  // clock times, ranges or ids from this builder) is now carried by the neutral-hint tests in
+  // day-break-checks.test.ts.
+  it("has no redacted detail variant any more, and the output keeps the finding shape (T-511-07, retired by Phase 85b D-07)", () => {
     const ev = evaluate([
       entry("secret-entry-id", "08:00", "15:00", 30, [
         iv("10:00", "10:10"),
@@ -165,25 +170,26 @@ describe("placementWarnings (Issue #511)", () => {
         iv("08:00", "08:10"),
       ]),
     ]);
-    const out = placementWarnings(ev, { tz: TZ, detail: "redacted", birthDateMissing: true });
+    const out = placementWarnings(ev, { tz: TZ, birthDateMissing: true });
     expect(out.length).toBeGreaterThan(0);
     for (const w of out) {
-      expect(w.message).not.toMatch(/\d{1,2}:\d{2}/);
+      // no field outside the finding shape (no interval, entry id or salon id)
+      for (const key of Object.keys(w)) expect(ALLOWED_KEYS.has(key)).toBe(true);
       expect(w.message).not.toContain("secret-entry-id");
       expect(w.message).not.toContain(SALON_A);
-      expect(w.message).not.toContain("Geburtsdatum nicht hinterlegt");
-      // whitelist: no field outside the finding shape (no interval, entry id or salon id)
-      for (const key of Object.keys(w)) expect(ALLOWED_KEYS.has(key)).toBe(true);
     }
-    // anti-vacuity: the full variant of the same day does contain clock times
-    const full = placementWarnings(ev, { tz: TZ, detail: "full" });
-    expect(full.some((w) => /\d{1,2}:\d{2}–\d{1,2}:\d{2}/.test(w.message))).toBe(true);
+    // anti-vacuity: the only variant is the clock-time one, so it is for whole-day readers only
+    expect(out.some((w) => /\d{1,2}:\d{2}–\d{1,2}:\d{2}/.test(w.message))).toBe(true);
+    // the builder takes no detail option any more
+    const source = readFileSync(resolve(__dirname, "../arbzg.ts"), "utf8");
+    expect(source).not.toMatch(/detail\s*:\s*"(full|redacted)"/);
+    expect(source).not.toContain('"redacted"');
   });
 
   it("birthDateMissing appends the note in the full variant only", () => {
     const ev = evaluate([entry("e1", "08:00", "15:00", 30, [iv("14:01", "14:31")])]);
-    const withNote = placementWarnings(ev, { tz: TZ, detail: "full", birthDateMissing: true });
-    const without = placementWarnings(ev, { tz: TZ, detail: "full" });
+    const withNote = placementWarnings(ev, { tz: TZ, birthDateMissing: true });
+    const without = placementWarnings(ev, { tz: TZ });
     expect(withNote.every((w) => w.message.includes("Geburtsdatum nicht hinterlegt"))).toBe(true);
     expect(without.some((w) => w.message.includes("Geburtsdatum nicht hinterlegt"))).toBe(false);
   });

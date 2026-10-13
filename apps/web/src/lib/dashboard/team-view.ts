@@ -35,9 +35,14 @@ export interface TeamTrendMonth {
 
 export interface TeamTrendResponse {
   salonId: string | null;
-  /** ACCOUNT = the working-time account's Ist; SALON_ENTRIES = closed valid entries of one salon. */
-  workedBasis: "ACCOUNT" | "SALON_ENTRIES";
-  sollUnavailableReason: "NO_PERMISSION" | "SALON_FILTER" | null;
+  /**
+   * ACCOUNT = the working-time account's Ist; SALON_ENTRIES = closed valid entries of one salon;
+   * SCOPE_ENTRIES = closed valid entries inside the caller's reach (Issue #85 D-06: a caller who
+   * covers only part of the team's salons never sees the account's Ist).
+   */
+  workedBasis: "ACCOUNT" | "SALON_ENTRIES" | "SCOPE_ENTRIES";
+  /** SCOPE_ENTRIES: part of the working time lies in salons outside the caller's reach. */
+  sollUnavailableReason: "NO_PERMISSION" | "SALON_FILTER" | "SCOPE_ENTRIES" | null;
   months: TeamTrendMonth[];
 }
 
@@ -61,6 +66,10 @@ export interface TeamUpcomingLeaveResponse {
 export const TEAM_SOLL_NOT_ATTRIBUTABLE_NOTE =
   "Das Soll ist eine Vertragsgröße der Person und lässt sich keinem Salon zuordnen.";
 
+/** Issue #85 D-06: why the Soll series is missing for a caller whose reach covers only part of the team. */
+export const TEAM_SOLL_PARTIAL_SCOPE_NOTE =
+  "Das Soll fehlt, weil ein Teil der Arbeitszeit in Salons außerhalb Ihrer Reichweite erfasst ist.";
+
 export const TEAM_SALDO_NOT_ATTRIBUTABLE_NOTE =
   "Der Saldo ist eine Vertragsgröße der Person und lässt sich keinem Salon zuordnen. Ohne Salonfilter sehen Sie hier den Verlauf über alle Salons.";
 
@@ -71,6 +80,16 @@ export const TEAM_SALDO_NOT_ATTRIBUTABLE_NOTE =
  */
 export function teamSalonFilter(state: TeamContextState): string | null {
   return showSalonOptions(state) ? selectedSalonId(state) : null;
+}
+
+/**
+ * Issue #85 D-09: the salon the Salonansicht names. Unlike `teamSalonFilter` it is NOT hidden
+ * behind the #64 options rule — the endpoint needs a salon, and the store already preselects the
+ * sole reachable salon; "Alle Salons" (or a context that is not loaded) has none. Presentation
+ * only: the API validates the salon against the caller's reach independently.
+ */
+export function teamSalonViewSalon(state: TeamContextState): string | null {
+  return selectedSalonId(state);
 }
 
 /** Appends `salonId` to a request path; no salon leaves the path untouched. */
@@ -105,6 +124,7 @@ function toHours(minutes: number): number {
 /** D-05/D-12: which series and notes a team-trend response allows. */
 export function teamTrendView(resp: TeamTrendResponse): TeamTrendView {
   const salonEntries = resp.workedBasis === "SALON_ENTRIES";
+  const scopeEntries = resp.workedBasis === "SCOPE_ENTRIES";
   const shouldMinutes = resp.months.map((m) => m.shouldMinutes);
   const hasSoll =
     resp.sollUnavailableReason === null && shouldMinutes.every((value) => value !== null);
@@ -113,13 +133,36 @@ export function teamTrendView(resp: TeamTrendResponse): TeamTrendView {
     workedHours: resp.months.map((m) => toHours(m.workedMinutes)),
     shouldHours: hasSoll ? shouldMinutes.map((value) => toHours(value as number)) : null,
     sickDays: resp.months.map((m) => m.sickDays),
-    workedSeriesLabel: salonEntries ? "Erfasste Arbeitszeit im Salon (h)" : "Ist (h)",
-    chartSub: salonEntries ? "Erfasste Arbeitszeit im Salon · Letzte 6 Monate" : "Letzte 6 Monate",
+    workedSeriesLabel: salonEntries
+      ? "Erfasste Arbeitszeit im Salon (h)"
+      : scopeEntries
+        ? "Erfasste Arbeitszeit (h)"
+        : "Ist (h)",
+    chartSub: salonEntries
+      ? "Erfasste Arbeitszeit im Salon · Letzte 6 Monate"
+      : scopeEntries
+        ? "Erfasste Arbeitszeit in Ihrer Reichweite · Letzte 6 Monate"
+        : "Letzte 6 Monate",
     sollNote:
-      resp.sollUnavailableReason === "SALON_FILTER" ? TEAM_SOLL_NOT_ATTRIBUTABLE_NOTE : null,
+      resp.sollUnavailableReason === "SALON_FILTER"
+        ? TEAM_SOLL_NOT_ATTRIBUTABLE_NOTE
+        : resp.sollUnavailableReason === "SCOPE_ENTRIES"
+          ? TEAM_SOLL_PARTIAL_SCOPE_NOTE
+          : null,
     trendNote:
       resp.sollUnavailableReason === "SALON_FILTER" ? TEAM_SALDO_NOT_ATTRIBUTABLE_NOTE : null,
   };
+}
+
+/**
+ * Issue #85 D-04/D-05: whether any shown day of the team week carries the "worked in another
+ * salon" flag. Scoped callers get the flag unfiltered, so the legend follows the data and not
+ * only the filter. Structural parameter type: the page's row type stays its own.
+ */
+export function teamWeekHasElsewhere(
+  team: ReadonlyArray<{ days: ReadonlyArray<{ workedElsewhere?: boolean }> }>,
+): boolean {
+  return team.some((member) => member.days.some((day) => day.workedElsewhere === true));
 }
 
 /** D-16: shown instead of the Team block when the server rejects the selected salon (404). */

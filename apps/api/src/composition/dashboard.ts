@@ -11,14 +11,23 @@ import {
   hasPermission,
   resolveAccessReach, // Phase 91b Plan 06 (#91), D-09/D-10/D-13
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 06 (#91), D-10/D-13
-  findSalon, // Issue #84 (D-16) — salon filter validation
+  resolveSalonInReach, // Issue #84 (D-16), Issue #85 (D-13) — salon filter validation
   homeSalonsForDays, // Issue #84 (D-13) — batched Stammsalon per day
-  type AccessReach,
+  scopedTimeEntryIds, // Issue #85 (D-04) — the one per-entry scope resolver
+  isShiftInScope, // Issue #548 — Phase 91b D-11, the one per-shift scope predicate
 } from "../contexts/platform";
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
+  distinctEmployeeIds,
+  fullyCoveredPersons,
+  outOfScopeValidCounts,
+  personDayKey,
+  presenceEntriesWithStandIns,
+} from "./team-entry-scope"; // Issue #85 (D-04/D-05)
+import {
   getWorkedEntriesInRange,
   getRecordedWorkEntriesInRange,
+  getRecordedWorkEntriesByIds, // Issue #85 (D-04) — the in-scope rows by id
   getInvalidEntries,
   getEffectiveSchedule,
   resolvePresenceState,
@@ -474,7 +483,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         "team-overview:read:ZUGEWIESEN",
       );
       // D-02/D-16: validated before any data read; one body for every rejection cause.
-      const salonFilter = await resolveTeamSalonFilter(app.prisma, tenantId, scopeReach, salonId);
+      const salonFilter = await resolveSalonInReach(app.prisma, tenantId, scopeReach, salonId);
       if (!salonFilter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
       const filterSalonId = salonFilter.salonId;
       const scopedAccess = { ...access, reach: scopeReach };
@@ -483,18 +492,48 @@ export async function dashboardRoutes(app: FastifyInstance) {
           ? "all"
           : await resolveStammsalonScopedEmployeeIds(app.prisma, tenantId, scopeReach, weekEnd);
 
+      // Issue #85 (D-04): for a scoped caller the entry decides. The Unterbau names the in-scope
+      // entries of the week; the population is the Stammsalon persons (as before) PLUS every
+      // person with at least one of those entries, and the hours of every row come from them.
+      let inScopeRows: Awaited<ReturnType<typeof getRecordedWorkEntriesByIds>> | null = null;
+      if (scopeReach.kind === "scoped") {
+        const inScopeIds = await scopedTimeEntryIds(
+          app.prisma,
+          tenantId,
+          scopeReach,
+          weekFirstDay,
+          weekLastDay,
+        );
+        // "all" is whole-tenant only; for a scoped reach it cannot occur, and fails closed.
+        inScopeRows = await getRecordedWorkEntriesByIds(
+          app.prisma,
+          tenantId,
+          inScopeIds === "all" ? [] : inScopeIds,
+        );
+      }
+      const populationIds =
+        teamWeekScopedIds === "all"
+          ? "all"
+          : [...teamWeekScopedIds, ...distinctEmployeeIds(inScopeRows ?? [])];
+
       // Alle aktiven, nicht-anonymisierten Mitarbeiter
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
           exitDate: null,
           user: { isActive: true },
-          ...(teamWeekScopedIds !== "all" ? { id: { in: teamWeekScopedIds } } : {}),
+          ...(populationIds !== "all" ? { id: { in: populationIds } } : {}),
         },
         select: { id: true, firstName: true, lastName: true, employeeNumber: true },
         orderBy: { lastName: "asc" },
       });
-      const teamWeekEmployeeIds = employees.map((e) => e.id);
+      // Contracts, holidays, leave and absences belong to the Stammsalon persons only: a person
+      // listed purely by an in-scope entry carries none of it (Pitfall 3). Shifts are read for
+      // every listed person and narrowed per shift below (Issue #548).
+      const stammSet = new Set(teamWeekScopedIds === "all" ? [] : teamWeekScopedIds);
+      const stammEmployees =
+        teamWeekScopedIds === "all" ? employees : employees.filter((e) => stammSet.has(e.id));
+      const teamWeekEmployeeIds = stammEmployees.map((e) => e.id);
 
       // Holidays by work location (Phase 71b, issue #71) — resolved ONCE per employee for the
       // whole week, fed with a dedicated T2 (closed WORK entries, carries salonId) read. This is
@@ -557,29 +596,39 @@ export async function dashboardRoutes(app: FastifyInstance) {
         weekLastDay,
       );
 
-      // Schichten der Woche (Phase 100B Plan 05 — S1, contexts/scheduling facade)
-      const shifts = await getShiftsInRange(
-        app.prisma,
-        employeeScopeFor(scopedAccess, { employeeIds: teamWeekEmployeeIds }),
-        weekFirstDay,
-        weekLastDay,
-      );
+      // Shifts of the week (S1, contexts/scheduling facade), read for every listed person.
+      // Issue #548 / Phase 91b D-11: a shift counts only through its own salon or a person in the
+      // reach, never through the Stammsalon. A dropped shift leaves the day exactly like a day
+      // without a shift. `employeeScopeFor` does not re-check its targets, so this per-row filter
+      // is the scope proof for the ids of entry-only persons. A whole-tenant reach keeps every
+      // shift and reads the same ids as before (`employees` is then the Stammsalon list).
+      const shiftReadEmployeeIds = employees.map((e) => e.id);
+      const shifts = (
+        await getShiftsInRange(
+          app.prisma,
+          employeeScopeFor(scopedAccess, { employeeIds: shiftReadEmployeeIds }),
+          weekFirstDay,
+          weekLastDay,
+        )
+      ).filter((s) => isShiftInScope(scopeReach, { salonId: s.salonId, employeeId: s.employeeId }));
 
       // Aktuelle Schedules aller MA (bulk, latest per employee)
       const allSchedules = await app.prisma.workSchedule.findMany({
         where: {
-          employeeId: { in: employees.map((e) => e.id) },
+          employeeId: { in: teamWeekEmployeeIds },
           validFrom: { lte: weekEnd },
         },
         orderBy: { validFrom: "desc" },
       });
 
-      // Issue #84 (D-03/D-06/D-15): under a salon filter, MEMBERSHIP follows the entry or the
-      // Stammsalon (a person is listed when they recorded time in the salon this week or are homed
-      // there on at least one week day), HOURS follow the entry's salon, and presence, holidays,
-      // leave, absences and shifts keep using ALL of a person's data — a Springer working in
-      // another salon is never shown as missing. The filter only removes rows, it never adds one
-      // outside the reach resolved above.
+      // Issue #84 (D-03/D-06/D-15), Issue #85 (D-04/D-05): under a salon filter, MEMBERSHIP follows
+      // the entry or the Stammsalon (a person is listed when they recorded time in the salon this
+      // week or are homed there on at least one week day) and HOURS follow the entry's salon.
+      // For a WHOLE-TENANT caller presence, holidays, leave, absences and shifts keep using ALL of
+      // a person's data — a Springer working in another salon is never shown as missing — and the
+      // filter only removes rows. For a SCOPED caller the entries come from the Unterbau's
+      // in-scope set only (the entry-based population is already part of `employees`), so the
+      // filter narrows that population further and never reveals an entry outside the reach.
       let shownEmployees = employees;
       if (filterSalonId !== null) {
         const homeByPerson = await homeSalonsForDays(
@@ -590,7 +639,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
           weekDays[6],
         );
         const enteredInSalon = new Set(
-          timeEntries.filter((e) => e.salonId === filterSalonId).map((e) => e.employeeId),
+          (inScopeRows ?? timeEntries)
+            .filter((e) => e.salonId === filterSalonId)
+            .map((e) => e.employeeId),
         );
         shownEmployees = employees.filter((emp) => {
           if (enteredInSalon.has(emp.id)) return true;
@@ -599,12 +650,34 @@ export async function dashboardRoutes(app: FastifyInstance) {
         });
       }
 
+      // Scoped callers: the in-scope rows by person-day (Issue #85, D-04).
+      const inScopeByPersonDay = new Map<string, typeof timeEntries>();
+      for (const row of inScopeRows ?? []) {
+        const key = personDayKey(row.employeeId, dateStrInTz(row.date, tz));
+        const list = inScopeByPersonDay.get(key);
+        if (list) list.push(row);
+        else inScopeByPersonDay.set(key, [row]);
+      }
+
+      // Issue #85 (D-05): per person-day, how many valid entries of a Stammsalon person lie
+      // outside the caller's reach. They are never shown as hours, times or a live clock-in; they
+      // only mark the day as worked elsewhere and keep the person from reading as absent. A
+      // population-only person has no row in `timeEntries`, so its count is always 0.
+      const hiddenCounts =
+        inScopeRows !== null
+          ? outOfScopeValidCounts(timeEntries, inScopeRows, (e) => dateStrInTz(e.date, tz))
+          : new Map<string, number>();
+
       // Pro Mitarbeiter die Woche aufbereiten
       const team = shownEmployees.map((emp) => {
         const days = weekDays.map((dayStr) => {
-          const dayEntries = timeEntries.filter(
-            (e) => e.employeeId === emp.id && dateStrInTz(e.date, tz) === dayStr,
-          );
+          const hiddenValid = hiddenCounts.get(personDayKey(emp.id, dayStr)) ?? 0;
+          const dayEntries =
+            inScopeRows !== null
+              ? (inScopeByPersonDay.get(personDayKey(emp.id, dayStr)) ?? [])
+              : timeEntries.filter(
+                  (e) => e.employeeId === emp.id && dateStrInTz(e.date, tz) === dayStr,
+                );
           // workedMinutes: only valid (non-invalid) entries count; under a salon filter only the
           // entries of that salon, and `workedElsewhere` marks a day with valid time elsewhere.
           let workedMinutes = 0;
@@ -707,10 +780,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
           const isFuture = !isDue;
 
           // Build typed inputs for the presence resolver
-          const presenceEntries: PresenceEntry[] = dayEntries.map((e) => ({
-            endTime: e.endTime,
-            isInvalid: e.isInvalid,
-          }));
+          // Scoped callers: hidden valid time enters as CLOSED stand-ins, so an out-of-scope open
+          // entry never reads as "clocked_in" (Issue #85, D-05).
+          const presenceEntries: PresenceEntry[] = presenceEntriesWithStandIns(
+            dayEntries,
+            hiddenValid,
+          );
 
           const presenceLeave: PresenceLeave | null = effectiveLeave
             ? {
@@ -723,13 +798,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
           const empHolidayName = holidaysByEmployee.get(emp.id)?.get(dayStr) ?? null;
 
+          // A row listed only by an in-scope entry is never "missing": its absence reasons (leave,
+          // sickness, Berufsschule, work in another salon) are held by the Stammsalon and
+          // withheld, so "Fehlt" would be a claim the response cannot back (Issue #548). An
+          // in-scope shift that is not yet due still reads "scheduled".
+          const entryOnlyRow = inScopeRows !== null && !stammSet.has(emp.id);
           const { status, reason } = resolvePresenceState({
             entries: presenceEntries,
             leave: presenceLeave,
             absence: presenceAbsence,
             isWorkday,
             isFuture,
-            hasShift: shift !== null,
+            hasShift: entryOnlyRow ? shift !== null && !isDue : shift !== null,
             isHoliday: empHolidayName !== null,
             holidayName: empHolidayName,
           });
@@ -750,14 +830,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
             shift,
             isWorkday,
             expectedHours,
-            ...(filterSalonId !== null ? { workedElsewhere } : {}),
+            ...(filterSalonId !== null || inScopeRows !== null
+              ? { workedElsewhere: workedElsewhere || hiddenValid > 0 }
+              : {}),
           };
         });
 
         return {
           id: emp.id,
           name: `${emp.firstName} ${emp.lastName}`,
-          employeeNumber: emp.employeeNumber,
+          // A person listed only by an in-scope entry is not a Stammsalon person: no number.
+          employeeNumber:
+            teamWeekScopedIds === "all" || stammSet.has(emp.id) ? emp.employeeNumber : null,
           days,
         };
       });
@@ -782,10 +866,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const today = todayInTz(tz);
       const todayStr = dateStrInTz(today, tz);
 
-      // Phase 91b Plan 06 (Issue #91), D-09/D-10/D-13 — same resolver-choice justification as
-      // GET /team-week above: `employeeScopeFor` only accepts an employeeId/employeeIds target, so
-      // the employee-level `resolveStammsalonScopedEmployeeIds` (Stichtag = today) is the only
-      // resolver that composes with the 3 `employeeScopeFor` call sites below.
+      // Phase 91b Plan 06 (Issue #91), D-09/D-10/D-13, Issue #85 (D-04) — the Stammsalon persons
+      // (employee-level `resolveStammsalonScopedEmployeeIds`, Stichtag = today) feed every
+      // planning read below, because `employeeScopeFor` only accepts an employeeId/employeeIds
+      // target. The per-entry rule is layered on top: persons with an in-scope entry today join
+      // the population, and what a scoped caller sees of a person's day is the in-scope entries.
       const attendanceScopeReach = await resolveAccessReach(
         app.prisma,
         access,
@@ -802,19 +887,50 @@ export async function dashboardRoutes(app: FastifyInstance) {
               today,
             );
 
+      // Issue #85 (D-04): for a scoped caller the entry decides. The Unterbau names today's
+      // in-scope entries; the population is the Stammsalon persons (as before) PLUS every person
+      // with at least one of those entries, and the status of such a person comes from them only.
+      let inScopeRows: Awaited<ReturnType<typeof getRecordedWorkEntriesByIds>> | null = null;
+      if (attendanceScopeReach.kind === "scoped") {
+        const inScopeIds = await scopedTimeEntryIds(
+          app.prisma,
+          tenantId,
+          attendanceScopeReach,
+          today,
+          today,
+        );
+        // "all" is whole-tenant only; for a scoped reach it cannot occur, and fails closed.
+        inScopeRows = await getRecordedWorkEntriesByIds(
+          app.prisma,
+          tenantId,
+          inScopeIds === "all" ? [] : inScopeIds,
+        );
+      }
+      const attendancePopulationIds =
+        attendanceScopedIds === "all"
+          ? "all"
+          : [...attendanceScopedIds, ...distinctEmployeeIds(inScopeRows ?? [])];
+
       // Bulk fetch 1 — active employees for this tenant
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
           exitDate: null,
           user: { isActive: true },
-          ...(attendanceScopedIds !== "all" ? { id: { in: attendanceScopedIds } } : {}),
+          ...(attendancePopulationIds !== "all" ? { id: { in: attendancePopulationIds } } : {}),
         },
         select: { id: true, firstName: true, lastName: true, employeeNumber: true },
         orderBy: { lastName: "asc" },
       });
 
-      const employeeIds = employees.map((e) => e.id);
+      // Planning data (holidays, leave, absences, contracts) belongs to the Stammsalon persons
+      // only: a person listed purely by an in-scope entry carries none of it.
+      const attendanceStammSet = new Set(attendanceScopedIds === "all" ? [] : attendanceScopedIds);
+      const employeeIds = (
+        attendanceScopedIds === "all"
+          ? employees
+          : employees.filter((e) => attendanceStammSet.has(e.id))
+      ).map((e) => e.id);
 
       // Holidays by work location, for today (Phase 71b, issue #71) — per employee, fed with a
       // dedicated T2 read (see the team-week handler above for why this is separate from
@@ -880,8 +996,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
       });
 
       // Build lookup maps (employeeId → first match)
+      // Scoped callers: the status of every person is built from the in-scope rows (Issue #85).
       const entriesByEmp = new Map<string, typeof timeEntries>();
-      for (const e of timeEntries) {
+      for (const e of inScopeRows ?? timeEntries) {
         const list = entriesByEmp.get(e.employeeId) ?? [];
         list.push(e);
         entriesByEmp.set(e.employeeId, list);
@@ -903,6 +1020,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       // DOW for today (needed once — all employees share the same day)
       const dow = getDayOfWeekInTz(today, tz);
+
+      // Issue #85 (D-05): valid entries of a Stammsalon person today that lie outside the reach.
+      // For today this is empty by construction (the Stichtag is the entry date), but the generic
+      // path is used rather than a special case. A population-only person has no row in
+      // `timeEntries`, so its count is always 0.
+      const attendanceHiddenCounts =
+        inScopeRows !== null
+          ? outOfScopeValidCounts(timeEntries, inScopeRows, () => todayStr)
+          : new Map<string, number>();
 
       // Summary counters
       let present = 0;
@@ -937,10 +1063,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
         });
 
         const rawEntries = entriesByEmp.get(emp.id) ?? [];
-        const presenceEntries: PresenceEntry[] = rawEntries.map((e) => ({
-          endTime: e.endTime,
-          isInvalid: e.isInvalid,
-        }));
+        // Hidden valid time of a Stammsalon person enters as a CLOSED stand-in: the day reads as
+        // present, and an out-of-scope open entry never reads as "clocked_in" (D-05).
+        const presenceEntries: PresenceEntry[] = presenceEntriesWithStandIns(
+          rawEntries,
+          attendanceHiddenCounts.get(personDayKey(emp.id, todayStr)) ?? 0,
+        );
 
         const rawLeave = leaveByEmp.get(emp.id) ?? null;
         const presenceLeave: PresenceLeave | null = rawLeave
@@ -978,7 +1106,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
         return {
           id: emp.id,
           name: `${emp.firstName} ${emp.lastName}`,
-          employeeNumber: emp.employeeNumber,
+          // A person listed only by an in-scope entry is not a Stammsalon person: no number.
+          employeeNumber:
+            attendanceScopedIds === "all" || attendanceStammSet.has(emp.id)
+              ? emp.employeeNumber
+              : null,
           status,
           reason,
         };
@@ -1682,6 +1814,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
   // D-13): Ist is the recorded working time of closed, valid entries in that salon through the
   // tenant-local yesterday, sick days follow the Stammsalon of each counted day, and Soll is never
   // computed — it is a contract figure of a person, not divisible by salon.
+  //
+  // Issue #85 (D-04/D-06): a SCOPED caller's figures never contain an out-of-scope minute. The
+  // account Ist (`computeMonthReportFigures`) covers every salon of a person, so it is used for a
+  // person-month only when every non-deleted WORK entry of that person in that month is in scope;
+  // otherwise — and always for a person who is listed only by an in-scope entry — Ist is the sum
+  // of the person's in-scope, valid, closed entries through tenant-local yesterday. The response
+  // names the basis (`SCOPE_ENTRIES`) and withholds Soll then, because Ist and Soll must never
+  // come from different populations. Sick days stay over the Stammsalon persons: leave belongs to
+  // the Stammsalon, a person listed only by an entry never adds one.
   app.get("/team-trend", {
     schema: {
       tags: ["Dashboard"],
@@ -1690,8 +1831,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
       description:
         "Per month of the window: the worked minutes and the target minutes from the working-time " +
         "account and the sick days from the absence context, over the persons in the caller's " +
-        "team-overview reach. Target minutes only with overtime:read covering every shown person " +
-        "and never together with a salon filter.",
+        "team-overview reach. For a caller with a partial reach the worked minutes of a person " +
+        "come from the account only if every entry of the person in that month is in the reach, " +
+        "otherwise they are the sum of the visible entries (workedBasis SCOPE_ENTRIES). Target " +
+        "minutes only with overtime:read covering every shown person, never together with a salon " +
+        "filter and never when part of the worked minutes came from visible entries.",
     },
     preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
     handler: async (req, reply) => {
@@ -1702,7 +1846,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       const reach = await resolveAccessReach(app.prisma, access, "team-overview:read:ZUGEWIESEN");
       // D-02/D-16: validated before any data read; one body for every rejection cause.
-      const filter = await resolveTeamSalonFilter(app.prisma, tenantId, reach, salonId);
+      const filter = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
       if (!filter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
       const filterSalonId = filter.salonId;
       const scopedAccess = { ...access, reach };
@@ -1717,6 +1861,61 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       // The window: the `months` calendar months ending with the tenant-local current month.
       const today = todayInTz(tz);
+      const dayString = (d: Date) => d.toISOString().slice(0, 10);
+
+      // Issue #85 (D-04): for a scoped caller the Unterbau names the in-scope entries of the whole
+      // window once; they are bucketed by month and decide the population beyond the Stammsalon
+      // persons and every Ist that does not come from the account.
+      const scopedRowsByMonth = new Map<
+        string,
+        Awaited<ReturnType<typeof getRecordedWorkEntriesByIds>>
+      >();
+      const scopedActiveIds = new Set<string>();
+      if (reach.kind === "scoped") {
+        const first = new Date(
+          Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - (months - 1), 1),
+        );
+        const windowFirstDay = monthDateRange(
+          first.getUTCFullYear(),
+          first.getUTCMonth() + 1,
+          tz,
+        ).firstDay;
+        const windowLastDay = monthDateRange(
+          today.getUTCFullYear(),
+          today.getUTCMonth() + 1,
+          tz,
+        ).lastDay;
+        const inScopeIds = await scopedTimeEntryIds(
+          app.prisma,
+          tenantId,
+          reach,
+          windowFirstDay,
+          windowLastDay,
+        );
+        // "all" is whole-tenant only; for a scoped reach it cannot occur, and fails closed.
+        const rows = await getRecordedWorkEntriesByIds(
+          app.prisma,
+          tenantId,
+          inScopeIds === "all" ? [] : inScopeIds,
+        );
+        for (const row of rows) {
+          const monthKey = dayString(row.date).slice(0, 7);
+          const list = scopedRowsByMonth.get(monthKey);
+          if (list) list.push(row);
+          else scopedRowsByMonth.set(monthKey, [row]);
+        }
+        const active = await app.prisma.employee.findMany({
+          where: {
+            tenantId,
+            exitDate: null,
+            user: { isActive: true },
+            id: { in: distinctEmployeeIds(rows) },
+          },
+          select: { id: true },
+        });
+        for (const p of active) scopedActiveIds.add(p.id);
+      }
+
       const window: Array<{
         year: number;
         month: number;
@@ -1724,6 +1923,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
         firstDay: Date;
         lastDay: Date;
         ids: string[];
+        /** Active persons listed only by an in-scope entry of the month (scoped callers). */
+        entryOnlyIds: string[];
       }> = [];
       for (let back = months - 1; back >= 0; back--) {
         const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - back, 1));
@@ -1746,6 +1947,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
           select: { id: true },
         });
         const ids = people.map((p) => p.id).sort((a, b) => a.localeCompare(b));
+        const key = `${year}-${String(month).padStart(2, "0")}`;
+        const stammIds = new Set(ids);
+        const entryOnlyIds = distinctEmployeeIds(scopedRowsByMonth.get(key) ?? []).filter(
+          (id) => scopedActiveIds.has(id) && !stammIds.has(id),
+        );
 
         if (overtimeReach && overtimeReach.kind === "scoped") {
           const covered = await resolveStammsalonScopedEmployeeIds(
@@ -1754,20 +1960,22 @@ export async function dashboardRoutes(app: FastifyInstance) {
             overtimeReach,
             end,
           );
-          if (covered !== "all" && !ids.every((id) => covered.includes(id))) sollCovered = false;
+          if (covered !== "all" && ![...ids, ...entryOnlyIds].every((id) => covered.includes(id))) {
+            sollCovered = false;
+          }
         }
         window.push({
           year,
           month,
-          key: `${year}-${String(month).padStart(2, "0")}`,
+          key,
           firstDay,
           lastDay,
           ids,
+          entryOnlyIds,
         });
       }
 
       // D-13: exact per-day Stammsalon of every shown person, one Unterbau call for the window.
-      const dayString = (d: Date) => d.toISOString().slice(0, 10);
       const homeByPerson =
         filterSalonId === null
           ? null
@@ -1786,10 +1994,61 @@ export async function dashboardRoutes(app: FastifyInstance) {
         shouldMinutes: number | null;
         sickDays: number;
       }> = [];
-      for (const { year, month, key, firstDay, lastDay, ids } of window) {
+      let usedScopeEntries = false;
+      for (const { year, month, key, firstDay, lastDay, ids, entryOnlyIds } of window) {
         let worked = 0;
         let should = 0;
-        if (filterSalonId === null) {
+        if (reach.kind === "scoped") {
+          // Issue #85 (D-04/D-06): only visible entries, valid and closed, through tenant-local
+          // yesterday (today never counts, #438). The fold step is the #79 kernel's.
+          const monthRows = scopedRowsByMonth.get(key) ?? [];
+          const scopeSum = (personIds: ReadonlySet<string>) =>
+            monthRows
+              .filter(
+                (e) =>
+                  personIds.has(e.employeeId) &&
+                  !e.isInvalid &&
+                  e.endTime !== null &&
+                  e.date.getTime() <= yesterday.getTime() &&
+                  (filterSalonId === null || e.salonId === filterSalonId),
+              )
+              .reduce((sum: number, e) => addWorkingMinutes(sum, e), 0);
+
+          if (filterSalonId !== null) {
+            worked = scopeSum(new Set([...ids, ...entryOnlyIds]));
+          } else {
+            // The account Ist only for a person whose every entry of the month is in scope.
+            const stammRows =
+              ids.length > 0
+                ? await getRecordedWorkEntriesInRange(
+                    app.prisma,
+                    employeeScopeFor(scopedAccess, { employeeIds: ids }),
+                    firstDay,
+                    lastDay,
+                  )
+                : [];
+            const idSet = new Set(ids);
+            const covered = fullyCoveredPersons(
+              stammRows,
+              monthRows.filter((e) => idSet.has(e.employeeId)),
+              ids,
+            );
+            const sumOver = new Set<string>(entryOnlyIds);
+            for (const id of ids) {
+              if (covered.has(id)) {
+                const figures = await computeMonthReportFigures(app, id, year, month);
+                worked += figures.workedMinutes;
+                should += figures.expectedMinutes;
+              } else {
+                sumOver.add(id);
+              }
+            }
+            if (sumOver.size > 0) {
+              usedScopeEntries = true;
+              worked += scopeSum(sumOver);
+            }
+          }
+        } else if (filterSalonId === null) {
           for (const id of ids) {
             const figures = await computeMonthReportFigures(app, id, year, month);
             worked += figures.workedMinutes;
@@ -1849,16 +2108,26 @@ export async function dashboardRoutes(app: FastifyInstance) {
         });
       }
 
-      // D-05: under a filter Soll is never shown, whatever the caller may otherwise see.
-      const sollVisible = canSeeSoll && sollCovered && filterSalonId === null;
+      // D-05: under a filter Soll is never shown, whatever the caller may otherwise see. Issue #85
+      // (D-06): nor when part of the Ist came from visible entries — Ist and Soll must not mix.
+      const workedBasis =
+        filterSalonId !== null
+          ? ("SALON_ENTRIES" as const)
+          : usedScopeEntries
+            ? ("SCOPE_ENTRIES" as const)
+            : ("ACCOUNT" as const);
+      const sollVisible =
+        canSeeSoll && sollCovered && filterSalonId === null && workedBasis === "ACCOUNT";
       return {
         salonId: filterSalonId,
-        workedBasis: filterSalonId === null ? ("ACCOUNT" as const) : ("SALON_ENTRIES" as const),
+        workedBasis,
         sollUnavailableReason: sollVisible
           ? null
-          : canSeeSoll && sollCovered
-            ? ("SALON_FILTER" as const)
-            : ("NO_PERMISSION" as const),
+          : !canSeeSoll || !sollCovered
+            ? ("NO_PERMISSION" as const)
+            : filterSalonId !== null
+              ? ("SALON_FILTER" as const)
+              : ("SCOPE_ENTRIES" as const),
         months: series.map((m) => ({ ...m, shouldMinutes: sollVisible ? m.shouldMinutes : null })),
       };
     },
@@ -1891,7 +2160,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       const reach = await resolveAccessReach(app.prisma, access, "team-overview:read:ZUGEWIESEN");
       // D-02/D-16: validated before any data read; one body for every rejection cause.
-      const filter = await resolveTeamSalonFilter(app.prisma, tenantId, reach, salonId);
+      const filter = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
       if (!filter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
       const filterSalonId = filter.salonId;
       const scopedAccess = { ...access, reach };
@@ -1963,25 +2232,6 @@ export async function dashboardRoutes(app: FastifyInstance) {
 // tenant's salon, an unknown id, an inactive salon and a salon outside the caller's reach are
 // indistinguishable (T-100-09).
 const TEAM_SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
-
-/**
- * Issue #84 (D-02/D-16) — the salon filter of the team views is a narrowing of the view, never an
- * access boundary (#82 D-05): it must name an ACTIVE salon of the caller's tenant that lies inside
- * the caller's reach for the endpoint's permission, and it can never widen that reach. Runs
- * before any data read. A PERSONS-only reach names no salons and therefore rejects every salon.
- */
-async function resolveTeamSalonFilter(
-  db: FastifyInstance["prisma"],
-  tenantId: string,
-  reach: AccessReach,
-  salonId: string | undefined,
-): Promise<{ ok: true; salonId: string | null } | { ok: false }> {
-  if (salonId === undefined) return { ok: true, salonId: null };
-  const salon = await findSalon(db, tenantId, salonId);
-  if (!salon || !salon.isActive) return { ok: false };
-  if (reach.kind === "scoped" && !reach.salonIds.includes(salon.id)) return { ok: false };
-  return { ok: true, salonId: salon.id };
-}
 
 function round(n: number): number {
   return Math.round(n * 100) / 100;

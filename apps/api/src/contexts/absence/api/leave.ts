@@ -484,6 +484,32 @@ async function resolveScopedEmployeeIdForRead(
   return { ok: true, employeeId };
 }
 
+/**
+ * Issue #85 (Phase 85b Plan 16, owner decision 2026-08-27): may this caller learn the TOTAL saldo
+ * of `employeeId`? Yes for the person themself, and for a caller whose `overtime:read` reach
+ * covers the person (whole tenant, or the Stammsalon rule of `GET /overtime/:employeeId`). A
+ * Salonmanager holds `leave-entitlement:read:ZUGEWIESEN` (which lets the leave dialog address a
+ * selected employee) but no `overtime:read`, so the saldo-derived numbers of
+ * `GET /overtime-balance` are masked for them. The server-side OVERTIME_COMP limit check never
+ * asks this question: it reads the balance itself and is unaffected.
+ */
+async function callerMaySeeSaldoOf(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  employeeId: string,
+): Promise<boolean> {
+  if (employeeId === req.user.employeeId) return true;
+  const overtimeReach = await permissionReach(req, "overtime:read");
+  if (overtimeReach !== "ZUGEWIESEN") return false;
+  const scopeReach = await resolveAccessReach(
+    app.prisma,
+    accessContextFromRequest(req),
+    "overtime:read:ZUGEWIESEN",
+  );
+  const stichtag = req.testNow ?? new Date();
+  return isStammsalonScopeMatch(app.prisma, req.user.tenantId, scopeReach, employeeId, stichtag);
+}
+
 export async function leaveRoutes(app: FastifyInstance) {
   // ── POST /requests  – Antrag stellen ────────────────────────────────────
   app.post("/requests", {
@@ -3496,6 +3522,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       const employeeId = scoped.employeeId;
       if (!employeeId) {
         return {
+          balanceVisible: true,
           balanceHours: 0,
           confirmedMinutes: 0,
           openMonthMinutes: null,
@@ -3518,6 +3545,23 @@ export async function leaveRoutes(app: FastifyInstance) {
         req.user.tenantId,
       );
 
+      // Issue #85 (Phase 85b Plan 16): no saldo-derived number leaves this endpoint for a caller
+      // without `overtime:read` coverage of the person. `isNegativeLimitExceeded` and
+      // `hasClosedMonth` are masked too — the first reveals the sign of the confirmed balance. The
+      // tolerance itself is tenant configuration and stays. Nothing is computed for a masked
+      // response, so no hidden value can leak through a log or a partial branch.
+      if (!(await callerMaySeeSaldoOf(app, req, employeeId))) {
+        return {
+          balanceVisible: false,
+          balanceHours: null,
+          confirmedMinutes: null,
+          openMonthMinutes: null,
+          hasClosedMonth: null,
+          maxNegativeBalanceMinutes: configuredMinutes,
+          isNegativeLimitExceeded: null,
+        };
+      }
+
       let breakdown: OvertimeBalanceBreakdown | null = null;
       try {
         breakdown = await computeOvertimeBalanceBreakdown(app, employeeId);
@@ -3531,6 +3575,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       if (breakdown !== null) {
         return {
+          balanceVisible: true,
           // Same 2-decimal rounding GET /overtime/:employeeId applies, so the two
           // endpoints cannot disagree on the same employee.
           balanceHours: Math.round(breakdown.totalHours * 100) / 100,
@@ -3552,6 +3597,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       try {
         const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, req.user.tenantId);
         return {
+          balanceVisible: true,
           balanceHours,
           confirmedMinutes: confirmed.minutes,
           openMonthMinutes: null,
@@ -3566,6 +3612,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           "GET /leave/overtime-balance: confirmed carry-over fallback failed",
         );
         return {
+          balanceVisible: true,
           balanceHours,
           confirmedMinutes: 0,
           openMonthMinutes: null,

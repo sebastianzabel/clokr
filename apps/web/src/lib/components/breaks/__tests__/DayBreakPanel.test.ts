@@ -7,9 +7,13 @@ import { describe, it, expect, vi } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import DayBreakPanel from "../DayBreakPanel.svelte";
-import type { DayCheck, DayCheckWarning } from "$lib/breaks/day-break-violation";
+import type {
+  FullDayCheck,
+  WithheldDayCheck,
+  DayCheckWarning,
+} from "$lib/breaks/day-break-violation";
 
-function check(over: Partial<DayCheck> = {}): DayCheck {
+function check(over: Partial<FullDayCheck> = {}): FullDayCheck {
   return {
     date: "2026-03-10",
     detail: "full",
@@ -54,8 +58,32 @@ function check(over: Partial<DayCheck> = {}): DayCheck {
   };
 }
 
-const redacted = (over: Partial<DayCheck> = {}) =>
-  check({ detail: "redacted", entries: null, gaps: null, dayBreaks: null, ...over });
+// Issue #85 D-07: the shape the API returns for a partially covered day (85b-06) — every number
+// and the finding flags are null, one neutral hint is the only content.
+const HINT_TEXT =
+  "Für diesen Tag liegt ein Prüfhinweis vor; die Klärung erfolgt über den Stammsalon.";
+const redacted = (over: Partial<WithheldDayCheck> = {}): WithheldDayCheck => ({
+  date: "2026-03-10",
+  detail: "redacted",
+  crossSalon: true,
+  netWorkedMinutes: null,
+  totalBreakMinutes: null,
+  requiredBreakMinutes: null,
+  breakShortfall: null,
+  maxDailyExceeded: null,
+  breakFinding: null,
+  positionUnknown: null,
+  warnings: [{ code: "FINDING_WITHHELD", severity: "warning", message: HINT_TEXT, hint: true }],
+  acknowledged: null,
+  locked: false,
+  mayAcknowledge: false,
+  mayRecordDayBreak: false,
+  acknowledgement: null,
+  entries: null,
+  gaps: null,
+  dayBreaks: null,
+  ...over,
+});
 
 describe("DayBreakPanel", () => {
   it("renders nothing without a cross-salon finding and without a recorded day break", () => {
@@ -89,15 +117,44 @@ describe("DayBreakPanel", () => {
     expect(screen.getAllByTestId("day-break-gap")).toHaveLength(1);
   });
 
-  it("shows no entry or gap rows on a redacted day, only the note and the totals", () => {
+  // Issue #85 D-07 (amended; the former expectation pinned the totals line for a
+  // redacted day): a redacted day carries no totals, only the date, the neutral hint and the note.
+  it("shows a redacted day as date, neutral hint and out-of-scope note only", () => {
     const { container } = renderWithTheme(DayBreakPanel, { check: redacted() });
+    expect(screen.getByTestId("day-break-panel")).toBeTruthy();
     expect(screen.queryByTestId("day-break-entry")).toBeNull();
     expect(screen.queryByTestId("day-break-gap")).toBeNull();
     const text = container.textContent ?? "";
+    expect(text).toContain("10.03.2026");
+    expect(screen.getByTestId("day-break-hint").textContent).toContain(HINT_TEXT);
     expect(text).toContain(
       "Einträge außerhalb des eigenen Zuständigkeitsbereichs werden nicht angezeigt.",
     );
-    expect(text).toContain("Insgesamt 8,0 h gearbeitet");
+    expect(text).not.toContain("Insgesamt");
+    expect(text).not.toContain("§");
+    expect(screen.queryByTestId("day-break-warning")).toBeNull();
+    expect(container.querySelector(".badge")).toBeNull();
+    expect(container.querySelector("button")).toBeNull();
+  });
+
+  it("renders a redacted day without any figure, also with every action flag set", () => {
+    const { container } = renderWithTheme(DayBreakPanel, {
+      check: redacted({ mayAcknowledge: true, mayRecordDayBreak: true, crossSalon: false }),
+      onAcknowledge: vi.fn(),
+      onAddBreak: vi.fn(),
+      onDeleteBreak: vi.fn(),
+    });
+    // Not vacuous: the panel is there, the text scan below looks at something.
+    expect(screen.getByTestId("day-break-panel")).toBeTruthy();
+    expect(screen.getByTestId("day-break-hint").textContent).toContain(HINT_TEXT);
+    const text = container.textContent ?? "";
+    // The date itself is written dd.mm.yyyy; hour, minute and clock figures must be absent.
+    expect(text).not.toMatch(/\d{1,2}:\d{2}/);
+    expect(text).not.toMatch(/\d+([.,]\d)?\s?(h|Min)\b/);
+    expect(screen.queryByTestId("day-break-ack")).toBeNull();
+    expect(screen.queryByTestId("day-break-add")).toBeNull();
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector("form")).toBeNull();
   });
 
   it("the redacted variant's rendered text contains no HH:MM pattern", () => {
@@ -212,7 +269,7 @@ describe("DayBreakPanel", () => {
   });
 
   /** One entry in one salon, a Satz-2/3 finding, nothing else. */
-  const single = (over: Partial<DayCheck> = {}) =>
+  const single = (over: Partial<FullDayCheck> = {}) =>
     check({
       crossSalon: false,
       breakShortfall: false,
@@ -317,20 +374,6 @@ describe("DayBreakPanel", () => {
       }),
     });
     expect(screen.queryByTestId("day-break-panel")).toBeNull();
-  });
-
-  it("renders the redacted server warnings without any time, and offers no action", () => {
-    const { container } = renderWithTheme(DayBreakPanel, {
-      check: redacted({
-        warnings: [warning({ message: "§ 4 Satz 3 ArbZG: 6 Std. 10 Min am Stück ohne Ruhepause" })],
-      }),
-      onAcknowledge: vi.fn(),
-      onAddBreak: vi.fn(),
-    });
-    expect(screen.getAllByTestId("day-break-warning")).toHaveLength(1);
-    expect(container.textContent ?? "").not.toMatch(/\d{1,2}:\d{2}/);
-    expect(screen.queryByTestId("day-break-ack")).toBeNull();
-    expect(screen.queryByTestId("day-break-add")).toBeNull();
   });
 
   it("does not repeat the 10-hour sentence when the server already sent its § 3 warning", () => {

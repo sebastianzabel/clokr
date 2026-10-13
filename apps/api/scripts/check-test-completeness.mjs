@@ -711,8 +711,31 @@ import { readFileSync } from "node:fs";
 // and `time-entry-day-lookup-guard` (6 -> 6) kept their case count. Same lower-bound convention as
 // above; not a re-measure-to-actual sweep.
 // Merged after Phase 84 (2026-10-13): Phase 84's 366/6254 plus Phase 87b's +3 files / +40 cases.
-const MIN_FILES = 369;
-const MIN_TESTS = 6294;
+//
+// Phase 85b (issues #85 and #547), 2026-10-13, merged with origin/main @ c8c3154c (#550): 11 new
+// test files - ten of Phase 85b (`src/__tests__/whole-tenant-frozen-85`, `employees-list-scope-85`,
+// `time-entries-salon-view-85`, `write-warnings-scope-85`, `cross-salon-springer-85`,
+// `src/composition/__tests__/team-entry-scope`, `dashboard-entry-scope-85`,
+// `src/contexts/platform/__tests__/resolve-salon-in-reach-85` and
+// `src/contexts/time-tracking/__tests__/withheld-finding-85`, `warning-visibility-85`) and one that
+// arrived with main (#550, `src/__tests__/create-test-salon-created-at-543`) - MIN_FILES rises from
+// 369 to 380. MIN_TESTS rises from 6294 to 6431: +137 cases, measured by counting `it(` /
+// `it.each(` per file in the blob at the phase base 4e7b1311 vs HEAD - Phase 85b new files 5, 11,
+// 16, 11, 31, 11, 16, 6, 3, 6 (= 116); #550 new file 12; edited files
+// `src/contexts/time-tracking/__tests__/facade-time-entries` 19 -> 25 (+6, the by-id read),
+// `cross-salon-break-notifications-80` 25 -> 26 (+1), `break-finding-notice` 11 -> 12 (+1) and
+// `src/contexts/time-tracking/api/__tests__/day-break-checks` 31 -> 32 (+1); the edited files
+// `lint-facade-signatures`, `dashboard-salon-manipulation-84`, `placement-warnings-511`,
+// `time-entry-salon`, `holiday-resolution` and `salon-couplings` kept their source case count
+// (assertions changed or cases rewritten 1:1). Same lower-bound convention as above (a case that
+// loops over data counts once in the source and more in the reporter); not a re-measure-to-actual
+// sweep. The full-suite actuals are measured in plan 85b-14.
+// Issue #548 (2026-10-13): one new test FILE, `src/composition/__tests__/dashboard-shift-scope-548.test.ts`
+// (8 cases) — MIN_FILES rises from 380 to 381 and MIN_TESTS from 6431 to 6439. The edited file
+// `dashboard-entry-scope-85.test.ts` changed only in its header docblock (case count unchanged).
+// Same lower-bound convention as above; not a re-measure-to-actual sweep.
+const MIN_FILES = 381;
+const MIN_TESTS = 6439;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

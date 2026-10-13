@@ -97,6 +97,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    own ─────────────────────────────────────────────────────────────────────────────────
   "src/composition/dashboard.ts": "komposition", // 11 models read across contexts by design (D-17)
   "src/composition/reports.ts": "komposition", // 7 models read across contexts by design (D-17)
+  "src/composition/team-entry-scope.ts": "komposition", // Issue #85 (D-04/D-05) — partitions entry rows by the Unterbau's in-scope id set; owns no model, carries no rule
   "src/composition/pdf.ts": "komposition", // pure PDF-layout rendering of pre-computed data; sole caller is reports.ts; no Prisma access, no Fachregel
   "src/composition/activity.ts": "komposition", // dashboard "Aktivität" widget backend; ADMIN branch reads AuditLog (platform-owned), EMPLOYEE/MANAGER branch aggregates timeEntry/leaveRequest/saldoSnapshot through facades (Phase 243 D-13, overruling this file's earlier D-17-as-enumeration argument: D-17 was an enumeration, not a criterion — the operative rule is "owns no model, carries no Fachregel", already applied to pdf.ts above; activity.ts owns no model and aggregates across three contexts' facades, so it fits the same bucket)
   "src/composition/data-retention.ts": "komposition", // annual DSGVO/legal retention job driven by TenantConfig.dataRetentionYears; touches TimeEntry/LeaveRequest/Absence with equal weight (3 separate updateMany, no single primary subject) plus an AuditLog purge — no single business context owns a generic cross-context retention policy (Phase 243 D-01/D-13: same substance as the prior unterbau reasoning, verdict changed to komposition, which is what "no context owns it" actually describes)
@@ -207,6 +208,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/clock-salon-choice.ts": "zeiterfassung", // Issue #87 (Phase 87b) — clockSalonChoice, the one clock-salon decision; reads the Unterbau only through the platform index
   "src/contexts/time-tracking/break-finding-days.ts": "zeiterfassung", // Issue #511 (D-12) — month-close / cron / dry-run detector over TimeEntry, Break, DayBreak and DayBreakAck
   "src/contexts/time-tracking/break-finding-notice.ts": "zeiterfassung", // Issue #80 (D-11) / #511 (D-13) — pure notification texts for break findings
+  "src/contexts/time-tracking/withheld-finding.ts": "zeiterfassung", // Issue #85 (D-07, D-12) — the one neutral wording for a finding withheld from a reader whose reach is partial; pure leaf constants, no model access
+  "src/contexts/time-tracking/warning-visibility.ts": "zeiterfassung", // Issue #85 (D-12) — which ArbZG warnings of a save response the writing caller may see; reads TimeEntry (own context) and the Unterbau scope
   "src/contexts/time-tracking/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry
   "src/contexts/time-tracking/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
   "src/contexts/time-tracking/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization
