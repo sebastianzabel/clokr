@@ -757,8 +757,9 @@ import { readFileSync } from "node:fs";
 // (+1), `src/__tests__/access-context-missing` 3 -> 5 (+2), `activity-auth-neutrality` 6 -> 10 (+4, the
 // amendments register), `src/contexts/scheduling/api/__tests__/shifts-my-week` 10 -> 11 (+1),
 // `leave-days-work-location` 4 -> 5 (+1) and `operator-tenant-boundary-sweep-88` 7 -> 8 (+1); the edited
-// files `tenant-deactivation-88` (19 -> 19, one title) and `src/contexts/platform/__tests__/compat-role`
-// (38 -> 38, one case rewritten 1:1) kept their case count. Same lower-bound convention as above (a
+// files `tenant-deactivation-88` (19 -> 19, one title), `src/contexts/platform/__tests__/compat-role`
+// (38 -> 38, one case rewritten 1:1) and `karenz-overrun` (one case rewritten 1:1, found by the full suite)
+// kept their case count. Same lower-bound convention as above (a
 // looping case counts once in the source and more in the reporter); not a re-measure-to-actual sweep.
 const MIN_FILES = 398;
 const MIN_TESTS = 6674;
