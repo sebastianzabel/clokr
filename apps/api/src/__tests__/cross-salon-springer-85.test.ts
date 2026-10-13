@@ -29,9 +29,15 @@
  * Mutation proofs on `scopedTimeEntryIds` in `contexts/platform/scope-filter.ts`, recorded here
  * (not re-run by CI; each change restored from a `cp` backup, `cmp` and `git diff --quiet` clean):
  * M1 "person-level, too much" - the entry-salon branch matches EVERY entry of an employee who has
- *    ANY entry in a reach salon: (red names recorded in the follow-up commit)
+ *    ANY entry in a reach salon: 6 red - "(b) ... sees only the two A entries of X, never the B
+ *    entry", "(b) the same holds for Y: only the A entry, with the A minutes", "(b) ... gets the
+ *    A-only sum of X: 137", "(b) the X row carries only the A hours: ...", "(b) ... gets the
+ *    in-scope sum 137 + 149 = 286, ..." and the numeric leak scan "(b) never receives a B-derived
+ *    number, a B entry id or a B end time".
  * M2 "person-level, too little" - the entry-salon branch is dropped (Stammsalon and persons only):
- *    (red names recorded in the follow-up commit)
+ *    7 red - the same five (b) cases as M1 minus the scan, plus "(b) salonId A lists the A entries
+ *    of X and Y, never a B entry" and "(b) X is listed present by the A entry of today, without an
+ *    employee number" (the A part is lost on every path: too little).
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
