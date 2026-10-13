@@ -4,6 +4,7 @@
   allowed effective dates; this dialog only chooses inside that preview: one checkbox per contract
   (individual contracts start unticked), one month-first from the server's list. Nothing is saved
   until the admin confirms; a stale preview (409) or any other rejection stays inside the dialog.
+  With no candidate at all the dialog says so and offers to save the defaults alone (IN-03).
 -->
 <script lang="ts">
   import { untrack } from "svelte";
@@ -30,9 +31,11 @@
     loadPreview: (effectiveFrom?: string) => Promise<BulkApplyPreview>;
     /** Saves the defaults together with the selection; rejects with the server's error. */
     onConfirm: (selection: BulkApplySelection) => Promise<void>;
+    /** Saves the defaults WITHOUT the bulk apply and clears the checkbox; used when nothing is affected. */
+    onSaveDefaultsOnly: () => Promise<void>;
   }
 
-  let { open = $bindable(), loadPreview, onConfirm }: Props = $props();
+  let { open = $bindable(), loadPreview, onConfirm, onSaveDefaultsOnly }: Props = $props();
 
   let preview = $state<BulkApplyPreview | null>(null);
   let selected = $state<Set<string>>(new Set());
@@ -87,6 +90,7 @@
 
   let selectedCount = $derived(selected.size);
   let canConfirm = $derived(preview !== null && selectedCount > 0 && !loading && !saving);
+  let nothingAffected = $derived(preview !== null && preview.candidates.length === 0);
 
   function toggle(id: string, checked: boolean) {
     const next = new Set(selected);
@@ -98,6 +102,21 @@
   async function changeDate(value: string) {
     staleText = null;
     await load(value);
+  }
+
+  async function saveDefaultsOnly() {
+    if (saving || loading) return;
+    saving = true;
+    errorText = null;
+    staleText = null;
+    try {
+      await onSaveDefaultsOnly();
+      open = false;
+    } catch (err) {
+      errorText = messageOf(err);
+    } finally {
+      saving = false;
+    }
   }
 
   async function confirm() {
@@ -171,8 +190,8 @@
         <div class="bulk-empty">
           <p class="bulk-empty-title">Keine Verträge zu ändern</p>
           <p class="form-hint">
-            Entfernen Sie den Haken bei „Auch auf bestehende Mitarbeiter anwenden“, um nur die
-            Vorgaben zu speichern.
+            Kein Vertrag ist betroffen. Mit „Nur Vorgaben speichern“ übernehmen Sie die neuen
+            Vorgaben, ohne bestehende Verträge anzufassen.
           </p>
         </div>
       {:else}
@@ -228,6 +247,16 @@
     <button type="button" class="btn btn-ghost" disabled={saving} onclick={() => (open = false)}>
       Abbrechen
     </button>
+    {#if nothingAffected}
+      <button
+        type="button"
+        class="btn btn-primary"
+        disabled={saving || loading}
+        onclick={saveDefaultsOnly}
+      >
+        {saving ? "Wird gespeichert…" : "Nur Vorgaben speichern"}
+      </button>
+    {/if}
     <button type="button" class="btn btn-primary" disabled={!canConfirm} onclick={confirm}>
       {saving ? "Wird übernommen…" : "Änderungen übernehmen"}
     </button>

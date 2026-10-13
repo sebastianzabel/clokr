@@ -520,6 +520,13 @@
     }
   }
 
+  // Review IN-03: the preview found no affected contract. Save the defaults alone — the box is
+  // cleared first, so saveGlobal neither opens the dialog again nor sends the apply fields.
+  async function saveDefaultsOnly() {
+    gApplyToExisting = false;
+    await saveGlobal();
+  }
+
   async function confirmBulk(selection: BulkApplySelection) {
     pendingBulk = selection;
     try {
@@ -1381,7 +1388,12 @@
 
 <!-- Issue #568: preview + explicit confirmation of the bulk apply (own footer snippet, so the
      Modal-footer census of this page is unaffected) -->
-<BulkApplyDialog bind:open={bulkDialogOpen} loadPreview={loadBulkPreview} onConfirm={confirmBulk} />
+<BulkApplyDialog
+  bind:open={bulkDialogOpen}
+  loadPreview={loadBulkPreview}
+  onConfirm={confirmBulk}
+  onSaveDefaultsOnly={saveDefaultsOnly}
+/>
 
 <!-- ── Sonderurlaub: Create Modal ────────────────────────────────────────── -->
 <Modal bind:open={slShowCreate} eyebrow="Neue Regel" title="Sonderurlaubsregel anlegen">

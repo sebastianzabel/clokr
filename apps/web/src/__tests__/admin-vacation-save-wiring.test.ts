@@ -176,6 +176,14 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     );
   });
 
+  it("Review IN-03: the dialog's defaults-only action clears the box before saving, without a selection", () => {
+    expect(PAGE).toContain("onSaveDefaultsOnly={saveDefaultsOnly}");
+    const body = fnBody("async function saveDefaultsOnly");
+    expect(body.indexOf("gApplyToExisting = false;")).toBeGreaterThan(-1);
+    expect(body.indexOf("gApplyToExisting = false;")).toBeLessThan(body.indexOf("saveGlobal()"));
+    expect(body).not.toContain("pendingBulk");
+  });
+
   it("PUT /settings/security carries exactly one key, maxNegativeBalanceMinutes", () => {
     const saveGlobalBody = fnBody("async function saveGlobal");
     const bodyStart = saveGlobalBody.indexOf('api.put("/settings/security", {');

@@ -90,9 +90,15 @@ function preview(over: Partial<BulkApplyPreview> = {}): BulkApplyPreview {
 
 const loadPreview = vi.fn();
 const onConfirm = vi.fn();
+const onSaveDefaultsOnly = vi.fn();
 
 function mount() {
-  return renderWithTheme(BulkApplyDialog, { open: true, loadPreview, onConfirm });
+  return renderWithTheme(BulkApplyDialog, {
+    open: true,
+    loadPreview,
+    onConfirm,
+    onSaveDefaultsOnly,
+  });
 }
 
 function box(name: RegExp) {
@@ -103,8 +109,10 @@ const confirmButton = () => screen.getByRole("button", { name: "Änderungen übe
 beforeEach(() => {
   loadPreview.mockReset();
   onConfirm.mockReset();
+  onSaveDefaultsOnly.mockReset();
   loadPreview.mockResolvedValue(preview());
   onConfirm.mockResolvedValue(undefined);
+  onSaveDefaultsOnly.mockResolvedValue(undefined);
 });
 
 describe("BulkApplyDialog", () => {
@@ -210,7 +218,41 @@ describe("BulkApplyDialog", () => {
     loadPreview.mockResolvedValue(preview({ candidates: [] }));
     mount();
     await screen.findByText("Keine Verträge zu ändern");
-    expect(screen.getByText(/Haken bei „Auch auf bestehende Mitarbeiter anwenden“/)).toBeTruthy();
+    expect(screen.getByText(/Kein Vertrag ist betroffen\./)).toBeTruthy();
     expect((confirmButton() as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  // Review IN-03: with no candidate the dialog is no dead end.
+  describe("nothing affected", () => {
+    const saveOnlyButton = () => screen.getByRole("button", { name: "Nur Vorgaben speichern" });
+
+    it("offers to save the defaults alone and does that without the bulk apply", async () => {
+      loadPreview.mockResolvedValue(preview({ candidates: [] }));
+      mount();
+      await screen.findByText("Keine Verträge zu ändern");
+      expect((saveOnlyButton() as HTMLButtonElement).disabled).toBe(false);
+      await fireEvent.click(saveOnlyButton());
+      await waitFor(() => expect(onSaveDefaultsOnly).toHaveBeenCalledTimes(1));
+      expect(onConfirm).not.toHaveBeenCalled();
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    });
+
+    it("keeps the dialog open and shows the error when saving the defaults is refused", async () => {
+      loadPreview.mockResolvedValue(preview({ candidates: [] }));
+      onSaveDefaultsOnly.mockRejectedValueOnce(new ApiError(400, "Ungültige Vorgaben."));
+      mount();
+      await screen.findByText("Keine Verträge zu ändern");
+      await fireEvent.click(saveOnlyButton());
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("Ungültige Vorgaben.");
+      expect(screen.getByRole("dialog")).toBeTruthy();
+    });
+
+    it("is not offered while there are candidates", async () => {
+      mount();
+      await screen.findByText("Probe Eins");
+      expect(screen.queryByRole("button", { name: "Nur Vorgaben speichern" })).toBeNull();
+      expect(screen.queryByText(/Kein Vertrag ist betroffen\./)).toBeNull();
+    });
   });
 });
