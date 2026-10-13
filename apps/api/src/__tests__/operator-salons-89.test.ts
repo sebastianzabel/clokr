@@ -4,7 +4,7 @@
  * inactive salons included, metadata only) and creates one through POST on the same path (Bundesland
  * and opening hours required, optional coupling, both audit trails in one transaction).
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import {
@@ -453,5 +453,185 @@ describe("POST /api/v1/operator/tenants/:id/salons", () => {
   it("never writes a Studiolution value or touches the legacy store hours", async () => {
     const res = await postSalon(dataA.tenant.id, salonBody({ provider: "STUDIOLUTION" }));
     expect(res.statusCode).toBe(400);
+  });
+});
+
+// ── POST atomicity and contract pins (plan 89-08, task 2) ────────────────────────────────────
+
+describe("POST /api/v1/operator/tenants/:id/salons — atomicity and contract", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Everything one request could have left behind for a salon of this name. */
+  async function leftovers(tenantId: string, name: string) {
+    return {
+      salons: await app.prisma.salon.count({ where: { tenantId, name } }),
+      operatorSalonRows: await app.prisma.operatorAuditLog.count({
+        where: { action: "SALON_CREATED", newValue: { path: ["name"], equals: name } },
+      }),
+      tenantSalonRows: await app.prisma.auditLog.count({
+        where: { entity: "Salon", action: "CREATE", newValue: { path: ["name"], equals: name } },
+      }),
+    };
+  }
+
+  it("rolls the salon and the operator row back when the tenant audit write fails", async () => {
+    const realAudit = app.audit.bind(app);
+    vi.spyOn(app, "audit").mockImplementation(async (entry) => {
+      if (entry.entity === "Salon") throw new Error("forced audit failure (test)");
+      return realAudit(entry);
+    });
+
+    const name = `Audit kaputt ${randomUUID().slice(0, 8)}`;
+    const res = await postSalon(dataA.tenant.id, salonBody({ name }));
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.body)).toEqual({ error: "Interner Serverfehler" });
+    expect(await leftovers(dataA.tenant.id, name)).toEqual({
+      salons: 0,
+      operatorSalonRows: 0,
+      tenantSalonRows: 0,
+    });
+  });
+
+  it("rolls salon, coupling and every audit row back when the coupling audit write fails", async () => {
+    const realAudit = app.audit.bind(app);
+    vi.spyOn(app, "audit").mockImplementation(async (entry) => {
+      if (entry.entity === "SalonCoupling") throw new Error("forced audit failure (test)");
+      return realAudit(entry);
+    });
+
+    const name = `Kopplung kaputt ${randomUUID().slice(0, 8)}`;
+    const branch = `B-${randomUUID().slice(0, 8)}`;
+    const res = await postSalon(
+      dataA.tenant.id,
+      salonBody({ name, coupling: { externalBranchId: branch } }),
+    );
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.body)).toEqual({ error: "Interner Serverfehler" });
+
+    expect(await leftovers(dataA.tenant.id, name)).toEqual({
+      salons: 0,
+      operatorSalonRows: 0,
+      tenantSalonRows: 0,
+    });
+    expect(
+      await app.prisma.salonCoupling.count({
+        where: { tenantId: dataA.tenant.id, externalBranchId: branch },
+      }),
+    ).toBe(0);
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: {
+          action: "SALON_COUPLING_SET",
+          newValue: { path: ["externalBranchId"], equals: branch },
+        },
+      }),
+    ).toBe(0);
+    expect(
+      await app.prisma.auditLog.count({
+        where: {
+          entity: "SalonCoupling",
+          newValue: { path: ["externalBranchId"], equals: branch },
+        },
+      }),
+    ).toBe(0);
+  });
+
+  it("answers a coupling race on the branch index with the mapped 409 and persists nothing", async () => {
+    const taken = `B-${randomUUID().slice(0, 8)}`;
+    const holder = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Race-Halter" });
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: dataA.tenant.id,
+        salonId: holder.id,
+        provider: "PHOREST",
+        externalBranchId: taken,
+      },
+    });
+
+    // Hide the pre-check from the coupling facade so the insert itself hits the unique index, as
+    // a concurrent writer that committed in between would.
+    const original = app.prisma.$transaction.bind(app.prisma);
+    vi.spyOn(app.prisma, "$transaction").mockImplementationOnce(((
+      fn: (tx: unknown) => Promise<unknown>,
+    ) =>
+      original(async (tx) => {
+        const proxy = new Proxy(tx, {
+          get(target, prop) {
+            const value = Reflect.get(target, prop);
+            if (prop === "salonCoupling") {
+              return new Proxy(value as object, {
+                get(t, p) {
+                  if (p === "findFirst") return async () => null;
+                  return Reflect.get(t, p);
+                },
+              });
+            }
+            return value;
+          },
+        });
+        return fn(proxy);
+      })) as never);
+
+    const name = `Rennen ${randomUUID().slice(0, 8)}`;
+    const res = await postSalon(
+      dataA.tenant.id,
+      salonBody({ name, coupling: { externalBranchId: taken } }),
+    );
+    expect(res.statusCode, res.body).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "Diese Filialkennung ist bereits einem anderen Salon zugeordnet.",
+      code: "BRANCH_ALREADY_COUPLED",
+    });
+    expect(await leftovers(dataA.tenant.id, name)).toEqual({
+      salons: 0,
+      operatorSalonRows: 0,
+      tenantSalonRows: 0,
+    });
+    expect(
+      await app.prisma.salonCoupling.count({
+        where: { tenantId: dataA.tenant.id, externalBranchId: taken },
+      }),
+    ).toBe(1);
+  });
+
+  it("pins the key set of every refusal body and of the created salon", async () => {
+    const taken = `B-${randomUUID().slice(0, 8)}`;
+    const holder = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Pin-Halter" });
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: dataA.tenant.id,
+        salonId: holder.id,
+        provider: "PHOREST",
+        externalBranchId: taken,
+      },
+    });
+    const dead = await seedTestData(app, "os89f");
+    try {
+      await app.prisma.tenant.update({
+        where: { id: dead.tenant.id },
+        data: { deactivatedAt: new Date(), deactivatedReason: "test" },
+      });
+
+      const branchTaken = await postSalon(
+        dataA.tenant.id,
+        salonBody({ coupling: { externalBranchId: taken } }),
+      );
+      const tenantDead = await postSalon(dead.tenant.id, salonBody());
+      const tenantUnknown = await postSalon(randomUUID(), salonBody());
+      const created = await postSalon(dataA.tenant.id, salonBody());
+
+      expect(branchTaken.statusCode).toBe(409);
+      expect(Object.keys(JSON.parse(branchTaken.body)).sort(byKey)).toEqual(["code", "error"]);
+      expect(tenantDead.statusCode).toBe(409);
+      expect(Object.keys(JSON.parse(tenantDead.body)).sort(byKey)).toEqual(["code", "error"]);
+      expect(tenantUnknown.statusCode).toBe(404);
+      expect(Object.keys(JSON.parse(tenantUnknown.body))).toEqual(["error"]);
+      expect(created.statusCode).toBe(201);
+      expect(Object.keys(JSON.parse(created.body)).sort(byKey)).toEqual(DTO_KEYS);
+    } finally {
+      await cleanupTestData(app, dead.tenant.id);
+    }
   });
 });

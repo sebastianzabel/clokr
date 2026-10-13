@@ -781,8 +781,10 @@ import { readFileSync } from "node:fs";
 // (15 cases, single-file run) - MIN_FILES rises from 402 to 403 and MIN_TESTS from 6721 to 6736. Same convention.
 // Phase 89 plan 08 task 1 (2026-10-13): no new test file; `operator-salons-89.test.ts` grows from 7 to 15 cases (single-file
 // run: the POST describe adds 8) - MIN_FILES stays 403, MIN_TESTS rises from 6736 to 6744. Same convention.
+// Phase 89 plan 08 task 2 (2026-10-13): `operator-salons-89.test.ts` grows from 15 to 19 cases (single-file run: the
+// atomicity describe adds 4) - MIN_FILES stays 403, MIN_TESTS rises from 6744 to 6748. Same convention.
 const MIN_FILES = 403;
-const MIN_TESTS = 6744;
+const MIN_TESTS = 6748;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
