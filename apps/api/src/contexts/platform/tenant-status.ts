@@ -11,8 +11,10 @@
  * - Credential paths (this plan): login (only after the password matched, so an unauthenticated caller
  *   learns nothing about tenant state), verify-otp, resend-otp, refresh, forgot-password, reset-password,
  *   change-password and invitation accept. Each answers `TENANT_DEACTIVATED_ERROR` (403), defined once here.
- * - The per-request check of already issued access tokens, API keys and device keys, and the operator
- *   route, follow in later plans of this phase; the cron rules (a deactivated tenant is skipped) arrive in 88-12.
+ * - The per-request check of already issued access tokens, API keys and device keys (cached for at most
+ *   10 s, invalidated on every (de)activation) and the operator routes that flip the state.
+ * - The writing background jobs skip a deactivated tenant; data retention deliberately does not
+ *   (`cron-deactivated-tenants-88.test.ts` pins both).
  *
  * Users without an Employee have no tenant: a blank tenant id answers "not deactivated" on purpose
  * (D-10). That hole is #551 and is NOT changed here.

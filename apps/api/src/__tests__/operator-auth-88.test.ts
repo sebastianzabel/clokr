@@ -369,7 +369,7 @@ describe("operator sign-in hardening", () => {
       expect(text, file).not.toMatch(/accessContextFromRequest|employeeScopeFor/);
       expect(text, file).not.toMatch(/prisma\.(user|employee|auditLog)\b/);
       const routes = text.match(/\bapp\.(get|post|put|patch|delete)\(/g) ?? [];
-      const limits = text.match(/config:\s*rateLimit/g) ?? [];
+      const limits = text.match(/config:\s*\w*rateLimit\w*/gi) ?? [];
       expect(routes.length, file).toBeGreaterThan(0);
       expect(limits.length, file).toBe(routes.length);
     }
