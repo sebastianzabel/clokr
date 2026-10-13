@@ -13,6 +13,11 @@ import type { PhorestStaffItem } from "../../../services/phorest/types";
 // Phase 65b (issue #65): every salon read from Schichtplanung goes through the Unterbau's public
 // facade — never a direct `prisma.salon.*` call from this context (ADR 0001).
 import { findSalon, listSalons, permissionReach, requirePermission } from "../../platform";
+import {
+  createSalonCoupling,
+  removeSalonCoupling,
+  SalonCouplingConflictError,
+} from "../facade/couplings";
 
 /**
  * Phorest API Integration
@@ -292,54 +297,36 @@ export async function integrationRoutes(app: FastifyInstance) {
       if (!salon) {
         return reply.code(SALON_NOT_FOUND_REPLY.status).send(SALON_NOT_FOUND_REPLY.body);
       }
-      if (!salon.isActive) {
+
+      let result;
+      try {
+        result = await createSalonCoupling(app.prisma, tenantId, salon, body.externalBranchId);
+      } catch (err: unknown) {
+        // A concurrent identical POST won the race: the facade names the index that collided and
+        // never re-queries, so the loser gets the SAME 409 a sequential retry would get.
+        if (err instanceof SalonCouplingConflictError) {
+          const reply409 =
+            err.code === "SALON_ALREADY_COUPLED"
+              ? SALON_ALREADY_COUPLED_REPLY
+              : BRANCH_ALREADY_COUPLED_REPLY;
+          return reply.code(reply409.status).send(reply409.body);
+        }
+        throw err;
+      }
+      if (result.status === "SALON_INACTIVE") {
         return reply.code(SALON_INACTIVE_REPLY.status).send(SALON_INACTIVE_REPLY.body);
       }
-      const salonAlreadyCoupled = await app.prisma.salonCoupling.findFirst({
-        where: { salonId: body.salonId, tenantId },
-      });
-      if (salonAlreadyCoupled) {
+      if (result.status === "SALON_ALREADY_COUPLED") {
         return reply
           .code(SALON_ALREADY_COUPLED_REPLY.status)
           .send(SALON_ALREADY_COUPLED_REPLY.body);
       }
-      const branchAlreadyCoupled = await app.prisma.salonCoupling.findFirst({
-        where: { tenantId, provider: "PHOREST", externalBranchId: body.externalBranchId },
-      });
-      if (branchAlreadyCoupled) {
+      if (result.status === "BRANCH_ALREADY_COUPLED") {
         return reply
           .code(BRANCH_ALREADY_COUPLED_REPLY.status)
           .send(BRANCH_ALREADY_COUPLED_REPLY.body);
       }
-
-      let coupling;
-      try {
-        coupling = await app.prisma.salonCoupling.create({
-          data: {
-            tenantId,
-            salonId: body.salonId,
-            provider: "PHOREST",
-            externalBranchId: body.externalBranchId,
-          },
-        });
-      } catch (err: unknown) {
-        if (isPrismaErrorCode(err, "P2002")) {
-          // A concurrent identical POST won the race — re-check which unique constraint the
-          // loser (this request) hit and answer the SAME 409 a sequential retry would get.
-          const bySalon = await app.prisma.salonCoupling.findFirst({
-            where: { salonId: body.salonId, tenantId },
-          });
-          if (bySalon) {
-            return reply
-              .code(SALON_ALREADY_COUPLED_REPLY.status)
-              .send(SALON_ALREADY_COUPLED_REPLY.body);
-          }
-          return reply
-            .code(BRANCH_ALREADY_COUPLED_REPLY.status)
-            .send(BRANCH_ALREADY_COUPLED_REPLY.body);
-        }
-        throw err;
-      }
+      const coupling = result.coupling;
 
       await app.audit({
         userId: req.user.sub,
@@ -368,8 +355,9 @@ export async function integrationRoutes(app: FastifyInstance) {
   // not time data — owner decision, issue #65). Shifts, appointments and sync runs are untouched;
   // the FK on those points at the SALON, not the coupling.
   //
-  // T-100-09 (D-16): ONE tenant-scoped lookup makes a foreign salon, an unknown id, and an own
-  // salon that was never coupled indistinguishable by construction — see
+  // T-100-09 (D-16): ONE tenant-scoped lookup (inside `removeSalonCoupling`, facade/couplings.ts)
+  // makes a foreign salon, an unknown id, and an own salon that was never coupled
+  // indistinguishable by construction — see
   // `apps/api/scripts/lint-t100-09-routes.json`'s entry for this route.
   app.delete("/phorest/couplings/:salonId", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
@@ -378,12 +366,11 @@ export async function integrationRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const { salonId } = couplingParamSchema.parse(req.params);
 
-      const existing = await app.prisma.salonCoupling.findFirst({ where: { salonId, tenantId } });
-      if (!existing) {
+      const result = await removeSalonCoupling(app.prisma, tenantId, salonId);
+      if (result.status === "NOT_FOUND") {
         return reply.code(COUPLING_NOT_FOUND_REPLY.status).send(COUPLING_NOT_FOUND_REPLY.body);
       }
-
-      await app.prisma.salonCoupling.delete({ where: { id: existing.id } });
+      const existing = result.removed;
 
       await app.audit({
         userId: req.user.sub,
