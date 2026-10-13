@@ -140,7 +140,10 @@ describe("Issue #84 — the Team block follows the salon context through team-vi
     expect(DASHBOARD).toContain("{TEAM_SALON_UNAVAILABLE_TEXT}");
     expect(DASHBOARD).toContain("anderer Salon");
     expect(DASHBOARD).toContain("In einem anderen Salon gearbeitet");
-    // The legend explains the badge only under a filter.
-    expect(DASHBOARD).toContain("{#if teamFilter !== null}");
+    // The legend explains the badge under a filter. Issue #85 D-04/D-05 (amended): scoped callers
+    // get workedElsewhere unfiltered, so the legend also follows the data.
+    expect(DASHBOARD).toContain(
+      "{#if teamFilter !== null || teamWeekHasElsewhere(teamWeek?.team ?? [])}",
+    );
   });
 });

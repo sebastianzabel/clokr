@@ -27,9 +27,12 @@ import {
   TEAM_SALDO_NOT_ATTRIBUTABLE_NOTE,
   TEAM_SALON_UNAVAILABLE_TEXT,
   TEAM_SOLL_NOT_ATTRIBUTABLE_NOTE,
+  TEAM_SOLL_PARTIAL_SCOPE_NOTE,
   isTeamSalonRejected,
   teamSalonFilter,
+  teamSalonViewSalon,
   teamTrendView,
+  teamWeekHasElsewhere,
   teamViewLabel,
   upcomingFromResponse,
   withSalonId,
@@ -152,6 +155,92 @@ describe("teamTrendView — driven by the response codes, never by a display str
       }),
     );
     expect(view.shouldHours).toBeNull();
+  });
+});
+
+// Issue #85 D-06: a partially covering manager gets the entries in reach, never the account's Ist.
+describe("teamTrendView — SCOPE_ENTRIES (Issue #85 D-06)", () => {
+  const scoped = (reason: TeamTrendResponse["sollUnavailableReason"]) =>
+    teamTrendView(
+      response({
+        workedBasis: "SCOPE_ENTRIES",
+        sollUnavailableReason: reason,
+        months: [{ month: "2026-05", workedMinutes: 90, shouldMinutes: null, sickDays: 2 }],
+      }),
+    );
+
+  it("names the basis: recorded working time in the caller's reach, no Soll, no note", () => {
+    const view = scoped("NO_PERMISSION");
+    expect(view.workedSeriesLabel).toBe("Erfasste Arbeitszeit (h)");
+    expect(view.chartSub).toBe("Erfasste Arbeitszeit in Ihrer Reichweite · Letzte 6 Monate");
+    expect(view.workedHours).toEqual([1.5]);
+    expect(view.shouldHours).toBeNull();
+    expect(view.sollNote).toBeNull();
+    expect(view.trendNote).toBeNull();
+  });
+
+  it("explains the missing Soll when the reason is SCOPE_ENTRIES", () => {
+    const view = scoped("SCOPE_ENTRIES");
+    expect(view.shouldHours).toBeNull();
+    expect(view.sollNote).toBe(TEAM_SOLL_PARTIAL_SCOPE_NOTE);
+    expect(view.sollNote).toBe(
+      "Das Soll fehlt, weil ein Teil der Arbeitszeit in Salons außerhalb Ihrer Reichweite erfasst ist.",
+    );
+    expect(view.trendNote).toBeNull();
+    expect(view.workedSeriesLabel).toBe("Erfasste Arbeitszeit (h)");
+  });
+
+  it("SCOPE_ENTRIES basis keeps its own label even if a Soll is delivered", () => {
+    const view = teamTrendView(response({ workedBasis: "SCOPE_ENTRIES" }));
+    expect(view.workedSeriesLabel).toBe("Erfasste Arbeitszeit (h)");
+    expect(view.shouldHours).toEqual([3, 10]);
+  });
+});
+
+// Issue #85 D-09: the Salonansicht always names one salon; teamSalonFilter stays the #64-guarded one.
+describe("teamSalonViewSalon — D-09", () => {
+  it("the sole reachable salon (preselected by the store) is the view's salon", () => {
+    const state = { isMultiSalon: true, salons: [A], selection: A.id };
+    expect(teamSalonViewSalon(state)).toBe(A.id);
+    expect(teamSalonFilter(state)).toBeNull();
+  });
+
+  it("a one-salon tenant has a view salon while the filter stays null", () => {
+    const state = { isMultiSalon: false, salons: [A], selection: A.id };
+    expect(teamSalonViewSalon(state)).toBe(A.id);
+    expect(teamSalonFilter(state)).toBeNull();
+  });
+
+  it('"Alle Salons" has no view salon', () => {
+    expect(teamSalonViewSalon({ isMultiSalon: true, salons: [A, B], selection: "ALL" })).toBeNull();
+  });
+
+  it("one selected salon of several is the view's salon", () => {
+    expect(teamSalonViewSalon({ isMultiSalon: true, salons: [A, B], selection: B.id })).toBe(B.id);
+  });
+
+  it("a context that is not loaded or a stale selection has no view salon", () => {
+    expect(teamSalonViewSalon({ isMultiSalon: false, salons: [], selection: null })).toBeNull();
+    expect(
+      teamSalonViewSalon({ isMultiSalon: true, salons: [A, B], selection: "gone" }),
+    ).toBeNull();
+  });
+});
+
+describe("teamWeekHasElsewhere — the legend follows the data (Issue #85 D-04/D-05)", () => {
+  it("is false for an empty team and for days without the key", () => {
+    expect(teamWeekHasElsewhere([])).toBe(false);
+    expect(teamWeekHasElsewhere([{ days: [{}, {}] }, { days: [] }])).toBe(false);
+    expect(teamWeekHasElsewhere([{ days: [{ workedElsewhere: false }] }])).toBe(false);
+  });
+
+  it("is true as soon as one shown day carries workedElsewhere", () => {
+    expect(
+      teamWeekHasElsewhere([
+        { days: [{}] },
+        { days: [{ workedElsewhere: false }, { workedElsewhere: true }] },
+      ]),
+    ).toBe(true);
   });
 });
 
