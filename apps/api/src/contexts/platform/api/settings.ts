@@ -608,6 +608,33 @@ export function projectSecuritySettings(cfg: TenantConfig | null): SecuritySetti
 }
 
 /**
+ * Issue #568 review WR-02 — locks the Employee rows of `employeeIds` (tenant-scoped, ordered by id)
+ * with `FOR NO KEY UPDATE` for the rest of the caller's transaction. Every contract write of an
+ * employee — the tenant-wide bulk apply and `PUT /work/:employeeId` — takes this same row lock as
+ * the first statement of its write transaction, so two of them can never interleave their
+ * read-then-insert on one employee's contracts (`WorkSchedule` has no unique constraint on
+ * `(employeeId, validFrom)`; without the lock both would insert a row on the same day, or one would
+ * insert under a row the other just created). Ordered by id, so two bulk applies or a bulk apply and
+ * a single write cannot deadlock. NO KEY UPDATE conflicts with itself but not with the FOR KEY SHARE
+ * a WorkSchedule insert takes on the Employee row, so the writes themselves are not blocked.
+ */
+async function lockEmployeeRowsForContractWrite(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  employeeIds: string[],
+): Promise<void> {
+  if (employeeIds.length === 0) return;
+  await tx.$queryRaw`SELECT "id" FROM "Employee" WHERE "tenantId" = ${tenantId} AND "id" = ANY(${employeeIds}::text[]) ORDER BY "id" FOR NO KEY UPDATE`;
+}
+
+/** 409 body of a per-employee contract write that lost a race for the same `validFrom` row (WR-02). */
+const CONTRACT_CHANGED_CONCURRENTLY = {
+  error:
+    "Der Vertrag dieses Mitarbeiters wurde gleichzeitig geändert. Bitte die Seite neu laden und die Änderung erneut speichern.",
+  code: "CONTRACT_CHANGED_CONCURRENTLY",
+} as const;
+
+/**
  * Issue #568 — everything the bulk apply's classification reads, loaded through `db` so the apply
  * can run it inside its own transaction after the tenant lock. `tenantId` is inline in both where
  * clauses; nothing is ever queried by a client-supplied id.
@@ -925,6 +952,13 @@ export async function settingsRoutes(app: FastifyInstance) {
               // the FOR KEY SHARE that every foreign-key insert onto Tenant takes, so clocking and
               // other writes of the tenant are not blocked for the duration of the apply.
               await tx.$queryRaw`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId} FOR NO KEY UPDATE`;
+              // Review WR-02: the Tenant lock only excludes a second bulk apply. A per-employee
+              // contract write (PUT /work/:employeeId) takes the Employee row lock instead, so the
+              // selected employees are locked here, BEFORE the recompute: whatever such a write
+              // committed is then visible to the classification (and flips the fingerprint), and
+              // one that comes later waits until this transaction is done.
+              const selection = [...new Set(applyEmployeeIds)].sort();
+              await lockEmployeeRowsForContractWrite(tx, tenantId, selection);
               const state = await computeBulkApplyState(
                 tx,
                 tenantId,
@@ -939,7 +973,6 @@ export async function settingsRoutes(app: FastifyInstance) {
                   BULK_APPLY_STALE_MESSAGE,
                 );
               }
-              const selection = [...new Set(applyEmployeeIds)].sort();
               const outside = checkBulkSelection(state.classification.candidates, selection);
               if (outside) throw outside;
               bulk = {
@@ -1474,6 +1507,17 @@ export async function settingsRoutes(app: FastifyInstance) {
 
             // $transaction returns the created/updated schedule via Promise.
             const schedule = await app.prisma.$transaction(async (tx) => {
+              // 0. Issue #568 review WR-02: the Employee row lock comes FIRST — the tenant-wide
+              //    bulk apply takes the same lock before it classifies and inserts. The row at
+              //    `validFrom` was read before the lock, so it is re-read after it; a concurrent
+              //    writer that created or removed it in between is a conflict, never a duplicate.
+              await lockEmployeeRowsForContractWrite(tx, req.user.tenantId, [employeeId]);
+              const currentForDate = await tx.workSchedule.findFirst({
+                where: { employeeId, validFrom, employee: { tenantId: req.user.tenantId } },
+                select: { id: true },
+              });
+              if ((currentForDate?.id ?? null) !== (existingForDate?.id ?? null)) return null;
+
               // 1. Delete all future shifts (Phase 100B Plan 05 — S3, contexts/scheduling
               //    facade; `tx` is the caller's own transaction client, D-07).
               await cancelOrphanShifts(tx, req.user.tenantId, futureShiftIds);
@@ -1491,6 +1535,7 @@ export async function settingsRoutes(app: FastifyInstance) {
                 });
               }
             });
+            if (!schedule) return reply.code(409).send(CONTRACT_CHANGED_CONCURRENTLY);
 
             // 3. Audit each deleted shift (outside $transaction so failures don't
             //    roll back the schedule change; audit is best-effort but typed)
@@ -1657,18 +1702,24 @@ export async function settingsRoutes(app: FastifyInstance) {
         validFrom,
       };
 
-      let schedule;
       const old = existing;
-      if (existing) {
-        schedule = await app.prisma.workSchedule.update({
-          where: { id: existing.id },
-          data: scheduleData,
+      // Issue #568 review WR-02: lock + re-read + write in ONE transaction. The Employee row lock is
+      // the same one the tenant-wide bulk apply takes, so the two never interleave on one employee;
+      // the row at `validFrom` was read before the lock and is re-read after it — a concurrent writer
+      // that created it in between is a conflict, never a second row on the same day.
+      const schedule = await app.prisma.$transaction(async (tx) => {
+        await lockEmployeeRowsForContractWrite(tx, req.user.tenantId, [employeeId]);
+        const current = await tx.workSchedule.findFirst({
+          where: { employeeId, validFrom, employee: { tenantId: req.user.tenantId } },
+          select: { id: true },
         });
-      } else {
-        schedule = await app.prisma.workSchedule.create({
-          data: { employeeId, ...scheduleData },
-        });
-      }
+        if ((current?.id ?? null) !== (existing?.id ?? null)) return null;
+        if (existing) {
+          return tx.workSchedule.update({ where: { id: existing.id }, data: scheduleData });
+        }
+        return tx.workSchedule.create({ data: { employeeId, ...scheduleData } });
+      });
+      if (!schedule) return reply.code(409).send(CONTRACT_CHANGED_CONCURRENTLY);
 
       await app.audit({
         userId: req.user.sub,

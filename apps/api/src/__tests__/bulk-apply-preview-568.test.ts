@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+import type { Prisma } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData, reissueTokenNow } from "./setup";
 import {
@@ -666,6 +667,177 @@ describe("Issue #568 — bulk apply preview and guarded apply", () => {
           .mocked(recalculateSnapshots)
           .mock.calls.filter(([, employeeId]) => employeeId === t.noContractId),
       ).toHaveLength(0);
+    });
+
+    /**
+     * A foreign writer that holds the Employee row lock inside an open transaction — what a
+     * concurrent `PUT /settings/work/:employeeId` is between its first statement and its commit.
+     * `act` runs inside that transaction after the lock is taken; the transaction stays open until
+     * `release()` (review WR-02).
+     */
+    async function holdEmployeeLock(
+      tenantId: string,
+      employeeId: string,
+      act?: (tx: Prisma.TransactionClient) => Promise<void>,
+    ) {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let locked!: () => void;
+      const lockTaken = new Promise<void>((resolve) => {
+        locked = resolve;
+      });
+      const done = app.prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT "id" FROM "Employee" WHERE "id" = ${employeeId} AND "tenantId" = ${tenantId} FOR NO KEY UPDATE`;
+          if (act) await act(tx);
+          locked();
+          await gate;
+        },
+        { timeout: 30_000, maxWait: 10_000 },
+      );
+      await lockTaken;
+      return { release, done };
+    }
+
+    const BLOCK_PROBE_MS = 700;
+    const stillRunning = (request: Promise<unknown>) =>
+      Promise.race([
+        request.then(() => false),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(true), BLOCK_PROBE_MS)),
+      ]);
+
+    it("(m) the bulk apply waits for a concurrent contract write of a selected employee and then refuses the stale preview (review WR-02)", async () => {
+      const t = await scenario("m");
+      const preview = await previewBulkApply(app, t.token, { defaults: DEFAULTS_38 });
+      const selection = [t.noContractId];
+      // The concurrent writer inserts a contract on the effective day and has not committed yet.
+      const writer = await holdEmployeeLock(t.data.tenant.id, t.noContractId, async (tx) => {
+        await tx.workSchedule.create({
+          data: {
+            employeeId: t.noContractId,
+            type: "FIXED_SCHEDULE",
+            weeklyHours: 20,
+            mondayHours: 4,
+            tuesdayHours: 4,
+            wednesdayHours: 4,
+            thursdayHours: 4,
+            fridayHours: 4,
+            saturdayHours: 0,
+            sundayHours: 0,
+            workDays: [1, 2, 3, 4, 5],
+            validFrom: new Date(`${preview.effectiveFrom}T00:00:00Z`),
+          },
+        });
+      });
+      const apply = putWork(t.token, {
+        ...DEFAULTS_38,
+        applyToExisting: true,
+        applyEmployeeIds: selection,
+        previewFingerprint: preview.fingerprint,
+        effectiveFrom: preview.effectiveFrom,
+      });
+      // Without the Employee row lock the apply would read the pre-commit state, accept the old
+      // fingerprint and write a second row on the same day.
+      try {
+        expect(await stillRunning(apply)).toBe(true);
+      } finally {
+        writer.release();
+        await writer.done;
+      }
+      const res = await apply;
+      expect(res.statusCode, res.body).toBe(409);
+      expect(JSON.parse(res.body).code).toBe("BULK_APPLY_PREVIEW_STALE");
+      const rows = await schedulesOf(t.noContractId);
+      expect(rows).toHaveLength(1);
+      expect(Number(rows[0].weeklyHours)).toBe(20);
+    });
+
+    it("(n) the per-employee contract write waits for the Employee row lock held by a bulk apply (review WR-02)", async () => {
+      const t = await scenario("n");
+      const holder = await holdEmployeeLock(t.data.tenant.id, t.noContractId);
+      const validFrom = monthFirstAheadStr(3);
+      const write = app.inject({
+        method: "PUT",
+        url: `/api/v1/settings/work/${t.noContractId}`,
+        headers: { authorization: `Bearer ${t.token}` },
+        payload: {
+          type: "FIXED_SCHEDULE",
+          weeklyHours: 30,
+          mondayHours: 6,
+          tuesdayHours: 6,
+          wednesdayHours: 6,
+          thursdayHours: 6,
+          fridayHours: 6,
+          saturdayHours: 0,
+          sundayHours: 0,
+          overtimeThreshold: 60,
+          allowOvertimePayout: false,
+          validFrom,
+        },
+      });
+      try {
+        expect(await stillRunning(write)).toBe(true);
+      } finally {
+        holder.release();
+        await holder.done;
+      }
+      const res = await write;
+      expect(res.statusCode, res.body).toBe(200);
+      expect(await schedulesOf(t.noContractId)).toHaveLength(1);
+    });
+
+    it("(o) a per-employee write whose contract row was created concurrently answers 409 instead of writing a duplicate (review WR-02)", async () => {
+      const t = await scenario("o");
+      const validFrom = monthFirstAheadStr(3);
+      const holder = await holdEmployeeLock(t.data.tenant.id, t.noContractId, async (tx) => {
+        await tx.workSchedule.create({
+          data: {
+            employeeId: t.noContractId,
+            type: "FIXED_SCHEDULE",
+            weeklyHours: 20,
+            mondayHours: 4,
+            tuesdayHours: 4,
+            wednesdayHours: 4,
+            thursdayHours: 4,
+            fridayHours: 4,
+            saturdayHours: 0,
+            sundayHours: 0,
+            workDays: [1, 2, 3, 4, 5],
+            validFrom: new Date(`${validFrom}T00:00:00Z`),
+          },
+        });
+      });
+      const write = app.inject({
+        method: "PUT",
+        url: `/api/v1/settings/work/${t.noContractId}`,
+        headers: { authorization: `Bearer ${t.token}` },
+        payload: {
+          type: "FIXED_SCHEDULE",
+          weeklyHours: 30,
+          mondayHours: 6,
+          tuesdayHours: 6,
+          wednesdayHours: 6,
+          thursdayHours: 6,
+          fridayHours: 6,
+          saturdayHours: 0,
+          sundayHours: 0,
+          overtimeThreshold: 60,
+          allowOvertimePayout: false,
+          validFrom,
+        },
+      });
+      try {
+        expect(await stillRunning(write)).toBe(true);
+      } finally {
+        holder.release();
+        await holder.done;
+      }
+      const res = await write;
+      expect(res.statusCode, res.body).toBe(409);
+      expect(JSON.parse(res.body).code).toBe("CONTRACT_CHANGED_CONCURRENTLY");
+      expect(await schedulesOf(t.noContractId)).toHaveLength(1);
     });
 
     it("(i) the earliest effective date mid-month is the 1st of next month", async () => {
