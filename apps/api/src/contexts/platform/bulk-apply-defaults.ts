@@ -425,6 +425,15 @@ export interface BulkApplyClassification {
   entries: ClassifiedEntry[];
 }
 
+/**
+ * Byte-order comparison of ids. Deliberately not `localeCompare`: the order must equal
+ * PostgreSQL's `ORDER BY "id"` (row locks are taken in it, so two writers never deadlock) and must
+ * not depend on the process locale (the fingerprint hashes ordered id lists).
+ */
+export function compareIds(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function byValidFromDescThenId(a: BulkScheduleRow, b: BulkScheduleRow): number {
   const diff = b.validFrom.getTime() - a.validFrom.getTime();
   if (diff !== 0) return diff;
@@ -572,7 +581,7 @@ export function bulkApplyFingerprint(input: {
   classification: BulkApplyClassification;
 }): string {
   const employees = [...input.classification.entries]
-    .sort((a, b) => (a.employeeId < b.employeeId ? -1 : a.employeeId > b.employeeId ? 1 : 0))
+    .sort((a, b) => compareIds(a.employeeId, b.employeeId))
     .map((entry) => [
       entry.employeeId,
       entry.comparedRow ? entry.comparedRow.id : null,

@@ -32,6 +32,7 @@ import {
   bulkScheduleData,
   checkBulkSelection,
   checkEffectiveFrom,
+  compareIds,
   classifyBulkApplyCandidates,
   effectiveFromWindow,
   mergeProposedDefaults,
@@ -957,7 +958,7 @@ export async function settingsRoutes(app: FastifyInstance) {
               // selected employees are locked here, BEFORE the recompute: whatever such a write
               // committed is then visible to the classification (and flips the fingerprint), and
               // one that comes later waits until this transaction is done.
-              const selection = [...new Set(applyEmployeeIds)].sort();
+              const selection = [...new Set(applyEmployeeIds)].sort(compareIds);
               await lockEmployeeRowsForContractWrite(tx, tenantId, selection);
               const state = await computeBulkApplyState(
                 tx,
@@ -1077,7 +1078,7 @@ export async function settingsRoutes(app: FastifyInstance) {
                   deselectedCandidateIds: bulk.classification.candidates
                     .map((candidate) => candidate.employeeId)
                     .filter((id) => !selected.has(id))
-                    .sort(),
+                    .sort(compareIds),
                   previewFingerprint,
                   values: bulk.proposed,
                 },
