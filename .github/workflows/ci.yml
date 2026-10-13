@@ -56,6 +56,8 @@ jobs:
       JWT_EXPIRES_IN: 15m
       JWT_REFRESH_EXPIRES_IN: 7d
       ENCRYPTION_KEY: test-encryption-key-min-32-characters-long!!
+      # Phase 88 (D-02a): separate operator signing secret, distinct from every secret above.
+      OPERATOR_JWT_SECRET: test-operator-jwt-secret-min-32-characters
       NODE_ENV: test
       # Object storage for the § 9 AU-document tests (Phase 104). Values match the
       # "Start MinIO" step below and docker-compose.yml's dev service. Set EXPLICITLY rather than
