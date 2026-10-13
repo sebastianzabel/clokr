@@ -273,6 +273,17 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "entries above: RECORD/MERGE mode refuses to run once the role guard is gone.",
   },
   {
+    route: "POST /api/v1/settings/work/apply-defaults/preview",
+    reason:
+      "New route added in Issue #568 (the two-step bulk apply of the default working time), long " +
+      "after the role guard (`requireRole`) was deleted from middleware/auth.ts (#75b/#83) — built " +
+      "permission-gated (`tenant-settings:update:ZUGEWIESEN`) from its very first commit and never " +
+      "had role-based access behavior to compare. Same vacuous-satisfaction reasoning as the Phase " +
+      "430, Phase 468 and Phase 481 entries above: RECORD/MERGE mode refuses to run once the role " +
+      "guard is gone. `PUT /api/v1/settings/work` stays a recorded `mutate()` route and its cells " +
+      "stay byte-identical, because a PUT without the apply flag behaves exactly as before.",
+  },
+  {
     route: "GET /api/v1/time-entries/summary",
     reason:
       "New route added in Phase 79 (Issue #79, R3), long after the role guard (`requireRole`) " +

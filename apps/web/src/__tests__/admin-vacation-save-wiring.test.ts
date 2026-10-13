@@ -83,6 +83,8 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
   // entry of its own.
   const WORK_KEYS = [
     "allowOvertimePayout",
+    // Issue #568: +3 action modifiers of the guarded bulk apply (38 -> 41)
+    "applyEmployeeIds",
     "applyToExisting",
     "arbzgEnabled",
     "autoCalcPartTimeVacation",
@@ -105,6 +107,7 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "defaultVacationDays",
     "defaultWednesdayHours",
     "defaultWeeklyHours",
+    "effectiveFrom",
     "enforceMinVacation",
     "fullTimeWorkDaysPerWeek",
     "halfDayAllowed",
@@ -112,6 +115,7 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "missingEntriesDays",
     "newYearsEveRule",
     "overtimeThreshold",
+    "previewFingerprint",
     "reminderPendingLeaveEnabled",
     "reminderPendingLeaveHours",
     "reminderUpcomingAbsenceDays",
@@ -123,13 +127,61 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "vacationReminderStartMonth",
   ] as const;
 
-  it("PUT /settings/work carries exactly the 38 known keys, no more, no fewer", () => {
+  it("PUT /settings/work carries exactly the 41 known keys, no more, no fewer", () => {
     const saveGlobalBody = fnBody("async function saveGlobal");
     const bodyStart = saveGlobalBody.indexOf('api.put("/settings/work", {');
     expect(bodyStart, 'api.put("/settings/work", {...}) call not found').toBeGreaterThan(-1);
     const objStart = saveGlobalBody.indexOf("{", bodyStart);
     const keys = extractObjectKeys(sliceBalancedObject(saveGlobalBody, objStart)).sort();
     expect(keys).toEqual([...WORK_KEYS].sort());
+  });
+
+  it("Issue #568: a ticked save opens the preview dialog before any api.put", () => {
+    const body = fnBody("async function saveGlobal");
+    const open = body.indexOf("bulkDialogOpen = true");
+    const firstPut = body.indexOf("api.put(");
+    expect(open, "bulkDialogOpen = true not found in saveGlobal").toBeGreaterThan(-1);
+    expect(firstPut, "api.put( not found in saveGlobal").toBeGreaterThan(-1);
+    expect(open).toBeLessThan(firstPut);
+    // The guard is conditioned on the checkbox and on the absence of a confirmed selection.
+    expect(body.slice(0, open)).toMatch(/gApplyToExisting && pendingBulk === null/);
+  });
+
+  it("Issue #568: only the dialog's confirmation sets pendingBulk", () => {
+    const assignments = PAGE.match(/pendingBulk = [^;]+;/g) ?? [];
+    // Review WR-03: saveGlobal clears it itself the moment the work PUT went through, confirmBulk's
+    // finally clears it for every other exit — two `= null`, one `= selection`.
+    expect(assignments.sort()).toEqual([
+      "pendingBulk = null;",
+      "pendingBulk = null;",
+      "pendingBulk = selection;",
+    ]);
+    expect(PAGE).toContain("onConfirm={confirmBulk}");
+  });
+
+  it("Review WR-03: the bulk state is reset right after the work PUT, before the security PUT", () => {
+    const body = fnBody("async function saveGlobal");
+    const workSaved = body.indexOf("workSaved = true");
+    const securityPut = body.indexOf('api.put("/settings/security"');
+    expect(workSaved, "workSaved = true not found in saveGlobal").toBeGreaterThan(-1);
+    expect(securityPut, "security PUT not found in saveGlobal").toBeGreaterThan(-1);
+    const between = body.slice(workSaved, securityPut);
+    // A failing security PUT must not leave a stale ticked box or a stale confirmed selection.
+    expect(between).toMatch(/gApplyToExisting = false;/);
+    expect(between).toMatch(/pendingBulk = null;/);
+    // The success toast reads the selection captured BEFORE the reset.
+    expect(between).toMatch(/const appliedBulk = pendingBulk;/);
+    expect(between.indexOf("const appliedBulk = pendingBulk;")).toBeLessThan(
+      between.indexOf("pendingBulk = null;"),
+    );
+  });
+
+  it("Review IN-03: the dialog's defaults-only action clears the box before saving, without a selection", () => {
+    expect(PAGE).toContain("onSaveDefaultsOnly={saveDefaultsOnly}");
+    const body = fnBody("async function saveDefaultsOnly");
+    expect(body.indexOf("gApplyToExisting = false;")).toBeGreaterThan(-1);
+    expect(body.indexOf("gApplyToExisting = false;")).toBeLessThan(body.indexOf("saveGlobal()"));
+    expect(body).not.toContain("pendingBulk");
   });
 
   it("PUT /settings/security carries exactly one key, maxNegativeBalanceMinutes", () => {
@@ -242,8 +294,16 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/vacation"
     //  - gApplyToExisting is an action modifier saveGlobal itself resets to false on success,
     //    not a persisted setting — a marker for it would claim an unsaved change that does not
     //    exist.
+    //  - Issue #568: pendingBulk is the dialog's confirmed selection, an action modifier like
+    //    gApplyToExisting that saveGlobal's caller resets to null after the save; its three
+    //    properties (applyEmployeeIds, previewFingerprint, effectiveFrom) are read off it with
+    //    `?.` and are not state variables of their own.
     submitted.delete("gWeekly");
     submitted.delete("gApplyToExisting");
+    submitted.delete("pendingBulk");
+    submitted.delete("applyEmployeeIds");
+    submitted.delete("previewFingerprint");
+    submitted.delete("effectiveFrom");
 
     const snapArgs = new Set(
       globalDirtySnapArgs()

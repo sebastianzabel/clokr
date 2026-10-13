@@ -1,13 +1,15 @@
 /**
  * Issue #450 (D-06) — the two REMAINING contract-change write paths (the cancelOrphanShifts
- * branch of PUT /api/v1/settings/work/:employeeId and the tenant-wide applyToExisting bulk apply
- * of PUT /api/v1/settings/work) recompute the affected auto-calculated VACATION entitlement per
+ * branch of PUT /api/v1/settings/work/:employeeId and the tenant-wide bulk apply of
+ * PUT /api/v1/settings/work, since Issue #568 a preview followed by a confirmed apply) recompute the affected auto-calculated VACATION entitlement per
  * contract segment (EuGH Brandes C-415/12, Greenfield C-219/14), exactly like the regular branch
  * already wired in 450-01.
  *
  * Fixed/real-clock dates only — every date is built via `new Date(Date.UTC(...))` or the real
- * clock (the bulk apply and the cancelOrphanShifts branch both compute their own `validFrom` from
- * "now", so the test mirrors that rather than injecting a fixed date). Initials-only fixtures
+ * clock (the cancelOrphanShifts branch computes its own `validFrom` from "now", so the test
+ * mirrors that rather than injecting a fixed date; the bulk apply takes the earliest allowed
+ * effective date — the 1st of NEXT month, or today when today is the 1st — and the test derives
+ * year and month from that date, so a December run expects January of the next year). Initials-only fixtures
  * (firstName "T", lastName "T") — no PII per CLAUDE.md.
  *
  * Own seeded tenant (not shared with other 450-0x test files): the bulk apply touches EVERY
@@ -19,7 +21,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { roundVacationDaysBurlG } from "../contexts/absence/vacation-calc";
-import { snapToMonthFirstUtc } from "../contexts/platform";
+import { earliestBulkEffectiveFromStr } from "./test-dates";
+import { applyBulkDefaults } from "./bulk-apply-helpers";
 
 describe("PUT /api/v1/settings/work(/:employeeId) — remaining D-06 write paths recompute VACATION entitlement per segment (Issue #450)", () => {
   let app: FastifyInstance;
@@ -189,28 +192,29 @@ describe("PUT /api/v1/settings/work(/:employeeId) — remaining D-06 write paths
     expect(newValue.validFrom).toBe(validFromStr);
   });
 
-  it("bulk apply (applyToExisting): FIXED Mo-Mi -> Mo-Fr recomputes the current-year row by segment", async () => {
-    const now = snapToMonthFirstUtc(new Date());
-    const k = now.getUTCMonth();
-    const currentYear = new Date().getUTCFullYear();
+  it("bulk apply (preview + confirm): FIXED Mo-Mi -> Mo-Fr recomputes the effective-year row by segment", async () => {
+    // The bulk apply is never retroactive (Issue #568): V is the earliest allowed effective date.
+    const validFromStr = earliestBulkEffectiveFromStr();
+    const V = new Date(`${validFromStr}T00:00:00Z`);
+    const Y = V.getUTCFullYear();
+    const k = V.getUTCMonth();
 
     const employeeId = await mkEmployee("bulk-e", new Date(Date.UTC(2024, 0, 1)));
     await mkFixedWorkSchedule(employeeId, [1, 2, 3], new Date(Date.UTC(2024, 0, 1)));
-    await mkEntitlement(employeeId, currentYear, 18);
+    await mkEntitlement(employeeId, Y, 18);
 
-    const res = await app.inject({
-      method: "PUT",
-      url: "/api/v1/settings/work",
-      headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: {
-        applyToExisting: true,
+    // The Mo-Mi contract differs from the stored defaults, so it is not pre-ticked: select it.
+    const { res, preview } = await applyBulkDefaults(app, data.adminToken, {
+      defaults: {
         defaultMondayHours: 8,
         defaultTuesdayHours: 8,
         defaultWednesdayHours: 8,
         defaultThursdayHours: 8,
         defaultFridayHours: 8,
       },
+      employeeIds: [employeeId],
     });
+    expect(preview.effectiveFrom).toBe(validFromStr);
     expect(res.statusCode).toBe(200);
 
     const newest = await app.prisma.workSchedule.findFirstOrThrow({
@@ -218,8 +222,9 @@ describe("PUT /api/v1/settings/work(/:employeeId) — remaining D-06 write paths
       orderBy: { validFrom: "desc" },
     });
     expect(newest.workDays).toEqual([1, 2, 3, 4, 5]);
+    expect(newest.validFrom.toISOString().slice(0, 10)).toBe(validFromStr);
 
-    const row = await entitlementRow(employeeId, currentYear);
+    const row = await entitlementRow(employeeId, Y);
     const expected = roundVacationDaysBurlG((18 * k + 30 * (12 - k)) / 12);
     expect(Number(row.totalDays)).toBe(expected);
 
@@ -232,31 +237,32 @@ describe("PUT /api/v1/settings/work(/:employeeId) — remaining D-06 write paths
       validFrom: string;
     };
     expect(newValue.reason).toBe("Vertragswechsel");
-    expect(newValue.validFrom).toBe(now.toISOString().slice(0, 10));
+    expect(newValue.validFrom).toBe(validFromStr);
     expect(audits[0].userId).toBe(data.adminUser.id);
   });
 
   it("bulk apply control: an employee with NO WorkSchedule row and an auto row of 30 stays 30 with zero LeaveEntitlement audits", async () => {
-    const currentYear = new Date().getUTCFullYear();
+    const Y = Number(earliestBulkEffectiveFromStr().slice(0, 4));
     const employeeId = await mkEmployee("bulk-f", new Date(Date.UTC(2024, 0, 1)));
-    await mkEntitlement(employeeId, currentYear, 30);
+    await mkEntitlement(employeeId, Y, 30);
 
-    const res = await app.inject({
-      method: "PUT",
-      url: "/api/v1/settings/work",
-      headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: {
-        applyToExisting: true,
+    // No contract at all is a default-selected candidate (nothing individual to protect).
+    const { res, preview } = await applyBulkDefaults(app, data.adminToken, {
+      defaults: {
         defaultMondayHours: 8,
         defaultTuesdayHours: 8,
         defaultWednesdayHours: 8,
         defaultThursdayHours: 8,
         defaultFridayHours: 8,
       },
+      employeeIds: "defaultSelected",
     });
+    const candidate = preview.candidates.find((c) => c.employeeId === employeeId);
+    expect(candidate?.category).toBe("NO_CONTRACT");
+    expect(candidate?.defaultSelected).toBe(true);
     expect(res.statusCode).toBe(200);
 
-    const row = await entitlementRow(employeeId, currentYear);
+    const row = await entitlementRow(employeeId, Y);
     expect(Number(row.totalDays)).toBe(30);
 
     const audits = await entitlementAudits(row.id);

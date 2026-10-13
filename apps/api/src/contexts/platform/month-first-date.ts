@@ -16,7 +16,7 @@
  * This module is the single source of truth for:
  *   - the German error string surfaced to the API client
  *   - the Zod refinement predicate
- *   - the deterministic snap-to-1st helper used by the bulk-apply flow
+ *   - the deterministic snap-to-1st helper (per-employee default; the bulk apply's earliest date)
  *   - Issue #450 (D-04), read side: `snapToMonthFirstUtc`'s `"up"` direction, consumed by
  *     `contexts/absence/leave-days.ts`'s `loadVacationContractSegments` — a pre-Phase-60
  *     contract change whose `validFrom` is not the 1st of a month takes effect on the 1st of the
@@ -84,8 +84,10 @@ export const monthFirstRefinement = (s: string): boolean => isMonthFirstDate(s);
  * Returns a new Date set to the 1st of the input's UTC month at 00:00:00.000Z — direction
  * `"down"` (the default, pre-existing behavior). Idempotent: snap(snap(d)) === snap(d).
  *
- * Used by the applyToExisting bulk-apply flow so server-side "now" timestamps
- * are normalized to month-1st before being written to WorkSchedule.validFrom.
+ * Used by the per-employee default (`PUT /settings/work/:employeeId`) to land a contract change
+ * on a month-1st. Issue #568: direction `"up"` applied to the tenant-local today is also the
+ * earliest effective date of the tenant-wide bulk apply (D-05, § 3 Satz 1 NachwG — never
+ * retroactive); the bulk apply itself lives in `bulk-apply-defaults.ts`.
  *
  * UTC components are used deliberately — WorkSchedule.validFrom is stored as
  * Timestamptz and the saldo engine compares it against UTC midnights elsewhere

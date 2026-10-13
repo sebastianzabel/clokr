@@ -3,6 +3,9 @@
 
   import { onMount } from "svelte";
   import { api } from "$api/client";
+  import BulkApplyDialog from "$lib/components/admin/BulkApplyDialog.svelte";
+  import { fetchBulkApplyPreview, type BulkApplySelection } from "$lib/api/bulk-apply";
+  import { formatDateDe } from "$lib/admin/bulk-apply-format";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
@@ -147,6 +150,10 @@
   // Phase 49.4: Verfügbarkeits-System toggle moved to /admin/system (Features card).
   // v1.6.5: autoBreakEnabled + defaultBreakStart moved to /admin/system → Arbeitszeit.
   let gApplyToExisting = $state(false);
+  // Issue #568: the bulk apply is two-step. A ticked save first opens the preview dialog; the
+  // dialog's confirmation sets pendingBulk, which saveGlobal sends along with the defaults.
+  let bulkDialogOpen = $state(false);
+  let pendingBulk: BulkApplySelection | null = $state(null);
   let gClockOutHours = $state(10);
   let gMissingDays = $state(7);
   let gAutoInvalidateHours = $state(14);
@@ -253,7 +260,7 @@
   );
   // gWeekly is NOT included — it's a $derived of gMon..gSun (:192), already covered.
   // gApplyToExisting is NOT included — it's not a persisted value but a modifier of the next
-  // save, which saveGlobal itself resets to false on success (:320). A marker for it would
+  // save, which saveGlobal itself resets to false as soon as the work PUT succeeded. A marker for it would
   // claim an unsaved setting that does not exist.
 
   // Gate the registration on "the baseline has been taken" (WR-01). The snapshot starts as ""
@@ -385,11 +392,18 @@
   }
 
   async function saveGlobal() {
+    // Issue #568 (D-07): with the box ticked nothing is saved before the admin confirmed the
+    // server preview in the dialog; confirmBulk re-enters here with pendingBulk set.
+    if (gApplyToExisting && pendingBulk === null) {
+      bulkDialogOpen = true;
+      return;
+    }
     gSaving = true;
     gError = "";
     gSaved = false;
+    let workSaved = false;
     try {
-      await api.put("/settings/work", {
+      const saved = (await api.put("/settings/work", {
         defaultWeeklyHours: gWeekly,
         defaultMondayHours: gMon,
         defaultTuesdayHours: gTue,
@@ -408,6 +422,9 @@
         // v1.6.5: autoBreakEnabled + defaultBreakStart are owned by /admin/system →
         // Arbeitszeit and intentionally not sent from this page to avoid clobbering.
         applyToExisting: gApplyToExisting,
+        applyEmployeeIds: pendingBulk?.applyEmployeeIds,
+        previewFingerprint: pendingBulk?.previewFingerprint,
+        effectiveFrom: pendingBulk?.effectiveFrom,
         clockOutReminderHours: gClockOutHours,
         missingEntriesDays: gMissingDays,
         autoDeleteOpenHours: gAutoInvalidateHours,
@@ -432,14 +449,25 @@
         reminderUpcomingAbsenceDays: reminderUpcomingDays,
         reminderPendingLeaveEnabled: reminderPendingEnabled,
         reminderUpcomingAbsenceEnabled: reminderUpcomingEnabled,
-      });
+      })) as { appliedCount?: number } | undefined;
+      workSaved = true;
+      // Review WR-03: the apply is committed now. Reset the one-shot bulk state HERE, not after the
+      // unrelated security PUT below — if that one fails, the box must not stay ticked and the
+      // confirmed selection must not stay armed for the next save.
+      const appliedBulk = pendingBulk;
+      gApplyToExisting = false;
+      pendingBulk = null;
+      if (appliedBulk !== null) {
+        const count = saved?.appliedCount ?? appliedBulk.applyEmployeeIds.length;
+        toasts.success(
+          `${count} ${count === 1 ? "Vertrag" : "Verträge"} ab ${formatDateDe(appliedBulk.effectiveFrom)} angepasst`,
+        );
+      }
       // Save max negative via security endpoint
       await api.put("/settings/security", {
         maxNegativeBalanceMinutes: maxNegEnabled ? Math.round(maxNegHours * 60) : null,
       });
       // Phase 49.4: availabilityEnabled toggle moved to /admin/system Features card.
-      // Reset nach Speichern
-      gApplyToExisting = false;
       gSaved = true;
       globalSnapshot = snap(
         gMon,
@@ -483,10 +511,47 @@
       ); // Phase 109 — section is clean again
       setTimeout(() => (gSaved = false), 3000);
     } catch (e: unknown) {
+      // A rejected bulk apply belongs to the dialog (its own message and the stale-preview
+      // handling); once the work PUT went through, a later failure is an ordinary save error.
+      if (pendingBulk !== null && !workSaved) throw e;
       gError = e instanceof Error ? e.message : "Fehler";
     } finally {
       gSaving = false;
     }
+  }
+
+  // Review IN-03: the preview found no affected contract. Save the defaults alone — the box is
+  // cleared first, so saveGlobal neither opens the dialog again nor sends the apply fields.
+  async function saveDefaultsOnly() {
+    gApplyToExisting = false;
+    await saveGlobal();
+  }
+
+  async function confirmBulk(selection: BulkApplySelection) {
+    pendingBulk = selection;
+    try {
+      await saveGlobal();
+    } finally {
+      pendingBulk = null;
+    }
+  }
+
+  // The preview classifies against the form's proposed working time; the effective date comes
+  // from the server's allowed list, never from a browser-side date rule (O5).
+  function loadBulkPreview(effectiveFrom?: string) {
+    return fetchBulkApplyPreview({
+      defaultWeeklyHours: gWeekly,
+      defaultMondayHours: gMon,
+      defaultTuesdayHours: gTue,
+      defaultWednesdayHours: gWed,
+      defaultThursdayHours: gThu,
+      defaultFridayHours: gFri,
+      defaultSaturdayHours: gSat,
+      defaultSundayHours: gSun,
+      overtimeThreshold: gThreshold,
+      allowOvertimePayout: gPayout,
+      effectiveFrom,
+    });
   }
 
   // ── Sonderurlaub: list + CRUD ──────────────────────────────────────────────
@@ -1314,11 +1379,21 @@
       </div>
     </div>
     <p class="form-hint vac-save-hint">
-      Erstellt neue Schedule-Versionen ab heute für alle MA mit festem Wochenmodell, wenn aktiviert.
-      Minijobber und MA mit individuellen Einstellungen bleiben unverändert.
+      Wenn aktiviert, öffnet „Speichern“ zuerst eine Vorschau. Individuelle Verträge bleiben ohne
+      ausdrückliche Auswahl unverändert. Änderungen gelten frühestens ab dem nächsten Monatsersten,
+      nie rückwirkend.
     </p>
   </div>
 {/if}
+
+<!-- Issue #568: preview + explicit confirmation of the bulk apply (own footer snippet, so the
+     Modal-footer census of this page is unaffected) -->
+<BulkApplyDialog
+  bind:open={bulkDialogOpen}
+  loadPreview={loadBulkPreview}
+  onConfirm={confirmBulk}
+  onSaveDefaultsOnly={saveDefaultsOnly}
+/>
 
 <!-- ── Sonderurlaub: Create Modal ────────────────────────────────────────── -->
 <Modal bind:open={slShowCreate} eyebrow="Neue Regel" title="Sonderurlaubsregel anlegen">

@@ -81,6 +81,7 @@
 │   ├── * (HEAD, GET)
 │   ├── /acks (POST)
 │   ├── /allowed-cards (GET, HEAD)
+│   ├── /apply-defaults/preview (POST)
 │   ├── /bulk (POST)
 │   ├── /checks (GET, HEAD)
 │   ├── /clock-in (POST)

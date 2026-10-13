@@ -11,9 +11,10 @@
  *     value is silently ignored on this branch, by construction.
  *   - D-01: `contractWorkDaysPerWeek` is written ONLY for SHIFT_BASED, bounded 1-7,
  *     and explicit `null` for every other type.
- *   - The bulk `PUT /api/v1/settings/work` (`applyToExisting`) path structurally
- *     cannot touch a SHIFT_BASED row (settings.ts only ever updates employees whose
- *     CURRENT row is FIXED_SCHEDULE) — pinned here as a regression guard.
+ *   - The bulk apply (Issue #568: preview, then `PUT /api/v1/settings/work` with the
+ *     preview's fingerprint and selection) structurally cannot touch a SHIFT_BASED row:
+ *     such an employee is listed as a non-candidate (OTHER_SCHEDULE_TYPE) and its id is
+ *     refused with 409 — pinned here as a regression guard.
  *   - Cross-tenant isolation (settings-work-tenant-isolation.test.ts's existing
  *     guard) still holds with the new field present in the payload.
  *
@@ -26,6 +27,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 import { monthsAheadStr } from "./test-dates";
+import { applyBulkDefaults, previewBulkApply } from "./bulk-apply-helpers";
 import type { FastifyInstance } from "fastify";
 
 /** First of the month N months from now (tenant TZ), built on the shared
@@ -252,25 +254,65 @@ describe("PUT /api/v1/settings/work/:employeeId — WorkSchedule.contractWorkDay
     expect(body.contractWorkDaysPerWeek).toBeNull();
   });
 
-  it("PUT /api/v1/settings/work (applyToExisting bulk) leaves a SHIFT_BASED employee's WorkSchedule row completely untouched (id, workDays, contractWorkDaysPerWeek, validFrom)", async () => {
+  it("bulk apply (preview + confirm) leaves a SHIFT_BASED employee's WorkSchedule row completely untouched (id, workDays, contractWorkDaysPerWeek, validFrom)", async () => {
     const before = await app.prisma.workSchedule.findFirstOrThrow({
       where: { employeeId: shiftEmployee2.id },
       orderBy: { validFrom: "desc" },
     });
 
-    const res = await app.inject({
-      method: "PUT",
-      url: "/api/v1/settings/work",
-      headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { applyToExisting: true, defaultWeeklyHours: 41 },
+    // A fresh no-contract employee guarantees a default-selected candidate, so the apply
+    // actually runs and writes while the SHIFT_BASED row has to stay out of it.
+    const bulkUser = await app.prisma.user.create({
+      data: {
+        email: `wcwd-bulk-${Date.now()}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const bulkEmployee = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: bulkUser.id,
+        employeeNumber: `WCWD3-${Date.now()}`,
+        firstName: "Bulk",
+        lastName: "NoContract",
+        hireDate: new Date(seedValidFrom),
+      },
+    });
+
+    const defaults = { defaultWeeklyHours: 41 };
+    const preview = await previewBulkApply(app, data.adminToken, { defaults });
+    const shiftGroup = preview.nonCandidates.find((g) => g.reason === "OTHER_SCHEDULE_TYPE");
+    expect(shiftGroup?.employees.map((e) => e.employeeId)).toContain(shiftEmployee2.id);
+    expect(preview.candidates.map((c) => c.employeeId)).not.toContain(shiftEmployee2.id);
+
+    const { res } = await applyBulkDefaults(app, data.adminToken, {
+      defaults,
+      employeeIds: "defaultSelected",
     });
     expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).appliedCount).toBeGreaterThanOrEqual(1);
+    expect(await app.prisma.workSchedule.count({ where: { employeeId: bulkEmployee.id } })).toBe(1);
 
     const after = await app.prisma.workSchedule.findFirstOrThrow({
       where: { employeeId: shiftEmployee2.id },
       orderBy: { validFrom: "desc" },
     });
     expect(after).toEqual(before);
+
+    // Sending the SHIFT_BASED id explicitly is refused and still changes nothing
+    const forced = await applyBulkDefaults(app, data.adminToken, {
+      defaults,
+      employeeIds: [shiftEmployee2.id],
+    });
+    expect(forced.res.statusCode).toBe(409);
+    expect(JSON.parse(forced.res.body).code).toBe("BULK_APPLY_PREVIEW_STALE");
+    const stillAfter = await app.prisma.workSchedule.findFirstOrThrow({
+      where: { employeeId: shiftEmployee2.id },
+      orderBy: { validFrom: "desc" },
+    });
+    expect(stillAfter).toEqual(before);
   });
 });
 

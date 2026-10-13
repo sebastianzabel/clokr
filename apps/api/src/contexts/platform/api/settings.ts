@@ -18,7 +18,29 @@ import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { accessContextFromRequest, employeeScopeFor } from "../access-context";
 import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-10/D-14
 import { isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-14
-import { DEFAULT_MISSING_ENTRIES_DAYS } from "../../working-time-account"; // issue #246, E-6
+import {
+  DEFAULT_MISSING_ENTRIES_DAYS, // issue #246, E-6
+  dateStrInTz, // Issue #568 review IN-02 — the "already effective" check compares tenant-local day strings
+  getTenantTimezone, // Issue #568 — the bulk apply's earliest effective date is the tenant-local today
+  todayInTz,
+} from "../../working-time-account";
+import {
+  BULK_APPLY_SELECTION_REQUIRED_MESSAGE,
+  BULK_APPLY_STALE_MESSAGE,
+  BulkApplyRejection,
+  bulkApplyFingerprint,
+  bulkScheduleData,
+  checkBulkSelection,
+  checkEffectiveFrom,
+  compareIds,
+  classifyBulkApplyCandidates,
+  effectiveFromWindow,
+  mergeProposedDefaults,
+  proposedContractValues,
+  storedWorkingTimeDefaults,
+  type BulkApplyClassification,
+  type WorkingTimeDefaults,
+} from "../bulk-apply-defaults"; // Issue #568 — classification, fingerprint and date window of the bulk apply
 import { getShiftsInRange, cancelOrphanShifts } from "../../scheduling"; // Phase 100B Plan 05 — S1/S3
 import {
   ARBZG_FLOOR_OVER_6H,
@@ -71,20 +93,60 @@ const RETIRED_TENANT_CONFIG_COLUMNS: Prisma.TenantConfigOmit = {
   monthlyHoursHolidayDeduction: true,
 };
 
+/**
+ * The working-time part of the tenant defaults (Issue #568). Shared by `tenantConfigSchema` and the
+ * bulk-apply preview body so both validate exactly the same fields; the preview reads the proposed
+ * values from this shape, the PUT saves them.
+ */
+const workingTimeDefaultsShape = {
+  defaultWeeklyHours: decimalFromApi(z.number().min(1).max(60)).optional(),
+  defaultMondayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  defaultTuesdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  defaultWednesdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  defaultThursdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  defaultFridayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  defaultSaturdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  defaultSundayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  overtimeThreshold: decimalFromApi(z.number().min(1).max(500)).optional(),
+  allowOvertimePayout: z.boolean().optional(),
+  // Phase 49.5 — default workdays Mon-Sun (tenant default)
+  defaultWorkDays: z
+    .array(z.number().int().min(0).max(6))
+    .min(1, "Mindestens ein Arbeitstag muss aktiv sein")
+    .max(7)
+    .optional(),
+};
+
+/**
+ * Issue #568 — the body fields of the guarded bulk apply. Declared INSIDE the (non-strict) config
+ * schema because Zod strips unknown keys; the handler destructures them out so they never reach the
+ * config upsert. Presence is a business rule checked in the handler (explicit 400 with a code),
+ * never a Zod refinement.
+ */
+const bulkApplyShape = {
+  // apply to existing contracts; requires the preview selection, see bulk-apply-defaults.ts
+  applyToExisting: z.boolean().optional(),
+  applyEmployeeIds: z.array(z.string().uuid()).max(5000).optional(),
+  previewFingerprint: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
+  effectiveFrom: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+};
+
+const previewSchema = z.object({
+  ...workingTimeDefaultsShape,
+  effectiveFrom: bulkApplyShape.effectiveFrom,
+});
+
 const tenantConfigSchema = z
   .object({
     tenantName: z.string().min(1).max(200).optional(),
-    applyToExisting: z.boolean().optional(), // Auf bestehende MA ohne manuelle Änderung anwenden
-    defaultWeeklyHours: decimalFromApi(z.number().min(1).max(60)).optional(),
-    defaultMondayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    defaultTuesdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    defaultWednesdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    defaultThursdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    defaultFridayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    defaultSaturdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    defaultSundayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    overtimeThreshold: decimalFromApi(z.number().min(1).max(500)).optional(),
-    allowOvertimePayout: z.boolean().optional(),
+    ...workingTimeDefaultsShape,
+    ...bulkApplyShape,
     federalState: z
       .string()
       .refine((s) => VALID_FEDERAL_STATES.includes(s))
@@ -203,12 +265,6 @@ const tenantConfigSchema = z
       .nullable()
       .optional(),
     defaultCoreDays: z.array(z.number().int().min(0).max(6)).optional(),
-    // Phase 49.5 — Standard-Arbeitstage Mo-So (Tenant-Default)
-    defaultWorkDays: z
-      .array(z.number().int().min(0).max(6))
-      .min(1, "Mindestens ein Arbeitstag muss aktiv sein")
-      .max(7)
-      .optional(),
     // Phase 63 D-02 / D-24 — per-tenant Berufsschule duration.
     // Bounds: 240..600 daily (4h..10h, ArbZG-compatible); 1200..3000 weekly
     // (20h..50h block-week cap). Values mirrored in
@@ -552,6 +608,117 @@ export function projectSecuritySettings(cfg: TenantConfig | null): SecuritySetti
   return out as SecuritySettings;
 }
 
+/**
+ * Issue #568 review WR-02 — locks the Employee rows of `employeeIds` (tenant-scoped, ordered by id)
+ * with `FOR NO KEY UPDATE` for the rest of the caller's transaction. Every contract write of an
+ * employee — the tenant-wide bulk apply and `PUT /work/:employeeId` — takes this same row lock as
+ * the first statement of its write transaction, so two of them can never interleave their
+ * read-then-insert on one employee's contracts (`WorkSchedule` has no unique constraint on
+ * `(employeeId, validFrom)`; without the lock both would insert a row on the same day, or one would
+ * insert under a row the other just created). Ordered by id, so two bulk applies or a bulk apply and
+ * a single write cannot deadlock. NO KEY UPDATE conflicts with itself but not with the FOR KEY SHARE
+ * a WorkSchedule insert takes on the Employee row, so the writes themselves are not blocked.
+ */
+async function lockEmployeeRowsForContractWrite(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  employeeIds: string[],
+): Promise<void> {
+  if (employeeIds.length === 0) return;
+  await tx.$queryRaw`SELECT "id" FROM "Employee" WHERE "tenantId" = ${tenantId} AND "id" = ANY(${employeeIds}::text[]) ORDER BY "id" FOR NO KEY UPDATE`;
+}
+
+/** 409 body of a per-employee contract write that lost a race for the same `validFrom` row (WR-02). */
+const CONTRACT_CHANGED_CONCURRENTLY = {
+  error:
+    "Der Vertrag dieses Mitarbeiters wurde gleichzeitig geändert. Bitte die Seite neu laden und die Änderung erneut speichern.",
+  code: "CONTRACT_CHANGED_CONCURRENTLY",
+} as const;
+
+/**
+ * Issue #568 — everything the bulk apply's classification reads, loaded through `db` so the apply
+ * can run it inside its own transaction after the tenant lock. `tenantId` is inline in both where
+ * clauses; nothing is ever queried by a client-supplied id.
+ */
+async function loadBulkApplyState(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  effectiveFrom: Date,
+) {
+  const [config, employees] = await Promise.all([
+    db.tenantConfig.findUnique({
+      where: { tenantId },
+      select: {
+        defaultWeeklyHours: true,
+        defaultMondayHours: true,
+        defaultTuesdayHours: true,
+        defaultWednesdayHours: true,
+        defaultThursdayHours: true,
+        defaultFridayHours: true,
+        defaultSaturdayHours: true,
+        defaultSundayHours: true,
+        overtimeThreshold: true,
+        allowOvertimePayout: true,
+        defaultWorkDays: true,
+      },
+    }),
+    // Issue #569 — only the active workforce: an anonymized employee is erased (Art. 17 GDPR), and
+    // an employee who left before the new contract starts has no contract to change.
+    db.employee.findMany({
+      where: {
+        tenantId,
+        ...NOT_ANONYMIZED_EMPLOYEE_WHERE,
+        OR: [{ exitDate: null }, { exitDate: { gte: effectiveFrom } }],
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        employeeNumber: true,
+        workSchedules: { orderBy: { validFrom: "desc" } },
+      },
+    }),
+  ]);
+  return { config, employees };
+}
+
+/** The recomputed state of one bulk apply or preview: stored defaults, proposal, classification. */
+async function computeBulkApplyState(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  effectiveFrom: string,
+  timeZone: string,
+  body: Partial<WorkingTimeDefaults>,
+): Promise<{
+  stored: WorkingTimeDefaults;
+  proposed: WorkingTimeDefaults;
+  classification: BulkApplyClassification;
+  fingerprint: string;
+}> {
+  const { config, employees } = await loadBulkApplyState(
+    db,
+    tenantId,
+    new Date(`${effectiveFrom}T00:00:00.000Z`),
+  );
+  const stored = storedWorkingTimeDefaults(config);
+  const proposed = mergeProposedDefaults(stored, body);
+  const classification = classifyBulkApplyCandidates({
+    employees,
+    stored,
+    proposed,
+    effectiveFrom,
+    timeZone,
+  });
+  const fingerprint = bulkApplyFingerprint({
+    tenantId,
+    effectiveFrom,
+    stored,
+    proposed,
+    classification,
+  });
+  return { stored, proposed, classification, fingerprint };
+}
+
 export async function settingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/work  — globale Vorgaben
   app.get("/work", {
@@ -680,7 +847,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.put("/work", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("tenant-settings:update:ZUGEWIESEN"),
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const body = tenantConfigSchema.parse(req.body);
       const tenantId = req.user.tenantId;
 
@@ -699,9 +866,40 @@ export async function settingsRoutes(app: FastifyInstance) {
         federalState,
         tenantName,
         applyToExisting,
+        applyEmployeeIds,
+        previewFingerprint,
+        effectiveFrom,
         sickNoteRequiredAfterDays,
         ...configBody
       } = body;
+
+      // Issue #568 (D-02, D-05): the bulk apply needs the preview's selection and fingerprint and
+      // a non-retroactive effective date. All of it is refused HERE, before anything is written.
+      // Without `applyToExisting` the three fields are ignored and this path is unchanged.
+      let bulkEffectiveFrom: string | undefined;
+      let bulkTimeZone: string | undefined;
+      if (applyToExisting === true) {
+        if (
+          !applyEmployeeIds ||
+          applyEmployeeIds.length === 0 ||
+          !previewFingerprint ||
+          !effectiveFrom
+        ) {
+          return reply.code(400).send({
+            error: BULK_APPLY_SELECTION_REQUIRED_MESSAGE,
+            code: "BULK_APPLY_SELECTION_REQUIRED",
+          });
+        }
+        const tz = await getTenantTimezone(app.prisma, tenantId);
+        const rejection = checkEffectiveFrom(effectiveFrom, todayInTz(tz));
+        if (rejection) {
+          return reply
+            .code(rejection.status)
+            .send({ error: rejection.message, code: rejection.code });
+        }
+        bulkEffectiveFrom = effectiveFrom;
+        bulkTimeZone = tz;
+      }
 
       // Phase 104 review (WR-08): the Zod field now accepts an explicit null (Clokr frontends
       // send `x ? x : null`, and clearing the number input yields null via Svelte's
@@ -724,232 +922,235 @@ export async function settingsRoutes(app: FastifyInstance) {
       // Phase 64b (issue #64, D-16, research Pitfall 1): the tenantConfig upsert, the optional
       // tenant update, and — ONLY when this PUT CHANGES storeHours — the D-16 salon mirror plus
       // its own UPDATE Salon audit row all run in ONE transaction, so a mirror failure rolls back
-      // the tenantConfig write too. The applyToExisting employee loop below and the
-      // TenantConfig/BREAK_DEFAULT_CHANGED audits stay OUTSIDE this transaction — separate,
-      // pre-existing code paths this task does not widen the lock scope around.
-      const config = await app.prisma.$transaction(async (tx) => {
-        // Review WR-02: the tenant value BEFORE this write. The admin UI resends the full week on
-        // every save of its section (also when only shiftStoreHoursMode changed), so "the body
-        // carries storeHours" is not "storeHours changed" — mirroring on the former would
-        // overwrite a salon edited via PATCH /api/v1/salons/:id with the unchanged tenant value.
-        const previousTenantHours =
-          configData.storeHours === undefined
-            ? undefined
-            : (
-                await tx.tenantConfig.findUnique({
-                  where: { tenantId },
-                  select: { storeHours: true },
-                })
-              )?.storeHours;
-
-        const upserted = await tx.tenantConfig.upsert({
-          where: { tenantId },
-          update: configData,
-          create: { tenantId, ...configData },
-          omit: RETIRED_TENANT_CONFIG_COLUMNS,
-        });
-
-        if (Object.keys(tenantUpdate).length > 0) {
-          await tx.tenant.update({
-            where: { id: tenantId },
-            data: tenantUpdate,
-          });
-        }
-
-        const hours = configData.storeHours;
-        if (hours !== undefined) {
-          const mirrored = await syncSoleActiveSalonOpeningHours(tx, tenantId, {
-            previousTenantHours,
-            openingHours: hours,
-          });
-          if (mirrored) {
-            await app.audit({
-              userId: req.user.sub,
-              action: "UPDATE",
-              entity: "Salon",
-              entityId: mirrored.updated.id,
-              oldValue: mirrored.existing,
-              newValue: mirrored.updated,
-              request: { ip: req.ip, headers: req.headers as Record<string, string> },
-              tx,
-            });
-          }
-        }
-
-        return upserted;
-      });
-
-      // Auf bestehende MA anwenden: Neue Schedule-Version für alle MA,
-      // deren aktueller Schedule noch den alten Defaults entspricht
-      let appliedCount = 0;
-      // Phase 76.24 (D-01) — tracks employees skipped due to same-month model-switch
-      // collision (existing row at validFrom has a different type than FIXED_SCHEDULE).
-      // Returned in the response so operators can handle them via the single-employee path.
+      // the tenantConfig write too.
+      //
+      // Issue #568 (D-02, D-06): the guarded bulk apply joins this very transaction — the tenant
+      // lock, the recomputation and fingerprint check, every new WorkSchedule row with its CREATE
+      // audit row, and the collective BULK_APPLY audit row. A refusal thrown inside rolls back the
+      // config save as well, so a stale or foreign selection changes nothing. Only the
+      // vacation-entitlement and saldo follow-ups run after the commit (reactive, ADR 0002
+      // Entscheidung 10).
+      const bulkEffectiveFromDate = bulkEffectiveFrom
+        ? new Date(`${bulkEffectiveFrom}T00:00:00.000Z`)
+        : undefined;
+      const applied: { employeeId: string }[] = [];
       let skippedModelSwitch = 0;
-      if (applyToExisting) {
-        // Phase 60 (#220) — bulk apply MUST write month-1st validFrom so the contract
-        // change is unambiguous at the saldo engine. Snap once here, reuse in the query
-        // and in both branches below (employees-without-schedule + FIXED_SCHEDULE update).
-        const now = snapToMonthFirstUtc(new Date());
-        // Issue #569 — only the active workforce gets the new defaults: an anonymized
-        // employee is erased (Art. 17 GDPR) and must not receive new rows, and an employee
-        // who left before the new contract starts has no contract to change.
-        const employees = await app.prisma.employee.findMany({
-          where: {
-            tenantId,
-            ...NOT_ANONYMIZED_EMPLOYEE_WHERE,
-            OR: [{ exitDate: null }, { exitDate: { gte: now } }],
-          },
-          include: { workSchedules: { orderBy: { validFrom: "desc" }, take: 1 } },
-        });
-        for (const emp of employees) {
-          const current = emp.workSchedules[0];
-          // Issue #450 (D-06, WR-02 review fix) — true only when THIS employee's own
-          // WorkSchedule write committed below, so the recompute call after the if/else
-          // runs immediately per employee rather than batched after the whole loop. That
-          // way a later employee's thrown error can never prevent an already-committed
-          // employee's entitlement recompute from running.
-          let employeeScheduleChanged = false;
-          if (!current) {
-            // MA ohne Schedule → neuen mit Defaults erstellen
-            // Phase 61 (v1.6.5) — workDays MUST be derived from the per-day-hours
-            // we're writing. Bulk-apply has no per-employee body, so we use the
-            // tenant defaults that are about to be persisted. tenantConfig
-            // defaultWorkDays acts as the fallback when defaults are all-zero.
-            const noScheduleHours: PerDayHours = {
-              mondayHours: configBody.defaultMondayHours ?? 8,
-              tuesdayHours: configBody.defaultTuesdayHours ?? 8,
-              wednesdayHours: configBody.defaultWednesdayHours ?? 8,
-              thursdayHours: configBody.defaultThursdayHours ?? 8,
-              fridayHours: configBody.defaultFridayHours ?? 8,
-              saturdayHours: configBody.defaultSaturdayHours ?? 0,
-              sundayHours: configBody.defaultSundayHours ?? 0,
-            };
-            const created = await app.prisma.workSchedule.create({
-              data: {
-                employeeId: emp.id,
-                type: "FIXED_SCHEDULE",
-                weeklyHours: configBody.defaultWeeklyHours ?? 40,
-                mondayHours: noScheduleHours.mondayHours as number,
-                tuesdayHours: noScheduleHours.tuesdayHours as number,
-                wednesdayHours: noScheduleHours.wednesdayHours as number,
-                thursdayHours: noScheduleHours.thursdayHours as number,
-                fridayHours: noScheduleHours.fridayHours as number,
-                saturdayHours: noScheduleHours.saturdayHours as number,
-                sundayHours: noScheduleHours.sundayHours as number,
-                overtimeThreshold: configBody.overtimeThreshold ?? 60,
-                allowOvertimePayout: configBody.allowOvertimePayout ?? false,
-                workDays: normalizeWorkDays(undefined, noScheduleHours, configBody.defaultWorkDays),
-                validFrom: now,
-              },
-            });
-            await app.audit({
-              userId: req.user.sub,
-              action: "CREATE",
-              entity: "WorkSchedule",
-              entityId: created.id,
-              newValue: created,
-              request: { ip: req.ip, headers: req.headers as Record<string, string> },
-            });
-            appliedCount++;
-            employeeScheduleChanged = true;
-          } else if (current.type === "FIXED_SCHEDULE") {
-            // Nur FIXED_SCHEDULE MA updaten (nicht Minijobber)
-
-            // Phase 76.24 (D-01 / T-76.24-03) — same-month type-change collision guard.
-            // Bulk apply always writes FIXED_SCHEDULE at `now` (month-1st). If a row
-            // already exists at that validFrom with a DIFFERENT type, skip this employee
-            // to prevent a silent overwrite of their AZ-model history. Surface skipped
-            // employees via `skippedModelSwitch` in the response body so the operator
-            // can handle them individually via PUT /settings/work/:employeeId.
-            const existingAtNow = await app.prisma.workSchedule.findFirst({
-              where: { employeeId: emp.id, validFrom: now },
-              select: { type: true },
-            });
-            if (existingAtNow && existingAtNow.type !== "FIXED_SCHEDULE") {
-              skippedModelSwitch++;
-              continue;
+      let config: Omit<TenantConfig, "monthlyHoursHolidayDeduction">;
+      try {
+        config = await app.prisma.$transaction(
+          async (tx) => {
+            let bulk:
+              | {
+                  proposed: WorkingTimeDefaults;
+                  classification: BulkApplyClassification;
+                  selection: string[];
+                }
+              | undefined;
+            if (bulkEffectiveFrom && bulkTimeZone && applyEmployeeIds && previewFingerprint) {
+              // Serialises concurrent applies of this tenant: the Tenant row always exists (a
+              // TenantConfig row may not), and everything below reads the state AFTER the lock.
+              // NO KEY UPDATE, not UPDATE: it still conflicts with a second apply, but not with
+              // the FOR KEY SHARE that every foreign-key insert onto Tenant takes, so clocking and
+              // other writes of the tenant are not blocked for the duration of the apply.
+              await tx.$queryRaw`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId} FOR NO KEY UPDATE`;
+              // Review WR-02: the Tenant lock only excludes a second bulk apply. A per-employee
+              // contract write (PUT /work/:employeeId) takes the Employee row lock instead, so the
+              // selected employees are locked here, BEFORE the recompute: whatever such a write
+              // committed is then visible to the classification (and flips the fingerprint), and
+              // one that comes later waits until this transaction is done.
+              const selection = [...new Set(applyEmployeeIds)].sort(compareIds);
+              await lockEmployeeRowsForContractWrite(tx, tenantId, selection);
+              const state = await computeBulkApplyState(
+                tx,
+                tenantId,
+                bulkEffectiveFrom,
+                bulkTimeZone,
+                configBody,
+              );
+              if (state.fingerprint !== previewFingerprint) {
+                throw new BulkApplyRejection(
+                  409,
+                  "BULK_APPLY_PREVIEW_STALE",
+                  BULK_APPLY_STALE_MESSAGE,
+                );
+              }
+              const outside = checkBulkSelection(state.classification.candidates, selection);
+              if (outside) throw outside;
+              bulk = {
+                proposed: state.proposed,
+                classification: state.classification,
+                selection,
+              };
             }
 
-            // Phase 61 (v1.6.5) — same as above: derive workDays from the
-            // per-day-hours that are actually being written for this employee.
-            const updateHours: PerDayHours = {
-              mondayHours: configBody.defaultMondayHours ?? Number(current.mondayHours),
-              tuesdayHours: configBody.defaultTuesdayHours ?? Number(current.tuesdayHours),
-              wednesdayHours: configBody.defaultWednesdayHours ?? Number(current.wednesdayHours),
-              thursdayHours: configBody.defaultThursdayHours ?? Number(current.thursdayHours),
-              fridayHours: configBody.defaultFridayHours ?? Number(current.fridayHours),
-              saturdayHours: configBody.defaultSaturdayHours ?? Number(current.saturdayHours),
-              sundayHours: configBody.defaultSundayHours ?? Number(current.sundayHours),
-            };
-            const created = await app.prisma.workSchedule.create({
-              data: {
-                employeeId: emp.id,
-                type: "FIXED_SCHEDULE",
-                weeklyHours: configBody.defaultWeeklyHours ?? Number(current.weeklyHours),
-                mondayHours: updateHours.mondayHours as number,
-                tuesdayHours: updateHours.tuesdayHours as number,
-                wednesdayHours: updateHours.wednesdayHours as number,
-                thursdayHours: updateHours.thursdayHours as number,
-                fridayHours: updateHours.fridayHours as number,
-                saturdayHours: updateHours.saturdayHours as number,
-                sundayHours: updateHours.sundayHours as number,
-                overtimeThreshold:
-                  configBody.overtimeThreshold ?? Number(current.overtimeThreshold),
-                allowOvertimePayout: configBody.allowOvertimePayout ?? current.allowOvertimePayout,
-                workDays: normalizeWorkDays(undefined, updateHours, configBody.defaultWorkDays),
-                validFrom: now,
-              },
-            });
-            await app.audit({
-              userId: req.user.sub,
-              action: "CREATE",
-              entity: "WorkSchedule",
-              entityId: created.id,
-              oldValue: current,
-              newValue: created,
-              request: { ip: req.ip, headers: req.headers as Record<string, string> },
-            });
-            appliedCount++;
-            employeeScheduleChanged = true;
-          }
+            // Review WR-02: the tenant value BEFORE this write. The admin UI resends the full week on
+            // every save of its section (also when only shiftStoreHoursMode changed), so "the body
+            // carries storeHours" is not "storeHours changed" — mirroring on the former would
+            // overwrite a salon edited via PATCH /api/v1/salons/:id with the unchanged tenant value.
+            const previousTenantHours =
+              configData.storeHours === undefined
+                ? undefined
+                : (
+                    await tx.tenantConfig.findUnique({
+                      where: { tenantId },
+                      select: { storeHours: true },
+                    })
+                  )?.storeHours;
 
-          // Issue #450 (D-06, WR-02 review fix) — recompute THIS employee's affected
-          // auto-calculated VACATION entitlement years immediately after their own
-          // WorkSchedule write/audit committed above, reactively (ADR 0002 Entscheidung
-          // 10) — never aborting the loop or the request. Placed per-employee (not
-          // batched after the whole loop) so an exception thrown by a LATER employee in
-          // this loop can never skip the recompute for an employee already committed.
-          if (employeeScheduleChanged) {
-            await recalcVacationEntitlementsForContractChange(
-              app.prisma,
-              emp.id,
-              tenantId,
-              now,
-              (entry) =>
-                app.audit({
-                  action: entry.action,
-                  entity: "LeaveEntitlement",
-                  entityId: entry.entityId,
-                  oldValue: entry.oldValue,
-                  ...requestAuditFields(req, entry.newValue as object | undefined),
-                }),
-            ).catch((err) =>
+            const upserted = await tx.tenantConfig.upsert({
+              where: { tenantId },
+              update: configData,
+              create: { tenantId, ...configData },
+              omit: RETIRED_TENANT_CONFIG_COLUMNS,
+            });
+
+            if (Object.keys(tenantUpdate).length > 0) {
+              await tx.tenant.update({
+                where: { id: tenantId },
+                data: tenantUpdate,
+              });
+            }
+
+            const hours = configData.storeHours;
+            if (hours !== undefined) {
+              const mirrored = await syncSoleActiveSalonOpeningHours(tx, tenantId, {
+                previousTenantHours,
+                openingHours: hours,
+              });
+              if (mirrored) {
+                await app.audit({
+                  userId: req.user.sub,
+                  action: "UPDATE",
+                  entity: "Salon",
+                  entityId: mirrored.updated.id,
+                  oldValue: mirrored.existing,
+                  newValue: mirrored.updated,
+                  request: { ip: req.ip, headers: req.headers as Record<string, string> },
+                  tx,
+                });
+              }
+            }
+
+            if (bulk && bulkEffectiveFrom) {
+              // Phase 76.24 (D-01): same-month model-switch collisions are non-candidates now and
+              // are only counted; the operator handles them via PUT /settings/work/:employeeId.
+              skippedModelSwitch =
+                bulk.classification.nonCandidates.find(
+                  (group) => group.reason === "SAME_MONTH_MODEL_SWITCH",
+                )?.count ?? 0;
+              const byId = new Map(
+                bulk.classification.candidates.map((candidate) => [
+                  candidate.employeeId,
+                  candidate,
+                ]),
+              );
+              for (const employeeId of bulk.selection) {
+                const candidate = byId.get(employeeId);
+                if (!candidate) continue;
+                const created = await tx.workSchedule.create({
+                  data: {
+                    employeeId,
+                    ...bulkScheduleData(bulk.proposed, bulkEffectiveFrom, candidate.comparedRow),
+                  },
+                });
+                await app.audit({
+                  userId: req.user.sub,
+                  action: "CREATE",
+                  entity: "WorkSchedule",
+                  entityId: created.id,
+                  ...(candidate.comparedRow ? { oldValue: candidate.comparedRow } : {}),
+                  newValue: created,
+                  request: { ip: req.ip, headers: req.headers as Record<string, string> },
+                  tx,
+                });
+                applied.push({ employeeId });
+              }
+              const selected = new Set(bulk.selection);
+              // One collective row: ids only, no names (D-06).
+              await app.audit({
+                userId: req.user.sub,
+                action: "BULK_APPLY",
+                entity: "TenantConfig",
+                entityId: upserted.id,
+                newValue: {
+                  effectiveFrom: bulkEffectiveFrom,
+                  appliedEmployeeIds: bulk.selection,
+                  deselectedCandidateIds: bulk.classification.candidates
+                    .map((candidate) => candidate.employeeId)
+                    .filter((id) => !selected.has(id))
+                    .sort(compareIds),
+                  previewFingerprint,
+                  values: bulk.proposed,
+                },
+                request: { ip: req.ip, headers: req.headers as Record<string, string> },
+                tx,
+              });
+            }
+
+            return upserted;
+          },
+          // The default 5 s does not fit a chain-sized workforce (one create + audit per employee).
+          bulkEffectiveFrom ? { timeout: 60_000, maxWait: 10_000 } : undefined,
+        );
+      } catch (err) {
+        if (err instanceof BulkApplyRejection) {
+          return reply.code(err.status).send({ error: err.message, code: err.code });
+        }
+        throw err;
+      }
+      const appliedCount = applied.length;
+
+      // Issue #568 (O2, #450) — reactive follow-ups after the commit, per applied employee: the
+      // saldo recalculation only when the new contract already took effect (effectiveFrom is the
+      // 1st and today), then the vacation-entitlement recompute. Neither can undo the apply.
+      if (bulkEffectiveFromDate && bulkEffectiveFrom && bulkTimeZone) {
+        // Compared as tenant-local DATE strings, never as an instant: effectiveFrom is a calendar
+        // day, so between 00:00 and 02:00 local on the 1st its UTC midnight still lies ahead of
+        // `new Date()` although the contract already governs today (review IN-02).
+        const alreadyEffective = bulkEffectiveFrom <= dateStrInTz(new Date(), bulkTimeZone);
+        for (const { employeeId } of applied) {
+          if (alreadyEffective) {
+            await recalculateSnapshots(app, employeeId, bulkEffectiveFromDate).catch((err) =>
               app.log.error(
-                { err, employeeId: emp.id },
-                "Failed to recalculate vacation entitlements after schedule change",
+                { err, employeeId },
+                "Failed to recalculate snapshots after bulk schedule change",
               ),
             );
           }
+          await recalcVacationEntitlementsForContractChange(
+            app.prisma,
+            employeeId,
+            tenantId,
+            bulkEffectiveFromDate,
+            (entry) =>
+              app.audit({
+                action: entry.action,
+                entity: "LeaveEntitlement",
+                entityId: entry.entityId,
+                oldValue: entry.oldValue,
+                ...requestAuditFields(req, entry.newValue as object | undefined),
+              }),
+          ).catch((err) =>
+            app.log.error(
+              { err, employeeId },
+              "Failed to recalculate vacation entitlements after schedule change",
+            ),
+          );
         }
       }
 
+      // The selection and fingerprint live in the BULK_APPLY row only (D-06); this row keeps the
+      // saved values and the count of written rows.
+      const auditBody: Record<string, unknown> = { ...body };
+      delete auditBody.applyEmployeeIds;
+      delete auditBody.previewFingerprint;
+      delete auditBody.effectiveFrom;
       await app.audit({
         userId: req.user.sub,
         action: "UPDATE",
         entity: "TenantConfig",
         entityId: config.id,
-        newValue: { ...body, appliedCount },
+        newValue: { ...auditBody, appliedCount },
       });
 
       // Phase 64 (D-11): Dedicated audit row for break-default changes — emitted
@@ -1014,6 +1215,50 @@ export async function settingsRoutes(app: FastifyInstance) {
         appliedCount,
         skippedModelSwitch,
         ...(warnings.length > 0 ? { warnings } : {}),
+      };
+    },
+  });
+
+  // POST /api/v1/settings/work/apply-defaults/preview — Issue #568 (D-01): read-only preview of
+  // applying PROPOSED default working times to the existing workforce. The server decides who is
+  // a candidate (bulk-apply-defaults.ts); the apply (PUT /work) recomputes the same state and
+  // refuses a stale fingerprint. Writes nothing.
+  app.post("/work/apply-defaults/preview", {
+    schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
+    preHandler: requirePermission("tenant-settings:update:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const body = previewSchema.parse(req.body ?? {});
+      const tenantId = req.user.tenantId;
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+      const window = effectiveFromWindow(todayInTz(tz));
+      const effectiveFrom = body.effectiveFrom ?? window.earliest;
+      const rejection = checkEffectiveFrom(effectiveFrom, todayInTz(tz));
+      if (rejection) {
+        return reply
+          .code(rejection.status)
+          .send({ error: rejection.message, code: rejection.code });
+      }
+      const { effectiveFrom: _ignored, ...proposedBody } = body;
+      void _ignored;
+      const state = await computeBulkApplyState(
+        app.prisma,
+        tenantId,
+        effectiveFrom,
+        tz,
+        proposedBody,
+      );
+      return {
+        effectiveFrom,
+        earliestEffectiveFrom: window.earliest,
+        latestEffectiveFrom: window.latest,
+        allowedEffectiveFrom: window.allowed,
+        fingerprint: state.fingerprint,
+        proposed: proposedContractValues(state.proposed),
+        candidates: state.classification.candidates.map(({ comparedRow: _row, ...candidate }) => {
+          void _row;
+          return candidate;
+        }),
+        nonCandidates: state.classification.nonCandidates,
       };
     },
   });
@@ -1263,6 +1508,17 @@ export async function settingsRoutes(app: FastifyInstance) {
 
             // $transaction returns the created/updated schedule via Promise.
             const schedule = await app.prisma.$transaction(async (tx) => {
+              // 0. Issue #568 review WR-02: the Employee row lock comes FIRST — the tenant-wide
+              //    bulk apply takes the same lock before it classifies and inserts. The row at
+              //    `validFrom` was read before the lock, so it is re-read after it; a concurrent
+              //    writer that created or removed it in between is a conflict, never a duplicate.
+              await lockEmployeeRowsForContractWrite(tx, req.user.tenantId, [employeeId]);
+              const currentForDate = await tx.workSchedule.findFirst({
+                where: { employeeId, validFrom, employee: { tenantId: req.user.tenantId } },
+                select: { id: true },
+              });
+              if ((currentForDate?.id ?? null) !== (existingForDate?.id ?? null)) return null;
+
               // 1. Delete all future shifts (Phase 100B Plan 05 — S3, contexts/scheduling
               //    facade; `tx` is the caller's own transaction client, D-07).
               await cancelOrphanShifts(tx, req.user.tenantId, futureShiftIds);
@@ -1280,6 +1536,7 @@ export async function settingsRoutes(app: FastifyInstance) {
                 });
               }
             });
+            if (!schedule) return reply.code(409).send(CONTRACT_CHANGED_CONCURRENTLY);
 
             // 3. Audit each deleted shift (outside $transaction so failures don't
             //    roll back the schedule change; audit is best-effort but typed)
@@ -1446,18 +1703,24 @@ export async function settingsRoutes(app: FastifyInstance) {
         validFrom,
       };
 
-      let schedule;
       const old = existing;
-      if (existing) {
-        schedule = await app.prisma.workSchedule.update({
-          where: { id: existing.id },
-          data: scheduleData,
+      // Issue #568 review WR-02: lock + re-read + write in ONE transaction. The Employee row lock is
+      // the same one the tenant-wide bulk apply takes, so the two never interleave on one employee;
+      // the row at `validFrom` was read before the lock and is re-read after it — a concurrent writer
+      // that created it in between is a conflict, never a second row on the same day.
+      const schedule = await app.prisma.$transaction(async (tx) => {
+        await lockEmployeeRowsForContractWrite(tx, req.user.tenantId, [employeeId]);
+        const current = await tx.workSchedule.findFirst({
+          where: { employeeId, validFrom, employee: { tenantId: req.user.tenantId } },
+          select: { id: true },
         });
-      } else {
-        schedule = await app.prisma.workSchedule.create({
-          data: { employeeId, ...scheduleData },
-        });
-      }
+        if ((current?.id ?? null) !== (existing?.id ?? null)) return null;
+        if (existing) {
+          return tx.workSchedule.update({ where: { id: existing.id }, data: scheduleData });
+        }
+        return tx.workSchedule.create({ data: { employeeId, ...scheduleData } });
+      });
+      if (!schedule) return reply.code(409).send(CONTRACT_CHANGED_CONCURRENTLY);
 
       await app.audit({
         userId: req.user.sub,
