@@ -20,6 +20,15 @@ import {
   todayStr,
 } from "./test-dates";
 import { applyBulkDefaults, previewBulkApply, type BulkPreviewBody } from "./bulk-apply-helpers";
+import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
+
+// A pass-through spy on the real function: the apply's reactive saldo follow-up is observed, not
+// replaced (review IN-02).
+vi.mock("../contexts/working-time-account/recalculate-snapshots", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../contexts/working-time-account/recalculate-snapshots")>();
+  return { ...actual, recalculateSnapshots: vi.fn(actual.recalculateSnapshots) };
+});
 
 const DEFAULTS_40 = {
   defaultWeeklyHours: 40,
@@ -317,6 +326,11 @@ describe("Issue #568 — bulk apply preview and guarded apply", () => {
     // between a preview and its apply.
     const pinnedNow = midMonthInstant();
     const nextMonthFirstNow = firstOfNextMonthInstant();
+    // 00:30 tenant-local on the 1st of next month: still the PREVIOUS day in UTC.
+    const nextMonthFirstJustAfterMidnight = fromZonedTime(
+      `${monthFirstAheadStr(1)}T00:30:00`,
+      TEST_TZ,
+    );
 
     beforeAll(() => {
       vi.useFakeTimers({ now: pinnedNow, toFake: ["Date"] });
@@ -617,6 +631,41 @@ describe("Issue #568 — bulk apply preview and guarded apply", () => {
       const rows = await schedulesOf(t.noContractId);
       expect(rows).toHaveLength(1);
       expect(rows[0].validFrom.toISOString().slice(0, 10)).toBe(preview.earliestEffectiveFrom);
+    });
+
+    it("(h2) between 00:00 and 02:00 local on the 1st the contract is already effective: the saldo path runs (review IN-02)", async () => {
+      const t = await scenario("h2");
+      vi.setSystemTime(nextMonthFirstJustAfterMidnight);
+      // The instant is still the previous UTC day, the tenant-local day is the 1st.
+      expect(nextMonthFirstJustAfterMidnight.toISOString().slice(0, 10) < todayStr()).toBe(true);
+      const token = reissueTokenNow(app, t.data.adminToken);
+      vi.mocked(recalculateSnapshots).mockClear();
+      const { res, preview } = await applyBulkDefaults(app, token, {
+        defaults: DEFAULTS_38,
+        employeeIds: [t.noContractId],
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(preview.effectiveFrom).toBe(todayStr());
+      const calls = vi
+        .mocked(recalculateSnapshots)
+        .mock.calls.filter(([, employeeId]) => employeeId === t.noContractId);
+      expect(calls).toHaveLength(1);
+      expect(calls[0][2].toISOString().slice(0, 10)).toBe(preview.effectiveFrom);
+    });
+
+    it("(h3) mid-month a future effective date triggers no saldo recalculation", async () => {
+      const t = await scenario("h3");
+      vi.mocked(recalculateSnapshots).mockClear();
+      const { res } = await applyBulkDefaults(app, t.token, {
+        defaults: DEFAULTS_38,
+        employeeIds: [t.noContractId],
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(
+        vi
+          .mocked(recalculateSnapshots)
+          .mock.calls.filter(([, employeeId]) => employeeId === t.noContractId),
+      ).toHaveLength(0);
     });
 
     it("(i) the earliest effective date mid-month is the 1st of next month", async () => {

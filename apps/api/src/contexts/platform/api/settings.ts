@@ -20,6 +20,7 @@ import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Pl
 import { isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-14
 import {
   DEFAULT_MISSING_ENTRIES_DAYS, // issue #246, E-6
+  dateStrInTz, // Issue #568 review IN-02 — the "already effective" check compares tenant-local day strings
   getTenantTimezone, // Issue #568 — the bulk apply's earliest effective date is the tenant-local today
   todayInTz,
 } from "../../working-time-account";
@@ -1068,9 +1069,13 @@ export async function settingsRoutes(app: FastifyInstance) {
       // Issue #568 (O2, #450) — reactive follow-ups after the commit, per applied employee: the
       // saldo recalculation only when the new contract already took effect (effectiveFrom is the
       // 1st and today), then the vacation-entitlement recompute. Neither can undo the apply.
-      if (bulkEffectiveFromDate) {
+      if (bulkEffectiveFromDate && bulkEffectiveFrom && bulkTimeZone) {
+        // Compared as tenant-local DATE strings, never as an instant: effectiveFrom is a calendar
+        // day, so between 00:00 and 02:00 local on the 1st its UTC midnight still lies ahead of
+        // `new Date()` although the contract already governs today (review IN-02).
+        const alreadyEffective = bulkEffectiveFrom <= dateStrInTz(new Date(), bulkTimeZone);
         for (const { employeeId } of applied) {
-          if (bulkEffectiveFromDate <= new Date()) {
+          if (alreadyEffective) {
             await recalculateSnapshots(app, employeeId, bulkEffectiveFromDate).catch((err) =>
               app.log.error(
                 { err, employeeId },
