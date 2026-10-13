@@ -94,8 +94,10 @@ segment, not from whichever contract happened to be current when the row was las
 - **Triggers:** every contract-change write path recomputes the affected years' auto-calculated
   VACATION entitlement after the write commits — `PUT /api/v1/settings/work/:employeeId` (both the
   regular branch and the `cancelOrphanShifts` branch) and the tenant-wide `applyToExisting` bulk
-  apply, each employee independently. The recompute is REACTIVE: it runs after the triggering
-  write's own transaction commits, with its own `.catch`, so one employee's recompute failure never
+  apply (preview + confirm, Issue #568), each applied employee independently, from the chosen
+  `effectiveFrom`. The recompute is REACTIVE: it runs after the triggering write's own transaction
+  commits (for the bulk apply: after the single bulk transaction commits, once per applied
+  employee), with its own `.catch`, so one employee's recompute failure never
   rolls back the write or blocks a sibling employee's recompute (ADR 0002 Entscheidung 10) — a
   failure is logged, never thrown back at the caller. The affected years are every year from
   `max(changed WorkSchedule row's validFrom year, current year)` through the current year plus

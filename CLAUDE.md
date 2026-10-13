@@ -580,6 +580,22 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
 - `LeaveRequest.daysProvisional Boolean?` — server-derived, set only at approval time; `true` when
   any day of a `SHIFT_BASED` leave request's period had no roster at calculation time (Phase 107,
   D-10/D-11). Never set by a client.
+- **Bulk apply of the default working time is preview + confirm (Issue #568, § 3 NachwG).**
+  `PUT /api/v1/settings/work` with `applyToExisting` never decides a contract change by itself.
+  `POST /api/v1/settings/work/apply-defaults/preview` (read-only) computes the candidate set
+  server-side; the apply needs `applyEmployeeIds` inside that set, the preview's `previewFingerprint`
+  (409 `BULK_APPLY_PREVIEW_STALE` otherwise, nothing written) and an `effectiveFrom` that is a
+  month-first and never before the tenant-local today (earliest: the next month-first, or today on the
+  1st; at most 12 months ahead; 400 otherwise) — a working-time change must be communicated at the
+  latest on the day it takes effect, so it is never retroactive. Only `FIXED_SCHEDULE` contracts and
+  employees without a contract are candidates; a contract that differs from the stored defaults
+  (`INDIVIDUAL`) is excluded unless the admin ticks it. The config save, the new rows, one
+  `CREATE WorkSchedule` audit per employee and one ids-only `BULK_APPLY` audit row run in ONE
+  transaction serialised by a `FOR NO KEY UPDATE` lock on the Tenant row; the #450 vacation recompute
+  stays reactive after commit. The rule lives ONLY in `contexts/platform/bulk-apply-defaults.ts`; the
+  web dialog (`BulkApplyDialog.svelte`) only chooses inside the preview and computes no date. Past
+  applies are listed read-only by `scripts/audit-568-bulk-apply-history.ts`. Per-employee changes
+  (`PUT /settings/work/:employeeId`) are unchanged.
 
 ## UI Consistency Rules
 

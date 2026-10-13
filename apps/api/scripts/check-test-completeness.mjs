@@ -799,8 +799,12 @@ import { readFileSync } from "node:fs";
 // behind the real totals); no floor is lowered.
 // Issue #569 (2026-10-13): one new test file `bulk-apply-active-workforce-569` (1 case) —
 // MIN_FILES 567 -> 568, MIN_TESTS 9030 -> 9031. Same lower-bound convention as above.
-const MIN_FILES = 568;
-const MIN_TESTS = 9031;
+// Issue #568 (2026-10-13): measured on `fix/568-bulk-apply-preview`, full run (`test:coverage`) - 571 test files,
+// 9093 tests (9090 passed, 3 skipped). New files: bulk-apply-defaults.test.ts, bulk-apply-preview-568.test.ts,
+// audit-568-bulk-apply-history.test.ts, plus the cases added to the six migrated bulk-apply files. Both floors are
+// set to exactly these numbers; MIN_FILES 568 -> 571, MIN_TESTS 9031 -> 9093, never lowered.
+const MIN_FILES = 571;
+const MIN_TESTS = 9093;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
