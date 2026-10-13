@@ -29,15 +29,10 @@ describe("time-entry-salon tracer (Phase 68b, issue #68)", () => {
     seed = await seedTestData(app, "tes"); // seed.salonId = the tenant's default salon (D)
 
     // A and B are created AFTER the default salon D (seedTestData already ran), so D stays the
-    // earliest-created ACTIVE salon — the fallback `findDefaultSalon` answer.
-    salonA = await createTestSalon(app.prisma, seed.tenant.id, {
-      name: "Salon A",
-      createdAt: new Date(),
-    });
-    salonB = await createTestSalon(app.prisma, seed.tenant.id, {
-      name: "Salon B",
-      createdAt: new Date(),
-    });
+    // earliest-created ACTIVE salon — the fallback `findDefaultSalon` answer. createTestSalon
+    // guarantees strictly increasing createdAt (issue #543), so no tie can reorder them.
+    salonA = await createTestSalon(app.prisma, seed.tenant.id, { name: "Salon A" });
+    salonB = await createTestSalon(app.prisma, seed.tenant.id, { name: "Salon B" });
 
     // HOME -> A, open-ended from 2024-01-01.
     await app.prisma.employeeSalonAssignment.create({

@@ -104,6 +104,22 @@ describe("no primary Einstempeln action on a finished day (acceptance criterion 
     expect(PAGE).not.toMatch(/btn-primary[\s\S]{0,400}Erneut einstempeln/);
   });
 
+  // Issue #546 (discriminator swap): the primary card button no longer composes `btn-primary`, so
+  // the negative regex above would stay green even if the reopen action became primary in the new
+  // composition (`timer-cta-primary`). This pins the reopen button's own classes instead.
+  it("the reopen button is the card's ghost variant, never the primary composition", () => {
+    // The label also occurs in a comment and in the confirm dialog props; only a <button> element
+    // whose body carries it counts.
+    const buttons = [...PAGE.matchAll(/<button\b[\s\S]*?<\/button\s*>/g)]
+      .map((m) => m[0])
+      .filter((b) => b.includes("Erneut einstempeln"));
+    expect(buttons, "exactly one reopen <button> element").toHaveLength(1);
+    const tag = buttons[0].slice(0, buttons[0].indexOf("Erneut einstempeln"));
+    expect(tag).toContain("timer-cta-ghost");
+    expect(tag).not.toContain("timer-cta-primary");
+    expect(tag).not.toMatch(/btn-primary/);
+  });
+
   it("handleClock refuses a finished day even if a button were ever wired to it", () => {
     expect(PAGE).toContain('if (day.kind === "finished") return;');
   });
