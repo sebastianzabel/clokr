@@ -13,6 +13,7 @@ import {
   isStammsalonScopeMatch,
 } from "../../platform"; // Phase 75b Plan 10 (#75), D-16; Phase 91b Plan 09 (#91), D-10/D-17
 import { getTenantTimezone, monthRangeUtc } from "../timezone";
+import { ACTIVE_TENANT_WHERE } from "../../platform"; // Phase 88 (D-05a)
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -108,7 +109,11 @@ export const deferredMonthCloseReminderPlugin = fp(async (app) => {
 
   async function remindDeferredMonthClose() {
     const now = new Date();
-    const tenants = await app.prisma.tenant.findMany({ select: { id: true, name: true } });
+    // Phase 88 (D-05a): a deactivated tenant is a suspended customer — no reminder notifications.
+    const tenants = await app.prisma.tenant.findMany({
+      where: ACTIVE_TENANT_WHERE,
+      select: { id: true, name: true },
+    });
 
     for (const tenant of tenants) {
       try {

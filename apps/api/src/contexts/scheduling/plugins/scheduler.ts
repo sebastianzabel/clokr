@@ -2,6 +2,7 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, tenantAdvisoryKey } from "../../../utils/with-advisory-lock";
 import { syncPhorestForTenant } from "../../../services/phorest/sync-tenant";
+import { ACTIVE_TENANT_WHERE } from "../../platform"; // Phase 88 (D-05a)
 
 /**
  * Background scheduler for recurring tasks.
@@ -24,9 +25,10 @@ export const schedulerPlugin = fp(async (app) => {
     for (const task of tasks) void task.stop();
     tasks.length = 0;
 
-    // Load all tenants with auto-sync enabled
+    // Load all ACTIVE tenants with auto-sync enabled (Phase 88, D-05a: a deactivated tenant is a
+    // suspended customer — no Phorest sync). (De)activation refreshes this list.
     const configs = await app.prisma.tenantConfig.findMany({
-      where: { phorestAutoSync: true },
+      where: { phorestAutoSync: true, tenant: ACTIVE_TENANT_WHERE },
       select: { tenantId: true, phorestSyncCron: true },
     });
 
@@ -45,6 +47,10 @@ export const schedulerPlugin = fp(async (app) => {
             app.prisma,
             tenantAdvisoryKey(cfg.tenantId),
             async () => {
+              // Phase 88 (D-05a, Pitfall 5): tasks registered before a deactivation keep firing until the
+              // next refresh, so every run re-checks the tenant itself (cached at most 10 s). It runs
+              // inside the lock body so a failing lookup is logged by the catch below.
+              if (!(await app.tenantIsActive(cfg.tenantId))) return;
               // Phase 86 (SA-03) / Phase 65b (D-12): per coupled salon, shifts + appointments sync
               // under this ONE tenant lock and record onto that salon's PhorestSyncRun row.
               // Cron actor = SYSTEM (no actorUserId).

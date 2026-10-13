@@ -11,6 +11,7 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import { runVocationalSchoolGeneration } from "../vocational-school-generator";
+import { ACTIVE_TENANT_WHERE } from "../../platform"; // Phase 88 (D-05a)
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -55,7 +56,9 @@ export const vocationalSchoolGeneratorPlugin = fp(async (app) => {
   async function runAllTenants() {
     app.log.info("Berufsschule-Auto-Gen: Starte tägliche Vorab-Generierung");
 
+    // Phase 88 (D-05a): a deactivated tenant is a suspended customer — no generated absences.
     const tenants = await app.prisma.tenant.findMany({
+      where: ACTIVE_TENANT_WHERE,
       include: { config: true },
     });
 
