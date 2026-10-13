@@ -192,6 +192,11 @@ export type PrincipalRefusalEntry = {
   action: "TENANT_PRINCIPAL_REFUSED" | "OPERATOR_PRINCIPAL_REFUSED";
   /** The `sub` of the refused token — the key of the window together with the route. */
   principalSub: string;
+  /**
+   * The acting operator account, only for a refused token whose operator signature VERIFIED (the account
+   * exists). Never set from an unverified claim: `operatorId` is a foreign key.
+   */
+  operatorId?: string | null;
   subjectTenantId?: string | null;
   route: string;
   method: string;
@@ -238,7 +243,7 @@ export async function recordPrincipalRefusal(
   refusalWindows.set(key, { windowStart: nowMs, suppressed: 0 });
 
   await recordOperatorAudit(db, {
-    operatorId: null,
+    operatorId: entry.operatorId ?? null,
     action: entry.action,
     subjectTenantId: entry.subjectTenantId,
     entity: "Route",

@@ -23,6 +23,7 @@ import { settingsRoutes } from "./contexts/platform/api/settings";
 import { leaveSettingsRoutes } from "./contexts/absence/api/leave-settings"; // Phase 243 Plan 02 (B1)
 import { holidayRoutes } from "./contexts/platform/api/holidays";
 import { auditPlugin } from "./contexts/platform/plugins/audit";
+import { tenantStatusPlugin } from "./contexts/platform/plugins/tenant-status"; // Phase 88 (#88, D-05a)
 import { prismaPlugin } from "./contexts/platform/plugins/prisma";
 import { mailerPlugin } from "./contexts/platform/plugins/mailer";
 import { notifyPlugin } from "./contexts/platform/plugins/notify";
@@ -308,6 +309,9 @@ export async function buildApp() {
   // ── Plugins ───────────────────────────────────────────────
   await app.register(prismaPlugin);
   await app.register(auditPlugin);
+  // Phase 88 (#88, D-02, D-05a): tenant state cache and operator-refusal helpers that `requireAuth`
+  // reads as decorations (the middleware imports nothing from contexts/).
+  await app.register(tenantStatusPlugin);
   await app.register(mailerPlugin);
   await app.register(notifyPlugin);
   await app.register(schedulerPlugin);

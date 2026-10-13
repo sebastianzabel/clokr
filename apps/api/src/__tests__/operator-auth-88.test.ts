@@ -141,7 +141,9 @@ describe("operator sign-in tracer", () => {
     const operator = await seedOperator(app);
     const token = await signIn(operator);
     const res = await get("/api/v1/employees", token);
-    expect(res.statusCode).toBe(401);
+    // Since plan 88-09 `requireAuth` answers an operator token with an explicit, audited 403.
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body)).toEqual({ error: "Forbidden" });
   });
 });
 
