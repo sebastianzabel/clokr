@@ -34,6 +34,17 @@
  * M3 the schedules read over the whole population instead of the Stammsalon persons → red on
  *    "lists the Springer S by the in-scope entry, …" (S got a contract: workday, expected hours)
  *    and on "filtered on A: rows A1, Q and S, …".
+ *
+ * Today-attendance and team-trend (Phase 85b plan 05, 2026-10-13): RED observed first, with the
+ * committed dashboard.ts of the previous commit, on the three trend cases (the "team-trend (D-06)"
+ * June figure, the filtered figure and the second-tenant case). Mutation proofs of the trend:
+ * M1 the account Ist is used for every Stammsalon person (coverage ignored) → red on "Salonmanager
+ *    of A: June = account Ist of A1 (360) + …" (Q's 300 B-minutes appear) and on the second-tenant
+ *    June case (300 instead of 100).
+ * M2 persons listed only by an in-scope entry are dropped from the trend → red on "Salonmanager of
+ *    A: June = …" (S's 240 missing) and on "filtered on A: A1 (360) + S (240); …".
+ * M3 the sick days are counted over the entry-only persons too → red on "sick days of a scoped
+ *    caller stay over the Stammsalon persons: S never adds one".
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -45,7 +56,10 @@ import {
   cleanupTestData,
   createTestSalon,
 } from "./../../__tests__/setup";
-import { SYSTEM_ROLE_IDS } from "../../contexts/platform";
+import crypto from "crypto";
+import { leaveTypeFields } from "../../contexts/absence/leave-type";
+import { saldoSnapshotPeriodBounds } from "../../__tests__/test-dates";
+import { normalizeRolePermissions, roleNameKey, SYSTEM_ROLE_IDS } from "../../contexts/platform";
 
 const PASSWORD = "test1234";
 const WEEK_URL = "/api/v1/dashboard/team-week?date=2026-06-17";
@@ -228,6 +242,22 @@ describe("Issue #85 — team-week per entry", () => {
         leaveTypeId: vacation.id,
         startDate: new Date("2026-06-18T00:00:00Z"),
         endDate: new Date("2026-06-18T00:00:00Z"),
+        days: 1,
+        status: "APPROVED",
+      },
+    });
+
+    // An approved SICK day of S (Fri 05.06): S is homed in B, so it is never a sick day of the
+    // Salonmanager of A (leave belongs to the Stammsalon), while the tenant admin counts it.
+    const sick = await app.prisma.leaveType.create({
+      data: { tenantId, ...leaveTypeFields("SICK"), color: "#EF4444" },
+    });
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: s.employee.id,
+        leaveTypeId: sick.id,
+        startDate: new Date("2026-06-05T00:00:00Z"),
+        endDate: new Date("2026-06-05T00:00:00Z"),
         days: 1,
         status: "APPROVED",
       },
@@ -446,6 +476,189 @@ describe("Issue #85 — team-week per entry", () => {
       expect(body.employees.find((r) => r.id === ids.S)?.status).toBe("clocked_in");
       expect(body.employees.find((r) => r.id === s2Id)?.status).toBe("present");
       expect(body.employees.find((r) => r.id === s2Id)?.employeeNumber).not.toBeNull();
+    });
+  });
+
+  describe("team-trend (D-06)", () => {
+    type TrendMonth = {
+      month: string;
+      workedMinutes: number;
+      shouldMinutes: number | null;
+      sickDays: number;
+    };
+    type Trend = {
+      salonId: string | null;
+      workedBasis: string;
+      sollUnavailableReason: string | null;
+      months: TrendMonth[];
+    };
+
+    async function trend(token: string, salonId?: string): Promise<Trend> {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/dashboard/team-trend${salonId ? `?salonId=${salonId}` : ""}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      return JSON.parse(res.body) as Trend;
+    }
+    const june = (t: Trend) => t.months.find((m) => m.month === "2026-06");
+
+    it("Salonmanager of A: June = account Ist of A1 (360) + in-scope sum of S (240) + Q uncovered (0 through yesterday)", async () => {
+      const body = await trend(managerToken);
+      expect(body.workedBasis).toBe("SCOPE_ENTRIES");
+      expect(body.sollUnavailableReason).toBe("NO_PERMISSION");
+      expect(body.months).toHaveLength(6);
+      expect(june(body)?.workedMinutes).toBe(600);
+      // No month carries S's 360 B-minutes, Q's 300 B-minutes or any other minute.
+      expect(body.months.reduce((sum, m) => sum + m.workedMinutes, 0)).toBe(600);
+      for (const m of body.months) expect(m.shouldMinutes, m.month).toBeNull();
+    });
+
+    it("sick days of a scoped caller stay over the Stammsalon persons: S never adds one", async () => {
+      const mine = await trend(managerToken);
+      expect(mine.months.reduce((sum, m) => sum + m.sickDays, 0)).toBe(0);
+      const admin = await trend(data.adminToken);
+      expect(june(admin)?.sickDays).toBe(1);
+    });
+
+    it("control: the tenant admin keeps the account Ist incl. the B minutes, equal to the monthly report", async () => {
+      const body = await trend(data.adminToken);
+      expect(body.workedBasis).toBe("ACCOUNT");
+      expect(body.sollUnavailableReason).toBeNull();
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly?year=2026&month=6",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const rows = (JSON.parse(res.body) as { rows: { workedHours: number }[] }).rows;
+      const reported = Math.round(rows.reduce((sum, r) => sum + r.workedHours * 60, 0));
+      expect(june(body)?.workedMinutes).toBe(reported);
+      // Non-vacuous: more than the manager's visible 600 (E 240, S 360 in B, Q 300 in B).
+      expect(reported).toBeGreaterThan(600);
+    });
+
+    it("filtered on A: A1 (360) + S (240); today's entries of S2 and Q never count (#438)", async () => {
+      const body = await trend(managerToken, salonA);
+      expect(body.salonId).toBe(salonA);
+      expect(body.workedBasis).toBe("SALON_ENTRIES");
+      expect(june(body)?.workedMinutes).toBe(600);
+      for (const m of body.months) expect(m.shouldMinutes, m.month).toBeNull();
+    });
+  });
+
+  describe("team-trend (D-06) — a Stammsalon change inside the month and a closed month", () => {
+    type Month = {
+      month: string;
+      workedMinutes: number;
+      shouldMinutes: number | null;
+      sickDays: number;
+    };
+    let data2: Awaited<ReturnType<typeof seedTestData>>;
+    let callerToken: string;
+
+    async function login(email: string): Promise<string> {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email, password: PASSWORD },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      return (JSON.parse(res.body) as { accessToken: string }).accessToken;
+    }
+
+    beforeAll(async () => {
+      data2 = await seedTestData(app, "es85c");
+      const tenantId = data2.tenant.id;
+      const a = data2.salonId;
+      const b = (await createTestSalon(app.prisma, tenantId, { name: "Es85 C-B" })).id;
+
+      // Q2: homed in B until 09.06 and in A from 10.06; 200 minutes in B on 08.06 (out of the
+      // reach of A) and 100 minutes in A on 12.06.
+      const q2 = await createPerson(tenantId, "Q2");
+      await home(tenantId, q2.employee.id, b, "2024-01-01", "2026-06-09");
+      await home(tenantId, q2.employee.id, a, "2026-06-10");
+      await entry(q2.employee.id, b, "2026-06-08", "08:00", "11:20");
+      await entry(q2.employee.id, a, "2026-06-12", "08:00", "09:40");
+
+      // P2: homed in A, every entry in A, a closed March whose snapshot differs from the entry.
+      const p2 = await createPerson(tenantId, "P2");
+      await home(tenantId, p2.employee.id, a);
+      await entry(p2.employee.id, a, "2026-03-10", "08:00", "12:00");
+      const march = saldoSnapshotPeriodBounds(new Date("2026-03-15T00:00:00.000Z"));
+      await app.prisma.saldoSnapshot.create({
+        data: {
+          employeeId: p2.employee.id,
+          periodType: "MONTHLY",
+          periodStart: march.start,
+          periodEnd: march.end,
+          workedMinutes: 9660,
+          expectedMinutes: 9600,
+          balanceMinutes: 60,
+          carryOver: 60,
+          closedAt: new Date("2026-04-02T08:00:00Z"),
+          closedBy: "test-system",
+          superseded: false,
+        },
+      });
+
+      // Caller C: team-overview, report and overtime reach over SALONS [A].
+      const caller = await createPerson(tenantId, "Caller");
+      const name = `Es85 ${crypto.randomBytes(3).toString("hex")}`;
+      const role = await app.prisma.accessRole.create({
+        data: {
+          tenantId,
+          name,
+          nameKey: roleNameKey(name),
+          permissions: normalizeRolePermissions([
+            "team-overview:read:ZUGEWIESEN",
+            "report:read:ZUGEWIESEN",
+            "overtime:read:ZUGEWIESEN",
+          ]),
+        },
+      });
+      await app.prisma.roleAssignment.create({
+        data: {
+          tenantId,
+          userId: caller.user.id,
+          accessRoleId: role.id,
+          scopeType: "SALONS",
+          salonIds: [a],
+          employeeIds: [],
+        },
+      });
+      callerToken = await login(caller.user.email);
+    });
+
+    afterAll(async () => {
+      try {
+        await app.prisma.roleAssignment.deleteMany({ where: { tenantId: data2.tenant.id } });
+        await app.prisma.accessRole.deleteMany({ where: { tenantId: data2.tenant.id } });
+        await cleanupTestData(app, data2.tenant.id);
+      } catch (err) {
+        console.error("dashboard-entry-scope-85 (second tenant) cleanup failed:", err);
+      }
+    });
+
+    it("June is the in-scope sum (100, not the account's 300); March keeps the account Ist of the fully covered person; Soll is withheld with the SCOPE_ENTRIES reason", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/team-trend",
+        headers: { authorization: `Bearer ${callerToken}` },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const body = JSON.parse(res.body) as {
+        workedBasis: string;
+        sollUnavailableReason: string | null;
+        months: Month[];
+      };
+      expect(body.workedBasis).toBe("SCOPE_ENTRIES");
+      expect(body.sollUnavailableReason).toBe("SCOPE_ENTRIES");
+      for (const m of body.months) expect(m.shouldMinutes, m.month).toBeNull();
+      expect(body.months.find((m) => m.month === "2026-06")?.workedMinutes).toBe(100);
+      // P2 is fully covered: the closed March is the snapshot value, not the 240 entry minutes.
+      expect(body.months.find((m) => m.month === "2026-03")?.workedMinutes).toBe(9660);
     });
   });
 });

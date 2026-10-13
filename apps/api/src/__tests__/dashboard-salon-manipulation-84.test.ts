@@ -35,7 +35,10 @@
  * per-entry scope adds a Springer by an in-scope entry with only those hours (Phase 84 left this
  * until #85). The salon filter still never widens the reach: S is listed because the reach covers
  * S's A entry, not because of the filter. E (homed in B, entries only in B) stays invisible on
- * every endpoint; the trend and upcoming-leave assertions below are unchanged by this amendment.
+ * every endpoint. The trend part is reversed the same way (D-06): filtered on A, S's A entry
+ * counts, so June carries those 240 minutes and every other month stays 0 with no sick day (S is
+ * not a Stammsalon person of A, leave belongs to the Stammsalon); the upcoming-leave assertions
+ * below are unchanged by this amendment.
  *
  * Harness: fake clock Wed 2026-06-17T10:00Z (Date only) installed BEFORE the app boots. The week
  * under test is Mon 2026-06-15 to Sun 2026-06-21. No person names in fixtures.
@@ -331,11 +334,15 @@ describe("Issue #84 — a manipulated salon filter yields no foreign data", () =
 
     const trend = await get(managerToken, ENDPOINTS[1], salonA);
     expect(trend.statusCode, trend.body).toBe(200);
+    // Per-entry scope (D-06): S's 4 h entry of 16.06 is the only visible minute; E contributes
+    // nothing and no month carries a sick day.
     for (const m of (
-      JSON.parse(trend.body) as { months: Array<{ workedMinutes: number; sickDays: number }> }
+      JSON.parse(trend.body) as {
+        months: Array<{ month: string; workedMinutes: number; sickDays: number }>;
+      }
     ).months) {
-      expect(m.workedMinutes).toBe(0);
-      expect(m.sickDays).toBe(0);
+      expect(m.workedMinutes, m.month).toBe(m.month === "2026-06" ? 240 : 0);
+      expect(m.sickDays, m.month).toBe(0);
     }
 
     const upcoming = await get(managerToken, ENDPOINTS[2], salonA);
