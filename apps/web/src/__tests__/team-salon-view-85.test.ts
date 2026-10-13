@@ -11,6 +11,13 @@
 //      teamSalonViewSalon($salonContext) ..." red.
 //   M2 `toasts.error(...)` added to the 404 branch -> "[calm 404] a rejected salon ... no toast, no
 //      console.error" red.
+//   (Plan 85b-12, refused saldo state, 2026-10-13)
+//   M3 `KontoSaldoCard` rendered unconditionally (the `{#if !overtimeDenied}` wrapper removed)
+//      -> "[refused saldo] the Konto card is rendered only when the overtime read was not
+//      denied" red.
+//   M4 `saldoFetchFailed = true` also assigned on a denial (`if (isDenied(rawMonthSaldo))
+//      saldoFetchFailed = true;`) -> "[refused saldo] only a failure routes into the error
+//      branch; a denial never does" red.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -117,5 +124,56 @@ describe("Issue #85 — the Salonansicht of /team/time-entries", () => {
     const elseAt = block.indexOf("else");
     expect(elseAt).toBeGreaterThan(block.indexOf("selectEmployee(linked)"));
     expect(block.slice(elseAt)).toContain('teamMode = "salon"');
+  });
+
+  // Plan 85b-12 — a role without saldo rights sees the visible Ist and a plain note, never an
+  // error card. The classifier itself is unit-tested in month-view-state.test.ts; these pins
+  // prove the page wires it the way the decision requires.
+  it("[refused saldo] the three contract/saldo reads are classified with settledAllowDenied", () => {
+    expect(PAGE).toContain("settledAllowDenied(api.get<WorkSchedule>(`/settings/work/${empId}`))");
+    expect(PAGE).toMatch(/settledAllowDenied\(\s*api\.get<\{\s*balanceHours: number;/);
+    expect(PAGE).toMatch(/settledAllowDenied\(\s*api\.get<MonthSaldo>\(/);
+    // The reads are not classified by the strict helper any more.
+    expect(PAGE).not.toMatch(/\bsettled\(/);
+  });
+
+  it("[refused saldo] the Konto card is rendered only when the overtime read was not denied", () => {
+    const card = PAGE.indexOf("<KontoSaldoCard");
+    expect(card, "KontoSaldoCard not found").toBeGreaterThan(-1);
+    const guard = PAGE.lastIndexOf("{#if !overtimeDenied}", card);
+    expect(guard, "no denied guard in front of the card").toBeGreaterThan(-1);
+    // Nothing but whitespace between the guard and the card: the card sits directly inside it.
+    expect(PAGE.slice(guard + "{#if !overtimeDenied}".length, card).trim()).toBe("");
+    expect(PAGE).toContain("overtimeDenied = isDenied(rawOvertime);");
+  });
+
+  it("[refused saldo] the Ist-only monthMetrics branch precedes the !schedule branch", () => {
+    const denied = PAGE.indexOf("if (saldoDenied) {");
+    const noSchedule = PAGE.indexOf("if (!schedule) {");
+    expect(denied).toBeGreaterThan(-1);
+    expect(noSchedule).toBeGreaterThan(-1);
+    expect(denied).toBeLessThan(noSchedule);
+    expect(PAGE.slice(denied, noSchedule)).toContain(
+      "istOnlyMonthMetrics({ istMin: totalWorked, workdaysSoFar: workedEntryDays })",
+    );
+    expect(PAGE).toContain("saldoDenied = isDenied(rawSchedule, rawOvertime);");
+    expect(PAGE).toContain("if (isDenied(rawMonthSaldo)) saldoDenied = true;");
+  });
+
+  it("[refused saldo] the German note is present, shown only for a denial", () => {
+    const text =
+      "Soll und Saldo dieser Person sehen Inhaber, Personalabteilung und die Person selbst.";
+    expect(PAGE).toContain(text);
+    const at = PAGE.indexOf(text);
+    expect(PAGE.lastIndexOf("{#if saldoDenied", at)).toBeGreaterThan(PAGE.lastIndexOf("{/if}", at));
+  });
+
+  it("[refused saldo] only a failure routes into the error branch; a denial never does", () => {
+    expect(PAGE).toContain("saldoFetchFailed = anyFailed(rawSchedule, rawOvertime);");
+    expect(PAGE).toContain("if (anyFailed(rawMonthSaldo)) saldoFetchFailed = true;");
+    // No assignment of saldoFetchFailed hangs off a denial.
+    expect(PAGE).not.toMatch(/isDenied\([^)]*\)[^\n]*saldoFetchFailed\s*=\s*true/);
+    expect(PAGE).not.toMatch(/saldoDenied[^\n]*saldoFetchFailed\s*=\s*true/);
+    expect(PAGE).not.toMatch(/saldoFetchFailed\s*=\s*(?:true\s*)?\|\|?[^;\n]*[dD]enied/);
   });
 });
