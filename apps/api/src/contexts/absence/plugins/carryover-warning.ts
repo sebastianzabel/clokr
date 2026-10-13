@@ -2,7 +2,10 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import type { FastifyInstance } from "fastify";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
-import { userIdsHoldingPermission } from "../../platform"; // Phase 75b Plan 10 (#75), D-16
+import {
+  userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
+  ACTIVE_TENANT_WHERE, // Phase 88 (D-05a) — deactivated tenants get no warnings
+} from "../../platform";
 import { vacationBalanceForRow } from "../facade/vacation-balance"; // Issue #451 (D-08) — same context, relative import (no index.ts detour — see 451-07-SUMMARY.md)
 
 // Issue #451 (D-08, 451-08 cycle fix). `runCarryoverWarningOnce` now imports
@@ -89,7 +92,7 @@ export async function runCarryoverWarningOnce(
   const now = new Date();
 
   const tenants = await app.prisma.tenant.findMany({
-    where: opts.onlyTenantId ? { id: opts.onlyTenantId } : undefined,
+    where: { ...ACTIVE_TENANT_WHERE, ...(opts.onlyTenantId ? { id: opts.onlyTenantId } : {}) },
     select: { id: true },
   });
 

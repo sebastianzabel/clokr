@@ -90,6 +90,9 @@ services:
       DATABASE_URL: "postgresql://clokr:${POSTGRES_PASSWORD}@postgres:5432/clokr"
       JWT_SECRET: "${JWT_SECRET}"
       JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET}"
+      # Optional (Phase 88). Empty means the operator interface is off; set a separate value of
+      # at least 32 characters, different from the secrets above, to switch it on.
+      OPERATOR_JWT_SECRET: "${OPERATOR_JWT_SECRET:-}"
       JWT_EXPIRES_IN: "15m"
       JWT_REFRESH_EXPIRES_IN: "7d"
       CORS_ORIGIN: "${CORS_ORIGIN}"

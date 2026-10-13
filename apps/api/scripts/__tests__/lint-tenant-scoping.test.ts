@@ -15,6 +15,7 @@ import {
   loadExceptions,
   validateExceptions,
   matchException,
+  matchNullishException,
   EXCEPTIONS_FILE,
   type TenantScopingException,
 } from "../lint-tenant-scoping-exceptions";
@@ -634,5 +635,78 @@ describe("runLint", () => {
     const mod = await import("../lint-tenant-scoping");
     expect(typeof mod.runLint).toBe("function");
     expect(typeof mod.formatFinding).toBe("function");
+  });
+});
+
+// ── Issue #88 (D-08a): the optional `rule` discriminator ────────────────────────────────────────
+
+describe("exception rule discriminator (nullish-tenant)", () => {
+  const nullishFinding = {
+    file: "apps/api/src/plugins/p.ts",
+    line: 12,
+    model: "salon",
+    method: "findMany",
+    rule: "R2" as const,
+    detail: "nullish-tenant R2: example",
+  };
+  const entry = (extra: Record<string, unknown> = {}) => ({
+    file: nullishFinding.file,
+    handler: "plugin hook",
+    validatedAt: null,
+    calls: [{ call: "salon.findMany", line: 12 }],
+    reason: REASON,
+    ...extra,
+  });
+
+  it("an entry without a rule never silences a nullish finding", () => {
+    const validated = validateExceptions(
+      [entry()],
+      [call({ file: nullishFinding.file, line: 12, model: "salon", method: "findMany" })],
+      [nullishFinding],
+    );
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) return;
+    expect(matchNullishException(nullishFinding, validated.entries)).toBeNull();
+  });
+
+  it("a nullish-tenant entry with a reason silences exactly its line", () => {
+    const validated = validateExceptions([entry({ rule: "nullish-tenant" })], [], [nullishFinding]);
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) return;
+    expect(matchNullishException(nullishFinding, validated.entries)).not.toBeNull();
+    expect(matchNullishException({ ...nullishFinding, line: 13 }, validated.entries)).toBeNull();
+  });
+
+  it("a nullish-tenant entry never silences a client-supplied finding", () => {
+    const validated = validateExceptions([entry({ rule: "nullish-tenant" })], [], [nullishFinding]);
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) return;
+    const clientSupplied = call({
+      file: nullishFinding.file,
+      line: 12,
+      model: "salon",
+      method: "findMany",
+    });
+    expect(matchException(clientSupplied, validated.entries)).toBeNull();
+  });
+
+  it("a nullish-tenant entry that matches no nullish finding is stale", () => {
+    const validated = validateExceptions([entry({ rule: "nullish-tenant" })], [], []);
+    expect(validated.ok).toBe(false);
+    if (validated.ok) return;
+    expect(validated.errors.join("\n")).toContain("STALE");
+  });
+
+  it("an unknown rule value fails validation", () => {
+    const validated = validateExceptions([entry({ rule: "something-else" })], [], [nullishFinding]);
+    expect(validated.ok).toBe(false);
+    if (validated.ok) return;
+    expect(validated.errors.join("\n")).toContain("unknown 'rule'");
+  });
+
+  it("the real exceptions file has no nullish-tenant entry and every entry is rule-less", () => {
+    const entries = loadExceptions(path.resolve(process.cwd(), "../.."));
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries.filter((e) => e.rule !== undefined)).toEqual([]);
   });
 });

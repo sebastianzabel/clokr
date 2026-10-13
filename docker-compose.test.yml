@@ -52,6 +52,7 @@ services:
       DATABASE_URL: "postgresql://clokr:clokr@postgres-test:5432/clokr_test"
       JWT_SECRET: "test-jwt-secret-for-local-dev-only-32chars-min"
       JWT_REFRESH_SECRET: "test-jwt-refresh-secret-for-local-dev-only-32chars"
+      OPERATOR_JWT_SECRET: "test-operator-jwt-secret-for-local-dev-only-32chars"
       ENCRYPTION_KEY: "test-encryption-key-for-local-dev-only-32chars-min"
       CORS_ORIGIN: "http://localhost:3001"
       APP_URL: "http://localhost:3001"

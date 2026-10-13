@@ -15,6 +15,11 @@
  *   - User.email                    → int-{employeeNumber-or-id8}@example.invalid
  *   - User.passwordHash             → "ANONYMIZED" (no real login possible)
  *   - Auth tokens (Invitation/OtpToken/RefreshToken) → hard-deleted (not needed on int)
+ *   - OperatorAccount (Phase 88, D-11): EVERY operator account is neutralised — email →
+ *     operator-{id8}@example.invalid, passwordHash → "ANONYMIZED", isActive → false, TOTP secret /
+ *     enrolment / replay step → null, recovery-code hashes → empty, lockout state reset. Prod operator
+ *     credentials must never reach the internet-reachable int environment; an int operator is re-created
+ *     with scripts/operator-account.ts. Rows are updated, never deleted (audit rows reference them).
  *
  * DELIBERATELY PRESERVED (so int reports stay complete + employees stay visible):
  *   - Employee.id            (unchanged — reports/links must keep working)
@@ -23,6 +28,8 @@
  *   - TimeEntry/LeaveRequest/Absence NOTES + all time/leave/absence/schedule/
  *     overtime data (unchanged)
  *   - AuditLog (unchanged)
+ *   - OperatorAuditLog (unchanged, Phase 88): append-only by trigger, holds no credentials, and failed
+ *     logins carry only a keyed hash of the attempted address, never the address itself
  *
  * Run against a STAGING copy of a prod dump (never against prod):
  *   DATABASE_URL=postgresql://clokr:...@localhost:5433/clokr_staging \
@@ -155,6 +162,30 @@ async function main() {
     processed++;
   }
 
+  // Operator accounts (Phase 88, D-11): neutralise every one. Per-row because the pseudonymous
+  // email derives from the id; no delete, audit rows reference the accounts with onDelete Restrict.
+  const operators = await prisma.operatorAccount.findMany({
+    select: { id: true },
+    orderBy: { id: "asc" },
+  });
+  for (const operator of operators) {
+    await prisma.operatorAccount.update({
+      where: { id: operator.id },
+      data: {
+        email: `operator-${operator.id.slice(0, 8)}@example.invalid`,
+        passwordHash: "ANONYMIZED",
+        isActive: false,
+        totpSecretEnc: null,
+        totpEnabledAt: null,
+        lastTotpStep: null,
+        recoveryCodeHashes: [],
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
+    });
+  }
+  console.log(`[pseudonymize] neutralised ${operators.length} operator account(s)`);
+
   // ── Inline verification ──────────────────────────────────────────────────
   const realEmail = await prisma.user.count({
     where: { NOT: { email: { endsWith: "@example.invalid" } } },
@@ -162,6 +193,12 @@ async function main() {
   const livePw = await prisma.user.count({ where: { NOT: { passwordHash: "ANONYMIZED" } } });
   const withNfc = await prisma.employee.count({ where: { NOT: { nfcCardId: null } } });
   const geloescht = await prisma.employee.count({ where: { firstName: "Gelöscht" } });
+  const realOperatorEmails = await prisma.operatorAccount.count({
+    where: { NOT: { email: { endsWith: "@example.invalid" } } },
+  });
+  const liveOperatorPasswords = await prisma.operatorAccount.count({
+    where: { NOT: { passwordHash: "ANONYMIZED" } },
+  });
 
   const durationMs = Date.now() - startedAt;
   await prisma.auditLog.create({
@@ -177,6 +214,8 @@ async function main() {
           residualRealEmails: realEmail,
           residualLivePasswords: livePw,
           residualNfc: withNfc,
+          residualOperatorEmails: realOperatorEmails,
+          residualOperatorPasswords: liveOperatorPasswords,
         },
       } as unknown as object,
     },
@@ -189,8 +228,18 @@ async function main() {
     `[pseudonymize] verify → residual real emails=${realEmail}, live passwords=${livePw}, ` +
       `nfc set=${withNfc}, still-"Gelöscht"=${geloescht}`,
   );
+  console.log(
+    `[pseudonymize] verify → residual operator emails=${realOperatorEmails}, ` +
+      `live operator passwords=${liveOperatorPasswords}`,
+  );
 
-  if (realEmail > 0 || livePw > 0 || withNfc > 0) {
+  if (
+    realEmail > 0 ||
+    livePw > 0 ||
+    withNfc > 0 ||
+    realOperatorEmails > 0 ||
+    liveOperatorPasswords > 0
+  ) {
     console.error("[pseudonymize] VERIFICATION FAILED — residual identifiers remain. Do NOT swap.");
     process.exitCode = 1;
   } else {

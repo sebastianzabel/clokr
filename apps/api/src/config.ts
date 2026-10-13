@@ -41,10 +41,33 @@ const envSchema = z
       .string()
       .default("false")
       .transform((v) => v === "true"),
+    // Phase 88 (#88, D-02a) — separate signing secret for operator tokens. Optional: unset
+    // (or blank — compose renders an unset variable as an empty string) means the operator
+    // surface is not registered at all (88-08), so existing deployments boot unchanged. Never
+    // reuse JWT_SECRET: access and refresh tokens already share it (research F6).
+    OPERATOR_JWT_SECRET: z.preprocess(
+      (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+      z.string().min(32).optional(),
+    ),
   })
   .refine((data) => !data.SMTP_HOST || (data.SMTP_PORT && data.SMTP_USER), {
     message: "SMTP_PORT and SMTP_USER required when SMTP_HOST is set",
-  });
+  })
+  // Defence in depth: with a value equal to a tenant secret the two verifiers would accept each
+  // other's signatures. 88-08/88-09 additionally reject a token by claim. Only the message is
+  // reported — never a secret value.
+  .refine(
+    (data) =>
+      data.OPERATOR_JWT_SECRET === undefined ||
+      (data.OPERATOR_JWT_SECRET !== data.JWT_SECRET &&
+        data.OPERATOR_JWT_SECRET !== data.JWT_REFRESH_SECRET &&
+        data.OPERATOR_JWT_SECRET !== data.ENCRYPTION_KEY),
+    {
+      message:
+        "OPERATOR_JWT_SECRET must differ from JWT_SECRET, JWT_REFRESH_SECRET and ENCRYPTION_KEY",
+      path: ["OPERATOR_JWT_SECRET"],
+    },
+  );
 
 const parsed = envSchema.safeParse(process.env);
 

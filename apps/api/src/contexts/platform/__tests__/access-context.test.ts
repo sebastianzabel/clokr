@@ -24,6 +24,18 @@ function fakeRequest(user: unknown): FastifyRequest {
   return { user } as unknown as FastifyRequest;
 }
 
+/**
+ * Phase 88 (AC-88-02): the shape of a request that authenticated as the operator — `req.user` stays
+ * null, the operator payload lives on `req.operator`. The operator principal is tenant-less by type,
+ * so the #77 guard turns any accidental tenant-bound use of such a request into an error.
+ */
+function operatorRequest(): FastifyRequest {
+  return {
+    user: null,
+    operator: { sub: "operator-1", kind: "operator", typ: "access" },
+  } as unknown as FastifyRequest;
+}
+
 const VALID_USER = {
   sub: "user-1",
   role: "EMPLOYEE",
@@ -51,6 +63,10 @@ describe("accessContextFromRequest (Phase 77b, D-02/D-13)", () => {
       );
     });
   }
+
+  it("throws AccessContextError for an operator-shaped request (user null, operator set)", () => {
+    expect(() => accessContextFromRequest(operatorRequest())).toThrow(AccessContextError);
+  });
 
   it("throws for a user object without the tenantId key", () => {
     const withoutTenant = { sub: VALID_USER.sub, role: VALID_USER.role, employeeId: "emp-1" };
@@ -125,6 +141,15 @@ describe("employeeScopeFor (Phase 77b, D-03)", () => {
       employeeIds: ["emp-1", "emp-2"],
       tenantId: "tenant-c",
     });
+  });
+
+  it("throws for the context path of an operator-shaped request, with or without a target", () => {
+    expect(() => employeeScopeFor(accessContextFromRequest(operatorRequest()))).toThrow(
+      AccessContextError,
+    );
+    expect(() =>
+      employeeScopeFor(accessContextFromRequest(operatorRequest()), { employeeId: "emp-1" }),
+    ).toThrow(AccessContextError);
   });
 
   it("re-asserts the tenant of a hand-built context", () => {

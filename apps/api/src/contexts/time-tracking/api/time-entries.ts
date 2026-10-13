@@ -354,6 +354,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if (!apiKey || apiKey.revokedAt) {
         return reply.code(401).send({ error: "Ungültiger oder widerrufener API Key" });
       }
+      // Phase 88 (D-05): the device key stays valid for reactivation, but a deactivated tenant gets nothing.
+      if (!(await app.tenantIsActive(apiKey.tenantId))) {
+        return reply.code(403).send(app.tenantDeactivatedError);
+      }
       app.prisma.terminalApiKey
         .update({ where: { id: apiKey.id }, data: { lastUsedAt: new Date() } })
         .catch((err) => app.log.error({ err }, "Failed to update NFC API key lastUsedAt"));

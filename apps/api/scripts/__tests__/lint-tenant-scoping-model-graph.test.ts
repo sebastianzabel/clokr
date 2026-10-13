@@ -128,9 +128,10 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
   // `employee` -> Employee(own)) — 46 -> 47 models, own count unchanged at 20 — and Issue #80
   // (+ DayBreak, DayBreakAck, both relation via `employee`) — 47 -> 49 models, own count unchanged —
   // and Issue #81 (+ TimeEntryActivityShare, relation via `timeEntry` -> `employee`) — 49 -> 50
-  // models, own count unchanged.
-  it("classifies exactly 50 models with no residual category (D-05)", () => {
-    expect(graph.size).toBe(50);
+  // models, own count unchanged — and Phase 88 (#88: + OperatorAccount, OperatorAuditLog, both
+  // `none`: neither carries a tenant key nor reaches one) — 50 -> 52 models, own count unchanged.
+  it("classifies exactly 52 models with no residual category (D-05)", () => {
+    expect(graph.size).toBe(52);
     for (const [, tenancy] of graph) {
       expect(["own", "relation", "none"]).toContain(tenancy.kind);
     }
@@ -158,9 +159,12 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
     });
   });
 
-  it("marks exactly Tenant as none — every other model reaches tenantId directly or via relation", () => {
-    const noneNames = [...graph].filter(([, v]) => v.kind === "none").map(([k]) => k);
-    expect(noneNames).toEqual(["tenant"]);
+  it("marks exactly Tenant and the two operator models as none — every other model reaches tenantId directly or via relation", () => {
+    const noneNames = [...graph]
+      .filter(([, v]) => v.kind === "none")
+      .map(([k]) => k)
+      .sort((a, b) => a.localeCompare(b));
+    expect(noneNames).toEqual(["operatorAccount", "operatorAuditLog", "tenant"]);
   });
 });
 

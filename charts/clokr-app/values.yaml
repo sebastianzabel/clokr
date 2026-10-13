@@ -92,6 +92,7 @@ secrets:
   corsOrigin: ""
   seedDemoData: "false"
   postgresPassword: "" # used by Postgres StatefulSet AND should match databaseUrl password
+  operatorJwtSecret: "" # optional (Phase 88) — empty = operator interface off; min. 32 chars, distinct from the other secrets; set via ArgoCD parameter, never commit
   redisUrl: "" # optional — if set, API connects to shared-infrastructure Redis
 
 # Anonymization pipeline (Phase 72). The CronJob runs `pnpm tsx scripts/anonymize-dump.ts`

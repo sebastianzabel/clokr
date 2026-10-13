@@ -977,6 +977,40 @@ Kombination nicht und sind bewusst keine eigenen Permissions — für eine über
 `confirm: true` bestätigte Kombinationsrolle bleiben sie in Kraft, geprüft in
 `four-eyes-runtime-locks.test.ts`.
 
+## Betreiber-Endpunkte (außerhalb des Katalogs)
+
+Der Betreiberzugang oberhalb des Mandanten (#88) ist ein eigener Principal mit eigenem Signierschlüssel
+(`OPERATOR_JWT_SECRET`), kein Benutzer mit besonderer Rolle. Seine Endpunkte kennen deshalb keine
+Katalog-Permission und stehen in keiner der Tabellen oben; die Zugangsentscheidung trifft allein der Guard
+`requireOperator` (`contexts/platform/operator-auth.ts`).
+
+| Endpunkt                                                    | Guard                            | Hinweis                                                                                                                             |
+| ----------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/v1/operator/auth/login`                          | keiner (öffentlich)              | Schritt 1: Passwort, liefert ein 5-Minuten-Challenge-Token                                                                          |
+| `POST /api/v1/operator/auth/verify`                         | keiner (Challenge-Token im Body) | Schritt 2: TOTP-Code oder Wiederherstellungscode, liefert das 15-Minuten-Zugriffstoken                                              |
+| `GET /api/v1/operator/auth/me`                              | `requireOperator`                | Das angemeldete Betreiberkonto                                                                                                      |
+| `GET /api/v1/operator/tenants`                              | `requireOperator`                | Alle Mandanten, nur Metadaten (Id, Name, Kurzname, Bundesland, Anlage, Deaktivierung)                                               |
+| `GET /api/v1/operator/tenants/:id`                          | `requireOperator`                | Ein Mandant, nur Metadaten; unbekannte Id: 404                                                                                      |
+| `POST /api/v1/operator/tenants`                             | `requireOperator`                | Legt Mandant, Konfiguration, Standard-Salon, ersten Administrator und Einladung in einer Transaktion an; Audit `TENANT_CREATED`     |
+| `PATCH /api/v1/operator/tenants/:id`                        | `requireOperator`                | Benennt den Mandanten um (nur `name`); Audit `TENANT_RENAMED`, nur bei Änderung                                                     |
+| `POST /api/v1/operator/tenants/:id/deactivate`              | `requireOperator`                | Deaktiviert mit Begründung, nie löschen; sofort wirksam; Audit `TENANT_DEACTIVATED`                                                 |
+| `POST /api/v1/operator/tenants/:id/reactivate`              | `requireOperator`                | Hebt die Deaktivierung auf; Audit `TENANT_REACTIVATED`                                                                              |
+| `POST /api/v1/operator/tenants/:id/resend-admin-invitation` | `requireOperator`                | Stellt die Einladung des ersten Administrators neu aus, nur solange niemand im Mandanten aktiv ist; Audit `ADMIN_INVITATION_RESENT` |
+
+- **Ein Mandanten-Token ist hier kein Zugang:** Ein gültiges Mandanten-Token auf einem geschützten
+  Betreiber-Endpunkt wird mit 403 beantwortet und als `TENANT_PRINCIPAL_REFUSED` im Betreiber-Audit
+  festgehalten (höchstens eine Zeile je Token-Inhaber und Route und Minute, mit der Zahl der
+  unterdrückten Wiederholungen); alles Nichtprüfbare ergibt 401.
+- **Umgekehrt** liest kein Mandanten-Code das Betreiber-Token: der Betreiber-Verifier schreibt
+  `req.operator`, `req.user` bleibt leer.
+- **Ohne `OPERATOR_JWT_SECRET`** sind diese Endpunkte gar nicht registriert (404); die
+  Mandanten-Seite verhält sich unverändert.
+- Alle Anmeldeausgänge landen im `OperatorAuditLog`, nie im Mandanten-`AuditLog`.
+- **Mandanten-Verwaltung liefert nur Metadaten** (Beschluss 2026-08-27; Support-Zugriff ist #93): keine
+  Mitarbeiterlisten, Zählungen oder sonstigen Mandantendaten. Das rohe Einladungstoken steht nur in der
+  Mail, nie in einer Antwort. Es gibt keine Löschroute; jede Änderung schreibt genau eine Zeile in den
+  `OperatorAuditLog`.
+
 ## Pflege
 
 Dieses Dokument wird von drei Tests und einem Lint-Gate gegen den Code gehalten:

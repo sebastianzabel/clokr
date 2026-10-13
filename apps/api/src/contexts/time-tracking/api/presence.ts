@@ -40,6 +40,11 @@ export async function presenceRoutes(app: FastifyInstance) {
 
       const tenantId = source.tenantId;
 
+      // Phase 88 (D-05): the device key stays valid for reactivation, but a deactivated tenant gets nothing.
+      if (!(await app.tenantIsActive(tenantId))) {
+        return reply.code(403).send(app.tenantDeactivatedError);
+      }
+
       // Fire-and-forget: update lastUsedAt on PresenceSource (adapter health signal)
       app.prisma.presenceSource
         .update({ where: { id: source.id }, data: { lastUsedAt: new Date() } })

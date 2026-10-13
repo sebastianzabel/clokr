@@ -12,6 +12,7 @@ import { isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 09 (
 import { readTenantTimezone } from "../facade/salon-assignments";
 import { dayToDate, tenantLocalDay } from "../salon-assignment-rules";
 import { config } from "../../../config";
+import { TENANT_DEACTIVATED_ERROR, isTenantRowActive } from "../tenant-status"; // Phase 88 (#88), AC-88-08
 
 /** SHA-256 hash for tokens stored in DB (refresh tokens, reset tokens). */
 function hashToken(token: string): string {
@@ -182,6 +183,22 @@ export async function authRoutes(app: FastifyInstance) {
         });
       }
 
+      // Phase 88 (AC-88-08): a deactivated tenant's users cannot sign in. The check sits AFTER the
+      // password comparison on purpose — a wrong password keeps the unchanged 401, so an
+      // unauthenticated caller learns nothing about the tenant's state. The refusal is the user's own
+      // action, so it lands in the tenant AuditLog.
+      if (!isTenantRowActive(user.employee?.tenant)) {
+        await app.audit({
+          userId: user.id,
+          action: "LOGIN_REFUSED",
+          entity: "User",
+          entityId: user.id,
+          newValue: { reason: "TENANT_DEACTIVATED" },
+          request: { ip: req.ip, headers: req.headers },
+        });
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
+      }
+
       // 2FA prüfen
       const twoFaEnabled = user.employee?.tenant?.config?.twoFaEnabled ?? false;
       if (twoFaEnabled) {
@@ -254,11 +271,16 @@ export async function authRoutes(app: FastifyInstance) {
 
       const user = await app.prisma.user.findUnique({
         where: { id: userId },
-        include: { employee: true },
+        include: { employee: { include: { tenant: { select: { deactivatedAt: true } } } } },
       });
 
       if (!user || !user.isActive) {
         return reply.code(401).send({ error: "Benutzer nicht gefunden" });
+      }
+
+      // Phase 88 (AC-88-08): the code matched, but a deactivated tenant gets no tokens.
+      if (!isTenantRowActive(user.employee?.tenant)) {
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
       }
 
       return issueTokens(app, req, reply, user);
@@ -274,11 +296,16 @@ export async function authRoutes(app: FastifyInstance) {
 
       const user = await app.prisma.user.findUnique({
         where: { id: userId },
-        include: { employee: true },
+        include: { employee: { include: { tenant: { select: { deactivatedAt: true } } } } },
       });
 
       if (!user || !user.isActive) {
         return reply.code(404).send({ error: "Benutzer nicht gefunden" });
+      }
+
+      // Phase 88 (AC-88-08): refuse before a code is created or any mail is sent.
+      if (!isTenantRowActive(user.employee?.tenant)) {
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
       }
 
       // Alte Tokens invalidieren
@@ -322,11 +349,21 @@ export async function authRoutes(app: FastifyInstance) {
 
       const stored = await app.prisma.refreshToken.findUnique({
         where: { token: hashToken(refreshToken) },
-        include: { user: { include: { employee: true } } },
+        include: {
+          user: {
+            include: { employee: { include: { tenant: { select: { deactivatedAt: true } } } } },
+          },
+        },
       });
 
       if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
         return reply.code(401).send({ error: "Ungültiger Refresh Token" });
+      }
+
+      // Phase 88 (AC-88-08): a deactivated tenant's session cannot be renewed. Checked BEFORE the
+      // rotation below, so the stored token is left exactly as it was.
+      if (!isTenantRowActive(stored.user.employee?.tenant)) {
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
       }
 
       // Rotate refresh token
@@ -398,11 +435,17 @@ export async function authRoutes(app: FastifyInstance) {
 
       const user = await app.prisma.user.findUnique({
         where: { email },
-        include: { employee: true },
+        include: { employee: { include: { tenant: { select: { deactivatedAt: true } } } } },
       });
 
       // Always return success to avoid leaking user existence
       if (!user || !user.isActive) {
+        return { success: true };
+      }
+
+      // Phase 88 (AC-88-08): a deactivated tenant's user gets no reset mail and no stored token. The
+      // answer stays the same `{ success: true }`, so the no-enumeration property holds.
+      if (!isTenantRowActive(user.employee?.tenant)) {
         return { success: true };
       }
 
@@ -463,8 +506,12 @@ export async function authRoutes(app: FastifyInstance) {
       // Load tenant password policy for the user
       const resetUser = await app.prisma.user.findUnique({
         where: { id: otpToken.userId },
-        include: { employee: true },
+        include: { employee: { include: { tenant: { select: { deactivatedAt: true } } } } },
       });
+      // Phase 88 (AC-88-08): a reset token issued before the deactivation must not set a password.
+      if (resetUser && !isTenantRowActive(resetUser.employee?.tenant)) {
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
+      }
       if (resetUser?.employee?.tenantId) {
         const policy = await loadPasswordPolicy(app, resetUser.employee.tenantId);
         const check = validatePassword(password, policy);
@@ -550,9 +597,15 @@ export async function authRoutes(app: FastifyInstance) {
 
       const user = await app.prisma.user.findUnique({
         where: { id: req.user.sub },
-        include: { employee: true },
+        include: { employee: { include: { tenant: { select: { deactivatedAt: true } } } } },
       });
       if (!user) return reply.code(404).send({ error: "Benutzer nicht gefunden" });
+
+      // Phase 88 (AC-88-08): the access token is still signature-valid after a deactivation, so the
+      // credential change is refused here.
+      if (!isTenantRowActive(user.employee?.tenant)) {
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
+      }
 
       const valid = await bcrypt.compare(body.currentPassword, user.passwordHash);
       if (!valid) return reply.code(400).send({ error: "Aktuelles Passwort ist falsch" });

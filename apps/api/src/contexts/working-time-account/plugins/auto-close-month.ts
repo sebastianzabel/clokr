@@ -6,6 +6,7 @@ import {
   userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
   isStammsalonScopeMatch, // Phase 91b Plan 09 (#91), D-10/D-17
+  ACTIVE_TENANT_WHERE, // Phase 88 (D-05a) — deactivated tenants are skipped
 } from "../../platform";
 import { periodStartWindow } from "../snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
@@ -91,7 +92,10 @@ export const autoCloseMonthPlugin = fp(async (app) => {
 
     app.log.info("Auto-Monatsabschluss: Prüfe Vormonat");
 
+    // Phase 88 (D-05a): a deactivated tenant is a suspended customer — no auto-close. Every unclosed
+    // prior month is backfilled oldest to newest, so the run after a reactivation catches up.
     const tenants = await app.prisma.tenant.findMany({
+      where: ACTIVE_TENANT_WHERE,
       include: { config: true },
     });
 

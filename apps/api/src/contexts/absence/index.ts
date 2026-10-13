@@ -90,7 +90,12 @@ export type {
 } from "./facade/leave-requests";
 
 // ── LeaveType (plan 10, A17-A19) ─────────────────────────────────────────────────────────────
-export { getLeaveTypeByCode, listLeaveTypes, updateLeaveType } from "./facade/leave-types";
+export {
+  getLeaveTypeByCode,
+  listLeaveTypes,
+  updateLeaveType,
+  ensureDefaultLeaveTypes, // Phase 88 (#88) — Erweiterung, additive; the default leave types of a new tenant
+} from "./facade/leave-types";
 export type { UpdateLeaveTypeInput } from "./facade/leave-types";
 
 // ── LeaveEntitlement (plan 10, A11-A16 + the code-based vacation-expiry read) ────────────────

@@ -19,6 +19,13 @@ model Tenant {
   createdAt    DateTime     @default(now()) @db.Timestamptz
   updatedAt    DateTime     @updatedAt @db.Timestamptz
 
+  // Phase 88 (#88, D-06) — deactivation instead of deletion: NULL = active (every existing tenant).
+  // Unterbau-Erweiterung: additive, no existing reader has to change.
+  deactivatedAt           DateTime?        @db.Timestamptz
+  deactivatedReason       String?
+  deactivatedByOperatorId String?
+  deactivatedByOperator   OperatorAccount? @relation(fields: [deactivatedByOperatorId], references: [id], onDelete: Restrict)
+
   employees            Employee[]
   leaveTypes           LeaveType[]
   publicHolidays       PublicHoliday[]
@@ -46,6 +53,8 @@ model Tenant {
   salonCouplings       SalonCoupling[]
   // Phase 67b (issue #67) — Salonzuordnung (HOME/DEPLOYMENT) rows
   salonAssignments     EmployeeSalonAssignment[]
+
+  @@index([deactivatedAt])
 }
 
 // Phase 64b (issue #64) — Unterbau level below Tenant (ADR 0001): a Salon is never hard-deleted,
@@ -1230,6 +1239,55 @@ model AuditLog {
   @@index([createdAt])
   @@index([purgeable])
   @@index([action])
+}
+
+// Phase 88 (#88, D-01) — the operator principal ABOVE the tenant. Deliberately not a User row and not a
+// Role value, and it carries no tenant column: the tenant-less state is explicit by type. Created only by
+// the server CLI (D-03).
+model OperatorAccount {
+  id                  String    @id @default(uuid())
+  email               String    @unique // stored lower-case
+  displayName         String
+  passwordHash        String
+  isActive            Boolean   @default(true)
+  totpSecretEnc       String?
+  totpEnabledAt       DateTime? @db.Timestamptz
+  lastTotpStep        Int?
+  recoveryCodeHashes  String[]  @default([])
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime? @db.Timestamptz
+  lastFailedLoginAt   DateTime? @db.Timestamptz
+  lastLoginAt         DateTime? @db.Timestamptz
+  createdAt           DateTime  @default(now()) @db.Timestamptz
+  updatedAt           DateTime  @updatedAt @db.Timestamptz
+
+  auditLogs          OperatorAuditLog[]
+  deactivatedTenants Tenant[]
+}
+
+// Phase 88 (#88, D-07/D-07a) — append-only operator audit trail. Written only by the create-only writer in
+// contexts/platform/operator-audit.ts and protected by the trigger migration
+// <ts>_operator_audit_log_append_only. The subject column is deliberately NOT named after the tenant key,
+// so the tenant-scoping model graph keeps classifying this model "none" and rows outlive any tenant
+// cleanup (plain string, no relation).
+model OperatorAuditLog {
+  id              String   @id @default(uuid())
+  operatorId      String? // acting operator; NULL for script actions and refused/unknown principals
+  action          String
+  subjectTenantId String?
+  entity          String
+  entityId        String?
+  oldValue        Json?
+  newValue        Json?
+  ipAddress       String?
+  userAgent       String?
+  createdAt       DateTime @default(now()) @db.Timestamptz
+
+  operator OperatorAccount? @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+
+  @@index([operatorId])
+  @@index([subjectTenantId, createdAt])
+  @@index([createdAt])
 }
 
 // ─────────────────────────────────────────────

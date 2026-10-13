@@ -42,6 +42,11 @@ export async function setup(): Promise<void> {
   // Only a default (no override of an already-set value), so CI or a real .env.test entry wins.
   process.env.MINIO_ENDPOINT ??= "localhost";
 
+  // Phase 88 (#88, D-02a): the operator surface is only registered when OPERATOR_JWT_SECRET is
+  // set, so the suite runs with it on. Only a default — CI or a real .env.test entry wins. The
+  // value differs from every tenant secret, which config.ts's refine requires.
+  process.env.OPERATOR_JWT_SECRET ??= "vitest-default-operator-jwt-secret-32chars";
+
   // ── Namespace (Phase 132) ────────────────────────────────────────────────────────────
   // Derived HERE and nowhere else in the harness. globalSetup runs ONCE, in the parent process,
   // before any worker is spawned, so this is the only place in the Vitest lifecycle where a `git`

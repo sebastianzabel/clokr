@@ -23,11 +23,41 @@ declare module "fastify" {
 }
 
 /**
+ * Phase 88 (#88, D-02, D-05a): the tenant guard refuses two things besides an invalid credential.
+ *
+ *   1. An operator token (AC-88-03). The operator secret differs from the tenant secret, so an operator
+ *      token fails the tenant verify; the operator verifier (present only when OPERATOR_JWT_SECRET is
+ *      configured) then recognises it and the answer is an explicit, audited 403 instead of the
+ *      indistinguishable 401. A payload that verified with the TENANT secret but carries the operator kind
+ *      or audience is refused the same way (defence in depth if the two secrets were ever equal).
+ *   2. A deactivated tenant, for JWT and API key alike (AC-88-08, D-05): an access token or key issued
+ *      before the deactivation stays cryptographically valid, so the tenant state is checked on every
+ *      request through `tenantIsActive` (cached for at most 10 s, invalidated explicitly).
+ *
+ * This file imports nothing from `contexts/` (eslint boundary, import cycle): the platform context hands
+ * its helpers over as Fastify decorations of `plugins/tenant-status.ts`. A missing decoration throws and
+ * ends in the global 500 handler — the guard fails closed, it never skips a check.
+ */
+function tenantGuard(req: FastifyRequest) {
+  const server = req.server;
+  if (
+    typeof server.tenantIsActive !== "function" ||
+    typeof server.hasOperatorClaims !== "function" ||
+    typeof server.recordOperatorPrincipalRefused !== "function" ||
+    !server.tenantDeactivatedError
+  ) {
+    throw new Error("tenantStatusPlugin is not registered; refusing to authenticate");
+  }
+  return server;
+}
+
+/**
  * Authenticate via JWT or API Key (clk_ prefix).
  * API keys are validated against the database and scopes are attached to the request.
  */
 export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
   const authHeader = req.headers.authorization;
+  const server = tenantGuard(req);
 
   // Check for API key (clk_ prefix)
   if (authHeader?.startsWith("Bearer clk_")) {
@@ -40,6 +70,9 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
     }
     if (apiKey.expiresAt && apiKey.expiresAt < new Date()) {
       return reply.code(401).send({ error: "API Key abgelaufen" });
+    }
+    if (!(await server.tenantIsActive(apiKey.tenantId))) {
+      return reply.code(403).send(server.tenantDeactivatedError);
     }
 
     // Update lastUsedAt (fire and forget)
@@ -65,7 +98,42 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
   try {
     await req.jwtVerify();
   } catch {
+    // Not a tenant token. If it is an operator token (the verifier exists only with OPERATOR_JWT_SECRET),
+    // say so with an audited 403; anything else keeps the unchanged 401 body.
+    if (typeof req.operatorJwtVerify === "function") {
+      try {
+        await req.operatorJwtVerify();
+      } catch {
+        return reply.code(401).send({ error: "Unauthorized" });
+      }
+      const operatorSub = (req.operator as { sub?: unknown } | null)?.sub;
+      await server.recordOperatorPrincipalRefused(
+        req,
+        typeof operatorSub === "string" ? operatorSub : "unknown",
+        { operatorAccountVerified: typeof operatorSub === "string" },
+      );
+      return reply.code(403).send({ error: "Forbidden" });
+    }
     return reply.code(401).send({ error: "Unauthorized" });
+  }
+
+  // Verified with the tenant secret, yet shaped like an operator token: never a tenant principal.
+  if (server.hasOperatorClaims(req.user)) {
+    const claimed = req.user as unknown as { sub?: unknown; tenantId?: unknown };
+    await server.recordOperatorPrincipalRefused(
+      req,
+      typeof claimed.sub === "string" ? claimed.sub : "unknown",
+      {
+        operatorAccountVerified: false,
+        claimedTenantId: typeof claimed.tenantId === "string" ? claimed.tenantId : null,
+      },
+    );
+    return reply.code(403).send({ error: "Forbidden" });
+  }
+
+  // A blank tenant id is never looked up (D-10, #551); `tenantIsActive` answers it without a query.
+  if (!(await server.tenantIsActive(req.user.tenantId))) {
+    return reply.code(403).send(server.tenantDeactivatedError);
   }
 }
 

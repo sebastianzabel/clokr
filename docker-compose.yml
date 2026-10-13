@@ -65,6 +65,8 @@ services:
       DATABASE_URL: "postgresql://clokr:password@postgres:5432/clokr"
       JWT_SECRET: "clokr-dev-secret-key-min-32-characters!"
       JWT_REFRESH_SECRET: "clokr-dev-refresh-secret-min-32-chars!"
+      # Phase 88: separate operator signing secret (dev value; distinct from the tenant secrets).
+      OPERATOR_JWT_SECRET: "clokr-dev-operator-secret-min-32-characters!"
       JWT_EXPIRES_IN: "15m"
       JWT_REFRESH_EXPIRES_IN: "7d"
       CORS_ORIGIN: "http://localhost:3000"

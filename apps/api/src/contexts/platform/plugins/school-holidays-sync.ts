@@ -26,6 +26,7 @@ import type { PrismaClient } from "@clokr/db";
 import { FederalState } from "@clokr/db";
 import { fetchSchoolHolidays, SchoolHolidaysApiError } from "../school-holidays-client";
 import { federalStateToIso } from "../federal-state-iso";
+import { ACTIVE_TENANT_WHERE } from "../tenant-status"; // Phase 88 (D-05a)
 
 const STALE_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000; // 30 Tage
 
@@ -157,8 +158,10 @@ export const schoolHolidaysSyncPlugin = fp(
     async function runAllTenants() {
       app.log.info("school-holidays cron: starting weekly sync");
 
+      // Phase 88 (D-05a): a deactivated tenant is a suspended customer — no holiday sync writes.
       const tenants = await app.prisma.tenant.findMany({
         where: {
+          ...ACTIVE_TENANT_WHERE,
           employees: {
             some: {
               vocationalSchoolPatterns: { some: { isActive: true } },

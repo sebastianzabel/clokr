@@ -594,6 +594,16 @@ hinein (ADR 0002, Entscheidung 10), kein Seiteneffekt eines fremden Imports. Das
 (gemessen: `measure-context-boundary-imports.ts --check 0` → 55 tiefe Importe, alle 55 durch die
 verbliebenen sechs Einträge gedeckt); der Zyklen-Deckel bleibt bei 22 (`--cycles --check 22`).
 
+### Nachtrag (Phase 88, Issue #88, 2026-10-13): Wurzel-Ausnahme 53 → 56
+
+`app.ts` registriert für das Betreiberkonto drei weitere Module (`operatorAuthRoutes`,
+`tenantStatusPlugin`, `operatorTenantRoutes`); der Zähler `expectedCount` der Ausnahme
+`composition-root` steigt von 53 auf 56 (`context-boundary-import-exceptions.json`, dort mit der
+Begründung je Schritt). Dieselbe Form wie die früheren Schritte: eine Registrierung durch die
+Kompositionswurzel, kein tiefer Import in einen Kontext. Die neue Naht
+`composition/tenant-onboarding.ts` importiert den Abwesenheitskontext ausschließlich über dessen
+`index.ts`. Eintrag Y beschreibt die Phase.
+
 ## I — Vakuosität von Riegeln maschinell verboten (Phase 235, Issues #235/#240/#245)
 
 **Eintrag I, im Ton und in der Form von Eintrag H (Phase 101B).** Warum dieser Eintrag existiert: #235, #240 und #245 beschreiben dieselbe Fehlerfamilie aus drei
@@ -3491,3 +3501,85 @@ Kopfzeilen der Testdateien.
 pnpm --filter @clokr/api run test:setup
 pnpm --filter @clokr/api exec vitest run src/contexts/time-tracking/__tests__/withheld-finding-85.test.ts src/contexts/time-tracking/__tests__/warning-visibility-85.test.ts src/__tests__/write-warnings-scope-85.test.ts src/contexts/time-tracking/api/__tests__/day-break-checks.test.ts src/contexts/time-tracking/__tests__/break-finding-notice.test.ts src/__tests__/cross-salon-break-notifications-80.test.ts src/contexts/time-tracking/__tests__/placement-warnings-511.test.ts src/contexts/time-tracking/__tests__/day-break-equivalence-80.test.ts
 ```
+
+## Y — Betreiberkonto oberhalb des Mandanten und Mandantenverwaltung (Phase 88, Issue #88)
+
+**Schwere: informativ. Nachtrag nach Auslieferung (D-06) — Unterbau-Erweiterung nach ADR 0002, Entscheidung 7.**
+
+### Was sich geändert hat
+
+Bis Phase 88 gab es oberhalb des Mandanten kein Konto: Mandanten entstanden per Seed oder
+Datenbankzugriff. Phase 88 führt ein **Betreiberkonto** ein, das Mandanten anlegt, umbenennt,
+deaktiviert und reaktivieren kann und dabei keine Mandantendaten sieht.
+
+Unterbau-Erweiterung (additiv; kein bestehender Leser muss sich ändern, jeder vorhandene Mandant ist
+aktiv): zwei neue Modelle `OperatorAccount` und `OperatorAuditLog` (`platform` 17 → 19), die Spalten
+`Tenant.deactivatedAt`, `Tenant.deactivatedReason` und `Tenant.deactivatedByOperatorId`, ein eigener
+Anmeldepfad (`contexts/platform/api/operator/auth.ts`, TOTP-Pflicht, eigenes optionales Geheimnis
+`OPERATOR_JWT_SECRET`) und die Wächter `requireOperator` / `requireAuth`, die einander die Token
+verweigern. Der Betreiber ist ein eigener Principal, keine `Role` und kein `User`.
+
+Mandanten werden nie gelöscht. Deaktivierung (`contexts/platform/tenant-status.ts`,
+`ACTIVE_TENANT_WHERE`) verweigert jeden Anmeldepfad und jede Anfrage bereits ausgestellter
+Zugriffstoken, API-Schlüssel und Geräteschlüssel; schreibende Cron-Jobs überspringen den Mandanten,
+die Aufbewahrungslöschung läuft bewusst weiter (§ 147 AO gilt unabhängig vom Vertrag).
+
+Zusätzlich verschärft: `lint:tenant-scoping` kennt jetzt die Regel „kein nullbarer Mandantenwert in
+einem Prisma-Aufruf“ (`lint-tenant-scoping-nullish-tenant.ts`), weil Prisma einen Filter mit
+`undefined` stillschweigend fallen lässt und ein fehlender Mandantenkontext mit dem Betreiberkonto
+erreichbar wird.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** ein additiver Export, `ensureDefaultLeaveTypes()` (`contexts/absence/index.ts`,
+  `facade/leave-types.ts`). Er legt die Standard-Abwesenheitsarten eines frisch angelegten Mandanten an
+  und nutzt dafür die bestehende Einzeldefinition (`REQUESTABLE_CODES` / `leaveTypeFields`), nie eine
+  zweite Kopie; idempotent, benennt nichts um. Der Urlaubsanspruch des ersten Admins im Eintrittsjahr
+  entsteht über den bestehenden Pfad `ensureVacationEntitlementForYear`. Kein bestehender Leser ändert
+  sich.
+- **Schichtplanung:** keine — der Phorest-Abgleich überspringt deaktivierte Mandanten.
+- **Arbeitszeitkonto:** keine — der automatische Monatsabschluss überspringt deaktivierte Mandanten; keine
+  Saldo-Berechnung ändert sich.
+- **Kompositionsschicht:** `app.ts` registriert drei weitere Module (`operatorAuthRoutes`,
+  `tenantStatusPlugin`, `operatorTenantRoutes`); der Zähler der Wurzel-Ausnahme steigt von 53 auf 56
+  (Eintrag H, `context-boundary-import-exceptions.json`, `composition-root`). Neu ist die Naht
+  `composition/tenant-onboarding.ts`: Sie führt in einer Transaktion `provisionTenantWithAdmin`
+  (Unterbau) und `ensureDefaultLeaveTypes` (Abwesenheiten) zusammen, besitzt kein Modell und trägt keine
+  Fachregel; der Unterbau importiert den Abwesenheitskontext nicht, die Naht wird ihm als Option
+  (`onTenantCreated`) übergeben.
+
+### Abweichungen und Grenzen
+
+- **Seeds tragen eine angepinnte Kopie der Provisionierungsregel (D-04a).** `packages/db` kann
+  `apps/api` nicht importieren; ein gemeinsamer Code ist daher nicht möglich. `tenant-provisioning-88.test.ts`
+  vergleicht die Seed-Kopie mit der Regel und wird rot, sobald sie auseinanderlaufen.
+- **Erster Datenbank-Trigger des Projekts.** `OperatorAuditLog` ist per Trigger append-only (UPDATE,
+  TRUNCATE und jedes DELETE außer dem Aufbewahrungslauf werden verweigert). Das schützt vor
+  Anwendungsfehlern, **nicht** vor dem Tabelleneigentümer: wer die Tabelle besitzt, kann den Trigger
+  entfernen. Insider-sicher ist das nicht.
+- **Zustands-Cache höchstens 10 Sekunden je Prozess.** Aktivierung und Deaktivierung verwerfen den Eintrag
+  im Prozess der Anfrage sofort (`app.invalidateTenantState()`); ein weiterer API-Prozess sieht die
+  Änderung spätestens nach 10 Sekunden.
+- **Die Lücke `tenantId: ""` ist nur festgehalten, nicht behoben (D-10, Issue #551).** Ein Benutzer ohne
+  Employee hat keinen Mandanten; ein leerer Mandantenwert antwortet „nicht deaktiviert“. Der
+  Randtest `operator-tenant-boundary-sweep-88.test.ts` beschreibt das Verhalten, damit eine spätere
+  Änderung sichtbar wird.
+- **Aufbewahrung des Betreiberprotokolls (D-07a).** Anmeldeereignisse 12 Monate, Lebenszyklus-Aktionen
+  (Anlegen, Umbenennen, Deaktivieren, Reaktivieren, Konto-Verwaltung) 10 Jahre; die Löschung läuft mit
+  der täglichen Aufbewahrungsprüfung (`composition/data-retention.ts`). Grundlage für die kurze Frist:
+  Datensparsamkeit, Art. 5 Abs. 1 lit. e DSGVO.
+- **Der erste Admin entsteht über die ausgelagerte Mitarbeiteranlage** (`employee-creation.ts`) mit dem
+  Akteur `OPERATOR` im Mandanten-Audit; das ist die einzige Stelle, an der der Betreiber eine Zeile in den
+  Mandanten-`AuditLog` schreibt. Die Einladungsregel (24 Stunden, Token gehasht) steht dort einmal.
+- **Betreiberkonten werden bei der Auffrischung von int neutralisiert** (`pseudonymize-dump.ts`, D-11).
+
+### Nachweise
+
+`operator-audit-append-only-88`, `operator-credentials-88`, `operator-account`, `operator-config-88`,
+`operator-auth-88`, `operator-surface-off-88`, `tenant-principal-guard-88`, `tenant-deactivation-88`,
+`device-keys-deactivated-88`, `cron-deactivated-tenants-88`, `tenant-provisioning-88`,
+`employee-creation-parity-88`, `operator-tenants-88`, `operator-tenant-boundary-sweep-88`,
+`lint-tenant-scoping-nullish-tenant` sowie die erweiterten Tests `measure-foreign-context-access`,
+`lint-tenant-scoping`, `lint-tenant-scoping-model-graph` und `access-context`. Betrieb:
+`docs/runbooks/operator-accounts.md`.

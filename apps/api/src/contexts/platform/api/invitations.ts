@@ -3,6 +3,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { createHash } from "crypto";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
+import { TENANT_DEACTIVATED_ERROR, isTenantRowActive } from "../tenant-status"; // Phase 88 (#88), AC-88-08
 
 /** SHA-256 hash for tokens stored in DB. */
 function hashToken(token: string): string {
@@ -24,7 +25,9 @@ export async function invitationRoutes(app: FastifyInstance) {
 
       const invitation = await app.prisma.invitation.findUnique({
         where: { token: hashToken(token) },
-        include: { employee: { include: { user: true } } },
+        include: {
+          employee: { include: { user: true, tenant: { select: { deactivatedAt: true } } } },
+        },
       });
 
       if (!invitation) {
@@ -39,6 +42,12 @@ export async function invitationRoutes(app: FastifyInstance) {
         return reply.code(410).send({
           error: "Dieser Link ist abgelaufen. Bitte wenden Sie sich an den Administrator.",
         });
+      }
+
+      // Phase 88 (AC-88-08): a deactivated tenant's invitation activates nothing — the user stays
+      // inactive and the invitation stays unused, so it works again after a reactivation.
+      if (!isTenantRowActive(invitation.employee.tenant)) {
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
       }
 
       // Validate password against tenant policy

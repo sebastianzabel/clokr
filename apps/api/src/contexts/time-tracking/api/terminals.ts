@@ -82,6 +82,10 @@ export async function terminalRoutes(app: FastifyInstance) {
           type: "object",
           properties: { error: { type: "string" } },
         },
+        403: {
+          type: "object",
+          properties: { error: { type: "string" }, code: { type: "string" } },
+        },
       },
     },
     handler: async (req, reply) => {
@@ -100,6 +104,11 @@ export async function terminalRoutes(app: FastifyInstance) {
       }
 
       const tenantId = apiKey.tenantId;
+
+      // Phase 88 (D-05): the device key stays valid for reactivation, but a deactivated tenant gets nothing.
+      if (!(await app.tenantIsActive(tenantId))) {
+        return reply.code(403).send(app.tenantDeactivatedError);
+      }
 
       // Update lastUsedAt (fire and forget)
       app.prisma.terminalApiKey

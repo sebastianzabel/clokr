@@ -200,3 +200,9 @@ export {
 export type { CompatRoleAssignmentRow, CompatRoleFilter } from "./compat-role";
 // Issue #450 (D-04) — Erweiterung, additive; consumed by contexts/absence/leave-days.ts
 export { snapToMonthFirstUtc } from "./month-first-date";
+// Phase 88 (#88, D-05/D-05a): the ONE spelling of "active tenant" for background jobs, so a
+// deactivated customer is skipped by every writing/notifying cron loop through one import.
+export { ACTIVE_TENANT_WHERE } from "./tenant-status";
+// Phase 88 (#88, D-07a): the operator audit retention purge, run by the daily data-retention job
+// of the composition layer (authentication events after 12 months, lifecycle actions after 120).
+export { purgeExpiredOperatorAudit } from "./operator-audit";

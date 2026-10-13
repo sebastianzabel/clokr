@@ -26,6 +26,10 @@ JWT_SECRET=<generierter-string>
 JWT_REFRESH_SECRET=<generierter-string>
 ENCRYPTION_KEY=<generierter-string>
 
+# Optional: eigenes Signiergeheimnis für die Betreiber-Oberfläche (mind. 32 Zeichen, verschieden
+# von den drei Werten oben). Ohne Wert ist die Betreiber-Oberfläche aus.
+# OPERATOR_JWT_SECRET=<generierter-string>
+
 # URL unter der Clokr erreichbar ist
 CORS_ORIGIN=http://deine-domain.de:3000
 APP_URL=http://deine-domain.de:3000

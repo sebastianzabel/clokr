@@ -68,6 +68,17 @@ it never mutates `SaldoSnapshot` at all, only `OpeningBalance` and `AuditLog`. S
 Operator tools are intended to be re-run as needed. They should be safe to
 invoke against any environment with the appropriate DATABASE_URL.
 
+`operator-account.ts` (Phase 88, D-03/D-03a) is the ONLY way an operator account — the principal above
+the tenant — comes into existence: no route, seed or UI creates one. Modes: `--create --email <e>
+--display-name <n>`, `--reset-mfa --email <e>` (lost authenticator: new TOTP secret and 10 new recovery
+codes), `--deactivate --email <e>` (offboarding). Dry-run by default; nothing is written without
+`--apply`. Required env: `DATABASE_URL`, `ENCRYPTION_KEY` (the TOTP secret is stored encrypted with it),
+optional `OPERATOR_PASSWORD` (never taken from argv; if unset a password is generated and printed once).
+The TOTP secret, otpauth URI and recovery codes are printed to stdout once and never written anywhere.
+Every applied run writes one `OperatorAuditLog` row (actor type SCRIPT with OS user and host) in the same
+transaction. In the API container (working directory `/app`): `docker exec -w /app/apps/api <container> pnpm tsx scripts/operator-account.ts …`. Procedure:
+`docs/runbooks/operator-accounts.md`.
+
 ## Audit tools
 
 Audit tools are read-only and intended to surface data-integrity concerns
@@ -379,6 +390,32 @@ seeded entry:
 `file` names the handler's file, `handler` its route, `validatedAt` the line number of the
 validating check that makes the rest of the handler safe (`null` only for the pre-authentication
 category, where no tenant context exists yet at all), `calls[]` every covered call, `reason` why.
+
+**The nullish-tenant rule (Phase 88, GitHub #88, D-08/D-08a).** The same command additionally
+fails when a `tenantId` value that can be `undefined` reaches ANY Prisma model call (every method,
+any nesting depth including relation filters and `data`, every non-test file under
+`apps/api/src` — plugins, middleware and jobs included, not only `SCOPED_DIRS`). Prisma drops an
+undefined filter, so `findMany({ where: { tenantId: undefined } })` returns every tenant's rows.
+Four syntactic shapes are flagged (details in `lint-tenant-scoping-nullish-tenant.ts`): the
+literal `undefined` / `void 0` (R1); an optional chain without a non-nullish `??` fallback (R2); a
+conditional or `&&` expression with a nullish branch (R3); an identifier bound to a parameter
+declared optional or annotated `| undefined`, or to a local whose initializer is itself flagged
+(R4). Legal and never flagged: the fail-closed idiom `x?.tenantId ?? ""`, `req.user.tenantId`, a
+required string parameter, an identifier narrowed by an `if` guard, and `tenantId: null` (left to
+the compiler; `AccessRole.tenantId` is nullable on purpose).
+
+- The report line is `nullish-tenant: <n> Prisma call(s) in <m> file(s), <k> finding(s)`; zero
+  scanned calls is an unsoftenable gate error, like the zero-file guards above.
+- **Fix a hit at its source** (required tenant id or `?? ""`). The exceptions file accepts an
+  entry for it only with an explicit `"rule": "nullish-tenant"` (the optional discriminator; an
+  entry without `rule` is the original rule and the existing entries are untouched); matching is
+  by `file` + `<model>.<method>` + the line of the `tenantId` value. No such entry exists, and a
+  hit on a clean tree is a finding to report, not an entry to add.
+- **Honest limit.** The check is syntactic: a variable whose `string | undefined` type is only
+  inferred (a call result, an unannotated object property, an interface from another file) is
+  invisible to it. The runtime counterpart is the Prisma-interceptor sweep of Plan 88-13. A green
+  run means "no nullish tenant id is visible in the source text", not "none can happen".
+- `--json` findings now carry a `rule` field (`"client-supplied"` or `"nullish-tenant"`).
 
 **The facade rule (Phase 100b, GitHub #100, D-10).** Phase 100b puts a facade layer between a
 route and Prisma: `apps/api/src/contexts/<x>/facade/*.ts`. Adding those directories to

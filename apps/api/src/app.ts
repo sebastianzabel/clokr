@@ -11,6 +11,9 @@ import swaggerUi from "@fastify/swagger-ui";
 import { config } from "./config";
 import { AccessContextError } from "./contexts/platform"; // Phase 77b (Issue #77) — index, not the deep module
 import { authRoutes } from "./contexts/platform/api/auth";
+import { operatorAuthRoutes } from "./contexts/platform/api/operator/auth"; // Phase 88 (#88)
+import { operatorTenantRoutes } from "./contexts/platform/api/operator/tenants"; // Phase 88 (#88)
+import { seedDefaultsForNewTenant } from "./composition/tenant-onboarding"; // Phase 88 (#88)
 import { employeeRoutes } from "./contexts/platform/api/employees";
 import { employeeWifiRoutes } from "./contexts/time-tracking/api/employee-wifi"; // Phase 243 Plan 02 (B2)
 import { timeEntryRoutes } from "./contexts/time-tracking/api/time-entries";
@@ -22,6 +25,7 @@ import { settingsRoutes } from "./contexts/platform/api/settings";
 import { leaveSettingsRoutes } from "./contexts/absence/api/leave-settings"; // Phase 243 Plan 02 (B1)
 import { holidayRoutes } from "./contexts/platform/api/holidays";
 import { auditPlugin } from "./contexts/platform/plugins/audit";
+import { tenantStatusPlugin } from "./contexts/platform/plugins/tenant-status"; // Phase 88 (#88, D-05a)
 import { prismaPlugin } from "./contexts/platform/plugins/prisma";
 import { mailerPlugin } from "./contexts/platform/plugins/mailer";
 import { notifyPlugin } from "./contexts/platform/plugins/notify";
@@ -231,6 +235,28 @@ export async function buildApp() {
       : {}),
   });
 
+  // Phase 88 (#88, D-02a, research F6): the operator principal is signed and verified by a SECOND,
+  // namespaced @fastify/jwt registration with its own secret, so an operator token never verifies as a
+  // tenant token and vice versa. Without OPERATOR_JWT_SECRET nothing below exists: the operator routes
+  // are not registered and the tenant side behaves exactly as before. No clockTolerance here — the
+  // test-only tolerance above must never reach the operator verifier. The plugin skips
+  // decorateRequest(decoratorName) when `fastify.jwt` already exists, so `req.operator` is declared
+  // explicitly; `req.user` is never touched by this verifier. `kind`/`aud` are put into every operator
+  // payload by operator-auth.ts and enforced by requireOperator, not by plugin sign options.
+  if (config.OPERATOR_JWT_SECRET) {
+    // null until operatorJwtVerify() ran; typed non-null because only requireOperator-guarded handlers read it.
+    app.decorateRequest("operator", null as never);
+    await app.register(jwt, {
+      secret: config.OPERATOR_JWT_SECRET,
+      namespace: "operator",
+      decoratorName: "operator",
+      jwtVerify: "operatorJwtVerify",
+      jwtSign: "operatorJwtSign",
+      jwtDecode: "operatorJwtDecode",
+      sign: { expiresIn: "15m" },
+    });
+  }
+
   // ── Request Context Logging ──────────────────────────────
   app.addHook("onRequest", (req, _reply, done) => {
     // Enrich log context with user/tenant info (from JWT if available)
@@ -285,6 +311,9 @@ export async function buildApp() {
   // ── Plugins ───────────────────────────────────────────────
   await app.register(prismaPlugin);
   await app.register(auditPlugin);
+  // Phase 88 (#88, D-02, D-05a): tenant state cache and operator-refusal helpers that `requireAuth`
+  // reads as decorations (the middleware imports nothing from contexts/).
+  await app.register(tenantStatusPlugin);
   await app.register(mailerPlugin);
   await app.register(notifyPlugin);
   await app.register(schedulerPlugin);
@@ -302,6 +331,15 @@ export async function buildApp() {
 
   // ── Routes ────────────────────────────────────────────────
   await app.register(authRoutes, { prefix: "/api/v1/auth" });
+  // Phase 88 (#88, D-02a): the operator surface exists only when its signing secret is configured.
+  if (config.OPERATOR_JWT_SECRET) {
+    await app.register(operatorAuthRoutes, { prefix: "/api/v1/operator/auth" });
+    // The Unterbau route cannot import the absence context; the composition root hands it the seam.
+    await app.register(operatorTenantRoutes, {
+      prefix: "/api/v1/operator/tenants",
+      onTenantCreated: seedDefaultsForNewTenant,
+    });
+  }
   await app.register(employeeRoutes, { prefix: "/api/v1/employees" });
   await app.register(timeEntryRoutes, { prefix: "/api/v1/time-entries" });
   await app.register(dayBreakRoutes, { prefix: "/api/v1/day-breaks" }); // Issue #80 (D-02..D-06, D-21)

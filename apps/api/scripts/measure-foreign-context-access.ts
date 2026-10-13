@@ -129,6 +129,8 @@ export type PrismaModelName =
   | "publicHoliday"
   | "schoolHolidayPeriod"
   | "auditLog"
+  | "operatorAccount"
+  | "operatorAuditLog"
   | "terminalApiKey"
   | "presenceSource"
   | "presenceDevice"
@@ -161,6 +163,8 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   employee: "platform",
   user: "platform",
   auditLog: "platform",
+  operatorAccount: "platform",
+  operatorAuditLog: "platform",
   apiKey: "platform",
   invitation: "platform",
   otpToken: "platform",
