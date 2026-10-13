@@ -1843,6 +1843,20 @@ Phase 85b schließt diese Lücke und hebt die Aussage für die Dashboard-Pfade a
   Antwort von `PATCH /employees/:id` selbst enthält kein Konto). Verdeckt bleibt `null`, nie 0; Ganzmandanten-
   Aufrufer und die Person selbst erhalten die unveränderte Antwort. Die Antwort von `POST /employees` zeigt
   ein frisch angelegtes Konto mit 0 und gibt damit keinen gespeicherten Wert preis.
+- **Überstundensaldo im Antragsdialog (Plan 85b-16, Verifikationsbefund).** `GET /leave/overtime-balance`
+  (Phase 415, #415) lieferte das Live-Gesamtsaldo einer gewählten Person an jeden Aufrufer mit
+  `leave-entitlement:read:ZUGEWIESEN` im Stammsalon-Scope, also auch an einen Salonmanager — ein dritter Weg
+  um die Saldo-Regel vom 27.08.2026 (Gesamtsaldo nur Inhaber, Personalabteilung, die Person selbst). Jetzt
+  fragt der Handler zusätzlich `overtime:read` (modulprivat `callerMaySeeSaldoOf` in
+  `contexts/absence/api/leave.ts`, dieselbe Stammsalon-Abdeckung wie `GET /overtime/:employeeId`). Ohne
+  Abdeckung sind `balanceHours`, `confirmedMinutes`, `openMonthMinutes`, `hasClosedMonth` und
+  `isNegativeLimitExceeded` `null` und `balanceVisible` ist `false`; das Vorzeichen des Saldos wird auch über
+  `isNegativeLimitExceeded` nicht verraten. Die konfigurierte Toleranz (`maxNegativeBalanceMinutes`) bleibt,
+  sie ist Mandantenkonfiguration. Die Person selbst und Aufrufer mit abdeckender Reichweite erhalten die
+  Zahlen mit `balanceVisible: true`. Die serverseitige OVERTIME_COMP-Prüfung bei Antrag und Genehmigung liest
+  diesen Endpunkt nicht und bleibt unverändert; der Dialog zeigt statt der Zahlen „Saldo nicht einsehbar – die
+  Prüfung erfolgt beim Speichern.“ und trifft keine Grenzentscheidung auf verdeckten Daten. Eine neue
+  Handler-Prüfung, keine neue Permission (`docs/permissions.md`, Handler-Prüfungen).
 - **Salonansicht (D-08, D-13).** `GET /time-entries` nimmt optional `salonId` mit `from` und `to` (höchstens
   31 Tage) und liefert alle sichtbaren Einträge dieses Salons für alle Personen; nur unter
   `time-entry:read:ZUGEWIESEN`.

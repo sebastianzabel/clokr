@@ -176,6 +176,45 @@ describe("LeaveRequestForm", () => {
     expect(screen.getByText("Guthaben")).toBeTruthy();
   });
 
+  // Issue #85 (Phase 85b Plan 16): the API withholds the total saldo of a person the viewer holds
+  // no overtime:read reach over (balanceVisible false, every number null).
+  it("OVERTIME_COMP: balanceVisible false shows the German note instead of any saldo figure", async () => {
+    apiGet.mockImplementation((path: string) => {
+      if (path.startsWith("/leave/overtime-balance")) {
+        return Promise.resolve({
+          balanceVisible: false,
+          balanceHours: null,
+          confirmedMinutes: null,
+          openMonthMinutes: null,
+          hasClosedMonth: null,
+          maxNegativeBalanceMinutes: 600,
+          isNegativeLimitExceeded: null,
+        });
+      }
+      return defaultGetImpl(path);
+    });
+    renderForm();
+    await fireEvent.change(screen.getByTestId("leave-form-type"), {
+      target: { value: "OVERTIME_COMP" },
+    });
+    await waitFor(() => expect(screen.getByTestId("leave-form-balance-hidden")).toBeTruthy());
+    expect(screen.getByTestId("leave-form-balance-hidden").textContent).toContain(
+      "Saldo nicht einsehbar – die Prüfung erfolgt beim Speichern.",
+    );
+    expect(screen.queryByText("Guthaben")).toBeNull();
+    expect(screen.queryByText("Verbleibend")).toBeNull();
+    expect(screen.queryByText(/Nicht genug Überstunden/)).toBeNull();
+  });
+
+  it("OVERTIME_COMP: balanceVisible true keeps the balance box and shows no note", async () => {
+    renderForm();
+    await fireEvent.change(screen.getByTestId("leave-form-type"), {
+      target: { value: "OVERTIME_COMP" },
+    });
+    await waitFor(() => expect(screen.getByText("Guthaben")).toBeTruthy());
+    expect(screen.queryByTestId("leave-form-balance-hidden")).toBeNull();
+  });
+
   // ── Create mutation: employeeId is ALWAYS sent, even for a self-create ─────────────────────
   it("create: POST /leave/requests always carries employeeId, and onSaved fires once", async () => {
     const { onSaved } = renderForm();

@@ -71,13 +71,16 @@
   }
 
   interface OvertimeBalanceResponse {
-    balanceHours: number;
-    confirmedMinutes: number;
+    /** Issue #85 (Phase 85b Plan 16): `false` = the caller may not see this person's total saldo;
+     *  every saldo-derived number below is then `null`. Absent on an older API = visible. */
+    balanceVisible?: boolean;
+    balanceHours: number | null;
+    confirmedMinutes: number | null;
     openMonthMinutes: number | null;
-    hasClosedMonth?: boolean;
+    hasClosedMonth?: boolean | null;
     rosterIncomplete?: boolean;
     maxNegativeBalanceMinutes: number | null;
-    isNegativeLimitExceeded: boolean;
+    isNegativeLimitExceeded: boolean | null;
   }
 
   interface Props {
@@ -133,6 +136,10 @@
 
   // Überstunden- / Urlaubskontostand — for `employeeId`, not necessarily the viewer.
   let overtimeBalance: number | null = $state(null);
+  // Issue #85 (Phase 85b Plan 16): the API withholds the total saldo of a person the viewer holds
+  // no `overtime:read` reach over. No limit decision is made client-side on hidden data — the
+  // server checks at save time.
+  let balanceHidden = $state(false);
   let confirmedMinutes: number | undefined = $state(undefined);
   let openMonthMinutes: number | null | undefined = $state(undefined);
   let hasClosedMonth = $state(false);
@@ -258,12 +265,23 @@
         const r = await api.get<OvertimeBalanceResponse>(
           `/leave/overtime-balance?employeeId=${forEmployeeId}`,
         );
-        overtimeBalance = r.balanceHours;
-        confirmedMinutes = r.confirmedMinutes;
-        openMonthMinutes = r.openMonthMinutes;
-        hasClosedMonth = r.hasClosedMonth ?? false;
-        maxNegativeBalanceMinutes = r.maxNegativeBalanceMinutes;
-        isNegativeLimitExceeded = r.isNegativeLimitExceeded;
+        if (r.balanceVisible === false) {
+          balanceHidden = true;
+          overtimeBalance = null;
+          confirmedMinutes = undefined;
+          openMonthMinutes = undefined;
+          hasClosedMonth = false;
+          maxNegativeBalanceMinutes = undefined;
+          isNegativeLimitExceeded = undefined;
+        } else {
+          balanceHidden = false;
+          overtimeBalance = r.balanceHours;
+          confirmedMinutes = r.confirmedMinutes ?? undefined;
+          openMonthMinutes = r.openMonthMinutes;
+          hasClosedMonth = r.hasClosedMonth ?? false;
+          maxNegativeBalanceMinutes = r.maxNegativeBalanceMinutes;
+          isNegativeLimitExceeded = r.isNegativeLimitExceeded ?? undefined;
+        }
       } catch {
         // Deliberately empty — keep whatever is already on screen.
       }
@@ -689,7 +707,13 @@
       {/if}
 
       <!-- Überstundensaldo-Info -->
-      {#if employeeId && formType === "OVERTIME_COMP" && overtimeBalance !== null}
+      {#if employeeId && formType === "OVERTIME_COMP" && balanceHidden}
+        <div class="form-group form-group--full">
+          <p class="balance-hint-muted" data-testid="leave-form-balance-hidden">
+            Saldo nicht einsehbar – die Prüfung erfolgt beim Speichern.
+          </p>
+        </div>
+      {:else if employeeId && formType === "OVERTIME_COMP" && overtimeBalance !== null}
         <div class="form-group form-group--full">
           <div class="balance-box">
             <div class="balance-row">
