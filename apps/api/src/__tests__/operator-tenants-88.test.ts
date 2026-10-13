@@ -74,11 +74,11 @@ async function createTenant(label: string, overrides: Record<string, unknown> = 
   return { body, parsed, mail: mails[mails.length - 1] };
 }
 
-async function loginAs(email: string) {
+async function loginAs(email: string, password = PASSWORD) {
   return app.inject({
     method: "POST",
     url: "/api/v1/auth/login",
-    payload: { email, password: PASSWORD },
+    payload: { email, password },
     remoteAddress: uniqueAddress(),
   });
 }
@@ -370,5 +370,301 @@ describe("operator tenant routes refuse the tenant principal", () => {
 
     expect((await call("GET", BASE)).statusCode).toBe(401);
     expect((await call("POST", BASE, undefined, createBody("anon"))).statusCode).toBe(401);
+  });
+});
+
+// ── Lifecycle ────────────────────────────────────────────────────────────────
+
+describe("PATCH /api/v1/operator/tenants/:id (rename)", () => {
+  it("changes the name only, audits old and new, and writes nothing for an unchanged name", async () => {
+    const { parsed } = await createTenant("rename");
+    const before = await app.prisma.tenant.findUniqueOrThrow({ where: { id: parsed.tenant.id } });
+    const salonBefore = await app.prisma.salon.findUniqueOrThrow({
+      where: { id: parsed.defaultSalonId },
+    });
+
+    const res = await call("PATCH", `${BASE}/${parsed.tenant.id}`, operatorToken, {
+      name: "  Neuer Name  ",
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const dto = JSON.parse(res.body);
+    expect(Object.keys(dto).sort()).toEqual(DTO_KEYS);
+    expect(dto.name).toBe("Neuer Name");
+    expect(dto.slug).toBe(before.slug);
+
+    const salonAfter = await app.prisma.salon.findUniqueOrThrow({
+      where: { id: parsed.defaultSalonId },
+    });
+    expect(salonAfter.name).toBe(salonBefore.name);
+
+    const rows = await app.prisma.operatorAuditLog.findMany({
+      where: { action: "TENANT_RENAMED", subjectTenantId: parsed.tenant.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].operatorId).toBe(operatorId);
+    expect(rows[0].oldValue).toEqual({ name: before.name });
+    expect(rows[0].newValue).toEqual({ name: "Neuer Name" });
+
+    const same = await call("PATCH", `${BASE}/${parsed.tenant.id}`, operatorToken, {
+      name: "Neuer Name",
+    });
+    expect(same.statusCode).toBe(200);
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: { action: "TENANT_RENAMED", subjectTenantId: parsed.tenant.id },
+      }),
+    ).toBe(1);
+  });
+
+  it("rejects an extra key, an empty name and an unknown id", async () => {
+    const { parsed } = await createTenant("rename2");
+    const url = `${BASE}/${parsed.tenant.id}`;
+    expect((await call("PATCH", url, operatorToken, { name: "X", slug: "y" })).statusCode).toBe(
+      400,
+    );
+    expect((await call("PATCH", url, operatorToken, { name: "   " })).statusCode).toBe(400);
+    expect(
+      (
+        await call("PATCH", `${BASE}/00000000-0000-4000-8000-000000000088`, operatorToken, {
+          name: "X",
+        })
+      ).statusCode,
+    ).toBe(404);
+  });
+});
+
+describe("deactivate and reactivate", () => {
+  let data2: Awaited<ReturnType<typeof seedTestData>>;
+  let refreshSpy: ReturnType<typeof vi.fn>;
+
+  beforeAll(async () => {
+    data2 = await seedTestData(app, "ot88b");
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: data2.tenant.id },
+      data: { twoFaEnabled: false },
+    });
+    refreshSpy = vi.fn(async () => undefined);
+    app.refreshScheduler = refreshSpy as unknown as () => Promise<void>;
+  });
+
+  afterAll(async () => {
+    delete app.refreshScheduler;
+    await cleanupTestData(app, data2.tenant.id);
+  });
+
+  async function counts() {
+    const tenantId = data2.tenant.id;
+    const [employees, users, timeEntries, salons, configs, leaveRequests, invitations] =
+      await Promise.all([
+        app.prisma.employee.count({ where: { tenantId } }),
+        app.prisma.user.count({ where: { employee: { tenantId } } }),
+        app.prisma.timeEntry.count({ where: { employee: { tenantId } } }),
+        app.prisma.salon.count({ where: { tenantId } }),
+        app.prisma.tenantConfig.count({ where: { tenantId } }),
+        app.prisma.leaveRequest.count({ where: { employee: { tenantId } } }),
+        app.prisma.invitation.count({ where: { employee: { tenantId } } }),
+      ]);
+    return { employees, users, timeEntries, salons, configs, leaveRequests, invitations };
+  }
+
+  it("deactivates immediately without any explicit cache invalidation, keeps the data and refuses every credential", async () => {
+    const url = `${BASE}/${data2.tenant.id}`;
+    // Prime the tenant-state cache with "active": only the route's own post-commit invalidation
+    // can make the next request see the change (no invalidateTenantState call in this test).
+    const primed = await app.inject({
+      method: "GET",
+      url: "/api/v1/me/context",
+      headers: { authorization: `Bearer ${data2.adminToken}` },
+      remoteAddress: uniqueAddress(),
+    });
+    expect(primed.statusCode).toBe(200);
+    const login = await loginAs(data2.empUser.email, "test1234");
+    expect(login.statusCode, login.body).toBe(200);
+    const { refreshToken } = JSON.parse(login.body) as { refreshToken: string };
+    const before = await counts();
+
+    refreshSpy.mockClear();
+    const missingReason = await call("POST", `${url}/deactivate`, operatorToken, {});
+    expect(missingReason.statusCode).toBe(400);
+    expect(
+      (await call("POST", `${url}/deactivate`, operatorToken, { reason: "ab" })).statusCode,
+    ).toBe(400);
+
+    const res = await call("POST", `${url}/deactivate`, operatorToken, {
+      reason: "Vertrag beendet",
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const dto = JSON.parse(res.body);
+    expect(Object.keys(dto).sort()).toEqual(DTO_KEYS);
+    expect(dto.deactivatedAt).toBeTruthy();
+    expect(dto.deactivatedReason).toBe("Vertrag beendet");
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+
+    const refused = await app.inject({
+      method: "GET",
+      url: "/api/v1/me/context",
+      headers: { authorization: `Bearer ${data2.adminToken}` },
+      remoteAddress: uniqueAddress(),
+    });
+    expect(refused.statusCode).toBe(403);
+    expect(JSON.parse(refused.body).code).toBe("TENANT_DEACTIVATED");
+
+    const relogin = await loginAs(data2.empUser.email, "test1234");
+    expect(relogin.statusCode).toBe(403);
+    const refresh = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      payload: { refreshToken },
+      remoteAddress: uniqueAddress(),
+    });
+    // Deactivation revoked the open refresh token, so the refresh is refused (401 revoked / 403 tenant).
+    expect([401, 403]).toContain(refresh.statusCode);
+
+    expect(await counts()).toEqual(before);
+
+    const again = await call("POST", `${url}/deactivate`, operatorToken, { reason: "nochmal" });
+    expect(again.statusCode).toBe(409);
+    expect(JSON.parse(again.body).code).toBe("ALREADY_DEACTIVATED");
+
+    const rows = await app.prisma.operatorAuditLog.findMany({
+      where: { action: "TENANT_DEACTIVATED", subjectTenantId: data2.tenant.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].operatorId).toBe(operatorId);
+  });
+
+  it("reactivates: sign-in works again, a second reactivation is a 409", async () => {
+    const url = `${BASE}/${data2.tenant.id}`;
+    refreshSpy.mockClear();
+    const res = await call("POST", `${url}/reactivate`, operatorToken);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(JSON.parse(res.body).deactivatedAt).toBeNull();
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+
+    const again = await call("POST", `${url}/reactivate`, operatorToken);
+    expect(again.statusCode).toBe(409);
+    expect(JSON.parse(again.body).code).toBe("NOT_DEACTIVATED");
+
+    const relogin = await loginAs(data2.empUser.email, "test1234");
+    expect(relogin.statusCode, relogin.body).toBe(200);
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: { action: "TENANT_REACTIVATED", subjectTenantId: data2.tenant.id },
+      }),
+    ).toBe(1);
+  });
+
+  it("answers an unknown tenant id with 404 on both routes", async () => {
+    const ghost = `${BASE}/00000000-0000-4000-8000-000000000089`;
+    expect(
+      (await call("POST", `${ghost}/deactivate`, operatorToken, { reason: "abc" })).statusCode,
+    ).toBe(404);
+    expect((await call("POST", `${ghost}/reactivate`, operatorToken)).statusCode).toBe(404);
+  });
+});
+
+describe("POST /api/v1/operator/tenants/:id/resend-admin-invitation", () => {
+  it("issues a new token and expires the old invitation while nobody has signed in", async () => {
+    const { body, parsed, mail } = await createTenant("resend");
+    const oldToken = mail.token;
+    const res = await call(
+      "POST",
+      `${BASE}/${parsed.tenant.id}/resend-admin-invitation`,
+      operatorToken,
+    );
+    expect(res.statusCode, res.body).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ invitationMailSent: true });
+    expect(res.body).not.toContain(oldToken);
+
+    const resent = mails[mails.length - 1];
+    expect(resent.to).toBe(body.admin.email);
+    expect(resent.token).not.toBe(oldToken);
+    expect(res.body).not.toContain(resent.token);
+
+    const oldAccept = await app.inject({
+      method: "POST",
+      url: "/api/v1/invitations/accept",
+      payload: { token: oldToken, password: PASSWORD },
+      remoteAddress: uniqueAddress(),
+    });
+    expect(oldAccept.statusCode).toBeGreaterThanOrEqual(400);
+
+    const rows = await app.prisma.operatorAuditLog.findMany({
+      where: { action: "ADMIN_INVITATION_RESENT", subjectTenantId: parsed.tenant.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].newValue).toEqual({ employeeId: parsed.adminEmployeeId });
+
+    // Once the admin accepted, the bootstrap window is closed.
+    await acceptAndLogin(body.admin.email, resent.token);
+    const late = await call(
+      "POST",
+      `${BASE}/${parsed.tenant.id}/resend-admin-invitation`,
+      operatorToken,
+    );
+    expect(late.statusCode).toBe(409);
+    expect(JSON.parse(late.body).code).toBe("TENANT_IN_USE");
+  });
+
+  it("is refused on a deactivated tenant and unknown for an unknown id", async () => {
+    const { parsed } = await createTenant("resend2");
+    await app.prisma.tenant.update({
+      where: { id: parsed.tenant.id },
+      data: { deactivatedAt: new Date(), deactivatedReason: "Test" },
+    });
+    const res = await call(
+      "POST",
+      `${BASE}/${parsed.tenant.id}/resend-admin-invitation`,
+      operatorToken,
+    );
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).code).toBe("TENANT_DEACTIVATED");
+
+    const ghost = await call(
+      "POST",
+      `${BASE}/00000000-0000-4000-8000-000000000090/resend-admin-invitation`,
+      operatorToken,
+    );
+    expect(ghost.statusCode).toBe(404);
+  });
+
+  it("reports invitationMailSent false when the mail fails", async () => {
+    const { parsed } = await createTenant("resend3");
+    mailSpy.mockRejectedValueOnce(new Error("SMTP nicht konfiguriert"));
+    const res = await call(
+      "POST",
+      `${BASE}/${parsed.tenant.id}/resend-admin-invitation`,
+      operatorToken,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ invitationMailSent: false });
+  });
+});
+
+describe("the operator surface cannot delete and refuses tenant tokens on every lifecycle route", () => {
+  it("has no DELETE route under /api/v1/operator and answers DELETE with 404", async () => {
+    const routes = app.printRoutes({ commonPrefix: false });
+    const operatorLines = routes.split("\n").filter((line) => line.includes("operator"));
+    expect(operatorLines.length).toBeGreaterThan(0);
+    expect(operatorLines.some((line) => /\(DELETE/.test(line))).toBe(false);
+    const { parsed } = await createTenant("nodelete");
+    const res = await call("DELETE", `${BASE}/${parsed.tenant.id}`, operatorToken);
+    expect(res.statusCode).toBe(404);
+    expect(await app.prisma.tenant.count({ where: { id: parsed.tenant.id } })).toBe(1);
+  });
+
+  it("answers a tenant admin token with 403 on rename, deactivate, reactivate and resend", async () => {
+    const id = data.tenant.id;
+    const attempts = [
+      call("PATCH", `${BASE}/${id}`, data.adminToken, { name: "Übernommen" }),
+      call("POST", `${BASE}/${id}/deactivate`, data.adminToken, { reason: "Übernahme" }),
+      call("POST", `${BASE}/${id}/reactivate`, data.adminToken),
+      call("POST", `${BASE}/${id}/resend-admin-invitation`, data.adminToken),
+      call("GET", `${BASE}/${id}`, data.adminToken),
+    ];
+    for (const res of await Promise.all(attempts)) expect(res.statusCode).toBe(403);
+    const tenant = await app.prisma.tenant.findUniqueOrThrow({ where: { id } });
+    expect(tenant.deactivatedAt).toBeNull();
+    expect(tenant.name).not.toBe("Übernommen");
   });
 });

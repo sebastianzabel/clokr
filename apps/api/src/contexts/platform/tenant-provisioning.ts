@@ -35,6 +35,8 @@ import {
   type EmployeeCreationAudit,
 } from "./employee-creation.js";
 import { tenantLocalDay } from "./salon-assignment-rules.js";
+import { OPERATOR_AUDIT_ACTIONS, recordOperatorAudit } from "./operator-audit.js";
+import { reissueEmployeeInvitation } from "./employee-creation.js";
 
 export interface TenantProvisioningInput {
   /** Explicit tenant id (test fixtures only); omitted, the schema generates one. */
@@ -353,4 +355,72 @@ export async function provisionTenantWithAdmin(
     if (conflict) throw new TenantProvisioningConflictError(conflict);
     throw err;
   }
+}
+
+// ── Re-issuing the first admin's invitation ─────────────────────────────────
+
+export type ResendFirstAdminInvitationResult =
+  | {
+      status: "OK";
+      employee: { id: string; firstName: string };
+      email: string;
+      /** The RAW token: for the invitation mail only, never for an HTTP response (T-88-52). */
+      token: string;
+    }
+  | { status: "NOT_FOUND" }
+  | { status: "TENANT_DEACTIVATED" }
+  | { status: "TENANT_IN_USE" }
+  | { status: "NO_PENDING_INVITATION" };
+
+/**
+ * Re-issues the invitation of the provisioned first admin, inside the caller's transaction, and
+ * writes `ADMIN_INVITATION_RESENT` (employee id only, no e-mail address) to the operator audit log.
+ *
+ * This is the BOOTSTRAP WINDOW only: it is allowed while the tenant is not deactivated and no user
+ * of the tenant is active yet, i.e. while the operator's mail never arrived or expired and nobody
+ * can sign in to resend it from the tenant UI. Afterwards invitations are the tenant's own
+ * business. The pending employee is the one whose user is still inactive — by construction the
+ * provisioned admin.
+ */
+export async function resendFirstAdminInvitation(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  input: { operatorId: string; request?: AuditRequestLike },
+): Promise<ResendFirstAdminInvitationResult> {
+  const tenant = await tx.tenant.findUnique({
+    where: { id: tenantId },
+    select: { id: true, deactivatedAt: true },
+  });
+  if (!tenant) return { status: "NOT_FOUND" };
+  if (tenant.deactivatedAt) return { status: "TENANT_DEACTIVATED" };
+
+  const activeUsers = await tx.user.count({ where: { isActive: true, employee: { tenantId } } });
+  if (activeUsers > 0) return { status: "TENANT_IN_USE" };
+
+  const pending = await tx.employee.findFirst({
+    where: { tenantId, user: { isActive: false } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true, firstName: true, user: { select: { email: true } } },
+  });
+  if (!pending) return { status: "NO_PENDING_INVITATION" };
+
+  const { token } = await reissueEmployeeInvitation(tx, {
+    employeeId: pending.id,
+    email: pending.user.email,
+  });
+  await recordOperatorAudit(tx, {
+    action: OPERATOR_AUDIT_ACTIONS.ADMIN_INVITATION_RESENT,
+    operatorId: input.operatorId,
+    subjectTenantId: tenantId,
+    entity: "Employee",
+    entityId: pending.id,
+    newValue: { employeeId: pending.id },
+    request: input.request,
+  });
+  return {
+    status: "OK",
+    employee: { id: pending.id, firstName: pending.firstName },
+    email: pending.user.email,
+    token,
+  };
 }
