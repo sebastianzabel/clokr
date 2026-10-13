@@ -80,3 +80,47 @@ describe("SalonTimeEntries — rows", () => {
     expect(screen.getByText("Wird geladen …")).toBeTruthy();
   });
 });
+
+describe("SalonTimeEntries — states", () => {
+  const base = { days: [], capReached: false, salonName: null };
+
+  it("prompts for a salon", () => {
+    renderWithTheme(SalonTimeEntries, { ...base, status: "prompt" });
+    expect(
+      screen.getByText("Wählen Sie in der Kopfleiste einen Salon, um seine Einträge zu sehen."),
+    ).toBeTruthy();
+  });
+
+  it("shows the calm rejected text", () => {
+    renderWithTheme(SalonTimeEntries, { ...base, status: "rejected" });
+    expect(
+      screen.getByText(
+        "Für diesen Salon liegt keine Salonansicht vor. Wählen Sie in der Kopfleiste einen anderen Salon.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("shows the empty-month text", () => {
+    renderWithTheme(SalonTimeEntries, { ...base, status: "empty" });
+    expect(
+      screen.getByText("In diesem Monat sind in diesem Salon keine Einträge erfasst."),
+    ).toBeTruthy();
+  });
+
+  it("shows the incomplete-list hint above the rows when the cap is reached (D-15)", () => {
+    renderWithTheme(SalonTimeEntries, { ...base, days, status: "rows", capReached: true });
+    const hint = screen.getByText(
+      "Es werden höchstens 1000 Einträge angezeigt; die Liste für diesen Monat ist unvollständig.",
+    );
+    const firstTable = document.querySelector("table");
+    expect(hint).toBeTruthy();
+    expect(
+      hint.compareDocumentPosition(firstTable as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("shows no hint below the cap and none for the other states", () => {
+    renderWithTheme(SalonTimeEntries, { ...base, days, status: "rows", capReached: false });
+    expect(document.body.textContent ?? "").not.toContain("unvollständig");
+  });
+});

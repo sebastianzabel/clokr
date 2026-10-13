@@ -31,7 +31,29 @@
 <div class="salon-view" data-testid="salon-time-entries">
   {#if status === "loading"}
     <p class="salon-view-note" role="status">Wird geladen …</p>
+  {:else if status === "prompt"}
+    <div class="callout brand" role="status">
+      <p>Wählen Sie in der Kopfleiste einen Salon, um seine Einträge zu sehen.</p>
+    </div>
+  {:else if status === "rejected"}
+    <div class="callout" role="status">
+      <p>
+        Für diesen Salon liegt keine Salonansicht vor. Wählen Sie in der Kopfleiste einen anderen
+        Salon.
+      </p>
+    </div>
+  {:else if status === "empty"}
+    <div class="callout" role="status">
+      <p>In diesem Monat sind in diesem Salon keine Einträge erfasst.</p>
+    </div>
   {:else if status === "rows"}
+    {#if capReached}
+      <div class="callout" role="status">
+        <p>
+          Es werden höchstens 1000 Einträge angezeigt; die Liste für diesen Monat ist unvollständig.
+        </p>
+      </div>
+    {/if}
     {#if salonName}
       <p class="salon-view-salon">Salon: {salonName}</p>
     {/if}

@@ -401,11 +401,16 @@
     }
     // Issue #80 (D-10): the BREAK_CROSS_SALON_VIOLATION notification link preselects the
     // employee. Only an id present in the caller's own list counts — an unknown or foreign id
-    // leaves the selector empty without an error, and the server scopes every read anyway.
+    // selects nobody, and the server scopes every read anyway.
     const linkedEmployeeId = normalizeEmployeeIdParam($page.url.searchParams.get("employeeId"));
     if (linkedEmployeeId) {
       const linked = employees.find((e) => e.id.toLowerCase() === linkedEmployeeId);
       if (linked) await selectEmployee(linked);
+      // Issue #85 (D-14): the employee list is narrowed to the caller's master-data reach (#547),
+      // while a manager of the Einsatzsalon still sees that salon's entries of the linked day. A
+      // linked person outside the list therefore opens the Salonansicht of the linked month
+      // (already anchored by the `date` param above) instead of doing nothing.
+      else teamMode = "salon";
     }
     // Without a (valid) employee link do NOT call loadAll() here — wait for employee selection
   });
