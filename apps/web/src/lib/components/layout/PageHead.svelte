@@ -122,6 +122,8 @@
     margin: 0;
     letter-spacing: 0.005em;
     color: var(--text);
+    /* A page title that is a user-entered name (a 200-character tenant name) wraps, it never widens the page. */
+    overflow-wrap: anywhere;
   }
 
   .page-head h1 :global(em) {
@@ -135,6 +137,7 @@
     color: var(--text-muted);
     font-size: 14px;
     line-height: 1.55;
+    overflow-wrap: anywhere;
   }
 
   .page-head-actions {

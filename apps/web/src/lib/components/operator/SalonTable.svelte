@@ -230,6 +230,19 @@
     overflow-wrap: anywhere;
   }
 
+  /* Six columns do not fit a 768 px Section at the .data-table padding: tighten the cell padding and
+     let the two row actions wrap under each other instead of holding the column open. */
+  @media (min-width: 640px) and (max-width: 1023px) {
+    .salon-table th,
+    .salon-table td {
+      padding-inline: 8px;
+    }
+
+    .salon-table td.cell-actions {
+      white-space: normal;
+    }
+  }
+
   @media (max-width: 639px) {
     .salon-table thead {
       position: absolute;

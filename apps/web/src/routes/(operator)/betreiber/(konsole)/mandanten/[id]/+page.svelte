@@ -78,7 +78,10 @@
       <PageHead eyebrow="Mandant" title={tenant.name} sub={`Kurzname ${tenant.slug}`} />
     </div>
 
-    <Section title="Mandant" sub="Stammdaten und Status" animate>
+    <!-- No `animate` here: a finished card-animate entrance leaves `transform: matrix(...)` on the card,
+         and the dialogs of TenantMasterData would then be positioned against the card instead of the
+         viewport (scrim only as large as the card, dialog clipped by it). -->
+    <Section title="Mandant" sub="Stammdaten und Status">
       <TenantMasterData
         {tenant}
         onRename={renameTenant}

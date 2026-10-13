@@ -55,12 +55,19 @@
     padding: 0;
     margin: 0;
     font-size: 0.8125rem;
+    min-width: 0;
   }
 
   .breadcrumb-item {
     display: flex;
     align-items: center;
     gap: 0.25rem;
+    /* A long last crumb (a 200-character tenant name) wraps inside the row instead of widening it. */
+    min-width: 0;
+  }
+
+  .breadcrumb-sep {
+    flex-shrink: 0;
   }
 
   .breadcrumb-sep {
@@ -81,5 +88,7 @@
   .breadcrumb-current {
     color: var(--text);
     font-weight: 500;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 </style>
