@@ -11,6 +11,7 @@
   import Section from "$lib/components/admin/Section.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
+  import { auditActorLabel } from "$lib/audit/actor-label";
 
   // ── Tabs (Phase 58: split log from config) ─────────────────────────────────
   const TABS = [
@@ -246,6 +247,7 @@
         {:else}
           <ul class="audit-timeline" aria-label="Audit-Einträge">
             {#each logs as log (log.id)}
+              {@const actor = auditActorLabel(log)}
               <li
                 class="audit-row"
                 role="button"
@@ -259,8 +261,8 @@
                 <div class="audit-row-main">
                   <span class="audit-time">{fmtDate(log.createdAt)}</span>
                   <span class="audit-actor">
-                    {#if log.user?.email}{log.user.email}{:else}<span class="audit-muted"
-                        >System</span
+                    {#if actor.kind === "user"}{actor.text}{:else}<span class="audit-muted"
+                        >{actor.text}</span
                       >{/if}
                   </span>
                   <span class={actionChip(log.action)}>
