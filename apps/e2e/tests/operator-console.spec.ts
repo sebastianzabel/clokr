@@ -2,8 +2,9 @@
  * Issue #89 - the operator console (/betreiber) against the operator API contract.
  *
  * The question this spec answers: does the browser side of the console - session guard, operator
- * client, tenant detail page, salon table - work against the shapes the operator API serves
- * (GET /api/v1/operator/tenants/:id and /tenants/:id/salons)?
+ * client, tenant list and creation dialog, tenant detail page, salon table - work against the
+ * shapes the operator API serves (GET/POST /api/v1/operator/tenants, GET /tenants/:id and
+ * /tenants/:id/salons)?
  *
  * Why the operator API is mocked: CI has no operator account (OPERATOR_JWT_SECRET is unset on the
  * test stack, so the surface is absent there) and no way to complete the TOTP sign-in. Interception
@@ -94,7 +95,17 @@ const SALONS: MockSalon[] = [
   },
 ];
 
-const TENANT = {
+interface MockTenant {
+  id: string;
+  name: string;
+  slug: string;
+  federalState: string;
+  createdAt: string;
+  deactivatedAt: string | null;
+  deactivatedReason: string | null;
+}
+
+const TENANT: MockTenant = {
   id: TENANT_ID,
   name: "Beispiel Friseure GmbH",
   slug: "beispiel-friseure",
@@ -104,6 +115,17 @@ const TENANT = {
   deactivatedReason: null,
 };
 
+const OFF_TENANT_ID = randomUUID();
+const OFF_TENANT: MockTenant = {
+  id: OFF_TENANT_ID,
+  name: "Altbetrieb",
+  slug: "altbetrieb",
+  federalState: "BAYERN",
+  createdAt: "2026-02-10T08:00:00.000Z",
+  deactivatedAt: "2026-03-01T08:00:00.000Z",
+  deactivatedReason: "Vertrag beendet",
+};
+
 interface RecordedCall {
   method: string;
   path: string;
@@ -111,19 +133,42 @@ interface RecordedCall {
   body: Record<string, unknown> | null;
 }
 
+/** How the mocked POST /tenants answers. */
+type CreateOutcome = "ok" | "SLUG_TAKEN" | "EMAIL_TAKEN";
+
 interface OperatorMock {
   /** "METHOD /path" of every operator request, in order. */
   seen: string[];
   calls: RecordedCall[];
-  /** Flip to make the whole operator surface answer 404 (OPERATOR_JWT_SECRET unset). */
-  state: { surfaceOff: boolean };
+  state: {
+    /** Flip to make the whole operator surface answer 404 (OPERATOR_JWT_SECRET unset). */
+    surfaceOff: boolean;
+    /** What GET /tenants serves; a successful create appends to it. */
+    tenants: MockTenant[];
+    /** Status of GET /tenants; anything but 200 serves an error body. */
+    listStatus: number;
+    /** What POST /tenants answers. */
+    create: CreateOutcome;
+    /** `invitationMailSent` of a successful create. */
+    mailSent: boolean;
+  };
 }
 
 const GENERIC_401 = { error: "Anmeldung fehlgeschlagen" };
 
 /** Fulfil every /api/v1/operator/** request from the in-spec state; record what was asked. */
 async function mockOperatorApi(page: Page): Promise<OperatorMock> {
-  const mock: OperatorMock = { seen: [], calls: [], state: { surfaceOff: false } };
+  const mock: OperatorMock = {
+    seen: [],
+    calls: [],
+    state: {
+      surfaceOff: false,
+      tenants: [TENANT, OFF_TENANT],
+      listStatus: 200,
+      create: "ok",
+      mailSent: true,
+    },
+  };
   await page.route("**/api/v1/operator/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -171,6 +216,55 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
       return good
         ? route.fulfill({ status: 200, json: { accessToken: ACCESS_TOKEN, expiresIn: 900 } })
         : route.fulfill({ status: 401, json: GENERIC_401 });
+    }
+    if (path === "/tenants" && method === "GET") {
+      return mock.state.listStatus === 200
+        ? route.fulfill({ status: 200, json: mock.state.tenants })
+        : route.fulfill({
+            status: mock.state.listStatus,
+            json: { error: "Interner Serverfehler" },
+          });
+    }
+    if (path === "/tenants" && method === "POST") {
+      if (mock.state.create === "SLUG_TAKEN") {
+        return route.fulfill({
+          status: 409,
+          json: { error: "Dieser Kurzname ist bereits vergeben.", code: "SLUG_TAKEN" },
+        });
+      }
+      if (mock.state.create === "EMAIL_TAKEN") {
+        return route.fulfill({
+          status: 409,
+          json: { error: "Diese E-Mail-Adresse ist bereits vergeben.", code: "EMAIL_TAKEN" },
+        });
+      }
+      const tenant: MockTenant = {
+        id: randomUUID(),
+        name: String(body?.name),
+        slug: String(body?.slug),
+        federalState: String(body?.federalState),
+        createdAt: "2026-10-13T08:00:00.000Z",
+        deactivatedAt: null,
+        deactivatedReason: null,
+      };
+      mock.state.tenants = [...mock.state.tenants, tenant];
+      return route.fulfill({
+        status: 201,
+        json: {
+          tenant,
+          defaultSalonId: randomUUID(),
+          adminEmployeeId: randomUUID(),
+          invitationMailSent: mock.state.mailSent,
+        },
+      });
+    }
+    const createdTenant = mock.state.tenants.find(
+      (t) => path === `/tenants/${t.id}` || path === `/tenants/${t.id}/salons`,
+    );
+    if (createdTenant && createdTenant.id !== TENANT_ID) {
+      return path.endsWith("/salons")
+        ? route.fulfill({ status: 200, json: [] })
+        : route.fulfill({ status: 200, json: createdTenant });
     }
     if (path === `/tenants/${TENANT_ID}/salons`) {
       return route.fulfill({ status: 200, json: SALONS });
@@ -460,5 +554,340 @@ test.describe("operator console - session clock", () => {
     await expect(page).toHaveURL(/\/betreiber\/anmelden$/);
     const stored = await page.evaluate((key) => sessionStorage.getItem(key), TOKEN_KEY);
     expect(stored).toBeNull();
+  });
+});
+
+/** Open the page the list lives on, with an operator session. */
+async function openTenantList(page: Page, mock?: (state: OperatorMock["state"]) => void) {
+  const operator = await mockOperatorApi(page);
+  mock?.(operator.state);
+  await seedOperatorSession(page);
+  await page.goto("/betreiber");
+  return operator;
+}
+
+/** Fill the create dialog with valid values; the Bundesland is chosen only when asked for. */
+async function fillCreateDialog(page: Page, options: { federalState?: string } = {}) {
+  await page.getByTestId("op-tenants-create").click();
+  await expect(page.getByTestId("op-tenant-create-dialog")).toBeVisible();
+  await page.getByTestId("op-tenant-create-name").fill("Neuer Betrieb GmbH");
+  if (options.federalState) {
+    await page.getByTestId("op-tenant-create-federal-state").selectOption(options.federalState);
+  }
+  await page.getByTestId("op-tenant-create-admin-email").fill("Erste.Admin@Example.INVALID");
+  await page.getByTestId("op-tenant-create-admin-first-name").fill("Erste");
+  await page.getByTestId("op-tenant-create-admin-last-name").fill("Administration");
+}
+
+function manyTenants(count: number): MockTenant[] {
+  return Array.from({ length: count }, (_, i) => ({
+    id: randomUUID(),
+    name: `Betrieb ${String(i).padStart(2, "0")}`,
+    slug: `betrieb-${i}`,
+    federalState: "HESSEN",
+    createdAt: "2026-01-05T08:00:00.000Z",
+    deactivatedAt: null,
+    deactivatedReason: null,
+  }));
+}
+
+test.describe("operator console - tenant list", () => {
+  test("shows an active and a deactivated tenant with state and reason", async ({ page }) => {
+    const { seen } = await openTenantList(page);
+
+    await expect(page.getByTestId("op-tenants-page")).toBeVisible();
+    await expect(page.getByTestId("op-tenants-table")).toBeVisible();
+    await expect(page.getByTestId(`op-tenant-row-${TENANT_ID}`)).toBeVisible();
+    await expect(page.getByTestId(`op-tenant-row-${OFF_TENANT_ID}`)).toBeVisible();
+
+    await expect(page.getByTestId(`op-tenant-status-${TENANT_ID}`)).toHaveAttribute(
+      "data-state",
+      "active",
+    );
+    await expect(page.getByTestId(`op-tenant-status-${OFF_TENANT_ID}`)).toHaveAttribute(
+      "data-state",
+      "deactivated",
+    );
+    // The reason of the deactivated tenant is on its row, the active one has none.
+    await expect(page.getByTestId(`op-tenant-row-${OFF_TENANT_ID}`)).toContainText(
+      OFF_TENANT.deactivatedReason ?? "",
+    );
+    await expect(page.getByTestId(`op-tenant-row-${TENANT_ID}`)).not.toContainText("Vertrag");
+
+    await expect(page.getByTestId(`op-tenant-link-${TENANT_ID}`)).toHaveAttribute(
+      "href",
+      `/betreiber/mandanten/${TENANT_ID}`,
+    );
+    expect(seen).toContain("GET /tenants");
+    // 2 tenants: no pagination.
+    await expect(page.getByTestId("op-tenants-pagination")).toHaveCount(0);
+  });
+
+  test("a tenant name leads to the tenant page", async ({ page }) => {
+    await openTenantList(page);
+
+    await page.getByTestId(`op-tenant-link-${TENANT_ID}`).click();
+
+    await expect(page).toHaveURL(new RegExp(`/betreiber/mandanten/${TENANT_ID}$`));
+    await expect(page.getByTestId("op-tenant-page")).toBeVisible();
+  });
+
+  test("zero tenants show the empty state, whose action opens the create dialog", async ({
+    page,
+  }) => {
+    await openTenantList(page, (state) => {
+      state.tenants = [];
+    });
+
+    const empty = page.getByTestId("op-tenants-empty");
+    await expect(empty).toBeVisible();
+    await expect(page.getByTestId("op-tenants-table")).toHaveCount(0);
+
+    await empty.getByRole("button").click();
+    await expect(page.getByTestId("op-tenant-create-dialog")).toBeVisible();
+  });
+
+  test("a failed load shows the error and the retry loads the list", async ({ page }) => {
+    const { state, seen } = await openTenantList(page, (s) => {
+      s.listStatus = 500;
+    });
+
+    await expect(page.getByTestId("op-tenants-error")).toBeVisible();
+    await expect(page.getByTestId("op-tenants-table")).toHaveCount(0);
+
+    state.listStatus = 200;
+    await page.getByTestId("op-tenants-retry").click();
+
+    await expect(page.getByTestId("op-tenants-table")).toBeVisible();
+    await expect(page.getByTestId("op-tenants-error")).toHaveCount(0);
+    expect(seen.filter((entry) => entry === "GET /tenants")).toHaveLength(2);
+  });
+
+  test("more than 25 tenants page through the pagination", async ({ page }) => {
+    await openTenantList(page, (state) => {
+      state.tenants = manyTenants(30);
+    });
+
+    await expect(page.getByTestId("op-tenants-pagination")).toBeVisible();
+    await expect(page.locator('[data-testid^="op-tenant-row-"]')).toHaveCount(25);
+
+    await page.getByRole("button", { name: "Nächste Seite" }).click();
+    await expect(page.locator('[data-testid^="op-tenant-row-"]')).toHaveCount(5);
+  });
+
+  test("without a session /betreiber sends the browser to the sign-in and asks for no tenant", async ({
+    page,
+  }) => {
+    const { seen } = await mockOperatorApi(page);
+
+    await page.goto("/betreiber");
+
+    await expect(page).toHaveURL(/\/betreiber\/anmelden\?next=%2Fbetreiber$/);
+    await expect(page.getByTestId("op-signin-page")).toBeVisible();
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((entry) => entry === "GET /auth/me")).toBe(true);
+  });
+});
+
+test.describe("operator console - tenant list at 360 px", () => {
+  test.use({ viewport: { width: 360, height: 800 } });
+
+  test("the stacked list never scrolls sideways, even with a 200-character name", async ({
+    page,
+  }) => {
+    const longName = "Langer".repeat(34);
+    expect(longName).toHaveLength(204);
+    const longTenant: MockTenant = {
+      ...TENANT,
+      id: randomUUID(),
+      name: longName.slice(0, 200),
+      slug: "langer-name",
+      deactivatedAt: "2026-03-01T08:00:00.000Z",
+      deactivatedReason: "Grund ".repeat(80).trim(),
+    };
+    await openTenantList(page, (state) => {
+      state.tenants = [longTenant, TENANT];
+    });
+    const row = page.getByTestId(`op-tenant-row-${longTenant.id}`);
+    await expect(row).toBeVisible();
+
+    // The stacked layout is really applied: a row is a flex box here, a table row on a desktop.
+    await expect(row).toHaveCSS("display", "flex");
+
+    const overflow = await page.evaluate(() => {
+      const html = document.documentElement;
+      const rows = [...document.querySelectorAll('[data-testid^="op-tenant-row-"]')];
+      const beyond = rows.flatMap((tr) => {
+        const limit = tr.getBoundingClientRect().right + 0.5;
+        return [...tr.querySelectorAll("*")]
+          .filter((child) => child.getBoundingClientRect().right > limit)
+          .map((child) => child.tagName);
+      });
+      const wrap = document.querySelector(".table-wrap");
+      return {
+        pageScrolls: html.scrollWidth > html.clientWidth,
+        wrapScrolls: wrap ? wrap.scrollWidth > wrap.clientWidth : null,
+        beyond,
+        rowCount: rows.length,
+      };
+    });
+    expect(overflow.rowCount).toBe(2);
+    expect(overflow.pageScrolls).toBe(false);
+    expect(overflow.wrapScrolls).toBe(false);
+    expect(overflow.beyond).toEqual([]);
+  });
+
+  test("the create dialog fits the viewport", async ({ page }) => {
+    await openTenantList(page);
+    await page.getByTestId("op-tenants-create").click();
+    await expect(page.getByTestId("op-tenant-create-dialog")).toBeVisible();
+
+    const fit = await page.evaluate(() => {
+      const modal = document.querySelector('[role="dialog"]');
+      if (!modal) return null;
+      const limit = modal.getBoundingClientRect().right + 0.5;
+      const beyond = [...modal.querySelectorAll("input, select, button, p, legend, label")]
+        .filter((child) => child.getBoundingClientRect().right > limit)
+        .map((child) => child.tagName);
+      return {
+        pageScrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        modalRight: modal.getBoundingClientRect().right,
+        beyond,
+      };
+    });
+    expect(fit).not.toBeNull();
+    expect(fit?.pageScrolls).toBe(false);
+    expect(fit?.modalRight).toBeLessThanOrEqual(360);
+    expect(fit?.beyond).toEqual([]);
+  });
+});
+
+test.describe("operator console - create tenant", () => {
+  test("creates a tenant, reports the sent invitation and opens the new tenant", async ({
+    page,
+  }) => {
+    const { calls, seen } = await openTenantList(page);
+
+    await fillCreateDialog(page, { federalState: "BAYERN" });
+    // The Kurzname followed the name.
+    await expect(page.getByTestId("op-tenant-create-slug")).toHaveValue("neuer-betrieb-gmbh");
+    await page.getByTestId("op-tenant-create-submit").click();
+
+    const mail = page.getByTestId("op-tenant-create-result-mail");
+    await expect(page.getByTestId("op-tenant-create-result")).toBeVisible();
+    await expect(mail).toHaveAttribute("data-state", "sent");
+
+    // The request body is exactly the documented contract: no timezone, no employeeNumber key.
+    const post = calls.find((c) => c.method === "POST" && c.path === "/tenants");
+    expect(post?.body).toEqual({
+      name: "Neuer Betrieb GmbH",
+      slug: "neuer-betrieb-gmbh",
+      federalState: "BAYERN",
+      admin: {
+        email: "erste.admin@example.invalid",
+        firstName: "Erste",
+        lastName: "Administration",
+      },
+    });
+    expect(post?.authorization).toBe("Bearer operator-token-for-e2e");
+
+    // The list was reloaded from the server, not patched locally.
+    await expect.poll(() => seen.filter((entry) => entry === "GET /tenants").length).toBe(2);
+
+    await page.getByTestId("op-tenant-create-result-open").click();
+    await expect(page).toHaveURL(/\/betreiber\/mandanten\/[0-9a-f-]{36}$/);
+    await expect(page.getByTestId("op-tenant-page")).toBeVisible();
+    await expect(page.getByTestId("op-tenant-name")).toHaveText("Neuer Betrieb GmbH");
+  });
+
+  test("sends timezone and employee number only when filled", async ({ page }) => {
+    const { calls } = await openTenantList(page);
+
+    await fillCreateDialog(page, { federalState: "HESSEN" });
+    await page.getByTestId("op-tenant-create-timezone").fill("Europe/Vienna");
+    await page.getByTestId("op-tenant-create-admin-employee-number").fill("P-1");
+    await page.getByTestId("op-tenant-create-submit").click();
+
+    await expect(page.getByTestId("op-tenant-create-result")).toBeVisible();
+    const post = calls.find((c) => c.method === "POST" && c.path === "/tenants");
+    expect(post?.body).toMatchObject({
+      timezone: "Europe/Vienna",
+      admin: { employeeNumber: "P-1" },
+    });
+  });
+
+  test("an invitation that could not be sent is reported as not-sent", async ({ page }) => {
+    await openTenantList(page, (state) => {
+      state.mailSent = false;
+    });
+
+    await fillCreateDialog(page, { federalState: "BERLIN" });
+    await page.getByTestId("op-tenant-create-submit").click();
+
+    await expect(page.getByTestId("op-tenant-create-result-mail")).toHaveAttribute(
+      "data-state",
+      "not-sent",
+    );
+  });
+
+  test("a taken Kurzname attaches to its field and the dialog stays open", async ({ page }) => {
+    await openTenantList(page, (state) => {
+      state.create = "SLUG_TAKEN";
+    });
+
+    await fillCreateDialog(page, { federalState: "BERLIN" });
+    await page.getByTestId("op-tenant-create-submit").click();
+
+    const message = page.getByTestId("op-tenant-create-field-error-slug");
+    await expect(message).toHaveAttribute("data-code", "SLUG_TAKEN");
+    await expect(page.getByTestId("op-tenant-create-slug")).toHaveAttribute("aria-invalid", "true");
+    await expect(page.getByTestId("op-tenant-create-dialog")).toBeVisible();
+    await expect(page.getByTestId("op-tenant-create-result")).toHaveCount(0);
+    await expect(page.getByTestId("op-tenant-create-slug")).toBeFocused();
+  });
+
+  test("a taken e-mail address attaches to the e-mail field", async ({ page }) => {
+    await openTenantList(page, (state) => {
+      state.create = "EMAIL_TAKEN";
+    });
+
+    await fillCreateDialog(page, { federalState: "BERLIN" });
+    await page.getByTestId("op-tenant-create-submit").click();
+
+    await expect(page.getByTestId("op-tenant-create-field-error-admin-email")).toHaveAttribute(
+      "data-code",
+      "EMAIL_TAKEN",
+    );
+    await expect(page.getByTestId("op-tenant-create-admin-email")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await expect(page.getByTestId("op-tenant-create-dialog")).toBeVisible();
+  });
+
+  test("the submit stays disabled until a Bundesland is chosen", async ({ page }) => {
+    const { calls } = await openTenantList(page);
+
+    await fillCreateDialog(page);
+    await expect(page.getByTestId("op-tenant-create-federal-state")).toHaveValue("");
+    await expect(page.getByTestId("op-tenant-create-submit")).toBeDisabled();
+
+    await page.getByTestId("op-tenant-create-federal-state").selectOption("SACHSEN");
+    await expect(page.getByTestId("op-tenant-create-submit")).toBeEnabled();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  test("cancelling closes the dialog without a request", async ({ page }) => {
+    const { calls } = await openTenantList(page);
+
+    await fillCreateDialog(page, { federalState: "SACHSEN" });
+    await page.getByTestId("op-tenant-create-cancel").click();
+
+    await expect(page.getByTestId("op-tenant-create-dialog")).toHaveCount(0);
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    // Reopening starts from a clean form.
+    await page.getByTestId("op-tenants-create").click();
+    await expect(page.getByTestId("op-tenant-create-name")).toHaveValue("");
+    await expect(page.getByTestId("op-tenant-create-federal-state")).toHaveValue("");
   });
 });
