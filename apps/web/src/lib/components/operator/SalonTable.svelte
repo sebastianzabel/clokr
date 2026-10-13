@@ -90,7 +90,9 @@
               {/if}
             </td>
             <td data-label="Bundesland">
-              <span class="text">{federalStateLabel(salon.federalState)}</span>
+              <span class="text federal-state" data-testid={`op-salon-federal-label-${salon.id}`}
+                >{federalStateLabel(salon.federalState)}</span
+              >
             </td>
             <td data-label="Kopplung" data-testid={`op-salon-coupling-${salon.id}`}>
               {#if salon.coupling}
@@ -222,6 +224,13 @@
 
   .muted {
     color: var(--text-muted);
+  }
+
+  /* A Bundesland is a short fixed name: `overflow-wrap: anywhere` (above) lowers the column's
+     min-content to one character, so the auto table layout squeezed it and split "Niedersachsen"
+     inside the word. Normal wrapping breaks only at spaces and hyphens. */
+  .text.federal-state {
+    overflow-wrap: normal;
   }
 
   .mono {

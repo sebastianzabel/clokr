@@ -444,6 +444,20 @@ test.describe("operator console - tenant detail", () => {
       "active",
     );
 
+    // A Bundesland name is one word and must never be split inside it ("Niedersachse" / "n"):
+    // the table column may shrink down to the longest word, not below it. Counting the client
+    // rects of the text gives one rect per rendered line, so a mid-word break reads as two.
+    for (const salonId of [DEFAULT_SALON_ID, OLD_SALON_ID]) {
+      const lineCount = await page
+        .getByTestId(`op-salon-federal-label-${salonId}`)
+        .evaluate((el) => {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          return range.getClientRects().length;
+        });
+      expect(lineCount, `Bundesland of salon ${salonId} wraps inside a word`).toBe(1);
+    }
+
     // Deactivated salon: no badge, no coupling, deactivated state.
     await expect(page.getByTestId(`op-salon-default-badge-${OLD_SALON_ID}`)).toHaveCount(0);
     await expect(page.getByTestId(`op-salon-coupling-${OLD_SALON_ID}`)).toContainText("Keine");
