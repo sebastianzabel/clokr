@@ -230,13 +230,28 @@ for (const viewport of VIEWPORTS) {
             const today = bar.getByRole("button", { name: "Heute", exact: true });
             await expect(today, `${where}: "Heute" is missing`).toBeVisible();
             await expect(today).toHaveText("Heute");
+            // The bar sits below the KPI rows, so on /leave its vertical position changes while
+            // the page data loads (measured: y 765 -> 982 at 360x800). Scroll first, so
+            // "fully on screen" answers the horizontal question this gate is about instead of
+            // racing the fold.
+            await today.scrollIntoViewIfNeeded();
             await expect(today, `${where}: "Heute" is not fully on screen`).toBeInViewport({
               ratio: 1,
             });
             const box = await today.boundingBox();
             expect(box, `${where}: "Heute" has no box`).not.toBeNull();
             expect(
-              box?.height ?? 0,
+              box?.x ?? -1,
+              `${where}: "Heute" starts left of the viewport`,
+            ).toBeGreaterThanOrEqual(0);
+            expect(
+              (box?.x ?? 0) + (box?.width ?? 0),
+              `${where}: "Heute" ends right of the viewport`,
+            ).toBeLessThanOrEqual(viewport.width);
+            // Layout reports a 44 px min-height at sub-pixel y offsets as 43.99997; round to
+            // 0.1 px so floating-point noise (measured, flaky) cannot fail a correct 44 px.
+            expect(
+              Math.round((box?.height ?? 0) * 10) / 10,
               `${where}: "Heute" is smaller than the 44 px touch target`,
             ).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
 
