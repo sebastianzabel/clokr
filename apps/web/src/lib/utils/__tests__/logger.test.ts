@@ -248,3 +248,62 @@ describe("clientLogger.install()", () => {
     expect(bodyOf(0).message).toBe("window-level boom");
   });
 });
+
+describe("clientLogger — never reports from the operator console (Issue #89, T-89-11)", () => {
+  afterEach(() => {
+    window.history.pushState({}, "", "/");
+  });
+
+  it("sends nothing from /betreiber paths even with a tenant token stored", async () => {
+    localStorage.setItem("accessToken", "tenant-token");
+    window.history.pushState({}, "", "/betreiber/mandanten/some-id");
+
+    clientLogger.error("operator page broke");
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS * 4);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(deliveryWarnings()).toHaveLength(0);
+  });
+
+  it("also covers the console root", async () => {
+    localStorage.setItem("accessToken", "tenant-token");
+    window.history.pushState({}, "", "/betreiber");
+
+    clientLogger.warn("operator root broke");
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS * 4);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("drops an entry queued on a tenant page when the browser moves to /betreiber first", async () => {
+    localStorage.setItem("accessToken", "tenant-token");
+    window.history.pushState({}, "", "/dashboard");
+    clientLogger.error("tenant page broke");
+
+    window.history.pushState({}, "", "/betreiber/anmelden");
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS * 4);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still delivers from a tenant page", async () => {
+    localStorage.setItem("accessToken", "tenant-token");
+    window.history.pushState({}, "", "/dashboard");
+
+    clientLogger.error("tenant page broke");
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(headerOf(0, "Authorization")).toBe("Bearer tenant-token");
+  });
+
+  it("does not treat a sibling path as the console", async () => {
+    localStorage.setItem("accessToken", "tenant-token");
+    window.history.pushState({}, "", "/betreiber-extra");
+
+    clientLogger.error("tenant page broke");
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

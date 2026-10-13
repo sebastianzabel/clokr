@@ -75,6 +75,16 @@ function reportDeliveryFailureOnce(reason: string) {
   );
 }
 
+/**
+ * True on the operator console. The endpoint takes the tenant token from localStorage; an
+ * operator-page error must never be posted under a tenant session that happens to be in the
+ * same browser (RESEARCH Pitfall 10), and an operator URL is not tenant log material.
+ */
+function onOperatorPath(): boolean {
+  const path = window.location.pathname;
+  return path === "/betreiber" || path.startsWith("/betreiber/");
+}
+
 function scheduleFlush(delayMs: number) {
   if (flushTimer) return;
   flushTimer = setTimeout(() => {
@@ -85,6 +95,12 @@ function scheduleFlush(delayMs: number) {
 
 function flush() {
   if (queue.length === 0) return;
+
+  // Drop, do not defer: a deferred entry would be delivered later from a tenant page.
+  if (onOperatorPath()) {
+    queue.length = 0;
+    return;
+  }
 
   const now = Date.now();
   const waitMs = Math.max(cooldownUntil - now, MIN_SEND_INTERVAL_MS - (now - lastSendAt));
@@ -132,6 +148,7 @@ function flush() {
 }
 
 function enqueue(entry: Record<string, unknown>) {
+  if (onOperatorPath()) return;
   queue.push(entry);
   // Bounded buffer: an error storm must not grow the queue without limit.
   while (queue.length > MAX_QUEUE) queue.shift();
