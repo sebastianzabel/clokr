@@ -205,6 +205,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/break-finding-days.ts": "zeiterfassung", // Issue #511 (D-12) — month-close / cron / dry-run detector over TimeEntry, Break, DayBreak and DayBreakAck
   "src/contexts/time-tracking/break-finding-notice.ts": "zeiterfassung", // Issue #80 (D-11) / #511 (D-13) — pure notification texts for break findings
   "src/contexts/time-tracking/withheld-finding.ts": "zeiterfassung", // Issue #85 (D-07, D-12) — the one neutral wording for a finding withheld from a reader whose reach is partial; pure leaf constants, no model access
+  "src/contexts/time-tracking/warning-visibility.ts": "zeiterfassung", // Issue #85 (D-12) — which ArbZG warnings of a save response the writing caller may see; reads TimeEntry (own context) and the Unterbau scope
   "src/contexts/time-tracking/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry
   "src/contexts/time-tracking/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
   "src/contexts/time-tracking/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization

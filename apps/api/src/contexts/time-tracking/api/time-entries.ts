@@ -20,6 +20,7 @@ import {
 import type { PermissionKey } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
+import { warningsVisibleToCaller } from "../warning-visibility"; // Issue #85 (D-12) — ArbZG warnings only as far as the caller's reach covers them
 import { planAutoBreak, autoBreakAppliesOnCreate, type AutoBreakPlan } from "../auto-break-plan"; // Issue #511 (AK-4, D-17/D-20) — the one automatic-break decision, also used by the preview
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
@@ -2320,7 +2321,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       await updateOvertimeAccount(app, existing.employeeId);
 
-      const warnings = await checkArbZG(app.prisma, existing.employeeId, existing.date);
+      const warnings = await warningsVisibleToCaller(app.prisma, {
+        tenantId: user.tenantId,
+        access: accessContextFromRequest(req),
+        callerEmployeeId: user.employeeId ?? null,
+        employeeId: existing.employeeId,
+        date: existing.date,
+        tz: overlapTz,
+        warnings: await checkArbZG(app.prisma, existing.employeeId, existing.date),
+      });
 
       // Phase 63 D-12 — append JArbSchG soft-warn + audit-log row.
       if (jarbSchgPut.softWarn) {
