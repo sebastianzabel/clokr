@@ -21,6 +21,7 @@ import {
 } from "../contexts/platform";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as sleepMs } from "node:timers/promises";
 import type { JwtPayload } from "../middleware/auth";
 
 // Keep JsonValue reachable from this module's public types (intentional no-op type alias)
@@ -126,6 +127,52 @@ export function reissueTokenNow(app: FastifyInstance, token: string): string {
 }
 
 /**
+ * Issue #543: next automatic `Salon.createdAt` in epoch milliseconds — strictly greater than both
+ * the previous automatic value and the current clock reading, so two salons never share an instant.
+ */
+export function nextSalonCreatedAtMs(lastMs: number, nowMs: number): number {
+  return Math.max(lastMs, nowMs) + 1;
+}
+
+/** A target further ahead of the clock than this is a faked or skewed Date, not a short wait. */
+const MAX_CLOCK_LEAD_MS = 50;
+/** Consecutive 1 ms sleeps with an unchanged clock after which the Date is considered frozen. */
+const MAX_CLOCK_STALLS = 3;
+
+/**
+ * Issue #543: let the wall clock pass `targetMs` so that every Node-clock timestamp generated after
+ * this returns is strictly greater than `targetMs`. Resolves `true` once `now()` exceeds the target
+ * and `false` when waiting cannot help — the target lies more than {@link MAX_CLOCK_LEAD_MS} ahead
+ * of the clock, or the clock did not move across {@link MAX_CLOCK_STALLS} consecutive sleeps (a
+ * `vi.useFakeTimers` frozen Date). It therefore never hangs, with or without fake timers. The clock
+ * is read lazily on every call: a captured `Date.now` reference would miss a later fake install.
+ */
+export async function waitForClockPast(
+  targetMs: number,
+  deps: { now?: () => number; sleep?: (ms: number) => Promise<unknown> } = {},
+): Promise<boolean> {
+  const now = deps.now ?? (() => Date.now());
+  const sleep = deps.sleep ?? sleepMs;
+  let current = now();
+  if (current > targetMs) return true;
+  if (targetMs - current > MAX_CLOCK_LEAD_MS) return false;
+  let stalls = 0;
+  while (stalls < MAX_CLOCK_STALLS) {
+    await sleep(1);
+    const next = now();
+    if (next > targetMs) return true;
+    stalls = next === current ? stalls + 1 : 0;
+    current = next;
+  }
+  return false;
+}
+
+// Last automatic Salon.createdAt handed out by createTestSalon, in epoch ms. Module state is per
+// test FILE (Vitest isolates modules per file), which suffices: salon order is per tenant and
+// fixture tenants never span files.
+let lastAutoSalonCreatedAtMs = 0;
+
+/**
  * Phase 325 (issue #325), D-17: create one salon for a fixture tenant. Accepts a
  * `Prisma.TransactionClient`-compatible client so both `app.prisma` and a `tx` inside a
  * transaction work. `isActive: false` also sets `deactivatedAt` (mirrors the real write path's
@@ -136,6 +183,14 @@ export function reissueTokenNow(app: FastifyInstance, token: string): string {
  * Phase 71b (issue #71), D-01: `federalState` defaults to the TENANT's own federalState (mirrors
  * `createSalon()`'s production default) — never a hardcoded value, so a fixture never silently
  * gets NIEDERSACHSEN for a tenant configured with a different state.
+ *
+ * Issue #543: without an explicit `createdAt`, the value is strictly increasing per test file and
+ * strictly after every Node-clock `createdAt` generated before the call, and the helper waits for
+ * the wall clock to pass it. With a real clock, every salon created after the call returns (this
+ * helper, a raw `prisma.salon.create`, `POST /api/v1/salons`) is therefore strictly younger, so
+ * `findDefaultSalon()` never reaches its random-UUID tie-break in a fixture. An explicit
+ * `createdAt` is stored verbatim and sits outside the sequence. Under a frozen or far-off faked
+ * Date only helper-versus-helper order is guaranteed.
  */
 export async function createTestSalon(
   db: Prisma.TransactionClient,
@@ -157,7 +212,14 @@ export async function createTestSalon(
         select: { federalState: true },
       })
     ).federalState;
-  return db.salon.create({
+  // Reserve synchronously (no await between read and write) so concurrent calls get distinct values.
+  let autoCreatedAtMs: number | null = null;
+  if (!overrides?.createdAt) {
+    autoCreatedAtMs = nextSalonCreatedAtMs(lastAutoSalonCreatedAtMs, Date.now());
+    lastAutoSalonCreatedAtMs = autoCreatedAtMs;
+  }
+  const autoCreatedAt = autoCreatedAtMs === null ? null : new Date(autoCreatedAtMs);
+  const salon = await db.salon.create({
     data: {
       tenantId,
       name: overrides?.name ?? "Test Salon",
@@ -165,9 +227,13 @@ export async function createTestSalon(
       openingHours: overrides?.openingHours ?? DEFAULT_SALON_OPENING_HOURS,
       isActive,
       deactivatedAt: isActive ? null : new Date(),
+      // Production writes the same instant into both columns of a fresh row.
       ...(overrides?.createdAt ? { createdAt: overrides.createdAt } : {}),
+      ...(autoCreatedAt ? { createdAt: autoCreatedAt, updatedAt: autoCreatedAt } : {}),
     },
   });
+  if (autoCreatedAtMs !== null) await waitForClockPast(autoCreatedAtMs);
+  return salon;
 }
 
 /**
