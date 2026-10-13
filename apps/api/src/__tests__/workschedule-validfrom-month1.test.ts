@@ -6,8 +6,9 @@
  *   1. PUT /settings/work/:employeeId rejects non-month-1st validFrom with 400
  *      and the exact German error string from month-first-date.ts.
  *   2. PUT /settings/work/:employeeId accepts month-1st validFrom (happy path).
- *   3. PUT /settings/work applyToExisting flow snaps server-side `now` to
- *      month-1st before writing — bulk apply NEVER produces a non-1st row.
+ *   3. The bulk apply (Issue #568: preview, then PUT /settings/work with the preview's
+ *      fingerprint and selection) writes at the chosen effective date, a month-1st that is
+ *      never before today — bulk apply NEVER produces a non-1st row.
  *   4. Existing non-1st validFrom rows (seeded directly via prisma, bypassing
  *      Zod) remain visible on read endpoints — audit trail preserved.
  *
@@ -17,7 +18,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData, reissueTokenNow } from "./setup";
-import { monthStartUtc } from "./test-dates";
+import { earliestBulkEffectiveFromStr, monthStartUtc } from "./test-dates";
+import { applyBulkDefaults } from "./bulk-apply-helpers";
 import { MONTH_FIRST_ERROR } from "../contexts/platform/month-first-date";
 import type { FastifyInstance } from "fastify";
 
@@ -161,16 +163,18 @@ describe("WorkSchedule.validFrom month-1st enforcement (Phase 60, #220)", () => 
     });
   });
 
-  describe("Test 3: applyToExisting (PUT /settings/work) snaps validFrom to month-1st", () => {
-    it("bulk apply writes WorkSchedule rows with validFrom = 1st of current UTC month", async () => {
+  describe("Test 3: the bulk apply writes validFrom = the chosen month-1st effective date", () => {
+    it("bulk apply writes WorkSchedule rows with validFrom = the chosen effectiveFrom (never the current month)", async () => {
       // Issue #136 (batch D): the test used to capture `expectedYear`/`expectedMonth`
-      // from `new Date()` BEFORE the request, while the server snaps with
-      // `snapToMonthFirstUtc(new Date())` (settings.ts) DURING it — a UTC month-end
-      // crossing between the two reads makes the server write next month's 1st against
-      // a stale expectation. Eliminated structurally: pin the clock across the capture
-      // AND the request to one derived (never literal), safely mid-month instant, so
+      // from `new Date()` BEFORE the request, while the server resolved its own `new Date()`
+      // DURING it — a UTC month-end crossing between the two reads makes the server write
+      // against a stale expectation. Eliminated structurally: pin the clock across the
+      // capture AND the request to one derived (never literal), safely mid-month instant, so
       // the test's `new Date()` and the server's `new Date()` are the same instant by
       // construction and no boundary can fall between them.
+      // Issue #568: the row lands at the bulk apply's effective date, which is the 1st of the
+      // NEXT month under the mid-month clock (a December run therefore expects January of the
+      // next year), never the current month.
       // The row this test writes must be identified by IDENTITY, not by recency:
       // `createdAt` carries `@default(now())`, which Prisma resolves from the JS clock
       // — the very clock `vi.useFakeTimers` replaces. The pinned instant is month-start
@@ -201,16 +205,10 @@ describe("WorkSchedule.validFrom month-1st enforcement (Phase 60, #220)", () => 
         // Re-issue it at the now-active faked "now" so its `iat`/`exp` are anchored correctly.
         const adminTokenNow = reissueTokenNow(app, data.adminToken);
 
-        const captured = new Date();
-        const expectedYear = captured.getUTCFullYear();
-        const expectedMonth = captured.getUTCMonth(); // 0-indexed
-
-        const res = await app.inject({
-          method: "PUT",
-          url: "/api/v1/settings/work",
-          headers: { authorization: `Bearer ${adminTokenNow}` },
-          payload: {
-            applyToExisting: true,
+        // The data employee's newest contract is Test 2's 35 h row, so it is an INDIVIDUAL
+        // candidate (not pre-ticked) — select it explicitly.
+        const { res, preview } = await applyBulkDefaults(app, adminTokenNow, {
+          defaults: {
             defaultWeeklyHours: 38,
             defaultMondayHours: 7.6,
             defaultTuesdayHours: 7.6,
@@ -220,7 +218,14 @@ describe("WorkSchedule.validFrom month-1st enforcement (Phase 60, #220)", () => 
             defaultSaturdayHours: 0,
             defaultSundayHours: 0,
           },
+          employeeIds: [data.employee.id],
         });
+
+        // Expected year/month come from the chosen effective date, cross-checked against the
+        // independent mirror of the server rule under the same pinned clock.
+        expect(preview.effectiveFrom).toBe(earliestBulkEffectiveFromStr());
+        const expectedYear = Number(preview.effectiveFrom.slice(0, 4));
+        const expectedMonth = Number(preview.effectiveFrom.slice(5, 7)) - 1; // 0-indexed
 
         expect(res.statusCode).toBe(200);
         const body = JSON.parse(res.body);
@@ -248,11 +253,10 @@ describe("WorkSchedule.validFrom month-1st enforcement (Phase 60, #220)", () => 
 
   describe("Test 4: existing non-1st validFrom row survives in the database", () => {
     it("the seeded mid-May row for secondEmpId remains in the DB unchanged (audit trail preserved)", async () => {
-      // Phase 66 fix (failure #7): Test 3's applyToExisting bulk-apply writes a NEW
-      // WorkSchedule row for every FIXED_SCHEDULE employee in the tenant — including
-      // secondEmpId — with validFrom = snapToMonthFirstUtc(now). The GET /work/:id
-      // endpoint orders by `validFrom desc` and returns the bulk-apply row, masking
-      // the seeded 2026-05-18 row. The real "audit trail preserved" claim is that
+      // Phase 66 fix (failure #7): a bulk apply writes a NEW WorkSchedule row for every
+      // selected FIXED_SCHEDULE employee, at the chosen effective date (Issue #568). The
+      // GET /work/:id endpoint orders by `validFrom desc` and would return such a bulk-apply
+      // row, masking the seeded 2026-05-18 row. The real "audit trail preserved" claim is that
       // the seeded row is still PERSISTED, not that GET returns it. Query Prisma
       // directly by validFrom to verify the audit row is intact.
       const seededValidFrom = new Date("2026-05-18T00:00:00.000Z");

@@ -6,10 +6,13 @@
  *  D-01a — hours-only edit within the SAME type → update-in-place (200, no new row)
  *  D-01b — MODEL_SWITCH_SAME_MONTH_ERROR is the canonical message asserted
  *
- * Also verifies the bulk-apply path (PUT /settings/work applyToExisting):
- *  - Skips differing-type same-month rows (does not overwrite/duplicate them)
+ * Also verifies the bulk-apply path (Issue #568: preview, then PUT /settings/work with the
+ * preview's fingerprint and selection):
+ *  - A differing-type row at the chosen effective date is a non-candidate (SAME_MONTH_MODEL_SWITCH):
+ *    it is never overwritten or duplicated, and sending its id is refused with 409
+ *  - A contract that already starts after the effective date is a non-candidate (FUTURE_CONTRACT)
  *  - Exposes `skippedModelSwitch` in the response
- *  - Same-type FIXED_SCHEDULE bulk apply still works unchanged
+ *  - Same-type FIXED_SCHEDULE bulk apply still writes a versioned row, now at the effective date
  *
  * Test run: pnpm --filter @clokr/api test -- schedule-type-switch-guard
  */
@@ -21,7 +24,12 @@ import {
   cleanupTestData,
   reissueTokenNow,
 } from "../../../../__tests__/setup";
-import { monthStartUtc } from "../../../../__tests__/test-dates";
+import { dbDateStr, monthStartUtc } from "../../../../__tests__/test-dates";
+import {
+  applyBulkDefaults,
+  previewBulkApply,
+  type BulkPreviewBody,
+} from "../../../../__tests__/bulk-apply-helpers";
 import { MODEL_SWITCH_SAME_MONTH_ERROR } from "../../month-first-date";
 import type { FastifyInstance } from "fastify";
 
@@ -86,6 +94,23 @@ function monthlyPayload(validFrom: string, monthlyHours = 80) {
   };
 }
 
+const DEFAULTS_40 = {
+  defaultWeeklyHours: 40,
+  defaultMondayHours: 8,
+  defaultTuesdayHours: 8,
+  defaultWednesdayHours: 8,
+  defaultThursdayHours: 8,
+  defaultFridayHours: 8,
+  defaultSaturdayHours: 0,
+  defaultSundayHours: 0,
+};
+
+/** The ids a preview lists under one non-candidate reason (empty when the group is absent). */
+function nonCandidateIds(preview: BulkPreviewBody, reason: string): string[] {
+  const group = preview.nonCandidates.find((g) => g.reason === reason);
+  return group ? group.employees.map((e) => e.employeeId) : [];
+}
+
 // ── suite ────────────────────────────────────────────────────────────────────
 
 describe("Schedule type-switch guard (Phase 76.24-01)", () => {
@@ -96,6 +121,25 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
     app = await getTestApp();
     data = await seedTestData(app, "stsg");
   });
+
+  /** A fresh employee of the tenant with no contract row: always a default-selected candidate. */
+  async function mkNoContractEmployee(label: string): Promise<string> {
+    const uid = `${label}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const user = await app.prisma.user.create({
+      data: { email: `stsg-${uid}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+    });
+    const employee = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        employeeNumber: `STSG-${uid}`,
+        firstName: "Bulk",
+        lastName: label,
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    return employee.id;
+  }
 
   afterAll(async () => {
     try {
@@ -311,25 +355,20 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
   // ── Bulk apply (PUT /settings/work) — applyToExisting path ────────────────
 
   describe("Bulk apply — differing-type same-month row is skipped, not overwritten", () => {
-    it("skips employees with a non-FIXED differing-type row at the same month-1st", async () => {
+    it("skips employees with a non-FIXED differing-type row at the effective date", async () => {
       // Use adminEmployee — its schedule is seeded as FIXED_SCHEDULE with validFrom=2024-01-01
       // and is only modified by other bulk-apply tests (not the single-employee tests above).
-      // We need to engineer the state so:
-      //   1) The most-recent schedule row is FIXED_SCHEDULE (so the employee enters the
-      //      else-if branch in the bulk-apply loop)
-      //   2) A MONTHLY_HOURS row exists exactly at snapToMonthFirstUtc(now) — the collision
-      //
-      // To guarantee (1), we delete all rows at or after thisMonthFirst for adminEmployee
-      // and write a FIXED_SCHEDULE row at a date AFTER thisMonthFirst. That makes it the
-      // most-recent, ensuring current.type === "FIXED_SCHEDULE".
+      // The engineered state, relative to the bulk apply's effective date E (the 1st of NEXT
+      // month under the mid-month clock below — a bulk apply is never retroactive, Issue #568):
+      //   1) the contract valid at E is the seeded FIXED_SCHEDULE row (valid-before row)
+      //   2) a MONTHLY_HOURS row exists exactly at E — the collision the guard must block
       const empId = data.adminEmployee.id;
-      // Issue #136 (batch D): thisMonthFirst used to be derived from a fresh new Date()
-      // and then compared/seeded against, while the server ALSO snaps its own
-      // new Date() (snapToMonthFirstUtc) at request time — a month-end crossing between
-      // the seed and the request makes the engineered collision land in the wrong month
-      // and the guard silently stops firing. Pin the clock across seed + request +
-      // assertion to a derived, safely-mid-month instant so the test's and the server's
-      // "now" are the same instant by construction.
+      // Issue #136 (batch D): E is derived from "now" and compared/seeded against, while the
+      // server ALSO resolves its own "now" at request time — a month-end crossing between the
+      // seed and the request makes the engineered collision land in the wrong month and the
+      // guard silently stops firing. Pin the clock across seed + request + assertion to a
+      // derived, safely-mid-month instant so the test's and the server's "now" are the same
+      // instant by construction.
       vi.useFakeTimers({
         now: new Date(monthStartUtc(0).getTime() + 10 * 24 * 60 * 60 * 1000),
         toFake: ["Date"],
@@ -342,17 +381,15 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
         const adminTokenNow = reissueTokenNow(app, data.adminToken);
 
         const thisMonthFirst = monthStartUtc(0);
-        // A month-1st strictly after thisMonthFirst so it sorts as most-recent
-        const laterMonthFirst = new Date(
-          Date.UTC(thisMonthFirst.getUTCFullYear(), thisMonthFirst.getUTCMonth() + 2, 1),
-        );
+        // E: the first allowed effective date under the mid-month clock.
+        const effectiveFrom = monthStartUtc(-1);
 
-        // Clean slate at thisMonthFirst and laterMonthFirst for this employee
+        // Clean slate from this month on for this employee
         await app.prisma.workSchedule.deleteMany({
           where: { employeeId: empId, validFrom: { gte: thisMonthFirst } },
         });
 
-        // Write MONTHLY_HOURS at thisMonthFirst (the collision row the guard must block)
+        // Write MONTHLY_HOURS at E (the collision row the guard must block)
         await app.prisma.workSchedule.create({
           data: {
             employeeId: empId,
@@ -368,12 +405,101 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
             sundayHours: 0,
             overtimeThreshold: 60,
             allowOvertimePayout: false,
-            validFrom: thisMonthFirst,
+            validFrom: effectiveFrom,
           },
         });
 
-        // Write FIXED_SCHEDULE at laterMonthFirst so it is the most-recent row
-        // (bulk-apply picks it via orderBy: validFrom desc, take: 1)
+        // Confirm collision row is MONTHLY_HOURS
+        const preRow = await app.prisma.workSchedule.findFirst({
+          where: { employeeId: empId, validFrom: effectiveFrom },
+        });
+        expect(preRow).not.toBeNull();
+        expect(preRow!.type).toBe("MONTHLY_HOURS");
+
+        // A fresh no-contract employee so the preview has a default-selected candidate and the
+        // apply actually runs (the guarded employee must be skipped, not the whole apply).
+        const freshId = await mkNoContractEmployee("collision");
+
+        const preCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
+
+        // The preview lists the admin employee as a same-month model switch, not as a candidate
+        const preview = await previewBulkApply(app, adminTokenNow, { defaults: DEFAULTS_40 });
+        expect(preview.effectiveFrom).toBe(dbDateStr(effectiveFrom));
+        expect(nonCandidateIds(preview, "SAME_MONTH_MODEL_SWITCH")).toContain(empId);
+        expect(preview.candidates.map((c) => c.employeeId)).not.toContain(empId);
+
+        // Act: bulk apply of the default-selected candidates.
+        // The guarded employee must be skipped and counted in skippedModelSwitch.
+        const { res } = await applyBulkDefaults(app, adminTokenNow, {
+          defaults: DEFAULTS_40,
+          employeeIds: "defaultSelected",
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+
+        // The admin employee was skipped because of model-switch collision
+        expect(typeof body.skippedModelSwitch).toBe("number");
+        expect(body.skippedModelSwitch).toBeGreaterThanOrEqual(1);
+
+        // The fresh employee did get its row, at E
+        const freshRows = await app.prisma.workSchedule.findMany({
+          where: { employeeId: freshId },
+        });
+        expect(freshRows).toHaveLength(1);
+        expect(freshRows[0].validFrom.toISOString()).toBe(effectiveFrom.toISOString());
+
+        // Row count unchanged — no new row created at E for the admin employee
+        const postCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
+        expect(postCount).toBe(preCount);
+
+        // The MONTHLY_HOURS collision row is still intact
+        const postRow = await app.prisma.workSchedule.findFirst({
+          where: { employeeId: empId, validFrom: effectiveFrom },
+        });
+        expect(postRow).not.toBeNull();
+        expect(postRow!.type).toBe("MONTHLY_HOURS");
+
+        // Sending the guarded id explicitly is refused (it is no candidate), nothing changes
+        const forced = await applyBulkDefaults(app, adminTokenNow, {
+          defaults: DEFAULTS_40,
+          employeeIds: [empId],
+        });
+        expect(forced.res.statusCode).toBe(409);
+        expect(JSON.parse(forced.res.body).code).toBe("BULK_APPLY_PREVIEW_STALE");
+        expect(await app.prisma.workSchedule.count({ where: { employeeId: empId } })).toBe(
+          preCount,
+        );
+        const stillRow = await app.prisma.workSchedule.findFirst({
+          where: { employeeId: empId, validFrom: effectiveFrom },
+        });
+        expect(stillRow!.type).toBe("MONTHLY_HOURS");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("lists a contract that starts after the effective date as FUTURE_CONTRACT and refuses its id", async () => {
+      // The pre-#568 shape of this scenario was a FIXED row two months ahead that made the
+      // employee the "most recent contract" holder. A row after E cannot be superseded by a row
+      // inserted at E, so the employee is a non-candidate with its own reason.
+      const empId = data.adminEmployee.id;
+      vi.useFakeTimers({
+        now: new Date(monthStartUtc(0).getTime() + 10 * 24 * 60 * 60 * 1000),
+        toFake: ["Date"],
+      });
+      try {
+        const adminTokenNow = reissueTokenNow(app, data.adminToken);
+        const thisMonthFirst = monthStartUtc(0);
+        const effectiveFrom = monthStartUtc(-1);
+        // One month after E
+        const laterMonthFirst = new Date(
+          Date.UTC(effectiveFrom.getUTCFullYear(), effectiveFrom.getUTCMonth() + 1, 1),
+        );
+
+        await app.prisma.workSchedule.deleteMany({
+          where: { employeeId: empId, validFrom: { gte: thisMonthFirst } },
+        });
         await app.prisma.workSchedule.create({
           data: {
             employeeId: empId,
@@ -391,60 +517,22 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
             validFrom: laterMonthFirst,
           },
         });
-
-        // Confirm the most-recent schedule is FIXED_SCHEDULE (qualifies for bulk-apply)
-        const latestSched = await app.prisma.workSchedule.findFirst({
-          where: { employeeId: empId },
-          orderBy: { validFrom: "desc" },
-        });
-        expect(latestSched?.type).toBe("FIXED_SCHEDULE");
-
-        // Confirm collision row is MONTHLY_HOURS
-        const preRow = await app.prisma.workSchedule.findFirst({
-          where: { employeeId: empId, validFrom: thisMonthFirst },
-        });
-        expect(preRow).not.toBeNull();
-        expect(preRow!.type).toBe("MONTHLY_HOURS");
-
         const preCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
 
-        // Act: bulk apply with applyToExisting=true
-        // The guard should detect: existing row at now (thisMonthFirst) has type
-        // MONTHLY_HOURS ≠ FIXED_SCHEDULE → skip this employee, increment skippedModelSwitch
-        const res = await app.inject({
-          method: "PUT",
-          url: "/api/v1/settings/work",
-          headers: { authorization: `Bearer ${adminTokenNow}` },
-          payload: {
-            applyToExisting: true,
-            defaultWeeklyHours: 40,
-            defaultMondayHours: 8,
-            defaultTuesdayHours: 8,
-            defaultWednesdayHours: 8,
-            defaultThursdayHours: 8,
-            defaultFridayHours: 8,
-            defaultSaturdayHours: 0,
-            defaultSundayHours: 0,
-          },
+        const preview = await previewBulkApply(app, adminTokenNow, { defaults: DEFAULTS_40 });
+        expect(preview.effectiveFrom).toBe(dbDateStr(effectiveFrom));
+        expect(nonCandidateIds(preview, "FUTURE_CONTRACT")).toContain(empId);
+        expect(preview.candidates.map((c) => c.employeeId)).not.toContain(empId);
+
+        const forced = await applyBulkDefaults(app, adminTokenNow, {
+          defaults: DEFAULTS_40,
+          employeeIds: [empId],
         });
-
-        expect(res.statusCode).toBe(200);
-        const body = JSON.parse(res.body);
-
-        // The admin employee was skipped because of model-switch collision
-        expect(typeof body.skippedModelSwitch).toBe("number");
-        expect(body.skippedModelSwitch).toBeGreaterThanOrEqual(1);
-
-        // Row count unchanged — no new row created at thisMonthFirst
-        const postCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
-        expect(postCount).toBe(preCount);
-
-        // The MONTHLY_HOURS collision row is still intact
-        const postRow = await app.prisma.workSchedule.findFirst({
-          where: { employeeId: empId, validFrom: thisMonthFirst },
-        });
-        expect(postRow).not.toBeNull();
-        expect(postRow!.type).toBe("MONTHLY_HOURS");
+        expect(forced.res.statusCode).toBe(409);
+        expect(JSON.parse(forced.res.body).code).toBe("BULK_APPLY_PREVIEW_STALE");
+        expect(await app.prisma.workSchedule.count({ where: { employeeId: empId } })).toBe(
+          preCount,
+        );
       } finally {
         vi.useRealTimers();
       }
@@ -455,9 +543,10 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
     it("creates a versioned month-1st row for a FIXED_SCHEDULE employee (no regression)", async () => {
       // Use the regular employee (data.employee) for the same-type no-collision test.
       // By this point its most-recent schedule is a SHIFT_BASED row (from single-employee
-      // tests), so it won't enter the FIXED_SCHEDULE branch. Use the adminEmployee instead
-      // but after ensuring a clean known state: remove all future rows so hireDate FIXED row
-      // is the most-recent, then let bulk-apply create a new versioned row at thisMonthFirst.
+      // tests), so it won't be a candidate. Use the adminEmployee instead but after ensuring a
+      // clean known state: remove all rows from this month on so the seeded FIXED row is the
+      // contract valid at the effective date, then let the bulk apply create a versioned row
+      // at that date (the 1st of NEXT month — never retroactive, Issue #568).
       const empId = data.adminEmployee.id;
 
       // Issue #136 (batch D): same remedy as the collision test above — pin the clock
@@ -474,8 +563,9 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
         const adminTokenNow = reissueTokenNow(app, data.adminToken);
 
         const thisMonthFirst = monthStartUtc(0);
+        const effectiveFrom = monthStartUtc(-1);
 
-        // Clean up any rows at or after thisMonthFirst (left from the collision test above)
+        // Clean up any rows from this month on (left from the collision tests above)
         await app.prisma.workSchedule.deleteMany({
           where: { employeeId: empId, validFrom: { gte: thisMonthFirst } },
         });
@@ -489,13 +579,10 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
 
         const beforeCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
 
-        // Act: bulk apply — no collision at thisMonthFirst; should create versioned row
-        const res = await app.inject({
-          method: "PUT",
-          url: "/api/v1/settings/work",
-          headers: { authorization: `Bearer ${adminTokenNow}` },
-          payload: {
-            applyToExisting: true,
+        // Act: bulk apply — no collision at E; the employee is selected explicitly (its stored
+        // contract differs from the stored defaults, so it is not pre-ticked by default)
+        const { res, preview } = await applyBulkDefaults(app, adminTokenNow, {
+          defaults: {
             defaultWeeklyHours: 38,
             defaultMondayHours: 7.6,
             defaultTuesdayHours: 7.6,
@@ -505,7 +592,9 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
             defaultSaturdayHours: 0,
             defaultSundayHours: 0,
           },
+          employeeIds: [empId],
         });
+        expect(preview.effectiveFrom).toBe(dbDateStr(effectiveFrom));
 
         expect(res.statusCode).toBe(200);
         const body = JSON.parse(res.body);
@@ -515,9 +604,9 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
         const afterCount = await app.prisma.workSchedule.count({ where: { employeeId: empId } });
         expect(afterCount).toBe(beforeCount + 1);
 
-        // The new row is at thisMonthFirst with 38h
+        // The new row is at the effective date with 38h
         const newRow = await app.prisma.workSchedule.findFirst({
-          where: { employeeId: empId, validFrom: thisMonthFirst },
+          where: { employeeId: empId, validFrom: effectiveFrom },
         });
         expect(newRow).not.toBeNull();
         expect(Number(newRow!.weeklyHours)).toBe(38);
