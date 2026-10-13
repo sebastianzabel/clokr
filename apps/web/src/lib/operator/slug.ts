@@ -23,9 +23,18 @@ export function suggestSlug(name: string): string {
     .replace(/[äöüß]/g, (char) => TRANSLITERATION[char] ?? char);
   // Strip other diacritics (é -> e) after the German rules have claimed theirs.
   const plain = transliterated.normalize("NFD").replace(/[̀-ͯ]/g, "");
-  const hyphenated = plain.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const hyphenated = trimHyphens(plain.replace(/[^a-z0-9]+/g, "-"));
   // Cutting at 63 can leave a trailing hyphen.
-  return hyphenated.slice(0, SLUG_MAX).replace(/-+$/, "");
+  return trimHyphens(hyphenated.slice(0, SLUG_MAX), { leading: false });
+}
+
+/** Plain scan instead of an alternation of anchored quantifiers, which backtracks super-linearly. */
+function trimHyphens(value: string, { leading = true }: { leading?: boolean } = {}): string {
+  let start = 0;
+  let end = value.length;
+  while (leading && start < end && value[start] === "-") start += 1;
+  while (end > start && value[end - 1] === "-") end -= 1;
+  return value.slice(start, end);
 }
 
 /** Mirrors the API: 3-63 characters of the hyphenated lower-case pattern. */

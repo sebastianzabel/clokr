@@ -54,7 +54,16 @@ export function emptyTenantForm(): TenantFormValues {
 }
 
 /** Same shape the API's `z.string().email()` accepts for everyday addresses; the server decides the rest. */
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function isEmailShape(value: string): boolean {
+  const at = value.indexOf("@");
+  if (at < 1 || value.indexOf("@", at + 1) !== -1 || /\s/.test(value)) return false;
+  const domain = value.slice(at + 1);
+  // A dot with at least one character on each side of it.
+  for (let i = 1; i < domain.length - 1; i += 1) {
+    if (domain[i] === ".") return true;
+  }
+  return false;
+}
 
 export const NAME_MAX = 200;
 export const EMAIL_MAX = 254;
@@ -79,7 +88,7 @@ export function validateTenantForm(values: TenantFormValues): FieldProblems {
     };
   }
   const email = values.adminEmail.trim();
-  if (!EMAIL_PATTERN.test(email) || email.length > EMAIL_MAX) {
+  if (!isEmailShape(email) || email.length > EMAIL_MAX) {
     problems["admin-email"] = {
       code: "EMAIL_INVALID",
       message: "Gültige E-Mail-Adresse eingeben.",
