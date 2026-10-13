@@ -975,6 +975,12 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
 - **Two guards that refuse each other.** `requireOperator` accepts only operator tokens,
   `requireAuth` only tenant tokens; presenting the wrong kind answers 403 and writes an
   `OperatorAuditLog` row (`operator-auth-88.test.ts`, `tenant-principal-guard-88.test.ts`).
+- **An MFA reset or a deactivation ends every issued operator token at once (Issue #557).**
+  `OperatorAccount.tokenVersion` is incremented in the same transaction as the `OPERATOR_MFA_RESET` /
+  `OPERATOR_DEACTIVATED` audit row (`newValue.sessionsRevoked`) and is carried by every operator token as
+  the claim `ver`. `requireOperator` (every request, never cached) and `/verify` (the pending challenge)
+  compare it only through `operatorTokenIsCurrent()` in `contexts/platform/operator-auth.ts`; a token
+  without an integer `ver` is refused with 401.
 - **Operator code is blind to tenant data.** Files under `contexts/platform/api/operator/` never read
   `req.user`, never build an access context (`employeeScopeFor`, `accessContextFromRequest`), never call
   `app.audit()` and never read `user`, `employee` or `auditLog`; every route carries a rate limit. A

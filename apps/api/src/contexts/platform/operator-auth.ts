@@ -20,9 +20,14 @@
  *
  * The 15-minute access token and the 5-minute second-factor challenge token share the secret and are told
  * apart by the `typ` claim; neither is ever accepted in the other's place.
+ *
+ * A fifth layer ends tokens on demand (Issue #557): every token carries the account's `tokenVersion` as the
+ * claim `ver`, and an MFA reset or a deactivation increments it. `requireOperator` (every request, never
+ * cached) and the `/verify` step (the pending challenge) compare it only through `operatorTokenIsCurrent()`.
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { isBlankTenantId } from "./access-context-error";
 import { OPERATOR_AUDIT_ACTIONS, recordPrincipalRefusal } from "./operator-audit";
 
 export const OPERATOR_TOKEN_KIND = "operator";
@@ -39,6 +44,8 @@ export type OperatorTokenPayload = {
   kind: typeof OPERATOR_TOKEN_KIND;
   aud: typeof OPERATOR_TOKEN_AUDIENCE;
   typ: OperatorTokenType;
+  /** The account's `tokenVersion` at signing time (Issue #557). */
+  ver: number;
   iat?: number;
   exp?: number;
 };
@@ -76,7 +83,8 @@ export function isOperatorPayload(
     p.aud === OPERATOR_TOKEN_AUDIENCE &&
     p.typ === typ &&
     typeof p.sub === "string" &&
-    p.sub.length > 0
+    p.sub.length > 0 &&
+    Number.isInteger(p.ver)
   );
 }
 
@@ -88,22 +96,41 @@ function operatorJwt(app: FastifyInstance) {
 
 /**
  * Signs an operator token. `kind` and `aud` go into the payload itself, independent of any plugin sign
- * option, so `requireOperator` can enforce them on whatever the verifier hands back.
+ * option, so `requireOperator` can enforce them on whatever the verifier hands back. The account's
+ * `tokenVersion` is a required parameter so no call site can forget it (Issue #557); a non-integer fails
+ * closed at sign time.
  */
 export function signOperatorToken(
   app: FastifyInstance,
   sub: string,
   typ: OperatorTokenType,
+  tokenVersion: number,
 ): string {
+  if (!Number.isInteger(tokenVersion)) {
+    throw new Error("Operator token version must be an integer");
+  }
   const payload: Omit<OperatorTokenPayload, "iat" | "exp"> = {
     sub,
     kind: OPERATOR_TOKEN_KIND,
     aud: OPERATOR_TOKEN_AUDIENCE,
     typ,
+    ver: tokenVersion,
   };
   return operatorJwt(app).sign(payload as never, {
     expiresIn: typ === "access" ? OPERATOR_ACCESS_TOKEN_TTL : OPERATOR_CHALLENGE_TTL,
   });
+}
+
+/**
+ * True only when the account exists, is active and the token's `ver` equals the stored `tokenVersion`
+ * exactly. This is the ONE place the comparison lives (Issue #557): a lower and a higher version are both
+ * refused, so neither an old token nor a forged future one passes.
+ */
+export function operatorTokenIsCurrent(
+  payload: Pick<OperatorTokenPayload, "ver">,
+  account: { isActive: boolean; tokenVersion: number } | null,
+): boolean {
+  return account !== null && account.isActive && payload.ver === account.tokenVersion;
 }
 
 /** Verifies signature, expiry, operator claims and token type; null on any failure. */
@@ -136,8 +163,9 @@ function verifiedTenantClaims(
   try {
     const claims = req.server.jwt.verify<{ sub?: unknown; tenantId?: unknown }>(token);
     if (typeof claims.sub !== "string" || claims.sub.length === 0) return null;
+    // The one blank-tenant rule (#551): a blank claim names no tenant for the audit subject.
     const tenantId =
-      typeof claims.tenantId === "string" && claims.tenantId.trim().length > 0
+      typeof claims.tenantId === "string" && !isBlankTenantId(claims.tenantId)
         ? claims.tenantId
         : null;
     return { sub: claims.sub, tenantId };
@@ -176,9 +204,10 @@ export async function requireOperator(req: FastifyRequest, reply: FastifyReply) 
 
   const account = await req.server.prisma.operatorAccount.findUnique({
     where: { id: req.operator.sub },
-    select: { isActive: true },
+    select: { isActive: true, tokenVersion: true },
   });
-  if (!account || !account.isActive) {
+  // Read on every request and never cached, so a reset or deactivation takes effect in every process at once.
+  if (!operatorTokenIsCurrent(req.operator, account)) {
     return reply.code(401).send({ error: "Unauthorized" });
   }
 }

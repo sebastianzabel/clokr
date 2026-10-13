@@ -65,7 +65,9 @@ then consumed.
 ```
 
 Replaces the TOTP secret and all recovery codes (old ones stop working), clears the lockout and the replay
-state, and prints the new enrolment data once. Writes one `OPERATOR_MFA_RESET` audit row.
+state, and prints the new enrolment data once. Writes one `OPERATOR_MFA_RESET` audit row. Every token
+already issued for the account (the access token and a pending sign-in challenge) is refused from the next
+request on (Issue #557); the operator signs in again with the new authenticator.
 
 ## Offboarding
 
@@ -75,6 +77,7 @@ state, and prints the new enrolment data once. Writes one `OPERATOR_MFA_RESET` a
 
 The account stays in the database (audit rows reference it and cannot be removed) but can no longer sign
 in. Writes one `OPERATOR_DEACTIVATED` audit row. Deactivating an already inactive account is refused.
+Every access token already issued is refused from the next request on.
 
 ## Tenant management
 

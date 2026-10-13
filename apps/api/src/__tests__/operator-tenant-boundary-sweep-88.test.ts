@@ -301,7 +301,7 @@ beforeAll(async () => {
   } as unknown as JwtPayload);
 
   const operator = await seedOperator(app);
-  operatorToken = signOperatorToken(app, operator.id, "access");
+  operatorToken = signOperatorToken(app, operator.id, "access", operator.tokenVersion);
 });
 
 afterAll(async () => {

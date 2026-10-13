@@ -101,7 +101,7 @@ beforeAll(async () => {
   data = await seedTestData(app, "ot88");
   const operator = await seedOperator(app);
   operatorId = operator.id;
-  operatorToken = signOperatorToken(app, operatorId, "access");
+  operatorToken = signOperatorToken(app, operatorId, "access", operator.tokenVersion);
   mailSpy = vi.spyOn(app.mailer, "sendInvitation").mockImplementation(async (params) => {
     mails.push(params);
   });
