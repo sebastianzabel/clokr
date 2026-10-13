@@ -16,6 +16,7 @@ import {
   cleanupTestData,
   FIXTURE_PACKAGES,
 } from "./setup";
+import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import {
   GRUNDVERSION,
   ModuleNotBookedError,
@@ -254,5 +255,82 @@ describe("the shared fixture books everything (Phase 566, D-10)", () => {
     expect(row.bookedModules).toEqual([...TENANT_MODULES]);
     expect(row.salonQuota).toBe(500);
     expect(fixture.tenant.salonQuota).toBe(500);
+  });
+});
+
+describe("salon creation against the booked limit (Phase 566, D-04, AC-566-02)", () => {
+  let app: FastifyInstance;
+  let grund: Awaited<ReturnType<typeof seedGrundversionTenant>>;
+  let chainTenant: Awaited<ReturnType<typeof seedGrundversionTenant>>;
+
+  function create(token: string, body: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: "/api/v1/salons",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { openingHours: DEFAULT_SALON_OPENING_HOURS, ...body },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    grund = await seedGrundversionTenant(app, "pkg566-create-grund");
+    chainTenant = await seedGrundversionTenant(app, "pkg566-create-chain");
+  });
+
+  afterAll(async () => {
+    for (const t of [grund, chainTenant]) {
+      try {
+        await cleanupTestData(app, t.tenant.id);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  it("(a) refuses an active create beyond the Grundversion limit with exactly { error, code } and persists nothing", async () => {
+    const name = `Zweiter Salon ${randomUUID().slice(0, 8)}`;
+    const salonsBefore = await app.prisma.salon.count({ where: { tenantId: grund.tenant.id } });
+
+    const res = await create(grund.adminToken, { name });
+
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect(Object.keys(body).sort((a, b) => a.localeCompare(b))).toEqual(["code", "error"]);
+    expect(body.code).toBe("SALON_QUOTA_REACHED");
+    expect(body.error).toBe(SALON_QUOTA_REACHED_MESSAGE);
+
+    // Nothing leaked: no Salon row and no audit row carrying the refused name.
+    expect(await app.prisma.salon.count({ where: { tenantId: grund.tenant.id } })).toBe(
+      salonsBefore,
+    );
+    expect(await app.prisma.salon.count({ where: { tenantId: grund.tenant.id, name } })).toBe(0);
+    expect(
+      await app.prisma.auditLog.count({
+        where: { entity: "Salon", action: "CREATE", newValue: { path: ["name"], equals: name } },
+      }),
+    ).toBe(0);
+  });
+
+  it("(b) an inactive create is never refused, even at the limit", async () => {
+    const res = await create(grund.adminToken, { name: "Vorbereitet", isActive: false });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body.isActive).toBe(false);
+    expect(body.deactivatedAt).not.toBeNull();
+  });
+
+  it("(c) with CHAIN and a quota of 2 the first active create passes and the second is refused", async () => {
+    await app.prisma.tenant.update({
+      where: { id: chainTenant.tenant.id },
+      data: { bookedModules: ["CHAIN"], salonQuota: 2 },
+    });
+    // The fixture tenant already owns one active default salon, so one slot is free.
+    const first = await create(chainTenant.adminToken, { name: "Zweiter Salon" });
+    expect(first.statusCode).toBe(201);
+
+    const second = await create(chainTenant.adminToken, { name: "Dritter Salon" });
+    expect(second.statusCode).toBe(409);
+    expect(JSON.parse(second.body).code).toBe("SALON_QUOTA_REACHED");
   });
 });

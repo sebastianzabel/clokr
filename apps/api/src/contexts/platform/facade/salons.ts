@@ -321,6 +321,13 @@ export async function salonExistsInForeignTenant(
  * Phase 71b (issue #71), D-01: when `input.federalState` is absent, the new salon inherits the
  * tenant's CURRENT `federalState`, read through the SAME `db` (Tenant is an Unterbau model, same
  * context — no cross-context read).
+ *
+ * Phase 566 (#566), D-04: the salon quota applies to every caller of this function (tenant route,
+ * operator route, provisioning), so a salon created as ACTIVE first passes
+ * `assertSalonActivationAllowed()` — it takes the Tenant lock (same order as `activateSalon`:
+ * Tenant, then Salon) and counts afterwards, which is what serialises two concurrent creates (a
+ * create locks no existing Salon row). An INACTIVE salon is never refused. With a bare client
+ * (test bootstrap) the lock is a single autocommit statement and the count still applies.
  */
 export async function createSalon(
   db: Prisma.TransactionClient,
@@ -328,6 +335,9 @@ export async function createSalon(
   input: CreateSalonInput,
 ): Promise<Salon> {
   const isActive = input.isActive ?? true;
+  if (isActive) {
+    await assertSalonActivationAllowed(db, tenantId);
+  }
   const federalState =
     input.federalState ??
     (
