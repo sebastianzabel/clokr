@@ -9,7 +9,7 @@ import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { config } from "./config";
-import { AccessContextError } from "./contexts/platform"; // Phase 77b (Issue #77) — index, not the deep module
+import { AccessContextError, PackageRefusalError } from "./contexts/platform"; // Phase 77b (Issue #77), Phase 566 (#566) — index, not the deep module
 import { authRoutes } from "./contexts/platform/api/auth";
 import { operatorAuthRoutes } from "./contexts/platform/api/operator/auth"; // Phase 88 (#88)
 import { operatorTenantRoutes } from "./contexts/platform/api/operator/tenants"; // Phase 88 (#88)
@@ -188,6 +188,11 @@ export async function buildApp() {
           "access context missing",
         );
         return reply.code(500).send({ error: "Interner Serverfehler" });
+      }
+      // Phase 566 (#566, D-03): a booked-package refusal is a deliberate 409 with a machine-readable
+      // code. One mapping for every caller, so no caller can leak a 500 or build its own body.
+      if (error instanceof PackageRefusalError) {
+        return reply.code(409).send({ error: error.message, code: error.code });
       }
       // Issue #330: a 5xx is an unexpected failure, and its message is internal (Prisma model,
       // field and constraint names, hosts, paths). The client gets a fixed body; the original

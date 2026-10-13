@@ -206,3 +206,18 @@ export { ACTIVE_TENANT_WHERE } from "./tenant-status";
 // Phase 88 (#88, D-07a): the operator audit retention purge, run by the daily data-retention job
 // of the composition layer (authentication events after 12 months, lifecycle actions after 120).
 export { purgeExpiredOperatorAudit } from "./operator-audit";
+// Phase 566 (#566): booked packages per tenant — the one decider (readers and assertions only;
+// the writer and the Tenant lock stay module-internal).
+export {
+  TENANT_MODULES,
+  GRUNDVERSION,
+  TENANT_MODULE_LABEL_DE,
+  salonLimit,
+  isModuleBooked,
+  assertModuleBooked,
+  assertSalonActivationAllowed,
+  PackageRefusalError,
+  SalonQuotaReachedError,
+  ModuleNotBookedError,
+} from "./tenant-packages";
+export type { TenantPackages } from "./tenant-packages";

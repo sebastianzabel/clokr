@@ -14,7 +14,7 @@ import { Secret, TOTP } from "otpauth";
 // Re-export Prisma.JsonValue to keep it nameable in the inferred return type of
 // seedTestData(). Adding `uiPreferences Json?` to User caused TS2883 because the
 // inferred return type implicitly references JsonValue without a local binding.
-import { Prisma, type FederalState } from "@clokr/db";
+import { Prisma, type FederalState, type TenantModule } from "@clokr/db";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import {
   DEFAULT_SALON_OPENING_HOURS,
@@ -323,6 +323,12 @@ export async function salonIdForEmployee(
   return salon.id;
 }
 
+/** Phase 566 (D-10): what every shared fixture tenant books — all modules, a quota no scenario reaches. */
+export const FIXTURE_PACKAGES = {
+  bookedModules: ["CHAIN", "INTEGRATIONS", "HARDWARE_CLOCK", "ANALYTICS"] as TenantModule[],
+  salonQuota: 500,
+} as const;
+
 /**
  * Phase 325 (issue #325), D-17: the pre-325 body of `seedTestData`, now called by it. Kept
  * module-private — the two overload signatures below are what callers see.
@@ -335,11 +341,21 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
   // Create tenant + tenant config through the one provisioning rule (Phase 88, D-04a). Only L1:
   // the default salon is NOT created here, it comes afterwards from the withDefaultSalon wrapper
   // with strictly ascending createdAt (Issue #543), so provisionTenant (L2) must not be used.
-  const { tenant } = await createTenantWithConfig(prisma, {
+  const { tenant: createdTenant } = await createTenantWithConfig(prisma, {
     name: `Test Tenant ${s}`,
     slug: `test-${s}`,
     federalState: "NIEDERSACHSEN",
     timezone: "Europe/Berlin",
+  });
+  // Phase 566 (D-10): shared fixtures book every package with a quota far above any scenario, so
+  // the recorded neutrality cells and every pre-existing test stay byte-identical (never re-record).
+  // Tests of the package rules create a Grundversion tenant explicitly (seedGrundversionTenant).
+  const tenant = await prisma.tenant.update({
+    where: { id: createdTenant.id },
+    data: {
+      bookedModules: [...FIXTURE_PACKAGES.bookedModules],
+      salonQuota: FIXTURE_PACKAGES.salonQuota,
+    },
   });
 
   // Create admin user
@@ -517,6 +533,19 @@ export async function seedTestData(
   }
   const salon = await createTestSalon(testApp.prisma, base.tenant.id, { name: base.tenant.name });
   return { ...base, salonId: salon.id };
+}
+
+/**
+ * Phase 566: `seedTestData` followed by the Grundversion (no module, quota 1), for the tests of the
+ * package rules. Returns the same shape as `seedTestData`, with the tenant row updated.
+ */
+export async function seedGrundversionTenant(testApp: FastifyInstance, suffix = "") {
+  const base = await seedTestData(testApp, suffix);
+  const tenant = await testApp.prisma.tenant.update({
+    where: { id: base.tenant.id },
+    data: { bookedModules: [], salonQuota: 1 },
+  });
+  return { ...base, tenant };
 }
 
 /**
