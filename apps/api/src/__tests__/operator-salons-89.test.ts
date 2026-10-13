@@ -1,7 +1,8 @@
 /**
- * Phase 89 plan 01 (#89, D-05/D-06/D-07/D-12/D-16) — the operator reads a tenant's salons through
- * GET /api/v1/operator/tenants/:id/salons: master data plus the Phorest coupling, inactive salons
- * included, metadata only.
+ * Phase 89 plans 01 and 08 (#89, D-05/D-06/D-07/D-07a/D-09/D-12/D-16) — the operator reads a tenant's
+ * salons through GET /api/v1/operator/tenants/:id/salons (master data plus the Phorest coupling,
+ * inactive salons included, metadata only) and creates one through POST on the same path (Bundesland
+ * and opening hours required, optional coupling, both audit trails in one transaction).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -21,6 +22,7 @@ const TENANT_BASE = "/api/v1/operator/tenants";
 let app: FastifyInstance;
 let dataA: Awaited<ReturnType<typeof seedTestData>>;
 let dataB: Awaited<ReturnType<typeof seedTestData>>;
+let operatorId: string;
 let operatorToken: string;
 let addressCounter = 0;
 
@@ -80,6 +82,7 @@ beforeAll(async () => {
   dataA = await seedTestData(app, "os89a");
   dataB = await seedTestData(app, "os89b");
   const operator = await seedOperator(app);
+  operatorId = operator.id;
   operatorToken = signOperatorToken(app, operator.id, "access", operator.tokenVersion);
 });
 
@@ -198,5 +201,257 @@ describe("GET /api/v1/operator/tenants/:id/salons", () => {
     const list = JSON.parse(res.body) as SalonDto[];
     expect(list.map((s) => s.id)).not.toContain(foreign.id);
     expect(res.body).not.toContain(foreign.id);
+  });
+});
+
+// ── POST /api/v1/operator/tenants/:id/salons (plan 89-08) ────────────────────────────────────
+
+const OPENING_HOURS = [0, 1, 2, 3, 4, 5, 6].map((day) => ({
+  day,
+  open: "09:00",
+  close: "18:00",
+  ...(day === 6 ? { closed: true } : {}),
+}));
+
+function postSalon(tenantId: string, body: unknown, token: string | undefined = operatorToken) {
+  return app.inject({
+    method: "POST",
+    url: salonsUrl(tenantId),
+    headers: {
+      "user-agent": "vitest-operator-salons",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    payload: body as object,
+    remoteAddress: uniqueAddress(),
+  });
+}
+
+function salonBody(overrides: Record<string, unknown> = {}) {
+  return {
+    name: `Salon ${randomUUID().slice(0, 8)}`,
+    street: "Hauptstrasse 1",
+    postalCode: "30159",
+    city: "Hannover",
+    openingHours: OPENING_HOURS,
+    federalState: "NIEDERSACHSEN",
+    ...overrides,
+  };
+}
+
+describe("POST /api/v1/operator/tenants/:id/salons", () => {
+  it("creates a salon, answers 201 with the twelve-key DTO and writes both audit rows", async () => {
+    const body = salonBody();
+    const res = await postSalon(dataA.tenant.id, body);
+    expect(res.statusCode, res.body).toBe(201);
+    const dto = JSON.parse(res.body) as SalonDto;
+    expect(Object.keys(dto).sort(byKey)).toEqual(DTO_KEYS);
+    expect(dto.name).toBe(body.name);
+    expect(dto.isActive).toBe(true);
+    expect(dto.coupling).toBeNull();
+    expect(dto.federalState).toBe("NIEDERSACHSEN");
+
+    const stored = await app.prisma.salon.findFirst({ where: { id: dto.id } });
+    expect(stored?.tenantId).toBe(dataA.tenant.id);
+
+    const opRows = await app.prisma.operatorAuditLog.findMany({ where: { entityId: dto.id } });
+    expect(opRows).toHaveLength(1);
+    expect(opRows[0]).toMatchObject({
+      action: "SALON_CREATED",
+      operatorId,
+      subjectTenantId: dataA.tenant.id,
+      entity: "Salon",
+    });
+    expect(opRows[0].newValue).toMatchObject({ id: dto.id, name: body.name });
+    expect(opRows[0].ipAddress).toBeTruthy();
+    expect(opRows[0].userAgent).toBe("vitest-operator-salons");
+
+    const tenantRows = await app.prisma.auditLog.findMany({
+      where: { entity: "Salon", entityId: dto.id },
+    });
+    expect(tenantRows).toHaveLength(1);
+    expect(tenantRows[0].action).toBe("CREATE");
+    expect(tenantRows[0].userId).toBeNull();
+    expect((tenantRows[0].newValue as { actor: unknown }).actor).toEqual({
+      type: "OPERATOR",
+      operatorId,
+      tenantId: dataA.tenant.id,
+    });
+  });
+
+  it("couples the salon to Phorest when a coupling is given and audits it on both sides", async () => {
+    const branch = `B-${randomUUID().slice(0, 8)}`;
+    const res = await postSalon(dataA.tenant.id, {
+      ...salonBody(),
+      coupling: { externalBranchId: branch },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const dto = JSON.parse(res.body) as SalonDto;
+    expect(dto.coupling).toEqual({ provider: "PHOREST", externalBranchId: branch });
+
+    const row = await app.prisma.salonCoupling.findFirst({ where: { salonId: dto.id } });
+    expect(row).toMatchObject({
+      tenantId: dataA.tenant.id,
+      provider: "PHOREST",
+      externalBranchId: branch,
+    });
+
+    const opActions = (
+      await app.prisma.operatorAuditLog.findMany({
+        where: { subjectTenantId: dataA.tenant.id, entityId: { in: [dto.id, row!.id] } },
+      })
+    )
+      .map((r) => r.action)
+      .sort(byKey);
+    expect(opActions).toEqual(["SALON_COUPLING_SET", "SALON_CREATED"]);
+
+    const couplingAudit = await app.prisma.auditLog.findMany({
+      where: { entity: "SalonCoupling", entityId: row!.id },
+    });
+    expect(couplingAudit).toHaveLength(1);
+    expect(couplingAudit[0].action).toBe("CREATE");
+    expect(couplingAudit[0].userId).toBeNull();
+    expect(couplingAudit[0].newValue).toMatchObject({
+      salonId: dto.id,
+      provider: "PHOREST",
+      externalBranchId: branch,
+      actor: { type: "OPERATOR", operatorId, tenantId: dataA.tenant.id },
+    });
+  });
+
+  it("marks the first salon of a tenant without active salons as default", async () => {
+    const empty = await seedTestData(app, "os89e");
+    try {
+      await app.prisma.salon.deleteMany({ where: { tenantId: empty.tenant.id } });
+      const res = await postSalon(empty.tenant.id, salonBody());
+      expect(res.statusCode, res.body).toBe(201);
+      expect((JSON.parse(res.body) as SalonDto).isDefault).toBe(true);
+    } finally {
+      await cleanupTestData(app, empty.tenant.id);
+    }
+  });
+
+  it("requires Bundesland and opening hours and rejects keys a client must never set", async () => {
+    const noState = salonBody();
+    delete (noState as Record<string, unknown>).federalState;
+    expect((await postSalon(dataA.tenant.id, noState)).statusCode).toBe(400);
+
+    const noHours = salonBody();
+    delete (noHours as Record<string, unknown>).openingHours;
+    expect((await postSalon(dataA.tenant.id, noHours)).statusCode).toBe(400);
+
+    for (const extra of [
+      { isActive: false },
+      { tenantId: dataB.tenant.id },
+      { provider: "PHOREST" },
+    ]) {
+      const res = await postSalon(dataA.tenant.id, salonBody(extra));
+      expect(res.statusCode, JSON.stringify(extra)).toBe(400);
+    }
+
+    expect(
+      (await postSalon(dataA.tenant.id, salonBody({ coupling: { externalBranchId: "" } })))
+        .statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await postSalon(
+          dataA.tenant.id,
+          salonBody({ coupling: { externalBranchId: "B-1", provider: "PHOREST" } }),
+        )
+      ).statusCode,
+    ).toBe(400);
+  });
+
+  it("refuses a taken branch id with the fixed 409 and persists nothing of the request", async () => {
+    const taken = `B-${randomUUID().slice(0, 8)}`;
+    const other = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Hat Kennung" });
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: dataA.tenant.id,
+        salonId: other.id,
+        provider: "PHOREST",
+        externalBranchId: taken,
+      },
+    });
+
+    const name = `Rollback ${randomUUID().slice(0, 8)}`;
+    const opBefore = await app.prisma.operatorAuditLog.count({
+      where: { subjectTenantId: dataA.tenant.id },
+    });
+    const res = await postSalon(
+      dataA.tenant.id,
+      salonBody({ name, coupling: { externalBranchId: taken } }),
+    );
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "Diese Filialkennung ist bereits einem anderen Salon zugeordnet.",
+      code: "BRANCH_ALREADY_COUPLED",
+    });
+
+    expect(await app.prisma.salon.count({ where: { tenantId: dataA.tenant.id, name } })).toBe(0);
+    expect(
+      await app.prisma.operatorAuditLog.count({ where: { subjectTenantId: dataA.tenant.id } }),
+    ).toBe(opBefore);
+    // No tenant CREATE row for a salon of that name either: the audit rows hold the full salon.
+    const leaked = await app.prisma.auditLog.findMany({
+      where: { entity: "Salon", action: "CREATE", newValue: { path: ["name"], equals: name } },
+    });
+    expect(leaked).toHaveLength(0);
+    const leakedActor = await app.prisma.operatorAuditLog.findMany({
+      where: { action: "SALON_CREATED", newValue: { path: ["name"], equals: name } },
+    });
+    expect(leakedActor).toHaveLength(0);
+  });
+
+  it("refuses a deactivated tenant with the fixed 409 before any write", async () => {
+    const dead = await seedTestData(app, "os89d");
+    try {
+      await app.prisma.tenant.update({
+        where: { id: dead.tenant.id },
+        data: { deactivatedAt: new Date(), deactivatedReason: "test" },
+      });
+      const before = await app.prisma.salon.count({ where: { tenantId: dead.tenant.id } });
+      const res = await postSalon(dead.tenant.id, salonBody());
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body)).toEqual({
+        error: "Der Mandant ist deaktiviert. Änderungen sind erst nach der Reaktivierung möglich.",
+        code: "TENANT_DEACTIVATED",
+      });
+      expect(await app.prisma.salon.count({ where: { tenantId: dead.tenant.id } })).toBe(before);
+      expect(
+        await app.prisma.operatorAuditLog.count({
+          where: { subjectTenantId: dead.tenant.id, action: "SALON_CREATED" },
+        }),
+      ).toBe(0);
+    } finally {
+      await cleanupTestData(app, dead.tenant.id);
+    }
+  });
+
+  it("answers an unknown tenant with the fixed 404, a tenant token with 403 and no token with 401", async () => {
+    const unknown = await postSalon(randomUUID(), salonBody());
+    expect(unknown.statusCode).toBe(404);
+    expect(JSON.parse(unknown.body)).toEqual({ error: "Mandant nicht gefunden" });
+
+    // The refusal row is bounded per (principal, route) and window, so this uses tenant B's admin,
+    // whom no earlier test of this file refused.
+    const where = { action: "TENANT_PRINCIPAL_REFUSED", subjectTenantId: dataB.tenant.id } as const;
+    const before = await app.prisma.operatorAuditLog.count({ where });
+    const refusedName = `Refused ${randomUUID().slice(0, 8)}`;
+    const refused = await postSalon(
+      dataB.tenant.id,
+      salonBody({ name: refusedName }),
+      dataB.adminToken,
+    );
+    expect(refused.statusCode).toBe(403);
+    expect(await app.prisma.operatorAuditLog.count({ where })).toBeGreaterThan(before);
+    expect(await app.prisma.salon.count({ where: { name: refusedName } })).toBe(0);
+
+    expect((await postSalon(dataA.tenant.id, salonBody(), "")).statusCode).toBe(401);
+  });
+
+  it("never writes a Studiolution value or touches the legacy store hours", async () => {
+    const res = await postSalon(dataA.tenant.id, salonBody({ provider: "STUDIOLUTION" }));
+    expect(res.statusCode).toBe(400);
   });
 });

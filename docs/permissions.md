@@ -997,6 +997,7 @@ Katalog-Permission und stehen in keiner der Tabellen oben; die Zugangsentscheidu
 | `POST /api/v1/operator/tenants/:id/reactivate`              | `requireOperator`                | Hebt die Deaktivierung auf; Audit `TENANT_REACTIVATED`                                                                              |
 | `POST /api/v1/operator/tenants/:id/resend-admin-invitation` | `requireOperator`                | Stellt die Einladung des ersten Administrators neu aus, nur solange niemand im Mandanten aktiv ist; Audit `ADMIN_INVITATION_RESENT` |
 | `GET /api/v1/operator/tenants/:id/salons`                   | `requireOperator`                | Alle Salons des Mandanten mit Kopplung, inaktive eingeschlossen; nur Stammdaten, keine Zählungen; unbekannter Mandant: 404          |
+| `POST /api/v1/operator/tenants/:id/salons`                  | `requireOperator`                | Legt einen Salon an (Bundesland, Öffnungszeiten Pflicht; Phorest-Kopplung optional); Audit `SALON_CREATED`, `SALON_COUPLING_SET`    |
 
 - **Ein Mandanten-Token ist hier kein Zugang:** Ein gültiges Mandanten-Token auf einem geschützten
   Betreiber-Endpunkt wird mit 403 beantwortet und als `TENANT_PRINCIPAL_REFUSED` im Betreiber-Audit
@@ -1011,6 +1012,10 @@ Katalog-Permission und stehen in keiner der Tabellen oben; die Zugangsentscheidu
   Mitarbeiterlisten, Zählungen oder sonstigen Mandantendaten. Das rohe Einladungstoken steht nur in der
   Mail, nie in einer Antwort. Es gibt keine Löschroute; jede Änderung schreibt genau eine Zeile in den
   `OperatorAuditLog`.
+- **Salon-Anlage des Betreibers steht in beiden Protokollen** (Phase 89): je Anlage eine Zeile
+  `SALON_CREATED` (bei Kopplung zusätzlich `SALON_COUPLING_SET`) im `OperatorAuditLog` und eine
+  Zeile im Audit-Protokoll des Mandanten (Akteur `OPERATOR`, ohne Benutzer), beide in derselben
+  Transaktion wie der Salon. Fehlschläge nennen keine Zählungen.
 
 ## Pflege
 

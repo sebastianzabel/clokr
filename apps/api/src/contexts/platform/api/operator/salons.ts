@@ -1,23 +1,53 @@
 /**
- * Operator salon management (Phase 89, #89, D-05/D-06/D-07/D-12/D-16).
+ * Operator salon management (Phase 89, #89, D-05/D-06/D-07/D-07a/D-09/D-11/D-12/D-12a/D-14a/D-16).
  *
  *   GET  /    all salons of one tenant (inactive included), master data plus the Phorest coupling
+ *   POST /    create a salon (Bundesland and opening hours required) with an optional coupling
  *
- * Mounted at `/api/v1/operator/tenants/:id/salons`; `:id` is the tenant. The route is guarded by
+ * Mounted at `/api/v1/operator/tenants/:id/salons`; `:id` is the tenant. Every route is guarded by
  * `requireOperator`; a tenant token is refused with 403 and an audit row. The response is the
  * metadata-only `toOperatorSalonDto` shape (D-06): no counts, no employee data (D-14a).
  *
- * Salons are read only through the Unterbau facade (`listSalons`). The coupling belongs to
- * Schichtplanung and the Unterbau must not import a business context, so it comes in through the
- * `ports` option that the composition root fills (`composition/operator-salon-ports.ts`).
- * Request parameters are parsed inside the handler, after the guard.
+ * Salons are read and created only through the Unterbau facade (`listSalons`, `createSalon`), so the
+ * tenant's own salon routes and this one share ONE rule set (D-07). The Bundesland is required here
+ * (D-07a): no silent inheritance from the tenant. The coupling belongs to Schichtplanung and the
+ * Unterbau must not import a business context, so it comes in through the `ports` option that the
+ * composition root fills (`composition/operator-salon-ports.ts`). The provider is fixed to Phorest
+ * on the server; no request key chooses it (D-11).
+ *
+ * A write is ONE transaction: the salon, its coupling, the operator's accountability row and the
+ * tenant's own audit row commit together or not at all (D-09, D-16). A refusal that is found after
+ * the transaction already wrote something is thrown as an `OperatorSalonRejection` so the
+ * transaction rolls back, and mapped to its reply outside. Refusal bodies are exactly
+ * `{ error, code }` with count-free sentences (D-14a). Request parameters and bodies are parsed
+ * inside the handler, after the guard.
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { FederalState } from "@clokr/db";
 import type { Prisma } from "@clokr/db";
 import { config } from "../../../../config";
+import { OPERATOR_AUDIT_ACTIONS, recordOperatorAudit } from "../../operator-audit";
 import { requireOperator } from "../../operator-auth";
-import { listSalons } from "../../facade/salons";
+import { operatorTenantAudit } from "../../operator-tenant-audit";
+import { createSalon, createSalonSchema, listSalons } from "../../facade/salons";
+
+/** A coupling row as the port hands it back (structural; the Unterbau imports no context). */
+interface PortCouplingRow {
+  id: string;
+  salonId: string;
+  provider: string;
+  externalBranchId: string;
+}
+
+type PortSetResult =
+  | { status: "SALON_INACTIVE" }
+  | { status: "BRANCH_ALREADY_COUPLED" }
+  | { status: "CREATED"; coupling: PortCouplingRow }
+  | { status: "UNCHANGED"; coupling: PortCouplingRow }
+  | { status: "REPLACED"; removed: PortCouplingRow; created: PortCouplingRow };
+
+type PortRemoveResult = { status: "NOT_FOUND" } | { status: "REMOVED"; removed: PortCouplingRow };
 
 /** Structural shape of the composition port; declared here so the Unterbau imports no context. */
 export interface OperatorSalonRoutesOptions {
@@ -28,10 +58,18 @@ export interface OperatorSalonRoutesOptions {
       salonId: string,
     ): Promise<number>;
     coupling: {
-      list(
+      list(db: Prisma.TransactionClient, tenantId: string): Promise<PortCouplingRow[]>;
+      set(
         db: Prisma.TransactionClient,
         tenantId: string,
-      ): Promise<Array<{ salonId: string; provider: string; externalBranchId: string }>>;
+        salon: { id: string; isActive: boolean },
+        externalBranchId: string,
+      ): Promise<PortSetResult>;
+      remove(
+        db: Prisma.TransactionClient,
+        tenantId: string,
+        salonId: string,
+      ): Promise<PortRemoveResult>;
     };
   };
 }
@@ -39,10 +77,94 @@ export interface OperatorSalonRoutesOptions {
 const readRateLimit = {
   rateLimit: { max: config.NODE_ENV === "test" ? 1000 : 60, timeWindow: "1 minute" },
 };
+const mutationRateLimit = {
+  rateLimit: { max: config.NODE_ENV === "test" ? 1000 : 20, timeWindow: "1 minute" },
+};
 
 const tenantParamSchema = z.object({ id: z.string().uuid() });
 
 const TENANT_NOT_FOUND = { error: "Mandant nicht gefunden" };
+
+/**
+ * Every refusal the salon routes can answer, keyed by `code` (UI-SPEC "Reason texts"). The bodies
+ * carry exactly `{ error, code }` and never a count (D-14a).
+ */
+const OPERATOR_SALON_REPLIES = {
+  FEDERAL_STATE_IN_USE: {
+    status: 409,
+    body: {
+      error:
+        "Das Bundesland ist durch Zeiteinträge oder Zuordnungen festgelegt. Ein Umzug ist ein neuer Salon.",
+      code: "FEDERAL_STATE_IN_USE",
+    },
+  },
+  SALON_INACTIVE: {
+    status: 422,
+    body: {
+      error: "Deaktivierte Salons können nicht gekoppelt werden.",
+      code: "SALON_INACTIVE",
+    },
+  },
+  SALON_ALREADY_COUPLED: {
+    status: 409,
+    body: { error: "Der Salon ist bereits gekoppelt.", code: "SALON_ALREADY_COUPLED" },
+  },
+  BRANCH_ALREADY_COUPLED: {
+    status: 409,
+    body: {
+      error: "Diese Filialkennung ist bereits einem anderen Salon zugeordnet.",
+      code: "BRANCH_ALREADY_COUPLED",
+    },
+  },
+  TENANT_DEACTIVATED: {
+    status: 409,
+    body: {
+      error: "Der Mandant ist deaktiviert. Änderungen sind erst nach der Reaktivierung möglich.",
+      code: "TENANT_DEACTIVATED",
+    },
+  },
+} as const;
+
+type OperatorSalonReplyCode = keyof typeof OPERATOR_SALON_REPLIES;
+
+/**
+ * A refusal found after the transaction already wrote something. Thrown so the transaction rolls
+ * back (nothing of the request persists, D-16) and caught outside to send the mapped reply.
+ */
+class OperatorSalonRejection extends Error {
+  readonly code: OperatorSalonReplyCode;
+  constructor(code: OperatorSalonReplyCode) {
+    super(code);
+    this.name = "OperatorSalonRejection";
+    this.code = code;
+  }
+}
+
+/**
+ * The reply code of a rejection or of the coupling facade's typed unique-index conflict, `null` for
+ * anything else. The conflict error is matched by name and code, not by class, because the Unterbau
+ * imports no business context.
+ */
+function replyCodeOf(err: unknown): OperatorSalonReplyCode | null {
+  if (err instanceof OperatorSalonRejection) return err.code;
+  if (err instanceof Error && err.name === "SalonCouplingConflictError") {
+    const code = (err as Error & { code?: unknown }).code;
+    if (code === "SALON_ALREADY_COUPLED" || code === "BRANCH_ALREADY_COUPLED") return code;
+  }
+  return null;
+}
+
+type TenantGate = "NOT_FOUND" | "TENANT_DEACTIVATED" | "OK";
+
+/** Tenant check first (D-06): unknown tenant, deactivated tenant, or writable. */
+async function tenantGate(tx: Prisma.TransactionClient, tenantId: string): Promise<TenantGate> {
+  const tenant = await tx.tenant.findUnique({
+    where: { id: tenantId },
+    select: { deactivatedAt: true },
+  });
+  if (!tenant) return "NOT_FOUND";
+  return tenant.deactivatedAt ? "TENANT_DEACTIVATED" : "OK";
+}
 
 type SalonRow = Awaited<ReturnType<typeof listSalons>>[number];
 
@@ -69,6 +191,20 @@ export function toOperatorSalonDto(
     coupling: extra.coupling,
   };
 }
+
+/**
+ * Create body: the facade's strict create schema without `isActive` (a new salon is always active),
+ * with the Bundesland REQUIRED (D-07a) and the optional embedded coupling (D-12a). No `provider`
+ * key exists (D-11).
+ */
+const createOperatorSalonSchema = createSalonSchema.omit({ isActive: true }).extend({
+  federalState: z.nativeEnum(FederalState),
+  coupling: z
+    .object({ externalBranchId: z.string().trim().min(1).max(100) })
+    .strict()
+    .nullable()
+    .optional(),
+});
 
 export async function operatorSalonRoutes(app: FastifyInstance, opts: OperatorSalonRoutesOptions) {
   // GET /api/v1/operator/tenants/:id/salons
@@ -99,6 +235,114 @@ export async function operatorSalonRoutes(app: FastifyInstance, opts: OperatorSa
             : null,
         });
       });
+    },
+  });
+
+  // POST /api/v1/operator/tenants/:id/salons
+  app.post("/", {
+    config: mutationRateLimit,
+    schema: {
+      tags: ["Betreiber"],
+      description:
+        "Creates a salon (Bundesland and opening hours required) with an optional Phorest coupling.",
+    },
+    preHandler: requireOperator,
+    handler: async (req, reply) => {
+      const { id: tenantId } = tenantParamSchema.parse(req.params);
+      const { coupling, ...fields } = createOperatorSalonSchema.parse(req.body);
+      const operatorId = req.operator.sub;
+      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId, request: req });
+
+      let result;
+      try {
+        result = await app.prisma.$transaction(async (tx) => {
+          const gate = await tenantGate(tx, tenantId);
+          if (gate !== "OK") return { status: gate } as const;
+
+          const created = await createSalon(tx, tenantId, fields);
+          // The default salon is the first ACTIVE salon of the tenant (same rule as the listing).
+          const [firstActive] = await listSalons(tx, tenantId, { includeInactive: false });
+          const isDefault = firstActive?.id === created.id;
+
+          await recordOperatorAudit(tx, {
+            action: OPERATOR_AUDIT_ACTIONS.SALON_CREATED,
+            operatorId,
+            subjectTenantId: tenantId,
+            entity: "Salon",
+            entityId: created.id,
+            newValue: toOperatorSalonDto(created, { isDefault, coupling: null }),
+            request: req,
+          });
+          await writeTenantAudit(
+            { action: "CREATE", entity: "Salon", entityId: created.id, newValue: created },
+            tx,
+          );
+
+          let appliedCoupling: { provider: string; externalBranchId: string } | null = null;
+          if (coupling) {
+            const outcome = await opts.ports.coupling.set(
+              tx,
+              tenantId,
+              { id: created.id, isActive: created.isActive },
+              coupling.externalBranchId,
+            );
+            if (
+              outcome.status === "BRANCH_ALREADY_COUPLED" ||
+              outcome.status === "SALON_INACTIVE"
+            ) {
+              throw new OperatorSalonRejection(outcome.status);
+            }
+            // A brand-new salon has no coupling to keep or replace; anything but CREATED is a bug.
+            if (outcome.status !== "CREATED") {
+              throw new Error(`Unexpected coupling outcome ${outcome.status} for a new salon`);
+            }
+            const row = outcome.coupling;
+            appliedCoupling = { provider: row.provider, externalBranchId: row.externalBranchId };
+            const couplingValue = {
+              salonId: row.salonId,
+              provider: row.provider,
+              externalBranchId: row.externalBranchId,
+            };
+            await recordOperatorAudit(tx, {
+              action: OPERATOR_AUDIT_ACTIONS.SALON_COUPLING_SET,
+              operatorId,
+              subjectTenantId: tenantId,
+              entity: "SalonCoupling",
+              entityId: row.id,
+              newValue: couplingValue,
+              request: req,
+            });
+            await writeTenantAudit(
+              {
+                action: "CREATE",
+                entity: "SalonCoupling",
+                entityId: row.id,
+                newValue: couplingValue,
+              },
+              tx,
+            );
+          }
+
+          return {
+            status: "OK",
+            dto: toOperatorSalonDto(created, { isDefault, coupling: appliedCoupling }),
+          } as const;
+        });
+      } catch (err) {
+        const code = replyCodeOf(err);
+        if (code) {
+          const refusal = OPERATOR_SALON_REPLIES[code];
+          return reply.code(refusal.status).send(refusal.body);
+        }
+        throw err;
+      }
+
+      if (result.status === "NOT_FOUND") return reply.code(404).send(TENANT_NOT_FOUND);
+      if (result.status === "TENANT_DEACTIVATED") {
+        const refusal = OPERATOR_SALON_REPLIES.TENANT_DEACTIVATED;
+        return reply.code(refusal.status).send(refusal.body);
+      }
+      return reply.code(201).send(result.dto);
     },
   });
 }

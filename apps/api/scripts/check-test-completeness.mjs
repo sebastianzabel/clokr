@@ -779,8 +779,10 @@ import { readFileSync } from "node:fs";
 // (19 -> 28 tests, no new test file), MIN_TESTS 6712 -> 6721. Same convention.
 // Phase 89 plan 07 task 1 (2026-10-13): one new test FILE, `src/contexts/scheduling/__tests__/facade-couplings.test.ts`
 // (15 cases, single-file run) - MIN_FILES rises from 402 to 403 and MIN_TESTS from 6721 to 6736. Same convention.
+// Phase 89 plan 08 task 1 (2026-10-13): no new test file; `operator-salons-89.test.ts` grows from 7 to 15 cases (single-file
+// run: the POST describe adds 8) - MIN_FILES stays 403, MIN_TESTS rises from 6736 to 6744. Same convention.
 const MIN_FILES = 403;
-const MIN_TESTS = 6736;
+const MIN_TESTS = 6744;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

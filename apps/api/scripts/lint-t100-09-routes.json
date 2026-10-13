@@ -1175,6 +1175,16 @@
       "reason": "`:id` addresses a Tenant by the operator principal, which sits above the tenant: there is no caller tenant whose foreign instance could be told apart from an unknown id. requireOperator runs first; an unknown id answers the same plain 404 `Mandant nicht gefunden` for every operator, and the salons are read with the tenant-scoped `listSalons(db, tenantId)` (salons.ts), so it is not a tenant-membership oracle. Proven by operator-salons-89.test.ts.",
       "ticket": null,
       "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/operator/tenants/:id/salons",
+      "file": "apps/api/src/contexts/platform/api/operator/salons.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` is the Tenant addressed by the operator principal, which sits above the tenant: there is no caller tenant whose foreign instance could be told apart from an unknown id, and no salon id is in the path. requireOperator runs first; an unknown id answers the one fixed 404 `Mandant nicht gefunden` for every operator, and the salon is created with the tenant-scoped `createSalon(tx, tenantId, …)` from the path tenant, never from the body. Proven by operator-salons-89.test.ts.",
+      "ticket": null,
+      "validatedAt": null
     }
   ]
 }

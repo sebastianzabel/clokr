@@ -8,12 +8,14 @@
  * only maps the public exports of the two contexts onto the shape the route declares.
  *
  * D-12 names the coupling port `{ get, set, remove }`; `list` is the read over all salons of a
- * tenant. `set`/`remove` arrive with the mutations and look a single row up themselves.
+ * tenant, `set` couples a salon (create, unchanged or replace) and `remove` uncouples it. The rules
+ * (inactive salon, one coupling per salon, one salon per branch id) live in Schichtplanung's
+ * coupling facade; this file only forwards.
  */
 import { countEntriesForSalon } from "../contexts/time-tracking";
-import { listSalonCouplings } from "../contexts/scheduling";
+import { listSalonCouplings, removeSalonCoupling, setSalonCoupling } from "../contexts/scheduling";
 
 export const operatorSalonPorts = {
   countTimeEntriesForSalon: countEntriesForSalon,
-  coupling: { list: listSalonCouplings },
+  coupling: { list: listSalonCouplings, set: setSalonCoupling, remove: removeSalonCoupling },
 };
