@@ -15,6 +15,7 @@ import {
   isStammsalonScopeMatch, // Phase 91b Plan 09 (#91), D-10/D-17
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
   findSalon, // Phase 81 (#81), D-09 — summary salon filter, identical 404
+  resolveSalonInReach, // Issue #85 (Phase 85b-03), D-08/D-13 — the one validator of a chosen salon
 } from "../../platform";
 import type { PermissionKey } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
@@ -181,6 +182,15 @@ const timeEntrySummaryQuerySchema = z.object({
 
 // D-09: the summary reads one bounded findMany; cap the window at a leap year (inclusive days).
 const SUMMARY_MAX_RANGE_DAYS = 366;
+
+// Issue #85 (Phase 85b-03), D-08: the optional salon of the Salonansicht. Zod strips every other
+// key, so the list's existing parameters keep their current, unvalidated handling.
+const timeEntryListSalonQuerySchema = z.object({
+  salonId: z.string().uuid("Ungültige Salon-ID").optional(),
+});
+
+// Issue #85 (Phase 85b-03), D-08: the salon view spans at most one month (inclusive days).
+const SALON_VIEW_MAX_RANGE_DAYS = 31;
 
 // Phase 91 (BREAK-03) — BAG 12.02.2025, 5 AZR 51/24: an automatically inserted break does not
 // prove the break was actually taken. `confirm` lets the employee/manager acknowledge it was
@@ -1053,7 +1063,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     schema: {
       tags: ["Zeiterfassung"],
       description:
-        "presenceMinutes/workingMinutes are per-entry display values (rounded, null for open entries; invalid and non-WORK rows included). Do not sum them: period totals come from GET /time-entries/summary.",
+        "presenceMinutes/workingMinutes are per-entry display values (rounded, null for open entries; invalid and non-WORK rows included). Do not sum them: period totals come from GET /time-entries/summary. With salonId (time-entry:read:ZUGEWIESEN, from and to required, at most 31 days) the list is the salon view: every in-scope entry recorded in that active salon in the caller's reach, for all persons.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requireAuth,
@@ -1077,6 +1087,57 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
       const isManager = readReach === "ZUGEWIESEN";
 
+      // Issue #85 (Phase 85b-03), D-08/D-13 — the Salonansicht. A chosen salon is validated here,
+      // BEFORE any entry is read: the entry decides (per-entry rule since Phase 91b), the salon
+      // only narrows, and the one Unterbau validator answers every rejection cause (foreign
+      // tenant, unknown id, inactive salon, salon outside the reach, PERSONS-only reach) with the
+      // same 404. The person view (no salonId) executes the statements below unchanged.
+      const { salonId: salonIdParam } = timeEntryListSalonQuerySchema.parse(req.query);
+      const salonView = salonIdParam !== undefined;
+      let viewSalonId: string | null = null;
+      let viewReach: Awaited<ReturnType<typeof resolveAccessReach>> | null = null;
+      if (salonView) {
+        if (!isManager) {
+          return reply.code(403).send({ error: "Forbidden" });
+        }
+        if (!from || !to) {
+          return reply
+            .code(400)
+            .send({ error: "Für die Salonansicht sind Start- und Enddatum erforderlich" });
+        }
+        const fromParsed = isoDateParam.safeParse(from);
+        const toParsed = isoDateParam.safeParse(to);
+        if (!fromParsed.success || !toParsed.success) {
+          return reply
+            .code(400)
+            .send({ error: "Für die Salonansicht sind Start- und Enddatum erforderlich" });
+        }
+        const spanMs = new Date(to).getTime() - new Date(from).getTime();
+        if (spanMs < 0) {
+          return reply.code(400).send({ error: "Startdatum darf nicht nach dem Enddatum liegen" });
+        }
+        if (Math.floor(spanMs / 86_400_000) + 1 > SALON_VIEW_MAX_RANGE_DAYS) {
+          return reply
+            .code(400)
+            .send({ error: "Der Zeitraum der Salonansicht darf höchstens 31 Tage umfassen" });
+        }
+        viewReach = await resolveAccessReach(
+          app.prisma,
+          accessContextFromRequest(req),
+          "time-entry:read:ZUGEWIESEN",
+        );
+        const resolved = await resolveSalonInReach(
+          app.prisma,
+          user.tenantId,
+          viewReach,
+          salonIdParam,
+        );
+        if (!resolved.ok) {
+          return reply.code(404).send({ error: "Salon nicht gefunden" });
+        }
+        viewSalonId = resolved.salonId;
+      }
+
       // Issue #368, Befund 4: EIGENE (non-manager) reach with a foreign `?employeeId=` used to
       // silently substitute the caller's own id and answer 200 with (empty) own data instead of
       // 403 — `time-entry:read:EIGENE` explicitly excludes foreign entries
@@ -1095,7 +1156,14 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if (!isManager && employeeId && employeeId !== user.employeeId) {
         return reply.code(403).send({ error: "Forbidden" });
       }
-      const employeeFilter = isManager && employeeId ? employeeId : (user.employeeId ?? undefined);
+      // Issue #85 D-08: the salon view never falls back to the caller's own employeeId — it lists
+      // every person's entries of that salon; an explicit employeeId intersects with it.
+      const employeeFilter =
+        isManager && employeeId
+          ? employeeId
+          : salonView
+            ? undefined
+            : (user.employeeId ?? undefined);
 
       // PERF-V1814-03: cap + defaulted 90d window (non-breaking; web callers always pass bounds)
       const defaultFrom = from
@@ -1113,7 +1181,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       let scopedIds: "all" | string[] = "all";
       if (isManager) {
         const access = accessContextFromRequest(req);
-        const reach = await resolveAccessReach(app.prisma, access, "time-entry:read:ZUGEWIESEN");
+        const reach =
+          viewReach ?? (await resolveAccessReach(app.prisma, access, "time-entry:read:ZUGEWIESEN"));
         scopedIds = await scopedTimeEntryIds(
           app.prisma,
           user.tenantId,
@@ -1140,6 +1209,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             lte: to ? new Date(to) : undefined,
           },
           ...(scopedIds !== "all" ? { id: { in: scopedIds } } : {}),
+          // Issue #85 D-08: the entry's own salon, ANDed with the scope above.
+          ...(viewSalonId !== null ? { salonId: viewSalonId } : {}),
         },
         include: {
           employee: { select: { firstName: true, lastName: true } },
@@ -1149,7 +1220,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
         },
         take: TIME_ENTRIES_MAX,
-        orderBy: { date: "desc" },
+        orderBy:
+          viewSalonId !== null
+            ? [
+                { date: "asc" },
+                { employee: { lastName: "asc" } },
+                { employee: { firstName: "asc" } },
+                { startTime: "asc" },
+              ]
+            : { date: "desc" },
       });
 
       if (entries.length === TIME_ENTRIES_MAX) {
