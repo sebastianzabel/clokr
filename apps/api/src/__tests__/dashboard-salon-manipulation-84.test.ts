@@ -319,7 +319,7 @@ describe("Issue #84 — a manipulated salon filter yields no foreign data", () =
     ).team;
     expect(rows.map((r) => r.id)).not.toContain(employeeE.id);
     expect(week.body).not.toContain(E_LABEL);
-    // Amendment 2026-10-13 (Phase 85b, D-04): S is homed in B, but the reach covers S's entry in
+    // Per-entry scope (see the header amendment, D-04): S is homed in B, but the reach covers S's entry in
     // A, so S is listed with exactly those 4 hours and no other figure.
     const s = rows.find((r) => r.id === employeeS.id);
     expect(s, "S is listed by the in-scope entry").toBeDefined();
