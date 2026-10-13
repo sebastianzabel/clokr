@@ -12,6 +12,8 @@ import { config } from "./config";
 import { AccessContextError } from "./contexts/platform"; // Phase 77b (Issue #77) — index, not the deep module
 import { authRoutes } from "./contexts/platform/api/auth";
 import { operatorAuthRoutes } from "./contexts/platform/api/operator/auth"; // Phase 88 (#88)
+import { operatorTenantRoutes } from "./contexts/platform/api/operator/tenants"; // Phase 88 (#88)
+import { seedDefaultsForNewTenant } from "./composition/tenant-onboarding"; // Phase 88 (#88)
 import { employeeRoutes } from "./contexts/platform/api/employees";
 import { employeeWifiRoutes } from "./contexts/time-tracking/api/employee-wifi"; // Phase 243 Plan 02 (B2)
 import { timeEntryRoutes } from "./contexts/time-tracking/api/time-entries";
@@ -332,6 +334,11 @@ export async function buildApp() {
   // Phase 88 (#88, D-02a): the operator surface exists only when its signing secret is configured.
   if (config.OPERATOR_JWT_SECRET) {
     await app.register(operatorAuthRoutes, { prefix: "/api/v1/operator/auth" });
+    // The Unterbau route cannot import the absence context; the composition root hands it the seam.
+    await app.register(operatorTenantRoutes, {
+      prefix: "/api/v1/operator/tenants",
+      onTenantCreated: seedDefaultsForNewTenant,
+    });
   }
   await app.register(employeeRoutes, { prefix: "/api/v1/employees" });
   await app.register(timeEntryRoutes, { prefix: "/api/v1/time-entries" });

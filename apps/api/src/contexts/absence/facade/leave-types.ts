@@ -38,6 +38,7 @@
  * same as before).
  */
 import type { LeaveType, LeaveTypeCode, Prisma } from "@clokr/db";
+import { REQUESTABLE_CODES, leaveTypeFields } from "../leave-type";
 
 // ── A17 — the stable, code-based lookup ─────────────────────────────────────────────────────
 
@@ -99,4 +100,33 @@ export async function updateLeaveType(
   if (!existing) return null;
   const updated = await db.leaveType.update({ where: { id, tenantId }, data });
   return { existing, updated };
+}
+
+// ── Phase 88 (#88) — the default leave types of a brand-new tenant ──────────────────────────
+
+/**
+ * Phase 88 (#88, orchestrator decision) — makes sure `tenantId` has a `LeaveType` row for every
+ * requestable code, so a freshly provisioned tenant can book leave at once (BUrlG: the first admin
+ * gets a hire-year vacation entitlement, which needs the VACATION row).
+ *
+ * The rows come from {@link leaveTypeFields} over {@link REQUESTABLE_CODES} — the one definition
+ * of the default types (`leave-type.ts`); there is no second copy here and no seed copy to keep
+ * in step. Idempotent: `skipDuplicates` leaves every row that already exists untouched, so a
+ * tenant-renamed type (name is display text, AC-2) is never overwritten and calling this twice
+ * writes nothing the second time. Writes no audit row, exactly like the lazy `ensureLeaveType`
+ * path in `api/leave.ts`; the operator's `TENANT_CREATED` row covers the provisioning as a whole.
+ *
+ * Returns the number of rows actually created. Site: the operator tenant-create flow in
+ * `composition/tenant-onboarding.ts` (the Unterbau must not import this context, so the
+ * composition layer calls this next to `provisionTenantWithAdmin`).
+ */
+export async function ensureDefaultLeaveTypes(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+): Promise<number> {
+  const { count } = await db.leaveType.createMany({
+    data: REQUESTABLE_CODES.map((code) => ({ tenantId, ...leaveTypeFields(code) })),
+    skipDuplicates: true,
+  });
+  return count;
 }

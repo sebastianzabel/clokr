@@ -210,6 +210,14 @@ export interface TenantWithAdminInput {
     /** Defaults to "1": the first employee of a brand-new tenant. */
     employeeNumber?: string;
   };
+  /**
+   * Runs in the caller's transaction right after the tenant skeleton exists and BEFORE the first
+   * admin is created. It is how a layer above (the composition root) adds what the Unterbau may
+   * not import itself — the default leave types of the absence context — so that the admin's
+   * hire-year vacation entitlement, written by the shared employee-creation code, finds its
+   * leave type. No business rule lives in this seam: it only runs the callback.
+   */
+  onTenantCreated?: (tx: Prisma.TransactionClient, tenantId: string) => Promise<void>;
 }
 
 export type ProvisionTenantWithAdminResult =
@@ -302,6 +310,7 @@ export async function provisionTenantWithAdmin(
 
   try {
     const { tenant, config, salon } = await provisionTenant(tx, input.tenant);
+    await input.onTenantCreated?.(tx, tenant.id);
 
     // Midnight UTC of the tenant-local day: the Stammsalon row starts on that same local day.
     const hireDay = tenantLocalDay(new Date(), config.timezone);
