@@ -21,6 +21,10 @@
  *  - M2: returning the stored balance unconditionally turned the null-balance cases red
  *    (Salonmanager, overtime:read over salon A, overtime:read EIGENE).
  *
+ * Phase 85b Plan 15 (gap closure): the same mask is pinned on `GET /employees/:id` and the PATCH
+ * responses (`overtimeAccount` is decided by one helper). Mutation proof M1: returning the raw
+ * account on the single view turns the 85b-15 cases red.
+ *
  * No person names in fixtures (labels such as "el85").
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -380,5 +384,132 @@ describe("Issue #547 (Phase 85b Plan 01) — employee list scope and balance mas
     expect(idsOf(rows)).not.toContain(emp["el85-anon"].id);
     const adminRows = await list(adminToken, "?includeAnonymized=true");
     expect(idsOf(adminRows)).toContain(emp["el85-anon"].id);
+  });
+
+  // ── Phase 85b Plan 15 (gap closure of 85b-VERIFICATION): the single view and the PATCH
+  // responses carry the same saldo mask as the list — one helper decides.
+
+  async function getOne(token: string, id: string) {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/employees/${id}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    return { status: res.statusCode, body: JSON.parse(res.body) as ListRow };
+  }
+
+  it("85b-15: GET /employees/:id masks the saldo for the Salonmanager (in-reach person and deployment-only person), keeps null for a person without an account", async () => {
+    const inReach = await getOne(salonManagerToken, emp["el85-pa1"].id);
+    expect(inReach.status).toBe(200);
+    expect(inReach.body.overtimeAccount).not.toBeNull();
+    expect(inReach.body.overtimeAccount!.balanceHours).toBeNull();
+
+    // Homed in B, deployed in A today: master data is visible, the saldo (which would include
+    // salon-B time) must not be.
+    const deployed = await getOne(salonManagerToken, emp["el85-depl"].id);
+    expect(deployed.status).toBe(200);
+    expect(deployed.body.overtimeAccount).not.toBeNull();
+    expect(deployed.body.overtimeAccount!.balanceHours).toBeNull();
+    // The stored value is non-zero, so a null is a mask and not an empty account.
+    const stored = await app.prisma.overtimeAccount.findUniqueOrThrow({
+      where: { employeeId: emp["el85-depl"].id },
+    });
+    expect(Number(stored.balanceHours)).toBe(8);
+
+    const noAccount = await getOne(salonManagerToken, emp["el85-pa2"].id);
+    expect(noAccount.status).toBe(200);
+    expect(noAccount.body.overtimeAccount).toBeNull();
+  });
+
+  it("85b-15: GET /employees/:id shows the stored saldo to the admin and to the person themself", async () => {
+    const asAdmin = await getOne(adminToken, emp["el85-depl"].id);
+    expect(asAdmin.status).toBe(200);
+    expect(Number(asAdmin.body.overtimeAccount!.balanceHours)).toBe(8);
+
+    const asSelf = await getOne(await login(emp["el85-pa1"].email), emp["el85-pa1"].id);
+    expect(asSelf.status).toBe(200);
+    expect(Number(asSelf.body.overtimeAccount!.balanceHours)).toBe(5);
+  });
+
+  it("85b-15: GET /employees/:id follows overtime:read coverage (salon A reveals a person homed in A, not the deployment-only person)", async () => {
+    const reader = await customManager(
+      "el85-ot-one",
+      ["employee:read:ZUGEWIESEN", "overtime:read:ZUGEWIESEN"],
+      { scopeType: "SALONS", salonIds: [salonA.id] },
+    );
+    const token = await login(reader.email);
+    expect(
+      Number((await getOne(token, emp["el85-pa1"].id)).body.overtimeAccount!.balanceHours),
+    ).toBe(5);
+    expect(
+      (await getOne(token, emp["el85-depl"].id)).body.overtimeAccount!.balanceHours,
+    ).toBeNull();
+  });
+
+  it("85b-15: the list and the single view agree on the balance of every listed person", async () => {
+    const rows = await list(salonManagerToken);
+    for (const row of rows) {
+      const one = await getOne(salonManagerToken, row.id);
+      expect(one.status).toBe(200);
+      expect(
+        one.body.overtimeAccount === null ? "NO_ACCOUNT" : one.body.overtimeAccount.balanceHours,
+      ).toBe(row.overtimeAccount === null ? "NO_ACCOUNT" : row.overtimeAccount.balanceHours);
+    }
+  });
+
+  it("85b-15: PATCH /employees/:id/reactivate answers balanceHours null to a caller without overtime:read coverage, the stored value to the admin", async () => {
+    const reader = await customManager(
+      "el85-react",
+      ["employee:read:ZUGEWIESEN", "employee:manage-access:ZUGEWIESEN"],
+      { scopeType: "SALONS", salonIds: [salonA.id] },
+    );
+    const token = await login(reader.email);
+    const target = await createPerson("el85-react-target", { balance: "4" });
+    await assign(target.id, salonA.id, "HOME", "2020-01-01");
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/employees/${target.id}/reactivate`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    // The fixture user is active already (409) -> deactivate first so the reactivate path runs.
+    expect(res.statusCode).toBe(409);
+    await app.prisma.user.update({ where: { id: target.userId }, data: { isActive: false } });
+    const ok = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/employees/${target.id}/reactivate`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(ok.statusCode).toBe(200);
+    const body = JSON.parse(ok.body) as ListRow;
+    expect(body.overtimeAccount).not.toBeNull();
+    expect(body.overtimeAccount!.balanceHours).toBeNull();
+
+    await app.prisma.user.update({ where: { id: target.userId }, data: { isActive: false } });
+    const asAdmin = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/employees/${target.id}/reactivate`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(asAdmin.statusCode).toBe(200);
+    expect(Number((JSON.parse(asAdmin.body) as ListRow).overtimeAccount!.balanceHours)).toBe(4);
+  });
+
+  it("85b-15: PATCH /employees/:id by a scoped caller returns no non-null balanceHours", async () => {
+    const reader = await customManager(
+      "el85-patch",
+      ["employee:read:ZUGEWIESEN", "employee:update:ZUGEWIESEN"],
+      { scopeType: "SALONS", salonIds: [salonA.id] },
+    );
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/employees/${emp["el85-pa1"].id}`,
+      headers: { authorization: `Bearer ${await login(reader.email)}` },
+      payload: { coverageWeight: 1 },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as ListRow;
+    // Either no account key at all or a masked one — never the stored 5.
+    expect(body.overtimeAccount?.balanceHours ?? null).toBeNull();
+    expect(res.body).not.toMatch(/"balanceHours":"?5/);
   });
 });

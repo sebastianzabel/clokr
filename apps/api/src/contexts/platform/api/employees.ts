@@ -502,6 +502,62 @@ async function enforcePersonAdminScope(
   return false;
 }
 
+/**
+ * Issue #547 (Phase 85b Plans 01 and 15, D-02): the persons whose STORED total saldo the caller
+ * may read — `"all"` for a whole-tenant `overtime:read` reach, otherwise the set of covered person
+ * ids (an own-row reach covers only the caller). The ONE place this decision lives: every
+ * `/employees` response that carries `overtimeAccount` goes through it plus `maskOvertimeAccount`
+ * (owner decision 2026-08-27: the total saldo is visible to Inhaber, Personalabteilung and the
+ * employee). Decided once per request.
+ */
+async function resolveBalanceVisibility(
+  app: FastifyInstance,
+  req: FastifyRequest,
+): Promise<"all" | ReadonlySet<string>> {
+  const tenantId = req.user.tenantId;
+  const ownEmployeeId = req.user.employeeId ?? null;
+  const overtimeReach = await permissionReach(req, "overtime:read");
+  if (overtimeReach === "EIGENE") {
+    return new Set(ownEmployeeId ? [ownEmployeeId] : []);
+  }
+  if (overtimeReach === "ZUGEWIESEN") {
+    const overtimeScope = await resolveAccessReach(
+      app.prisma,
+      accessContextFromRequest(req),
+      "overtime:read:ZUGEWIESEN",
+    );
+    // Stichtag = tenant-local today, computed exactly as resolvePersonScopedEmployeeIds does
+    // (a running saldo has no closed-period Stichtag, see overtime.ts GET /:employeeId).
+    const tz = await readTenantTimezone(app.prisma, tenantId);
+    const today = dayToDate(tenantLocalDay(new Date(), tz));
+    const covered = await resolveStammsalonScopedEmployeeIds(
+      app.prisma,
+      tenantId,
+      overtimeScope,
+      today,
+    );
+    return covered === "all"
+      ? "all"
+      : new Set(ownEmployeeId ? [...covered, ownEmployeeId] : covered);
+  }
+  return new Set<string>();
+}
+
+/**
+ * Applies `resolveBalanceVisibility` to one person's account: a person without an account stays
+ * `null`; a hidden balance is `null`, never a fabricated 0. Every other field of the account row
+ * keeps its key so the response shape does not depend on the caller.
+ */
+function maskOvertimeAccount<A extends { balanceHours: unknown }>(
+  visibleFor: "all" | ReadonlySet<string>,
+  employeeId: string,
+  account: A | null,
+): (Omit<A, "balanceHours"> & { balanceHours: A["balanceHours"] | null }) | null {
+  if (!account) return null;
+  const visible = visibleFor === "all" || visibleFor.has(employeeId);
+  return visible ? account : { ...account, balanceHours: null };
+}
+
 export async function employeeRoutes(app: FastifyInstance) {
   // GET /api/v1/employees
   //
@@ -556,40 +612,12 @@ export async function employeeRoutes(app: FastifyInstance) {
       });
 
       // D-02: whose stored balance this caller may read — decided once per request.
-      const overtimeReach = await permissionReach(req, "overtime:read");
-      let balanceVisibleFor: "all" | ReadonlySet<string> = new Set<string>();
-      if (overtimeReach === "EIGENE") {
-        balanceVisibleFor = new Set(ownEmployeeId ? [ownEmployeeId] : []);
-      } else if (overtimeReach === "ZUGEWIESEN") {
-        const overtimeScope = await resolveAccessReach(
-          app.prisma,
-          access,
-          "overtime:read:ZUGEWIESEN",
-        );
-        // Stichtag = tenant-local today, computed exactly as resolvePersonScopedEmployeeIds does
-        // (a running saldo has no closed-period Stichtag, see overtime.ts GET /:employeeId).
-        const tz = await readTenantTimezone(app.prisma, tenantId);
-        const today = dayToDate(tenantLocalDay(new Date(), tz));
-        const covered = await resolveStammsalonScopedEmployeeIds(
-          app.prisma,
-          tenantId,
-          overtimeScope,
-          today,
-        );
-        balanceVisibleFor =
-          covered === "all"
-            ? "all"
-            : new Set(ownEmployeeId ? [...covered, ownEmployeeId] : covered);
-      }
+      const balanceVisibleFor = await resolveBalanceVisibility(app, req);
 
       return employees.map((e) => {
-        const balanceVisible = balanceVisibleFor === "all" || balanceVisibleFor.has(e.id);
         return {
           ...e,
-          // A person without an account stays null; a hidden balance is null, never 0.
-          overtimeAccount: e.overtimeAccount
-            ? { balanceHours: balanceVisible ? e.overtimeAccount.balanceHours : null }
-            : null,
+          overtimeAccount: maskOvertimeAccount(balanceVisibleFor, e.id, e.overtimeAccount),
           workSchedule: e.workSchedules[0] ?? null,
           workSchedules: undefined,
           invitationStatus: deriveInvitationStatus(e.user.isActive, e.invitations),
@@ -652,6 +680,12 @@ export async function employeeRoutes(app: FastifyInstance) {
 
       return {
         ...employee,
+        // Issue #547 (Phase 85b Plan 15): the single view masks the total saldo exactly like the list.
+        overtimeAccount: maskOvertimeAccount(
+          await resolveBalanceVisibility(app, req),
+          employee.id,
+          employee.overtimeAccount,
+        ),
         workSchedule: employee.workSchedules[0] ?? null,
         workSchedules: undefined,
         invitationStatus: deriveInvitationStatus(employee.user.isActive, employee.invitations),
@@ -1703,6 +1737,12 @@ export async function employeeRoutes(app: FastifyInstance) {
 
       return {
         ...updated,
+        // Issue #547 (Phase 85b Plan 15): same saldo mask as the list and the single view.
+        overtimeAccount: maskOvertimeAccount(
+          await resolveBalanceVisibility(app, req),
+          id,
+          updated?.overtimeAccount ?? null,
+        ),
         workSchedule: updated?.workSchedules[0] ?? null,
         workSchedules: undefined,
       };
