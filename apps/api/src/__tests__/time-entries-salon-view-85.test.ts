@@ -14,11 +14,14 @@
  * reverted with `cp` from a backup (cmp clean) after the red names below were observed:
  * M1 resolveSalonInReach drops the scoped-reach membership line → red on "MA: a salon out of
  *    reach, a deactivated salon, a foreign tenant's salon and an unknown id answer byte-identical
- *    404s" (salon B answered 200).
+ *    404s" (salon B answered 200) and on "a PERSONS-only reach names no salon: salon A answers the
+ *    same 404".
  * M2 the salon branch drops the `salonId` condition from the where → red on "the salon view of A
- *    never contains an entry recorded in another salon" (H's B entry appeared).
+ *    never contains an entry recorded in another salon" (H's B entry appeared) and on the admin,
+ *    MA and MB id-set cases and the admin salon-B case.
  * M3 the salon branch falls back to the caller's own employeeId → red on "MA, salonId A: every
- *    entry recorded in A, of all persons, ordered by date then name".
+ *    entry recorded in A, of all persons, ordered by date then name" (and on the admin and MB
+ *    id-set cases and the admin salon-B case).
  *
  * Harness: no fake clock needed — every request names an explicit window.
  */
