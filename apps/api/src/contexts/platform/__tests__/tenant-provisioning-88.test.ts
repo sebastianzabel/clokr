@@ -116,6 +116,18 @@ describe("tenant provisioning (Phase 88, D-04/D-04a)", () => {
     expect(await app.prisma.salon.count({ where: { tenantId: tenant.id } })).toBe(0);
   });
 
+  it("(a) L1 writes the Grundversion explicitly: no module booked, a salon quota of 1 (Phase 566, D-09)", async () => {
+    const slug = uniqueSlug("l1pkg");
+    const { tenant } = await app.prisma.$transaction((tx) =>
+      createTenantWithConfig(tx, { name: `Tenant ${slug}`, slug, federalState: "BAYERN" }),
+    );
+    createdTenantIds.push(tenant.id);
+
+    const stored = await app.prisma.tenant.findUniqueOrThrow({ where: { id: tenant.id } });
+    expect(stored.bookedModules).toEqual([]);
+    expect(stored.salonQuota).toBe(1);
+  });
+
   it("(a) L1 honours a given timezone and a given id", async () => {
     const slug = uniqueSlug("l1tz");
     const id = `p88-id-${Math.random().toString(36).slice(2, 10)}`;
@@ -132,6 +144,22 @@ describe("tenant provisioning (Phase 88, D-04/D-04a)", () => {
 
     expect(tenant.id).toBe(id);
     expect(config.timezone).toBe("Europe/Lisbon");
+  });
+
+  it("(b) L2's default salon is active although the tenant starts on the Grundversion: the quota lets the first salon pass (Phase 566, D-04)", async () => {
+    const slug = uniqueSlug("l2pkg");
+    const { tenant, salon } = await app.prisma.$transaction((tx) =>
+      provisionTenant(tx, { name: `Tenant ${slug}`, slug, federalState: "SACHSEN" }),
+    );
+    createdTenantIds.push(tenant.id);
+
+    const stored = await app.prisma.tenant.findUniqueOrThrow({ where: { id: tenant.id } });
+    expect(stored.bookedModules).toEqual([]);
+    expect(stored.salonQuota).toBe(1);
+    expect(salon.isActive).toBe(true);
+    expect(await app.prisma.salon.count({ where: { tenantId: tenant.id, isActive: true } })).toBe(
+      1,
+    );
   });
 
   it("(b) L2 creates exactly one active default salon in the REQUESTED Bundesland", async () => {
@@ -218,6 +246,24 @@ function salonCreateCall(source: string): string {
   throw new Error("unbalanced prisma.salon.create( call");
 }
 
+/** The `prisma.tenant.create(` / `prisma.tenant.upsert(` call of a seed module, braces balanced. */
+function tenantCreateCall(source: string): string {
+  const starts = ["prisma.tenant.upsert(", "prisma.tenant.create("]
+    .map((needle) => source.indexOf(needle))
+    .filter((index) => index > -1);
+  expect(starts, "exactly one tenant creation call in the seed module").toHaveLength(1);
+  const start = starts[0] ?? 0;
+  let depth = 0;
+  for (let i = source.indexOf("(", start); i < source.length; i++) {
+    if (source[i] === "(") depth++;
+    if (source[i] === ")") {
+      depth--;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  throw new Error("unbalanced tenant creation call");
+}
+
 describe("seed parity — D-04a deviation", () => {
   const seeds = ["packages/db/src/seed.ts", "packages/db/src/seed-demo.ts"] as const;
 
@@ -232,6 +278,22 @@ describe("seed parity — D-04a deviation", () => {
       expect(call).toMatch(/isActive:\s*true/);
       expect(source).toMatch(/prisma\.tenantConfig\.(create|upsert)\(/);
       expect(source).toMatch(/tenantId:\s*tenant\.id/);
+    });
+  }
+
+  for (const rel of seeds) {
+    it(`${rel} books all four modules with a salon quota of 5 on its tenant (Phase 566, D-10)`, () => {
+      const source = readFileSync(join(REPO_ROOT, rel), "utf8");
+      const call = tenantCreateCall(source);
+      const modules = /bookedModules:\s*\[([^\]]*)\]/.exec(call);
+      expect(modules, "no bookedModules array in the seed's tenant creation").not.toBeNull();
+      const booked = (modules?.[1] ?? "")
+        .split(",")
+        .map((m) => m.trim().replace(/["']/g, ""))
+        .filter((m) => m !== "")
+        .sort((a, b) => a.localeCompare(b));
+      expect(booked).toEqual(["ANALYTICS", "CHAIN", "HARDWARE_CLOCK", "INTEGRATIONS"]);
+      expect(call).toMatch(/salonQuota:\s*5\b/);
     });
   }
 

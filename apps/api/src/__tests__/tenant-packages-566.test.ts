@@ -5,18 +5,20 @@
  * Package tests create Grundversion tenants explicitly (`seedGrundversionTenant`); the shared
  * `seedTestData` fixture books everything (D-10), pinned in the last block.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import {
   getTestApp,
   seedTestData,
   seedGrundversionTenant,
+  seedOperator,
   createTestSalon,
   cleanupTestData,
   FIXTURE_PACKAGES,
 } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
+import { signOperatorToken } from "../contexts/platform/operator-auth";
 import {
   GRUNDVERSION,
   ModuleNotBookedError,
@@ -332,5 +334,189 @@ describe("salon creation against the booked limit (Phase 566, D-04, AC-566-02)",
     const second = await create(chainTenant.adminToken, { name: "Dritter Salon" });
     expect(second.statusCode).toBe(409);
     expect(JSON.parse(second.body).code).toBe("SALON_QUOTA_REACHED");
+  });
+});
+
+// ── Operator paths (Phase 566, D-04, D-09, AC-566-02) ─────────────────────────────────────────
+
+let operatorAddressCounter = 0;
+
+/** Every operator request carries its own remote address so the per-route rate limits never trip. */
+function operatorAddress(): string {
+  const n = operatorAddressCounter++;
+  return `10.56.${Math.floor(n / 250) % 250}.${(n % 250) + 1}`;
+}
+
+describe("operator paths against the booked limit (Phase 566, D-04, D-09, AC-566-02)", () => {
+  let app: FastifyInstance;
+  let operatorToken: string;
+  let grund: Awaited<ReturnType<typeof seedGrundversionTenant>>;
+  const createdTenantIds: string[] = [];
+
+  function operatorCall(method: "POST", url: string, payload?: object) {
+    return app.inject({
+      method,
+      url,
+      headers: { authorization: `Bearer ${operatorToken}`, "user-agent": "vitest-packages-566" },
+      ...(payload ? { payload } : {}),
+      remoteAddress: operatorAddress(),
+    });
+  }
+
+  function salonBody(name: string) {
+    return {
+      name,
+      street: "Hauptstrasse 1",
+      postalCode: "30159",
+      city: "Hannover",
+      openingHours: DEFAULT_SALON_OPENING_HOURS,
+      federalState: "NIEDERSACHSEN",
+    };
+  }
+
+  /** Everything one operator request could have left behind for a salon of this name. */
+  async function leftovers(tenantId: string, name: string) {
+    return {
+      salons: await app.prisma.salon.count({ where: { tenantId, name } }),
+      operatorRows: await app.prisma.operatorAuditLog.count({
+        where: { action: "SALON_CREATED", newValue: { path: ["name"], equals: name } },
+      }),
+      tenantRows: await app.prisma.auditLog.count({
+        where: { entity: "Salon", action: "CREATE", newValue: { path: ["name"], equals: name } },
+      }),
+    };
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    grund = await seedGrundversionTenant(app, "pkg566-op");
+    const operator = await seedOperator(app);
+    operatorToken = signOperatorToken(app, operator.id, "access", operator.tokenVersion);
+  });
+
+  afterAll(async () => {
+    for (const id of [grund.tenant.id, ...createdTenantIds]) {
+      try {
+        await cleanupTestData(app, id);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  it("(a) the operator create refuses an active salon beyond the limit with the tenant route's body and persists nothing", async () => {
+    const name = `Operator Zweiter ${randomUUID().slice(0, 8)}`;
+    const res = await operatorCall(
+      "POST",
+      `/api/v1/operator/tenants/${grund.tenant.id}/salons`,
+      salonBody(name),
+    );
+
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect(Object.keys(body).sort((a, b) => a.localeCompare(b))).toEqual(["code", "error"]);
+    expect(body.code).toBe("SALON_QUOTA_REACHED");
+    expect(body.error).toBe(SALON_QUOTA_REACHED_MESSAGE);
+    expect(await leftovers(grund.tenant.id, name)).toEqual({
+      salons: 0,
+      operatorRows: 0,
+      tenantRows: 0,
+    });
+  });
+
+  it("(b) the operator activate refuses beyond the limit with the identical body and leaves the salon inactive", async () => {
+    const inactive = await createTestSalon(app.prisma, grund.tenant.id, {
+      name: "Operator vorbereitet",
+      isActive: false,
+    });
+    const operatorBefore = await app.prisma.operatorAuditLog.count({
+      where: { subjectTenantId: grund.tenant.id, entityId: inactive.id },
+    });
+    const tenantBefore = await app.prisma.auditLog.count({
+      where: { entity: "Salon", entityId: inactive.id },
+    });
+
+    const res = await operatorCall(
+      "POST",
+      `/api/v1/operator/tenants/${grund.tenant.id}/salons/${inactive.id}/activate`,
+    );
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: SALON_QUOTA_REACHED_MESSAGE,
+      code: "SALON_QUOTA_REACHED",
+    });
+    const row = await app.prisma.salon.findUniqueOrThrow({ where: { id: inactive.id } });
+    expect(row.isActive).toBe(false);
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: { subjectTenantId: grund.tenant.id, entityId: inactive.id },
+      }),
+    ).toBe(operatorBefore);
+    expect(
+      await app.prisma.auditLog.count({ where: { entity: "Salon", entityId: inactive.id } }),
+    ).toBe(tenantBefore);
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: { subjectTenantId: grund.tenant.id, action: "SALON_ACTIVATED" },
+      }),
+    ).toBe(0);
+  });
+
+  it("(b2) the operator activate of an already-active salon at the limit keeps the ALREADY_ACTIVE body", async () => {
+    const active = await app.prisma.salon.findFirstOrThrow({
+      where: { tenantId: grund.tenant.id, isActive: true },
+    });
+    const res = await operatorCall(
+      "POST",
+      `/api/v1/operator/tenants/${grund.tenant.id}/salons/${active.id}/activate`,
+    );
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect(body.error).toBe("Der Salon ist bereits aktiv.");
+    expect(body.code).not.toBe("SALON_QUOTA_REACHED");
+  });
+
+  it("(c) a new operator-created tenant starts on the Grundversion and still gets its active default salon", async () => {
+    const mailSpy = vi.spyOn(app.mailer, "sendInvitation").mockImplementation(async () => {});
+    try {
+      const slug = `p566-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const res = await operatorCall("POST", "/api/v1/operator/tenants", {
+        name: `Mandant ${slug}`,
+        slug,
+        federalState: "SACHSEN",
+        admin: { email: `${slug}@example.invalid`, firstName: "Erste", lastName: "Leitung" },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      const parsed = JSON.parse(res.body) as { tenant: { id: string }; defaultSalonId: string };
+      createdTenantIds.push(parsed.tenant.id);
+
+      const salon = await app.prisma.salon.findUniqueOrThrow({
+        where: { id: parsed.defaultSalonId },
+      });
+      expect(salon.isActive).toBe(true);
+      const stored = await app.prisma.tenant.findUniqueOrThrow({ where: { id: parsed.tenant.id } });
+      expect(stored.bookedModules).toEqual([]);
+      expect(stored.salonQuota).toBe(1);
+    } finally {
+      mailSpy.mockRestore();
+    }
+  });
+
+  it("(d) a deactivated tenant at its limit still answers TENANT_DEACTIVATED, the gate runs first", async () => {
+    const dead = await seedGrundversionTenant(app, "pkg566-op-dead");
+    createdTenantIds.push(dead.tenant.id);
+    await app.prisma.tenant.update({
+      where: { id: dead.tenant.id },
+      data: { deactivatedAt: new Date(), deactivatedReason: "test" },
+    });
+
+    const res = await operatorCall(
+      "POST",
+      `/api/v1/operator/tenants/${dead.tenant.id}/salons`,
+      salonBody(`Operator Tot ${randomUUID().slice(0, 8)}`),
+    );
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).code).toBe("TENANT_DEACTIVATED");
   });
 });

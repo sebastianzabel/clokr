@@ -298,6 +298,11 @@ async function main() {
       name: "Clokr Demo GmbH",
       slug: TENANT_SLUG,
       federalState: "NIEDERSACHSEN",
+      // Phase 566 (D-10): the demo shows every module and several salons, so it books all four
+      // modules with a salon quota of 5. Spelled out because packages/db cannot import the API
+      // constants; tenant-provisioning-88.test.ts pins these values.
+      bookedModules: ["CHAIN", "INTEGRATIONS", "HARDWARE_CLOCK", "ANALYTICS"],
+      salonQuota: 5,
     },
   });
   bump("tenant");
