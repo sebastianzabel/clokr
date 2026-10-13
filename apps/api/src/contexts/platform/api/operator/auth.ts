@@ -5,8 +5,8 @@
  *   POST /verify  challenge + TOTP code or one recovery code -> 15-minute access token
  *   GET  /me      the signed-in operator
  *
- * Registered only when `OPERATOR_JWT_SECRET` is configured (see `app.ts`). Nothing here reads `req.user`,
- * writes the tenant `AuditLog` or builds an access context: the operator is not a tenant principal
+ * Registered only when `OPERATOR_JWT_SECRET` is configured (see `app.ts`). Nothing here reads the tenant
+ * principal, writes the tenant audit table or builds an access context: the operator is not a tenant principal
  * (`operator-auth.ts`). Every outcome lands in `OperatorAuditLog`; a failed attempt stores a keyed hash of
  * the typed address, never the string itself.
  *

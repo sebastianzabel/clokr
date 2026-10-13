@@ -1,0 +1,49 @@
+/**
+ * Phase 88 plan 08 (D-02a, T-88-39) — without OPERATOR_JWT_SECRET the operator surface does not exist:
+ * its routes answer 404, the tenant side is unchanged and a missing second JWT registration breaks nothing.
+ */
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import type { FastifyInstance } from "fastify";
+
+describe("operator surface off (OPERATOR_JWT_SECRET unset)", () => {
+  const original = process.env.OPERATOR_JWT_SECRET;
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    delete process.env.OPERATOR_JWT_SECRET;
+    vi.resetModules();
+    const { buildApp } = await import("../app");
+    app = await buildApp();
+    await app.ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    if (original === undefined) delete process.env.OPERATOR_JWT_SECRET;
+    else process.env.OPERATOR_JWT_SECRET = original;
+    vi.resetModules();
+  });
+
+  it("does not register the operator auth routes", async () => {
+    for (const [method, url] of [
+      ["POST", "/api/v1/operator/auth/login"],
+      ["POST", "/api/v1/operator/auth/verify"],
+      ["GET", "/api/v1/operator/auth/me"],
+    ] as const) {
+      const res = await app.inject({ method, url, payload: method === "POST" ? {} : undefined });
+      expect(res.statusCode, url).toBe(404);
+    }
+  });
+
+  it("keeps the tenant routes working and requireAuth answers 401, not a crash", async () => {
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: "nobody@example.invalid", password: "wrong-password-1" },
+    });
+    expect(login.statusCode).toBe(401);
+    const protectedRoute = await app.inject({ method: "GET", url: "/api/v1/employees" });
+    expect(protectedRoute.statusCode).toBe(401);
+    expect(app.jwt.operator).toBeUndefined();
+  });
+});
