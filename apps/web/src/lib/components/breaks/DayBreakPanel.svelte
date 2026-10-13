@@ -13,9 +13,11 @@
    * acknowledgement exists; the employee's own open single-entry day stays a calendar marker.
    *
    * Everything shown comes from the server's `DayCheck`; the browser derives nothing. A REDACTED
-   * check (D-11, the caller's reach covers only part of the day) renders totals and the finding
-   * only plus a note — never a time, salon or id. Permission decisions come from the server
-   * flags `mayAcknowledge` / `mayRecordDayBreak`; the routes enforce them independently.
+   * check (the caller's reach covers only part of the day) renders the date, the server's neutral
+   * hint and a note only — no totals, no § paragraph, no finding list, no badge, no action and
+   * never a time, salon or id (Issue #85 D-07, DSGVO Art. 5 Abs. 1 lit. c). Permission decisions
+   * come from the server flags `mayAcknowledge` / `mayRecordDayBreak`; the routes enforce them
+   * independently.
    */
   import ReasonDialog from "$components/ui/ReasonDialog.svelte";
   import {
@@ -40,8 +42,8 @@
     { kind: "delete"; id: string } | { kind: "acknowledge" } | { kind: "revoke"; ackId: string };
 
   const badge = $derived(dayCheckBadge(check));
+  const full = $derived(check.detail === "full" ? check : null);
   const dayBreaks = $derived(check.dayBreaks ?? []);
-  const isFull = $derived(check.detail === "full");
   const warnings = $derived((check.warnings ?? []).filter((w) => !w.hint));
   const hints = $derived((check.warnings ?? []).filter((w) => w.hint));
   // The server already sent its § 3 sentence; the fixed one below is only the fallback.
@@ -49,26 +51,30 @@
   // A cross-salon day is shown for a finding (open or acknowledged), a cross-salon § 3 breach or
   // as soon as a day break is recorded on it. A single-entry finding day is shown only when the
   // caller can act on it (acknowledge, record a break) or an acknowledgement exists.
+  // A withheld day always renders (its hint is the whole point); a full day follows the rules above.
   const visible = $derived(
-    (check.crossSalon && (check.breakFinding || check.maxDailyExceeded)) ||
+    full === null ||
+      (full.crossSalon && (full.breakFinding || full.maxDailyExceeded)) ||
       dayBreaks.length > 0 ||
-      (check.breakFinding &&
-        (check.mayAcknowledge || check.mayRecordDayBreak || check.acknowledged)),
+      (full.breakFinding && (full.mayAcknowledge || full.mayRecordDayBreak || full.acknowledged)),
   );
   const dayLabel = $derived(check.date.split("-").reverse().join("."));
   const totalsLine = $derived(
-    `Insgesamt ${hoursDe(check.netWorkedMinutes)} h gearbeitet, ` +
-      `${Math.round(check.totalBreakMinutes)} Min Pause erfasst ` +
-      `(vorgeschrieben: ${check.requiredBreakMinutes} Min).`,
+    full === null
+      ? ""
+      : `Insgesamt ${hoursDe(full.netWorkedMinutes)} h gearbeitet, ` +
+          `${Math.round(full.totalBreakMinutes)} Min Pause erfasst ` +
+          `(vorgeschrieben: ${full.requiredBreakMinutes} Min).`,
   );
-  const canRecord = $derived(isFull && check.mayRecordDayBreak);
+  const canRecord = $derived(full !== null && full.mayRecordDayBreak);
   const canAcknowledge = $derived(
-    check.mayAcknowledge && !check.acknowledged && onAcknowledge !== undefined,
+    full !== null && full.mayAcknowledge && !full.acknowledged && onAcknowledge !== undefined,
   );
   const canRevoke = $derived(
-    check.mayAcknowledge &&
-      check.acknowledged &&
-      check.acknowledgement !== null &&
+    full !== null &&
+      full.mayAcknowledge &&
+      full.acknowledged &&
+      full.acknowledgement !== null &&
       onRevoke !== undefined,
   );
 
@@ -158,38 +164,40 @@
         {#if badge}<span class="badge {badge.cls}">{badge.label}</span>{/if}
       </p>
 
-      {#if check.crossSalon}
-        <p>
-          An diesem Tag sind Zeiten in mehreren Salons erfasst. Die Pause nach § 4 ArbZG gilt für
-          den ganzen Arbeitstag. Fahrzeit zwischen zwei Salons ist Arbeitszeit und zählt nicht als
-          Pause.
-        </p>
-      {:else}
-        <p>Zu den Pausen dieses Tages liegt ein Befund nach § 4 ArbZG bzw. § 11 JArbSchG vor.</p>
-      {/if}
-      <p class="dbp-totals">{totalsLine}</p>
-      {#if warnings.length > 0}
-        <ul class="dbp-list" aria-label="Befunde des Tages">
-          {#each warnings as warning, index (`${warning.code}-${index}`)}
-            <li data-testid="day-break-warning">{warning.message}</li>
-          {/each}
-        </ul>
+      {#if full}
+        {#if full.crossSalon}
+          <p>
+            An diesem Tag sind Zeiten in mehreren Salons erfasst. Die Pause nach § 4 ArbZG gilt für
+            den ganzen Arbeitstag. Fahrzeit zwischen zwei Salons ist Arbeitszeit und zählt nicht als
+            Pause.
+          </p>
+        {:else}
+          <p>Zu den Pausen dieses Tages liegt ein Befund nach § 4 ArbZG bzw. § 11 JArbSchG vor.</p>
+        {/if}
+        <p class="dbp-totals">{totalsLine}</p>
+        {#if warnings.length > 0}
+          <ul class="dbp-list" aria-label="Befunde des Tages">
+            {#each warnings as warning, index (`${warning.code}-${index}`)}
+              <li data-testid="day-break-warning">{warning.message}</li>
+            {/each}
+          </ul>
+        {/if}
       {/if}
       {#each hints as hint, index (`${hint.code}-${index}`)}
         <p class="text-muted" data-testid="day-break-hint">{hint.message}</p>
       {/each}
-      {#if check.maxDailyExceeded && !hasDailyLimitWarning}
+      {#if full && full.maxDailyExceeded && !hasDailyLimitWarning}
         <p>Die Tagessumme liegt über der Höchstarbeitszeit von 10 Stunden (§ 3 ArbZG).</p>
       {/if}
 
-      {#if isFull}
+      {#if full}
         <ul class="dbp-list" aria-label="Einträge und Lücken des Tages">
-          {#each check.entries ?? [] as entry (entry.id)}
+          {#each full.entries ?? [] as entry (entry.id)}
             <li data-testid="day-break-entry">
               Eintrag {timeLabel(entry.startTime)}–{timeLabel(entry.endTime)}
             </li>
           {/each}
-          {#each check.gaps ?? [] as gap (gap.startTime)}
+          {#each full.gaps ?? [] as gap (gap.startTime)}
             <li data-testid="day-break-gap">
               Lücke {timeLabel(gap.startTime)}–{timeLabel(gap.endTime)}{gap.crossSalon
                 ? " (Wechsel zwischen Salons)"
@@ -259,8 +267,8 @@
           </button>
         </div>
       {/if}
-      {#if canRevoke && check.acknowledgement}
-        {@const ackId = check.acknowledgement.id}
+      {#if canRevoke && full?.acknowledgement}
+        {@const ackId = full.acknowledgement.id}
         <div class="dbp-actions">
           <button
             type="button"
