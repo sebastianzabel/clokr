@@ -179,6 +179,11 @@ export default defineConfig({
       //   - month-bar-narrow-viewport.spec.ts (month bar fits 390/360 px; tenant fixture only,
       //     no seed, and no date dependency because the browser clock is fixed in September)
       //
+      // Issue #89 added a fifth file:
+      //   - the operator console spec (operator console against a mocked /api/v1/operator contract;
+      //     no tenant fixture, no seed, no date dependency; the operator session is seeded into
+      //     sessionStorage by the spec itself)
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -188,6 +193,7 @@ export default defineConfig({
         /bs-pattern-retroactive\.spec\.ts/,
         /leave-flow\.spec\.ts/,
         /month-bar-narrow-viewport\.spec\.ts/,
+        /operator-console\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

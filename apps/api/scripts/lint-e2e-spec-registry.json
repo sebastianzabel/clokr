@@ -32,6 +32,11 @@
       "reason": "Issue #553 narrow-viewport gate for every month bar consumer (6 surfaces x editorial/modern x 390 and 360 px). Needs only the tenant fixture, no seed, and no date dependency because the browser clock is fixed at 2026-09-16 (widest German month label). Measured RED on the unfixed tree: 21 of 24 fail (20 with the Heute button plus the modern /leave year bar at 360 px, where the nav row sits 1 px outside the bar); 24/24 green after the fix."
     },
     {
+      "file": "apps/e2e/tests/operator-console.spec.ts",
+      "category": "in-ci",
+      "reason": "Issue #89 operator console against a mocked /api/v1/operator contract (page.route fulfils every operator request in the browser): no seed, no operator account, no tenant fixture, no date dependency. The operator session is seeded into sessionStorage by the spec. Measured: 2/2 pass on the rebuilt test stack."
+    },
+    {
       "file": "apps/e2e/tests/accessibility.spec.ts",
       "category": "später-seed",
       "reason": "Imports ./helpers and authenticates through the seeded admin (admin@clokr.de via TEST_ADMIN), which requires the setup Playwright project's storageState; the e2e-ci selection deliberately avoids depending on the seed-login group (D-01/D-06) since local seed drift was itself part of this phase's own finding."

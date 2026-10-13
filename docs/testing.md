@@ -542,9 +542,12 @@ This is deliberately the same command, the same project name and the same three 
 variables the `e2e-ci` CI job (`.github/workflows/ci.yml`) runs against the same stack (D-05) —
 a green run here and a green run in CI mean the same thing. `--project=e2e-ci` is a named
 Playwright project in `apps/e2e/playwright.config.ts` with an explicit `testMatch` allowlist of
-exactly four files (`functional.spec.ts`, `bs-pattern-retroactive.spec.ts`,
-`leave-flow.spec.ts`, and since Issue #553 `month-bar-narrow-viewport.spec.ts`) and no `dependencies: ["setup"]` — these specs authenticate per-test via
-the tenant-bootstrap fixture, not via the seeded admin's `storageState` (D-04/D-06).
+exactly five files (`functional.spec.ts`, `bs-pattern-retroactive.spec.ts`,
+`leave-flow.spec.ts`, since Issue #553 `month-bar-narrow-viewport.spec.ts`, and since Issue #89
+`operator-console.spec.ts`) and no `dependencies: ["setup"]` — these specs authenticate per-test via
+the tenant-bootstrap fixture, not via the seeded admin's `storageState` (D-04/D-06). The
+operator-console spec is the exception that needs neither: it mocks `/api/v1/operator/**` in the
+browser and seeds the operator session into `sessionStorage` itself.
 
 ### 3. Tear down
 
@@ -559,7 +562,7 @@ genuinely empty database, never a leftover one from a previous run.
 ### Which spec runs where, and why not the others
 
 `apps/api/scripts/lint-e2e-spec-registry.json` is the checked-in, per-file answer for every one
-of the 25 files under `apps/e2e/tests/*.spec.ts`: `in-ci` (currently 6 — the four `e2e-ci`
+of the 26 files under `apps/e2e/tests/*.spec.ts`: `in-ci` (currently 7 — the five `e2e-ci`
 files above plus `axe-scan.spec.ts` and `visual.spec.ts`, each already running via their own
 dedicated CI job), `später-seed` (authenticates via the seeded admin's `storageState`, not yet
 wired to this stack) or `später-datum` (breaks on a measured, named cause — a tightened

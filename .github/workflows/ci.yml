@@ -853,7 +853,8 @@ jobs:
   # ── e2e-ci (Phase 275, Issue #275, D-04/D-05/D-06) ────────────────────
   # Runs the named `e2e-ci` Playwright project (apps/e2e/playwright.config.ts) — a
   # small, explicit allowlist of spec files, currently: functional.spec.ts,
-  # bs-pattern-retroactive.spec.ts, leave-flow.spec.ts, month-bar-narrow-viewport.spec.ts.
+  # bs-pattern-retroactive.spec.ts, leave-flow.spec.ts, month-bar-narrow-viewport.spec.ts,
+  # operator-console.spec.ts.
   # The full per-file registry this allowlist must stay consistent with lives in
   # apps/api/scripts/lint-e2e-spec-registry.json (plan 275-04).
   #
