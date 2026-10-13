@@ -10,6 +10,10 @@
 // Amendment 2026-10-13 (Phase 85b, Issue #85 D-07): a partially covered day carries a neutral hint
 // only - no totals, no finding, no sum-bearing text; the Phase 80 expectation of totals and the
 // finding was narrowed on purpose (DSGVO Art. 5 Abs. 1 lit. c).
+// Mutation proofs (2026-10-13, restored by `cp`): M1 spreading `dayCheckTotals(...)` into
+// `redactedDayCheck` again turns the redacted-day case, the acknowledgement case and the no-finding
+// case red (number scan); M2 emitting the hint only when `hasAckableFinding(evaluation)` turns the
+// "neutral hint does not depend on a finding" case red.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import bcrypt from "bcryptjs";
