@@ -119,6 +119,7 @@ export const operatorApi = {
       auth: false,
     }),
   me: () => request<OperatorMe>("GET", "/auth/me"),
+  listTenants: () => request<OperatorTenant[]>("GET", "/tenants"),
   getTenant: (id: string) => request<OperatorTenant>("GET", `/tenants/${encodeURIComponent(id)}`),
   listSalons: (tenantId: string) =>
     request<OperatorSalon[]>("GET", `/tenants/${encodeURIComponent(tenantId)}/salons`),

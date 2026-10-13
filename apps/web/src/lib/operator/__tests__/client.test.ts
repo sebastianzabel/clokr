@@ -85,6 +85,19 @@ describe("operatorApi", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer op-token");
   });
 
+  it("listTenants reads /tenants with the operator token", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(jsonResponse([{ id: "t1" }]));
+
+    await expect(operatorApi.listTenants()).resolves.toEqual([{ id: "t1" }]);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants");
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer op-token");
+  });
+
   it("listSalons reads /tenants/:id/salons", async () => {
     const { setSession, operatorApi } = await load();
     setSession("op-token", 900, NOW);

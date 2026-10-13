@@ -39,3 +39,20 @@ export function formatOperatorDate(iso: string): string {
   if (Number.isNaN(date.getTime())) return "–";
   return format(date, "dd.MM.yyyy", { locale: de });
 }
+
+/**
+ * The sentence a failed load shows. Distinguishes the three causes the operator can act on
+ * (no connection, server fault, rate limit) and falls back to the caller's page-specific text for
+ * everything else. It reads the numeric `status` only - never a message text (D-13).
+ */
+export function describeLoadError(error: unknown, fallback: string): string {
+  const status = (error as { status?: unknown } | null | undefined)?.status;
+  if (typeof status !== "number") {
+    return error instanceof TypeError
+      ? "Keine Verbindung zum Server. Bitte erneut versuchen."
+      : fallback;
+  }
+  if (status === 429) return "Zu viele Anfragen. Bitte einen Moment warten und erneut versuchen.";
+  if (status >= 500) return "Der Server hat einen Fehler gemeldet. Bitte erneut versuchen.";
+  return fallback;
+}
