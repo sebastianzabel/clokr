@@ -972,15 +972,23 @@ describe("Audit Trail Completeness", () => {
 
       expect(res.statusCode).toBe(200);
 
+      // Scoped to THIS tenant's config row and ordered: the audit table is shared by every file
+      // of the worker, so an unscoped, unordered read could pick another file's row (Issue #568).
+      const config = await app.prisma.tenantConfig.findUniqueOrThrow({
+        where: { tenantId: data.tenant.id },
+        select: { id: true },
+      });
       const logs = await app.prisma.auditLog.findMany({
         where: {
           entity: "TenantConfig",
+          entityId: config.id,
           action: "UPDATE",
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       });
 
-      expect(logs.length).toBeGreaterThanOrEqual(1);
+      expect(logs.length).toBe(1);
       const log = logs[0];
       expect(log.userId).toBe(data.adminUser.id);
       expect(log.action).toBe("UPDATE");
