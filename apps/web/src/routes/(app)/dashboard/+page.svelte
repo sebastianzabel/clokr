@@ -1426,7 +1426,7 @@
               <button
                 onclick={handleClock}
                 disabled={clockLoading || clockInBlocked(clockSalonViewState, clockSalonId)}
-                class="btn btn-primary timer-cta-primary"
+                class="btn timer-cta-primary"
                 type="button"
               >
                 {#if clockLoading}<span class="btn-spinner"></span>{/if}
@@ -2463,15 +2463,25 @@
        inherit this colour and must stay readable on the dark clock card (Issue #87). */
     color: rgba(255, 255, 255, 0.9);
   }
+  /* The card's primary button is an inverted variant: fill = the card's foreground token, text and
+     spinner arc = its dark gradient stop. It deliberately does not compose the global primary
+     variant, whose hover and modern-skin rules out-specify the card and turned the label white on
+     white (Issue #546). The page-wide white spinner would vanish on this fill too, and the focus
+     ring carries a dark band so it stays visible on the gradient. */
   :global(.timer-card-wrap .timer-cta-primary) {
-    background: white;
+    background: var(--text-on-brand);
     color: var(--brand-dark);
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+    box-shadow: var(--shadow-md);
     border-color: transparent;
   }
   :global(.timer-card-wrap .timer-cta-primary:hover:not(:disabled)) {
-    background: rgba(255, 255, 255, 0.92);
+    background: color-mix(in srgb, var(--text-on-brand) 92%, var(--brand-dark));
+    color: var(--brand-dark);
     transform: translateY(-1px);
+  }
+  :global(.timer-card-wrap .timer-cta-primary .btn-spinner) {
+    border-color: color-mix(in srgb, var(--brand-dark) 25%, var(--text-on-brand));
+    border-top-color: var(--brand-dark);
   }
   :global(.timer-card-wrap .timer-cta-ghost) {
     color: rgba(255, 255, 255, 0.9);
@@ -2481,6 +2491,12 @@
   :global(.timer-card-wrap .timer-cta-ghost:hover:not(:disabled)) {
     background: rgba(255, 255, 255, 0.08);
     color: white;
+  }
+  :global(.timer-card-wrap .timer-cta-primary:focus-visible),
+  :global(.timer-card-wrap .timer-cta-ghost:focus-visible) {
+    outline: 2px solid var(--text-on-brand);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px var(--brand-dark);
   }
   /* Open-break state: emphasises that clicking now ENDS the break. */
   :global(.timer-card-wrap .timer-cta-ghost--active) {
