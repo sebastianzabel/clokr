@@ -239,8 +239,10 @@ RUN rm -f /app/packages/db/src/reset-demo.ts \
 #   - Text scan, not control-flow analysis. A script whose entrypoint is NOT a column-0 `main(`
 #     line (a top-level `await`, an IIFE, a default export a caller invokes some other way) is
 #     invisible to it.
-#   - Recognizes exactly five literal Prisma model accessors (timeEntry / leaveRequest / absence
-#     / employee / saldoSnapshot). A delete reached via `$queryRaw`/`$executeRaw`, an aliased
+#   - Recognizes exactly seven literal Prisma model accessors (timeEntry / leaveRequest / absence
+#     / employee / saldoSnapshot, plus operatorAuditLog / operatorAccount since Phase 88 — the
+#     operator audit trail is append-only and its only legal purge lives in src/, never in a
+#     self-invoking script). A delete reached via `$queryRaw`/`$executeRaw`, an aliased
 #     client variable, or a NEW audit-relevant model added to the schema after this comment was
 #     written will not match until this list is updated by hand.
 #   - Does not follow imports: a script that calls out to a helper in ANOTHER file to do the
@@ -255,7 +257,7 @@ RUN rm -f /app/packages/db/src/reset-demo.ts \
 #     dot to dodge self-matching) has no equivalent failure mode to guard against here.
 RUN CANDIDATES=$(find /app/apps /app/packages -type f \( -name "*.ts" -o -name "*.js" \) \
       -not -path "*/node_modules/*" -not -path "*/generated/*" \
-      -exec grep -lE '\.(timeEntry|leaveRequest|absence|employee|saldoSnapshot)\.(deleteMany|delete)\(' {} \; 2>/dev/null); \
+      -exec grep -lE '\.(timeEntry|leaveRequest|absence|employee|saldoSnapshot|operatorAuditLog|operatorAccount)\.(deleteMany|delete)\(' {} \; 2>/dev/null); \
     HITS=""; \
     if [ -n "$CANDIDATES" ]; then \
       HITS=$(printf '%s\n' $CANDIDATES | xargs grep -lE '^main\(' 2>/dev/null); \
