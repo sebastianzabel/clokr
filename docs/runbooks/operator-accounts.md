@@ -76,6 +76,42 @@ state, and prints the new enrolment data once. Writes one `OPERATOR_MFA_RESET` a
 The account stays in the database (audit rows reference it and cannot be removed) but can no longer sign
 in. Writes one `OPERATOR_DEACTIVATED` audit row. Deactivating an already inactive account is refused.
 
+## Tenant management
+
+All routes live under `/api/v1/operator/tenants` and need an operator access token (see "Sign-in flow").
+They return tenant metadata only — never employees, time entries or leave. There is no delete route:
+a tenant that leaves is deactivated.
+
+**Create** (`POST /`). One request creates the tenant, its configuration, a default salon, the default
+leave types and the first admin, and sends the invitation mail. The body needs `name`, `slug` (lowercase
+letters, digits and hyphens, 3–63 characters), `federalState` (required: the Bundesland decides the
+statutory holidays of the default salon and cannot be changed later while the salon is in use),
+optionally `timezone`, and the first admin (`firstName`, `lastName`, `email`, hire date). The invitation
+link is valid for 24 hours. The response reports `invitationMailSent`; `false` means the tenant exists
+but the mail failed — check the SMTP settings, then re-issue the invitation (below). A taken slug or
+e-mail answers 409 and creates nothing.
+
+**Re-issue the first admin's invitation** (`POST /:id/resend-admin-invitation`). Allowed only in the
+bootstrap window: the tenant is not deactivated and no user of the tenant is active yet. Once the first
+admin has signed in, invitations are the tenant's own business and this route answers a refusal.
+
+**Defaults to know about.** The new tenant's master switch `emailNotificationsEnabled` is **off**; the
+tenant's admin switches it on in the admin area once SMTP is configured. Without it no notification
+mail is sent.
+
+**Rename** (`PATCH /:id`). Changes the tenant name only; the slug and the default salon's name stay.
+
+**Deactivate** (`POST /:id/deactivate`, a reason of 3–500 characters is required). Effective at once on
+every path: sign-in, token refresh, password reset and invitation acceptance are refused, and every
+request of an already issued access token, API key or device key is answered with 403 (the per-process
+state cache is invalidated by the route; a second API replica sees it within 10 seconds). Open refresh
+tokens are revoked. All business data stays untouched. Writing background jobs (month close, attendance
+checks, Phorest sync, reminders) skip the tenant; the data-retention purge keeps running for it. Reason
+and acting operator are written to the operator audit log.
+
+**Reactivate** (`POST /:id/reactivate`). Clears the deactivation; users sign in again with their existing
+credentials, the jobs resume with their next run.
+
 ## Int refresh
 
 The prod → int data refresh (`docs/data-refresh-process.md`) neutralises **every** operator account with
