@@ -3583,3 +3583,54 @@ erreichbar wird.
 `lint-tenant-scoping-nullish-tenant` sowie die erweiterten Tests `measure-foreign-context-access`,
 `lint-tenant-scoping`, `lint-tenant-scoping-model-graph` und `access-context`. Betrieb:
 `docs/runbooks/operator-accounts.md`.
+
+### Nachtrag (Issue #557, 2026-10-13): MFA-Rücksetzung und Deaktivierung beenden jedes ausgestellte Betreibertoken sofort
+
+**Schwere: informativ. Unterbau-Erweiterung nach ADR 0002, Entscheidung 7 (additiv; kein bestehender Leser
+muss sich ändern; die Freigabe ist das Erreichen von `Ready`).**
+
+Vorher blieben nach `resetOperatorMfa` ein bereits ausgestelltes 15-Minuten-Zugriffstoken und ein
+ausstehendes 5-Minuten-Challenge-Token bis zum Ablauf gültig. Ein verlorenes oder kompromittiertes Gerät
+verlor den Zugriff also nicht sofort (Art. 32 DSGVO: Fähigkeit, die Kontrolle wiederherzustellen).
+
+#### Was sich geändert hat
+
+- **Neue Spalte `OperatorAccount.tokenVersion`** (`Int`, Standard 0, eine additive Migration). Jedes
+  Betreibertoken trägt sie als Anspruch `ver`; `signOperatorToken()` nimmt sie als Pflichtparameter.
+- **Prüfung bei jeder Anfrage, ohne Zwischenspeicher.** `requireOperator` liest die Version je Anfrage aus
+  der Datenbank; die Sperre wirkt dadurch in jedem API-Prozess sofort — anders als der 10-Sekunden-Cache
+  des Mandantenstatus. Die Antwort bleibt `401 {error: "Unauthorized"}`, ohne Hinweis auf den Grund.
+- **Prüfung in `/verify`.** Eine vor der Rücksetzung ausgestellte Challenge wird abgewiesen
+  (`OPERATOR_MFA_FAILED`, Grund `STALE_CHALLENGE`), auch mit gültigem Code des neuen Geheimnisses; das
+  zählt weder als Fehlversuch noch verbraucht es einen TOTP-Schritt. Das Zugriffstoken wird mit der
+  aktuellen Version signiert.
+- **Vergleich an genau einer Stelle:** `operatorTokenIsCurrent()` in `contexts/platform/operator-auth.ts`
+  (strikte Gleichheit; eine niedrigere und eine höhere Version werden beide abgewiesen).
+- **Erhöhung in derselben Transaktion wie die Auditzeile.** `resetOperatorMfa` und
+  `deactivateOperatorAccount` erhöhen die Version zusammen mit `OPERATOR_MFA_RESET` /
+  `OPERATOR_DEACTIVATED`; die Zeile trägt `newValue.sessionsRevoked: true` sowie `tokenVersion` vorher und
+  nachher. Schlägt das Schreiben der Auditzeile fehl, bleiben Version, Geheimnis und `isActive`
+  unverändert.
+
+#### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** keine.
+- **Kompositionsschicht:** keine — kein neuer Endpunkt, keine neue Datei im Quellbaum.
+
+#### Grenzen
+
+- **Einmal neu anmelden nach dem Deploy.** Token aus der Zeit vor diesem Stand tragen kein `ver` und werden
+  abgewiesen; betroffen sind höchstens Token der letzten 15 Minuten.
+- **`requireAuth` bleibt unverändert.** Es weist ein Betreibertoken an einer Mandantenroute weiterhin nach
+  der Signaturprüfung mit 403 ab; dort wird nichts gewährt, eine Versionsprüfung änderte kein Ergebnis.
+- **Rennen zwischen Rücksetzung und `/verify`.** Die Verbrauchs-Updates (TOTP-Schritt, Wiederherstellungscode)
+  sind an die gelesene Version gebunden; eine dazwischen committete Rücksetzung trifft null Zeilen, und
+  die Anmeldung wird abgewiesen.
+
+#### Nachweis
+
+`operator-token-version-557` (Zugriffstoken und Challenge nach Rücksetzung und Deaktivierung, Anspruchsformen
+mit Gegenprobe, Atomarität der Transaktion, vier Mutationsproben).

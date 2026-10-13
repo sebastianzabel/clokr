@@ -749,8 +749,14 @@ import { readFileSync } from "node:fs";
 // `operator-auth-88` kept their case count. Lower-bound convention as above (the reporter counts a
 // looping case more than once, the source once - the edited-file deltas use the source count).
 // Full-suite run on this tree before the floor was raised: 559 files, 8866 tests.
-const MIN_FILES = 396;
-const MIN_TESTS = 6638;
+// Issue #557 (2026-10-13), on `fix/557-mfa-reset-tokens` (based on origin/main @ 0f248682): one new
+// test FILE, `src/__tests__/operator-token-version-557.test.ts` (11 cases, measured with the vitest JSON
+// reporter) - MIN_FILES rises from 396 to 397 and MIN_TESTS from 6638 to 6649. The edited files
+// `operator-auth-88`, `tenant-principal-guard-88`, `operator-tenants-88` and
+// `operator-tenant-boundary-sweep-88` kept their case count (delta 0). PR #559 (Issue #551) raises the
+// same two floors; the merge resolves that conflict. Same lower-bound convention as above.
+const MIN_FILES = 397;
+const MIN_TESTS = 6649;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
