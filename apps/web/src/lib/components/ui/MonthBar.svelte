@@ -222,7 +222,8 @@
   /* ── Combined Month-Bar (v1.5 — nav + mini-stats in one .card) ─────
      Dimensions kept in lockstep with .cal-monthbar (app.css) so /leave,
      /team/leave, /teamcal, /time-entries and /team/time-entries share
-     the same header height + serif title. Consumers must set the wrapping
+     the same header height + serif title. The two narrow-viewport blocks
+     below are mirrored there too (Issue #553). Consumers must set the wrapping
      .card padding to 0 so the primitive owns the inner spacing. */
   .month-bar {
     display: flex;
@@ -241,13 +242,6 @@
   .month-bar > .month-bar-stats {
     min-width: 0;
     flex: 0 0 auto;
-  }
-
-  /* Only allow wrap on truly narrow viewports (phone landscape). */
-  @media (max-width: 640px) {
-    .month-bar {
-      flex-wrap: wrap;
-    }
   }
 
   .month-bar-nav {
@@ -316,6 +310,63 @@
     display: flex;
     gap: 8px;
     align-items: center;
+  }
+
+  /* ── Narrow viewports (Issue #553, D-02/D-04/D-05) ────────────────────
+     Before this block the nav row (arrow | 200 px centre floor | arrow | "Heute")
+     was wider than a 390 px phone: the editorial skin scrolled horizontally
+     (423-514 px) and the modern skin clipped "Heute" at x = 414-428 through
+     `.card { overflow: hidden }`. Layout here: arrows and label share one grid
+     row, the centre loses its 200 px floor and may shrink, "Heute" and the extra
+     slot get their own full-width row. Nothing is hidden or abbreviated.
+     Why a grid and not flex-wrap: a measured flex-wrap variant only kept the
+     label clear by forcing a 100% basis onto "Heute" (a full-width ghost button),
+     and with an auto basis line breaking would push the next arrow, not "Heute",
+     onto a new line at narrow widths. The grid always gives the intended outcome.
+     Mirrored by .cal-monthbar in app.css (keep both in lockstep).
+     These rules come after every base rule they override (same specificity,
+     source order decides). */
+  @media (max-width: 640px) {
+    .month-bar {
+      flex-wrap: wrap;
+    }
+
+    .month-bar > .month-bar-nav {
+      flex: 1 1 100%;
+    }
+
+    .month-bar-nav {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+    }
+
+    .month-bar-center {
+      min-width: 0;
+    }
+
+    .month-bar-today,
+    .month-bar-extra {
+      grid-column: 1 / -1;
+      margin-left: 0;
+    }
+
+    /* 44px = the min-height of the neighbouring .nav-btn arrows (app.css), WCAG 2.5.5.
+       Scoped (0,2,0) beats the global v1.5 `.btn { min-height: 0 }` (0,1,0). */
+    .month-bar-today {
+      justify-self: center;
+      min-height: 44px;
+    }
+  }
+
+  /* 26px fits between the arrows from 481 to 640 px (clearance >= 45 px). Below that the
+     modern skin's label is 217 px at 26px and 188 px at 22px, but only ~170 px fit between
+     the arrows inside MonatSaldoCard at 360 px (card padding 28 px). 20px (the serif
+     .mini-stat .value size in app.css) is 173 px and clears the arrows by 7 px;
+     white-space: nowrap stays (D-02). */
+  @media (max-width: 480px) {
+    .month-bar-label {
+      font-size: 20px;
+    }
   }
 
   /* ── Mini-stats cluster ──────────────────────────────────────────── */
