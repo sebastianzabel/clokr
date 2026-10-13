@@ -75,6 +75,8 @@ export {
   salonOpeningHoursSchema,
   DEFAULT_SALON_OPENING_HOURS,
   findSalon,
+  // Issue #85 (D-13): additive re-export — the one validator of a chosen salon (moved from the dashboard).
+  resolveSalonInReach,
   // Phase 325 (issue #325), D-04: additive re-export — every Shift/PhorestAppointment writer
   // resolves the tenant's default salon through this one function.
   findDefaultSalon,

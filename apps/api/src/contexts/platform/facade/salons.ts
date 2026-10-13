@@ -47,6 +47,7 @@
  */
 import { FederalState, type Prisma, type Salon } from "@clokr/db";
 import { z } from "zod";
+import type { AccessReach } from "../access-context";
 import type { CalendarDay } from "../salon-assignment-rules";
 import {
   endDeploymentsOnSalonDeactivation,
@@ -262,6 +263,35 @@ export async function findSalon(
   salonId: string,
 ): Promise<Salon | null> {
   return db.salon.findFirst({ where: { id: salonId, tenantId } });
+}
+
+/**
+ * Issue #84 (D-02/D-16), Issue #85 (D-13) — the one validator of a chosen salon. The salon choice of
+ * a view (the dashboard's team views, the salon view of `GET /time-entries`) is a narrowing of that
+ * view, never an access boundary (#82 D-05): it must name an ACTIVE salon of the caller's tenant
+ * that lies inside the caller's reach for the endpoint's permission, and it can never widen that
+ * reach. Runs before any data read. A PERSONS-only reach names no salons and therefore rejects
+ * every salon.
+ *
+ * Every rejection cause — a foreign tenant's salon, an unknown id, an inactive salon, a salon
+ * outside the reach — yields the same `{ ok: false }`, so a caller answers one 404 body and no
+ * tenant-membership oracle exists (T-100-09). `undefined` means "no salon chosen" and needs no read.
+ *
+ * Unterbau-Erweiterung (additive, ADR 0002 Entscheidung 7), announced on Issue #85: the dashboard's
+ * former private copy moved here because the salon view of `GET /time-entries` is the second
+ * concrete use.
+ */
+export async function resolveSalonInReach(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  reach: AccessReach,
+  salonId: string | undefined,
+): Promise<{ ok: true; salonId: string | null } | { ok: false }> {
+  if (salonId === undefined) return { ok: true, salonId: null };
+  const salon = await findSalon(db, tenantId, salonId);
+  if (!salon || !salon.isActive) return { ok: false };
+  if (reach.kind === "scoped" && !reach.salonIds.includes(salon.id)) return { ok: false };
+  return { ok: true, salonId: salon.id };
 }
 
 /**

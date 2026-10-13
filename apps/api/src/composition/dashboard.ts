@@ -11,9 +11,8 @@ import {
   hasPermission,
   resolveAccessReach, // Phase 91b Plan 06 (#91), D-09/D-10/D-13
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 06 (#91), D-10/D-13
-  findSalon, // Issue #84 (D-16) — salon filter validation
+  resolveSalonInReach, // Issue #84 (D-16), Issue #85 (D-13) — salon filter validation
   homeSalonsForDays, // Issue #84 (D-13) — batched Stammsalon per day
-  type AccessReach,
 } from "../contexts/platform";
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -474,7 +473,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         "team-overview:read:ZUGEWIESEN",
       );
       // D-02/D-16: validated before any data read; one body for every rejection cause.
-      const salonFilter = await resolveTeamSalonFilter(app.prisma, tenantId, scopeReach, salonId);
+      const salonFilter = await resolveSalonInReach(app.prisma, tenantId, scopeReach, salonId);
       if (!salonFilter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
       const filterSalonId = salonFilter.salonId;
       const scopedAccess = { ...access, reach: scopeReach };
@@ -1702,7 +1701,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       const reach = await resolveAccessReach(app.prisma, access, "team-overview:read:ZUGEWIESEN");
       // D-02/D-16: validated before any data read; one body for every rejection cause.
-      const filter = await resolveTeamSalonFilter(app.prisma, tenantId, reach, salonId);
+      const filter = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
       if (!filter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
       const filterSalonId = filter.salonId;
       const scopedAccess = { ...access, reach };
@@ -1891,7 +1890,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       const reach = await resolveAccessReach(app.prisma, access, "team-overview:read:ZUGEWIESEN");
       // D-02/D-16: validated before any data read; one body for every rejection cause.
-      const filter = await resolveTeamSalonFilter(app.prisma, tenantId, reach, salonId);
+      const filter = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
       if (!filter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
       const filterSalonId = filter.salonId;
       const scopedAccess = { ...access, reach };
@@ -1963,25 +1962,6 @@ export async function dashboardRoutes(app: FastifyInstance) {
 // tenant's salon, an unknown id, an inactive salon and a salon outside the caller's reach are
 // indistinguishable (T-100-09).
 const TEAM_SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
-
-/**
- * Issue #84 (D-02/D-16) — the salon filter of the team views is a narrowing of the view, never an
- * access boundary (#82 D-05): it must name an ACTIVE salon of the caller's tenant that lies inside
- * the caller's reach for the endpoint's permission, and it can never widen that reach. Runs
- * before any data read. A PERSONS-only reach names no salons and therefore rejects every salon.
- */
-async function resolveTeamSalonFilter(
-  db: FastifyInstance["prisma"],
-  tenantId: string,
-  reach: AccessReach,
-  salonId: string | undefined,
-): Promise<{ ok: true; salonId: string | null } | { ok: false }> {
-  if (salonId === undefined) return { ok: true, salonId: null };
-  const salon = await findSalon(db, tenantId, salonId);
-  if (!salon || !salon.isActive) return { ok: false };
-  if (reach.kind === "scoped" && !reach.salonIds.includes(salon.id)) return { ok: false };
-  return { ok: true, salonId: salon.id };
-}
 
 function round(n: number): number {
   return Math.round(n * 100) / 100;
