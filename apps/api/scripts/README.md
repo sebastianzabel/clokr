@@ -76,7 +76,7 @@ codes), `--deactivate --email <e>` (offboarding). Dry-run by default; nothing is
 optional `OPERATOR_PASSWORD` (never taken from argv; if unset a password is generated and printed once).
 The TOTP secret, otpauth URI and recovery codes are printed to stdout once and never written anywhere.
 Every applied run writes one `OperatorAuditLog` row (actor type SCRIPT with OS user and host) in the same
-transaction. In the API container: `pnpm tsx scripts/operator-account.ts …`. Procedure:
+transaction. In the API container (working directory `/app`): `docker exec -w /app/apps/api <container> pnpm tsx scripts/operator-account.ts …`. Procedure:
 `docs/runbooks/operator-accounts.md`.
 
 ## Audit tools

@@ -12,7 +12,7 @@ audited in `OperatorAuditLog` (actor type `SCRIPT` with OS user and host), never
 
 ## Prerequisites
 
-- Shell on the server (in the API container: `pnpm tsx scripts/operator-account.ts …`; from a checkout:
+- Shell on the server (in the API container, whose working directory is `/app`: `docker exec -w /app/apps/api <container> pnpm tsx scripts/operator-account.ts …`; from a checkout:
   `pnpm --filter @clokr/api exec tsx scripts/operator-account.ts …`).
 - `DATABASE_URL` of the target environment.
 - `ENCRYPTION_KEY` of that environment (min 32 chars). The TOTP secret is stored encrypted with it —

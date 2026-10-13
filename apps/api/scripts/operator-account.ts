@@ -12,7 +12,8 @@
  *     --create --email <email> --display-name <name> [--apply]
  *     --reset-mfa --email <email> [--apply]     (lost authenticator: new secret + recovery codes)
  *     --deactivate --email <email> [--apply]    (offboarding)
- * In the API container: `pnpm tsx scripts/operator-account.ts …`.
+ * In the API container (working directory `/app`): `docker exec -w /app/apps/api <container>
+ * pnpm tsx scripts/operator-account.ts …`.
  *
  * The password is never taken from argv (shell history, process list): `OPERATOR_PASSWORD` or, when unset,
  * a generated one printed once. The TOTP secret, otpauth URI and the 10 recovery codes are printed to
