@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import type { Prisma } from "@clokr/db";
 import {
   getTestApp,
   seedTestData,
@@ -17,12 +18,17 @@ import {
   cleanupTestData,
   FIXTURE_PACKAGES,
 } from "./setup";
-import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
+import {
+  DEFAULT_SALON_OPENING_HOURS,
+  activateSalon,
+  createSalon,
+} from "../contexts/platform/facade/salons";
 import { signOperatorToken } from "../contexts/platform/operator-auth";
 import {
   GRUNDVERSION,
   ModuleNotBookedError,
   SALON_QUOTA_REACHED_MESSAGE,
+  SalonQuotaReachedError,
   TENANT_MODULES,
   assertModuleBooked,
   isModuleBooked,
@@ -518,5 +524,264 @@ describe("operator paths against the booked limit (Phase 566, D-04, D-09, AC-566
     );
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.body).code).toBe("TENANT_DEACTIVATED");
+  });
+});
+
+// ── Concurrency (Phase 566, D-04, T-566-06, AC-566-02) ────────────────────────────────────────
+//
+// Two kinds of race. `activateSalon` also locks every Salon row of the tenant (`FOR UPDATE`), so two
+// ACTIVATIONS serialise even without the Tenant lock. Two CREATES lock no existing Salon row, so
+// only the Tenant lock serialises them: the deterministic proof that the Tenant lock carries the
+// invariant is therefore the create race (a). The activation races prove the user-visible outcome.
+//
+// Mutation recorded in the SUMMARY (not re-run by CI): `lockTenantForPackages` turned into a no-op
+// -> case (a) goes red because tx2 is never observed waiting on tx1.
+
+interface RaceResult<A, B> {
+  first: PromiseSettledResult<A>;
+  second: PromiseSettledResult<B>;
+  /** PostgreSQL reported the second transaction as blocked by the first while it was held open. */
+  blocked: boolean;
+}
+
+/**
+ * Runs `firstWork` in one transaction and holds it open (after the work returned, so all its locks
+ * are held), starts `secondWork` in another, and polls `pg_blocking_pids` until the second is seen
+ * waiting on the first — synchronised on observed database state, never on a fixed sleep.
+ */
+async function raceTwoTransactions<A, B>(
+  app: FastifyInstance,
+  firstWork: (tx: Prisma.TransactionClient) => Promise<A>,
+  secondWork: (tx: Prisma.TransactionClient) => Promise<B>,
+): Promise<RaceResult<A, B>> {
+  let releaseFirst: (() => void) | undefined;
+  const holdGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let signalFirstLocked: ((pid: number) => void) | undefined;
+  const firstLocked = new Promise<number>((resolve) => {
+    signalFirstLocked = resolve;
+  });
+  const firstPromise = app.prisma.$transaction(
+    async (tx) => {
+      const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+      const result = await firstWork(tx);
+      signalFirstLocked?.(pid);
+      await holdGate;
+      return result;
+    },
+    { timeout: 20000, maxWait: 20000 },
+  );
+  // A work failure in tx1 would never signal; surface it instead of hanging.
+  const firstPid = await Promise.race([
+    firstLocked,
+    firstPromise.then(
+      () => Promise.reject(new Error("first transaction ended before it signalled")),
+      (err: unknown) => Promise.reject(err),
+    ),
+  ]);
+
+  let signalSecondPid: ((pid: number) => void) | undefined;
+  const secondPidKnown = new Promise<number>((resolve) => {
+    signalSecondPid = resolve;
+  });
+  let secondSettled = false;
+  const secondPromise = app.prisma
+    .$transaction(
+      async (tx) => {
+        const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+        signalSecondPid?.(pid);
+        return secondWork(tx);
+      },
+      { timeout: 20000, maxWait: 20000 },
+    )
+    .finally(() => {
+      secondSettled = true;
+    });
+  const secondPid = await secondPidKnown;
+
+  const deadline = Date.now() + 10000;
+  let blocked = false;
+  while (!secondSettled && Date.now() < deadline) {
+    const [{ blockers }] = await app.prisma.$queryRaw<{ blockers: number[] }[]>`
+      SELECT pg_blocking_pids(${secondPid}::int) AS blockers`;
+    if (blockers.includes(firstPid)) {
+      blocked = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  releaseFirst?.();
+  const [first, second] = await Promise.allSettled([firstPromise, secondPromise]);
+  return { first, second, blocked };
+}
+
+function expectQuotaRefusal(result: PromiseSettledResult<unknown>) {
+  expect(result.status).toBe("rejected");
+  expect((result as PromiseRejectedResult).reason).toBeInstanceOf(SalonQuotaReachedError);
+}
+
+describe("concurrent creates and activations at the limit (Phase 566, AC-566-02)", () => {
+  let app: FastifyInstance;
+  let operatorToken: string;
+  const tenants: Awaited<ReturnType<typeof seedGrundversionTenant>>[] = [];
+
+  /** A CHAIN tenant with a quota of 2 and its one active default salon: exactly one slot is free. */
+  async function atLimitMinusOne(label: string) {
+    const fixture = await seedGrundversionTenant(app, `pkg566-race-${label}`);
+    tenants.push(fixture);
+    await app.prisma.tenant.update({
+      where: { id: fixture.tenant.id },
+      data: { bookedModules: ["CHAIN"], salonQuota: 2 },
+    });
+    return fixture;
+  }
+
+  function newSalonInput(name: string) {
+    return {
+      name,
+      openingHours: DEFAULT_SALON_OPENING_HOURS,
+      street: null,
+      postalCode: null,
+      city: null,
+    };
+  }
+
+  async function activeCount(tenantId: string) {
+    return app.prisma.salon.count({ where: { tenantId, isActive: true } });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const operator = await seedOperator(app);
+    operatorToken = signOperatorToken(app, operator.id, "access", operator.tokenVersion);
+  });
+
+  afterAll(async () => {
+    for (const t of tenants) {
+      try {
+        await cleanupTestData(app, t.tenant.id);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  it("(a) two concurrent creates: the second waits on the first's Tenant lock and is then refused", async () => {
+    const fixture = await atLimitMinusOne("create");
+
+    const { first, second, blocked } = await raceTwoTransactions(
+      app,
+      (tx) => createSalon(tx, fixture.tenant.id, newSalonInput("Rennen A")),
+      (tx) => createSalon(tx, fixture.tenant.id, newSalonInput("Rennen B")),
+    );
+
+    expect(blocked, "tx2 was never observed waiting on tx1's Tenant lock").toBe(true);
+    expect(first.status).toBe("fulfilled");
+    expectQuotaRefusal(second);
+    expect(await activeCount(fixture.tenant.id)).toBe(2);
+  });
+
+  it("(b) two concurrent activations end with exactly one success", async () => {
+    const fixture = await atLimitMinusOne("activate");
+    const x = await createTestSalon(app.prisma, fixture.tenant.id, { name: "X", isActive: false });
+    const y = await createTestSalon(app.prisma, fixture.tenant.id, { name: "Y", isActive: false });
+
+    const { first, second } = await raceTwoTransactions(
+      app,
+      (tx) => activateSalon(tx, fixture.tenant.id, x.id),
+      (tx) => activateSalon(tx, fixture.tenant.id, y.id),
+    );
+
+    expect(first.status).toBe("fulfilled");
+    expect((first as PromiseFulfilledResult<{ status: string }>).value.status).toBe("OK");
+    expectQuotaRefusal(second);
+    expect(await activeCount(fixture.tenant.id)).toBe(2);
+  });
+
+  it("(c) a create racing an activation ends with exactly one success", async () => {
+    const fixture = await atLimitMinusOne("mixed");
+    const x = await createTestSalon(app.prisma, fixture.tenant.id, { name: "X", isActive: false });
+
+    const { first, second } = await raceTwoTransactions(
+      app,
+      (tx) => createSalon(tx, fixture.tenant.id, newSalonInput("Rennen C")),
+      (tx) => activateSalon(tx, fixture.tenant.id, x.id),
+    );
+
+    expect(first.status).toBe("fulfilled");
+    expectQuotaRefusal(second);
+    expect(await activeCount(fixture.tenant.id)).toBe(2);
+  });
+
+  it("(d) two parallel tenant-route activations answer {200, 409 SALON_QUOTA_REACHED}", async () => {
+    const fixture = await atLimitMinusOne("route");
+    const x = await createTestSalon(app.prisma, fixture.tenant.id, { name: "X", isActive: false });
+    const y = await createTestSalon(app.prisma, fixture.tenant.id, { name: "Y", isActive: false });
+
+    const responses = await Promise.all(
+      [x.id, y.id].map((id) =>
+        app.inject({
+          method: "POST",
+          url: `/api/v1/salons/${id}/activate`,
+          headers: { authorization: `Bearer ${fixture.adminToken}` },
+        }),
+      ),
+    );
+
+    expect(responses.map((r) => r.statusCode).sort((a, b) => a - b)).toEqual([200, 409]);
+    const refused = responses.find((r) => r.statusCode === 409);
+    expect(JSON.parse(refused?.body ?? "{}")).toEqual({
+      error: SALON_QUOTA_REACHED_MESSAGE,
+      code: "SALON_QUOTA_REACHED",
+    });
+    expect(await activeCount(fixture.tenant.id)).toBe(2);
+  });
+
+  it("(e) two parallel operator activations answer {200, 409} and write exactly one SALON_ACTIVATED row", async () => {
+    const fixture = await atLimitMinusOne("operator");
+    const x = await createTestSalon(app.prisma, fixture.tenant.id, { name: "X", isActive: false });
+    const y = await createTestSalon(app.prisma, fixture.tenant.id, { name: "Y", isActive: false });
+
+    const responses = await Promise.all(
+      [x.id, y.id].map((id) =>
+        app.inject({
+          method: "POST",
+          url: `/api/v1/operator/tenants/${fixture.tenant.id}/salons/${id}/activate`,
+          headers: { authorization: `Bearer ${operatorToken}` },
+          remoteAddress: operatorAddress(),
+        }),
+      ),
+    );
+
+    expect(responses.map((r) => r.statusCode).sort((a, b) => a - b)).toEqual([200, 409]);
+    const refused = responses.find((r) => r.statusCode === 409);
+    expect(JSON.parse(refused?.body ?? "{}")).toEqual({
+      error: SALON_QUOTA_REACHED_MESSAGE,
+      code: "SALON_QUOTA_REACHED",
+    });
+    expect(await activeCount(fixture.tenant.id)).toBe(2);
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: { subjectTenantId: fixture.tenant.id, action: "SALON_ACTIVATED" },
+      }),
+    ).toBe(1);
+  });
+
+  it("(f) two parallel tenant-route creates answer {201, 409} and leave the active count at the limit", async () => {
+    const fixture = await atLimitMinusOne("route-create");
+    const responses = await Promise.all(
+      ["Rennen D", "Rennen E"].map((name) =>
+        app.inject({
+          method: "POST",
+          url: "/api/v1/salons",
+          headers: { authorization: `Bearer ${fixture.adminToken}` },
+          payload: { name, openingHours: DEFAULT_SALON_OPENING_HOURS },
+        }),
+      ),
+    );
+    expect(responses.map((r) => r.statusCode).sort((a, b) => a - b)).toEqual([201, 409]);
+    expect(await activeCount(fixture.tenant.id)).toBe(2);
   });
 });
