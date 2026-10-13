@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
-import { requirePermission } from "../../platform";
+import { assertModuleBooked, requirePermission } from "../../platform";
 
 function hashKey(key: string): string {
   return createHash("sha256").update(key).digest("hex");
@@ -35,6 +35,8 @@ export async function terminalRoutes(app: FastifyInstance) {
     preHandler: requirePermission("terminal:manage:ZUGEWIESEN"),
     handler: async (req) => {
       const body = z.object({ name: z.string().min(1).max(100) }).parse(req.body);
+      // D-05: setting up a NEW terminal needs the module; existing keys, revoke and punching stay free (Issue #566).
+      await assertModuleBooked(app.prisma, req.user.tenantId, "HARDWARE_CLOCK");
       const rawKey = `clk_${randomBytes(32).toString("hex")}`;
       const keyHash = hashKey(rawKey);
       const keyPrefix = rawKey.substring(0, 12) + "...";
