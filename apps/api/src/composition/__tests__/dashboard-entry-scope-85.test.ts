@@ -15,7 +15,9 @@
  * Whole-tenant callers run the unchanged statements: the control cases here and the frozen 84
  * pins prove the response stays byte-identical (no `workedElsewhere` key without a salon filter).
  *
- * Fixture: tenant with the active salons A and B. A1 is homed in A (Mon 6 h in A). S is a Springer
+ * Fixture: tenant with the active salons A and B. Q is homed in B until Tue and in A from Wed
+ * (Stammsalon A at the week end): Mon 5 h in B and an OPEN entry Tue in B are outside the reach of
+ * the Salonmanager of A, Wed 2 h in A is inside. A1 is homed in A (Mon 6 h in A). S is a Springer
  * homed in B (Mon 08:00-12:00 in A, Tue 6 h in B, Wed an OPEN entry in B, approved vacation Thu, a
  * FIXED Mon-Fri contract). E is homed in B (Mon 4 h in B). MA is a Salonmanager with SALONS [A].
  * No person names. Fake clock Wed 2026-06-17T10:00Z (Date only), installed before the app boots;
@@ -23,7 +25,15 @@
  *
  * Mutation proofs (Phase 85b, 2026-10-13) — recorded here, not re-run by CI; each change was
  * reverted with `cp` from a backup after the red names below were observed:
- * (filled in below once recorded)
+ * M1 hours and presence from `timeEntries` instead of the in-scope rows for scoped callers → red
+ *    on "lists the Springer S by the in-scope entry, …", "shows no hours of the other salon, …"
+ *    and "filtered on A: rows A1, Q and S, …".
+ * M2 the stand-in of hidden time left OPEN (endTime null) → red on "shows no hours of the other
+ *    salon, a neutral worked-elsewhere mark, and never a live clock-in" and on "filtered on A:
+ *    rows A1, Q and S, …" (Q Tue read "clocked_in").
+ * M3 the schedules read over the whole population instead of the Stammsalon persons → red on
+ *    "lists the Springer S by the in-scope entry, …" (S got a contract: workday, expected hours)
+ *    and on "filtered on A: rows A1, Q and S, …".
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -65,7 +75,7 @@ describe("Issue #85 — team-week per entry", () => {
   let salonA: string;
   let salonB: string;
   let managerToken: string;
-  const ids: Record<"A1" | "S" | "E", string> = { A1: "", S: "", E: "" };
+  const ids: Record<"A1" | "S" | "E" | "Q", string> = { A1: "", S: "", E: "", Q: "" };
 
   async function createPerson(tenantId: string, label: string) {
     const s = uniqueSuffix(label);
@@ -221,6 +231,15 @@ describe("Issue #85 — team-week per entry", () => {
       },
     });
 
+    // Q: homed in B until Tue 16.06, in A from Wed 17.06. Mon and Tue (an OPEN entry) in B, Wed in A.
+    const q = await createPerson(tenantId, "Q");
+    ids.Q = q.employee.id;
+    await home(tenantId, q.employee.id, salonB, "2024-01-01", "2026-06-16");
+    await home(tenantId, q.employee.id, salonA, "2026-06-17");
+    await entry(q.employee.id, salonB, "2026-06-15", "09:00", "14:00");
+    await entry(q.employee.id, salonB, "2026-06-16", "08:00", null);
+    await entry(q.employee.id, salonA, "2026-06-17", "07:00", "09:00");
+
     // E: homed in B, entries only in B: never visible to the Salonmanager of A.
     const e = await createPerson(tenantId, "E");
     ids.E = e.employee.id;
@@ -242,7 +261,7 @@ describe("Issue #85 — team-week per entry", () => {
   describe("population and hours of a scoped caller", () => {
     it("lists the Springer S by the in-scope entry, with exactly the A hours and no planning data", async () => {
       const body = await week(managerToken);
-      expect(fixtureIds(body)).toEqual(["A1", "S"]);
+      expect(fixtureIds(body)).toEqual(["A1", "Q", "S"]);
       const s = rowOf(body, ids.S);
       expect(s?.employeeNumber).toBeNull();
       expect(dayOf(s, "2026-06-15")?.workedHours).toBe(4);
@@ -286,13 +305,49 @@ describe("Issue #85 — team-week per entry", () => {
 
     it("control: the tenant admin sees everyone with all hours and no workedElsewhere key", async () => {
       const body = await week(data.adminToken);
-      expect(fixtureIds(body)).toEqual(["A1", "E", "S"]);
+      expect(fixtureIds(body)).toEqual(["A1", "E", "Q", "S"]);
       expect(dayOf(rowOf(body, ids.S), "2026-06-16")?.workedHours).toBe(6);
       expect(dayOf(rowOf(body, ids.S), "2026-06-17")?.status).toBe("clocked_in");
       expect(dayOf(rowOf(body, ids.S), "2026-06-18")?.status).toBe("absent");
       for (const row of body.team) {
         for (const d of row.days) expect("workedElsewhere" in d).toBe(false);
       }
+    });
+  });
+
+  describe("a Stammsalon person with time outside the reach", () => {
+    it("shows no hours of the other salon, a neutral worked-elsewhere mark, and never a live clock-in", async () => {
+      const q = rowOf(await week(managerToken), ids.Q);
+      const mon = dayOf(q, "2026-06-15");
+      expect(mon?.workedHours).toBe(0);
+      expect(mon?.workedElsewhere).toBe(true);
+      expect(mon?.status).toBe("present");
+      const tue = dayOf(q, "2026-06-16");
+      expect(tue?.workedHours).toBe(0);
+      expect(tue?.workedElsewhere).toBe(true);
+      expect(tue?.status).toBe("present");
+      const wed = dayOf(q, "2026-06-17");
+      expect(wed?.workedHours).toBe(2);
+      expect(wed?.workedElsewhere).toBe(false);
+    });
+
+    it("filtered on A: rows A1, Q and S, S shows only the A hours, no day shows a minute of B", async () => {
+      const body = await week(managerToken, salonA);
+      expect(body.salonId).toBe(salonA);
+      expect(fixtureIds(body)).toEqual(["A1", "Q", "S"]);
+      const s = rowOf(body, ids.S);
+      expect(dayOf(s, "2026-06-15")?.workedHours).toBe(4);
+      for (const date of ["2026-06-16", "2026-06-17"]) {
+        expect(dayOf(s, date)?.workedHours, date).toBe(0);
+        expect(dayOf(s, date)?.status, date).toBe("none");
+        expect(dayOf(s, date)?.workedElsewhere, date).toBe(false);
+      }
+      const q = rowOf(body, ids.Q);
+      expect(dayOf(q, "2026-06-15")?.workedHours).toBe(0);
+      expect(dayOf(q, "2026-06-15")?.workedElsewhere).toBe(true);
+      expect(dayOf(q, "2026-06-16")?.status).toBe("present");
+      expect(dayOf(q, "2026-06-17")?.workedHours).toBe(2);
+      expect(rowOf(body, ids.E)).toBeUndefined();
     });
   });
 });
