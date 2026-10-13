@@ -734,8 +734,23 @@ import { readFileSync } from "node:fs";
 // (8 cases) — MIN_FILES rises from 380 to 381 and MIN_TESTS from 6431 to 6439. The edited file
 // `dashboard-entry-scope-85.test.ts` changed only in its header docblock (case count unchanged).
 // Same lower-bound convention as above; not a re-measure-to-actual sweep.
-const MIN_FILES = 381;
-const MIN_TESTS = 6439;
+// Phase 88 (issue #88), 2026-10-13, on `feat/88-superadmin` (contains origin/main @ 761d8c41): 15 new
+// test files - `scripts/__tests__/lint-tenant-scoping-nullish-tenant`, `scripts/__tests__/operator-account`,
+// `src/__tests__/cron-deactivated-tenants-88`, `device-keys-deactivated-88`, `operator-audit-append-only-88`,
+// `operator-auth-88`, `operator-config-88`, `operator-surface-off-88`, `operator-tenant-boundary-sweep-88`,
+// `operator-tenants-88`, `tenant-deactivation-88`, `tenant-principal-guard-88` and
+// `src/contexts/platform/__tests__/employee-creation-parity-88`, `operator-credentials-88`,
+// `tenant-provisioning-88` - MIN_FILES rises from 381 to 396. MIN_TESTS rises from 6439 to 6638:
+// +199 cases. The new files contribute 191, measured with the vitest JSON reporter on exactly those
+// files (24, 10, 21, 4, 15, 16, 8, 2, 8, 21, 19, 11, 4, 13, 15); the edited files add their source
+// case delta against the merge base - `scripts/__tests__/lint-tenant-scoping` 30 -> 36 (+6) and
+// `src/contexts/platform/__tests__/access-context` 14 -> 16 (+2); `lint-tenant-scoping-model-graph`,
+// `measure-foreign-context-access`, `lint-facade-signatures` and the rate-limit guard fix in
+// `operator-auth-88` kept their case count. Lower-bound convention as above (the reporter counts a
+// looping case more than once, the source once - the edited-file deltas use the source count).
+// Full-suite run on this tree before the floor was raised: 559 files, 8866 tests.
+const MIN_FILES = 396;
+const MIN_TESTS = 6638;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
