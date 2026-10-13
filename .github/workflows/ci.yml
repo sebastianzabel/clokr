@@ -853,8 +853,8 @@ jobs:
   # ── e2e-ci (Phase 275, Issue #275, D-04/D-05/D-06) ────────────────────
   # Runs the named `e2e-ci` Playwright project (apps/e2e/playwright.config.ts) — a
   # small, explicit allowlist of spec files, currently: functional.spec.ts,
-  # bs-pattern-retroactive.spec.ts, leave-flow.spec.ts. The full per-file registry
-  # this allowlist must stay consistent with lives in
+  # bs-pattern-retroactive.spec.ts, leave-flow.spec.ts, month-bar-narrow-viewport.spec.ts.
+  # The full per-file registry this allowlist must stay consistent with lives in
   # apps/api/scripts/lint-e2e-spec-registry.json (plan 275-04).
   #
   # Deliberately NO path filter (D-05): a functional e2e suite must not skip on an
@@ -922,7 +922,7 @@ jobs:
           # WEB_SERVER_DISABLED=true (the stack is already up from the previous step;
           # playwright.config.ts's own webServer would otherwise collide on port 4001).
           # E2E_API_BASE=4001 fixes the tenant fixture's stack-port default (Phase 275
-          # Task 1) — all three e2e-ci specs go through it.
+          # Task 1) — every e2e-ci spec goes through it.
           docker compose -f docker-compose.e2e.yml run --rm \
             --user root \
             -e PLAYWRIGHT_BASE_URL=http://localhost:3001 \

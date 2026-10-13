@@ -175,6 +175,10 @@ export default defineConfig({
       // The full per-file registry this allowlist must stay consistent with lives in
       // `apps/api/scripts/lint-e2e-spec-registry.json` (plan 275-04).
       //
+      // Issue #553 added a fourth file:
+      //   - month-bar-narrow-viewport.spec.ts (month bar fits 390/360 px; tenant fixture only,
+      //     no seed, and no date dependency because the browser clock is fixed in September)
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -183,6 +187,7 @@ export default defineConfig({
         /functional\.spec\.ts/,
         /bs-pattern-retroactive\.spec\.ts/,
         /leave-flow\.spec\.ts/,
+        /month-bar-narrow-viewport\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],
