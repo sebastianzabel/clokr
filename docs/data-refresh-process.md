@@ -6,7 +6,7 @@ The integration environment (`https://clokr-int.example.com`) is periodically re
 
 When an automated pipeline lands later, this manual runbook becomes the fall-back / debugging path.
 
-## TL;DR — Refresh in 8 commands
+## TL;DR — Refresh in 9 commands
 
 ```bash
 # 1. pg_dump prod into a temp file (your SSH user, your laptop)
@@ -51,33 +51,43 @@ DATABASE_URL=postgresql://clokr:<int-pg-password>@localhost:5433/clokr \
   pnpm --filter @clokr/api exec tsx scripts/seed-int-admin.ts
 ```
 
+```bash
+# 9. Re-create an int operator account — the pseudonymizer neutralised EVERY operator account
+#    (email, password, second factor); prod operator credentials never reach int.
+DATABASE_URL=postgresql://clokr:<int-pg-password>@localhost:5433/clokr ENCRYPTION_KEY=<int-key> \
+  pnpm --filter @clokr/api exec tsx scripts/operator-account.ts \
+  --create --email <int-operator-email> --display-name <name> --apply
+```
+
 **Never `prisma migrate dev`** — see step 5 below. `migrate deploy` does not run `prisma generate`.
 
 ---
 
 ## Legal posture
 
-| Concern                                | Mitigation                                                                                                                                                                                                                                                                                                                     |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Art. 32 DSGVO — security of processing | All direct-identifier columns rewritten before the swap. Plain Postgres protocol is wrapped in SSH (step 1) on the way out of prod.                                                                                                                                                                                            |
-| Art. 17 DSGVO — right to erasure       | This workflow **pseudonymizes** (Art. 4 Nr. 5): direct identifiers (name, email, NFC, credentials) are replaced while `Employee.id`/`employeeNumber` are deliberately kept — explicitly **not** Art.-17 erasure. The Art.-17 path remains the single-employee route handler via `apps/api/src/contexts/platform/anonymize.ts`. |
-| §147 AO / §257 HGB — 10-year retention | Time entries, leave requests, absences, schedules, overtime accounts are **preserved** by row count + values (only direct-identifier columns mutate). Retention is unaffected.                                                                                                                                                 |
-| Audit trail                            | The pseudonymizer writes a single `PSEUDONYMIZATION_RUN` AuditLog entry per run carrying `processed`, `durationMs`, and the residual-identifier check counts. Verification is **inline** in the script — it exits non-zero on failure; there is no separate validator to run.                                                  |
-| Residual risk — free-text notes        | `TimeEntry`/`LeaveRequest`/`Absence` free-text notes are **deliberately left untouched** so int data stays usable, and may contain incidental personal data. int is internet-reachable and protected only by login — treat it as **not** PII-free, and keep access restricted to the operator.                                 |
+| Concern                                | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Art. 32 DSGVO — security of processing | All direct-identifier columns rewritten before the swap. Plain Postgres protocol is wrapped in SSH (step 1) on the way out of prod.                                                                                                                                                                                                                                                                                                                                                 |
+| Art. 17 DSGVO — right to erasure       | This workflow **pseudonymizes** (Art. 4 Nr. 5): direct identifiers (name, email, NFC, credentials) are replaced while `Employee.id`/`employeeNumber` are deliberately kept — explicitly **not** Art.-17 erasure. The Art.-17 path remains the single-employee route handler via `apps/api/src/contexts/platform/anonymize.ts`.                                                                                                                                                      |
+| §147 AO / §257 HGB — 10-year retention | Time entries, leave requests, absences, schedules, overtime accounts are **preserved** by row count + values (only direct-identifier columns mutate). Retention is unaffected.                                                                                                                                                                                                                                                                                                      |
+| Audit trail                            | The pseudonymizer writes a single `PSEUDONYMIZATION_RUN` AuditLog entry per run carrying `processed`, `durationMs`, and the residual-identifier check counts. Verification is **inline** in the script — it exits non-zero on failure; there is no separate validator to run.                                                                                                                                                                                                       |
+| Operator credentials (Phase 88)        | Every `OperatorAccount` is neutralised by the pseudonymizer (email `operator-{id8}@example.invalid`, password `"ANONYMIZED"`, inactive, TOTP secret / recovery codes removed) and verified inline (non-zero exit on any residual). Prod operator credentials never reach int; an int operator is re-created with `operator-account.ts` (step 9). `OperatorAuditLog` is kept untouched: append-only, no credentials, failed logins store only a keyed hash of the attempted address. |
+| Residual risk — free-text notes        | `TimeEntry`/`LeaveRequest`/`Absence` free-text notes are **deliberately left untouched** so int data stays usable, and may contain incidental personal data. int is internet-reachable and protected only by login — treat it as **not** PII-free, and keep access restricted to the operator.                                                                                                                                                                                      |
 
 ## What gets pseudonymized
 
 Applied to every employee in the staging DB (`apps/api/scripts/pseudonymize-dump.ts`):
 
-| Model                              | Column              | Replaced with                                                                                        |
-| ---------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------- |
-| Employee                           | firstName, lastName | distinct realistic fake name from a fixed pool, deterministic by `id asc` order (re-runs idempotent) |
-| Employee                           | nfcCardId           | `null`                                                                                               |
-| User                               | email               | `int-{employeeNumber-or-id8}@example.invalid`                                                        |
-| User                               | passwordHash        | `"ANONYMIZED"` (no login possible — see step 8)                                                      |
-| Invitation, OtpToken, RefreshToken | (whole row)         | hard-deleted                                                                                         |
+| Model                              | Column              | Replaced with                                                                                                                                                                |
+| ---------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Employee                           | firstName, lastName | distinct realistic fake name from a fixed pool, deterministic by `id asc` order (re-runs idempotent)                                                                         |
+| Employee                           | nfcCardId           | `null`                                                                                                                                                                       |
+| User                               | email               | `int-{employeeNumber-or-id8}@example.invalid`                                                                                                                                |
+| User                               | passwordHash        | `"ANONYMIZED"` (no login possible — see step 8)                                                                                                                              |
+| Invitation, OtpToken, RefreshToken | (whole row)         | hard-deleted                                                                                                                                                                 |
+| OperatorAccount                    | all credentials     | email `operator-{id8}@example.invalid`, `passwordHash` `"ANONYMIZED"`, `isActive` false, TOTP secret, enrolment, replay step null, recovery-code hashes empty, lockout reset |
 
-What is **preserved**: `Employee.id`, `Employee.employeeNumber`, `User.isActive`, `AuditLog`, and all time/leave/absence/schedule/overtime rows **including their free-text notes**.
+What is **preserved**: `Employee.id`, `Employee.employeeNumber`, `User.isActive`, `AuditLog`, `OperatorAuditLog`, and all time/leave/absence/schedule/overtime rows **including their free-text notes**.
 
 ## Pre-requisites (one-time)
 

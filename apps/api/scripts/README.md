@@ -68,6 +68,17 @@ it never mutates `SaldoSnapshot` at all, only `OpeningBalance` and `AuditLog`. S
 Operator tools are intended to be re-run as needed. They should be safe to
 invoke against any environment with the appropriate DATABASE_URL.
 
+`operator-account.ts` (Phase 88, D-03/D-03a) is the ONLY way an operator account — the principal above
+the tenant — comes into existence: no route, seed or UI creates one. Modes: `--create --email <e>
+--display-name <n>`, `--reset-mfa --email <e>` (lost authenticator: new TOTP secret and 10 new recovery
+codes), `--deactivate --email <e>` (offboarding). Dry-run by default; nothing is written without
+`--apply`. Required env: `DATABASE_URL`, `ENCRYPTION_KEY` (the TOTP secret is stored encrypted with it),
+optional `OPERATOR_PASSWORD` (never taken from argv; if unset a password is generated and printed once).
+The TOTP secret, otpauth URI and recovery codes are printed to stdout once and never written anywhere.
+Every applied run writes one `OperatorAuditLog` row (actor type SCRIPT with OS user and host) in the same
+transaction. In the API container: `pnpm tsx scripts/operator-account.ts …`. Procedure:
+`docs/runbooks/operator-accounts.md`.
+
 ## Audit tools
 
 Audit tools are read-only and intended to surface data-integrity concerns
