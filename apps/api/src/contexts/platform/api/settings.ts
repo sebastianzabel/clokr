@@ -18,7 +18,22 @@ import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { accessContextFromRequest, employeeScopeFor } from "../access-context";
 import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-10/D-14
 import { isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-14
-import { DEFAULT_MISSING_ENTRIES_DAYS } from "../../working-time-account"; // issue #246, E-6
+import {
+  DEFAULT_MISSING_ENTRIES_DAYS, // issue #246, E-6
+  getTenantTimezone, // Issue #568 — the bulk apply's earliest effective date is the tenant-local today
+  todayInTz,
+} from "../../working-time-account";
+import {
+  bulkApplyFingerprint,
+  checkEffectiveFrom,
+  classifyBulkApplyCandidates,
+  effectiveFromWindow,
+  mergeProposedDefaults,
+  proposedContractValues,
+  storedWorkingTimeDefaults,
+  type BulkApplyClassification,
+  type WorkingTimeDefaults,
+} from "../bulk-apply-defaults"; // Issue #568 — classification, fingerprint and date window of the bulk apply
 import { getShiftsInRange, cancelOrphanShifts } from "../../scheduling"; // Phase 100B Plan 05 — S1/S3
 import {
   ARBZG_FLOOR_OVER_6H,
@@ -71,20 +86,43 @@ const RETIRED_TENANT_CONFIG_COLUMNS: Prisma.TenantConfigOmit = {
   monthlyHoursHolidayDeduction: true,
 };
 
+/**
+ * The working-time part of the tenant defaults (Issue #568). Shared by `tenantConfigSchema` and the
+ * bulk-apply preview body so both validate exactly the same fields; the preview reads the proposed
+ * values from this shape, the PUT saves them.
+ */
+const workingTimeDefaultsShape = {
+  defaultWeeklyHours: decimalFromApi(z.number().min(1).max(60)).optional(),
+  defaultMondayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  defaultTuesdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  defaultWednesdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  defaultThursdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  defaultFridayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  defaultSaturdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  defaultSundayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
+  overtimeThreshold: decimalFromApi(z.number().min(1).max(500)).optional(),
+  allowOvertimePayout: z.boolean().optional(),
+  // Phase 49.5 — default workdays Mon-Sun (tenant default)
+  defaultWorkDays: z
+    .array(z.number().int().min(0).max(6))
+    .min(1, "Mindestens ein Arbeitstag muss aktiv sein")
+    .max(7)
+    .optional(),
+};
+
+const previewSchema = z.object({
+  ...workingTimeDefaultsShape,
+  effectiveFrom: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
+
 const tenantConfigSchema = z
   .object({
     tenantName: z.string().min(1).max(200).optional(),
-    applyToExisting: z.boolean().optional(), // Auf bestehende MA ohne manuelle Änderung anwenden
-    defaultWeeklyHours: decimalFromApi(z.number().min(1).max(60)).optional(),
-    defaultMondayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    defaultTuesdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    defaultWednesdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    defaultThursdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    defaultFridayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    defaultSaturdayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    defaultSundayHours: decimalFromApi(z.number().min(0).max(24)).optional(),
-    overtimeThreshold: decimalFromApi(z.number().min(1).max(500)).optional(),
-    allowOvertimePayout: z.boolean().optional(),
+    applyToExisting: z.boolean().optional(), // apply to existing contracts; the guarded flow is added in the next commit
+    ...workingTimeDefaultsShape,
     federalState: z
       .string()
       .refine((s) => VALID_FEDERAL_STATES.includes(s))
@@ -203,12 +241,6 @@ const tenantConfigSchema = z
       .nullable()
       .optional(),
     defaultCoreDays: z.array(z.number().int().min(0).max(6)).optional(),
-    // Phase 49.5 — Standard-Arbeitstage Mo-So (Tenant-Default)
-    defaultWorkDays: z
-      .array(z.number().int().min(0).max(6))
-      .min(1, "Mindestens ein Arbeitstag muss aktiv sein")
-      .max(7)
-      .optional(),
     // Phase 63 D-02 / D-24 — per-tenant Berufsschule duration.
     // Bounds: 240..600 daily (4h..10h, ArbZG-compatible); 1200..3000 weekly
     // (20h..50h block-week cap). Values mirrored in
@@ -550,6 +582,88 @@ export function projectSecuritySettings(cfg: TenantConfig | null): SecuritySetti
       stored === undefined || stored === null ? SECURITY_SETTINGS_DEFAULTS[field] : stored;
   }
   return out as SecuritySettings;
+}
+
+/**
+ * Issue #568 — everything the bulk apply's classification reads, loaded through `db` so the apply
+ * can run it inside its own transaction after the tenant lock. `tenantId` is inline in both where
+ * clauses; nothing is ever queried by a client-supplied id.
+ */
+async function loadBulkApplyState(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  effectiveFrom: Date,
+) {
+  const [config, employees] = await Promise.all([
+    db.tenantConfig.findUnique({
+      where: { tenantId },
+      select: {
+        defaultWeeklyHours: true,
+        defaultMondayHours: true,
+        defaultTuesdayHours: true,
+        defaultWednesdayHours: true,
+        defaultThursdayHours: true,
+        defaultFridayHours: true,
+        defaultSaturdayHours: true,
+        defaultSundayHours: true,
+        overtimeThreshold: true,
+        allowOvertimePayout: true,
+        defaultWorkDays: true,
+      },
+    }),
+    // Issue #569 — only the active workforce: an anonymized employee is erased (Art. 17 GDPR), and
+    // an employee who left before the new contract starts has no contract to change.
+    db.employee.findMany({
+      where: {
+        tenantId,
+        ...NOT_ANONYMIZED_EMPLOYEE_WHERE,
+        OR: [{ exitDate: null }, { exitDate: { gte: effectiveFrom } }],
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        employeeNumber: true,
+        workSchedules: { orderBy: { validFrom: "desc" } },
+      },
+    }),
+  ]);
+  return { config, employees };
+}
+
+/** The recomputed state of one bulk apply or preview: stored defaults, proposal, classification. */
+async function computeBulkApplyState(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  effectiveFrom: string,
+  body: Partial<WorkingTimeDefaults>,
+): Promise<{
+  stored: WorkingTimeDefaults;
+  proposed: WorkingTimeDefaults;
+  classification: BulkApplyClassification;
+  fingerprint: string;
+}> {
+  const { config, employees } = await loadBulkApplyState(
+    db,
+    tenantId,
+    new Date(`${effectiveFrom}T00:00:00.000Z`),
+  );
+  const stored = storedWorkingTimeDefaults(config);
+  const proposed = mergeProposedDefaults(stored, body);
+  const classification = classifyBulkApplyCandidates({
+    employees,
+    stored,
+    proposed,
+    effectiveFrom,
+  });
+  const fingerprint = bulkApplyFingerprint({
+    tenantId,
+    effectiveFrom,
+    stored,
+    proposed,
+    classification,
+  });
+  return { stored, proposed, classification, fingerprint };
 }
 
 export async function settingsRoutes(app: FastifyInstance) {
@@ -1014,6 +1128,44 @@ export async function settingsRoutes(app: FastifyInstance) {
         appliedCount,
         skippedModelSwitch,
         ...(warnings.length > 0 ? { warnings } : {}),
+      };
+    },
+  });
+
+  // POST /api/v1/settings/work/apply-defaults/preview — Issue #568 (D-01): read-only preview of
+  // applying PROPOSED default working times to the existing workforce. The server decides who is
+  // a candidate (bulk-apply-defaults.ts); the apply (PUT /work) recomputes the same state and
+  // refuses a stale fingerprint. Writes nothing.
+  app.post("/work/apply-defaults/preview", {
+    schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
+    preHandler: requirePermission("tenant-settings:update:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const body = previewSchema.parse(req.body ?? {});
+      const tenantId = req.user.tenantId;
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+      const window = effectiveFromWindow(todayInTz(tz));
+      const effectiveFrom = body.effectiveFrom ?? window.earliest;
+      const rejection = checkEffectiveFrom(effectiveFrom, todayInTz(tz));
+      if (rejection) {
+        return reply
+          .code(rejection.status)
+          .send({ error: rejection.message, code: rejection.code });
+      }
+      const { effectiveFrom: _ignored, ...proposedBody } = body;
+      void _ignored;
+      const state = await computeBulkApplyState(app.prisma, tenantId, effectiveFrom, proposedBody);
+      return {
+        effectiveFrom,
+        earliestEffectiveFrom: window.earliest,
+        latestEffectiveFrom: window.latest,
+        allowedEffectiveFrom: window.allowed,
+        fingerprint: state.fingerprint,
+        proposed: proposedContractValues(state.proposed),
+        candidates: state.classification.candidates.map(({ comparedRow: _row, ...candidate }) => {
+          void _row;
+          return candidate;
+        }),
+        nonCandidates: state.classification.nonCandidates,
       };
     },
   });
