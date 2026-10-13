@@ -48,14 +48,14 @@ describe("OpeningHoursEditor", () => {
     for (const text of names) expect(text).toContain("Geöffnet");
   });
 
-  it("shows the default: Montag-Freitag open with 09:00 to 18:00, weekend closed", () => {
+  it("shows the API default: Montag-Samstag open with 08:00 to 20:00, Sonntag closed", () => {
     mount();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       expect(must(`op-salon-hours-${i}-open`)).toBeChecked();
-      expect(must(`op-salon-hours-${i}-from`).value).toBe("09:00");
-      expect(must(`op-salon-hours-${i}-to`).value).toBe("18:00");
+      expect(must(`op-salon-hours-${i}-from`).value).toBe("08:00");
+      expect(must(`op-salon-hours-${i}-to`).value).toBe("20:00");
     }
-    for (const i of [5, 6]) {
+    for (const i of [6]) {
       expect(must(`op-salon-hours-${i}-open`)).not.toBeChecked();
       expect(byId(`op-salon-hours-${i}-from`)).toBeNull();
       expect(byId(`op-salon-hours-${i}-to`)).toBeNull();
@@ -78,15 +78,15 @@ describe("OpeningHoursEditor", () => {
     expect(byId("op-salon-hours-2-from")).toBeNull();
     expect(byId("op-salon-hours-2-to")).toBeNull();
     expect(must("op-salon-hours-2-closed")).toHaveTextContent("Geschlossen");
-    expect(last(onChange)[2]).toEqual({ day: 2, open: "09:00", close: "18:00", closed: true });
+    expect(last(onChange)[2]).toEqual({ day: 2, open: "08:00", close: "20:00", closed: true });
   });
 
   it("opens a closed day again with its kept times", async () => {
     mount();
     await fireEvent.click(must("op-salon-hours-6-open"));
     await tick();
-    expect(must("op-salon-hours-6-from").value).toBe("09:00");
-    expect(must("op-salon-hours-6-to").value).toBe("18:00");
+    expect(must("op-salon-hours-6-from").value).toBe("08:00");
+    expect(must("op-salon-hours-6-to").value).toBe("20:00");
     expect(byId("op-salon-hours-6-closed")).toBeNull();
   });
 
@@ -97,15 +97,15 @@ describe("OpeningHoursEditor", () => {
     await fireEvent.input(from);
     await tick();
     const days = last(onChange);
-    expect(days[1]).toEqual({ day: 1, open: "08:30", close: "18:00", closed: false });
-    expect(days[0]).toEqual({ day: 0, open: "09:00", close: "18:00", closed: false });
+    expect(days[1]).toEqual({ day: 1, open: "08:30", close: "20:00", closed: false });
+    expect(days[0]).toEqual({ day: 0, open: "08:00", close: "20:00", closed: false });
   });
 
   it("reports open >= close under the row and marks the inputs invalid", async () => {
     mount();
     expect(byId("op-salon-hours-3-error")).toBeNull();
     const to = must("op-salon-hours-3-to");
-    to.value = "09:00";
+    to.value = "07:00";
     await fireEvent.input(to);
     await tick();
     const error = must("op-salon-hours-3-error");
@@ -119,7 +119,7 @@ describe("OpeningHoursEditor", () => {
   it("clears the error once the day is closed", async () => {
     mount();
     const to = must("op-salon-hours-3-to");
-    to.value = "09:00";
+    to.value = "07:00";
     await fireEvent.input(to);
     await tick();
     expect(byId("op-salon-hours-3-error")).not.toBeNull();

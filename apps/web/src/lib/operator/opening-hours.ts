@@ -16,23 +16,31 @@ export const DAY_NAMES: readonly string[] = [
   "Sonntag",
 ];
 
-export const DEFAULT_OPEN = "09:00";
-export const DEFAULT_CLOSE = "18:00";
-
 export const HOURS_ORDER_MESSAGE = "Die Öffnungszeit muss vor der Schließzeit liegen.";
 export const HOURS_MISSING_MESSAGE = "Uhrzeit angeben.";
 
 // Same pattern as the API schema (`salonOpeningHoursSchema`).
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-/** Montag-Freitag 09:00-18:00 open, Samstag and Sonntag closed. */
+/**
+ * Display mirror of the API's `DEFAULT_SALON_OPENING_HOURS`
+ * (`apps/api/src/contexts/platform/facade/salons.ts`): the hours a salon gets when none are given.
+ * The web tree cannot import API code, so `__tests__/opening-hours.test.ts` reads that source file
+ * and fails when a day, time or closed flag here drifts from it. Never edit one side alone.
+ */
+const DEFAULT_HOURS: readonly OpeningHoursDay[] = [
+  { day: 0, open: "08:00", close: "20:00", closed: false },
+  { day: 1, open: "08:00", close: "20:00", closed: false },
+  { day: 2, open: "08:00", close: "20:00", closed: false },
+  { day: 3, open: "08:00", close: "20:00", closed: false },
+  { day: 4, open: "08:00", close: "20:00", closed: false },
+  { day: 5, open: "08:00", close: "20:00", closed: false },
+  { day: 6, open: "08:00", close: "20:00", closed: true },
+];
+
+/** A fresh copy of the API's default hours: Montag-Samstag 08:00-20:00, Sonntag geschlossen. */
 export function defaultOpeningHours(): OpeningHoursDay[] {
-  return DAY_NAMES.map((_, day) => ({
-    day,
-    open: DEFAULT_OPEN,
-    close: DEFAULT_CLOSE,
-    closed: day >= 5,
-  }));
+  return DEFAULT_HOURS.map((entry) => ({ ...entry }));
 }
 
 function isUsable(hours: readonly OpeningHoursDay[] | null | undefined): boolean {

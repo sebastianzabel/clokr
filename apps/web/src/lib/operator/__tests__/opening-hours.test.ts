@@ -1,4 +1,8 @@
 // Issue #89 (D-10) - the opening-hours helpers of the salon form.
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -21,15 +25,14 @@ describe("DAY_NAMES", () => {
 });
 
 describe("defaultOpeningHours", () => {
-  it("is Montag-Freitag 09:00-18:00 open, Samstag and Sonntag closed, with explicit times", () => {
+  it("is Montag-Samstag 08:00-20:00 open, Sonntag closed, with explicit times", () => {
     const hours = defaultOpeningHours();
     expect(hours.map((d) => d.day)).toEqual([0, 1, 2, 3, 4, 5, 6]);
     for (const entry of hours) {
-      expect(entry.open).toBe("09:00");
-      expect(entry.close).toBe("18:00");
+      expect(entry.open).toBe("08:00");
+      expect(entry.close).toBe("20:00");
     }
-    expect(hours.slice(0, 5).every((d) => d.closed === false)).toBe(true);
-    expect(hours[5]?.closed).toBe(true);
+    expect(hours.slice(0, 6).every((d) => d.closed === false)).toBe(true);
     expect(hours[6]?.closed).toBe(true);
   });
 
@@ -37,7 +40,52 @@ describe("defaultOpeningHours", () => {
     const a = defaultOpeningHours();
     const first = a[0] as OpeningHoursDay;
     first.open = "10:00";
-    expect(defaultOpeningHours()[0]?.open).toBe("09:00");
+    expect(defaultOpeningHours()[0]?.open).toBe("08:00");
+  });
+});
+
+// The web tree cannot import API code (`apps/web/Dockerfile` gate), so the API constant is read
+// as TEXT, the same pattern as `lib/leave/__tests__/effective-leave-statuses.test.ts`.
+function readApiFile(relativeFromHere: string, relativeFromCwd: string): string {
+  try {
+    return readFileSync(fileURLToPath(new URL(relativeFromHere, import.meta.url)), "utf8");
+  } catch {
+    return readFileSync(resolve(process.cwd(), relativeFromCwd), "utf8");
+  }
+}
+
+const API_SOURCE = readApiFile(
+  "../../../../../api/src/contexts/platform/facade/salons.ts",
+  "../api/src/contexts/platform/facade/salons.ts",
+);
+
+function apiDefaultHours(): OpeningHoursDay[] {
+  const match = API_SOURCE.match(/DEFAULT_SALON_OPENING_HOURS[^=]*=\s*\[([\s\S]*?)\n\];/);
+  expect(match).not.toBeNull();
+  const entries = match![1].match(/\{[^{}]*\}/g) ?? [];
+  return entries.map((entry) => {
+    const day = /day:\s*(\d+)/.exec(entry);
+    const open = /open:\s*"([^"]+)"/.exec(entry);
+    const close = /close:\s*"([^"]+)"/.exec(entry);
+    expect(day && open && close, entry).toBeTruthy();
+    return {
+      day: Number(day![1]),
+      open: open![1],
+      close: close![1],
+      closed: /closed:\s*true/.test(entry),
+    };
+  });
+}
+
+describe("defaultOpeningHours mirrors the API constant (Issue #89)", () => {
+  it("[vacuity gate] the API source is loaded and declares the constant with seven entries", () => {
+    expect(API_SOURCE.length).toBeGreaterThan(0);
+    expect(API_SOURCE).toContain("DEFAULT_SALON_OPENING_HOURS");
+    expect(apiDefaultHours()).toHaveLength(7);
+  });
+
+  it("equals the API's DEFAULT_SALON_OPENING_HOURS day by day (open, close, closed)", () => {
+    expect(defaultOpeningHours()).toEqual(apiDefaultHours());
   });
 });
 
@@ -104,8 +152,8 @@ describe("validateOpeningHours", () => {
 
   it("reports an open day whose opening is not before its closing", () => {
     const days = defaultOpeningHours();
-    (days[1] as OpeningHoursDay).open = "18:00";
-    (days[3] as OpeningHoursDay).open = "19:00";
+    (days[1] as OpeningHoursDay).open = "20:00";
+    (days[3] as OpeningHoursDay).open = "21:00";
     expect(validateOpeningHours(days)).toEqual({
       1: HOURS_ORDER_MESSAGE,
       3: HOURS_ORDER_MESSAGE,
