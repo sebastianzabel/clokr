@@ -23,6 +23,7 @@
  * is an auto-waiting locator assertion.
  */
 import { randomUUID } from "node:crypto";
+import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import { test, expect } from "../fixtures";
 
@@ -1665,7 +1666,7 @@ async function scrimProblems(page: Page): Promise<string[]> {
       document
         .getAnimations()
         .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
-        .map((a) => a.finished),
+        .map((a) => a.finished.catch(() => undefined)),
     ),
   );
   return page.evaluate(() => {
@@ -1865,3 +1866,270 @@ for (const viewport of VIEWPORTS) {
     });
   });
 }
+
+// ── Look: pinned theme / skin / density, axe in light and dark, restore on leaving (D-01) ────────
+
+type LookPrefs = Partial<Record<"theme" | "mode" | "skin" | "density", string>>;
+
+/** Store the device's look preferences before the page loads, exactly where the stores read them. */
+async function storeLookPrefs(page: Page, prefs: LookPrefs): Promise<void> {
+  await page.addInitScript((entries) => {
+    for (const [key, value] of entries) localStorage.setItem(key, value);
+  }, Object.entries(prefs));
+}
+
+/** Wait until every finite animation has ended: mid-flight opacity would skew contrast results. */
+async function animationsSettled(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    Promise.race([
+      Promise.all(
+        document
+          .getAnimations()
+          .filter((a) => (a.effect?.getComputedTiming().endTime ?? 0) < 5000)
+          .map((a) => a.finished.catch(() => undefined)),
+      ),
+      new Promise((resolve) => setTimeout(resolve, 3000)),
+    ]),
+  );
+}
+
+/** The look attributes of <html>. */
+async function htmlLook(page: Page) {
+  return page.evaluate(() => {
+    const html = document.documentElement;
+    return {
+      theme: html.getAttribute("data-theme"),
+      density: html.getAttribute("data-density"),
+      skin: html.getAttribute("data-skin"),
+      mode: html.getAttribute("data-mode"),
+    };
+  });
+}
+
+/**
+ * WCAG contrast ratio between the text colour of the element and its effective background (its own
+ * colour blended over every translucent ancestor). Colours are normalised to sRGB through a canvas,
+ * because computed styles may be oklch()/color-mix() strings.
+ */
+async function contrastOf(page: Page, testId: string): Promise<number> {
+  return page.getByTestId(testId).evaluate((el) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) throw new Error("no 2d canvas");
+    const rgba = (css: string): [number, number, number, number] => {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = "#000";
+      ctx.fillStyle = css;
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+      return [r, g, b, a / 255];
+    };
+    const over = (
+      top: [number, number, number, number],
+      base: [number, number, number],
+    ): [number, number, number] => [
+      top[0] * top[3] + base[0] * (1 - top[3]),
+      top[1] * top[3] + base[1] * (1 - top[3]),
+      top[2] * top[3] + base[2] * (1 - top[3]),
+    ];
+    // Background: walk up to the first opaque layer, then blend back down.
+    const layers: Array<[number, number, number, number]> = [];
+    for (let node: Element | null = el; node; node = node.parentElement) {
+      const layer = rgba(getComputedStyle(node).backgroundColor);
+      if (layer[3] > 0) layers.push(layer);
+      if (layer[3] >= 1) break;
+    }
+    let background: [number, number, number] = [255, 255, 255];
+    for (const layer of layers.reverse()) background = over(layer, background);
+    // A gradient fill (the modern skin's primary button): every colour stop is a possible
+    // background behind the text, the weakest one decides.
+    const stops = [
+      ...(getComputedStyle(el).backgroundImage.match(
+        /rgba?\([^)]*\)|color\([^)]*\)|ok(?:lch|lab)\([^)]*\)|#[0-9a-f]{3,8}/gi,
+      ) ?? []),
+    ].map((css) => over(rgba(css), background));
+    const backgrounds = stops.length > 0 ? stops : [background];
+    const luminance = (c: [number, number, number]) => {
+      const [r, g, b] = c.map((v) => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratios = backgrounds.map((bg) => {
+      const text = over(rgba(getComputedStyle(el).color), bg);
+      const [hi, lo] = [luminance(text), luminance(bg)].sort((a, b) => b - a);
+      return (hi + 0.05) / (lo + 0.05);
+    });
+    return Math.min(...ratios);
+  });
+}
+
+test.describe("operator console - fixed look", () => {
+  const MODES = ["light", "dark"] as const;
+
+  // The supported pair: editorial x nacht, with a device that stores a tenant look.
+  for (const mode of MODES) {
+    test.describe(`editorial x nacht, ${mode} mode`, () => {
+      async function scan(page: Page): Promise<string[]> {
+        await animationsSettled(page);
+        const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
+        return results.violations.map(
+          (v) =>
+            `${v.id}: ${v.nodes
+              .map((n) => {
+                const data = (n.any[0]?.data ?? {}) as Record<string, unknown>;
+                return `${n.target.join(" ")} [${data.fgColor ?? ""} on ${data.bgColor ?? ""}, ${data.contrastRatio ?? ""}]`;
+              })
+              .join(" | ")}`,
+        );
+      }
+
+      test.beforeEach(async ({ page }) => {
+        await storeLookPrefs(page, { mode, theme: "pflaume", skin: "modern", density: "compact" });
+      });
+
+      test("sign-in has no WCAG 2 A/AA violations", async ({ page }) => {
+        await mockOperatorApi(page);
+        await page.goto("/betreiber/anmelden");
+        await expect(page.getByTestId("op-signin-page")).toBeVisible();
+        expect((await htmlLook(page)).mode).toBe(mode);
+        expect(await scan(page)).toEqual([]);
+      });
+
+      test("tenant list has no WCAG 2 A/AA violations", async ({ page }) => {
+        await openTenantList(page);
+        await expect(page.getByTestId("op-tenants-table")).toBeVisible();
+        expect((await htmlLook(page)).mode).toBe(mode);
+        expect(await scan(page)).toEqual([]);
+      });
+
+      test("tenant detail has no WCAG 2 A/AA violations", async ({ page }) => {
+        await mockOperatorApi(page);
+        await seedOperatorSession(page);
+        await page.goto(`/betreiber/mandanten/${TENANT_ID}`);
+        await expect(page.getByTestId("op-salons-table")).toBeVisible();
+        expect((await htmlLook(page)).mode).toBe(mode);
+        expect(await scan(page)).toEqual([]);
+      });
+    });
+  }
+
+  // A device that stores a tenant look gets the operator look regardless (the pin), readable.
+  const STORED_LOOKS: Array<{ name: string; prefs: LookPrefs }> = [
+    {
+      name: "modern skin, light",
+      prefs: { skin: "modern", theme: "pflaume", density: "compact", mode: "light" },
+    },
+    {
+      name: "modern skin, dark",
+      prefs: { skin: "modern", theme: "pflaume", density: "compact", mode: "dark" },
+    },
+    {
+      name: "editorial skin and Pflaume, light",
+      prefs: { skin: "editorial", theme: "pflaume", density: "compact", mode: "light" },
+    },
+  ];
+  for (const { name, prefs } of STORED_LOOKS) {
+    test.describe(`stored tenant look: ${name}`, () => {
+      test.use({ viewport: { width: 360, height: 800 } });
+
+      test("the console is pinned, fits and keeps its primary button and badge readable", async ({
+        page,
+      }) => {
+        await storeLookPrefs(page, prefs);
+        await openTenantList(page);
+        await expect(page.getByTestId("op-tenants-table")).toBeVisible();
+        await animationsSettled(page);
+
+        expect(await htmlLook(page)).toEqual({
+          theme: "nacht",
+          density: "comfortable",
+          skin: null,
+          mode: prefs.mode,
+        });
+        expect(await pageOverflow(page)).toEqual([]);
+        expect(await contrastOf(page, "op-tenants-create")).toBeGreaterThanOrEqual(4.5);
+        expect(await contrastOf(page, "op-badge")).toBeGreaterThanOrEqual(4.5);
+      });
+    });
+  }
+
+  // The pin bypassed (a future store change): the console must stay legible and fit. The supported
+  // pair is editorial x nacht; modern x nacht (light, dark) and editorial x pflaume (light) are
+  // smoke-checked by forcing the attributes the pin would have replaced.
+  const BYPASSED_LOOKS: Array<{
+    name: string;
+    mode: "light" | "dark";
+    skin: string | null;
+    theme: string;
+  }> = [
+    { name: "modern x nacht, light", mode: "light", skin: "modern", theme: "nacht" },
+    { name: "modern x nacht, dark", mode: "dark", skin: "modern", theme: "nacht" },
+    { name: "editorial x pflaume, light", mode: "light", skin: null, theme: "pflaume" },
+  ];
+  for (const look of BYPASSED_LOOKS) {
+    test.describe(`pin bypassed: ${look.name}`, () => {
+      test.use({ viewport: { width: 360, height: 800 } });
+
+      test("renders without overflow, primary button and badge stay readable", async ({ page }) => {
+        await storeLookPrefs(page, { mode: look.mode });
+        await openTenantList(page);
+        await expect(page.getByTestId("op-tenants-table")).toBeVisible();
+        await page.evaluate(({ skin, theme }) => {
+          const html = document.documentElement;
+          if (skin) html.setAttribute("data-skin", skin);
+          else html.removeAttribute("data-skin");
+          html.setAttribute("data-theme", theme);
+          document.querySelector('[data-testid="op-shell"]')?.setAttribute("data-theme", theme);
+        }, look);
+        await animationsSettled(page);
+
+        expect(await pageOverflow(page)).toEqual([]);
+        expect(await offendersOf(page, '[data-testid="op-bar"]')).toEqual([]);
+        expect(await offendersOf(page, '[data-testid="op-tenants-table"]')).toEqual([]);
+        expect(await contrastOf(page, "op-tenants-create")).toBeGreaterThanOrEqual(4.5);
+        expect(await contrastOf(page, "op-badge")).toBeGreaterThanOrEqual(4.5);
+      });
+    });
+  }
+
+  test("leaving /betreiber puts the device's look back on <html>", async ({ page }) => {
+    await storeLookPrefs(page, { theme: "pflaume", skin: "modern", density: "compact" });
+    await mockOperatorApi(page);
+    await page.goto("/betreiber/anmelden");
+    await expect(page.getByTestId("op-signin-page")).toBeVisible();
+
+    // On the console: the operator look, whatever the device stored.
+    expect(await htmlLook(page)).toMatchObject({
+      theme: "nacht",
+      density: "comfortable",
+      skin: null,
+    });
+
+    // A real client-side navigation: the router handles a click on any same-origin anchor. The
+    // marker proves the document was not reloaded (a reload would restore the look by itself).
+    await page.evaluate(() => {
+      (window as unknown as { __opNavMarker: number }).__opNavMarker = 1;
+      const link = document.createElement("a");
+      link.href = "/login";
+      link.setAttribute("data-testid", "op-test-leave");
+      link.textContent = "leave";
+      document.body.appendChild(link);
+    });
+    await page.getByTestId("op-test-leave").click();
+    await expect(page).toHaveURL(/\/login$/);
+
+    expect(
+      await page.evaluate(() => (window as unknown as { __opNavMarker?: number }).__opNavMarker),
+    ).toBe(1);
+    await expect
+      .poll(() => htmlLook(page))
+      .toMatchObject({
+        theme: "pflaume",
+        density: "compact",
+        skin: "modern",
+      });
+  });
+});
