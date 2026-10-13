@@ -1577,3 +1577,291 @@ test.describe("operator console - salon lifecycle", () => {
     await expect(page.getByRole("menuitem", { name: /löschen|entfernen/i })).toHaveCount(0);
   });
 });
+
+// ── Geometry: 1440 down to 360 px with worst-case texts (D-14, #553 lesson) ──────────────────
+
+const VIEWPORTS = [
+  { name: "1440 px", width: 1440, height: 900, stacked: false },
+  { name: "768 px", width: 768, height: 1024, stacked: false },
+  { name: "390 px", width: 390, height: 844, stacked: true },
+  { name: "360 px", width: 360, height: 800, stacked: true },
+] as const;
+
+const LONG_TENANT_NAME = "Langer".repeat(34).slice(0, 200);
+const LONG_REASON = "Grund ".repeat(100).trim().slice(0, 500);
+const LONG_STREET = "Sehr-lange-Strasse-".repeat(4).slice(0, 60);
+
+/**
+ * Descendants of `container` that reach beyond its right edge, labelled by test id (or tag and
+ * class). Measured on the children with getBoundingClientRect, never on scrollWidth of the
+ * container: a clipping parent reports a scrollWidth that hides exactly the overflow in question.
+ * Elements of 1 x 1 px or less (the visually hidden live regions) are not content.
+ */
+async function offendersOf(page: Page, containerSelector: string): Promise<string[]> {
+  return page.evaluate((selector) => {
+    const containers = [...document.querySelectorAll(selector)];
+    if (containers.length === 0) return [`no element matches ${selector}`];
+    return containers.flatMap((container) => {
+      const limit = container.getBoundingClientRect().right + 0.5;
+      return [...container.querySelectorAll("*")]
+        .filter((child) => {
+          const box = child.getBoundingClientRect();
+          if (box.width <= 1 && box.height <= 1) return false;
+          // Content of a visually hidden element (the header of a stacked list) is not on screen.
+          for (let up = child.parentElement; up && up !== container; up = up.parentElement) {
+            const upBox = up.getBoundingClientRect();
+            if (upBox.width <= 1 && upBox.height <= 1) return false;
+          }
+          return box.right > limit;
+        })
+        .map((child) => {
+          const id = child.getAttribute("data-testid");
+          return `${selector} > ${id ?? `${child.tagName.toLowerCase()}.${child.className}`}`;
+        });
+    });
+  }, containerSelector);
+}
+
+/**
+ * Document-level overflow: empty when the page does not scroll sideways, otherwise the elements
+ * that reach past the viewport (labelled like offendersOf), so a red run names the culprit.
+ */
+async function pageOverflow(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const html = document.documentElement;
+    if (html.scrollWidth <= window.innerWidth) return [];
+    const culprits = [...document.body.querySelectorAll("*")]
+      .filter((el) => {
+        const box = el.getBoundingClientRect();
+        return !(box.width <= 1 && box.height <= 1) && box.right > window.innerWidth + 0.5;
+      })
+      .map((el) => el.getAttribute("data-testid") ?? `${el.tagName.toLowerCase()}.${el.className}`);
+    // Text that spills out of a box which does not clip it: the box fits, its content does not.
+    const spilling = [...document.body.querySelectorAll("*")]
+      .filter(
+        (el) =>
+          el.clientWidth > 0 &&
+          el.scrollWidth > el.clientWidth + 1 &&
+          getComputedStyle(el).overflowX === "visible",
+      )
+      .map(
+        (el) =>
+          `spills: ${el.getAttribute("data-testid") ?? `${el.tagName.toLowerCase()}.${el.className}`}`,
+      );
+    return [`html scrolls: ${html.scrollWidth} > ${window.innerWidth}`, ...culprits, ...spilling];
+  });
+}
+
+/**
+ * The open dialog's backdrop must cover the whole viewport. A dialog rendered inside a transformed
+ * ancestor (a Section with a finished card-animate entrance keeps `transform: matrix(...)`) is
+ * positioned against that ancestor instead: the scrim then covers only the card and the dialog is
+ * shifted and clipped. Returns what is wrong, empty when the scrim is the viewport.
+ */
+async function scrimProblems(page: Page): Promise<string[]> {
+  // Let the finite entrance animations end first: mid-flight they shift the page by a few pixels.
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+        .map((a) => a.finished),
+    ),
+  );
+  return page.evaluate(() => {
+    const dialog = document.querySelector('[role="dialog"]');
+    const scrim = dialog?.parentElement;
+    if (!dialog || !scrim) return ["no open dialog"];
+    const box = scrim.getBoundingClientRect();
+    const problems: string[] = [];
+    if (Math.abs(box.left) > 0.5 || Math.abs(box.top) > 0.5) {
+      problems.push(`scrim starts at ${box.left}/${box.top}`);
+    }
+    if (Math.abs(box.right - window.innerWidth) > 1.5) {
+      problems.push(`scrim ends at ${box.right}, viewport ${window.innerWidth}`);
+    }
+    if (Math.abs(box.bottom - window.innerHeight) > 1.5) {
+      problems.push(`scrim bottom ${box.bottom}, viewport ${window.innerHeight}`);
+    }
+    return problems;
+  });
+}
+
+/** True when the element is rendered as the visually hidden 1 x 1 px header of a stacked list. */
+async function isVisuallyHidden(page: Page, selector: string): Promise<boolean> {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return false;
+    const box = el.getBoundingClientRect();
+    return box.width <= 1 && box.height <= 1;
+  }, selector);
+}
+
+/** True when a scroll wrapper (or the given element) clips content horizontally. */
+async function wrapperClips(page: Page, selector: string): Promise<boolean> {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    return el ? el.scrollWidth > el.clientWidth : false;
+  }, selector);
+}
+
+for (const viewport of VIEWPORTS) {
+  test.describe(`operator console - geometry at ${viewport.name}`, () => {
+    test.use({ viewport: { width: viewport.width, height: viewport.height } });
+
+    const longTenant: MockTenant = {
+      ...TENANT,
+      name: LONG_TENANT_NAME,
+    };
+    const frozenTenant: MockTenant = {
+      ...TENANT,
+      name: LONG_TENANT_NAME,
+      deactivatedAt: "2026-03-01T08:00:00.000Z",
+      deactivatedReason: LONG_REASON,
+    };
+    const longStreetSalons = (): MockSalon[] =>
+      structuredClone(SALONS).map((salon) =>
+        salon.id === DEFAULT_SALON_ID ? { ...salon, street: LONG_STREET } : salon,
+      );
+
+    async function openDetail(page: Page, tenant: MockTenant): Promise<void> {
+      const mock = await mockOperatorApi(page);
+      mock.state.detail = { ...tenant };
+      mock.state.salons = longStreetSalons();
+      await seedOperatorSession(page);
+      await page.goto(`/betreiber/mandanten/${TENANT_ID}`);
+      await expect(page.getByTestId("op-salons-table")).toBeVisible();
+    }
+
+    test("the sign-in page fits", async ({ page }) => {
+      await mockOperatorApi(page);
+      await page.goto("/betreiber/anmelden");
+      await expect(page.getByTestId("op-signin-page")).toBeVisible();
+
+      expect(await pageOverflow(page)).toEqual([]);
+      expect(await offendersOf(page, '[data-testid="op-signin-page"]')).toEqual([]);
+    });
+
+    test("the tenant list fits with a 200-character name and a 500-character reason", async ({
+      page,
+    }) => {
+      const listed = { ...frozenTenant, id: randomUUID() };
+      await openTenantList(page, (state) => {
+        state.tenants = [listed, TENANT];
+      });
+      await expect(page.getByTestId(`op-tenant-row-${listed.id}`)).toBeVisible();
+
+      expect(await pageOverflow(page)).toEqual([]);
+      expect(await offendersOf(page, '[data-testid="op-bar"]')).toEqual([]);
+      expect(await offendersOf(page, '[data-testid="op-tenants-table"]')).toEqual([]);
+      expect(await offendersOf(page, '[data-testid="op-tenants-page"]')).toEqual([]);
+      expect(await wrapperClips(page, ".table-wrap")).toBe(false);
+      // Stacked list below 640 px: the header row is not shown, the rows are not table rows.
+      expect(await isVisuallyHidden(page, '[data-testid="op-tenants-table"] thead')).toBe(
+        viewport.stacked,
+      );
+    });
+
+    test("the create-tenant dialog fits", async ({ page }) => {
+      await openTenantList(page);
+      await page.getByTestId("op-tenants-create").click();
+      await expect(page.getByTestId("op-tenant-create-dialog")).toBeVisible();
+      await page.getByTestId("op-tenant-create-name").fill(LONG_TENANT_NAME);
+      await page
+        .getByTestId("op-tenant-create-admin-email")
+        .fill(`${"a".repeat(60)}@example.invalid`);
+
+      expect(await pageOverflow(page)).toEqual([]);
+      expect(await offendersOf(page, '[role="dialog"]')).toEqual([]);
+      expect(await scrimProblems(page)).toEqual([]);
+      const box = await page.locator('[role="dialog"]').first().boundingBox();
+      expect(box).not.toBeNull();
+      expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(viewport.width + 0.5);
+    });
+
+    test("the tenant detail fits, the 200-character name is shown whole", async ({ page }) => {
+      await openDetail(page, longTenant);
+
+      expect(await pageOverflow(page)).toEqual([]);
+      expect(await offendersOf(page, '[data-testid="op-bar"]')).toEqual([]);
+      expect(await offendersOf(page, "main section")).toEqual([]);
+      expect(await offendersOf(page, '[data-testid="op-salons-table"]')).toEqual([]);
+      expect(await wrapperClips(page, ".table-wrap")).toBe(false);
+
+      // Not ellipsised: the text is wrapped, so the element holds all of it.
+      await expect(page.getByTestId("op-tenant-name")).toHaveText(LONG_TENANT_NAME);
+      expect(await wrapperClips(page, '[data-testid="op-tenant-name"]')).toBe(false);
+
+      expect(await isVisuallyHidden(page, '[data-testid="op-salons-table"] thead')).toBe(
+        viewport.stacked,
+      );
+    });
+
+    test("a deactivated tenant with a 500-character reason fits", async ({ page }) => {
+      await openDetail(page, frozenTenant);
+      await expect(page.getByTestId("op-tenant-deactivated-notice")).toContainText("Grund");
+
+      expect(await pageOverflow(page)).toEqual([]);
+      expect(await offendersOf(page, '[data-testid="op-bar"]')).toEqual([]);
+      expect(await offendersOf(page, "main section")).toEqual([]);
+      expect(await offendersOf(page, '[data-testid="op-tenant-deactivated-notice"]')).toEqual([]);
+      expect(await offendersOf(page, '[data-testid="op-salons-table"]')).toEqual([]);
+    });
+
+    test("the salon dialog in edit mode fits with a 60-character street", async ({ page }) => {
+      await openDetail(page, longTenant);
+      await page.getByTestId(`op-salon-edit-${DEFAULT_SALON_ID}`).click();
+      await expect(page.getByTestId("op-salon-dialog")).toBeVisible();
+      await expect(page.getByTestId("op-salon-street")).toHaveValue(LONG_STREET);
+
+      expect(await pageOverflow(page)).toEqual([]);
+      expect(await offendersOf(page, '[role="dialog"]')).toEqual([]);
+      expect(await scrimProblems(page)).toEqual([]);
+      const box = await page.locator('[role="dialog"]').first().boundingBox();
+      expect(box).not.toBeNull();
+      expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(viewport.width + 0.5);
+    });
+
+    test("the deactivate-tenant reason dialog fits with a 500-character reason", async ({
+      page,
+    }) => {
+      await openDetail(page, longTenant);
+      await page.getByTestId("op-tenant-deactivate").click();
+      const dialog = page.getByRole("dialog", { name: "Mandant deaktivieren?" });
+      await expect(dialog).toBeVisible();
+      await dialog.getByLabel("Begründung").fill(LONG_REASON);
+
+      expect(await pageOverflow(page)).toEqual([]);
+      expect(await offendersOf(page, '[role="dialog"]')).toEqual([]);
+      expect(await scrimProblems(page)).toEqual([]);
+      const box = await dialog.boundingBox();
+      expect(box).not.toBeNull();
+      expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(viewport.width + 0.5);
+    });
+
+    test("the bar's rule is styled: its border differs from a control with an invented class", async ({
+      page,
+    }) => {
+      await openTenantList(page);
+      await expect(page.getByTestId("op-bar")).toBeVisible();
+      await page.evaluate(() => {
+        const control = document.createElement("div");
+        control.className = "op-geometry-control-7f3a";
+        control.setAttribute("data-testid", "op-geometry-control");
+        document.body.appendChild(control);
+      });
+
+      const bar = await page.getByTestId("op-bar").evaluate((el) => {
+        const style = getComputedStyle(el);
+        return { width: style.borderTopWidth, style: style.borderTopStyle };
+      });
+      const control = await page.getByTestId("op-geometry-control").evaluate((el) => {
+        const style = getComputedStyle(el);
+        return { width: style.borderTopWidth, style: style.borderTopStyle };
+      });
+      expect(bar.width).toBe("2px");
+      expect(bar.style).toBe("solid");
+      expect(control.width).not.toBe(bar.width);
+    });
+  });
+}
