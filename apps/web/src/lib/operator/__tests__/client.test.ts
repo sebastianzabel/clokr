@@ -98,6 +98,46 @@ describe("operatorApi", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer op-token");
   });
 
+  it("createTenant posts the body as given to /tenants with the operator token", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(jsonResponse({ invitationMailSent: true }, 201));
+    const body = {
+      name: "Beispiel",
+      slug: "beispiel",
+      federalState: "BERLIN" as const,
+      admin: { email: "a@example.invalid", firstName: "A", lastName: "B" },
+    };
+
+    await expect(operatorApi.createTenant(body)).resolves.toEqual({ invitationMailSent: true });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify(body));
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer op-token");
+  });
+
+  it("createTenant surfaces the 409 code and keeps the session", async () => {
+    const { setSession, operatorApi, currentToken } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(
+      jsonResponse({ error: "Dieser Kurzname ist bereits vergeben.", code: "SLUG_TAKEN" }, 409),
+    );
+
+    const err = await operatorApi
+      .createTenant({
+        name: "x",
+        slug: "xxx",
+        federalState: "BERLIN",
+        admin: { email: "a@example.invalid", firstName: "A", lastName: "B" },
+      })
+      .catch((e: unknown) => e);
+
+    expect(err).toMatchObject({ status: 409, code: "SLUG_TAKEN" });
+    expect(currentToken()).toBe("op-token");
+  });
+
   it("listSalons reads /tenants/:id/salons", async () => {
     const { setSession, operatorApi } = await load();
     setSession("op-token", 900, NOW);

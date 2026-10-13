@@ -10,6 +10,8 @@ import { errorMessage } from "$api/error-message";
 import { clearSession, currentToken } from "$stores/operator-auth";
 import { buildSignInUrl } from "./next-path";
 import type {
+  CreateTenantBody,
+  CreateTenantResult,
   OperatorAccessGrant,
   OperatorChallenge,
   OperatorFactor,
@@ -119,6 +121,8 @@ export const operatorApi = {
       auth: false,
     }),
   me: () => request<OperatorMe>("GET", "/auth/me"),
+  createTenant: (body: CreateTenantBody) =>
+    request<CreateTenantResult>("POST", "/tenants", { body }),
   listTenants: () => request<OperatorTenant[]>("GET", "/tenants"),
   getTenant: (id: string) => request<OperatorTenant>("GET", `/tenants/${encodeURIComponent(id)}`),
   listSalons: (tenantId: string) =>

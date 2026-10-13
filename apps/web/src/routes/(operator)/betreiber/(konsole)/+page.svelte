@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import PageHead from "$components/layout/PageHead.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import TenantCreateDialog from "$lib/components/operator/TenantCreateDialog.svelte";
   import TenantTable from "$lib/components/operator/TenantTable.svelte";
   import { operatorApi } from "$lib/operator/client";
   import { describeLoadError } from "$lib/operator/labels";
-  import type { OperatorTenant } from "$lib/operator/types";
+  import type { CreateTenantBody, OperatorTenant } from "$lib/operator/types";
 
   type LoadState = "loading" | "ready" | "error";
 
@@ -19,8 +21,9 @@
   let pageSize = $state(25);
   let showCreate = $state(false);
 
-  async function load() {
-    loadState = "loading";
+  /** `silent` keeps the current list on screen while it refreshes (after a create). */
+  async function load(silent = false) {
+    if (!silent) loadState = "loading";
     try {
       tenants = await operatorApi.listTenants();
       loadState = "ready";
@@ -33,6 +36,15 @@
 
   function openCreate() {
     showCreate = true;
+  }
+
+  function createTenant(body: CreateTenantBody) {
+    return operatorApi.createTenant(body);
+  }
+
+  function openTenant(tenantId: string) {
+    showCreate = false;
+    void goto(`/betreiber/mandanten/${encodeURIComponent(tenantId)}`);
   }
 
   onMount(() => {
@@ -55,7 +67,6 @@
         type="button"
         class="btn btn-primary"
         aria-haspopup="dialog"
-        data-create-open={showCreate}
         data-testid="op-tenants-create"
         onclick={openCreate}>Mandant anlegen</button
       >
@@ -97,6 +108,13 @@
     {/if}
   </Section>
 </div>
+
+<TenantCreateDialog
+  bind:open={showCreate}
+  onCreate={createTenant}
+  onOpen={openTenant}
+  onCreated={() => void load(true)}
+/>
 
 <style>
   .row {

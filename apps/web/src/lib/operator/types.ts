@@ -62,3 +62,25 @@ export interface OperatorMe {
   displayName: string;
   lastLoginAt: string | null;
 }
+
+/** Body of `POST /operator/tenants`; the strict API schema accepts exactly these keys. */
+export interface CreateTenantBody {
+  name: string;
+  slug: string;
+  federalState: FederalState;
+  timezone?: string;
+  admin: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    employeeNumber?: string;
+  };
+}
+
+/** 201 body of `POST /operator/tenants`. The invitation token is never part of it (T-88-52). */
+export interface CreateTenantResult {
+  tenant: OperatorTenant;
+  defaultSalonId: string;
+  adminEmployeeId: string;
+  invitationMailSent: boolean;
+}
