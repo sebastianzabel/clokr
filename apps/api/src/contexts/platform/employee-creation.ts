@@ -11,9 +11,9 @@
  * helpers that need a tenant REQUEST (`auditRoleAssignmentChange(app, req, …)`,
  * `auditSalonAssignmentEvent(app, req, …)`, `userId: req.user.sub`). The operator path has no
  * tenant request and must never write a row "as if a tenant user did it" (D-07, repudiation): its
- * port leaves `AuditLog.userId` empty and records `newValue.actor = { type: "OPERATOR",
- * operatorId }`. The tenant route wires the port to the existing helpers, so its rows are
- * byte-identical to what it wrote before the extraction.
+ * port leaves `AuditLog.userId` empty and records the operator actor shape of
+ * `operator-tenant-audit.ts` in `newValue.actor`. The tenant route wires the port to the
+ * existing helpers, so its rows are byte-identical to what it wrote before the extraction.
  *
  * The invitation rule (random token, stored hashed, 24 h lifetime, open invitations expired on
  * re-issue) lives here once: employee creation, the tenant-side resend route and the operator

@@ -770,8 +770,11 @@ import { readFileSync } from "node:fs";
 // Phase 89 plan 01 (Issue #89, 2026-10-13), on `feat/89-betreiber-ui` (based on origin/main @ adac8e59): one
 // new test FILE, `src/__tests__/operator-salons-89.test.ts` (7 cases, as reported by its single-file
 // run) - MIN_FILES rises from 399 to 400 and MIN_TESTS from 6687 to 6694. Same lower-bound convention as above.
-const MIN_FILES = 400;
-const MIN_TESTS = 6694;
+// Phase 89 plan 06 task 1 (Issue #89, 2026-10-13): one new test FILE, `src/__tests__/operator-tenant-audit-89.test.ts`
+// (8 cases, single-file run), plus 1 new case in `operator-audit-append-only-88.test.ts` (15 -> 16) - MIN_FILES rises
+// from 400 to 401 and MIN_TESTS from 6694 to 6703. Same lower-bound convention as above.
+const MIN_FILES = 401;
+const MIN_TESTS = 6703;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

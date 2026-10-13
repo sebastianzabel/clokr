@@ -13,6 +13,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import {
   OPERATOR_AUDIT_ACTIONS,
+  OPERATOR_AUDIT_RETENTION_CLASS,
   purgeExpiredOperatorAudit,
   recordOperatorAudit,
 } from "../contexts/platform/operator-audit";
@@ -205,6 +206,23 @@ describe("Phase 88 — retention purge (D-07a)", () => {
     const id = await insertBackdated(OPERATOR_AUDIT_ACTIONS.TENANT_DEACTIVATED, monthsAgo(121));
     await purgeExpiredOperatorAudit(app.prisma, new Date());
     expect(await app.prisma.operatorAuditLog.findUnique({ where: { id } })).toBeNull();
+  });
+});
+
+describe("Phase 89 — salon and coupling lifecycle actions (D-09)", () => {
+  it("gives each of the six salon actions the 10-year LIFECYCLE class", () => {
+    const salonActions = [
+      OPERATOR_AUDIT_ACTIONS.SALON_CREATED,
+      OPERATOR_AUDIT_ACTIONS.SALON_UPDATED,
+      OPERATOR_AUDIT_ACTIONS.SALON_DEACTIVATED,
+      OPERATOR_AUDIT_ACTIONS.SALON_ACTIVATED,
+      OPERATOR_AUDIT_ACTIONS.SALON_COUPLING_SET,
+      OPERATOR_AUDIT_ACTIONS.SALON_COUPLING_REMOVED,
+    ];
+    expect(salonActions).toHaveLength(6);
+    for (const action of salonActions) {
+      expect(OPERATOR_AUDIT_RETENTION_CLASS[action]).toBe("LIFECYCLE");
+    }
   });
 });
 

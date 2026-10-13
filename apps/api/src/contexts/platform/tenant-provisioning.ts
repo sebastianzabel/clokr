@@ -11,7 +11,7 @@
  * - L3 `provisionTenantWithAdmin` — L2 + the first tenant admin, created by the SAME code as every
  *   other employee (`employee-creation.ts`), in the same transaction. Its audit rows go through
  *   `operatorEmployeeCreationAudit`: `AuditLog.userId` stays empty and `newValue.actor` names the
- *   operator, so nothing is ever written "as if a tenant user did it" (D-07).
+ *   operator and the new tenant, so nothing is ever written "as if a tenant user did it" (D-07).
  *
  * Every function takes the caller's transaction client, so the caller decides atomicity and an
  * audit row can land in the same transaction. L1 and L2 write no audit row themselves: they have
@@ -27,6 +27,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { FederalState, Prisma } from "@clokr/db";
 import { DEFAULT_SALON_OPENING_HOURS, createSalon } from "./facade/salons.js";
+import { operatorTenantAudit } from "./operator-tenant-audit.js";
 import {
   createEmployeeInTransaction,
   createEmployeeSchema,
@@ -101,44 +102,25 @@ type AuditRequestLike = {
   headers: Record<string, string | string[] | undefined>;
 };
 
-/** The actor metadata of an operator-attributed `AuditLog.newValue`. */
-function operatorActor(operatorId: string) {
-  return { type: "OPERATOR" as const, operatorId };
-}
-
 /**
  * The employee-creation audit port of the operator path (D-07, research A8). It writes the same
  * `AuditLog` actions and entities as the tenant port — a tenant admin reading the history of a
- * provisioned employee sees the same rows — but with `userId` empty and `newValue.actor =
- * { type: "OPERATOR", operatorId }`, mirroring the API-key idiom of `plugins/audit.ts`. A tenant
- * user's id is never used: the operator did this, not a tenant principal. The operator's own
- * accountability row (`TENANT_CREATED`) goes to `OperatorAuditLog` and is written by the caller.
+ * provisioned employee sees the same rows — but with `userId` empty and the operator actor shape
+ * of `operator-tenant-audit.ts` (the one writer), which also stamps the tenant the rows belong to
+ * so that tenant's audit page can show them (Phase 89, D-09a/D-09b). Rows written before Phase 89
+ * carry no tenant stamp. A tenant user's id is never used: the operator did this, not a tenant
+ * principal. The operator's own accountability row (`TENANT_CREATED`) goes to `OperatorAuditLog`
+ * and is written by the caller.
  */
 export function operatorEmployeeCreationAudit(
   app: FastifyInstance,
-  input: { operatorId: string; request?: AuditRequestLike },
+  input: { operatorId: string; tenantId: string; request?: AuditRequestLike },
 ): EmployeeCreationAudit {
-  const actor = operatorActor(input.operatorId);
-  const write = (
-    entry: {
-      action: string;
-      entity: string;
-      entityId: string;
-      oldValue?: unknown;
-      newValue?: object;
-    },
-    tx?: Prisma.TransactionClient,
-  ) =>
-    app.audit({
-      userId: undefined,
-      action: entry.action,
-      entity: entry.entity,
-      entityId: entry.entityId,
-      oldValue: entry.oldValue,
-      newValue: { ...(entry.newValue ?? {}), actor },
-      request: input.request,
-      tx,
-    });
+  const write = operatorTenantAudit(app, {
+    operatorId: input.operatorId,
+    tenantId: input.tenantId,
+    request: input.request,
+  });
 
   return {
     vacationEntitlement: (entry, tx) =>
@@ -276,12 +258,15 @@ function conflictFromUniqueViolation(err: unknown): "SLUG_TAKEN" | "EMAIL_TAKEN"
  * account nobody time-tracks on yet (CLAUDE.md "track-only" rule: `monthlyHours` null/0 is pure
  * time tracking, saldo 0). The tenant changes the contract later like any other.
  *
+ * `auditFor` builds the audit port for the new tenant, once the tenant row exists inside the
+ * transaction (before the first audited write).
+ *
  * `invitationToken` is for the invitation mail only.
  */
 export async function provisionTenantWithAdmin(
   tx: Prisma.TransactionClient,
   input: TenantWithAdminInput,
-  audit: EmployeeCreationAudit,
+  auditFor: (tenantId: string) => EmployeeCreationAudit,
 ): Promise<ProvisionTenantWithAdminResult> {
   if (await tx.tenant.findUnique({ where: { slug: input.tenant.slug }, select: { id: true } })) {
     return { status: "SLUG_TAKEN" };
@@ -312,6 +297,9 @@ export async function provisionTenantWithAdmin(
 
   try {
     const { tenant, config, salon } = await provisionTenant(tx, input.tenant);
+    // The audit port needs the new tenant's id (it stamps every row with it, Phase 89 D-09b), so
+    // the caller hands in a factory that is called once the tenant row exists.
+    const audit = auditFor(tenant.id);
     await input.onTenantCreated?.(tx, tenant.id);
 
     // Midnight UTC of the tenant-local day: the Stammsalon row starts on that same local day.

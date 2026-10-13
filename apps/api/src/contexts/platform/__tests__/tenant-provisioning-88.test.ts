@@ -229,7 +229,7 @@ describe("provisionTenantWithAdmin (L3, Phase 88 plan 10)", () => {
           tenant: { name: `Tenant ${slug}`, slug, federalState },
           admin: { email, firstName: "Erste", lastName: "Leitung" },
         },
-        operatorEmployeeCreationAudit(app, { operatorId }),
+        (tenantId) => operatorEmployeeCreationAudit(app, { operatorId, tenantId }),
       ),
     );
   }
@@ -316,9 +316,12 @@ describe("provisionTenantWithAdmin (L3, Phase 88 plan 10)", () => {
     );
     for (const row of rows) {
       expect(row.userId, `${row.entity} row must not name a tenant user`).toBeNull();
+      // Phase 89 revision R-1: the actor also stamps the tenant the row belongs to, so that
+      // tenant's audit page can show it. The assertion stays an exact deep equality.
       expect((row.newValue as { actor?: unknown }).actor).toEqual({
         type: "OPERATOR",
         operatorId,
+        tenantId: result.tenant.id,
       });
     }
     // The new admin did not "do" any of it.
@@ -369,7 +372,7 @@ describe("provisionTenantWithAdmin (L3, Phase 88 plan 10)", () => {
             tenant: { name: `Tenant ${slug}`, slug, federalState: "BAYERN" },
             admin: { email, firstName: "Erste", lastName: "Leitung" },
           },
-          operatorEmployeeCreationAudit(app, { operatorId }),
+          (tenantId) => operatorEmployeeCreationAudit(app, { operatorId, tenantId }),
         );
         expect(result.status).toBe("OK");
         throw new Error("boom after L3");

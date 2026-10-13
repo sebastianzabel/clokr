@@ -174,7 +174,8 @@ export async function operatorTenantRoutes(
               admin: body.admin,
               onTenantCreated: opts.onTenantCreated,
             },
-            operatorEmployeeCreationAudit(app, { operatorId, request: req }),
+            (tenantId) =>
+              operatorEmployeeCreationAudit(app, { operatorId, tenantId, request: req }),
           );
           if (provisioned.status !== "OK") return provisioned;
 
