@@ -29,6 +29,7 @@ classified by lifecycle.
 | dry-run-433-monthly-hours-soll.ts              | 2026-10-03 | List, per MONTHLY_HOURS employee (monthlyHours > 0) and non-superseded MONTHLY snapshot, the stored vs. Issue #433-rule-recomputed expected/balance minutes, the delta and the locked flag; only differing months are printed (read-only, no opt-in write flag, exits 2 on findings)                                                                                                                                                                                                                                                                                | Audit tool                                   |
 | audit-494-track-only-carry.ts                  | 2026-10-06 | List, per employee, closed MONTHLY snapshots whose contract valid in that month is track-only (MONTHLY_HOURS without monthly hours or TRACK_ONLY, Issue #494) with stored carry-over != 0, reason, locked flag, before/after live figure and a HIGH priority when a later contract has a target (read-only, no opt-in write flag, ids only, exits 2 on findings)                                                                                                                                                                                                    | Audit tool                                   |
 | audit-551-users-without-employee.ts            | 2026-10-13 | List every User without an Employee (they have no tenant and cannot sign in since Issue #551) — id, role, isActive, open refresh tokens, role assignments, plus a totals line; read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                                                             | Audit tool                                   |
+| audit-568-bulk-apply-history.ts                | 2026-10-13 | List, per past tenant-wide bulk apply of the default working time (AuditLog `UPDATE TenantConfig` with `applyToExisting`), every paired `CREATE WorkSchedule` row — ids, validFrom, old -> new weekly/day-hours, pairing source and flags HOURS_CHANGED / NO_PREVIOUS_CONTRACT / RETROACTIVE, plus a totals line (Issue #568; read-only, no write flag, ids only, exits 2 on findings)                                                                                                                                                                              | Audit tool                                   |
 | migrate-opening-balances.ts                    | 2026-08-19 | Move documented opening balances out of SaldoSnapshot.carryOver onto the OpeningBalance model; dry-run default, per-employee zero-drift assertion, aborts writing nothing on any failure                                                                                                                                                                                                                                                                                                                                                                            | Migration artifact (Phase 99)                |
 | ensure-test-database.ts                        | 2026-08-21 | Idempotent `CREATE DATABASE "clokr_test"` + `COMMENT ON DATABASE` marker stamp; refuses any non-test target (wrong name, `?schema=` param, or NODE_ENV=production) before opening a connection                                                                                                                                                                                                                                                                                                                                                                      | Test infrastructure (Phase 101)              |
 | reset-test-databases.ts                        | 2026-08-26 | Drops and re-clones the N per-worker test databases from the migrated `clokr_test` template; the ONLY `DROP-DATABASE` statement in this repo, gated on marker possession AND the anchored worker-name pattern; excluded from the runtime image (Phase 106 D-07/D-08)                                                                                                                                                                                                                                                                                                | Test infrastructure (Phase 106)              |
@@ -318,6 +319,29 @@ its own test), prints ids and counts only (never a mail address or a name, DSGVO
 behind an entrypoint guard, so importing the module connects to nothing. Operator step: run it once on
 int and prod BEFORE the #551 release is deployed. `seed-int-admin.ts` (refresh step 8) picks only admins
 that have an Employee for the same reason, and refuses a pinned `--email` without one before any write.
+
+`audit-568-bulk-apply-history.ts` (Issue #568) lists what the OLD tenant-wide "apply to existing employees"
+of the default working time changed. Until #568 it wrote a new contract row for every employee whose
+newest contract was a `FIXED_SCHEDULE`, from the 1st of the CURRENT month and without a preview (the
+04.10.2026 incident: an individual 16 h Mo-Do contract became 40 h Mo-Fr, retroactively); since #568 the
+apply is preview + confirmation and never retroactive. Per past apply (an `UPDATE TenantConfig` audit row
+whose `newValue.applyToExisting` is true) it prints one line per paired `CREATE WorkSchedule` audit row
+(`configAuditId`, `at`, `tenantId`, `employeeId`, `workScheduleId`, `validFrom`, `weekly=<old>-><new>`,
+`days=<seven old>-><seven new>`, `source`, `flags`), then a `Totals:` line. Flags: `HOURS_CHANGED`
+(weekly or any day-hours differ), `NO_PREVIOUS_CONTRACT`, `RETROACTIVE` (validFrom before the
+tenant-local date of the apply), `ACTOR_UNKNOWN` (API-key apply). Pairing: a `BULK_APPLY` audit row of the
+same TenantConfig in the 10 minutes before the config row is the exact source (`source=BULK_APPLY`, its
+`appliedEmployeeIds` and `effectiveFrom`); otherwise (historic apply) the same user's `CREATE WorkSchedule`
+rows of that window with type `FIXED_SCHEDULE`, a month-first validFrom and an employee of that tenant
+(`source=WINDOW`). It cannot see rows of a pre-#568 loop that crashed before writing its config row.
+Usage: optional `--tenant-id <uuid>` narrows to one tenant (`--help` prints the usage; any other flag,
+in particular `--confirm` or `--apply`, is a usage error, exit `1`). Exit codes: `0` nothing flagged
+HOURS_CHANGED or RETROACTIVE, `1` usage error or DATABASE_URL missing/a DB failure, `2` one or more such
+rows. It performs ZERO writes (only Prisma reads, no raw SQL, no write flag — mechanically checked by its
+own test), prints ids and numbers only (never a name, employee number or mail address, DSGVO), and its
+`main()` is behind an entrypoint guard. Operator step: run it once on int and prod after the #568 release
+and correct every listed contract that should not have changed deliberately through the per-employee path
+`PUT /api/v1/settings/work/:employeeId`.
 
 ## Test infrastructure
 
