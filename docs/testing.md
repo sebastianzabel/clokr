@@ -547,7 +547,8 @@ exactly five files (`functional.spec.ts`, `bs-pattern-retroactive.spec.ts`,
 `operator-console.spec.ts`) and no `dependencies: ["setup"]` — these specs authenticate per-test via
 the tenant-bootstrap fixture, not via the seeded admin's `storageState` (D-04/D-06). The
 operator-console spec is the exception that needs neither: it mocks `/api/v1/operator/**` in the
-browser and seeds the operator session into `sessionStorage` itself.
+browser and seeds the operator session into `sessionStorage` itself (one test uses the tenant
+fixture only to prove a tenant token never reaches the operator surface).
 
 ### 3. Tear down
 

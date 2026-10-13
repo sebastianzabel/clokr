@@ -34,7 +34,7 @@
     {
       "file": "apps/e2e/tests/operator-console.spec.ts",
       "category": "in-ci",
-      "reason": "Issue #89 operator console against a mocked /api/v1/operator contract (page.route fulfils every operator request in the browser): no seed, no operator account, no tenant fixture, no date dependency. The operator session is seeded into sessionStorage by the spec. Measured: 2/2 pass on the rebuilt test stack."
+      "reason": "Issue #89 operator console against a mocked /api/v1/operator contract (page.route fulfils every operator request in the browser): no seed, no operator account, no date dependency (the session clock test uses the Playwright fake clock). The operator session is seeded into sessionStorage by the spec; one test uses the tenant-bootstrap fixture only to prove a tenant token never reaches the operator surface. Measured: 13/13 pass on the rebuilt test stack."
     },
     {
       "file": "apps/e2e/tests/accessibility.spec.ts",
