@@ -1,17 +1,21 @@
 /**
- * Phase 88 plan 13 (AC-88-03, AC-88-04, D-08a, D-10) — a missing, empty or foreign tenant context never
+ * Phase 88 plan 13 (AC-88-03, AC-88-04, D-08a, D-10) — a missing, blank or foreign tenant context never
  * leads to tenant data or to an unfiltered query on ANY derived tenant route.
  *
  * Every route `deriveMatrixRoutes()` finds (minus the matrix's own excluded / outside-derivation routes
- * and the operator routes themselves) is requested with three tenant-less principals:
+ * and the operator routes themselves) is requested with these tenant-less principals:
  *
  *   1. an operator access token (a principal that carries no tenant by type),
- *   2. a tenant token with `tenantId: ""` — a real User row without an Employee (the legacy user, D-10),
+ *   2. tenant tokens of a real User row without an Employee (the legacy user, D-10) whose tenant id is
+ *      blank: `tenantId: ""`, `tenantId: "   "`, and no `tenantId` claim at all (Issue #551),
  *   3. a tenant token naming a tenant that does not exist.
  *
  * Invariants:
  *   - operator token: 403 on every swept route, never a 2xx (no route is excused);
- *   - empty / nonexistent tenant: no response body contains any identifier of the victim tenant, no victim row
+ *   - blank tenant (Issue #551): 403 `TENANT_REQUIRED` on EVERY swept route — never a 2xx, never a 5xx —
+ *     and not one Prisma call is recorded while the three blank sweeps run (the refusal happens in
+ *     `requireAuth`, before any permission check and before any query);
+ *   - nonexistent tenant: no response body contains any identifier of the victim tenant, no victim row
  *     changes, every 5xx carries exactly the fixed `Interner Serverfehler` body;
  *   - a Prisma-call interceptor (call-through spies on every model method of `app.prisma`) records every call
  *     of the sweeps; none carries a `tenantId` key whose value is undefined at any depth. This is the RUNTIME
@@ -23,13 +27,16 @@
  * routes are in the derived set, the interceptor recorded calls, and a control run with the victim admin's
  * token receives victim data on at least one swept route (so the leak detector demonstrably sees a leak).
  *
- * D-10 characterisation: the legacy user without an Employee keeps passing permission guards through the
- * legacy-role fallback (`request-permissions.ts`); #551 fixes that. This file only proves it never yields
- * data. The status histograms of the run are the characterisation.
+ * D-10 / #551: before Issue #551 the legacy user without an Employee passed permission guards through the
+ * legacy-role fallback (`request-permissions.ts`: 40 routes answered 200, 35 answered 500 and reached the
+ * database — the 88-13 characterisation). Since #551 a blank tenant is refused in `requireAuth`; the
+ * foreign-tenant sweep still drives every handler, so the interceptor keeps its coverage of handler
+ * queries. The status histograms of the run are logged.
  *
- * Mutation proofs (plan 88-13 SUMMARY): (a) removing the operator probe from `middleware/auth.ts` turns the
- * operator cases red; (b) replacing the tenant value of a tenant-filtered read by `undefined` turns the
- * empty-tenant sweep (leak) and the interceptor red.
+ * Mutation proofs (SUMMARYs of plan 88-13 and quick 261013-bhk): (a) removing the operator probe from
+ * `middleware/auth.ts` turns the operator cases red; (b) replacing the tenant value of a tenant-filtered
+ * read by `undefined` turns the foreign-tenant sweep (leak) and the interceptor red; (c) removing the
+ * blank-tenant refusal from `requireAuth` turns the blank-tenant case red.
  */
 import { randomUUID, randomBytes } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
@@ -47,6 +54,7 @@ import {
 } from "./setup";
 import { signOperatorToken } from "../contexts/platform/operator-auth";
 import type { JwtPayload } from "../middleware/auth";
+import { TENANT_REQUIRED_ERROR } from "../contexts/platform/tenant-status";
 import { deriveMatrixRoutes, pathParams } from "./neutrality/route-derivation";
 import { EXCLUDED_ROUTES, OUTSIDE_DERIVATION } from "./neutrality/matrix-config";
 
@@ -58,6 +66,8 @@ let leaveRequestId: string;
 let legacyUserId: string;
 let operatorToken: string;
 let emptyTenantToken: string;
+let whitespaceTenantToken: string;
+let absentTenantToken: string;
 let foreignTenantToken: string;
 let victimIdentifiers: string[] = [];
 
@@ -277,6 +287,13 @@ beforeAll(async () => {
     role: "ADMIN",
     tenantId: "",
   } as unknown as JwtPayload);
+  whitespaceTenantToken = app.jwt.sign({
+    sub: legacyUserId,
+    role: "ADMIN",
+    tenantId: "   ",
+  } as unknown as JwtPayload);
+  // No tenantId claim at all: the claim is absent at runtime, which the JwtPayload type cannot express.
+  absentTenantToken = app.jwt.sign({ sub: legacyUserId, role: "ADMIN" } as unknown as JwtPayload);
   foreignTenantToken = app.jwt.sign({
     sub: legacyUserId,
     role: "ADMIN",
@@ -300,6 +317,9 @@ describe("operator and tenant-less tokens over every derived tenant route (AC-88
   let swept: string[];
   let operatorResults: SweepResult[] = [];
   let emptyResults: SweepResult[] = [];
+  let whitespaceResults: SweepResult[] = [];
+  let absentResults: SweepResult[] = [];
+  let blankSweepCalls = -1;
   let foreignResults: SweepResult[] = [];
   let controlResults: SweepResult[] = [];
   let before: Awaited<ReturnType<typeof victimCounts>>;
@@ -310,7 +330,11 @@ describe("operator and tenant-less tokens over every derived tenant route (AC-88
     before = await victimCounts();
     installInterceptor();
     operatorResults = await sweep(swept, operatorToken);
+    const callsBeforeBlank = recorded.length;
     emptyResults = await sweep(swept, emptyTenantToken);
+    whitespaceResults = await sweep(swept, whitespaceTenantToken);
+    absentResults = await sweep(swept, absentTenantToken);
+    blankSweepCalls = recorded.length - callsBeforeBlank;
     foreignResults = await sweep(swept, foreignTenantToken);
     after = await victimCounts();
     // Control: GET routes only, so the victim's own admin cannot change anything.
@@ -320,14 +344,10 @@ describe("operator and tenant-less tokens over every derived tenant route (AC-88
     );
     console.warn(
       `[88-13] swept=${swept.length} operator=${JSON.stringify(histogram(operatorResults))} ` +
-        `empty=${JSON.stringify(histogram(emptyResults))} foreign=${JSON.stringify(histogram(foreignResults))} ` +
+        `empty=${JSON.stringify(histogram(emptyResults))} ` +
+        `whitespace=${JSON.stringify(histogram(whitespaceResults))} ` +
+        `absent=${JSON.stringify(histogram(absentResults))} blankSweepPrismaCalls=${blankSweepCalls} foreign=${JSON.stringify(histogram(foreignResults))} ` +
         `prismaCalls=${recorded.length}`,
-    );
-    console.warn(
-      `[88-13] empty-tenant 200 routes: ${emptyResults
-        .filter((r) => r.status === 200)
-        .map((r) => r.route)
-        .join(" | ")}`,
     );
   }, 900_000);
 
@@ -356,20 +376,38 @@ describe("operator and tenant-less tokens over every derived tenant route (AC-88
     expect(leaksOf(operatorResults)).toEqual([]);
   });
 
-  it.each([
-    ["empty tenant", () => emptyResults],
-    ["nonexistent tenant", () => foreignResults],
-  ])("%s: no victim identifier in any body and only the fixed 5xx body", (_name, results) => {
-    const rs = results();
-    expect(rs).toHaveLength(swept.length);
-    expect(leaksOf(rs)).toEqual([]);
-    const badFiveHundreds = rs.filter(
-      (r) => r.status >= 500 && r.body !== JSON.stringify({ error: "Interner Serverfehler" }),
-    );
-    expect(badFiveHundreds.map((r) => `${r.route} -> ${r.status} ${r.body.slice(0, 120)}`)).toEqual(
-      [],
-    );
+  it("blank tenant (empty, whitespace, absent): 403 TENANT_REQUIRED on every swept route, no Prisma call (#551)", () => {
+    for (const results of [emptyResults, whitespaceResults, absentResults]) {
+      expect(results).toHaveLength(swept.length);
+      const offenders = results.filter(
+        (r) =>
+          r.status !== 403 ||
+          JSON.stringify(JSON.parse(r.body)) !== JSON.stringify(TENANT_REQUIRED_ERROR),
+      );
+      expect(offenders.map((r) => `${r.route} -> ${r.status} ${r.body.slice(0, 120)}`)).toEqual([]);
+      expect(leaksOf(results)).toEqual([]);
+    }
+    // Anti-vacuity: the swept set is large and the interceptor was installed while the blank sweeps ran
+    // (the foreign-tenant sweep after them is recorded by the same interceptor).
+    expect(swept.length).toBeGreaterThan(100);
+    expect(blankSweepCalls).toBe(0);
   });
+
+  it.each([["nonexistent tenant", () => foreignResults]])(
+    // The blank-tenant rows were dropped here: the case above is stricter (403 on every route).
+    "%s: no victim identifier in any body and only the fixed 5xx body",
+    (_name, results) => {
+      const rs = results();
+      expect(rs).toHaveLength(swept.length);
+      expect(leaksOf(rs)).toEqual([]);
+      const badFiveHundreds = rs.filter(
+        (r) => r.status >= 500 && r.body !== JSON.stringify({ error: "Interner Serverfehler" }),
+      );
+      expect(
+        badFiveHundreds.map((r) => `${r.route} -> ${r.status} ${r.body.slice(0, 120)}`),
+      ).toEqual([]);
+    },
+  );
 
   it("leaves every victim row count unchanged", () => {
     expect(after).toEqual(before);

@@ -33,6 +33,7 @@ import {
 } from "../compat-role";
 import { SYSTEM_ROLE_IDS, SYSTEM_ROLE_PERMISSIONS, type SystemRoleSlot } from "../system-roles";
 import { roleNameKey } from "../access-role";
+import { TENANT_REQUIRED_ERROR } from "../tenant-status";
 
 const TENANT = "tenant-under-test";
 const OTHER_TENANT = "another-tenant";
@@ -560,15 +561,22 @@ describe("compat role — login, OTP and refresh carry the derived role (D-14, D
     expect(tokenRole(body.accessToken)).toBe("MANAGER");
   });
 
-  it("a user without Employee (tenant '') carries exactly the User.role column (AC-75-5)", async () => {
+  it("a user without Employee (tenant '') cannot sign in any more — 403 TENANT_REQUIRED, no token (#551)", async () => {
+    // Before Issue #551 this user logged in with the User.role column as its role (AC-75-5) and a
+    // refresh kept it. Such a principal has no tenant and gets no token now; the derivation for an
+    // empty tenant stays proven by the unit case on compatRoleForUser above (no query, column value).
     const user = await createUser(null, "ADMIN", "no-emp");
     try {
       const res = await login(user.email);
-      expect(res.status).toBe(200);
-      expect(res.body.user?.role).toBe("ADMIN");
-      expect(tokenRole(res.body.accessToken as string)).toBe("ADMIN");
-      expect(await refreshRole(res.body.refreshToken as string)).toBe("ADMIN");
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual(TENANT_REQUIRED_ERROR);
+      expect(res.body.accessToken).toBeUndefined();
+      expect(res.body.refreshToken).toBeUndefined();
+      expect(await app.prisma.refreshToken.count({ where: { userId: user.id } })).toBe(0);
     } finally {
+      await app.prisma.auditLog.deleteMany({
+        where: { OR: [{ userId: user.id }, { entityId: user.id }] },
+      });
       await app.prisma.refreshToken.deleteMany({ where: { userId: user.id } });
       await app.prisma.user.delete({ where: { id: user.id } });
     }

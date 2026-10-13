@@ -295,3 +295,143 @@ describe("the resolver grants a blank tenant nothing (D-03)", () => {
     expect(spies.userFindUnique).toHaveBeenCalled();
   });
 });
+
+describe("credential paths issue no token without a tenant (D-02)", () => {
+  function refreshTokenFor(userId: string): string {
+    return app.jwt.sign({
+      sub: userId,
+      role: "ADMIN",
+      tenantId: "",
+      jti: randomBytes(8).toString("hex"),
+    } as unknown as JwtPayload);
+  }
+
+  function loginBare(password: string) {
+    return post("/api/v1/auth/login", { email: bareUser.email, password });
+  }
+
+  it("login with the correct password answers 403 TENANT_REQUIRED, audits it and creates no token or OTP", async () => {
+    const refreshBefore = await app.prisma.refreshToken.count({ where: { userId: bareUser.id } });
+    const otpBefore = await app.prisma.otpToken.count({ where: { userId: bareUser.id } });
+    const auditBefore = await app.prisma.auditLog.count({
+      where: { userId: bareUser.id, action: "LOGIN_REFUSED" },
+    });
+
+    const res = await loginBare(PASSWORD);
+
+    expect(res.statusCode).toBe(403);
+    const body = JSON.parse(res.body);
+    expect(body).toEqual(TENANT_REQUIRED_ERROR);
+    expect(body.accessToken).toBeUndefined();
+    expect(await app.prisma.refreshToken.count({ where: { userId: bareUser.id } })).toBe(
+      refreshBefore,
+    );
+    expect(await app.prisma.otpToken.count({ where: { userId: bareUser.id } })).toBe(otpBefore);
+
+    const rows = await app.prisma.auditLog.findMany({
+      where: { userId: bareUser.id, action: "LOGIN_REFUSED" },
+    });
+    expect(rows.length).toBe(auditBefore + 1);
+    expect(rows.every((r) => r.entityId === bareUser.id)).toBe(true);
+    expect(
+      rows.filter((r) => (r.newValue as { reason?: string } | null)?.reason === "TENANT_REQUIRED")
+        .length,
+    ).toBe(auditBefore + 1);
+  });
+
+  it("login with a wrong password keeps the unchanged 401 (no oracle) and writes no LOGIN_REFUSED row", async () => {
+    const auditBefore = await app.prisma.auditLog.count({
+      where: { userId: bareUser.id, action: "LOGIN_REFUSED" },
+    });
+
+    const res = await loginBare("definitely-wrong-1");
+
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.body)).toEqual({ error: "Ungültige Anmeldedaten" });
+    expect(
+      await app.prisma.auditLog.count({ where: { userId: bareUser.id, action: "LOGIN_REFUSED" } }),
+    ).toBe(auditBefore);
+  });
+
+  it("control: a user with an Employee still logs in", async () => {
+    const res = await post("/api/v1/auth/login", {
+      email: data.adminUser.email,
+      password: PASSWORD,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).accessToken).toEqual(expect.any(String));
+  });
+
+  it("refresh with a stored token answers 403 and leaves the stored token untouched", async () => {
+    const raw = refreshTokenFor(bareUser.id);
+    const row = await app.prisma.refreshToken.create({
+      data: {
+        token: createHash("sha256").update(raw).digest("hex"),
+        userId: bareUser.id,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+    });
+    const countBefore = await app.prisma.refreshToken.count({ where: { userId: bareUser.id } });
+
+    const res = await post("/api/v1/auth/refresh", { refreshToken: raw });
+
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body)).toEqual(TENANT_REQUIRED_ERROR);
+    const after = await app.prisma.refreshToken.findUniqueOrThrow({ where: { id: row.id } });
+    expect(after.revokedAt).toBeNull();
+    expect(await app.prisma.refreshToken.count({ where: { userId: bareUser.id } })).toBe(
+      countBefore,
+    );
+  });
+
+  it("verify-otp with a valid code answers 403 and returns no token", async () => {
+    await app.prisma.otpToken.create({
+      data: {
+        userId: bareUser.id,
+        code: await bcrypt.hash("123456", 4),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+
+    const res = await post("/api/v1/auth/verify-otp", { userId: bareUser.id, code: "123456" });
+
+    expect(res.statusCode).toBe(403);
+    const body = JSON.parse(res.body);
+    expect(body).toEqual(TENANT_REQUIRED_ERROR);
+    expect(body.accessToken).toBeUndefined();
+  });
+
+  it("resend-otp answers 403, sends no mail and creates no OTP", async () => {
+    const sendOtp = vi.spyOn(app.mailer, "sendOtp").mockResolvedValue(undefined as never);
+    const otpBefore = await app.prisma.otpToken.count({ where: { userId: bareUser.id } });
+
+    const res = await post("/api/v1/auth/resend-otp", { userId: bareUser.id });
+
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body)).toEqual(TENANT_REQUIRED_ERROR);
+    expect(sendOtp).not.toHaveBeenCalled();
+    expect(await app.prisma.otpToken.count({ where: { userId: bareUser.id } })).toBe(otpBefore);
+  });
+
+  it("change-password with a blank-tenant token answers 403 and leaves the hash unchanged", async () => {
+    const before = await app.prisma.user.findUniqueOrThrow({
+      where: { id: bareUser.id },
+      select: { passwordHash: true },
+    });
+    const token = signToken({ sub: bareUser.id, role: "ADMIN", tenantId: "" });
+
+    const res = await post(
+      "/api/v1/auth/change-password",
+      { currentPassword: PASSWORD, newPassword: "Another-Passw0rd!2026" },
+      { authorization: `Bearer ${token}` },
+    );
+
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body)).toEqual(TENANT_REQUIRED_ERROR);
+    const after = await app.prisma.user.findUniqueOrThrow({
+      where: { id: bareUser.id },
+      select: { passwordHash: true },
+    });
+    expect(after.passwordHash).toBe(before.passwordHash);
+  });
+});

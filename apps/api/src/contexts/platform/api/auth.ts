@@ -12,7 +12,12 @@ import { isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 09 (
 import { readTenantTimezone } from "../facade/salon-assignments";
 import { dayToDate, tenantLocalDay } from "../salon-assignment-rules";
 import { config } from "../../../config";
-import { TENANT_DEACTIVATED_ERROR, isTenantRowActive } from "../tenant-status"; // Phase 88 (#88), AC-88-08
+import {
+  TENANT_DEACTIVATED_ERROR,
+  TENANT_REQUIRED_ERROR,
+  isBlankTenantId,
+  isTenantRowActive,
+} from "../tenant-status"; // Phase 88 (#88), AC-88-08; #551 (a principal without a tenant gets no token)
 
 /** SHA-256 hash for tokens stored in DB (refresh tokens, reset tokens). */
 function hashToken(token: string): string {
@@ -199,6 +204,21 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
       }
 
+      // Issue #551 (D-02): a user without an Employee has no tenant and gets no token. Same position
+      // as the refusal above — after the password matched (a wrong password keeps the unchanged 401,
+      // no oracle) and before any OTP is created or mailed.
+      if (isBlankTenantId(user.employee?.tenantId)) {
+        await app.audit({
+          userId: user.id,
+          action: "LOGIN_REFUSED",
+          entity: "User",
+          entityId: user.id,
+          newValue: { reason: "TENANT_REQUIRED" },
+          request: { ip: req.ip, headers: req.headers },
+        });
+        return reply.code(403).send(TENANT_REQUIRED_ERROR);
+      }
+
       // 2FA prüfen
       const twoFaEnabled = user.employee?.tenant?.config?.twoFaEnabled ?? false;
       if (twoFaEnabled) {
@@ -283,6 +303,11 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
       }
 
+      // Issue #551 (D-02): no token for a user without a tenant.
+      if (isBlankTenantId(user.employee?.tenantId)) {
+        return reply.code(403).send(TENANT_REQUIRED_ERROR);
+      }
+
       return issueTokens(app, req, reply, user);
     },
   });
@@ -306,6 +331,12 @@ export async function authRoutes(app: FastifyInstance) {
       // Phase 88 (AC-88-08): refuse before a code is created or any mail is sent.
       if (!isTenantRowActive(user.employee?.tenant)) {
         return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
+      }
+
+      // Issue #551 (D-02): same ordering — no code is created and no mail is sent for a user without
+      // a tenant.
+      if (isBlankTenantId(user.employee?.tenantId)) {
+        return reply.code(403).send(TENANT_REQUIRED_ERROR);
       }
 
       // Alte Tokens invalidieren
@@ -366,6 +397,12 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
       }
 
+      // Issue #551 (D-02): a user without a tenant cannot renew a session either. Also BEFORE the
+      // rotation, so the stored token stays exactly as it was (neither revoked nor rotated).
+      if (isBlankTenantId(stored.user.employee?.tenantId)) {
+        return reply.code(403).send(TENANT_REQUIRED_ERROR);
+      }
+
       // Rotate refresh token
       await app.prisma.refreshToken.update({
         where: { id: stored.id },
@@ -375,15 +412,18 @@ export async function authRoutes(app: FastifyInstance) {
       // Phase 75b (#75), D-14: the role claim is DERIVED from the user's role assignments at the one
       // derivation site (compat-role.ts); no access decision reads it (D-12). It stays in the token
       // because the frontend still consumes it until #539 removes User.role.
+      // The #551 refusal above guarantees an Employee, hence a non-blank tenant.
       const tenantId = stored.user.employee?.tenantId ?? "";
       const role = await compatRoleForUser(app.prisma, stored.user.id, tenantId, stored.user.role);
 
       // Phase 408 (#408): /auth/refresh is the only round-trip a running or restored session makes
       // by itself, so it carries the same effective-permissions list login/verify-otp already
-      // compute — same function, same empty-tenant guard as issueTokens().
-      const permissions = tenantId
-        ? await effectivePermissionKeysForUser(app.prisma, stored.user.id, tenantId)
-        : [];
+      // compute — same function as issueTokens().
+      const permissions = await effectivePermissionKeysForUser(
+        app.prisma,
+        stored.user.id,
+        tenantId,
+      );
 
       const payload = {
         sub: stored.user.id,
@@ -586,6 +626,12 @@ export async function authRoutes(app: FastifyInstance) {
       } catch {
         return reply.code(401).send({ error: "Unauthorized" });
       }
+      // Issue #551 (D-02): this route has its own preHandler and bypasses `requireAuth`, so it is the
+      // one tenant-token route the central gate does not cover. A token without a tenant is refused
+      // here with the same body.
+      if (isBlankTenantId((req.user as { tenantId?: unknown }).tenantId)) {
+        return reply.code(403).send(TENANT_REQUIRED_ERROR);
+      }
     },
     handler: async (req, reply) => {
       const body = z
@@ -649,11 +695,15 @@ async function issueTokens(
   },
 ) {
   const tenantId = user.employee?.tenantId ?? "";
+  // Issue #551 (D-02): never sign a token without a tenant. Both callers (login, verify-otp) refuse
+  // such a user earlier with 403 TENANT_REQUIRED, so reaching this is a programming error (→ the
+  // global 500 handler), not a client condition.
+  if (isBlankTenantId(tenantId)) {
+    throw new Error("issueTokens: refusing to sign a token without a tenant (#551)");
+  }
 
   // Load session config from tenant
-  const tenantConfig = tenantId
-    ? await app.prisma.tenantConfig.findUnique({ where: { tenantId } })
-    : null;
+  const tenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
 
   const rememberMe = (req.body as { rememberMe?: boolean })?.rememberMe === true;
   const refreshDays = rememberMe
@@ -670,9 +720,7 @@ async function issueTokens(
   // contributes to `role`, but its permissions are real. Computed at login/OTP-verify AND on every
   // `/auth/refresh` (Phase 408, #408) — unlike `role`, this list is recomputed on every refresh,
   // not just on the next login.
-  const permissions = tenantId
-    ? await effectivePermissionKeysForUser(app.prisma, user.id, tenantId)
-    : [];
+  const permissions = await effectivePermissionKeysForUser(app.prisma, user.id, tenantId);
 
   const payload = {
     sub: user.id,
