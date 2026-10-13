@@ -322,7 +322,6 @@ function dayWarnings(
     ...dayLimitWarnings(evaluation, 0, { birthDateMissing: options.birthDateMissing }),
     ...placementWarnings(evaluation, {
       tz: options.tz,
-      detail: "full",
       birthDateMissing: options.birthDateMissing,
     }),
   ];

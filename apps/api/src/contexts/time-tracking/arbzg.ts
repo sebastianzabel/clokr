@@ -201,18 +201,18 @@ export function dayLimitWarnings(
  * All items are severity "warning" (D-11): a placement finding never blocks a save, and a waiver
  * (`waived: true`) documents the decision without changing the finding.
  *
- * `detail: "redacted"` is for readers whose reach does not cover the whole day: the text is built
- * from counts, durations and the legal basis only — no clock time, no time range, no salon and no
- * id — so it cannot reveal more than the caller may see. `birthDateMissing` appends the note to
- * the full variant only.
+ * The text always carries the clock times, so it is for readers whose reach covers the whole day
+ * only. A reader with partial coverage gets the single neutral hint of `redactedDayCheck`
+ * (api/day-breaks.ts, Issue #85 D-07) instead - the former count-and-duration variant of this
+ * function was removed in Phase 85b because its sum-bearing text must not be reusable by accident.
+ * `birthDateMissing` appends the note.
  */
 export function placementWarnings(
   evaluation: DayBreakEvaluation,
-  options: { tz: string; detail: "full" | "redacted"; birthDateMissing?: boolean },
+  options: { tz: string; birthDateMissing?: boolean },
 ): ArbZGWarning[] {
   const { placement } = evaluation;
   const rules = BREAK_REGIMES[placement.regime];
-  const full = options.detail === "full";
   const minSegmentMin = rules.minSegmentMs / 60_000;
 
   return placement.findings.map((finding): ArbZGWarning => {
@@ -220,12 +220,10 @@ export function placementWarnings(
     switch (finding.code) {
       case "BREAK_TOO_LATE": {
         const longest = ceilMinutes(finding.longestBlockMin ?? 0);
-        const duration = full
-          ? `${Math.floor(longest / 60)}:${String(longest % 60).padStart(2, "0")} Std.`
-          : `${Math.floor(longest / 60)} Std. ${longest % 60} Min`;
+        const duration = `${Math.floor(longest / 60)}:${String(longest % 60).padStart(2, "0")} Std.`;
         text =
           `${finding.legalBasis}: ${duration} am Stück ohne Ruhepause von mindestens ` +
-          `${minSegmentMin} Min${full ? ` (${rangesText(finding, options.tz)})` : ""}. ` +
+          `${minSegmentMin} Min (${rangesText(finding, options.tz)}). ` +
           `Zulässig sind höchstens ${hoursText(rules.maxBlockMin)} Std.`;
         break;
       }
@@ -254,7 +252,7 @@ export function placementWarnings(
             : `in den ersten oder letzten ${rules.windowMin} Minuten`;
         text =
           `${finding.legalBasis}: ${pauseCount(n)} ${window} der Arbeitszeit nicht angerechnet` +
-          `${full ? ` (${rangesText(finding, options.tz)})` : ""}.`;
+          ` (${rangesText(finding, options.tz)}).`;
         break;
       }
       case "BREAK_POSITION_UNKNOWN":
@@ -264,7 +262,7 @@ export function placementWarnings(
         break;
     }
     if (finding.certainty === "UNCLEAR") text += ` ${CLARIFICATION_NOTE}`;
-    if (full && options.birthDateMissing) text += ` ${BIRTH_DATE_MISSING_NOTE}`;
+    if (options.birthDateMissing) text += ` ${BIRTH_DATE_MISSING_NOTE}`;
 
     const isHint = finding.code === "BREAK_POSITION_UNKNOWN";
     return {
@@ -441,7 +439,7 @@ export async function checkArbZG(
     }
     warnings.push(...dayLimitWarnings(evaluation, bsMinutesToday, { birthDateMissing }));
     // Issue #511 (D-10): the Satz-2/3 findings, appended after the Phase-80 ones.
-    warnings.push(...placementWarnings(evaluation, { tz, detail: "full", birthDateMissing }));
+    warnings.push(...placementWarnings(evaluation, { tz, birthDateMissing }));
 
     // § 5 ArbZG – Mindestruhezeit (11h zwischen Arbeitstagen)
     // Previous day: its last closed slot (any type).

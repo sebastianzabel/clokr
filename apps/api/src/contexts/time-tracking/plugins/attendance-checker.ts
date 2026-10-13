@@ -1319,10 +1319,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                         employeeName,
                         date: day.date,
                         // The position-unknown hint never notifies (A5).
-                        findingMessages: placementWarnings(day.evaluation, {
-                          tz,
-                          detail: "full",
-                        })
+                        findingMessages: placementWarnings(day.evaluation, { tz })
                           .filter((w) => !w.hint)
                           .map((w) => w.message),
                       });
