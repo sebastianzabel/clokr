@@ -23,6 +23,16 @@ export class AccessContextError extends Error {
 }
 
 /**
+ * The ONE blank-tenant rule (Issue #551, D-04): a tenant id is blank when it is not a string, or when
+ * the string is empty after removing surrounding whitespace. It lives in this zero-import leaf so that
+ * `requireTenantId` below, `requireAuth` (through the tenant-status plugin) and the credential paths
+ * (through `./tenant-status`, which re-exports it) all decide it in the same place.
+ */
+export function isBlankTenantId(value: unknown): boolean {
+  return typeof value !== "string" || value.trim() === "";
+}
+
+/**
  * Return `value` if it is a tenant id that can bind a query — a string with non-whitespace
  * content — and throw {@link AccessContextError} otherwise (`undefined`, `null`, a non-string, an
  * empty or whitespace-only string). `site` names the caller so the log entry says which guard
@@ -32,7 +42,7 @@ export class AccessContextError extends Error {
  * technically, never degrade into an empty filter (DSGVO Art. 32).
  */
 export function requireTenantId(value: unknown, site: string): string {
-  if (typeof value === "string" && value.trim() !== "") {
+  if (typeof value === "string" && !isBlankTenantId(value)) {
     return value;
   }
   const shown = typeof value === "string" ? JSON.stringify(value) : String(value);

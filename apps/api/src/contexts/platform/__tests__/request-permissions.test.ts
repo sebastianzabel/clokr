@@ -23,6 +23,7 @@ import type { Role } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import {
   effectiveGrants,
+  effectivePermissionKeysForUser,
   hasPermission,
   permissionReach,
   requireAnyPermission,
@@ -384,21 +385,37 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
     expect(setsOf(grants)).toEqual({ zugewiesen: [], eigene: [] });
   });
 
-  it("a user without Employee (tenant '') falls back to the column's system role", async () => {
-    const s = uniqueSuffix("no-emp");
-    const user = await app.prisma.user.create({
-      data: { email: `rp-${s}@test.de`, passwordHash: "x", role: "MANAGER", isActive: true },
-    });
-    createdUserIds.push(user.id);
-    try {
-      const grants = await effectiveGrants(
-        fakeRequest(app, { sub: user.id, role: "MANAGER", tenantId: "" }),
-      );
-      expect(setsOf(grants)).toEqual(systemSets("MANAGER"));
-      expect(grants.ownEmployeeId).toBeUndefined();
-    } finally {
-      await app.prisma.user.delete({ where: { id: user.id } });
-    }
+  it.each([
+    ["empty", ""],
+    ["whitespace-only", "   "],
+  ])(
+    "a user without Employee (%s tenant) holds nothing — no legacy-role fallback (#551, D-03)",
+    async (_name, tenantId) => {
+      const s = uniqueSuffix("no-emp");
+      const user = await app.prisma.user.create({
+        data: { email: `rp-${s}@test.de`, passwordHash: "x", role: "MANAGER", isActive: true },
+      });
+      createdUserIds.push(user.id);
+      try {
+        const grants = await effectiveGrants(
+          fakeRequest(app, { sub: user.id, role: "MANAGER", tenantId }),
+        );
+        expect(setsOf(grants)).toEqual({ zugewiesen: [], eigene: [] });
+        expect(grants.zugewiesenAnyScope.size).toBe(0);
+        expect(grants.ownEmployeeId).toBeUndefined();
+        expect(await effectivePermissionKeysForUser(app.prisma, user.id, tenantId)).toEqual([]);
+      } finally {
+        await app.prisma.user.delete({ where: { id: user.id } });
+      }
+    },
+  );
+
+  it("an API-key request with a blank tenant holds nothing either (#551, D-03)", async () => {
+    const grants = await effectiveGrants(
+      fakeRequest(app, { sub: "apikey:x", role: "ADMIN", tenantId: "" }, ["admin"]),
+    );
+    expect(setsOf(grants)).toEqual({ zugewiesen: [], eigene: [] });
+    expect(grants.zugewiesenAnyScope.size).toBe(0);
   });
 
   it("a missing system role row makes the resolver throw — never a silent grant or deny", async () => {

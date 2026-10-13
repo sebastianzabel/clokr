@@ -6,30 +6,30 @@
     "calls": [
       {
         "call": "user.findUnique",
-        "line": 63
+        "line": 68
       },
       {
         "call": "otpToken.findFirst",
-        "line": 249
+        "line": 269
       },
       {
         "call": "user.findUnique",
-        "line": 272
+        "line": 292
       },
       {
         "call": "user.findUnique",
-        "line": 297
+        "line": 322
       },
       {
         "call": "otpToken.updateMany",
-        "line": 312
+        "line": 343
       },
       {
         "call": "user.findUnique",
-        "line": 436
+        "line": 476
       }
     ],
-    "reason": "All six calls sit in pre-authentication flows (login, OTP verification, OTP resend, forgot-password) where req.user does not exist yet — there is no caller tenant to scope against, and the entire purpose of each call is establishing WHO the caller is before any tenant context exists. D-07 predicted this exact category. (Lines shifted +1 to +11 in Phase 75b Plan 10 (#75): a new import plus the ACCOUNT_LOCKED recipient site (D-16/D-17, userIdsHoldingPermission) inside the login handler's failed-attempt branch added net 11 lines above every call after that branch; the calls themselves are unmoved, mechanical only.) Lines shifted +3 (import block: userIdsHoldingPermission's import widened to also bring in resolveScopedHolderIds, plus 3 new imports — isStammsalonScopeMatch, readTenantTimezone, dayToDate/tenantLocalDay) and a further +20 inside the login handler (Phase 91b Plan 09, Issue #91, D-17: the employee:manage-access ACCOUNT_LOCKED notification's new resolveScopedHolderIds narrowing block, upstream of every subsequent call in this handler and every later handler in the file) — old lines [58, 208, 231, 251, 261, 367] -> new lines [61, 231, 254, 274, 284, 390], no finding, mechanical shift only; re-verified at the new lines. Line shifted +8 in Phase 408 (Issue #408): the /auth/refresh handler above forgot-password gained the `permissions` computation (effectivePermissionKeysForUser, same empty-tenant guard as issueTokens) — no finding, mechanical only; user.findUnique 391 -> 399. The five earlier anchors (62, 232, 255, 275, 285) sit above /refresh and are unmoved. Lines shifted in Phase 88 plan 06 (AC-88-08, 2026-10-13): the tenant-status import and the login tenant-deactivation refusal sit above these calls — no finding, mechanical only; user.findUnique 62 -> 63, otpToken.findFirst 232 -> 249, user.findUnique 255 -> 272, user.findUnique 275 -> 292, otpToken.updateMany 285 -> 302, user.findUnique 399 -> 416. Lines shifted in Phase 88 plan 06 task 2 (AC-88-08, 2026-10-13): the verify-otp, resend-otp and refresh tenant-deactivation refusals (and their widened includes) sit above the later calls — no finding, mechanical only; user.findUnique 292 -> 297, otpToken.updateMany 302 -> 312, user.findUnique 416 -> 436; the three earlier anchors (63, 249, 272) are unmoved."
+    "reason": "All six calls sit in pre-authentication flows (login, OTP verification, OTP resend, forgot-password) where req.user does not exist yet — there is no caller tenant to scope against, and the entire purpose of each call is establishing WHO the caller is before any tenant context exists. D-07 predicted this exact category. (Lines shifted +1 to +11 in Phase 75b Plan 10 (#75): a new import plus the ACCOUNT_LOCKED recipient site (D-16/D-17, userIdsHoldingPermission) inside the login handler's failed-attempt branch added net 11 lines above every call after that branch; the calls themselves are unmoved, mechanical only.) Lines shifted +3 (import block: userIdsHoldingPermission's import widened to also bring in resolveScopedHolderIds, plus 3 new imports — isStammsalonScopeMatch, readTenantTimezone, dayToDate/tenantLocalDay) and a further +20 inside the login handler (Phase 91b Plan 09, Issue #91, D-17: the employee:manage-access ACCOUNT_LOCKED notification's new resolveScopedHolderIds narrowing block, upstream of every subsequent call in this handler and every later handler in the file) — old lines [58, 208, 231, 251, 261, 367] -> new lines [61, 231, 254, 274, 284, 390], no finding, mechanical shift only; re-verified at the new lines. Line shifted +8 in Phase 408 (Issue #408): the /auth/refresh handler above forgot-password gained the `permissions` computation (effectivePermissionKeysForUser, same empty-tenant guard as issueTokens) — no finding, mechanical only; user.findUnique 391 -> 399. The five earlier anchors (62, 232, 255, 275, 285) sit above /refresh and are unmoved. Lines shifted in Phase 88 plan 06 (AC-88-08, 2026-10-13): the tenant-status import and the login tenant-deactivation refusal sit above these calls — no finding, mechanical only; user.findUnique 62 -> 63, otpToken.findFirst 232 -> 249, user.findUnique 255 -> 272, user.findUnique 275 -> 292, otpToken.updateMany 285 -> 302, user.findUnique 399 -> 416. Lines shifted in Phase 88 plan 06 task 2 (AC-88-08, 2026-10-13): the verify-otp, resend-otp and refresh tenant-deactivation refusals (and their widened includes) sit above the later calls — no finding, mechanical only; user.findUnique 292 -> 297, otpToken.updateMany 302 -> 312, user.findUnique 416 -> 436; the three earlier anchors (63, 249, 272) are unmoved. Lines shifted in Issue #551 (2026-10-13): the widened tenant-status import (+5) and the new TENANT_REQUIRED refusals in login, verify-otp, resend-otp and refresh sit above these calls — no finding, mechanical only; user.findUnique 63 -> 68, otpToken.findFirst 249 -> 269, user.findUnique 272 -> 292, user.findUnique 297 -> 322, otpToken.updateMany 312 -> 343, user.findUnique 436 -> 476."
   },
   {
     "file": "apps/api/src/contexts/absence/api/company-shutdowns.ts",

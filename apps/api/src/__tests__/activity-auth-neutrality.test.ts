@@ -24,7 +24,12 @@
  * fallback user and a user WITHOUT an Employee (role ADMIN, AC-75-5), the test logs in and records
  * the body's `user.role` and the access token's `role` claim (plus its tenant and employee claim,
  * as labels), then refreshes and records the new access token's `role` claim — the refresh body
- * carries no user object (C-4). One user of a tenant with two-factor login goes through the OTP
+ * carries no user object (C-4). Issue #551: the user WITHOUT an Employee has no tenant and can no
+ * longer sign in (403 TENANT_REQUIRED, no tokens), so its two recorded cells (`auth | A.noEmployee |
+ * login` and `| refresh`) are amended through `recorded/activity-auth-amendments.json` — the same
+ * register mechanism the permission matrix and the recipients recording use; `activity-auth.json`
+ * itself stays byte-identical, and the login-time refusal and the stored-token refresh refusal are
+ * proven in `tenant-required-551.test.ts`. One user of a tenant with two-factor login goes through the OTP
  * path: the code is captured from the stubbed mailer's `sendOtp` call and sent to
  * `POST /auth/verify-otp`. Pre-switch, every recorded role must equal the user's `User.role`
  * column — that column IS the source today — and the test asserts that in both modes.
@@ -55,6 +60,8 @@ import { runCell, type CellResult, type LabelContext } from "./neutrality/cell-r
 import type { ActorKind, RouteSpec, VariantSpec } from "./neutrality/matrix-config";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import type { JwtPayload } from "../middleware/auth";
+import { TENANT_REQUIRED_ERROR } from "../contexts/platform/tenant-status";
+import { isDeepStrictEqual } from "node:util";
 
 const MODE = process.env.NEUTRALITY_ACTIVITY_AUTH_MODE === "record" ? "record" : "verify";
 const DEFAULT_RECORDING = join(__dirname, "neutrality", "recorded", "activity-auth.json");
@@ -66,6 +73,32 @@ const ROLE_GUARD_DEFINITION = "export function requireRole";
 const AUTH_MIDDLEWARE = join(__dirname, "..", "middleware", "auth.ts");
 
 const FIXTURE_PASSWORD = "activity-auth-neutrality";
+
+/**
+ * Issue #551 — the amendments register of this recording, the same escape hatch
+ * `recipients-amendments.json` (Issue #355) and `matrix-amendments.json` (Issue #360) give their
+ * recordings. `recorded/activity-auth.json` stays byte-identical; a NAMED cell's expected value is
+ * the amendment's `to` instead (checked against the measured result exactly like an unamended cell),
+ * and the `from` is pinned byte-for-byte to the recording so a recording that moved out from under an
+ * amendment turns the register describe red. An unnamed cell is completely unaffected.
+ */
+interface ActivityAuthAmendment {
+  readonly key: string;
+  readonly from: unknown;
+  readonly to: unknown;
+  readonly issue: number;
+  readonly reason: string;
+  readonly date: string;
+}
+const AMENDMENTS_PATH = join(__dirname, "neutrality", "recorded", "activity-auth-amendments.json");
+const amendments: readonly ActivityAuthAmendment[] = (
+  JSON.parse(readFileSync(AMENDMENTS_PATH, "utf8")) as { amendments: ActivityAuthAmendment[] }
+).amendments;
+const amendmentByKey: ReadonlyMap<string, ActivityAuthAmendment> = new Map(
+  amendments.map((a) => [a.key, a]),
+);
+/** The shortest acceptable written reason of an amendment (same threshold as the other registers). */
+const MIN_REASON_LENGTH = 20;
 
 /** The activity schema's maximum `limit`. */
 const FEED_LIMIT = 20;
@@ -197,7 +230,8 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
   function record(key: string, entry: Entry): void {
     collected.set(key, entry);
     if (MODE === "verify") {
-      const expected = recording?.[key];
+      const amended = amendmentByKey.get(key);
+      const expected = amended ? amended.to : recording?.[key];
       expect(expected, `${key}: not recorded`).toBeDefined();
       expect(entry, key).toEqual(expected);
     }
@@ -509,16 +543,22 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
         if (refreshBody.accessToken) refreshRecord.tokenRole = claims(refreshBody.accessToken).role;
         record(`auth | ${label} | refresh`, refreshRecord);
 
+        if (label === "A.noEmployee") {
+          // Issue #551: a user without an Employee has no tenant — the login is refused with
+          // TENANT_REQUIRED and hands out no tokens, so there is nothing to refresh either.
+          expect(login.statusCode).toBe(403);
+          expect(loginBody).toEqual(TENANT_REQUIRED_ERROR);
+          expect(loginBody.accessToken).toBeUndefined();
+          expect(loginBody.refreshToken).toBeUndefined();
+          expect(refreshRecord).toEqual(amendmentByKey.get(`auth | ${label} | refresh`)?.to);
+          return;
+        }
         // Pre-switch sanity: the column IS the source, so every recorded role equals it; the
         // refresh body carries no user object (C-4).
         const column = columnRoleOf.get(label);
         expect(loginRecord).toMatchObject({ status: 200, bodyRole: column, tokenRole: column });
         expect(refreshRecord).toEqual({ status: 200, tokenRole: column });
         expect(refreshBody.user).toBeUndefined();
-        if (label === "A.noEmployee") {
-          expect(loginRecord.tokenTenant).toBe("<empty>");
-          expect(loginRecord.tokenEmployee).toBe("<none>");
-        }
       });
     }
 
@@ -641,6 +681,45 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
       if (MODE === "verify") {
         expect(Object.keys(recording ?? {}).sort()).toEqual([...collected.keys()].sort());
       }
+    });
+  });
+  describe("amendments register (Issue #551) — recorded/activity-auth.json stays byte-identical; named cells amend instead", () => {
+    it("the amendments file parses to a non-empty array before anything else is asserted (anti-vacuity)", () => {
+      expect(Array.isArray(amendments)).toBe(true);
+      expect(amendments.length).toBeGreaterThan(0);
+    });
+
+    it("no two amendments name the same cell key", () => {
+      const counts = new Map<string, number>();
+      for (const a of amendments) counts.set(a.key, (counts.get(a.key) ?? 0) + 1);
+      const duplicates = [...counts.entries()].filter(([, n]) => n > 1).map(([key]) => key);
+      expect(duplicates).toEqual([]);
+    });
+
+    it("every amendment names a positive integer GitHub issue, an ISO date, and a written reason of at least MIN_REASON_LENGTH characters", () => {
+      const problems = amendments
+        .filter(
+          (a) =>
+            !Number.isInteger(a.issue) ||
+            a.issue <= 0 ||
+            typeof a.reason !== "string" ||
+            a.reason.trim().length < MIN_REASON_LENGTH ||
+            !/^\d{4}-\d{2}-\d{2}$/.test(a.date),
+        )
+        .map((a) => a.key);
+      expect(problems).toEqual([]);
+    });
+
+    it("every amendment's key exists in the checked-in recording, and its 'from' matches the recording BYTE-FOR-BYTE", () => {
+      if (recording === undefined) return; // MODE=record: the beforeAll guard above already refused.
+      const currentRecording = recording;
+      const missing = amendments.filter((a) => !(a.key in currentRecording)).map((a) => a.key);
+      expect(missing).toEqual([]);
+      const stale = amendments
+        .filter((a) => a.key in currentRecording)
+        .filter((a) => !isDeepStrictEqual(a.from, currentRecording[a.key]))
+        .map((a) => `${a.key}: amendment 'from' does not match the recorded entry`);
+      expect(stale).toEqual([]);
     });
   });
 });

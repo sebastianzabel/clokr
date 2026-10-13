@@ -10,9 +10,13 @@
  *   bound even when nothing invalidated the cache. This instance serves one customer (instance per
  *   customer), so additional replicas are the only staleness vector; `invalidateTenantState(tenantId)`
  *   drops the entry at once and is called by the paths that (de)activate a tenant. A blank or absent
- *   tenant id is never looked up (D-10, #551: users without an Employee have no tenant) and an unknown
- *   tenant counts as active — the check only ever refuses a tenant it positively knows is deactivated.
+ *   tenant id is never looked up (D-10: users without an Employee have no tenant; since #551 such a
+ *   token is refused before this check, see `isBlankTenantId`) and an unknown tenant counts as active
+ *   — the check only ever refuses a tenant it positively knows is deactivated.
  * - `tenantDeactivatedError` — the one refusal body (`TENANT_DEACTIVATED`, 403).
+ * - `isBlankTenantId(value)` and `tenantRequiredError` (#551, D-01/D-04) — the one blank-tenant rule and
+ *   its refusal body (`TENANT_REQUIRED`, 403), handed to `requireAuth`, which refuses a token without a
+ *   tenant before any permission check.
  * - `hasOperatorClaims(payload)` — whether a payload that verified with the TENANT secret nevertheless
  *   carries the operator kind claim or audience (defence in depth against equal secrets).
  * - `recordOperatorPrincipalRefused(req, sub, options)` — the audit row for an operator token on a
@@ -20,7 +24,12 @@
  */
 import fp from "fastify-plugin";
 import type { FastifyRequest } from "fastify";
-import { isTenantDeactivated, TENANT_DEACTIVATED_ERROR } from "../tenant-status";
+import {
+  isBlankTenantId,
+  isTenantDeactivated,
+  TENANT_DEACTIVATED_ERROR,
+  TENANT_REQUIRED_ERROR,
+} from "../tenant-status";
 import { OPERATOR_AUDIT_ACTIONS, recordPrincipalRefusal } from "../operator-audit";
 import { OPERATOR_TOKEN_AUDIENCE, OPERATOR_TOKEN_KIND } from "../operator-auth";
 
@@ -40,6 +49,8 @@ declare module "fastify" {
     tenantIsActive(tenantId: string | null | undefined): Promise<boolean>;
     invalidateTenantState(tenantId: string): void;
     tenantDeactivatedError: typeof TENANT_DEACTIVATED_ERROR;
+    isBlankTenantId(value: unknown): boolean;
+    tenantRequiredError: typeof TENANT_REQUIRED_ERROR;
     hasOperatorClaims(payload: unknown): boolean;
     recordOperatorPrincipalRefused(
       req: FastifyRequest,
@@ -56,9 +67,11 @@ export const tenantStatusPlugin = fp(async (app) => {
   let generation = 0;
 
   app.decorate("tenantDeactivatedError", TENANT_DEACTIVATED_ERROR);
+  app.decorate("isBlankTenantId", isBlankTenantId);
+  app.decorate("tenantRequiredError", TENANT_REQUIRED_ERROR);
 
   app.decorate("tenantIsActive", async (tenantId: string | null | undefined): Promise<boolean> => {
-    if (!tenantId || tenantId.trim() === "") return true;
+    if (typeof tenantId !== "string" || isBlankTenantId(tenantId)) return true;
 
     const now = Date.now();
     const hit = cache.get(tenantId);

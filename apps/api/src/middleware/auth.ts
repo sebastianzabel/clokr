@@ -30,7 +30,11 @@ declare module "fastify" {
  *      configured) then recognises it and the answer is an explicit, audited 403 instead of the
  *      indistinguishable 401. A payload that verified with the TENANT secret but carries the operator kind
  *      or audience is refused the same way (defence in depth if the two secrets were ever equal).
- *   2. A deactivated tenant, for JWT and API key alike (AC-88-08, D-05): an access token or key issued
+ *   2. A tenant token without a tenant (#551): a verified payload whose tenant id is blank, whitespace-only,
+ *      absent or not a string (a User without an Employee) is refused with 403 `TENANT_REQUIRED` before
+ *      any permission check and before any query. The rule is `isBlankTenantId`, decided once in
+ *      `contexts/platform/tenant-status.ts` and handed over as a decoration.
+ *   3. A deactivated tenant, for JWT and API key alike (AC-88-08, D-05): an access token or key issued
  *      before the deactivation stays cryptographically valid, so the tenant state is checked on every
  *      request through `tenantIsActive` (cached for at most 10 s, invalidated explicitly).
  *
@@ -43,8 +47,10 @@ function tenantGuard(req: FastifyRequest) {
   if (
     typeof server.tenantIsActive !== "function" ||
     typeof server.hasOperatorClaims !== "function" ||
+    typeof server.isBlankTenantId !== "function" ||
     typeof server.recordOperatorPrincipalRefused !== "function" ||
-    !server.tenantDeactivatedError
+    !server.tenantDeactivatedError ||
+    !server.tenantRequiredError
   ) {
     throw new Error("tenantStatusPlugin is not registered; refusing to authenticate");
   }
@@ -70,6 +76,11 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
     }
     if (apiKey.expiresAt && apiKey.expiresAt < new Date()) {
       return reply.code(401).send({ error: "API Key abgelaufen" });
+    }
+    // The foreign key makes a key without a tenant unreachable; this is defence in depth, and it runs
+    // before the lastUsedAt write so a refused key leaves no trace.
+    if (server.isBlankTenantId(apiKey.tenantId)) {
+      return reply.code(403).send(server.tenantRequiredError);
     }
     if (!(await server.tenantIsActive(apiKey.tenantId))) {
       return reply.code(403).send(server.tenantDeactivatedError);
@@ -131,7 +142,12 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
     return reply.code(403).send({ error: "Forbidden" });
   }
 
-  // A blank tenant id is never looked up (D-10, #551); `tenantIsActive` answers it without a query.
+  // A tenant token without a tenant (a User without an Employee) never reaches a permission check or a
+  // query (#551, D-01). The claim is read as unknown: an absent claim is undefined at runtime.
+  if (server.isBlankTenantId((req.user as { tenantId?: unknown }).tenantId)) {
+    return reply.code(403).send(server.tenantRequiredError);
+  }
+
   if (!(await server.tenantIsActive(req.user.tenantId))) {
     return reply.code(403).send(server.tenantDeactivatedError);
   }
