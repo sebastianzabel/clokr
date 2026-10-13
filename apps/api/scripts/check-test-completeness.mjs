@@ -730,8 +730,12 @@ import { readFileSync } from "node:fs";
 // (assertions changed or cases rewritten 1:1). Same lower-bound convention as above (a case that
 // loops over data counts once in the source and more in the reporter); not a re-measure-to-actual
 // sweep. The full-suite actuals are measured in plan 85b-14.
-const MIN_FILES = 380;
-const MIN_TESTS = 6431;
+// Issue #548 (2026-10-13): one new test FILE, `src/composition/__tests__/dashboard-shift-scope-548.test.ts`
+// (8 cases) — MIN_FILES rises from 380 to 381 and MIN_TESTS from 6431 to 6439. The edited file
+// `dashboard-entry-scope-85.test.ts` changed only in its header docblock (case count unchanged).
+// Same lower-bound convention as above; not a re-measure-to-actual sweep.
+const MIN_FILES = 381;
+const MIN_TESTS = 6439;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

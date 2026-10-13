@@ -15,6 +15,11 @@
  * Whole-tenant callers run the unchanged statements: the control cases here and the frozen 84
  * pins prove the response stays byte-identical (no `workedElsewhere` key without a salon filter).
  *
+ * Amendment (Issue #548, 2026-10-13): since #548, in-scope shifts (`isShiftInScope`) are read for
+ * entry-only persons too, so "planning data ... shift ..." above now holds for contract, leave,
+ * absence and holiday only. This file's fixture creates no shifts, so its assertions are
+ * unchanged; see dashboard-shift-scope-548.test.ts.
+ *
  * Fixture: tenant with the active salons A and B. Q is homed in B until Tue and in A from Wed
  * (Stammsalon A at the week end): Mon 5 h in B and an OPEN entry Tue in B are outside the reach of
  * the Salonmanager of A, Wed 2 h in A is inside. A1 is homed in A (Mon 6 h in A). S is a Springer

@@ -14,6 +14,7 @@ import {
   resolveSalonInReach, // Issue #84 (D-16), Issue #85 (D-13) — salon filter validation
   homeSalonsForDays, // Issue #84 (D-13) — batched Stammsalon per day
   scopedTimeEntryIds, // Issue #85 (D-04) — the one per-entry scope resolver
+  isShiftInScope, // Issue #548 — Phase 91b D-11, the one per-shift scope predicate
 } from "../contexts/platform";
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -526,8 +527,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
         select: { id: true, firstName: true, lastName: true, employeeNumber: true },
         orderBy: { lastName: "asc" },
       });
-      // Planning data (holidays, leave, absences, shifts, contracts) belongs to the Stammsalon
-      // persons only: a person listed purely by an in-scope entry carries none of it (Pitfall 3).
+      // Contracts, holidays, leave and absences belong to the Stammsalon persons only: a person
+      // listed purely by an in-scope entry carries none of it (Pitfall 3). Shifts are read for
+      // every listed person and narrowed per shift below (Issue #548).
       const stammSet = new Set(teamWeekScopedIds === "all" ? [] : teamWeekScopedIds);
       const stammEmployees =
         teamWeekScopedIds === "all" ? employees : employees.filter((e) => stammSet.has(e.id));
@@ -594,13 +596,21 @@ export async function dashboardRoutes(app: FastifyInstance) {
         weekLastDay,
       );
 
-      // Schichten der Woche (Phase 100B Plan 05 — S1, contexts/scheduling facade)
-      const shifts = await getShiftsInRange(
-        app.prisma,
-        employeeScopeFor(scopedAccess, { employeeIds: teamWeekEmployeeIds }),
-        weekFirstDay,
-        weekLastDay,
-      );
+      // Shifts of the week (S1, contexts/scheduling facade), read for every listed person.
+      // Issue #548 / Phase 91b D-11: a shift counts only through its own salon or a person in the
+      // reach, never through the Stammsalon. A dropped shift leaves the day exactly like a day
+      // without a shift. `employeeScopeFor` does not re-check its targets, so this per-row filter
+      // is the scope proof for the ids of entry-only persons. A whole-tenant reach keeps every
+      // shift and reads the same ids as before (`employees` is then the Stammsalon list).
+      const shiftReadEmployeeIds = employees.map((e) => e.id);
+      const shifts = (
+        await getShiftsInRange(
+          app.prisma,
+          employeeScopeFor(scopedAccess, { employeeIds: shiftReadEmployeeIds }),
+          weekFirstDay,
+          weekLastDay,
+        )
+      ).filter((s) => isShiftInScope(scopeReach, { salonId: s.salonId, employeeId: s.employeeId }));
 
       // Aktuelle Schedules aller MA (bulk, latest per employee)
       const allSchedules = await app.prisma.workSchedule.findMany({
@@ -788,13 +798,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
           const empHolidayName = holidaysByEmployee.get(emp.id)?.get(dayStr) ?? null;
 
+          // A row listed only by an in-scope entry is never "missing": its absence reasons (leave,
+          // sickness, Berufsschule, work in another salon) are held by the Stammsalon and
+          // withheld, so "Fehlt" would be a claim the response cannot back (Issue #548). An
+          // in-scope shift that is not yet due still reads "scheduled".
+          const entryOnlyRow = inScopeRows !== null && !stammSet.has(emp.id);
           const { status, reason } = resolvePresenceState({
             entries: presenceEntries,
             leave: presenceLeave,
             absence: presenceAbsence,
             isWorkday,
             isFuture,
-            hasShift: shift !== null,
+            hasShift: entryOnlyRow ? shift !== null && !isDue : shift !== null,
             isHoliday: empHolidayName !== null,
             holidayName: empHolidayName,
           });
