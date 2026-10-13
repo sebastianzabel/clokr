@@ -1,11 +1,9 @@
 import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import bcrypt from "bcryptjs";
-import crypto, { createHash } from "crypto";
 import { Prisma, type Role, type RoleAssignmentScopeType } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { hasPermission, permissionReach, requirePermission } from "../request-permissions";
-import { validatePassword, loadPasswordPolicy } from "../password-policy";
+import { loadPasswordPolicy } from "../password-policy";
 import { accessContextFromRequest } from "../access-context"; // Phase 91b Plan 10 (#91), D-12/D-14
 import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-12/D-14
 import {
@@ -14,10 +12,8 @@ import {
   resolvePersonScopedEmployeeIds,
   resolveStammsalonScopedEmployeeIds,
 } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-12/D-14; Phase 85b Plan 01 (#547), D-01/D-02
-import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
 import {
-  lockTenantForRoleChanges,
   removeRoleAssignmentsOfUser,
   withRoleLockoutGuard,
   type RemovedRoleAssignment,
@@ -41,11 +37,7 @@ import {
   materializedAssignmentAuditEntry,
   removedAssignmentAuditEntry,
 } from "../role-assignment-audit";
-import {
-  createOvertimeAccount,
-  hardDeleteOvertimeDataForEmployee,
-  getTenantTimezone,
-} from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15; Phase 67b Plan 03 — D-22/D-07
+import { hardDeleteOvertimeDataForEmployee, getTenantTimezone } from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15; Phase 67b Plan 03 — D-22/D-07
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -60,30 +52,27 @@ import {
   getAbsenceDocumentPaths,
   hardDeleteAbsencesForEmployee,
   hardDeleteLeaveRequestsForEmployee,
-  BS_DAILY_MIN_BOUND,
-  BS_DAILY_MAX_BOUND,
-  BS_BLOCK_WEEKLY_MIN_BOUND,
-  BS_BLOCK_WEEKLY_MAX_BOUND,
-  ensureVacationEntitlementForYear, // Issue #416 — auto-seed vacation entitlement at hire time
-  resolveVacationBaseDays, // Issue #482 — the classification-aware base value
   statutoryMinimumVacationDays, // Issue #435 (D-11) — 5-day-base floor on POST/PATCH
   statutoryMinimumViolationMessage, // Issue #435 (D-11) — the ONE German 400 message builder
   daysDiffer, // Issue #435 code review (WR-01) — reused by the PATCH "did annualVacationDays change" guard
-  contractWorkDaysPerWeekFrom, // Phase 436 Plan 02 (D-02) — resolves the comparison value for validateUsualWorkDays
   syncExitYearVacationEntitlement, // Issue #447 (D-07) — recomputes an exit-year row on exitDate set/change
   exitVacationOverUseWarning, // Issue #447 (D-08) — the one over-use warning string
 } from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416; issue #435; issue #436; issue #447 (E-4 resolved)
-import { validateUsualWorkDays } from "../usual-work-days"; // Phase 436 Plan 02 (D-02)
 // Phase 67b Plan 03 (issue #67, D-22/D-07/D-24) — the Stammsalon lifecycle helpers.
-import {
-  createInitialHomeAssignment,
-  fillHomeGapBeforeHireDate,
-  readTenantTimezone,
-  resolveHomeSalonForNewEmployee,
-} from "../facade/salon-assignments";
+import { fillHomeGapBeforeHireDate, readTenantTimezone } from "../facade/salon-assignments";
 import { salonExistsInForeignTenant } from "../facade/salons";
 import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
 import { dayToDate, tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
+import {
+  bsSlotEmployeeFields,
+  createEmployeeInTransaction,
+  createEmployeeSchema,
+  employeeClassificationSchema,
+  employeeCreatedAuditValue,
+  prepareEmployeeCreation,
+  reissueEmployeeInvitation,
+  type EmployeeCreationAudit,
+} from "../employee-creation"; // Phase 88 Plan 10 (D-04a) — the one place employee creation lives
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -94,165 +83,6 @@ const SCOPE_LABEL: Record<RoleAssignmentScopeType, string> = {
   SALONS: "salonbezogen",
   PERSONS: "personenbezogen",
 };
-
-// Phase 76.31 D-06 — per-employee bsSlot* override Zod fields (highest layer of
-// the 4-layer slot hierarchy). Nullable Int — explicit null CLEARS the employee
-// override so resolution delegates down to Pattern → TenantConfig → daily-Soll.
-// Daily bounds 240..600 (4h..10h); block-week bounds 1200..3000 (20h..50h).
-const bsSlotEmployeeFields = {
-  bsSlotFirstLongDayMinutes: z
-    .number()
-    .int()
-    .min(BS_DAILY_MIN_BOUND)
-    .max(BS_DAILY_MAX_BOUND)
-    .nullable()
-    .optional(),
-  bsSlotSecondLongDayMinutes: z
-    .number()
-    .int()
-    .min(BS_DAILY_MIN_BOUND)
-    .max(BS_DAILY_MAX_BOUND)
-    .nullable()
-    .optional(),
-  bsSlotShortDayMinutes: z
-    .number()
-    .int()
-    .min(BS_DAILY_MIN_BOUND)
-    .max(BS_DAILY_MAX_BOUND)
-    .nullable()
-    .optional(),
-  bsSlotBlockWeekMinutes: z
-    .number()
-    .int()
-    .min(BS_BLOCK_WEEKLY_MIN_BOUND)
-    .max(BS_BLOCK_WEEKLY_MAX_BOUND)
-    .nullable()
-    .optional(),
-};
-
-/** SHA-256 hash for tokens stored in DB. */
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-// Personalstruktur (Phase 41) — keep enum in sync with prisma EmployeeClassification
-const employeeClassificationSchema = z.enum([
-  "VOLLZEIT",
-  "TEILZEIT",
-  "MINIJOB",
-  "AZUBI",
-  "AUSHILFE",
-  "WERKSTUDENT",
-  "PRAKTIKANT",
-]);
-
-const createEmployeeSchema = z.object({
-  email: z.string().email(),
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  employeeNumber: z.string().min(1),
-  hireDate: z.string().datetime(),
-  role: z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).default("EMPLOYEE"),
-  weeklyHours: z.number().min(0).max(60).nullable().optional().default(0),
-  scheduleType: z
-    .enum(["FIXED_SCHEDULE", "FLEXTIME", "MONTHLY_HOURS", "SHIFT_BASED"])
-    .default("SHIFT_BASED"),
-  monthlyHours: z.number().min(0).max(999).nullable().optional(),
-  nfcCardId: z.string().optional(),
-  password: z.string().min(8).optional(),
-  // Personalstruktur (Phase 41)
-  classification: employeeClassificationSchema.optional(),
-  coverageWeight: z.number().min(0).max(9.99).optional(),
-  requiresSupervision: z.boolean().optional(),
-  // Phase 49.2 — FLEXTIME Kernarbeitszeit (optional; only applied when scheduleType=FLEXTIME)
-  coreStart: z
-    .string()
-    .regex(/^\d{2}:\d{2}$/, "Format HH:MM erwartet")
-    .nullable()
-    .optional(),
-  coreEnd: z
-    .string()
-    .regex(/^\d{2}:\d{2}$/, "Format HH:MM erwartet")
-    .nullable()
-    .optional(),
-  coreDays: z.array(z.number().int().min(0).max(6)).optional(),
-  // Phase 49.5 — Arbeitstage/Woche (optional; fällt auf TenantConfig.defaultWorkDays zurück)
-  workDays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
-  // Phase 107 (D-01, issue #94) — vertragliche Anzahl Arbeitstage/Woche, NUR für
-  // SHIFT_BASED befüllt. .optional().nullable(): see settings.ts's identical field
-  // for the rationale (Svelte forms send `field: x ? x : null`).
-  contractWorkDaysPerWeek: z.number().int().min(1).max(7).optional().nullable(),
-  // Phase 436 Plan 02 (D-02): optional "übliche Arbeitstage" at creation, SHIFT_BASED only.
-  // .optional().nullable() (not bare .optional()): same convention as settings.ts — this
-  // project's Svelte forms send `field: x ? x : null`.
-  usualWorkDays: z.array(z.number().int().min(0).max(6)).max(7).optional().nullable(),
-  // Phase 64 — Pausendauer Override (D-08, BREAK-02, BREAK-04):
-  // nullable Int — null clears override → fall back to TenantConfig defaults.
-  // Floor enforces ArbZG §4 Pflichtpause; cap is a sane upper bound.
-  breakOver6hOverride: z
-    .number()
-    .int()
-    .min(
-      ARBZG_FLOOR_OVER_6H,
-      "Pausendauer für Arbeitstage über 6 Stunden darf nicht unter 30 Minuten liegen (ArbZG §4 Pflichtpause).",
-    )
-    .max(
-      BREAK_MAX_OVER_6H,
-      "Pausendauer für Arbeitstage über 6 Stunden darf 120 Minuten nicht überschreiten.",
-    )
-    .nullable()
-    .optional(),
-  breakOver9hOverride: z
-    .number()
-    .int()
-    .min(
-      ARBZG_FLOOR_OVER_9H,
-      "Pausendauer für Arbeitstage über 9 Stunden darf nicht unter 45 Minuten liegen (ArbZG §4 Pflichtpause).",
-    )
-    .max(
-      BREAK_MAX_OVER_9H,
-      "Pausendauer für Arbeitstage über 9 Stunden darf 180 Minuten nicht überschreiten.",
-    )
-    .nullable()
-    .optional(),
-  // Phase 85.1.1 (D-01, D-04) — per-employee Phorest Vor-/Nachbereitungszeit
-  // Override (create). Plain 0-30 bound (no ArbZG floor). null = fall back to
-  // TenantConfig.phorestPrepMinutes/phorestWrapupMinutes; 0 = explicit "no puffer".
-  phorestPrepMinutesOverride: z
-    .number()
-    .int()
-    .min(0, "Vorbereitungszeit darf nicht negativ sein.")
-    .max(30, "Vorbereitungszeit darf 30 Minuten nicht überschreiten.")
-    .nullable()
-    .optional(),
-  phorestWrapupMinutesOverride: z
-    .number()
-    .int()
-    .min(0, "Nachbereitungszeit darf nicht negativ sein.")
-    .max(30, "Nachbereitungszeit darf 30 Minuten nicht überschreiten.")
-    .nullable()
-    .optional(),
-  // Phase 76.31 D-06 — per-employee bsSlot* overrides (create).
-  ...bsSlotEmployeeFields,
-  // Phase 67b Plan 03 (D-22, issue #67) — the new employee's Stammsalon. Omitted or explicit
-  // null resolves automatically when the tenant has exactly one active salon; explicit null is
-  // accepted because Clokr frontends send `field: x ? x : null`, never omit the key.
-  homeSalonId: z.string().uuid().optional().nullable(),
-  // Issue #435 D-02 — base days at a 5-day week, two decimals because the JArbSchG minimum is
-  // 20,83 (D-11 pre-fill), Decimal(5,2) column. null = the classification-aware base value from
-  // resolveVacationBaseDays() (Issue #482). The statutory-minimum 400 is plan 03's (D-11) and
-  // runs in the handler, not in Zod.
-  annualVacationDays: z
-    .number()
-    .min(0.5)
-    .max(365)
-    .refine((v) => Math.round(v * 100) / 100 === v, "Höchstens zwei Nachkommastellen.")
-    .optional()
-    .nullable(),
-  // Issue #435 D-11 (prerequisite): needed at creation so the statutory minimum is checked and
-  // applied from day one — mirrors updateEmployeeSchema's identical field (Phase 65).
-  birthDate: z.string().datetime().nullable().optional(),
-});
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 
@@ -712,262 +542,52 @@ export async function employeeRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Forbidden" });
       }
 
-      // Issue #435 (D-11): the 5-day base against the 5-day statutory minimum, age at 1 January
-      // of the HIRE year — before any write. The regular computation additionally floors per
-      // year (D-09, plan 02); this guard only stops an obviously unlawful input value.
-      if (body.annualVacationDays != null) {
-        const checkYear = new Date(body.hireDate).getUTCFullYear();
-        const birthDateForCheck = body.birthDate ? new Date(body.birthDate) : null;
-        const minimum = statutoryMinimumVacationDays(birthDateForCheck, checkYear, 5);
-        if (Math.round(body.annualVacationDays * 100) < Math.round(minimum * 100)) {
-          return reply.code(400).send({
-            error: statutoryMinimumViolationMessage(minimum, birthDateForCheck, checkYear),
-          });
-        }
-      }
-
-      const directPassword = !!body.password;
-      if (directPassword) {
-        const policy = await loadPasswordPolicy(app, req.user.tenantId);
-        const check = validatePassword(body.password!, policy);
-        if (!check.valid) {
-          return reply.code(400).send({ error: check.errors.join(". ") });
-        }
-      }
-      const passwordHash = directPassword
-        ? await bcrypt.hash(body.password!, 12)
-        : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
-
-      // Phase 49.5 — Arbeitstage: Body-Override > Tenant-Default > Mo-Fr.
-      // Phase 61 (v1.6.5) — also derive from per-day-hours when the body doesn't
-      // carry them. createEmployeeSchema does not accept per-day-hours today, so
-      // we synthesize the Prisma schema defaults (Mo-Fr=8, Sat/Sun=0). When a
-      // future schema extension adds these fields, the helper picks them up
-      // automatically. The tenant default still wins for callers who want a
-      // non-Mo-Fr default at hire-time.
-      const tenantConfigForDefaults = await app.prisma.tenantConfig.findUnique({
-        where: { tenantId: req.user.tenantId },
-        select: { defaultWorkDays: true },
+      // Everything that is rejected before a write (statutory vacation minimum, password policy,
+      // workDays, usualWorkDays) is decided in employee-creation.ts — one place for the route and
+      // the operator's first-admin provisioning (Phase 88, D-04a).
+      const prepared = await prepareEmployeeCreation(app.prisma, req.user.tenantId, body, {
+        passwordPolicy: body.password
+          ? await loadPasswordPolicy(app, req.user.tenantId)
+          : undefined,
       });
-      const perDayHoursForDerive: PerDayHours = {
-        mondayHours: 8,
-        tuesdayHours: 8,
-        wednesdayHours: 8,
-        thursdayHours: 8,
-        fridayHours: 8,
-        saturdayHours: 0,
-        sundayHours: 0,
+      if (!prepared.ok) {
+        return reply.code(prepared.status).send({ error: prepared.error });
+      }
+      const { directPassword } = prepared;
+
+      // The audit rows of the creation are attributed to the calling tenant user (or, for an API
+      // key, recorded with an API_KEY actor) through the existing request-bound helpers.
+      const tenantAudit: EmployeeCreationAudit = {
+        vacationEntitlement: async (entry, tx) =>
+          app.audit({
+            userId: req.user.sub,
+            ...entry,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            tx,
+          }),
+        roleAssignmentChange: (change, tx) => auditRoleAssignmentChange(app, req, tx, change),
+        salonAssignmentCreated: (entry, tx) =>
+          auditSalonAssignmentEvent(app, req, {
+            entity: "EmployeeSalonAssignment",
+            action: "CREATE",
+            entityId: entry.entityId,
+            newValue: entry.newValue,
+            tx,
+          }),
+        employeeCreated: (entry, tx) =>
+          app.audit({
+            userId: req.user.sub,
+            action: "CREATE",
+            entity: "Employee",
+            entityId: entry.entityId,
+            newValue: entry.newValue,
+            tx,
+          }),
       };
-      const resolvedWorkDays = normalizeWorkDays(
-        body.workDays,
-        perDayHoursForDerive,
-        tenantConfigForDefaults?.defaultWorkDays,
+
+      const result = await app.prisma.$transaction((tx: Prisma.TransactionClient) =>
+        createEmployeeInTransaction(tx, req.user.tenantId, body, prepared, tenantAudit),
       );
-
-      // Phase 436 Plan 02 (D-02, 436-AC-03): validate BEFORE the transaction — a rejected body
-      // must create neither Employee nor User row.
-      const usualWorkDaysForCreate = body.usualWorkDays ?? [];
-      const usualWorkDaysCheck = validateUsualWorkDays(
-        body.scheduleType,
-        usualWorkDaysForCreate,
-        contractWorkDaysPerWeekFrom(
-          {
-            contractWorkDaysPerWeek:
-              body.scheduleType === "SHIFT_BASED" ? (body.contractWorkDaysPerWeek ?? 5) : null,
-            workDays: resolvedWorkDays,
-          },
-          tenantConfigForDefaults?.defaultWorkDays,
-        ),
-      );
-      if (!usualWorkDaysCheck.ok) {
-        return reply.code(400).send({ error: usualWorkDaysCheck.error });
-      }
-
-      // Phase 67b Plan 03 (D-22, issue #67): only reads TenantConfig (cached), safe before the tx.
-      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-
-      const result = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        // D-22/D-02: the FIRST statement in the transaction — a rejected outcome below returns
-        // before any write, so a 400 never leaves behind a User, Employee or assignment row.
-        const salonOutcome = await resolveHomeSalonForNewEmployee(
-          tx,
-          req.user.tenantId,
-          body.homeSalonId,
-        );
-        if (salonOutcome.status !== "OK") return salonOutcome;
-
-        const user = await tx.user.create({
-          data: {
-            email: body.email,
-            passwordHash,
-            role: body.role,
-            isActive: directPassword, // sofort aktiv wenn Passwort gesetzt
-          },
-        });
-
-        const emp = await tx.employee.create({
-          data: {
-            tenantId: req.user.tenantId,
-            userId: user.id,
-            firstName: body.firstName,
-            lastName: body.lastName,
-            employeeNumber: body.employeeNumber,
-            hireDate: new Date(body.hireDate),
-            nfcCardId: body.nfcCardId,
-            // Personalstruktur (Phase 41) — schema defaults apply if omitted
-            ...(body.classification !== undefined ? { classification: body.classification } : {}),
-            ...(body.coverageWeight !== undefined ? { coverageWeight: body.coverageWeight } : {}),
-            ...(body.requiresSupervision !== undefined
-              ? { requiresSupervision: body.requiresSupervision }
-              : {}),
-            // Phase 64 (D-08, BREAK-02): per-employee break override on create.
-            // undefined / omitted → null (fall back to tenant default).
-            breakOver6hOverride: body.breakOver6hOverride ?? null,
-            breakOver9hOverride: body.breakOver9hOverride ?? null,
-            // Phase 85.1.1 (D-01, D-04): per-employee Phorest puffer override on
-            // create. undefined / omitted → null (fall back to tenant default).
-            phorestPrepMinutesOverride: body.phorestPrepMinutesOverride ?? null,
-            phorestWrapupMinutesOverride: body.phorestWrapupMinutesOverride ?? null,
-            // Phase 76.31 (D-06): per-employee bsSlot* overrides on create.
-            // undefined / omitted → null (delegate down the slot hierarchy).
-            bsSlotFirstLongDayMinutes: body.bsSlotFirstLongDayMinutes ?? null,
-            bsSlotSecondLongDayMinutes: body.bsSlotSecondLongDayMinutes ?? null,
-            bsSlotShortDayMinutes: body.bsSlotShortDayMinutes ?? null,
-            bsSlotBlockWeekMinutes: body.bsSlotBlockWeekMinutes ?? null,
-            // Issue #482: per-person vacation base value, null = the classification's own
-            // Standard, resolved by resolveVacationBaseDays().
-            annualVacationDays: body.annualVacationDays ?? null,
-            // Issue #435 (D-11 prerequisite): needed at creation for the statutory-minimum floor.
-            birthDate: body.birthDate ? new Date(body.birthDate) : null,
-          },
-        });
-
-        const workSchedule = await tx.workSchedule.create({
-          data: {
-            employeeId: emp.id,
-            type: body.scheduleType,
-            // For SHIFT_BASED: default to 40h if caller omits weeklyHours (null/0/undefined)
-            weeklyHours:
-              body.scheduleType === "SHIFT_BASED" ? body.weeklyHours || 40 : body.weeklyHours,
-            monthlyHours: body.monthlyHours ?? null,
-            // Phase 49.2 — FLEXTIME Kernarbeitszeit (only persisted when FLEXTIME)
-            coreStart: body.scheduleType === "FLEXTIME" ? (body.coreStart ?? null) : null,
-            coreEnd: body.scheduleType === "FLEXTIME" ? (body.coreEnd ?? null) : null,
-            coreDays: body.scheduleType === "FLEXTIME" ? (body.coreDays ?? []) : [],
-            workDays: resolvedWorkDays,
-            // Phase 107 (D-01, issue #94) — mirrors the weeklyHours SHIFT_BASED
-            // default-if-omitted convention above. Initial schedule on employee
-            // creation is a contract START (not a contract CHANGE), so workDays
-            // above is still allowed to resolve/derive normally — only the D-02
-            // freeze on the settings.ts re-save path is exempted from this.
-            contractWorkDaysPerWeek:
-              body.scheduleType === "SHIFT_BASED" ? (body.contractWorkDaysPerWeek ?? 5) : null,
-            // Phase 436 Plan 02 (D-02): the Angabe is only ever non-empty for SHIFT_BASED,
-            // validated above via validateUsualWorkDays before this transaction started.
-            usualWorkDays: body.scheduleType === "SHIFT_BASED" ? usualWorkDaysCheck.value : [],
-            validFrom: new Date(body.hireDate),
-          },
-        });
-
-        await createOvertimeAccount(tx, emp.id, req.user.tenantId);
-
-        // Issue #416: auto-seed the new hire's VACATION LeaveEntitlement for their hire year —
-        // no code path previously created one, leaving new employees with no Urlaubsanspruch
-        // until an admin happened to open the Urlaubsanspruch tab. Runs on `tx` (invariant-
-        // carrying, ADR 0002 Entscheidung 10): if this fails, the whole employee-creation
-        // transaction rolls back rather than committing an employee with a silently missing
-        // entitlement. The create path itself has no classification branch of its own — since
-        // Issue #482 the Azubi-Standard is resolved inside resolveVacationBaseDays() below, the
-        // one place that chain lives.
-        const workDaysPerWeek =
-          body.scheduleType === "SHIFT_BASED"
-            ? (body.contractWorkDaysPerWeek ?? 5)
-            : // Mirrors countWorkDaysPerWeek()'s workDays.length tier — the same raw input
-              // resolvedWorkDays above already resolved for the WorkSchedule row.
-              resolvedWorkDays.length;
-        // Issue #482: the ONE base-value resolution — the classification-aware base value from
-        // resolveVacationBaseDays() — on `tx` since `emp` already exists inside this transaction.
-        const vacationBaseDays = await resolveVacationBaseDays(tx, emp.id, req.user.tenantId);
-        await ensureVacationEntitlementForYear(
-          tx,
-          emp.id,
-          req.user.tenantId,
-          emp.hireDate.getFullYear(),
-          emp.hireDate,
-          emp.birthDate,
-          // Issue #447 (D-05): the create schema has no exitDate field, so this is always null at
-          // hire time — passed anyway, truthfully, now that the parameter is required.
-          emp.exitDate,
-          workDaysPerWeek,
-          vacationBaseDays,
-          "Automatisch angelegt bei Mitarbeiteranlage",
-          async (entry) =>
-            app.audit({
-              userId: req.user.sub,
-              ...entry,
-              request: { ip: req.ip, headers: req.headers as Record<string, string> },
-              tx,
-            }),
-        );
-
-        // Phase 75b (D-15): the new user's system-role assignment and its audit row, in this same
-        // transaction. A grant cannot lower any holder count, so it takes the tenant lock (which
-        // serialises it with every guarded role change) but needs no before/after count. The
-        // column already holds `body.role`, so the write-back is a no-op kept for one uniform path.
-        await lockTenantForRoleChanges(tx, req.user.tenantId);
-        const { created: roleAssignment } = await replaceSystemRoleAssignment(
-          tx,
-          req.user.tenantId,
-          user.id,
-          body.role,
-        );
-        await auditRoleAssignmentChange(app, req, tx, {
-          userId: user.id,
-          entries: roleAssignment !== null ? [createdAssignmentAuditEntry(roleAssignment)] : [],
-          compatRole: await syncCompatRoleColumn(tx, req.user.tenantId, user.id),
-        });
-
-        // D-22: the new employee's Stammsalon (HOME) row, open-ended from its tenant-local hire
-        // day, in the SAME transaction — audited CREATE right after, still inside the tx.
-        const homeAssignment = await createInitialHomeAssignment(
-          tx,
-          req.user.tenantId,
-          emp.id,
-          salonOutcome.salonId,
-          tenantLocalDay(emp.hireDate, tz),
-        );
-        await auditSalonAssignmentEvent(app, req, {
-          entity: "EmployeeSalonAssignment",
-          action: "CREATE",
-          entityId: homeAssignment.id,
-          newValue: toAssignmentDto(homeAssignment),
-          tx,
-        });
-
-        // Einladung nur erstellen wenn kein Passwort gesetzt
-        let token: string | null = null;
-        let invitation: { expiresAt: Date; acceptedAt: Date | null } | null = null;
-        if (!directPassword) {
-          token = crypto.randomBytes(32).toString("hex");
-          invitation = await tx.invitation.create({
-            data: {
-              token: hashToken(token),
-              employeeId: emp.id,
-              email: body.email,
-              expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-            },
-          });
-        }
-
-        return {
-          status: "OK" as const,
-          employee: emp,
-          user,
-          workSchedule,
-          invitation,
-          invitationToken: token,
-        };
-      });
 
       if (result.status !== "OK") {
         switch (result.status) {
@@ -1006,27 +626,9 @@ export async function employeeRoutes(app: FastifyInstance) {
 
       const { employee, user, workSchedule, invitation, invitationToken } = result;
 
-      await app.audit({
-        userId: req.user.sub,
-        action: "CREATE",
-        entity: "Employee",
+      await tenantAudit.employeeCreated({
         entityId: employee.id,
-        newValue: {
-          ...employee,
-          email: body.email,
-          directPassword,
-          // Personalstruktur (Phase 41) — Decimal → string for stable JSON
-          coverageWeight: employee.coverageWeight.toString(),
-          // Issue #435 (D-02) — Decimal → string for stable JSON (same treatment as coverageWeight)
-          annualVacationDays: employee.annualVacationDays?.toString() ?? null,
-          // Phase 436 Plan 02 (D-02): the initial Angabe must be traceable (CLAUDE.md "prefer
-          // creating an audit entry over skipping it").
-          workSchedule: {
-            type: workSchedule.type,
-            contractWorkDaysPerWeek: workSchedule.contractWorkDaysPerWeek,
-            usualWorkDays: workSchedule.usualWorkDays,
-          },
-        },
+        newValue: employeeCreatedAuditValue(employee, body, workSchedule, directPassword),
       });
 
       // Einladungsmail nur senden wenn kein direktes Passwort
@@ -1788,20 +1390,11 @@ export async function employeeRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "Mitarbeiter hat Einladung bereits akzeptiert" });
       }
 
-      // Alte Invitations ablaufen lassen
-      await app.prisma.invitation.updateMany({
-        where: { employeeId: id, acceptedAt: null },
-        data: { expiresAt: new Date() },
-      });
-
-      const rawToken = crypto.randomBytes(32).toString("hex");
-      await app.prisma.invitation.create({
-        data: {
-          token: hashToken(rawToken),
-          employeeId: id,
-          email: employee.user.email,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        },
+      // Expire the open invitations and issue a new one (the invitation rule lives in
+      // employee-creation.ts).
+      const { token: rawToken } = await reissueEmployeeInvitation(app.prisma, {
+        employeeId: id,
+        email: employee.user.email,
       });
 
       try {
