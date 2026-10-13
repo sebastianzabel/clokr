@@ -328,3 +328,147 @@ describe("token paths: verify-otp, resend-otp and refresh", () => {
     expect(JSON.parse(ok.body).accessToken).toBeTruthy();
   });
 });
+
+describe("credential paths: forgot/reset/change-password and invitation accept", () => {
+  const NEW_PASSWORD = "NewPass!1234567";
+
+  function hashed(raw: string) {
+    return createHash("sha256").update(raw).digest("hex");
+  }
+
+  async function passwordHashOf(userId: string) {
+    return (await app.prisma.user.findUniqueOrThrow({ where: { id: userId } })).passwordHash;
+  }
+
+  async function issueResetToken(userId: string) {
+    const raw = "reset-" + Math.random().toString(36).slice(2);
+    await app.prisma.otpToken.create({
+      data: { userId, code: hashed(raw), expiresAt: new Date(Date.now() + 60 * 60 * 1000) },
+    });
+    return raw;
+  }
+
+  it("forgot-password answers success for a deactivated tenant but sends no mail and stores no token", async () => {
+    const resetSpy = vi.spyOn(app.mailer, "sendPasswordReset").mockResolvedValue(undefined);
+    try {
+      expect((await deactivate()).status).toBe("OK");
+      const before = await app.prisma.otpToken.count({ where: { userId: data.empUser.id } });
+
+      const res = await post("/api/v1/auth/forgot-password", { email: data.empUser.email });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true });
+      expect(resetSpy).not.toHaveBeenCalled();
+      expect(await app.prisma.otpToken.count({ where: { userId: data.empUser.id } })).toBe(before);
+
+      expect((await reactivate()).status).toBe("OK");
+      const again = await post("/api/v1/auth/forgot-password", { email: data.empUser.email });
+      expect(again.statusCode).toBe(200);
+      expect(resetSpy).toHaveBeenCalledTimes(1);
+      expect(await app.prisma.otpToken.count({ where: { userId: data.empUser.id } })).toBe(
+        before + 1,
+      );
+    } finally {
+      resetSpy.mockRestore();
+    }
+  });
+
+  it("change-password with a still signature-valid access token is refused and the hash stays", async () => {
+    const login = await loginAs(data.empUser.email);
+    expect(login.statusCode).toBe(200);
+    const { accessToken } = JSON.parse(login.body);
+    const hashBefore = await passwordHashOf(data.empUser.id);
+
+    expect((await deactivate()).status).toBe("OK");
+    const refused = await post(
+      "/api/v1/auth/change-password",
+      { currentPassword: "test1234", newPassword: NEW_PASSWORD },
+      { authorization: `Bearer ${accessToken}` },
+    );
+    expect(refused.statusCode).toBe(403);
+    expect(JSON.parse(refused.body)).toEqual(TENANT_DEACTIVATED_ERROR);
+    expect(await passwordHashOf(data.empUser.id)).toBe(hashBefore);
+
+    expect((await reactivate()).status).toBe("OK");
+    const ok = await post(
+      "/api/v1/auth/change-password",
+      { currentPassword: "test1234", newPassword: NEW_PASSWORD },
+      { authorization: `Bearer ${accessToken}` },
+    );
+    expect(ok.statusCode).toBe(200);
+    expect(await passwordHashOf(data.empUser.id)).not.toBe(hashBefore);
+  });
+
+  it("reset-password with a token issued before the deactivation is refused and the hash stays", async () => {
+    const raw = await issueResetToken(data.adminUser.id);
+    const hashBefore = await passwordHashOf(data.adminUser.id);
+
+    expect((await deactivate()).status).toBe("OK");
+    const refused = await post("/api/v1/auth/reset-password", {
+      token: raw,
+      password: NEW_PASSWORD,
+    });
+    expect(refused.statusCode).toBe(403);
+    expect(JSON.parse(refused.body)).toEqual(TENANT_DEACTIVATED_ERROR);
+    expect(await passwordHashOf(data.adminUser.id)).toBe(hashBefore);
+
+    expect((await reactivate()).status).toBe("OK");
+    const ok = await post("/api/v1/auth/reset-password", { token: raw, password: NEW_PASSWORD });
+    expect(ok.statusCode).toBe(200);
+    expect(await passwordHashOf(data.adminUser.id)).not.toBe(hashBefore);
+  });
+
+  it("invitation accept for a deactivated tenant is refused; the user stays inactive and the invitation unused", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const user = await app.prisma.user.create({
+      data: {
+        email: `invitee-${suffix}@test.de`,
+        passwordHash: "PENDING",
+        role: "EMPLOYEE",
+        isActive: false,
+      },
+    });
+    const employee = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        employeeNumber: `INV-${suffix}`,
+        firstName: "Ina",
+        lastName: "Eingeladen",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    const rawToken = "invite-" + suffix;
+    const invitation = await app.prisma.invitation.create({
+      data: {
+        token: hashed(rawToken),
+        employeeId: employee.id,
+        email: user.email,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+    });
+
+    expect((await deactivate()).status).toBe("OK");
+    const refused = await post("/api/v1/invitations/accept", {
+      token: rawToken,
+      password: NEW_PASSWORD,
+    });
+    expect(refused.statusCode).toBe(403);
+    expect(JSON.parse(refused.body)).toEqual(TENANT_DEACTIVATED_ERROR);
+    const userAfter = await app.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(userAfter.isActive).toBe(false);
+    expect(userAfter.passwordHash).toBe("PENDING");
+    const invitationAfter = await app.prisma.invitation.findUniqueOrThrow({
+      where: { id: invitation.id },
+    });
+    expect(invitationAfter.acceptedAt).toBeNull();
+
+    expect((await reactivate()).status).toBe("OK");
+    const ok = await post("/api/v1/invitations/accept", {
+      token: rawToken,
+      password: NEW_PASSWORD,
+    });
+    expect(ok.statusCode).toBe(200);
+    const activated = await app.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(activated.isActive).toBe(true);
+  });
+});

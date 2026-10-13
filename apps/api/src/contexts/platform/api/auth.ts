@@ -435,11 +435,17 @@ export async function authRoutes(app: FastifyInstance) {
 
       const user = await app.prisma.user.findUnique({
         where: { email },
-        include: { employee: true },
+        include: { employee: { include: { tenant: { select: { deactivatedAt: true } } } } },
       });
 
       // Always return success to avoid leaking user existence
       if (!user || !user.isActive) {
+        return { success: true };
+      }
+
+      // Phase 88 (AC-88-08): a deactivated tenant's user gets no reset mail and no stored token. The
+      // answer stays the same `{ success: true }`, so the no-enumeration property holds.
+      if (!isTenantRowActive(user.employee?.tenant)) {
         return { success: true };
       }
 
@@ -500,8 +506,12 @@ export async function authRoutes(app: FastifyInstance) {
       // Load tenant password policy for the user
       const resetUser = await app.prisma.user.findUnique({
         where: { id: otpToken.userId },
-        include: { employee: true },
+        include: { employee: { include: { tenant: { select: { deactivatedAt: true } } } } },
       });
+      // Phase 88 (AC-88-08): a reset token issued before the deactivation must not set a password.
+      if (resetUser && !isTenantRowActive(resetUser.employee?.tenant)) {
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
+      }
       if (resetUser?.employee?.tenantId) {
         const policy = await loadPasswordPolicy(app, resetUser.employee.tenantId);
         const check = validatePassword(password, policy);
@@ -587,9 +597,15 @@ export async function authRoutes(app: FastifyInstance) {
 
       const user = await app.prisma.user.findUnique({
         where: { id: req.user.sub },
-        include: { employee: true },
+        include: { employee: { include: { tenant: { select: { deactivatedAt: true } } } } },
       });
       if (!user) return reply.code(404).send({ error: "Benutzer nicht gefunden" });
+
+      // Phase 88 (AC-88-08): the access token is still signature-valid after a deactivation, so the
+      // credential change is refused here.
+      if (!isTenantRowActive(user.employee?.tenant)) {
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
+      }
 
       const valid = await bcrypt.compare(body.currentPassword, user.passwordHash);
       if (!valid) return reply.code(400).send({ error: "Aktuelles Passwort ist falsch" });
