@@ -1041,3 +1041,233 @@ describe("PATCH /api/v1/operator/tenants/:id/salons/:salonId", () => {
     expect((await patchSalon(dataB.tenant.id, "not-a-uuid", { name: "X" })).statusCode).toBe(400);
   });
 });
+
+// ── PATCH atomicity and contract pins (plan 89-09, task 2) ───────────────────────────────────
+
+describe("PATCH /api/v1/operator/tenants/:id/salons/:salonId — atomicity and contract", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Fails the tenant audit write for one entity, calls through for everything else. */
+  function failTenantAuditFor(entity: string) {
+    const realAudit = app.audit.bind(app);
+    vi.spyOn(app, "audit").mockImplementation(async (entry) => {
+      if (entry.entity === entity) throw new Error("forced audit failure (test)");
+      return realAudit(entry);
+    });
+  }
+
+  it("rolls the name change back when the coupling audit write fails", async () => {
+    const salon = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Kopplung-Audit" });
+    const branch = `B-${randomUUID().slice(0, 8)}`;
+    failTenantAuditFor("SalonCoupling");
+
+    const res = await patchSalon(dataA.tenant.id, salon.id, {
+      name: "Darf nicht bleiben",
+      coupling: { externalBranchId: branch },
+    });
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.body)).toEqual({ error: "Interner Serverfehler" });
+
+    expect((await app.prisma.salon.findUniqueOrThrow({ where: { id: salon.id } })).name).toBe(
+      "Kopplung-Audit",
+    );
+    expect(await couplingRows(salon.id)).toHaveLength(0);
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: {
+          subjectTenantId: dataA.tenant.id,
+          action: { in: ["SALON_UPDATED", "SALON_COUPLING_SET"] },
+          OR: [
+            { entityId: salon.id },
+            { newValue: { path: ["externalBranchId"], equals: branch } },
+          ],
+        },
+      }),
+    ).toBe(0);
+    expect(
+      await app.prisma.auditLog.count({
+        where: {
+          OR: [
+            { entity: "Salon", entityId: salon.id },
+            { entity: "SalonCoupling", newValue: { path: ["externalBranchId"], equals: branch } },
+          ],
+        },
+      }),
+    ).toBe(0);
+  });
+
+  it("rolls a name-only change back when the salon audit write fails", async () => {
+    const salon = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Salon-Audit" });
+    failTenantAuditFor("Salon");
+
+    const res = await patchSalon(dataA.tenant.id, salon.id, { name: "Darf nicht bleiben" });
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.body)).toEqual({ error: "Interner Serverfehler" });
+
+    expect((await app.prisma.salon.findUniqueOrThrow({ where: { id: salon.id } })).name).toBe(
+      "Salon-Audit",
+    );
+    expect(await operatorActions(dataA.tenant.id, [salon.id])).toHaveLength(0);
+    expect(
+      await app.prisma.auditLog.count({ where: { entity: "Salon", entityId: salon.id } }),
+    ).toBe(0);
+  });
+
+  it("keeps the old coupling and writes no audit row when a replace loses a race on the branch index", async () => {
+    const oldBranch = `OLD-${randomUUID().slice(0, 8)}`;
+    const takenBranch = `NEW-${randomUUID().slice(0, 8)}`;
+    const holder = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Replace-Halter" });
+    const salon = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Replace-Ziel" });
+    await app.prisma.salonCoupling.createMany({
+      data: [
+        {
+          tenantId: dataA.tenant.id,
+          salonId: holder.id,
+          provider: "PHOREST",
+          externalBranchId: takenBranch,
+        },
+        {
+          tenantId: dataA.tenant.id,
+          salonId: salon.id,
+          provider: "PHOREST",
+          externalBranchId: oldBranch,
+        },
+      ],
+    });
+    const couplingBefore = await couplingRows(salon.id);
+
+    // Hide only the branch-id pre-check, so the delete of the old row runs and the insert itself
+    // hits the real unique index, as a concurrent writer that committed in between would.
+    const original = app.prisma.$transaction.bind(app.prisma);
+    vi.spyOn(app.prisma, "$transaction").mockImplementationOnce(((
+      fn: (tx: unknown) => Promise<unknown>,
+    ) =>
+      original(async (tx) => {
+        const proxy = new Proxy(tx, {
+          get(target, prop) {
+            const value = Reflect.get(target, prop);
+            if (prop === "salonCoupling") {
+              return new Proxy(value as object, {
+                get(t, p) {
+                  if (p === "findFirst") {
+                    return async (args: { where?: { externalBranchId?: string } }) =>
+                      args?.where?.externalBranchId !== undefined
+                        ? null
+                        : (Reflect.get(t, p) as (a: unknown) => Promise<unknown>).call(t, args);
+                  }
+                  return Reflect.get(t, p);
+                },
+              });
+            }
+            return value;
+          },
+        });
+        return fn(proxy);
+      })) as never);
+
+    const res = await patchSalon(dataA.tenant.id, salon.id, {
+      name: "Darf nicht bleiben",
+      coupling: { externalBranchId: takenBranch },
+    });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: REFUSAL_TEXT.BRANCH_ALREADY_COUPLED,
+      code: "BRANCH_ALREADY_COUPLED",
+    });
+
+    expect(await couplingRows(salon.id)).toEqual(couplingBefore);
+    expect((await app.prisma.salon.findUniqueOrThrow({ where: { id: salon.id } })).name).toBe(
+      "Replace-Ziel",
+    );
+    expect(await operatorActions(dataA.tenant.id, [salon.id, couplingBefore[0].id])).toHaveLength(
+      0,
+    );
+    expect(
+      await app.prisma.auditLog.count({
+        where: {
+          OR: [
+            { entity: "Salon", entityId: salon.id },
+            { entity: "SalonCoupling", entityId: couplingBefore[0].id },
+          ],
+        },
+      }),
+    ).toBe(0);
+  });
+
+  it("pins the key set of every refusal body and of the updated salon", async () => {
+    const taken = `B-${randomUUID().slice(0, 8)}`;
+    const holder = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Pin-PATCH-Halter" });
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: dataA.tenant.id,
+        salonId: holder.id,
+        provider: "PHOREST",
+        externalBranchId: taken,
+      },
+    });
+    const target = await createTestSalon(app.prisma, dataA.tenant.id, {
+      name: "Pin-PATCH-Ziel",
+      federalState: "NIEDERSACHSEN",
+    });
+    const inactive = await createTestSalon(app.prisma, dataA.tenant.id, {
+      name: "Pin-PATCH-Inaktiv",
+      isActive: false,
+    });
+    const used = await createTestSalon(app.prisma, dataA.tenant.id, {
+      name: "Pin-PATCH-Belegt",
+      federalState: "NIEDERSACHSEN",
+    });
+    await app.prisma.timeEntry.create({
+      data: {
+        employeeId: dataA.employee.id,
+        salonId: used.id,
+        date: new Date("2026-01-06T00:00:00Z"),
+        startTime: new Date("2026-01-06T08:00:00Z"),
+        endTime: new Date("2026-01-06T16:00:00Z"),
+        breakMinutes: 30,
+      },
+    });
+    const dead = await seedTestData(app, "os89h");
+    try {
+      await app.prisma.tenant.update({
+        where: { id: dead.tenant.id },
+        data: { deactivatedAt: new Date(), deactivatedReason: "test" },
+      });
+
+      const bodies = {
+        branchTaken: await patchSalon(dataA.tenant.id, target.id, {
+          coupling: { externalBranchId: taken },
+        }),
+        inactive: await patchSalon(dataA.tenant.id, inactive.id, {
+          coupling: { externalBranchId: `B-${randomUUID().slice(0, 8)}` },
+        }),
+        federalState: await patchSalon(dataA.tenant.id, used.id, { federalState: "BAYERN" }),
+        tenantDead: await patchSalon(dead.tenant.id, randomUUID(), { name: "X" }),
+      };
+      for (const [name, res] of Object.entries(bodies)) {
+        expect([409, 422], name).toContain(res.statusCode);
+        expect(Object.keys(JSON.parse(res.body)).sort(byKey), name).toEqual(["code", "error"]);
+        // D-14a: no count of entries or assignments in any refusal.
+        expect(res.body, name).not.toMatch(/Count|\d/);
+      }
+
+      const salonUnknown = await patchSalon(dataA.tenant.id, randomUUID(), { name: "X" });
+      expect(salonUnknown.statusCode).toBe(404);
+      expect(Object.keys(JSON.parse(salonUnknown.body))).toEqual(["error"]);
+      const tenantUnknown = await patchSalon(randomUUID(), randomUUID(), { name: "X" });
+      expect(tenantUnknown.statusCode).toBe(404);
+      expect(Object.keys(JSON.parse(tenantUnknown.body))).toEqual(["error"]);
+      const noChanges = await patchSalon(dataA.tenant.id, target.id, {});
+      expect(noChanges.statusCode).toBe(400);
+      expect(Object.keys(JSON.parse(noChanges.body))).toEqual(["error"]);
+
+      const ok = await patchSalon(dataA.tenant.id, target.id, { name: "Pin-PATCH-Ziel 2" });
+      expect(ok.statusCode, ok.body).toBe(200);
+      expect(Object.keys(JSON.parse(ok.body)).sort(byKey)).toEqual(DTO_KEYS);
+    } finally {
+      await cleanupTestData(app, dead.tenant.id);
+    }
+  });
+});
