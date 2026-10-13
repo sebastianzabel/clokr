@@ -1804,6 +1804,101 @@ pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest 
 grep -n "resolveTeamSalonFilter" apps/api/src/composition/dashboard.ts   # Definition + drei Aufrufe
 ```
 
+### Nachtrag 2026-10-13 (Phase 85b, Issue #85 und #547) — Prüfung je Eintrag in den Dashboard-Teampfaden; Mitarbeiterliste nach Stammdatenregel; ein Prüfer für die Salonwahl
+
+**Schwere: Umkehr einer in Phase 84 ausdrücklich als vorläufig vermerkten Aussage; Unterbau-Erweiterung
+(additiv) nach ADR 0002, Entscheidung 7 — angekündigt auf #85. Keine Schemaänderung, keine Migration, keine
+neue Route, keine neue Katalog-Permission.**
+
+Phase 84 beließ die Reichweite eines Salonmanagers nach 91b D-09/D-10 (Stammsalon-Personen samt ihrer in
+anderen Salons erfassten Stunden sichtbar) und vermerkte die Prüfung je Zeiteintrag als „bis #85“ offen.
+Phase 85b schließt diese Lücke und hebt die Aussage für die Dashboard-Pfade auf.
+
+**Was sich geändert hat:**
+
+- **Prüfung je Eintrag (D-04 bis D-06).** Für eine eingeschränkte Reichweite (nicht der ganze Mandant) bauen
+  `GET /dashboard/team-week`, `/today-attendance` und `/team-trend` ihre Zahlen nur aus Einträgen, die der
+  Aufrufer sehen darf (`scopedTimeEntryIds`, Einträge über die Fassadenfunktion
+  `getRecordedWorkEntriesByIds`). Die Personenmenge ist die der Stammsalon-Personen vereinigt mit den
+  Personen, die einen sichtbaren Eintrag haben; Planungsdaten (Schichten, Vertrag, Urlaub, Feiertage) werden
+  weiter nur für die Stammsalon-Personen gelesen. Zeit, die der Aufrufer nicht sehen darf, erscheint als
+  neutrales `workedElsewhere` und nie als laufende Einstempelung. Das Konto-Ist (`computeMonthReportFigures`)
+  gilt nur für einen Personenmonat, dessen Einträge alle in Reichweite liegen; sonst steht die Summe der
+  sichtbaren Einträge da, `workedBasis` ist `SCOPE_ENTRIES`, das Soll `null` mit `sollUnavailableReason`
+  `SCOPE_ENTRIES`. Ganzmandanten-Aufrufer laufen über unveränderte Anweisungen (eingefrorene Pins aus Phase
+  84 und `whole-tenant-frozen-85.test.ts`). Die in Phase 84 festgehaltenen Zusicherungen, dass ein in B
+  beheimateter Springer mit einem A-Eintrag dem Manager von A nicht gezeigt wird, sind bewusst umgekehrt und
+  in den Kopfzeilen der betroffenen Tests als Nachtrag vermerkt.
+- **Mitarbeiterliste (#547).** `GET /employees` verengt eine eingeschränkte `employee:read`-Reichweite mit
+  derselben Stammdatenregel wie die Einzelansicht (`resolvePersonScopedEmployeeIds`, Phase 91b D-12) und
+  nimmt die eigene Zeile hinzu. `overtimeAccount.balanceHours` steht nur noch unter einer `overtime:read`-
+  Reichweite, die die Person abdeckt, sonst `null`. Eine neue Handler-Prüfung, keine neue Permission.
+- **Berichtigung (Plan 85b-15, Verifikationsbefund).** Die Aussage in #547 und im ersten Wortlaut dieses
+  Nachtrags, die Einzelansicht sei „bereits eingeschränkt“, stimmte nur für die Personenregel, **nicht für
+  das Saldo-Feld**: `GET /employees/:id` lieferte `overtimeAccount.balanceHours` ungefiltert an jeden Aufrufer
+  mit `employee:read` im Scope — die Maske der Liste ließ sich durch Einzelabrufe umgehen. Plan 85b-15
+  schließt das: ein modulprivates Paar (`resolveBalanceVisibility`, `maskOvertimeAccount` in
+  `contexts/platform/api/employees.ts`) entscheidet das Saldo für `GET /employees`, `GET /employees/:id` und
+  die Antwort von `PATCH /employees/:id/reactivate` (die einzige PATCH-Antwort mit `overtimeAccount`; die
+  Antwort von `PATCH /employees/:id` selbst enthält kein Konto). Verdeckt bleibt `null`, nie 0; Ganzmandanten-
+  Aufrufer und die Person selbst erhalten die unveränderte Antwort. Die Antwort von `POST /employees` zeigt
+  ein frisch angelegtes Konto mit 0 und gibt damit keinen gespeicherten Wert preis.
+- **Überstundensaldo im Antragsdialog (Plan 85b-16, Verifikationsbefund).** `GET /leave/overtime-balance`
+  (Phase 415, #415) lieferte das Live-Gesamtsaldo einer gewählten Person an jeden Aufrufer mit
+  `leave-entitlement:read:ZUGEWIESEN` im Stammsalon-Scope, also auch an einen Salonmanager — ein dritter Weg
+  um die Saldo-Regel vom 27.08.2026 (Gesamtsaldo nur Inhaber, Personalabteilung, die Person selbst). Jetzt
+  fragt der Handler zusätzlich `overtime:read` (modulprivat `callerMaySeeSaldoOf` in
+  `contexts/absence/api/leave.ts`, dieselbe Stammsalon-Abdeckung wie `GET /overtime/:employeeId`). Ohne
+  Abdeckung sind `balanceHours`, `confirmedMinutes`, `openMonthMinutes`, `hasClosedMonth` und
+  `isNegativeLimitExceeded` `null` und `balanceVisible` ist `false`; das Vorzeichen des Saldos wird auch über
+  `isNegativeLimitExceeded` nicht verraten. Die konfigurierte Toleranz (`maxNegativeBalanceMinutes`) bleibt,
+  sie ist Mandantenkonfiguration. Die Person selbst und Aufrufer mit abdeckender Reichweite erhalten die
+  Zahlen mit `balanceVisible: true`. Die serverseitige OVERTIME_COMP-Prüfung bei Antrag und Genehmigung liest
+  diesen Endpunkt nicht und bleibt unverändert; der Dialog zeigt statt der Zahlen „Saldo nicht einsehbar – die
+  Prüfung erfolgt beim Speichern.“ und trifft keine Grenzentscheidung auf verdeckten Daten. Eine neue
+  Handler-Prüfung, keine neue Permission (`docs/permissions.md`, Handler-Prüfungen).
+- **Salonansicht (D-08, D-13).** `GET /time-entries` nimmt optional `salonId` mit `from` und `to` (höchstens
+  31 Tage) und liefert alle sichtbaren Einträge dieses Salons für alle Personen; nur unter
+  `time-entry:read:ZUGEWIESEN`.
+- **Ein Prüfer für die Salonwahl.** `resolveSalonInReach()` (`contexts/platform/facade/salons.ts`, additiver
+  Export von `contexts/platform/index.ts`) ersetzt das modulprivate `resolveTeamSalonFilter()` des Dashboards
+  und wird von den drei Dashboard-Endpunkten und der Salonansicht aufgerufen: der Salon muss aktiv sein, zum
+  Mandanten gehören und in der Reichweite des Aufrufers liegen; jede Ablehnung ist derselbe 404-Körper vor
+  jedem Lesen.
+- **Web.** `/team/time-entries` bekommt die Salonansicht; die Salonwahl dort entscheidet allein
+  `teamSalonViewSalon()`. Eine Benachrichtigung für eine Person außerhalb der verengten Liste öffnet die
+  Salonansicht des verlinkten Monats. Eine Rolle ohne Saldo-Recht sieht die Personenansicht ohne
+  Saldo-Karten, nur mit Ist.
+
+**Auswirkung auf die Kontexte:**
+
+- Zeiterfassung: die Fassade bekam `getRecordedWorkEntriesByIds` (Lesezugriff nach Kennung, mandantengebunden,
+  in Stücken); `GET /time-entries` bekam die Salonansicht; Speicherantworten zeigen Warnungen nur noch im
+  Rahmen der Reichweite des Lesers (siehe Eintrag X, Nachtrag Phase 85b).
+- Abwesenheiten: keine.
+- Schichtplanung: keine. Schichten fremder Salons in der Wochenübersicht bleiben #548.
+- Arbeitszeitkonto: keine; `computeMonthReportFigures` wird nur unter der Bedingung „alle Einträge des
+  Personenmonats in Reichweite“ weiter aufgerufen, `calcLeaveAbsenceMinutesTz` und die einmalige
+  Soll-Minderung pro Tag sind nicht berührt.
+- Kompositionsschicht: das Dashboard ruft den Prüfer des Unterbaus auf und teilt die Zeilen je Eintrag
+  (`team-entry-scope.ts`, ohne Datenbankzugriff, eigene Regel für Salon oder Stammsalon entsteht nicht).
+
+**Was bewusst NICHT geschah:**
+
+- Keine Änderung an `scope-filter.ts`, an `homeSalonAt`, `salonForDay` oder `contextSalonIds`; keine
+  Semantikänderung eines bestehenden Unterbau-Exports.
+- Kein Salonfilter in `/reports` (#542) und keine Schichten fremder Salons in der Wochenübersicht (#548).
+- Soll und Saldo werden weiter nicht auf Salons aufgeteilt.
+- Die Neutralitätsmatrix wurde nicht neu aufgenommen.
+
+### Nachrechnen (Nachtrag Phase 85b)
+
+```bash
+pnpm --filter @clokr/api run lint:facade-signatures   # 137 Funktionen (135 vor Phase 85b, +resolveSalonInReach, +getRecordedWorkEntriesByIds), 17 Ausnahmen
+pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest run src/__tests__/whole-tenant-frozen-85.test.ts src/__tests__/employees-list-scope-85.test.ts src/contexts/platform/__tests__/resolve-salon-in-reach-85.test.ts src/__tests__/time-entries-salon-view-85.test.ts src/composition/__tests__/team-entry-scope.test.ts src/composition/__tests__/dashboard-entry-scope-85.test.ts src/__tests__/cross-salon-springer-85.test.ts src/__tests__/dashboard-salon-manipulation-84.test.ts src/composition/__tests__/dashboard-team-trend-84.test.ts src/composition/__tests__/dashboard-team-week-frozen-84.test.ts
+grep -n "resolveSalonInReach(" apps/api/src/composition/dashboard.ts apps/api/src/contexts/time-tracking/api/time-entries.ts   # drei Aufrufe im Dashboard, einer in der Salonansicht
+```
+
 ## Q — Systemrollen-Templates und zwei Saldo-Gates (Phase 76b, Issue #76)
 
 **Schwere: informativ. Unterbau-Erweiterung nach ADR 0002, Entscheidung 7 (additiv, kein
@@ -3292,4 +3387,56 @@ pnpm --filter @clokr/api exec tsx scripts/audit-511-break-placement.ts --all-ten
 pnpm --filter @clokr/web exec vitest run src/lib/breaks
 pnpm --filter @clokr/api test
 pnpm --filter @clokr/web test
+```
+
+### Nachtrag 2026-10-13 (Phase 85b, Issue #85): Teilweise abgedeckter Tag nur mit neutralem Hinweis; Speicherwarnungen nach Reichweite
+
+**Schwere: Verengung der Phase-80-Regel für Leser mit teilweiser Abdeckung (DSGVO Art. 5 Abs. 1 lit. c,
+Akzeptanzkriterium „auch nicht als Summe“); keine Schemaänderung, keine Migration, keine neue Route, keine
+neue Permission. Das Prüfwerk selbst ist unverändert: `evaluateDayBreaks()` und `evaluatePlacement()`
+bewerten wie zuvor, geändert ist nur, was ein Leser mit teilweiser Abdeckung davon erfährt.**
+
+**D-07 — ein neutraler Hinweis.** Phase 80 (D-11) und Phase 511 ließen einem Aufrufer, dessen Reichweite nur
+einen Teil der Einträge eines Tages deckt, „die Summen und den Befund“. Das legte Schwellen fremder Zeit
+offen (zum Beispiel „mehr als 10 Stunden“ als Befundkategorie, „Erfasst: N Min.“, Blockdauern der
+Pausenlage). Jetzt trägt `GET /day-breaks/checks` für einen solchen Tag genau ein Objekt aus einer
+zahlenfreien Positivliste (`redactedDayCheck`, erhält keine Auswertung) mit dem einen Hinweis
+`FINDING_WITHHELD`: „Für diesen Tag liegt ein Prüfhinweis vor; die Klärung erfolgt über den Stammsalon.“
+Der Hinweis ist an jedem teilweise abgedeckten Tag derselbe, mit oder ohne Befund; ein solcher Tag hat
+immer mindestens zwei Einträge und wird immer aufgelistet, also verrät weder die Auflistung noch der Hinweis
+einen Befund. Die Benachrichtigung des nächsten Tages (Feature 10) nutzt für diese Empfänger denselben
+neutralen Text (Titel „Prüfhinweis zu einem Arbeitstag“, Betreff der Mail ebenso), für die Familie
+`BREAK_CROSS_SALON_VIOLATION` wie für `BREAK_PLACEMENT_VIOLATION`. Die redigierte Variante von
+`placementWarnings()` (Anzahl und Dauer statt Uhrzeiten) hatte danach keinen Aufrufer mehr und wurde
+entfernt, damit ihr summenhaltiger Text nicht versehentlich wiederverwendet wird; der eine Fall T-511-07
+in `placement-warnings-511.test.ts` ist mit einer Notiz zu Phase 85b D-07 geändert und hält die Entfernung
+fest. `day-break-equivalence-80` ist nicht angefasst.
+
+**D-12 — Speicherantworten nach Reichweite.** `PUT` und `POST /time-entries`, das Ausstempeln im Auftrag
+und die Freigabe eines Zeitnachtrags mit Korrektur des Managers nannten Wochensumme, Ruhezeit oder
+24-Wochen-Schnitt über alle Einträge der Person, auch fremder Salons. `warningsVisibleToCaller()`
+(`contexts/time-tracking/warning-visibility.ts`) ist jetzt die EINE Stelle: eine Warnung bleibt nur, wenn
+jeder nicht gelöschte Eintrag der Person in ihrem Fenster (Tag; Tag−1 bis Tag+1 bei der Ruhezeit; ISO-Woche;
+168 Tage beim 24-Wochen-Schnitt) in der `time-entry:read`-Reichweite des Aufrufers liegt, sonst werden alle
+zurückgehaltenen Warnungen zu einem einzigen `FINDING_WITHHELD` zusammengefasst. Die Person selbst und ein
+Aufrufer mit ganzem Mandanten sind unverändert.
+
+**Bewusst hingenommene Reste.** (1) Dass ein Befund existiert, bleibt sichtbar — im Hinweis der Tagesprüfung,
+in der Benachrichtigung und im neutralen Eintrag der Speicherantwort; es steht keine Minute und keine
+Schwelle darin, und der Hinweis ist ohne Befund derselbe. (2) Die Benachrichtigungsfamilie bleibt als `type`
+gespeichert (`BREAK_CROSS_SALON_VIOLATION` oder `BREAK_PLACEMENT_VIOLATION`) und verrät damit, ob der Tag
+salonübergreifend war; sie trägt weder eine Zahl noch eine Schwelle. Wer den Befund ganz sehen soll, braucht
+die Reichweite über jeden Eintrag des Tages.
+
+**Beleg.** `withheld-finding-85.test.ts`, `warning-visibility-85.test.ts`, `write-warnings-scope-85.test.ts`,
+`cross-salon-springer-85.test.ts` (rekursiver Zahlenscan über zwölf Antworten, 122 Zahlenwerte),
+`day-break-checks.test.ts`, `break-finding-notice.test.ts` und `cross-salon-break-notifications-80.test.ts`
+(geänderte Fälle jeweils mit datiertem Nachtrag in der Kopfzeile); Mutationsnachweise stehen in den
+Kopfzeilen der Testdateien.
+
+### Nachrechnen (Nachtrag Phase 85b, Eintrag X)
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/contexts/time-tracking/__tests__/withheld-finding-85.test.ts src/contexts/time-tracking/__tests__/warning-visibility-85.test.ts src/__tests__/write-warnings-scope-85.test.ts src/contexts/time-tracking/api/__tests__/day-break-checks.test.ts src/contexts/time-tracking/__tests__/break-finding-notice.test.ts src/__tests__/cross-salon-break-notifications-80.test.ts src/contexts/time-tracking/__tests__/placement-warnings-511.test.ts src/contexts/time-tracking/__tests__/day-break-equivalence-80.test.ts
 ```

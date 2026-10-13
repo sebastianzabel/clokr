@@ -31,6 +31,15 @@
  *    same person shows the other day's hours …" (V missing), and here on "control: the tenant
  *    admin filtered on A sees the Springer S by his A entry".
  *
+ * Amendment 2026-10-13 (Phase 85b, Issue #85 D-04): the widening probe is reversed on purpose —
+ * per-entry scope adds a Springer by an in-scope entry with only those hours (Phase 84 left this
+ * until #85). The salon filter still never widens the reach: S is listed because the reach covers
+ * S's A entry, not because of the filter. E (homed in B, entries only in B) stays invisible on
+ * every endpoint. The trend part is reversed the same way (D-06): filtered on A, S's A entry
+ * counts, so June carries those 240 minutes and every other month stays 0 with no sick day (S is
+ * not a Stammsalon person of A, leave belongs to the Stammsalon); the upcoming-leave assertions
+ * below are unchanged by this amendment.
+ *
  * Harness: fake clock Wed 2026-06-17T10:00Z (Date only) installed BEFORE the app boots. The week
  * under test is Mon 2026-06-15 to Sun 2026-06-21. No person names in fixtures.
  */
@@ -299,23 +308,41 @@ describe("Issue #84 — a manipulated salon filter yields no foreign data", () =
 
   // ── The filter never widens a reach ───────────────────────────────────────────────────────
 
-  it("the Salonmanager filtered on A sees nothing of E or the Springer S on any endpoint", async () => {
+  it("the Salonmanager filtered on A sees S by the A entry (4 h on 16.06, nothing else) and nothing of E", async () => {
     const week = await get(managerToken, ENDPOINTS[0], salonA);
     expect(week.statusCode, week.body).toBe(200);
-    const rows = (JSON.parse(week.body) as { team: Array<{ id: string; name: string }> }).team;
+    const rows = (
+      JSON.parse(week.body) as {
+        team: Array<{
+          id: string;
+          employeeNumber: string | null;
+          days: Array<{ date: string; workedHours: number; workedElsewhere?: boolean }>;
+        }>;
+      }
+    ).team;
     expect(rows.map((r) => r.id)).not.toContain(employeeE.id);
-    // S has an entry in A, but is homed in B: outside the manager's reach, the filter adds no one.
-    expect(rows.map((r) => r.id)).not.toContain(employeeS.id);
     expect(week.body).not.toContain(E_LABEL);
-    expect(week.body).not.toContain(S_LABEL);
+    // Per-entry scope (see the header amendment, D-04): S is homed in B, but the reach covers S's entry in
+    // A, so S is listed with exactly those 4 hours and no other figure.
+    const s = rows.find((r) => r.id === employeeS.id);
+    expect(s, "S is listed by the in-scope entry").toBeDefined();
+    expect(s?.employeeNumber).toBeNull();
+    for (const d of s?.days ?? []) {
+      expect(d.workedHours, d.date).toBe(d.date === "2026-06-16" ? 4 : 0);
+      expect(d.workedElsewhere, d.date).toBe(false);
+    }
 
     const trend = await get(managerToken, ENDPOINTS[1], salonA);
     expect(trend.statusCode, trend.body).toBe(200);
+    // Per-entry scope (D-06): S's 4 h entry of 16.06 is the only visible minute; E contributes
+    // nothing and no month carries a sick day.
     for (const m of (
-      JSON.parse(trend.body) as { months: Array<{ workedMinutes: number; sickDays: number }> }
+      JSON.parse(trend.body) as {
+        months: Array<{ month: string; workedMinutes: number; sickDays: number }>;
+      }
     ).months) {
-      expect(m.workedMinutes).toBe(0);
-      expect(m.sickDays).toBe(0);
+      expect(m.workedMinutes, m.month).toBe(m.month === "2026-06" ? 240 : 0);
+      expect(m.sickDays, m.month).toBe(0);
     }
 
     const upcoming = await get(managerToken, ENDPOINTS[2], salonA);

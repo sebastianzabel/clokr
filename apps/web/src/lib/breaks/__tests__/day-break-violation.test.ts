@@ -7,6 +7,9 @@
 import { describe, it, expect } from "vitest";
 import {
   type DayCheck,
+  type FullDayCheck,
+  type WithheldDayCheck,
+  hasPlacementFinding,
   isChecksRangeAllowed,
   dayCheckBadge,
   type DayCheckWarning,
@@ -25,7 +28,7 @@ function serverWarning(over: Partial<DayCheckWarning> = {}): DayCheckWarning {
   };
 }
 
-function check(over: Partial<DayCheck> = {}): DayCheck {
+function check(over: Partial<FullDayCheck> = {}): FullDayCheck {
   return {
     date: "2026-03-10",
     detail: "full",
@@ -46,6 +49,40 @@ function check(over: Partial<DayCheck> = {}): DayCheck {
     entries: [],
     gaps: [],
     dayBreaks: [],
+    ...over,
+  };
+}
+
+/** The number-free object the API returns for a partially covered day (Issue #85 D-07). */
+function withheld(over: Partial<WithheldDayCheck> = {}): WithheldDayCheck {
+  return {
+    date: "2026-03-10",
+    detail: "redacted",
+    crossSalon: true,
+    netWorkedMinutes: null,
+    totalBreakMinutes: null,
+    requiredBreakMinutes: null,
+    breakShortfall: null,
+    maxDailyExceeded: null,
+    breakFinding: null,
+    positionUnknown: null,
+    warnings: [
+      {
+        code: "FINDING_WITHHELD",
+        severity: "warning",
+        message:
+          "Für diesen Tag liegt ein Prüfhinweis vor; die Klärung erfolgt über den Stammsalon.",
+        hint: true,
+      },
+    ],
+    acknowledged: null,
+    locked: false,
+    mayAcknowledge: false,
+    mayRecordDayBreak: false,
+    acknowledgement: null,
+    entries: null,
+    gaps: null,
+    dayBreaks: null,
     ...over,
   };
 }
@@ -317,5 +354,30 @@ describe("breakFindingMonthCloseHint", () => {
     expect(hint?.label).toBe("Pausenverstoß offen (1)");
     expect(hint?.title).toContain("10.03.");
     expect(hint?.title).not.toContain("nonsense");
+  });
+});
+
+// Issue #85 D-07: a withheld day is a neutral hint, never a marker, badge or placement finding.
+describe("a withheld (redacted) day", () => {
+  it("never becomes a calendar marker", () => {
+    const days: DayCheck[] = [withheld(), check({ date: "2026-03-11" })];
+    const map = dayChecksToArbzgMap(days);
+    expect(map.has("2026-03-10")).toBe(false);
+    expect(map.has("2026-03-11")).toBe(true);
+    expect(dayChecksToArbzgMap([withheld()]).size).toBe(0);
+    expect(dayCheckWarnings(withheld())).toEqual([]);
+  });
+
+  it("never gets a badge", () => {
+    expect(dayCheckBadge(withheld())).toBeNull();
+    expect(dayCheckBadge(withheld({ crossSalon: false }))).toBeNull();
+  });
+
+  it("carries no placement finding", () => {
+    expect(hasPlacementFinding(withheld())).toBe(false);
+  });
+
+  it("gives no save notice for the withheld hint", () => {
+    expect(breakFindingSaveNotice(withheld().warnings)).toBeNull();
   });
 });

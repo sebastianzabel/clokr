@@ -8,7 +8,23 @@ import {
   resolveSaldoCardState,
   SKIPPED,
   FAILED,
+  DENIED,
+  settledAllowDenied,
+  isDenied,
+  istOnlyMonthMetrics,
 } from "../month-view-state";
+
+// The real ApiError (`$api/client`) cannot be imported here: it pulls the auth store, which reads
+// localStorage at import time. The classifier is deliberately structural (an Error carrying a
+// numeric `status`), so a mirror of ApiError's shape is the faithful stand-in.
+class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 // Phase 116 (GitHub issue #119). The FIRST describe block below IS acceptance criterion #6:
 // no test anywhere in this repo asserted that a still-loading month list withholds its empty
@@ -203,5 +219,91 @@ describe("valueOr / anyFailed", () => {
 
   it("anyFailed spots a failure among several ok results", () => {
     expect(anyFailed(ok(1), ok(2), FAILED)).toBe(true);
+  });
+});
+
+// Issue #85 (Phase 76b note): a role that may legitimately be refused a read must see the card
+// disappear, not an error card. The helper is opt-in; `settled()` keeps treating every rejection
+// as a failure.
+describe("settledAllowDenied — a refusal is neither a failure nor a value", () => {
+  it("resolves an ok payload", async () => {
+    expect(await settledAllowDenied(Promise.resolve(7))).toEqual({ status: "ok", value: 7 });
+  });
+
+  it("an ApiError 403 is 'denied'", async () => {
+    const r = await settledAllowDenied(Promise.reject(new ApiError(403, "Forbidden")));
+    expect(r).toEqual({ status: "denied" });
+  });
+
+  it("an ApiError 404 (the identical answer for an out-of-scope person) is 'denied'", async () => {
+    const r = await settledAllowDenied(Promise.reject(new ApiError(404, "Nicht gefunden")));
+    expect(r).toEqual({ status: "denied" });
+  });
+
+  it("an ApiError 500 stays 'failed'", async () => {
+    const r = await settledAllowDenied(Promise.reject(new ApiError(500, "boom")));
+    expect(r).toEqual({ status: "failed" });
+  });
+
+  it("an ApiError 401 stays 'failed'", async () => {
+    const r = await settledAllowDenied(Promise.reject(new ApiError(401, "Unauthorized")));
+    expect(r).toEqual({ status: "failed" });
+  });
+
+  it("a non-ApiError rejection (network error) stays 'failed'", async () => {
+    const r = await settledAllowDenied(Promise.reject(new TypeError("Failed to fetch")));
+    expect(r).toEqual({ status: "failed" });
+  });
+
+  it("a plain object that merely carries status 403 is not an ApiError and stays 'failed'", async () => {
+    const r = await settledAllowDenied(Promise.reject({ status: 403 }));
+    expect(r).toEqual({ status: "failed" });
+  });
+
+  it("settled() is unchanged: a 403 rejection is still 'failed'", async () => {
+    expect(await settled(Promise.reject(new ApiError(403, "Forbidden")))).toEqual({
+      status: "failed",
+    });
+  });
+});
+
+describe("denied next to anyFailed / valueOr / isDenied", () => {
+  it("anyFailed does not count a denial", () => {
+    expect(anyFailed(DENIED, ok(1))).toBe(false);
+  });
+
+  it("anyFailed still spots a failure next to a denial", () => {
+    expect(anyFailed(DENIED, FAILED)).toBe(true);
+  });
+
+  it("valueOr falls back on denied", () => {
+    expect(valueOr(DENIED, null)).toBe(null);
+    expect(valueOr(DENIED, "fallback")).toBe("fallback");
+  });
+
+  it("isDenied is true for a denial and false for ok, failed and skipped", () => {
+    expect(isDenied(DENIED)).toBe(true);
+    expect(isDenied(ok(1))).toBe(false);
+    expect(isDenied(FAILED)).toBe(false);
+    expect(isDenied(SKIPPED)).toBe(false);
+  });
+
+  it("isDenied is true when any of several results is denied, and false for none", () => {
+    expect(isDenied(ok(1), DENIED)).toBe(true);
+    expect(isDenied()).toBe(false);
+  });
+});
+
+describe("istOnlyMonthMetrics — the refused-read month card", () => {
+  it("shows the Ist and the day count, and implies no Soll and no saldo", () => {
+    expect(istOnlyMonthMetrics({ istMin: 1230, workdaysSoFar: 3 })).toEqual({
+      sollToDateMin: 0,
+      istMin: 1230,
+      saldoMin: null,
+      sollLabel: "Soll",
+      closed: false,
+      workdaysSoFar: 3,
+      noSollTarget: true,
+    });
   });
 });

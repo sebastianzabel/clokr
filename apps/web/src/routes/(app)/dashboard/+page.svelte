@@ -71,12 +71,13 @@
     teamSalonFilter,
     teamTrendView,
     teamViewLabel,
+    teamWeekHasElsewhere,
     upcomingFromResponse,
     withSalonId,
     type TeamTrendResponse,
     type TeamTrendView,
     type TeamUpcomingLeaveResponse,
-  } from "$lib/dashboard/team-view"; // Issue #84 (D-07, D-11, D-12)
+  } from "$lib/dashboard/team-view"; // Issue #84 (D-07, D-11, D-12), #85 (D-04, D-06)
   import {
     Chart,
     BarController,
@@ -171,7 +172,8 @@
   interface TeamMember {
     id: string;
     name: string;
-    employeeNumber: string;
+    // Issue #85 D-05: null for a person whose number the caller's reach does not cover.
+    employeeNumber: string | null;
     days: TeamDay[];
   }
 
@@ -2077,7 +2079,7 @@
             <span class="legend-item">
               <span class="cell-badge cell-badge--none">–</span> Keine Daten
             </span>
-            {#if teamFilter !== null}
+            {#if teamFilter !== null || teamWeekHasElsewhere(teamWeek?.team ?? [])}
               <span class="legend-item">
                 <span class="cell-badge cell-badge--elsewhere">anderer Salon</span> In einem anderen Salon
                 gearbeitet

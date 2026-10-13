@@ -5,7 +5,7 @@
  * SERVER-computed day check (`GET /api/v1/day-breaks/checks`). The browser never computes a break
  * finding itself, neither the cross-salon sum nor the § 4 Satz 2/3 placement: a salon-scoped
  * manager's entry list is partial, so a client-side sum would under-report the day, and a redacted
- * day deliberately carries no times to compute from. Markers, badges, toasts and chips are built
+ * day deliberately carries no times and no figures to compute from (Issue #85 D-07). Markers, badges, toasts and chips are built
  * from the day check's `warnings` and `breakFinding`; no threshold and no § 4 sentence lives here.
  *
  * Lives in `$lib` because route pages cannot be mounted in this repo's vitest setup
@@ -60,16 +60,25 @@ export interface DayCheckWarning {
   crossSalon?: true;
 }
 
-/**
- * Mirror of the `DayCheck` of `apps/api/src/contexts/time-tracking/api/day-breaks.ts`.
- * `detail: "redacted"` means the caller's reach covers only part of the day: totals and the
- * finding are present, `entries`, `gaps`, `dayBreaks` and `acknowledgement` are null.
- */
-export interface DayCheck {
+/** Fields both variants of a day check carry (the withheld one with the safe values only). */
+interface DayCheckBase {
   /** "YYYY-MM-DD" calendar-day key. */
   date: string;
-  detail: "full" | "redacted";
   crossSalon: boolean;
+  /** The day's complete server-built finding list (§ 3, § 4 / § 11 and placement items). */
+  warnings: DayCheckWarning[];
+  locked: boolean;
+  mayAcknowledge: boolean;
+  mayRecordDayBreak: boolean;
+}
+
+/**
+ * A day the caller's reach covers completely: every figure and the finding are present.
+ * Mirror of the `detail: "full"` object of `GET /day-breaks/checks`
+ * (`apps/api/src/contexts/time-tracking/api/day-breaks.ts`).
+ */
+export interface FullDayCheck extends DayCheckBase {
+  detail: "full";
   netWorkedMinutes: number;
   totalBreakMinutes: number;
   requiredBreakMinutes: number;
@@ -79,17 +88,38 @@ export interface DayCheck {
   breakFinding: boolean;
   /** A break exists whose position is not recorded, so Satz 2/3 could not be checked. */
   positionUnknown: boolean;
-  /** The day's complete server-built finding list (§ 3, § 4 / § 11 and placement items). */
-  warnings: DayCheckWarning[];
   acknowledged: boolean;
-  locked: boolean;
-  mayAcknowledge: boolean;
-  mayRecordDayBreak: boolean;
   acknowledgement: DayCheckAcknowledgement | null;
   entries: DayCheckEntry[] | null;
   gaps: DayCheckGap[] | null;
   dayBreaks: DayCheckDayBreak[] | null;
 }
+
+/**
+ * A day the caller's reach covers only in part (Issue #85 D-07, DSGVO Art. 5 Abs. 1 lit. c).
+ * The API answers with a number-free whitelist: every figure, every finding flag and the
+ * acknowledgement are null, `warnings` holds exactly one neutral `FINDING_WITHHELD` hint. The
+ * browser prints that hint and nothing else about the day — it neither derives a figure nor a
+ * finding from a withheld day.
+ */
+export interface WithheldDayCheck extends DayCheckBase {
+  detail: "redacted";
+  netWorkedMinutes: null;
+  totalBreakMinutes: null;
+  requiredBreakMinutes: null;
+  breakShortfall: null;
+  maxDailyExceeded: null;
+  breakFinding: null;
+  positionUnknown: null;
+  acknowledged: null;
+  acknowledgement: null;
+  entries: null;
+  gaps: null;
+  dayBreaks: null;
+}
+
+/** Mirror of the `DayCheck` union of the day-breaks route: narrow by `detail` before reading figures. */
+export type DayCheck = FullDayCheck | WithheldDayCheck;
 
 export interface DayChecksResponse {
   employeeId: string;
@@ -139,7 +169,8 @@ export function hoursDe(minutes: number): string {
  * the trail stays visible (D-08, Revisionssicherheit).
  */
 export function dayCheckBadge(check: DayCheck): DayCheckBadge | null {
-  if (!check.breakFinding) return null;
+  // A withheld day never becomes a badge (Issue #85 D-07): it carries no finding flag at all.
+  if (check.detail !== "full" || !check.breakFinding) return null;
   if (check.crossSalon && check.breakShortfall) {
     return check.acknowledged
       ? { cls: "badge-gray", label: "Salonübergreifend: quittiert" }

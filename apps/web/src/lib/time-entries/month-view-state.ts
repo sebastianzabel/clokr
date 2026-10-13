@@ -49,13 +49,19 @@
 
 /** Outcome of one fetch whose failure the user must be told about. */
 export type FetchResult<T> =
-  { status: "ok"; value: T } | { status: "skipped" } | { status: "failed" };
+  { status: "ok"; value: T } | { status: "skipped" } | { status: "failed" } | { status: "denied" };
 
 /** The fetch was never attempted (e.g. no employee link) — NOT a backend failure. */
 export const SKIPPED: FetchResult<never> = { status: "skipped" };
 
 /** The fetch was attempted and rejected. */
 export const FAILED: FetchResult<never> = { status: "failed" };
+
+/**
+ * The server refused the read (403, or the identical 404 of an out-of-scope person). Produced
+ * only by `settledAllowDenied` — a refusal is neither a failure nor a value.
+ */
+export const DENIED: FetchResult<never> = { status: "denied" };
 
 export function ok<T>(value: T): FetchResult<T> {
   return { status: "ok", value };
@@ -72,6 +78,60 @@ export function ok<T>(value: T): FetchResult<T> {
  */
 export function settled<T>(p: Promise<T>): Promise<FetchResult<T>> {
   return p.then((value) => ok(value)).catch(() => FAILED as FetchResult<T>);
+}
+
+/**
+ * Like `settled`, but a 403 or 404 becomes `DENIED` instead of `FAILED`.
+ *
+ * Opt-in (Issue #85, Phase 76b note on that issue): for reads a role may legitimately be refused
+ * — a Salonmanager holds neither `contract:read` nor `overtime:read` — the card that depends on
+ * them disappears silently instead of showing an error with a retry button. Every other
+ * rejection (5xx, 401, a network error, anything that is not an `ApiError`) stays `FAILED`, so a
+ * real outage is never mistaken for a refusal and never rendered as a value.
+ *
+ * The check is structural (an `Error` carrying a numeric `status`, which is exactly what
+ * `ApiError` is) because this module imports nothing — `$api/client` pulls the auth store, which
+ * reads localStorage on import. Like `settled`, it discards the rejection object (T-116-01).
+ */
+export function settledAllowDenied<T>(p: Promise<T>): Promise<FetchResult<T>> {
+  return p.then(
+    (value) => ok(value),
+    (err: unknown) => {
+      const status = err instanceof Error ? (err as { status?: unknown }).status : undefined;
+      return (status === 403 || status === 404 ? DENIED : FAILED) as FetchResult<T>;
+    },
+  );
+}
+
+/** True when at least one of the given fetches was refused by the server. */
+export function isDenied(...results: FetchResult<unknown>[]): boolean {
+  return results.some((r) => r.status === "denied");
+}
+
+/**
+ * The month card's figures when the saldo/contract read was refused: the Ist of the entries the
+ * caller can see and nothing else — no Soll, no saldo, no ratio (Issue #85, 85-AC5). Shaped like
+ * the page's `MonthMetrics`; living here keeps the "no Soll target" flag out of the page's own
+ * MONTHLY_HOURS branch, which `month-card-no-soll-wiring.test.ts` pins as its only setter.
+ */
+export function istOnlyMonthMetrics(input: { istMin: number; workdaysSoFar: number | null }): {
+  sollToDateMin: number;
+  istMin: number;
+  saldoMin: null;
+  sollLabel: string;
+  closed: false;
+  workdaysSoFar: number | null;
+  noSollTarget: true;
+} {
+  return {
+    sollToDateMin: 0,
+    istMin: input.istMin,
+    saldoMin: null,
+    sollLabel: "Soll",
+    closed: false,
+    workdaysSoFar: input.workdaysSoFar,
+    noSollTarget: true,
+  };
 }
 
 /**

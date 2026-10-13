@@ -12,6 +12,23 @@
  * role assignments, DayBreakAck rows, notifications.
  *
  * Fixture names are neutral labels, never person names.
+ *
+ * Amendment 2026-10-13 (Phase 85b, Issue #85 D-07): a recipient whose reach does not cover the
+ * whole day (the "redacted" level) no longer receives the day sum or the placement finding text.
+ * Both kinds now carry the neutral notice of `buildWithheldNotice` (its title and hint text are the
+ * constants of `withheld-finding.ts`, spelled out in `neutralMessage()` below), and every redacted
+ * notice is scanned for figures. The expectations of the full recipients, the notification types,
+ * dedupe, links and dismissal are unchanged.
+ *
+ * Mutation proofs of that amendment (cp backup/restore, restored and diffed):
+ *   M1  the unit builder builds the core sentence for "redacted" again -> five unit cases red in
+ *       break-finding-notice.test.ts (the job no longer routes through it for non-full recipients,
+ *       it calls buildWithheldNotice directly, so the integration file stays green by design);
+ *   M1b the job hands a non-full cross-salon recipient the old full-detail sentence without entries
+ *       -> "a manager covering only salon A gets the neutral notice", "the mail ... salon-A manager"
+ *       and the scan over every redacted notice red;
+ *   M2  the job renders the placement texts at the redacted level for non-full recipients -> "a
+ *       partial-reach manager gets the neutral notice", the placement mail case and the scan red.
  */
 import { vi, describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import bcrypt from "bcryptjs";
@@ -26,6 +43,10 @@ import {
   CROSS_SALON_NOTICE_TITLE,
   BREAK_PLACEMENT_NOTICE_TITLE,
 } from "../contexts/time-tracking/break-finding-notice";
+import {
+  WITHHELD_FINDING_TEXT,
+  WITHHELD_NOTICE_TITLE,
+} from "../contexts/time-tracking/withheld-finding";
 
 // The transporter is built inline in the notify plugin through a dynamic import, so mocking
 // nodemailer captures the real mail that would leave the server (subject and HTML body).
@@ -60,6 +81,24 @@ const SMTP_CONFIGURED = {
 const MANAGER_PERMISSIONS = ["time-entry:update:ZUGEWIESEN", "time-entry:read:ZUGEWIESEN"];
 
 type T2Row = Awaited<ReturnType<typeof getWorkedEntriesInRange>>[number];
+
+/** The neutral message of Issue #85 D-07, spelled out so a change of the constants turns this red. */
+function neutralMessage(name: string, germanDay: string): string {
+  return `${name}, ${germanDay}: Für diesen Tag liegt ein Prüfhinweis vor; die Klärung erfolgt über den Stammsalon.`;
+}
+
+/** Every redacted notice of the run, scanned once more by the last test of the file. */
+const redactedNotices: { title: string; message: string; germanDay: string }[] = [];
+
+/** No digit outside the calendar date, no paragraph sign, no minutes, no break wording. */
+function expectNoFigure(text: string, germanDay: string): void {
+  const rest = text.replace(germanDay, "");
+  expect(rest).not.toMatch(/\d/);
+  expect(rest).not.toContain("§");
+  expect(rest).not.toContain("Min");
+  expect(rest).not.toContain("Pause");
+  expect(rest).not.toContain("h ohne");
+}
 
 function dateOf(day: string): Date {
   return new Date(`${day}T00:00:00.000Z`);
@@ -362,7 +401,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
   });
 
   describe("redaction by the recipient's own reach (D-11, T-80-37)", () => {
-    it("a manager covering only salon A gets the day total and the finding, nothing of salon B", async () => {
+    it("a manager covering only salon A gets the neutral notice, nothing of salon B", async () => {
       const x = await createEmployee("redact-x");
       const day = yesterday();
       twoSalonDay(x.employee.id, day);
@@ -371,10 +410,14 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
 
       const [n] = await notificationsFor(mgrA.user.id, x.employee.id, day);
       expect(n, "the salon-A manager is a recipient").toBeDefined();
-      expect(n.message).toBe(
-        `Fixture redact-x: Am ${germanDate(day)} insgesamt 8 h ohne 30 Min Pause, salonübergreifend.`,
-      );
-      expect(n.title).toBe(CROSS_SALON_NOTICE_TITLE);
+      expect(n.message).toBe(neutralMessage("Fixture redact-x", germanDate(day)));
+      expect(n.title).toBe(WITHHELD_NOTICE_TITLE);
+      expect(n.message).toContain(WITHHELD_FINDING_TEXT);
+      // The notification family (type) stays that of the finding kind; only the text is neutral.
+      expect(n.type).toBe(NOTIFICATION_TYPE);
+      expectNoFigure(n.title, germanDate(day));
+      expectNoFigure(n.message, germanDate(day));
+      redactedNotices.push({ title: n.title, message: n.message, germanDay: germanDate(day) });
       // Byte level over every user-visible field and the link: neither salon's name or id, and no
       // clock time at all (salon B's 12:30/16:30 and salon A's own 08:00/12:00 alike).
       const visible = [
@@ -593,7 +636,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
       console.info(`[511-06 full placement notice] ${n.title} | ${n.message}`);
     });
 
-    it("a partial-reach manager gets the redacted text: no clock time, no salon, no entry id", async () => {
+    it("a partial-reach manager gets the neutral notice: no figure, no clock time, no salon, no entry id", async () => {
       const x = await createEmployee("place-redact");
       const day = yesterday();
       await crossSalonPlacementDay(x.employee.id, day);
@@ -602,10 +645,15 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
 
       const [partial] = await notificationsOfType(PLACEMENT_TYPE, mgrA.user.id, x.employee.id, day);
       expect(partial, "the salon-A manager covers one of the two entries").toBeDefined();
-      expect(partial.title).toBe(BREAK_PLACEMENT_NOTICE_TITLE);
-      expect(partial.message.startsWith(`Fixture place-redact: Am ${germanDate(day)} § 4`)).toBe(
-        true,
-      );
+      expect(partial.title).toBe(WITHHELD_NOTICE_TITLE);
+      expect(partial.message).toBe(neutralMessage("Fixture place-redact", germanDate(day)));
+      expectNoFigure(partial.title, germanDate(day));
+      expectNoFigure(partial.message, germanDate(day));
+      redactedNotices.push({
+        title: partial.title,
+        message: partial.message,
+        germanDay: germanDate(day),
+      });
       const visible = [partial.title, partial.message, partial.link ?? ""].join("\n");
       expect(visible).not.toMatch(CLOCK_TIME);
       for (const forbidden of [salonName.A, salonName.B, salonA, salonB]) {
@@ -825,8 +873,9 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
             .filter((m) => m.to === email);
 
         const [partial] = mailTo(mgrA.user.email);
-        expect(partial.subject).toBe(`${BREAK_PLACEMENT_NOTICE_TITLE} – Clokr`);
+        expect(partial.subject).toBe(`${WITHHELD_NOTICE_TITLE} – Clokr`);
         expect(partial.subject).not.toMatch(CLOCK_TIME);
+        expect(partial.html).toContain(neutralMessage("Fixture place-mail", germanDate(day)));
         for (const forbidden of [salonName.A, salonName.B, salonA, salonB, "14:30", "08:00"]) {
           expect(partial.html, `mail must not contain "${forbidden}"`).not.toContain(forbidden);
         }
@@ -872,10 +921,10 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
         const redactedMails = mailTo(mgrA.user.email);
         expect(redactedMails).toHaveLength(1);
         const redacted = redactedMails[0];
-        expect(redacted.subject).toBe(`${CROSS_SALON_NOTICE_TITLE} – Clokr`);
-        expect(redacted.html).toContain(
-          `Fixture mail-x: Am ${germanDate(day)} insgesamt 8 h ohne 30 Min Pause, salonübergreifend.`,
-        );
+        expect(redacted.subject).toBe(`${WITHHELD_NOTICE_TITLE} – Clokr`);
+        expect(redacted.html).toContain(neutralMessage("Fixture mail-x", germanDate(day)));
+        expect(redacted.html).not.toContain("h ohne");
+        expect(redacted.html).not.toContain("Min Pause");
         for (const forbidden of [
           salonName.A,
           salonName.B,
@@ -900,6 +949,18 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
           where: { tenantId },
           data: { emailNotificationsEnabled: false, emailOnMissingEntries: false },
         });
+      }
+    });
+  });
+
+  describe("scan over every redacted notice of the run (Issue #85 D-07, T-85b-30)", () => {
+    it("none of them carries a figure, a paragraph or a break wording beyond the calendar date", () => {
+      // Filled by the cross-salon and the placement redaction cases above (declared order).
+      expect(redactedNotices.length).toBeGreaterThanOrEqual(2);
+      for (const n of redactedNotices) {
+        expect(n.title).toBe(WITHHELD_NOTICE_TITLE);
+        expectNoFigure(n.title, n.germanDay);
+        expectNoFigure(n.message, n.germanDay);
       }
     });
   });

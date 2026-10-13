@@ -199,6 +199,53 @@ export async function getRecordedWorkEntriesInRange(
   });
 }
 
+/**
+ * Issue #85 (D-04/D-13) — the recorded `WORK` rows named by `entryIds`, for the per-entry
+ * aggregates of the salon manager's view. The composition layer receives the in-scope ids from the
+ * Unterbau's `scopedTimeEntryIds` (the scope rule lives there, never here) and reads the rows
+ * through this function, because it may not read `TimeEntry` itself and
+ * {@link getRecordedWorkEntriesInRange} carries no id.
+ *
+ * Same row shape and the same membership rules as the range sibling — OPEN and INVALID rows are
+ * included, soft-deleted and non-`WORK` rows never are — plus the `id`. The tenant binds through
+ * the employee, so an id of another tenant is never returned. The ids are read in chunks of at
+ * most {@link ENTRY_ID_CHUNK_SIZE} to stay below Postgres' bind-parameter limit.
+ */
+export async function getRecordedWorkEntriesByIds(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  entryIds: readonly string[],
+) {
+  if (entryIds.length === 0) return [];
+  const rows = [];
+  for (let i = 0; i < entryIds.length; i += ENTRY_ID_CHUNK_SIZE) {
+    const chunk = entryIds.slice(i, i + ENTRY_ID_CHUNK_SIZE);
+    const part = await db.timeEntry.findMany({
+      where: {
+        id: { in: chunk },
+        employee: { tenantId },
+        deletedAt: null,
+        type: "WORK",
+      },
+      select: {
+        id: true,
+        employeeId: true,
+        date: true,
+        startTime: true,
+        endTime: true,
+        breakMinutes: true,
+        isInvalid: true,
+        salonId: true,
+      },
+    });
+    rows.push(...part);
+  }
+  return rows;
+}
+
+/** Issue #85 (D-04): ids per query, well below Postgres' 32767 bind-parameter limit. */
+const ENTRY_ID_CHUNK_SIZE = 5000;
+
 // ── T2-regrouped — any claimed entry-date, any TimeEntryType ─────────────────────────────────
 
 /**

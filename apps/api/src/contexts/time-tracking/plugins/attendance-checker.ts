@@ -13,7 +13,11 @@ import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
 import { findUnacknowledgedBreakFindingDays } from "../break-finding-days"; // Issue #511 (D-13)
 import { closedWorkRowsInRange } from "../day-break-store"; // Issue #80 (80-09)
 import { dayCoverage } from "../day-scope"; // Issue #80 (80-09)
-import { buildCrossSalonNotice, buildBreakPlacementNotice } from "../break-finding-notice"; // Issue #80 (80-09), #511 (D-13)
+import {
+  buildCrossSalonNotice,
+  buildBreakPlacementNotice,
+  buildWithheldNotice,
+} from "../break-finding-notice"; // Issue #80 (80-09), #511 (D-13), #85 (D-07)
 import { placementWarnings } from "../arbzg"; // Issue #511 (D-13)
 import {
   getTenantTimezone,
@@ -1295,32 +1299,30 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                   salonNames = new Map(salons.map((s) => [s.id, s.name]));
                 }
                 const employeeName = `${employee.firstName} ${employee.lastName}`;
-                const { title, message } = crossSalon
-                  ? buildCrossSalonNotice({
-                      employeeName,
-                      date: day.date,
-                      evaluation: day.evaluation,
-                      detail: full ? "full" : "redacted",
-                      entries: full
-                        ? day.rows.map((r) => ({
-                            salonName: salonNames?.get(r.salonId) ?? "",
-                            startLocal: timeStrInTz(r.startTime, tz),
-                            endLocal: timeStrInTz(r.endTime, tz),
-                          }))
-                        : undefined,
-                    })
-                  : buildBreakPlacementNotice({
-                      employeeName,
-                      date: day.date,
-                      // The position-unknown hint never notifies (A5); the redacted level holds
-                      // counts, durations and the legal basis only.
-                      findingMessages: placementWarnings(day.evaluation, {
-                        tz,
-                        detail: full ? "full" : "redacted",
+                // Issue #85 D-07: a recipient whose reach does not cover the whole day gets the
+                // neutral notice for both kinds - no figure, no category, no salon.
+                const { title, message } = !full
+                  ? buildWithheldNotice({ employeeName, date: day.date })
+                  : crossSalon
+                    ? buildCrossSalonNotice({
+                        employeeName,
+                        date: day.date,
+                        evaluation: day.evaluation,
+                        detail: "full",
+                        entries: day.rows.map((r) => ({
+                          salonName: salonNames?.get(r.salonId) ?? "",
+                          startLocal: timeStrInTz(r.startTime, tz),
+                          endLocal: timeStrInTz(r.endTime, tz),
+                        })),
                       })
-                        .filter((w) => !w.hint)
-                        .map((w) => w.message),
-                    });
+                    : buildBreakPlacementNotice({
+                        employeeName,
+                        date: day.date,
+                        // The position-unknown hint never notifies (A5).
+                        findingMessages: placementWarnings(day.evaluation, { tz })
+                          .filter((w) => !w.hint)
+                          .map((w) => w.message),
+                      });
                 await app.notify({
                   userId,
                   type: crossSalon ? "BREAK_CROSS_SALON_VIOLATION" : "BREAK_PLACEMENT_VIOLATION",
