@@ -2,7 +2,8 @@
  * Phase 88 plan 06 (AC-88-07/08/09, D-05/D-07/D-09) — a tenant is deactivated, never deleted, and every
  * credential path the platform owns refuses its users while it is.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import {
   getTestApp,
@@ -228,5 +229,102 @@ describe("deactivation core and the login refusal (tracer)", () => {
 
     const res = await loginAs(data.adminUser.email);
     expect(res.statusCode).toBe(200);
+  });
+});
+
+describe("token paths: verify-otp, resend-otp and refresh", () => {
+  let sentCodes: string[] = [];
+  let otpSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeAll(async () => {
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: data.tenant.id },
+      data: { twoFaEnabled: true },
+    });
+    otpSpy = vi.spyOn(app.mailer, "sendOtp").mockImplementation(async ({ code }) => {
+      sentCodes.push(code);
+    });
+  });
+
+  afterAll(async () => {
+    otpSpy.mockRestore();
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: data.tenant.id },
+      data: { twoFaEnabled: false },
+    });
+  });
+
+  it("verify-otp and resend-otp refuse a deactivated tenant and send nothing; sign-in works again after reactivation", async () => {
+    sentCodes = [];
+    const login = await loginAs(data.empUser.email);
+    expect(login.statusCode).toBe(202);
+    const { userId } = JSON.parse(login.body);
+    expect(sentCodes).toHaveLength(1);
+    const code = sentCodes[0];
+
+    expect((await deactivate()).status).toBe("OK");
+    otpSpy.mockClear();
+
+    const verify = await post("/api/v1/auth/verify-otp", { userId, code });
+    expect(verify.statusCode).toBe(403);
+    expect(JSON.parse(verify.body)).toEqual(TENANT_DEACTIVATED_ERROR);
+    expect(verify.body).not.toContain("accessToken");
+
+    const resend = await post("/api/v1/auth/resend-otp", { userId });
+    expect(resend.statusCode).toBe(403);
+    expect(JSON.parse(resend.body)).toEqual(TENANT_DEACTIVATED_ERROR);
+    expect(otpSpy).not.toHaveBeenCalled();
+
+    expect((await reactivate()).status).toBe("OK");
+    sentCodes = [];
+    const again = await loginAs(data.empUser.email);
+    expect(again.statusCode).toBe(202);
+    const verified = await post("/api/v1/auth/verify-otp", {
+      userId: JSON.parse(again.body).userId,
+      code: sentCodes[0],
+    });
+    expect(verified.statusCode).toBe(200);
+    expect(JSON.parse(verified.body).accessToken).toBeTruthy();
+
+    const resent = await post("/api/v1/auth/resend-otp", { userId });
+    expect(resent.statusCode).toBe(200);
+  });
+
+  it("refresh refuses a deactivated tenant before rotation and works again after reactivation", async () => {
+    // Switch 2FA off for this case so the login hands out tokens directly.
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: data.tenant.id },
+      data: { twoFaEnabled: false },
+    });
+    const login = await loginAs(data.empUser.email);
+    expect(login.statusCode).toBe(200);
+    const { refreshToken } = JSON.parse(login.body);
+    const tokenHash = createHash("sha256").update(refreshToken).digest("hex");
+    const rowsBefore = await app.prisma.refreshToken.count({
+      where: { userId: data.empUser.id },
+    });
+
+    // Set the column directly (no revocation), to isolate the refresh check itself.
+    await app.prisma.tenant.update({
+      where: { id: data.tenant.id },
+      data: { deactivatedAt: new Date() },
+    });
+
+    const refused = await post("/api/v1/auth/refresh", { refreshToken });
+    expect(refused.statusCode).toBe(403);
+    expect(JSON.parse(refused.body)).toEqual(TENANT_DEACTIVATED_ERROR);
+    const stored = await app.prisma.refreshToken.findUniqueOrThrow({ where: { token: tokenHash } });
+    expect(stored.revokedAt).toBeNull();
+    expect(await app.prisma.refreshToken.count({ where: { userId: data.empUser.id } })).toBe(
+      rowsBefore,
+    );
+
+    await app.prisma.tenant.update({
+      where: { id: data.tenant.id },
+      data: { deactivatedAt: null },
+    });
+    const ok = await post("/api/v1/auth/refresh", { refreshToken });
+    expect(ok.statusCode).toBe(200);
+    expect(JSON.parse(ok.body).accessToken).toBeTruthy();
   });
 });

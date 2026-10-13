@@ -271,11 +271,16 @@ export async function authRoutes(app: FastifyInstance) {
 
       const user = await app.prisma.user.findUnique({
         where: { id: userId },
-        include: { employee: true },
+        include: { employee: { include: { tenant: { select: { deactivatedAt: true } } } } },
       });
 
       if (!user || !user.isActive) {
         return reply.code(401).send({ error: "Benutzer nicht gefunden" });
+      }
+
+      // Phase 88 (AC-88-08): the code matched, but a deactivated tenant gets no tokens.
+      if (!isTenantRowActive(user.employee?.tenant)) {
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
       }
 
       return issueTokens(app, req, reply, user);
@@ -291,11 +296,16 @@ export async function authRoutes(app: FastifyInstance) {
 
       const user = await app.prisma.user.findUnique({
         where: { id: userId },
-        include: { employee: true },
+        include: { employee: { include: { tenant: { select: { deactivatedAt: true } } } } },
       });
 
       if (!user || !user.isActive) {
         return reply.code(404).send({ error: "Benutzer nicht gefunden" });
+      }
+
+      // Phase 88 (AC-88-08): refuse before a code is created or any mail is sent.
+      if (!isTenantRowActive(user.employee?.tenant)) {
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
       }
 
       // Alte Tokens invalidieren
@@ -339,11 +349,21 @@ export async function authRoutes(app: FastifyInstance) {
 
       const stored = await app.prisma.refreshToken.findUnique({
         where: { token: hashToken(refreshToken) },
-        include: { user: { include: { employee: true } } },
+        include: {
+          user: {
+            include: { employee: { include: { tenant: { select: { deactivatedAt: true } } } } },
+          },
+        },
       });
 
       if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
         return reply.code(401).send({ error: "Ungültiger Refresh Token" });
+      }
+
+      // Phase 88 (AC-88-08): a deactivated tenant's session cannot be renewed. Checked BEFORE the
+      // rotation below, so the stored token is left exactly as it was.
+      if (!isTenantRowActive(stored.user.employee?.tenant)) {
+        return reply.code(403).send(TENANT_DEACTIVATED_ERROR);
       }
 
       // Rotate refresh token
