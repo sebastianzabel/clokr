@@ -14,6 +14,27 @@ describe("Issue #445 finding 1 — next-year VACATION entitlement (D-04/D-05/D-0
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
 
+  type AuditRow = Awaited<ReturnType<FastifyInstance["prisma"]["auditLog"]["findMany"]>>[number];
+  /**
+   * Issue #555: one action can write several UPDATE audits on the same entitlement row (an approval heals
+   * `totalDays` AND recomputes `carriedOverDays`, two milliseconds apart). An unordered `findFirst` then picks
+   * either one at random. Every audit lookup here reads ALL rows of the action in creation order and selects by
+   * the field the scenario is about, so the assertion always looks at the row it means.
+   */
+  async function auditRows(entityId: string, action: "CREATE" | "UPDATE"): Promise<AuditRow[]> {
+    return app.prisma.auditLog.findMany({
+      where: { entity: "LeaveEntitlement", entityId, action },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+  }
+
+  /** The rows whose `newValue` carries `field` — exactly the audits that changed that column. */
+  function changing(rows: AuditRow[], field: string) {
+    return rows.filter(
+      (r) => typeof r.newValue === "object" && r.newValue !== null && field in r.newValue,
+    );
+  }
+
   async function mkEmployee(
     label: string,
     hireDate = new Date(Date.UTC(2024, 0, 1)),
@@ -109,20 +130,17 @@ describe("Issue #445 finding 1 — next-year VACATION entitlement (D-04/D-05/D-0
     expect(row2027!.isAutoCalculated).toBe(true);
     expect(Number(row2027!.carriedOverDays)).toBe(25);
 
-    const createAudit = await app.prisma.auditLog.findFirst({
-      where: { entity: "LeaveEntitlement", entityId: row2027!.id, action: "CREATE" },
-    });
-    expect(createAudit).not.toBeNull();
+    const creates = await auditRows(row2027!.id, "CREATE");
+    expect(creates).toHaveLength(1);
+    const createAudit = creates[0];
     expect((createAudit!.newValue as { totalDays: number }).totalDays).toBe(30);
     expect((createAudit!.newValue as { reason: string }).reason).toBe(
       "Jahreswechsel: regulärer Jahresanspruch",
     );
 
-    const updateAudit = await app.prisma.auditLog.findFirst({
-      where: { entity: "LeaveEntitlement", entityId: row2027!.id, action: "UPDATE" },
-    });
-    expect(updateAudit).not.toBeNull();
-    expect((updateAudit!.newValue as { carriedOverDays: number }).carriedOverDays).toBe(25);
+    const carryUpdates = changing(await auditRows(row2027!.id, "UPDATE"), "carriedOverDays");
+    expect(carryUpdates).toHaveLength(1);
+    expect((carryUpdates[0].newValue as { carriedOverDays: number }).carriedOverDays).toBe(25);
   });
 
   it("scenario 2: a raw 2027 placeholder heals to the regular entitlement when a 2026 booking is approved", async () => {
@@ -170,12 +188,12 @@ describe("Issue #445 finding 1 — next-year VACATION entitlement (D-04/D-05/D-0
     expect(Number(healed!.totalDays)).toBe(30);
     expect(healed!.isAutoCalculated).toBe(true);
 
-    const updateAudit = await app.prisma.auditLog.findFirst({
-      where: { entity: "LeaveEntitlement", entityId: placeholder.id, action: "UPDATE" },
-    });
-    expect(updateAudit).not.toBeNull();
-    expect((updateAudit!.oldValue as { totalDays: number }).totalDays).toBe(0);
-    expect((updateAudit!.newValue as { totalDays: number }).totalDays).toBe(30);
+    // The approval writes two UPDATE audits: the heal (totalDays) and the carry-over recompute
+    // (carriedOverDays). The heal is the one this scenario is about, and it is written exactly once.
+    const healUpdates = changing(await auditRows(placeholder.id, "UPDATE"), "totalDays");
+    expect(healUpdates).toHaveLength(1);
+    expect((healUpdates[0].oldValue as { totalDays: number }).totalDays).toBe(0);
+    expect((healUpdates[0].newValue as { totalDays: number }).totalDays).toBe(30);
   });
 
   it("scenario 3: GET /leave/entitlements heals a raw 2027 placeholder on read", async () => {
@@ -203,10 +221,9 @@ describe("Issue #445 finding 1 — next-year VACATION entitlement (D-04/D-05/D-0
     const dbRow = await app.prisma.leaveEntitlement.findUnique({ where: { id: placeholder.id } });
     expect(Number(dbRow!.totalDays)).toBe(30);
 
-    const updateAudit = await app.prisma.auditLog.findFirst({
-      where: { entity: "LeaveEntitlement", entityId: placeholder.id, action: "UPDATE" },
-    });
-    expect(updateAudit).not.toBeNull();
+    const selfHeals = changing(await auditRows(placeholder.id, "UPDATE"), "totalDays");
+    expect(selfHeals).toHaveLength(1);
+    const updateAudit = selfHeals[0];
     expect((updateAudit!.newValue as { reason: string }).reason).toBe(
       "Self-Heal: Urlaubsanspruch 0 ohne manuelle Setzung",
     );
@@ -272,18 +289,15 @@ describe("Issue #445 finding 1 — next-year VACATION entitlement (D-04/D-05/D-0
     });
     expect(Number(row!.totalDays)).toBe(0);
 
-    const healAudit = await app.prisma.auditLog.findFirst({
-      where: {
-        entity: "LeaveEntitlement",
-        entityId: row!.id,
-        action: "UPDATE",
-      },
-    });
-    // No UPDATE audit with isAutoCalculated true must exist — the human zero is never healed.
-    if (healAudit) {
-      const nv = healAudit.newValue as { isAutoCalculated?: boolean };
-      expect(nv.isAutoCalculated).not.toBe(true);
-    }
+    // No UPDATE audit may heal the human zero: checked over EVERY update row, not just the first one
+    // an unordered lookup happens to return (#555).
+    const updates = await auditRows(row!.id, "UPDATE");
+    expect(
+      updates.filter(
+        (r) => (r.newValue as { isAutoCalculated?: boolean }).isAutoCalculated === true,
+      ),
+    ).toEqual([]);
+    expect(changing(updates, "totalDays")).toEqual([]);
   });
 
   it("scenario 6: POST /leave/requests ensures the year's row before checking availability", async () => {
@@ -314,10 +328,9 @@ describe("Issue #445 finding 1 — next-year VACATION entitlement (D-04/D-05/D-0
     expect(row2027).not.toBeNull();
     expect(Number(row2027!.totalDays)).toBe(30);
 
-    const createAudit = await app.prisma.auditLog.findFirst({
-      where: { entity: "LeaveEntitlement", entityId: row2027!.id, action: "CREATE" },
-    });
-    expect(createAudit).not.toBeNull();
+    const creates = await auditRows(row2027!.id, "CREATE");
+    expect(creates).toHaveLength(1);
+    const createAudit = creates[0];
     expect((createAudit!.newValue as { reason: string }).reason).toBe(
       "Urlaubsantrag: regulärer Jahresanspruch",
     );
