@@ -44,6 +44,24 @@
     await load(true);
   }
 
+  async function deactivateTenant(id: string, reason: string) {
+    await operatorApi.deactivateTenant(id, reason);
+    toasts.success("Mandant deaktiviert.");
+    await load(true);
+  }
+
+  async function reactivateTenant() {
+    await operatorApi.reactivateTenant(tenantId);
+    toasts.success("Mandant reaktiviert.");
+    await load(true);
+  }
+
+  async function resendInvitation() {
+    const result = await operatorApi.resendInvitation(tenantId);
+    if (result.invitationMailSent) toasts.success("Einladung gesendet.");
+    return result;
+  }
+
   onMount(() => {
     void load();
   });
@@ -61,7 +79,13 @@
     </div>
 
     <Section title="Mandant" sub="Stammdaten und Status" animate>
-      <TenantMasterData {tenant} onRename={renameTenant} />
+      <TenantMasterData
+        {tenant}
+        onRename={renameTenant}
+        onDeactivate={deactivateTenant}
+        onReactivate={reactivateTenant}
+        onResend={resendInvitation}
+      />
     </Section>
 
     <Section title="Salons" sub="Standorte des Mandanten" animate>
