@@ -138,6 +138,66 @@ describe("operatorApi", () => {
     expect(currentToken()).toBe("op-token");
   });
 
+  it("renameTenant patches {name} on /tenants/:id with the operator token", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(jsonResponse({ id: "t1", name: "Neu" }));
+
+    await expect(operatorApi.renameTenant("t1", "Neu")).resolves.toEqual({ id: "t1", name: "Neu" });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/t1");
+    expect(init.method).toBe("PATCH");
+    expect(init.body).toBe(JSON.stringify({ name: "Neu" }));
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer op-token");
+  });
+
+  it("deactivateTenant posts {reason} to /tenants/:id/deactivate", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(jsonResponse({ id: "t1" }));
+
+    await operatorApi.deactivateTenant("t1", "Vertrag beendet");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/t1/deactivate");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ reason: "Vertrag beendet" }));
+  });
+
+  it("reactivateTenant and resendInvitation post without a body", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: "t1" }));
+    fetchMock.mockResolvedValueOnce(jsonResponse({ invitationMailSent: false }));
+
+    await operatorApi.reactivateTenant("t1");
+    await expect(operatorApi.resendInvitation("t1")).resolves.toEqual({
+      invitationMailSent: false,
+    });
+
+    const [reactivateUrl, reactivateInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(reactivateUrl).toBe("/api/v1/operator/tenants/t1/reactivate");
+    expect(reactivateInit.method).toBe("POST");
+    expect(reactivateInit.body).toBeUndefined();
+    const [resendUrl, resendInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(resendUrl).toBe("/api/v1/operator/tenants/t1/resend-admin-invitation");
+    expect(resendInit.method).toBe("POST");
+    expect(resendInit.body).toBeUndefined();
+  });
+
+  it("encodes the tenant id in every lifecycle path", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(jsonResponse({}));
+
+    await operatorApi.renameTenant("a/b", "x");
+    await operatorApi.reactivateTenant("a/b");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/operator/tenants/a%2Fb");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/v1/operator/tenants/a%2Fb/reactivate");
+  });
+
   it("listSalons reads /tenants/:id/salons", async () => {
     const { setSession, operatorApi } = await load();
     setSession("op-token", 900, NOW);

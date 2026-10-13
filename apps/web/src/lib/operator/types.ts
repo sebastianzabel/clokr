@@ -84,3 +84,8 @@ export interface CreateTenantResult {
   adminEmployeeId: string;
   invitationMailSent: boolean;
 }
+
+/** 200 body of `POST /operator/tenants/:id/resend-admin-invitation`; the token is never part of it. */
+export interface ResendInvitationResult {
+  invitationMailSent: boolean;
+}

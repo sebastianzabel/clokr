@@ -18,6 +18,7 @@ import type {
   OperatorMe,
   OperatorSalon,
   OperatorTenant,
+  ResendInvitationResult,
 } from "./types";
 
 const BASE_URL = "/api/v1/operator";
@@ -125,6 +126,19 @@ export const operatorApi = {
     request<CreateTenantResult>("POST", "/tenants", { body }),
   listTenants: () => request<OperatorTenant[]>("GET", "/tenants"),
   getTenant: (id: string) => request<OperatorTenant>("GET", `/tenants/${encodeURIComponent(id)}`),
+  renameTenant: (id: string, name: string) =>
+    request<OperatorTenant>("PATCH", `/tenants/${encodeURIComponent(id)}`, { body: { name } }),
+  deactivateTenant: (id: string, reason: string) =>
+    request<OperatorTenant>("POST", `/tenants/${encodeURIComponent(id)}/deactivate`, {
+      body: { reason },
+    }),
+  reactivateTenant: (id: string) =>
+    request<OperatorTenant>("POST", `/tenants/${encodeURIComponent(id)}/reactivate`),
+  resendInvitation: (id: string) =>
+    request<ResendInvitationResult>(
+      "POST",
+      `/tenants/${encodeURIComponent(id)}/resend-admin-invitation`,
+    ),
   listSalons: (tenantId: string) =>
     request<OperatorSalon[]>("GET", `/tenants/${encodeURIComponent(tenantId)}/salons`),
 };

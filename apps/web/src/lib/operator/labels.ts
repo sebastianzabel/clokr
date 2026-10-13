@@ -3,6 +3,7 @@
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import type { FederalState } from "@clokr/types";
+import { CONNECTION_TEXT, RATE_LIMIT_TEXT, SERVER_FAULT_TEXT } from "./reasons";
 
 const LABELS: Record<FederalState, string> = {
   BADEN_WUERTTEMBERG: "Baden-Württemberg",
@@ -48,11 +49,9 @@ export function formatOperatorDate(iso: string): string {
 export function describeLoadError(error: unknown, fallback: string): string {
   const status = (error as { status?: unknown } | null | undefined)?.status;
   if (typeof status !== "number") {
-    return error instanceof TypeError
-      ? "Keine Verbindung zum Server. Bitte erneut versuchen."
-      : fallback;
+    return error instanceof TypeError ? CONNECTION_TEXT : fallback;
   }
-  if (status === 429) return "Zu viele Anfragen. Bitte einen Moment warten und erneut versuchen.";
-  if (status >= 500) return "Der Server hat einen Fehler gemeldet. Bitte erneut versuchen.";
+  if (status === 429) return RATE_LIMIT_TEXT;
+  if (status >= 500) return SERVER_FAULT_TEXT;
   return fallback;
 }
