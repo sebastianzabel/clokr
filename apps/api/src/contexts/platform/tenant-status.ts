@@ -16,10 +16,13 @@
  * - The writing background jobs skip a deactivated tenant; data retention deliberately does not
  *   (`cron-deactivated-tenants-88.test.ts` pins both).
  *
- * Users without an Employee have no tenant: a blank tenant id answers "not deactivated" on purpose
- * (D-10). That hole is #551 and is NOT changed here.
+ * Users without an Employee have no tenant. `isTenantDeactivated` still answers "not deactivated" for a
+ * blank id, because deactivation and having a tenant are separate questions. Since #551 such a token is
+ * refused earlier, in `requireAuth`, with `TENANT_REQUIRED`, and no credential path issues it
+ * (see {@link isBlankTenantId}, the one function that decides the blank rule).
  */
 import type { Prisma } from "@clokr/db";
+import { isBlankTenantId } from "./access-context-error";
 import { OPERATOR_AUDIT_ACTIONS, recordOperatorAudit } from "./operator-audit";
 
 /** The one spelling of "active tenant" for queries (`where: { …, ...ACTIVE_TENANT_WHERE }`). */
@@ -34,6 +37,24 @@ export const TENANT_DEACTIVATED_ERROR = {
   code: "TENANT_DEACTIVATED",
 } as const;
 
+/**
+ * The refusal body for a principal without a tenant (#551, D-01). `code` is the control value; the
+ * German `error` text is display only — nobody may branch on it.
+ */
+export const TENANT_REQUIRED_ERROR = {
+  error: "Dieses Konto ist keinem Mandanten zugeordnet. Eine Anmeldung ist nicht möglich.",
+  code: "TENANT_REQUIRED",
+} as const;
+
+/**
+ * The blank-tenant rule (#551, D-04): a tenant id is blank when it is not a string, or when the string
+ * is empty after removing surrounding whitespace. It is DECIDED in exactly one function, defined in the
+ * zero-import leaf `./access-context-error` (the purity test pins that leaf free of imports, so the rule
+ * cannot live here without importing into it) and re-exported from here. `requireAuth` reaches it through
+ * the tenant-status plugin decoration; every other caller imports it from this module.
+ */
+export { isBlankTenantId };
+
 /** A missing row (user without Employee/tenant) counts as active — see the header on D-10. */
 export function isTenantRowActive(row: { deactivatedAt: Date | null } | null | undefined): boolean {
   return !row || row.deactivatedAt === null;
@@ -47,7 +68,7 @@ export async function isTenantDeactivated(
   db: Pick<Prisma.TransactionClient, "tenant">,
   tenantId: string | null | undefined,
 ): Promise<boolean> {
-  if (!tenantId || tenantId.trim() === "") return false;
+  if (typeof tenantId !== "string" || isBlankTenantId(tenantId)) return false;
   const row = await db.tenant.findUnique({
     where: { id: tenantId },
     select: { deactivatedAt: true },
