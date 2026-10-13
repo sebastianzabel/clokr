@@ -797,8 +797,10 @@ import { readFileSync } from "node:fs";
 // API suite run alone reports 567 test files and 9030 tests (9027 passed, 3 skipped). Both floors are set to
 // exactly these numbers (earlier floors followed the lower-bound convention above and had fallen far
 // behind the real totals); no floor is lowered.
-const MIN_FILES = 567;
-const MIN_TESTS = 9030;
+// Issue #569 (2026-10-13): one new test file `bulk-apply-active-workforce-569` (1 case) —
+// MIN_FILES 567 -> 568, MIN_TESTS 9030 -> 9031. Same lower-bound convention as above.
+const MIN_FILES = 568;
+const MIN_TESTS = 9031;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

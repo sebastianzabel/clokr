@@ -35,6 +35,7 @@ import {
   recalcVacationEntitlementsForContractChange, // Issue #450 (D-06) — reactive VACATION-entitlement recompute after a contract change
 } from "../../absence"; // issue #246, E-6
 import { validateUsualWorkDays } from "../usual-work-days"; // Phase 436 (D-02)
+import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter"; // Issue #569
 import { requestAuditFields } from "../request-audit-fields"; // Issue #450 (D-08) — attributes the recompute's audit to the acting user
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
@@ -786,15 +787,21 @@ export async function settingsRoutes(app: FastifyInstance) {
       // Returned in the response so operators can handle them via the single-employee path.
       let skippedModelSwitch = 0;
       if (applyToExisting) {
+        // Phase 60 (#220) — bulk apply MUST write month-1st validFrom so the contract
+        // change is unambiguous at the saldo engine. Snap once here, reuse in the query
+        // and in both branches below (employees-without-schedule + FIXED_SCHEDULE update).
+        const now = snapToMonthFirstUtc(new Date());
+        // Issue #569 — only the active workforce gets the new defaults: an anonymized
+        // employee is erased (Art. 17 GDPR) and must not receive new rows, and an employee
+        // who left before the new contract starts has no contract to change.
         const employees = await app.prisma.employee.findMany({
-          where: { tenantId },
+          where: {
+            tenantId,
+            ...NOT_ANONYMIZED_EMPLOYEE_WHERE,
+            OR: [{ exitDate: null }, { exitDate: { gte: now } }],
+          },
           include: { workSchedules: { orderBy: { validFrom: "desc" }, take: 1 } },
         });
-
-        // Phase 60 (#220) — bulk apply MUST write month-1st validFrom so the contract
-        // change is unambiguous at the saldo engine. Snap once here, reuse in both
-        // branches below (employees-without-schedule + FIXED_SCHEDULE update).
-        const now = snapToMonthFirstUtc(new Date());
         for (const emp of employees) {
           const current = emp.workSchedules[0];
           // Issue #450 (D-06, WR-02 review fix) — true only when THIS employee's own
