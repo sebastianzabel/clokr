@@ -260,8 +260,8 @@ function contractValuesOfRow(row: BulkScheduleRow): ContractValues {
 
 /**
  * The compare list of D-03: weekly hours, the seven day-hours, the overtime threshold and the
- * payout flag. A legacy null `weeklyHours` is `null` here and equals nothing — it is never
- * coerced to 0.
+ * payout flag (the `workDays` set is compared separately, see `sameTerms`). A legacy null
+ * `weeklyHours` is `null` here and equals nothing — it is never coerced to 0.
  */
 function compareList(v: ContractValues): (number | boolean | null)[] {
   return [
@@ -278,15 +278,26 @@ function compareList(v: ContractValues): (number | boolean | null)[] {
   ];
 }
 
+/** Set equality of two weekday lists (order and duplicates do not matter). */
+function sameWorkDaySet(a: readonly number[], b: readonly number[]): boolean {
+  const setA = new Set(a);
+  const setB = new Set(b);
+  return setA.size === setB.size && [...setA].every((day) => setB.has(day));
+}
+
+/**
+ * Two contracts carry the same terms when the compare list AND the `workDays` set agree (Issue #568
+ * review IN-01). A legacy FIXED row whose `workDays` diverges from its day-hours (Phase 95b: such
+ * rows are never "corrected" silently) therefore equals neither the stored defaults nor the
+ * proposal: it is an individual contract the admin has to tick explicitly, and a bulk apply never
+ * skips it as "already matches" while quietly rewriting its `workDays`. The defaults' `workDays`
+ * are `normalizeWorkDays` of the default day-hours — the derivation the write itself uses.
+ */
 function sameTerms(a: ContractValues, b: ContractValues): boolean {
   if (a.weeklyHours === null || b.weeklyHours === null) return false;
   const la = compareList(a);
   const lb = compareList(b);
-  return la.every((value, i) => value === lb[i]);
-}
-
-function defaultsAsContract(d: WorkingTimeDefaults): ContractValues {
-  return proposedContractValues(d);
+  return la.every((value, i) => value === lb[i]) && sameWorkDaySet(a.workDays, b.workDays);
 }
 
 // ── effective date window (D-05, O5) ─────────────────────────────────────────────────────────
@@ -434,7 +445,7 @@ export function classifyBulkApplyCandidates(input: {
   timeZone: string;
 }): BulkApplyClassification {
   const { employees, stored, proposed, effectiveFrom, timeZone } = input;
-  const storedContract = defaultsAsContract(stored);
+  const storedContract = proposedContractValues(stored);
   const after = proposedContractValues(proposed);
   const candidates: BulkCandidate[] = [];
   const groups = new Map<NonCandidateReason, EmployeeRef[]>();

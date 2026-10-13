@@ -273,6 +273,38 @@ describe("Issue #568 — bulk apply preview and guarded apply", () => {
       ).toContain(hireId);
     });
 
+    it("P6: a FIXED row whose workDays diverge from its day-hours is INDIVIDUAL, never pre-ticked or ALREADY_MATCHES_NEW (review IN-01)", async () => {
+      const legacyId = await mkEmployee(data.tenant.id, "Leg", "none");
+      // Legacy row of the Phase 95b kind: Mo-Fr 8 h day-hours, but a workDays list that dropped Friday.
+      await app.prisma.workSchedule.create({
+        data: {
+          employeeId: legacyId,
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          workDays: [1, 2, 3, 4],
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      // Against the unchanged 40 h defaults the hours alone would be "already matches new".
+      const body = await previewBulkApply(app, data.adminToken, { defaults: DEFAULTS_40 });
+      const candidate = body.candidates.find((c) => c.employeeId === legacyId);
+      expect(candidate?.category).toBe("INDIVIDUAL");
+      expect(candidate?.defaultSelected).toBe(false);
+      expect(candidate?.before?.workDays).toEqual([1, 2, 3, 4]);
+      expect(candidate?.after.workDays).toEqual([1, 2, 3, 4, 5]);
+      expect(
+        body.nonCandidates
+          .find((g) => g.reason === "ALREADY_MATCHES_NEW")
+          ?.employees.map((e) => e.employeeId) ?? [],
+      ).not.toContain(legacyId);
+    });
+
     it("P4: a caller without tenant-settings:update gets 403", async () => {
       const res = await rawPreview(data.empToken, DEFAULTS_40);
       expect(res.statusCode, res.body).toBe(403);

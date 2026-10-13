@@ -390,6 +390,57 @@ describe("classifyBulkApplyCandidates", () => {
     });
   });
 
+  // Review IN-01: workDays is part of the contract terms (Phase 95b: divergent legacy rows are never
+  // silently "corrected").
+  describe("workDays are compared as a set (IN-01)", () => {
+    const divergentFriday = (id: string) =>
+      // day-hours say Mo-Fr 8 h (= the stored defaults) but the legacy workDays dropped Friday
+      row({ id, workDays: [1, 2, 3, 4] });
+
+    it("a row with default hours but divergent workDays is INDIVIDUAL, not pre-ticked", () => {
+      const [c] = classify([emp("a", [divergentFriday("r1")])]).candidates;
+      expect(c.category).toBe("INDIVIDUAL");
+      expect(c.defaultSelected).toBe(false);
+    });
+
+    it("a row with the proposed hours but divergent workDays is never ALREADY_MATCHES_NEW", () => {
+      const r = classify([
+        emp("a", [row({ id: "r1", weeklyHours: 38, fridayHours: 6, workDays: [1, 2, 3, 4] })]),
+      ]);
+      expect(r.nonCandidates).toEqual([]);
+      expect(r.candidates).toHaveLength(1);
+      expect(r.candidates[0].category).toBe("INDIVIDUAL");
+    });
+
+    it("the order and duplicates of workDays do not matter", () => {
+      const [c] = classify([
+        emp("a", [row({ id: "r1", workDays: [5, 4, 3, 2, 1, 1] })]),
+      ]).candidates;
+      expect(c.category).toBe("MATCHES_DEFAULTS");
+      const r = classify([
+        emp("b", [row({ id: "r2", weeklyHours: 38, fridayHours: 6, workDays: [5, 3, 1, 2, 4] })]),
+      ]);
+      expect(r.nonCandidates.map((g) => g.reason)).toEqual(["ALREADY_MATCHES_NEW"]);
+    });
+
+    it("the defaults' workDays are derived from the default day-hours, like the write does", () => {
+      const stored: WorkingTimeDefaults = {
+        ...STORED,
+        defaultFridayHours: 0,
+        defaultWeeklyHours: 32,
+      };
+      const matching = row({
+        id: "r1",
+        weeklyHours: 32,
+        fridayHours: 0,
+        workDays: [1, 2, 3, 4],
+      });
+      expect(classify([emp("a", [matching])], PROPOSED, stored).candidates[0].category).toBe(
+        "MATCHES_DEFAULTS",
+      );
+    });
+  });
+
   it("groups appear in precedence order, sorted candidates by last name", () => {
     const r = classify([
       emp("z", [row({ id: "z1", type: "SHIFT_BASED" })], "Zed"),
