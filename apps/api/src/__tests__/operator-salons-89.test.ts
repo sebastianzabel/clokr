@@ -708,6 +708,9 @@ describe("PATCH /api/v1/operator/tenants/:id/salons/:salonId", () => {
     expect(opRows[0].oldValue).toMatchObject({ id: salon.id, name: "Alt" });
     expect(opRows[0].newValue).toMatchObject({ id: salon.id, name: newName });
     expect(opRows[0].ipAddress).toBeTruthy();
+    // Coupling changes have their own rows: a SALON_UPDATED row never carries a coupling value.
+    expect(opRows[0].oldValue).not.toHaveProperty("coupling");
+    expect(opRows[0].newValue).not.toHaveProperty("coupling");
 
     const tenantRows = await app.prisma.auditLog.findMany({
       where: { entity: "Salon", entityId: salon.id },
@@ -720,6 +723,43 @@ describe("PATCH /api/v1/operator/tenants/:id/salons/:salonId", () => {
       name: newName,
       actor: { type: "OPERATOR", operatorId, tenantId: dataA.tenant.id },
     });
+    expect(tenantRows[0].oldValue).not.toHaveProperty("coupling");
+    expect(tenantRows[0].newValue).not.toHaveProperty("coupling");
+  });
+
+  it("writes no coupling value on SALON_UPDATED when name and coupling change in one request", async () => {
+    const salon = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Kombi-Alt" });
+    const existingBranch = `K0-${randomUUID().slice(0, 8)}`;
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: dataA.tenant.id,
+        salonId: salon.id,
+        provider: "PHOREST",
+        externalBranchId: existingBranch,
+      },
+    });
+    const nextBranch = `K1-${randomUUID().slice(0, 8)}`;
+    const res = await patchSalon(dataA.tenant.id, salon.id, {
+      name: "Kombi-Neu",
+      coupling: { externalBranchId: nextBranch },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+
+    const updated = await app.prisma.operatorAuditLog.findFirstOrThrow({
+      where: { subjectTenantId: dataA.tenant.id, entityId: salon.id, action: "SALON_UPDATED" },
+    });
+    expect(updated.oldValue).toMatchObject({ name: "Kombi-Alt" });
+    expect(updated.newValue).toMatchObject({ name: "Kombi-Neu" });
+    expect(updated.oldValue).not.toHaveProperty("coupling");
+    expect(updated.newValue).not.toHaveProperty("coupling");
+    // The coupling change is recorded in its own rows.
+    const couplingActions = await app.prisma.operatorAuditLog.findMany({
+      where: { subjectTenantId: dataA.tenant.id, entity: "SalonCoupling" },
+      select: { action: true, newValue: true, oldValue: true },
+    });
+    expect(couplingActions.map((r) => r.action)).toEqual(
+      expect.arrayContaining(["SALON_COUPLING_REMOVED", "SALON_COUPLING_SET"]),
+    );
   });
 
   it("leaves the legacy store hours of the tenant untouched when the salon hours change", async () => {

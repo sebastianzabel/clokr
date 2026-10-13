@@ -181,14 +181,13 @@ async function tenantGate(tx: Prisma.TransactionClient, tenantId: string): Promi
 
 type SalonRow = Awaited<ReturnType<typeof listSalons>>[number];
 
-/** The one operator-facing shape of a salon: exactly these keys, never more (T-89-02). */
-export function toOperatorSalonDto(
-  row: SalonRow,
-  extra: {
-    isDefault: boolean;
-    coupling: { provider: string; externalBranchId: string } | null;
-  },
-) {
+/**
+ * A salon's own fields without its coupling. The audit rows of a salon edit use this shape: the
+ * coupling is a separate entity with separate SALON_COUPLING_SET / SALON_COUPLING_REMOVED rows,
+ * and a coupling value on a SALON_UPDATED row would be the pre-request state on both sides of the
+ * append-only record (misleading).
+ */
+export function toOperatorSalonFields(row: SalonRow, extra: { isDefault: boolean }) {
   return {
     id: row.id,
     name: row.name,
@@ -201,8 +200,18 @@ export function toOperatorSalonDto(
     deactivatedAt: row.deactivatedAt,
     createdAt: row.createdAt,
     isDefault: extra.isDefault,
-    coupling: extra.coupling,
   };
+}
+
+/** The one operator-facing shape of a salon: exactly these keys, never more (T-89-02). */
+export function toOperatorSalonDto(
+  row: SalonRow,
+  extra: {
+    isDefault: boolean;
+    coupling: { provider: string; externalBranchId: string } | null;
+  },
+) {
+  return { ...toOperatorSalonFields(row, extra), coupling: extra.coupling };
 }
 
 /**
@@ -407,9 +416,6 @@ export async function operatorSalonRoutes(app: FastifyInstance, opts: OperatorSa
 
           const [firstActive] = await listSalons(tx, tenantId, { includeInactive: false });
           const isDefault = firstActive?.id === salonId;
-          const couplingBefore = (await opts.ports.coupling.list(tx, tenantId)).find(
-            (c) => c.salonId === salonId,
-          );
 
           let current = existing;
           if (Object.keys(patch).length > 0) {
@@ -422,26 +428,15 @@ export async function operatorSalonRoutes(app: FastifyInstance, opts: OperatorSa
               return { status: "REFUSED", code: "FEDERAL_STATE_IN_USE" } as const;
             }
             current = outcome.updated;
-            const beforeCoupling = couplingBefore
-              ? {
-                  provider: couplingBefore.provider,
-                  externalBranchId: couplingBefore.externalBranchId,
-                }
-              : null;
+            // No coupling key: coupling changes carry their own SALON_COUPLING_* rows.
             await recordOperatorAudit(tx, {
               action: OPERATOR_AUDIT_ACTIONS.SALON_UPDATED,
               operatorId,
               subjectTenantId: tenantId,
               entity: "Salon",
               entityId: salonId,
-              oldValue: toOperatorSalonDto(outcome.existing, {
-                isDefault,
-                coupling: beforeCoupling,
-              }),
-              newValue: toOperatorSalonDto(outcome.updated, {
-                isDefault,
-                coupling: beforeCoupling,
-              }),
+              oldValue: toOperatorSalonFields(outcome.existing, { isDefault }),
+              newValue: toOperatorSalonFields(outcome.updated, { isDefault }),
               request: req,
             });
             await writeTenantAudit(
