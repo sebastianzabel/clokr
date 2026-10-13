@@ -342,7 +342,11 @@ export async function resetOperatorMfa(
 export type DeactivateOperatorAccountResult =
   { status: "OK" } | { status: "NOT_FOUND" } | { status: "ALREADY_INACTIVE" };
 
-/** Offboarding: the account stays (audit rows reference it with onDelete Restrict) but can no longer sign in. */
+/**
+ * Offboarding: the account stays (audit rows reference it with onDelete Restrict) but can no longer sign in.
+ * Every token already issued is refused from the next request on: the token version is incremented in the
+ * same transaction as the audit row (Issue #557).
+ */
 export async function deactivateOperatorAccount(
   db: PrismaClient,
   input: { email: string; actor: OperatorActor },
@@ -356,14 +360,18 @@ export async function deactivateOperatorAccount(
   if (!existing.isActive) return { status: "ALREADY_INACTIVE" };
 
   await db.$transaction(async (tx) => {
-    await tx.operatorAccount.update({ where: { id: existing.id }, data: { isActive: false } });
+    const { tokenVersion } = await tx.operatorAccount.update({
+      where: { id: existing.id },
+      data: { isActive: false, tokenVersion: { increment: 1 } },
+      select: { tokenVersion: true },
+    });
     await recordOperatorAudit(tx, {
       operatorId: null,
       action: OPERATOR_AUDIT_ACTIONS.OPERATOR_DEACTIVATED,
       entity: "OperatorAccount",
       entityId: existing.id,
-      oldValue: { isActive: true },
-      newValue: { isActive: false, actor: input.actor },
+      oldValue: { isActive: true, tokenVersion: tokenVersion - 1 },
+      newValue: { isActive: false, actor: input.actor, sessionsRevoked: true, tokenVersion },
     });
   });
   return { status: "OK" };

@@ -14,7 +14,15 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { TOTP, Secret } from "otpauth";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedOperator, type SeededOperator } from "./setup";
-import { resetOperatorMfa } from "../contexts/platform/operator-credentials";
+import {
+  deactivateOperatorAccount,
+  resetOperatorMfa,
+} from "../contexts/platform/operator-credentials";
+import {
+  isOperatorPayload,
+  operatorTokenIsCurrent,
+  signOperatorToken,
+} from "../contexts/platform/operator-auth";
 
 let app: FastifyInstance;
 let addressCounter = 0;
@@ -134,5 +142,187 @@ describe("MFA reset ends the issued access token (tracer)", () => {
     const fresh = await signIn(op, newTotp(0));
     expect(decodedVer(fresh)).toBe(1);
     expect((await get("/api/v1/operator/auth/me", fresh)).statusCode).toBe(200);
+  });
+});
+
+describe("a pending challenge dies with the reset", () => {
+  it("refuses a stale challenge even with a valid code of the new secret, without counting a failure", async () => {
+    const op = await seedOperator(app);
+    const staleChallenge = await loginChallenge(op.email, op.password);
+    const result = await reset(op);
+    const newTotp = totpFromSecret(result.enrollment.secretBase32);
+
+    const res = await verify(staleChallenge, newTotp(0));
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.body)).toEqual({ error: "Anmeldung fehlgeschlagen" });
+
+    const rows = await app.prisma.operatorAuditLog.findMany({
+      where: { action: "OPERATOR_MFA_FAILED", entityId: op.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].newValue).toMatchObject({ reason: "STALE_CHALLENGE" });
+    const account = await app.prisma.operatorAccount.findUniqueOrThrow({ where: { id: op.id } });
+    expect(account.failedLoginAttempts).toBe(0);
+    expect(account.lastTotpStep).toBeNull();
+
+    // Control: the SAME code is accepted on a fresh challenge, so the refusal came from the version.
+    const fresh = await loginChallenge(op.email, op.password);
+    const ok = await verify(fresh, newTotp(0));
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(decodedVer((JSON.parse(ok.body) as { accessToken: string }).accessToken)).toBe(1);
+  });
+});
+
+describe("deactivation revokes every issued token", () => {
+  it("increments the version, 401s the issued token and audits old/new version", async () => {
+    const op = await seedOperator(app);
+    const token = await signIn(op, op.totpFor(0));
+    expect((await get("/api/v1/operator/auth/me", token)).statusCode).toBe(200);
+
+    expect(await deactivateOperatorAccount(app.prisma, { email: op.email, actor: ACTOR })).toEqual({
+      status: "OK",
+    });
+
+    const res = await get("/api/v1/operator/auth/me", token);
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.body)).toEqual({ error: "Unauthorized" });
+    expect(await storedVersion(op.id)).toBe(1);
+
+    const rows = await app.prisma.operatorAuditLog.findMany({
+      where: { action: "OPERATOR_DEACTIVATED", entityId: op.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].oldValue).toEqual({ isActive: true, tokenVersion: 0 });
+    expect(rows[0].newValue).toMatchObject({
+      isActive: false,
+      sessionsRevoked: true,
+      tokenVersion: 1,
+    });
+  });
+});
+
+describe("claim shapes", () => {
+  function handSigned(sub: string, typ: "access" | "mfa-challenge", ver?: unknown): string {
+    const payload: Record<string, unknown> = {
+      sub,
+      kind: "operator",
+      aud: "clokr-operator",
+      typ,
+    };
+    if (ver !== undefined) payload.ver = ver;
+    return app.jwt.operator!.sign(payload as never, { expiresIn: "5m" });
+  }
+
+  it("accepts a hand-signed access token with the correct ver and refuses every other shape at the guard", async () => {
+    const op = await seedOperator(app);
+    expect(op.tokenVersion).toBe(0);
+    expect(
+      (await get("/api/v1/operator/auth/me", handSigned(op.id, "access", 0))).statusCode,
+      "control",
+    ).toBe(200);
+
+    const shapes: Array<[string, unknown]> = [
+      ["missing", undefined],
+      ["string", "0"],
+      ["fraction", 0.5],
+      ["null", null],
+      ["higher", 1],
+    ];
+    for (const [name, ver] of shapes) {
+      const res = await get("/api/v1/operator/auth/me", handSigned(op.id, "access", ver));
+      expect(res.statusCode, name).toBe(401);
+      expect(JSON.parse(res.body), name).toEqual({ error: "Unauthorized" });
+    }
+  });
+
+  it("refuses a lower ver once the stored version has moved on", async () => {
+    const op = await seedOperator(app);
+    await reset(op);
+    expect(await storedVersion(op.id)).toBe(1);
+    expect(
+      (await get("/api/v1/operator/auth/me", handSigned(op.id, "access", 0))).statusCode,
+      "lower",
+    ).toBe(401);
+    expect(
+      (await get("/api/v1/operator/auth/me", handSigned(op.id, "access", 1))).statusCode,
+      "control",
+    ).toBe(200);
+  });
+
+  it("refuses a challenge without ver at /verify, and accepts the control with the same code", async () => {
+    const op = await seedOperator(app);
+    const code = op.totpFor(0);
+    const noVer = await verify(handSigned(op.id, "mfa-challenge"), code);
+    expect(noVer.statusCode).toBe(401);
+    const control = await verify(handSigned(op.id, "mfa-challenge", 0), code);
+    expect(control.statusCode, control.body).toBe(200);
+  });
+});
+
+describe("helpers", () => {
+  const complete = { sub: "x", kind: "operator", aud: "clokr-operator", typ: "access" };
+
+  it("isOperatorPayload requires an integer ver", () => {
+    expect(isOperatorPayload({ ...complete, ver: 0 }, "access")).toBe(true);
+    expect(isOperatorPayload({ ...complete, ver: 7 }, "access")).toBe(true);
+    for (const ver of [undefined, "0", 0.5, null, Number.NaN]) {
+      expect(isOperatorPayload({ ...complete, ver }, "access"), String(ver)).toBe(false);
+    }
+  });
+
+  it("operatorTokenIsCurrent is true only for an equal version on an active account", () => {
+    expect(operatorTokenIsCurrent({ ver: 2 }, { isActive: true, tokenVersion: 2 })).toBe(true);
+    expect(operatorTokenIsCurrent({ ver: 1 }, { isActive: true, tokenVersion: 2 })).toBe(false);
+    expect(operatorTokenIsCurrent({ ver: 3 }, { isActive: true, tokenVersion: 2 })).toBe(false);
+    expect(operatorTokenIsCurrent({ ver: 2 }, { isActive: false, tokenVersion: 2 })).toBe(false);
+    expect(operatorTokenIsCurrent({ ver: 2 }, null)).toBe(false);
+  });
+
+  it("signOperatorToken throws for a non-integer version", () => {
+    expect(() => signOperatorToken(app, "x", "access", 1.5)).toThrow();
+    expect(() => signOperatorToken(app, "x", "access", Number.NaN)).toThrow();
+    expect(() => signOperatorToken(app, "x", "access", 0)).not.toThrow();
+  });
+});
+
+describe("the version bump and its audit row are one transaction", () => {
+  // A BigInt in the actor cannot be serialised by the audit writer, so the audit write throws inside the
+  // transaction after the account update: nothing may survive.
+  const brokenActor = { type: "SCRIPT", user: 1n, host: "test" } as never;
+
+  it("a failed audit write rolls the reset back", async () => {
+    const op = await seedOperator(app);
+    const token = await signIn(op, op.totpFor(0));
+    const before = await app.prisma.operatorAccount.findUniqueOrThrow({ where: { id: op.id } });
+
+    await expect(
+      resetOperatorMfa(app.prisma, { email: op.email, actor: brokenActor }),
+    ).rejects.toThrow();
+
+    const after = await app.prisma.operatorAccount.findUniqueOrThrow({ where: { id: op.id } });
+    expect(after.tokenVersion).toBe(0);
+    expect(after.totpSecretEnc).toBe(before.totpSecretEnc);
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: { action: "OPERATOR_MFA_RESET", entityId: op.id },
+      }),
+    ).toBe(0);
+    expect((await get("/api/v1/operator/auth/me", token)).statusCode).toBe(200);
+  });
+
+  it("a failed audit write rolls the deactivation back", async () => {
+    const op = await seedOperator(app);
+    await expect(
+      deactivateOperatorAccount(app.prisma, { email: op.email, actor: brokenActor }),
+    ).rejects.toThrow();
+
+    const after = await app.prisma.operatorAccount.findUniqueOrThrow({ where: { id: op.id } });
+    expect(after.isActive).toBe(true);
+    expect(after.tokenVersion).toBe(0);
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: { action: "OPERATOR_DEACTIVATED", entityId: op.id },
+      }),
+    ).toBe(0);
   });
 });
