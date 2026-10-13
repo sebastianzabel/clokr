@@ -767,8 +767,11 @@ import { readFileSync } from "node:fs";
 // `operator-auth-88`, `tenant-principal-guard-88`, `operator-tenants-88` and
 // `operator-tenant-boundary-sweep-88` kept their case count (delta 0). Merged after PR #559 (Issue #551): both
 // deltas add up (398 + 1 files, 6674 + 11 cases; +2 for the reset-race cases of the review, WR-02). Same lower-bound convention as above.
-const MIN_FILES = 399;
-const MIN_TESTS = 6687;
+// Phase 89 plan 01 (Issue #89, 2026-10-13), on `feat/89-betreiber-ui` (based on origin/main @ adac8e59): one
+// new test FILE, `src/__tests__/operator-salons-89.test.ts` (7 cases, as reported by its single-file
+// run) - MIN_FILES rises from 399 to 400 and MIN_TESTS from 6687 to 6694. Same lower-bound convention as above.
+const MIN_FILES = 400;
+const MIN_TESTS = 6694;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

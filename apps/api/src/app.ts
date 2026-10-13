@@ -13,7 +13,9 @@ import { AccessContextError } from "./contexts/platform"; // Phase 77b (Issue #7
 import { authRoutes } from "./contexts/platform/api/auth";
 import { operatorAuthRoutes } from "./contexts/platform/api/operator/auth"; // Phase 88 (#88)
 import { operatorTenantRoutes } from "./contexts/platform/api/operator/tenants"; // Phase 88 (#88)
+import { operatorSalonRoutes } from "./contexts/platform/api/operator/salons"; // Phase 89 (#89)
 import { seedDefaultsForNewTenant } from "./composition/tenant-onboarding"; // Phase 88 (#88)
+import { operatorSalonPorts } from "./composition/operator-salon-ports"; // Phase 89 (#89)
 import { employeeRoutes } from "./contexts/platform/api/employees";
 import { employeeWifiRoutes } from "./contexts/time-tracking/api/employee-wifi"; // Phase 243 Plan 02 (B2)
 import { timeEntryRoutes } from "./contexts/time-tracking/api/time-entries";
@@ -338,6 +340,12 @@ export async function buildApp() {
     await app.register(operatorTenantRoutes, {
       prefix: "/api/v1/operator/tenants",
       onTenantCreated: seedDefaultsForNewTenant,
+    });
+    // Phase 89 (#89, D-07/D-12): the coupling and the time-entry count live in other contexts; the
+    // composition root hands the Unterbau route the ports.
+    await app.register(operatorSalonRoutes, {
+      prefix: "/api/v1/operator/tenants/:id/salons",
+      ports: operatorSalonPorts,
     });
   }
   await app.register(employeeRoutes, { prefix: "/api/v1/employees" });

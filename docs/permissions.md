@@ -996,6 +996,7 @@ Katalog-Permission und stehen in keiner der Tabellen oben; die Zugangsentscheidu
 | `POST /api/v1/operator/tenants/:id/deactivate`              | `requireOperator`                | Deaktiviert mit Begründung, nie löschen; sofort wirksam; Audit `TENANT_DEACTIVATED`                                                 |
 | `POST /api/v1/operator/tenants/:id/reactivate`              | `requireOperator`                | Hebt die Deaktivierung auf; Audit `TENANT_REACTIVATED`                                                                              |
 | `POST /api/v1/operator/tenants/:id/resend-admin-invitation` | `requireOperator`                | Stellt die Einladung des ersten Administrators neu aus, nur solange niemand im Mandanten aktiv ist; Audit `ADMIN_INVITATION_RESENT` |
+| `GET /api/v1/operator/tenants/:id/salons`                   | `requireOperator`                | Alle Salons des Mandanten mit Kopplung, inaktive eingeschlossen; nur Stammdaten, keine Zählungen; unbekannter Mandant: 404          |
 
 - **Ein Mandanten-Token ist hier kein Zugang:** Ein gültiges Mandanten-Token auf einem geschützten
   Betreiber-Endpunkt wird mit 403 beantwortet und als `TENANT_PRINCIPAL_REFUSED` im Betreiber-Audit

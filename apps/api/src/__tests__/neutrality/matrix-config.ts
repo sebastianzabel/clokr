@@ -226,12 +226,13 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
     "POST /api/v1/operator/tenants/:id/deactivate",
     "POST /api/v1/operator/tenants/:id/reactivate",
     "POST /api/v1/operator/tenants/:id/resend-admin-invitation",
+    "GET /api/v1/operator/tenants/:id/salons",
   ].map((route) => ({
     route,
     reason:
       "Operator-authenticated (separate principal with its own signing secret, requireOperator, " +
       "Phase 88 #88) — no tenant actor can be a matrix cell; the tenant-token refusal is proven in " +
-      "operator-auth-88.test.ts and operator-tenants-88.test.ts.",
+      "operator-auth-88.test.ts, operator-tenants-88.test.ts and operator-salons-89.test.ts.",
   })),
   {
     route: "GET /api/v1/shifts/planning-overview",
