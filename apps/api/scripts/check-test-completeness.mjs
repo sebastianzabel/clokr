@@ -793,8 +793,12 @@ import { readFileSync } from "node:fs";
 // deactivate / activate describe adds 8) - MIN_FILES stays 403, MIN_TESTS rises from 6764 to 6772. Same convention.
 // Phase 89 plan 10 task 2 (2026-10-13): one new test FILE (`operator-salons-boundary-89.test.ts`, 8 cases in a single-file
 // run) - MIN_FILES rises from 403 to 404, MIN_TESTS rises from 6772 to 6780. Same convention.
-const MIN_FILES = 404;
-const MIN_TESTS = 6780;
+// Phase 89 plan 15 (2026-10-13): measured on `feat/89-betreiber-ui` after 89-15, full run - the whole
+// API suite run alone reports 567 test files and 9030 tests (9027 passed, 3 skipped). Both floors are set to
+// exactly these numbers (earlier floors followed the lower-bound convention above and had fallen far
+// behind the real totals); no floor is lowered.
+const MIN_FILES = 567;
+const MIN_TESTS = 9030;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
