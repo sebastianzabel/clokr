@@ -18,6 +18,7 @@ import {
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
   distinctEmployeeIds,
+  fullyCoveredPersons,
   outOfScopeValidCounts,
   personDayKey,
   presenceEntriesWithStandIns,
@@ -1798,6 +1799,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
   // D-13): Ist is the recorded working time of closed, valid entries in that salon through the
   // tenant-local yesterday, sick days follow the Stammsalon of each counted day, and Soll is never
   // computed — it is a contract figure of a person, not divisible by salon.
+  //
+  // Issue #85 (D-04/D-06): a SCOPED caller's figures never contain an out-of-scope minute. The
+  // account Ist (`computeMonthReportFigures`) covers every salon of a person, so it is used for a
+  // person-month only when every non-deleted WORK entry of that person in that month is in scope;
+  // otherwise — and always for a person who is listed only by an in-scope entry — Ist is the sum
+  // of the person's in-scope, valid, closed entries through tenant-local yesterday. The response
+  // names the basis (`SCOPE_ENTRIES`) and withholds Soll then, because Ist and Soll must never
+  // come from different populations. Sick days stay over the Stammsalon persons: leave belongs to
+  // the Stammsalon, a person listed only by an entry never adds one.
   app.get("/team-trend", {
     schema: {
       tags: ["Dashboard"],
@@ -1806,8 +1816,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
       description:
         "Per month of the window: the worked minutes and the target minutes from the working-time " +
         "account and the sick days from the absence context, over the persons in the caller's " +
-        "team-overview reach. Target minutes only with overtime:read covering every shown person " +
-        "and never together with a salon filter.",
+        "team-overview reach. For a caller with a partial reach the worked minutes of a person " +
+        "come from the account only if every entry of the person in that month is in the reach, " +
+        "otherwise they are the sum of the visible entries (workedBasis SCOPE_ENTRIES). Target " +
+        "minutes only with overtime:read covering every shown person, never together with a salon " +
+        "filter and never when part of the worked minutes came from visible entries.",
     },
     preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
     handler: async (req, reply) => {
@@ -1833,6 +1846,61 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       // The window: the `months` calendar months ending with the tenant-local current month.
       const today = todayInTz(tz);
+      const dayString = (d: Date) => d.toISOString().slice(0, 10);
+
+      // Issue #85 (D-04): for a scoped caller the Unterbau names the in-scope entries of the whole
+      // window once; they are bucketed by month and decide the population beyond the Stammsalon
+      // persons and every Ist that does not come from the account.
+      const scopedRowsByMonth = new Map<
+        string,
+        Awaited<ReturnType<typeof getRecordedWorkEntriesByIds>>
+      >();
+      const scopedActiveIds = new Set<string>();
+      if (reach.kind === "scoped") {
+        const first = new Date(
+          Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - (months - 1), 1),
+        );
+        const windowFirstDay = monthDateRange(
+          first.getUTCFullYear(),
+          first.getUTCMonth() + 1,
+          tz,
+        ).firstDay;
+        const windowLastDay = monthDateRange(
+          today.getUTCFullYear(),
+          today.getUTCMonth() + 1,
+          tz,
+        ).lastDay;
+        const inScopeIds = await scopedTimeEntryIds(
+          app.prisma,
+          tenantId,
+          reach,
+          windowFirstDay,
+          windowLastDay,
+        );
+        // "all" is whole-tenant only; for a scoped reach it cannot occur, and fails closed.
+        const rows = await getRecordedWorkEntriesByIds(
+          app.prisma,
+          tenantId,
+          inScopeIds === "all" ? [] : inScopeIds,
+        );
+        for (const row of rows) {
+          const monthKey = dayString(row.date).slice(0, 7);
+          const list = scopedRowsByMonth.get(monthKey);
+          if (list) list.push(row);
+          else scopedRowsByMonth.set(monthKey, [row]);
+        }
+        const active = await app.prisma.employee.findMany({
+          where: {
+            tenantId,
+            exitDate: null,
+            user: { isActive: true },
+            id: { in: distinctEmployeeIds(rows) },
+          },
+          select: { id: true },
+        });
+        for (const p of active) scopedActiveIds.add(p.id);
+      }
+
       const window: Array<{
         year: number;
         month: number;
@@ -1840,6 +1908,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
         firstDay: Date;
         lastDay: Date;
         ids: string[];
+        /** Active persons listed only by an in-scope entry of the month (scoped callers). */
+        entryOnlyIds: string[];
       }> = [];
       for (let back = months - 1; back >= 0; back--) {
         const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - back, 1));
@@ -1862,6 +1932,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
           select: { id: true },
         });
         const ids = people.map((p) => p.id).sort((a, b) => a.localeCompare(b));
+        const key = `${year}-${String(month).padStart(2, "0")}`;
+        const stammIds = new Set(ids);
+        const entryOnlyIds = distinctEmployeeIds(scopedRowsByMonth.get(key) ?? []).filter(
+          (id) => scopedActiveIds.has(id) && !stammIds.has(id),
+        );
 
         if (overtimeReach && overtimeReach.kind === "scoped") {
           const covered = await resolveStammsalonScopedEmployeeIds(
@@ -1870,20 +1945,22 @@ export async function dashboardRoutes(app: FastifyInstance) {
             overtimeReach,
             end,
           );
-          if (covered !== "all" && !ids.every((id) => covered.includes(id))) sollCovered = false;
+          if (covered !== "all" && ![...ids, ...entryOnlyIds].every((id) => covered.includes(id))) {
+            sollCovered = false;
+          }
         }
         window.push({
           year,
           month,
-          key: `${year}-${String(month).padStart(2, "0")}`,
+          key,
           firstDay,
           lastDay,
           ids,
+          entryOnlyIds,
         });
       }
 
       // D-13: exact per-day Stammsalon of every shown person, one Unterbau call for the window.
-      const dayString = (d: Date) => d.toISOString().slice(0, 10);
       const homeByPerson =
         filterSalonId === null
           ? null
@@ -1902,10 +1979,61 @@ export async function dashboardRoutes(app: FastifyInstance) {
         shouldMinutes: number | null;
         sickDays: number;
       }> = [];
-      for (const { year, month, key, firstDay, lastDay, ids } of window) {
+      let usedScopeEntries = false;
+      for (const { year, month, key, firstDay, lastDay, ids, entryOnlyIds } of window) {
         let worked = 0;
         let should = 0;
-        if (filterSalonId === null) {
+        if (reach.kind === "scoped") {
+          // Issue #85 (D-04/D-06): only visible entries, valid and closed, through tenant-local
+          // yesterday (today never counts, #438). The fold step is the #79 kernel's.
+          const monthRows = scopedRowsByMonth.get(key) ?? [];
+          const scopeSum = (personIds: ReadonlySet<string>) =>
+            monthRows
+              .filter(
+                (e) =>
+                  personIds.has(e.employeeId) &&
+                  !e.isInvalid &&
+                  e.endTime !== null &&
+                  e.date.getTime() <= yesterday.getTime() &&
+                  (filterSalonId === null || e.salonId === filterSalonId),
+              )
+              .reduce((sum: number, e) => addWorkingMinutes(sum, e), 0);
+
+          if (filterSalonId !== null) {
+            worked = scopeSum(new Set([...ids, ...entryOnlyIds]));
+          } else {
+            // The account Ist only for a person whose every entry of the month is in scope.
+            const stammRows =
+              ids.length > 0
+                ? await getRecordedWorkEntriesInRange(
+                    app.prisma,
+                    employeeScopeFor(scopedAccess, { employeeIds: ids }),
+                    firstDay,
+                    lastDay,
+                  )
+                : [];
+            const idSet = new Set(ids);
+            const covered = fullyCoveredPersons(
+              stammRows,
+              monthRows.filter((e) => idSet.has(e.employeeId)),
+              ids,
+            );
+            const sumOver = new Set<string>(entryOnlyIds);
+            for (const id of ids) {
+              if (covered.has(id)) {
+                const figures = await computeMonthReportFigures(app, id, year, month);
+                worked += figures.workedMinutes;
+                should += figures.expectedMinutes;
+              } else {
+                sumOver.add(id);
+              }
+            }
+            if (sumOver.size > 0) {
+              usedScopeEntries = true;
+              worked += scopeSum(sumOver);
+            }
+          }
+        } else if (filterSalonId === null) {
           for (const id of ids) {
             const figures = await computeMonthReportFigures(app, id, year, month);
             worked += figures.workedMinutes;
@@ -1965,16 +2093,26 @@ export async function dashboardRoutes(app: FastifyInstance) {
         });
       }
 
-      // D-05: under a filter Soll is never shown, whatever the caller may otherwise see.
-      const sollVisible = canSeeSoll && sollCovered && filterSalonId === null;
+      // D-05: under a filter Soll is never shown, whatever the caller may otherwise see. Issue #85
+      // (D-06): nor when part of the Ist came from visible entries — Ist and Soll must not mix.
+      const workedBasis =
+        filterSalonId !== null
+          ? ("SALON_ENTRIES" as const)
+          : usedScopeEntries
+            ? ("SCOPE_ENTRIES" as const)
+            : ("ACCOUNT" as const);
+      const sollVisible =
+        canSeeSoll && sollCovered && filterSalonId === null && workedBasis === "ACCOUNT";
       return {
         salonId: filterSalonId,
-        workedBasis: filterSalonId === null ? ("ACCOUNT" as const) : ("SALON_ENTRIES" as const),
+        workedBasis,
         sollUnavailableReason: sollVisible
           ? null
-          : canSeeSoll && sollCovered
-            ? ("SALON_FILTER" as const)
-            : ("NO_PERMISSION" as const),
+          : !canSeeSoll || !sollCovered
+            ? ("NO_PERMISSION" as const)
+            : filterSalonId !== null
+              ? ("SALON_FILTER" as const)
+              : ("SCOPE_ENTRIES" as const),
         months: series.map((m) => ({ ...m, shouldMinutes: sollVisible ? m.shouldMinutes : null })),
       };
     },

@@ -58,9 +58,9 @@ export function outOfScopeValidCounts<A extends ScopedEntryRow, B extends Scoped
  * theirs is hidden. `personIds` lists persons that should be judged even if they appear in no row
  * (zero rows on both sides is covered).
  */
-export function fullyCoveredPersons<R extends ScopedEntryRow>(
-  allRows: readonly R[],
-  inScopeRows: readonly R[],
+export function fullyCoveredPersons<A extends ScopedEntryRow, B extends ScopedEntryRow>(
+  allRows: readonly A[],
+  inScopeRows: readonly B[],
   personIds: Iterable<string> = [],
 ): Set<string> {
   const total = new Map<string, number>();
