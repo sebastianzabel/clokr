@@ -260,7 +260,7 @@
   );
   // gWeekly is NOT included — it's a $derived of gMon..gSun (:192), already covered.
   // gApplyToExisting is NOT included — it's not a persisted value but a modifier of the next
-  // save, which saveGlobal itself resets to false on success (:320). A marker for it would
+  // save, which saveGlobal itself resets to false as soon as the work PUT succeeded. A marker for it would
   // claim an unsaved setting that does not exist.
 
   // Gate the registration on "the baseline has been taken" (WR-01). The snapshot starts as ""
@@ -451,10 +451,16 @@
         reminderUpcomingAbsenceEnabled: reminderUpcomingEnabled,
       })) as { appliedCount?: number } | undefined;
       workSaved = true;
-      if (pendingBulk !== null) {
-        const count = saved?.appliedCount ?? pendingBulk.applyEmployeeIds.length;
+      // Review WR-03: the apply is committed now. Reset the one-shot bulk state HERE, not after the
+      // unrelated security PUT below — if that one fails, the box must not stay ticked and the
+      // confirmed selection must not stay armed for the next save.
+      const appliedBulk = pendingBulk;
+      gApplyToExisting = false;
+      pendingBulk = null;
+      if (appliedBulk !== null) {
+        const count = saved?.appliedCount ?? appliedBulk.applyEmployeeIds.length;
         toasts.success(
-          `${count} ${count === 1 ? "Vertrag" : "Verträge"} ab ${formatDateDe(pendingBulk.effectiveFrom)} angepasst`,
+          `${count} ${count === 1 ? "Vertrag" : "Verträge"} ab ${formatDateDe(appliedBulk.effectiveFrom)} angepasst`,
         );
       }
       // Save max negative via security endpoint
@@ -462,8 +468,6 @@
         maxNegativeBalanceMinutes: maxNegEnabled ? Math.round(maxNegHours * 60) : null,
       });
       // Phase 49.4: availabilityEnabled toggle moved to /admin/system Features card.
-      // Reset nach Speichern
-      gApplyToExisting = false;
       gSaved = true;
       globalSnapshot = snap(
         gMon,

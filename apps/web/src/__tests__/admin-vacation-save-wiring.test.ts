@@ -149,8 +149,31 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
 
   it("Issue #568: only the dialog's confirmation sets pendingBulk", () => {
     const assignments = PAGE.match(/pendingBulk = [^;]+;/g) ?? [];
-    expect(assignments.sort()).toEqual(["pendingBulk = null;", "pendingBulk = selection;"]);
+    // Review WR-03: saveGlobal clears it itself the moment the work PUT went through, confirmBulk's
+    // finally clears it for every other exit — two `= null`, one `= selection`.
+    expect(assignments.sort()).toEqual([
+      "pendingBulk = null;",
+      "pendingBulk = null;",
+      "pendingBulk = selection;",
+    ]);
     expect(PAGE).toContain("onConfirm={confirmBulk}");
+  });
+
+  it("Review WR-03: the bulk state is reset right after the work PUT, before the security PUT", () => {
+    const body = fnBody("async function saveGlobal");
+    const workSaved = body.indexOf("workSaved = true");
+    const securityPut = body.indexOf('api.put("/settings/security"');
+    expect(workSaved, "workSaved = true not found in saveGlobal").toBeGreaterThan(-1);
+    expect(securityPut, "security PUT not found in saveGlobal").toBeGreaterThan(-1);
+    const between = body.slice(workSaved, securityPut);
+    // A failing security PUT must not leave a stale ticked box or a stale confirmed selection.
+    expect(between).toMatch(/gApplyToExisting = false;/);
+    expect(between).toMatch(/pendingBulk = null;/);
+    // The success toast reads the selection captured BEFORE the reset.
+    expect(between).toMatch(/const appliedBulk = pendingBulk;/);
+    expect(between.indexOf("const appliedBulk = pendingBulk;")).toBeLessThan(
+      between.indexOf("pendingBulk = null;"),
+    );
   });
 
   it("PUT /settings/security carries exactly one key, maxNegativeBalanceMinutes", () => {
