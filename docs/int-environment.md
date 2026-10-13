@@ -60,7 +60,7 @@ ArgoCD UI → Applications → clokr → "Sync"
 
 ## Secrets
 
-The clokr repo is public on GitHub. Real secrets (JWT_SECRET, JWT_REFRESH_SECRET, ENCRYPTION_KEY, DB passwords) MUST NOT be committed to `charts/clokr-app/values-int.yaml`. The file uses `CHANGEME-*` placeholders.
+The clokr repo is public on GitHub. Real secrets (JWT_SECRET, JWT_REFRESH_SECRET, ENCRYPTION_KEY, the optional OPERATOR_JWT_SECRET, DB passwords) MUST NOT be committed to `charts/clokr-app/values-int.yaml`. The file uses `CHANGEME-*` placeholders.
 
 Real secret values are injected via the **ArgoCD UI Parameters tab**:
 

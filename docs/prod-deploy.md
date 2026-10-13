@@ -45,6 +45,11 @@ JWT_SECRET=<32+ char random>
 JWT_REFRESH_SECRET=<32+ char random>
 ENCRYPTION_KEY=<32+ char random>
 
+# Optional: operator interface (Phase 88). Separate signing secret, min 32 chars and different
+# from the three secrets above; unset or empty keeps the operator interface off. Operator accounts
+# are created with scripts/operator-account.ts (see docs/runbooks/operator-accounts.md).
+OPERATOR_JWT_SECRET=<32+ char random, optional>
+
 # Required: app URLs (must match HAProxy frontend hostname)
 CORS_ORIGIN=https://clokr.example.com
 APP_URL=https://clokr.example.com
