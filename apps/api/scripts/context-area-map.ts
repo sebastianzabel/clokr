@@ -80,6 +80,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/middleware/auth.ts": "rahmen",
   "src/utils/test-database.ts": "rahmen", // sole source of the test-DB name pattern/marker/worker-count (CLAUDE.md) — test infra, not a business context
   "src/utils/with-advisory-lock.ts": "rahmen", // generic Postgres advisory-lock helper; imported by 8 plugins + integrations.ts across every context, owns no model
+  "src/utils/prisma-unique-violation.ts": "rahmen", // generic Prisma P2002 target reader; imported by the platform and scheduling contexts, owns no model
   "src/utils/crypto.ts": "rahmen", // generic crypto helper (hashing/encryption), no model, no single owning context
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
