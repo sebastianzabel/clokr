@@ -117,7 +117,7 @@ describe("DayBreakPanel", () => {
     expect(screen.getAllByTestId("day-break-gap")).toHaveLength(1);
   });
 
-  // Issue #85 D-07 (amended; the former expectation pinned "Insgesamt 8,0 h gearbeitet" for a
+  // Issue #85 D-07 (amended; the former expectation pinned the totals line for a
   // redacted day): a redacted day carries no totals, only the date, the neutral hint and the note.
   it("shows a redacted day as date, neutral hint and out-of-scope note only", () => {
     const { container } = renderWithTheme(DayBreakPanel, { check: redacted() });
