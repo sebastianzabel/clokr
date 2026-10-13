@@ -921,8 +921,14 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   **Scoped callers follow the per-entry rule (Issue #85, D-04/D-06),** which replaces the Phase 84
   "the filter only removes rows" reading for them: on `/team-week`, `/today-attendance` and
   `/team-trend` the population is the Stammsalon persons UNION the persons with an in-scope entry
-  (`scopedTimeEntryIds` + `getRecordedWorkEntriesByIds`), planning data (shifts, contract, leave,
-  holidays) is read for the Stammsalon persons only, and hours come only from in-scope entries.
+  (`scopedTimeEntryIds` + `getRecordedWorkEntriesByIds`), contract, leave, absences and holidays
+  are read for the Stammsalon persons only, shifts are read for every listed person and shown only
+  if `isShiftInScope` admits them (Phase 91b D-11: the shift's own salon or a person in reach,
+  never the Stammsalon, so a Springer listed by an in-scope entry sees the reach's own shifts), a
+  day whose only shift is out of scope reads exactly like a day without a shift (no `shift`, no
+  SHIFT_BASED workday, no due time, no marker), a row listed only by an entry is never „Fehlt“
+  (its absence reasons are held by the Stammsalon; an in-scope shift not yet due makes it
+  „Geplant“, Issue #548), and hours come only from in-scope entries.
   Time the caller cannot see is a neutral `workedElsewhere` and never a live clock-in. The account
   Ist is used only for a person-month whose every entry is in scope; otherwise the in-scope sum is
   shown and `workedBasis` is `SCOPE_ENTRIES` (Soll then `null`, `sollUnavailableReason`

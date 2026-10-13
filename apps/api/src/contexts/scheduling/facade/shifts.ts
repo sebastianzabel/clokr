@@ -26,7 +26,13 @@
  *   |                            | `time-entries.ts:2572`, `overtime.ts:1148`, `month-saldo.ts:194`,  |
  *   |                            | `recalculate-snapshots.ts:350`, `auto-close-month.ts:558`          |
  *   | `label`                    | `dashboard.ts:408/952` (falls back to `template.name`)             |
+ *   | `salonId`                  | `dashboard.ts` team-week: per-shift scope via `isShiftInScope`     |
+ *   |                            | (Phase 91b D-11, Issue #548)                                       |
  *   | `template.name`/`.color`   | `dashboard.ts:408/952` (`include: { template: { select: ... } }`)  |
+ *
+ * `salonId` was added by Issue #548. It is an additive select field: the signature, the `where`
+ * and the ordering are unchanged, and no existing caller changes behaviour (each maps explicit
+ * fields and none serializes the raw row).
  *
  * The remaining 8 sites (`dashboard.ts:1171`, `attendance-checker.ts:668/844`,
  * `overtime.ts:532/828`, `month-saldo.ts:194`†, `auto-close-month.ts:360`) select only `date` (or
@@ -114,6 +120,7 @@ export async function getShiftsInRange(
     select: {
       id: true,
       employeeId: true,
+      salonId: true, // Issue #548 — lets the dashboard apply the per-shift scope (D-11)
       date: true,
       startTime: true,
       endTime: true,
