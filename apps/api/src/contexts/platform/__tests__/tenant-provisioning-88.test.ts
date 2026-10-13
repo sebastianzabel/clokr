@@ -258,6 +258,17 @@ describe("seed parity — D-04a deviation", () => {
 //   provisioning has an empty userId and the OPERATOR actor".
 // - M5: pass a tenant-user-shaped `userId` (a fake id) in the operator port -> red: the audit insert
 //   violates the User foreign key, so every L3 case fails, (f) among them.
+// Issue #567 (quick 261013-smt, 2026-10-13), the (h) cases, each run red then restored from a `cp`
+// backup:
+// - M6: add the error's message property to `uniqueViolationTarget`'s joined parts -> red: "(h) an
+//   e-mail collision stays EMAIL_TAKEN when the error message mentions slug" (and the helper's own
+//   "ignores the message property" case).
+// - M7: swap the two return values of `conflictFromUniqueViolation` -> red: all three (h) cases and
+//   the operator route's slug and e-mail race cases.
+// - M8: return SLUG_TAKEN for every P2002 -> red: both (h) e-mail cases and the route e-mail case.
+// Measured against the pre-#567 classifier (origin/main copy): only the message-mentions-slug case
+// is red; the plain e-mail race was already green there, because the real message echo happens not to
+// contain the word slug. The bug needs an invocation echo that does, e.g. a slug-like admin e-mail.
 describe("provisionTenantWithAdmin (L3, Phase 88 plan 10)", () => {
   let app: FastifyInstance;
   let operatorId: string;

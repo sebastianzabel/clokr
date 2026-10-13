@@ -310,6 +310,48 @@ describe("POST /api/v1/operator/tenants (tracer)", () => {
     expect(await app.prisma.tenant.count({ where: { slug: first.body.slug } })).toBe(1);
   });
 
+  it("maps an e-mail unique race after the pre-checks to 409 EMAIL_TAKEN", async () => {
+    const first = await createTenant("mailrace");
+    // Hide only the e-mail pre-check from L3 so the user insert itself hits the unique index
+    // (Issue #567): the answer must name the e-mail, not the slug, and everything rolls back.
+    const original = app.prisma.$transaction.bind(app.prisma);
+    const spy = vi.spyOn(app.prisma, "$transaction").mockImplementationOnce(((
+      fn: (tx: unknown) => Promise<unknown>,
+    ) =>
+      original(async (tx) => {
+        const proxy = new Proxy(tx, {
+          get(target, prop) {
+            const value = Reflect.get(target, prop);
+            if (prop === "user") {
+              return new Proxy(value as object, {
+                get(t, p) {
+                  if (p === "findUnique") {
+                    return async (args: { where?: { email?: unknown } }) =>
+                      args.where?.email !== undefined
+                        ? null
+                        : (t as { findUnique: (a: unknown) => unknown }).findUnique(args);
+                  }
+                  const member = Reflect.get(t, p);
+                  return typeof member === "function" ? member.bind(t) : member;
+                },
+              });
+            }
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        return fn(proxy);
+      })) as never);
+    const body = createBody("mailrace2");
+    body.admin.email = first.body.admin.email;
+    const res = await call("POST", BASE, operatorToken, body);
+    spy.mockRestore();
+    expect(res.statusCode, res.body).toBe(409);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.code).toBe("EMAIL_TAKEN");
+    expect(parsed.error).toBe("Diese E-Mail-Adresse ist bereits vergeben.");
+    expect(await app.prisma.tenant.count({ where: { slug: body.slug } })).toBe(0);
+  });
+
   it("still creates the tenant when the mail fails and reports invitationMailSent false", async () => {
     mailSpy.mockRejectedValueOnce(new Error("SMTP nicht konfiguriert"));
     const body = createBody("nomail");

@@ -8,6 +8,7 @@
  * restored from a `cp` backup:
  * - M6: add the error's message property as a fifth joined part -> red: "ignores the message
  *   property" here and the tenant-provisioning "(h) ... message mentions slug" case.
+ * - M7 and M8 mutate the caller's classifier and are recorded in `tenant-provisioning-88.test.ts`.
  */
 import { describe, it, expect } from "vitest";
 import { uniqueViolationTarget } from "../prisma-unique-violation";
