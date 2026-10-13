@@ -159,6 +159,10 @@ interface OperatorMock {
     detail: MockTenant;
     /** What POST /tenants/:TENANT_ID/resend-admin-invitation answers. */
     resend: ResendOutcome;
+    /** What GET /tenants/:TENANT_ID/salons serves; a successful salon write changes it. */
+    salons: MockSalon[];
+    /** When set, every salon write is refused with this status and code (the body is not stored). */
+    salonRefusal: { status: number; code: string } | null;
   };
 }
 
@@ -177,6 +181,8 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
       mailSent: true,
       detail: { ...TENANT },
       resend: "sent",
+      salons: structuredClone(SALONS),
+      salonRefusal: null,
     },
   };
   await page.route("**/api/v1/operator/**", async (route) => {
@@ -276,8 +282,59 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
         ? route.fulfill({ status: 200, json: [] })
         : route.fulfill({ status: 200, json: createdTenant });
     }
-    if (path === `/tenants/${TENANT_ID}/salons`) {
-      return route.fulfill({ status: 200, json: SALONS });
+    if (path === `/tenants/${TENANT_ID}/salons` && method === "GET") {
+      return route.fulfill({ status: 200, json: mock.state.salons });
+    }
+    if (
+      path.startsWith(`/tenants/${TENANT_ID}/salons`) &&
+      (method === "POST" || method === "PATCH")
+    ) {
+      const refusal = mock.state.salonRefusal;
+      if (refusal) {
+        // The server's own text is deliberately NOT the console's sentence: the console must
+        // choose its wording by the code.
+        return route.fulfill({
+          status: refusal.status,
+          json: { error: "Serverseitiger Text, der nicht angezeigt wird.", code: refusal.code },
+        });
+      }
+      const input = (body ?? {}) as Record<string, unknown>;
+      const coupling = input.coupling as { externalBranchId: string } | null | undefined;
+      const couplingOf = (value: typeof coupling): MockSalon["coupling"] =>
+        value ? { provider: "PHOREST", externalBranchId: value.externalBranchId } : null;
+      if (method === "POST") {
+        const created: MockSalon = {
+          id: randomUUID(),
+          name: String(input.name),
+          street: (input.street as string | undefined) ?? null,
+          postalCode: (input.postalCode as string | undefined) ?? null,
+          city: (input.city as string | undefined) ?? null,
+          openingHours: input.openingHours as MockSalon["openingHours"],
+          federalState: String(input.federalState),
+          isActive: true,
+          deactivatedAt: null,
+          createdAt: "2026-10-13T08:00:00.000Z",
+          isDefault: false,
+          coupling: couplingOf(coupling),
+        };
+        mock.state.salons = [...mock.state.salons, created];
+        return route.fulfill({ status: 201, json: created });
+      }
+      const salonId = path.split("/").pop();
+      const current = mock.state.salons.find((salon) => salon.id === salonId);
+      if (!current) {
+        return route.fulfill({ status: 404, json: { error: "Salon nicht gefunden" } });
+      }
+      const { coupling: _coupling, ...rest } = input;
+      const updated: MockSalon = {
+        ...current,
+        ...(rest as Partial<MockSalon>),
+        ...("coupling" in input ? { coupling: couplingOf(coupling) } : {}),
+      };
+      mock.state.salons = mock.state.salons.map((salon) =>
+        salon.id === salonId ? updated : salon,
+      );
+      return route.fulfill({ status: 200, json: updated });
     }
     if (path === `/tenants/${TENANT_ID}` && method === "PATCH") {
       mock.state.detail = { ...mock.state.detail, name: String(body?.name).trim() };
@@ -1089,5 +1146,229 @@ test.describe("operator console - tenant lifecycle", () => {
     });
     expect(overflow.page).toBeLessThanOrEqual(0);
     expect(overflow.beyond).toBe(0);
+  });
+});
+
+test.describe("operator console - salon form", () => {
+  const SECOND_SALON_ID = randomUUID();
+  const SECOND_SALON: MockSalon = {
+    id: SECOND_SALON_ID,
+    name: "Zweitsalon",
+    street: null,
+    postalCode: null,
+    city: null,
+    openingHours: HOURS,
+    federalState: "HESSEN",
+    isActive: true,
+    deactivatedAt: null,
+    createdAt: "2026-03-05T08:00:00.000Z",
+    isDefault: false,
+    coupling: null,
+  };
+
+  async function openTenantPage(page: Page, twoActiveSalons = true) {
+    const mock = await mockOperatorApi(page);
+    if (twoActiveSalons) mock.state.salons = [...mock.state.salons, structuredClone(SECOND_SALON)];
+    await seedOperatorSession(page);
+    await page.goto(`/betreiber/mandanten/${TENANT_ID}`);
+    await expect(page.getByTestId("op-salons-table")).toBeVisible();
+    return mock;
+  }
+
+  /** The body of the last salon write of the given method. */
+  function lastSalonBody(mock: OperatorMock, method: "POST" | "PATCH"): Record<string, unknown> {
+    const writes = mock.calls.filter(
+      (call) => call.method === method && call.path.startsWith(`/tenants/${TENANT_ID}/salons`),
+    );
+    const last = writes.at(-1);
+    if (!last?.body) throw new Error(`no ${method} salon request was recorded`);
+    return last.body;
+  }
+
+  test("create: the Bundesland keeps the submit disabled, the POST carries seven days and no coupling key", async ({
+    page,
+  }) => {
+    const mock = await openTenantPage(page);
+
+    await page.getByTestId("op-salon-create").click();
+    await expect(page.getByTestId("op-salon-dialog")).toBeVisible();
+    await expect(page.getByTestId("op-salon-federal-state")).toHaveValue("");
+    await page.getByTestId("op-salon-name").fill("Neuer Salon");
+    await expect(page.getByTestId("op-salon-submit")).toBeDisabled();
+
+    await page.getByTestId("op-salon-federal-state").selectOption("BAYERN");
+    await expect(page.getByTestId("op-salon-submit")).toBeEnabled();
+    // The hours start from the Standardsalon's: Montag-Freitag 09:00-18:00, Samstag/Sonntag closed.
+    await expect(page.getByTestId("op-salon-hours-0-from")).toHaveValue("09:00");
+    await expect(page.getByTestId("op-salon-hours-5-open")).not.toBeChecked();
+    await page.getByTestId("op-salon-submit").click();
+
+    await expect(page.getByTestId("op-salon-dialog")).toHaveCount(0);
+    await expect(page.getByTestId("op-salons-table")).toContainText("Neuer Salon");
+
+    const body = lastSalonBody(mock, "POST");
+    expect(body.name).toBe("Neuer Salon");
+    expect(body.federalState).toBe("BAYERN");
+    expect("coupling" in body).toBe(false);
+    const hours = body.openingHours as Array<Record<string, unknown>>;
+    expect(hours).toHaveLength(7);
+    expect(hours.map((entry) => entry.day)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(hours[0]).toEqual({ day: 0, open: "09:00", close: "18:00", closed: false });
+    expect(hours[6]).toEqual({ day: 6, open: "09:00", close: "18:00", closed: true });
+    // The list was re-read from the server after the save.
+    expect(mock.seen.filter((entry) => entry === `GET /tenants/${TENANT_ID}/salons`).length).toBe(
+      2,
+    );
+  });
+
+  test("edit: a name-only change sends exactly { name } and the save waits for a change", async ({
+    page,
+  }) => {
+    const mock = await openTenantPage(page);
+
+    await page.getByTestId(`op-salon-edit-${SECOND_SALON_ID}`).click();
+    await expect(page.getByTestId("op-salon-name")).toHaveValue("Zweitsalon");
+    await expect(page.getByTestId("op-salon-submit")).toBeDisabled();
+    await page.getByTestId("op-salon-name").fill("Umbenannter Salon");
+    await expect(page.getByTestId("op-salon-submit")).toBeEnabled();
+    await page.getByTestId("op-salon-submit").click();
+
+    await expect(page.getByTestId("op-salon-dialog")).toHaveCount(0);
+    await expect(page.getByTestId(`op-salon-name-${SECOND_SALON_ID}`)).toHaveText(
+      "Umbenannter Salon",
+    );
+    expect(lastSalonBody(mock, "PATCH")).toEqual({ name: "Umbenannter Salon" });
+  });
+
+  test("a refused Bundesland change shows the reason on top and marks the field, the dialog stays", async ({
+    page,
+  }) => {
+    const mock = await openTenantPage(page);
+    mock.state.salonRefusal = { status: 409, code: "FEDERAL_STATE_IN_USE" };
+
+    await page.getByTestId(`op-salon-edit-${SECOND_SALON_ID}`).click();
+    await page.getByTestId("op-salon-federal-state").selectOption("BAYERN");
+    await page.getByTestId("op-salon-submit").click();
+
+    const reason = page.getByTestId("op-salon-reason");
+    await expect(reason).toHaveAttribute("data-code", "FEDERAL_STATE_IN_USE");
+    await expect(reason).toContainText("Ein Umzug ist ein neuer Salon.");
+    await expect(page.getByTestId("op-salon-federal-state")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await expect(page.getByTestId("op-salon-dialog")).toBeVisible();
+    expect(lastSalonBody(mock, "PATCH")).toEqual({ federalState: "BAYERN" });
+  });
+
+  test("coupling: set from Keine sends { coupling: { externalBranchId } } and the row shows it", async ({
+    page,
+  }) => {
+    const mock = await openTenantPage(page);
+
+    await page.getByTestId(`op-salon-edit-${SECOND_SALON_ID}`).click();
+    await page.getByTestId("op-salon-coupling-provider").selectOption("PHOREST");
+    await expect(page.getByTestId("op-salon-submit")).toBeDisabled();
+    await page.getByTestId("op-salon-coupling-branch").fill("branch-new-1");
+    await page.getByTestId("op-salon-submit").click();
+
+    await expect(page.getByTestId("op-salon-dialog")).toHaveCount(0);
+    await expect(page.getByTestId(`op-salon-coupling-${SECOND_SALON_ID}`)).toContainText(
+      "Phorest · branch-new-1",
+    );
+    expect(lastSalonBody(mock, "PATCH")).toEqual({
+      coupling: { externalBranchId: "branch-new-1" },
+    });
+  });
+
+  test("coupling: replacing the branch sends the new branch and nothing else", async ({ page }) => {
+    const mock = await openTenantPage(page);
+
+    await page.getByTestId(`op-salon-edit-${DEFAULT_SALON_ID}`).click();
+    await expect(page.getByTestId("op-salon-coupling-branch")).toHaveValue(BRANCH_ID);
+    await page.getByTestId("op-salon-coupling-branch").fill("branch-replaced");
+    await page.getByTestId("op-salon-submit").click();
+
+    await expect(page.getByTestId("op-salon-dialog")).toHaveCount(0);
+    await expect(page.getByTestId(`op-salon-coupling-${DEFAULT_SALON_ID}`)).toContainText(
+      "Phorest · branch-replaced",
+    );
+    expect(lastSalonBody(mock, "PATCH")).toEqual({
+      coupling: { externalBranchId: "branch-replaced" },
+    });
+  });
+
+  test("coupling: removal shows its hint before the save and sends { coupling: null }", async ({
+    page,
+  }) => {
+    const mock = await openTenantPage(page);
+
+    await page.getByTestId(`op-salon-edit-${DEFAULT_SALON_ID}`).click();
+    await expect(page.getByTestId("op-salon-coupling-remove-hint")).toHaveCount(0);
+    await page.getByTestId("op-salon-coupling-provider").selectOption("NONE");
+    await expect(page.getByTestId("op-salon-coupling-remove-hint")).toBeVisible();
+    expect(mock.calls.filter((call) => call.method === "PATCH")).toHaveLength(0);
+    await page.getByTestId("op-salon-submit").click();
+
+    await expect(page.getByTestId("op-salon-dialog")).toHaveCount(0);
+    await expect(page.getByTestId(`op-salon-coupling-${DEFAULT_SALON_ID}`)).toContainText("Keine");
+    expect(lastSalonBody(mock, "PATCH")).toEqual({ coupling: null });
+  });
+
+  test("a branch already coupled elsewhere attaches to the Filialkennung by its code", async ({
+    page,
+  }) => {
+    const mock = await openTenantPage(page);
+    mock.state.salonRefusal = { status: 409, code: "BRANCH_ALREADY_COUPLED" };
+
+    await page.getByTestId(`op-salon-edit-${SECOND_SALON_ID}`).click();
+    await page.getByTestId("op-salon-coupling-provider").selectOption("PHOREST");
+    await page.getByTestId("op-salon-coupling-branch").fill(BRANCH_ID);
+    await page.getByTestId("op-salon-submit").click();
+
+    const message = page.getByTestId("op-salon-coupling-branch-error");
+    await expect(message).toHaveAttribute("data-code", "BRANCH_ALREADY_COUPLED");
+    await expect(page.getByTestId("op-salon-coupling-branch")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await expect(page.getByTestId("op-salon-dialog")).toBeVisible();
+    await expect(page.getByTestId("op-salon-error")).toHaveCount(0);
+  });
+
+  test("the single-salon hint shows with exactly one active salon and not with two", async ({
+    page,
+  }) => {
+    await openTenantPage(page, false);
+    await page.getByTestId("op-salon-create").click();
+    await expect(page.getByTestId("op-salon-single-salon-hint")).toBeVisible();
+    await page.getByTestId("op-salon-cancel").click();
+    await expect(page.getByTestId("op-salon-dialog")).toHaveCount(0);
+  });
+
+  test("the single-salon hint is absent on a tenant with two active salons", async ({ page }) => {
+    await openTenantPage(page, true);
+    await page.getByTestId("op-salon-create").click();
+    await expect(page.getByTestId("op-salon-dialog")).toBeVisible();
+    await expect(page.getByTestId("op-salon-single-salon-hint")).toHaveCount(0);
+  });
+
+  test("at 360 px the dialog's von/bis inputs share a line and nothing overflows", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 360, height: 800 });
+    await openTenantPage(page);
+    await page.getByTestId("op-salon-create").click();
+    await expect(page.getByTestId("op-salon-dialog")).toBeVisible();
+
+    const from = await page.getByTestId("op-salon-hours-0-from").boundingBox();
+    const to = await page.getByTestId("op-salon-hours-0-to").boundingBox();
+    expect(from && to).toBeTruthy();
+    expect(Math.abs((from?.y ?? 0) - (to?.y ?? 100))).toBeLessThan(2);
+    expect((to?.x ?? 0) + (to?.width ?? 0)).toBeLessThanOrEqual(360);
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    );
+    expect(overflow).toBe(false);
   });
 });
