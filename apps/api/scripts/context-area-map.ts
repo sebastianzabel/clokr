@@ -161,6 +161,9 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/role-assignment-audit.ts": "unterbau", // Phase 75b Plan 11 (Issue #75) — shared audit helpers for RoleAssignment writes (moved out of api/role-assignments.ts) plus the compatRole-on-last-row rule (D-29); writes AuditLog only via app.audit, Unterbau models
   "src/contexts/platform/scope-filter.ts": "unterbau", // Phase 91b (Issue #91), D-07 — the ONE shared module every context's scope check calls (TimeEntry/EmployeeSalonAssignment/Shift/Employee reads on behalf of all four contexts, per its own module docblock); same category as access-context.ts/request-permissions.ts — shared Unterbau substrate, owned by no single context, per ADR 0002
   "src/contexts/platform/usual-work-days.ts": "unterbau", // Phase 436 (Issue #436), D-01 — validateUsualWorkDays(), the one write-path validation for WorkSchedule.usualWorkDays, an Unterbau model
+  "src/contexts/platform/tenant-provisioning.ts": "unterbau", // Phase 88 plan 05 (D-04/D-04a) — the one tenant-skeleton rule (Tenant + TenantConfig + default salon), Unterbau models only
+  "src/contexts/platform/operator-audit.ts": "unterbau", // Phase 88 (operator account) — operator audit helpers, Unterbau-owned; mapped here because the exhaustiveness test was red for it since the earlier 88 plans
+  "src/contexts/platform/operator-credentials.ts": "unterbau", // Phase 88 (operator account) — operator credential handling, Unterbau-owned; mapped here for the same reason as operator-audit.ts
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────
