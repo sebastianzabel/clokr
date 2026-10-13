@@ -163,6 +163,8 @@ interface OperatorMock {
     salons: MockSalon[];
     /** When set, every salon write is refused with this status and code (the body is not stored). */
     salonRefusal: { status: number; code: string } | null;
+    /** When set, every salon deactivate / activate is refused with this status and code. */
+    lifecycleRefusal: { status: number; code: string } | null;
   };
 }
 
@@ -183,6 +185,7 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
       resend: "sent",
       salons: structuredClone(SALONS),
       salonRefusal: null,
+      lifecycleRefusal: null,
     },
   };
   await page.route("**/api/v1/operator/**", async (route) => {
@@ -284,6 +287,34 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
     }
     if (path === `/tenants/${TENANT_ID}/salons` && method === "GET") {
       return route.fulfill({ status: 200, json: mock.state.salons });
+    }
+    const lifecycle = new RegExp(
+      `^/tenants/${TENANT_ID}/salons/([^/]+)/(deactivate|activate)$`,
+    ).exec(path);
+    if (lifecycle && method === "POST") {
+      const [, salonId, action] = lifecycle;
+      const refusal = mock.state.lifecycleRefusal;
+      if (refusal) {
+        // The server's own text is deliberately NOT the console's sentence: the console must
+        // choose its wording by the code.
+        return route.fulfill({
+          status: refusal.status,
+          json: { error: "Serverseitiger Text, der nicht angezeigt wird.", code: refusal.code },
+        });
+      }
+      const current = mock.state.salons.find((salon) => salon.id === salonId);
+      if (!current) {
+        return route.fulfill({ status: 404, json: { error: "Salon nicht gefunden" } });
+      }
+      const updated: MockSalon = {
+        ...current,
+        isActive: action === "activate",
+        deactivatedAt: action === "activate" ? null : "2026-10-13T08:00:00.000Z",
+      };
+      mock.state.salons = mock.state.salons.map((salon) =>
+        salon.id === salonId ? updated : salon,
+      );
+      return route.fulfill({ status: 200, json: updated });
     }
     if (
       path.startsWith(`/tenants/${TENANT_ID}/salons`) &&
@@ -1370,5 +1401,179 @@ test.describe("operator console - salon form", () => {
       () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
     );
     expect(overflow).toBe(false);
+  });
+});
+
+test.describe("operator console - salon lifecycle", () => {
+  const SECOND_SALON_ID = randomUUID();
+  const SECOND_SALON: MockSalon = {
+    id: SECOND_SALON_ID,
+    name: "Zweitsalon",
+    street: null,
+    postalCode: null,
+    city: null,
+    openingHours: HOURS,
+    federalState: "HESSEN",
+    isActive: true,
+    deactivatedAt: null,
+    createdAt: "2026-03-05T08:00:00.000Z",
+    isDefault: false,
+    coupling: null,
+  };
+
+  /** Hauptsalon (active) + Altsalon (inactive) from the base mock; `twoActive` adds Zweitsalon. */
+  async function openTenantPage(page: Page, twoActive = true) {
+    const mock = await mockOperatorApi(page);
+    if (twoActive) mock.state.salons = [...mock.state.salons, structuredClone(SECOND_SALON)];
+    await seedOperatorSession(page);
+    await page.goto(`/betreiber/mandanten/${TENANT_ID}`);
+    await expect(page.getByTestId("op-salons-table")).toBeVisible();
+    return mock;
+  }
+
+  const confirmDialog = (page: Page) => page.getByRole("dialog", { name: "Salon deaktivieren?" });
+
+  test("a refused deactivation (HOME_SALON_IN_USE) is shown by its code inside the open dialog", async ({
+    page,
+  }) => {
+    const mock = await openTenantPage(page);
+    mock.state.lifecycleRefusal = { status: 409, code: "HOME_SALON_IN_USE" };
+
+    await page.getByTestId(`op-salon-deactivate-${SECOND_SALON_ID}`).click();
+    await expect(confirmDialog(page)).toBeVisible();
+    await confirmDialog(page).getByRole("button", { name: "Salon deaktivieren" }).click();
+
+    const error = page.getByTestId("op-salon-deactivate-error");
+    await expect(error).toHaveAttribute("data-code", "HOME_SALON_IN_USE");
+    await expect(error).toContainText("noch Stammsalon von Mitarbeitenden");
+    await expect(error).not.toContainText("Serverseitiger Text");
+    await expect(confirmDialog(page)).toBeVisible();
+    await expect(page.getByTestId(`op-salon-status-${SECOND_SALON_ID}`)).toHaveAttribute(
+      "data-state",
+      "active",
+    );
+  });
+
+  test("LAST_ACTIVE_SALON from a stale page (two salons listed) shows in the dialog", async ({
+    page,
+  }) => {
+    const mock = await openTenantPage(page);
+    mock.state.lifecycleRefusal = { status: 409, code: "LAST_ACTIVE_SALON" };
+
+    await page.getByTestId(`op-salon-deactivate-${SECOND_SALON_ID}`).click();
+    await confirmDialog(page).getByRole("button", { name: "Salon deaktivieren" }).click();
+
+    await expect(page.getByTestId("op-salon-deactivate-error")).toHaveAttribute(
+      "data-code",
+      "LAST_ACTIVE_SALON",
+    );
+    await expect(confirmDialog(page)).toBeVisible();
+  });
+
+  test("the dialog names the consequences and a successful deactivation shows the row as deactivated", async ({
+    page,
+  }) => {
+    const mock = await openTenantPage(page);
+
+    await page.getByTestId(`op-salon-deactivate-${SECOND_SALON_ID}`).click();
+    await expect(confirmDialog(page)).toContainText("„Zweitsalon“ wird deaktiviert.");
+    await expect(confirmDialog(page)).toContainText("Einsatzsalon-Zuordnungen enden");
+    expect(mock.calls.some((call) => call.path.endsWith("/deactivate"))).toBe(false);
+
+    await confirmDialog(page).getByRole("button", { name: "Salon deaktivieren" }).click();
+    await expect(confirmDialog(page)).toHaveCount(0);
+    await expect(page.getByTestId(`op-salon-status-${SECOND_SALON_ID}`)).toHaveAttribute(
+      "data-state",
+      "deactivated",
+    );
+    expect(mock.seen).toContain(`POST /tenants/${TENANT_ID}/salons/${SECOND_SALON_ID}/deactivate`);
+    // The list was reloaded from the server, not edited locally.
+    expect(mock.seen.filter((entry) => entry === `GET /tenants/${TENANT_ID}/salons`).length).toBe(
+      2,
+    );
+  });
+
+  test("activation needs no dialog and shows the row as active", async ({ page }) => {
+    const mock = await openTenantPage(page);
+
+    await page.getByTestId(`op-salon-activate-${OLD_SALON_ID}`).click();
+
+    await expect(page.getByTestId(`op-salon-status-${OLD_SALON_ID}`)).toHaveAttribute(
+      "data-state",
+      "active",
+    );
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(mock.seen).toContain(`POST /tenants/${TENANT_ID}/salons/${OLD_SALON_ID}/activate`);
+  });
+
+  test("ALREADY_ACTIVE lands in the page notice with its code, and the next success clears it", async ({
+    page,
+  }) => {
+    const mock = await openTenantPage(page);
+    mock.state.lifecycleRefusal = { status: 409, code: "ALREADY_ACTIVE" };
+
+    await page.getByTestId(`op-salon-activate-${OLD_SALON_ID}`).click();
+    const notice = page.getByTestId("op-salons-notice");
+    await expect(notice).toHaveAttribute("data-code", "ALREADY_ACTIVE");
+    await expect(notice).toHaveAttribute("role", "alert");
+    await expect(notice).toContainText("Salon „Altsalon“: Der Salon ist bereits aktiv.");
+
+    mock.state.lifecycleRefusal = null;
+    await page.getByTestId(`op-salon-activate-${OLD_SALON_ID}`).click();
+    await expect(page.getByTestId("op-salons-notice")).toHaveCount(0);
+  });
+
+  test("a tenant with one active salon: Deaktivieren is aria-disabled, the note is visible, no request leaves", async ({
+    page,
+  }) => {
+    const mock = await openTenantPage(page, false);
+
+    const control = page.getByTestId(`op-salon-deactivate-${DEFAULT_SALON_ID}`);
+    await expect(control).toHaveAttribute("aria-disabled", "true");
+    await expect(page.getByTestId("op-salons-last-active-note")).toBeVisible();
+    await expect(page.getByTestId("op-salons-last-active-note")).toContainText(
+      "Der letzte aktive Salon lässt sich nicht deaktivieren.",
+    );
+    // Playwright treats aria-disabled as not actionable; a user can still press it, so force it.
+    await control.click({ force: true });
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(mock.calls.some((call) => call.path.endsWith("/deactivate"))).toBe(false);
+  });
+
+  test("a deactivated tenant shows the hint and freezes the salon controls", async ({ page }) => {
+    const mock = await mockOperatorApi(page);
+    mock.state.detail = {
+      ...mock.state.detail,
+      deactivatedAt: "2026-10-01T08:00:00.000Z",
+      deactivatedReason: "Vertrag beendet",
+    };
+    await seedOperatorSession(page);
+    await page.goto(`/betreiber/mandanten/${TENANT_ID}`);
+    await expect(page.getByTestId("op-salons-table")).toBeVisible();
+
+    await expect(page.getByTestId("op-salons-tenant-frozen-hint")).toContainText(
+      "Der Mandant ist deaktiviert. Änderungen sind erst nach der Reaktivierung möglich.",
+    );
+    await expect(page.getByTestId("op-salon-create")).toBeDisabled();
+    await expect(page.getByTestId(`op-salon-edit-${DEFAULT_SALON_ID}`)).toBeDisabled();
+    await expect(page.getByTestId(`op-salon-deactivate-${DEFAULT_SALON_ID}`)).toBeDisabled();
+    await expect(page.getByTestId(`op-salon-activate-${OLD_SALON_ID}`)).toBeDisabled();
+    await expect(page.getByTestId("op-salon-create")).toHaveAttribute(
+      "aria-describedby",
+      "op-salons-tenant-frozen-hint",
+    );
+  });
+
+  test("an active tenant shows no frozen hint", async ({ page }) => {
+    await openTenantPage(page);
+    await expect(page.getByTestId("op-salons-tenant-frozen-hint")).toHaveCount(0);
+    await expect(page.getByTestId("op-salon-create")).toBeEnabled();
+  });
+
+  test("no element on the tenant page is named like a delete action", async ({ page }) => {
+    await openTenantPage(page);
+    await expect(page.getByRole("button", { name: /löschen|entfernen/i })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /löschen|entfernen/i })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: /löschen|entfernen/i })).toHaveCount(0);
   });
 });
