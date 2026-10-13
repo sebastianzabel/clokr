@@ -257,3 +257,37 @@ export function holidayFreeMondayStr(
       `weeksAhead=${weeksAhead}, state=${state}`,
   );
 }
+
+/**
+ * The earliest effective date a tenant-wide bulk apply of the default working time accepts
+ * (Issue #568, D-05, § 3 Satz 1 NachwG): today when today is the 1st, else the 1st of the following
+ * month, in the tenant timezone. An independent mirror of the server rule, built on `todayStr`.
+ */
+export function earliestBulkEffectiveFromStr(tz: string = TEST_TZ): string {
+  const today = todayStr(tz);
+  if (today.endsWith("-01")) return today;
+  const [y, m] = today.split("-").map(Number);
+  return dbDateStr(new Date(Date.UTC(y, m, 1)));
+}
+
+/** The 1st of the month `months` calendar months after the CURRENT tenant-local month, "YYYY-MM-01". */
+export function monthFirstAheadStr(months: number, tz: string = TEST_TZ): string {
+  const [y, m] = todayStr(tz).split("-").map(Number);
+  return dbDateStr(new Date(Date.UTC(y, m - 1 + months, 1)));
+}
+
+/**
+ * An instant on the 11th of the current tenant-local month, mid-morning (09:00 UTC = 10:00 or 11:00
+ * Europe/Berlin) — safely away from every month boundary, for pinning the fake clock of a test that
+ * expects "next month's 1st" to be the earliest bulk effective date.
+ */
+export function midMonthInstant(tz: string = TEST_TZ): Date {
+  const [y, m] = todayStr(tz).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 11, 9, 0, 0));
+}
+
+/** An instant on the 1st of the NEXT tenant-local month, 09:00 UTC (10:00 or 11:00 Europe/Berlin). */
+export function firstOfNextMonthInstant(tz: string = TEST_TZ): Date {
+  const [y, m] = todayStr(tz).split("-").map(Number);
+  return new Date(Date.UTC(y, m, 1, 9, 0, 0));
+}

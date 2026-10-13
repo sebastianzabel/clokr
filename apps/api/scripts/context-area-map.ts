@@ -84,6 +84,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
+  "src/__tests__/bulk-apply-helpers.ts": "rahmen", // Issue #568 — shared two-step bulk-apply test helper, no model
   "src/__tests__/legacy-role-migration-sql.ts": "rahmen", // Phase 75b (Issue #75) — test infra that runs the checked-in legacy-role data migration verbatim; no model of its own
   "src/__tests__/neutrality/route-derivation.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: parses the route set from source; test infra, no model
   "src/__tests__/neutrality/matrix-config.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: checked-in route specs and exclusions; test infra, no model
