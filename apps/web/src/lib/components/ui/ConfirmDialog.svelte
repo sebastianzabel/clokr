@@ -81,6 +81,12 @@
       // behave like a normal cancel (i.e. fire onCancel).
       confirming = true;
       open = false;
+    } catch {
+      // A rejecting onConfirm is an expected refusal (the caller shows its own
+      // reason inside the dialog). handleConfirm runs from a click handler that
+      // nobody awaits, so rethrowing would surface as an unhandled promise
+      // rejection in the browser (and be posted by the tenant client logger).
+      // The dialog simply stays open; no caller can observe the rethrow.
     } finally {
       pending = false;
     }

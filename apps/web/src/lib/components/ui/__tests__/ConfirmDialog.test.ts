@@ -90,45 +90,79 @@ describe("ConfirmDialog — dismiss paths (Phase 76.13 UI-V19-05)", () => {
   });
 
   it("onConfirm throws → dialog stays open, onCancel NEVER called (then ESC fires onCancel)", async () => {
-    // Regression guard for the subtle invariant in ConfirmDialog.svelte:65-78:
+    // Regression guard for the invariant in ConfirmDialog.svelte handleConfirm:
     // `confirming = true` MUST be set AFTER `await onConfirm()` resolves, so a
     // throwing handler short-circuits both `confirming = true` and `open = false`.
-    // If someone refactors handleConfirm and moves `confirming = true` before
-    // the await, the dialog would silently fire onCancel on every failure,
-    // which contradicts the documented contract on ConfirmDialog.svelte:71-72.
-    // Svelte's onclick handler does NOT await async handlers, so when
-    // `handleConfirm` rejects (because `await onConfirm()` throws), the
-    // returned promise's rejection leaks as an unhandled rejection in vitest.
-    // Suppress it at the Node process level for the duration of this test.
     const expected = new Error("boom");
-    const onUnhandled = (reason: unknown) => {
-      if (reason === expected) return; // swallow the expected leak only.
-      throw reason; // re-surface any unexpected rejection.
-    };
-    process.on("unhandledRejection", onUnhandled);
+    const onConfirm = vi.fn().mockRejectedValue(expected);
+    const props = baseProps({ onConfirm });
+    renderWithTheme(ConfirmDialog, props);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+    expect(props.onCancel).not.toHaveBeenCalled();
+
+    // Subsequent ESC SHOULD fire onCancel - the failure path resets to a normal
+    // dismiss cycle.
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(props.onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("onConfirm rejects → no unhandled rejection, buttons usable again, dialog open", async () => {
+    // handleConfirm runs from a click handler nobody awaits: a rethrow would be an
+    // unhandled promise rejection (in the browser: posted by the client logger).
+    // Observe both channels: jsdom's window event and Node's process event.
+    const windowEvents: unknown[] = [];
+    const processEvents: unknown[] = [];
+    const onWindow = (e: Event) => windowEvents.push(e);
+    const onProcess = (reason: unknown) => processEvents.push(reason);
+    window.addEventListener("unhandledrejection", onWindow);
+    process.on("unhandledRejection", onProcess);
 
     try {
-      const onConfirm = vi.fn().mockRejectedValue(expected);
+      const onConfirm = vi.fn().mockRejectedValue(new Error("refused"));
       const props = baseProps({ onConfirm });
       renderWithTheme(ConfirmDialog, props);
 
       await fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
-      // Dialog stays open after rejection — confirm called once, no cancel.
       await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+      // Let any leaked rejection reach the event loop.
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(windowEvents).toHaveLength(0);
+      expect(processEvents).toHaveLength(0);
       expect(screen.queryByRole("dialog")).not.toBeNull();
-      expect(props.onCancel).not.toHaveBeenCalled();
-
-      // Subsequent ESC SHOULD fire onCancel — failure path resets to a normal
-      // dismiss cycle (per the comment at ConfirmDialog.svelte:71-72).
-      await fireEvent.keyDown(window, { key: "Escape" });
-      expect(props.onCancel).toHaveBeenCalledTimes(1);
-
-      // Drain any pending microtasks so the expected unhandled rejection
-      // fires while our listener is still attached.
-      await new Promise((r) => setTimeout(r, 0));
+      // `pending` is reset: the confirm button is enabled again and can retry.
+      const confirm = screen.getByRole("button", { name: "Bestätigen" }) as HTMLButtonElement;
+      expect(confirm.disabled).toBe(false);
+      await fireEvent.click(confirm);
+      await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(2));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(windowEvents).toHaveLength(0);
+      expect(processEvents).toHaveLength(0);
     } finally {
-      process.off("unhandledRejection", onUnhandled);
+      window.removeEventListener("unhandledrejection", onWindow);
+      process.off("unhandledRejection", onProcess);
     }
+  });
+
+  it("onConfirm rejects once, then resolves → dialog closes, onCancel NEVER called", async () => {
+    const onConfirm = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("refused"))
+      .mockResolvedValueOnce(undefined);
+    const props = baseProps({ onConfirm });
+    renderWithTheme(ConfirmDialog, props);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(onConfirm).toHaveBeenCalledTimes(2);
+    expect(props.onCancel).not.toHaveBeenCalled();
   });
 
   // ── Phase 87: additive `body?: Snippet` prop (backward-compatible) ──────────
