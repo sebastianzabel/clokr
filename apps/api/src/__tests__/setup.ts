@@ -26,6 +26,7 @@ import { join } from "node:path";
 import { setTimeout as sleepMs } from "node:timers/promises";
 import type { JwtPayload } from "../middleware/auth";
 import { createOperatorAccount } from "../contexts/platform/operator-credentials";
+import { createTenantWithConfig } from "../contexts/platform/tenant-provisioning";
 
 // Keep JsonValue reachable from this module's public types (intentional no-op type alias)
 export type _SeedJsonValue = Prisma.JsonValue;
@@ -331,22 +332,14 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
     (suffix ? suffix + "-" : "") + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const prisma = testApp.prisma;
 
-  // Create tenant
-  const tenant = await prisma.tenant.create({
-    data: {
-      name: `Test Tenant ${s}`,
-      slug: `test-${s}`,
-      federalState: "NIEDERSACHSEN",
-    },
-  });
-
-  // Create tenant config
-  await prisma.tenantConfig.create({
-    data: {
-      tenantId: tenant.id,
-      defaultVacationDays: 30,
-      timezone: "Europe/Berlin",
-    },
+  // Create tenant + tenant config through the one provisioning rule (Phase 88, D-04a). Only L1:
+  // the default salon is NOT created here, it comes afterwards from the withDefaultSalon wrapper
+  // with strictly ascending createdAt (Issue #543), so provisionTenant (L2) must not be used.
+  const { tenant } = await createTenantWithConfig(prisma, {
+    name: `Test Tenant ${s}`,
+    slug: `test-${s}`,
+    federalState: "NIEDERSACHSEN",
+    timezone: "Europe/Berlin",
   });
 
   // Create admin user
