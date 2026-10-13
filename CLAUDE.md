@@ -110,7 +110,7 @@ Clokr has **four business contexts**, a shared substrate (**Unterbau**, the Shar
 - **Abwesenheiten** (`contexts/absence/`) — request, approval, entitlement, carry-over. A workflow with status, not a recording. Date ranges in days.
 - **Schichtplanung** (`contexts/scheduling/` + `services/phorest/`) — shifts, templates, coverage, availability, Phorest sync. Plans the future. Since Phase 107 it feeds Arbeitszeitkonto (SHIFT_BASED Soll) and Abwesenheiten (SHIFT_BASED leave-day count).
 - **Arbeitszeitkonto** (`contexts/working-time-account/`) — Soll vs. Ist, saldo, Monatsabschluss. Reads from the others. Owns the once-per-day rule.
-- **Unterbau** (Shared Kernel, `contexts/platform/`) — the 17 `platform` models of `MODEL_OWNER` in `apps/api/scripts/measure-foreign-context-access.ts` (Tenant, TenantConfig, Employee, User, WorkSchedule, …) and permissions. Salon (#64), RoleAssignment (#74) and Salonzuordnung (#67) land here; Beschäftigung (#66) is backlog and has no entity.
+- **Unterbau** (Shared Kernel, `contexts/platform/`) — the 19 `platform` models of `MODEL_OWNER` in `apps/api/scripts/measure-foreign-context-access.ts` (Tenant, TenantConfig, Employee, User, WorkSchedule, OperatorAccount, OperatorAuditLog, …) and permissions. Salon (#64), RoleAssignment (#74) and Salonzuordnung (#67) land here; Beschäftigung (#66) is backlog and has no entity.
 - **Composition layer** (`apps/api/src/composition/` + composition root `apps/api/src/app.ts`) — owns no model, carries no business rule, reads contexts only through their `index.ts`, and no context imports from `composition/`. A business rule found there moves into the owning context (ADR 0002, Entscheidung 9).
 
 Rules — these are directives, not preferences:
@@ -157,6 +157,15 @@ Clokr MUST be audit-proof (revisionssicher). All data relevant to working time, 
 - **§ 9-Korrektur** (Issue #468, A-3): a `/correct` never deletes a `Section9Credit` — a credit
   that no longer applies is marked `SUPERSEDED` and, if it partially survives, replaced by a new
   correction credit (`supersedesId`), both audited.
+
+- **Operator audit is append-only (Phase 88, Issue #88, D-07a).** Every action of the operator
+  principal is written to `OperatorAuditLog` through `recordOperatorAudit()`
+  (`contexts/platform/operator-audit.ts`, the only file naming the delegate), never to the tenant
+  `AuditLog`. The table is append-only twice over: the writer only creates rows, and a database
+  trigger refuses UPDATE, TRUNCATE and every DELETE except the retention purge (the first DB trigger
+  of the project; it guards against application mistakes, not against the table owner). Retention
+  (`composition/data-retention.ts`): authentication events 12 months, lifecycle actions 10 years.
+  Details and limits: `docs/adr/0001-abweichungen.md` Eintrag Y.
 
 These rules apply to ALL code changes touching time entries, leave, overtime, and employee data. When in doubt, prefer creating an audit log entry over skipping it.
 
@@ -239,7 +248,8 @@ The three rules that get broken most often:
 
 Environments: dev = local docker · int = k3s (ArgoCD) · prod = dmz-proxy (`/opt/awh-infra/.env`).
 Refreshing int from prod data requires `apps/api/scripts/pseudonymize-dump.ts` — never restore a raw
-prod dump to int.
+prod dump to int. The refresh also neutralises every `OperatorAccount` (email, password hash, TOTP
+secret — Phase 88, D-11), so no operator credential of prod survives on int.
 
 ## CVE / Security Vulnerability Handling
 
@@ -950,6 +960,51 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   Salonansicht of the linked month (D-14). A role without saldo rights sees the person view without
   the saldo cards, Ist only (a 403/404 on the saldo reads is a calm state, not an error).
 
+### Operator principal and tenant deactivation (Phase 88, Issue #88)
+
+The operator is the account ABOVE the tenant (tenant create, rename, deactivate, reactivate). Rules,
+as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
+
+- **A separate principal, never a role.** `OperatorAccount` is no `User` and no `Role` value. Its sign-in
+  with a mandatory TOTP lives in `contexts/platform/operator-credentials.ts` and
+  `contexts/platform/api/operator/auth.ts`; accounts are created only with
+  `apps/api/scripts/operator-account.ts`. There is no registration route.
+- **Own optional secret.** `OPERATOR_JWT_SECRET` (`config.ts`) is distinct from `JWT_SECRET` and
+  optional: unset, no operator route is registered and the surface is absent (404), proven by
+  `operator-surface-off-88.test.ts`. Never default it, never fall back to `JWT_SECRET`.
+- **Two guards that refuse each other.** `requireOperator` accepts only operator tokens,
+  `requireAuth` only tenant tokens; presenting the wrong kind answers 403 and writes an
+  `OperatorAuditLog` row (`operator-auth-88.test.ts`, `tenant-principal-guard-88.test.ts`).
+- **Operator code is blind to tenant data.** Files under `contexts/platform/api/operator/` never read
+  `req.user`, never build an access context (`employeeScopeFor`, `accessContextFromRequest`), never call
+  `app.audit()` and never read `user`, `employee` or `auditLog`; every route carries a rate limit. A
+  source scan in `operator-auth-88.test.ts` fails on a violation. Operator responses carry tenant
+  metadata only; support access to tenant data is #93, not here. The one place the operator writes a
+  tenant `AuditLog` row is the employee-creation audit port of the first admin (actor `OPERATOR`).
+- **Tenants are deactivated, never deleted.** `ACTIVE_TENANT_WHERE` (`contexts/platform/tenant-status.ts`)
+  is the one spelling of "active tenant" in a query. A deactivated tenant is refused on every credential
+  path (login after the password matched, OTP, refresh, password reset, invitation accept) and on every
+  request of an already issued access token, API key or device key. The per-process state cache holds
+  at most 10 s and is invalidated by `app.invalidateTenantState()` on every (de)activation. There is
+  no tenant delete path and the business data is untouched.
+- **Jobs: writing jobs skip, retention never skips.** Cron jobs that write (month close, attendance
+  checks, Phorest sync, reminders) skip a deactivated tenant; the data-retention purge deliberately
+  runs for it, because retention is a legal duty that does not end with the contract. The source-scan
+  guard `cron-deactivated-tenants-88.test.ts` fails on a job without the filter.
+- **Provisioning and employee creation each live in one place.** `tenant-provisioning.ts`
+  (`provisionTenantWithAdmin`; tenant, config, first admin, invitation) and `employee-creation.ts`
+  (also the invitation rule) — the employee route and the operator flow call the same code
+  (`employee-creation-parity-88.test.ts`). Seeds carry a pinned copy of the provisioning rule because
+  `packages/db` cannot import `apps/api` (`tenant-provisioning-88.test.ts` compares them). The
+  default leave types of a new tenant are seeded through the composition seam
+  `composition/tenant-onboarding.ts` and `ensureDefaultLeaveTypes()` of the absence context — the
+  Unterbau never imports a business context.
+- **A nullish tenant never reaches a Prisma call.** Prisma DROPS a filter whose value is `undefined`,
+  so `where: { tenantId: undefined }` reads every tenant. `lint:tenant-scoping` fails on an optional
+  tenant value in any Prisma call under `apps/api/src` (`lint-tenant-scoping-nullish-tenant.ts`); the
+  fail-closed form is `?? ""`. The runtime twin is `operator-tenant-boundary-sweep-88.test.ts`. The
+  known hole `tenantId: ""` (a user without an employee) is characterised there and left to #551.
+
 ### Tenant-scoping gate (Issue #204)
 
 A new route or service handler that reads a client-supplied identifier into a tenant-scoped
@@ -959,6 +1014,7 @@ Prisma model without constraining it to `req.user.tenantId` fails CI, not just r
 | --- | --- |
 | `apps/api/scripts/lint-tenant-scoping.ts` | The gate itself — scope, methods, and the three ways a call counts as scoped |
 | `apps/api/scripts/lint-tenant-scoping-exceptions.json` | Every deliberate exception, each with a mandatory reason |
+| `apps/api/scripts/lint-tenant-scoping-nullish-tenant.ts` | The nullish-tenant rule (Phase 88): an optional tenant value reaching a Prisma call fails the same gate |
 | `apps/api/scripts/README.md` § Lint gates | How to add a justified exception, and when NOT to |
 
 Verify with `pnpm --filter @clokr/api run lint:tenant-scoping`. A hit on a clean tree is a
