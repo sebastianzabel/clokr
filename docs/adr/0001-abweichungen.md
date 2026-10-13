@@ -1899,6 +1899,57 @@ pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest 
 grep -n "resolveSalonInReach(" apps/api/src/composition/dashboard.ts apps/api/src/contexts/time-tracking/api/time-entries.ts   # drei Aufrufe im Dashboard, einer in der Salonansicht
 ```
 
+### Nachtrag 2026-10-13 (Issue #548) — Schichten in der Wochenübersicht je Schicht nach Reichweite
+
+**Schwere:** Fehlerbehebung; keine Unterbau-Änderung; keine Schema-, Migrations-, Routen- oder
+Permission-Änderung; ergänzt die 85b-Aussage „Planungsdaten nur für Stammsalon-Personen“ für
+Schichten.
+
+**Was sich geändert hat:**
+
+- `GET /api/v1/dashboard/team-week` wendet `isShiftInScope` (Phase 91b D-11: eigener Salon der
+  Schicht oder Person in der Reichweite, nie das Stammsalon) je Schicht an. Vorher las die Route die
+  Schichten der Stammsalon-Personen ohne `salonId`; ein Salonmanager von A sah Zeit, Bezeichnung und
+  Farbe einer Salon-B-Schicht einer in A beheimateten Person und ein daraus abgeleitetes „Fehlt“
+  oder „Geplant“.
+- Schichten werden für jede gelistete Person gelesen, auch für eine nur über einen sichtbaren
+  Eintrag gelistete Person (85b D-04); sie sieht nur Schichten in der Reichweite.
+- Ein Tag mit nur fremder Schicht sieht aus wie ein Tag ohne Schicht: kein `shift`, kein
+  SHIFT_BASED-Arbeitstag, keine Fälligkeitszeit. `expectedHours` bleibt der Vertragswert, ein neuer
+  Antwortschlüssel oder Marker wird bewusst nicht eingeführt: eine verdeckte Schicht kann kein
+  falsches „Fehlt“ erzeugen (anders als verdeckte Arbeitszeit, die `workedElsewhere` braucht), und
+  ein Marker würde den fremden Plan verraten (Art. 5 Abs. 1 lit. c DSGVO).
+- Eine nur über einen Eintrag gelistete Zeile wird nie „Fehlt“, weil die Abwesenheitsgründe
+  (Urlaub, Krankheit, Berufsschule, Arbeit in einem anderen Salon) beim Stammsalon liegen und
+  zurückgehalten werden; eine noch nicht fällige Schicht in Reichweite ergibt „Geplant“.
+- Ganzmandanten-Aufrufer sind unverändert (gleiche Personenliste, gleiche Antwort), belegt durch
+  die eingefrorenen Pins `dashboard-team-week-frozen-84` und `whole-tenant-frozen-85`.
+
+**Auswirkung auf die Kontexte:**
+
+- Zeiterfassung: keine.
+- Abwesenheiten: keine.
+- Schichtplanung: `getShiftsInRange` liefert zusätzlich `salonId`; additiv, keine Signaturänderung,
+  kein bestehender Leser ändert sich.
+- Arbeitszeitkonto: keine; liest das Feld nicht, der Token-Wächter aus Phase 68b/71b bleibt
+  unberührt.
+- Kompositionsschicht: team-week ruft den Prüfer des Unterbaus; today-attendance liest keine
+  Schichten, my-week und open-items nur eigene.
+
+**Was bewusst NICHT geschah:**
+
+- Vertrag, Urlaub, Abwesenheiten und Feiertage einer nur über einen Eintrag gelisteten Person
+  bleiben zurückgehalten (85b D-04).
+- Kein neuer Antwortschlüssel, kein Marker „anderswo geplant“.
+- Keine Änderung an `scope-filter.ts`.
+
+### Nachrechnen (Nachtrag Issue #548)
+
+```bash
+pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest run src/composition/__tests__/dashboard-shift-scope-548.test.ts src/composition/__tests__/dashboard-team-week-frozen-84.test.ts src/__tests__/whole-tenant-frozen-85.test.ts
+pnpm --filter @clokr/api run lint:facade-signatures   # meldet weiterhin 137 Funktionen
+```
+
 ## Q — Systemrollen-Templates und zwei Saldo-Gates (Phase 76b, Issue #76)
 
 **Schwere: informativ. Unterbau-Erweiterung nach ADR 0002, Entscheidung 7 (additiv, kein
