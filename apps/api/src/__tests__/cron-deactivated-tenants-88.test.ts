@@ -10,6 +10,8 @@
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import cron from "node-cron";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 
 // The Phorest orchestrator is the observable of "a sync started": the callback guard is proven by it
@@ -141,5 +143,149 @@ describe("Phase 88 — the Phorest scheduler", () => {
       await app.prisma.tenant.update({ where: { id: tenantId }, data: { deactivatedAt: null } });
       app.invalidateTenantState(tenantId);
     }
+  });
+});
+
+describe("Phase 88 — school holidays sync", () => {
+  it("runSchoolHolidaysSync asks only for active tenants", async () => {
+    expectEveryCallFiltered(await tenantWheresOf(() => app.runSchoolHolidaysSync!()));
+  });
+});
+
+describe("Phase 88 — data retention keeps running for deactivated tenants (D-05a, legal duty)", () => {
+  it("runRetention queries every tenant and looks at the deactivated tenant's employees", async () => {
+    await app.prisma.tenant.update({
+      where: { id: tenantId },
+      data: { deactivatedAt: new Date() },
+    });
+    app.invalidateTenantState(tenantId);
+    const tenantSpy = vi.spyOn(app.prisma.tenant, "findMany");
+    const employeeSpy = vi.spyOn(app.prisma.employee, "findMany");
+    try {
+      await app.runRetention!();
+      expect(tenantSpy).toHaveBeenCalled();
+      for (const call of tenantSpy.mock.calls) {
+        expect(
+          JSON.stringify((call[0] as { where?: unknown } | undefined)?.where ?? {}),
+        ).not.toContain("deactivatedAt");
+      }
+      // Positive control: the loop really reached the deactivated tenant.
+      const reached = employeeSpy.mock.calls.some(
+        (call) =>
+          (call[0] as { where?: { tenantId?: string } } | undefined)?.where?.tenantId === tenantId,
+      );
+      expect(reached).toBe(true);
+    } finally {
+      await app.prisma.tenant.update({ where: { id: tenantId }, data: { deactivatedAt: null } });
+      app.invalidateTenantState(tenantId);
+    }
+  });
+});
+
+describe("Phase 88 — the daily purge enforces the operator audit retention (D-07a)", () => {
+  function monthsAgo(months: number): Date {
+    const d = new Date();
+    d.setUTCMonth(d.getUTCMonth() - months);
+    return d;
+  }
+  async function insertRow(action: string, createdAt: Date): Promise<string> {
+    const row = await app.prisma.operatorAuditLog.create({
+      data: { action, entity: "OperatorAccount", createdAt },
+      select: { id: true },
+    });
+    return row.id;
+  }
+  const exists = async (id: string) =>
+    (await app.prisma.operatorAuditLog.findUnique({ where: { id } })) !== null;
+
+  it("deletes an expired authentication event and keeps a young one and an old lifecycle action", async () => {
+    const expiredAuth = await insertRow("OPERATOR_LOGIN_FAILED", monthsAgo(13));
+    const oldLifecycle = await insertRow("TENANT_CREATED", monthsAgo(13));
+    const youngAuth = await insertRow("OPERATOR_LOGIN", monthsAgo(1));
+
+    await app.runPurgeableAuditLogs!();
+
+    expect(await exists(expiredAuth)).toBe(false);
+    expect(await exists(oldLifecycle)).toBe(true);
+    expect(await exists(youngAuth)).toBe(true);
+  });
+});
+
+describe("Phase 88 — source scan: every tenant loop is filtered or on the named allowlist", () => {
+  const SRC_ROOT = resolve(__dirname, "..");
+  /**
+   * The only tenant-list reads allowed to see deactivated tenants, each with the reason. `count` is
+   * the exact number of calls in the file, so a second unfiltered call in an allowlisted file is
+   * still a finding.
+   */
+  const ALLOWLIST: Record<string, { count: number; reason: string }> = {
+    "composition/data-retention.ts": {
+      count: 2,
+      reason:
+        "the lawful deletion duty does not pause with a contract (DSGVO Art. 17, § 147 AO); the second call only computes the global audit purge window",
+    },
+    "contexts/platform/api/operator/tenants.ts": {
+      count: 1,
+      reason: "the operator tenant list must show deactivated tenants",
+    },
+  };
+  /** Floor of filtered calls at the time of writing: 10 attendance loops + 6 other jobs. */
+  const FILTERED_FLOOR = 16;
+  const CALL = /\.(tenant|tenantConfig)\.findMany\(/g;
+
+  function walk(dir: string): string[] {
+    const out: string[] = [];
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) {
+        if (name === "__tests__" || name === "node_modules") continue;
+        out.push(...walk(full));
+      } else if (name.endsWith(".ts") && !name.endsWith(".test.ts")) {
+        out.push(full);
+      }
+    }
+    return out;
+  }
+
+  /** The argument text of the call that opens at `open` (the index of its `(`), paren-balanced. */
+  function argumentText(text: string, open: number): string {
+    let depth = 0;
+    for (let i = open; i < text.length; i++) {
+      if (text[i] === "(") depth++;
+      else if (text[i] === ")" && --depth === 0) return text.slice(open + 1, i);
+    }
+    return text.slice(open + 1);
+  }
+
+  const files = walk(SRC_ROOT).map((full) => ({
+    rel: relative(SRC_ROOT, full).split("\\").join("/"),
+    text: readFileSync(full, "utf8"),
+  }));
+  const calls = files.flatMap(({ rel, text }) =>
+    [...text.matchAll(CALL)].map((m) => ({
+      rel,
+      filtered: argumentText(text, (m.index ?? 0) + m[0].length - 1).includes(
+        "ACTIVE_TENANT_WHERE",
+      ),
+    })),
+  );
+
+  it("is not vacuous: finds the filtered calls and every allowlisted file", () => {
+    expect(files.length).toBeGreaterThan(0);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.filter((c) => c.filtered).length).toBeGreaterThanOrEqual(FILTERED_FLOOR);
+    for (const [rel, { count }] of Object.entries(ALLOWLIST)) {
+      expect(calls.filter((c) => c.rel === rel).length, rel).toBe(count);
+    }
+  });
+
+  it("has no unfiltered tenant loop outside the allowlist", () => {
+    const offenders = calls.filter((c) => !c.filtered && !(c.rel in ALLOWLIST)).map((c) => c.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps the allowlisted data-retention calls free of an active-tenant filter", () => {
+    const retention = calls.filter((c) => c.rel === "composition/data-retention.ts");
+    expect(retention.every((c) => !c.filtered)).toBe(true);
   });
 });

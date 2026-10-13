@@ -4,6 +4,7 @@ import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-loc
 import { countSnapshotsBefore } from "../contexts/working-time-account"; // Phase 100B Plan 07 — W7
 import { archiveEntriesBefore, archiveDayBreakDataBefore } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T9; Issue #80 — T9b
 import { archiveAbsencesBefore, archiveLeaveRequestsBefore } from "../contexts/absence"; // Phase 100B Plan 12; Plan 13
+import { purgeExpiredOperatorAudit } from "../contexts/platform"; // Phase 88 (D-07a)
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -29,6 +30,11 @@ export const dataRetentionPlugin = fp(async (app) => {
   async function runRetention() {
     app.log.info("Data-Retention: Starte jährliche Aufbewahrungsprüfung");
 
+    // Phase 88 (D-05a): deactivated tenants stay in scope ON PURPOSE — this loop carries no
+    // active-tenant filter. Deactivation pauses a customer, it does not suspend the lawful deletion
+    // duty (DSGVO Art. 17 after the retention period; § 147 AO / § 16 ArbZG define how long data MAY be
+    // kept). Skipping a deactivated tenant here would retain its data beyond that period. The source
+    // scan in cron-deactivated-tenants-88.test.ts lists this call as an allowlisted exception.
     const tenants = await app.prisma.tenant.findMany({
       include: { config: true },
     });
@@ -157,6 +163,9 @@ export const dataRetentionPlugin = fp(async (app) => {
     // Determine the minimum configured retention across all tenants.
     // AuditLog has no tenantId column, so we apply the shortest window
     // (most privacy-preserving) as the global cutoff.
+    // Phase 88 (D-05a): deactivated tenants are included on purpose (no active-tenant filter) — the
+    // window is global and the purge only ever shortens retention, so excluding a tenant could not
+    // protect it and would silently change the cutoff; see runRetention for the legal reasoning.
     const tenants = await app.prisma.tenant.findMany({
       include: { config: true },
     });
@@ -191,6 +200,13 @@ export const dataRetentionPlugin = fp(async (app) => {
     app.log.info(
       `AuditLog-Purge: ${result.count} purgeable Einträge gelöscht (Cutoff: ${cutoff.toISOString()}, Fenster: ${minRetentionDays} Tage)`,
     );
+
+    // Phase 88 (D-07a): the operator audit has its own retention (authentication events 12 months,
+    // lifecycle actions 120 months). It belongs to no tenant, so it runs here with the daily purge
+    // regardless of which tenants are active. The purge goes through the trigger-flagged path of the
+    // append-only table; a plain delete is refused by the database.
+    const operatorAudit = await purgeExpiredOperatorAudit(app.prisma, new Date());
+    app.log.info(`OperatorAudit-Purge: ${operatorAudit.deleted} abgelaufene Einträge gelöscht`);
   }
 
   // Schedule: January 2nd at 03:00
