@@ -6,12 +6,15 @@
  * `contractWorkDaysPerWeek` of them. The rule lives in ONE place, `validateUsualWorkDays()`, which
  * both real write paths already call (POST /employees, PUT /settings/work/:employeeId).
  *
- * The second describe block locks D-08: tenant bulk apply, the cancelOrphanShifts branch and the
- * CSV employee import never write a SHIFT_BASED row, so they need no validator call of their own.
+ * The second describe block locks D-08: tenant bulk apply (Issue #568: preview, then a confirmed
+ * apply — a SHIFT_BASED employee is a non-candidate and its id is refused), the cancelOrphanShifts
+ * branch and the CSV employee import never write a SHIFT_BASED row, so they need no validator call
+ * of their own.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 import { monthsAheadStr } from "./test-dates";
+import { applyBulkDefaults, previewBulkApply } from "./bulk-apply-helpers";
 import type { FastifyInstance } from "fastify";
 
 /** First of the month N months from now — WorkSchedule.validFrom must be a month-1st. */
@@ -317,11 +320,15 @@ describe("D-08 write-path audit (Issue #481) — paths without a validator call 
     const noScheduleEmp = await bareEmployee("bulk-none");
     const shiftCountBefore = await shiftBasedRowCount();
 
-    const res = await app.inject({
-      method: "PUT",
-      url: "/api/v1/settings/work",
-      headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { applyToExisting: true, defaultWeeklyHours: 39 },
+    const defaults = { defaultWeeklyHours: 39 };
+    const preview = await previewBulkApply(app, data.adminToken, { defaults });
+    const shiftGroup = preview.nonCandidates.find((g) => g.reason === "OTHER_SCHEDULE_TYPE");
+    expect(shiftGroup?.employees.map((e) => e.employeeId)).toContain(shiftEmp.id);
+    expect(preview.candidates.map((c) => c.employeeId)).not.toContain(shiftEmp.id);
+
+    const { res } = await applyBulkDefaults(app, data.adminToken, {
+      defaults,
+      employeeIds: [noScheduleEmp.id],
     });
     expect(res.statusCode).toBe(200);
 
@@ -334,6 +341,18 @@ describe("D-08 write-path audit (Issue #481) — paths without a validator call 
       where: { employeeId: noScheduleEmp.id },
     });
     expect(created.map((r) => r.type)).toEqual(["FIXED_SCHEDULE"]);
+
+    // Sending the SHIFT_BASED id explicitly is refused; the row stays as it was
+    const forced = await applyBulkDefaults(app, data.adminToken, {
+      defaults,
+      employeeIds: [shiftEmp.id],
+    });
+    expect(forced.res.statusCode).toBe(409);
+    expect(JSON.parse(forced.res.body).code).toBe("BULK_APPLY_PREVIEW_STALE");
+    expect(await shiftBasedRowCount()).toBe(shiftCountBefore);
+    expect(await app.prisma.workSchedule.findUniqueOrThrow({ where: { id: shiftRow.id } })).toEqual(
+      shiftRow,
+    );
   });
 
   it("cancelOrphanShifts (leaving SHIFT_BASED) writes only a non-SHIFT_BASED row with an empty Angabe", async () => {
