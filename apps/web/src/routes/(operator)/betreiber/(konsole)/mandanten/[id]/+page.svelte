@@ -4,7 +4,7 @@
   import PageHead from "$components/layout/PageHead.svelte";
   import Breadcrumb from "$components/ui/Breadcrumb.svelte";
   import Section from "$lib/components/admin/Section.svelte";
-  import SalonTable from "$lib/components/operator/SalonTable.svelte";
+  import SalonsSection from "$lib/components/operator/SalonsSection.svelte";
   import TenantMasterData from "$lib/components/operator/TenantMasterData.svelte";
   import { OperatorApiError, operatorApi } from "$lib/operator/client";
   import type { OperatorSalon, OperatorTenant } from "$lib/operator/types";
@@ -88,11 +88,13 @@
       />
     </Section>
 
-    <Section title="Salons" sub="Standorte des Mandanten" animate>
-      <div data-testid="op-salons-section">
-        <SalonTable {salons} />
-      </div>
-    </Section>
+    <SalonsSection
+      {tenantId}
+      {salons}
+      onCreate={operatorApi.createSalon}
+      onUpdate={operatorApi.updateSalon}
+      onReload={() => load(true)}
+    />
   {:else}
     <PageHead eyebrow="Betreiber" title="Mandant" />
 

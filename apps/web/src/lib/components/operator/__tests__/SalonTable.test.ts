@@ -5,7 +5,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { fireEvent } from "@testing-library/svelte";
 
 import { renderWithTheme } from "$tests/test-utils";
 import type { OperatorSalon } from "$lib/operator/types";
@@ -136,5 +137,43 @@ describe("SalonTable", () => {
     document.body.appendChild(control);
     expect(getComputedStyle(badge).display).toBe("inline-flex");
     expect(getComputedStyle(control).display).not.toBe("inline-flex");
+  });
+});
+
+describe("SalonTable - edit action", () => {
+  it("has no action column without onEdit", () => {
+    renderWithTheme(SalonTable, { salons: SALONS }, "nacht");
+    expect(byId("op-salon-edit-s-default")).toBeNull();
+    expect(document.querySelectorAll("th")).toHaveLength(5);
+  });
+
+  it("renders one edit button per row with the salon name in its accessible name", () => {
+    renderWithTheme(SalonTable, { salons: SALONS, onEdit: vi.fn() }, "nacht");
+    for (const salonRow of SALONS) {
+      const button = byId(`op-salon-edit-${salonRow.id}`);
+      expect(button).toHaveTextContent("Bearbeiten");
+      expect(button).toHaveAttribute("aria-label", `Salon ${salonRow.name} bearbeiten`);
+    }
+    expect(document.querySelectorAll("th")).toHaveLength(6);
+  });
+
+  it("calls onEdit with the salon of the clicked row, deactivated salons included", async () => {
+    const onEdit = vi.fn();
+    renderWithTheme(SalonTable, { salons: SALONS, onEdit }, "nacht");
+    await fireEvent.click(byId("op-salon-edit-s-off") as HTMLElement);
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onEdit.mock.calls[0]?.[0]).toMatchObject({ id: "s-off", name: "Altsalon" });
+  });
+
+  it("styles the edit button as a button, not as plain text", () => {
+    renderWithTheme(SalonTable, { salons: SALONS, onEdit: vi.fn() }, "nacht");
+    const button = byId("op-salon-edit-s-default") as HTMLElement;
+    const control = document.createElement("button");
+    control.className = "no-such-class-89";
+    document.body.appendChild(control);
+    expect(getComputedStyle(button).display).toBe("inline-flex");
+    expect(getComputedStyle(control).display).not.toBe("inline-flex");
+    expect(getComputedStyle(button).cursor).toBe("pointer");
+    expect(getComputedStyle(control).cursor).not.toBe("pointer");
   });
 });

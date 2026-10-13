@@ -10,6 +10,7 @@ import { errorMessage } from "$api/error-message";
 import { clearSession, currentToken } from "$stores/operator-auth";
 import { buildSignInUrl } from "./next-path";
 import type {
+  CreateSalonBody,
   CreateTenantBody,
   CreateTenantResult,
   OperatorAccessGrant,
@@ -19,6 +20,7 @@ import type {
   OperatorSalon,
   OperatorTenant,
   ResendInvitationResult,
+  UpdateSalonBody,
 } from "./types";
 
 const BASE_URL = "/api/v1/operator";
@@ -141,4 +143,12 @@ export const operatorApi = {
     ),
   listSalons: (tenantId: string) =>
     request<OperatorSalon[]>("GET", `/tenants/${encodeURIComponent(tenantId)}/salons`),
+  createSalon: (tenantId: string, body: CreateSalonBody) =>
+    request<OperatorSalon>("POST", `/tenants/${encodeURIComponent(tenantId)}/salons`, { body }),
+  updateSalon: (tenantId: string, salonId: string, patch: UpdateSalonBody) =>
+    request<OperatorSalon>(
+      "PATCH",
+      `/tenants/${encodeURIComponent(tenantId)}/salons/${encodeURIComponent(salonId)}`,
+      { body: patch },
+    ),
 };

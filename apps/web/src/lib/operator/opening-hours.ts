@@ -3,7 +3,14 @@
 // The API stores seven entries, `day` 0 = Montag … 6 = Sonntag. A closed day still carries valid
 // `open` / `close` strings because the API schema requires them, so closing a day never empties
 // its times. The form keeps one entry per index, so `days[index].day === index`.
-import type { OpeningHoursDay } from "./types";
+import type { FederalState } from "@clokr/types";
+import type {
+  CouplingProvider,
+  CreateSalonBody,
+  OpeningHoursDay,
+  OperatorSalon,
+  UpdateSalonBody,
+} from "./types";
 
 /** Display names, indexed by `day` (0 = Montag). */
 export const DAY_NAMES: readonly string[] = [
@@ -94,4 +101,148 @@ export function validateOpeningHours(days: readonly OpeningHoursDay[]): Record<n
 /** An empty PLZ is fine (the field is optional); a filled one is exactly five digits. */
 export function isValidPostalCode(value: string): boolean {
   return value === "" || /^\d{5}$/.test(value);
+}
+
+// ── Salon form values, validation and the PATCH diff ───────────────────────────────────────────
+
+/** Name length limit of the API's salon schema. */
+export const SALON_NAME_MAX = 100;
+
+export const NAME_REQUIRED_MESSAGE = "Name ist erforderlich.";
+export const FEDERAL_STATE_REQUIRED_MESSAGE = "Bundesland auswählen.";
+export const POSTAL_CODE_MESSAGE = "PLZ: 5 Ziffern.";
+
+/** What the salon dialog edits. Text fields are plain strings; "" means "not given". */
+export interface SalonFormValues {
+  name: string;
+  street: string;
+  postalCode: string;
+  city: string;
+  /** "" = nothing chosen yet (create starts there on purpose, D-07a). */
+  federalState: FederalState | "";
+  openingHours: OpeningHoursDay[];
+  provider: CouplingProvider;
+  externalBranchId: string;
+}
+
+export type SalonFieldKey = "name" | "postal-code" | "federal-state";
+
+/** A fresh create form: hours from the Standardsalon (else the API default), nothing else filled. */
+export function emptySalonForm(
+  defaultSalon: { openingHours: readonly OpeningHoursDay[] } | null | undefined,
+): SalonFormValues {
+  return {
+    name: "",
+    street: "",
+    postalCode: "",
+    city: "",
+    federalState: "",
+    openingHours: prefillOpeningHours(defaultSalon),
+    provider: "NONE",
+    externalBranchId: "",
+  };
+}
+
+/** The edit form of a loaded salon. Missing address parts become "". */
+export function salonFormFromSalon(salon: OperatorSalon): SalonFormValues {
+  const phorest = salon.coupling?.provider === "PHOREST";
+  return {
+    name: salon.name,
+    street: salon.street ?? "",
+    postalCode: salon.postalCode ?? "",
+    city: salon.city ?? "",
+    federalState: salon.federalState,
+    openingHours: prefillOpeningHours(salon),
+    provider: phorest ? "PHOREST" : "NONE",
+    externalBranchId: phorest ? (salon.coupling?.externalBranchId ?? "") : "",
+  };
+}
+
+/** Problems that block saving, keyed by field. The API stays authoritative. */
+export function validateSalonForm(form: SalonFormValues): Partial<Record<SalonFieldKey, string>> {
+  const problems: Partial<Record<SalonFieldKey, string>> = {};
+  if (form.name.trim() === "") problems.name = NAME_REQUIRED_MESSAGE;
+  if (form.federalState === "") problems["federal-state"] = FEDERAL_STATE_REQUIRED_MESSAGE;
+  if (!isValidPostalCode(form.postalCode.trim())) problems["postal-code"] = POSTAL_CODE_MESSAGE;
+  return problems;
+}
+
+/** Whole-form validity: field problems, every open day in order, and a Filialkennung for Phorest. */
+export function isSalonFormValid(form: SalonFormValues): boolean {
+  if (Object.keys(validateSalonForm(form)).length > 0) return false;
+  if (Object.keys(validateOpeningHours(form.openingHours)).length > 0) return false;
+  return form.provider !== "PHOREST" || form.externalBranchId.trim() !== "";
+}
+
+/** The wire shape of one day: all four keys, `closed` always explicit. */
+function wireDay(entry: OpeningHoursDay): OpeningHoursDay {
+  return { day: entry.day, open: entry.open, close: entry.close, closed: entry.closed === true };
+}
+
+function sameHours(a: readonly OpeningHoursDay[], b: readonly OpeningHoursDay[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((entry, index) => {
+    const other = b[index];
+    return (
+      other !== undefined &&
+      entry.day === other.day &&
+      entry.open === other.open &&
+      entry.close === other.close &&
+      (entry.closed === true) === (other.closed === true)
+    );
+  });
+}
+
+/** Cleared address field -> `null` (the API stores "no value"); anything else trimmed. */
+function addressPatch(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * The PATCH body for an edit: only the keys that differ from the loaded salon (T-89-41). `coupling`
+ * appears only when it changed: another Filialkennung or a first Phorest coupling -> the object,
+ * Phorest -> Keine -> `null`. An identical form yields `{}`.
+ */
+export function diffSalonForm(original: SalonFormValues, form: SalonFormValues): UpdateSalonBody {
+  const patch: UpdateSalonBody = {};
+  if (form.name.trim() !== original.name.trim()) patch.name = form.name.trim();
+  if (form.street.trim() !== original.street.trim()) patch.street = addressPatch(form.street);
+  if (form.postalCode.trim() !== original.postalCode.trim()) {
+    patch.postalCode = addressPatch(form.postalCode);
+  }
+  if (form.city.trim() !== original.city.trim()) patch.city = addressPatch(form.city);
+  if (form.federalState !== "" && form.federalState !== original.federalState) {
+    patch.federalState = form.federalState;
+  }
+  if (!sameHours(original.openingHours, form.openingHours)) {
+    patch.openingHours = form.openingHours.map(wireDay);
+  }
+  if (form.provider === "PHOREST") {
+    const branch = form.externalBranchId.trim();
+    if (original.provider !== "PHOREST" || branch !== original.externalBranchId.trim()) {
+      patch.coupling = { externalBranchId: branch };
+    }
+  } else if (original.provider === "PHOREST") {
+    patch.coupling = null;
+  }
+  return patch;
+}
+
+/**
+ * The POST body for a new salon: the hours are always sent explicitly (all seven days), empty
+ * address fields and a "Keine" coupling are left out. Call only with a valid form.
+ */
+export function buildCreateSalonBody(form: SalonFormValues): CreateSalonBody {
+  const body: CreateSalonBody = {
+    name: form.name.trim(),
+    openingHours: form.openingHours.map(wireDay),
+    federalState: form.federalState as FederalState,
+  };
+  if (form.street.trim() !== "") body.street = form.street.trim();
+  if (form.postalCode.trim() !== "") body.postalCode = form.postalCode.trim();
+  if (form.city.trim() !== "") body.city = form.city.trim();
+  if (form.provider === "PHOREST")
+    body.coupling = { externalBranchId: form.externalBranchId.trim() };
+  return body;
 }

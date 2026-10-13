@@ -1,8 +1,8 @@
 <!--
   SalonTable - the salons of one tenant as seen by the operator (Issue #89).
 
-  Read-only: name (with the Standardsalon badge), address line, Bundesland, coupling and status.
-  Row actions arrive with the salon management plans. Up to 639 px the table becomes a stacked
+  Name (with the Standardsalon badge), address line, Bundesland, coupling and status. With `onEdit`
+  each row ends in a "Bearbeiten" action (always visible, 44 px). Up to 639 px the table becomes a stacked
   list by CSS only (same markup), so a phone never scrolls sideways.
 -->
 <script lang="ts">
@@ -11,9 +11,11 @@
 
   interface Props {
     salons: OperatorSalon[];
+    /** Opens the edit dialog for a salon; without it the table has no action column. */
+    onEdit?: (salon: OperatorSalon) => void;
   }
 
-  let { salons }: Props = $props();
+  let { salons, onEdit }: Props = $props();
 
   /** "Straße, PLZ Ort" with missing parts omitted; null when nothing is known. */
   function addressLine(salon: OperatorSalon): string | null {
@@ -41,6 +43,7 @@
           <th scope="col">Bundesland</th>
           <th scope="col">Kopplung</th>
           <th scope="col">Status</th>
+          {#if onEdit}<th scope="col"><span class="sr-only">Aktionen</span></th>{/if}
         </tr>
       </thead>
       <tbody>
@@ -85,6 +88,18 @@
                 >{salon.isActive ? "Aktiv" : "Deaktiviert"}</span
               >
             </td>
+            {#if onEdit}
+              <td class="cell-actions">
+                <button
+                  type="button"
+                  class="btn btn-outline btn-sm"
+                  aria-haspopup="dialog"
+                  aria-label={`Salon ${salon.name} bearbeiten`}
+                  data-testid={`op-salon-edit-${salon.id}`}
+                  onclick={() => onEdit(salon)}>Bearbeiten</button
+                >
+              </td>
+            {/if}
           </tr>
         {/each}
       </tbody>
@@ -110,6 +125,15 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
+  }
+
+  .cell-actions {
+    white-space: nowrap;
+  }
+
+  /* The v1.5 .btn recipe resets min-height to 0; row actions keep the 44 px touch target. */
+  .cell-actions :global(.btn) {
+    min-height: 44px;
   }
 
   .text {
@@ -173,7 +197,12 @@
       margin-bottom: 4px;
     }
 
-    .salon-table td:not(.cell-name)::before {
+    .salon-table td.cell-actions {
+      margin-top: 8px;
+      white-space: normal;
+    }
+
+    .salon-table td:not(.cell-name):not(.cell-actions)::before {
       content: attr(data-label) ": ";
       font-weight: 600;
       color: var(--text-muted);

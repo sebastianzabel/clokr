@@ -207,6 +207,38 @@ describe("operatorApi", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/operator/tenants/t1/salons");
   });
 
+  it("createSalon posts the body to /tenants/:id/salons with the operator token", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(jsonResponse({ id: "s1" }, 201));
+    const body = {
+      name: "Salon Beispiel",
+      openingHours: [{ day: 0, open: "08:00", close: "20:00", closed: false }],
+      federalState: "NIEDERSACHSEN" as const,
+    };
+
+    await operatorApi.createSalon("t1", body as never);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/t1/salons");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify(body));
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer op-token");
+  });
+
+  it("updateSalon patches exactly the given keys, including an explicit null", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(jsonResponse({ id: "s1" }));
+
+    await operatorApi.updateSalon("a/b", "s/1", { coupling: null });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/a%2Fb/salons/s%2F1");
+    expect(init.method).toBe("PATCH");
+    expect(init.body).toBe(JSON.stringify({ coupling: null }));
+  });
+
   it("never sends the tenant localStorage token, in any header", async () => {
     local.setItem("accessToken", "tenant-token");
     local.setItem("refreshToken", "tenant-refresh");

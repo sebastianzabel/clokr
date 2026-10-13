@@ -92,3 +92,35 @@ export interface CreateTenantResult {
 export interface ResendInvitationResult {
   invitationMailSent: boolean;
 }
+
+/** The coupling object of a salon write: an object sets or replaces it, `null` removes it. */
+export interface SalonCouplingInput {
+  externalBranchId: string;
+}
+
+/** Body of `POST /operator/tenants/:id/salons`; the strict API schema accepts exactly these keys. */
+export interface CreateSalonBody {
+  name: string;
+  street?: string;
+  postalCode?: string;
+  city?: string;
+  /** Always all seven days, explicit `closed`. */
+  openingHours: OpeningHoursDay[];
+  federalState: FederalState;
+  /** Absent = no coupling. */
+  coupling?: SalonCouplingInput;
+}
+
+/**
+ * Body of `PATCH /operator/tenants/:id/salons/:salonId`: only the keys that changed. An address
+ * field cleared by the operator is sent as `null`; `coupling` absent = unchanged.
+ */
+export interface UpdateSalonBody {
+  name?: string;
+  street?: string | null;
+  postalCode?: string | null;
+  city?: string | null;
+  federalState?: FederalState;
+  openingHours?: OpeningHoursDay[];
+  coupling?: SalonCouplingInput | null;
+}
