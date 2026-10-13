@@ -5,10 +5,9 @@
 // renders the console's own sentence, an unknown code renders the server's `error` string, and a
 // response without a code falls back to the status sentence (no connection, rate limit, server
 // fault). The sentences are count-free on purpose (D-14a): they never name a number of rows, so a
-// reason cannot leak how much data a tenant holds. The salon codes are added next to the tenant
-// ones when the salon UI needs them.
+// reason cannot leak how much data a tenant holds.
 
-/** Sentences for the tenant lifecycle codes (UI-SPEC "Reason texts"). */
+/** Sentences for the tenant lifecycle and salon codes (UI-SPEC "Reason texts"). */
 export const REASON_TEXTS: Readonly<Record<string, string>> = {
   TENANT_DEACTIVATED:
     "Der Mandant ist deaktiviert. Änderungen sind erst nach der Reaktivierung möglich.",
@@ -21,7 +20,24 @@ export const REASON_TEXTS: Readonly<Record<string, string>> = {
   // The tenant routes answer an unknown id with a bare 404 and no code; `failureText()` maps that
   // status to this key so the sentence still comes from this module.
   TENANT_NOT_FOUND: "Mandant nicht gefunden.",
+  // Salon codes. The salon routes answer an unknown salon with a bare 404 as well, so the salon
+  // callers pass `notFoundCode: SALON_NOT_FOUND` to `failureText()`.
+  FEDERAL_STATE_IN_USE:
+    "Das Bundesland ist durch Zeiteinträge oder Zuordnungen festgelegt. Ein Umzug ist ein neuer Salon.",
+  HOME_SALON_IN_USE:
+    "Der Salon ist noch Stammsalon von Mitarbeitenden. Die Mitarbeitenden müssen zuerst einem anderen Stammsalon zugeordnet werden.",
+  LAST_ACTIVE_SALON:
+    "Das ist der letzte aktive Salon des Mandanten. Ein Mandant braucht mindestens einen aktiven Salon.",
+  ALREADY_INACTIVE: "Der Salon ist bereits deaktiviert.",
+  ALREADY_ACTIVE: "Der Salon ist bereits aktiv.",
+  SALON_ALREADY_COUPLED: "Der Salon ist bereits gekoppelt.",
+  BRANCH_ALREADY_COUPLED: "Diese Filialkennung ist bereits einem anderen Salon zugeordnet.",
+  SALON_INACTIVE: "Deaktivierte Salons können nicht gekoppelt werden.",
+  SALON_NOT_FOUND: "Salon nicht gefunden.",
 };
+
+/** Key a salon caller passes as `notFoundCode` so a code-less 404 reads as a missing salon. */
+export const SALON_NOT_FOUND = "SALON_NOT_FOUND";
 
 /**
  * Sentences that differ by the place the action was started from. The resend dialog says only
@@ -40,6 +56,8 @@ export const GENERIC_TEXT = "Die Aktion konnte nicht ausgeführt werden. Bitte e
 export interface ReasonOptions {
   /** Sentences that win over `REASON_TEXTS` for the same code. */
   overrides?: Readonly<Record<string, string>>;
+  /** The key a code-less 404 maps to (`failureText` only); defaults to `TENANT_NOT_FOUND`. */
+  notFoundCode?: string;
 }
 
 /**
@@ -77,7 +95,7 @@ export function failureText(error: unknown, options: ReasonOptions = {}): string
     { status?: unknown; code?: unknown; message?: unknown } | null | undefined;
   const status = typeof shaped?.status === "number" ? shaped.status : undefined;
   let code = typeof shaped?.code === "string" ? shaped.code : undefined;
-  if (code === undefined && status === 404) code = "TENANT_NOT_FOUND";
+  if (code === undefined && status === 404) code = options.notFoundCode ?? "TENANT_NOT_FOUND";
   // Only an API answer carries a message worth showing; a stray runtime error would be English.
   const message =
     status !== undefined && typeof shaped?.message === "string" ? shaped.message : undefined;

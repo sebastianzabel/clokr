@@ -20,6 +20,9 @@ export interface OpeningHoursDay {
   closed?: boolean;
 }
 
+/** The coupling choices of the salon form: no coupling, or Phorest (D-11: nothing else is offered). */
+export type CouplingProvider = "NONE" | "PHOREST";
+
 export interface OperatorCoupling {
   provider: string;
   externalBranchId: string;

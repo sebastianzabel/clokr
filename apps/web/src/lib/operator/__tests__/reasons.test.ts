@@ -7,6 +7,7 @@ import {
   GENERIC_TEXT,
   RATE_LIMIT_TEXT,
   REASON_TEXTS,
+  SALON_NOT_FOUND,
   RESEND_REASON_TEXTS,
   SERVER_FAULT_TEXT,
   failureText,
@@ -24,7 +25,34 @@ const TENANT_CODES = [
   "TENANT_NOT_FOUND",
 ];
 
+const SALON_TEXTS: Record<string, string> = {
+  FEDERAL_STATE_IN_USE:
+    "Das Bundesland ist durch Zeiteinträge oder Zuordnungen festgelegt. Ein Umzug ist ein neuer Salon.",
+  HOME_SALON_IN_USE:
+    "Der Salon ist noch Stammsalon von Mitarbeitenden. Die Mitarbeitenden müssen zuerst einem anderen Stammsalon zugeordnet werden.",
+  LAST_ACTIVE_SALON:
+    "Das ist der letzte aktive Salon des Mandanten. Ein Mandant braucht mindestens einen aktiven Salon.",
+  ALREADY_INACTIVE: "Der Salon ist bereits deaktiviert.",
+  ALREADY_ACTIVE: "Der Salon ist bereits aktiv.",
+  SALON_ALREADY_COUPLED: "Der Salon ist bereits gekoppelt.",
+  BRANCH_ALREADY_COUPLED: "Diese Filialkennung ist bereits einem anderen Salon zugeordnet.",
+  SALON_INACTIVE: "Deaktivierte Salons können nicht gekoppelt werden.",
+  SALON_NOT_FOUND: "Salon nicht gefunden.",
+};
+
 describe("REASON_TEXTS", () => {
+  it("holds every salon code with its UI-SPEC sentence, verbatim", () => {
+    for (const [code, text] of Object.entries(SALON_TEXTS)) {
+      expect(REASON_TEXTS[code], code).toBe(text);
+    }
+  });
+
+  it("renders a salon sentence by code, whatever the server said", () => {
+    expect(reasonText("BRANCH_ALREADY_COUPLED", "Branch exists")).toBe(
+      SALON_TEXTS["BRANCH_ALREADY_COUPLED"],
+    );
+  });
+
   it("covers every tenant lifecycle code", () => {
     expect(Object.keys(REASON_TEXTS)).toEqual(expect.arrayContaining(TENANT_CODES));
   });
@@ -98,6 +126,18 @@ describe("failureText", () => {
 
   it("maps a bare 404 to the tenant-not-found sentence", () => {
     expect(failureText({ status: 404, message: "Mandant nicht gefunden" })).toBe(
+      "Mandant nicht gefunden.",
+    );
+  });
+
+  it("maps a code-less 404 to the salon sentence when the caller names the salon key", () => {
+    expect(
+      failureText(
+        { status: 404, message: "Salon nicht gefunden" },
+        { notFoundCode: SALON_NOT_FOUND },
+      ),
+    ).toBe("Salon nicht gefunden.");
+    expect(failureText({ status: 404, message: "Salon nicht gefunden" })).toBe(
       "Mandant nicht gefunden.",
     );
   });
