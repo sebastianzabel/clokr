@@ -1833,6 +1833,16 @@ Phase 85b schließt diese Lücke und hebt die Aussage für die Dashboard-Pfade a
   derselben Stammdatenregel wie die Einzelansicht (`resolvePersonScopedEmployeeIds`, Phase 91b D-12) und
   nimmt die eigene Zeile hinzu. `overtimeAccount.balanceHours` steht nur noch unter einer `overtime:read`-
   Reichweite, die die Person abdeckt, sonst `null`. Eine neue Handler-Prüfung, keine neue Permission.
+- **Berichtigung (Plan 85b-15, Verifikationsbefund).** Die Aussage in #547 und im ersten Wortlaut dieses
+  Nachtrags, die Einzelansicht sei „bereits eingeschränkt“, stimmte nur für die Personenregel, **nicht für
+  das Saldo-Feld**: `GET /employees/:id` lieferte `overtimeAccount.balanceHours` ungefiltert an jeden Aufrufer
+  mit `employee:read` im Scope — die Maske der Liste ließ sich durch Einzelabrufe umgehen. Plan 85b-15
+  schließt das: ein modulprivates Paar (`resolveBalanceVisibility`, `maskOvertimeAccount` in
+  `contexts/platform/api/employees.ts`) entscheidet das Saldo für `GET /employees`, `GET /employees/:id` und
+  die Antwort von `PATCH /employees/:id/reactivate` (die einzige PATCH-Antwort mit `overtimeAccount`; die
+  Antwort von `PATCH /employees/:id` selbst enthält kein Konto). Verdeckt bleibt `null`, nie 0; Ganzmandanten-
+  Aufrufer und die Person selbst erhalten die unveränderte Antwort. Die Antwort von `POST /employees` zeigt
+  ein frisch angelegtes Konto mit 0 und gibt damit keinen gespeicherten Wert preis.
 - **Salonansicht (D-08, D-13).** `GET /time-entries` nimmt optional `salonId` mit `from` und `to` (höchstens
   31 Tage) und liefert alle sichtbaren Einträge dieses Salons für alle Personen; nur unter
   `time-entry:read:ZUGEWIESEN`.
