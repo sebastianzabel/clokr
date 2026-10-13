@@ -70,8 +70,8 @@ async function refusalRows(sub: string, route: string) {
 }
 
 /** A signed operator access token via the operator signer (a real one, as login would hand out). */
-function operatorAccessToken(sub: string): string {
-  return signOperatorToken(app, sub, "access");
+function operatorAccessToken(op: SeededOperator): string {
+  return signOperatorToken(app, op.id, "access", op.tokenVersion);
 }
 
 beforeAll(async () => {
@@ -99,7 +99,7 @@ afterAll(async () => {
 describe("operator tokens on tenant routes", () => {
   it("refuses an operator access token with 403 and audits the route", async () => {
     const own = await seedOperator(app);
-    const token = operatorAccessToken(own.id);
+    const token = operatorAccessToken(own);
 
     const res = await get("/api/v1/employees", token);
     expect(res.statusCode).toBe(403);
@@ -150,7 +150,7 @@ describe("operator tokens on tenant routes", () => {
 
   it("bounds the audit of 50 refused calls to one row", async () => {
     const own = await seedOperator(app);
-    const token = operatorAccessToken(own.id);
+    const token = operatorAccessToken(own);
 
     for (let i = 0; i < 50; i += 1) {
       const res = await get("/api/v1/employees", token);

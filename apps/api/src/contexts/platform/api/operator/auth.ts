@@ -164,7 +164,7 @@ export async function operatorAuthRoutes(app: FastifyInstance) {
       }
 
       return {
-        challengeToken: signOperatorToken(app, account.id, "mfa-challenge"),
+        challengeToken: signOperatorToken(app, account.id, "mfa-challenge", account.tokenVersion),
         expiresIn: OPERATOR_CHALLENGE_TTL_SECONDS,
       };
     },
@@ -298,7 +298,7 @@ export async function operatorAuthRoutes(app: FastifyInstance) {
       }
 
       return {
-        accessToken: signOperatorToken(app, account.id, "access"),
+        accessToken: signOperatorToken(app, account.id, "access", account.tokenVersion),
         expiresIn: OPERATOR_ACCESS_TOKEN_TTL_SECONDS,
       };
     },

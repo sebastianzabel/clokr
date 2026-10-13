@@ -11,7 +11,9 @@
  * none) and the tenant's SMTP configuration is looked up per tenant, which an operator does not have.
  *
  * Every lifecycle step (create, MFA reset, deactivate) writes exactly one `OperatorAuditLog` row in the
- * SAME transaction as the change (D-07) — never a tenant `AuditLog` row. The constants below are the ONE
+ * SAME transaction as the change (D-07) — never a tenant `AuditLog` row. An MFA reset (and, since Issue
+ * #557, a deactivation) increments `OperatorAccount.tokenVersion` in that same transaction, which ends every
+ * operator token already issued. The constants below are the ONE
  * place the operator password policy, lockout thresholds and TOTP parameters live.
  */
 
@@ -284,7 +286,11 @@ export type ResetOperatorMfaResult =
     }
   | { status: "NOT_FOUND" };
 
-/** Replaces the authenticator secret and all recovery codes of an operator (lost device) and clears lockout state. */
+/**
+ * Replaces the authenticator secret and all recovery codes of an operator (lost device) and clears lockout
+ * state. Every token already issued for the account (access token and pending challenge) ends with it: the
+ * token version is incremented in the same transaction as the audit row (Issue #557).
+ */
 export async function resetOperatorMfa(
   db: PrismaClient,
   input: { email: string; actor: OperatorActor },
@@ -296,7 +302,10 @@ export async function resetOperatorMfa(
   const enrollment = createTotpEnrollment(email);
   const recovery = generateRecoveryCodes();
   await db.$transaction(async (tx) => {
-    await tx.operatorAccount.update({
+    // Incrementing the token version ends every token already issued for the account (Issue #557). The
+    // old value is derived from the returned one: the increment is atomic, so it stays exact under
+    // concurrent resets.
+    const { tokenVersion } = await tx.operatorAccount.update({
       where: { id: existing.id },
       data: {
         totpSecretEnc: enrollment.secretEnc,
@@ -305,14 +314,22 @@ export async function resetOperatorMfa(
         recoveryCodeHashes: recovery.hashes,
         failedLoginAttempts: 0,
         lockedUntil: null,
+        tokenVersion: { increment: 1 },
       },
+      select: { tokenVersion: true },
     });
     await recordOperatorAudit(tx, {
       operatorId: null,
       action: OPERATOR_AUDIT_ACTIONS.OPERATOR_MFA_RESET,
       entity: "OperatorAccount",
       entityId: existing.id,
-      newValue: { actor: input.actor, recoveryCodes: OPERATOR_RECOVERY_CODE_COUNT },
+      oldValue: { tokenVersion: tokenVersion - 1 },
+      newValue: {
+        actor: input.actor,
+        recoveryCodes: OPERATOR_RECOVERY_CODE_COUNT,
+        sessionsRevoked: true,
+        tokenVersion,
+      },
     });
   });
   return {

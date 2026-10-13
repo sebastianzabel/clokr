@@ -691,6 +691,8 @@ export type SeededOperator = {
   password: string;
   secretBase32: string;
   recoveryCodes: string[];
+  /** The account's current token version (Issue #557); a hand-signed operator token must carry it as `ver`. */
+  tokenVersion: number;
   /**
    * The TOTP code of the current 30 s step plus `stepOffset` steps. Two logins inside one 30 s window
    * need different offsets (0, then +1): the replay guard refuses a step that is not greater than the
@@ -718,6 +720,10 @@ export async function seedOperator(
   if (result.status !== "OK") {
     throw new Error(`seedOperator failed: ${result.status}`);
   }
+  const { tokenVersion } = await testApp.prisma.operatorAccount.findUniqueOrThrow({
+    where: { id: result.account.id },
+    select: { tokenVersion: true },
+  });
   const totp = new TOTP({
     algorithm: "SHA1",
     digits: 6,
@@ -730,6 +736,7 @@ export async function seedOperator(
     password: SEEDED_OPERATOR_PASSWORD,
     secretBase32: result.enrollment.secretBase32,
     recoveryCodes: result.recoveryCodes,
+    tokenVersion,
     totpFor: (stepOffset = 0) => totp.generate({ timestamp: Date.now() + stepOffset * 30_000 }),
   };
 }
