@@ -844,7 +844,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       await updateOvertimeAccount(app, entry.employeeId);
 
-      const warnings = await checkArbZG(app.prisma, entry.employeeId, entry.date);
+      const warnings = await warningsVisibleToCaller(app.prisma, {
+        tenantId: req.user.tenantId,
+        access: accessContextFromRequest(req),
+        callerEmployeeId: req.user.employeeId ?? null,
+        employeeId: entry.employeeId,
+        date: entry.date,
+        tz,
+        warnings: await checkArbZG(app.prisma, entry.employeeId, entry.date),
+      });
 
       // Auto-dismiss CLOCK_OUT_REMINDER notifications for this entry (Phase 70 contract — preserved verbatim).
       try {
@@ -1752,7 +1760,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       await updateOvertimeAccount(app, employeeId);
 
-      const warnings = await checkArbZG(app.prisma, employeeId, new Date(body.date));
+      const warnings = await warningsVisibleToCaller(app.prisma, {
+        tenantId: user.tenantId,
+        access: accessContextFromRequest(req),
+        callerEmployeeId: user.employeeId ?? null,
+        employeeId,
+        date: new Date(body.date),
+        tz,
+        warnings: await checkArbZG(app.prisma, employeeId, new Date(body.date)),
+      });
 
       // Phase 63 D-12 — append JArbSchG soft-warn to the warnings array AND
       // emit a JARBSCHG_SOFT_WARN audit-log row tied to the created entry.
