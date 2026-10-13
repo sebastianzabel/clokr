@@ -28,6 +28,7 @@ classified by lifecycle.
 | audit-vacation-entitlements.ts                 | 2026-10-02 | Prüfbericht over every stored VACATION LeaveEntitlement row, base year + following year (Issue #444), eight categories incl. OK, read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                                                                                                           | Audit tool                                   |
 | dry-run-433-monthly-hours-soll.ts              | 2026-10-03 | List, per MONTHLY_HOURS employee (monthlyHours > 0) and non-superseded MONTHLY snapshot, the stored vs. Issue #433-rule-recomputed expected/balance minutes, the delta and the locked flag; only differing months are printed (read-only, no opt-in write flag, exits 2 on findings)                                                                                                                                                                                                                                                                                | Audit tool                                   |
 | audit-494-track-only-carry.ts                  | 2026-10-06 | List, per employee, closed MONTHLY snapshots whose contract valid in that month is track-only (MONTHLY_HOURS without monthly hours or TRACK_ONLY, Issue #494) with stored carry-over != 0, reason, locked flag, before/after live figure and a HIGH priority when a later contract has a target (read-only, no opt-in write flag, ids only, exits 2 on findings)                                                                                                                                                                                                    | Audit tool                                   |
+| audit-551-users-without-employee.ts            | 2026-10-13 | Audit tool: list every User without an Employee (they have no tenant and cannot sign in since Issue #551) — id, role, isActive, open refresh tokens, role assignments, plus a totals line; read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                                                 |
 | migrate-opening-balances.ts                    | 2026-08-19 | Move documented opening balances out of SaldoSnapshot.carryOver onto the OpeningBalance model; dry-run default, per-employee zero-drift assertion, aborts writing nothing on any failure                                                                                                                                                                                                                                                                                                                                                                            | Migration artifact (Phase 99)                |
 | ensure-test-database.ts                        | 2026-08-21 | Idempotent `CREATE DATABASE "clokr_test"` + `COMMENT ON DATABASE` marker stamp; refuses any non-test target (wrong name, `?schema=` param, or NODE_ENV=production) before opening a connection                                                                                                                                                                                                                                                                                                                                                                      | Test infrastructure (Phase 101)              |
 | reset-test-databases.ts                        | 2026-08-26 | Drops and re-clones the N per-worker test databases from the migrated `clokr_test` template; the ONLY `DROP-DATABASE` statement in this repo, gated on marker possession AND the anchored worker-name pattern; excluded from the runtime image (Phase 106 D-07/D-08)                                                                                                                                                                                                                                                                                                | Test infrastructure (Phase 106)              |
@@ -303,6 +304,20 @@ UUIDs — no employee name, no employee number. Correcting a finding is a delibe
 affected month (mandatory reason, UNLOCK audit entry) followed by a re-close, never this script
 (and never for an `OPENING_BALANCE` row). Operator step: run it once on int and prod after the
 release that ships Issue #494.
+
+`audit-551-users-without-employee.ts` (Issue #551) lists every `User` that has no `Employee` row. Such a
+user has no tenant: since #551 `requireAuth` answers 403 `TENANT_REQUIRED` for its tokens, and login,
+verify-otp, resend-otp, refresh and change-password refuse it before any token is issued, so every
+listed ACTIVE user loses the ability to sign in with that release. Per user it prints one line
+(`userId=<full uuid> role=<role> isActive=<bool> openRefreshTokens=<n> roleAssignments=<n>`; open means
+not revoked and not expired, role assignments are counted across all tenants), then a `Totals:` line.
+Usage: no required flag (`--help` prints the usage; any unknown flag is a usage error, exit `1`).
+Exit codes: `0` no such user, `1` usage error or DATABASE_URL missing/a DB failure, `2` one or more users
+listed. It performs ZERO writes (only Prisma reads, no raw SQL, no write flag — mechanically checked by
+its own test), prints ids and counts only (never a mail address or a name, DSGVO), and its `main()` is
+behind an entrypoint guard, so importing the module connects to nothing. Operator step: run it once on
+int and prod BEFORE the #551 release is deployed. `seed-int-admin.ts` (refresh step 8) picks only admins
+that have an Employee for the same reason, and refuses a pinned `--email` without one before any write.
 
 ## Test infrastructure
 
@@ -831,6 +846,14 @@ sweep ever runs. An unamended cell is unaffected — this is additive only.
   from "not recorded" and from a plain cell mismatch, so the three causes are never confused
 - **Generic on purpose:** any future issue whose fix changes a matrix cell's correct value for a
   reason unrelated to Issue #75 adds an entry here instead of building its own mechanism
+
+`activity-auth-neutrality.test.ts` has the same register since Issue #551
+(`neutrality/recorded/activity-auth-amendments.json`, next to `activity-auth.json`, which stays
+byte-identical): same shape (`key`, `from`, `to`, `issue`, `reason` of at least 20 characters, `date`),
+same rules — `from` is pinned byte-for-byte to the recording, `to` is compared with the measured result,
+and its own "amendments register (Issue #551)" describe validates the register (anti-vacuity, no
+duplicate key, no missing field, no orphaned or stale entry). Its two entries are the login and refresh
+cells of the user without an Employee, who can no longer sign in.
 
 ## Invocation
 

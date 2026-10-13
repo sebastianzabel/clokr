@@ -749,8 +749,19 @@ import { readFileSync } from "node:fs";
 // `operator-auth-88` kept their case count. Lower-bound convention as above (the reporter counts a
 // looping case more than once, the source once - the edited-file deltas use the source count).
 // Full-suite run on this tree before the floor was raised: 559 files, 8866 tests.
-const MIN_FILES = 396;
-const MIN_TESTS = 6638;
+// Issue #551 (2026-10-13), quick 261013-bhk on `fix/551-leerer-mandant-sperre` (based on 0f248682):
+// 2 new test files - `src/__tests__/tenant-required-551` and
+// `scripts/__tests__/audit-551-users-without-employee` - MIN_FILES rises from 396 to 398. MIN_TESTS rises
+// from 6638 to 6674: +36 cases, measured by counting `it(` / `it.each(` per file in the blob at 0f248682
+// vs HEAD - new files 19 and 7; edited files `src/contexts/platform/__tests__/request-permissions` 28 -> 29
+// (+1), `src/__tests__/access-context-missing` 3 -> 5 (+2), `activity-auth-neutrality` 6 -> 10 (+4, the
+// amendments register), `src/contexts/scheduling/api/__tests__/shifts-my-week` 10 -> 11 (+1),
+// `leave-days-work-location` 4 -> 5 (+1) and `operator-tenant-boundary-sweep-88` 7 -> 8 (+1); the edited
+// files `tenant-deactivation-88` (19 -> 19, one title) and `src/contexts/platform/__tests__/compat-role`
+// (38 -> 38, one case rewritten 1:1) kept their case count. Same lower-bound convention as above (a
+// looping case counts once in the source and more in the reporter); not a re-measure-to-actual sweep.
+const MIN_FILES = 398;
+const MIN_TESTS = 6674;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

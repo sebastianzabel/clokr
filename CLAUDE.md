@@ -1002,8 +1002,15 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
 - **A nullish tenant never reaches a Prisma call.** Prisma DROPS a filter whose value is `undefined`,
   so `where: { tenantId: undefined }` reads every tenant. `lint:tenant-scoping` fails on an optional
   tenant value in any Prisma call under `apps/api/src` (`lint-tenant-scoping-nullish-tenant.ts`); the
-  fail-closed form is `?? ""`. The runtime twin is `operator-tenant-boundary-sweep-88.test.ts`. The
-  known hole `tenantId: ""` (a user without an employee) is characterised there and left to #551.
+  fail-closed form is `?? ""`. The runtime twin is `operator-tenant-boundary-sweep-88.test.ts`.
+  **A tenant token without a tenant is refused in one place (Issue #551).** Since #551 `requireAuth`
+  refuses a verified tenant token (JWT or API key) whose `tenantId` is blank, whitespace-only, absent
+  or not a string with 403 `{ error, code: "TENANT_REQUIRED" }`, before any permission check and before
+  any query; no credential path issues such a token (login after the password matched, verify-otp,
+  resend-otp, refresh before the rotation, change-password); `effectiveGrants` grants a blank tenant
+  nothing (no legacy-role fallback). The rule lives only in `isBlankTenantId()`
+  (`contexts/platform/tenant-status.ts`, defined in the zero-import leaf `access-context-error.ts`).
+  `scripts/audit-551-users-without-employee.ts` lists the affected users (read-only).
 
 ### Tenant-scoping gate (Issue #204)
 

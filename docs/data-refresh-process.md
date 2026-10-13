@@ -248,9 +248,9 @@ Example output:
   Change it in the app if this environment is shared.
 ```
 
-The script picks an **existing active ADMIN** (lowest id) and never creates a person. Useful flags:
+The script picks an **existing active ADMIN with an Employee** (lowest id among them) and never creates a person. Since Issue #551 an admin without an Employee has no tenant and cannot sign in (403 `TENANT_REQUIRED`), so the default pick skips such users and a pinned `--email` of one is refused before anything is written. Useful flags:
 
-- `--email <address>` — pin a specific admin instead of the deterministic lowest-id pick
+- `--email <address>` — pin a specific admin (one that has an Employee) instead of the deterministic lowest-id pick
 - `--password <value>` — supply a password instead of letting the script generate one
 - `--disable-2fa` — only needed if the tenant has 2FA on; otherwise `POST /auth/login` returns
   202 `{ requiresOtp: true }` and mails the code to the pseudonymized, undeliverable
