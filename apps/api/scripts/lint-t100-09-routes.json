@@ -1137,6 +1137,16 @@
       "validatedAt": null
     },
     {
+      "route": "PUT /api/v1/operator/tenants/:id/packages",
+      "file": "apps/api/src/contexts/platform/api/operator/tenants.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Tenant by the operator principal, which sits above the tenant: there is no caller tenant whose foreign instance could be told apart from an unknown id. requireOperator runs first; an unknown id answers the same plain 404 `Mandant nicht gefunden` for every operator, and the writer reads the `tenant` model only (tenant-packages.ts `changeTenantPackages`), so it is not a tenant-membership oracle. Proven by operator-packages-566.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "POST /api/v1/operator/tenants/:id/deactivate",
       "file": "apps/api/src/contexts/platform/api/operator/tenants.ts",
       "category": "nicht anwendbar",

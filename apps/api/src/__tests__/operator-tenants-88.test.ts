@@ -65,7 +65,10 @@ async function createTenant(label: string, overrides: Record<string, unknown> = 
   const res = await call("POST", BASE, operatorToken, body);
   expect(res.statusCode, res.body).toBe(201);
   const parsed = JSON.parse(res.body) as {
-    tenant: { id: string };
+    tenant: {
+      id: string;
+      packages: { bookedModules: string[]; salonQuota: number; activeSalonCount: number };
+    };
     defaultSalonId: string;
     adminEmployeeId: string;
     invitationMailSent: boolean;
@@ -125,8 +128,11 @@ const DTO_KEYS = [
   "federalState",
   "id",
   "name",
+  "packages",
   "slug",
 ];
+
+const PACKAGES_KEYS = ["activeSalonCount", "bookedModules", "salonQuota"];
 
 describe("POST /api/v1/operator/tenants (tracer)", () => {
   it("creates a tenant its first admin can use right away, and never returns the invitation token", async () => {
@@ -140,6 +146,12 @@ describe("POST /api/v1/operator/tenants (tracer)", () => {
       "tenant",
     ]);
     expect(Object.keys(parsed.tenant).sort()).toEqual(DTO_KEYS);
+    // A freshly created tenant starts on the Grundversion with its default salon active (566).
+    expect(parsed.tenant.packages).toEqual({
+      bookedModules: [],
+      salonQuota: 1,
+      activeSalonCount: 1,
+    });
     expect(parsed.invitationMailSent).toBe(true);
     expect(mail.token.length).toBeGreaterThan(10);
     expect(mail.to).toBe(body.admin.email);
@@ -374,8 +386,20 @@ describe("GET /api/v1/operator/tenants and /:id", () => {
 
     const list = await call("GET", BASE, operatorToken);
     expect(list.statusCode).toBe(200);
-    const items = JSON.parse(list.body) as { id: string; deactivatedAt: string | null }[];
-    for (const item of items) expect(Object.keys(item).sort()).toEqual(DTO_KEYS);
+    const items = JSON.parse(list.body) as {
+      id: string;
+      deactivatedAt: string | null;
+      packages: Record<string, unknown>;
+    }[];
+    for (const item of items) {
+      expect(Object.keys(item).sort()).toEqual(DTO_KEYS);
+      expect(Object.keys(item.packages).sort()).toEqual(PACKAGES_KEYS);
+    }
+    // The fixture tenant books every module with quota 500 (566-01 FIXTURE_PACKAGES).
+    expect(items.find((i) => i.id === data.tenant.id)?.packages).toMatchObject({
+      bookedModules: ["CHAIN", "INTEGRATIONS", "HARDWARE_CLOCK", "ANALYTICS"],
+      salonQuota: 500,
+    });
     const expectedOrder = await app.prisma.tenant.findMany({
       select: { id: true },
       orderBy: [{ name: "asc" }, { id: "asc" }],
@@ -385,7 +409,9 @@ describe("GET /api/v1/operator/tenants and /:id", () => {
 
     const one = await call("GET", `${BASE}/${parsed.tenant.id}`, operatorToken);
     expect(one.statusCode).toBe(200);
-    expect(Object.keys(JSON.parse(one.body)).sort()).toEqual(DTO_KEYS);
+    const oneDto = JSON.parse(one.body);
+    expect(Object.keys(oneDto).sort()).toEqual(DTO_KEYS);
+    expect(Object.keys(oneDto.packages).sort()).toEqual(PACKAGES_KEYS);
   });
 
   it("answers an unknown id with 404", async () => {
@@ -431,6 +457,7 @@ describe("PATCH /api/v1/operator/tenants/:id (rename)", () => {
     expect(res.statusCode, res.body).toBe(200);
     const dto = JSON.parse(res.body);
     expect(Object.keys(dto).sort()).toEqual(DTO_KEYS);
+    expect(Object.keys(dto.packages).sort()).toEqual(PACKAGES_KEYS);
     expect(dto.name).toBe("Neuer Name");
     expect(dto.slug).toBe(before.slug);
 
@@ -538,6 +565,7 @@ describe("deactivate and reactivate", () => {
     expect(res.statusCode, res.body).toBe(200);
     const dto = JSON.parse(res.body);
     expect(Object.keys(dto).sort()).toEqual(DTO_KEYS);
+    expect(Object.keys(dto.packages).sort()).toEqual(PACKAGES_KEYS);
     expect(dto.deactivatedAt).toBeTruthy();
     expect(dto.deactivatedReason).toBe("Vertrag beendet");
     expect(refreshSpy).toHaveBeenCalledTimes(1);

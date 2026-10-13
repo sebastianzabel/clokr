@@ -16,8 +16,8 @@
  *   data. A package that is not booked refuses a NEW creation or activation only.
  * - `isMultiSalonTenant()` / `showSalonOptions()` never read packages: whether the salon choice
  *   is shown depends on the number of active salons, not on what is booked.
- * - Written only by the operator (the writer arrives with the operator packages route); this
- *   module has no tenant-facing write.
+ * - Written only by the operator through {@link changeTenantPackages} (and by the e2e test
+ *   bootstrap); this module has no tenant-facing write.
  * - Legal-core paths (saldo, Monatsabschluss, ArbZG, retention, DATEV) must not import this
  *   module — packages gate convenience features, never a legal duty.
  *
@@ -208,4 +208,56 @@ export async function assertModuleBooked(
   if (!(await isModuleBooked(db, tenantId, module))) {
     throw new ModuleNotBookedError(module);
   }
+}
+
+export type ChangeTenantPackagesResult =
+  | { status: "NOT_FOUND" }
+  | { status: "TENANT_DEACTIVATED" }
+  | { status: "UNCHANGED"; packages: TenantPackages }
+  | { status: "OK"; before: TenantPackages; after: TenantPackages };
+
+/**
+ * The ONE writer of the two package columns. Operator only: the operator route calls it inside
+ * its audit transaction; the e2e test bootstrap calls it without a principal.
+ *
+ * Takes the same Tenant row lock as {@link assertSalonActivationAllowed}, so a package change and
+ * a salon activation serialise (D-04). It changes nothing but `bookedModules` and `salonQuota`
+ * (D-06): no salon is deactivated and nothing is revoked, even when the new values fall below the
+ * current usage. It writes no audit row itself — the caller audits. The input range (module set,
+ * quota upper bound) is validated by the caller; a quota below 1 is still refused here as defense
+ * in depth, the database CHECK is the last line.
+ */
+export async function changeTenantPackages(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  next: TenantPackages,
+): Promise<ChangeTenantPackagesResult> {
+  if (!Number.isInteger(next.salonQuota) || next.salonQuota < 1) {
+    throw new RangeError("salonQuota must be an integer of at least 1");
+  }
+  await lockTenantForPackages(db, tenantId);
+  const row = await db.tenant.findUnique({
+    where: { id: tenantId },
+    select: { deactivatedAt: true, ...TENANT_PACKAGES_SELECT },
+  });
+  if (!row) return { status: "NOT_FOUND" };
+  if (row.deactivatedAt) return { status: "TENANT_DEACTIVATED" };
+
+  const before = normalizeStoredPackages(row);
+  const after = normalizeStoredPackages({
+    bookedModules: next.bookedModules,
+    salonQuota: next.salonQuota,
+  });
+  const unchanged =
+    before.salonQuota === after.salonQuota &&
+    before.bookedModules.length === after.bookedModules.length &&
+    before.bookedModules.every((module, i) => module === after.bookedModules[i]);
+  if (unchanged) return { status: "UNCHANGED", packages: before };
+
+  await db.tenant.update({
+    where: { id: tenantId },
+    data: { bookedModules: after.bookedModules, salonQuota: after.salonQuota },
+    select: { id: true },
+  });
+  return { status: "OK", before, after };
 }
