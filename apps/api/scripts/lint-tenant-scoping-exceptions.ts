@@ -62,12 +62,21 @@
  *    longer matches any current finding fails as STALE, so the list cannot rot into a blanket
  *    allow once the code it names has moved or been fixed.
  *
+ * ── The optional `rule` discriminator (Issue #88, D-08a) ──────────────────────────────────────
+ * The nullish-tenant rule (`lint-tenant-scoping-nullish-tenant.ts`) shares this file. An entry
+ * WITHOUT a `rule` field is a client-supplied-identifier exception, exactly as before - the
+ * existing entries stay byte-identical. An entry with `"rule": "nullish-tenant"` matches ONLY
+ * nullish findings, by `file` + `calls[].call` (`<model>.<method>`) + `calls[].line`, where the
+ * line is the line of the offending `tenantId` value. Any other `rule` value fails validation, and
+ * a client-supplied entry can never silence a nullish finding (nor the reverse). A hit of the
+ * nullish rule on a clean tree is fixed at its source; no entry of this kind exists.
+ *
  * This module has no `main()`, no CLI, and no side effects on import — the CLI entry point and its
  * report belong to `lint-tenant-scoping.ts` (this same plan, Task 2).
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { PrismaCall } from "./lint-tenant-scoping-types";
+import type { NullishTenantFinding } from "./lint-tenant-scoping-nullish-tenant";
 
 /** Repo-relative path to the exception list, exported so the CLI entry and tests share one constant. */
 export const EXCEPTIONS_FILE = "apps/api/scripts/lint-tenant-scoping-exceptions.json";
@@ -101,6 +110,12 @@ export type TenantScopingException = {
   /** Every call this entry covers, each named explicitly — NEVER "every call in this handler". */
   calls: TenantScopingExceptionCall[];
   /**
+   * Which rule this entry excepts. Absent = the original client-supplied-identifier rule
+   * (Issue #204); `"nullish-tenant"` = the Issue #88 rule. Set on a validated entry only when the
+   * raw entry carried it, so the existing entries keep their exact shape.
+   */
+  rule?: ExceptionRule;
+  /**
    * WHY the calls above are tenant-safe, in prose, referencing `validatedAt` when it is set.
    * Mandatory, enforced here rather than in code review (D-06). This field is the whole point of
    * the list: "Die Ausnahmeliste ist dabei kein Makel, sondern der eigentliche Wert: sie macht die
@@ -108,6 +123,13 @@ export type TenantScopingException = {
    */
   reason: string;
 };
+
+/** Where a finding sits: file, line and the `<model>.<method>` of its Prisma call. */
+export type FindingLocation = { file: string; line: number; model: string; method: string };
+
+/** The rules an exception entry may name. */
+export const EXCEPTION_RULES = ["nullish-tenant"] as const;
+export type ExceptionRule = (typeof EXCEPTION_RULES)[number];
 
 /**
  * Minimum trimmed `reason` length. "A reason must be a sentence, not a word" (plan 04 <behavior>):
@@ -120,7 +142,7 @@ export type TenantScopingException = {
  */
 export const MIN_REASON_LENGTH = 30;
 
-function callKey(call: Pick<PrismaCall, "model" | "method">): string {
+function callKey(call: { model: string; method: string }): string {
   return `${call.model}.${call.method}`;
 }
 
@@ -149,7 +171,8 @@ function describeCall(c: TenantScopingExceptionCall): string {
  */
 export function validateExceptions(
   entries: unknown,
-  findings: readonly PrismaCall[],
+  findings: readonly FindingLocation[],
+  nullishFindings: readonly NullishTenantFinding[] = [],
 ): { ok: true; entries: TenantScopingException[] } | { ok: false; errors: string[] } {
   if (!Array.isArray(entries)) {
     return {
@@ -169,7 +192,15 @@ export function validateExceptions(
       return;
     }
 
-    const { file, handler, validatedAt, calls, reason } = raw;
+    const { file, handler, validatedAt, calls, reason, rule } = raw;
+
+    if (rule !== undefined && !(EXCEPTION_RULES as readonly unknown[]).includes(rule)) {
+      errors.push(
+        `${label}: unknown 'rule' ${JSON.stringify(rule)} - omit it for the client-supplied ` +
+          `rule, or use one of: ${EXCEPTION_RULES.map((r) => JSON.stringify(r)).join(", ")}`,
+      );
+      return;
+    }
 
     if (typeof file !== "string" || file.length === 0) {
       errors.push(`${label}: missing or invalid 'file' (repo-relative path expected)`);
@@ -243,8 +274,9 @@ export function validateExceptions(
       return;
     }
 
+    const pool: readonly FindingLocation[] = rule === "nullish-tenant" ? nullishFindings : findings;
     const staleCalls = parsedCalls.filter(
-      (c) => !findings.some((f) => f.file === file && callKey(f) === c.call && f.line === c.line),
+      (c) => !pool.some((f) => f.file === file && callKey(f) === c.call && f.line === c.line),
     );
     if (staleCalls.length > 0) {
       errors.push(
@@ -262,6 +294,7 @@ export function validateExceptions(
       validatedAt: validatedAt as number | null,
       calls: parsedCalls,
       reason: reason.trim(),
+      ...(rule === undefined ? {} : { rule: rule as ExceptionRule }),
     });
   });
 
@@ -277,12 +310,13 @@ export function validateExceptions(
  * number in the exception entry", not as an unexplained finding that looks like a brand-new gap.
  */
 export function matchException(
-  call: PrismaCall,
+  call: FindingLocation,
   entries: readonly TenantScopingException[],
 ): { matched: TenantScopingException } | { nearMiss: TenantScopingException } | null {
   const key = callKey(call);
 
   for (const entry of entries) {
+    if (entry.rule !== undefined) continue; // nullish-tenant entries never silence this rule
     if (entry.file !== call.file) continue;
     if (entry.calls.some((c) => c.call === key && c.line === call.line)) {
       return { matched: entry };
@@ -290,12 +324,30 @@ export function matchException(
   }
 
   for (const entry of entries) {
+    if (entry.rule !== undefined) continue;
     if (entry.file !== call.file) continue;
     if (entry.calls.some((c) => c.call === key)) {
       return { nearMiss: entry };
     }
   }
 
+  return null;
+}
+
+/**
+ * Does a nullish-tenant finding match an entry that names the `nullish-tenant` rule? Exact
+ * `file` + `<model>.<method>` + line only; an entry without the rule never matches.
+ */
+export function matchNullishException(
+  finding: NullishTenantFinding,
+  entries: readonly TenantScopingException[],
+): TenantScopingException | null {
+  const key = callKey(finding);
+  for (const entry of entries) {
+    if (entry.rule !== "nullish-tenant") continue;
+    if (entry.file !== finding.file) continue;
+    if (entry.calls.some((c) => c.call === key && c.line === finding.line)) return entry;
+  }
   return null;
 }
 

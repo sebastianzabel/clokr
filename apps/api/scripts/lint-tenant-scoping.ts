@@ -87,12 +87,26 @@ import {
   loadExceptions,
   validateExceptions,
   matchException,
+  matchNullishException,
 } from "./lint-tenant-scoping-exceptions";
 import type { TenantScopingException } from "./lint-tenant-scoping-exceptions";
+import {
+  listNullishScanFiles,
+  findNullishTenantValues,
+} from "./lint-tenant-scoping-nullish-tenant";
+import type { NullishTenantFinding } from "./lint-tenant-scoping-nullish-tenant";
 
 // ── Public shape ───────────────────────────────────────────────────────────────────────────────
 
-export type RunLintFinding = { call: PrismaCall; detail: string };
+/** The location of a finding; the nullish rule reports any Prisma model method, not only the 8 relevant ones. */
+export type FindingCall = Pick<PrismaCall, "file" | "line" | "model"> & { method: string };
+
+export type RunLintFinding = {
+  /** Which rule produced it: the original Issue #204 rule, or the Issue #88 nullish-tenant rule. */
+  rule: "client-supplied" | "nullish-tenant";
+  call: FindingCall;
+  detail: string;
+};
 
 export type RunLintCounts = {
   /** Every relevant Prisma call found in SCOPED_DIRS, before the D-14 client-supplied filter. */
@@ -105,6 +119,12 @@ export type RunLintCounts = {
   excepted: number;
   /** Raw findings NOT covered by any exception — what actually gets reported. */
   findings: number;
+  /** Prisma model calls seen by the nullish-tenant scan (all methods, all non-test src). */
+  nullishScanned: number;
+  /** Files walked by the nullish-tenant scan. */
+  nullishFiles: number;
+  /** Nullish-tenant findings NOT covered by an exception. */
+  nullishFindings: number;
 };
 
 export type RunLintResult = {
@@ -125,7 +145,7 @@ const EMPTY_BY_VIA: Record<ScopedVia, number> = {
 
 /** `<file>:<line> — <model>.<method> — <detail>` — the one line-format every finding is printed as. */
 export function formatFinding(
-  call: PrismaCall,
+  call: FindingCall,
   verdict: Extract<Verdict, { scoped: false }>,
 ): string {
   return `${call.file}:${call.line} — ${call.model}.${call.method} — ${verdict.detail}`;
@@ -176,6 +196,9 @@ export function runLint(opts: { repoRoot: string; json?: boolean }): RunLintResu
           byVia: { ...EMPTY_BY_VIA },
           excepted: 0,
           findings: 0,
+          nullishScanned: 0,
+          nullishFiles: 0,
+          nullishFindings: 0,
         },
         errors: [err.message],
       };
@@ -201,8 +224,41 @@ export function runLint(opts: { repoRoot: string; json?: boolean }): RunLintResu
     if (verdict.scoped) {
       byVia[verdict.via] += 1;
     } else {
-      rawFindings.push({ call: candidate.call, detail: verdict.detail });
+      rawFindings.push({
+        rule: "client-supplied",
+        call: candidate.call,
+        detail: verdict.detail,
+      });
     }
+  }
+
+  // Issue #88 (D-08a): the nullish-tenant rule - an undefined tenant id reaching ANY Prisma model
+  // call anywhere in non-test src. A walk that cannot run is a gate error, never "all clean".
+  const nullishRaw: NullishTenantFinding[] = [];
+  const nullishStats = { calls: 0 };
+  let nullishFiles = 0;
+  const nullishErrors: string[] = [];
+  try {
+    for (const relPath of listNullishScanFiles(repoRoot)) {
+      const absPath = path.join(repoRoot, relPath);
+      const sourceFile = ts.createSourceFile(
+        absPath,
+        fs.readFileSync(absPath, "utf8"),
+        ts.ScriptTarget.Latest,
+        /* setParentNodes */ true,
+      );
+      nullishFiles += 1;
+      nullishRaw.push(...findNullishTenantValues(sourceFile, relPath, nullishStats));
+    }
+  } catch (err) {
+    nullishErrors.push(err instanceof Error ? err.message : String(err));
+  }
+  if (nullishErrors.length === 0 && nullishStats.calls === 0) {
+    nullishErrors.push(
+      "nullish-tenant scan saw 0 Prisma model call(s) in non-test apps/api/src. Either the scan " +
+        "root no longer matches the tree or the call detection is broken - both are defects, " +
+        "not 'all clean' (Issue #88).",
+    );
   }
 
   // Exception validation runs against the RAW finding set (pre-except), so staleness is judged
@@ -214,6 +270,7 @@ export function runLint(opts: { repoRoot: string; json?: boolean }): RunLintResu
     const validated = validateExceptions(
       raw,
       rawFindings.map((f) => f.call),
+      nullishRaw,
     );
     if (validated.ok) {
       exceptions = validated.entries;
@@ -235,12 +292,31 @@ export function runLint(opts: { repoRoot: string; json?: boolean }): RunLintResu
     findings.push(f);
   }
 
+  let nullishFindings = 0;
+  for (const f of nullishRaw) {
+    const match = matchNullishException(f, exceptions);
+    if (match) {
+      excepted += 1;
+      continue;
+    }
+    nullishFindings += 1;
+    findings.push({
+      rule: "nullish-tenant",
+      call: { file: f.file, line: f.line, model: f.model, method: f.method },
+      detail: f.detail,
+    });
+  }
+  errors.push(...nullishErrors);
+
   const counts: RunLintCounts = {
     inScope,
     candidates: candidates.length,
     byVia,
     excepted,
-    findings: findings.length,
+    findings: findings.length - nullishFindings,
+    nullishScanned: nullishStats.calls,
+    nullishFiles,
+    nullishFindings,
   };
 
   // Guard B (#229): a run that finds ZERO in-scope Prisma calls is never "all clean" — either the
@@ -301,6 +377,11 @@ function printReport(result: RunLintResult): void {
       `${result.counts.excepted} exception(s) applied, ${result.counts.findings} finding(s).`,
   );
 
+  console.log(
+    `[lint:tenant-scoping] nullish-tenant: ${result.counts.nullishScanned} Prisma call(s) in ` +
+      `${result.counts.nullishFiles} file(s), ${result.counts.nullishFindings} finding(s).`,
+  );
+
   if (result.findings.length === 0 && result.errors.length === 0) {
     console.log(`[lint:tenant-scoping] OK — no findings outside the exception list.`);
     return;
@@ -311,24 +392,33 @@ function printReport(result: RunLintResult): void {
     for (const f of result.findings) {
       console.error(`  ${formatFinding(f.call, { scoped: false, detail: f.detail })}`);
     }
-    console.error(
-      `\nFix options:\n` +
-        `  1. Scope the query: add \`tenantId: req.user.tenantId\` to the \`where\`, or a relation\n` +
-        `     filter (e.g. \`employee: { tenantId: req.user.tenantId } }\`) for a model without its\n` +
-        `     own column.\n` +
-        `  2. Or fetch-then-compare: load the record, compare its tenantId against req.user.tenantId\n` +
-        `     and return 404 BEFORE any write — the established idiom in this codebase\n` +
-        `     (see apps/api/src/contexts/time-tracking/api/time-entries.ts:681-698).\n` +
-        `  3. Or, if this site is genuinely tenant-safe for a reason the check cannot see, add an\n` +
-        `     entry to apps/api/scripts/lint-tenant-scoping-exceptions.json (one entry per HANDLER,\n` +
-        `     naming every covered call explicitly — see that file's header):\n` +
-        `       { "file": "...", "handler": "METHOD /path", "validatedAt": 0,\n` +
-        `         "calls": [{ "call": "model.method", "line": 0 }], "reason": "<why this is safe>" }\n` +
-        `     The reason is MANDATORY and is validated by this script — an entry without one fails\n` +
-        `     the run, and so does a call this script finds that is not named in 'calls'. Do NOT add\n` +
-        `     an entry to silence a finding you have not understood: per Issue #204, a hit on a\n` +
-        `     clean tree is a finding and belongs in a GitHub issue, not in this list.\n`,
-    );
+    if (result.counts.nullishFindings > 0) {
+      console.error(
+        `\nnullish-tenant fix: use a required tenant id or the fail-closed \`?? ""\` idiom; never let ` +
+          `an optional tenant reach a query (Prisma drops an undefined filter). Fix it at the ` +
+          `source - an exception needs an explicit "rule": "nullish-tenant" entry and is not the ` +
+          `answer to a real hit.`,
+      );
+    }
+    if (result.counts.findings > 0)
+      console.error(
+        `\nFix options:\n` +
+          `  1. Scope the query: add \`tenantId: req.user.tenantId\` to the \`where\`, or a relation\n` +
+          `     filter (e.g. \`employee: { tenantId: req.user.tenantId } }\`) for a model without its\n` +
+          `     own column.\n` +
+          `  2. Or fetch-then-compare: load the record, compare its tenantId against req.user.tenantId\n` +
+          `     and return 404 BEFORE any write — the established idiom in this codebase\n` +
+          `     (see apps/api/src/contexts/time-tracking/api/time-entries.ts:681-698).\n` +
+          `  3. Or, if this site is genuinely tenant-safe for a reason the check cannot see, add an\n` +
+          `     entry to apps/api/scripts/lint-tenant-scoping-exceptions.json (one entry per HANDLER,\n` +
+          `     naming every covered call explicitly — see that file's header):\n` +
+          `       { "file": "...", "handler": "METHOD /path", "validatedAt": 0,\n` +
+          `         "calls": [{ "call": "model.method", "line": 0 }], "reason": "<why this is safe>" }\n` +
+          `     The reason is MANDATORY and is validated by this script — an entry without one fails\n` +
+          `     the run, and so does a call this script finds that is not named in 'calls'. Do NOT add\n` +
+          `     an entry to silence a finding you have not understood: per Issue #204, a hit on a\n` +
+          `     clean tree is a finding and belongs in a GitHub issue, not in this list.\n`,
+      );
   }
 
   if (result.exitCode === 0 && process.env.LINT_TENANT_SCOPING_SOFT === "1") {
@@ -352,6 +442,7 @@ function main(): void {
           model: f.call.model,
           method: f.call.method,
           detail: f.detail,
+          rule: f.rule,
         })),
         null,
         2,
