@@ -178,3 +178,73 @@ export async function purgeExpiredOperatorAudit(
     return { deleted: count };
   });
 }
+
+// ── Bounded refusal audit ──────────────────────────────────────────────────
+
+/** Length of the per-(principal, route) window in which repeated refusals collapse into one row. */
+export const PRINCIPAL_REFUSAL_WINDOW_MS = 60_000;
+const PRINCIPAL_REFUSAL_MAX_KEYS = 10_000;
+
+type RefusalWindow = { windowStart: number; suppressed: number };
+const refusalWindows = new Map<string, RefusalWindow>();
+
+export type PrincipalRefusalEntry = {
+  action: "TENANT_PRINCIPAL_REFUSED" | "OPERATOR_PRINCIPAL_REFUSED";
+  /** The `sub` of the refused token — the key of the window together with the route. */
+  principalSub: string;
+  subjectTenantId?: string | null;
+  route: string;
+  method: string;
+  request?: AuditRequestLike;
+};
+
+/**
+ * Audit a cross-principal refusal (a tenant token on an operator route or the reverse) without letting
+ * a token holder flood the append-only table: at most ONE row per (action, principal sub, route) per
+ * 60-second window is written. Repeats inside the window only increment an in-process counter, and the
+ * next row written for the key carries that count as `newValue.suppressedRepeats` — so the fact and the
+ * number of attempts are never lost, only the row volume is bounded. The state is per process; with
+ * several API replicas the bound is per replica, which is still a constant factor and not unbounded.
+ * Expired windows without suppressed repeats are evicted on every call; one that still owes a count stays
+ * until its key reappears. The map is capped (oldest first), the only case in which a count can be lost.
+ */
+export async function recordPrincipalRefusal(
+  db: Prisma.TransactionClient,
+  entry: PrincipalRefusalEntry,
+  now: Date = new Date(),
+): Promise<{ written: boolean }> {
+  const nowMs = now.getTime();
+  for (const [staleKey, window] of refusalWindows) {
+    if (window.suppressed === 0 && nowMs - window.windowStart >= PRINCIPAL_REFUSAL_WINDOW_MS) {
+      refusalWindows.delete(staleKey);
+    }
+  }
+
+  const key = `${entry.action}|${entry.principalSub}|${entry.route}`;
+  const previous = refusalWindows.get(key);
+  if (previous && nowMs - previous.windowStart < PRINCIPAL_REFUSAL_WINDOW_MS) {
+    previous.suppressed += 1;
+    return { written: false };
+  }
+
+  const suppressedRepeats = previous?.suppressed ?? 0;
+  // Re-insert so the key moves to the newest position of the insertion-ordered map.
+  refusalWindows.delete(key);
+  while (refusalWindows.size >= PRINCIPAL_REFUSAL_MAX_KEYS) {
+    const oldest = refusalWindows.keys().next().value;
+    if (oldest === undefined) break;
+    refusalWindows.delete(oldest);
+  }
+  refusalWindows.set(key, { windowStart: nowMs, suppressed: 0 });
+
+  await recordOperatorAudit(db, {
+    operatorId: null,
+    action: entry.action,
+    subjectTenantId: entry.subjectTenantId,
+    entity: "Route",
+    entityId: entry.route,
+    newValue: { principalSub: entry.principalSub, method: entry.method, suppressedRepeats },
+    request: entry.request,
+  });
+  return { written: true };
+}

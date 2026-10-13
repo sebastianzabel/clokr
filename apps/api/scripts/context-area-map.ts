@@ -165,6 +165,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/tenant-provisioning.ts": "unterbau", // Phase 88 plan 05 (D-04/D-04a) — the one tenant-skeleton rule (Tenant + TenantConfig + default salon), Unterbau models only
   "src/contexts/platform/operator-audit.ts": "unterbau", // Phase 88 plan 01 (D-07/D-07a) — create-only writer, retention classes and flagged retention purge of OperatorAuditLog, an append-only Unterbau model that belongs to no business context
   "src/contexts/platform/operator-credentials.ts": "unterbau", // Phase 88 plan 02 (D-03/D-03a) — operator account credentials and lifecycle (password policy, lockout, TOTP, recovery codes, create/MFA reset/deactivate); OperatorAccount and OperatorAuditLog are Unterbau models
+  "src/contexts/platform/operator-auth.ts": "unterbau", // Phase 88 plan 08 (D-01/D-02/D-02a, AC-88-01/02/10) — operator token signing/verification, the requireOperator guard and the cross-principal refusal; reads OperatorAccount, writes OperatorAuditLog, both Unterbau models
+  "src/contexts/platform/api/operator/auth.ts": "unterbau", // Phase 88 plan 08 (D-02/D-03/D-03a) — operator sign-in (password, TOTP/recovery code, me); reads and writes OperatorAccount and OperatorAuditLog, Unterbau models that belong to no business context
   "src/contexts/platform/tenant-status.ts": "unterbau", // Phase 88 plan 06 (D-05, AC-88-07/08) — tenant deactivation/reactivation (Tenant columns, refresh-token revocation, operator audit) and the one refusal body of the credential paths; Tenant, RefreshToken and OperatorAuditLog are Unterbau models
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
