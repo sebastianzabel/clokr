@@ -916,7 +916,10 @@ export async function settingsRoutes(app: FastifyInstance) {
             if (bulkEffectiveFrom && applyEmployeeIds && previewFingerprint) {
               // Serialises concurrent applies of this tenant: the Tenant row always exists (a
               // TenantConfig row may not), and everything below reads the state AFTER the lock.
-              await tx.$queryRaw`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId} FOR UPDATE`;
+              // NO KEY UPDATE, not UPDATE: it still conflicts with a second apply, but not with
+              // the FOR KEY SHARE that every foreign-key insert onto Tenant takes, so clocking and
+              // other writes of the tenant are not blocked for the duration of the apply.
+              await tx.$queryRaw`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId} FOR NO KEY UPDATE`;
               const state = await computeBulkApplyState(
                 tx,
                 tenantId,
