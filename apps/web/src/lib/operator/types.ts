@@ -39,3 +39,26 @@ export interface OperatorSalon {
   isDefault: boolean;
   coupling: OperatorCoupling | null;
 }
+
+/** Step 1 of the sign-in: the short-lived challenge that step 2 redeems. */
+export interface OperatorChallenge {
+  challengeToken: string;
+  /** Seconds the challenge stays valid. */
+  expiresIn: number;
+}
+
+/** Exactly one second factor per verify call (the API refuses both or neither). */
+export type OperatorFactor = { code: string } | { recoveryCode: string };
+
+export interface OperatorAccessGrant {
+  accessToken: string;
+  /** Seconds the access token stays valid (no refresh exists). */
+  expiresIn: number;
+}
+
+export interface OperatorMe {
+  id: string;
+  email: string;
+  displayName: string;
+  lastLoginAt: string | null;
+}

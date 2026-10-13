@@ -9,7 +9,14 @@
 import { errorMessage } from "$api/error-message";
 import { clearSession, currentToken } from "$stores/operator-auth";
 import { buildSignInUrl } from "./next-path";
-import type { OperatorSalon, OperatorTenant } from "./types";
+import type {
+  OperatorAccessGrant,
+  OperatorChallenge,
+  OperatorFactor,
+  OperatorMe,
+  OperatorSalon,
+  OperatorTenant,
+} from "./types";
 
 const BASE_URL = "/api/v1/operator";
 
@@ -89,6 +96,29 @@ function readCode(data: unknown): string | undefined {
 }
 
 export const operatorApi = {
+  /**
+   * Whether the operator surface exists on this instance. A GET /auth/me without a token is
+   * answered 404 when the surface is off and 401 when it is on - and unlike a login attempt it
+   * neither uses the 10-per-15-minutes login budget nor writes a failed-login audit row on every
+   * page load (T-89-13). Anything but a 404 (including a network failure) counts as "on", so the
+   * form can report the real problem.
+   */
+  probeSurface: async (): Promise<"on" | "off"> => {
+    try {
+      await request<unknown>("GET", "/auth/me", { auth: false });
+      return "on";
+    } catch (error) {
+      return error instanceof OperatorApiError && error.status === 404 ? "off" : "on";
+    }
+  },
+  login: (email: string, password: string) =>
+    request<OperatorChallenge>("POST", "/auth/login", { body: { email, password }, auth: false }),
+  verify: (challengeToken: string, factor: OperatorFactor) =>
+    request<OperatorAccessGrant>("POST", "/auth/verify", {
+      body: { challengeToken, ...factor },
+      auth: false,
+    }),
+  me: () => request<OperatorMe>("GET", "/auth/me"),
   getTenant: (id: string) => request<OperatorTenant>("GET", `/tenants/${encodeURIComponent(id)}`),
   listSalons: (tenantId: string) =>
     request<OperatorSalon[]>("GET", `/tenants/${encodeURIComponent(tenantId)}/salons`),

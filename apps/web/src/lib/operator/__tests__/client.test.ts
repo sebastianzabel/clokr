@@ -219,3 +219,105 @@ describe("operatorApi", () => {
     expect(err).toMatchObject({ status: 500, code: undefined, message: "Fehler" });
   });
 });
+
+describe("operatorApi sign-in calls", () => {
+  it("probeSurface maps a 404 to off and sends no Authorization header", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(jsonResponse({ error: "Nicht gefunden" }, 404));
+
+    await expect(operatorApi.probeSurface()).resolves.toBe("off");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/auth/me");
+    expect(init.method).toBe("GET");
+    const headers = (init.headers ?? {}) as Record<string, string>;
+    expect(Object.keys(headers).map((k) => k.toLowerCase())).not.toContain("authorization");
+  });
+
+  it("probeSurface maps the tokenless 401 to on, without clearing or redirecting", async () => {
+    const { setSession, operatorApi, setUnauthorizedHandler, currentToken } = await load();
+    setSession("op-token", 900, NOW);
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    fetchMock.mockResolvedValue(jsonResponse({ error: "Unauthorized" }, 401));
+
+    await expect(operatorApi.probeSurface()).resolves.toBe("on");
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(currentToken()).toBe("op-token");
+  });
+
+  it("probeSurface treats a network failure as on (the form then reports the real error)", async () => {
+    const { operatorApi } = await load();
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(operatorApi.probeSurface()).resolves.toBe("on");
+  });
+
+  it("login posts email and password without a token", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(jsonResponse({ challengeToken: "c1", expiresIn: 300 }));
+
+    await expect(operatorApi.login("op@example.invalid", "pw")).resolves.toEqual({
+      challengeToken: "c1",
+      expiresIn: 300,
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/auth/login");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ email: "op@example.invalid", password: "pw" }));
+    expect(
+      Object.keys(init.headers as Record<string, string>).map((k) => k.toLowerCase()),
+    ).not.toContain("authorization");
+  });
+
+  it("verify sends exactly the one factor it is given", async () => {
+    const { operatorApi } = await load();
+    fetchMock.mockResolvedValue(jsonResponse({ accessToken: "a1", expiresIn: 900 }));
+
+    await operatorApi.verify("c1", { code: "123456" });
+    await operatorApi.verify("c1", { recoveryCode: "AAAA-BBBB" });
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/operator/auth/verify");
+    expect((fetchMock.mock.calls[0][1] as RequestInit).body).toBe(
+      JSON.stringify({ challengeToken: "c1", code: "123456" }),
+    );
+    expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBe(
+      JSON.stringify({ challengeToken: "c1", recoveryCode: "AAAA-BBBB" }),
+    );
+  });
+
+  it("a 401 from login or verify throws OperatorApiError and never triggers the handler", async () => {
+    const { setSession, operatorApi, setUnauthorizedHandler, OperatorApiError, currentToken } =
+      await load();
+    setSession("op-token", 900, NOW);
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    fetchMock.mockResolvedValue(jsonResponse({ error: "Anmeldung fehlgeschlagen" }, 401));
+
+    const a = await operatorApi.login("a@example.invalid", "x").catch((e: unknown) => e);
+    const b = await operatorApi.verify("c", { code: "000000" }).catch((e: unknown) => e);
+
+    expect(a).toBeInstanceOf(OperatorApiError);
+    expect(b).toMatchObject({ status: 401, message: "Anmeldung fehlgeschlagen" });
+    expect(handler).not.toHaveBeenCalled();
+    expect(currentToken()).toBe("op-token");
+  });
+
+  it("me uses the operator token", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(
+      jsonResponse({ id: "o1", email: "op@example.invalid", displayName: "Op", lastLoginAt: null }),
+    );
+
+    await operatorApi.me();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/auth/me");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer op-token");
+  });
+});
