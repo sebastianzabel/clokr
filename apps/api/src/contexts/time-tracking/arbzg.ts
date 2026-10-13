@@ -21,6 +21,7 @@ import type { DayBreakEvaluation, DayBreakRow } from "./day-break-rule"; // Issu
 import { listDayBreaksOfDay, listAcksOfDay, loadBreaksOfEntries } from "./day-break-store"; // Issue #80 (D-06), #511 (D-15)
 import { BREAK_REGIMES, breakRegimeFor, isApprenticeWithoutBirthDate } from "./break-regime"; // Issue #511 — the thresholds the messages quote, D-05 regime
 import type { PlacementCertainty, PlacementFinding } from "./day-break-placement"; // Issue #511
+import { WITHHELD_FINDING_CODE, WITHHELD_FINDING_TEXT } from "./withheld-finding"; // Issue #85 D-07
 
 // Phase 69b: in-memory equivalents of the former `findFirst({ endTime: { not: null }, orderBy })`
 // rest-period lookups. Only closed rows count; the first maximum/minimum wins on ties.
@@ -47,7 +48,8 @@ export interface ArbZGWarning {
     | "BREAK_SEGMENT_TOO_SHORT"
     | "BREAK_TOO_LATE"
     | "BREAK_OUTSIDE_WINDOW"
-    | "BREAK_POSITION_UNKNOWN";
+    | "BREAK_POSITION_UNKNOWN"
+    | "FINDING_WITHHELD";
   severity: "warning" | "error";
   message: string;
   /**
@@ -71,10 +73,24 @@ export interface ArbZGWarning {
   /** Issue #511 (D-10) — display text of the provision the finding rests on; never a control value. */
   legalBasis?: string;
   /**
-   * Issue #511 (D-06) — true only on BREAK_POSITION_UNKNOWN: a hint that the stored break has no
-   * position, never a violation.
+   * Issue #511 (D-06) — true only on BREAK_POSITION_UNKNOWN and, since Issue #85 (D-07), on
+   * FINDING_WITHHELD: a hint is never a violation, marker, notice or month-close block.
    */
   hint?: true;
+}
+
+/**
+ * The one neutral item a reader whose reach covers only part of a day gets instead of the day's
+ * findings (Issue #85 D-07): no minute, no hour, no threshold, no finding category. Built here from
+ * the constants of `withheld-finding.ts`, nowhere else.
+ */
+export function withheldFindingWarning(): ArbZGWarning {
+  return {
+    code: WITHHELD_FINDING_CODE,
+    severity: "warning",
+    message: WITHHELD_FINDING_TEXT,
+    hint: true,
+  };
 }
 
 const CLARIFICATION_NOTE = "Klärung nötig: Fahrzeit oder Pause?";

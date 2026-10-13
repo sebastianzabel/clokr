@@ -6,6 +6,10 @@
 // constructed days only and delegates to the real implementation for everything else. Everything
 // downstream is real: employees, salons, role assignments, the month lock, DayBreak and
 // DayBreakAck rows and the kernel `evaluateDayBreaks`.
+//
+// Amendment 2026-10-13 (Phase 85b, Issue #85 D-07): a partially covered day carries a neutral hint
+// only - no totals, no finding, no sum-bearing text; the Phase 80 expectation of totals and the
+// finding was narrowed on purpose (DSGVO Art. 5 Abs. 1 lit. c).
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import bcrypt from "bcryptjs";
@@ -22,6 +26,7 @@ import {
 import { normalizeRolePermissions, roleNameKey } from "../../../platform";
 import { getTenantTimezone, monthRangeUtc } from "../../../working-time-account";
 import { evaluateDayBreaks } from "../../day-break-rule";
+import { WITHHELD_FINDING_CODE, WITHHELD_FINDING_TEXT } from "../../withheld-finding";
 
 vi.mock("../../facade/time-entries", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../facade/time-entries")>();
@@ -65,13 +70,13 @@ interface DayCheckBody {
   date: string;
   detail: "full" | "redacted";
   crossSalon: boolean;
-  netWorkedMinutes: number;
-  totalBreakMinutes: number;
-  requiredBreakMinutes: number;
-  breakShortfall: boolean;
-  maxDailyExceeded: boolean;
-  breakFinding: boolean;
-  positionUnknown: boolean;
+  netWorkedMinutes: number | null;
+  totalBreakMinutes: number | null;
+  requiredBreakMinutes: number | null;
+  breakShortfall: boolean | null;
+  maxDailyExceeded: boolean | null;
+  breakFinding: boolean | null;
+  positionUnknown: boolean | null;
   warnings: Array<{
     code: string;
     severity: string;
@@ -81,7 +86,7 @@ interface DayCheckBody {
     hint?: true;
     waived?: true;
   }>;
-  acknowledged: boolean;
+  acknowledged: boolean | null;
   locked: boolean;
   mayAcknowledge: boolean;
   mayRecordDayBreak: boolean;
@@ -112,6 +117,20 @@ function at(hhmm: string, day = DAY): string {
 function errorOf(res: { body: string }): string {
   return (JSON.parse(res.body) as { error: string }).error;
 }
+/** Every value of type number anywhere in a JSON value (D-07: a redacted day carries none). */
+function collectNumbers(value: unknown, path = "$"): string[] {
+  if (typeof value === "number") return [path];
+  if (Array.isArray(value)) return value.flatMap((v, i) => collectNumbers(v, `${path}[${i}]`));
+  if (value !== null && typeof value === "object") {
+    return Object.entries(value).flatMap(([k, v]) => collectNumbers(v, `${path}.${k}`));
+  }
+  return [];
+}
+
+/** The one warning list a redacted day carries. */
+const NEUTRAL_WARNINGS = [
+  { code: WITHHELD_FINDING_CODE, severity: "warning", message: WITHHELD_FINDING_TEXT, hint: true },
+];
 
 describe("Issue #80 — GET /api/v1/day-breaks/checks", () => {
   let app: FastifyInstance;
@@ -473,7 +492,7 @@ describe("Issue #80 — GET /api/v1/day-breaks/checks", () => {
       expect(after.mayAcknowledge).toBe(true); // revoke stays allowed
     });
 
-    it("a manager scoped on salon A only gets the day redacted: totals and the finding, no entry, gap, day break, acknowledgement or foreign id", async () => {
+    it("a manager scoped on salon A only gets the day redacted: a neutral hint, no number, entry, gap, day break, acknowledgement or foreign id", async () => {
       const rows = twoSalonDay(data.employee.id);
       await seedDayBreak(data.employee.id, DAY, "12:00", "12:10");
       const partial = await createScopedManager(
@@ -490,17 +509,15 @@ describe("Issue #80 — GET /api/v1/day-breaks/checks", () => {
           date: DAY,
           detail: "redacted",
           crossSalon: true,
-          netWorkedMinutes: 480,
-          totalBreakMinutes: 10,
-          requiredBreakMinutes: 30,
-          breakShortfall: true,
-          maxDailyExceeded: false,
-          breakFinding: true,
-          positionUnknown: false,
-          warnings: expect.arrayContaining([
-            expect.objectContaining({ code: "BREAK_TOO_SHORT", severity: "warning" }),
-          ]),
-          acknowledged: false,
+          netWorkedMinutes: null,
+          totalBreakMinutes: null,
+          requiredBreakMinutes: null,
+          breakShortfall: null,
+          maxDailyExceeded: null,
+          breakFinding: null,
+          positionUnknown: null,
+          warnings: NEUTRAL_WARNINGS,
+          acknowledged: null,
           locked: false,
           mayAcknowledge: false,
           mayRecordDayBreak: false,
@@ -510,6 +527,9 @@ describe("Issue #80 — GET /api/v1/day-breaks/checks", () => {
           dayBreaks: null,
         },
       ]);
+      // D-07: not a single number in the redacted day, and no duration or threshold text.
+      expect(collectNumbers(body.days[0])).toEqual([]);
+      expect(res.body).not.toMatch(/\d+([.,]\d+)?\s?(h|Std|Min)/);
 
       // Byte-level: not a field check — the raw response body must not contain anything of the
       // foreign salon (its id, the id of its entry, any timestamp of it) nor of the day break.
@@ -538,7 +558,7 @@ describe("Issue #80 — GET /api/v1/day-breaks/checks", () => {
       expect(uuids).toEqual([data.employee.id]);
     });
 
-    it("a redacted day with a current acknowledgement shows acknowledged but never its reason or id", async () => {
+    it("a redacted day with a current acknowledgement shows nothing of it: acknowledged null, never its reason or id", async () => {
       const rows = twoSalonDay(data.employee.id);
       await seedCurrentAck(data.employee.id, rows);
       const partial = await createScopedManager(
@@ -549,7 +569,7 @@ describe("Issue #80 — GET /api/v1/day-breaks/checks", () => {
       const res = await getChecks(partial.token, data.employee.id);
       const day = (JSON.parse(res.body) as ChecksBody).days[0];
       expect(day.detail).toBe("redacted");
-      expect(day.acknowledged).toBe(true);
+      expect(day.acknowledged).toBeNull();
       expect(day.acknowledgement).toBeNull();
       expect(res.body.includes(REASON)).toBe(false);
     });
@@ -798,7 +818,7 @@ describe("Issue #80 — GET /api/v1/day-breaks/checks", () => {
       expect(mockedBulk).toHaveBeenCalledTimes(1);
     });
 
-    it("a partially covered A+B day carries redacted warnings: no clock time, no salon, no id", async () => {
+    it("a partially covered A+B day carries exactly the neutral hint: no clock time, no salon, no id, no category", async () => {
       twoSalonDay(data.employee.id);
       const partial = await createScopedManager(
         "chk-mgr-red",
@@ -809,18 +829,45 @@ describe("Issue #80 — GET /api/v1/day-breaks/checks", () => {
       expect(res.statusCode).toBe(200);
       const day = (JSON.parse(res.body) as ChecksBody).days[0];
       expect(day.detail).toBe("redacted");
-      // Anti-vacuity: the redacted day has findings to redact.
-      expect(day.warnings.length).toBeGreaterThan(0);
-      expect(day.warnings.map((w) => w.code)).toContain("BREAK_TOO_LATE");
-      for (const w of day.warnings) {
-        expect(w.message).not.toMatch(TIME_RANGE);
-        expect(w.message).not.toMatch(/\d{1,2}:\d{2}/);
-        expect(w.message).not.toContain("Zweiter Salon");
-        expect(w.message).not.toContain(salonB);
-      }
-      // The same day in full detail does print the ranges - the control for the regex above.
+      expect(day.warnings).toEqual(NEUTRAL_WARNINGS);
+      expect(res.body).not.toContain("BREAK_");
+      expect(res.body).not.toContain("MAX_DAILY");
+      expect(res.body).not.toContain(salonB);
+      // Control: the same day in full detail does carry the findings and the ranges.
       const full = (await checksOf(data.adminToken, data.employee.id)).days[0];
+      expect(full.warnings.length).toBeGreaterThan(0);
+      expect(full.warnings.map((w) => w.code)).toContain("BREAK_TOO_LATE");
       expect(full.warnings.some((w) => TIME_RANGE.test(w.message))).toBe(true);
+    });
+
+    it("the neutral hint does not depend on a finding: a partially covered A+B day without any finding yields the same redacted object", async () => {
+      // 8 h net, the 60 min gap between the salons recorded as a day break: no § 3, no § 4 finding.
+      const rows = [
+        row(data.employee.id, DAY, salonA, "08:00", "12:00"),
+        row(data.employee.id, DAY, salonB, "13:00", "17:00"),
+      ];
+      constructedDays.set(`${data.employee.id}:${DAY}`, rows);
+      await seedDayBreak(data.employee.id, DAY, "12:00", "13:00");
+      // Anti-vacuity: in full detail this day really has no finding.
+      const fullDay = (await checksOf(data.adminToken, data.employee.id)).days[0];
+      expect(fullDay).toMatchObject({ detail: "full", breakFinding: false, breakShortfall: false });
+      expect(fullDay.warnings).toEqual([]);
+      const partial = await createScopedManager(
+        "chk-mgr-nofind",
+        ["time-entry:read:ZUGEWIESEN"],
+        [salonA],
+      );
+      const withoutFinding = (await checksOf(partial.token, data.employee.id)).days;
+      expect(withoutFinding).toHaveLength(1);
+      expect(withoutFinding[0].warnings).toEqual(NEUTRAL_WARNINGS);
+      expect(collectNumbers(withoutFinding[0])).toEqual([]);
+
+      // The same figures-free object as the day with a finding.
+      constructedDays.clear();
+      await app.prisma.dayBreak.deleteMany({ where: { employeeId: data.employee.id } });
+      twoSalonDay(data.employee.id);
+      const withFinding = (await checksOf(partial.token, data.employee.id)).days;
+      expect(withFinding).toEqual(withoutFinding);
     });
 
     it("mayAcknowledge is the one ack predicate: a manager on a single-entry Satz-3 day may, the employee on the own day may not", async () => {

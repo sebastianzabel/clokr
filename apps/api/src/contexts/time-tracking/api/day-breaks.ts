@@ -50,7 +50,12 @@ import {
   loadBreaksOfEntries,
   loadDayBreakDataForDays,
 } from "../day-break-store";
-import { type ArbZGWarning, dayLimitWarnings, placementWarnings } from "../arbzg";
+import {
+  type ArbZGWarning,
+  dayLimitWarnings,
+  placementWarnings,
+  withheldFindingWarning,
+} from "../arbzg";
 import { dayCoverage } from "../day-scope";
 import { resolveEntrySalon } from "../entry-salon";
 import { planAutoBreak, autoBreakAppliesOnCreate } from "../auto-break-plan"; // Issue #511 (AK-4) — the save's own automatic-break decision
@@ -279,7 +284,7 @@ function ackFacts(
 }
 
 /**
- * The figures every detail level of a day check carries - totals, the finding and the server-built
+ * The figures a full-detail day check carries - totals, the finding and the server-built
  * messages, no entry data. `warnings` is the day's complete finding list (§ 3, § 4 / § 11 and the
  * Satz-2/3 placement items); the web renders it and computes no § 4 figure of its own (Issue #511
  * D-18).
@@ -308,42 +313,47 @@ function dayCheckTotals(
   };
 }
 
-/**
- * The day's findings as messages, built by the one finding builders. The redacted variant carries
- * no clock time, salon or id and no birth-date note (Issue #511 D-18, T-511-17).
- */
+/** The day's findings as messages, built by the one finding builders (full level, with clock times). */
 function dayWarnings(
   evaluation: DayBreakEvaluation,
-  options: { tz: string; detail: "full" | "redacted"; birthDateMissing: boolean },
+  options: { tz: string; birthDateMissing: boolean },
 ): ArbZGWarning[] {
-  const full = options.detail === "full";
-  const birthDateMissing = full && options.birthDateMissing;
   return [
-    ...dayLimitWarnings(evaluation, 0, { birthDateMissing }),
-    ...placementWarnings(evaluation, { tz: options.tz, detail: options.detail, birthDateMissing }),
+    ...dayLimitWarnings(evaluation, 0, { birthDateMissing: options.birthDateMissing }),
+    ...placementWarnings(evaluation, {
+      tz: options.tz,
+      detail: "full",
+      birthDateMissing: options.birthDateMissing,
+    }),
   ];
 }
 
 /**
- * A day as a caller whose scope covers only part of its entries may see it (D-11): the day totals,
- * the finding and the redacted messages. Built from an explicit whitelist - the entry list, gaps,
- * day breaks, acknowledgement and every id are fixed to null/false here, never removed from a
- * fuller object, so a field added to the full shape can never leak into this one by omission.
+ * A day as a caller whose scope covers only part of its entries may see it (Issue #85 D-07, which
+ * narrows the Phase 80 D-11 rule of "totals and the finding"): one neutral hint and nothing else -
+ * no number, no finding category, no sum-bearing text. Built from an explicit whitelist that is
+ * handed only the date, the cross-salon flag and the lock state: it receives no evaluation, so a
+ * figure added to the full shape can never leak into it by spreading. The entry list, gaps, day
+ * breaks, acknowledgement and every id are fixed to null/false here, never removed from a fuller
+ * object. The hint is the same on EVERY partially covered day, with or without a finding - such a
+ * day always has at least two entries and is always listed, so neither listing nor hint reveals a
+ * finding.
  */
-function redactedDayCheck(
-  dateKey: string,
-  evaluation: DayBreakEvaluation,
-  locked: boolean,
-  tz: string,
-) {
+function redactedDayCheck(dateKey: string, crossSalon: boolean, locked: boolean) {
   return {
     detail: "redacted" as const,
-    ...dayCheckTotals(
-      evaluation,
-      dateKey,
-      locked,
-      dayWarnings(evaluation, { tz, detail: "redacted", birthDateMissing: false }),
-    ),
+    date: dateKey,
+    crossSalon,
+    netWorkedMinutes: null,
+    totalBreakMinutes: null,
+    requiredBreakMinutes: null,
+    breakShortfall: null,
+    maxDailyExceeded: null,
+    breakFinding: null,
+    positionUnknown: null,
+    warnings: [withheldFindingWarning()],
+    acknowledged: null,
+    locked,
     mayAcknowledge: false,
     mayRecordDayBreak: false,
     acknowledgement: null,
@@ -375,7 +385,6 @@ function fullDayCheck(params: {
       params.locked,
       dayWarnings(evaluation, {
         tz: params.tz,
-        detail: "full",
         birthDateMissing: params.birthDateMissing,
       }),
     ),
@@ -764,15 +773,15 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         "daily-maximum finding (Issue #80, widened by Issue #511 D-18): a day with two or more " +
         "closed WORK entries, a § 4 ArbZG / § 11 JArbSchG shortfall, a § 3 day above 10 h or an " +
         "ackable Satz-2/3 placement finding. A day that carries only the position-unknown hint is " +
-        "not listed. Every day carries the server-built `warnings` (code, severity, message, " +
+        "not listed. Every full-detail day carries the server-built `warnings` (code, severity, message, " +
         "certainty, legalBasis, hint, waived), `breakFinding` and `positionUnknown`; at most 62 " +
         "days per request, read only. An employee exempt from time tracking (§ 18 ArbZG) gets no " +
         "days. The employee and a " +
         "caller whose read scope covers every entry of the day receive the full detail (entries " +
         "with salon, gaps, day breaks, acknowledgement). A caller whose scope covers only part of " +
-        "the day receives the day totals, the finding and the redacted warnings only - never a " +
-        "time, salon or id of an " +
-        "entry outside their scope; a day none of whose entries is in scope is omitted. The gaps " +
+        "the day receives one neutral hint only (Issue #85 D-07) - no totals, no finding, no " +
+        "time, salon or id of any entry; every other figure of the day is null; a day none of whose " +
+        "entries is in scope is omitted. The gaps " +
         "are the day-break kernel's own gap list. maxDailyExceeded compares the day's net working " +
         "time of these entries only (no Berufsschule credit) against the § 3 ArbZG cap of 10 h.",
       security: [{ bearerAuth: [] }],
@@ -974,7 +983,7 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         const locked = closed || dayRows.some((r) => r.isLocked);
 
         if (readCoverage === "partial") {
-          days.push(redactedDayCheck(dateKey, evaluation, locked, tz));
+          days.push(redactedDayCheck(dateKey, evaluation.crossSalon, locked));
           continue;
         }
 
@@ -1218,7 +1227,6 @@ export async function dayBreakRoutes(app: FastifyInstance) {
       return {
         warnings: dayWarnings(evaluation, {
           tz,
-          detail: "full",
           birthDateMissing: isApprenticeWithoutBirthDate(employee),
         }),
         autoBreakApplied,
