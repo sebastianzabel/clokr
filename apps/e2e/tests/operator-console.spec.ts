@@ -136,6 +136,10 @@ interface RecordedCall {
 /** How the mocked POST /tenants answers. */
 type CreateOutcome = "ok" | "SLUG_TAKEN" | "EMAIL_TAKEN";
 
+/** How the mocked POST /tenants/:id/resend-admin-invitation answers. */
+type ResendOutcome =
+  "sent" | "not-sent" | "TENANT_DEACTIVATED" | "TENANT_IN_USE" | "NO_PENDING_INVITATION";
+
 interface OperatorMock {
   /** "METHOD /path" of every operator request, in order. */
   seen: string[];
@@ -151,6 +155,10 @@ interface OperatorMock {
     create: CreateOutcome;
     /** `invitationMailSent` of a successful create. */
     mailSent: boolean;
+    /** The tenant served at /tenants/:TENANT_ID; the lifecycle routes change it. */
+    detail: MockTenant;
+    /** What POST /tenants/:TENANT_ID/resend-admin-invitation answers. */
+    resend: ResendOutcome;
   };
 }
 
@@ -167,6 +175,8 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
       listStatus: 200,
       create: "ok",
       mailSent: true,
+      detail: { ...TENANT },
+      resend: "sent",
     },
   };
   await page.route("**/api/v1/operator/**", async (route) => {
@@ -269,8 +279,36 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
     if (path === `/tenants/${TENANT_ID}/salons`) {
       return route.fulfill({ status: 200, json: SALONS });
     }
+    if (path === `/tenants/${TENANT_ID}` && method === "PATCH") {
+      mock.state.detail = { ...mock.state.detail, name: String(body?.name).trim() };
+      return route.fulfill({ status: 200, json: mock.state.detail });
+    }
+    if (path === `/tenants/${TENANT_ID}/deactivate` && method === "POST") {
+      mock.state.detail = {
+        ...mock.state.detail,
+        deactivatedAt: "2026-10-13T08:00:00.000Z",
+        deactivatedReason: String(body?.reason),
+      };
+      return route.fulfill({ status: 200, json: mock.state.detail });
+    }
+    if (path === `/tenants/${TENANT_ID}/reactivate` && method === "POST") {
+      mock.state.detail = { ...mock.state.detail, deactivatedAt: null, deactivatedReason: null };
+      return route.fulfill({ status: 200, json: mock.state.detail });
+    }
+    if (path === `/tenants/${TENANT_ID}/resend-admin-invitation` && method === "POST") {
+      const outcome = mock.state.resend;
+      if (outcome === "sent" || outcome === "not-sent") {
+        return route.fulfill({ status: 200, json: { invitationMailSent: outcome === "sent" } });
+      }
+      // The server's own text is deliberately NOT the console's sentence: the console must choose
+      // its wording by the code.
+      return route.fulfill({
+        status: 409,
+        json: { error: "Serverseitiger Text, der nicht angezeigt wird.", code: outcome },
+      });
+    }
     if (path === `/tenants/${TENANT_ID}`) {
-      return route.fulfill({ status: 200, json: TENANT });
+      return route.fulfill({ status: 200, json: mock.state.detail });
     }
     return route.fulfill({ status: 404, json: { error: "Mandant nicht gefunden" } });
   });
@@ -889,5 +927,167 @@ test.describe("operator console - create tenant", () => {
     await page.getByTestId("op-tenants-create").click();
     await expect(page.getByTestId("op-tenant-create-name")).toHaveValue("");
     await expect(page.getByTestId("op-tenant-create-federal-state")).toHaveValue("");
+  });
+});
+
+test.describe("operator console - tenant lifecycle", () => {
+  const NEW_NAME = "Umbenannte Friseure GmbH";
+
+  async function openTenant(page: Page): Promise<OperatorMock> {
+    const mock = await mockOperatorApi(page);
+    await seedOperatorSession(page);
+    await page.goto(`/betreiber/mandanten/${TENANT_ID}`);
+    await expect(page.getByTestId("op-tenant-status")).toHaveAttribute("data-state", "active");
+    return mock;
+  }
+
+  function callsTo(mock: OperatorMock, method: string, suffix: string): RecordedCall[] {
+    return mock.calls.filter(
+      (c) => c.method === method && c.path === `/tenants/${TENANT_ID}${suffix}`,
+    );
+  }
+
+  test("rename sends {name}, reloads the tenant from the server and shows the new name", async ({
+    page,
+  }) => {
+    const mock = await openTenant(page);
+    const readsBefore = callsTo(mock, "GET", "").length;
+
+    await page.getByTestId("op-tenant-rename").click();
+    await expect(page.getByTestId("op-tenant-rename-dialog")).toBeVisible();
+    await expect(page.getByTestId("op-tenant-rename-submit")).toBeDisabled();
+    await page.getByTestId("op-tenant-rename-input").fill(`  ${NEW_NAME}  `);
+    await page.getByTestId("op-tenant-rename-submit").click();
+
+    await expect(page.getByTestId("op-tenant-name")).toHaveText(NEW_NAME);
+    await expect(page.getByTestId("op-tenant-rename-dialog")).toHaveCount(0);
+    expect(callsTo(mock, "PATCH", "")).toHaveLength(1);
+    expect(callsTo(mock, "PATCH", "")[0].body).toEqual({ name: NEW_NAME });
+    expect(callsTo(mock, "PATCH", "")[0].authorization).toMatch(/^Bearer /);
+    expect(callsTo(mock, "GET", "").length).toBeGreaterThan(readsBefore);
+    // The Kurzname is untouched.
+    await expect(page.getByTestId("op-tenant-slug")).toHaveText(TENANT.slug);
+  });
+
+  test("deactivate: a two-character reason sends no request, a valid one deactivates", async ({
+    page,
+  }) => {
+    const mock = await openTenant(page);
+
+    await page.getByTestId("op-tenant-deactivate").click();
+    const dialog = page.getByRole("dialog", { name: "Mandant deaktivieren?" });
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByLabel("Begründung").fill("ab");
+    await dialog.getByRole("button", { name: "Mandant deaktivieren" }).click();
+    await expect(dialog.getByRole("alert")).toBeVisible();
+    await expect(dialog).toBeVisible();
+    expect(callsTo(mock, "POST", "/deactivate")).toHaveLength(0);
+
+    await dialog.getByLabel("Begründung").fill("Vertrag beendet");
+    await dialog.getByRole("button", { name: "Mandant deaktivieren" }).click();
+
+    await expect(page.getByTestId("op-tenant-status")).toHaveAttribute("data-state", "deactivated");
+    await expect(page.getByTestId("op-tenant-deactivated-notice")).toContainText("Vertrag beendet");
+    await expect(dialog).toHaveCount(0);
+    expect(callsTo(mock, "POST", "/deactivate")).toHaveLength(1);
+    expect(callsTo(mock, "POST", "/deactivate")[0].body).toEqual({ reason: "Vertrag beendet" });
+    // A deactivated tenant is offered reactivate, neither deactivate nor resend.
+    await expect(page.getByTestId("op-tenant-reactivate")).toBeVisible();
+    await expect(page.getByTestId("op-tenant-deactivate")).toHaveCount(0);
+    await expect(page.getByTestId("op-tenant-resend")).toHaveCount(0);
+  });
+
+  test("reactivate asks first and then shows the tenant as active", async ({ page }) => {
+    const mock = await mockOperatorApi(page);
+    mock.state.detail = {
+      ...TENANT,
+      deactivatedAt: "2026-03-01T08:00:00.000Z",
+      deactivatedReason: "Vertrag beendet",
+    };
+    await seedOperatorSession(page);
+    await page.goto(`/betreiber/mandanten/${TENANT_ID}`);
+    await expect(page.getByTestId("op-tenant-status")).toHaveAttribute("data-state", "deactivated");
+
+    await page.getByTestId("op-tenant-reactivate").click();
+    const dialog = page.getByRole("dialog", { name: "Mandant reaktivieren?" });
+    await expect(dialog).toBeVisible();
+    expect(callsTo(mock, "POST", "/reactivate")).toHaveLength(0);
+    await dialog.getByRole("button", { name: "Mandant reaktivieren" }).click();
+
+    await expect(page.getByTestId("op-tenant-status")).toHaveAttribute("data-state", "active");
+    await expect(page.getByTestId("op-tenant-deactivated-notice")).toHaveCount(0);
+    await expect(dialog).toHaveCount(0);
+    expect(callsTo(mock, "POST", "/reactivate")).toHaveLength(1);
+  });
+
+  for (const code of ["TENANT_IN_USE", "NO_PENDING_INVITATION"] as const) {
+    test(`resend answered with ${code} shows the notice by code and keeps the dialog open`, async ({
+      page,
+    }) => {
+      const mock = await openTenant(page);
+      mock.state.resend = code;
+
+      await page.getByTestId("op-tenant-resend").click();
+      const dialog = page.getByRole("dialog", { name: "Einladung erneut senden?" });
+      await dialog.getByRole("button", { name: "Einladung senden" }).click();
+
+      const notice = dialog.getByTestId("op-tenant-notice");
+      await expect(notice).toBeVisible();
+      await expect(notice).toHaveAttribute("data-code", code);
+      // The server's text is never shown; the console words the reason itself.
+      await expect(notice).not.toContainText("Serverseitiger Text");
+      await expect(dialog).toBeVisible();
+      expect(callsTo(mock, "POST", "/resend-admin-invitation")).toHaveLength(1);
+      expect(callsTo(mock, "POST", "/resend-admin-invitation")[0].body).toBeNull();
+    });
+  }
+
+  test("resend with a mail that could not be sent leaves a warning on the page", async ({
+    page,
+  }) => {
+    const mock = await openTenant(page);
+    mock.state.resend = "not-sent";
+
+    await page.getByTestId("op-tenant-resend").click();
+    const dialog = page.getByRole("dialog", { name: "Einladung erneut senden?" });
+    await dialog.getByRole("button", { name: "Einladung senden" }).click();
+
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByTestId("op-tenant-mail-warning")).toBeVisible();
+    await expect(page.getByTestId("op-tenant-mail-warning")).toHaveClass(/alert-warning/);
+  });
+
+  test("a sent invitation closes the dialog without a warning", async ({ page }) => {
+    const mock = await openTenant(page);
+
+    await page.getByTestId("op-tenant-resend").click();
+    const dialog = page.getByRole("dialog", { name: "Einladung erneut senden?" });
+    await dialog.getByRole("button", { name: "Einladung senden" }).click();
+
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByTestId("op-tenant-mail-warning")).toHaveCount(0);
+    expect(callsTo(mock, "POST", "/resend-admin-invitation")).toHaveLength(1);
+  });
+
+  test("at 360 px the action row wraps and nothing leaves the viewport", async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 800 });
+    await openTenant(page);
+
+    const row = page.getByTestId("op-tenant-actions");
+    // Control: the flex-wrap recipe is really applied, not merely present in the source.
+    await expect(row).toHaveCSS("display", "flex");
+    await expect(row).toHaveCSS("flex-wrap", "wrap");
+    const overflow = await page.evaluate(() => {
+      const root = document.documentElement;
+      const rowEl = document.querySelector('[data-testid="op-tenant-actions"]') as HTMLElement;
+      const limit = rowEl.getBoundingClientRect().right;
+      const beyond = [...rowEl.children].filter(
+        (child) => child.getBoundingClientRect().right > limit + 0.5,
+      ).length;
+      return { page: root.scrollWidth - root.clientWidth, beyond };
+    });
+    expect(overflow.page).toBeLessThanOrEqual(0);
+    expect(overflow.beyond).toBe(0);
   });
 });
