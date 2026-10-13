@@ -172,7 +172,7 @@
     }
   });
 
-  // Issue #82 (D-10 adaptation): apps/web has no salon admin screen yet (#89 will call
+  // Issue #82 (D-10 adaptation): apps/web has no salon admin screen yet (#563 will call
   // `salonContext.load(..., { force: true })` itself after create/deactivate/activate), so the
   // context is re-validated after in-app navigation — throttled by the store, so options appear or
   // vanish at a later page change without a reload. The initial mount is covered by onMount.
