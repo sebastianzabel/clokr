@@ -47,8 +47,10 @@
             >
           </td>
           <td class="meta slug" data-label="Kurzname">{tenant.slug}</td>
-          <td class="meta" data-label="Bundesland">{federalStateLabel(tenant.federalState)}</td>
-          <td class="meta" data-label="Angelegt">{formatOperatorDate(tenant.createdAt)}</td>
+          <td class="meta state" data-label="Bundesland">
+            {federalStateLabel(tenant.federalState)}
+          </td>
+          <td class="meta date" data-label="Angelegt">{formatOperatorDate(tenant.createdAt)}</td>
           <td class="cell-status" data-label="Status">
             <span
               class="badge status"
@@ -95,15 +97,24 @@
     text-decoration: underline;
   }
 
-  .slug {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    overflow-wrap: anywhere;
+  /* "break-word" (not "anywhere") keeps the table layout from squeezing these columns down to one
+     character when a long name claims the width; the minimum widths do the same for short words. */
+  .meta {
+    overflow-wrap: break-word;
   }
 
-  .meta {
-    overflow-wrap: anywhere;
-    min-width: 0;
+  .slug {
+    min-width: 128px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+
+  .state {
+    min-width: 128px;
+  }
+
+  .date {
+    min-width: 96px;
   }
 
   .reason {
@@ -194,11 +205,13 @@
 
     .tenant-table td.meta {
       order: 4;
+      min-width: 0;
     }
 
-    .tenant-table td.meta + td.meta::before {
+    /* The separator trails its item, so a wrapped line never starts with a stray dot. */
+    .tenant-table td.meta:not(.date)::after {
       content: "\00b7";
-      margin-right: 8px;
+      margin-left: 8px;
     }
 
     .tenant-table .reason {
