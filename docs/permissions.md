@@ -1013,8 +1013,15 @@ Katalog-Permission und stehen in keiner der Tabellen oben; die Zugangsentscheidu
 - Alle Anmeldeausgänge landen im `OperatorAuditLog`, nie im Mandanten-`AuditLog`.
 - **Mandanten-Verwaltung liefert nur Metadaten** (Beschluss 2026-08-27; Support-Zugriff ist #93): keine
   Mitarbeiterlisten, Zählungen oder sonstigen Mandantendaten. Das rohe Einladungstoken steht nur in der
-  Mail, nie in einer Antwort. Es gibt keine Löschroute; jede Änderung schreibt genau eine Zeile in den
-  `OperatorAuditLog`.
+  Mail, nie in einer Antwort. Es gibt keine Löschroute. Eine Mandanten-Änderung schreibt genau eine
+  Zeile in den `OperatorAuditLog`; eine Salon-Anfrage kann mehrere Aktionen schreiben (ersetzt sie eine
+  Kopplung, stehen `SALON_COUPLING_REMOVED` und `SALON_COUPLING_SET` nebeneinander, ein Bearbeiten mit
+  Namensänderung und Kopplung `SALON_UPDATED` plus die Kopplungszeile).
+- **Salon-Antworten liefern Salon-Stammdaten, keine Zählungen** (Phase 89, D-14a): Name, Anschrift,
+  Öffnungszeiten, Bundesland, Standard- und Aktiv-Kennzeichen und die Filialkennung der Kopplung, nie
+  Mitarbeiterdaten und nie Zahlen über Einträge oder Zuordnungen. Jede Änderung schreibt zusätzlich eine
+  Zeile in den `AuditLog` des Mandanten (Akteur `OPERATOR` mit dem Mandantenstempel, ohne Benutzer; der
+  Mandant sieht sie als „Betreiber“, nur Zeilen seit Phase 89).
 - **Salon-Anlage des Betreibers steht in beiden Protokollen** (Phase 89): je Anlage eine Zeile
   `SALON_CREATED` (bei Kopplung zusätzlich `SALON_COUPLING_SET`) im `OperatorAuditLog` und eine
   Zeile im Audit-Protokoll des Mandanten (Akteur `OPERATOR`, ohne Benutzer), beide in derselben

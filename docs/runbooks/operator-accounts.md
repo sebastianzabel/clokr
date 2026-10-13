@@ -58,6 +58,17 @@ at most once: signing in twice inside the same 30-second window needs the next c
 attempts the account is locked for 15 minutes. A recovery code replaces the authenticator code once and is
 then consumed.
 
+## Signing in to the operator console
+
+The console is part of the web app at `/betreiber`; the sign-in page is `/betreiber/anmelden` (nothing in
+the tenant app links to it, so bookmark it). Enter the password, then the six-digit authenticator code or a
+recovery code. The session lasts 15 minutes and is not refreshed: a clock in the console header counts it
+down, and at zero the browser returns to the sign-in page, then continues at the page you came from. The
+session lives in the browser tab only (`sessionStorage`), so closing the tab ends it; "Abmelden" clears it
+too, but the token itself stays valid until its 15 minutes run out unless the account's MFA is reset or the
+account is deactivated (Issue #557). Where `OPERATOR_JWT_SECRET` is unset the operator surface is absent;
+the sign-in page then says so instead of showing a form.
+
 ## Lost authenticator
 
 ```bash
