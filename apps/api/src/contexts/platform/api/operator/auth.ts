@@ -14,6 +14,9 @@
  * not-enrolled accounts all answer the identical 401 after a bcrypt comparison (a cached dummy hash stands
  * in for an unknown address). Request bodies are parsed with zod inside the handler, deliberately not with
  * a JSON schema, so the guard of the other operator routes always runs before any body validation.
+ *
+ * A challenge issued before an MFA reset or a deactivation is refused at /verify (Issue #557): every token
+ * carries the account's token version, and /verify signs the access token with the CURRENT version.
  */
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -32,6 +35,7 @@ import { OPERATOR_AUDIT_ACTIONS, recordOperatorAudit } from "../../operator-audi
 import {
   OPERATOR_ACCESS_TOKEN_TTL_SECONDS,
   OPERATOR_CHALLENGE_TTL_SECONDS,
+  operatorTokenIsCurrent,
   requireOperator,
   signOperatorToken,
   verifyOperatorToken,
@@ -164,7 +168,7 @@ export async function operatorAuthRoutes(app: FastifyInstance) {
       }
 
       return {
-        challengeToken: signOperatorToken(app, account.id, "mfa-challenge"),
+        challengeToken: signOperatorToken(app, account.id, "mfa-challenge", account.tokenVersion),
         expiresIn: OPERATOR_CHALLENGE_TTL_SECONDS,
       };
     },
@@ -207,6 +211,14 @@ export async function operatorAuthRoutes(app: FastifyInstance) {
         await auditFailure(account.isActive ? "LOCKED" : "INACTIVE", account.id);
         return reply.code(401).send(GENERIC_FAILURE);
       }
+      // `operatorTokenIsCurrent` re-checks `isActive`, but the explicit branch above keeps the distinct
+      // INACTIVE / LOCKED audit reasons; do not fold it into the version check below.
+      // A challenge issued before a reset or deactivation is dead (Issue #557). This is not a guessing
+      // attempt, so no failure is registered and no TOTP step is consumed.
+      if (!operatorTokenIsCurrent(challenge, account)) {
+        await auditFailure("STALE_CHALLENGE", account.id);
+        return reply.code(401).send(GENERIC_FAILURE);
+      }
       if (!account.totpSecretEnc || !account.totpEnabledAt) {
         await auditFailure("NOT_ENROLLED", account.id);
         return reply.code(401).send(GENERIC_FAILURE);
@@ -241,6 +253,8 @@ export async function operatorAuthRoutes(app: FastifyInstance) {
           const { count } = await tx.operatorAccount.updateMany({
             where: {
               id: account.id,
+              // A reset committing after the account read bumps the version, so this matches no row.
+              tokenVersion: account.tokenVersion,
               OR: [{ lastTotpStep: null }, { lastTotpStep: { lt: check.step } }],
             },
             data: { ...success, lastTotpStep: check.step },
@@ -267,7 +281,11 @@ export async function operatorAuthRoutes(app: FastifyInstance) {
         remainingRecoveryCodes = check.remainingHashes.length;
         consumed = await app.prisma.$transaction(async (tx) => {
           const { count } = await tx.operatorAccount.updateMany({
-            where: { id: account.id, recoveryCodeHashes: { equals: account.recoveryCodeHashes } },
+            where: {
+              id: account.id,
+              tokenVersion: account.tokenVersion,
+              recoveryCodeHashes: { equals: account.recoveryCodeHashes },
+            },
             data: { ...success, recoveryCodeHashes: check.remainingHashes },
           });
           if (count !== 1) return false;
@@ -292,13 +310,25 @@ export async function operatorAuthRoutes(app: FastifyInstance) {
       }
 
       if (!consumed) {
+        // Zero rows matched. Either the step / recovery code was used in parallel (a replay, counted as a
+        // failure), or a reset or deactivation committed after the account read and bumped the version
+        // (Issue #557): that is the same stale challenge as above, so it is neither counted nor called a
+        // replay.
+        const latest = await app.prisma.operatorAccount.findUnique({
+          where: { id: account.id },
+          select: { isActive: true, tokenVersion: true },
+        });
+        if (!operatorTokenIsCurrent(challenge, latest)) {
+          await auditFailure("STALE_CHALLENGE", account.id);
+          return reply.code(401).send(GENERIC_FAILURE);
+        }
         await registerFailure(account, req);
         await auditFailure("REPLAY", account.id);
         return reply.code(401).send(GENERIC_FAILURE);
       }
 
       return {
-        accessToken: signOperatorToken(app, account.id, "access"),
+        accessToken: signOperatorToken(app, account.id, "access", account.tokenVersion),
         expiresIn: OPERATOR_ACCESS_TOKEN_TTL_SECONDS,
       };
     },

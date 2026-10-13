@@ -761,8 +761,14 @@ import { readFileSync } from "node:fs";
 // (38 -> 38, one case rewritten 1:1) and `karenz-overrun` (one case rewritten 1:1, found by the full suite)
 // kept their case count. Same lower-bound convention as above (a
 // looping case counts once in the source and more in the reporter); not a re-measure-to-actual sweep.
-const MIN_FILES = 398;
-const MIN_TESTS = 6674;
+// Issue #557 (2026-10-13), on `fix/557-mfa-reset-tokens` (based on origin/main @ 0f248682): one new
+// test FILE, `src/__tests__/operator-token-version-557.test.ts` (11 cases, measured with the vitest JSON
+// reporter) - MIN_FILES rises from 396 to 397 and MIN_TESTS from 6638 to 6649. The edited files
+// `operator-auth-88`, `tenant-principal-guard-88`, `operator-tenants-88` and
+// `operator-tenant-boundary-sweep-88` kept their case count (delta 0). Merged after PR #559 (Issue #551): both
+// deltas add up (398 + 1 files, 6674 + 11 cases; +2 for the reset-race cases of the review, WR-02). Same lower-bound convention as above.
+const MIN_FILES = 399;
+const MIN_TESTS = 6687;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

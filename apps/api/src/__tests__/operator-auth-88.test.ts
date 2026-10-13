@@ -309,22 +309,41 @@ describe("operator sign-in hardening", () => {
   it("enforces the operator claims even when the signature verifies with the operator secret", async () => {
     const operator = await seedOperator(app);
     const signer = app.jwt.operator!;
-    const noKind = signer.sign({ sub: operator.id, typ: "access" } as never, { expiresIn: "5m" });
+    const noKind = signer.sign(
+      { sub: operator.id, typ: "access", ver: operator.tokenVersion } as never,
+      { expiresIn: "5m" },
+    );
     const wrongAud = signer.sign(
-      { sub: operator.id, kind: "operator", aud: "somebody-else", typ: "access" } as never,
+      {
+        sub: operator.id,
+        kind: "operator",
+        aud: "somebody-else",
+        typ: "access",
+        ver: operator.tokenVersion,
+      } as never,
       { expiresIn: "5m" },
     );
     const noTyp = signer.sign(
-      { sub: operator.id, kind: "operator", aud: "clokr-operator" } as never,
+      {
+        sub: operator.id,
+        kind: "operator",
+        aud: "clokr-operator",
+        ver: operator.tokenVersion,
+      } as never,
       { expiresIn: "5m" },
     );
     // Each claim missing on its own, so none of the checks can hide behind another.
     const onlyKindMissing = signer.sign(
-      { sub: operator.id, aud: "clokr-operator", typ: "access" } as never,
+      {
+        sub: operator.id,
+        aud: "clokr-operator",
+        typ: "access",
+        ver: operator.tokenVersion,
+      } as never,
       { expiresIn: "5m" },
     );
     const onlyAudMissing = signer.sign(
-      { sub: operator.id, kind: "operator", typ: "access" } as never,
+      { sub: operator.id, kind: "operator", typ: "access", ver: operator.tokenVersion } as never,
       { expiresIn: "5m" },
     );
     for (const token of [noKind, wrongAud, noTyp, onlyKindMissing, onlyAudMissing]) {
