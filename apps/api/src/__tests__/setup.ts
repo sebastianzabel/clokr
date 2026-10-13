@@ -9,6 +9,8 @@
 import { buildApp } from "../app";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
+import { randomBytes } from "node:crypto";
+import { Secret, TOTP } from "otpauth";
 // Re-export Prisma.JsonValue to keep it nameable in the inferred return type of
 // seedTestData(). Adding `uiPreferences Json?` to User caused TS2883 because the
 // inferred return type implicitly references JsonValue without a local binding.
@@ -23,6 +25,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleepMs } from "node:timers/promises";
 import type { JwtPayload } from "../middleware/auth";
+import { createOperatorAccount } from "../contexts/platform/operator-credentials";
 
 // Keep JsonValue reachable from this module's public types (intentional no-op type alias)
 export type _SeedJsonValue = Prisma.JsonValue;
@@ -684,4 +687,56 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.phorestSyncRun.deleteMany({ where: { tenantId } });
   await prisma.salon.deleteMany({ where: { tenantId } });
   await prisma.tenant.delete({ where: { id: tenantId } });
+}
+
+/** Policy-conforming operator password used by every seeded operator (a fixture, not a secret). */
+export const SEEDED_OPERATOR_PASSWORD = "Op-Fixture-Passw0rd!2026";
+
+export type SeededOperator = {
+  id: string;
+  email: string;
+  password: string;
+  secretBase32: string;
+  recoveryCodes: string[];
+  /**
+   * The TOTP code of the current 30 s step plus `stepOffset` steps. Two logins inside one 30 s window
+   * need different offsets (0, then +1): the replay guard refuses a step that is not greater than the
+   * last accepted one, and the validation window of 1 still accepts the next step.
+   */
+  totpFor: (stepOffset?: number) => string;
+};
+
+/**
+ * Phase 88: creates a real operator account (TOTP + recovery codes) through the same function the server
+ * CLI uses. Operator rows are never deleted by tests — audit rows reference them with onDelete Restrict
+ * and the audit table is append-only — so every call uses a fresh synthetic email.
+ */
+export async function seedOperator(
+  testApp: FastifyInstance,
+  opts: { displayName?: string } = {},
+): Promise<SeededOperator> {
+  const email = `op-${randomBytes(6).toString("hex")}@example.invalid`;
+  const result = await createOperatorAccount(testApp.prisma, {
+    email,
+    displayName: opts.displayName ?? "Test Operator",
+    password: SEEDED_OPERATOR_PASSWORD,
+    actor: { type: "SCRIPT", user: "vitest", host: "test" },
+  });
+  if (result.status !== "OK") {
+    throw new Error(`seedOperator failed: ${result.status}`);
+  }
+  const totp = new TOTP({
+    algorithm: "SHA1",
+    digits: 6,
+    period: 30,
+    secret: Secret.fromBase32(result.enrollment.secretBase32),
+  });
+  return {
+    id: result.account.id,
+    email: result.account.email,
+    password: SEEDED_OPERATOR_PASSWORD,
+    secretBase32: result.enrollment.secretBase32,
+    recoveryCodes: result.recoveryCodes,
+    totpFor: (stepOffset = 0) => totp.generate({ timestamp: Date.now() + stepOffset * 30_000 }),
+  };
 }

@@ -10,6 +10,8 @@
  *   DATABASE_URL=<dsn> ENCRYPTION_KEY=<key> [OPERATOR_PASSWORD=<pw>] \
  *     pnpm --filter @clokr/api exec tsx scripts/operator-account.ts \
  *     --create --email <email> --display-name <name> [--apply]
+ *     --reset-mfa --email <email> [--apply]     (lost authenticator: new secret + recovery codes)
+ *     --deactivate --email <email> [--apply]    (offboarding)
  * In the API container: `pnpm tsx scripts/operator-account.ts …`.
  *
  * The password is never taken from argv (shell history, process list): `OPERATOR_PASSWORD` or, when unset,
@@ -28,15 +30,19 @@ import { pathToFileURL } from "node:url";
 import {
   OPERATOR_PASSWORD_POLICY,
   createOperatorAccount,
+  deactivateOperatorAccount,
   normalizeOperatorEmail,
+  resetOperatorMfa,
   type OperatorActor,
 } from "../src/contexts/platform/operator-credentials";
 
 export const EXIT_OK = 0;
 export const EXIT_ERROR = 1;
 
+export type OperatorAccountMode = "create" | "reset-mfa" | "deactivate";
+
 export type OperatorAccountArgs = {
-  mode: "create";
+  mode: OperatorAccountMode;
   email: string;
   displayName?: string;
   apply: boolean;
@@ -48,6 +54,8 @@ export function parseOperatorAccountArgs(argv: string[]): OperatorAccountArgs {
     args: argv,
     options: {
       create: { type: "boolean" },
+      "reset-mfa": { type: "boolean" },
+      deactivate: { type: "boolean" },
       email: { type: "string" },
       "display-name": { type: "string" },
       apply: { type: "boolean" },
@@ -55,8 +63,10 @@ export function parseOperatorAccountArgs(argv: string[]): OperatorAccountArgs {
     strict: true,
     allowPositionals: false,
   });
-  const modes = (["create"] as const).filter((m) => values[m]);
-  if (modes.length !== 1) throw new Error("Exactly one mode flag is required: --create");
+  const modes = (["create", "reset-mfa", "deactivate"] as const).filter((m) => values[m]);
+  if (modes.length !== 1) {
+    throw new Error("Exactly one mode flag is required: --create | --reset-mfa | --deactivate");
+  }
   if (!values.email) throw new Error("--email is required");
   return {
     mode: modes[0],
@@ -89,54 +99,109 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const email = normalizeOperatorEmail(args.email);
-  if (!args.displayName) {
+  if (args.mode === "create" && !args.displayName) {
     console.error("[operator-account] --display-name is required for --create");
     return EXIT_ERROR;
   }
 
   if (!args.apply) {
-    console.log(
-      `[operator-account] DRY RUN — would create operator account ${email} ("${args.displayName}") ` +
-        `with TOTP enrolment and 10 recovery codes (password policy: min ${OPERATOR_PASSWORD_POLICY.passwordMinLength}). ` +
-        "Nothing written. Re-run with --apply.",
-    );
+    console.log(dryRunMessage(args, email));
     return EXIT_OK;
   }
 
-  const suppliedPassword = process.env.OPERATOR_PASSWORD;
-  const password = suppliedPassword || generateOperatorPassword();
   const actor: OperatorActor = { type: "SCRIPT", user: userInfo().username, host: hostname() };
-
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
   try {
-    const result = await createOperatorAccount(prisma, {
-      email,
-      displayName: args.displayName,
-      password,
-      actor,
-    });
-    if (result.status === "EMAIL_TAKEN") {
-      console.error(`[operator-account] an operator account with ${email} already exists`);
-      return EXIT_ERROR;
-    }
-    if (result.status === "INVALID") {
-      console.error(`[operator-account] invalid input: ${result.errors.join("; ")}`);
-      return EXIT_ERROR;
-    }
-    console.log(
-      `[operator-account] created operator account ${result.account.email} (${result.account.id})`,
-    );
-    if (!suppliedPassword) console.log(`password (shown once): ${password}`);
-    console.log(`otpauth URI (shown once): ${result.enrollment.otpauthUri}`);
-    console.log(`TOTP secret (shown once): ${result.enrollment.secretBase32}`);
-    console.log("recovery codes (shown once, store offline):");
-    for (const code of result.recoveryCodes) console.log(`  ${code}`);
-    return EXIT_OK;
+    if (args.mode === "create") return await runCreate(prisma, email, args.displayName!, actor);
+    if (args.mode === "reset-mfa") return await runResetMfa(prisma, email, actor);
+    return await runDeactivate(prisma, email, actor);
   } finally {
     await prisma.$disconnect();
     await pool.end();
   }
+}
+
+function dryRunMessage(args: OperatorAccountArgs, email: string): string {
+  const tail = "Nothing written. Re-run with --apply.";
+  if (args.mode === "create") {
+    return (
+      `[operator-account] DRY RUN — would create operator account ${email} ("${args.displayName}") ` +
+      `with TOTP enrolment and 10 recovery codes (password policy: min ${OPERATOR_PASSWORD_POLICY.passwordMinLength}). ${tail}`
+    );
+  }
+  if (args.mode === "reset-mfa") {
+    return `[operator-account] DRY RUN — would replace the TOTP secret and all recovery codes of ${email}. ${tail}`;
+  }
+  return `[operator-account] DRY RUN — would deactivate operator account ${email}. ${tail}`;
+}
+
+function printEnrollment(
+  enrollment: { secretBase32: string; otpauthUri: string },
+  recoveryCodes: string[],
+): void {
+  console.log(`otpauth URI (shown once): ${enrollment.otpauthUri}`);
+  console.log(`TOTP secret (shown once): ${enrollment.secretBase32}`);
+  console.log("recovery codes (shown once, store offline):");
+  for (const code of recoveryCodes) console.log(`  ${code}`);
+}
+
+async function runCreate(
+  prisma: PrismaClient,
+  email: string,
+  displayName: string,
+  actor: OperatorActor,
+): Promise<number> {
+  const suppliedPassword = process.env.OPERATOR_PASSWORD;
+  const password = suppliedPassword || generateOperatorPassword();
+  const result = await createOperatorAccount(prisma, { email, displayName, password, actor });
+  if (result.status === "EMAIL_TAKEN") {
+    console.error(`[operator-account] an operator account with ${email} already exists`);
+    return EXIT_ERROR;
+  }
+  if (result.status === "INVALID") {
+    console.error(`[operator-account] invalid input: ${result.errors.join("; ")}`);
+    return EXIT_ERROR;
+  }
+  console.log(
+    `[operator-account] created operator account ${result.account.email} (${result.account.id})`,
+  );
+  if (!suppliedPassword) console.log(`password (shown once): ${password}`);
+  printEnrollment(result.enrollment, result.recoveryCodes);
+  return EXIT_OK;
+}
+
+async function runResetMfa(
+  prisma: PrismaClient,
+  email: string,
+  actor: OperatorActor,
+): Promise<number> {
+  const result = await resetOperatorMfa(prisma, { email, actor });
+  if (result.status === "NOT_FOUND") {
+    console.error(`[operator-account] no operator account with ${email}`);
+    return EXIT_ERROR;
+  }
+  console.log(`[operator-account] second factor of ${email} reset`);
+  printEnrollment(result.enrollment, result.recoveryCodes);
+  return EXIT_OK;
+}
+
+async function runDeactivate(
+  prisma: PrismaClient,
+  email: string,
+  actor: OperatorActor,
+): Promise<number> {
+  const result = await deactivateOperatorAccount(prisma, { email, actor });
+  if (result.status === "NOT_FOUND") {
+    console.error(`[operator-account] no operator account with ${email}`);
+    return EXIT_ERROR;
+  }
+  if (result.status === "ALREADY_INACTIVE") {
+    console.error(`[operator-account] ${email} is already deactivated`);
+    return EXIT_ERROR;
+  }
+  console.log(`[operator-account] deactivated operator account ${email}`);
+  return EXIT_OK;
 }
 
 // Run-guard (Issue #203 class): only bootstrap the DB and execute when invoked as a script, so importing

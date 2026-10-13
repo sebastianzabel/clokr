@@ -275,3 +275,79 @@ export async function createOperatorAccount(
     throw error;
   }
 }
+
+export type ResetOperatorMfaResult =
+  | {
+      status: "OK";
+      enrollment: { secretBase32: string; otpauthUri: string };
+      recoveryCodes: string[];
+    }
+  | { status: "NOT_FOUND" };
+
+/** Replaces the authenticator secret and all recovery codes of an operator (lost device) and clears lockout state. */
+export async function resetOperatorMfa(
+  db: PrismaClient,
+  input: { email: string; actor: OperatorActor },
+): Promise<ResetOperatorMfaResult> {
+  const email = normalizeOperatorEmail(input.email);
+  const existing = await db.operatorAccount.findUnique({ where: { email }, select: { id: true } });
+  if (!existing) return { status: "NOT_FOUND" };
+
+  const enrollment = createTotpEnrollment(email);
+  const recovery = generateRecoveryCodes();
+  await db.$transaction(async (tx) => {
+    await tx.operatorAccount.update({
+      where: { id: existing.id },
+      data: {
+        totpSecretEnc: enrollment.secretEnc,
+        totpEnabledAt: new Date(),
+        lastTotpStep: null,
+        recoveryCodeHashes: recovery.hashes,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
+    });
+    await recordOperatorAudit(tx, {
+      operatorId: null,
+      action: OPERATOR_AUDIT_ACTIONS.OPERATOR_MFA_RESET,
+      entity: "OperatorAccount",
+      entityId: existing.id,
+      newValue: { actor: input.actor, recoveryCodes: OPERATOR_RECOVERY_CODE_COUNT },
+    });
+  });
+  return {
+    status: "OK",
+    enrollment: { secretBase32: enrollment.secretBase32, otpauthUri: enrollment.otpauthUri },
+    recoveryCodes: recovery.codes,
+  };
+}
+
+export type DeactivateOperatorAccountResult =
+  { status: "OK" } | { status: "NOT_FOUND" } | { status: "ALREADY_INACTIVE" };
+
+/** Offboarding: the account stays (audit rows reference it with onDelete Restrict) but can no longer sign in. */
+export async function deactivateOperatorAccount(
+  db: PrismaClient,
+  input: { email: string; actor: OperatorActor },
+): Promise<DeactivateOperatorAccountResult> {
+  const email = normalizeOperatorEmail(input.email);
+  const existing = await db.operatorAccount.findUnique({
+    where: { email },
+    select: { id: true, isActive: true },
+  });
+  if (!existing) return { status: "NOT_FOUND" };
+  if (!existing.isActive) return { status: "ALREADY_INACTIVE" };
+
+  await db.$transaction(async (tx) => {
+    await tx.operatorAccount.update({ where: { id: existing.id }, data: { isActive: false } });
+    await recordOperatorAudit(tx, {
+      operatorId: null,
+      action: OPERATOR_AUDIT_ACTIONS.OPERATOR_DEACTIVATED,
+      entity: "OperatorAccount",
+      entityId: existing.id,
+      oldValue: { isActive: true },
+      newValue: { isActive: false, actor: input.actor },
+    });
+  });
+  return { status: "OK" };
+}
