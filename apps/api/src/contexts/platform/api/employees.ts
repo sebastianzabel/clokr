@@ -8,7 +8,12 @@ import { hasPermission, permissionReach, requirePermission } from "../request-pe
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
 import { accessContextFromRequest } from "../access-context"; // Phase 91b Plan 10 (#91), D-12/D-14
 import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-12/D-14
-import { isPersonMasterDataInScope, isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-12/D-14
+import {
+  isPersonMasterDataInScope,
+  isStammsalonScopeMatch,
+  resolvePersonScopedEmployeeIds,
+  resolveStammsalonScopedEmployeeIds,
+} from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-12/D-14; Phase 85b Plan 01 (#547), D-01/D-02
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
 import {
@@ -73,11 +78,12 @@ import { validateUsualWorkDays } from "../usual-work-days"; // Phase 436 Plan 02
 import {
   createInitialHomeAssignment,
   fillHomeGapBeforeHireDate,
+  readTenantTimezone,
   resolveHomeSalonForNewEmployee,
 } from "../facade/salon-assignments";
 import { salonExistsInForeignTenant } from "../facade/salons";
 import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
-import { tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
+import { dayToDate, tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -498,6 +504,15 @@ async function enforcePersonAdminScope(
 
 export async function employeeRoutes(app: FastifyInstance) {
   // GET /api/v1/employees
+  //
+  // Issue #547 (Phase 85b Plan 01, D-01/D-02): the list is narrowed like the single view. A scoped
+  // `employee:read` reach lists only the persons of the master-data rule (Stammsalon today OR an
+  // active deployment today in the reach, OR the reach's person ids) plus the caller's own row —
+  // the same rule `GET /:id` applies (Phase 91b D-12), so the list is never wider than the single
+  // view. `overtimeAccount.balanceHours` is the stored value only where the caller's `overtime:read`
+  // reach covers the person; otherwise it is `null`, never a fabricated 0 (owner decision
+  // 2026-08-27: the total saldo is visible to Inhaber, Personalabteilung and the employee). A
+  // whole-tenant caller receives the unchanged response.
   app.get("/", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("employee:read:ZUGEWIESEN"),
@@ -511,10 +526,23 @@ export async function employeeRoutes(app: FastifyInstance) {
       // Lazy: the permission is checked only when the flag is actually set (issue #75, D-13)
       const showAnonymized =
         includeAnonymized === "true" && (await hasPermission(req, "employee:anonymize:ZUGEWIESEN"));
+
+      const tenantId = req.user.tenantId;
+      const ownEmployeeId = req.user.employeeId ?? null;
+      const access = accessContextFromRequest(req);
+
+      // D-01: the persons the caller's employee:read reach covers ("all" for a whole-tenant reach).
+      const readReach = await resolveAccessReach(app.prisma, access, "employee:read:ZUGEWIESEN");
+      const personIds = await resolvePersonScopedEmployeeIds(app.prisma, tenantId, readReach);
+
       const employees = await app.prisma.employee.findMany({
         where: {
-          tenantId: req.user.tenantId,
+          tenantId,
           ...(showAnonymized ? {} : NOT_ANONYMIZED_EMPLOYEE_WHERE),
+          // The caller's own row is always part of the list (the self rule of GET /:id).
+          ...(personIds !== "all"
+            ? { id: { in: ownEmployeeId ? [...personIds, ownEmployeeId] : personIds } }
+            : {}),
         },
         include: {
           user: { select: { email: true, role: true, isActive: true, lastLoginAt: true } },
@@ -527,13 +555,47 @@ export async function employeeRoutes(app: FastifyInstance) {
         take: 1000,
       });
 
-      return employees.map((e) => ({
-        ...e,
-        workSchedule: e.workSchedules[0] ?? null,
-        workSchedules: undefined,
-        invitationStatus: deriveInvitationStatus(e.user.isActive, e.invitations),
-        invitations: undefined,
-      }));
+      // D-02: whose stored balance this caller may read — decided once per request.
+      const overtimeReach = await permissionReach(req, "overtime:read");
+      let balanceVisibleFor: "all" | ReadonlySet<string> = new Set<string>();
+      if (overtimeReach === "EIGENE") {
+        balanceVisibleFor = new Set(ownEmployeeId ? [ownEmployeeId] : []);
+      } else if (overtimeReach === "ZUGEWIESEN") {
+        const overtimeScope = await resolveAccessReach(
+          app.prisma,
+          access,
+          "overtime:read:ZUGEWIESEN",
+        );
+        // Stichtag = tenant-local today, computed exactly as resolvePersonScopedEmployeeIds does
+        // (a running saldo has no closed-period Stichtag, see overtime.ts GET /:employeeId).
+        const tz = await readTenantTimezone(app.prisma, tenantId);
+        const today = dayToDate(tenantLocalDay(new Date(), tz));
+        const covered = await resolveStammsalonScopedEmployeeIds(
+          app.prisma,
+          tenantId,
+          overtimeScope,
+          today,
+        );
+        balanceVisibleFor =
+          covered === "all"
+            ? "all"
+            : new Set(ownEmployeeId ? [...covered, ownEmployeeId] : covered);
+      }
+
+      return employees.map((e) => {
+        const balanceVisible = balanceVisibleFor === "all" || balanceVisibleFor.has(e.id);
+        return {
+          ...e,
+          // A person without an account stays null; a hidden balance is null, never 0.
+          overtimeAccount: e.overtimeAccount
+            ? { balanceHours: balanceVisible ? e.overtimeAccount.balanceHours : null }
+            : null,
+          workSchedule: e.workSchedules[0] ?? null,
+          workSchedules: undefined,
+          invitationStatus: deriveInvitationStatus(e.user.isActive, e.invitations),
+          invitations: undefined,
+        };
+      });
     },
   });
 
