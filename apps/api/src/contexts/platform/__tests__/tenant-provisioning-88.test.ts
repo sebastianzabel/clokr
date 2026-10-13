@@ -18,14 +18,68 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
+import type { Prisma } from "@clokr/db";
 import { getTestApp, closeTestApp, cleanupTestData, seedOperator } from "../../../__tests__/setup";
 import {
   createTenantWithConfig,
   operatorEmployeeCreationAudit,
   provisionTenant,
   provisionTenantWithAdmin,
+  TenantProvisioningConflictError,
 } from "../tenant-provisioning";
+import { uniqueViolationTarget } from "../../../utils/prisma-unique-violation";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
+
+/**
+ * Issue #567: a transaction client whose slug and e-mail PRE-CHECKS see nothing, so the insert
+ * itself hits the real unique index in the test database. Everything else reaches the real
+ * delegates. `captured` collects the raw error of a failed `tenant.create` / `user.create`;
+ * `spikeUserMessage` appends the word "slug" to the `user.create` error's message property, which
+ * proves the classification never reads that text.
+ */
+function precheckBlindTx(
+  tx: Prisma.TransactionClient,
+  opts: { captured: unknown[]; spikeUserMessage?: boolean },
+): Prisma.TransactionClient {
+  const wrapDelegate = (name: "tenant" | "user", delegate: object) =>
+    new Proxy(delegate, {
+      get(target, prop) {
+        if (prop === "findUnique") {
+          return async (args: { where?: { slug?: unknown; email?: unknown } }) => {
+            const blinded = name === "tenant" ? args.where?.slug : args.where?.email;
+            if (blinded !== undefined) return null;
+            return (target as { findUnique: (a: unknown) => unknown }).findUnique(args);
+          };
+        }
+        if (prop === "create") {
+          return async (args: unknown) => {
+            try {
+              return await (target as { create: (a: unknown) => unknown }).create(args);
+            } catch (err: unknown) {
+              opts.captured.push(err);
+              if (opts.spikeUserMessage && name === "user" && err instanceof Error) {
+                Object.defineProperty(err, "message", {
+                  value: `${err.message} slug`,
+                  writable: true,
+                  configurable: true,
+                });
+              }
+              throw err;
+            }
+          };
+        }
+        const member = Reflect.get(target, prop);
+        return typeof member === "function" ? member.bind(target) : member;
+      },
+    });
+  return new Proxy(tx, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop);
+      if (prop === "tenant" || prop === "user") return wrapDelegate(prop, value as object);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
 
 function uniqueSlug(label: string): string {
   return `p88-${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -204,6 +258,17 @@ describe("seed parity — D-04a deviation", () => {
 //   provisioning has an empty userId and the OPERATOR actor".
 // - M5: pass a tenant-user-shaped `userId` (a fake id) in the operator port -> red: the audit insert
 //   violates the User foreign key, so every L3 case fails, (f) among them.
+// Issue #567 (quick 261013-smt, 2026-10-13), the (h) cases, each run red then restored from a `cp`
+// backup:
+// - M6: add the error's message property to `uniqueViolationTarget`'s joined parts -> red: "(h) an
+//   e-mail collision stays EMAIL_TAKEN when the error message mentions slug" (and the helper's own
+//   "ignores the message property" case).
+// - M7: swap the two return values of `conflictFromUniqueViolation` -> red: all three (h) cases and
+//   the operator route's slug and e-mail race cases.
+// - M8: return SLUG_TAKEN for every P2002 -> red: both (h) e-mail cases and the route e-mail case.
+// Measured against the pre-#567 classifier (origin/main copy): only the message-mentions-slug case
+// is red; the plain e-mail race was already green there, because the real message echo happens not to
+// contain the word slug. The bug needs an invocation echo that does, e.g. a slug-like admin e-mail.
 describe("provisionTenantWithAdmin (L3, Phase 88 plan 10)", () => {
   let app: FastifyInstance;
   let operatorId: string;
@@ -352,6 +417,86 @@ describe("provisionTenantWithAdmin (L3, Phase 88 plan 10)", () => {
     expect(result).toEqual({ status: "SLUG_TAKEN" });
     expect(await app.prisma.user.count({ where: { email: otherEmail } })).toBe(0);
     expect(await app.prisma.tenant.count({ where: { slug } })).toBe(1);
+  });
+
+  // ── Issue #567: a unique collision AFTER the pre-checks is classified from structured metadata ──
+  /** Provision on a pre-check-blinded transaction; resolves to the rejection (or null). */
+  function provisionPastPrechecks(
+    slug: string,
+    email: string,
+    opts: { captured: unknown[]; spikeUserMessage?: boolean },
+  ) {
+    return app.prisma
+      .$transaction((tx) =>
+        provisionTenantWithAdmin(
+          precheckBlindTx(tx, opts),
+          {
+            tenant: { name: `Tenant ${slug}`, slug, federalState: "HESSEN" },
+            admin: { email, firstName: "Erste", lastName: "Leitung" },
+          },
+          (tenantId) => operatorEmployeeCreationAudit(app, { operatorId, tenantId }),
+        ),
+      )
+      .then(() => null)
+      .catch((e: unknown) => e);
+  }
+
+  it("(h) a slug collision past the pre-checks is TenantProvisioningConflictError SLUG_TAKEN", async () => {
+    const slug = uniqueSlug("h-slug");
+    const created = await provision(slug, `${slug}@example.invalid`);
+    expect(created.status).toBe("OK");
+    if (created.status === "OK") createdTenantIds.push(created.tenant.id);
+
+    const freshEmail = `${slug}-other@example.invalid`;
+    const captured: unknown[] = [];
+    const err = await provisionPastPrechecks(slug, freshEmail, { captured });
+    expect(err).toBeInstanceOf(TenantProvisioningConflictError);
+    expect((err as TenantProvisioningConflictError).status).toBe("SLUG_TAKEN");
+    expect(await app.prisma.tenant.count({ where: { slug } })).toBe(1);
+    expect(await app.prisma.user.count({ where: { email: freshEmail } })).toBe(0);
+
+    // Measured shape: the structured target names the slug index/field and not the e-mail one.
+    expect(captured).toHaveLength(1);
+    const target = uniqueViolationTarget(captured[0]) ?? "";
+    expect(target).toMatch(/Tenant_slug_key|slug/);
+    expect(target).not.toMatch(/User_email_key|email/);
+  });
+
+  it("(h) an e-mail collision past the pre-checks is TenantProvisioningConflictError EMAIL_TAKEN", async () => {
+    const first = uniqueSlug("h-mail");
+    const email = `${first}@example.invalid`;
+    const created = await provision(first, email);
+    expect(created.status).toBe("OK");
+    if (created.status === "OK") createdTenantIds.push(created.tenant.id);
+
+    const second = uniqueSlug("h-mail2");
+    const captured: unknown[] = [];
+    const err = await provisionPastPrechecks(second, email, { captured });
+    expect(err).toBeInstanceOf(TenantProvisioningConflictError);
+    expect((err as TenantProvisioningConflictError).status).toBe("EMAIL_TAKEN");
+    expect(await app.prisma.tenant.count({ where: { slug: second } })).toBe(0);
+    expect(await app.prisma.user.count({ where: { email } })).toBe(1);
+
+    expect(captured).toHaveLength(1);
+    const target = uniqueViolationTarget(captured[0]) ?? "";
+    expect(target).toMatch(/User_email_key|email/);
+    expect(target).not.toMatch(/Tenant_slug_key|slug/);
+  });
+
+  it("(h) an e-mail collision stays EMAIL_TAKEN when the error message mentions slug", async () => {
+    const first = uniqueSlug("h-mailmsg");
+    const email = `${first}@example.invalid`;
+    const created = await provision(first, email);
+    expect(created.status).toBe("OK");
+    if (created.status === "OK") createdTenantIds.push(created.tenant.id);
+
+    const second = uniqueSlug("h-mailmsg2");
+    const captured: unknown[] = [];
+    const err = await provisionPastPrechecks(second, email, { captured, spikeUserMessage: true });
+    expect((captured[0] as Error).message).toContain("slug");
+    expect(err).toBeInstanceOf(TenantProvisioningConflictError);
+    expect((err as TenantProvisioningConflictError).status).toBe("EMAIL_TAKEN");
+    expect(await app.prisma.tenant.count({ where: { slug: second } })).toBe(0);
   });
 
   it("(g) invalid admin input is INVALID before any write", async () => {

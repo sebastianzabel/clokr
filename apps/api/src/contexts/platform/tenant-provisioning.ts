@@ -28,6 +28,7 @@ import type { FastifyInstance } from "fastify";
 import type { FederalState, Prisma } from "@clokr/db";
 import { DEFAULT_SALON_OPENING_HOURS, createSalon } from "./facade/salons.js";
 import { operatorTenantAudit } from "./operator-tenant-audit.js";
+import { uniqueViolationTarget } from "../../utils/prisma-unique-violation.js";
 import {
   createEmployeeInTransaction,
   createEmployeeSchema,
@@ -233,16 +234,21 @@ export class TenantProvisioningConflictError extends Error {
   }
 }
 
+/**
+ * Classify a unique collision of the provisioning inserts by the violated index or field, read from
+ * the structured metadata through `uniqueViolationTarget` (never from the error's message, Issue
+ * #567). Fail-closed: anything that is not exactly one of the slug and the e-mail index returns
+ * `null`, so the caller rethrows the original error (a 500 beats a wrong German message).
+ */
 function conflictFromUniqueViolation(err: unknown): "SLUG_TAKEN" | "EMAIL_TAKEN" | null {
-  if (typeof err !== "object" || err === null || !("code" in err) || err.code !== "P2002") {
-    return null;
-  }
-  const target = String(
-    (err as { meta?: { target?: unknown } }).meta?.target ?? (err as { message?: unknown }).message,
-  );
-  if (target.includes("slug")) return "SLUG_TAKEN";
-  if (target.includes("email")) return "EMAIL_TAKEN";
-  return null;
+  const target = uniqueViolationTarget(err);
+  if (target === null) return null;
+  // Whole tokens, so `OperatorAccount_email_key` is not an e-mail match.
+  const tokens = new Set(target.split(/[^A-Za-z0-9_]+/).filter(Boolean));
+  const slug = tokens.has("Tenant_slug_key") || tokens.has("slug");
+  const email = tokens.has("User_email_key") || tokens.has("email");
+  if (slug === email) return null;
+  return slug ? "SLUG_TAKEN" : "EMAIL_TAKEN";
 }
 
 /**
