@@ -3,10 +3,16 @@
  *
  * SalonCoupling is owned by Schichtplanung. This module is the one place other contexts read it
  * through: the tenant routes and the operator's composition port call the same functions. It takes
- * already-resolved identifiers from its callers, imports no other context and writes no audit
- * entry — the caller audits (the operator writes `OperatorAuditLog`, a tenant route `AuditLog`).
+ * already-resolved identifiers from its callers, imports only the Unterbau index (the Shared
+ * Kernel, for the package gate) and writes no audit entry — the caller audits (the operator writes
+ * `OperatorAuditLog`, a tenant route `AuditLog`).
+ *
+ * Issue #566 (D-05): a NEW coupling is a new integration setup and needs the Integrationen module
+ * (`createSalonCoupling`, and `setSalonCoupling` on its create branch). Replacing the branch of an
+ * existing coupling or removing it maintains an existing setup and stays free (D-06).
  */
 import type { Prisma } from "@clokr/db";
+import { assertModuleBooked } from "../../platform";
 import { uniqueViolationTarget } from "../../../utils/prisma-unique-violation.js";
 
 /** All coupling rows of a tenant, ordered deterministically (`salonId`, then `id`). */
@@ -137,6 +143,9 @@ export async function createSalonCoupling(
   if (await findBranchCoupling(db, tenantId, externalBranchId)) {
     return { status: "BRANCH_ALREADY_COUPLED" };
   }
+  // A new coupling is a new integration setup (D-05, Issue #566): the Unterbau decides, and the
+  // salon/branch answers above keep precedence. Throws `ModuleNotBookedError` (409 in app.ts).
+  await assertModuleBooked(db, tenantId, "INTEGRATIONS");
   const coupling = await insertCoupling(db, tenantId, salon.id, externalBranchId);
   return { status: "CREATED", coupling };
 }
@@ -144,7 +153,7 @@ export async function createSalonCoupling(
 /**
  * Set a salon's coupling to a branch (the operator's single "set" action, D-12).
  *
- * No coupling yet creates one; the same branch id is `UNCHANGED` (no write); a different branch
+ * No coupling yet creates one (needs the Integrationen module, D-05); the same branch id is `UNCHANGED` (no write); a different branch
  * id REPLACES: the old row is removed and a new one created in the caller's transaction, and
  * both rows are returned so the caller audits both (replace = remove + create — a coupling is
  * configuration and is never updated in place here). A branch id already used by another salon
@@ -162,6 +171,9 @@ export async function setSalonCoupling(
     if (await findBranchCoupling(db, tenantId, externalBranchId)) {
       return { status: "BRANCH_ALREADY_COUPLED" };
     }
+    // Create branch only (D-05, Issue #566): UNCHANGED and REPLACED maintain an existing setup and
+    // stay free without the module (D-06).
+    await assertModuleBooked(db, tenantId, "INTEGRATIONS");
     const coupling = await insertCoupling(db, tenantId, salon.id, externalBranchId);
     return { status: "CREATED", coupling };
   }

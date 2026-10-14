@@ -7,10 +7,10 @@
  * books everything and would make every gate case vacuous.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { TenantModule } from "@clokr/db";
-import { getTestApp, seedGrundversionTenant, cleanupTestData } from "./setup";
+import { getTestApp, seedGrundversionTenant, cleanupTestData, createTestSalon } from "./setup";
 import { moduleNotBookedMessage } from "../contexts/platform/tenant-packages";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
@@ -509,5 +509,72 @@ describe("everything that maintains or uses an existing setup stays free without
 
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body).success).toBe(true);
+  });
+});
+
+describe("integrations — couplings (D-05)", () => {
+  let t: Seed;
+  const COUPLINGS = "/api/v1/integrations/phorest/couplings";
+  const BRANCH = `branch-566-${randomBytes(4).toString("hex")}`;
+  let salonId: string;
+
+  beforeAll(async () => {
+    t = await seedGrundversionTenant(app, "a566-coup");
+    const salon = await createTestSalon(app.prisma, t.tenant.id, { name: "Kopplungssalon" });
+    salonId = salon.id;
+  });
+  afterAll(async () => cleanup(t.tenant.id));
+
+  it("(a) a new coupling is refused on the Grundversion with MODULE_NOT_BOOKED and nothing is persisted", async () => {
+    await setModules(t.tenant.id, []);
+    const auditBefore = await app.prisma.auditLog.count({
+      where: { entity: "SalonCoupling", action: "CREATE" },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: COUPLINGS,
+      headers: bearer(t.adminToken),
+      payload: { salonId, externalBranchId: BRANCH },
+    });
+
+    expectModuleRefusal(res, TenantModule.INTEGRATIONS);
+    expect(JSON.parse(res.body).error).toContain("Integrationen");
+    expect(await app.prisma.salonCoupling.count({ where: { tenantId: t.tenant.id } })).toBe(0);
+    expect(
+      await app.prisma.auditLog.count({ where: { entity: "SalonCoupling", action: "CREATE" } }),
+    ).toBe(auditBefore);
+  });
+
+  it("(b) the same request works exactly as before once the module is booked", async () => {
+    await setModules(t.tenant.id, [TenantModule.INTEGRATIONS]);
+
+    const res = await app.inject({
+      method: "POST",
+      url: COUPLINGS,
+      headers: bearer(t.adminToken),
+      payload: { salonId, externalBranchId: BRANCH },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body.coupling.salonId).toBe(salonId);
+    expect(body.coupling.provider).toBe("PHOREST");
+    expect(body.coupling.externalBranchId).toBe(BRANCH);
+    expect(await app.prisma.salonCoupling.count({ where: { tenantId: t.tenant.id } })).toBe(1);
+  });
+
+  it("(c) an unknown salon id on the Grundversion keeps the existing 404 (salon resolution precedes the gate)", async () => {
+    await setModules(t.tenant.id, []);
+
+    const res = await app.inject({
+      method: "POST",
+      url: COUPLINGS,
+      headers: bearer(t.adminToken),
+      payload: { salonId: randomUUID(), externalBranchId: `${BRANCH}-other` },
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body)).toEqual({ error: "Salon nicht gefunden" });
   });
 });
