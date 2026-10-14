@@ -12,7 +12,13 @@ import {
 import type { PhorestStaffItem } from "../../../services/phorest/types";
 // Phase 65b (issue #65): every salon read from Schichtplanung goes through the Unterbau's public
 // facade — never a direct `prisma.salon.*` call from this context (ADR 0001).
-import { findSalon, listSalons, permissionReach, requirePermission } from "../../platform";
+import {
+  assertModuleBooked,
+  findSalon,
+  listSalons,
+  permissionReach,
+  requirePermission,
+} from "../../platform";
 import {
   createSalonCoupling,
   removeSalonCoupling,
@@ -504,6 +510,11 @@ export async function integrationRoutes(app: FastifyInstance) {
               where: { salonId: soleActiveSalonId, tenantId },
             });
             if (!existingCoupling) {
+              // This branch creates a NEW coupling: same rule as the facade (D-05, Issue #566),
+              // so this route is no bypass. The in-place branch update below and saving the
+              // credentials without a branch stay free (D-06). A refusal rolls back the whole
+              // request, including the credentials (the web sends no branch in that state, 566-10).
+              await assertModuleBooked(tx, tenantId, "INTEGRATIONS");
               const created = await tx.salonCoupling.create({
                 data: {
                   tenantId,

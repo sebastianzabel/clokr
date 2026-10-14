@@ -10,7 +10,14 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { TenantModule } from "@clokr/db";
-import { getTestApp, seedGrundversionTenant, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  seedGrundversionTenant,
+  seedOperator,
+  cleanupTestData,
+  createTestSalon,
+} from "./setup";
+import { signOperatorToken } from "../contexts/platform/operator-auth";
 import { moduleNotBookedMessage } from "../contexts/platform/tenant-packages";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
@@ -576,5 +583,268 @@ describe("integrations — couplings (D-05)", () => {
 
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body)).toEqual({ error: "Salon nicht gefunden" });
+  });
+});
+
+describe("integrations — no bypass (D-05, D-06)", () => {
+  let t: Seed;
+  let operatorToken: string;
+  const OPERATOR_SALONS = () => `/api/v1/operator/tenants/${t.tenant.id}/salons`;
+  const CONFIG = "/api/v1/integrations/phorest/config";
+  const OPENING_HOURS = [0, 1, 2, 3, 4, 5, 6].map((day) => ({
+    day,
+    open: "09:00",
+    close: "18:00",
+    ...(day === 6 ? { closed: true } : {}),
+  }));
+
+  function newBranch() {
+    return `B-${randomUUID().slice(0, 8)}`;
+  }
+
+  function salonBody(overrides: Record<string, unknown> = {}) {
+    return {
+      name: `Salon ${randomUUID().slice(0, 8)}`,
+      street: "Hauptstrasse 1",
+      postalCode: "30159",
+      city: "Hannover",
+      openingHours: OPENING_HOURS,
+      federalState: "NIEDERSACHSEN",
+      ...overrides,
+    };
+  }
+
+  function operatorCall(method: "POST" | "PATCH", url: string, payload: unknown) {
+    return app.inject({
+      method,
+      url,
+      headers: { authorization: `Bearer ${operatorToken}`, "user-agent": "vitest-566" },
+      payload: payload as object,
+      remoteAddress: uniqueAddress(),
+    });
+  }
+
+  /** Operator audit rows of this tenant, optionally narrowed to some actions. */
+  function operatorRowCount() {
+    return app.prisma.operatorAuditLog.count({ where: { subjectTenantId: t.tenant.id } });
+  }
+
+  /** Tenant audit rows the operator stamped for this tenant (Salon and SalonCoupling entities). */
+  function stampedTenantRowCount() {
+    return app.prisma.auditLog.count({
+      where: {
+        entity: { in: ["Salon", "SalonCoupling"] },
+        newValue: { path: ["actor", "tenantId"], equals: t.tenant.id },
+      },
+    });
+  }
+
+  async function bookIntegrations(on: boolean) {
+    await setModules(
+      t.tenant.id,
+      on ? [TenantModule.CHAIN, TenantModule.INTEGRATIONS] : [TenantModule.CHAIN],
+    );
+  }
+
+  beforeAll(async () => {
+    t = await seedGrundversionTenant(app, "a566-nobyp");
+    await app.prisma.tenant.update({
+      where: { id: t.tenant.id },
+      data: { bookedModules: [TenantModule.CHAIN], salonQuota: 5 },
+    });
+    const operator = await seedOperator(app);
+    operatorToken = signOperatorToken(app, operator.id, "access", operator.tokenVersion);
+  });
+  afterAll(async () => cleanup(t.tenant.id));
+
+  it("operator salon create with a coupling is refused without Integrationen and persists nothing", async () => {
+    await bookIntegrations(false);
+    const name = `Ohne Modul ${randomUUID().slice(0, 8)}`;
+    const salonsBefore = await app.prisma.salon.count({ where: { tenantId: t.tenant.id } });
+    const opBefore = await operatorRowCount();
+    const tenantRowsBefore = await stampedTenantRowCount();
+
+    const res = await operatorCall(
+      "POST",
+      OPERATOR_SALONS(),
+      salonBody({ name, coupling: { externalBranchId: newBranch() } }),
+    );
+
+    expectModuleRefusal(res, TenantModule.INTEGRATIONS);
+    expect(await app.prisma.salon.count({ where: { tenantId: t.tenant.id } })).toBe(salonsBefore);
+    expect(await app.prisma.salon.count({ where: { tenantId: t.tenant.id, name } })).toBe(0);
+    expect(await app.prisma.salonCoupling.count({ where: { tenantId: t.tenant.id } })).toBe(0);
+    expect(await operatorRowCount()).toBe(opBefore);
+    expect(await stampedTenantRowCount()).toBe(tenantRowsBefore);
+  });
+
+  it("operator salon create WITHOUT a coupling stays free of the Integrationen module", async () => {
+    await bookIntegrations(false);
+
+    const res = await operatorCall("POST", OPERATOR_SALONS(), salonBody());
+
+    expect(res.statusCode, res.body).toBe(201);
+  });
+
+  it("operator edit that couples an uncoupled salon is refused and the whole request is rolled back", async () => {
+    await bookIntegrations(false);
+    const salon = await createTestSalon(app.prisma, t.tenant.id, { name: "Unveraendert" });
+    const opBefore = await operatorRowCount();
+    const tenantRowsBefore = await stampedTenantRowCount();
+
+    const res = await operatorCall("PATCH", `${OPERATOR_SALONS()}/${salon.id}`, {
+      name: "Neuer Name",
+      coupling: { externalBranchId: newBranch() },
+    });
+
+    expectModuleRefusal(res, TenantModule.INTEGRATIONS);
+    const stored = await app.prisma.salon.findUniqueOrThrow({ where: { id: salon.id } });
+    expect(stored.name).toBe("Unveraendert");
+    expect(await app.prisma.salonCoupling.count({ where: { salonId: salon.id } })).toBe(0);
+    expect(await operatorRowCount()).toBe(opBefore);
+    expect(await stampedTenantRowCount()).toBe(tenantRowsBefore);
+  });
+
+  it("maintaining an existing coupling stays free: replace, unchanged, operator removal and tenant removal", async () => {
+    const salon = await createTestSalon(app.prisma, t.tenant.id, { name: "Bestand" });
+    const c1 = newBranch();
+    const c2 = newBranch();
+
+    // The coupling is created while the module is booked, then the module is cancelled.
+    await bookIntegrations(true);
+    const set = await operatorCall("PATCH", `${OPERATOR_SALONS()}/${salon.id}`, {
+      coupling: { externalBranchId: c1 },
+    });
+    expect(set.statusCode, set.body).toBe(200);
+    await bookIntegrations(false);
+
+    // Different branch: REPLACED.
+    const replaced = await operatorCall("PATCH", `${OPERATOR_SALONS()}/${salon.id}`, {
+      coupling: { externalBranchId: c2 },
+    });
+    expect(replaced.statusCode, replaced.body).toBe(200);
+    const rows = await app.prisma.salonCoupling.findMany({ where: { salonId: salon.id } });
+    expect(rows.map((r) => r.externalBranchId)).toEqual([c2]);
+
+    // Same branch: success, no write.
+    const opBefore = await operatorRowCount();
+    const same = await operatorCall("PATCH", `${OPERATOR_SALONS()}/${salon.id}`, {
+      coupling: { externalBranchId: c2 },
+    });
+    expect(same.statusCode, same.body).toBe(200);
+    expect(await operatorRowCount()).toBe(opBefore);
+
+    // Operator removal.
+    const removed = await operatorCall("PATCH", `${OPERATOR_SALONS()}/${salon.id}`, {
+      coupling: null,
+    });
+    expect(removed.statusCode, removed.body).toBe(200);
+    expect(await app.prisma.salonCoupling.count({ where: { salonId: salon.id } })).toBe(0);
+
+    // Tenant removal of a coupling that exists while the module is not booked.
+    await app.prisma.salonCoupling.create({
+      data: {
+        tenantId: t.tenant.id,
+        salonId: salon.id,
+        provider: "PHOREST",
+        externalBranchId: newBranch(),
+      },
+    });
+    const del = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/integrations/phorest/couplings/${salon.id}`,
+      headers: bearer(t.adminToken),
+    });
+    expect(del.statusCode, del.body).toBe(200);
+    expect(await app.prisma.salonCoupling.count({ where: { salonId: salon.id } })).toBe(0);
+  });
+
+  describe("PUT /api/v1/integrations/phorest/config", () => {
+    let c: Seed;
+
+    beforeAll(async () => {
+      c = await seedGrundversionTenant(app, "a566-cfg");
+    });
+    afterAll(async () => cleanup(c.tenant.id));
+
+    function putConfig(payload: Record<string, unknown>) {
+      return app.inject({
+        method: "PUT",
+        url: CONFIG,
+        headers: bearer(c.adminToken),
+        payload,
+      });
+    }
+
+    function phorestFields() {
+      return app.prisma.tenantConfig.findUniqueOrThrow({
+        where: { tenantId: c.tenant.id },
+        select: {
+          phorestBusinessId: true,
+          phorestUsername: true,
+          phorestPassword: true,
+          phorestAutoSync: true,
+        },
+      });
+    }
+
+    it("a branch that would create the sole salon's coupling is refused and the credentials roll back", async () => {
+      await setModules(c.tenant.id, []);
+      expect(
+        await app.prisma.salon.count({ where: { tenantId: c.tenant.id, isActive: true } }),
+      ).toBe(1);
+      expect(await app.prisma.salonCoupling.count({ where: { tenantId: c.tenant.id } })).toBe(0);
+      const before = await phorestFields();
+
+      const res = await putConfig({
+        phorestBusinessId: "biz-566-refused",
+        phorestUsername: "refused@example.invalid",
+        phorestPassword: "refused-secret",
+        phorestAutoSync: true,
+        branchId: newBranch(),
+      });
+
+      expectModuleRefusal(res, TenantModule.INTEGRATIONS);
+      expect(await phorestFields()).toEqual(before);
+      expect(await app.prisma.salonCoupling.count({ where: { tenantId: c.tenant.id } })).toBe(0);
+    });
+
+    it("saving the credentials without a branch stays free", async () => {
+      await setModules(c.tenant.id, []);
+
+      const res = await putConfig({
+        phorestBusinessId: "biz-566-free",
+        phorestUsername: "free@example.invalid",
+      });
+
+      expect(res.statusCode, res.body).toBe(200);
+      const after = await phorestFields();
+      expect(after.phorestBusinessId).toBe("biz-566-free");
+      expect(after.phorestUsername).toBe("free@example.invalid");
+      expect(await app.prisma.salonCoupling.count({ where: { tenantId: c.tenant.id } })).toBe(0);
+    });
+
+    it("updating the branch of the sole salon's existing coupling stays free", async () => {
+      await setModules(c.tenant.id, [TenantModule.INTEGRATIONS]);
+      const first = newBranch();
+      const created = await putConfig({
+        phorestBusinessId: "biz-566-edit",
+        phorestUsername: "edit@example.invalid",
+        branchId: first,
+      });
+      expect(created.statusCode, created.body).toBe(200);
+      await setModules(c.tenant.id, []);
+
+      const second = newBranch();
+      const res = await putConfig({
+        phorestBusinessId: "biz-566-edit",
+        phorestUsername: "edit@example.invalid",
+        branchId: second,
+      });
+
+      expect(res.statusCode, res.body).toBe(200);
+      const rows = await app.prisma.salonCoupling.findMany({ where: { tenantId: c.tenant.id } });
+      expect(rows.map((r) => r.externalBranchId)).toEqual([second]);
+    });
   });
 });
