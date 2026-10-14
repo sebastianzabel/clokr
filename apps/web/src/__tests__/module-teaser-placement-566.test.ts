@@ -198,13 +198,17 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
     }
   });
 
-  it("(f2) the coupling is blocked only when Integrationen is NOT booked and no coupling exists yet", () => {
-    expect(phorest).toMatch(
-      /phCouplingBlocked\s*=\s*moduleBooked\(get\(salonContext\),\s*"INTEGRATIONS"\)\s*===\s*false\s*&&\s*ph\.branchId\s*===\s*null/,
+  it("(f2) the coupling is blocked only when Integrationen is NOT booked and no coupling exists yet, read reactively", () => {
+    const code = phorest;
+    expect(code).toMatch(
+      /phCouplingBlocked\s*=\s*\$derived\(\s*phConfigLoaded\s*&&\s*moduleBooked\(\$salonContext,\s*"INTEGRATIONS"\)\s*===\s*false\s*&&\s*phServerBranchId\s*===\s*null/,
     );
-    expect(phorest).toMatch(
-      /phBranchIdEditable\s*=\s*ph\.branchIdEditable\s*&&\s*!phCouplingBlocked/,
+    expect(code).toMatch(
+      /phBranchIdEditable\s*=\s*\$derived\(\s*phSoleSalon\s*&&\s*!phCouplingBlocked\s*\)/,
     );
+    // A one-shot `get(salonContext)` right after `await salonContext.load(...)` raced the layout's
+    // own forced load on a hard reload (found by the 566-12 walkthrough): never read it that way.
+    expect(code).not.toMatch(/get\(\s*salonContext\s*\)/);
   });
 
   it("(g) exactly four hint usages in the web source, one per spot, all under routes/(app)/admin/", () => {
