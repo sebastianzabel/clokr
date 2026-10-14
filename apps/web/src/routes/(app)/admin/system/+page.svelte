@@ -548,6 +548,7 @@
   // Phase 566 (D-12): display only — the server answers 409 for an unbooked module either way.
   // `=== false` only: an unknown state never hides the create row.
   const hardwareBooked = $derived(moduleBooked($salonContext, "HARDWARE_CLOCK"));
+  const integrationsBooked = $derived(moduleBooked($salonContext, "INTEGRATIONS"));
 
   onMount(async () => {
     // Forced, so a freshly booked module shows without waiting for the navigation throttle.
@@ -1320,7 +1321,7 @@
       newApiKeyName = "";
       apiKeys = await api.get<ApiKeyEntry[]>("/api-keys");
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Fehler");
+      toasts.error(e instanceof Error ? e.message : "API-Schlüssel konnte nicht erstellt werden.");
     } finally {
       apiKeyLoading = false;
     }
@@ -2906,33 +2907,37 @@
             </div>
           {/if}
 
-          <div class="api-key-create">
-            <div class="inline-create">
-              <input
-                type="text"
-                class="form-input"
-                bind:value={newApiKeyName}
-                placeholder="Name (z.B. DATEV Export)"
-              />
-              <button
-                class="btn btn-primary"
-                onclick={createApiKey}
-                disabled={apiKeyLoading || !newApiKeyName.trim() || newApiKeyScopes.length === 0}
-              >
-                Key erstellen
-              </button>
-            </div>
-            <div class="scope-chips">
-              {#each API_SCOPES as s (s.scope)}
+          {#if integrationsBooked === false}
+            <ModuleHint module="INTEGRATIONS" subject="API-Schlüssel" />
+          {:else}
+            <div class="api-key-create">
+              <div class="inline-create">
+                <input
+                  type="text"
+                  class="form-input"
+                  bind:value={newApiKeyName}
+                  placeholder="Name (z.B. DATEV Export)"
+                />
                 <button
-                  class="btn btn-sm"
-                  class:btn-primary={newApiKeyScopes.includes(s.scope)}
-                  class:btn-ghost={!newApiKeyScopes.includes(s.scope)}
-                  onclick={() => toggleScope(s.scope)}>{s.label}</button
+                  class="btn btn-primary"
+                  onclick={createApiKey}
+                  disabled={apiKeyLoading || !newApiKeyName.trim() || newApiKeyScopes.length === 0}
                 >
-              {/each}
+                  Key erstellen
+                </button>
+              </div>
+              <div class="scope-chips">
+                {#each API_SCOPES as s (s.scope)}
+                  <button
+                    class="btn btn-sm"
+                    class:btn-primary={newApiKeyScopes.includes(s.scope)}
+                    class:btn-ghost={!newApiKeyScopes.includes(s.scope)}
+                    onclick={() => toggleScope(s.scope)}>{s.label}</button
+                  >
+                {/each}
+              </div>
             </div>
-          </div>
+          {/if}
 
           {#if apiKeys.length > 0}
             <div class="table-wrap">
