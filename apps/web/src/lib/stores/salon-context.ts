@@ -25,6 +25,7 @@
 import { writable, get } from "svelte/store";
 import { api, ApiError } from "$api/client";
 import { clientLogger } from "$lib/utils/logger";
+import { TENANT_MODULES, type TenantModule } from "$lib/packages/tenant-modules";
 
 export interface ContextSalon {
   id: string;
@@ -36,6 +37,14 @@ export interface MeContextResponse {
   isMultiSalon: boolean;
   homeSalonId: string | null;
   salons: ContextSalon[];
+  /** Optional on the wire so a mixed deploy cannot crash (Phase 566). */
+  packages?: { bookedModules: string[]; salonLimit: number };
+}
+
+/** The booked packages of the tenant, display only (Phase 566, D-12). */
+export interface ContextPackages {
+  bookedModules: TenantModule[];
+  salonLimit: number;
 }
 
 export interface SalonContextState {
@@ -46,6 +55,11 @@ export interface SalonContextState {
   homeSalonId: string | null;
   /** A listed salon id, `ALL_SALONS`, or null when no choice exists. */
   selection: string | null;
+  /**
+   * Booked packages (Phase 566, D-12). Null until loaded and after a fail-closed load. Display
+   * only: never an input of `showSalonOptions`, `resolveSelection` or any salon id.
+   */
+  packages: ContextPackages | null;
 }
 
 /** The selection value for "every reachable salon" (D-08: the default with several salons). */
@@ -61,6 +75,7 @@ const INITIAL: SalonContextState = {
   isMultiSalon: false,
   homeSalonId: null,
   selection: null,
+  packages: null,
 };
 
 export function salonContextStorageKey(tenantId: string, userId: string): string {
@@ -73,6 +88,30 @@ export function salonContextStorageKey(tenantId: string, userId: string): string
  */
 export function showSalonOptions(state: Pick<SalonContextState, "isMultiSalon" | "salons">) {
   return state.isMultiSalon && state.salons.length > 1;
+}
+
+/**
+ * Whether the tenant booked a module: true/false, or null while the packages are unknown. A teaser
+ * shows only on `=== false`; unknown never hides a create control — the server answers 409 for an
+ * unbooked module anyway (Phase 566, D-12). Display only, never an access boundary.
+ */
+export function moduleBooked(
+  state: Pick<SalonContextState, "packages">,
+  module: TenantModule,
+): boolean | null {
+  if (state.packages === null) return null;
+  return state.packages.bookedModules.includes(module);
+}
+
+/** Copies the two display fields of the wire value; unknown module names are dropped. */
+function readPackages(wire: MeContextResponse["packages"]): ContextPackages | null {
+  if (!wire || !Array.isArray(wire.bookedModules) || typeof wire.salonLimit !== "number") {
+    return null;
+  }
+  return {
+    bookedModules: TENANT_MODULES.filter((module) => wire.bookedModules.includes(module)),
+    salonLimit: wire.salonLimit,
+  };
 }
 
 /**
@@ -196,7 +235,8 @@ function createSalonContext() {
       }
       lastSuccessAt = Date.now();
       hasGoodState = true;
-      set({ ...base, loaded: true, selection });
+      // Packages sit next to `base`, not in it: selection logic never sees them (D-12).
+      set({ ...base, loaded: true, selection, packages: readPackages(response.packages) });
     },
 
     /** Accepts only `ALL_SALONS` or a listed id, and only while options are shown. */

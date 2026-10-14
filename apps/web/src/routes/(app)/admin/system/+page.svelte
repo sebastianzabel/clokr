@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api } from "$api/client";
+  import { api, ApiError } from "$api/client";
+  import { authStore } from "$stores/auth";
+  import { salonContext, moduleBooked } from "$stores/salon-context";
+  import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
@@ -542,7 +545,13 @@
     return () => markUnsaved("admin-system", false);
   });
 
+  // Phase 566 (D-12): display only — the server answers 409 for an unbooked module either way.
+  // `=== false` only: an unknown state never hides the create row.
+  const hardwareBooked = $derived(moduleBooked($salonContext, "HARDWARE_CLOCK"));
+
   onMount(async () => {
+    // Forced, so a freshly booked module shows without waiting for the navigation throttle.
+    void salonContext.load($authStore.user?.id ?? null, { force: true });
     try {
       const cfg = await api.get<TenantConfig>("/settings/work");
       gFederalState = cfg.federalState ?? "NIEDERSACHSEN";
@@ -1347,6 +1356,9 @@
       terminalKeys = list.keys;
     } catch (err) {
       console.error("Failed to create terminal key:", err);
+      toasts.error(
+        err instanceof ApiError ? err.message : "Terminal-Schlüssel konnte nicht erstellt werden.",
+      );
     } finally {
       terminalLoading = false;
     }
@@ -2794,21 +2806,25 @@
             </div>
           {/if}
 
-          <div class="inline-create">
-            <input
-              type="text"
-              class="form-input"
-              bind:value={newKeyName}
-              placeholder="Terminal-Name (z.B. Kasse 1)"
-            />
-            <button
-              class="btn btn-primary"
-              onclick={createTerminalKey}
-              disabled={terminalLoading || !newKeyName.trim()}
-            >
-              Schlüssel erstellen
-            </button>
-          </div>
+          {#if hardwareBooked === false}
+            <ModuleHint module="HARDWARE_CLOCK" subject="NFC-Terminals" />
+          {:else}
+            <div class="inline-create">
+              <input
+                type="text"
+                class="form-input"
+                bind:value={newKeyName}
+                placeholder="Terminal-Name (z.B. Kasse 1)"
+              />
+              <button
+                class="btn btn-primary"
+                onclick={createTerminalKey}
+                disabled={terminalLoading || !newKeyName.trim()}
+              >
+                Schlüssel erstellen
+              </button>
+            </div>
+          {/if}
 
           {#if terminalKeys.length > 0}
             <div class="table-wrap">

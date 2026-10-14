@@ -14,18 +14,32 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import crypto, { createHash, randomBytes, randomUUID } from "crypto";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  seedGrundversionTenant,
+  cleanupTestData,
+  createTestSalon,
+} from "./setup";
 import type { JwtPayload } from "../middleware/auth";
 import { SYSTEM_ROLE_IDS, normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
 const PASSWORD = "test1234";
-const BODY_KEYS = ["homeSalonId", "isMultiSalon", "salons", "tenant"];
+const BODY_KEYS = ["homeSalonId", "isMultiSalon", "packages", "salons", "tenant"];
 
 type ContextBody = {
   tenant: { id: string; name: string };
   isMultiSalon: boolean;
   homeSalonId: string | null;
   salons: { id: string; name: string }[];
+  packages: { bookedModules: string[]; salonLimit: number };
+};
+
+// Phase 566 (D-10): the shared fixture tenants book every module with a quota far above any scenario.
+const FIXTURE_PACKAGES_BODY = {
+  bookedModules: ["CHAIN", "INTEGRATIONS", "HARDWARE_CLOCK", "ANALYTICS"],
+  salonLimit: 500,
 };
 
 describe("Issue #82 — GET /api/v1/me/context", () => {
@@ -34,6 +48,8 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
   let foreign: Awaited<ReturnType<typeof seedTestData>>;
   let single: Awaited<ReturnType<typeof seedTestData>>;
   let ordering: Awaited<ReturnType<typeof seedTestData>> | null = null;
+  let grundversion: Awaited<ReturnType<typeof seedTestData>> | null = null;
+  let quotaWithoutChain: Awaited<ReturnType<typeof seedTestData>> | null = null;
   let salonA: { id: string; name: string };
   let salonB: { id: string; name: string };
   let salonC: { id: string; name: string };
@@ -165,7 +181,7 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
     vi.useRealTimers();
     try {
       // RoleAssignment.accessRole is Restrict: assignments go first, main tenant before foreign.
-      for (const t of [data, single, ordering, foreign]) {
+      for (const t of [data, single, ordering, grundversion, quotaWithoutChain, foreign]) {
         if (!t) continue;
         await app.prisma.roleAssignment.deleteMany({ where: { tenantId: t.tenant.id } });
         await app.prisma.apiKey.deleteMany({ where: { tenantId: t.tenant.id } });
@@ -174,6 +190,8 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
       await cleanupTestData(app, data.tenant.id);
       await cleanupTestData(app, single.tenant.id);
       if (ordering) await cleanupTestData(app, ordering.tenant.id);
+      if (grundversion) await cleanupTestData(app, grundversion.tenant.id);
+      if (quotaWithoutChain) await cleanupTestData(app, quotaWithoutChain.tenant.id);
       await cleanupTestData(app, foreign.tenant.id);
     } catch (err) {
       console.error("me-context-82 cleanup failed:", err);
@@ -195,6 +213,7 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
       isMultiSalon: true,
       homeSalonId: salonA.id,
       salons: [{ id: salonA.id, name: "Salon Nord" }],
+      packages: FIXTURE_PACKAGES_BODY,
     });
   });
 
@@ -329,7 +348,26 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
       isMultiSalon: false,
       homeSalonId: null,
       salons: [{ id: single.salonId, name: single.tenant.name }],
+      packages: FIXTURE_PACKAGES_BODY,
     });
+  });
+
+  it("a Grundversion tenant gets no module and a salon limit of 1 (Phase 566, D-12)", async () => {
+    grundversion = await seedGrundversionTenant(app, "ctx82g");
+    const body = await contextBody(grundversion.adminToken);
+    expect(body.packages).toEqual({ bookedModules: [], salonLimit: 1 });
+    // The packages are display data: the salon part stays ids and names only.
+    expect(body.salons).toEqual([{ id: grundversion.salonId, name: grundversion.tenant.name }]);
+  });
+
+  it("a stored quota of 7 without the CHAIN module shows a salon limit of 1 (Phase 566, D-02)", async () => {
+    quotaWithoutChain = await seedTestData(app, "ctx82q");
+    await app.prisma.tenant.update({
+      where: { id: quotaWithoutChain.tenant.id },
+      data: { bookedModules: ["ANALYTICS"], salonQuota: 7 },
+    });
+    const body = await contextBody(quotaWithoutChain.adminToken);
+    expect(body.packages).toEqual({ bookedModules: ["ANALYTICS"], salonLimit: 1 });
   });
 
   it("orders salons by German name collation, then by id", async () => {
