@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { get } from "svelte/store";
   import { api } from "$api/client";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
@@ -8,6 +9,9 @@
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
+  import { authStore } from "$stores/auth";
+  import { salonContext, moduleBooked } from "$stores/salon-context";
+  import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
 
   // Phase 85.1-03 — extracted from admin/system/+page.svelte (D-10: eigener Admin-Tab).
   // Phorest
@@ -17,6 +21,14 @@
   // authority here, the page only reflects it. When false the Branch-ID field is locked (the branch
   // now lives on a per-salon coupling; multi-coupling UI is deferred to #82 ff.).
   let phBranchIdEditable = $state(true);
+  // Phase 566 (D-05, D-12): true when the tenant has not booked Integrationen and the sole active
+  // salon has no coupling yet — a first coupling would be refused, so the field is locked and the
+  // request carries no `branchId` (the credentials still save on the free path). Display only: the
+  // server refuses the coupling regardless. An existing coupling stays editable (updating the
+  // branch is free). Unknown package state never blocks.
+  let phCouplingBlocked = $state(false);
+  // True when more than one salon is active (the branch is then coupled per salon).
+  let phMultiSalon = $state(false);
   let phUsername = $state("");
   let phPassword = $state("");
   let phConfigured = $state(false);
@@ -166,6 +178,8 @@
 
   onMount(async () => {
     try {
+      // Forced, so the package state is fresh before the Branch-ID field is decided.
+      await salonContext.load($authStore.user?.id ?? null, { force: true }).catch(() => undefined);
       const ph = await api.get<{
         configured: boolean;
         phorestBusinessId: string | null;
@@ -185,7 +199,12 @@
       phConfigured = ph.configured;
       phBusinessId = ph.phorestBusinessId ?? "";
       phBranchId = ph.branchId ?? "";
-      phBranchIdEditable = ph.branchIdEditable;
+      phMultiSalon = !ph.branchIdEditable;
+      phCouplingBlocked =
+        moduleBooked(get(salonContext), "INTEGRATIONS") === false && ph.branchId === null;
+      // The request spread `...(phBranchIdEditable ? { branchId: phBranchId } : {})` stays as it is
+      // (pinned contract): a blocked field is simply not editable, so no branch is sent.
+      phBranchIdEditable = ph.branchIdEditable && !phCouplingBlocked;
       phUsername = ph.phorestUsername ?? "";
       phAutoSync = ph.phorestAutoSync ?? false;
       phSyncCron = ph.phorestSyncCron ?? "0 3 * * *";
@@ -525,10 +544,13 @@
           placeholder="z.B. branch-001"
           disabled={!phBranchIdEditable}
         />
-        {#if !phBranchIdEditable}
+        {#if phMultiSalon}
           <p class="form-hint text-muted">
             Mehrere aktive Salons — die Phorest-Filiale wird je Salon gekoppelt.
           </p>
+        {/if}
+        {#if phCouplingBlocked}
+          <ModuleHint module="INTEGRATIONS" subject="Phorest-Kopplungen" />
         {/if}
       </div>
       <div class="form-group">
