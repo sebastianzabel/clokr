@@ -848,3 +848,110 @@ describe("integrations — no bypass (D-05, D-06)", () => {
     });
   });
 });
+
+describe("analytics — summary (D-05): only activityMinutes is package-bound", () => {
+  let t: Seed;
+
+  function summary(salonId?: string) {
+    const qs = new URLSearchParams({
+      employeeId: t.employee.id,
+      from: "2026-09-07",
+      to: "2026-09-13",
+      ...(salonId ? { salonId } : {}),
+    });
+    return app.inject({
+      method: "GET",
+      url: `/api/v1/time-entries/summary?${qs.toString()}`,
+      headers: bearer(t.adminToken),
+    });
+  }
+
+  function entry(
+    date: string,
+    kind: "UNSPECIFIED" | "PRODUCTIVE",
+    shares?: { kind: "SETUP_CLEANING"; minutes: number }[],
+  ) {
+    return app.prisma.timeEntry.create({
+      data: {
+        employeeId: t.employee.id,
+        salonId: t.salonId,
+        date: new Date(`${date}T00:00:00Z`),
+        startTime: new Date(`${date}T08:00:00Z`),
+        endTime: new Date(`${date}T16:30:00Z`),
+        breakMinutes: 30,
+        type: "WORK",
+        source: "MANUAL",
+        activityKind: kind,
+        ...(shares ? { activityShares: { create: shares } } : {}),
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    t = await seedGrundversionTenant(app, "a566-analytics");
+    await entry("2026-09-08", "UNSPECIFIED");
+    await entry("2026-09-09", "PRODUCTIVE", [{ kind: "SETUP_CLEANING", minutes: 60 }]);
+  });
+  afterAll(async () => {
+    await app.prisma.timeEntryActivityShare.deleteMany({
+      where: { timeEntry: { employee: { tenantId: t.tenant.id } } },
+    });
+    await cleanup(t.tenant.id);
+  });
+
+  it("(a) booked: activityMinutes per kind, and no reason key at all", async () => {
+    await setModules(t.tenant.id, [TenantModule.ANALYTICS]);
+    const res = await summary();
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect(body.activityMinutes).toEqual({ PRODUCTIVE: 420, SETUP_CLEANING: 60, UNSPECIFIED: 480 });
+    expect(Object.keys(body)).not.toContain("activityMinutesUnavailableReason");
+  });
+
+  it("(b) unbooked: activityMinutes null with MODULE_NOT_BOOKED, every other figure identical", async () => {
+    await setModules(t.tenant.id, [TenantModule.ANALYTICS]);
+    const booked = JSON.parse((await summary()).body) as Record<string, unknown>;
+    await setModules(t.tenant.id, []);
+    const res = await summary();
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect(body.activityMinutes).toBeNull();
+    expect(body.activityMinutesUnavailableReason).toBe("MODULE_NOT_BOOKED");
+    const { activityMinutes: _a, activityMinutesUnavailableReason: _r, ...rest } = body;
+    const { activityMinutes: _b, ...bookedRest } = booked;
+    expect(rest).toEqual(bookedRest);
+    expect(rest.workingMinutes).toBe(960);
+    expect(rest.entryCount).toBe(2);
+  });
+
+  it("(c) unbooked with salonId narrowing: same rule", async () => {
+    await setModules(t.tenant.id, []);
+    const res = await summary(t.salonId);
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect(body.activityMinutes).toBeNull();
+    expect(body.activityMinutesUnavailableReason).toBe("MODULE_NOT_BOOKED");
+    expect(body.workingMinutes).toBe(960);
+  });
+
+  it("(d) unbooked: recording an activity kind and a share stays free", async () => {
+    await setModules(t.tenant.id, []);
+    const e = await entry("2026-09-10", "UNSPECIFIED");
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/v1/time-entries/${e.id}`,
+      headers: bearer(t.adminToken),
+      payload: {
+        activityKind: "PRODUCTIVE",
+        activityShares: [{ kind: "SETUP_CLEANING", minutes: 30 }],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const row = await app.prisma.timeEntry.findUniqueOrThrow({
+      where: { id: e.id },
+      include: { activityShares: { select: { kind: true, minutes: true } } },
+    });
+    expect(row.activityKind).toBe("PRODUCTIVE");
+    expect(row.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 30 }]);
+  });
+});
