@@ -552,6 +552,74 @@ Route selektiert jede globale Rolle, nicht nur die per Id bekannten) — der alt
 Problem für einen kurzen Rollback ohne Bedienung dieser Rollen; bei einem längeren Rollback vorher
 mit dem Betreiber klären.
 
+## Phase 566 — Gebuchte Pakete je Mandant (Bestandsschutz, Issue #566)
+
+**Hinweis für die Release Notes (v1.16.0).** Dieser Abschnitt ist der Release-Hinweis zu Phase 566: Vor dem
+Deploy gehört die lesende Vorschau (Schritt 1) auf int und prod in den Ablauf, und ihre Ausgabe gehört zum
+Material der Release Notes. Ohne sie lässt sich nach dem Deploy nicht belegen, dass kein Mandant etwas
+verloren hat.
+
+**Was die Migration tut.** `packages/db/prisma/migrations/20261013233636_tenant_packages` ist additiv: Sie legt den
+Aufzählungstyp `TenantModule` (`CHAIN`, `INTEGRATIONS`, `HARDWARE_CLOCK`, `ANALYTICS`) an, ergänzt
+`Tenant.bookedModules` (Standard leer) und `Tenant.salonQuota` (Standard 1, `CHECK ("salonQuota" >= 1)`) und führt
+danach **eine** markierte `UPDATE`-Anweisung aus (`-- 566-data-migration:begin` … `:end`). Die Anweisung
+gibt jedem vorhandenen Mandanten, **auch einem deaktivierten**, was er heute nutzt: `salonQuota` = Zahl aktiver
+Salons (mindestens 1); `CHAIN` bei mehr als einem Salon (jeder Zustand), Kundenrolle, Rollenzuweisung mit Bereich
+Salons/Personen oder Einsatz-Zuordnung; `INTEGRATIONS` bei Kopplung, API-Schlüssel (auch widerrufen) oder
+Phorest-Zugangsdaten; `HARDWARE_CLOCK` bei Terminal-Schlüssel oder Anwesenheitsquelle (jeder Zustand);
+`ANALYTICS` bei klassifiziertem Zeiteintrag oder Tätigkeitsanteil. Das gibt absichtlich eher zu viel als zu
+wenig. Die Anweisung ist durch eine Bedingung geschützt (nur Mandanten mit Kontingent 1 und ohne Module) und
+daher wiederholbar; ein vom Betreiber bereits bearbeiteter Mandant bleibt unberührt. Die
+Tätigkeitsarten (Phase 81) erscheinen im selben Release: Auf int und prod gibt es vor dem Deploy keine
+Klassifizierung, `ANALYTICS` wird dort also nicht vergeben.
+
+**1. Vor `migrate deploy` — Vorschau (lesend, auf int UND prod).**
+`apps/api/scripts/audit-566-package-backfill.ts` schreibt nichts (es gibt keinen Schreib-Schalter, `--apply` und
+`--confirm` werden abgelehnt) und gibt je Mandant nur Id, Kontingent, Module und die ausgelösten Signale aus — keine
+Namen, keine Zugangsdaten. Das Skript liegt erst im Image des neuen Release; **der Standard-Einstiegspunkt dieses
+Images führt `prisma migrate deploy` aus und darf vor der Deploy-Entscheidung niemals gegen int oder prod
+gestartet werden.** Deshalb wird der Einstiegspunkt überschrieben:
+
+```bash
+# DATABASE_URL zeigt auf die Datenbank der Umgebung (int bzw. prod); aus der Umgebung weitergereicht,
+# nicht auf der Kommandozeile ausgeschrieben.
+docker run --rm -e DATABASE_URL --entrypoint sh <neues-api-image> \
+  -lc 'cd /app/apps/api && pnpm tsx scripts/audit-566-package-backfill.ts' \
+  | tee "566-backfill-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+Gleichwertig und ebenso sicher: aus einem Checkout des Release-Stands gegen eine wiederhergestellte Kopie des Dumps
+(`DATABASE_URL=<Kopie> pnpm --filter @clokr/api exec tsx scripts/audit-566-package-backfill.ts`). Auf
+einer Datenbank vor der Migration (Normalfall) meldet das Skript die Tätigkeitsart-Signale als
+`analytics=not-evaluable`, alle anderen Zuteilungen stehen vollständig in der Ausgabe; die letzte Zeile
+`Totals:` nennt Mandantenzahl und Zahl je Modul. Die Ausgabe aufbewahren (Material der Release Notes). Prüfen:
+Jeder Mandant mit mehreren aktiven Salons steht mit `CHAIN`; jeder Mandant mit Kopplung, Schlüssel oder
+Anwesenheitsquelle mit dem passenden Modul. Weicht eine Zeile von der Erwartung ab, vor dem Deploy mit dem Betreiber
+klären — nichts still korrigieren.
+
+**2. `migrate deploy`** wie gewohnt (Einstiegspunkt des neuen Images, vorher `pg_dump`).
+
+**3. Nach dem Deploy — Vergleich (lesend).**
+
+```sql
+-- Stored packages per tenant. Compare with the saved preview: for every tenant an operator has not
+-- edited since the deploy, "salonQuota" and "bookedModules" must equal the preview line.
+SELECT "id", "bookedModules", "salonQuota" FROM "Tenant" ORDER BY "id";
+```
+
+Jede Abweichung, die keine Betreiberänderung ist (`OperatorAuditLog`, Aktion `TENANT_PACKAGES_CHANGED`), wird
+gemeldet und **nie still korrigiert**. Ein Betreiber ändert Pakete danach nur über die Konsole
+(`/betreiber`, Abschnitt „Pakete“); jede Änderung steht doppelt im Protokoll. Einen neuen Mandanten legt der
+Betreiber mit der Grundversion an (keine Module, Kontingent 1) und bucht danach.
+
+**4. Rollback.** Das vorige Image kennt die neuen Spalten nicht und liest sie nie; sie haben Standardwerte, sodass
+seine Inserts weiter gelingen, und die `CHECK`-Bedingung verletzt kein altes Schreiben. Ein Rollback funktioniert
+deshalb ohne Datenkorrektur, die Migration wird nicht zurückgenommen (vorher wie immer `pg_dump`). Für die Dauer
+des Rollbacks gelten die Paketgrenzen **nicht** (der alte Code kennt sie nicht): Alle Mandanten können wieder
+beliebig viele Salons, Schlüssel, Terminals und Quellen anlegen. Beim erneuten Vorwärts-Deploy bleiben die
+gespeicherten Pakete bestehen; dann den Vergleich aus Schritt 3 wiederholen, weil in der Zwischenzeit Salons
+entstanden sein können (die Kontingente lassen sie bestehen, nur neue werden abgelehnt — nie rückwirkend).
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:
