@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import crypto, { createHash } from "crypto";
 import { hasPermission, requirePermission } from "../request-permissions";
+import { assertModuleBooked } from "../tenant-packages";
 
 const VALID_SCOPES = [
   "read:employees",
@@ -66,6 +67,10 @@ export async function apiKeyRoutes(app: FastifyInstance) {
       }
 
       const tenantId = req.user.tenantId;
+
+      // D-05: minting a NEW API key needs the module; an existing key keeps authenticating and can
+      // be revoked (Issue #566). After the validation and the admin-scope check, so 400/403 win.
+      await assertModuleBooked(app.prisma, tenantId, "INTEGRATIONS");
 
       // Generate key: clk_ prefix + 40 random hex chars
       const rawKey = `clk_${crypto.randomBytes(20).toString("hex")}`;
