@@ -71,6 +71,7 @@ function created(mailSent: boolean): CreateTenantResult {
       createdAt: "2026-10-13T08:00:00.000Z",
       deactivatedAt: null,
       deactivatedReason: null,
+      packages: { bookedModules: [], salonQuota: 1, activeSalonCount: 1 },
     },
     defaultSalonId: "salon-1",
     adminEmployeeId: "employee-1",

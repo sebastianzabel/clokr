@@ -4,6 +4,7 @@
   import PageHead from "$components/layout/PageHead.svelte";
   import Breadcrumb from "$components/ui/Breadcrumb.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import PackagesSection from "$lib/components/operator/PackagesSection.svelte";
   import SalonsSection from "$lib/components/operator/SalonsSection.svelte";
   import TenantMasterData from "$lib/components/operator/TenantMasterData.svelte";
   import { OperatorApiError, operatorApi } from "$lib/operator/client";
@@ -90,6 +91,14 @@
         onResend={resendInvitation}
       />
     </Section>
+
+    <!-- Not wrapped in an animated Section either (#570): same transform trap as above. -->
+    <PackagesSection
+      {tenant}
+      onSave={(body) => operatorApi.setTenantPackages(tenantId, body)}
+      onSaved={(saved) => (tenant = saved)}
+      tenantDeactivated={tenant.deactivatedAt !== null}
+    />
 
     <SalonsSection
       {tenantId}

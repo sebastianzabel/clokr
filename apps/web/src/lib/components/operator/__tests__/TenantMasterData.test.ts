@@ -34,6 +34,7 @@ const ACTIVE: OperatorTenant = {
   createdAt: "2026-03-05T12:00:00.000Z",
   deactivatedAt: null,
   deactivatedReason: null,
+  packages: { bookedModules: [], salonQuota: 1, activeSalonCount: 1 },
 };
 
 const DEACTIVATED: OperatorTenant = {

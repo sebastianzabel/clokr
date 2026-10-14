@@ -20,6 +20,7 @@ import type {
   OperatorSalon,
   OperatorTenant,
   ResendInvitationResult,
+  SetTenantPackagesBody,
   UpdateSalonBody,
 } from "./types";
 
@@ -141,6 +142,8 @@ export const operatorApi = {
       "POST",
       `/tenants/${encodeURIComponent(id)}/resend-admin-invitation`,
     ),
+  setTenantPackages: (id: string, body: SetTenantPackagesBody) =>
+    request<OperatorTenant>("PUT", `/tenants/${encodeURIComponent(id)}/packages`, { body }),
   listSalons: (tenantId: string) =>
     request<OperatorSalon[]>("GET", `/tenants/${encodeURIComponent(tenantId)}/salons`),
   createSalon: (tenantId: string, body: CreateSalonBody) =>
