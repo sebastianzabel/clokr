@@ -3,6 +3,7 @@
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { get as getStore } from "svelte/store";
+  import { reportRights } from "$lib/page-rights";
   import Pagination from "$components/ui/Pagination.svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
@@ -182,8 +183,15 @@
 
   // ── Role guard ─────────────────────────────────────────────────────────────
 
-  let currentRole = $state<string | null>(null);
-  let isManager = $derived(currentRole === "ADMIN" || currentRole === "MANAGER");
+  // Issue #538: each block follows the permission of the endpoint behind it (docs/permissions.md),
+  // never the compat role. The API refuses anything beyond these; the page only hides.
+  let rights = $derived(reportRights($authStore.user));
+  let canTeamAttendance = $derived(rights.canTeamAttendance);
+  let canTeamOvertime = $derived(rights.canTeamOvertime);
+  let canReportRead = $derived(rights.canReportRead);
+  let canReportExport = $derived(rights.canReportExport);
+  let canReportNotify = $derived(rights.canReportNotify);
+  let showTeamArea = $derived(rights.showTeamArea);
 
   // ── Heutige Anwesenheit state (RPT-03) ─────────────────────────────────────
 
@@ -426,9 +434,9 @@
   $effect(() => {
     const _m = selectedMonth;
     const _y = selectedYear;
-    if (isManager) {
-      void loadTodayAttendance();
-      void loadOvertimeOverview();
+    if (canTeamAttendance) void loadTodayAttendance();
+    if (canTeamOvertime) void loadOvertimeOverview();
+    if (canReportRead) {
       void loadLeaveOverview();
       void loadCarryoverAtRisk();
     }
@@ -437,7 +445,7 @@
   // Refresh when horizon changes (independent of selectedMonth/selectedYear)
   $effect(() => {
     const _h = carryoverHorizon;
-    if (isManager) void loadCarryoverAtRisk();
+    if (canReportRead) void loadCarryoverAtRisk();
   });
 
   // Der Monatsbericht-Hinweis hängt an der EIGENEN Periodenauswahl der Karte,
@@ -445,18 +453,15 @@
   $effect(() => {
     const _m = companyPdfMonth;
     const _y = companyPdfYear;
-    if (isManager) void loadCompanyMonthlySection9Note();
+    if (canReportRead) void loadCompanyMonthlySection9Note();
   });
 
   // ── onMount ────────────────────────────────────────────────────────────────
 
   onMount(async () => {
-    const auth = getStore(authStore);
-    currentRole = auth.user?.role ?? null;
-    // Persona-aware: employees see their personal monthly closes table;
-    // managers/admins keep their existing onMount-driven $effect-driven loads.
-    const callerIsManager = currentRole === "ADMIN" || currentRole === "MANAGER";
-    if (!callerIsManager) {
+    // Permission-aware: a caller without any team-report right sees the personal monthly closes
+    // table; the others keep the $effect-driven loads above.
+    if (!showTeamArea) {
       await loadEmployeeMonthlyCloses();
     }
   });
@@ -561,7 +566,7 @@
   }
 
   async function loadCarryoverAtRisk() {
-    if (!isManager) return;
+    if (!canReportRead) return;
     carryoverLoading = true;
     carryoverError = "";
     try {
@@ -620,7 +625,7 @@
   }
 
   async function loadLeaveOverview() {
-    if (!isManager) return;
+    if (!canReportRead) return;
     leaveOverviewLoading = true;
     leaveOverviewError = "";
     try {
@@ -884,13 +889,13 @@
   eyebrow="Mein Bereich"
   title="Berichte & Auswertungen"
   accent="Auswertungen"
-  sub={isManager
+  sub={showTeamArea
     ? "Urlaubslisten, Monatsberichte und DATEV-Exporte erstellen"
     : "Persönliche Monatsabschlüsse — als PDF zum Download."}
 />
 
 <!-- KPI cluster — Card + KPIStat primitives -->
-{#if isManager}
+{#if showTeamArea}
   <div class="kpi-row">
     <Card animate>
       <KPIStat label="Mitarbeiter" value={String(kpiTeamSize)} />
@@ -937,169 +942,175 @@
   </div>
 {/if}
 
-{#if isManager}
+{#if showTeamArea}
   <div class="reports-grid">
     <!-- DATEV Export Card -->
-    <div class="card card-body card-animate report-card">
-      <div class="report-card-icon-section report-card-icon-section--green">
-        <span class="report-icon-lg">📁</span>
-      </div>
-      <div class="report-card-header">
-        <div>
-          <h2 class="report-card-heading">DATEV Export</h2>
-          <p class="report-card-desc text-muted">
-            TXT-Datei für DATEV-Lohnabrechnung herunterladen
-          </p>
+    {#if canReportExport}
+      <div class="card card-body card-animate report-card">
+        <div class="report-card-icon-section report-card-icon-section--green">
+          <span class="report-icon-lg">📁</span>
         </div>
-      </div>
+        <div class="report-card-header">
+          <div>
+            <h2 class="report-card-heading">DATEV Export</h2>
+            <p class="report-card-desc text-muted">
+              TXT-Datei für DATEV-Lohnabrechnung herunterladen
+            </p>
+          </div>
+        </div>
 
-      <div class="report-controls">
-        <div class="form-group">
-          <label class="form-label" for="datev-month">Monat</label>
-          <select id="datev-month" bind:value={datevMonth} class="form-input">
-            {#each months as name, i (i)}
-              <option value={i + 1}>{name}</option>
-            {/each}
-          </select>
+        <div class="report-controls">
+          <div class="form-group">
+            <label class="form-label" for="datev-month">Monat</label>
+            <select id="datev-month" bind:value={datevMonth} class="form-input">
+              {#each months as name, i (i)}
+                <option value={i + 1}>{name}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="datev-year">Jahr</label>
+            <select id="datev-year" bind:value={datevYear} class="form-input">
+              {#each years as y (y)}
+                <option value={y}>{y}</option>
+              {/each}
+            </select>
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="datev-year">Jahr</label>
-          <select id="datev-year" bind:value={datevYear} class="form-input">
-            {#each years as y (y)}
-              <option value={y}>{y}</option>
-            {/each}
-          </select>
-        </div>
-      </div>
 
-      <button class="btn btn-primary" onclick={downloadDatev} disabled={datevLoading}>
-        {#if datevLoading}
-          <span class="btn-spinner"></span>
-          Vorbereiten…
-        {:else}
-          ↓ TXT herunterladen
+        <button class="btn btn-primary" onclick={downloadDatev} disabled={datevLoading}>
+          {#if datevLoading}
+            <span class="btn-spinner"></span>
+            Vorbereiten…
+          {:else}
+            ↓ TXT herunterladen
+          {/if}
+        </button>
+
+        {#if datevError}
+          <div class="alert alert-error" role="alert">
+            <span>⚠</span>
+            <span>{datevError}</span>
+          </div>
         {/if}
-      </button>
-
-      {#if datevError}
-        <div class="alert alert-error" role="alert">
-          <span>⚠</span>
-          <span>{datevError}</span>
-        </div>
-      {/if}
-    </div>
+      </div>
+    {/if}
 
     <!-- Urlaubsbericht PDF Card (kombiniert: Urlaubsliste + Urlaubsübersicht) -->
-    <div class="card card-body card-animate report-card">
-      <div class="report-card-icon-section report-card-icon-section--blue">
-        <span class="report-icon-lg">🏖</span>
-      </div>
-      <div class="report-card-header">
-        <div>
-          <h2 class="report-card-heading">Urlaubsbericht PDF</h2>
-          <p class="report-card-desc text-muted">
-            Urlaubsliste &amp; Jahresübersicht der Ansprüche in einem PDF
-          </p>
+    {#if canReportExport}
+      <div class="card card-body card-animate report-card">
+        <div class="report-card-icon-section report-card-icon-section--blue">
+          <span class="report-icon-lg">🏖</span>
         </div>
-      </div>
-
-      <div class="report-controls">
-        <div class="form-group">
-          <label class="form-label" for="leave-year">Jahr</label>
-          <select id="leave-year" bind:value={leaveYear} class="form-input">
-            {#each years as y (y)}
-              <option value={y}>{y}</option>
-            {/each}
-          </select>
+        <div class="report-card-header">
+          <div>
+            <h2 class="report-card-heading">Urlaubsbericht PDF</h2>
+            <p class="report-card-desc text-muted">
+              Urlaubsliste &amp; Jahresübersicht der Ansprüche in einem PDF
+            </p>
+          </div>
         </div>
-      </div>
 
-      <button class="btn btn-primary" onclick={downloadVacationPdf} disabled={leaveLoading}>
-        {#if leaveLoading}
-          <span class="btn-spinner"></span>
-          Vorbereiten…
-        {:else}
-          PDF herunterladen
+        <div class="report-controls">
+          <div class="form-group">
+            <label class="form-label" for="leave-year">Jahr</label>
+            <select id="leave-year" bind:value={leaveYear} class="form-input">
+              {#each years as y (y)}
+                <option value={y}>{y}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" onclick={downloadVacationPdf} disabled={leaveLoading}>
+          {#if leaveLoading}
+            <span class="btn-spinner"></span>
+            Vorbereiten…
+          {:else}
+            PDF herunterladen
+          {/if}
+        </button>
+
+        {#if leaveError}
+          <div class="alert alert-error" role="alert">
+            <span>⚠</span>
+            <span>{leaveError}</span>
+          </div>
         {/if}
-      </button>
-
-      {#if leaveError}
-        <div class="alert alert-error" role="alert">
-          <span>⚠</span>
-          <span>{leaveError}</span>
-        </div>
-      {/if}
-    </div>
+      </div>
+    {/if}
 
     <!-- Company Monthly PDF Card (PDF-01 / PDF-03) -->
-    <div class="card card-body card-animate report-card">
-      <div class="report-card-icon-section report-card-icon-section--purple">
-        <span class="report-icon-lg">📑</span>
-      </div>
-      <div class="report-card-header">
-        <div>
-          <h2 class="report-card-heading">Firmenweiter Monatsbericht</h2>
-          <p class="report-card-desc text-muted">
-            Alle Mitarbeiter in einer PDF — optional nach Rolle gefiltert
-          </p>
+    {#if canReportExport}
+      <div class="card card-body card-animate report-card">
+        <div class="report-card-icon-section report-card-icon-section--purple">
+          <span class="report-icon-lg">📑</span>
         </div>
-      </div>
+        <div class="report-card-header">
+          <div>
+            <h2 class="report-card-heading">Firmenweiter Monatsbericht</h2>
+            <p class="report-card-desc text-muted">
+              Alle Mitarbeiter in einer PDF — optional nach Rolle gefiltert
+            </p>
+          </div>
+        </div>
 
-      <div class="report-controls">
+        <div class="report-controls">
+          <div class="form-group">
+            <label class="form-label" for="company-pdf-month">Monat</label>
+            <select id="company-pdf-month" bind:value={companyPdfMonth} class="form-input">
+              {#each months as name, i (i)}
+                <option value={i + 1}>{name}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="company-pdf-year">Jahr</label>
+            <select id="company-pdf-year" bind:value={companyPdfYear} class="form-input">
+              {#each years as y (y)}
+                <option value={y}>{y}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+
         <div class="form-group">
-          <label class="form-label" for="company-pdf-month">Monat</label>
-          <select id="company-pdf-month" bind:value={companyPdfMonth} class="form-input">
-            {#each months as name, i (i)}
-              <option value={i + 1}>{name}</option>
-            {/each}
+          <label class="form-label" for="company-pdf-role">Rolle</label>
+          <select id="company-pdf-role" bind:value={companyPdfRole} class="form-input">
+            <option value="all">Alle Mitarbeiter</option>
+            <option value="EMPLOYEE">Nur Mitarbeiter</option>
+            <option value="MANAGER">Nur Manager</option>
           </select>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="company-pdf-year">Jahr</label>
-          <select id="company-pdf-year" bind:value={companyPdfYear} class="form-input">
-            {#each years as y (y)}
-              <option value={y}>{y}</option>
-            {/each}
-          </select>
-        </div>
-      </div>
 
-      <div class="form-group">
-        <label class="form-label" for="company-pdf-role">Rolle</label>
-        <select id="company-pdf-role" bind:value={companyPdfRole} class="form-input">
-          <option value="all">Alle Mitarbeiter</option>
-          <option value="EMPLOYEE">Nur Mitarbeiter</option>
-          <option value="MANAGER">Nur Manager</option>
-        </select>
-      </div>
+        <button
+          class="btn btn-primary"
+          onclick={downloadCompanyMonthlyPdf}
+          disabled={companyPdfLoading}
+        >
+          {#if companyPdfLoading}
+            <span class="btn-spinner"></span>
+            Vorbereiten…
+          {:else}
+            PDF herunterladen
+          {/if}
+        </button>
 
-      <button
-        class="btn btn-primary"
-        onclick={downloadCompanyMonthlyPdf}
-        disabled={companyPdfLoading}
-      >
-        {#if companyPdfLoading}
-          <span class="btn-spinner"></span>
-          Vorbereiten…
-        {:else}
-          PDF herunterladen
+        {#if companyPdfSection9Note}
+          <div class="alert alert-info" data-testid="report-section9-note">
+            <span aria-hidden="true">§</span>
+            <span>{companyPdfSection9Note}</span>
+          </div>
         {/if}
-      </button>
 
-      {#if companyPdfSection9Note}
-        <div class="alert alert-info" data-testid="report-section9-note">
-          <span aria-hidden="true">§</span>
-          <span>{companyPdfSection9Note}</span>
-        </div>
-      {/if}
-
-      {#if companyPdfError}
-        <div class="alert alert-error" role="alert">
-          <span>⚠</span>
-          <span>{companyPdfError}</span>
-        </div>
-      {/if}
-    </div>
+        {#if companyPdfError}
+          <div class="alert alert-error" role="alert">
+            <span>⚠</span>
+            <span>{companyPdfError}</span>
+          </div>
+        {/if}
+      </div>
+    {/if}
   </div>
 {:else}
   <!-- EMP-06: Employee personal monthly closes -->
@@ -1200,8 +1211,8 @@
   </Card>
 {/if}
 
-<!-- Team-Übersicht — ADMIN / MANAGER only -->
-{#if isManager}
+<!-- Team-Übersicht — only for callers holding a team-report right -->
+{#if showTeamArea}
   <div class="team-overview-section card-animate">
     <div class="team-overview-header">
       <h2>Team-Übersicht</h2>
@@ -1220,159 +1231,267 @@
     </div>
 
     <!-- Heutige Anwesenheit (RPT-03) -->
-    <Card animate class="widget-card" style="--card-idx: 1;">
-      <CardHeader title="Heutige Anwesenheit" sub="Status aller Mitarbeiter">
-        {#snippet actions()}
-          {#if todayAttendance}
-            <span class="section-date">{todayAttendance.date}</span>
-          {/if}
-        {/snippet}
-      </CardHeader>
+    {#if canTeamAttendance}
+      <Card animate class="widget-card" style="--card-idx: 1;">
+        <CardHeader title="Heutige Anwesenheit" sub="Status aller Mitarbeiter">
+          {#snippet actions()}
+            {#if todayAttendance}
+              <span class="section-date">{todayAttendance.date}</span>
+            {/if}
+          {/snippet}
+        </CardHeader>
 
-      {#if todayLoading}
-        <p class="section-placeholder">Lade Anwesenheit…</p>
-      {:else if todayError}
-        <p class="section-error">{todayError}</p>
-      {:else if todayAttendance}
-        <div class="attendance-summary">
-          <div class="summary-chip">
-            <span class="label">Anwesend</span>
-            <span class="value">{todayAttendance.summary.present}</span>
-          </div>
-          <div class="summary-chip">
-            <span class="label">Eingestempelt</span>
-            <span class="value">{todayAttendance.summary.clockedIn}</span>
-          </div>
-          <div class="summary-chip">
-            <span class="label">Abwesend</span>
-            <span class="value">{todayAttendance.summary.absent}</span>
-          </div>
-          <div class="summary-chip">
-            <span class="label">Fehlend</span>
-            <span class="value">{todayAttendance.summary.missing}</span>
-          </div>
-          {#if todayAttendance.summary.holiday > 0}
+        {#if todayLoading}
+          <p class="section-placeholder">Lade Anwesenheit…</p>
+        {:else if todayError}
+          <p class="section-error">{todayError}</p>
+        {:else if todayAttendance}
+          <div class="attendance-summary">
             <div class="summary-chip">
-              <span class="label">Feiertag</span>
-              <span class="value">{todayAttendance.summary.holiday}</span>
+              <span class="label">Anwesend</span>
+              <span class="value">{todayAttendance.summary.present}</span>
             </div>
-          {/if}
-        </div>
-
-        <div class="table-wrap">
-          <table class="attendance-table">
-            <thead>
-              <tr>
-                <th>Mitarbeiter</th>
-                <th>Nr.</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each pagedTodayRows as row (row.id)}
-                <tr>
-                  <td>{row.name}</td>
-                  <td>{row.employeeNumber}</td>
-                  <td><span class={statusClass(row.status)}>{statusLabel(row)}</span></td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <Pagination
-          total={todayAttendance.employees.length}
-          bind:page={todayPage}
-          bind:pageSize={todayPageSize}
-        />
-      {/if}
-    </Card>
-
-    <!-- Verfall-Warnungen (Phase 44 — BUrlG § 7 Hinweispflicht / EuGH C-684/16) -->
-    <Card animate class="widget-card" style="--card-idx: 2;">
-      <CardHeader title="Verfall-Warnungen" sub="Resturlaub mit auslaufender Frist (§ 7 BUrlG)">
-        {#snippet actions()}
-          <label class="carryover-horizon-label" for="carryover-horizon">
-            Horizont
-            <select id="carryover-horizon" class="period-select" bind:value={carryoverHorizon}>
-              <option value={30}>30 Tage</option>
-              <option value={60}>60 Tage</option>
-              <option value={90}>90 Tage</option>
-              <option value={180}>180 Tage</option>
-            </select>
-          </label>
-        {/snippet}
-      </CardHeader>
-
-      {#if carryoverLoading}
-        <p class="section-placeholder">Lade Verfall-Warnungen…</p>
-      {:else if carryoverError}
-        <p class="section-error">{carryoverError}</p>
-      {:else if carryover}
-        <div class="carryover-summary">
-          <div class="summary-chip">
-            <span class="label">Betroffene MA</span>
-            <span class="value">{carryover.summary.employeesAtRisk}</span>
+            <div class="summary-chip">
+              <span class="label">Eingestempelt</span>
+              <span class="value">{todayAttendance.summary.clockedIn}</span>
+            </div>
+            <div class="summary-chip">
+              <span class="label">Abwesend</span>
+              <span class="value">{todayAttendance.summary.absent}</span>
+            </div>
+            <div class="summary-chip">
+              <span class="label">Fehlend</span>
+              <span class="value">{todayAttendance.summary.missing}</span>
+            </div>
+            {#if todayAttendance.summary.holiday > 0}
+              <div class="summary-chip">
+                <span class="label">Feiertag</span>
+                <span class="value">{todayAttendance.summary.holiday}</span>
+              </div>
+            {/if}
           </div>
-          <div class="summary-chip">
-            <span class="label">Tage im Risiko</span>
-            <span class="value">{formatDays(carryover.summary.totalDaysAtRisk)}</span>
-          </div>
-          <div class="summary-chip">
-            <span class="label">Hinweise (30 T.)</span>
-            <span class="value">{carryover.summary.warnedLast30}</span>
-          </div>
-        </div>
 
-        {#if carryover.rows.length === 0}
-          <p class="section-placeholder">
-            Kein Resturlaub mit Verfall in den nächsten {carryover.horizonDays} Tagen.
-          </p>
-        {:else}
-          <div class="carryover-callout">
-            Hinweispflicht: Mitarbeiter müssen gemäß EuGH C-684/16 ausdrücklich auf verfallenden
-            Urlaub hingewiesen werden. Ohne dokumentierten Hinweis verfällt der Urlaub <strong
-              >nicht</strong
-            >.
-          </div>
           <div class="table-wrap">
-            <table class="carryover-table">
+            <table class="attendance-table">
               <thead>
                 <tr>
                   <th>Mitarbeiter</th>
                   <th>Nr.</th>
-                  <th class="numeric">Gefährdet (T.)</th>
-                  <th>Verfällt am</th>
-                  <th class="numeric">Verbleibend</th>
-                  <th>Letzter Hinweis</th>
-                  <th class="actions-col">Aktion</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {#each pagedCarryoverRows as row (row.entitlementId)}
+                {#each pagedTodayRows as row (row.id)}
                   <tr>
-                    <td>{row.employee.firstName} {row.employee.lastName}</td>
-                    <td>{row.employee.employeeNumber}</td>
-                    <td class="numeric">{formatDays(row.atRiskDays ?? row.carriedOverDays)}</td>
-                    <td>{formatDeDate(row.deadline)}</td>
+                    <td>{row.name}</td>
+                    <td>{row.employeeNumber}</td>
+                    <td><span class={statusClass(row.status)}>{statusLabel(row)}</span></td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            total={todayAttendance.employees.length}
+            bind:page={todayPage}
+            bind:pageSize={todayPageSize}
+          />
+        {/if}
+      </Card>
+    {/if}
+
+    {#if canReportRead}
+      <!-- Verfall-Warnungen (Phase 44 — BUrlG § 7 Hinweispflicht / EuGH C-684/16) -->
+      <Card animate class="widget-card" style="--card-idx: 2;">
+        <CardHeader title="Verfall-Warnungen" sub="Resturlaub mit auslaufender Frist (§ 7 BUrlG)">
+          {#snippet actions()}
+            <label class="carryover-horizon-label" for="carryover-horizon">
+              Horizont
+              <select id="carryover-horizon" class="period-select" bind:value={carryoverHorizon}>
+                <option value={30}>30 Tage</option>
+                <option value={60}>60 Tage</option>
+                <option value={90}>90 Tage</option>
+                <option value={180}>180 Tage</option>
+              </select>
+            </label>
+          {/snippet}
+        </CardHeader>
+
+        {#if carryoverLoading}
+          <p class="section-placeholder">Lade Verfall-Warnungen…</p>
+        {:else if carryoverError}
+          <p class="section-error">{carryoverError}</p>
+        {:else if carryover}
+          <div class="carryover-summary">
+            <div class="summary-chip">
+              <span class="label">Betroffene MA</span>
+              <span class="value">{carryover.summary.employeesAtRisk}</span>
+            </div>
+            <div class="summary-chip">
+              <span class="label">Tage im Risiko</span>
+              <span class="value">{formatDays(carryover.summary.totalDaysAtRisk)}</span>
+            </div>
+            <div class="summary-chip">
+              <span class="label">Hinweise (30 T.)</span>
+              <span class="value">{carryover.summary.warnedLast30}</span>
+            </div>
+          </div>
+
+          {#if carryover.rows.length === 0}
+            <p class="section-placeholder">
+              Kein Resturlaub mit Verfall in den nächsten {carryover.horizonDays} Tagen.
+            </p>
+          {:else}
+            <div class="carryover-callout">
+              Hinweispflicht: Mitarbeiter müssen gemäß EuGH C-684/16 ausdrücklich auf verfallenden
+              Urlaub hingewiesen werden. Ohne dokumentierten Hinweis verfällt der Urlaub <strong
+                >nicht</strong
+              >.
+            </div>
+            <div class="table-wrap">
+              <table class="carryover-table">
+                <thead>
+                  <tr>
+                    <th>Mitarbeiter</th>
+                    <th>Nr.</th>
+                    <th class="numeric">Gefährdet (T.)</th>
+                    <th>Verfällt am</th>
+                    <th class="numeric">Verbleibend</th>
+                    <th>Letzter Hinweis</th>
+                    <th class="actions-col">Aktion</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each pagedCarryoverRows as row (row.entitlementId)}
+                    <tr>
+                      <td>{row.employee.firstName} {row.employee.lastName}</td>
+                      <td>{row.employee.employeeNumber}</td>
+                      <td class="numeric">{formatDays(row.atRiskDays ?? row.carriedOverDays)}</td>
+                      <td>{formatDeDate(row.deadline)}</td>
+                      <td class="numeric">
+                        <span class={row.daysUntilDeadline <= 14 ? "danger" : ""}>
+                          {row.daysUntilDeadline} T.
+                        </span>
+                      </td>
+                      <td>{formatLastWarning(row.lastWarningSentAt)}</td>
+                      <td class="row-actions">
+                        <div class="row-actions__group">
+                          {#if canReportNotify}
+                            <button
+                              class="btn-ghost btn-warn-now"
+                              disabled={carryoverWarnBusy[row.entitlementId]}
+                              onclick={() => sendCarryoverWarning(row)}
+                            >
+                              {carryoverWarnBusy[row.entitlementId]
+                                ? "Senden…"
+                                : "Hinweis jetzt senden"}
+                            </button>
+                          {/if}
+                          {#if carryoverRowMsg[row.entitlementId]}
+                            <span class="row-msg">{carryoverRowMsg[row.entitlementId]}</span>
+                          {/if}
+                        </div>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+            <Pagination
+              total={carryover.rows.length}
+              bind:page={carryoverPage}
+              bind:pageSize={carryoverPageSize}
+            />
+          {/if}
+        {/if}
+      </Card>
+    {/if}
+
+    {#if canTeamOvertime}
+      <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) -->
+      <Card animate class="widget-card" style="--card-idx: 3;">
+        <CardHeader title="Überstunden-Übersicht" sub="Saldo & Verlauf je Mitarbeiter" />
+
+        {#if overtimeLoading}
+          <p class="section-placeholder">Lade Überstunden-Saldo…</p>
+        {:else if overtimeError}
+          <p class="section-error">{overtimeError}</p>
+        {:else if overtimeOverview}
+          <div class="table-wrap">
+            <table class="overtime-table">
+              <thead>
+                <tr>
+                  <th class="sortable" onclick={() => toggleSort("name")}>
+                    Mitarbeiter
+                    {#if sortColumn === "name"}<span class="sort-arrow"
+                        >{sortDir === "asc" ? "▲" : "▼"}</span
+                      >{/if}
+                  </th>
+                  <th>Nr.</th>
+                  <th class="sortable numeric" onclick={() => toggleSort("balance")}>
+                    Saldo (h)
+                    {#if sortColumn === "balance"}<span class="sort-arrow"
+                        >{sortDir === "asc" ? "▲" : "▼"}</span
+                      >{/if}
+                  </th>
+                  <th>Status</th>
+                  <th>Verlauf (6 Monate)</th>
+                  <th class="actions-col">Aktionen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each pagedOvertimeRows as row (row.id)}
+                  <tr>
+                    <td>{row.name}</td>
+                    <td>{row.employeeNumber}</td>
                     <td class="numeric">
-                      <span class={row.daysUntilDeadline <= 14 ? "danger" : ""}>
-                        {row.daysUntilDeadline} T.
-                      </span>
+                      {#if row.confirmedMinutes !== undefined}
+                        <SaldoAnzeige
+                          variant="compact"
+                          confirmedMinutes={row.confirmedMinutes}
+                          openMonthMinutes={row.openMonthMinutes ?? null}
+                          hasClosedMonth={row.hasClosedMonth ?? false}
+                          rosterIncomplete={row.rosterIncomplete}
+                        />
+                      {:else}
+                        <!-- Fallback: an older cached overview response without the split
+                           fields — degrade to the primitive's single-value rendering
+                           rather than an empty cell (matches the dashboard/97-04 shape). -->
+                        <SaldoAnzeige
+                          variant="compact"
+                          saldoMinutes={Math.round(row.balanceHours * 60)}
+                        />
+                      {/if}
                     </td>
-                    <td>{formatLastWarning(row.lastWarningSentAt)}</td>
+                    <td
+                      ><span class={statusBadgeClass(row.status)}
+                        >{statusBadgeLabel(row.status)}</span
+                      ></td
+                    >
+                    <td class="sparkline-cell">
+                      {#if row.snapshots.length >= 2}
+                        <canvas width="100" height="28" use:registerCanvas={row.id}></canvas>
+                      {:else}
+                        <span class="no-trend">(kein Verlauf)</span>
+                      {/if}
+                    </td>
                     <td class="row-actions">
                       <div class="row-actions__group">
                         <button
-                          class="btn-ghost btn-warn-now"
-                          disabled={carryoverWarnBusy[row.entitlementId]}
-                          onclick={() => sendCarryoverWarning(row)}
+                          class="btn-icon btn-icon-pdf"
+                          title="Stundennachweis PDF ({row.name})"
+                          onclick={() => downloadEmployeePdf(row.id, row.name)}>PDF</button
                         >
-                          {carryoverWarnBusy[row.entitlementId]
-                            ? "Senden…"
-                            : "Hinweis jetzt senden"}
-                        </button>
-                        {#if carryoverRowMsg[row.entitlementId]}
-                          <span class="row-msg">{carryoverRowMsg[row.entitlementId]}</span>
+                        <button
+                          class="btn-icon btn-icon-datev"
+                          title="DATEV LODAS ({row.name})"
+                          onclick={() => downloadEmployeeDatev(row.id, row.name)}>TXT</button
+                        >
+                        {#if empDownloadErrors[`pdf-${row.id}`]}
+                          <span class="row-dl-error">{empDownloadErrors[`pdf-${row.id}`]}</span>
+                        {/if}
+                        {#if empDownloadErrors[`datev-${row.id}`]}
+                          <span class="row-dl-error">{empDownloadErrors[`datev-${row.id}`]}</span>
                         {/if}
                       </div>
                     </td>
@@ -1382,169 +1501,72 @@
             </table>
           </div>
           <Pagination
-            total={carryover.rows.length}
-            bind:page={carryoverPage}
-            bind:pageSize={carryoverPageSize}
+            total={sortedOvertime.length}
+            bind:page={overtimePage}
+            bind:pageSize={overtimePageSize}
           />
         {/if}
-      {/if}
-    </Card>
+      </Card>
+    {/if}
 
-    <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) -->
-    <Card animate class="widget-card" style="--card-idx: 3;">
-      <CardHeader title="Überstunden-Übersicht" sub="Saldo & Verlauf je Mitarbeiter" />
+    {#if canReportRead}
+      <!-- Urlaubsübersicht (RPT-02) -->
+      <Card animate class="widget-card" style="--card-idx: 4;">
+        <CardHeader title="Urlaubsübersicht" sub="Ansprüche, Genommen, Rest" />
 
-      {#if overtimeLoading}
-        <p class="section-placeholder">Lade Überstunden-Saldo…</p>
-      {:else if overtimeError}
-        <p class="section-error">{overtimeError}</p>
-      {:else if overtimeOverview}
-        <div class="table-wrap">
-          <table class="overtime-table">
-            <thead>
-              <tr>
-                <th class="sortable" onclick={() => toggleSort("name")}>
-                  Mitarbeiter
-                  {#if sortColumn === "name"}<span class="sort-arrow"
-                      >{sortDir === "asc" ? "▲" : "▼"}</span
-                    >{/if}
-                </th>
-                <th>Nr.</th>
-                <th class="sortable numeric" onclick={() => toggleSort("balance")}>
-                  Saldo (h)
-                  {#if sortColumn === "balance"}<span class="sort-arrow"
-                      >{sortDir === "asc" ? "▲" : "▼"}</span
-                    >{/if}
-                </th>
-                <th>Status</th>
-                <th>Verlauf (6 Monate)</th>
-                <th class="actions-col">Aktionen</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each pagedOvertimeRows as row (row.id)}
+        {#if leaveOverviewLoading}
+          <p class="section-placeholder">Lade Urlaubsübersicht…</p>
+        {:else if leaveOverviewError}
+          <p class="section-error">{leaveOverviewError}</p>
+        {:else if leaveOverviewRows.length === 0}
+          <p class="section-placeholder">Keine Einträge für dieses Jahr</p>
+        {:else}
+          <div class="table-wrap">
+            <table class="leave-overview-table">
+              <thead>
                 <tr>
-                  <td>{row.name}</td>
-                  <td>{row.employeeNumber}</td>
-                  <td class="numeric">
-                    {#if row.confirmedMinutes !== undefined}
-                      <SaldoAnzeige
-                        variant="compact"
-                        confirmedMinutes={row.confirmedMinutes}
-                        openMonthMinutes={row.openMonthMinutes ?? null}
-                        hasClosedMonth={row.hasClosedMonth ?? false}
-                        rosterIncomplete={row.rosterIncomplete}
-                      />
-                    {:else}
-                      <!-- Fallback: an older cached overview response without the split
-                           fields — degrade to the primitive's single-value rendering
-                           rather than an empty cell (matches the dashboard/97-04 shape). -->
-                      <SaldoAnzeige
-                        variant="compact"
-                        saldoMinutes={Math.round(row.balanceHours * 60)}
-                      />
-                    {/if}
-                  </td>
-                  <td
-                    ><span class={statusBadgeClass(row.status)}>{statusBadgeLabel(row.status)}</span
-                    ></td
-                  >
-                  <td class="sparkline-cell">
-                    {#if row.snapshots.length >= 2}
-                      <canvas width="100" height="28" use:registerCanvas={row.id}></canvas>
-                    {:else}
-                      <span class="no-trend">(kein Verlauf)</span>
-                    {/if}
-                  </td>
-                  <td class="row-actions">
-                    <div class="row-actions__group">
-                      <button
-                        class="btn-icon btn-icon-pdf"
-                        title="Stundennachweis PDF ({row.name})"
-                        onclick={() => downloadEmployeePdf(row.id, row.name)}>PDF</button
-                      >
-                      <button
-                        class="btn-icon btn-icon-datev"
-                        title="DATEV LODAS ({row.name})"
-                        onclick={() => downloadEmployeeDatev(row.id, row.name)}>TXT</button
-                      >
-                      {#if empDownloadErrors[`pdf-${row.id}`]}
-                        <span class="row-dl-error">{empDownloadErrors[`pdf-${row.id}`]}</span>
-                      {/if}
-                      {#if empDownloadErrors[`datev-${row.id}`]}
-                        <span class="row-dl-error">{empDownloadErrors[`datev-${row.id}`]}</span>
-                      {/if}
-                    </div>
-                  </td>
+                  <th>Mitarbeiter</th>
+                  <th>Nr.</th>
+                  <th>Urlaubsart</th>
+                  <th class="numeric">Gesamt</th>
+                  <th class="numeric">Übertrag</th>
+                  <th class="numeric">Genommen</th>
+                  <th class="numeric">Geplant</th>
+                  <th class="numeric">Rest</th>
                 </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <Pagination
-          total={sortedOvertime.length}
-          bind:page={overtimePage}
-          bind:pageSize={overtimePageSize}
-        />
-      {/if}
-    </Card>
-
-    <!-- Urlaubsübersicht (RPT-02) -->
-    <Card animate class="widget-card" style="--card-idx: 4;">
-      <CardHeader title="Urlaubsübersicht" sub="Ansprüche, Genommen, Rest" />
-
-      {#if leaveOverviewLoading}
-        <p class="section-placeholder">Lade Urlaubsübersicht…</p>
-      {:else if leaveOverviewError}
-        <p class="section-error">{leaveOverviewError}</p>
-      {:else if leaveOverviewRows.length === 0}
-        <p class="section-placeholder">Keine Einträge für dieses Jahr</p>
-      {:else}
-        <div class="table-wrap">
-          <table class="leave-overview-table">
-            <thead>
-              <tr>
-                <th>Mitarbeiter</th>
-                <th>Nr.</th>
-                <th>Urlaubsart</th>
-                <th class="numeric">Gesamt</th>
-                <th class="numeric">Übertrag</th>
-                <th class="numeric">Genommen</th>
-                <th class="numeric">Geplant</th>
-                <th class="numeric">Rest</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each pagedLeaveOverviewRows as row (row.employee.employeeNumber + ":" + (row.leaveType?.id ?? "missing"))}
-                <tr>
-                  <td>{row.employee.firstName} {row.employee.lastName}</td>
-                  <td>{row.employee.employeeNumber}</td>
-                  {#if row.missingEntitlement}
-                    <td colspan="6">
-                      <span class="badge badge-yellow">kein Anspruch hinterlegt</span>
-                    </td>
-                  {:else}
-                    <td>{row.leaveType?.name}</td>
-                    <td class="numeric">{formatDays(row.totalDays)}</td>
-                    <td class="numeric"
-                      >{formatDays(row.carriedOverEffectiveDays ?? row.carriedOverDays)}</td
-                    >
-                    <td class="numeric">{formatDays(row.usedDays)}</td>
-                    <td class="numeric">{formatDays(row.pendingDays)}</td>
-                    <td class="numeric strong">{formatDays(row.remainingDays)}</td>
-                  {/if}
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <Pagination
-          total={leaveOverviewRows.length}
-          bind:page={leaveOverviewPage}
-          bind:pageSize={leaveOverviewPageSize}
-        />
-      {/if}
-    </Card>
+              </thead>
+              <tbody>
+                {#each pagedLeaveOverviewRows as row (row.employee.employeeNumber + ":" + (row.leaveType?.id ?? "missing"))}
+                  <tr>
+                    <td>{row.employee.firstName} {row.employee.lastName}</td>
+                    <td>{row.employee.employeeNumber}</td>
+                    {#if row.missingEntitlement}
+                      <td colspan="6">
+                        <span class="badge badge-yellow">kein Anspruch hinterlegt</span>
+                      </td>
+                    {:else}
+                      <td>{row.leaveType?.name}</td>
+                      <td class="numeric">{formatDays(row.totalDays)}</td>
+                      <td class="numeric"
+                        >{formatDays(row.carriedOverEffectiveDays ?? row.carriedOverDays)}</td
+                      >
+                      <td class="numeric">{formatDays(row.usedDays)}</td>
+                      <td class="numeric">{formatDays(row.pendingDays)}</td>
+                      <td class="numeric strong">{formatDays(row.remainingDays)}</td>
+                    {/if}
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            total={leaveOverviewRows.length}
+            bind:page={leaveOverviewPage}
+            bind:pageSize={leaveOverviewPageSize}
+          />
+        {/if}
+      </Card>
+    {/if}
   </div>
 {/if}
 

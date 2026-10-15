@@ -26,7 +26,7 @@ import type { JwtPayload } from "../middleware/auth";
 import { SYSTEM_ROLE_IDS, normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
 const PASSWORD = "test1234";
-const BODY_KEYS = ["homeSalonId", "isMultiSalon", "packages", "salons", "tenant"];
+const BODY_KEYS = ["homeSalonId", "isMultiSalon", "packages", "roles", "salons", "tenant"];
 
 type ContextBody = {
   tenant: { id: string; name: string };
@@ -34,6 +34,7 @@ type ContextBody = {
   homeSalonId: string | null;
   salons: { id: string; name: string }[];
   packages: { bookedModules: string[]; salonLimit: number };
+  roles: string[];
 };
 
 // Phase 566 (D-10): the shared fixture tenants book every module with a quota far above any scenario.
@@ -214,7 +215,33 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
       homeSalonId: salonA.id,
       salons: [{ id: salonA.id, name: "Salon Nord" }],
       packages: FIXTURE_PACKAGES_BODY,
+      roles: ["Salonmanager"],
     });
+  });
+
+  it("names the caller's own roles (Issue #538): stored assignments, custom roles, legacy fallback", async () => {
+    // Legacy fallback: no stored assignment -> the system role of User.role stands in.
+    expect((await contextBody(data.adminToken)).roles).toEqual(["Admin"]);
+
+    // Stored assignments: a custom role next to a system role, distinct and sorted by name.
+    const { user } = await createEmployee("roles538");
+    const custom = await app.prisma.accessRole.create({
+      data: {
+        tenantId: data.tenant.id,
+        name: "Fruehschicht-Leitung",
+        nameKey: roleNameKey("Fruehschicht-Leitung"),
+        permissions: normalizeRolePermissions(["time-entry:read:ZUGEWIESEN"]),
+      },
+    });
+    await assign(user.id, custom.id, { scopeType: "SALONS", salonIds: [salonA.id] });
+    await assign(user.id, SYSTEM_ROLE_IDS.SALON_MANAGER, {
+      scopeType: "SALONS",
+      salonIds: [salonB.id],
+    });
+    const body = await contextBody(await login(user.email));
+    expect(body.roles).toEqual(["Fruehschicht-Leitung", "Salonmanager"]);
+    // Names only: nothing of the assignment scope or the role's permissions leaks.
+    expect(JSON.stringify(body.roles)).not.toContain(salonA.id);
   });
 
   it("legacy-role fallback admin (no stored assignment) reaches every active salon, never the inactive one", async () => {
@@ -349,6 +376,7 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
       homeSalonId: null,
       salons: [{ id: single.salonId, name: single.tenant.name }],
       packages: FIXTURE_PACKAGES_BODY,
+      roles: ["Admin"],
     });
   });
 

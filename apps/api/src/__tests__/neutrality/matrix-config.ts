@@ -385,6 +385,15 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "`GET /api/v1/roles/permission-catalog` entry directly above.",
   },
   {
+    route: "GET /api/v1/role-assignments/role-names",
+    reason:
+      "New route added in Issue #538, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b) — built permission-gated (`role-assignment:manage:ZUGEWIESEN`) " +
+      "from its very first commit, role names only, and never had role-based access behavior to " +
+      "compare. Same vacuous-satisfaction reasoning as the " +
+      "`GET /api/v1/role-assignments/people` entry directly above.",
+  },
+  {
     route: "GET /api/v1/dashboard/team-trend",
     reason:
       "New route added in Phase 84 (Issue #84, D-07), long after the role guard (`requireRole`) " +

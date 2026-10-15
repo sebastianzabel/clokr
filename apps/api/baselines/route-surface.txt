@@ -107,6 +107,7 @@
 │   ├── /preview (POST)
 │   ├── /range (GET, HEAD)
 │   ├── /read-all (PATCH)
+│   ├── /role-names (GET, HEAD)
 │   ├── /scopes (GET, HEAD)
 │   ├── /static/index.html (GET, HEAD)
 │   ├── /static/swagger-initializer.js (GET, HEAD)

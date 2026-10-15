@@ -93,7 +93,27 @@ describe("salon-context — tracer", () => {
       homeSalonId: "s1",
       selection: "ALL",
       packages: { bookedModules: ["CHAIN", "ANALYTICS"], salonLimit: 12 },
+      roles: [],
     });
+  });
+
+  it("holds the assigned role names for the shell label and drops anything that is no name (Issue #538)", async () => {
+    const { salonContext, roleNamesLabel } = await freshModule();
+    apiGet.mockResolvedValue(
+      response([S1, S2], { roles: ["Fruehschicht-Leitung", "Salonmanager", "", 7, null] }),
+    );
+    await salonContext.load("u1", { force: true });
+    expect(salonContext.peek().roles).toEqual(["Fruehschicht-Leitung", "Salonmanager"]);
+    expect(roleNamesLabel(salonContext.peek())).toBe("Fruehschicht-Leitung, Salonmanager");
+  });
+
+  it("a response without roles (mixed deploy) or before loading gives an empty label (Issue #538)", async () => {
+    const { salonContext, roleNamesLabel } = await freshModule();
+    expect(roleNamesLabel(salonContext.peek())).toBe("");
+    apiGet.mockResolvedValue(response());
+    await salonContext.load("u1", { force: true });
+    expect(salonContext.peek().roles).toEqual([]);
+    expect(roleNamesLabel(salonContext.peek())).toBe("");
   });
 
   it("holds the packages next to the context, filters unknown modules and answers moduleBooked", async () => {
@@ -305,6 +325,7 @@ describe("salon-context — failures, transitions, races (D-10)", () => {
       homeSalonId: null,
       selection: null,
       packages: null,
+      roles: [],
     });
     expect(loggerWarn).toHaveBeenCalledTimes(1);
     expect(loggerWarn.mock.calls[0][1]).toEqual({ status: 500 });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { authStore } from "$stores/auth";
+  import { salonContext, roleNamesLabel } from "$stores/salon-context";
   import { tenantFeatures } from "$stores/tenant-features";
   import { versionStore, loadVersion } from "$stores/version";
   import { hasUnreadReleaseNotes, loadReleaseNotesData, openWhatsNew } from "$stores/release-notes";
@@ -114,13 +115,7 @@
       <div class="userinfo">
         <div class="name">{$authStore.user.firstName ?? $authStore.user.email}</div>
         <div class="role">
-          {#if $authStore.user.role === "ADMIN"}
-            Administrator
-          {:else if $authStore.user.role === "MANAGER"}
-            Manager
-          {:else}
-            Mitarbeiter
-          {/if}
+          {roleNamesLabel($salonContext)}
         </div>
       </div>
       <button

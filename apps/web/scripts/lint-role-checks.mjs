@@ -11,14 +11,13 @@
  *
  * ── Why scoped to an explicit file list, not all of apps/web/src (unlike the API gate) ─────────
  * The API gate can scan its whole `src/` because Phase 75b converted EVERY access decision in the
- * API before it landed. The web has not had that pass yet: `/admin/*`, `/reports`' internal
- * `isManager`, `/settings`' role label, and other pre-existing role checks are deliberately
- * UNTOUCHED by Phase 378 (out of scope at the time; Phase 83 (#83) since converted the /admin area; see
- * `378-CONTEXT.md` D-03). A repo-wide gate would fail on all of those on day one with no way to
- * tell a legitimate pre-existing check from a regression. `SCOPE_FILES` below is exactly the set
- * of files Phase 378 converted; a file joins this list only when it is actually migrated off
- * `user.role` for a visibility decision, same spirit as `lint-tenant-scoping-exceptions.json` and
- * `lint-t100-09-routes.json`'s incremental-adoption registers.
+ * API before it landed. The web converted its pages in steps (#378 Team-Bereich, #83 /admin,
+ * #538 the rest: employees, reports, time-entries, settings, Topbar, Sidebar). A repo-wide gate
+ * would also scan unrelated files (login payload types, fixtures) with no way to tell them from a
+ * decision, so `SCOPE_FILES` below lists every file that decides or labels by permission; a file
+ * joins this list when it is migrated off `user.role`, same spirit as
+ * `lint-tenant-scoping-exceptions.json` and `lint-t100-09-routes.json`'s incremental-adoption
+ * registers. A new page that needs the caller's access joins the list in the same change.
  *
  * ── Why regex/line-based, not a Svelte AST walk (unlike the API gate) ──────────────────────────
  * `apps/api/scripts/lint-role-checks.ts` parses TypeScript with `ts.createSourceFile` — every
@@ -34,6 +33,7 @@
  *
  * ── What is flagged (per line, in every SCOPE_FILES entry) ─────────────────────────────────────
  *   - `authstore-role-read`  — `$authStore.user.role` / `$authStore.user?.role`;
+ *   - `authstore-snapshot-role-read` — the same read through `get(authStore)` or an `auth` snapshot;
  *   - `role-comparison`      — a bare `role` (or `.role`) compared with `===`/`!==`/`==`/`!=`
  *                              against `"ADMIN"`/`"MANAGER"`/`"EMPLOYEE"`, either side;
  *   - `role-membership`      — `[...].includes(...)` on an array literal containing one of those
@@ -41,13 +41,9 @@
  *   - `role-derived-identifier` — a declaration of `isManager` or `isAdmin`.
  *
  * ── What is tolerated ────────────────────────────────────────────────────────────────────────
- * Two lines per file, hand-listed in `ALLOWLIST` below with the reason inline — both are the
- * SAME documented exception (Phase 378, D-03): the `/admin/*` sub-nav gate in `Sidebar.svelte`
- * and `BottomTabBar.svelte` (out of scope, #83's territory) and Sidebar's own role-LABEL badge
- * (display text, decides nothing — the same class of read `compat-role.ts` is allowlisted for on
- * the API side). A finding on a clean tree is a role check to convert to a permission, never a
- * reason to widen `ALLOWLIST` — adding an entry there is itself a change to review, same as the
- * API gate's single allowlisted file.
+ * Nothing, since #538: `ALLOWLIST` is empty. A finding is a role check to convert to a
+ * permission, or a role label to derive from the assigned role names - never a reason to add an
+ * entry. The mechanism (with its stale-entry check) stays for a future, reviewed exception.
  *
  * ── Known limits (accepted, stated not hidden) ──────────────────────────────────────────────────
  *   - A check reached through a renamed intermediate the regex does not recognise (e.g. a role
@@ -114,16 +110,23 @@ export const SCOPE_FILES = [
   "apps/web/src/lib/components/ui/CommandPalette.svelte",
   // Phase 84 (#84): the Team block's salon filter and trend-card decisions.
   "apps/web/src/lib/dashboard/team-view.ts",
+  // Issue #538: the remaining pages and shell parts that still decided or labelled by the compat
+  // role. The persona store (`lib/stores/persona.ts`) is gone - nothing imported it.
+  "apps/web/src/routes/(app)/admin/employees/+page.svelte",
+  "apps/web/src/routes/(app)/admin/employees/[id]/+page.svelte",
+  "apps/web/src/routes/(app)/reports/+page.svelte",
+  "apps/web/src/routes/(app)/time-entries/+page.svelte",
+  "apps/web/src/routes/(app)/settings/+page.svelte",
+  "apps/web/src/lib/components/layout/Topbar.svelte",
+  "apps/web/src/lib/stores/salon-context.ts",
+  "apps/web/src/lib/page-rights.ts",
 ];
 
-/** (file, exact trimmed line text) pairs that read the compat role for a display LABEL only and
- *  decide nothing (Sidebar's role badge) — converted with #538. Since Phase 83 the
- *  admin gates are permission-based, so no access exception remains. A stale entry fails the run
- *  (`staleAllowlistEntries`): a dead exception is a check that sees nothing. */
-export const ALLOWLIST = new Set([
-  'apps/web/src/lib/components/layout/Sidebar.svelte::{#if $authStore.user.role === "ADMIN"}',
-  'apps/web/src/lib/components/layout/Sidebar.svelte::{:else if $authStore.user.role === "MANAGER"}',
-]);
+/** (file, exact trimmed line text) pairs that may keep a flagged line. Empty since #538: the last
+ *  two entries (Sidebar's role-label badge) now show the assigned role names. The mechanism stays
+ *  so a future exception is a reviewed, reasoned entry; a stale entry fails the run
+ *  (`staleAllowlistEntries`) - a dead exception is a check that sees nothing. */
+export const ALLOWLIST = new Set();
 
 /**
  * ALLOWLIST entries whose file is not in scope or whose text matches no trimmed line of that file.
@@ -156,6 +159,12 @@ const PATTERNS = [
   {
     shape: "authstore-role-read",
     re: /\$authStore\.user\??\.role\b/,
+  },
+  {
+    // `get(authStore).user?.role`, `getStore(authStore).user.role`, `auth.user?.role` - the same
+    // read of the caller's compat role through a store snapshot (Issue #538).
+    shape: "authstore-snapshot-role-read",
+    re: /\b(get|getStore)\(authStore\)[^;]*\.role\b|\bauth\w*\??\.user\??\.role\b/,
   },
   {
     shape: "role-comparison",
@@ -225,19 +234,19 @@ function run() {
 
   if (findings.length > 0) {
     console.error(
-      `lint:role-checks: FAILED — ${findings.length} role check(s) in converted files (Issues #378, #83):`,
+      `lint:role-checks: FAILED — ${findings.length} role check(s) in converted files (Issues #378, #83, #538):`,
     );
     for (const f of findings) console.error(`  ${f.file}:${f.line}: ${f.shape} — ${f.text}`);
     console.error(
       "Convert to a permission check via $lib/permissions.ts (hasPermission/hasAnyPermission) " +
-        "against docs/permissions.md, or — if this is a genuine display-only read that decides " +
-        "nothing — add it to ALLOWLIST in apps/web/scripts/lint-role-checks.mjs with a reason.",
+        "against docs/permissions.md. A role LABEL comes from the assigned role names " +
+        "(GET /me/context `roles`), never from the compat role.",
     );
     process.exit(1);
   }
 
   console.log(
-    `lint:role-checks: OK — 0 finding(s) in ${SCOPE_FILES.length} file(s) (Issues #378, #83)`,
+    `lint:role-checks: OK — 0 finding(s) in ${SCOPE_FILES.length} file(s) (Issues #378, #83, #538)`,
   );
   process.exit(0);
 }

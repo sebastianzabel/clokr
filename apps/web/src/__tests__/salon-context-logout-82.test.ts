@@ -84,6 +84,8 @@ describe("Issue #82 — logout forgets the salon context", () => {
       selection: null,
       // Phase 566: the booked-package display state is forgotten on logout like everything else.
       packages: null,
+      // Issue #538: the role names are forgotten on logout too.
+      roles: [],
     });
   });
 

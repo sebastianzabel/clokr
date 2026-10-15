@@ -18,7 +18,6 @@
     id: string;
     firstName: string;
     lastName: string;
-    role?: string;
   }
   interface LeaveRequest {
     id: string;
@@ -255,7 +254,6 @@
               <div class="row-avatar">{initials(u.firstName, u.lastName)}</div>
               <div class="row-name-text">
                 <div class="row-name-line">{u.firstName} {u.lastName}</div>
-                {#if u.role}<div class="row-role">{u.role}</div>{/if}
               </div>
             </div>
             {#each days as d (d.getTime())}
@@ -429,11 +427,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .row-role {
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-
   .cell {
     height: 34px;
     margin: 4px 1px;
