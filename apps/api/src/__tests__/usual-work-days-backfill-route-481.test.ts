@@ -11,7 +11,7 @@
  * with it.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("PATCH /settings/work/:employeeId/usual-work-days — Nachtrag on an existing row (Issue #481, R6)", () => {
@@ -47,6 +47,11 @@ describe("PATCH /settings/work/:employeeId/usual-work-days — Nachtrag on an ex
         lastName: "K",
         hireDate: new Date("2026-05-18"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: user.id,
+      role: "EMPLOYEE",
     });
     employeeId = employee.id;
     await app.prisma.overtimeAccount.create({ data: { employeeId, balanceHours: 0 } });
@@ -215,6 +220,11 @@ describe("PATCH /settings/work/:employeeId/usual-work-days — validation, oracl
         lastName: "R",
         hireDate: new Date("2026-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: seed.tenant.id,
+      userId: user.id,
+      role: "EMPLOYEE",
     });
     const schedule = await app.prisma.workSchedule.create({
       data: {

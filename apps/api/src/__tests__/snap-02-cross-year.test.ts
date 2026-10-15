@@ -61,7 +61,13 @@
  * No PII — synthetic fixtures only.
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 68b (issue #68)
+import {
+  getTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+  grantSystemRole,
+} from "./setup"; // Phase 68b (issue #68)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import {
@@ -228,6 +234,7 @@ async function createIsolatedTenant(
       hireDate: new Date("2024-01-01T00:00:00Z"),
     },
   });
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: adminUser.id, role: "ADMIN" });
   await prisma.workSchedule.create({
     data: {
       employeeId: adminEmp.id,
@@ -266,6 +273,7 @@ async function createIsolatedTenant(
       breakOver9hOverride: 0,
     },
   });
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: empUser.id, role: "EMPLOYEE" });
   await prisma.workSchedule.create({
     data: {
       employeeId: emp.id,
