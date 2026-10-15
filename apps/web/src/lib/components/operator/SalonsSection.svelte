@@ -65,7 +65,6 @@
   let activatingId = $state<string | null>(null);
 
   const defaultSalon = $derived(salons.find((s) => s.isDefault) ?? null);
-  const activeSalonCount = $derived(salons.filter((s) => s.isActive).length);
 
   function openCreate() {
     mode = "create";
@@ -251,14 +250,7 @@
   {/snippet}
 </ConfirmDialog>
 
-<SalonDialog
-  bind:open={dialogOpen}
-  {mode}
-  salon={editing}
-  {defaultSalon}
-  {activeSalonCount}
-  onSubmit={submit}
-/>
+<SalonDialog bind:open={dialogOpen} {mode} salon={editing} {defaultSalon} onSubmit={submit} />
 
 <style>
   .frozen-hint,

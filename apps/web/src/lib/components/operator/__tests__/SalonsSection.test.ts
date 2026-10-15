@@ -138,11 +138,11 @@ describe("SalonsSection", () => {
     expect(el<HTMLInputElement>("op-salon-name").value).toBe("Zweitsalon");
   });
 
-  it("passes the active salon count: the hint shows for exactly one", async () => {
+  it("the create dialog never shows a tenant-settings hint, whatever the salon count (Issue #563)", async () => {
     mount(ONE);
     await fireEvent.click(el("op-salon-create"));
     await tick();
-    expect(byId("op-salon-single-salon-hint")).not.toBeNull();
+    expect(byId("op-salon-single-salon-hint")).toBeNull();
     document.body.innerHTML = "";
     mount(TWO);
     await fireEvent.click(el("op-salon-create"));
@@ -152,7 +152,8 @@ describe("SalonsSection", () => {
     mount([...ONE, salon({ id: "s9", name: "Altsalon", isActive: false })]);
     await fireEvent.click(el("op-salon-create"));
     await tick();
-    expect(byId("op-salon-single-salon-hint")).not.toBeNull();
+    expect(el("op-salon-dialog")).toHaveAttribute("data-mode", "create");
+    expect(byId("op-salon-single-salon-hint")).toBeNull();
   });
 
   it("a created salon closes the dialog, reloads once, toasts and refocuses the trigger", async () => {

@@ -1649,21 +1649,14 @@ test.describe("operator console - salon form", () => {
     await expect(page.getByTestId("op-salon-error")).toHaveCount(0);
   });
 
-  test("the single-salon hint shows with exactly one active salon and not with two", async ({
-    page,
-  }) => {
+  test("the salon form does not show a tenant-settings hint", async ({ page }) => {
+    // The tenant-settings mirror of the opening hours is retired (Issue #563); a one-salon
+    // tenant must not be promised an overwrite any more.
     await openTenantPage(page, false);
-    await page.getByTestId("op-salon-create").click();
-    await expect(page.getByTestId("op-salon-single-salon-hint")).toBeVisible();
-    await page.getByTestId("op-salon-cancel").click();
-    await expect(page.getByTestId("op-salon-dialog")).toHaveCount(0);
-  });
-
-  test("the single-salon hint is absent on a tenant with two active salons", async ({ page }) => {
-    await openTenantPage(page, true);
     await page.getByTestId("op-salon-create").click();
     await expect(page.getByTestId("op-salon-dialog")).toBeVisible();
     await expect(page.getByTestId("op-salon-single-salon-hint")).toHaveCount(0);
+    await expect(page.getByTestId("op-salon-dialog")).not.toContainText("Mandanten-Einstellungen");
   });
 
   test("at 360 px the dialog's von/bis inputs share a line and nothing overflows", async ({
