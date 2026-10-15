@@ -338,4 +338,15 @@ describe("salonPatch", () => {
     };
     expect(salonPatch(stored, salonToForm(stored))).toBeNull();
   });
+
+  it("restricted to a key list it ignores changes outside the list", () => {
+    const form = salonToForm(STORED);
+    form.name = "Salon Süd";
+    form.openingHours[2].closed = true;
+    expect(Object.keys(salonPatch(STORED, form, ["openingHours"]) ?? {})).toEqual(["openingHours"]);
+    expect(
+      salonPatch(STORED, form, ["name", "street", "postalCode", "city", "federalState"]),
+    ).toEqual({ name: "Salon Süd" });
+    expect(salonPatch(STORED, salonToForm(STORED), ["openingHours"])).toBeNull();
+  });
 });

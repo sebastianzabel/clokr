@@ -5,7 +5,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { employeeAdminRights, mayFileRetroRequest, reportRights } from "$lib/page-rights";
+import {
+  employeeAdminRights,
+  mayFileRetroRequest,
+  reportRights,
+  salonAdminRights,
+} from "$lib/page-rights";
 import personas from "$lib/nav/__tests__/fixtures/system-role-permissions.json";
 
 const p = personas as Record<string, string[]>;
@@ -131,6 +136,45 @@ describe("mayFileRetroRequest (/time-entries)", () => {
     expect(mayFileRetroRequest({ permissions: ["retro-request:create:ZUGEWIESEN"] })).toBe(false);
     expect(mayFileRetroRequest(adminRoleNoPermissions)).toBe(false);
     expect(mayFileRetroRequest(null)).toBe(false);
+  });
+});
+
+describe("salonAdminRights (/admin/salons, Issue #563)", () => {
+  // Hand-written expectations, re-checked against the fixture: ADMIN and OWNER hold salon:read and
+  // salon:manage, MANAGER holds salon:read only, every other system role holds neither.
+  it("admin and owner read and manage", () => {
+    for (const key of ["ADMIN", "OWNER"]) {
+      expect(salonAdminRights({ permissions: p[key] }), key).toEqual({
+        canRead: true,
+        canManage: true,
+      });
+    }
+  });
+
+  it("manager reads but cannot create or edit", () => {
+    expect(salonAdminRights({ permissions: p.MANAGER })).toEqual({
+      canRead: true,
+      canManage: false,
+    });
+  });
+
+  it("salon manager, HR, trainer and employee neither read nor manage", () => {
+    for (const key of ["SALON_MANAGER", "HR", "TRAINER", "EMPLOYEE"]) {
+      expect(salonAdminRights({ permissions: p[key] }), key).toEqual({
+        canRead: false,
+        canManage: false,
+      });
+    }
+  });
+
+  it("a custom role with salon:manage only manages without reading, whatever the compat role says", () => {
+    expect(salonAdminRights({ permissions: ["salon:manage:ZUGEWIESEN"] })).toEqual({
+      canRead: false,
+      canManage: true,
+    });
+    expect(salonAdminRights(adminRoleNoPermissions)).toEqual({ canRead: false, canManage: false });
+    expect(salonAdminRights(noList)).toEqual({ canRead: false, canManage: false });
+    expect(salonAdminRights(null)).toEqual({ canRead: false, canManage: false });
   });
 });
 

@@ -877,7 +877,7 @@ location, `admin/roles` — `admin-roles` — keeps its marker in the role edito
 | `admin/export`                    | `admin-export`              | `Section.dirty` (Lohnartennummern only — Export konfigurieren is never dirty, see below) |
 | `admin/audit`                     | `admin-audit`               | `Section.dirty` (Aufbewahrung only — log filters are never dirty, see below)             |
 | `admin/availability/[employeeId]` | `admin-availability-detail` | inline `.unsaved-hint` in the `ListDetail` actions snippet                               |
-| `admin/salons/[id]`               | `admin-salon-detail`        | `Section.dirty` (Öffnungszeiten)                                                         |
+| `admin/salons/[id]`               | `admin-salon-detail`        | `Section.dirty` (Stammdaten, Öffnungszeiten)                                             |
 
 | Page                                                                    | Excluded because                                                                                                                                                                                            |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
