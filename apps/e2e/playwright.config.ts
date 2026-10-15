@@ -184,6 +184,10 @@ export default defineConfig({
       //     no tenant fixture, no seed, no date dependency; the operator session is seeded into
       //     sessionStorage by the spec itself)
       //
+      // Issue #621 added a sixth file:
+      //   - the admin tab strip narrow-viewport gate (tenant fixture only, no seed, no date
+      //     dependency)
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -194,6 +198,7 @@ export default defineConfig({
         /leave-flow\.spec\.ts/,
         /month-bar-narrow-viewport\.spec\.ts/,
         /operator-console\.spec\.ts/,
+        /admin-tabs-narrow-viewport\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],
