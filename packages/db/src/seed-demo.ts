@@ -23,6 +23,7 @@ import pg from "pg";
 import bcrypt from "bcryptjs";
 import { DEFAULT_SALON_OPENING_HOURS, createDefaultHomeAssignment } from "./default-salon";
 import { ADMIN_EMAIL } from "./seed-credentials";
+import { ensureSystemRoleAssignment } from "./seed-role-assignments";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool as any);
@@ -402,6 +403,14 @@ async function main() {
       },
     });
     bump("employee");
+
+    // Issue #539 (D-09): permissions come only from stored role assignments, so every demo
+    // user holds its seeded role's system role as one (the `role` column is still written).
+    await ensureSystemRoleAssignment(prisma, {
+      tenantId: tenant.id,
+      userId: user.id,
+      role: s.role,
+    });
 
     // D-24 (Phase 67b Plan 04, issue #67): every demo employee also gets its Stammsalon
     // (HOME) row, to the tenant's default salon created above, from its tenant-local hire

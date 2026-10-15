@@ -4,6 +4,7 @@ import pg from "pg";
 import bcrypt from "bcryptjs";
 import { ADMIN_EMAIL, ADMIN_PASSWORD, EMPLOYEE_EMAIL, EMPLOYEE_PASSWORD } from "./seed-credentials";
 import { DEFAULT_SALON_OPENING_HOURS, createDefaultHomeAssignment } from "./default-salon";
+import { ensureSystemRoleAssignment } from "./seed-role-assignments";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool as any);
@@ -110,6 +111,14 @@ async function main() {
     },
   });
 
+  // Issue #539 (D-09): permissions come only from stored role assignments, so the bootstrap
+  // admin holds its system role as one (the `role` column above is still written).
+  await ensureSystemRoleAssignment(prisma, {
+    tenantId: tenant.id,
+    userId: adminUser.id,
+    role: "ADMIN",
+  });
+
   // D-24 (Phase 67b Plan 04, issue #67): every employee this seed creates also gets its
   // Stammsalon (HOME) row. Idempotent — a no-op on a re-run against an already-seeded
   // database's admin employee (main() only reaches this far when demo-clokr didn't exist
@@ -201,6 +210,13 @@ async function main() {
       hireDate: new Date(),
       nfcCardId: "NFC-TEST-001",
     },
+  });
+
+  // Issue #539 (D-09): the test employee holds its system role as a stored assignment too.
+  await ensureSystemRoleAssignment(prisma, {
+    tenantId: tenant.id,
+    userId: empUser.id,
+    role: "EMPLOYEE",
   });
 
   // D-24 (Phase 67b Plan 04, issue #67): same Stammsalon assignment as the admin above.
