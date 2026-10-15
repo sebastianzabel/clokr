@@ -13,7 +13,7 @@
  * shifts or employees the planner sees (#82), and the authoritative opening-hours check stays on the
  * server for every shift write. Weekday indices follow the API: 0 = Montag … 6 = Sonntag.
  */
-import { selectedSalonId, showSalonOptions, type SalonContextState } from "$stores/salon-context";
+import { selectedSalonId, showSalonOptions } from "$stores/salon-context";
 
 /** Shown above the grid when several salons are in the field and none is chosen. */
 export const SALON_HOURS_CHOOSE_HINT =
@@ -63,7 +63,7 @@ function viewOf(salon: SalonOpeningHoursEntry): ClosedDaysView {
 
 export function closedDaysFor(
   salons: SalonOpeningHoursEntry[] | undefined,
-  state: Pick<SalonContextState, "isMultiSalon" | "salons" | "selection">,
+  state: Parameters<typeof showSalonOptions>[0] & Parameters<typeof selectedSalonId>[0],
 ): ClosedDaysView {
   if (!Array.isArray(salons) || salons.length === 0) {
     return { days: new Set(), ...NOTHING };

@@ -36,9 +36,7 @@
 
   onMount(async () => {
     try {
-      const res = await api.get<{ salons: SalonDto[]; isMultiSalon: boolean }>(
-        "/salons?includeInactive=true",
-      );
+      const res = await api.get<{ salons: SalonDto[] }>("/salons?includeInactive=true");
       salons = res.salons;
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
