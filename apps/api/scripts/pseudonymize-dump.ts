@@ -30,6 +30,8 @@
  *   - AuditLog (unchanged)
  *   - OperatorAuditLog (unchanged, Phase 88): append-only by trigger, holds no credentials, and failed
  *     logins carry only a keyed hash of the attempted address, never the address itself
+ *   - SupportAccess (unchanged, Issue #93): immutable by trigger, holds no credentials and no employee
+ *     data; its reason is operator-authored text, kept like AuditLog and OperatorAuditLog
  *
  * Run against a STAGING copy of a prod dump (never against prod):
  *   DATABASE_URL=postgresql://clokr:...@localhost:5433/clokr_staging \

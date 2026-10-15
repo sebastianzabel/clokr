@@ -110,7 +110,7 @@ Clokr has **four business contexts**, a shared substrate (**Unterbau**, the Shar
 - **Abwesenheiten** (`contexts/absence/`) — request, approval, entitlement, carry-over. A workflow with status, not a recording. Date ranges in days.
 - **Schichtplanung** (`contexts/scheduling/` + `services/phorest/`) — shifts, templates, coverage, availability, Phorest sync. Plans the future. Since Phase 107 it feeds Arbeitszeitkonto (SHIFT_BASED Soll) and Abwesenheiten (SHIFT_BASED leave-day count).
 - **Arbeitszeitkonto** (`contexts/working-time-account/`) — Soll vs. Ist, saldo, Monatsabschluss. Reads from the others. Owns the once-per-day rule.
-- **Unterbau** (Shared Kernel, `contexts/platform/`) — the 19 `platform` models of `MODEL_OWNER` in `apps/api/scripts/measure-foreign-context-access.ts` (Tenant, TenantConfig, Employee, User, WorkSchedule, OperatorAccount, OperatorAuditLog, …) and permissions. Salon (#64), RoleAssignment (#74) and Salonzuordnung (#67) land here; Beschäftigung (#66) is backlog and has no entity.
+- **Unterbau** (Shared Kernel, `contexts/platform/`) — the 20 `platform` models of `MODEL_OWNER` in `apps/api/scripts/measure-foreign-context-access.ts` (Tenant, TenantConfig, Employee, User, WorkSchedule, OperatorAccount, OperatorAuditLog, SupportAccess, …) and permissions. Salon (#64), RoleAssignment (#74) and Salonzuordnung (#67) land here; Beschäftigung (#66) is backlog and has no entity.
 - **Composition layer** (`apps/api/src/composition/` + composition root `apps/api/src/app.ts`) — owns no model, carries no business rule, reads contexts only through their `index.ts`, and no context imports from `composition/`. A business rule found there moves into the owning context (ADR 0002, Entscheidung 9).
 
 Rules — these are directives, not preferences:
@@ -165,7 +165,9 @@ Clokr MUST be audit-proof (revisionssicher). All data relevant to working time, 
   trigger refuses UPDATE, TRUNCATE and every DELETE except the retention purge (the first DB trigger
   of the project; it guards against application mistakes, not against the table owner). Retention
   (`composition/data-retention.ts`): authentication events 12 months, lifecycle actions 10 years.
-  Details and limits: `docs/adr/0001-abweichungen.md` Eintrag Y.
+  Details and limits: `docs/adr/0001-abweichungen.md` Eintrag Y. `SupportAccess` (Issue #93) carries
+  the project's second database trigger, with the same intent (see the support-access bullet in the
+  operator section).
 
 These rules apply to ALL code changes touching time entries, leave, overtime, and employee data. When in doubt, prefer creating an audit log entry over skipping it.
 
@@ -1017,8 +1019,12 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   `app.audit()` and never read `user`, `employee` or `auditLog`; every route carries a rate limit. A
   source scan in `operator-auth-88.test.ts` fails on a violation. Operator responses carry tenant
   metadata and, since Phase 89, salon master data including the Phorest branch id — never employee
-  data and never counts (no time-entry, assignment or employee numbers, Issue #89 D-14a); support
-  access to tenant data is #93, not here. **The ONE documented exception (Issue #90):**
+  data and never counts (no time-entry, assignment or employee numbers, Issue #89 D-14a), with two
+  documented exceptions. **The SECOND documented exception (Issue #93):** person data under an active
+  support access — the operator reads a curated, read-only slice of ONE tenant's person data, only
+  through `composition/operator-support-ports.ts`, never in the route files themselves (see the
+  support-access bullet below); D-14a still binds every other operator response.
+  **The first documented exception (Issue #90):**
   `GET /api/v1/operator/dashboard` is the only operator response that carries numbers — per tenant
   the active and total salons, the active employees (not anonymized, not exited before today, UTC)
   and the UTC day of the newest login of any user of the tenant, plus totals and the inactive flag.
@@ -1040,6 +1046,52 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   labelled „Betreiber“ — the salon and coupling rows as well as the first-admin creation rows of a
   tenant the operator created. Operator rows written before Phase 89 carry no stamp and stay
   invisible to the tenant (append-only, not backfilled).
+- **Support access (Issue #93, Phase 93b).** A time-boxed, read-only, logged operator view of one
+  tenant's person data; ADR `docs/adr/0001-abweichungen.md` Eintrag Y, Nachtrag Issue #93.
+  - **Grant.** `SupportAccess` (Unterbau, an Erweiterung; `Tenant` and `OperatorAccount` FKs
+    `onDelete: Restrict`) carries a reason of 10–500 trimmed characters and a duration of 1 / 4 / 8 / 24 h
+    (default 1 h, never a free end time). `assertActiveSupportAccess()` in
+    `contexts/platform/support-access.ts` is the ONE decider of "active": `endedAt` null AND
+    `expiresAt > now` on the application clock, derived on every request, no cron; tenant and operator
+    must match and a deactivated tenant is refused (409 `TENANT_DEACTIVATED`). One active grant per
+    operator and tenant — a second request is 409 `SUPPORT_ACCESS_ALREADY_ACTIVE`, there is no silent
+    extension; after an end or an expiry a NEW request with a new reason is needed. Creation takes the
+    Tenant row `FOR NO KEY UPDATE` in READ COMMITTED (the race proof observes the block).
+  - **Reads.** Seven operator routes: lifecycle under `/api/v1/operator/tenants/:id/support-access`
+    (request, own history, end) and four curated GET reads under `…/support/…` (employees, one
+    employee's month, contracts, the tenant audit log) with `Cache-Control: no-store`; no write method
+    exists under `/support/`. Every read re-checks the grant INSIDE its audit transaction under the
+    grant row's `FOR SHARE` lock (`runSupportRead`, `lockGrant`), so an end waits for in-flight read
+    audits and no read audit follows a committed end. The data comes only from the ports of
+    `composition/operator-support-ports.ts` and three allow-list facade reads (time-entries, day
+    breaks, leave requests); excluded everywhere: free-text notes, reasons, documents, attests and
+    day-break acknowledgements. `support-access-boundary-93.test.ts` pins grant-first, audit-first,
+    GET-only and tenant-scoped ports by a source scan.
+  - **Double protocol, audit first.** Every read writes `SUPPORT_DATA_READ` to the `OperatorAuditLog`
+    (with IP) AND to the tenant `AuditLog` (actor-stamped, no IP) in ONE transaction BEFORE the read:
+    no log, no data; a read that fails afterwards leaves an "attempted read" row. A refusal is 403
+    `SUPPORT_ACCESS_REQUIRED` plus a `SUPPORT_ACCESS_REFUSED` row; start and end write
+    `SUPPORT_ACCESS_STARTED` / `SUPPORT_ACCESS_ENDED` to both logs.
+  - **Audit-log read is redacted by TYPE (D-17).** `redactSupportAuditValue()`
+    (`contexts/platform/support-audit-redaction.ts`) keeps numbers, booleans, null, numeric strings,
+    ISO dates/timestamps, UUIDs and UPPER_SNAKE control values and the structure; every other string
+    becomes "[ausgeblendet]". Never a key-name deny-list — the next new free-text field would pass it.
+    Window mandatory, at most 92 UTC calendar days, 50 rows per page.
+  - **Tenant side.** `GET /api/v1/support-accesses` and `/:id` (`audit-log:read`) and
+    `POST /api/v1/support-accesses/:id/end` (`tenant-settings:update`), both whole-tenant; the tenant
+    sees the operator's `displayName` (never e-mail or IP), the reason, the window, the status and every
+    read. A tenant end writes the `OperatorAuditLog` row with `operatorId` null and the tenant user in
+    `newValue`. The operator's own end stays possible for a deactivated tenant (it only narrows the access). The web
+    page „Support-Zugriffe“ under `/admin` lists, details and ends. At start every whole-tenant holder
+    of `tenant-settings:update` gets an in-app notice (mail policy `never`; the link only for holders of
+    `audit-log:read`, never a dead link), dismissed on end.
+  - **Immutability and retention.** The second DB trigger of the project (after the `OperatorAuditLog`
+    one): a `SupportAccess` row is never deleted and never edited, except the single NULL → value
+    transition of `endedAt`/`endedBy`/`endedByUserId`; DELETE only under the flagged retention purge
+    (`purgeExpiredSupportAccess`, 120 months, floored in the trigger), TRUNCATE refused. Test cleanup
+    disables the trigger only inside `cleanupTestData`, never in app code. Limits (a DB table owner
+    can drop the trigger; the reason is operator-authored free text; a grant outlives the 15-minute
+    operator token): ADR Nachtrag Issue #93.
 - **The operator console (Phase 89, Issue #89).** The UI lives at `/betreiber` in the same web app
   as the route group `(operator)`, with its own `sessionStorage` session (`$stores/operator-auth`,
   keys `clokr.operator.accessToken` / `.expiresAt`) and its own client `lib/operator/client.ts`

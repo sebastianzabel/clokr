@@ -3935,6 +3935,170 @@ Importgrenzen-Messung (Kompositionswurzel 58). Web: `OperatorOverview.test.ts` (
 dashboard (#90)“ in `operator-console.spec.ts` (fünf neue Fälle, 119 von 119 grün gegen den gebauten
 Teststack, einschließlich axe in hell und dunkel). Die Neutralitätsmatrix (1712 Zellen) ist unverändert.
 
+### Nachtrag (Issue #93, 2026-10-15): Support-Zugriff — befristete, protokollierte Einsicht
+
+**Schwere: hoch (zweite dokumentierte Ausnahme zu D-14a, personenbezogene Daten in Betreiberantworten).
+Unterbau-Änderung nach ADR 0002, Entscheidung 7 — eine Erweiterung (neues Modell `SupportAccess`, additive
+Migration, keine Änderung eines bestehenden Lesers). Freigabe durch das Erreichen von `Ready`; eine
+Semantikänderung liegt nicht vor.**
+
+Issue #93 gibt dem Betreiber die Möglichkeit, für die Fehlersuche in einem Mandanten dessen Personendaten
+einzusehen — unter drei Bedingungen: der Zugriff ist begründet und befristet, er ist lesend und auf einen
+kuratierten Umfang beschränkt, und der Mandant (der Verantwortliche) sieht jeden Abruf und kann den Zugriff
+sofort beenden. Ausgangslage war D-14a (Phase 89): Betreiberantworten tragen weder Personendaten noch Zahlen
+(Ausnahme #90: aggregierte Kennzahlen).
+
+#### Rechtsrahmen
+
+- **Art. 28 Abs. 3 lit. a DSGVO:** Der Betreiber ist Auftragsverarbeiter und verarbeitet Personendaten nur auf
+  dokumentierte Weisung des Verantwortlichen. Ein Support-Zugriff ist ein solcher Weisungsfall und deshalb an
+  einen Grund und eine Frist gebunden; das Weisungsrecht des Mandanten ist als „Zugriff beenden“ umgesetzt.
+- **Art. 5 Abs. 1 lit. b, c DSGVO:** Zweckbindung und Datenminimierung — ein kuratierter, lesender Umfang statt
+  der ganzen Mandanten-App; Freitexte und Dokumente sind ausgeschlossen.
+- **Art. 28 Abs. 3 lit. h und Art. 5 Abs. 2 DSGVO:** Nachweisfähigkeit — jeder Abruf wird mit Wer, Wann,
+  Mandant, Datenkategorie und Grund festgehalten, unveränderbar, und dem Mandanten in der App zugänglich gemacht.
+- **Art. 32 DSGVO:** Vertraulichkeit und Nachvollziehbarkeit. **Art. 9 DSGVO:** Krankheitsdaten — es werden nur
+  Art-Kürzel, Status und Tage gelesen, nie Atteste oder Notizen.
+- **§ 26 BDSG / Art. 88 DSGVO:** Beschäftigtendaten — Hebel ist die Transparenz gegenüber dem Verantwortlichen.
+
+#### Entscheidungen (Kurzform; das Addendum nach der Recherche ist maßgeblich)
+
+- **D-01 Eigene, nur lesende Betreiber-Endpunkte, keine Mandanten-Sitzung.** Der Betreiber erhält nie ein
+  Mandanten-Token. Die Trennung aus #88 bleibt vollständig; ein Impersonations-Token würde jede Mandanten-Leseroute
+  öffnen und „welche Daten“ im Protokoll unscharf machen.
+- **D-02/D-03 `SupportAccess`** (Unterbau): Mandant, Betreiber, Grund (10–500 Zeichen, getrimmt), Beginn, Ende,
+  vorzeitiges Ende. Dauer 1, 4, 8 oder 24 Stunden (Vorgabe 1), nie eine freie Endzeit. Aktiv ⇔ `endedAt` leer und
+  `expiresAt` in der Zukunft, bei jeder Anfrage mit der Anwendungsuhr geprüft, kein Cron (D-22). Pro Betreiber und
+  Mandant höchstens ein aktiver Zugriff (409 `SUPPORT_ACCESS_ALREADY_ACTIVE`, kein stilles Verlängern).
+- **D-04/D-28 Nur für aktive Mandanten.** Ein deaktivierter Mandant wird beim Antrag und bei jedem Abruf abgelehnt
+  (409 `TENANT_DEACTIVATED`, mit Ablehnungszeile). Das **Beenden** eines laufenden Zugriffs bleibt auch bei
+  deaktiviertem Mandanten möglich (Änderung in 93b-08: Beenden verengt den Zugriff nur).
+- **D-05 Kuratierter Umfang:** Mitarbeitendenliste (ohne E-Mail, Geburtsdatum, NFC-Kennung, Anschrift),
+  Monatsansicht je Person (Zeiteinträge samt Löschkennzeichen und Pausen, Anträge, Abwesenheiten, Tagespausen,
+  Soll/Ist/Saldo über `computeMonthReportFigures()`, Abschlussstatus), Vertragshistorie, Änderungsprotokoll des
+  Mandanten. Ausgeschlossen: jede Notiz, jede Begründung (`breakWaivedReason`, `DayBreakAck.reason`), Dokumente
+  und Atteste. Sieben Betreiberrouten: drei für den Lebenszyklus (`POST`, `GET` Verlauf, `POST …/:accessId/end`
+  unter `/support-access`), vier Lesungen (`GET` unter `/support/…`); keine Schreibmethode unter `/support/`.
+- **D-06/D-19 Doppelt protokolliert, erst protokollieren, dann lesen.** Beide Zeilen (`OperatorAuditLog` mit IP,
+  Mandanten-`AuditLog` ohne IP, Akteur gestempelt) werden in einer Transaktion vor der Lesung geschrieben; scheitert
+  das Protokoll, wird nichts gelesen. Ein Abruf ohne aktiven Zugriff ist 403 `SUPPORT_ACCESS_REQUIRED` mit einer
+  Zeile `SUPPORT_ACCESS_REFUSED`. Antworten tragen `Cache-Control: no-store` (D-11).
+- **D-07/D-25 Unveränderbarkeit.** Der zweite Datenbank-Trigger des Projekts (nach dem des `OperatorAuditLog`,
+  Eintrag Y): `SupportAccess` wird nie gelöscht und nie geändert, außer durch den einmaligen Übergang von leer auf
+  einen Wert bei `endedAt`/`endedBy`/`endedByUserId`; DELETE nur unter dem gekennzeichneten Aufbewahrungslauf und
+  erst nach 120 Monaten (Boden im Trigger), TRUNCATE ist verboten. Dazu drei CHECK-Regeln (`endedBy`, Paar-Regel,
+  Zeitfenster). `purgeExpiredSupportAccess` läuft im täglichen Lauf von `composition/data-retention.ts`, auch für
+  deaktivierte Mandanten.
+- **D-08/D-27/D-29 Sichtbarkeit und Kontrolle für den Mandanten.** `GET /api/v1/support-accesses` und `/:id`
+  (`audit-log:read`) und `POST /api/v1/support-accesses/:id/end` (`tenant-settings:update`), jeweils mandantenweit,
+  keine neuen Katalogschlüssel. Der Mandant sieht den Anzeigenamen des Betreiberkontos (nie E-Mail oder IP). Die
+  Betreiberzeile eines Mandanten-Endes hat `operatorId` leer; der Mandantennutzer steht im `newValue`. Die Admin-Seite
+  „Support-Zugriffe“ liegt in der Gruppe COMPLIANCE hinter „Audit & Log“. Beim Start geht eine In-App-Mitteilung an
+  jeden mandantenweiten Inhaber von `tenant-settings:update` (E-Mail-Richtlinie „nie“); der Link steht nur bei
+  Empfängern, die auch `audit-log:read` mandantenweit halten (kein toter Link). Beim Ende werden die offenen
+  Mitteilungen ausgeblendet.
+- **D-09/D-21 Betreiberkonsole.** Abschnitt „Support-Zugriff“ auf der Mandantenseite, Leseansichten unter
+  `/betreiber/mandanten/[id]/support/…` mit durchgehendem Banner; ein 403 `SUPPORT_ACCESS_REQUIRED` meldet den
+  Betreiber nicht ab. Die Konsole bleibt von der Mandanten-App isoliert (`operator-isolation-89`).
+- **D-10/D-24 Ausnahmeregister.** Der **einzige** Betreiberpfad zu Personendaten ist
+  `composition/operator-support-ports.ts` (Lesungen als `ports` in die Routen injiziert) hinter
+  `assertActiveSupportAccess()` (`contexts/platform/support-access.ts`), der einen Entscheidungsstelle für „aktiv“.
+  Die Routendateien lesen selbst weiterhin kein Personenmodell; `operator-auth-88` bleibt unverändert grün.
+- **D-12/D-23 Gleichzeitigkeit.** Der Antrag sperrt die Mandantenzeile `FOR NO KEY UPDATE` in READ COMMITTED und
+  prüft darunter „kein aktiver Zugriff“; von zwei parallelen Anträgen gelingt genau einer (Test beobachtet das
+  Warten in `pg_blocking_pids`).
+- **D-17 Schwärzung nach Typ (Erlaubnisliste).** In `oldValue`/`newValue` des gelesenen Änderungsprotokolls bleiben
+  Zahlen, Wahrheitswerte, `null`, Datums- und Zeitangaben, UUIDs und UPPER_SNAKE-Kennwerte erhalten, dazu die
+  Struktur; jeder andere Text wird zu „[ausgeblendet]“ (`redactSupportAuditValue`,
+  `contexts/platform/support-audit-redaction.ts`). Eine Sperrliste nach Feldnamen würde das nächste neue Freitextfeld
+  still durchlassen. Fenster Pflicht, höchstens 92 UTC-Kalendertage, 50 Einträge je Seite (D-26: Personenfilter über
+  `entityId` oder `employeeId` im Wert).
+
+#### Zweite dokumentierte Ausnahme zu D-14a und Begründung
+
+D-14a schloss Personendaten und Zahlen in Betreiberantworten aus; Nachtrag #90 ließ aggregierte Kennzahlen zu.
+Ein Support-Zugriff öffnet **personenbezogene** Daten, deshalb nur so weit und so lange, wie es der Grund trägt:
+befristet (höchstens 24 Stunden), lesend, kuratiert, doppelt protokolliert und vom Verantwortlichen jederzeit
+beendbar. D-14a gilt für jede andere Betreiberantwort unverändert, und weder #90 noch #93 sind ein Präzedenzfall
+für eine weitere Ausnahme. Eine neue Lesung gehört in `operator-support-ports.ts`, bekommt eine Eintragszeile im
+Grenztest `support-access-boundary-93.test.ts` und wird durch eine Fachentscheidung des Issues freigegeben.
+
+#### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine fachliche Änderung. Zwei zusätzliche, anhängende Lesefunktionen in der Fassade
+  (Monatseinträge einschließlich Löschkennzeichen, Tagespausen), ohne Freitexte; die Zahl der Fassadenfunktionen
+  steigt von 143 auf 146 (zusammen mit der Abwesenheits-Lesefunktion).
+- **Abwesenheiten:** keine fachliche Änderung. Eine Lesefunktion für Anträge ohne Notizen und Atteste.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** keine Änderung. Gelesen wird nur über `computeMonthReportFigures()`;
+  `calcLeaveAbsenceMinutesTz()` und der `sbClaimed`-Satz bleiben unberührt.
+- **Kompositionsschicht:** ein neues, regelfreies Lesemodul `composition/operator-support-ports.ts`. Es besitzt
+  kein Modell und trägt keine Fachregel; `app.ts` registriert drei Routen-Plugins mehr (Zähler der
+  Kompositionswurzel in `context-boundary-import-exceptions.json` 58 → 61).
+- **Unterbau:** neues Modell `SupportAccess` (zwei Migrationen, rein additiv, kein Backfill), neue Funktionen in
+  `contexts/platform/` (`support-access.ts`, `support-access-types.ts`, `support-audit-redaction.ts`), vier neue
+  Betreiber-Audit-Aktionen, Mandanten-Routen `api/support-accesses.ts`. Ausfuhren aus `index.ts` kamen hinzu, keine
+  bestehende änderte Signatur oder Bedeutung. Plattform-Modelle in `MODEL_OWNER`: 19 → 20 (gesamt 52 → 53).
+
+#### Gates und Tests
+
+- **API** (je Datei die Fälle der Akzeptanzkriterien): `support-access-decider-93` (Entscheiderfunktion,
+  Antrag unter Sperre, `lockGrant`, Schreiber, Trigger), `support-access-grant-93` (Antrag, Dauer, 409, Ablauf mit
+  eingespeister Uhr, Verlauf, Beenden, Warten eines Lesevorgangs auf ein Ende), `support-access-immutability-93`
+  (Trigger- und CHECK-Matrix, Aufbewahrungslauf, keine Änderungsroute), `support-access-facades-93`
+  (Schlüsselmengen und Marker der drei Fassadenlesungen), `support-access-reads-93` (Monat, Verträge,
+  Änderungsprotokoll: Schlüssel-Whitelist, ausgeschlossene Felder, doppelte Protokollierung, geschlossen
+  scheiternd, byte-gleiche 404), `support-audit-redaction-93` (Schwärzung, auch ein künftiges unbekanntes
+  Textfeld), `support-access-tenant-93` (Liste, Detail, Beenden, Mitteilung, 403-Matrix),
+  `support-access-boundary-93` (Quelltextscan: erst Entscheiderfunktion, erst Protokoll, nur GET, Ports mit
+  Mandantenbezug), dazu `operator-surface-off-88` (ohne `OPERATOR_JWT_SECRET` keine Betreiberroute),
+  `t100-09-oracle-probe` (zwei neue Mandantenrouten als `probe`, fremde Zugriffs-ID gleich unbekannter ID) und
+  `permission-site-mapping`. Die Neutralitätsaufzeichnungen (`neutrality/recorded/`) sind unverändert; die neuen
+  Routen stehen in `EXCLUDED_ROUTES` von `matrix-config.ts`.
+- **Web:** Komponenten- und Hilfstests der Konsole (`SupportSection`, `SupportBanner`, `SupportEmployeeTable`,
+  `SupportMonthView`, `SupportContracts`, `SupportAuditLog`, `support-audit`, `support-month`, `support-nav`) und der
+  Mandantenseite (`SupportAccessList`, `SupportAccessDetail`, `support-access/labels`), `operator-isolation-89`,
+  `admin-nav-visibility-83`, `admin-route-permissions`. **E2E:** die Beschreibung „operator console - support access
+  (#93)“ in `operator-console.spec.ts` (24 Fälle, gesamte Datei 143 von 143 grün, einschließlich axe in hell und dunkel
+  und 360 px). Sichtprüfung beider Oberflächen: 30 Aufnahmen in drei Breiten (Phase-Verzeichnis, nicht im Repo).
+- **Gates:** `lint:tenant-scoping`, `lint:facade-signatures`, `lint:t100-09-routes --check`, `lint:role-checks`,
+  `lint-guard-vacuity`, Importgrenzen- und Fremdzugriffsmessung, `lint-e2e-spec-registry`,
+  `check-test-completeness` (Untergrenzen angehoben).
+
+#### Grenzen
+
+- **Ein Insider mit Tabelleneigentümer-Rechten kann die Trigger entfernen.** Beide Trigger schützen gegen
+  Anwendungsfehler, nicht gegen den Besitzer der Tabelle; die Absicherung des direkten Datenbankzugriffs ist
+  organisatorisch und ausdrücklich nicht Teil von #93.
+- **Der Grund ist vom Betreiber verfasster Freitext** und wird dem Mandanten unverändert gezeigt (Länge 10–500, kein
+  Markup-Rendering). Er ist eine Aussage des Betreibers, keine geprüfte Tatsache.
+- **Art. 9: Rest der Art-Kürzel.** Die Leseansicht zeigt Anträge mit ihrem Art-Kürzel; `SICK`, `SICK_CHILD`,
+  `MATERNITY` und `PARENTAL` verraten damit eine Krankheit, einen Mutterschutz oder eine Elternzeit. Das ist
+  Bestandteil der Aufgabe (Fehlersuche an Saldo und Urlaub) und wird hingenommen; nie gelesen werden Atteste,
+  Notizen und Dokumentpfade.
+- **Zu viel statt zu wenig protokolliert.** Scheitert eine Lesung nach ihrer Protokollzeile, bleibt eine Zeile für
+  einen versuchten Abruf (D-19, Protokoll zuerst). Das ist gewollt und ehrlicher als der umgekehrte Fehler.
+- **Zwischen Protokollzeile und Lesung kann ein Ende noch festschreiben.** Die erneute Prüfung innerhalb der
+  Protokolltransaktion unter `FOR SHARE` auf der Zugriffszeile schließt nur das Fenster **vor** der Protokollzeile
+  (ein Ende wartet auf laufende Protokolltransaktionen, und nach einem festgeschriebenen Ende folgt keine
+  Abrufzeile). Eine Lesung, deren Protokollzeile bereits festgeschrieben ist, läuft noch zu Ende (Beleg: ein beobachtetes
+  Warten in `support-access-grant-93`, Fall g).
+- **Ein 24-Stunden-Zugriff überlebt das 15-Minuten-Token.** Der Zugriff gehört zum Betreiberkonto, nicht zum
+  Token; ein abgelaufenes Token verlangt eine neue Anmeldung mit TOTP, der Zugriff läuft weiter. Sperrt oder
+  entzieht man das Konto (MFA-Zurücksetzen, Deaktivierung), enden die Token sofort (#557), der Zugriff selbst endet
+  nur durch Ablauf oder ein ausdrückliches Ende.
+- **Die Schwärzung bleibt bei UPPER_SNAKE und Zahlenketten stehen, auch wenn ein Mandant sie als Freitext
+  getippt hat** (zum Beispiel ein einzelnes Wort in Großbuchstaben oder eine Ziffernfolge); ein Freitext kann sich
+  von einem Kennwert nicht unterscheiden lassen. Die Regel ist deshalb eine Erlaubnisliste mit einem benannten Rest,
+  keine Sperrliste.
+- **Zeitfenster in UTC.** Das Fenster des Änderungsprotokolls (höchstens 92 Kalendertage) zählt in UTC-Tagen, nicht
+  in der Zeitzone des Mandanten; die Konsole weist darauf hin und zeigt Zeiten in der Zone des Browsers.
+- **`HEAD` zählt als Abruf.** Fastify beantwortet `HEAD` auf einer `GET`-Route; die Sicherung (Entscheidung, Protokoll,
+  `no-store`) gilt unverändert, ein `HEAD` schreibt also ebenfalls die zwei Protokollzeilen.
+- **Außerhalb von D-14:** eine vorherige Freigabe durch den Mandanten (würde den Support genau dann blockieren, wenn
+  der Administrator ausgesperrt ist — ersetzt durch Transparenz und Beenden-Recht), eine E-Mail-Benachrichtigung,
+  Dienstplan, Berichte und DATEV, und die Absicherung des direkten Datenbankzugriffs.
+
 ---
 
 ## Z — Gebuchte Pakete je Mandant (Phase 566, Issue #566)

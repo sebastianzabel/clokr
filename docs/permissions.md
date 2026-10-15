@@ -1028,8 +1028,8 @@ Katalog-Permission und stehen in keiner der Tabellen oben; die Zugangsentscheidu
 - **Ohne `OPERATOR_JWT_SECRET`** sind diese Endpunkte gar nicht registriert (404); die
   Mandanten-Seite verhält sich unverändert.
 - Alle Anmeldeausgänge landen im `OperatorAuditLog`, nie im Mandanten-`AuditLog`.
-- **Mandanten-Verwaltung liefert nur Metadaten** (Beschluss 2026-08-27; Support-Zugriff ist #93): keine
-  Mitarbeiterlisten, Zählungen oder sonstigen Mandantendaten. Das rohe Einladungstoken steht nur in der
+- **Mandanten-Verwaltung liefert nur Metadaten** (Beschluss 2026-08-27; Personendaten nur unter einem
+  Support-Zugriff, siehe unten): keine Mitarbeiterlisten, Zählungen oder sonstigen Mandantendaten. Das rohe Einladungstoken steht nur in der
   Mail, nie in einer Antwort. Es gibt keine Löschroute. Eine Mandanten-Änderung schreibt genau eine
   Zeile in den `OperatorAuditLog`; eine Salon-Anfrage kann mehrere Aktionen schreiben (ersetzt sie eine
   Kopplung, stehen `SALON_COUPLING_REMOVED` und `SALON_COUPLING_SET` nebeneinander, ein Bearbeiten mit
@@ -1055,6 +1055,18 @@ Katalog-Permission und stehen in keiner der Tabellen oben; die Zugangsentscheidu
   Einsatzsalon-Zuordnungen; je beendeter Zuordnung steht eine `END`-Zeile (Akteur `OPERATOR`) im
   Audit-Protokoll des Mandanten, neben `SALON_DEACTIVATED` im `OperatorAuditLog`, alles in einer
   Transaktion. Ablehnungen nennen keine Zählungen und schreiben keine Audit-Zeile.
+- **Support-Zugriff (Issue #93) — die zweite dokumentierte Ausnahme** zur Regel „Betreiber liefert nur Metadaten“
+  (die erste sind die Kennzahlen aus #90): Die sieben Endpunkte `…/support-access` (Antrag, eigener Verlauf, Beenden) und
+  `…/support/…` (vier Lesungen) liefern Personendaten, aber nur, solange der Betreiber für genau diesen Mandanten einen
+  aktiven Zugriff hält (Grund 10–500 Zeichen, 1/4/8/24 Stunden, `assertActiveSupportAccess()` als einzige
+  Entscheidungsstelle; sonst 403 `SUPPORT_ACCESS_REQUIRED`). Die Daten kommen ausschließlich aus
+  `composition/operator-support-ports.ts`, kuratiert und ohne Freitexte, Dokumente und Atteste; es gibt keine
+  Schreibmethode unter `/support/`. **Doppeltes Protokoll:** jeder Abruf schreibt vor der Lesung, in einer
+  Transaktion, `SUPPORT_DATA_READ` in den `OperatorAuditLog` (mit IP) und in den `AuditLog` des Mandanten (ohne IP,
+  Akteur `OPERATOR`); scheitert das Protokoll, gibt es keine Daten. Der Mandant sieht und beendet seine Zugriffe über die
+  drei Mandantenrouten `/api/v1/support-accesses` (Tabellen oben: `audit-log:read` und `tenant-settings:update`, jeweils
+  mandantenweit, keine neuen Katalogschlüssel). Details und Grenzen: `docs/adr/0001-abweichungen.md` Eintrag Y,
+  Nachtrag Issue #93.
 
 ## Pflege
 

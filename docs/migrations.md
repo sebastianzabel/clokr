@@ -620,6 +620,51 @@ beliebig viele Salons, Schlüssel, Terminals und Quellen anlegen. Beim erneuten 
 gespeicherten Pakete bestehen; dann den Vergleich aus Schritt 3 wiederholen, weil in der Zwischenzeit Salons
 entstanden sein können (die Kontingente lassen sie bestehen, nur neue werden abgelehnt — nie rückwirkend).
 
+## Phase 93b — Support-Zugriff (Issue #93)
+
+**Was die Migrationen tun.** Zwei Verzeichnisse, beide rein additiv, kein Backfill, kein Eingriff in eine bestehende Tabelle:
+
+- `20261015131930_support_access` (**generiert** mit `prisma migrate diff` gegen die Schatten-Datenbank, vor dem Anwenden
+  gelesen): legt die Tabelle `SupportAccess` mit zwei Indizes und zwei Fremdschlüsseln an (`Tenant` und `OperatorAccount`,
+  beide `ON DELETE RESTRICT`).
+- `20261015131931_support_access_append_only` (**von Hand geschrieben**, nur DDL): die Funktion `support_access_guard()`,
+  die Trigger `support_access_no_update_delete` (zeilenweise) und `support_access_no_truncate` (je Anweisung) sowie die
+  CHECK-Regeln `SupportAccess_endedBy_valid`, `SupportAccess_end_pair` und `SupportAccess_window_valid`.
+
+**Der Trigger ist der zweite des Projekts** (der erste schützt `OperatorAuditLog`, Phase 88). Eine Zeile wird nie
+gelöscht und nie geändert, außer durch den einmaligen Übergang von leer auf einen Wert bei `endedAt`/`endedBy`
+(`endedByUserId` darf mitgesetzt werden); DELETE ist nur in einer Transaktion mit dem Schalter
+`clokr.support_access_retention = 'on'` und nur für Zeilen, die älter als 120 Monate sind, erlaubt (die Bereinigung
+`purgeExpiredSupportAccess` im täglichen Aufbewahrungslauf); TRUNCATE ist immer verboten. Der Trigger schützt gegen
+Anwendungsfehler, nicht gegen den Tabelleneigentümer, der ihn entfernen könnte.
+
+**Der Drift-Wächter sieht den Trigger nicht.** Prisma bildet weder Trigger noch CHECK-Regeln ab; `prisma migrate diff`
+bleibt deshalb leer, und genau deshalb ist die zweite Migration von Hand geschrieben. Der Trigger darf **nie** außerhalb
+der Testbereinigung abgeschaltet werden: Nur `cleanupTestData` in `apps/api/src/__tests__/setup.ts` schaltet ihn
+innerhalb **einer** Transaktion ab und wieder an; kein Anwendungscode, kein Skript und keine Wartung tut das.
+
+**Rollout.** Reines `prisma migrate deploy` (Einstiegspunkt des neuen Images, vorher wie immer `pg_dump`) auf int und
+prod; kein Vorabskript, keine Datenkorrektur, keine Vorschau. `prisma generate` ist nach dem Anwenden nötig, wo der
+Client nicht aus dem Image kommt. Der Betreiberzugang bleibt unverändert (`OPERATOR_JWT_SECRET`); ohne ihn sind die sieben
+Betreiberrouten nicht registriert, die drei Mandantenrouten (`/api/v1/support-accesses`) sind es immer und zeigen dann eine
+leere Liste.
+
+**Rollback.** Das vorige Image kennt `SupportAccess` nicht und liest die Tabelle nie; seine Schreibvorgänge berühren sie
+nicht, also braucht ein Rollback keine Datenkorrektur und die Migrationen werden nicht zurückgenommen. Für die Dauer des
+Rollbacks gibt es keinen Support-Zugriff (der alte Code kennt die Routen nicht); ein laufender Zugriff läuft durch seine
+Frist von höchstens 24 Stunden ab. Die Tabelle nie von Hand leeren oder löschen — der Trigger verweigert es, und ein
+Umgehen wäre ein Eingriff in das Nachweisprotokoll.
+
+**Vor dem ersten Einsatz prüfen (lesend).**
+
+```sql
+-- The table exists and both triggers are installed.
+SELECT tgname FROM pg_trigger WHERE tgrelid = '"SupportAccess"'::regclass AND NOT tgisinternal ORDER BY tgname;
+-- expected: support_access_no_truncate, support_access_no_update_delete
+```
+
+Mandanten-Auffrischung int: siehe `docs/data-refresh-process.md` (`SupportAccess` bleibt unverändert erhalten).
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:
