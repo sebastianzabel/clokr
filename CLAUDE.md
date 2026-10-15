@@ -329,7 +329,9 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   gets the same neutral text as the redacted day check, title and mail subject included; Issue #85
   D-07). With one entry per
   day (#70 still open) every result equals the pre-80 behaviour, proven by the frozen-copy
-  equivalence test (`day-break-equivalence-80.test.ts`; its fixture and the test are never edited).
+  equivalence test (`day-break-equivalence-80.test.ts`; its frozen fixture is never edited, and a deliberate
+  behaviour change enters only through the amendment register
+  `fixtures/day-break-equivalence-80-amendments.json` with rule, reason and issue — #523 is the first).
   Since D-22 the kernel additionally returns the day's breaks as intervals with their source
   (`entry-break`, `day-break`, `same-salon-gap`, `unplaced-entry-break` = legacy `breakMinutes`
   without position, never placed), the gaps and the work blocks between breaks; Phase 80 warnings
