@@ -171,6 +171,7 @@
 ├── /api/v1/operator/auth/login (POST)
 ├── /api/v1/operator/auth/me (GET, HEAD)
 ├── /api/v1/operator/auth/verify (POST)
+├── /api/v1/operator/dashboard (GET, HEAD)
 ├── /api/v1/operator/tenants (GET, HEAD, POST)
 ├── /api/v1/overtime/:employeeId (GET, HEAD)
 ├── /api/v1/overtime/close-month (POST)

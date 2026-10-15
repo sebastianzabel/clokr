@@ -13,6 +13,7 @@ import { AccessContextError, PackageRefusalError } from "./contexts/platform"; /
 import { authRoutes } from "./contexts/platform/api/auth";
 import { operatorAuthRoutes } from "./contexts/platform/api/operator/auth"; // Phase 88 (#88)
 import { operatorTenantRoutes } from "./contexts/platform/api/operator/tenants"; // Phase 88 (#88)
+import { operatorDashboardRoutes } from "./contexts/platform/api/operator/dashboard"; // Issue #90
 import { operatorSalonRoutes } from "./contexts/platform/api/operator/salons"; // Phase 89 (#89)
 import { seedDefaultsForNewTenant } from "./composition/tenant-onboarding"; // Phase 88 (#88)
 import { operatorSalonPorts } from "./composition/operator-salon-ports"; // Phase 89 (#89)
@@ -352,6 +353,8 @@ export async function buildApp() {
       prefix: "/api/v1/operator/tenants/:id/salons",
       ports: operatorSalonPorts,
     });
+    // Issue #90: aggregated, person-free tenant metrics; every view is logged.
+    await app.register(operatorDashboardRoutes, { prefix: "/api/v1/operator/dashboard" });
   }
   await app.register(employeeRoutes, { prefix: "/api/v1/employees" });
   await app.register(timeEntryRoutes, { prefix: "/api/v1/time-entries" });

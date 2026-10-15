@@ -35,6 +35,11 @@ describe("operator surface off (OPERATOR_JWT_SECRET unset)", () => {
     }
   });
 
+  it("does not register the operator dashboard route (Issue #90)", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/v1/operator/dashboard" });
+    expect(res.statusCode).toBe(404);
+  });
+
   it("keeps the tenant routes working and requireAuth answers 401, not a crash", async () => {
     const login = await app.inject({
       method: "POST",
