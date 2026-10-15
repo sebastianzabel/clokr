@@ -23,7 +23,6 @@
             user: {
               id: string;
               email: string;
-              role: "ADMIN" | "MANAGER" | "EMPLOYEE";
               employeeId: string | null;
             };
             sessionConfig?: { sessionTimeoutMinutes: number; rememberMeEnabled: boolean };

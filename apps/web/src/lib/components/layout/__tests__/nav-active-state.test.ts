@@ -52,9 +52,9 @@ const ALL_TEAM_PERMISSIONS = [
   "report:read:ZUGEWIESEN",
 ];
 
-function signInAs(role: "ADMIN" | "EMPLOYEE", permissions: string[]) {
+function signInAs(permissions: string[]) {
   // The store is mocked with a plain writable, so the user shape is only what the tab bar reads.
-  (authStore as unknown as { set(v: unknown): void }).set({ user: { role, permissions } });
+  (authStore as unknown as { set(v: unknown): void }).set({ user: { permissions } });
 }
 
 function mobileNav(): HTMLElement {
@@ -70,7 +70,7 @@ describe("BottomTabBar — current location (#515)", () => {
   beforeEach(() => {
     // Since #83 the admin items behind „Mehr“ are permission-gated (admin-route-permissions.ts),
     // so the admin fixture also holds the right its /admin/employees page needs.
-    signInAs("ADMIN", [...ALL_TEAM_PERMISSIONS, "employee:read:ZUGEWIESEN"]);
+    signInAs([...ALL_TEAM_PERMISSIONS, "employee:read:ZUGEWIESEN"]);
   });
 
   it("marks a primary route as the page and leaves Mehr unmarked, named exactly Mehr", () => {
@@ -113,7 +113,7 @@ describe("BottomTabBar — current location (#515)", () => {
   });
 
   it("names the page behind Mehr for a plain employee too", () => {
-    signInAs("EMPLOYEE", []);
+    signInAs([]);
     renderWithTheme(BottomTabBar, { currentPath: "/settings" });
     const nav = mobileNav();
 

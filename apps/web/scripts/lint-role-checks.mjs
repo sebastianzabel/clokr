@@ -120,6 +120,11 @@ export const SCOPE_FILES = [
   "apps/web/src/lib/components/layout/Topbar.svelte",
   "apps/web/src/lib/stores/salon-context.ts",
   "apps/web/src/lib/page-rights.ts",
+  // Issue #539: the session carries no role (anti-regression for the session store and both
+  // sign-in pages; a role field or a role comparison coming back fails here).
+  "apps/web/src/lib/stores/auth.ts",
+  "apps/web/src/routes/(auth)/login/+page.svelte",
+  "apps/web/src/routes/(auth)/otp/+page.svelte",
 ];
 
 /** (file, exact trimmed line text) pairs that may keep a flagged line. Empty since #538: the last

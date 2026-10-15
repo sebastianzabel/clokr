@@ -58,7 +58,6 @@ function asUser(permissions: string[]) {
     user: {
       id: "u1",
       email: "u1@test.de",
-      role: "EMPLOYEE",
       employeeId: "e1",
       firstName: null,
       permissions,

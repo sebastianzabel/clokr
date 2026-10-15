@@ -119,7 +119,7 @@ describe("mobile Mehr sheet renders the same sections (#516)", () => {
 
   it("marks the new targets as the page (admin Verfügbarkeit and Phorest)", async () => {
     (authStore as unknown as { set(v: unknown): void }).set({
-      user: { role: "ADMIN", permissions: p.ADMIN },
+      user: { permissions: p.ADMIN },
     });
     for (const [path, group] of [
       ["/admin/availability", "PLANUNG"],

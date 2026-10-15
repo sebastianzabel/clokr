@@ -99,14 +99,12 @@ const authMock = vi.hoisted(() => {
     user: {
       id: "u1",
       email: "u1@test.de",
-      role: "EMPLOYEE" as const,
       employeeId: "e1",
       firstName: null as string | null,
       permissions: undefined as string[] | undefined,
     } as {
       id: string;
       email: string;
-      role: "EMPLOYEE";
       employeeId: string;
       firstName: string | null;
       permissions?: string[];
@@ -160,7 +158,6 @@ beforeEach(() => {
   authMock.state.user = {
     id: "u1",
     email: "u1@test.de",
-    role: "EMPLOYEE",
     employeeId: "e1",
     firstName: null,
     permissions: undefined,
@@ -227,7 +224,6 @@ describe("Phase 408 (#408) — behavioural: loadPermissionsIfMissing() (Task 2, 
     authMock.state.user = {
       id: "u1",
       email: "u1@test.de",
-      role: "EMPLOYEE",
       employeeId: "e1",
       firstName: null,
       permissions: undefined,
@@ -255,7 +251,6 @@ describe("Phase 408 (#408) — behavioural: loadPermissionsIfMissing() (Task 2, 
     authMock.state.user = {
       id: "u1",
       email: "u1@test.de",
-      role: "EMPLOYEE",
       employeeId: "e1",
       firstName: null,
       permissions: [],
@@ -280,7 +275,6 @@ describe("Phase 408 (#408) — behavioural: loadPermissionsIfMissing() (Task 2, 
     authMock.state.user = {
       id: "u1",
       email: "u1@test.de",
-      role: "EMPLOYEE",
       employeeId: "e1",
       firstName: null,
       permissions: undefined,
@@ -298,7 +292,6 @@ describe("Phase 408 (#408) — behavioural: loadPermissionsIfMissing() (Task 2, 
     authMock.state.user = {
       id: "u1",
       email: "u1@test.de",
-      role: "EMPLOYEE",
       employeeId: "e1",
       firstName: null,
       permissions: undefined,
@@ -312,7 +305,6 @@ describe("Phase 408 (#408) — behavioural: loadPermissionsIfMissing() (Task 2, 
     authMock.state.user = {
       id: "u1",
       email: "u1@test.de",
-      role: "EMPLOYEE",
       employeeId: "e1",
       firstName: null,
       permissions: undefined,
@@ -329,5 +321,72 @@ describe("Phase 408 (#408) — behavioural: loadPermissionsIfMissing() (Task 2, 
     expect(first).toBe(true);
     expect(second).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Issue #539 (plan 12, D-05): the session carries no role. A refused sign-in or refresh answers
+// 403 `{ error: <German text>, code: "NO_ROLE_ASSIGNED" }` (539-09); the web shows the server's
+// text and ends the session on a refused refresh, and branches on neither the text nor the code.
+const NO_ROLE_TEXT =
+  "Ihrem Konto ist keine Rolle zugewiesen. Bitte wenden Sie sich an Ihre Administration.";
+
+describe("Issue #539 — a role-less account is refused with the server's reason", () => {
+  it("NR-1: a 401-triggered refresh refused with 403 NO_ROLE_ASSIGNED ends the session like any failed refresh", async () => {
+    // jsdom's location is not writable; the client assigns window.location.href on logout.
+    vi.stubGlobal("window", { location: { href: "/dashboard" } });
+    fetchMock
+      .mockReturnValueOnce(errorResponse(401)) // initial request
+      .mockReturnValueOnce(jsonResponse({ error: NO_ROLE_TEXT, code: "NO_ROLE_ASSIGNED" }, 403)); // refresh
+
+    await expect(api.get("/probe")).rejects.toMatchObject({ status: 401 });
+
+    expect(authMock.setTokens).not.toHaveBeenCalled();
+    expect(authMock.logout).toHaveBeenCalledTimes(1);
+  });
+
+  it("NR-2: a 403 sign-in answer becomes an ApiError carrying the German text as message and the code in data", async () => {
+    fetchMock.mockReturnValueOnce(
+      jsonResponse({ error: NO_ROLE_TEXT, code: "NO_ROLE_ASSIGNED" }, 403),
+    );
+
+    const err = (await api
+      .post("/auth/login", { email: "a@b.de", password: "x" })
+      .catch((e: unknown) => e)) as Error & { status: number; data: { code: string } };
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err.status).toBe(403);
+    expect(err.message).toBe(NO_ROLE_TEXT);
+    expect(err.data.code).toBe("NO_ROLE_ASSIGNED");
+    expect(authMock.logout).not.toHaveBeenCalled();
+  });
+});
+
+describe("Issue #539 — source-read: the web session has no role", () => {
+  const LOGIN = readSource(
+    "../routes/(auth)/login/+page.svelte",
+    "src/routes/(auth)/login/+page.svelte",
+  );
+  const OTP = readSource("../routes/(auth)/otp/+page.svelte", "src/routes/(auth)/otp/+page.svelte");
+
+  it("NR-3: AuthUser declares no role", () => {
+    const start = STORES_AUTH.indexOf("export interface AuthUser {");
+    const end = STORES_AUTH.indexOf("\n}", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(STORES_AUTH.slice(start, end)).not.toMatch(/\brole\s*[?]?\s*:/);
+  });
+
+  it("NR-4: the login and OTP payload types declare no role", () => {
+    expect(LOGIN).not.toMatch(/\brole\s*[?]?\s*:/);
+    expect(OTP).not.toMatch(/\brole\s*[?]?\s*:/);
+  });
+
+  it("NR-5: both pages display the caught error's message and do not branch on the refusal", () => {
+    expect(LOGIN).toMatch(/error\s*=\s*e instanceof Error \? e\.message/);
+    expect(OTP).toMatch(/const msg = e instanceof Error \? e\.message/);
+    expect(OTP).toMatch(/error\s*=\s*msg/);
+    for (const source of [LOGIN, OTP]) {
+      expect(source).not.toContain("NO_ROLE_ASSIGNED");
+      expect(source).not.toContain("keine Rolle");
+    }
   });
 });

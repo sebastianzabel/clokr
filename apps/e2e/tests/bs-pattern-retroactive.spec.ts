@@ -63,7 +63,6 @@ interface BrowserAuthResponse {
   user: {
     id: string;
     email: string;
-    role: "ADMIN" | "MANAGER" | "EMPLOYEE";
     employeeId: string | null;
     firstName?: string;
   };
