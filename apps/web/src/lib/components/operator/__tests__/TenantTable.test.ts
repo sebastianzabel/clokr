@@ -257,12 +257,12 @@ describe("TenantTable", () => {
       expect(labels).toEqual(["Salons", "Mitarbeitende", "Letzte Aktivität"]);
     });
 
-    it("shows the metric label only inside the 639 px media query (source)", () => {
+    it("shows the metric label only inside the stacked-list media query (source)", () => {
       const source = readFileSync(
         resolve(process.cwd(), "src/lib/components/operator/TenantTable.svelte"),
         "utf8",
       );
-      const mediaAt = source.indexOf("@media (max-width: 639px)");
+      const mediaAt = source.indexOf("@media (max-width: 767px)");
       expect(mediaAt).toBeGreaterThan(-1);
       expect(source.slice(0, mediaAt)).toMatch(/\.m-label \{\s*display: none;/);
       expect(source.slice(mediaAt)).toMatch(/\.tenant-table \.m-label \{\s*display: inline;/);

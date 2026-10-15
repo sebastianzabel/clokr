@@ -7,7 +7,7 @@
   route (`metrics`, keyed by tenant id) and an "Inaktiv" badge sits next to the status badge when
   the metrics say the tenant is inactive; a tenant without metrics shows a dash in those cells and
   no badge. The list is paged client-side above 25 rows.
-  Up to 639 px the table becomes a stacked list by CSS only (same markup), so a phone never
+  Up to 767 px the table becomes a stacked list by CSS only (same markup), so a phone never
   scrolls sideways: line one is the name with the status and inactivity badges, line two the
   muted "slug - Bundesland - Angelegt - Salons - Mitarbeitende - Letzte Aktivität" (the header row
   is hidden there, so each metric carries its own visible label), line three the reason.
@@ -179,6 +179,12 @@
     display: none;
   }
 
+  /* The amber text of .badge-yellow measures 4.25:1 on its own tint (WCAG AA asks 4.5:1 for 13 px
+     text), so the label takes the body text colour; the tint and border still carry the warning. */
+  .inactive-badge {
+    color: var(--text);
+  }
+
   .reason {
     display: block;
     margin-top: 4px;
@@ -192,7 +198,40 @@
     margin-top: 16px;
   }
 
-  @media (max-width: 639px) {
+  /* Eight columns do not fit a tablet width at the default padding: tighten the cells, let the
+     headers wrap and lower the content minimums so the table fits without sideways scrolling. */
+  @media (min-width: 768px) and (max-width: 1099px) {
+    .tenant-table th {
+      padding: 10px 6px;
+      white-space: normal;
+      vertical-align: bottom;
+      font-size: 11px;
+      letter-spacing: 0.02em;
+    }
+
+    .tenant-table td {
+      padding: 10px 6px;
+      font-size: 13px;
+    }
+
+    .slug {
+      min-width: 72px;
+    }
+
+    .state {
+      min-width: 84px;
+    }
+
+    .date {
+      min-width: 74px;
+    }
+
+    .metric {
+      min-width: 0;
+    }
+  }
+
+  @media (max-width: 767px) {
     .tenant-table thead {
       position: absolute;
       width: 1px;

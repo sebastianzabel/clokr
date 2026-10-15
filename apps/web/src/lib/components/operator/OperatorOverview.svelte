@@ -59,6 +59,12 @@
     overflow-wrap: anywhere;
   }
 
+  /* The faint caption colour of the KPI recipe is 3.08:1 on the console's white card (WCAG AA
+     asks 4.5:1 for 11 px text), so the console uses the muted text colour for it. */
+  .tile :global(.kpi-label) {
+    color: var(--text-muted);
+  }
+
   @media (max-width: 639px) {
     .overview-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
