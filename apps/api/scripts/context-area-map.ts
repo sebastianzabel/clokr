@@ -178,6 +178,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/operator/auth.ts": "unterbau", // Phase 88 plan 08 (D-02/D-03/D-03a) — operator sign-in (password, TOTP/recovery code, me); reads and writes OperatorAccount and OperatorAuditLog, Unterbau models that belong to no business context
   "src/contexts/platform/tenant-status.ts": "unterbau", // Phase 88 plan 06 (D-05, AC-88-07/08) — tenant deactivation/reactivation (Tenant columns, refresh-token revocation, operator audit) and the one refusal body of the credential paths; Tenant, RefreshToken and OperatorAuditLog are Unterbau models
   "src/contexts/platform/tenant-packages.ts": "unterbau", // Phase 566 (#566) — booked packages per tenant: the one decider of the Tenant.bookedModules/salonQuota columns, an Unterbau model
+  "src/contexts/platform/facade/operator-metrics.ts": "unterbau", // Issue #90 — the one producer of the operator dashboard counts; reads Tenant, Salon, Employee and the logins of User, all Unterbau models
+  "src/contexts/platform/api/operator/dashboard.ts": "unterbau", // Issue #90 — operator dashboard route (aggregated tenant metrics, DASHBOARD_VIEWED audit); reads Tenant and calls the metrics facade, owns no model
   "src/contexts/platform/api/operator/salons.ts": "unterbau", // Phase 89 (#89, D-05/D-06/D-07) — operator salon routes (list now, mutations in later plans); reads Salon through the Unterbau facade and gets coupling and time-entry count through a port from the composition root
   "src/composition/operator-salon-ports.ts": "komposition", // Phase 89 (#89, D-07/D-12) — maps the time-tracking and scheduling index exports onto the operator salon port; owns no model, carries no rule
 

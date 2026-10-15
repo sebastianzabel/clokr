@@ -6,6 +6,7 @@ import {
   describeLoadError,
   federalStateLabel,
   formatOperatorDate,
+  formatOperatorDay,
 } from "../labels";
 
 const ALL: FederalState[] = [
@@ -85,5 +86,19 @@ describe("describeLoadError", () => {
 
   it("ignores the message text: a message that says 429 does not change the outcome", () => {
     expect(describeLoadError({ status: 400, message: "429" }, FALLBACK)).toBe(FALLBACK);
+  });
+});
+
+describe("formatOperatorDay", () => {
+  it("rewrites a calendar day as dd.MM.yyyy without a time-zone shift", () => {
+    expect(formatOperatorDay("2026-10-01")).toBe("01.10.2026");
+    expect(formatOperatorDay("2026-12-31")).toBe("31.12.2026");
+  });
+
+  it("shows a dash for anything that is not a YYYY-MM-DD day", () => {
+    expect(formatOperatorDay("")).toBe("–");
+    expect(formatOperatorDay("2026-10-01T22:00:00.000Z")).toBe("–");
+    expect(formatOperatorDay("01.10.2026")).toBe("–");
+    expect(formatOperatorDay("not a day")).toBe("–");
   });
 });

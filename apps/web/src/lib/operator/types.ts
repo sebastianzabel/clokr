@@ -28,6 +28,38 @@ export interface OperatorTenant {
   packages: OperatorTenantPackages;
 }
 
+/** Totals block of `GET /operator/dashboard` (Issue #90): counts only. */
+export interface OperatorDashboardTotals {
+  tenants: number;
+  activeTenants: number;
+  deactivatedTenants: number;
+  activeSalons: number;
+  activeEmployees: number;
+  inactiveTenants: number;
+}
+
+/** One tenant's aggregate metrics (Issue #90): numbers and one calendar day, never a person. */
+export interface OperatorDashboardTenant {
+  id: string;
+  name: string;
+  slug: string;
+  deactivatedAt: string | null;
+  activeSalons: number;
+  totalSalons: number;
+  activeEmployees: number;
+  /** `YYYY-MM-DD` (UTC day) of the tenant's most recent sign-in, or null when there never was one. */
+  lastActivityAt: string | null;
+  inactive: boolean;
+}
+
+/** Wire type of `GET /operator/dashboard` (Issue #90, aggregates only). */
+export interface OperatorDashboard {
+  /** The server's inactivity threshold in days; the console never hard-codes it. */
+  inactivityDays: number;
+  totals: OperatorDashboardTotals;
+  tenants: OperatorDashboardTenant[];
+}
+
 /** One weekday of the opening hours; `day` 0 = Montag … 6 = Sonntag (API order). */
 export interface OpeningHoursDay {
   day: number;
