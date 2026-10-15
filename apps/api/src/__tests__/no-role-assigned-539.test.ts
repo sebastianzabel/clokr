@@ -33,7 +33,8 @@ import {
 } from "../contexts/platform/request-permissions";
 
 const PASSWORD = "test1234";
-const WRONG_PASSWORD = "definitely-wrong-1";
+// Generated at runtime: a literal here is flagged by gitleaks as a generic API key.
+const WRONG_PASSWORD = `wrong-${crypto.randomUUID()}`;
 
 describe("Issue #539 - NO_ROLE_ASSIGNED at login, verify-otp and refresh", () => {
   let app: FastifyInstance;
