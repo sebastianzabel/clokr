@@ -24,7 +24,8 @@
  * (the requester, whom most sites are about, and a colleague), an EMPLOYEE, an ADMIN and a MANAGER
  * with `exitDate` set, and a user whose only stored assignment is a SALONS-scope customer role that
  * holds every ZUGEWIESEN permission (the migration skips a user that already has an assignment).
- * After the migration: a fallback ADMIN, MANAGER and EMPLOYEE with zero stored assignments (D-08).
+ * After the migration: an ADMIN, MANAGER and EMPLOYEE with zero stored assignments (D-08). Since #539
+ * (Release A) there is no legacy-role fallback, so these users hold nothing and are no recipient.
  * Tenant S holds an active ADMIN and MANAGER and nothing that could trigger a notification of its
  * own, so any row S receives is a cross-tenant leak.
  *
@@ -544,7 +545,8 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
     // D-25: the checked-in migration SQL runs on the fixture before any trigger.
     await executeLegacyRoleMigration(app.prisma);
 
-    // D-08: fallback users exist only after the migration, so they hold no stored assignment.
+    // D-08: these users exist only after the migration, so they hold no stored assignment (since #539
+    // that means they hold nothing).
     await createPerson(tenantR, "R.fallback.admin", { role: "ADMIN" });
     await createPerson(tenantR, "R.fallback.manager", { role: "MANAGER" });
     await createPerson(tenantR, "R.fallback.employee", { role: "EMPLOYEE" });

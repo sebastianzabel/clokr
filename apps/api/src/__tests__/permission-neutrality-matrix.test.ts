@@ -15,8 +15,11 @@
  *
  * The five main actors hold stored role assignments (the checked-in migration SQL gives them one,
  * D-25), so after the switch they prove "migration + switched code == old code". The three fallback
- * actors are built AFTER the migration ran and hold no assignment — a test below proves that — so
- * they prove the legacy-role fallback path (D-21).
+ * actors are built AFTER the migration ran and hold no assignment — a test below proves that. Since
+ * #539 (Release A) the legacy-role fallback is gone, so these actors hold NOTHING: their changed
+ * cells are generated #539 amendment links, proven independently by the "#539 oracle (D-15)"
+ * describes - the three fallback actors answer identically and like an actor with a stored
+ * assignment of an empty customer role.
  *
  * ── RECORD vs VERIFY ────────────────────────────────────────────────────────────────────────────
  *   NEUTRALITY_MATRIX_MODE=record  run the cells and write every record to the recording file
@@ -101,6 +104,7 @@ import {
   ACTOR_ORDER,
   EXCLUDED_ROUTES,
   FALLBACK_ACTORS,
+  ORACLE_ACTOR,
   OUTSIDE_DERIVATION,
   PHASES_ENABLED,
   ROUTE_SPECS,
@@ -222,6 +226,9 @@ function cellKey(actor: ActorKind, route: string, variant: string): string {
 }
 
 /** The route part of a cell key (`<actor> | <METHOD path> | <variant>`). */
+/** Anti-vacuity floor of the #539 oracle: the cells compared per actor (299 per user actor when written). */
+const MIN_ORACLE_CELLS = 290;
+
 function routeOfKey(key: string): string {
   const parts = key.split(" | ");
   if (parts.length !== 3) throw new Error(`matrix: malformed cell key ${JSON.stringify(key)}`);
@@ -239,6 +246,9 @@ describe("permission neutrality matrix (Issue #75)", () => {
   let stubs: ExternalStubs | undefined;
   const fixtures = new Map<ActorKind, ActorFixture>();
   const collected = new Map<string, CellResult>();
+  /** #539 (D-15): the cells of the oracle actor (a stored assignment of an empty customer role). */
+  const oracleCollected = new Map<string, CellResult>();
+  let oracleFixture: ActorFixture | undefined;
   let recording: Record<string, CellResult> | undefined;
   /** MERGE: the routes the existing recording already holds cells for. */
   let recordedRoutes: ReadonlySet<string> = new Set();
@@ -294,10 +304,13 @@ describe("permission neutrality matrix (Issue #75)", () => {
     // D-25: the checked-in migration SQL runs on the fixture before any cell, in both modes.
     await executeLegacyRoleMigration(app.prisma);
     for (const fixture of fixtures.values()) await registerMigrationRows(fixture);
-    // D-21: the fallback actors exist only after the migration, so they hold no assignment.
+    // D-21: the fallback actors exist only after the migration, so they hold no assignment (since #539
+    // that means they hold nothing).
     for (const actor of ACTOR_ORDER.filter((a) => FALLBACK_ACTORS.has(a))) {
       fixtures.set(actor, await buildActorTenant(app, actor));
     }
+    // #539 (D-15): the oracle actor, kept OUT of `fixtures` so no existing actor's label context changes.
+    oracleFixture = await buildActorTenant(app, ORACLE_ACTOR);
 
     if (MODE === "verify" || MERGE) {
       if (!existsSync(VERIFY_IN)) {
@@ -353,7 +366,7 @@ describe("permission neutrality matrix (Issue #75)", () => {
         );
       }
     }
-    for (const fixture of fixtures.values()) {
+    for (const fixture of [...fixtures.values(), ...(oracleFixture ? [oracleFixture] : [])]) {
       try {
         await cleanupMatrixExtras(app, fixture.tenantId);
         await cleanupTestData(app, fixture.tenantId);
@@ -438,7 +451,7 @@ describe("permission neutrality matrix (Issue #75)", () => {
   });
 
   describe("fallback actors (D-21)", () => {
-    it("hold zero stored role assignments at run start, so every cell of theirs uses the legacy-role fallback", async () => {
+    it("hold zero stored role assignments at run start, so since #539 every cell of theirs is answered by a user who holds nothing", async () => {
       const fallbackUsers = ACTOR_ORDER.filter((a) => FALLBACK_ACTORS.has(a)).map((actor) => {
         const userId = fixtures.get(actor)?.actorUserId;
         if (!userId) throw new Error(`matrix: fallback actor ${actor} has no user`);
@@ -521,6 +534,114 @@ describe("permission neutrality matrix (Issue #75)", () => {
       }
     });
   }
+
+  // ── #539 oracle (D-15) ─────────────────────────────────────────────────────────────────────────────
+  // The amendments of the fallback actors were GENERATED from a measured run. Without an independent
+  // reference they would be green by construction. The oracle actor holds a STORED tenant-wide
+  // assignment of a customer role with no permission; "holds nothing" then means: the three fallback
+  // actors answer every route and variant identically, and like the oracle.
+  describe("#539 oracle sweep (D-15)", () => {
+    it("sweeps every route and variant once as the empty-role actor", async () => {
+      if (!oracleFixture) throw new Error("matrix: no oracle fixture");
+      const ctx: LabelContext = {
+        self: oracleFixture,
+        others: [...fixtures.values()],
+        global: GLOBAL_LABELS,
+      };
+      for (const route of orderedRoutes) {
+        const spec = ROUTE_SPECS[route];
+        for (const variant of variantsOf(route, spec)) {
+          if (!actorRunsVariant(oracleFixture, variant)) continue;
+          oracleCollected.set(
+            cellKey(ORACLE_ACTOR, route, variant.name),
+            await runCell({
+              app,
+              ctx,
+              actorSlot: ACTOR_ORDER.length + 1,
+              route,
+              spec,
+              variant,
+            }),
+          );
+        }
+      }
+      expect(oracleCollected.size).toBeGreaterThanOrEqual(MIN_ORACLE_CELLS);
+    }, 600_000);
+  });
+
+  describe("#539 oracle (D-15)", () => {
+    /** The cells of `actor` keyed by `route | variant`, from the given collection. */
+    function cellsOf(
+      source: ReadonlyMap<string, CellResult>,
+      actor: ActorKind,
+    ): Map<string, CellResult> {
+      const out = new Map<string, CellResult>();
+      for (const [key, value] of source) {
+        const [keyActor, route, variant] = key.split(" | ");
+        if (keyActor === actor) out.set(`${route} | ${variant}`, value);
+      }
+      return out;
+    }
+
+    /** `statusOnly` routes name the actors whose body is no stable function of the tenant. */
+    function comparable(routeAndVariant: string, actor: ActorKind, value: CellResult): unknown {
+      const spec = ROUTE_SPECS[routeAndVariant.split(" | ")[0]];
+      return spec?.statusOnly?.actors.includes(actor) ? { status: value.status } : value;
+    }
+
+    it("(a) the three fallback actors answer every route and variant identically", () => {
+      const employee = cellsOf(collected, "FALLBACK_EMPLOYEE");
+      const manager = cellsOf(collected, "FALLBACK_MANAGER");
+      const admin = cellsOf(collected, "FALLBACK_ADMIN");
+      expect(employee.size).toBeGreaterThanOrEqual(MIN_ORACLE_CELLS);
+      const differing: string[] = [];
+      for (const [key, value] of employee) {
+        for (const [name, other] of [
+          ["FALLBACK_MANAGER", manager],
+          ["FALLBACK_ADMIN", admin],
+        ] as const) {
+          const theirs = other.get(key);
+          if (
+            theirs === undefined ||
+            !isDeepStrictEqual(
+              JSON.parse(JSON.stringify(comparable(key, "FALLBACK_EMPLOYEE", value))),
+              JSON.parse(JSON.stringify(comparable(key, name, theirs))),
+            )
+          ) {
+            differing.push(
+              `${key}: FALLBACK_EMPLOYEE ${JSON.stringify(value)} vs ${name} ${JSON.stringify(theirs)}`,
+            );
+          }
+        }
+      }
+      expect(differing).toEqual([]);
+      expect(manager.size).toBe(employee.size);
+      expect(admin.size).toBe(employee.size);
+    });
+
+    it("(b) the fallback actors equal an actor with a stored assignment of a customer role without permissions", () => {
+      const employee = cellsOf(collected, "FALLBACK_EMPLOYEE");
+      const oracle = cellsOf(oracleCollected, ORACLE_ACTOR);
+      expect(oracle.size).toBe(employee.size);
+      expect(oracle.size).toBeGreaterThanOrEqual(MIN_ORACLE_CELLS);
+      const differing: string[] = [];
+      for (const [key, value] of employee) {
+        const theirs = oracle.get(key);
+        if (
+          theirs === undefined ||
+          !isDeepStrictEqual(
+            JSON.parse(JSON.stringify(comparable(key, "FALLBACK_EMPLOYEE", value))),
+            JSON.parse(JSON.stringify(comparable(key, "FALLBACK_EMPLOYEE", theirs))),
+          )
+        ) {
+          differing.push(
+            `${key}: FALLBACK_EMPLOYEE ${JSON.stringify(value)} vs ORACLE ${JSON.stringify(theirs)}`,
+          );
+        }
+      }
+      expect(differing).toEqual([]);
+    });
+  });
 
   describe("locks (AC-75-17)", () => {
     it("records the ADMIN's review of its own leave request as the self-approval refusal", () => {

@@ -45,7 +45,7 @@
  * which is refused) — the input of `scripts/neutrality-amendments-from-run.ts`.
  * RECORD refuses once the legacy role guard's definition is gone from `middleware/auth.ts` (same
  * guard as the matrix). Both modes build the fixture, run the checked-in migration SQL (D-25), then
- * create the fallback users. Every run starts with `pnpm --filter @clokr/api run test:setup`.
+ * create the fallback users (users without a stored assignment, who hold nothing since #539). Every run starts with `pnpm --filter @clokr/api run test:setup`.
  * Mailer, storage and `fetch` are stubbed in both modes; every request carries its own
  * `remoteAddress`, so no rate limit (verify-otp: 5 per 10 minutes) can interfere.
  */
@@ -659,8 +659,24 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
       });
     }
 
-    it("the ADMIN-class feeds are fully labelled: 20 tenant/global rows, no <new>, no foreign row", () => {
-      for (const label of ["A.admin", "A.fallback.admin"]) {
+    it("the stored ADMIN feed is fully labelled: 20 tenant/global rows, no <new>, no foreign row; the ADMIN-column user without a stored assignment gets none (#539)", () => {
+      // A user without a stored assignment holds neither the audit nor the review/leave-request
+      // permissions: nothing of the ADMIN or MANAGER classes, at most its own time entry.
+      for (const label of ["A.fallback.admin", "A.fallback.manager"]) {
+        const ids = feeds.get(label)?.ids ?? ["<missing>"];
+        expect(ids.length, label).toBeLessThanOrEqual(1);
+        expect(
+          ids.filter((id) => !id.includes(`${label}.`)),
+          label,
+        ).toEqual([]);
+        expect(
+          ids.some(
+            (id) => id.startsWith("audit.") || id.startsWith("rev-") || id.startsWith("tlr-"),
+          ),
+          label,
+        ).toBe(false);
+      }
+      for (const label of ["A.admin"]) {
         const ids = feeds.get(label)?.ids ?? [];
         expect(ids, label).toHaveLength(FEED_LIMIT);
         expect(

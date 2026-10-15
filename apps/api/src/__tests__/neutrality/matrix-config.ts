@@ -29,7 +29,8 @@ export type ActorKind =
   | "ADMIN"
   | "FALLBACK_EMPLOYEE"
   | "FALLBACK_MANAGER"
-  | "FALLBACK_ADMIN";
+  | "FALLBACK_ADMIN"
+  | "ORACLE_EMPTY_ROLE";
 
 export const ACTOR_ORDER: readonly ActorKind[] = [
   "EMPLOYEE",
@@ -41,6 +42,15 @@ export const ACTOR_ORDER: readonly ActorKind[] = [
   "FALLBACK_MANAGER",
   "FALLBACK_ADMIN",
 ];
+
+/**
+ * The oracle actor of #539 (D-15): a user with a STORED tenant-wide assignment of a customer role with
+ * no permissions at all. It is NOT part of `ACTOR_ORDER`, `FALLBACK_ACTORS` or `API_KEY_ACTORS`, so the
+ * recording, the amendment comparison and the measured dumps never see it; the matrix test sweeps it
+ * once, separately, and compares the three fallback actors with it ("holds nothing" independently of
+ * how the amendments were produced).
+ */
+export const ORACLE_ACTOR: ActorKind = "ORACLE_EMPTY_ROLE";
 
 /** Actors authenticated with a `clk_` API key. They have no employee of their own. */
 export const API_KEY_ACTORS: ReadonlySet<ActorKind> = new Set(["APIKEY_PLAIN", "APIKEY_ADMIN"]);
