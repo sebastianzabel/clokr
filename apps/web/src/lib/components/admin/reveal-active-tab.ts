@@ -10,13 +10,15 @@ export function revealActiveTab(strip: HTMLElement, _activeTab: string | undefin
   function reveal() {
     const active = strip.querySelector<HTMLElement>(".view-tab--active");
     if (!active) return;
-    const left = active.offsetLeft;
-    const right = left + active.offsetWidth;
-    // Only the strip scrolls; the page never moves (scrollIntoView would also scroll it vertically).
-    if (left < strip.scrollLeft) {
-      strip.scrollLeft = left;
-    } else if (right > strip.scrollLeft + strip.clientWidth) {
-      strip.scrollLeft = right - strip.clientWidth;
+    // Measured against the strip's own box: offsetLeft would be relative to the nearest positioned
+    // ancestor and include the page gutter. Only the strip scrolls; the page never moves
+    // (scrollIntoView would also scroll it vertically).
+    const tab = active.getBoundingClientRect();
+    const box = strip.getBoundingClientRect();
+    if (tab.left < box.left) {
+      strip.scrollLeft -= box.left - tab.left;
+    } else if (tab.right > box.right) {
+      strip.scrollLeft += tab.right - box.right;
     }
   }
   reveal();
