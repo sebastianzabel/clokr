@@ -67,7 +67,8 @@ describe("Issue #82 — salon context wiring", () => {
       .split("\n")
       .filter((line) => /^\s+\w+\??:/.test(line))
       .map((line) => line.trim().split(/\??:/)[0]);
-    expect(fields).toEqual(["id", "email", "role", "employeeId", "firstName", "permissions"]);
+    // Issue #539 (D-05): the session carries no role either - the exact field set is the pin.
+    expect(fields).toEqual(["id", "email", "employeeId", "firstName", "permissions"]);
   });
 });
 
