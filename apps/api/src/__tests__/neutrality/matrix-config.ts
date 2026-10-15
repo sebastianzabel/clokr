@@ -235,6 +235,8 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
     "POST /api/v1/operator/tenants/:id/salons/:salonId/activate",
     "POST /api/v1/operator/tenants/:id/support-access",
     "GET /api/v1/operator/tenants/:id/support/employees",
+    "GET /api/v1/operator/tenants/:id/support-access",
+    "POST /api/v1/operator/tenants/:id/support-access/:accessId/end",
   ].map((route) => ({
     route,
     reason:

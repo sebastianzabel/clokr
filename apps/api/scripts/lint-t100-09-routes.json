@@ -1245,6 +1245,26 @@
       "reason": "`:id` addresses a Tenant by the operator principal, which sits above the tenant: there is no caller tenant whose foreign instance could be told apart from an unknown id. requireOperator runs first; an unknown id answers the same plain 404 `Mandant nicht gefunden` for every operator, before any audit row and before any tenant data is read (support.ts `runSupportRead` asks the decider, which reads the `tenant` model first), so it is not a tenant-membership oracle. Proven by support-access-grant-93.test.ts.",
       "ticket": null,
       "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/operator/tenants/:id/support-access",
+      "file": "apps/api/src/contexts/platform/api/operator/support-access.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Tenant by the operator principal, which sits above the tenant: there is no caller tenant whose foreign instance could be told apart from an unknown id. requireOperator runs first; an unknown id answers the same plain 404 `Mandant nicht gefunden` for every operator and the list reads only the calling operator's own grant rows (support-access.ts `listSupportAccessesForOperator`, tenant and operator in one `where`), so it is not a tenant-membership oracle. Proven by support-access-grant-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/operator/tenants/:id/support-access/:accessId/end",
+      "file": "apps/api/src/contexts/platform/api/operator/support-access.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. `:accessId` is resolved together with the tenant id and the operator id in one `where` (support-access.ts `endSupportAccessByOperator`), so another operator's or another tenant's grant id and an unknown id answer the one 404 `Support-Zugriff nicht gefunden` - proven byte-identical by support-access-grant-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
     }
   ]
 }

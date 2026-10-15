@@ -9,9 +9,10 @@
  * every case that needs a fresh principal seeds a fresh synthetic operator. Tenants are cleaned up in
  * `afterAll`, which also removes their grants through the trigger-disabled delete of `cleanupTestData`.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import type { Prisma } from "@clokr/db";
 import {
   getTestApp,
   closeTestApp,
@@ -21,9 +22,10 @@ import {
   cleanupTestData,
 } from "./setup";
 import { signOperatorToken } from "../contexts/platform/operator-auth";
+import { createSupportAccessInTx } from "../contexts/platform/support-access";
 
 type Fixture = Awaited<ReturnType<typeof seedGrundversionTenant>>;
-type Principal = { id: string; token: string };
+type Principal = { id: string; token: string; tokenVersion: number };
 
 const REASON = "Support ticket: employee list does not load";
 const GRANT_KEYS = [
@@ -71,6 +73,7 @@ async function newPrincipal(): Promise<Principal> {
   return {
     id: operator.id,
     token: signOperatorToken(app, operator.id, "access", operator.tokenVersion),
+    tokenVersion: operator.tokenVersion,
   };
 }
 
@@ -425,5 +428,527 @@ describe("(g) the grant ends while a read waits (D-19 check-then-audit window)",
       where: { action: "SUPPORT_DATA_READ", entityId: grant.id },
     });
     expect(tenantReads).toBe(0);
+  });
+});
+
+// ── Phase 93b-03: the grant lifecycle ─────────────────────────────────────────────────────────────
+
+const HOUR_MS = 3_600_000;
+const TENANT_NOT_FOUND_BODY = { error: "Mandant nicht gefunden" };
+
+function listGrants(tenantId: string, token: string) {
+  return app.inject({
+    method: "GET",
+    url: `/api/v1/operator/tenants/${tenantId}/support-access`,
+    headers: { authorization: `Bearer ${token}` },
+    remoteAddress: uniqueAddress(),
+  });
+}
+
+function endGrant(tenantId: string, accessId: string, token: string) {
+  return app.inject({
+    method: "POST",
+    url: `/api/v1/operator/tenants/${tenantId}/support-access/${accessId}/end`,
+    headers: { authorization: `Bearer ${token}`, "user-agent": "vitest-support-end" },
+    remoteAddress: uniqueAddress(),
+  });
+}
+
+function startedRows(operatorId: string, tenantId: string) {
+  return app.prisma.operatorAuditLog.count({
+    where: { action: "SUPPORT_ACCESS_STARTED", operatorId, subjectTenantId: tenantId },
+  });
+}
+
+function tenantStartedRows(operatorId: string) {
+  return app.prisma.auditLog.count({
+    where: {
+      action: "SUPPORT_ACCESS_STARTED",
+      newValue: { path: ["actor", "operatorId"], equals: operatorId },
+    },
+  });
+}
+
+describe("grant request validation and duration (D-02, D-03, AC-93-1)", () => {
+  const LONG_REASON = "x".repeat(501);
+  const INVALID_BODIES: [string, Record<string, unknown>][] = [
+    ["no reason", {}],
+    ["a reason of 9 trimmed characters", { reason: "  123456789  " }],
+    ["a reason of 501 characters", { reason: LONG_REASON }],
+    ["a whitespace-only reason", { reason: "              " }],
+    ["a duration of 2 hours", { reason: REASON, durationHours: 2 }],
+    ["a duration given as a string", { reason: REASON, durationHours: "1" }],
+    ["an extra body key", { reason: REASON, expiresAt: "2030-01-01T00:00:00Z" }],
+  ];
+
+  it.each(INVALID_BODIES)("refuses %s with 400 and writes nothing", async (_label, body) => {
+    const { tenant } = await newTenant("validation");
+    const operator = await newPrincipal();
+    const res = await requestGrant(tenant.id, operator.token, body);
+    expect(res.statusCode, res.body).toBe(400);
+    expect(await app.prisma.supportAccess.count({ where: { tenantId: tenant.id } })).toBe(0);
+    expect(await startedRows(operator.id, tenant.id)).toBe(0);
+    expect(await tenantStartedRows(operator.id)).toBe(0);
+  });
+
+  it.each([4, 8, 24])(
+    "a duration of %i hours ends exactly that long after the start",
+    async (h) => {
+      const { tenant } = await newTenant(`duration-${h}`);
+      const operator = await newPrincipal();
+      const res = await requestGrant(tenant.id, operator.token, {
+        reason: REASON,
+        durationHours: h,
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      const access = JSON.parse(res.body).access as { id: string; durationHours: number };
+      expect(access.durationHours).toBe(h);
+      const row = await app.prisma.supportAccess.findUniqueOrThrow({ where: { id: access.id } });
+      expect(row.expiresAt.getTime() - row.startedAt.getTime()).toBe(h * HOUR_MS);
+    },
+  );
+
+  it("an unknown tenant answers the exact operator tenant 404 and writes nothing", async () => {
+    const operator = await newPrincipal();
+    const res = await requestGrant(randomUUID(), operator.token, { reason: REASON });
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body)).toEqual(TENANT_NOT_FOUND_BODY);
+    expect(await app.prisma.supportAccess.count({ where: { operatorId: operator.id } })).toBe(0);
+  });
+
+  it("a deactivated tenant cannot receive a grant (409 TENANT_DEACTIVATED, no row)", async () => {
+    const { tenant } = await newTenant("grant-deactivated");
+    const operator = await newPrincipal();
+    await app.prisma.tenant.update({
+      where: { id: tenant.id },
+      data: { deactivatedAt: new Date() },
+    });
+    const res = await requestGrant(tenant.id, operator.token, { reason: REASON });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(JSON.parse(res.body).code).toBe("TENANT_DEACTIVATED");
+    expect(await app.prisma.supportAccess.count({ where: { tenantId: tenant.id } })).toBe(0);
+  });
+});
+
+describe("no silent extension, re-request after end or expiry, two operators (D-02, AC-93-5)", () => {
+  it("a second request while active leaves the stored expiresAt byte-equal", async () => {
+    const { tenant } = await newTenant("noextend");
+    const operator = await newPrincipal();
+    const first = await requestGrant(tenant.id, operator.token, { reason: REASON });
+    expect(first.statusCode).toBe(201);
+    const accessId = String(JSON.parse(first.body).access.id);
+    const before = await app.prisma.supportAccess.findUniqueOrThrow({ where: { id: accessId } });
+
+    const second = await requestGrant(tenant.id, operator.token, {
+      reason: "A second and different reason",
+      durationHours: 24,
+    });
+    expect(second.statusCode, second.body).toBe(409);
+    expect(JSON.parse(second.body).code).toBe("SUPPORT_ACCESS_ALREADY_ACTIVE");
+
+    const after = await app.prisma.supportAccess.findUniqueOrThrow({ where: { id: accessId } });
+    expect(after.expiresAt.toISOString()).toBe(before.expiresAt.toISOString());
+    expect(after.reason).toBe(before.reason);
+    expect(await app.prisma.supportAccess.count({ where: { tenantId: tenant.id } })).toBe(1);
+  });
+
+  it("after the operator ended the grant a NEW request opens a NEW row and the first stays", async () => {
+    const { tenant } = await newTenant("renew-ended");
+    const operator = await newPrincipal();
+    const first = await requestGrant(tenant.id, operator.token, { reason: REASON });
+    const firstId = String(JSON.parse(first.body).access.id);
+    expect((await endGrant(tenant.id, firstId, operator.token)).statusCode).toBe(200);
+    const ended = await app.prisma.supportAccess.findUniqueOrThrow({ where: { id: firstId } });
+
+    const second = await requestGrant(tenant.id, operator.token, {
+      reason: "A new reason after the end",
+    });
+    expect(second.statusCode, second.body).toBe(201);
+    const secondId = String(JSON.parse(second.body).access.id);
+    expect(secondId).not.toBe(firstId);
+
+    const firstAfter = await app.prisma.supportAccess.findUniqueOrThrow({ where: { id: firstId } });
+    expect(firstAfter).toEqual(ended);
+    expect(await app.prisma.supportAccess.count({ where: { tenantId: tenant.id } })).toBe(2);
+  });
+
+  it("after expiry a NEW request opens a NEW row and the expired one stays EXPIRED", async () => {
+    const { tenant } = await newTenant("renew-expired");
+    const operator = await newPrincipal();
+    const startedAt = new Date(Date.now() - 3 * HOUR_MS);
+    const expired = await seedSupportAccess(app, {
+      tenantId: tenant.id,
+      operatorId: operator.id,
+      startedAt,
+      expiresAt: new Date(startedAt.getTime() + HOUR_MS),
+    });
+    const res = await requestGrant(tenant.id, operator.token, { reason: REASON });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(await app.prisma.supportAccess.count({ where: { tenantId: tenant.id } })).toBe(2);
+    const list = JSON.parse((await listGrants(tenant.id, operator.token)).body) as {
+      history: { id: string; status: string }[];
+    };
+    expect(list.history.find((g) => g.id === expired.id)?.status).toBe("EXPIRED");
+  });
+
+  it("two different operators may hold an active grant for the same tenant at once", async () => {
+    const { tenant } = await newTenant("two-operators");
+    const a = await newPrincipal();
+    const b = await newPrincipal();
+    expect((await requestGrant(tenant.id, a.token, { reason: REASON })).statusCode).toBe(201);
+    expect((await requestGrant(tenant.id, b.token, { reason: REASON })).statusCode).toBe(201);
+    expect(await app.prisma.supportAccess.count({ where: { tenantId: tenant.id } })).toBe(2);
+  });
+});
+
+// ── The parallel request race (D-12, D-23) ────────────────────────────────────────────────────────
+// Copy of the observed-block harness of tenant-packages-566.test.ts (never imported from there):
+// `firstWork` runs in one transaction that is held open after its work, `secondWork` in another, and
+// `pg_blocking_pids` is polled until the second backend is seen waiting on the first.
+
+interface RaceResult<A, B> {
+  first: PromiseSettledResult<A>;
+  second: PromiseSettledResult<B>;
+  /** PostgreSQL reported the second transaction as blocked by the first while it was held open. */
+  blocked: boolean;
+}
+
+async function raceTwoTransactions<A, B>(
+  firstWork: (tx: Prisma.TransactionClient) => Promise<A>,
+  secondWork: (tx: Prisma.TransactionClient) => Promise<B>,
+): Promise<RaceResult<A, B>> {
+  let releaseFirst: (() => void) | undefined;
+  const holdGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let signalFirstLocked: ((pid: number) => void) | undefined;
+  const firstLocked = new Promise<number>((resolve) => {
+    signalFirstLocked = resolve;
+  });
+  const firstPromise = app.prisma.$transaction(
+    async (tx) => {
+      const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+      const result = await firstWork(tx);
+      signalFirstLocked?.(pid);
+      await holdGate;
+      return result;
+    },
+    { timeout: 20000, maxWait: 20000 },
+  );
+  // A work failure in tx1 would never signal; surface it instead of hanging.
+  const firstPid = await Promise.race([
+    firstLocked,
+    firstPromise.then(
+      () => Promise.reject(new Error("first transaction ended before it signalled")),
+      (err: unknown) => Promise.reject(err),
+    ),
+  ]);
+
+  let signalSecondPid: ((pid: number) => void) | undefined;
+  const secondPidKnown = new Promise<number>((resolve) => {
+    signalSecondPid = resolve;
+  });
+  let secondSettled = false;
+  const secondPromise = app.prisma
+    .$transaction(
+      async (tx) => {
+        const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+        signalSecondPid?.(pid);
+        return secondWork(tx);
+      },
+      { timeout: 20000, maxWait: 20000 },
+    )
+    .finally(() => {
+      secondSettled = true;
+    });
+  const secondPid = await secondPidKnown;
+
+  const deadline = Date.now() + 10000;
+  let blocked = false;
+  while (!secondSettled && Date.now() < deadline) {
+    const [{ blockers }] = await app.prisma.$queryRaw<{ blockers: number[] }[]>`
+      SELECT pg_blocking_pids(${secondPid}::int) AS blockers`;
+    if (blockers.includes(firstPid)) {
+      blocked = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  releaseFirst?.();
+  const [first, second] = await Promise.allSettled([firstPromise, secondPromise]);
+  return { first, second, blocked };
+}
+
+describe("two parallel grant requests of one operator for one tenant (D-12, D-23, AC-93-5)", () => {
+  it("exactly one creates a row; the second is observed waiting on the Tenant lock and then sees it", async () => {
+    const { tenant } = await newTenant("race");
+    const operator = await newPrincipal();
+    const input = {
+      tenantId: tenant.id,
+      operatorId: operator.id,
+      reason: REASON,
+      durationHours: 1 as const,
+    };
+
+    const { first, second, blocked } = await raceTwoTransactions(
+      (tx) => createSupportAccessInTx(app, tx, input),
+      (tx) => createSupportAccessInTx(app, tx, input),
+    );
+    console.warn(`93b-03 race: blocked=${blocked}`);
+
+    expect(blocked, "the second transaction was never observed waiting on the first").toBe(true);
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("fulfilled");
+    expect((first as PromiseFulfilledResult<{ status: string }>).value.status).toBe("CREATED");
+    expect((second as PromiseFulfilledResult<{ status: string }>).value.status).toBe(
+      "ALREADY_ACTIVE",
+    );
+    expect(
+      await app.prisma.supportAccess.count({
+        where: { tenantId: tenant.id, operatorId: operator.id },
+      }),
+    ).toBe(1);
+  });
+});
+
+// ── Expiry without any job, deactivation after the start (D-22, D-28, AC-93-3, AC-93-8) ───────────
+
+describe("a grant that is no longer inside its window opens no read (D-22)", () => {
+  it("a row inserted as already expired is refused with 403 and one refusal row", async () => {
+    const { tenant } = await newTenant("lapsed");
+    const operator = await newPrincipal();
+    const startedAt = new Date(Date.now() - 5 * HOUR_MS);
+    await seedSupportAccess(app, {
+      tenantId: tenant.id,
+      operatorId: operator.id,
+      startedAt,
+      expiresAt: new Date(startedAt.getTime() + HOUR_MS),
+    });
+    const before = (await refusalRows(operator.id, tenant.id)).length;
+    const res = await readEmployees(tenant.id, operator.token);
+    expect(res.statusCode, res.body).toBe(403);
+    expect(JSON.parse(res.body).code).toBe("SUPPORT_ACCESS_REQUIRED");
+    expect(await refusalRows(operator.id, tenant.id)).toHaveLength(before + 1);
+    expect(await readRows(operator.id, tenant.id)).toHaveLength(0);
+  });
+
+  it("a running 1 h grant reads at 59 minutes and is refused at 61 minutes of application time", async () => {
+    const { tenant } = await newTenant("clock");
+    const operator = await newPrincipal();
+    expect((await requestGrant(tenant.id, operator.token, { reason: REASON })).statusCode).toBe(
+      201,
+    );
+    const realNow = Date.now();
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      // The operator access token lives 15 minutes, so each probe carries a token signed at its own
+      // fake instant; only the grant window is under test.
+      vi.setSystemTime(realNow + 59 * 60_000);
+      const within = signOperatorToken(app, operator.id, "access", operator.tokenVersion);
+      const ok = await readEmployees(tenant.id, within);
+      expect(ok.statusCode, ok.body).toBe(200);
+
+      vi.setSystemTime(realNow + 61 * 60_000);
+      const lapsed = signOperatorToken(app, operator.id, "access", operator.tokenVersion);
+      const refused = await readEmployees(tenant.id, lapsed);
+      expect(refused.statusCode, refused.body).toBe(403);
+      expect(JSON.parse(refused.body).code).toBe("SUPPORT_ACCESS_REQUIRED");
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await refusalRows(operator.id, tenant.id)).toHaveLength(1);
+    expect(await readRows(operator.id, tenant.id)).toHaveLength(1);
+  });
+
+  it("a tenant deactivated through the operator route after the start refuses every read (409)", async () => {
+    const { tenant } = await newTenant("deactivate-after");
+    const operator = await newPrincipal();
+    expect((await requestGrant(tenant.id, operator.token, { reason: REASON })).statusCode).toBe(
+      201,
+    );
+    const deactivate = await app.inject({
+      method: "POST",
+      url: `/api/v1/operator/tenants/${tenant.id}/deactivate`,
+      headers: { authorization: `Bearer ${operator.token}` },
+      payload: { reason: "Vertrag beendet" },
+      remoteAddress: uniqueAddress(),
+    });
+    expect(deactivate.statusCode, deactivate.body).toBe(200);
+
+    const res = await readEmployees(tenant.id, operator.token);
+    expect(res.statusCode, res.body).toBe(409);
+    expect(JSON.parse(res.body).code).toBe("TENANT_DEACTIVATED");
+    const refusals = await refusalRows(operator.id, tenant.id);
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0].newValue).toMatchObject({ code: "TENANT_DEACTIVATED" });
+    expect(await readRows(operator.id, tenant.id)).toHaveLength(0);
+  });
+});
+
+// ── History and early end (D-03, D-06) ────────────────────────────────────────────────────────────
+
+describe("GET /operator/tenants/:id/support-access", () => {
+  it("lists the grants of THIS operator, newest first, with the derived statuses", async () => {
+    const { tenant } = await newTenant("history");
+    const operator = await newPrincipal();
+    const other = await newPrincipal();
+    const now = Date.now();
+    const expired = await seedSupportAccess(app, {
+      tenantId: tenant.id,
+      operatorId: operator.id,
+      startedAt: new Date(now - 10 * HOUR_MS),
+      expiresAt: new Date(now - 9 * HOUR_MS),
+    });
+    const ended = await seedSupportAccess(app, {
+      tenantId: tenant.id,
+      operatorId: operator.id,
+      startedAt: new Date(now - 5 * HOUR_MS),
+      expiresAt: new Date(now + 5 * HOUR_MS),
+      endedAt: new Date(now - 4 * HOUR_MS),
+      endedBy: "OPERATOR",
+    });
+    const foreign = await seedSupportAccess(app, { tenantId: tenant.id, operatorId: other.id });
+    const active = await seedSupportAccess(app, {
+      tenantId: tenant.id,
+      operatorId: operator.id,
+      startedAt: new Date(now - 60_000),
+      expiresAt: new Date(now + HOUR_MS),
+    });
+
+    const res = await listGrants(tenant.id, operator.token);
+    expect(res.statusCode, res.body).toBe(200);
+    const body = JSON.parse(res.body) as {
+      active: { id: string } | null;
+      history: { id: string; status: string; endedBy: string | null }[];
+    };
+    expect(Object.keys(body).sort(byKey)).toEqual(["active", "history"]);
+    expect(body.active?.id).toBe(active.id);
+    expect(body.history.map((g) => g.id)).toEqual([active.id, ended.id, expired.id]);
+    expect(body.history.map((g) => g.status)).toEqual(["ACTIVE", "ENDED", "EXPIRED"]);
+    expect(body.history[1].endedBy).toBe("OPERATOR");
+    expect(res.body).not.toContain(foreign.id);
+
+    const otherList = JSON.parse((await listGrants(tenant.id, other.token)).body) as {
+      active: { id: string } | null;
+      history: { id: string }[];
+    };
+    expect(otherList.history.map((g) => g.id)).toEqual([foreign.id]);
+    expect(otherList.active?.id).toBe(foreign.id);
+  });
+
+  it("an unknown tenant answers the operator tenant 404", async () => {
+    const operator = await newPrincipal();
+    const res = await listGrants(randomUUID(), operator.token);
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body)).toEqual(TENANT_NOT_FOUND_BODY);
+  });
+
+  it("a tenant admin token never reaches the history", async () => {
+    const { tenant, adminToken } = await newTenant("history-principal");
+    const res = await listGrants(tenant.id, adminToken);
+    expect(res.statusCode).toBe(403);
+  });
+});
+
+describe("POST /operator/tenants/:id/support-access/:accessId/end", () => {
+  it("ends the grant, logs it in both protocols, refuses the next read and a second end", async () => {
+    const { tenant } = await newTenant("end");
+    const operator = await newPrincipal();
+    const grant = await requestGrant(tenant.id, operator.token, { reason: REASON });
+    const accessId = String(JSON.parse(grant.body).access.id);
+    expect((await readEmployees(tenant.id, operator.token)).statusCode).toBe(200);
+
+    const res = await endGrant(tenant.id, accessId, operator.token);
+    expect(res.statusCode, res.body).toBe(200);
+    const body = JSON.parse(res.body) as { access: Record<string, unknown> };
+    expect(Object.keys(body)).toEqual(["access"]);
+    expect(Object.keys(body.access).sort(byKey)).toEqual(GRANT_KEYS);
+    expect(body.access.status).toBe("ENDED");
+    expect(body.access.endedBy).toBe("OPERATOR");
+    expect(body.access.endedAt).toBeTruthy();
+
+    const operatorRows = await app.prisma.operatorAuditLog.findMany({
+      where: { action: "SUPPORT_ACCESS_ENDED", entityId: accessId },
+    });
+    expect(operatorRows).toHaveLength(1);
+    expect(operatorRows[0].ipAddress).toBeTruthy();
+    expect(operatorRows[0].newValue).toMatchObject({ endedBy: "OPERATOR" });
+    const tenantRows = await app.prisma.auditLog.findMany({
+      where: { action: "SUPPORT_ACCESS_ENDED", entityId: accessId },
+    });
+    expect(tenantRows).toHaveLength(1);
+    expect(tenantRows[0].ipAddress).toBeNull();
+    expect(tenantRows[0].newValue).toMatchObject({
+      actor: { type: "OPERATOR", operatorId: operator.id, tenantId: tenant.id },
+    });
+
+    const afterEnd = await readEmployees(tenant.id, operator.token);
+    expect(afterEnd.statusCode).toBe(403);
+    expect(JSON.parse(afterEnd.body).code).toBe("SUPPORT_ACCESS_REQUIRED");
+
+    const again = await endGrant(tenant.id, accessId, operator.token);
+    expect(again.statusCode, again.body).toBe(409);
+    expect(JSON.parse(again.body).code).toBe("SUPPORT_ACCESS_NOT_ACTIVE");
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: { action: "SUPPORT_ACCESS_ENDED", entityId: accessId },
+      }),
+    ).toBe(1);
+  });
+
+  it("another operator's grant id and a random uuid answer byte-identical 404 bodies", async () => {
+    const { tenant } = await newTenant("end-foreign");
+    const owner = await newPrincipal();
+    const intruder = await newPrincipal();
+    const grant = await seedSupportAccess(app, { tenantId: tenant.id, operatorId: owner.id });
+
+    const foreign = await endGrant(tenant.id, grant.id, intruder.token);
+    const unknown = await endGrant(tenant.id, randomUUID(), intruder.token);
+    expect(foreign.statusCode).toBe(404);
+    expect(unknown.statusCode).toBe(404);
+    expect(foreign.body).toBe(unknown.body);
+    // The owner's grant is untouched.
+    const row = await app.prisma.supportAccess.findUniqueOrThrow({ where: { id: grant.id } });
+    expect(row.endedAt).toBeNull();
+  });
+
+  it("a grant of another tenant is indistinguishable from an unknown id", async () => {
+    const a = await newTenant("end-tenant-a");
+    const b = await newTenant("end-tenant-b");
+    const operator = await newPrincipal();
+    const grant = await seedSupportAccess(app, { tenantId: a.tenant.id, operatorId: operator.id });
+    const viaB = await endGrant(b.tenant.id, grant.id, operator.token);
+    const unknown = await endGrant(b.tenant.id, randomUUID(), operator.token);
+    expect(viaB.statusCode).toBe(404);
+    expect(viaB.body).toBe(unknown.body);
+  });
+
+  it("ending an expired grant answers 409 SUPPORT_ACCESS_NOT_ACTIVE and changes nothing", async () => {
+    const { tenant } = await newTenant("end-expired");
+    const operator = await newPrincipal();
+    const startedAt = new Date(Date.now() - 3 * HOUR_MS);
+    const grant = await seedSupportAccess(app, {
+      tenantId: tenant.id,
+      operatorId: operator.id,
+      startedAt,
+      expiresAt: new Date(startedAt.getTime() + HOUR_MS),
+    });
+    const res = await endGrant(tenant.id, grant.id, operator.token);
+    expect(res.statusCode, res.body).toBe(409);
+    expect(JSON.parse(res.body).code).toBe("SUPPORT_ACCESS_NOT_ACTIVE");
+    const row = await app.prisma.supportAccess.findUniqueOrThrow({ where: { id: grant.id } });
+    expect(row.endedAt).toBeNull();
+  });
+
+  it("a tenant admin token never reaches the end route", async () => {
+    const { tenant, adminToken } = await newTenant("end-principal");
+    const operator = await newPrincipal();
+    const grant = await seedSupportAccess(app, { tenantId: tenant.id, operatorId: operator.id });
+    const res = await endGrant(tenant.id, grant.id, adminToken);
+    expect(res.statusCode).toBe(403);
+    const row = await app.prisma.supportAccess.findUniqueOrThrow({ where: { id: grant.id } });
+    expect(row.endedAt).toBeNull();
   });
 });

@@ -346,3 +346,93 @@ export function supportEmployeeStatus(
   if (row.exitDate !== null && row.exitDate.getTime() < today.getTime()) return "EXITED";
   return "ACTIVE";
 }
+
+// ── Operator history and early end (D-02, D-03, D-06) ─────────────────────────────────────────────
+
+/** Newest grants returned by the operator history; older rows stay in the table, never in the view. */
+const SUPPORT_ACCESS_HISTORY_LIMIT = 50;
+
+/**
+ * The grants of ONE operator for ONE tenant, newest `startedAt` first (at most 50), plus the one the
+ * decider would accept right now. Reads only `SupportAccess` and never another operator's rows: both the
+ * tenant and the operator are part of the single `where`.
+ */
+export async function listSupportAccessesForOperator(
+  db: Prisma.TransactionClient,
+  input: { tenantId: string; operatorId: string },
+  now: Date = new Date(),
+): Promise<{ active: SupportAccessDto | null; history: SupportAccessDto[] }> {
+  const rows = await db.supportAccess.findMany({
+    where: { tenantId: input.tenantId, operatorId: input.operatorId },
+    orderBy: [{ startedAt: "desc" }, { id: "asc" }],
+    take: SUPPORT_ACCESS_HISTORY_LIMIT,
+  });
+  const history = rows.map((row) => toSupportAccessDto(row, now));
+  const active = history.find((grant) => grant.status === "ACTIVE") ?? null;
+  return { active, history };
+}
+
+export type EndSupportAccessResult =
+  | { status: "NOT_FOUND" }
+  | { status: "NOT_ACTIVE" }
+  | { status: "ENDED"; access: SupportAccessDto };
+
+/**
+ * The operator ends its own active grant early. The guarded `updateMany` is the single transition the
+ * database trigger allows (`endedAt` and `endedBy` set once, nothing else changed); `endedAt IS NULL` and
+ * `expiresAt > now` in the `where` make a second end and the end of a lapsed grant a no-op. A grant of
+ * another operator or tenant is looked up with the same keys, so it is indistinguishable from an unknown
+ * id (`NOT_FOUND`). Both audit rows are written in the same transaction.
+ */
+export async function endSupportAccessByOperator(
+  app: FastifyInstance,
+  input: {
+    tenantId: string;
+    operatorId: string;
+    accessId: string;
+    request?: SupportRequestLike;
+  },
+  now: Date = new Date(),
+): Promise<EndSupportAccessResult> {
+  return app.prisma.$transaction(
+    async (tx): Promise<EndSupportAccessResult> => {
+      const { count } = await tx.supportAccess.updateMany({
+        where: {
+          id: input.accessId,
+          tenantId: input.tenantId,
+          operatorId: input.operatorId,
+          endedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: { endedAt: now, endedBy: "OPERATOR" },
+      });
+      const row = await tx.supportAccess.findFirst({
+        where: { id: input.accessId, tenantId: input.tenantId, operatorId: input.operatorId },
+      });
+      if (!row) return { status: "NOT_FOUND" };
+      if (count === 0) return { status: "NOT_ACTIVE" };
+
+      const newValue = { endedBy: "OPERATOR", endedAt: now.toISOString() };
+      await recordOperatorAudit(tx, {
+        action: OPERATOR_AUDIT_ACTIONS.SUPPORT_ACCESS_ENDED,
+        operatorId: input.operatorId,
+        subjectTenantId: input.tenantId,
+        entity: "SupportAccess",
+        entityId: row.id,
+        newValue,
+        request: input.request,
+      });
+      await operatorTenantAudit(app, { operatorId: input.operatorId, tenantId: input.tenantId })(
+        {
+          action: OPERATOR_AUDIT_ACTIONS.SUPPORT_ACCESS_ENDED,
+          entity: "SupportAccess",
+          entityId: row.id,
+          newValue,
+        },
+        tx,
+      );
+      return { status: "ENDED", access: toSupportAccessDto(row, now) };
+    },
+    { timeout: 15_000, maxWait: 15_000 },
+  );
+}
