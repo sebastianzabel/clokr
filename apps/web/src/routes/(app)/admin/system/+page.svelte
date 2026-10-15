@@ -6,8 +6,6 @@
   import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
-  import OpeningHoursEditor from "$lib/components/admin/OpeningHoursEditor.svelte";
-  import { prefillOpeningHours, type OpeningHoursDay } from "$lib/salons/opening-hours";
   import Pagination from "$components/ui/Pagination.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import { toasts } from "$stores/toast";
@@ -58,8 +56,7 @@
     availabilityEnabled?: boolean;
     // Phase 49.5 — Standard-Arbeitstage (0=So..6=Sa)
     defaultWorkDays?: number[];
-    // Phase 58 — Ladenöffnungszeiten (moved from /admin/shifts)
-    storeHours?: unknown;
+    // Check mode of shifts against the opening hours of their salon (the hours live on the salon)
     shiftStoreHoursMode?: "STRICT" | "DAY_ONLY" | "OFF";
     // Phase 67.2 — Auto-Cleanup für Berufsschultag-Schichten (Plan 04 backend hook,
     // Plan 05 surfaces toggle here). Wenn true (Default): künftige Shifts auf neuen
@@ -133,33 +130,27 @@
   // DATEV Lohnartennummern moved to /admin/export (Phase 58) — TenantConfig fields
   // datevNormalstundenNr / datevUrlaubNr / datevKrankNr / datevSonderurlaubNr live there.
 
-  // ── Phase 58: Ladenöffnungszeiten (moved from /admin/shifts) ─────────────
-  let storeHours: OpeningHoursDay[] = $state([]);
+  // ── Shift check mode against opening hours (a tenant policy; the hours live on the salon, #563) ──
   let shiftStoreHoursMode: "STRICT" | "DAY_ONLY" | "OFF" = $state("DAY_ONLY");
-  let storeHoursSaving = $state(false);
-  let storeHoursMsg = $state("");
+  let shiftHoursModeSaving = $state(false);
+  let shiftHoursModeMsg = $state("");
 
-  async function saveStoreHours() {
-    if (!_gOtherFields) return; // guard: need full work-settings context
-    storeHoursSaving = true;
-    storeHoursMsg = "";
+  // Minimal payload on purpose: only the changed field, never the `_gOtherFields` full spread
+  // (a snapshot read once at load — copying it widens the lost-update race N-09).
+  async function saveShiftHoursMode() {
+    shiftHoursModeSaving = true;
+    shiftHoursModeMsg = "";
     try {
-      await api.put("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
-        storeHours,
-        shiftStoreHoursMode,
-      });
-      storeHoursMsg = "Gespeichert.";
-      storeHoursSnapshot = snap(storeHours, shiftStoreHoursMode); // Phase 109 — section is clean again
-      toasts.success("Ladenöffnungszeiten aktualisiert.");
+      await api.put("/settings/work", { shiftStoreHoursMode });
+      shiftHoursModeMsg = "Gespeichert.";
+      shiftHoursModeSnapshot = snap(shiftStoreHoursMode); // Phase 109 — section is clean again
+      toasts.success("Prüfmodus gespeichert.");
     } catch (e: unknown) {
-      storeHoursMsg = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-      toasts.error(storeHoursMsg);
+      shiftHoursModeMsg = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+      toasts.error(shiftHoursModeMsg);
     } finally {
-      storeHoursSaving = false;
-      setTimeout(() => (storeHoursMsg = ""), 2500);
+      shiftHoursModeSaving = false;
+      setTimeout(() => (shiftHoursModeMsg = ""), 2500);
     }
   }
 
@@ -431,8 +422,8 @@
   let companySnapshot = $state("");
   let companyDirty = $derived(snap(gTenantName, gFederalState, gTimezone) !== companySnapshot);
 
-  let storeHoursSnapshot = $state("");
-  let storeHoursDirty = $derived(snap(storeHours, shiftStoreHoursMode) !== storeHoursSnapshot);
+  let shiftHoursModeSnapshot = $state("");
+  let shiftHoursModeDirty = $derived(snap(shiftStoreHoursMode) !== shiftHoursModeSnapshot);
 
   let coreDefaultsSnapshot = $state("");
   let coreDefaultsDirty = $derived(
@@ -494,7 +485,7 @@
   // leave a stale entry behind.
   let anyUnsaved = $derived(
     companyDirty ||
-      storeHoursDirty ||
+      shiftHoursModeDirty ||
       coreDefaultsDirty ||
       breakDefaultsDirty ||
       retroWindowDirty ||
@@ -579,8 +570,6 @@
         Array.isArray(cfg.defaultWorkDays) && cfg.defaultWorkDays.length > 0
           ? [...cfg.defaultWorkDays]
           : [1, 2, 3, 4, 5];
-      // Phase 58 — Ladenöffnungszeiten (moved from /admin/shifts)
-      storeHours = prefillOpeningHours(cfg.storeHours);
       shiftStoreHoursMode = cfg.shiftStoreHoursMode ?? "DAY_ONLY";
 
       try {
@@ -648,7 +637,7 @@
 
       // Phase 109 — baseline for the unsaved markers. Must run after ALL state above is hydrated.
       companySnapshot = snap(gTenantName, gFederalState, gTimezone);
-      storeHoursSnapshot = snap(storeHours, shiftStoreHoursMode);
+      shiftHoursModeSnapshot = snap(shiftStoreHoursMode);
       coreDefaultsSnapshot = snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays);
       breakDefaultsSnapshot = snap(defaultBreakOver6h, defaultBreakOver9h);
       retroWindowSnapshot = snap(retroEntryWindowDays);
@@ -1442,27 +1431,29 @@
           </div>
         </Section>
 
-        <!-- ── Ladenöffnungszeiten (Phase 58 — moved from /admin/shifts) ────── -->
+        <!-- ── Shift check mode against opening hours ────────────────────── -->
         <Section
-          title="Ladenöffnungszeiten"
-          sub="Wochentägliche Öffnungs- und Schließzeiten. Schichtplanung warnt bei Konflikten."
-          dirty={storeHoursDirty}
+          title="Schichtprüfung gegen Öffnungszeiten"
+          sub="Wie streng Schichten an die Öffnungszeiten des jeweiligen Salons gebunden werden."
+          dirty={shiftHoursModeDirty}
         >
           {#snippet footer()}
             <button
               type="button"
-              class="btn btn-primary sm"
-              onclick={saveStoreHours}
-              disabled={storeHoursSaving}
+              class="btn btn-primary btn-sm"
+              onclick={saveShiftHoursMode}
+              disabled={shiftHoursModeSaving}
             >
-              {storeHoursSaving ? "Speichern …" : "Öffnungszeiten speichern"}
+              {shiftHoursModeSaving ? "Speichern …" : "Prüfmodus speichern"}
             </button>
-            {#if storeHoursMsg}
-              <span class="cfg-muted cfg-msg">{storeHoursMsg}</span>
+            {#if shiftHoursModeMsg}
+              <span class="cfg-muted cfg-msg">{shiftHoursModeMsg}</span>
             {/if}
           {/snippet}
 
-          <OpeningHoursEditor bind:days={storeHours} idPrefix="system-hours" />
+          <p class="form-hint">
+            Die Öffnungszeiten selbst pflegen Sie je Salon unter Administration › Salons.
+          </p>
 
           <div class="cfg-section-title">Schicht-Zeiten an Öffnungszeiten binden</div>
           <div class="cfg-mode-options">
@@ -3260,7 +3251,7 @@
     }
   }
 
-  /* ── Ladenöffnungszeiten / Schichtprüfung (Phase 58) ──────── */
+  /* ── Schichtprüfung gegen Öffnungszeiten (Phase 58) ──────── */
   .cfg-muted {
     color: var(--text-muted);
     font-size: 13.5px;

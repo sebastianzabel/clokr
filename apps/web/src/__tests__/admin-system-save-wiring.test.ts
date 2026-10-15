@@ -203,7 +203,7 @@ describe("D-07 — security-relevant settings stay button-gated", () => {
 
 describe("D-01 — genuine form groups stay button-gated", () => {
   const BUTTON_ONLY_GROUPS = [
-    "saveStoreHours",
+    "saveShiftHoursMode",
     "saveFederalState",
     "saveCoreDefaults",
     "saveBsSlots",
@@ -307,7 +307,7 @@ describe("D-01/AK-01 — the eight E-Mail-Benachrichtigungs-Toggles save instant
 describe("D-11/D-12 — unsaved markers on admin/system", () => {
   const SECTIONS = [
     "companyDirty",
-    "storeHoursDirty",
+    "shiftHoursModeDirty",
     "coreDefaultsDirty",
     "breakDefaultsDirty",
     "retroWindowDirty",

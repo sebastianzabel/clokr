@@ -72,3 +72,18 @@ export function employeeAdminRights(user: Caller): EmployeeAdminRights {
 export function mayFileRetroRequest(user: Caller): boolean {
   return hasPermission(user, "retro-request:create:EIGENE");
 }
+
+/** `/admin/salons` (list and detail): what the tenant salon endpoints would accept. */
+export interface SalonAdminRights {
+  /** `GET /salons`, `GET /salons/:id` - salon:read. The page is visible with this alone. */
+  canRead: boolean;
+  /** `POST /salons`, `PATCH /salons/:id`, deactivate, activate - salon:manage. */
+  canManage: boolean;
+}
+
+export function salonAdminRights(user: Caller): SalonAdminRights {
+  return {
+    canRead: hasPermission(user, "salon:read:ZUGEWIESEN"),
+    canManage: hasPermission(user, "salon:manage:ZUGEWIESEN"),
+  };
+}

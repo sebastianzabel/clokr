@@ -6,6 +6,7 @@
   import { salonContext } from "$stores/salon-context";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
+  import { salonAdminRights } from "$lib/page-rights";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import OpeningHoursEditor from "$lib/components/admin/OpeningHoursEditor.svelte";
@@ -23,6 +24,8 @@
   }
 
   const salonId = $derived($page.params.id);
+  // Presentation only: the API refuses a write without salon:manage on its own.
+  const rights = $derived(salonAdminRights($authStore.user));
 
   let salon = $state<SalonDetail | null>(null);
   let loading = $state(true);
@@ -117,10 +120,16 @@
     animate
   >
     {#snippet tabContent(_tab)}
+      {#snippet saveFooter()}
+        <button type="button" class="btn btn-primary btn-sm" onclick={saveHours} disabled={saving}>
+          {saving ? "Speichern …" : "Öffnungszeiten speichern"}
+        </button>
+      {/snippet}
       <Section
         title="Öffnungszeiten"
         sub="Wochentägliche Öffnungs- und Schließzeiten dieses Salons. Die Schichtplanung prüft Schichten gegen diese Zeiten."
         dirty={hoursDirty}
+        footer={rights.canManage ? saveFooter : undefined}
       >
         {#snippet actions()}
           <span class="badge" class:badge-green={salon.isActive} class:badge-gray={!salon.isActive}>
@@ -128,18 +137,12 @@
           </span>
         {/snippet}
 
-        <OpeningHoursEditor bind:days={hoursForm} errors={hoursErrors} idPrefix="salon-hours" />
-
-        {#snippet footer()}
-          <button
-            type="button"
-            class="btn btn-primary btn-sm"
-            onclick={saveHours}
-            disabled={saving}
-          >
-            {saving ? "Speichern …" : "Öffnungszeiten speichern"}
-          </button>
-        {/snippet}
+        <OpeningHoursEditor
+          bind:days={hoursForm}
+          errors={hoursErrors}
+          idPrefix="salon-hours"
+          disabled={!rights.canManage}
+        />
       </Section>
     {/snippet}
   </ListDetail>
