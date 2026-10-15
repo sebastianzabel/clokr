@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRow } from "./setup";
 import { operatorTenantAudit } from "../contexts/platform/operator-tenant-audit";
 
 let app: FastifyInstance;
@@ -68,9 +68,8 @@ describe("Phase 89 — operatorTenantAudit writer (D-09b)", () => {
       entity: "Salon",
       entityId,
     });
-    const row = await app.prisma.auditLog.findFirstOrThrow({
+    const row = await soleAuditRow(app.prisma, {
       where: { entityId },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(row.newValue).toEqual({ actor: { type: "OPERATOR", operatorId, tenantId } });
   });
@@ -83,9 +82,8 @@ describe("Phase 89 — operatorTenantAudit writer (D-09b)", () => {
       entityId,
       newValue: { actor: { type: "OPERATOR", operatorId, tenantId: randomUUID() } },
     });
-    const row = await app.prisma.auditLog.findFirstOrThrow({
+    const row = await soleAuditRow(app.prisma, {
       where: { entityId },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect((row.newValue as { actor: { tenantId: string } }).actor.tenantId).toBe(tenantId);
   });

@@ -27,23 +27,21 @@ describe("flagged shapes", () => {
   it("flags an unordered auditLog.findFirst", () => {
     expect(
       shapes(`await app.prisma.auditLog.findFirst({ where: { entity: "X", entityId: id } });`),
-    ).toEqual(["unordered-find-first"]);
+    ).toEqual(["bare-find-first"]);
   });
 
   it("flags findFirstOrThrow, findFirst without arguments and a non-literal argument", () => {
     expect(shapes(`await prisma.auditLog.findFirstOrThrow({ where: { id } });`)).toEqual([
-      "unordered-find-first",
+      "bare-find-first",
     ]);
-    expect(shapes(`await prisma.auditLog.findFirst();`)).toEqual(["unordered-find-first"]);
-    expect(shapes(`await prisma.auditLog.findFirst(args);`)).toEqual(["unordered-find-first"]);
-    expect(shapes(`await prisma.auditLog.findFirst({ ...base });`)).toEqual([
-      "unordered-find-first",
-    ]);
+    expect(shapes(`await prisma.auditLog.findFirst();`)).toEqual(["bare-find-first"]);
+    expect(shapes(`await prisma.auditLog.findFirst(args);`)).toEqual(["bare-find-first"]);
+    expect(shapes(`await prisma.auditLog.findFirst({ ...base });`)).toEqual(["bare-find-first"]);
   });
 
   it("flags an unordered notification.findFirst (also on a transaction client)", () => {
     expect(shapes(`await tx.notification.findFirst({ where: { userId } });`)).toEqual([
-      "unordered-find-first",
+      "bare-find-first",
     ]);
   });
 
@@ -67,15 +65,20 @@ describe("flagged shapes", () => {
 });
 
 describe("tolerated shapes", () => {
-  it("accepts a findFirst with an orderBy", () => {
+  it("flags even an ordered findFirst - ordering does not prove uniqueness", () => {
     expect(
       shapes(
         `await prisma.auditLog.findFirst({ where: w, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });`,
       ),
-    ).toEqual([]);
+    ).toEqual(["bare-find-first"]);
     expect(
       shapes(`await prisma.notification.findFirst({ where: w, orderBy: { createdAt: "desc" } });`),
-    ).toEqual([]);
+    ).toEqual(["bare-find-first"]);
+  });
+
+  it("accepts the sole-row helpers", () => {
+    expect(shapes(`await soleAuditRow(app.prisma, { where: w });`)).toEqual([]);
+    expect(shapes(`await soleNotificationOrNull(app.prisma, { where: w });`)).toEqual([]);
   });
 
   it("accepts an unordered findMany that is only counted, filtered or iterated", () => {

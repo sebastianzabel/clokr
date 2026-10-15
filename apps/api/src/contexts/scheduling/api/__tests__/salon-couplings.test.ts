@@ -17,6 +17,7 @@ import {
   seedTestData,
   cleanupTestData,
   createTestSalon,
+  soleAuditRowOrNull,
 } from "../../../../__tests__/setup";
 
 const PREFIX = "/api/v1/integrations";
@@ -149,9 +150,8 @@ describe("Phorest salon coupling CRUD (Phase 65b, issue #65, D-14..D-17)", () =>
     });
     expect(afterAudits).toBe(beforeAudits + 1);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "SalonCoupling", entityId: body.coupling.id, action: "CREATE" },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit?.newValue).toEqual({
       salonId: salon.id,
@@ -354,9 +354,8 @@ describe("Phorest salon coupling CRUD (Phase 65b, issue #65, D-14..D-17)", () =>
       where: { entity: "SalonCoupling", action: "DELETE" },
     });
     expect(afterAudits).toBe(beforeAudits + 1);
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "SalonCoupling", entityId: coupling.id, action: "DELETE" },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit?.oldValue).toEqual({
       salonId: salon.id,

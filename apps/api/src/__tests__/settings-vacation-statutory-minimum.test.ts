@@ -7,7 +7,13 @@
  * on `new Date()`. Initials-only fixtures (firstName "T", lastName "T") — no PII per CLAUDE.md.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("PUT/GET /api/v1/settings/vacation/:employeeId — statutory minimum (Issue #435, D-10/D-14)", () => {
@@ -112,9 +118,8 @@ describe("PUT/GET /api/v1/settings/vacation/:employeeId — statutory minimum (I
         where: { employeeId, year: 2027 },
       });
       expect(row).toBeNull();
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "LeaveEntitlement", entityId: employeeId },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).toBeNull();
     });

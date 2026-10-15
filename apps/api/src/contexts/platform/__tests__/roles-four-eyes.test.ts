@@ -14,7 +14,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "../../../__tests__/setup";
 import { PERMISSIONS, permissionKey } from "../permission-catalog";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 import { ROLE_LOCKOUT_MESSAGE } from "../role-assignment";
@@ -187,9 +193,8 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
       const body = JSON.parse(res.body);
       createdRoleIds.push(body.id);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "AccessRole", entityId: body.id, action: "CREATE" },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).not.toBeNull();
       const newValue = audit!.newValue as Record<string, unknown>;
@@ -208,9 +213,8 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
       const body = JSON.parse(res.body);
       createdRoleIds.push(body.id);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "AccessRole", entityId: body.id, action: "CREATE" },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).not.toBeNull();
       const newValue = audit!.newValue as Record<string, unknown>;
@@ -364,9 +368,8 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
       const res = await patchRole(id, { permissions: combinationPermissions, confirm: true });
       expect(res.statusCode).toBe(200);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "AccessRole", entityId: id, action: "UPDATE" },
-        orderBy: { createdAt: "desc" },
       });
       expect(audit).not.toBeNull();
       const newValue = audit!.newValue as Record<string, unknown>;
@@ -381,9 +384,8 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
       const res = await patchRole(id, { name: newName });
       expect(res.statusCode).toBe(200);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "AccessRole", entityId: id, action: "UPDATE" },
-        orderBy: { createdAt: "desc" },
       });
       const newValue = audit!.newValue as Record<string, unknown>;
       expect("fourEyesWarningConfirmed" in newValue).toBe(false);
@@ -402,9 +404,8 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
       const res = await patchRole(id, { permissions: ["time-entry:create:EIGENE"] });
       expect(res.statusCode).toBe(200);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "AccessRole", entityId: id, action: "UPDATE" },
-        orderBy: { createdAt: "desc" },
       });
       const newValue = audit!.newValue as Record<string, unknown>;
       expect("fourEyesWarningConfirmed" in newValue).toBe(false);
@@ -418,9 +419,8 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
       });
       expect(res.statusCode).toBe(200);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "AccessRole", entityId: id, action: "UPDATE" },
-        orderBy: { createdAt: "desc" },
       });
       const newValue = audit!.newValue as Record<string, unknown>;
       expect("fourEyesWarningConfirmed" in newValue).toBe(false);
@@ -553,9 +553,8 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
       });
       expect(res.statusCode, res.body).toBe(200);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "AccessRole", entityId: id, action: "UPDATE" },
-        orderBy: { createdAt: "desc" },
       });
       expect(audit).not.toBeNull();
       const newValue = audit!.newValue as Record<string, unknown>;
@@ -656,9 +655,8 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
       const body = JSON.parse(res.body);
       createdRoleIds.push(body.id);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "AccessRole", entityId: body.id, action: "COPY" },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).not.toBeNull();
       const newValue = audit!.newValue as Record<string, unknown>;
@@ -680,9 +678,8 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
       const body = JSON.parse(res.body);
       createdRoleIds.push(body.id);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "AccessRole", entityId: body.id, action: "COPY" },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       const newValue = audit!.newValue as Record<string, unknown>;
       expect("fourEyesWarningConfirmed" in newValue).toBe(false);

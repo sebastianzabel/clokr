@@ -26,7 +26,8 @@ import {
   seedTestData,
   cleanupTestData,
   createTestSalon, // Phase 325 (issue #325)
-  salonIdForEmployee, // Phase 68b (issue #68)
+  salonIdForEmployee,
+  soleNotificationOrNull, // Phase 68b (issue #68)
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
@@ -2118,9 +2119,8 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
       "RED: unconfirmed AUTO day must defer auto-close (no snapshot) once the block branch is built",
     ).toBeNull();
 
-    const notif = await app.prisma.notification.findFirst({
+    const notif = await soleNotificationOrNull(app.prisma, {
       where: { userId: seed.mgrUserId, type: "MONTH_CLOSE_BLOCKED" },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(
       notif,

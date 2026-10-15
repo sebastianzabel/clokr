@@ -14,7 +14,13 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import { hasHumanVacationWrite } from "../contexts/absence/leave-days";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
@@ -280,13 +286,12 @@ describe("Elternzeit-Kürzung (§ 17 Abs. 1 BEEG) — Issue #468, D-08..D-11", (
     expect(newVal.declaredAt).toBe("2026-09-01");
     expect(Object.keys(newVal)).not.toContain("isAutoCalculated");
 
-    const reductionAudit = await app.prisma.auditLog.findFirst({
+    const reductionAudit = await soleAuditRowOrNull(app.prisma, {
       where: {
         entity: "ParentalLeaveReduction",
         entityId: reductions[0].id,
         action: "PARENTAL_LEAVE_REDUCTION_DECLARED",
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(reductionAudit).toBeTruthy();
 
@@ -549,27 +554,29 @@ describe("Elternzeit-Kürzung (§ 17 Abs. 1 BEEG) — Issue #468, D-08..D-11", (
     expect(reductions[0].revokedBy).toBe(data.adminUser.id);
 
     // Both the commit-time AND the revoke-time audit reference the same reductionId in
-    // newValue — order by createdAt desc to get the latest (the revoke) one.
-    const entitlementAudit = await app.prisma.auditLog.findFirst({
+    // newValue: exactly two rows, in creation order — the commit (30 -> 23), then the revoke
+    // (23 -> 30). Both are asserted, not just the latest.
+    const entitlementAudits = await app.prisma.auditLog.findMany({
       where: {
         entity: "LeaveEntitlement",
         entityId: row2026After!.id,
         action: "UPDATE",
         newValue: { path: ["parentalLeaveReductionId"], equals: reductions[0].id },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
-    expect(entitlementAudit).toBeTruthy();
+    expect(entitlementAudits).toHaveLength(2);
+    const [commitAudit, entitlementAudit] = entitlementAudits;
+    expect((commitAudit!.newValue as Record<string, unknown>).totalDays).toBe(23);
     expect(entitlementAudit!.oldValue).toMatchObject({ totalDays: 23 });
     expect((entitlementAudit!.newValue as Record<string, unknown>).totalDays).toBe(30);
 
-    const revocationAudit = await app.prisma.auditLog.findFirst({
+    const revocationAudit = await soleAuditRowOrNull(app.prisma, {
       where: {
         entity: "ParentalLeaveReduction",
         entityId: reductions[0].id,
         action: "PARENTAL_LEAVE_REDUCTION_REVOKED",
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(revocationAudit).toBeTruthy();
     expect(revocationAudit!.oldValue).toMatchObject({ status: "ACTIVE" });

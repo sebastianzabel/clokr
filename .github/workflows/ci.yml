@@ -361,9 +361,10 @@ jobs:
       - name: Lint unordered audit/notification reads in tests (Issue #561 — flake class of #555)
         # One action can write several AuditLog rows (or notify twice) in the same millisecond; a
         # test that picks "the" row with an unordered findFirst passes alone and flakes in the full
-        # parallel run. This AST gate fails on auditLog/notification findFirst(OrThrow) without an
-        # orderBy and on an unordered findMany that is indexed by position, in every test file under
-        # apps/api/src. Fix: auditRowsFor() / auditRowChangingField() from src/__tests__/setup.ts.
+        # parallel run, and even an ordered findFirst silently ignores a second write. This AST gate
+        # fails on any auditLog/notification findFirst(OrThrow) and on an unordered findMany that is
+        # indexed by position, in every test file under apps/api/src. Fix: soleAuditRow[OrNull]() /
+        # soleNotification[OrNull]() / auditRowsFor() from src/__tests__/setup.ts.
         # No exceptions file. Unconditional, ~1s.
         run: pnpm --filter @clokr/api run lint:unordered-test-reads
 

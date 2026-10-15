@@ -26,7 +26,13 @@
  * `todayStr()` resolves "today" in the tenant timezone, not raw UTC.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+  soleAuditRowOrNull,
+} from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -352,9 +358,8 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
 
     // Phase 120 (D-01/D-02/D-04): the audit row must show both sides even though the value did
     // NOT change (Issue #417) — `days` stated, not absent, on a status-flip audit entry.
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: { action: "APPROVE", entity: "LeaveRequest", entityId: created.id },
-      orderBy: { createdAt: "desc" },
     });
     expect(auditRow).toBeTruthy();
     const oldVal = auditRow!.oldValue as {
@@ -463,9 +468,8 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
     const rejectRes = await reject(created.id, "Phase 120 audit pair");
     expect(rejectRes.statusCode).toBe(200);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: { action: "REJECT", entity: "LeaveRequest", entityId: created.id },
-      orderBy: { createdAt: "desc" },
     });
     expect(auditRow).toBeTruthy();
     expect(auditRow!.oldValue).toBeTruthy();

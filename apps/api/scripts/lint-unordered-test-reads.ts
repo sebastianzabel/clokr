@@ -11,9 +11,10 @@
  * ── What is flagged (every test file under `apps/api/src`: `__tests__/` dirs and `*.test.ts`) ──
  * A call `<receiver>.auditLog.<m>(…)` or `<receiver>.notification.<m>(…)` (`prisma`, `app.prisma`,
  * `tx`, … — any receiver) where
- *   - `unordered-find-first` — `<m>` is `findFirst` / `findFirstOrThrow` and the first argument is
- *     not an object literal holding an `orderBy` property (a spread or a variable argument cannot
- *     be proven ordered and is flagged);
+ *   - `bare-find-first` — `<m>` is `findFirst` / `findFirstOrThrow`, ordered or not. Even an
+ *     ordered `findFirst` returns only one match and silently ignores a second write of the same
+ *     action (#555), so tests use `soleAuditRow[OrNull]()` / `soleNotification[OrNull]()` (throws
+ *     unless exactly one row matches) or a `findMany` with explicit length / all-row assertions;
  *   - `unordered-find-many-indexed` — `<m>` is `findMany`, the arguments hold no `orderBy`, and the
  *     result is picked by position: the awaited call is indexed directly (`(await …)[0]`,
  *     `.at(0)`), or it is bound to a name / array destructuring that the same file indexes with
@@ -44,7 +45,7 @@ export const SRC_DIR = "apps/api/src";
 const DELEGATES: ReadonlySet<string> = new Set(["auditLog", "notification"]);
 const FIND_FIRST: ReadonlySet<string> = new Set(["findFirst", "findFirstOrThrow"]);
 
-export type UnorderedReadShape = "unordered-find-first" | "unordered-find-many-indexed";
+export type UnorderedReadShape = "bare-find-first" | "unordered-find-many-indexed";
 
 export interface UnorderedReadFinding {
   line: number;
@@ -148,8 +149,8 @@ export function findUnorderedReads(fileName: string, text: string): UnorderedRea
   const visit = (n: ts.Node): void => {
     if (ts.isCallExpression(n)) {
       const method = delegateCallMethod(n);
-      if (method !== undefined && FIND_FIRST.has(method) && !hasOrderBy(n)) {
-        findings.push({ line: lineOf(n), shape: "unordered-find-first", text: snippet(n) });
+      if (method !== undefined && FIND_FIRST.has(method)) {
+        findings.push({ line: lineOf(n), shape: "bare-find-first", text: snippet(n) });
       } else if (method === "findMany" && !hasOrderBy(n) && isPickedByPosition(n)) {
         findings.push({ line: lineOf(n), shape: "unordered-find-many-indexed", text: snippet(n) });
       }
@@ -201,8 +202,8 @@ export function run(repoRoot: string): number {
     );
     for (const f of findings) console.error(`  ${f.file}:${f.line}: ${f.shape} — ${f.text}`);
     console.error(
-      "Use auditRowsFor() / auditRowChangingField() from src/__tests__/setup.ts, or add an explicit " +
-        "orderBy. There is no exceptions file.",
+      "Use soleAuditRow[OrNull]() / soleNotification[OrNull]() / auditRowsFor() / " +
+        "auditRowChangingField() from src/__tests__/setup.ts. There is no exceptions file.",
     );
     return 1;
   }

@@ -7,6 +7,7 @@ import {
   seedTestData,
   cleanupTestData,
   seedEntitlementYears,
+  soleAuditRowOrNull,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -1041,9 +1042,8 @@ describe("Leave / Absence API", () => {
       expect(body.status).toBe("PENDING");
 
       // Audit log captures the manager-on-behalf-of marker.
-      const auditEntry = await app.prisma.auditLog.findFirst({
+      const auditEntry = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "LeaveRequest", entityId: body.id, action: "CREATE" },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(auditEntry).not.toBeNull();
       const newValue = auditEntry?.newValue as Record<string, unknown> | null;
@@ -1098,9 +1098,8 @@ describe("Leave / Absence API", () => {
       expect(body.employeeId).toBe(mgrEmployeeId);
       expect(body.status).toBe("PENDING");
 
-      const auditEntry = await app.prisma.auditLog.findFirst({
+      const auditEntry = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "LeaveRequest", entityId: body.id, action: "CREATE" },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       const newValue = auditEntry?.newValue as Record<string, unknown> | null;
       expect(newValue?.source).toBeUndefined();

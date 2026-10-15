@@ -27,6 +27,7 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee,
+  soleAuditRowOrNull,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dateStrInTz } from "../contexts/working-time-account/timezone";
@@ -424,9 +425,8 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
         expect(body.reviewNote, "absent note is stored as null").toBeNull();
 
         // Audit newValue.reviewNote must be null (true absence recorded)
-        const auditLog = await app.prisma.auditLog.findFirst({
+        const auditLog = await soleAuditRowOrNull(app.prisma, {
           where: { action: "RETRO_ENTRY_APPROVED", entityId: requestId },
-          orderBy: { createdAt: "desc" },
         });
         const newValue = auditLog?.newValue as Record<string, unknown> | null;
         expect(newValue?.reviewNote, "audit reviewNote null when not given").toBeNull();
@@ -614,9 +614,8 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
         if (approveRes.statusCode !== 200) return;
 
         // Verify AuditLog entry
-        const auditLog = await app.prisma.auditLog.findFirst({
+        const auditLog = await soleAuditRowOrNull(app.prisma, {
           where: { action: "RETRO_ENTRY_APPROVED", entityId: requestId },
-          orderBy: { createdAt: "desc" },
         });
         // RED: RETRO_ENTRY_APPROVED action not yet created in Plan 03
         expect(auditLog, "AuditLog with RETRO_ENTRY_APPROVED must exist").not.toBeNull();
@@ -703,9 +702,8 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
         expect(grant?.status, "grant must be USED after consumption").toBe("USED");
 
         // Verify AuditLog entry for RETRO_ENTRY_APPROVED_USED carries oldValue
-        const usedAuditLog = await app.prisma.auditLog.findFirst({
+        const usedAuditLog = await soleAuditRowOrNull(app.prisma, {
           where: { action: "RETRO_ENTRY_APPROVED_USED", entityId: grantId },
-          orderBy: { createdAt: "desc" },
         });
         expect(usedAuditLog, "AuditLog with RETRO_ENTRY_APPROVED_USED must exist").not.toBeNull();
         if (usedAuditLog) {
@@ -898,9 +896,8 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
         expect(grant?.status, "grant must be USED after PUT consumption").toBe("USED");
 
         // Verify AuditLog entry for RETRO_ENTRY_APPROVED_USED carries oldValue
-        const usedAuditLog = await app.prisma.auditLog.findFirst({
+        const usedAuditLog = await soleAuditRowOrNull(app.prisma, {
           where: { action: "RETRO_ENTRY_APPROVED_USED", entityId: grantId },
-          orderBy: { createdAt: "desc" },
         });
         expect(usedAuditLog, "AuditLog with RETRO_ENTRY_APPROVED_USED must exist").not.toBeNull();
         if (usedAuditLog) {

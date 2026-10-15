@@ -7,7 +7,13 @@
  * expiring. Initials-only fixtures — no PII per CLAUDE.md.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 const Y = new Date().getUTCFullYear() + 1;
@@ -194,13 +200,17 @@ describe("Exit-year VACATION booking/GET/approval (Issue #447, D-06/D-08/D-09)",
     expect(Number(vacRow.totalDays)).toBe(8);
     expect(vacRow.effectiveEntitlementDays).toBe(8);
 
-    const exitAudit = await app.prisma.auditLog.findFirst({
+    // Scoped to this employee's own vacation row: other tests of the file write the same reason.
+    const entitlementC = await app.prisma.leaveEntitlement.findFirstOrThrow({
+      where: { employeeId: empC, leaveTypeId: data.vacationType.id, year: Y },
+    });
+    const exitAudit = await soleAuditRowOrNull(app.prisma, {
       where: {
         entity: "LeaveEntitlement",
         action: "UPDATE",
+        entityId: entitlementC.id,
         newValue: { path: ["reason"], equals: "Austritt — anteiliger Anspruch (§ 5 BUrlG)" },
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(exitAudit).not.toBeNull();
 
@@ -220,7 +230,7 @@ describe("Exit-year VACATION booking/GET/approval (Issue #447, D-06/D-08/D-09)",
     const rowsD = JSON.parse(getResD.body) as Array<{ typeCode: string; totalDays: unknown }>;
     const vacRowD = rowsD.find((r) => r.typeCode === "VACATION")!;
     expect(Number(vacRowD.totalDays)).toBe(25);
-    const exitAuditD = await app.prisma.auditLog.findFirst({
+    const exitAuditD = await soleAuditRowOrNull(app.prisma, {
       where: {
         entity: "LeaveEntitlement",
         action: "UPDATE",
@@ -231,7 +241,6 @@ describe("Exit-year VACATION booking/GET/approval (Issue #447, D-06/D-08/D-09)",
         ).id,
         newValue: { path: ["reason"], equals: "Austritt — anteiliger Anspruch (§ 5 BUrlG)" },
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(exitAuditD).toBeNull();
   });

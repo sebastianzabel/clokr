@@ -9,7 +9,14 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  soleAuditRowOrNull,
+} from "./setup";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import { futureDateStr, nextWeekdayStr } from "./test-dates";
 
@@ -248,13 +255,12 @@ describe("Issue #91 (Phase 91b Plan 08) — shifts.ts salon/person scope", () =>
       expect(res.statusCode).toBe(404);
       expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: {
           action: "SCOPE_ACCESS_DENIED",
           entity: "Employee",
           entityId: outOfScope.employee.id,
         },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).not.toBeNull();
     });
@@ -306,9 +312,8 @@ describe("Issue #91 (Phase 91b Plan 08) — shifts.ts salon/person scope", () =>
       expect(res.statusCode).toBe(404);
       expect(res.body).toBe(JSON.stringify({ error: "Schicht nicht gefunden" }));
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { action: "SCOPE_ACCESS_DENIED", entity: "Shift", entityId: shift.id },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).not.toBeNull();
     });
@@ -331,9 +336,8 @@ describe("Issue #91 (Phase 91b Plan 08) — shifts.ts salon/person scope", () =>
       expect(res.statusCode).toBe(404);
       expect(res.body).toBe(JSON.stringify({ error: "Schicht nicht gefunden" }));
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { action: "SCOPE_ACCESS_DENIED", entity: "Shift", entityId: shift.id },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).not.toBeNull();
     });
@@ -360,9 +364,8 @@ describe("Issue #91 (Phase 91b Plan 08) — shifts.ts salon/person scope", () =>
       expect(res.statusCode).toBe(404);
       expect(res.body).toBe(JSON.stringify({ error: "Schicht nicht gefunden" }));
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { action: "SCOPE_ACCESS_DENIED", entity: "Shift", entityId: shift.id },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).not.toBeNull();
     });

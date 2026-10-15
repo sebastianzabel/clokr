@@ -13,7 +13,13 @@
 // Test date: 2026-05-15 (Friday). Past relative to system today = 2026-06-01.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 function utcDate(iso: string): Date {
@@ -158,13 +164,12 @@ describe("POST /api/v1/time-entries — JArbSchG pre-check (Phase 63 Plan 03)", 
     expect(softWarn).toBeDefined();
 
     // Audit-log row exists
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "JARBSCHG_SOFT_WARN",
         entity: "TimeEntry",
         entityId: body.entry.id,
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).not.toBeNull();
   });
@@ -363,13 +368,12 @@ describe("PUT /api/v1/time-entries/:id — JArbSchG pre-check (Phase 63 Plan 03)
     );
     expect(softWarn).toBeDefined();
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "JARBSCHG_SOFT_WARN",
         entity: "TimeEntry",
         entityId: initial.id,
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).not.toBeNull();
   });

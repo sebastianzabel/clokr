@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleNotificationOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -45,9 +51,8 @@ describe("Leave-request notification copy (Issue #200)", () => {
     expect(res.statusCode).toBe(201);
     const requestId = JSON.parse(res.body).id as string;
 
-    const notif = await app.prisma.notification.findFirst({
+    const notif = await soleNotificationOrNull(app.prisma, {
       where: { userId: data.adminUser.id, type: "LEAVE_REQUEST", relatedId: requestId },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(notif).not.toBeNull();
     return notif!;

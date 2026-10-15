@@ -10,7 +10,14 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, seedOperator, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  seedOperator,
+  cleanupTestData,
+  soleAuditRow,
+} from "./setup";
 import { operatorTenantAudit } from "../contexts/platform/operator-tenant-audit";
 import { signOperatorToken } from "../contexts/platform/operator-auth";
 
@@ -99,21 +106,18 @@ beforeAll(async () => {
   });
 
   stampedAId = (
-    await app.prisma.auditLog.findFirstOrThrow({
+    await soleAuditRow(app.prisma, {
       where: { entityId: stampedA.entityId },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     })
   ).id;
   stampedBId = (
-    await app.prisma.auditLog.findFirstOrThrow({
+    await soleAuditRow(app.prisma, {
       where: { entityId: stampedB.entityId },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     })
   ).id;
   unstampedId = (
-    await app.prisma.auditLog.findFirstOrThrow({
+    await soleAuditRow(app.prisma, {
       where: { entityId: unstamped.entityId },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     })
   ).id;
 });
@@ -229,9 +233,13 @@ describe("GET /api/v1/audit-logs/:id — operator rows (D-09a, T-100-09)", () =>
       entityId: tenantB.adminEmployee.id,
       newValue: { fixture: true },
     });
-    const row = await app.prisma.auditLog.findFirstOrThrow({
-      where: { userId: tenantB.adminUser.id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    const row = await soleAuditRow(app.prisma, {
+      where: {
+        userId: tenantB.adminUser.id,
+        action: "UPDATE",
+        entity: "Employee",
+        entityId: tenantB.adminEmployee.id,
+      },
     });
     const res = await get(`/api/v1/audit-logs/${row.id}`, tenantA.adminToken);
     const unknown = await get(`/api/v1/audit-logs/${randomUUID()}`, tenantA.adminToken);

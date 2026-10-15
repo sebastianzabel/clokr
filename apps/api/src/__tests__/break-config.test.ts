@@ -17,7 +17,13 @@
 //   T-64-17 (DoS — optional fields keep old clients working)
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 // ── Tenant defaults: PUT validation + audit ────────────────────────────────────
@@ -178,12 +184,11 @@ describe("break-config: tenant defaults", () => {
     });
     expect(put.statusCode).toBe(200);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "BREAK_DEFAULT_CHANGED",
         entity: "TenantConfig",
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(auditRow).not.toBeNull();
     const oldVal = auditRow!.oldValue as { defaultBreakOver6h: number; defaultBreakOver9h: number };
@@ -206,12 +211,11 @@ describe("break-config: tenant defaults", () => {
     });
     expect(put.statusCode).toBe(200);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "BREAK_DEFAULT_CHANGED",
         entity: "TenantConfig",
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeNull();
   });
@@ -226,12 +230,11 @@ describe("break-config: tenant defaults", () => {
     });
     expect(put.statusCode).toBe(200);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "BREAK_DEFAULT_CHANGED",
         entity: "TenantConfig",
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeNull();
   });
@@ -345,13 +348,12 @@ describe("break-config: employee overrides", () => {
     });
     expect(res.statusCode).toBe(200);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "EMPLOYEE_BREAK_OVERRIDE_CHANGED",
         entity: "Employee",
         entityId: data.employee.id,
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(auditRow).not.toBeNull();
     const oldVal = auditRow!.oldValue as {
@@ -380,13 +382,12 @@ describe("break-config: employee overrides", () => {
     });
     expect(res.statusCode).toBe(200);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "EMPLOYEE_BREAK_OVERRIDE_CHANGED",
         entity: "Employee",
         entityId: data.employee.id,
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(auditRow).not.toBeNull();
     const newVal = auditRow!.newValue as { breakOver6hOverride: number | null };
@@ -404,13 +405,12 @@ describe("break-config: employee overrides", () => {
     });
     expect(res.statusCode).toBe(200);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "EMPLOYEE_BREAK_OVERRIDE_CHANGED",
         entity: "Employee",
         entityId: data.employee.id,
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeNull();
   });
@@ -437,13 +437,12 @@ describe("break-config: employee overrides", () => {
     });
     expect(res.statusCode).toBe(200);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "EMPLOYEE_BREAK_OVERRIDE_CHANGED",
         entity: "Employee",
         entityId: data.employee.id,
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeNull();
   });
@@ -561,13 +560,12 @@ describe("phorest puffer: employee overrides (85.1.1)", () => {
     });
     expect(res.statusCode).toBe(200);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "EMPLOYEE_PHOREST_PUFFER_OVERRIDE_CHANGED",
         entity: "Employee",
         entityId: data.employee.id,
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(auditRow).not.toBeNull();
     const oldVal = auditRow!.oldValue as { phorestPrepMinutesOverride: number | null };
@@ -587,13 +585,12 @@ describe("phorest puffer: employee overrides (85.1.1)", () => {
     });
     expect(res.statusCode).toBe(200);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "EMPLOYEE_PHOREST_PUFFER_OVERRIDE_CHANGED",
         entity: "Employee",
         entityId: data.employee.id,
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeNull();
   });
@@ -620,13 +617,12 @@ describe("phorest puffer: employee overrides (85.1.1)", () => {
     });
     expect(res.statusCode).toBe(200);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "EMPLOYEE_PHOREST_PUFFER_OVERRIDE_CHANGED",
         entity: "Employee",
         entityId: data.employee.id,
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeNull();
   });

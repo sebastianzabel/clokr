@@ -10,7 +10,13 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { fromZonedTime } from "date-fns-tz";
-import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  soleAuditRowOrNull,
+} from "./setup";
 import { addDaysStr, mondayOfWeekStr, pastDateStr, daysAgoStrInTz, TEST_TZ } from "./test-dates";
 
 describe("time-entry-salon tracer (Phase 68b, issue #68)", () => {
@@ -103,9 +109,8 @@ describe("time-entry-salon tracer (Phase 68b, issue #68)", () => {
       expect(row.salonId).toBe(salonB.id);
 
       // D-13: the CLOCK_IN audit's newValue is the full row, so it carries salonId too.
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "TimeEntry", entityId: row.id, action: "CLOCK_IN" },
-        orderBy: { createdAt: "desc" },
       });
       expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(salonB.id);
     } finally {
@@ -329,9 +334,8 @@ describe("explicit salonId on POST /time-entries (Phase 68b, issue #68, D-07/D-0
     expect(body.entry.salonId).toBe(salonC.id);
     expect(body.entry.isInvalid).toBe(false);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "TimeEntry", entityId: body.entry.id, action: "CREATE" },
-      orderBy: { createdAt: "desc" },
     });
     expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(salonC.id);
   });
@@ -385,9 +389,8 @@ describe("explicit salonId on POST /time-entries (Phase 68b, issue #68, D-07/D-0
     const grantAfter = await app.prisma.retroEntryRequest.findUnique({ where: { id: grant.id } });
     expect(grantAfter?.status).toBe("USED");
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "TimeEntry", entityId: body.entry.id, action: "CREATE" },
-      orderBy: { createdAt: "desc" },
     });
     expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(salonC.id);
   });
@@ -416,9 +419,8 @@ describe("explicit salonId on POST /time-entries (Phase 68b, issue #68, D-07/D-0
       expect(body.entry.isInvalid).toBe(true);
       expect(body.entry.invalidReasonCode).toBe("RETRO_APPROVAL_PENDING");
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "TimeEntry", entityId: body.entry.id, action: "CREATE" },
-        orderBy: { createdAt: "desc" },
       });
       expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(salonC.id);
     } finally {

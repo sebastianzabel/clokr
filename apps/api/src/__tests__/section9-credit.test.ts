@@ -14,6 +14,7 @@ import {
   seedTestData,
   cleanupTestData,
   seedEntitlementYears,
+  soleAuditRowOrNull,
 } from "./setup";
 import { dbDateStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
@@ -310,9 +311,8 @@ describe("Section9Credit detection (AU_PENDING) — Phase 104-05", () => {
     const credit = await app.prisma.section9Credit.findFirstOrThrow({
       where: { sickRequestId: sickId },
     });
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "SECTION9_CREDIT_DETECTED", entity: "Section9Credit", entityId: credit.id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     const newValue = audit!.newValue as {
@@ -541,13 +541,12 @@ describe("Section9Credit notifications and listing — Phase 104-05 Task 3", () 
     });
     expect(res.statusCode).toBe(404);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "CROSS_TENANT_ACCESS_DENIED",
         entity: "Section9Credit",
         entityId: creditId,
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -987,13 +986,12 @@ describe("confirm — Phase 104-06 Task 1", () => {
   });
 
   it("Test 10 (D-17): the SECTION9_CREDIT_CONFIRMED audit row carries both request ids, the credited range, creditedDays, attestSource and the reason", async () => {
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "SECTION9_CREDIT_CONFIRMED",
         entity: "Section9Credit",
         entityId: test1CreditId,
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     const newValue = audit!.newValue as {

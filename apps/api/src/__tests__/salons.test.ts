@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRowOrNull } from "./setup";
 import {
   DEFAULT_SALON_OPENING_HOURS,
   findSalon,
@@ -310,15 +310,13 @@ describe("Salon lifecycle: read by id, create, update, deactivate, activate (Pha
     expect(foreignRes.body).toBe(unknownRes.body);
     expect(JSON.parse(foreignRes.body)).toEqual({ error: "Salon nicht gefunden" });
 
-    const auditForForeign = await app.prisma.auditLog.findFirst({
+    const auditForForeign = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entity: "Salon", entityId: salonA.id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditForForeign).not.toBeNull();
 
-    const auditForUnknown = await app.prisma.auditLog.findFirst({
+    const auditForUnknown = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entity: "Salon", entityId: unknownId },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditForUnknown).toBeNull();
   });
@@ -357,9 +355,8 @@ describe("Salon lifecycle: read by id, create, update, deactivate, activate (Pha
     expect(body.name).toBe("Mitte");
     expect(body.street).toBeNull();
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CREATE", entity: "Salon", entityId: body.id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect(audit?.oldValue).toBeNull();
@@ -469,9 +466,8 @@ describe("Salon lifecycle: read by id, create, update, deactivate, activate (Pha
     expect(body.city).toBe("Hannover");
     expect(body.name).toBe("Salon A");
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "UPDATE", entity: "Salon", entityId: salonA.id },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
     expect((audit?.oldValue as { city?: string | null } | null)?.city).toBeNull();
@@ -601,9 +597,8 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
     });
     expect(JSON.parse(afterRes.body).isMultiSalon).toBe(false);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "DEACTIVATE", entity: "Salon", entityId: salonA2.id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect((audit?.oldValue as { isActive?: boolean } | null)?.isActive).toBe(true);
@@ -622,9 +617,8 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
     expect(row?.isActive).toBe(true);
     expect(row?.deactivatedAt).toBeNull();
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "DEACTIVATE", entity: "Salon", entityId: salonA1.id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).toBeNull();
   });
@@ -646,9 +640,8 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
     expect(body.isActive).toBe(true);
     expect(body.deactivatedAt).toBeNull();
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "ACTIVATE", entity: "Salon", entityId: salonA2.id },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
     expect((audit?.oldValue as { isActive?: boolean } | null)?.isActive).toBe(false);
@@ -847,9 +840,8 @@ describe("Salon routes with an API-key caller (Phase 64b review, WR-01)", () => 
   }
 
   async function auditRow(action: string, entityId: string) {
-    return app.prisma.auditLog.findFirst({
+    return soleAuditRowOrNull(app.prisma, {
       where: { action, entity: "Salon", entityId },
-      orderBy: { createdAt: "desc" },
     });
   }
 

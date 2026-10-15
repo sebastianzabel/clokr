@@ -7,7 +7,13 @@
 //   - Clock-out after reopen keeps gap breakMinutes (auto-break guard, Pitfall 1)
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "../../../__tests__/setup";
 import { resolveClockEvent } from "../resolver";
 import { consolidateSameDayEntries } from "../consolidate";
 import type { ClockEvent, ClockIntent } from "../types";
@@ -140,9 +146,8 @@ describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integrat
     expect(active.length).toBe(1);
 
     // Assert a CLOCK_REOPEN AuditLog row exists for this entry (D-01c)
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CLOCK_REOPEN", entityId: active[0].id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).not.toBeNull();
     expect(auditRow?.action).toBe("CLOCK_REOPEN");

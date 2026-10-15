@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { createHash, randomBytes } from "crypto";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "../../../__tests__/setup";
 import { todayInTz } from "../../../contexts/working-time-account/timezone";
 
 // seedTestData provisions the tenant with TenantConfig.timezone = "Europe/Berlin" (setup.ts:249).
@@ -248,9 +254,8 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
 
     expect(res.statusCode).toBe(200);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "TimeEntry", entityId: openEntry.id, action: "CLOCK_OUT" },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect(audit!.userId).toBe(data.empUser.id);
@@ -285,9 +290,8 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
 
     expect(res.statusCode).toBe(200);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "TimeEntry", entityId: openEntry.id, action: "CLOCK_OUT" },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect(audit!.userId).toBeNull();

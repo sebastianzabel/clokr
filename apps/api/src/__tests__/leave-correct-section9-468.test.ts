@@ -5,6 +5,7 @@ import {
   seedTestData,
   cleanupTestData,
   seedEntitlementYears,
+  soleAuditRowOrNull,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -149,9 +150,8 @@ describe("Leave correction and § 9 credits (Issue #468, D-04/A-3)", () => {
     const creditAfter = await app.prisma.section9Credit.findUnique({ where: { id: creditId } });
     expect(creditAfter?.status).toBe("SUPERSEDED");
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "SECTION9_CREDIT_SUPERSEDED", entity: "Section9Credit", entityId: creditId },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     const oldVal = audit?.oldValue as { status?: string; creditedDays?: number } | null;
@@ -278,18 +278,16 @@ describe("Leave correction and § 9 credits (Issue #468, D-04/A-3)", () => {
     expect(revision1.creditedEnd?.toISOString().slice(0, 10)).toBe("2028-02-15");
     expect(Number(revision1.creditedDays)).toBe(2);
 
-    const supersedeAudit = await app.prisma.auditLog.findFirst({
+    const supersedeAudit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "SECTION9_CREDIT_SUPERSEDED", entity: "Section9Credit", entityId: creditId },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(supersedeAudit).not.toBeNull();
-    const correctedAudit = await app.prisma.auditLog.findFirst({
+    const correctedAudit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "SECTION9_CREDIT_CORRECTED",
         entity: "Section9Credit",
         entityId: revision1.id,
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(correctedAudit).not.toBeNull();
     const correctedNewVal = correctedAudit?.newValue as {

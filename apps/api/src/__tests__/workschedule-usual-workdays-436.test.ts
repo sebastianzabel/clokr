@@ -26,7 +26,13 @@
  *     `workSchedule` key at all.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+  auditRowsFor,
+} from "./setup";
 import { monthsAheadStr, dbDateStr, utcMidnight } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
@@ -355,6 +361,8 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
     });
     const scheduleId = zeroRow.id;
 
+    // Earlier tests of this file updated the same seeded row: this PUT adds exactly one UPDATE row.
+    const updatesBefore = (await auditRowsFor(app, "WorkSchedule", scheduleId, "UPDATE")).length;
     const updateRes = await putWork(shiftEmployee.id, {
       type: "SHIFT_BASED",
       weeklyHours: 32,
@@ -364,11 +372,10 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
     });
     expect(updateRes.statusCode).toBe(200);
 
-    const audit = await app.prisma.auditLog.findFirst({
-      where: { entity: "WorkSchedule", entityId: scheduleId, action: "UPDATE" },
-      orderBy: { createdAt: "desc" },
-    });
-    expect(audit).not.toBeNull();
+    const updateRows = await auditRowsFor(app, "WorkSchedule", scheduleId, "UPDATE");
+    expect(updateRows).toHaveLength(updatesBefore + 1);
+    const audit = updateRows[updateRows.length - 1];
+    expect(audit).toBeDefined();
     const oldValue = audit!.oldValue as { usualWorkDays: number[] };
     const newValue = audit!.newValue as { usualWorkDays: number[] };
     expect(oldValue.usualWorkDays).toEqual([]);
@@ -454,9 +461,8 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.body);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "Employee", entityId: body.id, action: "CREATE" },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     const newValue = audit!.newValue as { workSchedule: Record<string, unknown> };

@@ -16,7 +16,13 @@
  */
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  soleAuditRowOrNull,
+} from "./setup";
 import { futureDateStr, nextWeekdayStr, addDaysStr, holidayFreeMondayStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
@@ -80,9 +86,8 @@ describe("POST /api/v1/shifts — default-salon tracer (Phase 325, issue #325)",
     const row = await app.prisma.shift.findUniqueOrThrow({ where: { id: body.id } });
     expect(row.salonId).toBe(seed.salonId);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "Shift", entityId: body.id, action: "CREATE" },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(seed.salonId);
@@ -515,9 +520,8 @@ describe("POST/PUT/bulk /api/v1/shifts — explicit salonId (Phase 325 Plan 02, 
     const body = JSON.parse(res.body);
     expect(body.salonId).toBe(secondSalon.id);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "Shift", entityId: body.id, action: "CREATE" },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(secondSalon.id);
   });
@@ -553,9 +557,8 @@ describe("POST/PUT/bulk /api/v1/shifts — explicit salonId (Phase 325 Plan 02, 
     const body = JSON.parse(res.body);
     expect(body.salonId).toBe(secondSalon.id);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "Shift", entityId: shift.id, action: "UPDATE" },
-      orderBy: { createdAt: "desc" },
     });
     expect((audit?.oldValue as { salonId?: string } | null)?.salonId).toBe(seed.salonId);
     expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(secondSalon.id);

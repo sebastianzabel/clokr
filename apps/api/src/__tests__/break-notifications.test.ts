@@ -25,6 +25,7 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee,
+  soleNotificationOrNull,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
@@ -257,13 +258,11 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
     });
     expect(patchRes.statusCode).toBe(200);
 
-    const notifA = await app.prisma.notification.findFirst({
+    const notifA = await soleNotificationOrNull(app.prisma, {
       where: { relatedType: "TimeEntry", relatedId: entryA.id, type: "BREAK_UNCONFIRMED" },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
-    const notifB = await app.prisma.notification.findFirst({
+    const notifB = await soleNotificationOrNull(app.prisma, {
       where: { relatedType: "TimeEntry", relatedId: entryB.id, type: "BREAK_UNCONFIRMED" },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(notifA?.dismissedAt, "confirmed entry's own nudge must auto-dismiss").not.toBeNull();
     expect(notifB?.dismissedAt, "the OTHER (still-AUTO) entry's nudge must stay open").toBeNull();
@@ -299,13 +298,11 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
 
       await app.tryBreakUnconfirmedNudge();
 
-      const notifA = await app.prisma.notification.findFirst({
+      const notifA = await soleNotificationOrNull(app.prisma, {
         where: { relatedType: "TimeEntry", relatedId: entryA.id, type: "BREAK_UNCONFIRMED" },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
-      const notifB = await app.prisma.notification.findFirst({
+      const notifB = await soleNotificationOrNull(app.prisma, {
         where: { relatedType: "TimeEntry", relatedId: entryB.id, type: "BREAK_UNCONFIRMED" },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(notifA, "entry on the 1st must be nudged even though today IS the 1st").not.toBeNull();
       expect(

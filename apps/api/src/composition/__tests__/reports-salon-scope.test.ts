@@ -16,6 +16,7 @@ import {
   seedTestData,
   cleanupTestData,
   createTestSalon,
+  soleAuditRowOrNull,
 } from "../../__tests__/setup";
 import { normalizeRolePermissions, roleNameKey } from "../../contexts/platform";
 
@@ -322,9 +323,8 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
     expect(res.statusCode).toBe(404);
     expect(res.body).toBe(JSON.stringify({ error: "Anspruch nicht gefunden" }));
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "SCOPE_ACCESS_DENIED", entity: "LeaveEntitlement", entityId: ent.id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -370,13 +370,12 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
     expect(res.statusCode).toBe(404);
     expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "SCOPE_ACCESS_DENIED",
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -398,13 +397,12 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
     });
     expect(res.statusCode).toBe(404);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "SCOPE_ACCESS_DENIED",
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });

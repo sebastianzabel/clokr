@@ -1193,10 +1193,13 @@ is gone, and a red VERIFY is a finding (an access change), not a stale fixture. 
 
 ### Ordered audit/notification reads in tests (Issue #561)
 
-A test never picks an `AuditLog` or `Notification` row with an unordered `findFirst`, nor indexes an
-unordered `findMany` by position — one action can write several rows in the same millisecond and the
-test then flakes in the parallel run (#555). Use `auditRowsFor()` / `auditRowChangingField()` from
-`apps/api/src/__tests__/setup.ts` or an explicit `orderBy`. `lint:unordered-test-reads`
+A test never picks an `AuditLog` or `Notification` row with `findFirst` (ordered or not), nor
+indexes an unordered `findMany` by position — one action can write several rows in the same
+millisecond, the test flakes in the parallel run (#555), and even an ordered `findFirst` silently
+ignores a second write. Use `soleAuditRow[OrNull]()` / `soleNotification[OrNull]()` (throws unless
+exactly one row matches), `auditRowsFor()` / `auditRowChangingField()` from
+`apps/api/src/__tests__/setup.ts`, or a `findMany` with explicit length / all-row assertions; when a
+test means one of several rows, narrow the `where` (action, recipient, field). `lint:unordered-test-reads`
 (`apps/api/scripts/lint-unordered-test-reads.ts`, CI and pre-commit, no exceptions file) fails on it;
 a hit is converted, never excepted.
 

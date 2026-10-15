@@ -795,6 +795,86 @@ export async function auditRowsFor(
   });
 }
 
+const ORDERED = [{ createdAt: "asc" as const }, { id: "asc" as const }];
+
+function describeRows(rows: { id: string; createdAt: Date; action?: string }[]): string {
+  return rows
+    .map((r) => `${r.id}${r.action ? ` ${r.action}` : ""} @ ${r.createdAt.toISOString()}`)
+    .join("; ");
+}
+
+/**
+ * The ONE audit row matching `args.where`, or `null` when none matches. Throws, listing the matched
+ * rows, when several match — a later second write of the same action must fail the test instead of
+ * being silently ignored (Issue #561, #555). Narrow the `where` when the test means one specific
+ * row, or read all rows with `auditRowsFor()` and assert on every one.
+ */
+export async function soleAuditRowOrNull<T extends Prisma.AuditLogFindManyArgs>(
+  db: { auditLog: FastifyInstance["prisma"]["auditLog"] },
+  args: T,
+): Promise<Prisma.AuditLogGetPayload<T> | null> {
+  const rows = (await db.auditLog.findMany({
+    ...args,
+    orderBy: ORDERED,
+  })) as unknown as (Prisma.AuditLogGetPayload<T> & {
+    id: string;
+    createdAt: Date;
+    action?: string;
+  })[];
+  if (rows.length > 1) {
+    throw new Error(
+      `expected at most one audit row for ${JSON.stringify(args.where)}, matched ${rows.length}: ${describeRows(rows)}`,
+    );
+  }
+  return rows[0] ?? null;
+}
+
+/** Like {@link soleAuditRowOrNull}, but throws when no row matches. */
+export async function soleAuditRow<T extends Prisma.AuditLogFindManyArgs>(
+  db: { auditLog: FastifyInstance["prisma"]["auditLog"] },
+  args: T,
+): Promise<Prisma.AuditLogGetPayload<T>> {
+  const row = await soleAuditRowOrNull(db, args);
+  if (row === null) {
+    throw new Error(`expected exactly one audit row for ${JSON.stringify(args.where)}, matched 0`);
+  }
+  return row;
+}
+
+/** The ONE notification matching `args.where`, or `null`; throws when several match. */
+export async function soleNotificationOrNull<T extends Prisma.NotificationFindManyArgs>(
+  db: { notification: FastifyInstance["prisma"]["notification"] },
+  args: T,
+): Promise<Prisma.NotificationGetPayload<T> | null> {
+  const rows = (await db.notification.findMany({
+    ...args,
+    orderBy: ORDERED,
+  })) as unknown as (Prisma.NotificationGetPayload<T> & {
+    id: string;
+    createdAt: Date;
+  })[];
+  if (rows.length > 1) {
+    throw new Error(
+      `expected at most one notification for ${JSON.stringify(args.where)}, matched ${rows.length}: ${describeRows(rows)}`,
+    );
+  }
+  return rows[0] ?? null;
+}
+
+/** Like {@link soleNotificationOrNull}, but throws when no notification matches. */
+export async function soleNotification<T extends Prisma.NotificationFindManyArgs>(
+  db: { notification: FastifyInstance["prisma"]["notification"] },
+  args: T,
+): Promise<Prisma.NotificationGetPayload<T>> {
+  const row = await soleNotificationOrNull(db, args);
+  if (row === null) {
+    throw new Error(
+      `expected exactly one notification for ${JSON.stringify(args.where)}, matched 0`,
+    );
+  }
+  return row;
+}
+
 /** The rows whose `newValue` carries `field` — exactly the audits that changed that column. */
 export function auditRowsChangingField(rows: AuditRow[], field: string): AuditRow[] {
   return rows.filter(

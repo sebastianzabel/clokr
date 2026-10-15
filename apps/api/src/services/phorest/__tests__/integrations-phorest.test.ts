@@ -15,6 +15,7 @@ import {
   seedTestData,
   cleanupTestData,
   createTestSalon,
+  soleAuditRowOrNull,
 } from "../../../__tests__/setup";
 import { encrypt, decryptSafe } from "../../../utils/crypto";
 import { mockPhorestByBranch } from "./helpers";
@@ -704,6 +705,9 @@ describe("GET/PUT /phorest/config branchId / branchIdEditable (Phase 65b, issue 
     const beforeUpdateAudits = await app.prisma.auditLog.count({
       where: { entity: "SalonCoupling", action: "UPDATE" },
     });
+    // PhorestConfig audits carry no entityId: scope them to this tenant's admin.
+    const configAuditWhere = { entity: "PhorestConfig", userId: seed.adminUser.id };
+    const configAuditsBefore = await app.prisma.auditLog.count({ where: configAuditWhere });
 
     const same = await app.inject({
       method: "PUT",
@@ -740,19 +744,23 @@ describe("GET/PUT /phorest/config branchId / branchIdEditable (Phase 65b, issue 
     expect(after?.id).toBe(before?.id);
     expect(after?.externalBranchId).toBe("cfg-branch-2");
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "SalonCoupling", entityId: after!.id, action: "UPDATE" },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit?.oldValue).toEqual({ externalBranchId: "cfg-branch-1" });
     expect(audit?.newValue).toEqual({ externalBranchId: "cfg-branch-2" });
 
-    const configAudit = await app.prisma.auditLog.findFirst({
-      where: { entity: "PhorestConfig" },
-      orderBy: { createdAt: "desc" },
+    // Both PUTs of this test (same branchId, then changed branchId) wrote a PhorestConfig row;
+    // none of them may carry the branch.
+    const configAudits = await app.prisma.auditLog.findMany({
+      where: configAuditWhere,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
-    expect(configAudit?.newValue).not.toHaveProperty("branchId");
-    expect(configAudit?.newValue).not.toHaveProperty("branch");
+    expect(configAudits).toHaveLength(configAuditsBefore + 2);
+    for (const configAudit of configAudits.slice(configAuditsBefore)) {
+      expect(configAudit.newValue).not.toHaveProperty("branchId");
+      expect(configAudit.newValue).not.toHaveProperty("branch");
+    }
   });
 
   it("PUT without branchId leaves the coupling untouched", async () => {
@@ -790,9 +798,8 @@ describe("GET/PUT /phorest/config branchId / branchIdEditable (Phase 65b, issue 
         where: { salonId: fresh.salonId },
       });
       expect(created?.externalBranchId).toBe("fresh-branch");
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "SalonCoupling", entityId: created!.id, action: "CREATE" },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit?.newValue).toEqual({
         salonId: fresh.salonId,

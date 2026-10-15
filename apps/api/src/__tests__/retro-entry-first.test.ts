@@ -31,6 +31,8 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee,
+  soleAuditRowOrNull,
+  soleNotificationOrNull,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { daysAgoStrInTz, dbDateStr, TEST_TZ } from "./test-dates";
@@ -485,19 +487,17 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
         expect(releasedEntry?.isInvalid, "coupled entry must be released").toBe(false);
         expect(releasedEntry?.invalidReason).toBeNull();
 
-        const entryAudit = await app.prisma.auditLog.findFirst({
+        const entryAudit = await soleAuditRowOrNull(app.prisma, {
           where: { entity: "TimeEntry", entityId: entry.id, action: "UPDATE" },
-          orderBy: { createdAt: "desc" },
         });
         expect(entryAudit, "TimeEntry UPDATE audit row must exist").not.toBeNull();
 
-        const requestAudit = await app.prisma.auditLog.findFirst({
+        const requestAudit = await soleAuditRowOrNull(app.prisma, {
           where: {
             entity: "RetroEntryRequest",
             entityId: request.id,
             action: "RETRO_ENTRY_APPROVED",
           },
-          orderBy: { createdAt: "desc" },
         });
         expect(
           requestAudit,
@@ -571,19 +571,17 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
         });
         expect(requestAfter?.status, "request must be REJECTED").toBe("REJECTED");
 
-        const entryAudit = await app.prisma.auditLog.findFirst({
+        const entryAudit = await soleAuditRowOrNull(app.prisma, {
           where: { entity: "TimeEntry", entityId: entry.id, action: "DELETE" },
-          orderBy: { createdAt: "desc" },
         });
         expect(entryAudit, "TimeEntry DELETE (soft-delete) audit row must exist").not.toBeNull();
 
-        const requestAudit = await app.prisma.auditLog.findFirst({
+        const requestAudit = await soleAuditRowOrNull(app.prisma, {
           where: {
             entity: "RetroEntryRequest",
             entityId: request.id,
             action: "RETRO_ENTRY_REJECTED",
           },
-          orderBy: { createdAt: "desc" },
         });
         expect(
           requestAudit,
@@ -718,15 +716,17 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
         );
 
         // Re-notify: the edit must fire a fresh in-app notification (net-new call site).
-        const notif = await app.prisma.notification.findFirst({
+        // One notification per approver: assert on ALL rows (at least one, each recipient once).
+        const notifs = await app.prisma.notification.findMany({
           where: {
             relatedType: "RetroEntryRequest",
             relatedId: request.id,
             type: "RETRO_ENTRY_UPDATED",
           },
-          orderBy: { createdAt: "desc" },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         });
-        expect(notif, "edit must re-notify the approver(s)").not.toBeNull();
+        expect(notifs.length, "edit must re-notify the approver(s)").toBeGreaterThan(0);
+        expect(new Set(notifs.map((n) => n.userId)).size, "each approver once").toBe(notifs.length);
       } finally {
         vi.useRealTimers();
       }
@@ -822,19 +822,17 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
         ).not.toBeNull();
         expect(entryAfter?.deletedAt, "coupled entry must be soft-deleted").not.toBeNull();
 
-        const reqAudit = await app.prisma.auditLog.findFirst({
+        const reqAudit = await soleAuditRowOrNull(app.prisma, {
           where: {
             entity: "RetroEntryRequest",
             entityId: request.id,
             action: "RETRO_ENTRY_WITHDRAWN",
           },
-          orderBy: { createdAt: "desc" },
         });
         expect(reqAudit, "RETRO_ENTRY_WITHDRAWN audit must exist").not.toBeNull();
 
-        const entryAudit = await app.prisma.auditLog.findFirst({
+        const entryAudit = await soleAuditRowOrNull(app.prisma, {
           where: { entity: "TimeEntry", entityId: entry.id, action: "DELETE" },
-          orderBy: { createdAt: "desc" },
         });
         expect(entryAudit, "TimeEntry DELETE (soft-delete) audit must exist").not.toBeNull();
 
@@ -953,13 +951,12 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
         });
         expect(res.statusCode, "cross-tenant withdraw must 404").toBe(404);
 
-        const audit = await app.prisma.auditLog.findFirst({
+        const audit = await soleAuditRowOrNull(app.prisma, {
           where: {
             action: "CROSS_TENANT_ACCESS_DENIED",
             entity: "RetroEntryRequest",
             entityId: request.id,
           },
-          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         });
         expect(audit, "CROSS_TENANT_ACCESS_DENIED audit must exist").not.toBeNull();
       } finally {
@@ -1115,9 +1112,8 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
           expectedEnd.getTime(),
         );
 
-        const entryAudit = await app.prisma.auditLog.findFirst({
+        const entryAudit = await soleAuditRowOrNull(app.prisma, {
           where: { entity: "TimeEntry", entityId: entry.id, action: "MANAGER_CORRECTION" },
-          orderBy: { createdAt: "desc" },
         });
         expect(entryAudit, "MANAGER_CORRECTION audit must exist").not.toBeNull();
         const oldVal = entryAudit?.oldValue as { breakMinutes?: number } | null;
@@ -1140,9 +1136,8 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
           where: { id: employeeId },
           select: { userId: true },
         });
-        const notif = await app.prisma.notification.findFirst({
+        const notif = await soleNotificationOrNull(app.prisma, {
           where: { userId: empUser!.userId, type: "RETRO_ENTRY_DECIDED", relatedId: entry.id },
-          orderBy: { createdAt: "desc" },
         });
         expect(notif, "employee must be notified of the approve decision").not.toBeNull();
       } finally {
@@ -1172,9 +1167,8 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
           new Date(`${targetDate}T08:00:00.000Z`).toISOString(),
         );
 
-        const entryAudit = await app.prisma.auditLog.findFirst({
+        const entryAudit = await soleAuditRowOrNull(app.prisma, {
           where: { entity: "TimeEntry", entityId: entry.id, action: "UPDATE" },
-          orderBy: { createdAt: "desc" },
         });
         expect(
           entryAudit,
@@ -1251,9 +1245,8 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
           "no reviewer recorded on a blocked approval",
         ).toBeNull();
 
-        const entryAudit = await app.prisma.auditLog.findFirst({
+        const entryAudit = await soleAuditRowOrNull(app.prisma, {
           where: { entity: "TimeEntry", entityId: entry.id, action: "MANAGER_CORRECTION" },
-          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         });
         expect(entryAudit, "no MANAGER_CORRECTION audit on a hard-blocked correction").toBeNull();
       } finally {
@@ -1319,9 +1312,8 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
           where: { id: employeeId },
           select: { userId: true },
         });
-        const notif = await app.prisma.notification.findFirst({
+        const notif = await soleNotificationOrNull(app.prisma, {
           where: { userId: empUser!.userId, type: "RETRO_ENTRY_DECIDED", relatedId: entry.id },
-          orderBy: { createdAt: "desc" },
         });
         expect(notif, "employee must be notified of the reject decision").not.toBeNull();
       } finally {

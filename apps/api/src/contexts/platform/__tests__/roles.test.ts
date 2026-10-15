@@ -6,7 +6,13 @@
  * cascade, so it is deleted explicitly in `afterAll`, per CONTEXT.md's `<specifics>` section).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "../../../__tests__/setup";
 import { PERMISSIONS, permissionKey } from "../permission-catalog";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 // AK-73-7/D-11 (test (w)): `roleGrants` pulled from the Unterbau's public surface (`..`), not
@@ -252,9 +258,8 @@ describe("Roles API (Phase 73b, Issue #73)", () => {
   });
 
   it("(g) writes exactly one CREATE audit row per successful create and none for a 409", async () => {
-    const auditForA = await app.prisma.auditLog.findFirst({
+    const auditForA = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "AccessRole", action: "CREATE", entityId: createdRoleId },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditForA).not.toBeNull();
     expect(auditForA?.newValue).toEqual({

@@ -803,16 +803,18 @@ One action can write several `AuditLog` rows (an approval heals `totalDays` AND 
 parallel full run (#555, `carryover-warning.test.ts` in #568). The gate refuses the shape, in every
 test file under `apps/api/src` (`__tests__/` directories and `*.test.ts`):
 
-- `unordered-find-first` — `<x>.auditLog` / `<x>.notification` `.findFirst` / `.findFirstOrThrow`
-  whose first argument is not an object literal holding `orderBy` (a spread or a variable argument
-  cannot be proven ordered);
+- `bare-find-first` — `<x>.auditLog` / `<x>.notification` `.findFirst` / `.findFirstOrThrow`, ordered
+  or not: ordering makes the earliest/latest match deterministic but silently ignores a second
+  write of the same action (#555);
 - `unordered-find-many-indexed` — an unordered `findMany` on those delegates whose result is picked
   by position (`(await …)[0]`, `.at(n)`, array destructuring, or a bound name the file indexes).
   A `findMany` that is only counted, filtered or iterated is order-independent and not flagged.
 
-Fix: `auditRowsFor()` / `auditRowsChangingField()` / `auditRowChangingField()` from
-`src/__tests__/setup.ts` (ordered by `createdAt`, then `id`; the last throws unless exactly one row
-changed the field), or an explicit `orderBy`. Every hit was converted when the gate landed; there is
+Fix: `soleAuditRow[OrNull]()` / `soleNotification[OrNull]()` from `src/__tests__/setup.ts` (ordered
+by `createdAt`, then `id`; throws, listing the matched rows, unless exactly one row matches), or
+`auditRowsFor()` / `auditRowChangingField()`, or a `findMany` with explicit length / all-row
+assertions. When a test means one of several rows, narrow the `where` (action, recipient, field) or
+assert a before/after count. Every hit was converted when the gate landed; there is
 no exceptions file. Structurally invisible: a result handed through a function return, and a
 delegate reached through a variable. Production `findFirst` (dedupe lookups) is out of scope.
 

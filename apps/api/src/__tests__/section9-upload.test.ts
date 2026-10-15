@@ -8,7 +8,14 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+  auditRowsFor,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 /** Builds a minimal, valid multipart/form-data body for a single file field. */
@@ -294,13 +301,12 @@ describe("Section9 document upload/retrieval — Phase 104-07 Task 1", () => {
     });
     expect(res.statusCode).toBe(404);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "CROSS_TENANT_ACCESS_DENIED",
         entity: "Section9Credit",
         entityId: credit.id,
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(auditRow).toBeTruthy();
   });
@@ -397,15 +403,17 @@ describe("Section9 document upload/retrieval — Phase 104-07 Task 1", () => {
     // Phase 104 review WR-06: the audit row recorded that *a* replacement happened but not
     // WHAT it replaced — the displaced path was lost entirely. It is now in oldValue, so
     // the displacement stays reconstructible even though the object itself is gone.
-    const audit = await app.prisma.auditLog.findFirst({
-      where: {
-        action: "SECTION9_DOCUMENT_UPLOADED",
-        entity: "Section9Credit",
-        entityId: credit.id,
-      },
-      orderBy: { createdAt: "desc" },
-    });
-    expect(audit).not.toBeNull();
+    // Two uploads, two audit rows, in creation order: the first stored firstPath, the second
+    // displaced it.
+    const uploadAudits = await auditRowsFor(
+      app,
+      "Section9Credit",
+      credit.id,
+      "SECTION9_DOCUMENT_UPLOADED",
+    );
+    expect(uploadAudits).toHaveLength(2);
+    expect(uploadAudits[0]!.newValue).toMatchObject({ documentPath: firstPath });
+    const audit = uploadAudits[1];
     expect(audit!.oldValue).toMatchObject({ documentPath: firstPath });
     expect(audit!.newValue).toMatchObject({ documentPath: secondPath });
   });

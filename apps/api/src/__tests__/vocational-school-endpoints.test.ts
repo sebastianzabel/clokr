@@ -14,7 +14,13 @@
 //               cross-employee leak guarded by regression tests below.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import { saldoSnapshotPeriodBounds } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
@@ -354,9 +360,8 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     expect(body.type).toBe("VOCATIONAL_SCHOOL");
 
     // Audit log entry was written.
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "VOCATIONAL_SCHOOL_MANUAL_INSERTED", entityId: body.id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).toBeTruthy();
 
@@ -514,9 +519,8 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
       expect(after?.deletedAt).not.toBeNull();
 
       // Audit row exists with oldValue snapshot.
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { action: "VOCATIONAL_SCHOOL_MANUAL_DELETED", entityId: absence.id },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).toBeTruthy();
       expect(audit?.entity).toBe("Absence");

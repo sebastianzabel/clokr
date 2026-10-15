@@ -13,7 +13,13 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
 import type { Prisma, RoleAssignment } from "@clokr/db";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "../../../__tests__/setup";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
 import { countGuardedPermissionHolders, userMayApply } from "../facade/role-assignments";
@@ -406,9 +412,8 @@ describe("Phase 74b review fixes", () => {
       ["COPY", copyId],
       ["DELETE", roleId],
     ] as const) {
-      const row = await app.prisma.auditLog.findFirst({
+      const row = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "AccessRole", entityId, action },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(row, `${action} audit row`).not.toBeNull();
       expect(row?.userId, `${action} userId`).toBeNull();
@@ -480,9 +485,8 @@ describe("Phase 74b review fixes", () => {
   // ── WR-06: deactivate / anonymize audits resolve the actor and carry the request ───────────────
 
   async function latestAudit(entity: string, entityId: string, action: string) {
-    return app.prisma.auditLog.findFirst({
+    return soleAuditRowOrNull(app.prisma, {
       where: { entity, entityId, action },
-      orderBy: { createdAt: "desc" },
     });
   }
 

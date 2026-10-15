@@ -10,7 +10,13 @@
  * hazard, see CLAUDE.md / docs/testing.md).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("GET /api/v1/settings/vacation/:employeeId — first-access self-heal (Issue #416)", () => {
@@ -79,9 +85,8 @@ describe("GET /api/v1/settings/vacation/:employeeId — first-access self-heal (
     expect(entitlement).not.toBeNull();
     expect(entitlement?.isAutoCalculated).toBe(true);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "LeaveEntitlement", entityId: entitlement!.id, action: "CREATE" },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
 

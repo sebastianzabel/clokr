@@ -5,6 +5,7 @@ import {
   seedTestData,
   cleanupTestData,
   seedEntitlementYears,
+  soleAuditRowOrNull,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { computeAffectedMonths } from "../contexts/absence/correction-lock";
@@ -113,9 +114,8 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
     // Mon 07 – Fri 11 = 5 working days (no NDS holidays that week)
     expect(Number(body.days)).toBe(5);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "LEAVE_CORRECTED", entity: "LeaveRequest", entityId: req.id },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
     expect(audit?.userId).toBeTruthy();
@@ -158,9 +158,8 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
     });
 
     expect(res.statusCode).toBe(404);
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entity: "LeaveRequest", entityId: req.id },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
