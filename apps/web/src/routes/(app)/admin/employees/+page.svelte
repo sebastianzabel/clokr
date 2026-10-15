@@ -44,9 +44,7 @@
     classification: EmployeeClassification;
     coverageWeight: string | number;
     requiresSupervision: boolean;
-    // Assigned role names (Issue #538); null when the caller may not see them
-    // (needs role-assignment:manage) - the role chip, filter and count are then not offered.
-    roleNames: string[] | null;
+    userId: string;
     user: {
       email: string;
       isActive: boolean;
@@ -167,6 +165,11 @@
     return emp.firstName === "Gelöscht" && emp.lastName.startsWith("GELÖSCHT-");
   }
 
+  // Assigned role names per user id (Issue #538), loaded from the role-assignment resource only
+  // for a caller who may manage role assignments; null = not offered (chip, filter and count are
+  // hidden). GET /employees itself carries no role data.
+  let roleNamesByUser = $state<Record<string, string[]> | null>(null);
+
   // Filters
   let filterSearch = $state("");
   let filterRole = $state("");
@@ -187,7 +190,7 @@
           `${emp.firstName} ${emp.lastName} ${emp.user.email} ${emp.employeeNumber}`.toLowerCase();
         if (!match.includes(q)) return false;
       }
-      if (filterRole && !(emp.roleNames ?? []).includes(filterRole)) return false;
+      if (filterRole && !(roleNamesOf(emp) ?? []).includes(filterRole)) return false;
       if (filterStatus) {
         if (filterStatus === "active" && !emp.user.isActive) return false;
         if (filterStatus === "pending" && (emp.user.isActive || emp.invitationStatus !== "PENDING"))
@@ -213,10 +216,10 @@
   // KPI mini-stats (exclude anonymized)
   let statTotal = $derived(employees.filter((e) => !isAnonymized(e)).length);
   let statActive = $derived(employees.filter((e) => e.user.isActive && !isAnonymized(e)).length);
-  // Role chip, filter and count exist only when the API sent the names (Issue #538).
-  let showRoles = $derived(employees.some((e) => e.roleNames !== null));
+  // Role chip, filter and count exist only when the names were loaded (Issue #538).
+  let showRoles = $derived(roleNamesByUser !== null);
   let roleOptions = $derived(
-    [...new Set(employees.flatMap((e) => (isAnonymized(e) ? [] : (e.roleNames ?? []))))].sort(
+    [...new Set(employees.flatMap((e) => (isAnonymized(e) ? [] : (roleNamesOf(e) ?? []))))].sort(
       (a, b) => a.localeCompare(b, "de"),
     ),
   );
@@ -252,13 +255,36 @@
     }
   });
 
+  function roleNamesOf(emp: Employee): string[] | null {
+    return roleNamesByUser === null ? null : (roleNamesByUser[emp.userId] ?? []);
+  }
+
+  async function loadRoleNames() {
+    if (!canAssignRoles) {
+      roleNamesByUser = null;
+      return;
+    }
+    try {
+      const res = await api.get<{ roleNames: Record<string, string[]> }>(
+        "/role-assignments/role-names",
+      );
+      roleNamesByUser = res.roleNames;
+    } catch {
+      // The chip is decoration; a failed read hides it instead of blocking the list.
+      roleNamesByUser = null;
+    }
+  }
+
   async function loadEmployees() {
     loading = true;
     error = "";
     try {
       // Admin list requests anonymized rows too (ADMIN-only server-side); the
       // "Anonymisierte anzeigen" toggle then filters them client-side (isAnonymized).
-      employees = await api.get<Employee[]>("/employees?includeAnonymized=true");
+      [employees] = await Promise.all([
+        api.get<Employee[]>("/employees?includeAnonymized=true"),
+        loadRoleNames(),
+      ]);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -591,9 +617,9 @@
                     <td class="col-email">{emp.user.email}</td>
                     {#if showRoles}
                       <td>
-                        {#if emp.roleNames !== null && emp.roleNames.length > 0}
+                        {#if (roleNamesOf(emp) ?? []).length > 0}
                           <span class="chip chip-brand">
-                            <span class="dot"></span>{emp.roleNames.join(", ")}
+                            <span class="dot"></span>{(roleNamesOf(emp) ?? []).join(", ")}
                           </span>
                         {/if}
                       </td>

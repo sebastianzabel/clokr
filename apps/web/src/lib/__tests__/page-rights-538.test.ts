@@ -182,8 +182,9 @@ describe("the employee list shows roles only from roleNames (Issue #538)", () =>
   it("never reads the compat role of a listed person, and offers chip, filter and count only when names arrive", () => {
     expect(src.length).toBeGreaterThan(10_000);
     expect(src).not.toMatch(/\buser\??\.role\b/);
-    expect(src).toContain("roleNames: string[] | null");
-    expect(src).toContain("employees.some((e) => e.roleNames !== null)");
+    expect(src).toContain("/role-assignments/role-names");
+    expect(src).toContain("let showRoles = $derived(roleNamesByUser !== null);");
+    expect(src).toContain("if (!canAssignRoles)");
     expect(src).toContain("{#if showRoles}");
   });
 

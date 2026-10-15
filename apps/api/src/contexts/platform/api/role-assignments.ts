@@ -31,7 +31,11 @@ import {
   roleAssignmentScopeOf,
   type NormalizedRoleAssignmentScope,
 } from "../role-assignment";
-import { lockTenantForRoleChanges, withRoleLockoutGuard } from "../facade/role-assignments";
+import {
+  lockTenantForRoleChanges,
+  roleNamesByUserId,
+  withRoleLockoutGuard,
+} from "../facade/role-assignments";
 import { foreignKeyConstraintOf } from "../prisma-foreign-key";
 import {
   auditRoleAssignmentChange,
@@ -627,6 +631,34 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             a.firstName.localeCompare(b.firstName, "de") ||
             a.employeeId.localeCompare(b.employeeId),
         );
+    },
+  });
+
+  // GET /api/v1/role-assignments/role-names — the assigned role names per user, for the role chip
+  // of the employee list (Issue #538). Role names are role-assignment data, so they live here and
+  // not on GET /employees. Like /people it is whole-tenant by construction: the permission has the
+  // Mandant reference, so a scoped holder never passes the guard.
+  app.get("/role-names", {
+    schema: {
+      tags: ["Rollenzuweisungen"],
+      security: [{ bearerAuth: [] }],
+      summary: "List the assigned role names per user",
+      description:
+        "Returns, per user id of the caller tenant's non-anonymized employees, the names of the roles that user holds (stored assignments, legacy-role fallback when none is stored). Names only, no scope or permission data.",
+    },
+    preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
+    handler: async (req) => {
+      const tenantId = req.user.tenantId;
+      const rows = await app.prisma.employee.findMany({
+        where: { tenantId, ...NOT_ANONYMIZED_EMPLOYEE_WHERE },
+        select: { userId: true },
+      });
+      const names = await roleNamesByUserId(
+        app.prisma,
+        tenantId,
+        rows.map((row) => row.userId),
+      );
+      return { roleNames: Object.fromEntries(names) };
     },
   });
 }
