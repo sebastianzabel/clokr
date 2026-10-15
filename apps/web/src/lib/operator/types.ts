@@ -172,3 +172,43 @@ export interface UpdateSalonBody {
   openingHours?: OpeningHoursDay[];
   coupling?: SalonCouplingInput | null;
 }
+
+/** Derived status of a support access at the time the server answered (Issue #93). */
+export type SupportAccessStatus = "ACTIVE" | "EXPIRED" | "ENDED";
+
+/** Who ended a support access early. */
+export type SupportAccessEndedBy = "OPERATOR" | "TENANT";
+
+/** The durations the server accepts for a support access, in hours (D-03). */
+export type SupportDurationHours = 1 | 4 | 8 | 24;
+
+/** One support access as `GET /operator/tenants/:id/support-access` reports it (mirror of the API DTO). */
+export interface OperatorSupportAccess {
+  id: string;
+  tenantId: string;
+  reason: string;
+  durationHours: number;
+  /** ISO instants. */
+  startedAt: string;
+  expiresAt: string;
+  endedAt: string | null;
+  endedBy: SupportAccessEndedBy | null;
+  status: SupportAccessStatus;
+}
+
+/** Wire type of `GET /operator/tenants/:id/support-access`: the running access and every own grant, newest first. */
+export interface OperatorSupportAccessState {
+  active: OperatorSupportAccess | null;
+  history: OperatorSupportAccess[];
+}
+
+/** Body of `POST /operator/tenants/:id/support-access`; the strict API schema accepts exactly these keys. */
+export interface RequestSupportAccessBody {
+  reason: string;
+  durationHours: SupportDurationHours;
+}
+
+/** 201 body of the request and 200 body of the end call. */
+export interface SupportAccessResult {
+  access: OperatorSupportAccess;
+}

@@ -48,3 +48,19 @@ export function announcementFor(previousMs: number, ms: number): string | null {
   }
   return null;
 }
+
+const MINUTE_MS = 60_000;
+
+/**
+ * The remaining time of a support access (Issue #93): hours and minutes, minute resolution,
+ * partial minutes floored so the figure never overstates the grant. A 24 h grant needs more than
+ * the `mm:ss` of `formatRemaining`. Callers derive `ms` from `remainingMs(expiresAt, now)`.
+ */
+export function formatGrantRemaining(ms: number): string {
+  if (ms <= 0) return "Abgelaufen";
+  if (ms < MINUTE_MS) return "Weniger als 1 Min.";
+  const totalMinutes = Math.floor(ms / MINUTE_MS);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours > 0 ? `Noch ${hours} Std. ${minutes} Min.` : `Noch ${minutes} Min.`;
+}

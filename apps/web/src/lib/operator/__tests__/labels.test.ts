@@ -7,6 +7,10 @@ import {
   federalStateLabel,
   formatOperatorDate,
   formatOperatorDay,
+  formatOperatorDateTime,
+  SUPPORT_DURATION_OPTIONS,
+  SUPPORT_ENDED_BY_LABELS,
+  SUPPORT_STATUS_LABELS,
 } from "../labels";
 
 const ALL: FederalState[] = [
@@ -100,5 +104,38 @@ describe("formatOperatorDay", () => {
     expect(formatOperatorDay("2026-10-01T22:00:00.000Z")).toBe("–");
     expect(formatOperatorDay("01.10.2026")).toBe("–");
     expect(formatOperatorDay("not a day")).toBe("–");
+  });
+});
+
+describe("support access vocabulary (Issue #93)", () => {
+  it("offers exactly 1, 4, 8 and 24 hours, in that order", () => {
+    expect(SUPPORT_DURATION_OPTIONS).toEqual([
+      { value: 1, label: "1 Stunde" },
+      { value: 4, label: "4 Stunden" },
+      { value: 8, label: "8 Stunden" },
+      { value: 24, label: "24 Stunden" },
+    ]);
+  });
+
+  it("labels the three statuses and the two ender values by their control values", () => {
+    expect(SUPPORT_STATUS_LABELS).toEqual({
+      ACTIVE: "Aktiv",
+      EXPIRED: "Abgelaufen",
+      ENDED: "Beendet",
+    });
+    expect(SUPPORT_ENDED_BY_LABELS).toEqual({
+      OPERATOR: "durch Betreiber",
+      TENANT: "durch Mandant",
+    });
+  });
+
+  it("formats an instant as dd.MM.yyyy, HH:mm in the browser zone", () => {
+    const iso = "2026-10-15T09:30:00.000Z";
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    expect(formatOperatorDateTime(iso)).toBe(
+      `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`,
+    );
+    expect(formatOperatorDateTime("not a date")).toBe("–");
   });
 });
