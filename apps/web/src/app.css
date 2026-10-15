@@ -963,14 +963,29 @@ select.form-input {
 }
 
 /* ─── View Tabs ─────────────────────────────────────────────────────── */
+/* Issue #621: the strip scrolls on its own on narrow screens instead of widening the page (five
+   tabs are ~565 px wide). The baseline is an inset shadow, not a border: with overflow-x: auto the
+   strip clips its content box, so the active tab's 2px underline (margin-bottom: -2px over the old
+   border) would be cut off — painted on top of the inset shadow it looks the same as before. The
+   active tab is kept in view by revealActiveTab() (lib/components/admin/reveal-active-tab.ts). */
 .view-tabs {
   display: flex;
   gap: 0.25rem;
   margin-bottom: 1rem;
-  border-bottom: 2px solid var(--border);
+  box-shadow: inset 0 -2px 0 var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.view-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .view-tab {
+  flex: 0 0 auto;
+  white-space: nowrap;
   background: none;
   border: none;
   cursor: pointer;
@@ -981,7 +996,6 @@ select.form-input {
   font-weight: 500;
   color: var(--text-muted);
   border-bottom: 2px solid transparent;
-  margin-bottom: -2px;
   border-radius: 4px 4px 0 0;
   transition:
     color 0.15s,

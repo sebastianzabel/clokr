@@ -53,6 +53,7 @@
     </ListDetail>
 -->
 <script lang="ts">
+  import { revealActiveTab } from "./reveal-active-tab";
   import type { Snippet } from "svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Breadcrumb from "$lib/components/ui/Breadcrumb.svelte";
@@ -140,7 +141,13 @@
     {/if}
 
     {#if tabs && tabs.length > 0}
-      <div class="view-tabs" role="tablist" aria-label={title} onkeydown={handleKeydown}>
+      <div
+        class="view-tabs"
+        role="tablist"
+        aria-label={title}
+        onkeydown={handleKeydown}
+        use:revealActiveTab={currentTab}
+      >
         {#each tabs as tab (tab.id)}
           <button
             class="view-tab"

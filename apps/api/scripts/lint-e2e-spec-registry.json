@@ -32,6 +32,11 @@
       "reason": "Issue #553 narrow-viewport gate for every month bar consumer (6 surfaces x editorial/modern x 390 and 360 px). Needs only the tenant fixture, no seed, and no date dependency because the browser clock is fixed at 2026-09-16 (widest German month label). Measured RED on the unfixed tree: 21 of 24 fail (20 with the Heute button plus the modern /leave year bar at 360 px, where the nav row sits 1 px outside the bar); 24/24 green after the fix."
     },
     {
+      "file": "apps/e2e/tests/admin-tabs-narrow-viewport.spec.ts",
+      "category": "in-ci",
+      "reason": "Issue #621 narrow-viewport gate for the shared .view-tabs strip (/admin/system with five tabs, /admin/vacation) x editorial/modern x 390 and 360 px: no page-level horizontal scroll, the five-tab strip scrolls itself (non-vacuous), End/Home bring the chosen tab fully into view with its underline unclipped. Needs only the tenant fixture, no seed, no date dependency. Measured before the fix: /admin/system 565 px and /admin/vacation 641 px wide at 390 px; after the fix 390 px in both skins (scripted probe against the rebuilt test stack)."
+    },
+    {
       "file": "apps/e2e/tests/operator-console.spec.ts",
       "category": "in-ci",
       "reason": "Issue #89 operator console against a mocked /api/v1/operator contract (page.route fulfils every operator request in the browser): no seed, no operator account, no date dependency (the session clock test uses the Playwright fake clock). The operator session is seeded into sessionStorage by the spec; one test uses the tenant-bootstrap fixture only to prove a tenant token never reaches the operator surface. Measured: 36/36 pass on the rebuilt test stack (108/108 with --repeat-each=3)."
