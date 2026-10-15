@@ -114,7 +114,7 @@ describe("Manual opening at phone width is not collateral damage (prove-it #2)",
       versionStore.set("1.9.18");
       const { default: MobileMoreSheet } =
         await import("$lib/components/layout/MobileMoreSheet.svelte");
-      renderWithTheme(MobileMoreSheet, { open: true, items: [], currentPath: "/dashboard" });
+      renderWithTheme(MobileMoreSheet, { open: true, sections: [], currentPath: "/dashboard" });
 
       expect(whatsNewOpen).toBeDefined();
       let open = false;

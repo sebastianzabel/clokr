@@ -15,6 +15,7 @@ import type {
   CreateTenantResult,
   OperatorAccessGrant,
   OperatorChallenge,
+  OperatorDashboard,
   OperatorFactor,
   OperatorMe,
   OperatorSalon,
@@ -128,6 +129,7 @@ export const operatorApi = {
   createTenant: (body: CreateTenantBody) =>
     request<CreateTenantResult>("POST", "/tenants", { body }),
   listTenants: () => request<OperatorTenant[]>("GET", "/tenants"),
+  getDashboard: () => request<OperatorDashboard>("GET", "/dashboard"),
   getTenant: (id: string) => request<OperatorTenant>("GET", `/tenants/${encodeURIComponent(id)}`),
   renameTenant: (id: string, name: string) =>
     request<OperatorTenant>("PATCH", `/tenants/${encodeURIComponent(id)}`, { body: { name } }),

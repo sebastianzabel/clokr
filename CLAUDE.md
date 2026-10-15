@@ -1013,7 +1013,21 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   source scan in `operator-auth-88.test.ts` fails on a violation. Operator responses carry tenant
   metadata and, since Phase 89, salon master data including the Phorest branch id — never employee
   data and never counts (no time-entry, assignment or employee numbers, Issue #89 D-14a); support
-  access to tenant data is #93, not here. The ONE FILE that writes operator-actor rows into a
+  access to tenant data is #93, not here. **The ONE documented exception (Issue #90):**
+  `GET /api/v1/operator/dashboard` is the only operator response that carries numbers — per tenant
+  the active and total salons, the active employees (not anonymized, not exited before today, UTC)
+  and the UTC day of the newest login of any user of the tenant, plus totals and the inactive flag.
+  They are computed only by `operatorTenantMetrics()` in
+  `contexts/platform/facade/operator-metrics.ts` (Unterbau, deliberately NOT re-exported from
+  `index.ts`); aggregates only, never a person, a person's id, a time entry or a saldo, and the
+  operator route files themselves still never read the person models. The inactivity threshold
+  lives once in `OPERATOR_INACTIVITY_DAYS` (30) and is served as `inactivityDays`; a tenant is
+  inactive only when it is not deactivated and has no login or none within that window. Every
+  successful call writes `DASHBOARD_VIEWED` (retention class AUTH_EVENT, 12 months) in the same
+  transaction. D-14a still binds every other operator response, and the dashboard is no precedent
+  for a new number. Known limit: the facade reads no `TimeEntry`, so a tenant that only clocks at
+  terminals shows as inactive. Details: `docs/adr/0001-abweichungen.md` Eintrag Y, Nachtrag
+  Issue #90. The ONE FILE that writes operator-actor rows into a
   tenant `AuditLog` is `contexts/platform/operator-tenant-audit.ts` (first-admin creation, salon and
   coupling changes; actor `{ type: "OPERATOR", operatorId, tenantId }`; guard
   `operator-tenant-audit-89.test.ts` fails on any other file spelling that actor shape). Rows
@@ -1030,7 +1044,9 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   and `X-Frame-Options: DENY` on `/betreiber`; the client logger drops its queue there, so operator
   errors never reach the tenant log endpoint. Nothing in the tenant app links to `/betreiber`, and
   the console pins theme nacht / skin editorial / comfortable without writing the device's stored
-  preferences (it restores them on leaving). Logout clears the tab's session but cannot revoke the
+  preferences (it restores them on leaving). Since Issue #90 the start page shows an „Übersicht“
+  and the tenant list the columns Salons, Mitarbeitende and Letzte Aktivität with an „Inaktiv“
+  badge, loaded with one `GET /operator/dashboard` next to the tenant list request. Logout clears the tab's session but cannot revoke the
   15-minute token server-side (accepted, T-89-14). The salon routes
   (`contexts/platform/api/operator/salons.ts`) call only the Unterbau salon facade and the coupling
   port of `composition/operator-salon-ports.ts` (Schichtplanung `facade/couplings.ts`); every

@@ -243,7 +243,7 @@ h6 {
 /* Inline links in body text — must be distinguishable from surrounding text */
 a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-user):not(
     .sidebar-brand
-  ) {
+  ):not(.mehr-item) {
   text-decoration-line: underline;
   text-decoration-color: var(--brand-light);
   text-underline-offset: 2px;
@@ -251,7 +251,7 @@ a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-us
 }
 a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-user):not(
     .sidebar-brand
-  ):hover {
+  ):not(.mehr-item):hover {
   text-decoration-color: var(--brand);
 }
 

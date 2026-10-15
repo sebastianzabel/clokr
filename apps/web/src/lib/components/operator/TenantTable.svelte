@@ -1,24 +1,36 @@
 <!--
   TenantTable - the operator's list of tenants (Issue #89, D-14).
 
-  Name (link to the tenant page), Kurzname, Bundesland, Angelegt and Status; a deactivated tenant
-  carries its reason as a muted line under the badge. The list is paged client-side above 25 rows.
-  Up to 639 px the table becomes a stacked list by CSS only (same markup), so a phone never
-  scrolls sideways: line one is the name with the status badge, line two the muted
-  "slug - Bundesland - Angelegt", line three the reason.
+  Name (link to the tenant page), Kurzname, Bundesland, Angelegt, Salons (active / total),
+  Mitarbeitende (active), Letzte Aktivität and Status; a deactivated tenant carries its reason as a
+  muted line under the badge. Since Issue #90 the three metric columns come from the dashboard
+  route (`metrics`, keyed by tenant id) and an "Inaktiv" badge sits next to the status badge when
+  the metrics say the tenant is inactive; a tenant without metrics shows a dash in those cells and
+  no badge. The list is paged client-side above 25 rows.
+  Up to 767 px the table becomes a stacked list by CSS only (same markup), so a phone never
+  scrolls sideways: line one is the name with the status and inactivity badges, line two the
+  muted "slug - Bundesland - Angelegt - Salons - Mitarbeitende - Letzte Aktivität" (the header row
+  is hidden there, so each metric carries its own visible label), line three the reason.
 -->
 <script lang="ts">
   import Pagination from "$components/ui/Pagination.svelte";
-  import { federalStateLabel, formatOperatorDate } from "$lib/operator/labels";
-  import type { OperatorTenant } from "$lib/operator/types";
+  import { federalStateLabel, formatOperatorDate, formatOperatorDay } from "$lib/operator/labels";
+  import type { OperatorDashboardTenant, OperatorTenant } from "$lib/operator/types";
 
   interface Props {
     tenants: OperatorTenant[];
     page?: number;
     pageSize?: number;
+    /** Dashboard metrics by tenant id (Issue #90); a tenant without an entry shows dashes. */
+    metrics?: ReadonlyMap<string, OperatorDashboardTenant>;
   }
 
-  let { tenants, page = $bindable(1), pageSize = $bindable(25) }: Props = $props();
+  let {
+    tenants,
+    page = $bindable(1),
+    pageSize = $bindable(25),
+    metrics = new Map(),
+  }: Props = $props();
 
   const visible = $derived(tenants.slice((page - 1) * pageSize, page * pageSize));
 </script>
@@ -32,12 +44,16 @@
         <th scope="col">Kurzname</th>
         <th scope="col">Bundesland</th>
         <th scope="col">Angelegt</th>
+        <th scope="col">Salons</th>
+        <th scope="col">Mitarbeitende</th>
+        <th scope="col">Letzte Aktivität</th>
         <th scope="col">Status</th>
       </tr>
     </thead>
     <tbody>
       {#each visible as tenant (tenant.id)}
         {@const deactivated = tenant.deactivatedAt !== null}
+        {@const metric = metrics.get(tenant.id)}
         <tr data-testid={`op-tenant-row-${tenant.id}`}>
           <td class="cell-name" data-label="Name">
             <a
@@ -51,6 +67,37 @@
             {federalStateLabel(tenant.federalState)}
           </td>
           <td class="meta date" data-label="Angelegt">{formatOperatorDate(tenant.createdAt)}</td>
+          <td class="meta metric" data-label="Salons" data-testid={`op-tenant-salons-${tenant.id}`}>
+            <span class="m-label" aria-hidden="true">Salons</span>
+            {#if metric}
+              <span aria-hidden="true">{metric.activeSalons} / {metric.totalSalons}</span>
+              <span class="sr-only">{metric.activeSalons} von {metric.totalSalons} aktiv</span>
+            {:else}
+              –
+            {/if}
+          </td>
+          <td
+            class="meta metric"
+            data-label="Mitarbeitende"
+            data-testid={`op-tenant-employees-${tenant.id}`}
+          >
+            <span class="m-label" aria-hidden="true">Mitarbeitende</span>
+            {metric ? metric.activeEmployees : "–"}
+          </td>
+          <td
+            class="meta metric activity"
+            data-label="Letzte Aktivität"
+            data-testid={`op-tenant-activity-${tenant.id}`}
+          >
+            <span class="m-label" aria-hidden="true">Letzte Aktivität</span>
+            {#if !metric}
+              –
+            {:else if metric.lastActivityAt === null}
+              Keine Anmeldung
+            {:else}
+              {formatOperatorDay(metric.lastActivityAt)}
+            {/if}
+          </td>
           <td class="cell-status" data-label="Status">
             <span
               class="badge status"
@@ -60,6 +107,12 @@
               data-state={deactivated ? "deactivated" : "active"}
               >{deactivated ? "Deaktiviert" : "Aktiv"}</span
             >
+            {#if metric?.inactive}
+              <span
+                class="badge badge-yellow inactive-badge"
+                data-testid={`op-tenant-inactive-${tenant.id}`}>Inaktiv</span
+              >
+            {/if}
             {#if deactivated && tenant.deactivatedReason}
               <span class="reason">Grund: {tenant.deactivatedReason}</span>
             {/if}
@@ -117,6 +170,21 @@
     min-width: 96px;
   }
 
+  .metric {
+    min-width: 96px;
+  }
+
+  /* The column header carries the name on a wide screen; the stacked list shows this label instead. */
+  .m-label {
+    display: none;
+  }
+
+  /* The amber text of .badge-yellow measures 4.25:1 on its own tint (WCAG AA asks 4.5:1 for 13 px
+     text), so the label takes the body text colour; the tint and border still carry the warning. */
+  .inactive-badge {
+    color: var(--text);
+  }
+
   .reason {
     display: block;
     margin-top: 4px;
@@ -130,7 +198,40 @@
     margin-top: 16px;
   }
 
-  @media (max-width: 639px) {
+  /* Eight columns do not fit a tablet width at the default padding: tighten the cells, let the
+     headers wrap and lower the content minimums so the table fits without sideways scrolling. */
+  @media (min-width: 768px) and (max-width: 1099px) {
+    .tenant-table th {
+      padding: 10px 6px;
+      white-space: normal;
+      vertical-align: bottom;
+      font-size: 11px;
+      letter-spacing: 0.02em;
+    }
+
+    .tenant-table td {
+      padding: 10px 6px;
+      font-size: 13px;
+    }
+
+    .slug {
+      min-width: 72px;
+    }
+
+    .state {
+      min-width: 84px;
+    }
+
+    .date {
+      min-width: 74px;
+    }
+
+    .metric {
+      min-width: 0;
+    }
+  }
+
+  @media (max-width: 767px) {
     .tenant-table thead {
       position: absolute;
       width: 1px;
@@ -199,8 +300,15 @@
       display: contents;
     }
 
-    .tenant-table .status {
+    .tenant-table .status,
+    .tenant-table .inactive-badge {
       order: 2;
+    }
+
+    /* The header row is hidden here, so every metric value names itself. */
+    .tenant-table .m-label {
+      display: inline;
+      margin-right: 4px;
     }
 
     .tenant-table td.meta {
@@ -209,7 +317,7 @@
     }
 
     /* The separator trails its item, so a wrapped line never starts with a stray dot. */
-    .tenant-table td.meta:not(.date)::after {
+    .tenant-table td.meta:not(.activity)::after {
       content: "\00b7";
       margin-left: 8px;
     }

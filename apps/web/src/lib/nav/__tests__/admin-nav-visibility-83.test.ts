@@ -64,13 +64,15 @@ describe("admin navigation (Issue #83)", () => {
 
   it("Sidebar, BottomTabBar and CommandPalette read the route map, not the compat role", () => {
     const sidebar = read("lib/components/layout/Sidebar.svelte");
-    expect(sidebar).toContain("visibleAdminNavGroups($authStore.user");
+    // Since #516 both variants render `visibleNavSections()` (app-nav.ts), which reads the groups.
+    expect(sidebar).toContain("visibleNavSections($authStore.user");
+    expect(read("lib/nav/app-nav.ts")).toContain("visibleAdminNavGroups(user");
     expect(sidebar).not.toContain("const adminNav");
     expect(sidebar.match(/\.role\b/g) ?? []).toHaveLength(
       (sidebar.match(/\$authStore\.user\.role === "(ADMIN|MANAGER)"/g) ?? []).length + 1,
     );
     const bar = read("lib/components/layout/BottomTabBar.svelte");
-    expect(bar).toContain("visibleAdminNavItems($authStore.user");
+    expect(bar).toContain("visibleNavSections($authStore.user");
     expect(bar).not.toMatch(/\brole\b\s*===|adminMore/);
     const palette = read("lib/components/ui/CommandPalette.svelte");
     expect(palette).toContain("canAccessAdminPath($authStore.user, a.href)");
