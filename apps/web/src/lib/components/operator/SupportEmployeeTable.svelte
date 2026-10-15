@@ -11,9 +11,11 @@
   import {
     EMPLOYEE_STATUS_LABELS,
     SCHEDULE_TYPE_LABELS,
+    employeeStatusBadgeClass,
     labelFor,
   } from "$lib/operator/support-labels";
-  import type { SupportEmployee, SupportEmployeeStatus } from "$lib/operator/types";
+  import { supportContractsPath, supportMonthPath } from "$lib/operator/support-nav";
+  import type { SupportEmployee } from "$lib/operator/types";
 
   interface Props {
     tenantId: string;
@@ -21,16 +23,6 @@
   }
 
   let { tenantId, employees }: Props = $props();
-
-  const base = $derived(
-    `/betreiber/mandanten/${encodeURIComponent(tenantId)}/support/mitarbeitende`,
-  );
-
-  function badgeClass(status: SupportEmployeeStatus): string {
-    if (status === "ACTIVE") return "badge-green";
-    if (status === "EXITED") return "badge-gray";
-    return "badge-yellow";
-  }
 
   function fullName(employee: SupportEmployee): string {
     return `${employee.firstName} ${employee.lastName}`.trim();
@@ -66,7 +58,7 @@
             </td>
             <td data-label="Status">
               <span
-                class={`badge ${badgeClass(employee.status)}`}
+                class={`badge ${employeeStatusBadgeClass(employee.status)}`}
                 data-testid={`op-support-employee-status-${employee.id}`}
                 data-state={employee.status}
                 >{labelFor(EMPLOYEE_STATUS_LABELS, employee.status)}</span
@@ -85,13 +77,13 @@
             <td class="cell-actions">
               <a
                 class="btn btn-outline btn-sm"
-                href={`${base}/${encodeURIComponent(employee.id)}`}
+                href={supportMonthPath(tenantId, employee.id)}
                 aria-label={`Monatsansicht von ${fullName(employee)}`}
                 data-testid={`op-support-employee-month-${employee.id}`}>Monatsansicht</a
               >
               <a
                 class="btn btn-outline btn-sm"
-                href={`${base}/${encodeURIComponent(employee.id)}/vertraege`}
+                href={supportContractsPath(tenantId, employee.id)}
                 aria-label={`Verträge von ${fullName(employee)}`}
                 data-testid={`op-support-employee-contracts-${employee.id}`}>Verträge</a
               >

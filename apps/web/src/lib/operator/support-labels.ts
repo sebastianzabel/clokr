@@ -126,3 +126,15 @@ export function formatSignedMinutes(minutes: number): string {
   if (rounded < 0) return `−${hoursAndMinutes(-rounded)}`;
   return "0:00";
 }
+
+/** A day count with the German decimal comma (`0,5`, `5`). */
+export function formatDays(days: number): string {
+  return String(days).replace(".", ",");
+}
+
+/** The badge recipe (`app.css`) of an employee status; an unknown status reads as the neutral one. */
+export function employeeStatusBadgeClass(status: string): string {
+  if (status === "ACTIVE") return "badge-green";
+  if (status === "ANONYMIZED") return "badge-yellow";
+  return "badge-gray";
+}

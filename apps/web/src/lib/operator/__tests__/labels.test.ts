@@ -7,6 +7,8 @@ import {
   federalStateLabel,
   formatOperatorDate,
   formatOperatorDay,
+  formatOperatorDayRange,
+  formatOperatorTime,
   formatOperatorDateTime,
   SUPPORT_DURATION_OPTIONS,
   SUPPORT_ENDED_BY_LABELS,
@@ -137,5 +139,20 @@ describe("support access vocabulary (Issue #93)", () => {
       `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`,
     );
     expect(formatOperatorDateTime("not a date")).toBe("–");
+  });
+});
+
+describe("formatOperatorTime and formatOperatorDayRange", () => {
+  it("formats an instant as HH:mm in the browser zone", () => {
+    const iso = "2026-10-15T09:30:00.000Z";
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    expect(formatOperatorTime(iso)).toBe(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+    expect(formatOperatorTime("not a date")).toBe("–");
+  });
+
+  it("formats one day or a period of calendar days", () => {
+    expect(formatOperatorDayRange("2026-09-21", "2026-09-21")).toBe("21.09.2026");
+    expect(formatOperatorDayRange("2026-09-14", "2026-09-18")).toBe("14.09.2026 – 18.09.2026");
   });
 });

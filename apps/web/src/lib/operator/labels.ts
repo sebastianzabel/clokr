@@ -50,6 +50,13 @@ export function formatOperatorDateTime(iso: string): string {
   return format(date, "dd.MM.yyyy, HH:mm", { locale: de });
 }
 
+/** `HH:mm` of an instant in the browser's zone (D-03); an unparsable value is a dash. */
+export function formatOperatorTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "–";
+  return format(date, "HH:mm", { locale: de });
+}
+
 /**
  * `dd.MM.yyyy` of a `YYYY-MM-DD` calendar day (Issue #90). Pure string split on purpose: the API
  * sends a UTC day, and parsing it through a Date would shift it by the viewer's time zone.
@@ -110,3 +117,10 @@ export const SUPPORT_ENDED_BY_LABELS: Readonly<Record<SupportAccessEndedBy, stri
   OPERATOR: "durch Betreiber",
   TENANT: "durch Mandant",
 };
+
+/** One calendar day, or `dd.MM.yyyy – dd.MM.yyyy` for a period (both ends `YYYY-MM-DD`). */
+export function formatOperatorDayRange(start: string, end: string): string {
+  return start === end
+    ? formatOperatorDay(start)
+    : `${formatOperatorDay(start)} – ${formatOperatorDay(end)}`;
+}

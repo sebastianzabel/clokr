@@ -13,6 +13,7 @@ import {
   LEAVE_STATUS_LABELS,
   LEAVE_TYPE_LABELS,
   SCHEDULE_TYPE_LABELS,
+  formatDays,
   formatSignedMinutes,
   formatMinutes,
   labelFor,
@@ -133,5 +134,13 @@ describe("minute formatters", () => {
   it("rounds a fractional minute figure instead of printing it", () => {
     expect(formatMinutes(59.6)).toBe("1:00");
     expect(formatSignedMinutes(-0.4)).toBe("0:00");
+  });
+});
+
+describe("formatDays", () => {
+  it("uses the German decimal comma", () => {
+    expect(formatDays(5)).toBe("5");
+    expect(formatDays(0.5)).toBe("0,5");
+    expect(formatDays(12.5)).toBe("12,5");
   });
 });
