@@ -176,7 +176,8 @@ export default defineConfig({
       // `apps/api/scripts/lint-e2e-spec-registry.json` (plan 275-04).
       //
       // Issue #553 added a fourth file:
-      //   - month-bar-narrow-viewport.spec.ts (month bar fits 390/360 px; tenant fixture only,
+      //   - month-bar-narrow-viewport.spec.ts (month bar fits 390/360/320 px (320 and the whole-page
+      //     geometry added by Issue #564); tenant fixture only,
       //     no seed, and no date dependency because the browser clock is fixed in September)
       //
       // Issue #89 added a fifth file:

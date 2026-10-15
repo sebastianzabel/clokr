@@ -5,7 +5,8 @@
  * Before the fix, at 390 px every page with a MonthBar / .cal-monthbar was wider than the phone
  * (editorial skin: horizontal scroll, 410-514 px) or had "Heute" cut off (modern skin). This spec
  * is the permanent gate: per surface x skin x viewport it proves that
- *   - the document does not scroll horizontally,
+ *   - the document does not scroll horizontally and no element of the page (not only of the bar)
+ *     ends right of the viewport (Issue #564),
  *   - no element of the bar lies outside the viewport or outside the bar's own box,
  *   - the month label is one line and clear of the previous/next arrows,
  *   - "Heute" (where the page offers it) is visible, exactly labelled, fully inside the viewport,
@@ -29,17 +30,20 @@
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { test, expect } from "../fixtures";
 import type { TestTenant } from "../fixtures";
+import { measurePageOverflow } from "../helpers/viewport-geometry";
 
 const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:4001";
 const PASSWORD = "test1234";
 
 /**
- * Two widths are pass/fail (360x800 is one of the most common Android sizes). 320 px is not
- * covered yet: it still overflows outside the bar on /leave and /team/leave (Issue #564).
+ * Three widths are pass/fail (360x800 is one of the most common Android sizes, 320x568 the
+ * narrowest phone still in use). Issue #564 added 320 px: there /leave pushed the page to 337/349 px
+ * (iCal buttons) and the modern skin's month label overlapped the arrows by 9-13 px.
  */
 const VIEWPORTS = [
   { width: 390, height: 844 },
   { width: 360, height: 800 },
+  { width: 320, height: 568 },
 ] as const;
 
 const SKINS = ["editorial", "modern"] as const;
@@ -238,11 +242,30 @@ for (const viewport of VIEWPORTS) {
 
           const g = await measure(bar, surface.prev, surface.next);
 
+          // Name the offenders in the failure message (Issue #564: a bare "332 > 320" cost a CI round
+          // trip). Only measured when the cheap scrollWidth check is about to fail.
+          const offenders =
+            g.scrollWidth > g.innerWidth
+              ? (await measurePageOverflow(page, TOLERANCE_PX)).beyondViewport.join("; ")
+              : "";
           expect(
             g.scrollWidth,
-            `${where}: document is wider than the viewport`,
+            `${where}: document is wider than the viewport; elements beyond it: ${offenders}`,
           ).toBeLessThanOrEqual(g.innerWidth);
           expect(g.outside, `${where}: bar elements outside the viewport or the bar`).toEqual([]);
+
+          // Issue #564: the whole page, not only the bar. Wait for the settled layout (late data
+          // moves content), then check every element's box: none may end right of the viewport
+          // unless a clipping ancestor ends inside it (a scrolling tab strip is fine).
+          await waitForStableBox(bar);
+          const pageGeometry = await measurePageOverflow(page, TOLERANCE_PX);
+          expect(
+            pageGeometry.scrollWidth,
+            `${where}: document is wider than the viewport (settled)`,
+          ).toBeLessThanOrEqual(pageGeometry.innerWidth);
+          expect(pageGeometry.overflowing, `${where}: elements end right of the viewport`).toEqual(
+            [],
+          );
 
           expect(g.label, `${where}: month label not found`).not.toBeNull();
           expect(g.prevRight, `${where}: previous arrow not found`).not.toBeNull();
