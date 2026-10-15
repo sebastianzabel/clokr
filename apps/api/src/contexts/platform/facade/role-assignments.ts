@@ -754,30 +754,74 @@ export async function resolveScopedHolderIds(
 }
 
 /**
- * Issue #538: the display names of the roles the caller holds, for the role label in the web
- * (Topbar, Sidebar, profile). Presentation only - decides nothing; own data, names only.
- * Same source as the access decision: the stored assignments of this tenant (system roles and
- * this tenant's own roles), or, with none stored, the system role of the legacy `User.role`
- * column as one implicit assignment ({@link loadLegacyFallbackRole}). Distinct, sorted by name.
- * Not re-exported from `contexts/platform/index.ts` (read only by platform's own `me.ts`).
+ * Issue #538: the display names of the roles each of `userIds` holds - the ONE derivation behind
+ * the caller's own role label (`GET /me/context`) and the per-person role chip of
+ * `GET /employees`. Presentation only, it decides nothing; names only. Same source as the access
+ * decision: the stored assignments of this tenant (system roles and this tenant's own roles), or,
+ * for a user with none stored, the system role of the legacy `User.role` column as one implicit
+ * assignment (the {@link loadLegacyFallbackRole} rule). Distinct, sorted by name. A user id that
+ * does not exist maps to an empty list. Two queries for any number of users. Not re-exported from
+ * `contexts/platform/index.ts`.
  */
+export async function roleNamesByUserId(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  userIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  if (userIds.length === 0) return result;
+  const namesByUser = new Map<string, Set<string>>();
+  const assignments = await db.roleAssignment.findMany({
+    where: { tenantId, userId: { in: [...userIds] } },
+    select: { userId: true, accessRole: { select: { name: true, tenantId: true } } },
+  });
+  for (const assignment of assignments) {
+    const role = assignment.accessRole;
+    if (role.tenantId !== null && role.tenantId !== tenantId) continue;
+    const names = namesByUser.get(assignment.userId) ?? new Set<string>();
+    names.add(role.name);
+    namesByUser.set(assignment.userId, names);
+  }
+  const withoutAssignment = userIds.filter(
+    (id) => !assignments.some((assignment) => assignment.userId === id),
+  );
+  if (withoutAssignment.length > 0) {
+    const users = await db.user.findMany({
+      where: { id: { in: withoutAssignment } },
+      select: { id: true, role: true },
+    });
+    const fallbackNames = new Map<string, string>();
+    for (const role of new Set(users.map(({ role }) => role))) {
+      const fallbackRoleId = systemRoleIdForLegacyRole(role);
+      const fallbackRole = await db.accessRole.findUnique({
+        where: { id: fallbackRoleId },
+        select: { name: true },
+      });
+      if (!fallbackRole) {
+        throw new Error(
+          `roleNamesByUserId: system role ${fallbackRoleId} is missing - the migration that inserts the system roles has not been applied`,
+        );
+      }
+      fallbackNames.set(role, fallbackRole.name);
+    }
+    for (const { id, role } of users) {
+      namesByUser.set(id, new Set([fallbackNames.get(role) as string]));
+    }
+  }
+  for (const id of userIds) {
+    result.set(
+      id,
+      [...(namesByUser.get(id) ?? [])].sort((a, b) => a.localeCompare(b, "de")),
+    );
+  }
+  return result;
+}
+
+/** The role names of one user (see {@link roleNamesByUserId}); the caller's own label. */
 export async function ownRoleNames(
   db: Prisma.TransactionClient,
   tenantId: string,
   userId: string,
 ): Promise<string[]> {
-  const assignments = await db.roleAssignment.findMany({
-    where: { tenantId, userId },
-    select: { accessRole: { select: { name: true, tenantId: true } } },
-  });
-  const names = new Set<string>();
-  for (const assignment of assignments) {
-    const role = assignment.accessRole;
-    if (role.tenantId === null || role.tenantId === tenantId) names.add(role.name);
-  }
-  if (assignments.length === 0) {
-    const fallbackRole = await loadLegacyFallbackRole(db, userId, "ownRoleNames");
-    if (fallbackRole) names.add(fallbackRole.name);
-  }
-  return [...names].sort((a, b) => a.localeCompare(b, "de"));
+  return (await roleNamesByUserId(db, tenantId, [userId])).get(userId) ?? [];
 }

@@ -44,9 +44,11 @@
     classification: EmployeeClassification;
     coverageWeight: string | number;
     requiresSupervision: boolean;
+    // Assigned role names (Issue #538); null when the caller may not see them
+    // (needs role-assignment:manage) - the role chip, filter and count are then not offered.
+    roleNames: string[] | null;
     user: {
       email: string;
-      role: Role;
       isActive: boolean;
       lastLoginAt: string | null;
     };
@@ -167,7 +169,7 @@
 
   // Filters
   let filterSearch = $state("");
-  let filterRole = $state<Role | "">("");
+  let filterRole = $state("");
   let filterStatus = $state<"active" | "pending" | "expired" | "inactive" | "">("");
   let showAnonymized = $state(false);
 
@@ -185,7 +187,7 @@
           `${emp.firstName} ${emp.lastName} ${emp.user.email} ${emp.employeeNumber}`.toLowerCase();
         if (!match.includes(q)) return false;
       }
-      if (filterRole && !hasCompatRole(emp, filterRole)) return false;
+      if (filterRole && !(emp.roleNames ?? []).includes(filterRole)) return false;
       if (filterStatus) {
         if (filterStatus === "active" && !emp.user.isActive) return false;
         if (filterStatus === "pending" && (emp.user.isActive || emp.invitationStatus !== "PENDING"))
@@ -211,8 +213,13 @@
   // KPI mini-stats (exclude anonymized)
   let statTotal = $derived(employees.filter((e) => !isAnonymized(e)).length);
   let statActive = $derived(employees.filter((e) => e.user.isActive && !isAnonymized(e)).length);
-  let statManagers = $derived(countWithCompatRole("MANAGER"));
-  let statAdmins = $derived(countWithCompatRole("ADMIN"));
+  // Role chip, filter and count exist only when the API sent the names (Issue #538).
+  let showRoles = $derived(employees.some((e) => e.roleNames !== null));
+  let roleOptions = $derived(
+    [...new Set(employees.flatMap((e) => (isAnonymized(e) ? [] : (e.roleNames ?? []))))].sort(
+      (a, b) => a.localeCompare(b, "de"),
+    ),
+  );
 
   $effect(() => {
     filteredEmployees.length;
@@ -434,36 +441,6 @@
     }
   }
 
-  // The listed person's role as the API derives it from their role assignments (a coarse
-  // three-way summary of someone else's data, not a decision about the caller). Lookup tables
-  // instead of comparisons keep it out of the role-check gate (Issue #538).
-  const ROLE_LABELS: Record<Role, string> = {
-    ADMIN: "Administrator",
-    MANAGER: "Manager",
-    EMPLOYEE: "Mitarbeiter",
-  };
-  const ROLE_CHIP_CLASSES: Record<Role, string> = {
-    ADMIN: "chip chip-brand",
-    MANAGER: "chip chip-warn",
-    EMPLOYEE: "chip",
-  };
-
-  function roleLabel(role: Role): string {
-    return ROLE_LABELS[role] ?? ROLE_LABELS.EMPLOYEE;
-  }
-
-  function roleChipClass(role: Role): string {
-    return ROLE_CHIP_CLASSES[role] ?? ROLE_CHIP_CLASSES.EMPLOYEE;
-  }
-
-  function hasCompatRole(emp: Employee, role: Role): boolean {
-    return roleLabel(emp.user.role) === ROLE_LABELS[role];
-  }
-
-  function countWithCompatRole(role: Role): number {
-    return employees.filter((e) => hasCompatRole(e, role) && !isAnonymized(e)).length;
-  }
-
   function statusLabel(emp: Employee): string {
     if (emp.user.isActive) return "Aktiv";
     if (emp.invitationStatus === "PENDING") return "Einladung ausstehend";
@@ -518,8 +495,9 @@
           <div class="kpi-row">
             <KPIStat label="Mitarbeitende" value={String(statTotal)} unit="gesamt" />
             <KPIStat label="Aktiv" value={String(statActive)} unit="angemeldet" />
-            <KPIStat label="Manager" value={String(statManagers)} unit="Rolle" />
-            <KPIStat label="Administratoren" value={String(statAdmins)} unit="Rolle" />
+            {#if showRoles}
+              <KPIStat label="Rollen" value={String(roleOptions.length)} unit="vergeben" />
+            {/if}
           </div>
         </Section>
 
@@ -533,16 +511,18 @@
               aria-label="Mitarbeiter suchen"
               data-testid="admin-employees-search"
             />
-            <select
-              class="select filter-select"
-              bind:value={filterRole}
-              aria-label="Nach Rolle filtern"
-            >
-              <option value="">Alle Rollen</option>
-              <option value="ADMIN">Administrator</option>
-              <option value="MANAGER">Manager</option>
-              <option value="EMPLOYEE">Mitarbeiter</option>
-            </select>
+            {#if showRoles}
+              <select
+                class="select filter-select"
+                bind:value={filterRole}
+                aria-label="Nach Rolle filtern"
+              >
+                <option value="">Alle Rollen</option>
+                {#each roleOptions as name (name)}
+                  <option value={name}>{name}</option>
+                {/each}
+              </select>
+            {/if}
             <select
               class="select filter-select"
               bind:value={filterStatus}
@@ -574,7 +554,7 @@
                   <th>Nr.</th>
                   <th>Name</th>
                   <th>E-Mail</th>
-                  <th>Rolle</th>
+                  {#if showRoles}<th>Rolle</th>{/if}
                   <th>Eintritt</th>
                   <th>Arbeitszeitmodell</th>
                   <th>Status</th>
@@ -609,11 +589,15 @@
                       {/if}
                     </td>
                     <td class="col-email">{emp.user.email}</td>
-                    <td>
-                      <span class={roleChipClass(emp.user.role)}>
-                        <span class="dot"></span>{roleLabel(emp.user.role)}
-                      </span>
-                    </td>
+                    {#if showRoles}
+                      <td>
+                        {#if emp.roleNames !== null && emp.roleNames.length > 0}
+                          <span class="chip chip-brand">
+                            <span class="dot"></span>{emp.roleNames.join(", ")}
+                          </span>
+                        {/if}
+                      </td>
+                    {/if}
                     <td class="col-date"
                       >{new Date(emp.hireDate).toLocaleDateString("de-DE", {
                         day: "2-digit",

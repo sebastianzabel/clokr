@@ -173,3 +173,26 @@ describe("the pages read the rights module and no role", () => {
     });
   }
 });
+
+describe("the employee list shows roles only from roleNames (Issue #538)", () => {
+  const src = readFileSync(
+    resolve(process.cwd(), "src/routes/(app)/admin/employees/+page.svelte"),
+    "utf8",
+  );
+  it("never reads the compat role of a listed person, and offers chip, filter and count only when names arrive", () => {
+    expect(src.length).toBeGreaterThan(10_000);
+    expect(src).not.toMatch(/\buser\??\.role\b/);
+    expect(src).toContain("roleNames: string[] | null");
+    expect(src).toContain("employees.some((e) => e.roleNames !== null)");
+    expect(src).toContain("{#if showRoles}");
+  });
+
+  it("the team calendar no longer renders a role under a name", () => {
+    const cal = readFileSync(
+      resolve(process.cwd(), "src/routes/(app)/teamcal/+page.svelte"),
+      "utf8",
+    );
+    expect(cal.length).toBeGreaterThan(5_000);
+    expect(cal).not.toContain("u.role");
+  });
+});

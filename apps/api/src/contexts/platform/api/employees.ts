@@ -15,6 +15,7 @@ import {
 import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../anonymize";
 import {
   removeRoleAssignmentsOfUser,
+  roleNamesByUserId,
   withRoleLockoutGuard,
   type RemovedRoleAssignment,
 } from "../facade/role-assignments";
@@ -444,9 +445,21 @@ export async function employeeRoutes(app: FastifyInstance) {
       // D-02: whose stored balance this caller may read — decided once per request.
       const balanceVisibleFor = await resolveBalanceVisibility(app, req);
 
+      // Issue #538: the assigned role names, only for a caller who manages role assignments
+      // (a whole-tenant right - the resource has the Mandant reference); everyone else gets
+      // `null`, never a fabricated list. One derivation, shared with GET /me/context.
+      const roleNamesByUser = (await hasPermission(req, "role-assignment:manage:ZUGEWIESEN"))
+        ? await roleNamesByUserId(
+            app.prisma,
+            tenantId,
+            employees.map((e) => e.userId),
+          )
+        : null;
+
       return employees.map((e) => {
         return {
           ...e,
+          roleNames: roleNamesByUser ? (roleNamesByUser.get(e.userId) ?? []) : null,
           overtimeAccount: maskOvertimeAccount(balanceVisibleFor, e.id, e.overtimeAccount),
           workSchedule: e.workSchedules[0] ?? null,
           workSchedules: undefined,
