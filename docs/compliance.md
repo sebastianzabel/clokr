@@ -34,7 +34,7 @@ Eine Pause ist die Summe aus:
    - Gap **> 0 und ≤ 2h** → zählt als Pause
    - Gap **> 2h** → gilt als separate Schicht, NICHT als Pause
 3. **Abschnittsregel (§ 4 Satz 2, seit Phase 511):** Für die Lage-Prüfung zählt ein Pausenabschnitt nur, wenn er mindestens **15 Min** lang ist, im Arbeitszeitraum des Tages liegt und weder den ersten Beginn noch das letzte Ende berührt (Jugendliche: zusätzlich nicht in der ersten oder letzten Stunde). Aneinandergrenzende Abschnitte gelten als eine Ruhepause. Ein nicht zählender Abschnitt bleibt Arbeitszeit für die Compliance-Zahl; der Saldo ändert sich nicht.
-4. **Lücken zwischen Einträgen:** Im selben Salon zählt eine Lücke bis 120 Min wie bisher. Zwischen **verschiedenen Salons** zählt eine Lücke nie als Pause (Fahrzeit ist Arbeitszeit), es sei denn, die freie Zeit ist als Tagespause erfasst. Weil das System die Aufteilung in Fahrzeit und freie Zeit nicht kennt, rechnet es zwei Grenzfälle: ganze Lücke Arbeitszeit, freier Anteil am Anfang und am Ende der Lücke. Beide regelkonform → konform; beide verletzt → Verstoß; sonst Befund mit Sicherheit `UNCLEAR` („Klärung nötig: Fahrzeit oder Pause?“). Aufgelöst wird durch eine erfasste Tagespause oder eine Quittung der Führungskraft.
+4. **Lücken zwischen Einträgen:** Im selben Salon zählt eine Lücke immer, gleich wie lang (Issue #523: die frühere Grenze von 120 Min ist entfallen, eine Ruhepause hat nach § 4 ArbZG keine Höchstdauer). Zwischen **verschiedenen Salons** zählt eine Lücke nie als Pause (Fahrzeit ist Arbeitszeit), es sei denn, die freie Zeit ist als Tagespause erfasst. Weil das System die Aufteilung in Fahrzeit und freie Zeit nicht kennt, rechnet es zwei Grenzfälle: ganze Lücke Arbeitszeit, freier Anteil am Anfang und am Ende der Lücke. Beide regelkonform → konform; beide verletzt → Verstoß; sonst Befund mit Sicherheit `UNCLEAR` („Klärung nötig: Fahrzeit oder Pause?“). Aufgelöst wird durch eine erfasste Tagespause oder eine Quittung der Führungskraft.
 
 ### Auto-Break (opt-in pro Tenant)
 
@@ -56,7 +56,6 @@ Sobald MA bereits eine Pause eingegeben hat (z.B. nur 15min), greift Auto-Break 
 
 - **„Im Voraus feststehend“ (§ 4 Satz 1):** Die Pausen müssen im Voraus feststehen. Das lässt sich aus Zeitstempeln nicht prüfen; ein erfasstes, abgeschlossenes Pausensegment gilt als Ruhepause.
 - **Ältere Einträge ohne Pausenlage:** Nur als Summe gespeicherte Pausen erzeugen den Hinweis `BREAK_POSITION_UNKNOWN`, nie einen Verstoß. Vor dem Einschalten von `blockMonthCloseOnUnconfirmedBreak` den Probelauf `audit-511-break-placement.ts` lesen.
-- **Lücke im selben Salon über 120 Min:** zählt für Satz 1 weiterhin nicht als Pause, obwohl eine Ruhepause keine Höchstdauer hat (Issue #523, Owner-Entscheidung offen). Für Satz 3 beendet sie einen Arbeitsblock.
 - **Fahrzeit zwischen Salons:** wird nicht erfasst (Issue #92); die Prüfung rechnet deshalb die beiden Grenzfälle (`UNCLEAR`).
 - **Jugendliche:** § 8 JArbSchG (Tages- und Wochenhöchstzeit) wird nicht geprüft (Issue #524). Fehlt das Geburtsdatum, gilt § 4 ArbZG; bei Auszubildenden weist der Befund darauf hin.
 - **Geschlossene Monate** werden nie neu bewertet.
