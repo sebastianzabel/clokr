@@ -18,7 +18,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dateStrInTz } from "../contexts/working-time-account/timezone";
 
@@ -92,6 +98,8 @@ async function seedRetroTenant(
       hireDate: new Date("2023-01-01"),
     },
   });
+  // Issue #539 (D-09): the three fixture users hold their system role as a stored assignment.
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: adminUser.id, role: "ADMIN" });
   await prisma.workSchedule.create({
     data: {
       employeeId: adminEmp.id,
@@ -127,6 +135,7 @@ async function seedRetroTenant(
       hireDate: new Date("2023-01-01"),
     },
   });
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: managerUser.id, role: "MANAGER" });
   await prisma.workSchedule.create({
     data: {
       employeeId: managerEmp.id,
@@ -162,6 +171,7 @@ async function seedRetroTenant(
       hireDate: new Date("2023-01-01"),
     },
   });
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: empUser.id, role: "EMPLOYEE" });
   await prisma.workSchedule.create({
     data: {
       employeeId: emp.id,

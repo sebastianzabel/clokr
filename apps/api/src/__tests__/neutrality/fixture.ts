@@ -31,7 +31,7 @@
 import { randomBytes, createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Role } from "@clokr/db";
-import { configureDatevKanzlei, seedTestData } from "../setup";
+import { configureDatevKanzlei, removeFixtureRoleAssignments, seedTestData } from "../setup";
 import { leaveTypeFields } from "../../contexts/absence/leave-type";
 import { DEFAULT_SALON_OPENING_HOURS } from "../../contexts/platform";
 import type { JwtPayload } from "../../middleware/auth";
@@ -802,6 +802,11 @@ export async function buildActorTenant(
 ): Promise<ActorFixture> {
   const registry = new LabelRegistry();
   const seed = await seedTestData(app, `75b-matrix-${actor.toLowerCase()}`);
+  // Issue #539 (D-04, D-15): the recordings were taken on seed users WITHOUT stored role rows.
+  // Main-actor tenants receive theirs from the checked-in migration SQL (D-25 of #75), fallback-
+  // actor tenants keep none (D-21). The logins inside seedTestData already ran while the rows
+  // existed, so the LOGIN audit rows registered below are unchanged.
+  await removeFixtureRoleAssignments(app.prisma, [seed.adminUser.id, seed.empUser.id]);
   const tenantId = seed.tenant.id;
   const t: TenantContext = {
     app,

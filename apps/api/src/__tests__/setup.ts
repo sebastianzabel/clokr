@@ -19,6 +19,7 @@ import { leaveTypeFields } from "../contexts/absence/leave-type";
 import {
   DEFAULT_SALON_OPENING_HOURS,
   findDefaultSalon,
+  SYSTEM_ROLE_IDS,
   type SalonOpeningHours,
 } from "../contexts/platform";
 import { readFileSync, readdirSync } from "node:fs";
@@ -323,6 +324,61 @@ export async function salonIdForEmployee(
   return salon.id;
 }
 
+/**
+ * Issue #539 (D-09): the system roles a fixture user can be given. Its own union, not the Prisma
+ * `Role` enum, so it survives the removal of that enum in Release B.
+ */
+export type LegacySystemRoleName = "ADMIN" | "MANAGER" | "EMPLOYEE";
+
+/**
+ * Issue #539 (D-09): gives a fixture user its system role as a STORED tenant-wide
+ * `RoleAssignment`. From Release A on, permissions come only from stored rows, so every fixture
+ * user that is meant to hold a role says so explicitly, per user — Release B then only drops the
+ * `role:` column values. Idempotent (upsert on the unique key `userId_accessRoleId_scopeType`) and
+ * writes no `AuditLog` row: a fixture has no principal, while production writes go through
+ * employee creation or the role-assignment API, both audited. Returns the row id.
+ */
+export async function grantSystemRole(
+  prisma: Prisma.TransactionClient,
+  input: { tenantId: string; userId: string; role: LegacySystemRoleName },
+): Promise<string> {
+  const accessRoleId = SYSTEM_ROLE_IDS[input.role];
+  const row = await prisma.roleAssignment.upsert({
+    where: {
+      userId_accessRoleId_scopeType: {
+        userId: input.userId,
+        accessRoleId,
+        scopeType: "TENANT",
+      },
+    },
+    create: {
+      tenantId: input.tenantId,
+      userId: input.userId,
+      accessRoleId,
+      scopeType: "TENANT",
+      salonIds: [],
+      employeeIds: [],
+    },
+    update: {},
+    select: { id: true },
+  });
+  return row.id;
+}
+
+/**
+ * Issue #539: removes every stored role assignment of `userIds`. It exists only to restore a
+ * recorded precondition (the neutrality fixture, whose recordings were taken on seed users
+ * without stored rows) or — until plan 539-07 rewrites them — the pre-#539 seed state of a file
+ * that deliberately tests the unassigned state. Never a way to make an incidental test green.
+ */
+export async function removeFixtureRoleAssignments(
+  prisma: Prisma.TransactionClient,
+  userIds: readonly string[],
+): Promise<void> {
+  if (userIds.length === 0) return;
+  await prisma.roleAssignment.deleteMany({ where: { userId: { in: [...userIds] } } });
+}
+
 /** Phase 566 (D-10): what every shared fixture tenant books — all modules, a quota no scenario reaches. */
 export const FIXTURE_PACKAGES = {
   bookedModules: ["CHAIN", "INTEGRATIONS", "HARDWARE_CLOCK", "ANALYTICS"] as TenantModule[],
@@ -380,6 +436,9 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
       hireDate: new Date("2024-01-01"),
     },
   });
+  // Issue #539 (D-09): the seed users hold their system role as a stored assignment, before the
+  // logins below — permissions come only from stored rows.
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: adminUser.id, role: "ADMIN" });
 
   await prisma.workSchedule.create({
     data: {
@@ -421,6 +480,7 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
       hireDate: new Date("2024-01-01"),
     },
   });
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: empUser.id, role: "EMPLOYEE" });
 
   await prisma.workSchedule.create({
     data: {

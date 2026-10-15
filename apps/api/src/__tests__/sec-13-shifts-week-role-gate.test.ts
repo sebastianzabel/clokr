@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import { dowOf, futureDateStr, nextWeekdayStr, todayStr } from "./test-dates";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import type { FastifyInstance } from "fastify";
@@ -111,6 +111,12 @@ describe("GET /api/v1/shifts/week — role gate (#267)", () => {
         lastName: "Gate",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    // Issue #539 (D-09): the ad-hoc manager holds its system role as a stored assignment.
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: mgrUser.id,
+      role: "MANAGER",
     });
     const loginRes = await app.inject({
       method: "POST",
