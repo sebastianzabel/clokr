@@ -23,7 +23,6 @@ import {
   isDemotionToEmployee,
   isLegacySystemRoleId,
   parseCompatRoleFilter,
-  materializeLegacyRoleAssignment,
   replaceSystemRoleAssignment,
   requestedRoleUnchanged,
   RoleDemotionBlockedError,
@@ -31,6 +30,7 @@ import {
   systemRoleIdForLegacyRole,
   type CompatRoleAssignmentRow,
 } from "../compat-role";
+import * as compatRoleModule from "../compat-role";
 import { SYSTEM_ROLE_IDS, SYSTEM_ROLE_PERMISSIONS, type SystemRoleSlot } from "../system-roles";
 import { roleNameKey } from "../access-role";
 import { TENANT_REQUIRED_ERROR } from "../tenant-status";
@@ -600,7 +600,7 @@ describe("compat role — login, OTP and refresh carry the derived role (D-14, D
   );
 });
 
-describe("compat role — write half against the database (D-14, D-15, D-26)", () => {
+describe("compat role — write half against the database (D-14, D-15, #539)", () => {
   let app: FastifyInstance;
   let seed: Awaited<ReturnType<typeof seedTestData>>;
   let other: Awaited<ReturnType<typeof seedTestData>>;
@@ -670,28 +670,28 @@ describe("compat role — write half against the database (D-14, D-15, D-26)", (
     await closeTestApp();
   });
 
-  it("materializeLegacyRoleAssignment stores the fallback once, and never for a user of another tenant", async () => {
-    const user = await createUser(seed.tenant.id, "MANAGER", "mat");
-    const first = await materializeLegacyRoleAssignment(app.prisma, seed.tenant.id, user.id);
-    expect(first).toMatchObject({
-      legacyRole: "MANAGER",
-      assignment: {
-        userId: user.id,
-        accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
-        roleName: "Manager",
-        scopeType: "TENANT",
-        salonIds: [],
-        employeeIds: [],
-      },
-    });
-    expect(await materializeLegacyRoleAssignment(app.prisma, seed.tenant.id, user.id)).toBeNull();
-    expect((await rowsOf(user.id)).map((row) => row.id)).toEqual([first!.assignment.id]);
+  it("nothing is stored on a user's behalf (#539 D-11): the module has no materialization, a replacement writes exactly the requested row", async () => {
+    // The D-26 function is gone: with the fallback removed it would be an implicit grant.
+    expect("materializeLegacyRoleAssignment" in compatRoleModule).toBe(false);
 
-    const foreign = await createUser(other.tenant.id, "ADMIN", "mat-foreign");
-    expect(
-      await materializeLegacyRoleAssignment(app.prisma, seed.tenant.id, foreign.id),
-    ).toBeNull();
-    expect(await app.prisma.roleAssignment.count({ where: { userId: foreign.id } })).toBe(0);
+    const user = await createUser(seed.tenant.id, "MANAGER", "mat");
+    expect(await rowsOf(user.id)).toEqual([]);
+    const { removed, created } = await replaceSystemRoleAssignment(
+      app.prisma,
+      seed.tenant.id,
+      user.id,
+      "EMPLOYEE",
+    );
+    expect(removed).toEqual([]);
+    expect(created).toMatchObject({
+      userId: user.id,
+      accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
+      scopeType: "TENANT",
+    });
+    // The MANAGER column is not stored as a row: exactly the requested Mitarbeiter row exists.
+    expect((await rowsOf(user.id)).map((row) => row.accessRoleId)).toEqual([
+      SYSTEM_ROLE_IDS.EMPLOYEE,
+    ]);
   });
 
   it("requestedRoleUnchanged compares with the User.role column, stored rows or not (D-16, P-05)", async () => {

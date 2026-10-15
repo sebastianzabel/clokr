@@ -30,11 +30,11 @@
  * exactly the column value. That equals deriving over the implicit fallback assignment — the unit
  * tests prove the equivalence for all three system roles — without a second query.
  *
- * The write half (Phase 75b Plan 11, D-14/D-15/D-26/D-29) keeps the column and the stored
+ * The write half (Phase 75b Plan 11, D-14/D-15/D-29) keeps the column and the stored
  * assignments consistent on every assignment write path — the employee form, the CSV import, the
- * role-assignment API and the anonymization:
- * - {@link materializeLegacyRoleAssignment} turns the implicit fallback into a stored row before
- *   the first assignment write, so a first customer role never silently removes a legacy role;
+ * role-assignment API and the anonymization. There is no materialization step any more: the D-26
+ * function that stored the column's role as a real row before the first assignment write is gone
+ * since #539, because with the fallback removed it would be an implicit grant of that role:
  * - {@link replaceSystemRoleAssignment} swaps the user's tenant-wide system role, leaving every
  *   customer-role assignment untouched;
  * - {@link assignmentsBlockingDemotionToEmployee} (Issue #357 sub-fix B): the employee-form PATCH
@@ -278,39 +278,6 @@ async function legacyRoleColumn(
 }
 
 /**
- * D-26: when `userId` has NO stored role assignment in `tenantId`, stores the implicit fallback
- * (D-08) as a real TENANT assignment on the system role of its `User.role` column, and returns the
- * created row together with that legacy value (the caller audits it with origin SYSTEM). Returns
- * null when the user already has a stored row — any row, even a malformed one, disables the
- * fallback — or does not belong to an employee of the tenant.
- *
- * Runs before every assignment write on an existing user: without it, the first stored row (e.g.
- * a customer role) would end the fallback and silently remove the rights of the legacy role.
- */
-export async function materializeLegacyRoleAssignment(
-  db: Prisma.TransactionClient,
-  tenantId: string,
-  userId: string,
-): Promise<{ assignment: WrittenRoleAssignment; legacyRole: Role } | null> {
-  const stored = await db.roleAssignment.count({ where: { tenantId, userId } });
-  if (stored > 0) return null;
-  const legacyRole = await legacyRoleColumn(db, tenantId, userId);
-  if (legacyRole === null) return null;
-  const created = await db.roleAssignment.create({
-    data: {
-      tenantId,
-      userId,
-      accessRoleId: systemRoleIdForLegacyRole(legacyRole),
-      scopeType: "TENANT",
-      salonIds: [],
-      employeeIds: [],
-    },
-    include: WRITTEN_ASSIGNMENT_INCLUDE,
-  });
-  return { assignment: toWrittenAssignment(created), legacyRole };
-}
-
-/**
  * Phase 76b (Issue #76) D-16, P-05: true when setting `role` on `userId` would request nothing new
  * — the requested value equals the target's `User.role` **column**, whether or not the user has
  * any stored assignment in `tenantId`. Replaces the pre-76b fallback-only no-op predicate, which
@@ -330,7 +297,7 @@ export async function materializeLegacyRoleAssignment(
  * exactly the defect D-16 closes. Accepted residual: for a stale-low column, an admin cannot demote
  * through the form in one step; the role-assignment API remains available for that.
  *
- * A request that changes nothing writes nothing: no materialized row, no demotion check, no audit
+ * A request that changes nothing writes nothing: no replaced row, no demotion check, no audit
  * (74b D-07/D-12). Returns false when `userId` does not belong to an employee of `tenantId` (the
  * column lookup yields null), so that case always runs the ordinary path below.
  *
@@ -357,8 +324,8 @@ export async function requestedRoleUnchanged(
  * {@link assignmentsBlockingDemotionToEmployee}). Returns the removed and the created rows
  * (removals are written first) for the caller's audit.
  *
- * Does not materialize the fallback — a caller changing an existing user runs
- * {@link materializeLegacyRoleAssignment} first; a brand-new user has nothing to materialize.
+ * Writes exactly the requested role: nothing is stored on the user's behalf first (the legacy
+ * fallback is gone, #539).
  */
 export async function replaceSystemRoleAssignment(
   db: Prisma.TransactionClient,

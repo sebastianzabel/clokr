@@ -23,7 +23,6 @@ import { RoleLockoutError, ROLE_LOCKOUT_MESSAGE } from "../role-assignment";
 import {
   assignmentsBlockingDemotionToEmployee,
   isDemotionToEmployee,
-  materializeLegacyRoleAssignment,
   replaceSystemRoleAssignment,
   requestedRoleNeedsRoleAssignmentManage,
   requestedRoleUnchanged,
@@ -34,7 +33,6 @@ import {
 import {
   auditRoleAssignmentChange,
   createdAssignmentAuditEntry,
-  materializedAssignmentAuditEntry,
   removedAssignmentAuditEntry,
 } from "../role-assignment-audit";
 import { hardDeleteOvertimeDataForEmployee, getTenantTimezone } from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15; Phase 67b Plan 03 — D-22/D-07
@@ -216,14 +214,15 @@ async function auditRemovedRoleAssignments(
  * holder of a guarded permission then rolls back this change, the employee-field update and every
  * audit row together (D-31).
  *
- * Order: a request whose role equals the target's `User.role` column is no role change (D-16,
- * P-05) and writes nothing — regardless of whether the user has stored assignments. A different
- * value runs the path below unchanged. For a demotion TO Mitarbeiter,
+ * Order: a request whose role equals the role DERIVED from the target's stored assignments (the
+ * one the form shows, Issue #539 D-10/D-11) is no role change (D-16) and writes nothing. A user
+ * with no stored assignment has no derived role, so any requested role runs the path below and
+ * gives them one. A different value runs the path below unchanged. For a demotion TO Mitarbeiter,
  * {@link assignmentsBlockingDemotionToEmployee} runs first (Issue #357 sub-fix B) — a
  * still-granting customer-role or salon/person-scoped assignment throws
  * {@link RoleDemotionBlockedError} before any write, so the whole request (this role change AND
  * every other field on the same PATCH) rolls back atomically rather than silently applying a
- * partial demotion. Otherwise the fallback is materialized first (D-26), the system-role
+ * partial demotion. Otherwise the system-role
  * assignment is replaced (customer roles untouched), the column is rewritten to the derived value,
  * and the audit rows are written in the order of the writes with the column change on the last one
  * (D-29).
@@ -241,13 +240,11 @@ async function applyRoleFromEmployeeForm(
     const blocking = await assignmentsBlockingDemotionToEmployee(tx, tenantId, userId);
     if (blocking.length > 0) throw new RoleDemotionBlockedError(blocking);
   }
-  const materialized = await materializeLegacyRoleAssignment(tx, tenantId, userId);
   const { removed, created } = await replaceSystemRoleAssignment(tx, tenantId, userId, role);
   const compatRole = await syncCompatRoleColumn(tx, tenantId, userId);
   await auditRoleAssignmentChange(app, req, tx, {
     userId,
     entries: [
-      ...(materialized !== null ? [materializedAssignmentAuditEntry(materialized)] : []),
       ...removed.map((row) => removedAssignmentAuditEntry(row)),
       ...(created !== null ? [createdAssignmentAuditEntry(created)] : []),
     ],

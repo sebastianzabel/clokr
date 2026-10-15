@@ -1,18 +1,20 @@
 /**
  * Phase 75b Plan 11 (Issue #75) — the role bridge: every path that sets a legacy role writes a
  * system-role assignment, every assignment change rewrites `User.role` to the derived value with
- * an audit trace, and a user who still relies on the fallback has it stored first.
+ * an audit trace. Since Issue #539 nothing is stored on a user's behalf first: a write adds or
+ * replaces exactly what was requested, and a user without a stored assignment holds nothing.
  *
  * AC-75-16: a role change in the employee form takes effect on the target's very next request —
  * the permission resolver reads the stored assignments per request, not the JWT claim — and the
  * next refresh carries the new compat role. D-15 (the bridge, role-assignment:manage), D-26
- * (materialize the fallback), D-29 (compatRole on the triggering audit row), D-31 (one transaction
+ * (no implicit materialization since #539), D-29 (compatRole on the triggering audit row), D-31 (one transaction
  * with the lockout guard).
  *
  * Fixture: the checked-in legacy-role migration is executed after seeding, so the seed admin holds
  * a STORED Admin assignment — the anchor that keeps the lockout guard from firing where a test
- * does not intend it. A "migrated" person is created before a migration run, a "fallback" person
- * after the last one (no stored assignment, D-08). No person names (CLAUDE.md PII rule).
+ * does not intend it. A "migrated" person is created before a migration run, an "unassigned"
+ * person after the last one (no stored assignment — it holds nothing, #539). No person names
+ * (CLAUDE.md PII rule).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
@@ -25,17 +27,18 @@ import {
   seedTestData,
   cleanupTestData,
   createAdminApiKey,
+  grantSystemRole,
   removeFixtureApiKeys,
 } from "./setup";
 import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
 import { SYSTEM_ROLE_IDS, normalizeRolePermissions, roleNameKey } from "../contexts/platform";
+import { effectivePermissionKeysForUser } from "../contexts/platform/request-permissions";
 import { ROLE_LOCKOUT_MESSAGE } from "../contexts/platform/role-assignment";
 import { ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX } from "../contexts/platform/compat-role";
 
 const PASSWORD = "test1234";
 // POST /employees validates the tenant password policy; the fixture users bypass it.
 const POLICY_PASSWORD = "Test@1234567!";
-const MATERIALIZATION_REASON = "Übernahme der Alt-Rolle (#75)";
 
 type AuditRow = {
   id: string;
@@ -47,7 +50,7 @@ type AuditRow = {
   newValue: Record<string, unknown> | null;
 };
 
-describe("Role bridge: employee form, compat column and fallback materialization (75b-11)", () => {
+describe("Role bridge: employee form, compat column and role-assignment writes (75b-11, #539)", () => {
   let app: FastifyInstance;
   let tenant: Awaited<ReturnType<typeof seedTestData>>;
   let lockTenant: Awaited<ReturnType<typeof seedTestData>>;
@@ -232,37 +235,18 @@ describe("Role bridge: employee form, compat column and fallback materialization
     expect(rows.map((row) => row.accessRoleId)).toEqual([SYSTEM_ROLE_IDS.MANAGER]);
   });
 
-  it("a fallback user is materialized first (D-26): CREATE (origin SYSTEM), DELETE, CREATE", async () => {
-    const target = await createPerson(tenant.tenant.id, "Rueckfall Mitarbeiter", "EMPLOYEE");
+  it("a user without a stored assignment gets exactly the requested role through the form: one audited CREATE, no implicit row (#539 D-11)", async () => {
+    const target = await createPerson(tenant.tenant.id, "Ohne Rolle Formular", "EMPLOYEE");
     expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
 
     const res = await patchEmployee(tenant.adminToken, target.employee.id, { role: "MANAGER" });
     expect(res.statusCode).toBe(200);
 
     const audits = await roleAssignmentAudits(target.user.id);
-    expect(audits).toHaveLength(3);
-    const materialized = audits.find(
-      (row) => row.action === "CREATE" && row.newValue?.origin === "SYSTEM",
-    )!;
-    expect(materialized.newValue).toEqual({
-      userId: target.user.id,
-      accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
-      roleName: "Mitarbeiter",
-      scopeType: "TENANT",
-      salonIds: [],
-      employeeIds: [],
-      origin: "SYSTEM",
-      reason: MATERIALIZATION_REASON,
-      legacyRole: "EMPLOYEE",
-    });
-    // The materialized row is the one the replacement removes — CREATE before DELETE of one id.
-    const deleted = audits.find((row) => row.action === "DELETE")!;
-    expect(deleted.entityId).toBe(materialized.entityId);
-    expect(deleted.oldValue).toMatchObject({ accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE });
-    expect(deleted.newValue).toBeNull();
-    const granted = audits.find(
-      (row) => row.action === "CREATE" && row.entityId !== materialized.entityId,
-    )!;
+    expect(audits).toHaveLength(1);
+    const granted = audits[0];
+    expect(granted.action).toBe("CREATE");
+    expect(granted.newValue?.origin).toBeUndefined();
     expect(granted.newValue).toMatchObject({
       accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
       roleName: "Manager",
@@ -271,6 +255,7 @@ describe("Role bridge: employee form, compat column and fallback materialization
 
     const rows = await storedAssignments(tenant.tenant.id, target.user.id);
     expect(rows.map((row) => row.id)).toEqual([granted.entityId]);
+    expect(rows.map((row) => row.accessRoleId)).toEqual([SYSTEM_ROLE_IDS.MANAGER]);
     expect(await columnRole(target.user.id)).toBe("MANAGER");
   });
 
@@ -663,7 +648,7 @@ describe("Role bridge: employee form, compat column and fallback materialization
     });
   });
 
-  describe("the role-assignment API materializes and writes the column back (D-26, D-14/D-29)", () => {
+  describe("the role-assignment API grants exactly what is requested and writes the column back (#539 D-11, D-14/D-29)", () => {
     function assignmentRequest(
       method: "POST" | "PATCH" | "DELETE",
       path: string,
@@ -689,9 +674,12 @@ describe("Role bridge: employee form, compat column and fallback materialization
       });
     }
 
-    it("a first customer role for a fallback EMPLOYEE keeps the legacy role: materialized row + grant, column MANAGER", async () => {
-      const target = await createPerson(tenant.tenant.id, "Erste Kundenrolle", "EMPLOYEE");
+    // Research Pitfall 2 (#539): with the fallback gone, storing the column's role on the first
+    // grant would hand the user a right nobody requested. The user holds exactly the granted role.
+    it("a first customer role for a user without stored rows grants exactly that role - nothing of the column role (Pitfall 2, T-539-27)", async () => {
+      const target = await createPerson(tenant.tenant.id, "Erste Kundenrolle", "MANAGER");
       const customerRole = await customerRoleWith(["time-entry:read:ZUGEWIESEN"]);
+      expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
 
       const res = await assignmentRequest("POST", "", {
         userId: target.user.id,
@@ -702,42 +690,68 @@ describe("Role bridge: employee form, compat column and fallback materialization
       const grantId = JSON.parse(res.body).id as string;
 
       const rows = await storedAssignments(tenant.tenant.id, target.user.id);
-      expect(rows.map((row) => row.accessRoleId).sort()).toEqual(
-        [SYSTEM_ROLE_IDS.EMPLOYEE, customerRole.id].sort(),
-      );
-      expect(await columnRole(target.user.id)).toBe("MANAGER");
+      expect(rows.map((row) => row.id)).toEqual([grantId]);
+      expect(rows.map((row) => row.accessRoleId)).toEqual([customerRole.id]);
+      expect(
+        await effectivePermissionKeysForUser(app.prisma, target.user.id, tenant.tenant.id),
+      ).toEqual(["time-entry:read:ZUGEWIESEN"]);
 
       const audits = await roleAssignmentAudits(target.user.id);
-      expect(audits).toHaveLength(2);
-      const materialized = audits.find((row) => row.entityId !== grantId)!;
-      expect(materialized.newValue).toMatchObject({
-        accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
-        origin: "SYSTEM",
-        reason: MATERIALIZATION_REASON,
-        legacyRole: "EMPLOYEE",
-      });
-      expect(materialized.newValue?.compatRole).toBeUndefined();
-      const grant = audits.find((row) => row.entityId === grantId)!;
-      expect(grant.newValue).toMatchObject({
-        accessRoleId: customerRole.id,
-        compatRole: { from: "EMPLOYEE", to: "MANAGER" },
-      });
+      expect(audits).toHaveLength(1);
+      expect(audits[0].entityId).toBe(grantId);
+      expect(audits.some((row) => row.newValue?.origin === "SYSTEM")).toBe(false);
+      // The column follows the stored rows (D-14/D-29) and the change is recorded on the grant.
+      expect(await columnRole(target.user.id)).toBe("MANAGER");
+      expect(audits[0].newValue).toMatchObject({ accessRoleId: customerRole.id });
     });
 
-    it("a grant equal to the materialized fallback answers 409 and rolls the materialization back", async () => {
-      const target = await createPerson(tenant.tenant.id, "Doppelte Zuweisung", "EMPLOYEE");
+    it("the same grant to a user WITH a stored Manager row keeps both rows (unchanged behaviour)", async () => {
+      const target = await createPerson(tenant.tenant.id, "Kundenrolle Zusatz", "MANAGER");
+      await grantSystemRole(app.prisma, {
+        tenantId: tenant.tenant.id,
+        userId: target.user.id,
+        role: "MANAGER",
+      });
+      const customerRole = await customerRoleWith(["time-entry:read:ZUGEWIESEN"]);
 
       const res = await assignmentRequest("POST", "", {
+        userId: target.user.id,
+        accessRoleId: customerRole.id,
+        scope: { type: "TENANT" },
+      });
+      expect(res.statusCode).toBe(201);
+
+      const rows = await storedAssignments(tenant.tenant.id, target.user.id);
+      expect(rows.map((row) => row.accessRoleId).sort()).toEqual(
+        [SYSTEM_ROLE_IDS.MANAGER, customerRole.id].sort(),
+      );
+    });
+
+    it("granting Mitarbeiter to a user without stored rows is a plain grant (201, one row), a repeat is the 409 duplicate", async () => {
+      const target = await createPerson(tenant.tenant.id, "Doppelte Zuweisung", "EMPLOYEE");
+
+      const first = await assignmentRequest("POST", "", {
         userId: target.user.id,
         accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
         scope: { type: "TENANT" },
       });
-      expect(res.statusCode).toBe(409);
-      expect(JSON.parse(res.body)).toEqual({
+      expect(first.statusCode).toBe(201);
+      const rowsAfterFirst = await storedAssignments(tenant.tenant.id, target.user.id);
+      expect(rowsAfterFirst.map((row) => row.accessRoleId)).toEqual([SYSTEM_ROLE_IDS.EMPLOYEE]);
+      const auditsAfterFirst = await roleAssignmentAudits(target.user.id);
+      expect(auditsAfterFirst).toHaveLength(1);
+
+      const second = await assignmentRequest("POST", "", {
+        userId: target.user.id,
+        accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
+        scope: { type: "TENANT" },
+      });
+      expect(second.statusCode).toBe(409);
+      expect(JSON.parse(second.body)).toEqual({
         error: "Diese Rolle ist dem Nutzer mit diesem Scope-Typ bereits zugewiesen.",
       });
-      expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
-      expect(await roleAssignmentAudits(target.user.id)).toEqual([]);
+      expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual(rowsAfterFirst);
+      expect(await roleAssignmentAudits(target.user.id)).toEqual(auditsAfterFirst);
       expect(await columnRole(target.user.id)).toBe("EMPLOYEE");
     });
 
@@ -766,7 +780,7 @@ describe("Role bridge: employee form, compat column and fallback materialization
       });
     });
 
-    it("revoking the last assignment writes EMPLOYEE (D-08): the fallback never keeps the old right", async () => {
+    it("revoking the last assignment writes EMPLOYEE (D-08): nothing keeps the old right (#539)", async () => {
       const target = await createPerson(tenant.tenant.id, "Letzte Zuweisung", "MANAGER");
       await executeLegacyRoleMigration(app.prisma);
       const [managerRow] = await storedAssignments(tenant.tenant.id, target.user.id);
@@ -918,9 +932,15 @@ describe("Role bridge: employee form, compat column and fallback materialization
       expect(res.statusCode).toBe(204);
     }
 
-    /** A fallback-EMPLOYEE person with no stored assignment yet (D-08). */
-    function templatePerson(label: string) {
-      return createPerson(tenant.tenant.id, label, "EMPLOYEE");
+    /** A person holding exactly the stored Mitarbeiter system-role row, as production creates one. */
+    async function templatePerson(label: string) {
+      const person = await createPerson(tenant.tenant.id, label, "EMPLOYEE");
+      await grantSystemRole(app.prisma, {
+        tenantId: tenant.tenant.id,
+        userId: person.user.id,
+        role: "EMPLOYEE",
+      });
+      return person;
     }
 
     async function snapshot(userId: string) {
@@ -967,15 +987,13 @@ describe("Role bridge: employee form, compat column and fallback materialization
       "Personalabteilung (HR) %s: PATCH echoing the column changes no assignment, and P-02's 403/own-only holds",
       async (variant) => {
         const target = await templatePerson(`Unveraendert HR ${variant}`);
-        expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
-        await grant(target.user.id, SYSTEM_ROLE_IDS.HR);
-        const rowsAfterGrant = await storedAssignments(tenant.tenant.id, target.user.id);
-        const materialized = rowsAfterGrant.find(
+        const mitarbeiterRow = (await storedAssignments(tenant.tenant.id, target.user.id)).find(
           (row) => row.accessRoleId === SYSTEM_ROLE_IDS.EMPLOYEE,
         );
-        expect(materialized).toBeDefined();
+        expect(mitarbeiterRow).toBeDefined();
+        await grant(target.user.id, SYSTEM_ROLE_IDS.HR);
         if (variant === "alone") {
-          await revoke(materialized!.id);
+          await revoke(mitarbeiterRow!.id);
         }
         expect(await columnRole(target.user.id)).toBe("MANAGER");
         const before = await snapshot(target.user.id);
@@ -1187,7 +1205,9 @@ describe("Role bridge: employee form, compat column and fallback materialization
         (await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }))
           .firstName,
       ).not.toBe("Echt Verboten");
-      expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
+      expect(
+        (await storedAssignments(tenant.tenant.id, target.user.id)).map((row) => row.accessRoleId),
+      ).toEqual([SYSTEM_ROLE_IDS.EMPLOYEE]);
     });
   });
 });

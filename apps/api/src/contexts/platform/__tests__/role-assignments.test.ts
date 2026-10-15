@@ -242,32 +242,16 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
     expect(row?.salonIds).toEqual([]);
     expect(row?.employeeIds).toEqual([]);
 
-    // Phase 75b (D-26): the grantee still relied on the legacy-role fallback (no stored
-    // assignment), so the grant first stores that fallback as its own audited assignment — two
-    // CREATE rows instead of one: the materialized Mitarbeiter row and the requested grant.
+    // Issue #539 (D-11): the grantee has no stored assignment, and the grant stores nothing on its
+    // behalf - exactly ONE CREATE row (the requested grant), no `origin: "SYSTEM"` row, and the
+    // grantee holds exactly the one stored row.
     const auditCountAfter = await app.prisma.auditLog.count({
       where: { entity: "RoleAssignment", action: "CREATE" },
     });
-    expect(auditCountAfter - auditCountBefore).toBe(2);
-    const materializedAudit = await soleAuditRowOrNull(app.prisma, {
-      where: {
-        entity: "RoleAssignment",
-        action: "CREATE",
-        entityId: { not: body.id },
-        newValue: { path: ["userId"], equals: granteeTenant.user.id },
-      },
-    });
-    expect(materializedAudit?.newValue).toEqual({
-      userId: granteeTenant.user.id,
-      accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
-      roleName: "Mitarbeiter",
-      scopeType: "TENANT",
-      salonIds: [],
-      employeeIds: [],
-      origin: "SYSTEM",
-      reason: "Übernahme der Alt-Rolle (#75)",
-      legacyRole: "EMPLOYEE",
-    });
+    expect(auditCountAfter - auditCountBefore).toBe(1);
+    expect(
+      await app.prisma.roleAssignment.count({ where: { userId: granteeTenant.user.id } }),
+    ).toBe(1);
     const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "RoleAssignment", action: "CREATE", entityId: body.id },
     });
