@@ -2020,6 +2020,21 @@ textarea.form-input {
     font-size: 20px;
   }
 }
+/* 320 px (Issue #564): at 20px the modern skin's title plus its picker chevron is 172 px wide
+   but only ~146 px lie between the arrows (bar padding 24 px), so it overlapped them by up to
+   13 px. Less side padding and an 18px title leave ~12 px clearance in both skins. Same values
+   as the MonthBar primitive's 360 px block. */
+@media (max-width: 360px) {
+  /* Compound selector (0,2,0): the v1.5 `.card { padding: var(--pad-card) }` further down would
+     otherwise win by source order. */
+  .cal-monthbar.card {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .cal-monthbar-title {
+    font-size: 18px;
+  }
+}
 
 /* ── Widget Action Links (Phase 9) ──────────────────────────────── */
 .widget-action {
