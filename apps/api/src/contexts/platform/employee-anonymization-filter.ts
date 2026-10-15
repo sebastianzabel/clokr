@@ -24,3 +24,12 @@ export const ANONYMIZED_EMPLOYEE_WHERE = {
 export const NOT_ANONYMIZED_EMPLOYEE_WHERE = {
   NOT: ANONYMIZED_EMPLOYEE_WHERE,
 } satisfies Prisma.EmployeeWhereInput;
+
+/**
+ * In-memory twin of {@link ANONYMIZED_EMPLOYEE_WHERE}: true when a loaded Employee row carries the
+ * DSGVO-anonymization sentinel. The two forms express ONE sentinel (firstName "Gelöscht" AND lastName
+ * starting with "GELÖSCHT-"); a caller that already holds the row uses this instead of re-spelling it.
+ */
+export function isAnonymizedEmployee(row: { firstName: string; lastName: string }): boolean {
+  return row.firstName === "Gelöscht" && row.lastName.startsWith("GELÖSCHT-");
+}

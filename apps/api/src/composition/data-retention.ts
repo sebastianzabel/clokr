@@ -4,7 +4,7 @@ import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-loc
 import { countSnapshotsBefore } from "../contexts/working-time-account"; // Phase 100B Plan 07 — W7
 import { archiveEntriesBefore, archiveDayBreakDataBefore } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T9; Issue #80 — T9b
 import { archiveAbsencesBefore, archiveLeaveRequestsBefore } from "../contexts/absence"; // Phase 100B Plan 12; Plan 13
-import { purgeExpiredOperatorAudit } from "../contexts/platform"; // Phase 88 (D-07a)
+import { purgeExpiredOperatorAudit, purgeExpiredSupportAccess } from "../contexts/platform"; // Phase 88 (D-07a), Issue #93 (D-25)
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -207,6 +207,13 @@ export const dataRetentionPlugin = fp(async (app) => {
     // append-only table; a plain delete is refused by the database.
     const operatorAudit = await purgeExpiredOperatorAudit(app.prisma, new Date());
     app.log.info(`OperatorAudit-Purge: ${operatorAudit.deleted} abgelaufene Einträge gelöscht`);
+
+    // Issue #93 (D-25): support access grants are the operator's lifecycle record and follow the same
+    // 120-month class. Like the operator audit above, this runs for every tenant — deactivated ones
+    // included — because retention is a legal duty that does not end with the contract. The purge goes
+    // through the flagged path of the append-only table; the database refuses younger rows regardless.
+    const supportAccess = await purgeExpiredSupportAccess(app.prisma, new Date());
+    app.log.info(`SupportAccess-Purge: ${supportAccess.deleted} abgelaufene Einträge gelöscht`);
   }
 
   // Schedule: January 2nd at 03:00

@@ -140,6 +140,11 @@ const NEVER_ENTRIES: Record<string, EmailPolicy> = {
   SECTION9_AU_PENDING_MANAGER: { email: "never", reason: NEVER_REASON },
   SECTION9_CREDIT_CONFIRMED: { email: "never", reason: NEVER_REASON },
   SECTION9_CREDIT_REJECTED: { email: "never", reason: NEVER_REASON },
+  // Issue #93: the tenant's in-app notice that a support access started; never mailed.
+  SUPPORT_ACCESS_STARTED: {
+    email: "never",
+    reason: "In-app only; a mail notification is out of scope of Issue #93 (D-14).",
+  },
 };
 
 export const NOTIFICATION_EMAIL_POLICY: Record<string, EmailPolicy> = {

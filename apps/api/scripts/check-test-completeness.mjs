@@ -814,8 +814,14 @@ import { readFileSync } from "node:fs";
 // test files, 9263 tests (9260 passed, 3 skipped). New file: operator-dashboard-90.test.ts (15 cases), plus the cases
 // added to operator-surface-off-88 and the existing files the dashboard touched. Both floors are set to exactly these
 // numbers; MIN_FILES 579 -> 580, MIN_TESTS 9246 -> 9263, never lowered.
-const MIN_FILES = 580;
-const MIN_TESTS = 9263;
+// Issue #93 (2026-10-15): measured on `feat/93-support-zugriff` after 93b-11, full run (`test:coverage`) - 589 test
+// files, 9496 tests (9493 passed, 3 skipped); new files: support-access-{decider,grant,reads,facades,immutability,
+// tenant,boundary}-93, support-audit-redaction-93, plus the cases added to existing files (operator-surface-off-88,
+// t100-09-oracle-probe, the facade-signature and measure-foreign-context-access tests) and what merged from origin/main
+// since the #90 measurement. Both floors are set to exactly
+// these numbers; MIN_FILES 580 -> 589, MIN_TESTS 9263 -> 9496. Never lowered.
+const MIN_FILES = 589;
+const MIN_TESTS = 9496;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

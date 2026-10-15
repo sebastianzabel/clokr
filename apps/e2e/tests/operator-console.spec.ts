@@ -373,6 +373,11 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
     if (path === `/tenants/${TENANT_ID}/salons` && method === "GET") {
       return route.fulfill({ status: 200, json: mock.state.salons });
     }
+    // The tenant page also reads the operator's support accesses (#93); without a grant the
+    // server answers an empty state. The support describe block overrides this with its own state.
+    if (/^\/tenants\/[^/]+\/support-access$/.test(path) && method === "GET") {
+      return route.fulfill({ status: 200, json: { active: null, history: [] } });
+    }
     const lifecycle = new RegExp(
       `^/tenants/${TENANT_ID}/salons/([^/]+)/(deactivate|activate)$`,
     ).exec(path);
@@ -2632,4 +2637,760 @@ test.describe("operator console - packages", () => {
       .map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`);
     expect(blocking).toEqual([]);
   });
+});
+
+// ── Support access (#93): request, read views, refusal, end ─────────────────────────────────────
+//
+// The support routes are mocked on top of mockOperatorApi (a route registered later answers first and
+// hands everything else on with fallback()). One small state machine holds the grant, so a request
+// switches the page to the running state and an end switches it back, exactly like the server. No
+// person names, no real e-mails: every value is synthetic.
+
+const SUPPORT_EMPLOYEE_ID = randomUUID();
+const SUPPORT_EMPLOYEE_SHIFT_ID = randomUUID();
+const SUPPORT_SALON_ID = randomUUID();
+const SUPPORT_REASON = "Ticket zur Saldo-Abweichung im September prüfen";
+const SUPPORT_HOUR = 3_600_000;
+const SUPPORT_LONG_VALUE = "Wert".repeat(25);
+
+interface MockGrant {
+  id: string;
+  tenantId: string;
+  reason: string;
+  durationHours: number;
+  startedAt: string;
+  expiresAt: string;
+  endedAt: string | null;
+  endedBy: "OPERATOR" | "TENANT" | null;
+  status: "ACTIVE" | "EXPIRED" | "ENDED";
+}
+
+interface SupportMock {
+  /** The running grant, null without one. */
+  active: MockGrant | null;
+  history: MockGrant[];
+  /** GET support-access keeps answering "no grant" while true (a list read that lags the server). */
+  listStale: boolean;
+  /** The next read answers 403 SUPPORT_ACCESS_REQUIRED and the grant ends on the server. */
+  refuseNextRead: boolean;
+  /** `total` of the audit-log answer. */
+  auditTotal: number;
+  /** "METHOD path?query" of every support request, in order. */
+  calls: string[];
+  bodies: Array<Record<string, unknown> | null>;
+}
+
+function newGrant(reason: string, hours: number): MockGrant {
+  const now = Date.now();
+  return {
+    id: randomUUID(),
+    tenantId: TENANT_ID,
+    reason,
+    durationHours: hours,
+    startedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + hours * SUPPORT_HOUR).toISOString(),
+    endedAt: null,
+    endedBy: null,
+    status: "ACTIVE",
+  };
+}
+
+function supportMonthBody(employeeId: string, month: string) {
+  return {
+    employee: {
+      id: employeeId,
+      employeeNumber: "1001",
+      firstName: "Vorname",
+      lastName: "Nachname",
+      status: "ACTIVE",
+    },
+    month,
+    timezone: "Europe/Berlin",
+    entries: [
+      {
+        id: randomUUID(),
+        date: `${month}-02`,
+        startTime: `${month}-02T07:00:00.000Z`,
+        endTime: `${month}-02T15:30:00.000Z`,
+        breakMinutes: 30,
+        breaks: [{ startTime: `${month}-02T10:00:00.000Z`, endTime: `${month}-02T10:30:00.000Z` }],
+        breakStatus: "CONFIRMED",
+        salon: { id: SUPPORT_SALON_ID, name: "Hauptsalon" },
+        type: "WORK",
+        source: "NFC",
+        isInvalid: false,
+        invalidReasonCode: null,
+        deleted: false,
+        isLocked: true,
+      },
+      {
+        id: randomUUID(),
+        date: `${month}-03`,
+        startTime: `${month}-03T07:00:00.000Z`,
+        endTime: null,
+        breakMinutes: 0,
+        breaks: [],
+        breakStatus: "AUTO",
+        salon: { id: SUPPORT_SALON_ID, name: SUPPORT_LONG_VALUE },
+        type: "WORK",
+        source: "MOBILE",
+        isInvalid: true,
+        invalidReasonCode: "MISSING_CLOCK_OUT",
+        deleted: true,
+        isLocked: false,
+      },
+    ],
+    dayBreaks: [
+      {
+        id: randomUUID(),
+        date: `${month}-04`,
+        startTime: `${month}-04T11:00:00.000Z`,
+        endTime: `${month}-04T11:30:00.000Z`,
+      },
+    ],
+    leaveRequests: [
+      {
+        id: randomUUID(),
+        typeCode: "VACATION",
+        typeName: "Urlaub",
+        status: "APPROVED",
+        startDate: `${month}-10`,
+        endDate: `${month}-12`,
+        halfDay: false,
+        days: 2.5,
+        daysProvisional: true,
+      },
+    ],
+    absences: [
+      {
+        id: randomUUID(),
+        type: "VOCATIONAL_SCHOOL",
+        source: "PATTERN",
+        startDate: `${month}-17`,
+        endDate: `${month}-17`,
+        halfDay: false,
+      },
+    ],
+    figures: {
+      workedMinutes: 2430,
+      expectedMinutes: 2400,
+      balanceMinutes: 30,
+      balanceAdjustmentMinutes: 0,
+      basis: "snapshot",
+    },
+    figuresUnavailableReason: null,
+    snapshot: { confirmed: true, basis: "snapshot" },
+  };
+}
+
+function supportContractBody(id: string, type: string, validFrom: string) {
+  return {
+    id,
+    type,
+    validFrom,
+    weeklyHours: 30,
+    monthlyHours: null,
+    dayHours: {
+      monday: 1,
+      tuesday: 1,
+      wednesday: 1,
+      thursday: 1,
+      friday: 1,
+      saturday: 0,
+      sunday: 0,
+    },
+    workDays: [1, 2, 3, 4, 5],
+    contractWorkDaysPerWeek: type === "SHIFT_BASED" ? 4 : null,
+    usualWorkDays: type === "SHIFT_BASED" ? [2, 4, 6] : [],
+    overtimeMode: "CARRY_FORWARD",
+    overtimeThreshold: 60,
+    allowOvertimePayout: false,
+    maxNegativeBalanceMinutes: null,
+    coreStart: null,
+    coreEnd: null,
+    coreDays: [],
+  };
+}
+
+function supportAuditItems() {
+  return [
+    {
+      id: randomUUID(),
+      createdAt: "2026-10-02T08:15:00.000Z",
+      action: "UPDATE",
+      entity: "TimeEntry",
+      entityId: randomUUID(),
+      userId: randomUUID(),
+      oldValue: { breakMinutes: 30, note: "[ausgeblendet]" },
+      newValue: { breakMinutes: 45, note: "[ausgeblendet]", longValue: SUPPORT_LONG_VALUE },
+    },
+    {
+      id: randomUUID(),
+      createdAt: "2026-10-01T09:00:00.000Z",
+      action: "SUPPORT_NOTE",
+      entity: "LeaveRequest",
+      entityId: randomUUID(),
+      userId: null,
+      oldValue: null,
+      newValue: { actor: { type: "OPERATOR", operatorId: randomUUID() }, status: "APPROVED" },
+    },
+    {
+      id: randomUUID(),
+      createdAt: "2026-09-30T07:30:00.000Z",
+      action: "DELETE",
+      entity: "Absence",
+      entityId: null,
+      userId: null,
+      oldValue: { halfDay: false },
+      newValue: null,
+    },
+  ];
+}
+
+/** Serve the support routes of TENANT_ID from the state machine; everything else falls through. */
+async function mockSupportApi(page: Page): Promise<SupportMock> {
+  const support: SupportMock = {
+    active: null,
+    history: [],
+    listStale: false,
+    refuseNextRead: false,
+    auditTotal: 3,
+    calls: [],
+    bodies: [],
+  };
+  const prefix = `/api/v1/operator/tenants/${TENANT_ID}`;
+  await page.route(
+    (url) => url.pathname.startsWith(`${prefix}/support`),
+    async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const path = url.pathname.slice(prefix.length);
+      const method = request.method();
+      support.calls.push(`${method} ${path}${url.search}`);
+      support.bodies.push(request.postDataJSON() as Record<string, unknown> | null);
+
+      if (path === "/support-access" && method === "GET") {
+        return route.fulfill({
+          status: 200,
+          json: support.listStale
+            ? { active: null, history: [] }
+            : { active: support.active, history: support.history },
+        });
+      }
+      if (path === "/support-access" && method === "POST") {
+        const body = (request.postDataJSON() ?? {}) as { reason: string; durationHours: number };
+        if (support.active) {
+          return route.fulfill({
+            status: 409,
+            json: {
+              error: "Serverseitiger Text, der nicht angezeigt wird.",
+              code: "SUPPORT_ACCESS_ALREADY_ACTIVE",
+            },
+          });
+        }
+        const grant = newGrant(body.reason, body.durationHours);
+        support.active = grant;
+        support.history = [grant, ...support.history];
+        return route.fulfill({ status: 201, json: { access: grant } });
+      }
+      const end = /^\/support-access\/([^/]+)\/end$/.exec(path);
+      if (end && method === "POST") {
+        if (!support.active || support.active.id !== end[1]) {
+          return route.fulfill({
+            status: 409,
+            json: { error: "Nicht aktiv.", code: "SUPPORT_ACCESS_NOT_ACTIVE" },
+          });
+        }
+        const ended: MockGrant = {
+          ...support.active,
+          status: "ENDED",
+          endedAt: new Date().toISOString(),
+          endedBy: "OPERATOR",
+        };
+        support.history = support.history.map((grant) => (grant.id === ended.id ? ended : grant));
+        support.active = null;
+        return route.fulfill({ status: 200, json: { access: ended } });
+      }
+
+      // Every remaining route is a read under /support/.
+      if (method !== "GET" || !path.startsWith("/support/")) {
+        return route.fulfill({ status: 404, json: { error: "Nicht gefunden" } });
+      }
+      if (support.refuseNextRead || !support.active) {
+        support.refuseNextRead = false;
+        if (support.active) {
+          // The grant ran out on the server while the page was open.
+          support.history = support.history.map((grant) =>
+            grant.id === support.active?.id
+              ? { ...grant, status: "EXPIRED" as const, endedAt: new Date().toISOString() }
+              : grant,
+          );
+          support.active = null;
+        }
+        return route.fulfill({
+          status: 403,
+          json: { error: "Kein aktiver Support-Zugriff", code: "SUPPORT_ACCESS_REQUIRED" },
+        });
+      }
+      if (path === "/support/employees") {
+        return route.fulfill({
+          status: 200,
+          json: {
+            items: [
+              {
+                id: SUPPORT_EMPLOYEE_ID,
+                employeeNumber: "1001",
+                firstName: "Vorname",
+                lastName: "Nachname",
+                hireDate: "2024-03-01",
+                exitDate: null,
+                status: "ACTIVE",
+                homeSalon: { id: SUPPORT_SALON_ID, name: "Hauptsalon" },
+                scheduleType: "FIXED_SCHEDULE",
+              },
+              {
+                id: SUPPORT_EMPLOYEE_SHIFT_ID,
+                employeeNumber: "1002",
+                firstName: "Anna",
+                lastName: SUPPORT_LONG_VALUE,
+                hireDate: "2025-01-01",
+                exitDate: "2026-06-30",
+                status: "EXITED",
+                homeSalon: null,
+                scheduleType: "SHIFT_BASED",
+              },
+            ],
+          },
+        });
+      }
+      const month = /^\/support\/employees\/([^/]+)\/month$/.exec(path);
+      if (month) {
+        return route.fulfill({
+          status: 200,
+          json: supportMonthBody(month[1], url.searchParams.get("month") ?? "2026-09"),
+        });
+      }
+      const contracts = /^\/support\/employees\/([^/]+)\/contracts$/.exec(path);
+      if (contracts) {
+        return route.fulfill({
+          status: 200,
+          json: {
+            items: [
+              supportContractBody(randomUUID(), "SHIFT_BASED", "2026-03-01T00:00:00.000Z"),
+              supportContractBody(randomUUID(), "FIXED_SCHEDULE", "2025-01-01T00:00:00.000Z"),
+            ],
+          },
+        });
+      }
+      if (path === "/support/audit-log") {
+        const items = supportAuditItems();
+        return route.fulfill({
+          status: 200,
+          json: {
+            items: url.searchParams.get("employeeId") ? items.slice(0, 1) : items,
+            total: url.searchParams.get("employeeId") ? 1 : support.auditTotal,
+            page: Number(url.searchParams.get("page") ?? "1"),
+            pageSize: 50,
+            from: url.searchParams.get("from"),
+            to: url.searchParams.get("to"),
+          },
+        });
+      }
+      return route.fulfill({ status: 404, json: { error: "Nicht gefunden" } });
+    },
+  );
+  return support;
+}
+
+interface SupportOpenOptions {
+  /** Start with a running grant of this reason. */
+  active?: string;
+  /** Path below the tenant page; the tenant page itself by default. */
+  path?: string;
+}
+
+/** Mocked console with a seeded operator session, opened on the tenant page (or `path`). */
+async function openSupport(
+  page: Page,
+  options: SupportOpenOptions = {},
+): Promise<{ mock: OperatorMock; support: SupportMock }> {
+  const mock = await mockOperatorApi(page);
+  const support = await mockSupportApi(page);
+  if (options.active !== undefined) {
+    const grant = newGrant(options.active, 4);
+    support.active = grant;
+    support.history = [grant];
+  }
+  await seedOperatorSession(page);
+  await page.goto(`/betreiber/mandanten/${TENANT_ID}${options.path ?? ""}`);
+  return { mock, support };
+}
+
+function supportCalls(support: SupportMock, prefix: string): string[] {
+  return support.calls.filter((call) => call.startsWith(prefix));
+}
+
+test.describe("operator console - support access (#93)", () => {
+  test("request: nine characters keep the button disabled, a valid reason with 4 hours starts the access", async ({
+    page,
+  }) => {
+    const { support } = await openSupport(page);
+    await expect(page.getByTestId("op-support-section")).toBeVisible();
+
+    await page.getByTestId("op-support-reason").fill("123456789");
+    await expect(page.getByTestId("op-support-request")).toBeDisabled();
+
+    await page.getByTestId("op-support-reason").fill(SUPPORT_REASON);
+    await page.getByRole("radio", { name: "4 Stunden", exact: true }).click();
+    await expect(page.getByTestId("op-support-request")).toBeEnabled();
+    await page.getByTestId("op-support-request").click();
+
+    await expect(page.getByTestId("op-support-active")).toBeVisible();
+    await expect(page.getByTestId("op-support-active-reason")).toHaveText(SUPPORT_REASON);
+    // 4 h minus the seconds since the request: "Noch 3 Std. 59 Min." - the countdown, not a static text.
+    await expect(page.getByTestId("op-support-remaining")).toContainText(/Noch 3 Std\. \d+ Min\./);
+    await expect(page.getByTestId("op-support-request")).toHaveCount(0);
+
+    const posts = support.calls.filter((call) => call === "POST /support-access");
+    expect(posts).toHaveLength(1);
+    expect(support.bodies[support.calls.indexOf("POST /support-access")]).toEqual({
+      reason: SUPPORT_REASON,
+      durationHours: 4,
+    });
+  });
+
+  test("a second request is refused with SUPPORT_ACCESS_ALREADY_ACTIVE and worded by its code", async ({
+    page,
+  }) => {
+    const { support } = await openSupport(page);
+    await expect(page.getByTestId("op-support-request")).toBeVisible();
+
+    // Another session started an access meanwhile; this page's list read still shows the old state.
+    support.listStale = true;
+    const other = newGrant("Anderer Vorgang im zweiten Fenster", 1);
+    support.active = other;
+    support.history = [other];
+
+    await page.getByTestId("op-support-reason").fill(SUPPORT_REASON);
+    await page.getByTestId("op-support-request").click();
+
+    const error = page.getByTestId("op-support-error");
+    await expect(error).toBeVisible();
+    await expect(error).toHaveAttribute("data-code", "SUPPORT_ACCESS_ALREADY_ACTIVE");
+    await expect(error).toContainText("Es besteht bereits ein aktiver Support-Zugriff.");
+    // The server's own text is never shown; the input stays.
+    await expect(error).not.toContainText("Serverseitiger Text");
+    await expect(page.getByTestId("op-support-reason")).toHaveValue(SUPPORT_REASON);
+  });
+
+  test("employees, month, contracts and protocol each carry the banner; reads are audited by the server's calls", async ({
+    page,
+  }) => {
+    const { support } = await openSupport(page, { active: SUPPORT_REASON });
+
+    await page.getByTestId("op-support-link-employees").click();
+    await expect(page.getByTestId("op-support-employees")).toBeVisible();
+    const banner = page.getByTestId("op-support-banner");
+    await expect(banner).toBeVisible();
+    await expect(page.getByTestId("op-support-banner-reason")).toContainText(SUPPORT_REASON);
+    await expect(page.getByTestId("op-support-banner-remaining")).toContainText("Noch");
+    await expect(page.getByTestId(`op-support-employee-row-${SUPPORT_EMPLOYEE_ID}`)).toContainText(
+      "Feste Arbeitszeiten",
+    );
+
+    // Month view: the banner stays, the month navigation changes `monat` in the URL.
+    await page.getByTestId(`op-support-employee-month-${SUPPORT_EMPLOYEE_ID}`).click();
+    await expect(page.getByTestId("op-support-month")).toBeVisible();
+    await expect(banner).toBeVisible();
+    await expect(page.getByTestId("op-support-figure-balance")).toHaveText("+0:30");
+    const before = await page.getByTestId("op-support-month-input").inputValue();
+    await page.getByTestId("op-support-month-prev").click();
+    await expect(page).toHaveURL(/monat=\d{4}-\d{2}/);
+    const after = await page.getByTestId("op-support-month-input").inputValue();
+    expect(after).not.toBe(before);
+    expect(new URL(page.url()).searchParams.get("monat")).toBe(after);
+    await expect(page.getByTestId("op-support-month")).toBeVisible();
+
+    // Contracts: both contracts, the day-hours note only on the shift-based one.
+    await page.getByTestId("op-support-contracts-link").click();
+    await expect(page.getByTestId("op-support-contracts")).toBeVisible();
+    await expect(banner).toBeVisible();
+    await expect(page.locator('[data-testid^="op-support-contract-row-"]')).toHaveCount(2);
+    await expect(page.locator('[data-testid^="op-support-contract-dayhours-note-"]')).toHaveCount(
+      1,
+    );
+    await expect(page.getByTestId("op-support-contracts")).toContainText(
+      "Tagesstunden sind nur bei festen Arbeitszeiten verbindlich.",
+    );
+
+    // Back to the month, then to the protocol through the employee list.
+    await page.goBack();
+    await expect(page.getByTestId("op-support-month")).toBeVisible();
+    await page.getByRole("link", { name: "Support", exact: true }).click();
+    await expect(page.getByTestId("op-support-employees")).toBeVisible();
+    await page.getByTestId("op-support-protocol-link").click();
+    await expect(page.getByTestId("op-support-audit")).toBeVisible();
+    await expect(banner).toBeVisible();
+    const rows = page.locator('[data-testid^="op-support-audit-row-"]');
+    await expect(rows).toHaveCount(3);
+
+    // The redacted marker is visible once the values are opened; the operator row is labelled.
+    await rows.first().getByText("Werte anzeigen").click();
+    const marker = rows.first().getByTestId("op-support-audit-redacted").first();
+    await expect(marker).toBeVisible();
+    await expect(marker).toContainText("[ausgeblendet]");
+    await expect(rows.nth(1)).toContainText("Betreiber");
+
+    // The console asked for exactly the four curated reads (plus the person list of the protocol).
+    expect(supportCalls(support, "GET /support/employees").length).toBeGreaterThanOrEqual(3);
+    expect(supportCalls(support, "GET /support/employees/")).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(`/support/employees/${SUPPORT_EMPLOYEE_ID}/month?month=`),
+        `GET /support/employees/${SUPPORT_EMPLOYEE_ID}/contracts`,
+      ]),
+    );
+    expect(supportCalls(support, "GET /support/audit-log")).not.toHaveLength(0);
+    // Nothing but GET under /support/.
+    expect(
+      support.calls.filter((call) => call.includes(" /support/") && !call.startsWith("GET ")),
+    ).toEqual([]);
+  });
+
+  test("the protocol keeps its filters in the URL, refuses a window above 92 days and pages", async ({
+    page,
+  }) => {
+    const { support } = await openSupport(page, {
+      active: SUPPORT_REASON,
+      path: "/support/protokoll",
+    });
+    support.auditTotal = 120;
+    await expect(page.getByTestId("op-support-audit")).toBeVisible();
+    await expect(page.locator('[data-testid^="op-support-audit-row-"]')).toHaveCount(3);
+
+    // Default window: 30 days up to today.
+    const from = await page.getByTestId("op-support-audit-from").inputValue();
+    const to = await page.getByTestId("op-support-audit-to").inputValue();
+    const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000;
+    expect(days).toBe(30);
+
+    // A window of 93 days is refused before any request.
+    const requestsBefore = supportCalls(support, "GET /support/audit-log").length;
+    await page.getByTestId("op-support-audit-from").fill("2026-01-01");
+    await page.getByTestId("op-support-audit-to").fill("2026-04-04");
+    await page.getByTestId("op-support-audit-apply").click();
+    await expect(page.getByTestId("op-support-audit-window-error")).toHaveText(
+      "Der Zeitraum darf höchstens 92 Tage umfassen.",
+    );
+    expect(supportCalls(support, "GET /support/audit-log")).toHaveLength(requestsBefore);
+
+    // A valid window and one person land in the URL and in the request.
+    await page.getByTestId("op-support-audit-from").fill("2026-09-01");
+    await page.getByTestId("op-support-audit-to").fill("2026-09-30");
+    await page.getByTestId("op-support-audit-person").selectOption(SUPPORT_EMPLOYEE_ID);
+    await page.getByTestId("op-support-audit-apply").click();
+    await expect(page).toHaveURL(/von=2026-09-01&bis=2026-09-30&person=/);
+    await expect(page.locator('[data-testid^="op-support-audit-row-"]')).toHaveCount(1);
+    expect(supportCalls(support, "GET /support/audit-log").at(-1)).toContain(
+      `employeeId=${SUPPORT_EMPLOYEE_ID}`,
+    );
+    await expect(page.getByTestId("op-support-audit-window-error")).toHaveCount(0);
+
+    // Without a person the pager shows from the 51st row on and the next page is asked for.
+    await page.getByTestId("op-support-audit-person").selectOption("");
+    await page.getByTestId("op-support-audit-apply").click();
+    await expect(page.getByTestId("op-support-audit-pagination")).toBeVisible();
+    await page.getByRole("button", { name: "Nächste Seite" }).click();
+    await expect(page).toHaveURL(/seite=2/);
+    expect(supportCalls(support, "GET /support/audit-log").at(-1)).toContain("page=2");
+  });
+
+  test("a read refused with SUPPORT_ACCESS_REQUIRED returns to the tenant page, the session stays", async ({
+    page,
+  }) => {
+    const { support } = await openSupport(page, {
+      active: SUPPORT_REASON,
+      path: "/support",
+    });
+    // The layout read the grant as running; the grant ends on the server before the first read.
+    support.refuseNextRead = true;
+    await page.reload();
+
+    const notice = page.getByTestId("op-support-notice");
+    await expect(notice).toBeVisible();
+    await expect(notice).toHaveAttribute("data-code", "SUPPORT_ACCESS_REQUIRED");
+    await expect(page).toHaveURL(new RegExp(`/betreiber/mandanten/${TENANT_ID}\\?hinweis=`));
+    await expect(page).not.toHaveURL(/anmelden/);
+    // The operator is still signed in: the session keys are untouched and the form is offered.
+    const session = await page.evaluate(
+      ([tokenKey, expiresKey]) => ({
+        token: sessionStorage.getItem(tokenKey),
+        expires: sessionStorage.getItem(expiresKey),
+      }),
+      [TOKEN_KEY, EXPIRES_KEY] as const,
+    );
+    expect(session.token).toBe("operator-token-for-e2e");
+    expect(session.expires).not.toBeNull();
+    await expect(page.getByTestId("op-support-request")).toBeVisible();
+  });
+
+  test("ending the access asks first and brings the request form back", async ({ page }) => {
+    const { support } = await openSupport(page, { active: SUPPORT_REASON });
+    await expect(page.getByTestId("op-support-active")).toBeVisible();
+
+    await page.getByTestId("op-support-end").click();
+    const dialog = page.getByRole("dialog", { name: "Support-Zugriff beenden?" });
+    await expect(dialog).toBeVisible();
+    expect(supportCalls(support, "POST /support-access/")).toHaveLength(0);
+    await dialog.getByRole("button", { name: "Zugriff beenden" }).click();
+
+    await expect(page.getByTestId("op-support-request")).toBeVisible();
+    await expect(page.getByTestId("op-support-active")).toHaveCount(0);
+    await expect(dialog).toHaveCount(0);
+    expect(supportCalls(support, "POST /support-access/")).toHaveLength(1);
+    await expect(page.getByTestId("op-support-history")).toContainText("Beendet");
+  });
+
+  test.describe("at 360 px", () => {
+    test.use({ viewport: { width: 360, height: 800 } });
+
+    const AREAS = [
+      {
+        name: "the tenant page support section",
+        path: "",
+        ready: "op-support-active",
+        container: '[data-testid="op-support-section"]',
+      },
+      {
+        name: "the tenant page request form",
+        path: "",
+        ready: "op-support-request",
+        container: '[data-testid="op-support-section"]',
+        grant: false,
+      },
+      {
+        name: "the employees view",
+        path: "/support",
+        ready: "op-support-employees",
+        container: '[data-testid="op-support-employees-page"]',
+      },
+      {
+        name: "the month view",
+        path: `/support/mitarbeitende/${SUPPORT_EMPLOYEE_ID}?monat=2026-09`,
+        ready: "op-support-month",
+        container: '[data-testid="op-support-month-page"]',
+      },
+      {
+        name: "the contracts view",
+        path: `/support/mitarbeitende/${SUPPORT_EMPLOYEE_ID}/vertraege`,
+        ready: "op-support-contracts",
+        container: '[data-testid="op-support-contracts-page"]',
+      },
+      {
+        name: "the protocol view",
+        path: "/support/protokoll",
+        ready: "op-support-audit-row-",
+        container: '[data-testid="op-support-protocol-page"]',
+      },
+    ] as const;
+
+    for (const area of AREAS) {
+      test(`${area.name} never scrolls sideways`, async ({ page }) => {
+        // The longest allowed reason, so the banner and the section are measured at their worst.
+        await openSupport(
+          page,
+          "grant" in area ? { path: area.path } : { active: LONG_REASON, path: area.path },
+        );
+        if (area.ready.endsWith("-")) {
+          await expect(page.locator(`[data-testid^="${area.ready}"]`).first()).toBeVisible();
+          // Open every value block so the long values are measured too.
+          for (const summary of await page.locator("details > summary").all()) {
+            await summary.click();
+          }
+        } else {
+          await expect(page.getByTestId(area.ready)).toBeVisible();
+        }
+        await animationsSettled(page);
+
+        expect(await pageOverflow(page)).toEqual([]);
+        expect(await offendersOf(page, area.container)).toEqual([]);
+      });
+    }
+  });
+
+  for (const mode of ["light", "dark"] as const) {
+    test.describe(`accessibility, editorial x nacht, ${mode} mode`, () => {
+      async function violations(page: Page): Promise<string[]> {
+        await animationsSettled(page);
+        const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
+        return results.violations.map(
+          (v) =>
+            `${v.id}: ${v.nodes
+              .map((n) => {
+                const data = (n.any[0]?.data ?? {}) as Record<string, unknown>;
+                return `${n.target.join(" ")} [${data.fgColor ?? ""} on ${data.bgColor ?? ""}, ${data.contrastRatio ?? ""}]`;
+              })
+              .join(" | ")}`,
+        );
+      }
+
+      test.beforeEach(async ({ page }) => {
+        await storeLookPrefs(page, { mode, theme: "pflaume", skin: "modern", density: "compact" });
+      });
+
+      test("the tenant page with a running access has no WCAG 2 A/AA violation", async ({
+        page,
+      }) => {
+        await openSupport(page, { active: SUPPORT_REASON });
+        await expect(page.getByTestId("op-support-active")).toBeVisible();
+        expect((await htmlLook(page)).mode).toBe(mode);
+        expect(await violations(page)).toEqual([]);
+      });
+
+      test("the tenant page with the refusal notice and the request form has no WCAG 2 A/AA violation", async ({
+        page,
+      }) => {
+        await openSupport(page, { path: "?hinweis=SUPPORT_ACCESS_REQUIRED" });
+        await expect(page.getByTestId("op-support-notice")).toBeVisible();
+        await expect(page.getByTestId("op-support-request")).toBeVisible();
+        expect(await violations(page)).toEqual([]);
+      });
+
+      test("the employees view has no WCAG 2 A/AA violation", async ({ page }) => {
+        await openSupport(page, { active: SUPPORT_REASON, path: "/support" });
+        await expect(page.getByTestId("op-support-employees")).toBeVisible();
+        expect(await violations(page)).toEqual([]);
+      });
+
+      test("the month view has no WCAG 2 A/AA violation", async ({ page }) => {
+        await openSupport(page, {
+          active: SUPPORT_REASON,
+          path: `/support/mitarbeitende/${SUPPORT_EMPLOYEE_ID}?monat=2026-09`,
+        });
+        await expect(page.getByTestId("op-support-month")).toBeVisible();
+        expect((await htmlLook(page)).mode).toBe(mode);
+        expect(await violations(page)).toEqual([]);
+      });
+
+      test("the contracts view has no WCAG 2 A/AA violation", async ({ page }) => {
+        await openSupport(page, {
+          active: SUPPORT_REASON,
+          path: `/support/mitarbeitende/${SUPPORT_EMPLOYEE_ID}/vertraege`,
+        });
+        await expect(page.getByTestId("op-support-contracts")).toBeVisible();
+        expect(await violations(page)).toEqual([]);
+      });
+
+      test("the protocol view with opened values has no WCAG 2 A/AA violation", async ({
+        page,
+      }) => {
+        await openSupport(page, { active: SUPPORT_REASON, path: "/support/protokoll" });
+        await expect(page.locator('[data-testid^="op-support-audit-row-"]').first()).toBeVisible();
+        for (const summary of await page.locator("details > summary").all()) {
+          await summary.click();
+        }
+        await expect(page.getByTestId("op-support-audit-redacted").first()).toBeVisible();
+        expect(await violations(page)).toEqual([]);
+      });
+    });
+  }
 });

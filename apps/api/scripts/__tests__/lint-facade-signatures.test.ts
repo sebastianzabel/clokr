@@ -585,7 +585,11 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // Issue #538 (2026-10-15): +2 roleNamesByUserId and ownRoleNames
     // (platform/facade/role-assignments.ts, the one derivation of the assigned role names) —
     // 143 -> 145; both pass F1/F2/F3 directly, exceptions unchanged at 17.
-    expect(functions).toHaveLength(145);
+    // Issue #93 (Phase 93b-04, D-05(2), 2026-10-15): +3 operator support month reads —
+    // getEntriesForSupportMonth, getDayBreaksForSupportMonth (time-tracking/facade/time-entries.ts)
+    // and getLeaveRequestsForSupportMonth (absence/facade/leave-requests.ts) — 145 -> 148 after the
+    // merge with #538; all three pass F1/F2/F3 directly, exceptions unchanged at 17.
+    expect(functions).toHaveLength(148);
 
     const rawExceptions = JSON.parse(
       readFileSync(

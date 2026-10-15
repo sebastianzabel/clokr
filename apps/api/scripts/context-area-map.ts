@@ -109,6 +109,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    WorkSchedule/PublicHoliday/SchoolHolidayPeriod/AuditLog/ApiKey/Notification ────────────
   "src/contexts/platform/api/api-keys.ts": "unterbau", // writes ApiKey only
   "src/contexts/platform/api/audit-logs.ts": "unterbau", // reads AuditLog only
+  "src/contexts/platform/api/support-accesses.ts": "unterbau", // Issue #93: tenant view of SupportAccess
   "src/contexts/platform/api/auth.ts": "unterbau", // writes OtpToken/RefreshToken/User
   "src/contexts/platform/api/avatars.ts": "unterbau", // writes Employee.avatarUrl only
   "src/contexts/platform/api/employees.ts": "unterbau", // writes Employee/User primarily; the tx.* deletes of Absence/Break/LeaveEntitlement/LeaveRequest/OvertimeAccount/TimeEntry/WorkSchedule are cascade cleanup ON employee delete, not this file's primary subject
@@ -178,10 +179,16 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/operator/auth.ts": "unterbau", // Phase 88 plan 08 (D-02/D-03/D-03a) — operator sign-in (password, TOTP/recovery code, me); reads and writes OperatorAccount and OperatorAuditLog, Unterbau models that belong to no business context
   "src/contexts/platform/tenant-status.ts": "unterbau", // Phase 88 plan 06 (D-05, AC-88-07/08) — tenant deactivation/reactivation (Tenant columns, refresh-token revocation, operator audit) and the one refusal body of the credential paths; Tenant, RefreshToken and OperatorAuditLog are Unterbau models
   "src/contexts/platform/tenant-packages.ts": "unterbau", // Phase 566 (#566) — booked packages per tenant: the one decider of the Tenant.bookedModules/salonQuota columns, an Unterbau model
+  "src/contexts/platform/support-access.ts": "unterbau", // Issue #93 (Phase 93b-01) — the one decider of an active support access, grant creation under the Tenant lock and the support audit writers; SupportAccess, OperatorAuditLog and AuditLog are Unterbau models
+  "src/contexts/platform/support-access-types.ts": "unterbau", // Issue #93 (Phase 93b-01) — types and control values of the support access; no model access, no behaviour
   "src/contexts/platform/facade/operator-metrics.ts": "unterbau", // Issue #90 — the one producer of the operator dashboard counts; reads Tenant, Salon, Employee and the logins of User, all Unterbau models
   "src/contexts/platform/api/operator/dashboard.ts": "unterbau", // Issue #90 — operator dashboard route (aggregated tenant metrics, DASHBOARD_VIEWED audit); reads Tenant and calls the metrics facade, owns no model
   "src/contexts/platform/api/operator/salons.ts": "unterbau", // Phase 89 (#89, D-05/D-06/D-07) — operator salon routes (list now, mutations in later plans); reads Salon through the Unterbau facade and gets coupling and time-entry count through a port from the composition root
   "src/composition/operator-salon-ports.ts": "komposition", // Phase 89 (#89, D-07/D-12) — maps the time-tracking and scheduling index exports onto the operator salon port; owns no model, carries no rule
+  "src/contexts/platform/support-audit-redaction.ts": "unterbau", // Issue #93 (Phase 93b-05, D-17) — pure type allow-list redaction of AuditLog old/new values for the support audit-log read; no model access, no imports
+  "src/contexts/platform/api/operator/support-access.ts": "unterbau", // Issue #93 (D-18) — operator support access grant request (POST); reads and writes the SupportAccess grant through the Unterbau decider and owns no model
+  "src/contexts/platform/api/operator/support.ts": "unterbau", // Issue #93 (D-05/D-18/D-19/D-24) — GET-only operator support reads behind the grant decider and the audit-first transaction; tenant data comes in through the composition port, never read here
+  "src/composition/operator-support-ports.ts": "komposition", // Issue #93 (D-05/D-24) — assembles the curated support DTOs from the platform and working-time-account index exports for the operator support routes; owns no model, carries no rule
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────

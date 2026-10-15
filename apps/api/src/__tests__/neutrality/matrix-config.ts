@@ -233,13 +233,20 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
     "PATCH /api/v1/operator/tenants/:id/salons/:salonId",
     "POST /api/v1/operator/tenants/:id/salons/:salonId/deactivate",
     "POST /api/v1/operator/tenants/:id/salons/:salonId/activate",
+    "POST /api/v1/operator/tenants/:id/support-access",
+    "GET /api/v1/operator/tenants/:id/support/employees",
+    "GET /api/v1/operator/tenants/:id/support-access",
+    "POST /api/v1/operator/tenants/:id/support-access/:accessId/end",
+    "GET /api/v1/operator/tenants/:id/support/employees/:employeeId/month",
+    "GET /api/v1/operator/tenants/:id/support/employees/:employeeId/contracts",
+    "GET /api/v1/operator/tenants/:id/support/audit-log",
   ].map((route) => ({
     route,
     reason:
       "Operator-authenticated (separate principal with its own signing secret, requireOperator, " +
       "Phase 88 #88) — no tenant actor can be a matrix cell; the tenant-token refusal is proven in " +
       "operator-auth-88.test.ts, operator-tenants-88.test.ts, operator-salons-89.test.ts, " +
-      "operator-packages-566.test.ts and operator-dashboard-90.test.ts.",
+      "operator-packages-566.test.ts, operator-dashboard-90.test.ts, support-access-grant-93.test.ts and support-access-reads-93.test.ts.",
   })),
   {
     route: "GET /api/v1/shifts/planning-overview",
@@ -285,6 +292,36 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "430, Phase 468 and Phase 481 entries above: RECORD/MERGE mode refuses to run once the role " +
       "guard is gone. `PUT /api/v1/settings/work` stays a recorded `mutate()` route and its cells " +
       "stay byte-identical, because a PUT without the apply flag behaves exactly as before.",
+  },
+  {
+    route: "GET /api/v1/support-accesses",
+    reason:
+      "New route added in Issue #93 (Phase 93b-06, D-08), long after the role guard (`requireRole`) " +
+      "was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`audit-log:read:ZUGEWIESEN`, relation MANDANT, so whole-tenant reach only) from its very first " +
+      "commit and never had role-based access behavior to compare. Same vacuous-satisfaction " +
+      "reasoning as the Phase 430, Phase 468 and Phase 481 entries above: RECORD/MERGE mode " +
+      "refuses to run once the role guard is gone. Proven by support-access-tenant-93.test.ts.",
+  },
+  {
+    route: "GET /api/v1/support-accesses/:id",
+    reason:
+      "New route added in Issue #93 (Phase 93b-06, D-08), long after the role guard (`requireRole`) " +
+      "was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`audit-log:read:ZUGEWIESEN`, relation MANDANT, so whole-tenant reach only) from its very first " +
+      "commit and never had role-based access behavior to compare. Same vacuous-satisfaction " +
+      "reasoning as the Phase 430, Phase 468 and Phase 481 entries above: RECORD/MERGE mode " +
+      "refuses to run once the role guard is gone. Proven by support-access-tenant-93.test.ts.",
+  },
+  {
+    route: "POST /api/v1/support-accesses/:id/end",
+    reason:
+      "New route added in Issue #93 (Phase 93b-06, D-08), long after the role guard (`requireRole`) " +
+      "was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`tenant-settings:update:ZUGEWIESEN`, relation MANDANT, so whole-tenant reach only) from its very first " +
+      "commit and never had role-based access behavior to compare. Same vacuous-satisfaction " +
+      "reasoning as the Phase 430, Phase 468 and Phase 481 entries above: RECORD/MERGE mode " +
+      "refuses to run once the role guard is gone. Proven by support-access-tenant-93.test.ts.",
   },
   {
     route: "GET /api/v1/time-entries/summary",

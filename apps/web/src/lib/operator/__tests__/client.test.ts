@@ -499,3 +499,185 @@ describe("operatorApi sign-in calls", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer op-token");
   });
 });
+
+describe("support access (Issue #93, D-21)", () => {
+  it("a 403 with the support code is an ordinary refusal: session kept, no redirect", async () => {
+    const { setSession, operatorApi, setUnauthorizedHandler, currentToken } = await load();
+    setSession("op-token", 900, NOW);
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    fetchMock.mockResolvedValue(
+      jsonResponse({ error: "Kein aktiver Support-Zugriff", code: "SUPPORT_ACCESS_REQUIRED" }, 403),
+    );
+
+    await expect(operatorApi.getSupportAccess("t1")).rejects.toMatchObject({
+      status: 403,
+      code: "SUPPORT_ACCESS_REQUIRED",
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(currentToken()).toBe("op-token");
+    expect(Object.keys(session.dump()).length).toBeGreaterThan(0);
+  });
+
+  it("a 403 without a code (tenant-token refusal) still clears the session and redirects", async () => {
+    const { setSession, operatorApi, setUnauthorizedHandler, currentToken } = await load();
+    setSession("op-token", 900, NOW);
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    fetchMock.mockResolvedValue(jsonResponse({ error: "Zugriff verweigert" }, 403));
+
+    await expect(operatorApi.getSupportAccess("t1")).rejects.toMatchObject({ status: 403 });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(currentToken()).toBeNull();
+    expect(session.dump()).toEqual({});
+  });
+
+  it("a 403 with another code still signs the operator out", async () => {
+    const { setSession, operatorApi, setUnauthorizedHandler } = await load();
+    setSession("op-token", 900, NOW);
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    fetchMock.mockResolvedValue(jsonResponse({ error: "Nein", code: "SOMETHING_ELSE" }, 403));
+
+    await expect(operatorApi.getSupportAccess("t1")).rejects.toMatchObject({ status: 403 });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(session.dump()).toEqual({});
+  });
+
+  it("a 401 with the support code is not exempt (only the 403 refusal is)", async () => {
+    const { setSession, operatorApi, setUnauthorizedHandler } = await load();
+    setSession("op-token", 900, NOW);
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    fetchMock.mockResolvedValue(jsonResponse({ error: "x", code: "SUPPORT_ACCESS_REQUIRED" }, 401));
+
+    await expect(operatorApi.getSupportAccess("t1")).rejects.toMatchObject({ status: 401 });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("getSupportAccess GETs the tenant's support-access path with the encoded id", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(jsonResponse({ active: null, history: [] }));
+
+    const state = await operatorApi.getSupportAccess("t/1");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/t%2F1/support-access");
+    expect(init.method).toBe("GET");
+    expect(state).toEqual({ active: null, history: [] });
+  });
+
+  it("requestSupportAccess POSTs exactly { reason, durationHours } and returns the access", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    const access = { id: "a1", status: "ACTIVE" };
+    fetchMock.mockResolvedValue(jsonResponse({ access }, 201));
+
+    const result = await operatorApi.requestSupportAccess("t1", {
+      reason: "Ticket prüfen",
+      durationHours: 4,
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/t1/support-access");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ reason: "Ticket prüfen", durationHours: 4 }));
+    expect(result).toEqual({ access });
+  });
+
+  it("endSupportAccess POSTs the end path with both ids encoded and no body", async () => {
+    const { setSession, operatorApi } = await load();
+    setSession("op-token", 900, NOW);
+    fetchMock.mockResolvedValue(jsonResponse({ access: { id: "a 1", status: "ENDED" } }));
+
+    await operatorApi.endSupportAccess("t1", "a 1");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/t1/support-access/a%201/end");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeUndefined();
+  });
+});
+
+describe("support reads (Issue #93, D-05)", () => {
+  async function ready() {
+    const loaded = await load();
+    loaded.setSession("op-token", 900, NOW);
+    return loaded;
+  }
+
+  it("listSupportEmployees GETs the employees path with the encoded tenant id", async () => {
+    const { operatorApi } = await ready();
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+
+    await expect(operatorApi.listSupportEmployees("t/1")).resolves.toEqual({ items: [] });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/t%2F1/support/employees");
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer op-token");
+  });
+
+  it("getSupportEmployeeMonth GETs the month path with both ids encoded and the month query", async () => {
+    const { operatorApi } = await ready();
+    fetchMock.mockResolvedValue(jsonResponse({ month: "2026-09" }));
+
+    await operatorApi.getSupportEmployeeMonth("t 1", "e/1", "2026-09");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/t%201/support/employees/e%2F1/month?month=2026-09");
+    expect(init.method).toBe("GET");
+  });
+
+  it("getSupportContracts GETs the contracts path", async () => {
+    const { operatorApi } = await ready();
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+
+    await operatorApi.getSupportContracts("t1", "e1");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/t1/support/employees/e1/contracts");
+    expect(init.method).toBe("GET");
+  });
+
+  it("getSupportAuditLog sends from and to, and adds employeeId and page only when given", async () => {
+    const { operatorApi } = await ready();
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+
+    await operatorApi.getSupportAuditLog("t1", { from: "2026-09-01", to: "2026-09-30" });
+    await operatorApi.getSupportAuditLog("t1", {
+      from: "2026-09-01",
+      to: "2026-09-30",
+      employeeId: "e 1",
+      page: 3,
+    });
+
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe(
+      "/api/v1/operator/tenants/t1/support/audit-log?from=2026-09-01&to=2026-09-30",
+    );
+    expect((fetchMock.mock.calls[1] as [string])[0]).toBe(
+      "/api/v1/operator/tenants/t1/support/audit-log?from=2026-09-01&to=2026-09-30&employeeId=e+1&page=3",
+    );
+  });
+
+  it("a refused read keeps the session and carries the code", async () => {
+    const { operatorApi, setUnauthorizedHandler, currentToken } = await ready();
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    fetchMock.mockResolvedValue(
+      jsonResponse({ error: "Kein Zugriff", code: "SUPPORT_ACCESS_REQUIRED" }, 403),
+    );
+
+    await expect(operatorApi.listSupportEmployees("t1")).rejects.toMatchObject({
+      status: 403,
+      code: "SUPPORT_ACCESS_REQUIRED",
+    });
+    expect(handler).not.toHaveBeenCalled();
+    expect(currentToken()).toBe("op-token");
+  });
+});

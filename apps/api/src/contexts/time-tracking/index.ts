@@ -113,6 +113,9 @@ export type { ResolveEntrySalonInput, ResolveEntrySalonResult } from "./entry-sa
 // ROUTE file (settings.ts, employees.ts, imports.ts already import this same index).
 export { countEntriesForSalon } from "./facade/time-entries";
 
+// Issue #93 (D-05): operator support month view — allow-list read
+export { getEntriesForSupportMonth, getDayBreaksForSupportMonth } from "./facade/time-entries";
+
 // validateTimeEntryInvariants is deliberately NOT exported here. Its only caller outside this
 // context is platform/api/imports.ts, which is E-2 in ADR 0001 Eintrag H — the importer writing
 // directly into time-tracking, a defect Block 2 (#102-#104) replaces with an event. Exporting it

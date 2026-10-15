@@ -384,16 +384,21 @@ describe("operator salon surface - route x principal matrix", () => {
     }
 
     // The frozen route table: the operator salon node sits at one fixed depth and lists PATCH only.
+    // Issue #93 moved that depth: the `/support` and `/support-access` siblings under
+    // `/operator/tenants/:id` made the tree draw the salon subtree one level further in (a `\u2502`
+    // column instead of blank padding) — the same route, the same PATCH-only surface, a different indent.
     const baseline = readFileSync(
       join(__dirname, "../../baselines/route-surface.txt"),
       "utf-8",
     ).split("\n");
     const operatorSalonNodes = baseline.filter(
       (line) =>
-        line.startsWith("\u2502           \u2514\u2500\u2500 /:salonId (") ||
-        line.startsWith("\u2502           \u251C\u2500\u2500 /:salonId ("),
+        line.startsWith("\u2502       \u2502   \u2514\u2500\u2500 /:salonId (") ||
+        line.startsWith("\u2502       \u2502   \u251C\u2500\u2500 /:salonId ("),
     );
-    expect(operatorSalonNodes).toEqual(["\u2502           \u2514\u2500\u2500 /:salonId (PATCH)"]);
+    expect(operatorSalonNodes).toEqual([
+      "\u2502       \u2502   \u2514\u2500\u2500 /:salonId (PATCH)",
+    ]);
     expect(baseline.some((line) => line.includes("/deactivate (POST)"))).toBe(true);
     expect(baseline.some((line) => line.includes("/activate (POST)"))).toBe(true);
   });

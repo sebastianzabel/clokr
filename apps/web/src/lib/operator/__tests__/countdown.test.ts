@@ -7,6 +7,7 @@ import {
   ANNOUNCE_30_SECONDS,
   ANNOUNCE_2_MINUTES,
   announcementFor,
+  formatGrantRemaining,
   formatRemaining,
   remainingMs,
   sessionState,
@@ -84,5 +85,31 @@ describe("announcementFor", () => {
   it("uses the UI-SPEC sentences", () => {
     expect(ANNOUNCE_2_MINUTES).toBe("Die Sitzung endet in 2 Minuten. Eingaben bitte abschließen.");
     expect(ANNOUNCE_30_SECONDS).toBe("Die Sitzung endet in 30 Sekunden.");
+  });
+});
+
+describe("formatGrantRemaining (Issue #93)", () => {
+  const MIN = 60_000;
+  const HOUR = 60 * MIN;
+
+  it("shows hours and minutes", () => {
+    expect(formatGrantRemaining(3 * HOUR + 12 * MIN)).toBe("Noch 3 Std. 12 Min.");
+    expect(formatGrantRemaining(24 * HOUR)).toBe("Noch 24 Std. 0 Min.");
+  });
+
+  it("drops the hours below one hour", () => {
+    expect(formatGrantRemaining(12 * MIN)).toBe("Noch 12 Min.");
+    expect(formatGrantRemaining(1 * MIN)).toBe("Noch 1 Min.");
+  });
+
+  it("says less than a minute under one minute and Abgelaufen at zero or below", () => {
+    expect(formatGrantRemaining(59_999)).toBe("Weniger als 1 Min.");
+    expect(formatGrantRemaining(1)).toBe("Weniger als 1 Min.");
+    expect(formatGrantRemaining(0)).toBe("Abgelaufen");
+    expect(formatGrantRemaining(-5_000)).toBe("Abgelaufen");
+  });
+
+  it("floors partial minutes so the figure never overstates the grant", () => {
+    expect(formatGrantRemaining(3 * HOUR + 12 * MIN + 59_000)).toBe("Noch 3 Std. 12 Min.");
   });
 });

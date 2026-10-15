@@ -2252,7 +2252,9 @@ textarea.form-input {
 }
 .btn-danger {
   background: transparent;
-  color: var(--bad);
+  /* --bad-text is identical to --bad in light mode and brightened in dark mode: the label of an outline
+     danger button measured 2.62:1 (below WCAG AA) with --bad on the dark card surface. */
+  color: var(--bad-text);
   border-color: rgba(180, 35, 24, 0.3);
   border-radius: var(--r-sm);
 }

@@ -1097,6 +1097,30 @@
       "validatedAt": null
     },
     {
+      "route": "GET /api/v1/support-accesses/:id",
+      "file": "apps/api/src/contexts/platform/api/support-accesses.ts",
+      "category": "probe",
+      "params": {
+        "id": "supportAccess"
+      },
+      "minimalBody": null,
+      "reason": "support-accesses.ts GET /:id (Issue #93, Phase 93b-06, D-15): the access is looked up with ONE `supportAccess.findFirst({ where: { id, tenantId } })` where `tenantId` is the caller's own (`req.user.tenantId`) - a foreign tenant's real access and an unknown id both return null and fall through the single 404 `{ error: \"Support-Zugriff nicht gefunden\" }` before any read of the tenant log is made, so there is no membership oracle. GET has no body, so a bodyless probe reaches the lookup. Proven with a real tenant-B access (fixture key `supportAccess`) by this probe and by support-access-tenant-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/support-accesses/:id/end",
+      "file": "apps/api/src/contexts/platform/api/support-accesses.ts",
+      "category": "probe",
+      "params": {
+        "id": "supportAccess"
+      },
+      "minimalBody": null,
+      "reason": "support-accesses.ts POST /:id/end (Issue #93, Phase 93b-06, D-15): the end is ONE guarded `supportAccess.updateMany({ where: { id, tenantId, endedAt: null, expiresAt: { gt: now } } })` with the caller's own tenant, so a foreign tenant's real access matches nothing and is never ended; the follow-up `findFirst({ where: { id, tenantId } })` is tenant-scoped too and returns null for a foreign and for an unknown id, both answering the byte-identical 404 `{ error: \"Support-Zugriff nicht gefunden\" }` before any audit row is written. A bodyless POST reaches the lookup (no body schema). The fixture-integrity check after the sweep proves tenant B's access is still active. Proven by this probe and by support-access-tenant-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "DELETE /api/v1/day-breaks/:id",
       "file": "apps/api/src/contexts/time-tracking/api/day-breaks.ts",
       "category": "nicht anwendbar",
@@ -1223,6 +1247,76 @@
       "params": null,
       "minimalBody": null,
       "reason": "The salon is looked up inside the facade `activateSalon(tx, tenantId, salonId)` with `{ id: salonId, tenantId }` and one null path (NOT_FOUND), so another tenant's salon and an unknown id are byte-identical (404 `Salon nicht gefunden`) - proven by operator-salons-89.test.ts and operator-salons-boundary-89.test.ts; the operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. requireOperator runs first and an unknown tenant answers the one fixed 404 `Mandant nicht gefunden`.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/operator/tenants/:id/support-access",
+      "file": "apps/api/src/contexts/platform/api/operator/support-access.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Tenant by the operator principal, which sits above the tenant: there is no caller tenant whose foreign instance could be told apart from an unknown id. requireOperator runs first; an unknown id answers the same plain 404 `Mandant nicht gefunden` for every operator, and the writer reads the `tenant` model and the support access table only (support-access.ts `createSupportAccess`), so it is not a tenant-membership oracle. Proven by support-access-grant-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/operator/tenants/:id/support/employees",
+      "file": "apps/api/src/contexts/platform/api/operator/support.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Tenant by the operator principal, which sits above the tenant: there is no caller tenant whose foreign instance could be told apart from an unknown id. requireOperator runs first; an unknown id answers the same plain 404 `Mandant nicht gefunden` for every operator, before any audit row and before any tenant data is read (support.ts `runSupportRead` asks the decider, which reads the `tenant` model first), so it is not a tenant-membership oracle. Proven by support-access-grant-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/operator/tenants/:id/support-access",
+      "file": "apps/api/src/contexts/platform/api/operator/support-access.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a Tenant by the operator principal, which sits above the tenant: there is no caller tenant whose foreign instance could be told apart from an unknown id. requireOperator runs first; an unknown id answers the same plain 404 `Mandant nicht gefunden` for every operator and the list reads only the calling operator's own grant rows (support-access.ts `listSupportAccessesForOperator`, tenant and operator in one `where`), so it is not a tenant-membership oracle. Proven by support-access-grant-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/operator/tenants/:id/support-access/:accessId/end",
+      "file": "apps/api/src/contexts/platform/api/operator/support-access.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. `:accessId` is resolved together with the tenant id and the operator id in one `where` (support-access.ts `endSupportAccessByOperator`), so another operator's or another tenant's grant id and an unknown id answer the one 404 `Support-Zugriff nicht gefunden` - proven byte-identical by support-access-grant-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/operator/tenants/:id/support/employees/:employeeId/month",
+      "file": "apps/api/src/contexts/platform/api/operator/support.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. `:employeeId` is resolved together with the tenant id inside the audit transaction (support.ts `runSupportRead`, port `employeeExists`: `{ id, tenantId }`), so another tenant's employee and an unknown id answer the same 404 `Mitarbeiter nicht gefunden` with no audit row and no data read - proven byte-identical (status and body) by support-access-reads-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/operator/tenants/:id/support/employees/:employeeId/contracts",
+      "file": "apps/api/src/contexts/platform/api/operator/support.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. `:employeeId` is resolved together with the tenant id inside the audit transaction (support.ts `runSupportRead`, port `employeeExists`: `{ id, tenantId }`), so another tenant's employee and an unknown id answer the same 404 `Mitarbeiter nicht gefunden` with no audit row and no data read - proven byte-identical (status and body) by support-access-reads-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/operator/tenants/:id/support/audit-log",
+      "file": "apps/api/src/contexts/platform/api/operator/support.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. `:id` is the tenant the operator holds a grant for (decided by the one decider before any read) and the optional `employeeId` query value is resolved together with that tenant id inside the audit transaction (support.ts `runSupportRead`, port `employeeExists`: `{ id, tenantId }`), so another tenant's employee and an unknown id answer the same 404 `Mitarbeiter nicht gefunden` with no audit row and no data read - proven byte-identical (status and body) by support-access-reads-93.test.ts; the rows themselves are scoped by the tenant two-branch `OR` of the port and never include another tenant's row (same file).",
       "ticket": null,
       "validatedAt": null
     }

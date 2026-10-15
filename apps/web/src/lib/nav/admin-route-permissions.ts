@@ -75,6 +75,10 @@ export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
   navRoute("/admin/month-close", "COMPLIANCE", "Monatsabschluss", "lock", [Z("month-close:read")]),
   // GET /audit-logs
   navRoute("/admin/audit", "COMPLIANCE", "Audit & Log", "shield", [Z("audit-log:read")]),
+  // GET /support-accesses (the end action's extra permission is checked in the page; the API decides)
+  navRoute("/admin/support-access", "COMPLIANCE", "Support-Zugriffe", "shield", [
+    Z("audit-log:read"),
+  ]),
   // POST /imports/employees, POST /imports/time-entries
   navRoute(
     "/admin/import",

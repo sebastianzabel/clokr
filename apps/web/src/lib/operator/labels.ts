@@ -4,6 +4,7 @@ import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import type { FederalState } from "@clokr/types";
 import type { TenantModule } from "$lib/packages/tenant-modules";
+import type { SupportAccessEndedBy, SupportAccessStatus, SupportDurationHours } from "./types";
 import { CONNECTION_TEXT, RATE_LIMIT_TEXT, SERVER_FAULT_TEXT } from "./reasons";
 
 const LABELS: Record<FederalState, string> = {
@@ -42,6 +43,20 @@ export function formatOperatorDate(iso: string): string {
   return format(date, "dd.MM.yyyy", { locale: de });
 }
 
+/** `dd.MM.yyyy, HH:mm` of an instant in the browser's zone (D-03); an unparsable value is a dash. */
+export function formatOperatorDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "–";
+  return format(date, "dd.MM.yyyy, HH:mm", { locale: de });
+}
+
+/** `HH:mm` of an instant in the browser's zone (D-03); an unparsable value is a dash. */
+export function formatOperatorTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "–";
+  return format(date, "HH:mm", { locale: de });
+}
+
 /**
  * `dd.MM.yyyy` of a `YYYY-MM-DD` calendar day (Issue #90). Pure string split on purpose: the API
  * sends a UTC day, and parsing it through a Date would shift it by the viewer's time zone.
@@ -78,3 +93,34 @@ export const TENANT_MODULE_DESCRIPTIONS: Readonly<Record<TenantModule, string>> 
   HARDWARE_CLOCK: "NFC-Terminals und WLAN-Anwesenheit",
   ANALYTICS: "Auswertung nach Tätigkeitsarten",
 };
+
+/** The durations of a support access (D-03), in the order the form offers them. */
+export const SUPPORT_DURATION_OPTIONS: ReadonlyArray<{
+  value: SupportDurationHours;
+  label: string;
+}> = [
+  { value: 1, label: "1 Stunde" },
+  { value: 4, label: "4 Stunden" },
+  { value: 8, label: "8 Stunden" },
+  { value: 24, label: "24 Stunden" },
+];
+
+/** Status badge text of a support access, keyed by the control value (never by the text). */
+export const SUPPORT_STATUS_LABELS: Readonly<Record<SupportAccessStatus, string>> = {
+  ACTIVE: "Aktiv",
+  EXPIRED: "Abgelaufen",
+  ENDED: "Beendet",
+};
+
+/** Who ended a support access early, keyed by the control value. */
+export const SUPPORT_ENDED_BY_LABELS: Readonly<Record<SupportAccessEndedBy, string>> = {
+  OPERATOR: "durch Betreiber",
+  TENANT: "durch Mandant",
+};
+
+/** One calendar day, or `dd.MM.yyyy – dd.MM.yyyy` for a period (both ends `YYYY-MM-DD`). */
+export function formatOperatorDayRange(start: string, end: string): string {
+  return start === end
+    ? formatOperatorDay(start)
+    : `${formatOperatorDay(start)} – ${formatOperatorDay(end)}`;
+}

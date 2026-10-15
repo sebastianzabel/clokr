@@ -40,6 +40,7 @@
     "/admin/employees": "Mitarbeitende",
     "/admin/month-close": "Monatsabschluss",
     "/admin/audit": "Compliance & Audit",
+    "/admin/support-access": "Support-Zugriffe",
     "/admin/themes": "Branding & Themes",
     "/admin/import": "CSV Import",
     "/admin/export": "DATEV Export",

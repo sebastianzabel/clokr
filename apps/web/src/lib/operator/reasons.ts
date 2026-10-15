@@ -39,7 +39,41 @@ export const REASON_TEXTS: Readonly<Record<string, string>> = {
   SALON_QUOTA_REACHED:
     "Salon-Kontingent erreicht. Erst im Abschnitt „Pakete“ das Ketten-Paket buchen oder das Kontingent erhöhen.",
   MODULE_NOT_BOOKED: "Das nötige Zusatzmodul ist nicht gebucht. Erst im Abschnitt „Pakete“ buchen.",
+  // Support access (Issue #93). The sentences name no count, like every reason of this console.
+  SUPPORT_ACCESS_REQUIRED:
+    "Für diesen Mandanten besteht kein aktiver Support-Zugriff. Bitte zuerst einen Zugriff mit Grund anfordern.",
+  SUPPORT_ACCESS_ALREADY_ACTIVE:
+    "Es besteht bereits ein aktiver Support-Zugriff. Eine Verlängerung ist nicht möglich; nach dem Ende ist ein neuer Antrag nötig.",
+  SUPPORT_ACCESS_NOT_ACTIVE: "Der Support-Zugriff ist nicht mehr aktiv.",
+  // Client-side code: no API answer carries it. The read views raise it when the grant ran out
+  // while they were open, and hand it to the tenant page as the `hinweis` notice.
+  SUPPORT_ACCESS_EXPIRED:
+    "Der Support-Zugriff ist abgelaufen. Für eine weitere Einsicht ist ein neuer Antrag mit Grund nötig.",
+  SUPPORT_ACCESS_NOT_FOUND: "Support-Zugriff nicht gefunden.",
+  EMPLOYEE_NOT_FOUND: "Mitarbeitende Person nicht gefunden.",
 };
+
+/**
+ * The code of the 403 a support read gets without an active grant (D-21). It is an ordinary
+ * refusal, not an authentication failure: the client keeps the operator's session on it.
+ */
+export const SUPPORT_ACCESS_REQUIRED = "SUPPORT_ACCESS_REQUIRED";
+/** Client-side code: the grant ran out while a support view was open. */
+export const SUPPORT_ACCESS_EXPIRED = "SUPPORT_ACCESS_EXPIRED";
+/** The only codes a read view may hand back to the tenant page as the `hinweis` notice. */
+export const SUPPORT_NOTICE_CODES: readonly string[] = [
+  SUPPORT_ACCESS_REQUIRED,
+  SUPPORT_ACCESS_EXPIRED,
+];
+
+/** Sentences that win over `REASON_TEXTS` when a support READ is refused (nothing is changed there). */
+export const SUPPORT_READ_OVERRIDES: Readonly<Record<string, string>> = {
+  TENANT_DEACTIVATED: "Der Mandant ist deaktiviert. Eine Einsicht ist nicht möglich.",
+};
+
+/** Keys a caller passes as `notFoundCode` so a code-less 404 reads as a missing grant or employee. */
+export const SUPPORT_ACCESS_NOT_FOUND = "SUPPORT_ACCESS_NOT_FOUND";
+export const EMPLOYEE_NOT_FOUND = "EMPLOYEE_NOT_FOUND";
 
 /** Key a salon caller passes as `notFoundCode` so a code-less 404 reads as a missing salon. */
 export const SALON_NOT_FOUND = "SALON_NOT_FOUND";

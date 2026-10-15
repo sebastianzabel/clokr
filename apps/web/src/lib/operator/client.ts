@@ -9,6 +9,7 @@
 import { errorMessage } from "$api/error-message";
 import { clearSession, currentToken } from "$stores/operator-auth";
 import { buildSignInUrl } from "./next-path";
+import { SUPPORT_ACCESS_REQUIRED } from "./reasons";
 import type {
   CreateSalonBody,
   CreateTenantBody,
@@ -19,9 +20,17 @@ import type {
   OperatorFactor,
   OperatorMe,
   OperatorSalon,
+  OperatorSupportAccessState,
   OperatorTenant,
+  RequestSupportAccessBody,
   ResendInvitationResult,
   SetTenantPackagesBody,
+  SupportAccessResult,
+  SupportAuditPage,
+  SupportAuditQuery,
+  SupportContractList,
+  SupportEmployeeList,
+  SupportEmployeeMonth,
   UpdateSalonBody,
 } from "./types";
 
@@ -84,7 +93,13 @@ export async function request<T>(
     ? await res.json()
     : await res.text();
 
-  if (auth && (res.status === 401 || res.status === 403)) {
+  // A support read without an active grant is answered 403 with this code (D-21). That is the
+  // server state of the grant, not a failed authentication: it must not end the operator's
+  // sign-in, so the answer falls through to the ordinary throw below. A 403 without the code
+  // (a tenant token) and every 401 still clear the session.
+  const supportRefusal = res.status === 403 && readCode(data) === SUPPORT_ACCESS_REQUIRED;
+
+  if (auth && !supportRefusal && (res.status === 401 || res.status === 403)) {
     clearSession();
     unauthorizedHandler?.(buildSignInUrl(currentPath(), { expired: true }));
     throw new OperatorApiError(res.status, readCode(data), errorMessage(data, "Fehler"), data);
@@ -166,4 +181,46 @@ export const operatorApi = {
       "POST",
       `/tenants/${encodeURIComponent(tenantId)}/salons/${encodeURIComponent(salonId)}/activate`,
     ),
+  getSupportAccess: (tenantId: string) =>
+    request<OperatorSupportAccessState>(
+      "GET",
+      `/tenants/${encodeURIComponent(tenantId)}/support-access`,
+    ),
+  requestSupportAccess: (tenantId: string, body: RequestSupportAccessBody) =>
+    request<SupportAccessResult>(
+      "POST",
+      `/tenants/${encodeURIComponent(tenantId)}/support-access`,
+      { body },
+    ),
+  endSupportAccess: (tenantId: string, accessId: string) =>
+    request<SupportAccessResult>(
+      "POST",
+      `/tenants/${encodeURIComponent(tenantId)}/support-access/${encodeURIComponent(accessId)}/end`,
+    ),
+  // Support reads (Issue #93, D-05). Each one is refused 403 SUPPORT_ACCESS_REQUIRED without an active
+  // access; the client keeps the operator signed in on exactly that answer.
+  listSupportEmployees: (tenantId: string) =>
+    request<SupportEmployeeList>(
+      "GET",
+      `/tenants/${encodeURIComponent(tenantId)}/support/employees`,
+    ),
+  getSupportEmployeeMonth: (tenantId: string, employeeId: string, month: string) =>
+    request<SupportEmployeeMonth>(
+      "GET",
+      `/tenants/${encodeURIComponent(tenantId)}/support/employees/${encodeURIComponent(employeeId)}/month?month=${encodeURIComponent(month)}`,
+    ),
+  getSupportContracts: (tenantId: string, employeeId: string) =>
+    request<SupportContractList>(
+      "GET",
+      `/tenants/${encodeURIComponent(tenantId)}/support/employees/${encodeURIComponent(employeeId)}/contracts`,
+    ),
+  getSupportAuditLog: (tenantId: string, query: SupportAuditQuery) => {
+    const params = new URLSearchParams({ from: query.from, to: query.to });
+    if (query.employeeId !== undefined) params.set("employeeId", query.employeeId);
+    if (query.page !== undefined) params.set("page", String(query.page));
+    return request<SupportAuditPage>(
+      "GET",
+      `/tenants/${encodeURIComponent(tenantId)}/support/audit-log?${params.toString()}`,
+    );
+  },
 };

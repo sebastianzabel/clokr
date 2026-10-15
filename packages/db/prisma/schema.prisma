@@ -26,6 +26,10 @@ model Tenant {
   deactivatedByOperatorId String?
   deactivatedByOperator   OperatorAccount? @relation(fields: [deactivatedByOperatorId], references: [id], onDelete: Restrict)
 
+  // Issue #93 (Phase 93b) — support access grants of the operator for this tenant. Plural name on
+  // purpose: the tenant-scoping model graph skips plural collections.
+  supportAccesses SupportAccess[]
+
   // Phase 566 (#566) — booked packages per tenant. Unterbau-Erweiterung: additive, no existing reader
   // has to change. Written only by the operator and read only through
   // contexts/platform/tenant-packages.ts, the one decider. `salonQuota` has a database CHECK
@@ -1280,6 +1284,7 @@ model OperatorAccount {
 
   auditLogs          OperatorAuditLog[]
   deactivatedTenants Tenant[]
+  supportAccesses    SupportAccess[] // Issue #93: plural on purpose, see the Tenant back-relation
 }
 
 // Phase 88 (#88, D-07/D-07a) — append-only operator audit trail. Written only by the create-only writer in
@@ -1305,6 +1310,34 @@ model OperatorAuditLog {
   @@index([operatorId])
   @@index([subjectTenantId, createdAt])
   @@index([createdAt])
+}
+
+// Issue #93 (Phase 93b-01, D-02/D-07/D-16) — a time-boxed, read-only operator access grant for ONE tenant
+// (Unterbau-Erweiterung: additive, no existing reader has to change). A grant is active exactly while
+// `endedAt IS NULL AND expiresAt > now`, decided only by contexts/platform/support-access.ts. Rows are never
+// edited or deleted: the trigger migration <ts>_support_access_append_only refuses DELETE, TRUNCATE and
+// every UPDATE except the single NULL -> value transition of endedAt/endedBy/endedByUserId, so these rows
+// are the accountability record of what the operator was allowed to see (Art. 28 (3)(h) DSGVO). No
+// @updatedAt on purpose: Prisma would rewrite it on the end update and the trigger would refuse that.
+// endedBy is "OPERATOR" | "TENANT" (CHECK in the trigger migration); endedByUserId is a plain string
+// without a foreign key so DSGVO anonymisation of the user cannot cascade.
+model SupportAccess {
+  id            String    @id @default(uuid())
+  tenantId      String
+  operatorId    String
+  reason        String
+  startedAt     DateTime  @db.Timestamptz
+  expiresAt     DateTime  @db.Timestamptz
+  endedAt       DateTime? @db.Timestamptz
+  endedBy       String?
+  endedByUserId String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  operator OperatorAccount @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, startedAt])
+  @@index([operatorId, tenantId])
 }
 
 // ─────────────────────────────────────────────

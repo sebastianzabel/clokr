@@ -42,6 +42,29 @@ describe("admin navigation (Issue #83)", () => {
     for (const group of ADMIN_NAV_GROUPS) expect(group.items.length).toBeLessThanOrEqual(5);
   });
 
+  it("COMPLIANCE is one group of three, Support-Zugriffe directly after Audit & Log (Issue #93)", () => {
+    const compliance = ADMIN_NAV_GROUPS.filter((g) => g.label === "COMPLIANCE");
+    expect(compliance).toHaveLength(1);
+    expect(compliance[0].items.map((i) => i.label)).toEqual([
+      "Monatsabschluss",
+      "Audit & Log",
+      "Support-Zugriffe",
+    ]);
+    expect(compliance[0].items[2]).toEqual({
+      href: "/admin/support-access",
+      label: "Support-Zugriffe",
+      icon: "shield",
+    });
+  });
+
+  it("the nav label equals the list page's PageHead title character for character (Issue #93)", () => {
+    const page = read("routes/(app)/admin/support-access/+page.svelte");
+    expect(page).toContain('title="Support-Zugriffe"');
+    expect(read("routes/(app)/+layout.svelte")).toContain(
+      '"/admin/support-access": "Support-Zugriffe"',
+    );
+  });
+
   it("filters per item, drops empty groups and the availability item when the feature is off", () => {
     expect(visibleAdminNavGroups({ permissions: p.HR }, on).map((g) => g.label)).toEqual([
       "PERSONAL",

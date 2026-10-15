@@ -4,12 +4,17 @@ import { describe, expect, it } from "vitest";
 
 import {
   CONNECTION_TEXT,
+  EMPLOYEE_NOT_FOUND,
   GENERIC_TEXT,
   RATE_LIMIT_TEXT,
   REASON_TEXTS,
   SALON_NOT_FOUND,
   RESEND_REASON_TEXTS,
   SERVER_FAULT_TEXT,
+  SUPPORT_ACCESS_EXPIRED,
+  SUPPORT_ACCESS_NOT_FOUND,
+  SUPPORT_ACCESS_REQUIRED,
+  SUPPORT_NOTICE_CODES,
   failureText,
   reasonText,
 } from "../reasons";
@@ -145,5 +150,49 @@ describe("failureText", () => {
   it("is generic for anything unrecognisable", () => {
     expect(failureText(null)).toBe(GENERIC_TEXT);
     expect(failureText(new Error("boom"))).toBe(GENERIC_TEXT);
+  });
+});
+
+describe("support access reasons (Issue #93)", () => {
+  const SUPPORT_TEXTS: Record<string, string> = {
+    SUPPORT_ACCESS_REQUIRED:
+      "Für diesen Mandanten besteht kein aktiver Support-Zugriff. Bitte zuerst einen Zugriff mit Grund anfordern.",
+    SUPPORT_ACCESS_ALREADY_ACTIVE:
+      "Es besteht bereits ein aktiver Support-Zugriff. Eine Verlängerung ist nicht möglich; nach dem Ende ist ein neuer Antrag nötig.",
+    SUPPORT_ACCESS_NOT_ACTIVE: "Der Support-Zugriff ist nicht mehr aktiv.",
+    SUPPORT_ACCESS_EXPIRED:
+      "Der Support-Zugriff ist abgelaufen. Für eine weitere Einsicht ist ein neuer Antrag mit Grund nötig.",
+    SUPPORT_ACCESS_NOT_FOUND: "Support-Zugriff nicht gefunden.",
+    EMPLOYEE_NOT_FOUND: "Mitarbeitende Person nicht gefunden.",
+  };
+
+  it.each(Object.entries(SUPPORT_TEXTS))("has the sentence for %s", (code, text) => {
+    expect(REASON_TEXTS[code]).toBe(text);
+    expect(reasonText(code, "server string")).toBe(text);
+  });
+
+  it("chooses by code, ignoring the server's message", () => {
+    expect(
+      failureText({
+        status: 409,
+        code: "SUPPORT_ACCESS_ALREADY_ACTIVE",
+        message: "Es besteht bereits etwas anderes",
+      }),
+    ).toBe(SUPPORT_TEXTS.SUPPORT_ACCESS_ALREADY_ACTIVE);
+  });
+
+  it("maps a code-less 404 to the grant or employee sentence named by the caller", () => {
+    expect(
+      failureText({ status: 404, message: "x" }, { notFoundCode: SUPPORT_ACCESS_NOT_FOUND }),
+    ).toBe(SUPPORT_TEXTS.SUPPORT_ACCESS_NOT_FOUND);
+    expect(failureText({ status: 404, message: "x" }, { notFoundCode: EMPLOYEE_NOT_FOUND })).toBe(
+      SUPPORT_TEXTS.EMPLOYEE_NOT_FOUND,
+    );
+  });
+
+  it("exports the code constants the client and the views compare against", () => {
+    expect(SUPPORT_ACCESS_REQUIRED).toBe("SUPPORT_ACCESS_REQUIRED");
+    expect(SUPPORT_ACCESS_EXPIRED).toBe("SUPPORT_ACCESS_EXPIRED");
+    expect(SUPPORT_NOTICE_CODES).toEqual(["SUPPORT_ACCESS_REQUIRED", "SUPPORT_ACCESS_EXPIRED"]);
   });
 });

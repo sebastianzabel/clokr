@@ -6,32 +6,48 @@
   import Section from "$lib/components/admin/Section.svelte";
   import PackagesSection from "$lib/components/operator/PackagesSection.svelte";
   import SalonsSection from "$lib/components/operator/SalonsSection.svelte";
+  import SupportSection from "$lib/components/operator/SupportSection.svelte";
   import TenantMasterData from "$lib/components/operator/TenantMasterData.svelte";
   import { OperatorApiError, operatorApi } from "$lib/operator/client";
-  import type { OperatorSalon, OperatorTenant } from "$lib/operator/types";
+  import { SUPPORT_NOTICE_CODES } from "$lib/operator/reasons";
+  import type {
+    OperatorSalon,
+    OperatorSupportAccessState,
+    OperatorTenant,
+    RequestSupportAccessBody,
+  } from "$lib/operator/types";
   import { toasts } from "$stores/toast";
 
   type LoadState = "loading" | "ready" | "not-found" | "error";
 
   let tenant = $state<OperatorTenant | null>(null);
   let salons = $state<OperatorSalon[]>([]);
+  let supportAccess = $state<OperatorSupportAccessState>({ active: null, history: [] });
   let loadState = $state<LoadState>("loading");
 
   const tenantId = $derived($page.params.id ?? "");
+  // A read view that lost its grant sends the operator back with the reason code (D-21). Only the
+  // known codes count; the sentence always comes from the reasons module, never from the URL.
+  const supportNotice = $derived.by(() => {
+    const code = $page.url.searchParams.get("hinweis");
+    return code !== null && SUPPORT_NOTICE_CODES.includes(code) ? code : null;
+  });
 
   /**
-   * Reads the tenant and its salons from the server. After an action the reload is silent: the
+   * Reads the tenant, its salons and the operator's support accesses from the server. After an action the reload is silent: the
    * page keeps its content (and the open dialogs) on screen instead of flashing the skeleton.
    */
   async function load(silent = false) {
     if (!silent) loadState = "loading";
     try {
-      const [loadedTenant, loadedSalons] = await Promise.all([
+      const [loadedTenant, loadedSalons, loadedSupport] = await Promise.all([
         operatorApi.getTenant(tenantId),
         operatorApi.listSalons(tenantId),
+        operatorApi.getSupportAccess(tenantId),
       ]);
       tenant = loadedTenant;
       salons = loadedSalons;
+      supportAccess = loadedSupport;
       loadState = "ready";
     } catch (err) {
       // A 401/403 was already handled by the client (session cleared, redirect to the sign-in).
@@ -61,6 +77,18 @@
     const result = await operatorApi.resendInvitation(tenantId);
     if (result.invitationMailSent) toasts.success("Einladung gesendet.");
     return result;
+  }
+
+  async function requestSupportAccess(body: RequestSupportAccessBody) {
+    await operatorApi.requestSupportAccess(tenantId, body);
+    toasts.success("Support-Zugriff gestartet.");
+    await load(true);
+  }
+
+  async function endSupportAccess(accessId: string) {
+    await operatorApi.endSupportAccess(tenantId, accessId);
+    toasts.success("Support-Zugriff beendet.");
+    await load(true);
   }
 
   onMount(() => {
@@ -104,6 +132,16 @@
       onDeactivate={operatorApi.deactivateSalon}
       onActivate={operatorApi.activateSalon}
       tenantDeactivated={tenant.deactivatedAt !== null}
+      onReload={() => load(true)}
+    />
+
+    <SupportSection
+      {tenantId}
+      state={supportAccess}
+      tenantDeactivated={tenant.deactivatedAt !== null}
+      notice={supportNotice}
+      onRequest={requestSupportAccess}
+      onEnd={endSupportAccess}
       onReload={() => load(true)}
     />
   {:else}

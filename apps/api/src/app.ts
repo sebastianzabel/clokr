@@ -15,8 +15,11 @@ import { operatorAuthRoutes } from "./contexts/platform/api/operator/auth"; // P
 import { operatorTenantRoutes } from "./contexts/platform/api/operator/tenants"; // Phase 88 (#88)
 import { operatorDashboardRoutes } from "./contexts/platform/api/operator/dashboard"; // Issue #90
 import { operatorSalonRoutes } from "./contexts/platform/api/operator/salons"; // Phase 89 (#89)
+import { operatorSupportAccessRoutes } from "./contexts/platform/api/operator/support-access"; // Issue #93
+import { operatorSupportRoutes } from "./contexts/platform/api/operator/support"; // Issue #93
 import { seedDefaultsForNewTenant } from "./composition/tenant-onboarding"; // Phase 88 (#88)
 import { operatorSalonPorts } from "./composition/operator-salon-ports"; // Phase 89 (#89)
+import { operatorSupportPorts } from "./composition/operator-support-ports"; // Issue #93
 import { employeeRoutes } from "./contexts/platform/api/employees";
 import { employeeWifiRoutes } from "./contexts/time-tracking/api/employee-wifi"; // Phase 243 Plan 02 (B2)
 import { timeEntryRoutes } from "./contexts/time-tracking/api/time-entries";
@@ -47,6 +50,7 @@ import multipart from "@fastify/multipart";
 import { notificationRoutes } from "./contexts/platform/api/notifications";
 import { invitationRoutes } from "./contexts/platform/api/invitations";
 import { auditLogRoutes } from "./contexts/platform/api/audit-logs";
+import { supportAccessRoutes } from "./contexts/platform/api/support-accesses"; // Issue #93 (D-08)
 import { activityRoutes } from "./composition/activity";
 import { companyShutdownRoutes } from "./contexts/absence/api/company-shutdowns";
 import { dashboardRoutes } from "./composition/dashboard";
@@ -355,6 +359,15 @@ export async function buildApp() {
     });
     // Issue #90: aggregated, person-free tenant metrics; every view is logged.
     await app.register(operatorDashboardRoutes, { prefix: "/api/v1/operator/dashboard" });
+    // Issue #93 (D-18/D-24): the grant lifecycle and the support reads live under two prefixes; the
+    // reads get their tenant data through the composition port, never from the Unterbau itself.
+    await app.register(operatorSupportAccessRoutes, {
+      prefix: "/api/v1/operator/tenants/:id/support-access",
+    });
+    await app.register(operatorSupportRoutes, {
+      prefix: "/api/v1/operator/tenants/:id/support",
+      ports: operatorSupportPorts,
+    });
   }
   await app.register(employeeRoutes, { prefix: "/api/v1/employees" });
   await app.register(timeEntryRoutes, { prefix: "/api/v1/time-entries" });
@@ -372,6 +385,9 @@ export async function buildApp() {
   await app.register(holidayRoutes, { prefix: "/api/v1/holidays" });
   await app.register(invitationRoutes, { prefix: "/api/v1/invitations" });
   await app.register(auditLogRoutes, { prefix: "/api/v1/audit-logs" });
+  // Issue #93 (D-08): the tenant's view of the support accesses. Registered outside the operator block —
+  // the tenant side exists with or without the operator surface.
+  await app.register(supportAccessRoutes, { prefix: "/api/v1/support-accesses" });
   await app.register(activityRoutes, { prefix: "/api/v1/activity" });
   await app.register(companyShutdownRoutes, { prefix: "/api/v1/company-shutdowns" });
   await app.register(dashboardRoutes, { prefix: "/api/v1/dashboard" });

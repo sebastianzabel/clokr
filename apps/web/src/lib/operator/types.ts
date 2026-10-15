@@ -172,3 +172,212 @@ export interface UpdateSalonBody {
   openingHours?: OpeningHoursDay[];
   coupling?: SalonCouplingInput | null;
 }
+
+/** Derived status of a support access at the time the server answered (Issue #93). */
+export type SupportAccessStatus = "ACTIVE" | "EXPIRED" | "ENDED";
+
+/** Who ended a support access early. */
+export type SupportAccessEndedBy = "OPERATOR" | "TENANT";
+
+/** The durations the server accepts for a support access, in hours (D-03). */
+export type SupportDurationHours = 1 | 4 | 8 | 24;
+
+/** One support access as `GET /operator/tenants/:id/support-access` reports it (mirror of the API DTO). */
+export interface OperatorSupportAccess {
+  id: string;
+  tenantId: string;
+  reason: string;
+  durationHours: number;
+  /** ISO instants. */
+  startedAt: string;
+  expiresAt: string;
+  endedAt: string | null;
+  endedBy: SupportAccessEndedBy | null;
+  status: SupportAccessStatus;
+}
+
+/** Wire type of `GET /operator/tenants/:id/support-access`: the running access and every own grant, newest first. */
+export interface OperatorSupportAccessState {
+  active: OperatorSupportAccess | null;
+  history: OperatorSupportAccess[];
+}
+
+/** Body of `POST /operator/tenants/:id/support-access`; the strict API schema accepts exactly these keys. */
+export interface RequestSupportAccessBody {
+  reason: string;
+  durationHours: SupportDurationHours;
+}
+
+/** 201 body of the request and 200 body of the end call. */
+export interface SupportAccessResult {
+  access: OperatorSupportAccess;
+}
+
+// ── Support reads (Issue #93, D-05) ─────────────────────────────────────────
+// Mirrors of the DTOs in `apps/api/src/contexts/platform/support-access-types.ts`. Enum-like fields
+// stay plain strings on purpose: an unknown value is shown raw by `labelFor`, never rejected.
+
+/** Derived employee status of the support views. */
+export type SupportEmployeeStatus = "ACTIVE" | "EXITED" | "ANONYMIZED";
+
+/** How the figures of a month were obtained. */
+export type SupportFiguresBasis = "snapshot" | "fullMonth" | "toDate" | "untracked";
+
+/** One employee of the support list; no e-mail, birth date, NFC card or address. */
+export interface SupportEmployee {
+  id: string;
+  employeeNumber: string;
+  firstName: string;
+  lastName: string;
+  /** Calendar days, `YYYY-MM-DD`. */
+  hireDate: string;
+  exitDate: string | null;
+  status: SupportEmployeeStatus;
+  homeSalon: { id: string; name: string } | null;
+  scheduleType: string | null;
+}
+
+/** Wire type of `GET …/support/employees`. */
+export interface SupportEmployeeList {
+  items: SupportEmployee[];
+}
+
+export interface SupportMonthEntry {
+  id: string;
+  /** Calendar day, `YYYY-MM-DD`. */
+  date: string;
+  /** Instants, ISO strings. */
+  startTime: string;
+  endTime: string | null;
+  breakMinutes: number;
+  breaks: { startTime: string; endTime: string }[];
+  breakStatus: string;
+  salon: { id: string; name: string };
+  type: string;
+  source: string;
+  isInvalid: boolean;
+  invalidReasonCode: string | null;
+  deleted: boolean;
+  isLocked: boolean;
+}
+
+export interface SupportDayBreak {
+  id: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+}
+
+export interface SupportLeaveRequest {
+  id: string;
+  typeCode: string;
+  typeName: string;
+  status: string;
+  startDate: string;
+  endDate: string;
+  halfDay: boolean;
+  days: number;
+  daysProvisional: boolean | null;
+}
+
+export interface SupportAbsence {
+  id: string;
+  type: string;
+  source: string;
+  startDate: string;
+  endDate: string;
+  halfDay: boolean;
+}
+
+export interface SupportMonthFigures {
+  workedMinutes: number;
+  expectedMinutes: number;
+  balanceMinutes: number;
+  balanceAdjustmentMinutes: number;
+  basis: SupportFiguresBasis;
+}
+
+/** Wire type of `GET …/support/employees/:employeeId/month`. */
+export interface SupportEmployeeMonth {
+  employee: {
+    id: string;
+    employeeNumber: string;
+    firstName: string;
+    lastName: string;
+    status: SupportEmployeeStatus;
+  };
+  /** `YYYY-MM`. */
+  month: string;
+  timezone: string;
+  entries: SupportMonthEntry[];
+  dayBreaks: SupportDayBreak[];
+  leaveRequests: SupportLeaveRequest[];
+  absences: SupportAbsence[];
+  figures: SupportMonthFigures | null;
+  figuresUnavailableReason: null | "NO_ACTIVE_SALON";
+  snapshot: { confirmed: boolean; basis: SupportFiguresBasis } | null;
+}
+
+/** One contract row of the history. The `{day}Hours` columns are authoritative for FIXED_SCHEDULE only. */
+export interface SupportContract {
+  id: string;
+  type: string;
+  /** Instant, ISO string. */
+  validFrom: string;
+  weeklyHours: number | null;
+  monthlyHours: number | null;
+  dayHours: {
+    monday: number;
+    tuesday: number;
+    wednesday: number;
+    thursday: number;
+    friday: number;
+    saturday: number;
+    sunday: number;
+  };
+  workDays: number[];
+  contractWorkDaysPerWeek: number | null;
+  usualWorkDays: number[];
+  overtimeMode: string;
+  overtimeThreshold: number;
+  allowOvertimePayout: boolean;
+  maxNegativeBalanceMinutes: number | null;
+  coreStart: string | null;
+  coreEnd: string | null;
+  coreDays: number[];
+}
+
+/** Wire type of `GET …/support/employees/:employeeId/contracts`. */
+export interface SupportContractList {
+  items: SupportContract[];
+}
+
+/** One row of the tenant change log; old and new values are already redacted by type on the server. */
+export interface SupportAuditItem {
+  id: string;
+  createdAt: string;
+  action: string;
+  entity: string;
+  entityId: string | null;
+  userId: string | null;
+  oldValue: unknown;
+  newValue: unknown;
+}
+
+/** Wire type of `GET …/support/audit-log`. */
+export interface SupportAuditPage {
+  items: SupportAuditItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  from: string;
+  to: string;
+}
+
+/** Query of `GET …/support/audit-log`; `from`/`to` are calendar days, at most 92 days apart. */
+export interface SupportAuditQuery {
+  from: string;
+  to: string;
+  page?: number;
+  employeeId?: string;
+}

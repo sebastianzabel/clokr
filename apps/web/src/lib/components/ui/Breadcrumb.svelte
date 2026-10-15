@@ -49,7 +49,10 @@
 
   .breadcrumb-list {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    /* A deep trail (the five-level support views) wraps onto further rows at 360 px instead of squeezing
+       every crumb until a word breaks mid-letter. */
     gap: 0.25rem;
     list-style: none;
     padding: 0;
@@ -64,6 +67,7 @@
     gap: 0.25rem;
     /* A long last crumb (a 200-character tenant name) wraps inside the row instead of widening it. */
     min-width: 0;
+    max-width: 100%;
   }
 
   .breadcrumb-sep {

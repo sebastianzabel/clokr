@@ -719,3 +719,44 @@ export async function archiveLeaveRequestsBefore(
   });
   return result.count;
 }
+
+// ── Issue #93 (D-05(2)) — operator support month view: allow-list read ───────────────────────────
+
+/**
+ * Issue #93 (Phase 93b-04, D-05(2)): the non-deleted leave requests of one employee that overlap
+ * `[firstDay, lastDay]`, in every status, for the operator's support month view. Calendar-day bounds
+ * (`startDate`/`endDate` are `@db.Date`, Issue #493).
+ *
+ * Data minimisation (Art. 5 (1) (c) DSGVO, Art. 9 residue): an allow-list `select` with the type,
+ * status, dates, half day and day count. The free-text `note` and `reviewNote`, the reviewer and
+ * cancellation-requester ids, the attest fields (`attestPresent/ValidFrom/ValidTo`), the special-leave
+ * rule and the booked overtime-comp minutes are never read. The tenant binds through the employee.
+ */
+export async function getLeaveRequestsForSupportMonth(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  employeeId: string,
+  firstDay: Date,
+  lastDay: Date,
+) {
+  return db.leaveRequest.findMany({
+    where: {
+      employeeId,
+      employee: { tenantId },
+      deletedAt: null,
+      startDate: { lte: lastDay },
+      endDate: { gte: firstDay },
+    },
+    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      startDate: true,
+      endDate: true,
+      halfDay: true,
+      days: true,
+      daysProvisional: true,
+      status: true,
+      leaveType: { select: { code: true, name: true } },
+    },
+  });
+}

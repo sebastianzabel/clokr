@@ -21,6 +21,11 @@
  *
  * Issue #90 adds `DASHBOARD_VIEWED`: every read of the aggregated cross-tenant dashboard is an access
  * event of the operator (Art. 32 DSGVO), class AUTH_EVENT, written in the same transaction as the read.
+ *
+ * Issue #93 adds the support access actions: `SUPPORT_ACCESS_STARTED` / `SUPPORT_ACCESS_ENDED` (grant
+ * lifecycle) and `SUPPORT_DATA_READ` (one row per read of tenant data under a grant) are class LIFECYCLE;
+ * `SUPPORT_ACCESS_REFUSED` (a support read without an active grant) is class AUTH_EVENT. The writers live
+ * in `support-access.ts` and always pair the operator row with a tenant `AuditLog` row.
  */
 
 import type { Prisma, PrismaClient } from "@clokr/db";
@@ -50,6 +55,10 @@ export const OPERATOR_AUDIT_ACTIONS = {
   SALON_COUPLING_SET: "SALON_COUPLING_SET",
   SALON_COUPLING_REMOVED: "SALON_COUPLING_REMOVED",
   DASHBOARD_VIEWED: "DASHBOARD_VIEWED",
+  SUPPORT_ACCESS_STARTED: "SUPPORT_ACCESS_STARTED",
+  SUPPORT_ACCESS_ENDED: "SUPPORT_ACCESS_ENDED",
+  SUPPORT_DATA_READ: "SUPPORT_DATA_READ",
+  SUPPORT_ACCESS_REFUSED: "SUPPORT_ACCESS_REFUSED",
 } as const;
 
 export type OperatorAuditAction =
@@ -89,6 +98,13 @@ export const OPERATOR_AUDIT_RETENTION_CLASS: Record<
   SALON_COUPLING_SET: "LIFECYCLE",
   SALON_COUPLING_REMOVED: "LIFECYCLE",
   DASHBOARD_VIEWED: "AUTH_EVENT",
+  // Issue #93: the grant lifecycle and every support read are the accountability record of what the
+  // operator was allowed to see and did see (Art. 28 (3)(h) DSGVO), so they follow the lifecycle
+  // class; a refused read carries login-like telemetry (IP, user agent) and expires quickly.
+  SUPPORT_ACCESS_STARTED: "LIFECYCLE",
+  SUPPORT_ACCESS_ENDED: "LIFECYCLE",
+  SUPPORT_DATA_READ: "LIFECYCLE",
+  SUPPORT_ACCESS_REFUSED: "AUTH_EVENT",
 };
 
 /**
@@ -154,8 +170,11 @@ export async function recordOperatorAudit(
   });
 }
 
-/** `months` UTC calendar months before `from` (day of month clamped to the target month's length). */
-function subtractUtcMonths(from: Date, months: number): Date {
+/**
+ * `months` UTC calendar months before `from` (day of month clamped to the target month's length). Also
+ * used by the support access retention purge, so there is one month subtraction (Issue #93, D-25).
+ */
+export function subtractUtcMonths(from: Date, months: number): Date {
   const result = new Date(from.getTime());
   const day = result.getUTCDate();
   result.setUTCDate(1);

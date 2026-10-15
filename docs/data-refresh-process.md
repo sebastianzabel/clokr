@@ -87,7 +87,9 @@ Applied to every employee in the staging DB (`apps/api/scripts/pseudonymize-dump
 | Invitation, OtpToken, RefreshToken | (whole row)         | hard-deleted                                                                                                                                                                 |
 | OperatorAccount                    | all credentials     | email `operator-{id8}@example.invalid`, `passwordHash` `"ANONYMIZED"`, `isActive` false, TOTP secret, enrolment, replay step null, recovery-code hashes empty, lockout reset |
 
-What is **preserved**: `Employee.id`, `Employee.employeeNumber`, `User.isActive`, `AuditLog`, `OperatorAuditLog`, and all time/leave/absence/schedule/overtime rows **including their free-text notes**.
+What is **preserved**: `Employee.id`, `Employee.employeeNumber`, `User.isActive`, `AuditLog`, `OperatorAuditLog`, `SupportAccess`, and all time/leave/absence/schedule/overtime rows **including their free-text notes**.
+
+`SupportAccess` (Issue #93) is preserved unchanged like `AuditLog` and `OperatorAuditLog`: the table is immutable by trigger (the pseudonymizer could not update it anyway), and its `reason` is operator-authored text, not employee data, so there is nothing to pseudonymize. The restore (drop/recreate) is unaffected by the trigger; a `TRUNCATE` of the table is refused, so never add one to a refresh script.
 
 ## Pre-requisites (one-time)
 
