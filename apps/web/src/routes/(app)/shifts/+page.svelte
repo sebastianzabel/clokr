@@ -3,6 +3,8 @@
   import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { salonContext } from "$stores/salon-context";
+  import { closedDaysFor, type SalonOpeningHoursEntry } from "$lib/shifts/closed-days";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
@@ -105,6 +107,9 @@
     contractSollMinutesByEmp?: Record<string, number>;
     // v1.7.4 hotfix — SchoolHolidayPeriod cells for the visible week.
     schoolHoliday?: SchoolHolidayEntry[];
+    // Issue #563 (D-15) — opening hours of the active salons inside the caller's shift:read reach.
+    // Optional so an older API during a rolling deploy dims nothing instead of failing.
+    salonOpeningHours?: SalonOpeningHoursEntry[];
   }
   interface Template {
     id: string;
@@ -137,8 +142,6 @@
   let cursorMonday = $state(mondayOfWeek(new Date()));
   let week: WeekData | null = $state(null);
   let templates: Template[] = $state([]);
-  // Phase 47.5 — Set of weekday indices (0=Mo..6=So) marked as closed in storeHours.
-  let closedDays = $state<Set<number>>(new Set());
   let loading = $state(true);
   let error = $state("");
   let gated = $state(false);
@@ -492,17 +495,12 @@
     error = "";
     try {
       const date = ymd(cursorMonday);
-      const [w, t, work] = await Promise.all([
+      const [w, t] = await Promise.all([
         api.get<WeekData>(`/shifts/week?date=${date}`),
         api.get<Template[]>("/shifts/templates"),
-        api.get<{ storeHours?: Array<{ day: number; closed?: boolean }> }>("/settings/work"),
       ]);
       week = w;
       templates = t;
-      // Phase 47.5 — closed-day set used by grid to dim cells visually.
-      closedDays = new Set(
-        (work.storeHours ?? []).filter((s) => s.closed === true).map((s) => s.day),
-      );
       // Phase 47 — seed one TemplateDragItem per template. svelte-dnd-action
       // maps items[i] to children[i] positionally, so the initial list and
       // restoreTemplatesStrip() must both render the full canonical templates
@@ -1025,12 +1023,16 @@
   function isPastDay(iso: string): boolean {
     return iso.slice(0, 10) < ymd(new Date());
   }
-  // Phase 47.5 — Closed-day check: dow from iso, then lookup in closedDays set.
+  // Phase 47.5 / Issue #563 — which closed days the grid dims and for which salon: the week field
+  // `salonOpeningHours` plus the header's salon choice, decided in `closedDaysFor()` (presentation
+  // only, never a filter of shifts or employees).
+  const closedView = $derived(closedDaysFor(week?.salonOpeningHours, $salonContext));
+  // Closed-day check: weekday from iso (converted to 0 = Montag), then lookup in the view's set.
   function isClosedDay(iso: string): boolean {
     const d = new Date(iso.slice(0, 10) + "T00:00:00Z");
     const jsDow = d.getUTCDay();
     const dow = jsDow === 0 ? 6 : jsDow - 1;
-    return closedDays.has(dow);
+    return closedView.days.has(dow);
   }
   function shiftLabel(s: Shift): string {
     const start = s.startTime.slice(0, 5);
@@ -1492,6 +1494,9 @@
           </p>
         </div>
       {:else}
+        {#if closedView.hint}
+          <p class="form-hint sp-hours-hint" role="status">{closedView.hint}</p>
+        {/if}
         <div class="shift-grid">
           <div class="head">Person</div>
           {#each week.weekDays as d, i (d)}
@@ -1571,7 +1576,7 @@
                 <!-- Phase 47.5 — Closed-day cell: visually marked, no drop-target. -->
                 <div
                   class="shift-cell sp-cell sp-cell--closed"
-                  title="Geschäft an diesem Tag geschlossen"
+                  title={`${closedView.salonName ?? "Der Salon"} ist an diesem Tag geschlossen`}
                 >
                   <span class="sp-closed-label">geschlossen</span>
                 </div>
@@ -2530,6 +2535,11 @@
   }
   .sp-cell--past .sp-shift-pill {
     cursor: default;
+  }
+
+  /* Issue #563 — hint above the grid when several salons are shown and none is chosen */
+  .sp-hours-hint {
+    margin: 0 0 8px;
   }
 
   /* Phase 47.1 — Empty roster callout when no SHIFT_BASED employees */
