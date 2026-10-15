@@ -320,6 +320,124 @@ test.describe("admin salons (Issue #563)", () => {
     await expect(hint).toHaveCount(0);
   });
 
+  test("a refused Bundesland change shows the server text, restores the stored value and locks the field", async ({
+    page,
+    request,
+    tenant,
+  }) => {
+    const [salon] = await listSalons(request, tenant);
+    const serverText =
+      "Das Bundesland kann nicht mehr geändert werden: Zeiteinträge verweisen auf diesen Salon.";
+    await signIn(page, request, tenant);
+    let patches = 0;
+    await page.route(`**/api/v1/salons/${salon.id}`, async (route) => {
+      if (route.request().method() !== "PATCH") return route.fallback();
+      patches += 1;
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        json: { error: serverText, code: "FEDERAL_STATE_IN_USE" },
+      });
+    });
+
+    await page.goto(`/admin/salons/${salon.id}`);
+    const select = page.getByLabel("Bundesland *");
+    await expect(select).toHaveValue("NIEDERSACHSEN");
+    await select.selectOption("HESSEN");
+    await page.getByRole("button", { name: "Stammdaten speichern" }).click();
+
+    await expect(page.locator("#salon-federal-state-error")).toHaveText(serverText);
+    await expect(select).toHaveValue("NIEDERSACHSEN");
+    await expect(select).toBeDisabled();
+    expect(patches).toBe(1);
+
+    // The lock is only the Bundesland: the other master-data fields stay editable.
+    const name = page.getByLabel("Name *");
+    await expect(name).toBeEnabled();
+    await name.fill("Umbenannter Testsalon");
+    await expect(name).toHaveValue("Umbenannter Testsalon");
+    await expect(select).toBeDisabled();
+  });
+
+  test("a refused deactivation keeps the dialog open, shows the server text and changes nothing", async ({
+    page,
+    request,
+    tenant,
+  }) => {
+    const second = await createSalonViaApi(request, tenant, SECOND_SALON_NAME);
+    const serverText = "Der letzte aktive Salon kann nicht deaktiviert werden.";
+    await signIn(page, request, tenant);
+    await page.route(`**/api/v1/salons/${second.id}/deactivate`, (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        json: { error: serverText, code: "LAST_ACTIVE_SALON" },
+      }),
+    );
+
+    await page.goto(`/admin/salons/${second.id}`);
+    await page.getByRole("button", { name: "Salon deaktivieren" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "Deaktivieren" }).click();
+
+    await expect(page.getByText(serverText)).toBeVisible();
+    await expect(dialog).toBeVisible();
+    await expect(page.getByText("Salon deaktiviert.")).toHaveCount(0);
+
+    await dialog.getByRole("button", { name: "Abbrechen" }).click();
+    await expect(dialog).toHaveCount(0);
+    // Still active: the Danger Zone is offered and the list shows both salons as "Aktiv".
+    await expect(page.getByRole("button", { name: "Salon deaktivieren" })).toBeVisible();
+    await page.goto("/admin/salons");
+    await expect(page.getByRole("row", { name: new RegExp(SECOND_SALON_NAME) })).toContainText(
+      "Aktiv",
+    );
+    expect((await listSalons(request, tenant)).find((s) => s.id === second.id)?.isActive).toBe(
+      true,
+    );
+  });
+
+  test("a refused activation keeps the dialog open, shows the server text and changes nothing", async ({
+    page,
+    request,
+    tenant,
+  }) => {
+    const second = await createSalonViaApi(request, tenant, SECOND_SALON_NAME);
+    const off = await request.post(`${API_BASE}/api/v1/salons/${second.id}/deactivate`, {
+      headers: authHeaders(tenant),
+    });
+    expect(off.ok(), `deactivate through the API (${off.status()})`).toBe(true);
+    const serverText = "Die gebuchte Salonanzahl ist erreicht.";
+    await signIn(page, request, tenant);
+    await page.route(`**/api/v1/salons/${second.id}/activate`, (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        json: { error: serverText, code: "SALON_QUOTA_REACHED" },
+      }),
+    );
+
+    await page.goto(`/admin/salons/${second.id}`);
+    await page.getByRole("button", { name: "Salon aktivieren" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "Aktivieren" }).click();
+
+    await expect(page.getByText(serverText)).toBeVisible();
+    await expect(dialog).toBeVisible();
+    await expect(page.getByText("Salon aktiviert.")).toHaveCount(0);
+
+    await dialog.getByRole("button", { name: "Abbrechen" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Salon aktivieren" })).toBeVisible();
+    await page.goto("/admin/salons");
+    await expect(page.getByRole("row", { name: new RegExp(SECOND_SALON_NAME) })).toContainText(
+      "Inaktiv",
+    );
+    expect((await listSalons(request, tenant)).find((s) => s.id === second.id)?.isActive).toBe(
+      false,
+    );
+  });
+
   for (const viewport of VIEWPORTS) {
     test(`the list and the detail page fit ${viewport.width} px`, async ({
       page,
