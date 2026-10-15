@@ -93,10 +93,16 @@ describe("salon detail page - the hours write", () => {
 describe("salon detail page - create mode (D-06)", () => {
   const CREATE = () => fnBody(DETAIL, "async function createSalon");
 
-  it("posts createSalonBody(form) to /salons, once, and nowhere else", () => {
+  it("posts createSalonBody(form) to /salons, once; the only other posts are the two lifecycle actions", () => {
     const body = CREATE();
     expect(body).toContain('api.post("/salons", createSalonBody(form))');
-    expect((DETAIL.match(/api\.post\(/g) ?? []).length).toBe(1);
+    expect((body.match(/api\.post\(/g) ?? []).length).toBe(1);
+    const targets = [...DETAIL.matchAll(/api\.post\(\s*([^,)]+)/g)].map((m) => m[1].trim());
+    expect(targets).toEqual([
+      '"/salons"',
+      "`/salons/${salon.id}/deactivate`",
+      "`/salons/${salon.id}/activate`",
+    ]);
   });
 
   it("validates in create mode before it posts", () => {
@@ -174,6 +180,84 @@ describe("salon detail page - master data (Stammdaten)", () => {
     expect(DETAIL).toContain("onclick={saveHours}");
     expect(DETAIL).toContain("dirty={masterDirty}");
     expect(DETAIL).toContain("dirty={hoursDirty}");
+  });
+});
+
+describe("salon detail page - deactivate and activate (D-06)", () => {
+  const DEACTIVATE = () => fnBody(DETAIL, "async function deactivateSalon");
+  const ACTIVATE = () => fnBody(DETAIL, "async function activateSalon");
+
+  it("deactivates through POST /salons/:id/deactivate and reloads the salon and the salon context after success", () => {
+    const body = DEACTIVATE();
+    const postAt = body.indexOf("api.post(");
+    expect(postAt).toBeGreaterThanOrEqual(0);
+    expect(body).toMatch(/api\.post\(\s*`\/salons\/\$\{[^`]*\}\/deactivate`/);
+    expect(body.indexOf("await reloadAfterLifecycleWrite()")).toBeGreaterThan(postAt);
+    expect(body).toContain("Salon deaktiviert.");
+  });
+
+  it("activates through POST /salons/:id/activate and reloads the salon and the salon context after success", () => {
+    const body = ACTIVATE();
+    const postAt = body.indexOf("api.post(");
+    expect(postAt).toBeGreaterThanOrEqual(0);
+    expect(body).toMatch(/api\.post\(\s*`\/salons\/\$\{[^`]*\}\/activate`/);
+    expect(body.indexOf("await reloadAfterLifecycleWrite()")).toBeGreaterThan(postAt);
+    expect(body).toContain("Salon aktiviert.");
+  });
+
+  it("the shared reload re-reads the salon, adopts it without touching the form baselines and then reloads the salon context", () => {
+    const body = fnBody(DETAIL, "async function reloadAfterLifecycleWrite");
+    const getAt = body.indexOf("api.get<SalonDto>(`/salons/${");
+    expect(getAt).toBeGreaterThanOrEqual(0);
+    expect(body).toContain("adopt(");
+    expect(body).toContain("{})");
+    expect(body.indexOf("await refreshSalonContext()")).toBeGreaterThan(getAt);
+    const helper = fnBody(DETAIL, "async function refreshSalonContext");
+    expect(helper).toMatch(/salonContext\.load\([^)]*\{\s*force:\s*true\s*\}\s*\)/);
+  });
+
+  it("shows the server's refusal text and rethrows so the dialog stays open, on both actions", () => {
+    for (const body of [DEACTIVATE(), ACTIVATE()]) {
+      const catchAt = body.indexOf("catch (err");
+      expect(catchAt).toBeGreaterThanOrEqual(0);
+      const handler = body.slice(catchAt);
+      expect(handler).toContain("toasts.error(");
+      expect(handler).toContain("err.message");
+      expect(handler).toMatch(/throw err/);
+    }
+  });
+
+  it("has one ConfirmDialog per action, each bound to its handler", () => {
+    expect((DETAIL.match(/<ConfirmDialog/g) ?? []).length).toBe(2);
+    expect(DETAIL).toContain("onConfirm={deactivateSalon}");
+    expect(DETAIL).toContain("onConfirm={activateSalon}");
+    expect(DETAIL).toContain('title="Salon deaktivieren?"');
+    expect(DETAIL).toContain('title="Salon wieder aktivieren?"');
+  });
+
+  it("offers the lifecycle controls only to a caller who may manage salons, in edit mode", () => {
+    const zone = DETAIL.indexOf("<DangerZone");
+    const section = DETAIL.indexOf('title="Salon aktivieren"');
+    expect(zone).toBeGreaterThanOrEqual(0);
+    expect(section).toBeGreaterThanOrEqual(0);
+    for (const at of [zone, section]) {
+      const gate = DETAIL.lastIndexOf("{#if", at);
+      expect(DETAIL.slice(gate, at)).toMatch(/rights\.canManage/);
+      expect(DETAIL.slice(gate, at)).toMatch(/!isCreate/);
+    }
+  });
+
+  it("disables deactivation with a visible hint when the salon is the tenant's only active one", () => {
+    expect(DETAIL).toContain("/salons?includeInactive=true");
+    expect(DETAIL).toMatch(/disabled=\{[^}]*isLastActiveSalon[^}]*\}/);
+    expect(DETAIL).toContain("Der letzte aktive Salon kann nicht deaktiviert werden.");
+  });
+
+  it("never deletes a salon", () => {
+    for (const source of [DETAIL, LIST]) {
+      expect(source).not.toMatch(/api\.delete\(/);
+      expect(source).not.toMatch(/\.delete\(/);
+    }
   });
 });
 

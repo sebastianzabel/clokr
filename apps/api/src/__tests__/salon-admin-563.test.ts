@@ -447,3 +447,168 @@ describe("salon admin page create and master data (#563-04)", () => {
     expect(foreign.body).toBe(unknown.body);
   });
 });
+
+/**
+ * Issue #563, plan 05 - deactivate and activate with the calls `/admin/salons/[id]` makes
+ * (`POST /salons/:id/deactivate`, `POST /salons/:id/activate`, then `GET /me/context`). The routes
+ * are unchanged (D-01); this proves status, audit actor, the context following the change, the
+ * quota refusal and the 403/404 contract from the page's point of view. Refusal bodies of the
+ * lifecycle routes carry `{ error }` only (research A7) - the page shows them and never branches.
+ */
+describe("salon admin page lifecycle (#563-05)", () => {
+  let app: FastifyInstance;
+  let tenant: Awaited<ReturnType<typeof seedTestData>>;
+  let grundversion: Awaited<ReturnType<typeof seedGrundversionTenant>>;
+  let otherTenant: Awaited<ReturnType<typeof seedTestData>>;
+  let managerToken: string;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    tenant = await seedTestData(app, "salon-admin-563-life");
+    grundversion = await seedGrundversionTenant(app, "salon-admin-563-life-grund");
+    otherTenant = await seedTestData(app, "salon-admin-563-life-other");
+    managerToken = await createManagerToken(app, tenant.tenant.id);
+  });
+
+  afterAll(async () => {
+    for (const id of [tenant?.tenant.id, grundversion?.tenant.id, otherTenant?.tenant.id]) {
+      if (!id) continue;
+      try {
+        await cleanupTestData(app, id);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  const adminAuth = () => ({ authorization: `Bearer ${tenant.adminToken}` });
+
+  async function contextSalonIds(headers: Record<string, string>): Promise<string[]> {
+    const res = await app.inject({ method: "GET", url: "/api/v1/me/context", headers });
+    expect(res.statusCode).toBe(200);
+    return (JSON.parse(res.body) as { salons: { id: string }[] }).salons.map((s) => s.id);
+  }
+
+  async function post(path: string, headers: Record<string, string>) {
+    return app.inject({ method: "POST", url: `/api/v1/salons/${path}`, headers });
+  }
+
+  it("deactivate marks the salon inactive with deactivatedAt, audits DEACTIVATE with the admin as actor and drops it from the admin's salon context", async () => {
+    const salon = await createTestSalon(app.prisma, tenant.tenant.id, { name: "Zu deaktivieren" });
+    expect(await contextSalonIds(adminAuth())).toContain(salon.id);
+
+    const res = await post(`${salon.id}/deactivate`, adminAuth());
+    expect(res.statusCode, res.body).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ id: salon.id, isActive: false });
+
+    const fresh = await app.prisma.salon.findUniqueOrThrow({ where: { id: salon.id } });
+    expect(fresh.isActive).toBe(false);
+    expect(fresh.deactivatedAt).not.toBeNull();
+
+    const row = await soleAuditRow(app.prisma, {
+      where: { entity: "Salon", entityId: salon.id, action: "DEACTIVATE" },
+    });
+    expect(row.userId).toBe(tenant.adminUser.id);
+    expect(row.oldValue).toMatchObject({ isActive: true });
+    expect(row.newValue).toMatchObject({ isActive: false });
+
+    expect(await contextSalonIds(adminAuth())).not.toContain(salon.id);
+  });
+
+  it("activate reverses it: active again, one ACTIVATE audit row with the admin as actor, listed in the context again", async () => {
+    const salon = await createTestSalon(app.prisma, tenant.tenant.id, { name: "Wieder aktiv" });
+    expect((await post(`${salon.id}/deactivate`, adminAuth())).statusCode).toBe(200);
+    expect(await contextSalonIds(adminAuth())).not.toContain(salon.id);
+
+    const res = await post(`${salon.id}/activate`, adminAuth());
+    expect(res.statusCode, res.body).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ id: salon.id, isActive: true });
+
+    const fresh = await app.prisma.salon.findUniqueOrThrow({ where: { id: salon.id } });
+    expect(fresh.isActive).toBe(true);
+
+    const row = await soleAuditRow(app.prisma, {
+      where: { entity: "Salon", entityId: salon.id, action: "ACTIVATE" },
+    });
+    expect(row.userId).toBe(tenant.adminUser.id);
+    expect(row.newValue).toMatchObject({ isActive: true });
+
+    expect(await contextSalonIds(adminAuth())).toContain(salon.id);
+  });
+
+  it("deactivating the tenant's last active salon answers 409 with the server's text and changes nothing", async () => {
+    // A tenant with exactly one active salon: the fixture's own salon.
+    const solo = await seedTestData(app, "salon-admin-563-life-solo");
+    try {
+      const res = await post(`${solo.salonId}/deactivate`, {
+        authorization: `Bearer ${solo.adminToken}`,
+      });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(JSON.parse(res.body)).toEqual({
+        error: "Der letzte aktive Salon eines Mandanten kann nicht deaktiviert werden.",
+      });
+      const fresh = await app.prisma.salon.findUniqueOrThrow({ where: { id: solo.salonId } });
+      expect(fresh.isActive).toBe(true);
+      expect(await auditRowsFor(app, "Salon", solo.salonId, "DEACTIVATE")).toHaveLength(0);
+    } finally {
+      try {
+        await cleanupTestData(app, solo.tenant.id);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  it("activating a second salon in a Grundversion tenant (quota 1, one active salon) answers 409 SALON_QUOTA_REACHED and the salon stays inactive", async () => {
+    // The only way to hold a second, inactive salon in a one-salon tenant is a direct fixture row:
+    // neither route can produce it (deactivating the last active salon is refused).
+    const inactive = await createTestSalon(app.prisma, grundversion.tenant.id, {
+      name: "Inaktiv ohne Kette",
+      isActive: false,
+    });
+    const res = await post(`${inactive.id}/activate`, {
+      authorization: `Bearer ${grundversion.adminToken}`,
+    });
+    expect(res.statusCode, res.body).toBe(409);
+    const body = JSON.parse(res.body) as { code: string; error: string };
+    expect(body.code).toBe("SALON_QUOTA_REACHED");
+    expect(body.error).toBe(SALON_QUOTA_REACHED_MESSAGE);
+    const fresh = await app.prisma.salon.findUniqueOrThrow({ where: { id: inactive.id } });
+    expect(fresh.isActive).toBe(false);
+    expect(await auditRowsFor(app, "Salon", inactive.id, "ACTIVATE")).toHaveLength(0);
+  });
+
+  it("refuses the MANAGER on both actions with 403 and changes nothing", async () => {
+    const active = await createTestSalon(app.prisma, tenant.tenant.id, { name: "Manager aktiv" });
+    const inactive = await createTestSalon(app.prisma, tenant.tenant.id, {
+      name: "Manager inaktiv",
+      isActive: false,
+    });
+    const managerAuth = { authorization: `Bearer ${managerToken}` };
+
+    expect((await post(`${active.id}/deactivate`, managerAuth)).statusCode).toBe(403);
+    expect((await post(`${inactive.id}/activate`, managerAuth)).statusCode).toBe(403);
+
+    expect((await app.prisma.salon.findUniqueOrThrow({ where: { id: active.id } })).isActive).toBe(
+      true,
+    );
+    expect(
+      (await app.prisma.salon.findUniqueOrThrow({ where: { id: inactive.id } })).isActive,
+    ).toBe(false);
+    expect(await auditRowsFor(app, "Salon", active.id, "DEACTIVATE")).toHaveLength(0);
+    expect(await auditRowsFor(app, "Salon", inactive.id, "ACTIVATE")).toHaveLength(0);
+  });
+
+  it("answers a foreign tenant's salon id and an unknown id with the identical 404 on both actions", async () => {
+    for (const action of ["deactivate", "activate"]) {
+      const foreign = await post(`${otherTenant.salonId}/${action}`, adminAuth());
+      const unknown = await post(`${randomUUID()}/${action}`, adminAuth());
+      expect(foreign.statusCode, action).toBe(404);
+      expect(unknown.statusCode, action).toBe(404);
+      expect(foreign.body, action).toBe(unknown.body);
+    }
+    // The foreign salon was not touched.
+    const fresh = await app.prisma.salon.findUniqueOrThrow({ where: { id: otherTenant.salonId } });
+    expect(fresh.isActive).toBe(true);
+  });
+});

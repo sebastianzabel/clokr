@@ -10,6 +10,8 @@
   import { salonAdminRights } from "$lib/page-rights";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import DangerZone from "$lib/components/admin/DangerZone.svelte";
+  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import OpeningHoursEditor from "$lib/components/admin/OpeningHoursEditor.svelte";
   import { FEDERAL_STATE_OPTIONS } from "$lib/salons/federal-states";
   import { validateOpeningHours } from "$lib/salons/opening-hours";
@@ -54,6 +56,14 @@
   // Set after the server refused a Bundesland change (409 FEDERAL_STATE_IN_USE): the field stays
   // locked for the rest of this visit, the other master data remain editable.
   let federalStateLocked = $state(false);
+
+  // ── Lifecycle (D-06: a salon is deactivated, never deleted) ───────────────────────────────
+  let deactivateOpen = $state(false);
+  let activateOpen = $state(false);
+  // Active salons of the tenant, read once on load and after every lifecycle write. It only
+  // decides whether the deactivate button is offered; the server's 409 stays the authority.
+  let activeSalonCount: number | null = $state(null);
+  const isLastActiveSalon = $derived(Boolean(salon?.isActive) && activeSalonCount === 1);
 
   // ── Unsaved-section tracking (Phase 109, D-11/D-12) ───────────────────────────────────────
   function snap(...values: unknown[]): string {
@@ -104,6 +114,16 @@
     await salonContext.load($authStore.user?.id ?? null, { force: true }).catch(() => undefined);
   }
 
+  async function loadActiveSalonCount() {
+    try {
+      const res = await api.get<{ salons: SalonDto[] }>("/salons?includeInactive=true");
+      activeSalonCount = res.salons.filter((entry) => entry.isActive).length;
+    } catch {
+      // Unknown count: the button stays enabled and the server decides.
+      activeSalonCount = null;
+    }
+  }
+
   onMount(async () => {
     if (salonId === "neu") {
       snapshotsReady = true;
@@ -113,6 +133,7 @@
     try {
       adopt(await api.get<SalonDto>(`/salons/${salonId}`), { master: true, hours: true });
       snapshotsReady = true;
+      await loadActiveSalonCount();
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         forbidden = true;
@@ -218,6 +239,47 @@
     } finally {
       savingHours = false;
     }
+  }
+
+  /**
+   * Re-reads the salon and the active count after a lifecycle write and reloads the header salon
+   * context. The form sections keep their baselines, so unsaved edits survive a status change.
+   */
+  async function reloadAfterLifecycleWrite() {
+    if (!salon) return;
+    try {
+      adopt(await api.get<SalonDto>(`/salons/${salon.id}`), {});
+      await loadActiveSalonCount();
+    } catch {
+      toasts.error("Der Salon konnte nicht neu geladen werden.");
+    }
+    await refreshSalonContext();
+  }
+
+  // The two handlers run inside ConfirmDialog: a refusal toasts the server's own text and is
+  // rethrown, so the dialog swallows it and stays open. Nothing here branches on that text.
+  async function deactivateSalon() {
+    if (!salon) return;
+    try {
+      await api.post(`/salons/${salon.id}/deactivate`);
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : "Deaktivieren fehlgeschlagen.");
+      throw err;
+    }
+    await reloadAfterLifecycleWrite();
+    toasts.success("Salon deaktiviert.");
+  }
+
+  async function activateSalon() {
+    if (!salon) return;
+    try {
+      await api.post(`/salons/${salon.id}/activate`);
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : "Aktivieren fehlgeschlagen.");
+      throw err;
+    }
+    await reloadAfterLifecycleWrite();
+    toasts.success("Salon aktiviert.");
   }
 </script>
 
@@ -404,6 +466,61 @@
           disabled={!rights.canManage}
         />
       </Section>
+
+      {#if rights.canManage && !isCreate && salon?.isActive}
+        <DangerZone
+          title="Salon deaktivieren"
+          description="Ein deaktivierter Salon bekommt keine neuen Zeiteinträge, Schichten oder Zuordnungen. Verlauf und Auswertungen bleiben erhalten. Der Salon wird nie gelöscht und kann jederzeit wieder aktiviert werden."
+        >
+          {#snippet actions()}
+            <div>
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm btn-danger"
+                onclick={() => (deactivateOpen = true)}
+                disabled={isLastActiveSalon}
+              >
+                Salon deaktivieren
+              </button>
+              {#if isLastActiveSalon}
+                <p class="form-hint" id="salon-deactivate-hint">
+                  Der letzte aktive Salon kann nicht deaktiviert werden.
+                </p>
+              {/if}
+            </div>
+            <ConfirmDialog
+              bind:open={deactivateOpen}
+              title="Salon deaktivieren?"
+              description={`„${salon?.name ?? ""}“ wird deaktiviert und bekommt keine neuen Zeiteinträge, Schichten oder Zuordnungen mehr. Verlauf und Auswertungen bleiben erhalten.`}
+              confirmLabel="Deaktivieren"
+              danger
+              onConfirm={deactivateSalon}
+            />
+          {/snippet}
+        </DangerZone>
+      {/if}
+
+      {#if rights.canManage && !isCreate && salon && !salon.isActive}
+        <Section
+          title="Salon aktivieren"
+          sub="Der Salon steht danach wieder für Zeiteinträge, Schichten und Zuordnungen zur Verfügung. Es gilt die Salonanzahl des gebuchten Pakets."
+        >
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            onclick={() => (activateOpen = true)}
+          >
+            Salon aktivieren
+          </button>
+          <ConfirmDialog
+            bind:open={activateOpen}
+            title="Salon wieder aktivieren?"
+            description={`„${salon.name}“ wird wieder aktiv und ist für Zeiteinträge, Schichten und Zuordnungen auswählbar.`}
+            confirmLabel="Aktivieren"
+            onConfirm={activateSalon}
+          />
+        </Section>
+      {/if}
     {/snippet}
   </ListDetail>
 {/if}
