@@ -230,42 +230,42 @@
     "calls": [
       {
         "call": "employee.deleteMany",
-        "line": 311
-      },
-      {
-        "call": "leaveType.deleteMany",
-        "line": 315
-      },
-      {
-        "call": "publicHoliday.deleteMany",
-        "line": 316
-      },
-      {
-        "call": "coverageRule.deleteMany",
         "line": 317
       },
       {
+        "call": "leaveType.deleteMany",
+        "line": 321
+      },
+      {
+        "call": "publicHoliday.deleteMany",
+        "line": 322
+      },
+      {
+        "call": "coverageRule.deleteMany",
+        "line": 323
+      },
+      {
         "call": "shiftTemplate.deleteMany",
-        "line": 318
-      },
-      {
-        "call": "companyShutdown.deleteMany",
-        "line": 319
-      },
-      {
-        "call": "terminalApiKey.deleteMany",
-        "line": 320
-      },
-      {
-        "call": "salon.deleteMany",
         "line": 324
       },
       {
-        "call": "tenantConfig.deleteMany",
+        "call": "companyShutdown.deleteMany",
         "line": 325
+      },
+      {
+        "call": "terminalApiKey.deleteMany",
+        "line": 326
+      },
+      {
+        "call": "salon.deleteMany",
+        "line": 330
+      },
+      {
+        "call": "tenantConfig.deleteMany",
+        "line": 331
       }
     ],
-    "reason": "This whole plugin only registers when ALLOW_TEST_BOOTSTRAP=true (never true on int/prod, read once at boot in config.ts) — there is no per-caller tenant to isolate against because this test-only surface's authorization model is the env flag PLUS the ^test-[a-zA-Z0-9_-]{8}$ id format gate at line 269, not req.user.tenantId. Every call listed deletes by the SAME already-format-validated tenant id, never by a value scoped to a caller's own tenant, including the salon.deleteMany (Phase 64b, issue #64, D-18) at line 330 which tears down the default salon before the tenant delete (Salon.tenant is onDelete: Restrict). Lines shifted +24 in Phase 67b Plan 04 (GitHub issue #67): D-24's default-salon-timezone hoist plus the new Stammsalon (HOME) EmployeeSalonAssignment.create block were added to the POST /bootstrap-tenant handler above this one, and two new facade imports (listSalons's sibling readTenantTimezone, plus dayToDate/tenantLocalDay) were added at the top of the file — all upstream of every anchor in this entry — mechanical only, no finding. The new employeeSalonAssignment.deleteMany call this same plan adds (immediately before employee.deleteMany, keyed by the query-derived employeeIds list, same shape as workSchedule.deleteMany above it) is NOT a candidate for this gate at all — same PRINCIPAL_FIELDS-style reasoning as workSchedule.deleteMany, which has never been listed here either — so it needs no entry, only this re-pin. Lines previously shifted +18 in Phase 64b Plan 03 (GitHub issue #64): a new import plus a default-salon salon.create block (D-18) were added in the POST handler above this one, upstream of every anchor in this entry — mechanical only, no finding. tenantConfig.deleteMany shifted a further +4 (total +22) because the salon.deleteMany call itself, with its 3-line comment, was inserted immediately above it. Lines previously shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context absence/leave-type import, E-8) — no finding, mechanical only. Lines shifted in the merge of origin/main (2026-09-26, Issues #341/#345/#347/#355/#356/#357/#364/#365) into feat/91-scope-grenze — origin/main's own commits shifted lines in this file upstream of these calls; no finding, mechanical shift only; old->new 317->319, 321->323, 322->324, 323->325, 324->326, 325->327, 326->328, 330->332, 331->333. Lines shifted -20 net in Phase 88 plan 05 (2026-10-13): the inline tenant/config/salon creation in POST /bootstrap-tenant was replaced by provisionTenant, upstream of every anchor in this entry — no finding, mechanical only; old->new 319->299, 323->303, 324->304, 325->305, 326->306, 327->307, 328->308, 332->312, 333->313, validatedAt 271->251 (the TENANT_ID_RE gate)."
+    "reason": "This whole plugin only registers when ALLOW_TEST_BOOTSTRAP=true (never true on int/prod, read once at boot in config.ts) — there is no per-caller tenant to isolate against because this test-only surface's authorization model is the env flag PLUS the ^test-[a-zA-Z0-9_-]{8}$ id format gate at line 269, not req.user.tenantId. Every call listed deletes by the SAME already-format-validated tenant id, never by a value scoped to a caller's own tenant, including the salon.deleteMany (Phase 64b, issue #64, D-18) at line 330 which tears down the default salon before the tenant delete (Salon.tenant is onDelete: Restrict). Lines shifted +24 in Phase 67b Plan 04 (GitHub issue #67): D-24's default-salon-timezone hoist plus the new Stammsalon (HOME) EmployeeSalonAssignment.create block were added to the POST /bootstrap-tenant handler above this one, and two new facade imports (listSalons's sibling readTenantTimezone, plus dayToDate/tenantLocalDay) were added at the top of the file — all upstream of every anchor in this entry — mechanical only, no finding. The new employeeSalonAssignment.deleteMany call this same plan adds (immediately before employee.deleteMany, keyed by the query-derived employeeIds list, same shape as workSchedule.deleteMany above it) is NOT a candidate for this gate at all — same PRINCIPAL_FIELDS-style reasoning as workSchedule.deleteMany, which has never been listed here either — so it needs no entry, only this re-pin. Lines previously shifted +18 in Phase 64b Plan 03 (GitHub issue #64): a new import plus a default-salon salon.create block (D-18) were added in the POST handler above this one, upstream of every anchor in this entry — mechanical only, no finding. tenantConfig.deleteMany shifted a further +4 (total +22) because the salon.deleteMany call itself, with its 3-line comment, was inserted immediately above it. Lines previously shifted +1 in Phase 101B Plan 05 Task 1 (one eslint-disable-next-line comment inserted above this file's cross-context absence/leave-type import, E-8) — no finding, mechanical only. Lines shifted in the merge of origin/main (2026-09-26, Issues #341/#345/#347/#355/#356/#357/#364/#365) into feat/91-scope-grenze — origin/main's own commits shifted lines in this file upstream of these calls; no finding, mechanical shift only; old->new 317->319, 321->323, 322->324, 323->325, 324->326, 325->327, 326->328, 330->332, 331->333. Lines shifted -20 net in Phase 88 plan 05 (2026-10-13): the inline tenant/config/salon creation in POST /bootstrap-tenant was replaced by provisionTenant, upstream of every anchor in this entry — no finding, mechanical only; old->new 319->299, 323->303, 324->304, 325->305, 326->306, 327->307, 328->308, 332->312, 333->313, validatedAt 271->251 (the TENANT_ID_RE gate). Lines shifted +6 in Phase 539 Plan 02 (Issue #539): one import line (replaceSystemRoleAssignment) and a 5-line stored-assignment write for the bootstrapped admin were added in the POST /bootstrap-tenant handler above this one, upstream of every anchor in this entry — no finding, mechanical only; old->new 311->317, 315->321, 316->322, 317->323, 318->324, 319->325, 320->326, 324->330, 325->331. The bootstrap-terminal handler below gained its own write; it is a separate handler and not an anchor here."
   },
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",

@@ -340,6 +340,9 @@ type FastifyApp = Awaited<ReturnType<typeof import("../src/__tests__/setup").get
  */
 async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture> {
   const prisma = app.prisma;
+  // Issue #539: the function employee creation uses for the system-role row; loaded here, like
+  // every other `../src/*` module of this script (see the note above `MEASURE_SCRIPT_...`).
+  const { replaceSystemRoleAssignment } = await import("../src/contexts/platform/compat-role");
   const s = `t22-parity-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
 
   const tenant = await prisma.tenant.create({
@@ -384,6 +387,8 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
       hireDate: new Date("2024-01-01T00:00:00Z"),
     },
   });
+  // Issue #539: the login below needs a stored assignment — permissions come only from stored rows.
+  await replaceSystemRoleAssignment(prisma, tenantId, adminUser.id, "ADMIN");
   await prisma.workSchedule.create({
     data: {
       employeeId: adminEmp.id,
@@ -434,6 +439,8 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
       breakOver9hOverride: 0,
     },
   });
+  // Issue #539: the Azubi holds its system role as a stored assignment as well.
+  await replaceSystemRoleAssignment(prisma, tenantId, empUser.id, "EMPLOYEE");
   const empId = emp.id;
 
   await prisma.workSchedule.create({
