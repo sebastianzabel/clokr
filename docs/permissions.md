@@ -224,12 +224,17 @@ Route. Jeder Nutzer mit Mitarbeiter hat seit der Migration von #75 eine Zuweisun
 auf die Systemrolle seiner Alt-Rolle; ein Nutzer ganz ohne gespeicherte Zuweisung hält seit #539
 (Release A) nichts: der Altrollen-Rückfall, der sie implizit aus `User.role` ableitete, ist entfernt
 und jede Auflösungsstelle (Berechtigungen, Reichweite, Salonkontext, Empfängersuche, Rollennamen)
-liest nur gespeicherte Zuweisungen (fail-closed). Ein Nutzer ohne Mitarbeiterdatensatz hat keinen Mandanten und hält seit #551 gar nichts: `requireAuth` weist ein Mandanten-Token ohne Mandanten (leer, nur Leerzeichen, fehlend) mit 403 `TENANT_REQUIRED` ab, bevor irgendeine Berechtigung geprüft wird. `User.role` und der
-JWT-Claim `role` sind nur noch Kompatibilitätsfelder für das Frontend: Sie werden an genau einer
-Stelle aus den Zuweisungen abgeleitet (`contexts/platform/compat-role.ts`), die Spalte wird bei jeder
-Änderung über Mitarbeiterformular, Import und `/role-assignments` zurückgeschrieben (die
-Anonymisierung lässt sie bewusst stehen — der Nutzer kann sich danach nicht mehr anmelden), und
-keine Zugriffsentscheidung liest sie.
+liest nur gespeicherte Zuweisungen (fail-closed; `GET /role-assignments/role-names` liefert für einen
+Nutzer ohne Zuweisung eine leere Liste). Ein Nutzer ohne Mitarbeiterdatensatz hat keinen Mandanten und hält seit #551 gar nichts: `requireAuth` weist ein Mandanten-Token ohne Mandanten (leer, nur Leerzeichen, fehlend) mit 403 `TENANT_REQUIRED` ab, bevor irgendeine Berechtigung geprüft wird. Ein aktiver Nutzer, dessen
+wirksame Permission-Menge leer ist, wird beim Anmelden, bei `verify-otp` und beim Token-Refresh mit 403
+`NO_ROLE_ASSIGNED` abgewiesen (seit #539; beim Login mit Audit `LOGIN_REFUSED`). `User.role` ist seit
+#539 (Release A) nur noch eine Rückfallsicherung für ein Zurückrollen auf das vorige Image: Die Spalte
+wird an genau einer Stelle aus den Zuweisungen abgeleitet (`contexts/platform/compat-role.ts`) und bei
+jeder Änderung über Mitarbeiterformular, Import und `/role-assignments` zurückgeschrieben (die
+Anonymisierung setzt sie auf EMPLOYEE, #357), aber kein Token trägt mehr einen `role`-Claim, und keine
+Zugriffsentscheidung liest die Spalte. Die einzigen Leser sind der Rollenfilter des Firmen-PDF, der
+Vergleich des Zurückschreibens und das Übernahme-Skript (`legacy-role-reads-539.test.ts`); Spalte und
+Enum entfallen mit Release B.
 
 **Aussperrschutz (umgesetzt mit #74):** Halter einer Permission ist ein aktiver Nutzer mit
 mindestens einer Zuweisung mit Scope Mandant, deren Rolle die Permission gewährt. Geschützt sind
@@ -817,8 +822,8 @@ trifft keine Zugriffsentscheidung über den Aufrufer und stand deshalb bisher im
 Permissions“. Phase 75b (#75, D-16) stellt jede der 17 Stellen auf eine Permission um: die Fassade
 `userIdsHoldingPermission(db, tenantId, permission)` (`contexts/platform/facade/role-assignments.ts`)
 liefert die Nutzer-Ids, die eine ZUGEWIESEN-Permission über eine wohlgeformte TENANT-Zuweisung
-halten — gespeichert, oder implizit über die Systemrolle von `User.role` für einen Nutzer ohne
-gespeicherte Zuweisung (D-08, `systemRoleIdForLegacyRole`). Jede Stelle behält alle ihre übrigen
+halten — ausschließlich über gespeicherte Zuweisungen (seit #539 entfällt der frühere implizite
+Rückfall auf die Systemrolle von `User.role`; ein Nutzer ohne gespeicherte Zuweisung ist nie Empfänger). Jede Stelle behält alle ihre übrigen
 Filter (`isActive`, Mandant, `exitDate`, Akteur-/Ziel-Ausschluss, Auswahlform) und ersetzt nur die
 Rollenbedingung durch die Trefferliste dieser Fassade. Die Permission je Stelle ist so gewählt,
 dass die heutige Empfänger-Menge unverändert bleibt (D-16): A,M-Stellen fragen eine Permission, die
@@ -1084,7 +1089,10 @@ Dieses Dokument wird von drei Tests und einem Lint-Gate gegen den Code gehalten:
   `FOUR_EYES_CONFIRMATION_REQUIRED` und die Namen der Ausnahmeliste `FOUR_EYES_EXCEPTIONS`.
 - `lint:role-checks` (`apps/api/scripts/lint-role-checks.ts`, in CI und im Pre-Commit-Hook) schlägt
   fehl, wenn der Rollen-Guard oder ein Rollenvergleich außerhalb von
-  `contexts/platform/compat-role.ts` zurückkommt.
+  `contexts/platform/compat-role.ts` zurückkommt (die einzige Ausnahme, weil das Modul die Spalte
+  `User.role` bis Release B noch schreibt, #539). Wer die Spalte außerhalb ihrer drei dokumentierten
+  Leser liest (`select: { role: true }`, `role` in einem `where`, `req.user.role`, ein `role`-Claim im
+  `JwtPayload`), fällt in `legacy-role-reads-539.test.ts` durch.
 
 Ausführen:
 

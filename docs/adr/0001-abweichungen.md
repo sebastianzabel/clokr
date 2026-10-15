@@ -1550,6 +1550,118 @@ Tests (`compat-role`, `shifts-my-week`, `leave-days-work-location`, `activity-au
 Mutationsprobe: ohne die Sperre in `requireAuth` werden die Fälle von `tenant-required-551.test.ts` und
 der Sweep rot (siehe Summary der Quick-Task 261013-bhk).
 
+### Nachtrag 2026-10-15 (Issue #539, Release A) — Berechtigungen nur noch aus gespeicherten Rollenzuweisungen
+
+**Entscheidung.** Owner-Entscheidung vom 15.10.2026 (am Issue #539 dokumentiert): Der Altrollen-Rückfall, die Spalte
+`User.role` und das Enum `Role` werden in **zwei Releases** entfernt. Dieser Nachtrag beschreibt **Release A**; Release B
+(Spalte und Enum per Migration, Muster #470) steht im Folge-Issue @@RELEASE_B@@. Release A ist eine
+**Unterbau-Semantikänderung** im Sinn von ADR 0002, Entscheidung 7 (Bedeutung und Rückgabe mehrerer Exporte von
+`contexts/platform/index.ts` ändern sich; ein Nutzer ohne gespeicherte Zuweisung hielt bisher implizit die Systemrolle seiner
+Spalte und hält jetzt nichts).
+
+**Was sich geändert hat.**
+
+- **Der Rückfall ist an allen fünf Auflösungsstellen weg** (D-02, D-03): `computeGrantsForUser` (Berechtigungen),
+  `resolveAccessReach` (Reichweite), `contextSalonIds` (Salonkontext), `userIdsHoldingPermission` (Empfängersuche) und
+  `roleNamesByUserId` (Rollennamen) lesen nur noch gespeicherte Zuweisungen des Mandanten, fail-closed.
+  `loadLegacyFallbackRole` ist gelöscht; ein Nutzer ohne Zuweisung ist ein Nutzer mit leerer Menge, leerer Reichweite, ohne
+  Empfängerrolle und mit leerer Rollennamenliste.
+- **Keine stille Zuweisung mehr** (D-11): `materializeLegacyRoleAssignment` ist gelöscht. Wer in einem Formular oder über
+  `POST /role-assignments` eine erste Rolle bekommt, erhält genau diese Rolle und nichts von der Spalte (Fall „erste
+  Kundenrolle für einen Nutzer ohne Zeilen“ in `employee-role-bridge.test.ts`).
+- **Übernahme vor dem Deploy** (D-01): `apps/api/scripts/backfill-539-role-assignments.ts`. Standard ist ein lesender
+  Probelauf (nur Ids, Exit-Code 2 bei übernehmbaren Nutzern); mit `--confirm` bekommt jeder aktive Nutzer mit
+  Mitarbeiterdatensatz und ohne Zuweisung genau eine Zuweisung mit Scope Mandant auf die Systemrolle seiner Spalte, mit einer
+  SYSTEM-Audit-Zeile „Übernahme der Alt-Rolle (#75)“, eine Transaktion je Nutzer, wiederholbar. Der Ablauf steht in
+  `docs/migrations.md`, Abschnitt „Phase 539“.
+- **Anmeldung ohne Berechtigung wird abgewiesen** (D-14): Login (nach dem Passwortvergleich, vor jedem OTP; Audit
+  `LOGIN_REFUSED` mit Grund `NO_ROLE_ASSIGNED`), `verify-otp` und `refresh` (vor der Rotation) antworten mit 403
+  `{ error, code: "NO_ROLE_ASSIGNED" }`, wenn die wirksame Permission-Menge leer ist. Der Code ist der Steuerwert; die Web-App
+  zeigt den Text des Servers und verzweigt weder auf Code noch Text.
+- **Kein `role`-Claim, kein `user.role` im Login-Body** (D-05): `JwtPayload` hat kein Feld `role` mehr, der API-Schlüssel-Principal
+  ist `{ sub, tenantId }`, das Request-Log trägt keine Rolle. Ein vor dem Deploy ausgestelltes Token mit `role`-Claim bleibt
+  gültig, der Claim wird von nichts gelesen (`token-claims-539.test.ts`: ein Token mit `role: "ADMIN"` für einen Nutzer mit
+  Mitarbeiter-Zuweisung erhält nur die Rechte der Zuweisung).
+- **Rollenvorbelegung im Mitarbeiterformular** (D-10): `formRolesByUserId()` leitet die angezeigte Rolle serverseitig aus den
+  gespeicherten Zuweisungen ab; ohne Zuweisung ist `user.role` in `GET /employees`, `GET /employees/:id` und den Antworten
+  von Anlage und Reaktivierung `null`, die Web-App zeigt „Keine Rolle zugewiesen“ mit Hinweis und sendet ohne Auswahl keine
+  Rolle. Ein anonymisierter Mitarbeiter (Zuweisungen sind hart gelöscht, #74b) zeigt in `GET /employees?includeAnonymized=true`
+  daher ebenfalls `null`.
+- **`actorRole` wird nicht mehr geschrieben** (D-13): neue Audit-Zeilen der Urlaubsanlage im Auftrag tragen kein `actorRole`
+  mehr. Bestehende Zeilen bleiben unverändert (das Protokoll ist append-only; Revisionssicherheit).
+- **Exporte entfernt** (D-16): `systemRoleIdForLegacyRole`, `deriveCompatRole` und `compatRoleForUser` stehen nicht mehr in
+  `contexts/platform/index.ts` (kein Verbraucher außerhalb des Unterbaus; `tsc` ist der Beweis).
+- **Die Spalte wird weiter geschrieben** (D-06): `deriveCompatRole()` und `syncCompatRoleColumn` halten `User.role` nach jeder
+  Änderung konsistent mit den Zuweisungen, damit ein Rollback auf das vorige Image konsistente Werte findet. Es gibt keine
+  Schema-Migration.
+
+**Was bewusst nicht geschah** (D-08). Spalte und Enum bleiben bis Release B stehen. Keine Systemrolle gewährt etwas anderes
+als vorher (`system-roles.ts` ist byte-gleich zum Merge-Basisstand).
+
+**Verbleibende Leser der Spalte.** Genau drei, vom AST-Wächter `apps/api/src/__tests__/legacy-role-reads-539.test.ts` erzwungen
+(jeder Eintrag der Erlaubnisliste muss mindestens einen Treffer haben, sonst ist der Test rot): (1) der Rollenfilter des
+Firmen-PDF (`&role=`, D-12, über `parseCompatRoleFilter`/`compatRoleUserWhere` in `compat-role.ts`; die Zeilendaten des Berichts
+tragen keine Rolle mehr), (2) der Vergleich vor dem Zurückschreiben in `syncCompatRoleColumn` (D-06) und (3) das
+Übernahme-Skript (D-01). Der Wächter läuft über 318 Quelldateien (`apps/api/src` und `apps/api/scripts`, ohne Tests) und
+verbietet außerdem `select: { role: true }`, `role` unter einem `where`, `req.user.role`, ein `role`-Feld im `JwtPayload` und die
+Namen der gelöschten Funktionen. `lint:role-checks` behält `compat-role.ts` als einzige Ausnahme, bis Release B die Spalte entfernt.
+
+**Gemessen.**
+
+- _Probe vom 15.10.2026_ (nur lesend, ohne Namen, Kommentar am Issue #539): int und prod sind identisch; von 20 Nutzern haben
+  17 eine gespeicherte Zuweisung, die 3 übrigen haben die Kompat-Rolle EMPLOYEE und sind **inaktiv**. Kein aktiver Nutzer
+  hing am Rückfall. Die Übernahme betrifft dort also niemanden; das Skript bleibt für künftige Instanzen. Inaktive und
+  anonymisierte Nutzer bekommen bewusst keine Zuweisung zurück (Anonymisierung löscht sie absichtlich).
+- _Rechteneutralität der Übernahme_ (`backfill-539-role-assignments.test.ts`): je übernommenem Nutzer sind wirksame Permissions,
+  `resolveAccessReach` für alle 65 ZUGEWIESEN-Schlüssel des Katalogs und die Mitgliedschaft in `userIdsHoldingPermission` vor
+  und nach der Übernahme gleich dem, was ein über `POST /employees` angelegter Nutzer mit derselben Rolle hat (Admin 87,
+  Manager 63, Mitarbeiter 22 wirksame Schlüssel). Der Test ist über fünf Mutationsproben abgesichert.
+- _Neutralitätsaufzeichnungen_ (`matrix.json`, `recipients.json`, `activity-auth.json`) sind **byte-gleich zum Merge-Basisstand**;
+  jede Änderung steht als datierter Kettenglied in den drei Nachtragsregistern, erzeugt aus einem gemessenen Lauf mit
+  `apps/api/scripts/neutrality-amendments-from-run.ts` (verweigert alles außerhalb der benannten Schlüssel). Matrix: **460**
+  Glieder (FALLBACK_ADMIN 259, FALLBACK_MANAGER 158, FALLBACK_EMPLOYEE 43), alle auf Schlüsseln `FALLBACK_*`, kein Schlüssel eines
+  Hauptakteurs oder API-Schlüssels. Empfänger: **17** Glieder (die Zeilen `R.fallback.*` entfallen). Aktivität/Anmeldung: **16**
+  Glieder (2 Rückfall-Feeds, 6 Anmeldung/Refresh der Rückfall-Akteure mit 403 bzw. 400, 8 Einträge `auth | …`, die `bodyRole`
+  und `tokenRole` für jeden Principal verlieren; D-17). Die Gültigkeit der Ketten (Anfang gleich Aufzeichnung, jedes Glied setzt das vorige fort, Datum, Issue, Grund) prüft
+  `neutrality-amendment-chain-539.test.ts`.
+- _Unabhängige Gegenprobe_ (D-15): ein Akteur mit gespeicherter Rolle ohne jede Permission (`ORACLE_EMPTY_ROLE`) wird gegen die
+  drei Rückfall-Akteure verglichen: FALLBACK_MANAGER und FALLBACK_ADMIN sind gleich FALLBACK_EMPLOYEE, und dieser ist gleich dem
+  Orakel, je **299** Zellen ohne Abweichung (Untergrenze 290). Eine Mutationsprobe (Orakel mit Admin-Rolle) macht 183 Fälle rot.
+- _Fixture-Sweep_ (D-09): Testnutzer, die sich auf den Rückfall verließen, bekommen ihre Systemrolle jetzt als gespeicherte
+  Zuweisung über `grantSystemRole()` (`__tests__/setup.ts`): 3 + 80 + 14 Dateien mit 197 + 50 Aufrufen, jeweils mit einem
+  vorübergehenden Messfühler im Resolver belegt, der jeden Rückfall-Treffer zählte (danach null Treffer in diesen Dateien); die
+  18 Dateien, die den Rückfall selbst prüften oder sich bewusst auf ihn stützten, wurden mit seinem Entfernen auf „hält
+  nichts“ umgeschrieben.
+
+**Akzeptierte Restrisiken.**
+
+- _Veralteter Browser-Tab (D-18)._ Ein vor dem Deploy geöffneter Tab des Mitarbeiterformulars kann beim Speichern noch den
+  Wert der Spalte als `role` senden. Der Server vergleicht ihn mit der aus den gespeicherten Zuweisungen abgeleiteten Rolle
+  (`requestedRoleUnchanged`); weicht er ab, ist es eine gewollte Rollenänderung, die nur ein Administrator mit
+  `role-assignment:manage` auslösen kann und die auditiert wird. Die Zahl der Nutzer, bei denen Spalte und abgeleitete Rolle
+  auseinanderlaufen, nennt der Probelauf (`columnDrift`).
+- _`actorRole`._ Neue Zeilen tragen kein `actorRole`; wer die Rolle des Handelnden zum Zeitpunkt rekonstruieren will, nimmt das
+  Rollenzuweisungs-Protokoll (Audit der Zuweisung). Bestehende Zeilen bleiben unverändert.
+- _Alter Token-Claim._ Tokens, die vor dem Deploy ausgestellt wurden, tragen ihren `role`-Claim weiter; er wird nicht gelesen
+  .
+
+**Auswirkung auf die Kontexte.**
+
+| Kontext             | Wirkung                                                                                                                                                                        |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Unterbau            | Der Rückfall und die stille Übernahme entfallen, Anmeldung ohne Berechtigung wird abgewiesen (403 `NO_ROLE_ASSIGNED`), drei Exporte entfallen; die Spalte bleibt bis Release B |
+| Zeiterfassung       | keine fachliche Wirkung                                                                                                                                                        |
+| Abwesenheiten       | keine fachliche Wirkung; neue Audit-Zeilen der Urlaubsanlage im Auftrag tragen kein `actorRole`                                                                                |
+| Schichtplanung      | keine                                                                                                                                                                          |
+| Arbeitszeitkonto    | keine                                                                                                                                                                          |
+| Kompositionsschicht | Der Rollenfilter des Firmen-PDF liest die Kompat-Spalte weiter (D-12), bis Release B ihn über gespeicherte Zuweisungen ausdrückt; Berichtszeilen tragen keine Rolle mehr       |
+
+**Betreiberschritt vor dem Deploy** (T-539-45): Probelauf des Übernahme-Skripts auf int UND prod, bei Treffern `--confirm`
+(Ablauf: `docs/migrations.md`, „Phase 539“). Ohne ihn können sich aktive Nutzer ohne Zuweisung nach dem Deploy nicht anmelden.
+
+**Release B.** Spalte `User.role` und Enum `Role` entfernen, `compat-role.ts` und die `lint:role-checks`-Ausnahme streichen,
+den Firmen-PDF-Filter über Zuweisungen ausdrücken, das Übernahme-Skript stilllegen: @@RELEASE_B@@.
+
 ---
 
 ## O — Bundesland und manuelle Feiertage wandern an den Salon (Phase 71b, Issue #71)
