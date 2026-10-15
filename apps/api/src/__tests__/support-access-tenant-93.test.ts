@@ -21,6 +21,7 @@ import {
   seedSupportAccess,
   soleAuditRow,
   cleanupTestData,
+  tokenWithoutSignIn,
 } from "./setup";
 import { signOperatorToken } from "../contexts/platform/operator-auth";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
@@ -173,6 +174,12 @@ async function createUserWithRole(
     },
   });
   customRoleTenantIds.add(fixture.tenant.id);
+  if (scope.scopeType === "SALONS") {
+    // Both keys are whole-tenant (MANDANT relation): a SALONS assignment holds nothing and, since
+    // #539 (D-14), such an account cannot sign in. The token is signed directly; the routes must
+    // still answer 403.
+    return { user, employee, token: await tokenWithoutSignIn(app, user.email) };
+  }
   const login = await app.inject({
     method: "POST",
     url: "/api/v1/auth/login",
@@ -685,7 +692,7 @@ describe("the tenant is told in-app when an access starts", () => {
     const row = await app.prisma.supportAccess.findUniqueOrThrow({ where: { id: grant.id } });
 
     const notices = await noticesFor(grant.id);
-    // The seeded admin (legacy ADMIN fallback) and the tenant-settings:update-only user; never the
+    // The seeded admin (stored ADMIN row) and the tenant-settings:update-only user; never the
     // EMPLOYEE, the audit-log:read-only user, a salon-scoped holder, an inactive user or tenant B's admin.
     expect(idsOf(notices)).toEqual([t.adminUser.id, settingsOnly.user.id].sort(byKey));
     for (const excluded of [

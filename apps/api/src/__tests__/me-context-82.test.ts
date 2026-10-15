@@ -299,6 +299,9 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
 
   it("an employee reaches the salons of its current and future assignments only", async () => {
     const { user, employee } = await createEmployee("ownReach");
+    // #539: an employee signs in only with a stored role - the plain Mitarbeiter row; it adds no
+    // managed salon, so the salons asserted below are those of the person's own assignments.
+    await assign(user.id, SYSTEM_ROLE_IDS.EMPLOYEE, { scopeType: "TENANT" });
     await salonAssignment(employee.id, salonA.id, "HOME", "2024-01-01");
     await salonAssignment(employee.id, salonB.id, "DEPLOYMENT", "2026-01-01", "2026-12-31");
     await salonAssignment(employee.id, salonD.id, "DEPLOYMENT", "2026-09-01");
@@ -314,6 +317,9 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
 
   it("an employee whose only assignment is HOME on an inactive salon reaches nothing", async () => {
     const { user, employee } = await createEmployee("inactiveHome");
+    // #539: an employee signs in only with a stored role - the plain Mitarbeiter row; it adds no
+    // managed salon, so the salons asserted below are those of the person's own assignments.
+    await assign(user.id, SYSTEM_ROLE_IDS.EMPLOYEE, { scopeType: "TENANT" });
     await salonAssignment(employee.id, salonI.id, "HOME", "2024-01-01");
     const body = await contextBody(await login(user.email));
     expect(body.salons).toEqual([]);

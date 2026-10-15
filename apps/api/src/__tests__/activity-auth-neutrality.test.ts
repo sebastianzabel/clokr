@@ -29,7 +29,7 @@
  * login` and `| refresh`) are amended through `recorded/activity-auth-amendments.json` — the same
  * register mechanism the permission matrix and the recipients recording use; `activity-auth.json`
  * itself stays byte-identical, and the login-time refusal and the stored-token refresh refusal are
- * proven in `tenant-required-551.test.ts`. One user of a tenant with two-factor login goes through the OTP
+ * proven in `tenant-required-551.test.ts`. Since Issue #539 (D-14) the same holds for the three fallback users (no stored assignment): their login is refused with NO_ROLE_ASSIGNED, their `auth | A.fallback.* | login` and `| refresh` cells are amended too, and their activity feeds are measured with directly signed tokens. One user of a tenant with two-factor login goes through the OTP
  * path: the code is captured from the stubbed mailer's `sendOtp` call and sent to
  * `POST /auth/verify-otp`. Pre-switch, every recorded role must equal the user's `User.role`
  * column — that column IS the source today — and the test asserts that in both modes.
@@ -70,6 +70,7 @@ import type { ActorKind, RouteSpec, VariantSpec } from "./neutrality/matrix-conf
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import type { JwtPayload } from "../middleware/auth";
 import { TENANT_REQUIRED_ERROR } from "../contexts/platform/tenant-status";
+import { NO_ROLE_ASSIGNED_ERROR } from "../contexts/platform/request-permissions";
 
 const MODE = process.env.NEUTRALITY_ACTIVITY_AUTH_MODE === "record" ? "record" : "verify";
 const DEFAULT_RECORDING = join(__dirname, "neutrality", "recorded", "activity-auth.json");
@@ -569,6 +570,21 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
           expect(refreshRecord).toEqual(amendmentByKey.get(`auth | ${label} | refresh`)?.to);
           return;
         }
+        if (label.startsWith("A.fallback.")) {
+          // Issue #539 (D-14): a user without a stored assignment holds no permission and can no
+          // longer sign in - the login is refused with NO_ROLE_ASSIGNED and hands out no tokens, so
+          // there is nothing to refresh either (the refresh request carries no token and is
+          // answered like the one of A.noEmployee). Both recorded cells are amended through
+          // `recorded/activity-auth-amendments.json`; the refusal itself is proven in
+          // `no-role-assigned-539.test.ts`.
+          expect(login.statusCode).toBe(403);
+          expect(loginBody).toEqual(NO_ROLE_ASSIGNED_ERROR);
+          expect(loginBody.accessToken).toBeUndefined();
+          expect(loginBody.refreshToken).toBeUndefined();
+          expect(loginRecord).toEqual(amendmentByKey.get(`auth | ${label} | login`)?.to);
+          expect(refreshRecord).toEqual(amendmentByKey.get(`auth | ${label} | refresh`)?.to);
+          return;
+        }
         // Pre-switch sanity: the column IS the source, so every recorded role equals it; the
         // refresh body carries no user object (C-4).
         const column = columnRoleOf.get(label);
@@ -635,7 +651,18 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
 
     for (const [index, caller] of FEED_CALLERS.entries()) {
       it(`GET /activity?limit=20 — ${caller.label}`, async () => {
-        const token = accessTokenOf.get(caller.label);
+        // Issue #539 (D-14): since a user without a stored assignment cannot sign in, the
+        // fallback callers get their token signed directly with exactly the claims a login would
+        // have issued (sub, role column, tenant, employee). The feed is still measured, to prove
+        // that such a principal reads nothing (the 'stored ADMIN feed' case below).
+        const token = caller.label.startsWith("A.fallback.")
+          ? app.jwt.sign({
+              sub: userId(caller.label),
+              role: columnRoleOf.get(caller.label) as Role,
+              tenantId: tenantA,
+              employeeId: employeeIdOf.get(caller.label),
+            } as JwtPayload)
+          : accessTokenOf.get(caller.label);
         if (!token) throw new Error(`activity-auth: ${caller.label} has no token from the login`);
         const self: ActorFixture = {
           actor: caller.actor,

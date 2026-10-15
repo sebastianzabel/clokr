@@ -366,6 +366,27 @@ export async function grantSystemRole(
 }
 
 /**
+ * Issue #539 (D-14): a token for a user who can no longer SIGN IN. An active account whose effective
+ * permission set is empty (no stored role assignment, or only a role that grants nothing at the
+ * chosen scope) is refused at login with 403 `NO_ROLE_ASSIGNED`, but several tests exist precisely
+ * to prove that such a principal gets 403 on a guarded route (an empty SALONS scope, a salon-scoped
+ * holder of a whole-tenant key). They obtain their token here: signed with exactly the claims a
+ * login would have issued (sub, role column, tenant, employee). `email` is the user's login email.
+ */
+export async function tokenWithoutSignIn(app: FastifyInstance, email: string): Promise<string> {
+  const user = await app.prisma.user.findUniqueOrThrow({
+    where: { email },
+    include: { employee: { select: { id: true, tenantId: true } } },
+  });
+  return app.jwt.sign({
+    sub: user.id,
+    role: user.role,
+    tenantId: user.employee?.tenantId ?? "",
+    employeeId: user.employee?.id,
+  } as JwtPayload);
+}
+
+/**
  * Issue #539: removes every stored role assignment of `userIds`. It exists only to restore a
  * recorded precondition (the neutrality fixture, whose recordings were taken on seed users
  * without stored rows) or — until plan 539-07 rewrites them — the pre-#539 seed state of a file

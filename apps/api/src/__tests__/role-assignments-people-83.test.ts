@@ -12,7 +12,13 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  tokenWithoutSignIn,
+} from "./setup";
 import { SYSTEM_ROLE_IDS, normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
 const PASSWORD = "test1234";
@@ -213,13 +219,15 @@ describe("Issue #83 — GET /api/v1/role-assignments/people", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
-    expect((await people(await login(manager.email))).statusCode).toBe(403);
+    // It cannot sign in since #539 (D-14): the token is signed directly (see tokenWithoutSignIn).
+    expect((await people(await tokenWithoutSignIn(app, manager.email))).statusCode).toBe(403);
   });
 
   it("the managing role at SALONS scope gets 403 (MANDANT relation), no token 401", async () => {
     const { user } = await createEmployee("Probe-S", "Rui83");
     await assign(user.id, managerRoleId, "SALONS");
-    expect((await people(await login(user.email))).statusCode).toBe(403);
+    // A SALONS assignment of a whole-tenant key holds nothing, so no sign-in since #539 (D-14).
+    expect((await people(await tokenWithoutSignIn(app, user.email))).statusCode).toBe(403);
     expect((await people()).statusCode).toBe(401);
   });
 });
