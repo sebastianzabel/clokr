@@ -1507,8 +1507,11 @@
     min-height: 96px;
   }
   @media (max-width: 768px) {
+    /* minmax(0, 1fr): a bare 1fr track is minmax(auto, 1fr) and grew with the widest nowrap
+       content of the Überstundenkonto card, pushing the page past a 320 px viewport (Issue #564,
+       seen on CI with wider fallback fonts). */
     .kpi-row {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
       gap: 12px;
     }
   }

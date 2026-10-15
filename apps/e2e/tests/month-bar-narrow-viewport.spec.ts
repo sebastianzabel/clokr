@@ -242,9 +242,15 @@ for (const viewport of VIEWPORTS) {
 
           const g = await measure(bar, surface.prev, surface.next);
 
+          // Name the offenders in the failure message (Issue #564: a bare "332 > 320" cost a CI round
+          // trip). Only measured when the cheap scrollWidth check is about to fail.
+          const offenders =
+            g.scrollWidth > g.innerWidth
+              ? (await measurePageOverflow(page, TOLERANCE_PX)).beyondViewport.join("; ")
+              : "";
           expect(
             g.scrollWidth,
-            `${where}: document is wider than the viewport`,
+            `${where}: document is wider than the viewport; elements beyond it: ${offenders}`,
           ).toBeLessThanOrEqual(g.innerWidth);
           expect(g.outside, `${where}: bar elements outside the viewport or the bar`).toEqual([]);
 

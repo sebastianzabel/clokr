@@ -14,6 +14,8 @@ export interface PageOverflow {
   scrollWidth: number;
   /** `tag.class#id` of each element whose right edge exceeds the viewport, unclipped. */
   overflowing: string[];
+  /** Every element ending right of the viewport, clipped or not (diagnostics for a red gate). */
+  beyondViewport: string[];
 }
 
 export async function measurePageOverflow(page: Page, tolerance = 0.5): Promise<PageOverflow> {
@@ -28,14 +30,19 @@ export async function measurePageOverflow(page: Page, tolerance = 0.5): Promise<
       }
       return false;
     };
-    const overflowing = [...document.body.querySelectorAll("*")]
-      .filter((e) => {
-        const r = e.getBoundingClientRect();
-        if (r.width === 0 && r.height === 0) return false;
-        if (getComputedStyle(e).position === "fixed") return false;
-        return r.right > iw + tol && !clippedInside(e);
-      })
-      .map(describe);
-    return { innerWidth: iw, scrollWidth: document.documentElement.scrollWidth, overflowing };
+    const beyond = [...document.body.querySelectorAll("*")].filter((e) => {
+      const r = e.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return false;
+      if (getComputedStyle(e).position === "fixed") return false;
+      return r.right > iw + tol;
+    });
+    const label = (e: Element) =>
+      `${describe(e)} (right ${Math.round(e.getBoundingClientRect().right)})`;
+    return {
+      innerWidth: iw,
+      scrollWidth: document.documentElement.scrollWidth,
+      overflowing: beyond.filter((e) => !clippedInside(e)).map(label),
+      beyondViewport: beyond.slice(0, 12).map(label),
+    };
   }, tolerance);
 }
