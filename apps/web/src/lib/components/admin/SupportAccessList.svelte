@@ -89,7 +89,9 @@
           </span>
           <span class="sa-window">{windowOf(item)}</span>
           <span class="sa-status">
-            <span class={statusBadgeClass(item.status)}>{statusLabel(item.status)}</span>
+            <span class={`${statusBadgeClass(item.status)} sa-badge`}
+              >{statusLabel(item.status)}</span
+            >
             {#if item.endedBy}
               <span class="sa-muted">{endedByLabel(item.endedBy)}</span>
             {/if}
@@ -114,6 +116,12 @@
 {/if}
 
 <style>
+  /* The tinted label text of .badge-yellow / .badge-purple misses 4.5:1 on its own tint (measured 4.25:1 in
+     light and down to 1.93:1 in dark mode): the label takes the body text colour, tint and border stay. */
+  .sa-badge {
+    color: var(--text);
+  }
+
   .sa-intro {
     margin: 0 0 12px;
     font-size: 14px;
@@ -161,7 +169,9 @@
     padding: 12px 8px;
     border-radius: var(--r-sm);
     color: var(--text);
-    text-decoration: none;
+    /* The global inline-link recipe (app.css, a:not(.btn)...) outweighs a plain class and would underline
+       every text of the row; only the operator name carries the link affordance. */
+    text-decoration-line: none !important;
     transition: background-color 160ms var(--ease);
   }
 
@@ -184,6 +194,15 @@
 
   .sa-operator {
     font-weight: 600;
+    text-decoration-line: underline;
+    text-decoration-color: var(--brand-light);
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1px;
+  }
+
+  .sa-row:hover .sa-operator,
+  .sa-row:focus-visible .sa-operator {
+    text-decoration-color: var(--brand);
   }
 
   .sa-reason {

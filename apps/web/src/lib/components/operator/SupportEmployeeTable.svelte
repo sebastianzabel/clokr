@@ -58,7 +58,7 @@
             </td>
             <td data-label="Status">
               <span
-                class={`badge ${employeeStatusBadgeClass(employee.status)}`}
+                class={`badge mark ${employeeStatusBadgeClass(employee.status)}`}
                 data-testid={`op-support-employee-status-${employee.id}`}
                 data-state={employee.status}
                 >{labelFor(EMPLOYEE_STATUS_LABELS, employee.status)}</span
@@ -96,6 +96,12 @@
 {/if}
 
 <style>
+  /* The tinted label text of the status badges misses 4.5:1 on its own tint (.badge-yellow in light mode,
+     measured 4.25:1): the label takes the body text colour, the tint and border still carry the meaning. */
+  .mark {
+    color: var(--text);
+  }
+
   .empty {
     margin: 0;
     font-size: 16px;
@@ -103,9 +109,18 @@
   }
 
   .name {
+    display: block;
     font-weight: 600;
     overflow-wrap: anywhere;
     min-width: 0;
+    /* A very long unbroken name wraps inside its own column instead of pushing the action column out of
+       the table wrapper (measured at 1440 px with a 100-character name). */
+    max-width: 24ch;
+  }
+
+  /* The name column never shrinks to single characters when the other columns claim the width. */
+  .cell-name {
+    min-width: 16ch;
   }
 
   .text {
@@ -120,11 +135,12 @@
   }
 
   .cell-actions {
-    white-space: nowrap;
+    white-space: normal;
   }
 
-  .cell-actions .btn + .btn {
-    margin-left: 8px;
+  /* The two links sit side by side and wrap under each other only when the column is too narrow. */
+  .cell-actions :global(.btn) {
+    margin: 0 8px 4px 0;
   }
 
   /* The v1.5 .btn recipe resets min-height to 0; row actions keep the 44 px touch target. */
@@ -132,21 +148,12 @@
     min-height: 44px;
   }
 
-  /* Eight columns do not fit a 768 px page at the .data-table padding: tighten the cell padding and
-     let the two links wrap under each other instead of holding the column open. */
-  @media (min-width: 640px) and (max-width: 1023px) {
+  /* Eight columns do not fit the page at the .data-table padding at any desktop width (the action column was
+     clipped at 1440 px as well): tighten the cell padding from 640 px up. */
+  @media (min-width: 640px) {
     .support-table th,
     .support-table td {
       padding-inline: 8px;
-    }
-
-    .support-table td.cell-actions {
-      white-space: normal;
-    }
-
-    .cell-actions .btn + .btn {
-      margin-left: 0;
-      margin-top: 4px;
     }
   }
 

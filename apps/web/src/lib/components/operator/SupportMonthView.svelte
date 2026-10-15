@@ -59,7 +59,7 @@
     <h2 class="person-name">{person.lastName}, {person.firstName}</h2>
     <span class="mono" data-testid="op-support-month-number">{person.employeeNumber}</span>
     <span
-      class={`badge ${employeeStatusBadgeClass(person.status)}`}
+      class={`badge mark ${employeeStatusBadgeClass(person.status)}`}
       data-testid="op-support-month-status"
       data-state={person.status}>{labelFor(EMPLOYEE_STATUS_LABELS, person.status)}</span
     >
@@ -109,7 +109,8 @@
       {#if month.entries.length === 0}
         <p class="empty">Keine Zeiteinträge in diesem Monat.</p>
       {:else}
-        <div class="table-wrap">
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div class="table-wrap" role="region" aria-label="Zeiteinträge des Monats" tabindex="0">
           <table class="data-table stack-table" data-testid="op-support-entries-table">
             <caption class="sr-only">Zeiteinträge des Monats</caption>
             <thead>
@@ -160,15 +161,17 @@
                   <td data-label="Art">{labelFor(ENTRY_TYPE_LABELS, entry.type)}</td>
                   <td data-label="Quelle">{labelFor(ENTRY_SOURCE_LABELS, entry.source)}</td>
                   <td class="cell-marks">
-                    {#if entry.isInvalid}
-                      <span class="badge badge-red mark">{invalidText(entry)}</span>
-                    {/if}
-                    {#if entry.deleted}
-                      <span class="badge badge-gray">gelöscht</span>
-                    {/if}
-                    {#if entry.isLocked}
-                      <span class="badge badge-blue mark">gesperrt</span>
-                    {/if}
+                    <div class="marks">
+                      {#if entry.isInvalid}
+                        <span class="badge badge-red mark">{invalidText(entry)}</span>
+                      {/if}
+                      {#if entry.deleted}
+                        <span class="badge badge-gray">gelöscht</span>
+                      {/if}
+                      {#if entry.isLocked}
+                        <span class="badge badge-blue mark">gesperrt</span>
+                      {/if}
+                    </div>
                   </td>
                 </tr>
               {/each}
@@ -184,7 +187,8 @@
       {#if month.dayBreaks.length === 0}
         <p class="empty">Keine Tagespausen in diesem Monat.</p>
       {:else}
-        <div class="table-wrap">
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div class="table-wrap" role="region" aria-label="Tagespausen des Monats" tabindex="0">
           <table class="data-table stack-table">
             <caption class="sr-only">Tagespausen des Monats</caption>
             <thead>
@@ -212,7 +216,8 @@
       {#if month.leaveRequests.length === 0}
         <p class="empty">Keine Anträge in diesem Monat.</p>
       {:else}
-        <div class="table-wrap">
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div class="table-wrap" role="region" aria-label="Anträge des Monats" tabindex="0">
           <table class="data-table stack-table">
             <caption class="sr-only">Anträge des Monats</caption>
             <thead>
@@ -254,7 +259,8 @@
       {#if month.absences.length === 0}
         <p class="empty">Keine Abwesenheiten in diesem Monat.</p>
       {:else}
-        <div class="table-wrap">
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <div class="table-wrap" role="region" aria-label="Abwesenheiten des Monats" tabindex="0">
           <table class="data-table stack-table">
             <caption class="sr-only">Abwesenheiten des Monats</caption>
             <thead>
@@ -344,8 +350,12 @@
   }
 
   .text {
+    display: block;
     overflow-wrap: anywhere;
     min-width: 0;
+    /* A very long unbroken salon name wraps inside its own column instead of squeezing the other columns
+       and pushing the marks out of the table wrapper (measured at 1440 px with a 100-character name). */
+    max-width: 24ch;
   }
 
   .breaks {
@@ -360,10 +370,17 @@
     font-size: 13px;
   }
 
-  .cell-marks {
+  /* The flex row lives in a wrapper: a table cell must stay a table cell, or its row border breaks. */
+  .marks {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
+  }
+
+  /* An unknown reason code is shown raw and may be long: the badge wraps instead of widening the column. */
+  .marks .badge {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   /* The tinted text of .badge-red / -yellow / -blue misses 4.5:1 on its own tint (13 px text; dark

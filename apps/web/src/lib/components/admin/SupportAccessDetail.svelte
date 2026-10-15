@@ -100,7 +100,10 @@
     <dd>{formatInZone(closing.at, timezone)}</dd>
 
     <dt>Status</dt>
-    <dd><span class={statusBadgeClass(access.status)}>{statusLabel(access.status)}</span></dd>
+    <dd>
+      <span class={`${statusBadgeClass(access.status)} sa-badge`}>{statusLabel(access.status)}</span
+      >
+    </dd>
 
     {#if access.endedBy}
       <dt>Beendet</dt>
@@ -145,6 +148,12 @@
 </ConfirmDialog>
 
 <style>
+  /* The tinted label text of .badge-yellow / .badge-purple misses 4.5:1 on its own tint (measured 4.25:1 in
+     light and down to 1.93:1 in dark mode): the label takes the body text colour, tint and border stay. */
+  .sa-badge {
+    color: var(--text);
+  }
+
   .sa-dl {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
