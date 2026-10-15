@@ -19,7 +19,7 @@ test.describe("Mobile Experience (UI-15 — v1.5 Bottom-Tab Bar)", () => {
     await expect(bar).toBeVisible();
 
     // Three primary tab labels + the Mehr trigger.
-    for (const label of ["Übersicht", "Zeit", "Urlaub", "Mehr"]) {
+    for (const label of ["Übersicht", "Zeit", "Abwesenheiten", "Mehr"]) {
       await expect(bar.getByText(label, { exact: true }).first()).toBeVisible();
     }
 
@@ -77,7 +77,7 @@ test.describe("Mobile Experience (UI-15 — v1.5 Bottom-Tab Bar)", () => {
 
     // Admin sees the full overflow nav — at minimum these manager + admin items
     // are present in the sheet.
-    for (const label of ["Anträge", "Team-Zeiten", "Mitarbeitende", "Compliance & Audit"]) {
+    for (const label of ["Anträge", "Team-Zeiten", "Mitarbeitende", "Audit & Log"]) {
       await expect(sheet.getByText(label, { exact: false }).first()).toBeVisible();
     }
 

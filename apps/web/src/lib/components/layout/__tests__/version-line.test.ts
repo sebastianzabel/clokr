@@ -127,7 +127,7 @@ describe("MobileMoreSheet version line — mounted pin", () => {
     versionStore.set("");
   });
 
-  const baseProps = { open: true, items: [], currentPath: "/dashboard" };
+  const baseProps = { open: true, sections: [], currentPath: "/dashboard" };
 
   it("renders v1.9.18 when versionStore is populated", () => {
     versionStore.set("1.9.18");
