@@ -589,7 +589,9 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // getEntriesForSupportMonth, getDayBreaksForSupportMonth (time-tracking/facade/time-entries.ts)
     // and getLeaveRequestsForSupportMonth (absence/facade/leave-requests.ts) — 145 -> 148 after the
     // merge with #538; all three pass F1/F2/F3 directly, exceptions unchanged at 17.
-    expect(functions).toHaveLength(148);
+    // Phase 563 (Issue #563, 2026-10-15): the storeHours mirror was removed from facade/salons.ts
+    // (-1, syncSoleActiveSalonOpeningHours) — 148 -> 147; exceptions unchanged at 17.
+    expect(functions).toHaveLength(147);
 
     const rawExceptions = JSON.parse(
       readFileSync(

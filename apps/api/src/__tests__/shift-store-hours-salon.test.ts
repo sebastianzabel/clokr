@@ -7,6 +7,10 @@
  * BYTE-IDENTICAL after the switch (`git diff <parity-sha> <switch-sha> --
  * shift-store-hours-salon.test.ts` touches no line of it — only additions below it). See
  * 325-02-SUMMARY.md for both runs ("recorded on old reader", "after switch").
+ *
+ * Phase 563 (D-16): the parity table and its loop are still byte-identical to that recording.
+ * Only the PRECONDITION moved: Issue #563 retired the tenant-level hours and the salon mirror it
+ * used, so the custom week is now written onto the salon through `PATCH /api/v1/salons/:id`.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
@@ -164,16 +168,17 @@ describe("shift store-hours check — D-11 parity (Phase 325 Plan 02, issue #325
     cleanupTenantIds.push(seed.tenant.id);
     await makeShiftEligible(app, seed.employee.id);
 
+    // Issue #563 (D-16): the tenant-level hours and the salon mirror this precondition used are
+    // retired. The salon is now written through the tenant salon route; PARITY_CASES and the loop
+    // below are unchanged and still byte-identical to their Phase 325 recording.
     const putRes = await app.inject({
-      method: "PUT",
-      url: "/api/v1/settings/work",
+      method: "PATCH",
+      url: `/api/v1/salons/${seed.salonId}`,
       headers: { authorization: `Bearer ${seed.adminToken}` },
-      payload: { storeHours: CUSTOM_WEEK },
+      payload: { openingHours: CUSTOM_WEEK },
     });
     expect(putRes.statusCode, putRes.body.slice(0, 400)).toBe(200);
 
-    // D-13 mirror precondition: seedTestData's tenant has exactly one active salon, so the PUT
-    // above must have mirrored the custom week into it verbatim.
     const salon = await app.prisma.salon.findUniqueOrThrow({ where: { id: seed.salonId } });
     expect(salon.openingHours).toEqual(CUSTOM_WEEK);
 
