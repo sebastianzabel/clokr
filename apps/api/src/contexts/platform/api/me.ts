@@ -4,6 +4,7 @@ import { requireAuth } from "../../../middleware/auth";
 import { API_KEY_SUBJECT_PREFIX, accessContextFromRequest } from "../access-context";
 import { contextSalonIds } from "../facade/role-assignments";
 import { isMultiSalonTenant, listSalons } from "../facade/salons";
+import { packagesForDisplay } from "../tenant-packages";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -210,7 +211,7 @@ export async function meRoutes(app: FastifyInstance) {
     schema: {
       tags: ["Mein Bereich"],
       description:
-        "Get the caller's tenant and the active salons it can reach. A presentation context only — every endpoint decides access itself.",
+        "Get the caller's tenant, the active salons it can reach and the tenant's booked packages (module names and effective salon limit). A presentation context only — every endpoint decides access itself.",
       security: [{ bearerAuth: [] }],
     },
     handler: async (req, reply) => {
@@ -243,6 +244,10 @@ export async function meRoutes(app: FastifyInstance) {
         isMultiSalon: await isMultiSalonTenant(app.prisma, tenant.id),
         homeSalonId: reach.homeSalonId,
         salons,
+        // Phase 566 (D-12): display only — module names and the effective salon limit, no quota and
+        // no counts. The server re-checks every write against the same decider, so this value is
+        // never an access boundary. Own-tenant data, hence no new permission.
+        packages: await packagesForDisplay(app.prisma, tenant.id),
       };
     },
   });

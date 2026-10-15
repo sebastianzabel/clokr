@@ -87,6 +87,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
   "src/__tests__/bulk-apply-helpers.ts": "rahmen", // Issue #568 — shared two-step bulk-apply test helper, no model
   "src/__tests__/legacy-role-migration-sql.ts": "rahmen", // Phase 75b (Issue #75) — test infra that runs the checked-in legacy-role data migration verbatim; no model of its own
+  "src/__tests__/tenant-packages-migration-566-fixtures.ts": "rahmen", // Phase 566 (Issue #566) — test infra: fixture catalogue and verbatim reader of the checked-in packages backfill SQL, shared by the migration test and the dry-run parity test; no model of its own
   "src/__tests__/neutrality/route-derivation.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: parses the route set from source; test infra, no model
   "src/__tests__/neutrality/matrix-config.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: checked-in route specs and exclusions; test infra, no model
   "src/__tests__/neutrality/fixture.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: tenant-per-actor fixture across every context's models; test infra like setup.ts
@@ -176,6 +177,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/operator/tenants.ts": "unterbau", // Phase 88 plan 11 (D-04/D-05/D-07) — operator tenant lifecycle (create, list, get, rename, deactivate, reactivate, resend first-admin invitation); reads and writes the Tenant model and platform functions only
   "src/contexts/platform/api/operator/auth.ts": "unterbau", // Phase 88 plan 08 (D-02/D-03/D-03a) — operator sign-in (password, TOTP/recovery code, me); reads and writes OperatorAccount and OperatorAuditLog, Unterbau models that belong to no business context
   "src/contexts/platform/tenant-status.ts": "unterbau", // Phase 88 plan 06 (D-05, AC-88-07/08) — tenant deactivation/reactivation (Tenant columns, refresh-token revocation, operator audit) and the one refusal body of the credential paths; Tenant, RefreshToken and OperatorAuditLog are Unterbau models
+  "src/contexts/platform/tenant-packages.ts": "unterbau", // Phase 566 (#566) — booked packages per tenant: the one decider of the Tenant.bookedModules/salonQuota columns, an Unterbau model
   "src/contexts/platform/api/operator/salons.ts": "unterbau", // Phase 89 (#89, D-05/D-06/D-07) — operator salon routes (list now, mutations in later plans); reads Salon through the Unterbau facade and gets coupling and time-entry count through a port from the composition root
   "src/composition/operator-salon-ports.ts": "komposition", // Phase 89 (#89, D-07/D-12) — maps the time-tracking and scheduling index exports onto the operator salon port; owns no model, carries no rule
 

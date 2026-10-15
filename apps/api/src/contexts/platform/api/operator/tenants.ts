@@ -5,6 +5,7 @@
  *   GET  /:id                           one tenant, metadata only
  *   POST /                              create tenant + configuration + default salon + first admin + invitation
  *   PATCH /:id                          rename (name only; slug and the default salon's name stay)
+ *   PUT  /:id/packages                  set booked modules and salon quota (recorded twice, never retroactive)
  *   POST /:id/deactivate                deactivate with a reason (never delete)
  *   POST /:id/reactivate                reactivate
  *   POST /:id/resend-admin-invitation   re-issue the first admin's invitation (bootstrap window only)
@@ -22,12 +23,19 @@
  */
 import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { z } from "zod";
-import { FederalState } from "@clokr/db";
+import { FederalState, TenantModule } from "@clokr/db";
 import type { Prisma } from "@clokr/db";
 import { config } from "../../../../config";
 import { OPERATOR_AUDIT_ACTIONS, recordOperatorAudit } from "../../operator-audit";
 import { requireOperator } from "../../operator-auth";
 import { deactivateTenant, reactivateTenant } from "../../tenant-status";
+import { operatorTenantAudit } from "../../operator-tenant-audit";
+import {
+  TENANT_MODULES,
+  TENANT_PACKAGES_SELECT,
+  changeTenantPackages,
+  normalizeStoredPackages,
+} from "../../tenant-packages";
 import {
   TenantProvisioningConflictError,
   operatorEmployeeCreationAudit,
@@ -84,6 +92,18 @@ const idParamSchema = z.object({ id: z.string().uuid() });
 
 const renameTenantSchema = z.object({ name: z.string().trim().min(1).max(200) }).strict();
 const deactivateTenantSchema = z.object({ reason: z.string().trim().min(3).max(500) }).strict();
+const setPackagesSchema = z
+  .object({
+    bookedModules: z.array(z.nativeEnum(TenantModule)).max(TENANT_MODULES.length),
+    salonQuota: z.number().int().min(1).max(500),
+  })
+  .strict();
+
+/** Shown when a package change hits a deactivated tenant; same sentence as the salon routes. */
+const TENANT_DEACTIVATED_REPLY = {
+  error: "Der Mandant ist deaktiviert. Änderungen sind erst nach der Reaktivierung möglich.",
+  code: "TENANT_DEACTIVATED",
+};
 
 const tenantSelect = {
   id: true,
@@ -93,11 +113,18 @@ const tenantSelect = {
   createdAt: true,
   deactivatedAt: true,
   deactivatedReason: true,
+  ...TENANT_PACKAGES_SELECT,
+  _count: { select: { salons: { where: { isActive: true } } } },
 } satisfies Prisma.TenantSelect;
 
 type TenantMetadataRow = Prisma.TenantGetPayload<{ select: typeof tenantSelect }>;
 
-/** The one operator-facing shape of a tenant: exactly these keys, never more (T-88-51). */
+/**
+ * The one operator-facing shape of a tenant: exactly these keys, never more (T-88-51). Keys: id,
+ * name, slug, federalState, createdAt, deactivatedAt, deactivatedReason and `packages`
+ * (booked modules, salon quota, number of active salons — salon master data, never an employee
+ * or entry count, #89 D-14a).
+ */
 export function toOperatorTenantDto(row: TenantMetadataRow) {
   return {
     id: row.id,
@@ -107,6 +134,10 @@ export function toOperatorTenantDto(row: TenantMetadataRow) {
     createdAt: row.createdAt,
     deactivatedAt: row.deactivatedAt,
     deactivatedReason: row.deactivatedReason,
+    packages: {
+      ...normalizeStoredPackages(row),
+      activeSalonCount: row._count.salons,
+    },
   };
 }
 
@@ -178,7 +209,13 @@ export async function operatorTenantRoutes(
           );
           if (provisioned.status !== "OK") return provisioned;
 
-          const dto = toOperatorTenantDto(provisioned.tenant);
+          // Re-read through the DTO select: the provisioned row carries no salon count.
+          const dto = toOperatorTenantDto(
+            await tx.tenant.findUniqueOrThrow({
+              where: { id: provisioned.tenant.id },
+              select: tenantSelect,
+            }),
+          );
           await recordOperatorAudit(tx, {
             action: OPERATOR_AUDIT_ACTIONS.TENANT_CREATED,
             operatorId,
@@ -266,6 +303,55 @@ export async function operatorTenantRoutes(
       });
       if (!row) return reply.code(404).send(TENANT_NOT_FOUND);
       return toOperatorTenantDto(row);
+    },
+  });
+
+  // PUT /api/v1/operator/tenants/:id/packages
+  app.put("/:id/packages", {
+    config: mutationRateLimit,
+    schema: {
+      tags: ["Betreiber"],
+      description:
+        "Sets the booked modules and the salon quota of a tenant. Never retroactive: existing data is untouched.",
+    },
+    preHandler: requireOperator,
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const body = setPackagesSchema.parse(req.body);
+      const operatorId = req.operator.sub;
+      const writeTenantAudit = operatorTenantAudit(app, { operatorId, tenantId: id });
+
+      const result = await app.prisma.$transaction(async (tx) => {
+        const changed = await changeTenantPackages(tx, id, body);
+        if (changed.status === "OK") {
+          await recordOperatorAudit(tx, {
+            action: OPERATOR_AUDIT_ACTIONS.TENANT_PACKAGES_CHANGED,
+            operatorId,
+            subjectTenantId: id,
+            entity: "Tenant",
+            entityId: id,
+            oldValue: changed.before,
+            newValue: changed.after,
+            request: req,
+          });
+          await writeTenantAudit(
+            {
+              action: "UPDATE",
+              entity: "TenantPackages",
+              entityId: id,
+              oldValue: changed.before,
+              newValue: changed.after,
+            },
+            tx,
+          );
+        }
+        return changed;
+      });
+      if (result.status === "NOT_FOUND") return reply.code(404).send(TENANT_NOT_FOUND);
+      if (result.status === "TENANT_DEACTIVATED") {
+        return reply.code(409).send(TENANT_DEACTIVATED_REPLY);
+      }
+      return toOperatorTenantDto(await loadTenantMetadata(id));
     },
   });
 

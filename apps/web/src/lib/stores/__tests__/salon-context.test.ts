@@ -50,12 +50,15 @@ const S1 = { id: "s1", name: "Salon Nord" };
 const S2 = { id: "s2", name: "Salon Ost" };
 const FOREIGN_UUID = "9b2f6a8e-3c1d-4e5f-8a7b-0c1d2e3f4a5b";
 
+const PACKAGES_WIRE = { bookedModules: ["CHAIN", "ANALYTICS"], salonLimit: 12 };
+
 function response(salons = [S1, S2], overrides: Record<string, unknown> = {}) {
   return {
     tenant: { id: "t1", name: "Kette" },
     isMultiSalon: true,
     homeSalonId: "s1",
     salons,
+    packages: PACKAGES_WIRE,
     ...overrides,
   };
 }
@@ -89,7 +92,45 @@ describe("salon-context — tracer", () => {
       isMultiSalon: true,
       homeSalonId: "s1",
       selection: "ALL",
+      packages: { bookedModules: ["CHAIN", "ANALYTICS"], salonLimit: 12 },
     });
+  });
+
+  it("holds the packages next to the context, filters unknown modules and answers moduleBooked", async () => {
+    const { salonContext, moduleBooked } = await freshModule();
+    apiGet.mockResolvedValue(
+      response([S1, S2], {
+        packages: { bookedModules: ["ANALYTICS", "FUTURE_MODULE", "CHAIN"], salonLimit: 3 },
+      }),
+    );
+    expect(moduleBooked(salonContext.peek(), "CHAIN")).toBeNull();
+    await salonContext.load("u1", { force: true });
+    // Unknown names are dropped and the API's canonical order is restored.
+    expect(salonContext.peek().packages).toEqual({
+      bookedModules: ["CHAIN", "ANALYTICS"],
+      salonLimit: 3,
+    });
+    expect(moduleBooked(salonContext.peek(), "CHAIN")).toBe(true);
+    expect(moduleBooked(salonContext.peek(), "HARDWARE_CLOCK")).toBe(false);
+  });
+
+  it("a response without packages (mixed deploy) leaves packages null and moduleBooked unknown", async () => {
+    const { salonContext, moduleBooked } = await freshModule();
+    apiGet.mockResolvedValue(response([S1, S2], { packages: undefined }));
+    await salonContext.load("u1", { force: true });
+    expect(salonContext.peek().loaded).toBe(true);
+    expect(salonContext.peek().packages).toBeNull();
+    expect(moduleBooked(salonContext.peek(), "HARDWARE_CLOCK")).toBeNull();
+  });
+
+  it("the packages never change the salon options or the selection", async () => {
+    const { salonContext, showSalonOptions } = await freshModule();
+    apiGet.mockResolvedValue(
+      response([S1, S2], { packages: { bookedModules: [], salonLimit: 1 } }),
+    );
+    await salonContext.load("u1", { force: true });
+    expect(showSalonOptions(salonContext.peek())).toBe(true);
+    expect(salonContext.peek().selection).toBe("ALL");
   });
 
   it("copies only id and name from the answer", async () => {
@@ -263,6 +304,7 @@ describe("salon-context — failures, transitions, races (D-10)", () => {
       isMultiSalon: false,
       homeSalonId: null,
       selection: null,
+      packages: null,
     });
     expect(loggerWarn).toHaveBeenCalledTimes(1);
     expect(loggerWarn.mock.calls[0][1]).toEqual({ status: 500 });

@@ -18,6 +18,7 @@ function tenant(overrides: Partial<OperatorTenant> & { id: string }): OperatorTe
     createdAt: "2026-01-05T08:00:00.000Z",
     deactivatedAt: null,
     deactivatedReason: null,
+    packages: { bookedModules: [], salonQuota: 1, activeSalonCount: 1 },
     ...overrides,
   };
 }

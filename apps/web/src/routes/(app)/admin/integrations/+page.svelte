@@ -17,8 +17,11 @@
     type FritzDevice,
     type OptedInEmployee,
   } from "$lib/api/presence";
-  import { api } from "$api/client";
+  import { api, ApiError } from "$api/client";
   import { toasts } from "$stores/toast";
+  import { authStore } from "$stores/auth";
+  import { salonContext, moduleBooked } from "$stores/salon-context";
+  import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
 
   // ── Block 1: Presence-Quellen ─────────────────────────────────────────────
   let sources: PresenceSource[] = $state([]);
@@ -70,7 +73,13 @@
   let optPageSize = $state(10);
   let pagedOptedIn = $derived(optedIn.slice((optPage - 1) * optPageSize, optPage * optPageSize));
 
+  // Phase 566 (D-12): display only — the server answers 409 for an unbooked module either way.
+  // `=== false` only: an unknown state never hides the create row.
+  const hardwareBooked = $derived(moduleBooked($salonContext, "HARDWARE_CLOCK"));
+
   onMount(async () => {
+    // Forced, so a freshly booked module shows without waiting for the navigation throttle.
+    void salonContext.load($authStore.user?.id ?? null, { force: true });
     await Promise.all([loadSources(), loadOptedIn()]);
     // Load employees list for device assignment dropdown.
     // GET /employees returns the array directly (not wrapped in { employees }).
@@ -118,8 +127,13 @@
       newSourceName = "";
       newSourceAdapterUrl = "";
       await loadSources();
-    } catch {
-      sourceCreateError = "Schlüssel konnte nicht erstellt werden. Bitte versuchen Sie es erneut.";
+    } catch (err: unknown) {
+      // A 409 carries the server's German sentence (module not booked); anything else keeps the
+      // generic retry hint.
+      sourceCreateError =
+        err instanceof ApiError && err.status === 409
+          ? err.message
+          : "Schlüssel konnte nicht erstellt werden. Bitte versuchen Sie es erneut.";
     } finally {
       sourceCreating = false;
     }
@@ -267,27 +281,31 @@
       </div>
     {/if}
 
-    <div class="source-create-row">
-      <input
-        type="text"
-        class="form-input source-name-input"
-        bind:value={newSourceName}
-        placeholder="Quellen-Name (z.B. FritzBox Büro)"
-      />
-      <input
-        type="url"
-        class="form-input source-url-input"
-        bind:value={newSourceAdapterUrl}
-        placeholder="Adapter-URL (optional)"
-      />
-      <button
-        class="btn btn-primary"
-        onclick={handleCreateSource}
-        disabled={sourceCreating || !newSourceName.trim()}
-      >
-        Schlüssel erstellen
-      </button>
-    </div>
+    {#if hardwareBooked === false}
+      <ModuleHint module="HARDWARE_CLOCK" subject="WLAN-Anwesenheitsquellen" />
+    {:else}
+      <div class="source-create-row">
+        <input
+          type="text"
+          class="form-input source-name-input"
+          bind:value={newSourceName}
+          placeholder="Quellen-Name (z.B. FritzBox Büro)"
+        />
+        <input
+          type="url"
+          class="form-input source-url-input"
+          bind:value={newSourceAdapterUrl}
+          placeholder="Adapter-URL (optional)"
+        />
+        <button
+          class="btn btn-primary"
+          onclick={handleCreateSource}
+          disabled={sourceCreating || !newSourceName.trim()}
+        >
+          Schlüssel erstellen
+        </button>
+      </div>
+    {/if}
 
     {#if sourceCreateError}
       <p class="form-error" role="alert">{sourceCreateError}</p>

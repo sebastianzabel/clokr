@@ -104,6 +104,14 @@ interface MockTenant {
   createdAt: string;
   deactivatedAt: string | null;
   deactivatedReason: string | null;
+  packages: MockPackages;
+}
+
+/** Booked packages as the operator API reports them (Phase 566). */
+interface MockPackages {
+  bookedModules: string[];
+  salonQuota: number;
+  activeSalonCount: number;
 }
 
 const TENANT: MockTenant = {
@@ -114,6 +122,8 @@ const TENANT: MockTenant = {
   createdAt: "2026-01-05T08:00:00.000Z",
   deactivatedAt: null,
   deactivatedReason: null,
+  // The base mock serves one active salon (Hauptsalon).
+  packages: { bookedModules: ["CHAIN"], salonQuota: 3, activeSalonCount: 1 },
 };
 
 const OFF_TENANT_ID = randomUUID();
@@ -125,6 +135,7 @@ const OFF_TENANT: MockTenant = {
   createdAt: "2026-02-10T08:00:00.000Z",
   deactivatedAt: "2026-03-01T08:00:00.000Z",
   deactivatedReason: "Vertrag beendet",
+  packages: { bookedModules: [], salonQuota: 1, activeSalonCount: 0 },
 };
 
 interface RecordedCall {
@@ -182,7 +193,7 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
       listStatus: 200,
       create: "ok",
       mailSent: true,
-      detail: { ...TENANT },
+      detail: structuredClone(TENANT),
       resend: "sent",
       salons: structuredClone(SALONS),
       salonRefusal: null,
@@ -266,6 +277,7 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
         createdAt: "2026-10-13T08:00:00.000Z",
         deactivatedAt: null,
         deactivatedReason: null,
+        packages: { bookedModules: [], salonQuota: 1, activeSalonCount: 1 },
       };
       mock.state.tenants = [...mock.state.tenants, tenant];
       return route.fulfill({
@@ -370,6 +382,18 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
     }
     if (path === `/tenants/${TENANT_ID}` && method === "PATCH") {
       mock.state.detail = { ...mock.state.detail, name: String(body?.name).trim() };
+      return route.fulfill({ status: 200, json: mock.state.detail });
+    }
+    if (path === `/tenants/${TENANT_ID}/packages` && method === "PUT") {
+      const input = (body ?? {}) as { bookedModules: string[]; salonQuota: number };
+      mock.state.detail = {
+        ...mock.state.detail,
+        packages: {
+          bookedModules: input.bookedModules,
+          salonQuota: input.salonQuota,
+          activeSalonCount: mock.state.detail.packages.activeSalonCount,
+        },
+      };
       return route.fulfill({ status: 200, json: mock.state.detail });
     }
     if (path === `/tenants/${TENANT_ID}/deactivate` && method === "POST") {
@@ -1406,6 +1430,8 @@ test.describe("operator console - salon form", () => {
     await openTenantPage(page);
     await page.getByTestId("op-salon-create").click();
     await expect(page.getByTestId("op-salon-dialog")).toBeVisible();
+    // The dialog enters with a 0.2 s transform animation; measuring mid-flight skews the y values.
+    await animationsSettled(page);
 
     const from = await page.getByTestId("op-salon-hours-0-from").boundingBox();
     const to = await page.getByTestId("op-salon-hours-0-to").boundingBox();
@@ -2145,5 +2171,216 @@ test.describe("operator console - fixed look", () => {
         density: "compact",
         skin: "modern",
       });
+  });
+});
+
+test.describe("operator console - packages", () => {
+  async function openTenant(page: Page, tenantId = TENANT_ID): Promise<OperatorMock> {
+    const mock = await mockOperatorApi(page);
+    await seedOperatorSession(page);
+    await page.goto(`/betreiber/mandanten/${tenantId}`);
+    await expect(page.getByTestId("op-packages-section")).toBeVisible();
+    return mock;
+  }
+
+  function packageWrites(mock: OperatorMock): RecordedCall[] {
+    return mock.calls.filter(
+      (c) => c.method === "PUT" && c.path === `/tenants/${TENANT_ID}/packages`,
+    );
+  }
+
+  test("the section shows four modules, the Ketten-Paket booked and the quota", async ({
+    page,
+  }) => {
+    await openTenant(page);
+
+    await expect(page.getByTestId("package-base")).toContainText("Grundversion");
+    const modules = page.getByTestId("package-modules");
+    await expect(modules).toContainText("Ketten-Paket");
+    await expect(modules).toContainText("Integrationen");
+    await expect(modules).toContainText("Hardware-Stempeln");
+    await expect(modules).toContainText("Auswertungen");
+    await expect(modules.locator('input[type="checkbox"]')).toHaveCount(4);
+    await expect(page.getByTestId("package-CHAIN")).toBeChecked();
+    await expect(page.getByTestId("package-INTEGRATIONS")).not.toBeChecked();
+    await expect(page.getByTestId("package-HARDWARE_CLOCK")).not.toBeChecked();
+    await expect(page.getByTestId("package-ANALYTICS")).not.toBeChecked();
+    await expect(page.getByTestId("package-quota")).toHaveValue("3");
+    await expect(page.getByTestId("package-active-salons")).toHaveText("1");
+    await expect(page.getByTestId("package-effective-limit")).toHaveText("3");
+    await expect(page.getByTestId("packages-save")).toBeDisabled();
+    await expect(page.getByTestId("package-quota-warning")).toHaveCount(0);
+  });
+
+  test("ticking Hardware-Stempeln and saving sends exactly { bookedModules, salonQuota }", async ({
+    page,
+  }) => {
+    const mock = await openTenant(page);
+
+    await page.getByTestId("package-HARDWARE_CLOCK").check();
+    await expect(page.getByText("Nicht gespeichert")).toBeVisible();
+    await page.getByTestId("packages-save").click();
+
+    await expect(page.getByText("Nicht gespeichert")).toHaveCount(0);
+    await expect(page.getByTestId("packages-save")).toBeDisabled();
+    await expect(page.getByTestId("package-HARDWARE_CLOCK")).toBeChecked();
+
+    const writes = packageWrites(mock);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].body).toEqual({ bookedModules: ["CHAIN", "HARDWARE_CLOCK"], salonQuota: 3 });
+    expect(writes[0].authorization).toMatch(/^Bearer /);
+  });
+
+  test("unticking the Ketten-Paket on a tenant with several active salons warns, and still saves", async ({
+    page,
+  }) => {
+    const mock = await mockOperatorApi(page);
+    mock.state.detail = {
+      ...mock.state.detail,
+      packages: { bookedModules: ["CHAIN"], salonQuota: 5, activeSalonCount: 3 },
+    };
+    await seedOperatorSession(page);
+    await page.goto(`/betreiber/mandanten/${TENANT_ID}`);
+    await expect(page.getByTestId("op-packages-section")).toBeVisible();
+    await expect(page.getByTestId("package-quota-warning")).toHaveCount(0);
+
+    await page.getByTestId("package-CHAIN").uncheck();
+    await expect(page.getByTestId("package-effective-limit")).toHaveText("1");
+    const warning = page.getByTestId("package-quota-warning");
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText("Bestehende Salons bleiben aktiv");
+    await expect(page.getByTestId("packages-save")).toBeEnabled();
+
+    await page.getByTestId("packages-save").click();
+    await expect(page.getByText("Nicht gespeichert")).toHaveCount(0);
+    expect(packageWrites(mock)).toHaveLength(1);
+    expect(packageWrites(mock)[0].body).toEqual({ bookedModules: [], salonQuota: 5 });
+    // The salons stay as they are: the mock saw no salon write at all.
+    expect(mock.calls.filter((c) => c.path.includes("/salons") && c.method !== "GET")).toEqual([]);
+  });
+
+  test("a quota outside 1 to 500 shows the inline error and sends nothing", async ({ page }) => {
+    const mock = await openTenant(page);
+
+    await page.getByTestId("package-ANALYTICS").check();
+    await page.getByTestId("package-quota").fill("501");
+    await expect(page.getByTestId("package-quota-error")).toBeVisible();
+    await expect(page.getByTestId("packages-save")).toBeDisabled();
+    expect(packageWrites(mock)).toHaveLength(0);
+  });
+
+  test("a deactivated tenant shows the controls disabled with the frozen hint", async ({
+    page,
+  }) => {
+    await openTenant(page, OFF_TENANT_ID);
+
+    await expect(page.getByTestId("op-packages-tenant-frozen-hint")).toContainText(
+      "Der Mandant ist deaktiviert.",
+    );
+    for (const module of ["CHAIN", "INTEGRATIONS", "HARDWARE_CLOCK", "ANALYTICS"]) {
+      await expect(page.getByTestId(`package-${module}`)).toBeDisabled();
+    }
+    await expect(page.getByTestId("package-quota")).toBeDisabled();
+    await expect(page.getByTestId("packages-save")).toBeDisabled();
+  });
+
+  test("a salon create refused with SALON_QUOTA_REACHED shows the console's own reason, not the server's sentence", async ({
+    page,
+  }) => {
+    const mock = await openTenant(page);
+    mock.state.salonRefusal = { status: 409, code: "SALON_QUOTA_REACHED" };
+
+    await page.getByTestId("op-salon-create").click();
+    await page.getByTestId("op-salon-name").fill("Neuer Salon");
+    await page.getByTestId("op-salon-federal-state").selectOption("BAYERN");
+    await page.getByTestId("op-salon-submit").click();
+
+    const reason = page.getByTestId("op-salon-error");
+    await expect(reason).toContainText("Salon-Kontingent erreicht.");
+    await expect(reason).toContainText("Abschnitt „Pakete“");
+    await expect(reason).not.toContainText("Serverseitiger Text");
+    await expect(page.getByTestId("op-salon-dialog")).toBeVisible();
+  });
+
+  test("an activation refused with MODULE_NOT_BOOKED points to the Pakete section", async ({
+    page,
+  }) => {
+    const mock = await openTenant(page);
+    mock.state.lifecycleRefusal = { status: 409, code: "MODULE_NOT_BOOKED" };
+
+    await page.getByTestId(`op-salon-activate-${OLD_SALON_ID}`).click();
+
+    const notice = page.getByTestId("op-salons-notice");
+    await expect(notice).toHaveAttribute("data-code", "MODULE_NOT_BOOKED");
+    await expect(notice).toContainText("Abschnitt „Pakete“");
+    await expect(notice).not.toContainText("Serverseitiger Text");
+  });
+
+  test("a refused save shows the reason by code and keeps the draft", async ({ page }) => {
+    const mock = await openTenant(page);
+    await page.route(`**/api/v1/operator/tenants/${TENANT_ID}/packages`, (route) =>
+      route.fulfill({
+        status: 409,
+        json: {
+          error: "Serverseitiger Text, der nicht angezeigt wird.",
+          code: "TENANT_DEACTIVATED",
+        },
+      }),
+    );
+
+    await page.getByTestId("package-INTEGRATIONS").check();
+    await page.getByTestId("packages-save").click();
+
+    const error = page.getByTestId("packages-error");
+    await expect(error).toContainText("Der Mandant ist deaktiviert.");
+    await expect(error).not.toContainText("Serverseitiger Text");
+    await expect(page.getByTestId("package-INTEGRATIONS")).toBeChecked();
+    await expect(page.getByText("Nicht gespeichert")).toBeVisible();
+    expect(packageWrites(mock)).toHaveLength(0);
+  });
+
+  test.describe("at 360 px", () => {
+    test.use({ viewport: { width: 360, height: 800 } });
+
+    test("the section does not scroll sideways and every control lies inside the viewport", async ({
+      page,
+    }) => {
+      await openTenant(page);
+      await page.getByTestId("package-ANALYTICS").check();
+
+      const geometry = await page.evaluate(() => {
+        const ids = [
+          "package-CHAIN",
+          "package-INTEGRATIONS",
+          "package-HARDWARE_CLOCK",
+          "package-ANALYTICS",
+          "package-quota",
+          "packages-save",
+        ];
+        const outside = ids.filter((id) => {
+          const node = document.querySelector(`[data-testid="${id}"]`);
+          if (!node) return true;
+          const rect = node.getBoundingClientRect();
+          return rect.left < 0 || rect.right > window.innerWidth;
+        });
+        const root = document.documentElement;
+        return { outside, scrolls: root.scrollWidth - window.innerWidth };
+      });
+      expect(geometry.outside).toEqual([]);
+      expect(geometry.scrolls).toBeLessThanOrEqual(0);
+    });
+  });
+
+  test("the tenant page with the section has no serious or critical accessibility violation", async ({
+    page,
+  }) => {
+    await openTenant(page);
+    await animationsSettled(page);
+
+    const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
+    const blocking = results.violations
+      .filter((v) => v.impact === "serious" || v.impact === "critical")
+      .map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`);
+    expect(blocking).toEqual([]);
   });
 });

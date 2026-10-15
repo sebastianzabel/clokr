@@ -805,8 +805,13 @@ import { readFileSync } from "node:fs";
 // set to exactly these numbers; MIN_FILES 568 -> 571, MIN_TESTS 9031 -> 9093, never lowered. After the review
 // fixes (tenant-local day compare, workDays, row locks) re-measured: 571 files, 9110 tests (9107 passed, 3 skipped)
 // -> MIN_TESTS 9093 -> 9110.
-const MIN_FILES = 571;
-const MIN_TESTS = 9110;
+// Issue #566 (2026-10-15): measured on `feat/566-pakete-je-mandant` after 566-11, full run (`test:coverage`) - 579 test
+// files, 9246 tests (9243 passed, 3 skipped). New files of the phase: tenant-packages-566, operator-packages-566,
+// tenant-packages-addons-566, tenant-packages-never-retroactive-566, packages-legal-core-isolation-566,
+// tenant-packages-migration-566, scripts/__tests__/audit-566-package-backfill, plus the cases added to existing files.
+// Both floors are set to exactly these numbers; MIN_FILES 571 -> 579, MIN_TESTS 9110 -> 9246, never lowered.
+const MIN_FILES = 579;
+const MIN_TESTS = 9246;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

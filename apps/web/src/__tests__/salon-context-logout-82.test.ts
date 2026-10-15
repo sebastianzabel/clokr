@@ -82,6 +82,8 @@ describe("Issue #82 — logout forgets the salon context", () => {
       isMultiSalon: false,
       homeSalonId: null,
       selection: null,
+      // Phase 566: the booked-package display state is forgotten on logout like everything else.
+      packages: null,
     });
   });
 

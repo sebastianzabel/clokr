@@ -45,6 +45,7 @@ import { listSalons } from "../facade/salons.js";
 import { readTenantTimezone } from "../facade/salon-assignments.js";
 import { dayToDate, tenantLocalDay } from "../salon-assignment-rules.js";
 import { provisionTenant } from "../tenant-provisioning.js";
+import { TENANT_MODULES, changeTenantPackages } from "../tenant-packages.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -130,6 +131,17 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         federalState: "NIEDERSACHSEN",
         timezone,
       });
+
+      // Phase 566 (D-10): e2e tenants book every module, so the specs and the `/admin/system`
+      // visual baseline keep rendering the create controls; nothing in e2e tests the unbooked
+      // state. Written through the one package writer. No audit row: this route has no principal.
+      const booked = await changeTenantPackages(prisma, tenant.id, {
+        bookedModules: [...TENANT_MODULES],
+        salonQuota: 500,
+      });
+      if (booked.status !== "OK") {
+        throw new Error(`bootstrap-tenant: booking all modules failed (${booked.status})`);
+      }
 
       const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
       const adminUser = await prisma.user.create({

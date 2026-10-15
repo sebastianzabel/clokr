@@ -1046,6 +1046,33 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   request of an already issued access token, API key or device key. The per-process state cache holds
   at most 10 s and is invalidated by `app.invalidateTenantState()` on every (de)activation. There is
   no tenant delete path and the business data is untouched.
+- **Booked packages per tenant (Phase 566, Issue #566).** `Tenant.bookedModules` (`TenantModule`:
+  `CHAIN`, `INTEGRATIONS`, `HARDWARE_CLOCK`, `ANALYTICS`) and `Tenant.salonQuota` (≥ 1, DB CHECK
+  `Tenant_salonQuota_positive`) are written only by the operator (`PUT /api/v1/operator/tenants/:id/packages`;
+  `TENANT_PACKAGES_CHANGED` in `OperatorAuditLog` plus the tenant `AuditLog` row `TenantPackages`, one
+  transaction, nothing written for an unchanged body). They are decided only in
+  `contexts/platform/tenant-packages.ts`: the effective salon limit is the quota with `CHAIN`, else 1; a
+  create or activation takes the Tenant row `FOR NO KEY UPDATE` BEFORE it counts (lock order Tenant → Salon),
+  and the operator write takes the same lock; a refusal is 409 `SALON_QUOTA_REACHED` / `MODULE_NOT_BOOKED`
+  (`{ error, code }`, mapped once in `app.ts` through `PackageRefusalError`). The Grundversion (everything the
+  law requires, system roles, roster, reports, one active salon) is never gated. Modules gate only setting up
+  something NEW — nine sites: `createSalon` (active) and `activateSalon` (every caller: tenant, operator,
+  provisioning), `createSalonCoupling` and the create branch of `setSalonCoupling` (replacing and removing
+  stay free) plus the create branch of `PUT /integrations/phorest/config`, `POST /api-keys`,
+  `POST /terminals`, `POST /admin/presence-sources`; and the `activityMinutes` of `GET /time-entries/summary`
+  (`null` + `activityMinutesUnavailableReason: "MODULE_NOT_BOOKED"`; recording an activity stays free).
+  Never retroactive: cancelling a module or lowering the quota deactivates, revokes and locks nothing, and
+  reads, reports, PDFs, DATEV and exports keep working (`tenant-packages-never-retroactive-566.test.ts`).
+  `packages-legal-core-isolation-566.test.ts` (AST) proves the legally required paths read no package and
+  pins every gate before its create. `isMultiSalonTenant()` / `showSalonOptions()` never read packages. The
+  web only displays: `GET /me/context` `packages` (`bookedModules`, `salonLimit`), `moduleBooked()` in
+  `$stores/salon-context` (unknown state hides nothing) and `ModuleHint` at exactly four set-up spots under
+  `/admin` (never in clock, calendar or dashboard; existing items stay manageable). Test fixtures book
+  everything (`FIXTURE_PACKAGES`, so recorded neutrality cells stay unchanged); package tests build their
+  tenant with `seedGrundversionTenant`. Existing tenants keep what they use (migration
+  `*_tenant_packages`, Bestandsschutz); run the read-only dry run `scripts/audit-566-package-backfill.ts`
+  on int and prod BEFORE the deploy (`docs/migrations.md`, „Phase 566“). Extended roles are not gated yet
+  (#624). ADR: `docs/adr/0001-abweichungen.md` Eintrag Z.
 - **Jobs: writing jobs skip, retention never skips.** Cron jobs that write (month close, attendance
   checks, Phorest sync, reminders) skip a deactivated tenant; the data-retention purge deliberately
   runs for it, because retention is a legal duty that does not end with the contract. The source-scan

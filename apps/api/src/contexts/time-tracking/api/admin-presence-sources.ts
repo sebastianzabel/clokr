@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
-import { requirePermission } from "../../platform";
+import { assertModuleBooked, requirePermission } from "../../platform";
 import { normalizeMac } from "../normalize-mac";
 
 function hashKey(key: string): string {
@@ -69,6 +69,10 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
           adapterUrl: z.string().url().optional(),
         })
         .parse(req.body);
+
+      // D-05: setting up a NEW presence source needs the module; editing, revoking and the ingest of
+      // an existing source stay free (Issue #566).
+      await assertModuleBooked(app.prisma, req.user.tenantId, "HARDWARE_CLOCK");
 
       const rawKey = `clk_${randomBytes(32).toString("hex")}`;
       const keyHash = hashKey(rawKey);

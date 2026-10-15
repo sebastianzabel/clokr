@@ -3805,3 +3805,163 @@ operatorId, tenantId }`. `GET /api/v1/audit-logs` (Liste und Einzelabruf) liest 
 `operator-isolation-89`, `hooks-frame-ancestors-89`) sowie die Playwright-Spezifikation
 `operator-console.spec.ts` (Anmeldung, Mandanten- und Salonlebenszyklus, Geometrie von 1440 bis 360 px,
 axe in hell und dunkel). Die Neutralitätsmatrix (1712 Zellen) ist unverändert.
+
+---
+
+## Z — Gebuchte Pakete je Mandant (Phase 566, Issue #566)
+
+**Schwere: informativ. Unterbau-Änderung nach ADR 0002, Entscheidung 7 — eine Erweiterung (zwei Spalten, ein
+Aufzählungstyp) und eine Semantikänderung (neue Ablehnungen in `createSalon` und `activateSalon`). Freigabe der
+Erweiterung durch das Erreichen von `Ready`; Freigabe der Semantikänderung durch die Owner-Entscheidung vom
+13.10.2026 im Issue.**
+
+### Ausgangslage
+
+Bis Phase 566 kannte Clokr keinen Begriff dafür, was ein Mandant gebucht hat: Jeder Mandant konnte beliebig viele
+Salons anlegen, Phorest koppeln, API-Schlüssel und NFC-Terminals erzeugen, WLAN-Anwesenheitsquellen einrichten und
+die Tätigkeitsarten auswerten. Die Owner-Entscheidung vom 13.10.2026 trennt eine **Grundversion** von **Paketen**:
+
+- **Grundversion** (immer enthalten, nie gesperrt): alles, was das Gesetz verlangt (Zeiterfassung, Pausen- und
+  ArbZG-Prüfung, Urlaub, Monatsabschluss, Berichte, DATEV, DSGVO-Auskunft und -Anonymisierung, Aufbewahrung),
+  die Systemrollen, die Dienstplanung und **ein** aktiver Salon.
+- **Ketten-Paket** (`CHAIN`): mehrere aktive Salons bis zu einem vertraglichen Kontingent (`salonQuota`);
+  dem Katalog nach gehören die erweiterten Rollen ebenfalls dazu, sie werden in dieser Phase aber nicht gesperrt (D-07).
+- **Zusatzmodule:** Integrationen (`INTEGRATIONS`: Phorest-Kopplung, API-Schlüssel), Hardware-Stempeln
+  (`HARDWARE_CLOCK`: NFC-Terminal, WLAN-Anwesenheitsquelle), Auswertungen (`ANALYTICS`: Tätigkeitsarten, Issue #81).
+
+Es gibt keinen Lizenzschlüssel und keine Abrechnung; der Betreiber setzt die Pakete je Mandant (eine Instanz je Kunde).
+
+### Entscheidung
+
+- **D-01 — Ablage am Mandanten.** `Tenant.bookedModules TenantModule[]` (Standard leer) und `Tenant.salonQuota Int`
+  (Standard 1, `CHECK ("salonQuota" >= 1)` namens `Tenant_salonQuota_positive`). Die Zeile des Mandanten existiert
+  immer, ist der bestehende Sperranker (`FOR NO KEY UPDATE`, #568) und braucht kein neues Modell. Eine
+  Änderungshistorie gibt es nicht als Tabelle, sie ist die doppelte Auditzeile (D-08).
+- **D-02 — Kontingent gilt nur mit Ketten-Paket.** Das wirksame Salon-Limit ist `salonQuota` mit `CHAIN`, sonst 1.
+  Das Kontingent bleibt wie eingegeben gespeichert, auch ohne `CHAIN`; wird `CHAIN` später gebucht, gilt es wieder.
+- **D-03 — Eine Entscheidungsstelle.** `contexts/platform/tenant-packages.ts` (über `contexts/platform/index.ts`)
+  ist die einzige Datei, die entscheidet, ob ein Paket gebucht ist: `isModuleBooked`, `salonLimit`,
+  `assertSalonActivationAllowed(db, tenantId)` und `assertModuleBooked(db, tenantId, module)`. Abgelehnt wird mit
+  `SalonQuotaReachedError` / `ModuleNotBookedError` (Basis `PackageRefusalError`), die `app.ts` an genau einer
+  Stelle auf 409 `{ error, code: "SALON_QUOTA_REACHED" | "MODULE_NOT_BOOKED" }` mit deutschem Text abbildet.
+  Das Web zeigt nur an.
+- **D-04 — Rennfrei.** `createSalon` (nur für einen aktiven Salon) und `activateSalon` nehmen zuerst
+  `SELECT "id" FROM "Tenant" WHERE "id" = $1 FOR NO KEY UPDATE`, zählen dann die aktiven Salons und schreiben
+  danach; Sperrreihenfolge Mandant → Salon. Auch die Betreiberroute für die Pakete nimmt dieselbe Sperre, damit
+  eine Änderung des Kontingents nicht an einer laufenden Aktivierung vorbeigeht. Für die Sperre der
+  Mandantenzeile genügt `FOR NO KEY UPDATE`: Sie kollidiert mit sich selbst, nicht mit dem `FOR KEY SHARE`, das jede Anlage
+  einer abhängigen Zeile nimmt. Beweis: `pg_blocking_pids` in `tenant-packages-566.test.ts` und
+  `operator-packages-566.test.ts` (Mutationsproben: ohne Sperre werden die Fälle rot).
+- **D-05 — Module sperren nur das Neu-Einrichten.** Neun Stellen, jeweils _vor_ dem Schreibaufruf und nach
+  Validierung und Rechteprüfung: `createSalon` und `activateSalon`; `createSalonCoupling` und der Anlegezweig von
+  `setSalonCoupling` (Ersetzen und Entfernen einer Kopplung bleiben frei) sowie der Anlegezweig von
+  `PUT /integrations/phorest/config` (kein Umweg an der Fassade vorbei; eine Ablehnung rollt die ganze Anfrage
+  zurück, Zugangsdaten eingeschlossen); `POST /api-keys`; `POST /terminals`; `POST /admin/presence-sources`; und die
+  `activityMinutes` von `GET /time-entries/summary` (nicht gebucht: `null` mit
+  `activityMinutesUnavailableReason: "MODULE_NOT_BOOKED"`, nach dem Muster von `sollUnavailableReason`; jede
+  andere Summenzahl bleibt gleich, das Schreiben einer Tätigkeitsart bleibt frei).
+  Frei bleiben Zuordnung von Geräten zu einer bestehenden Quelle, die Eigenregistrierung eines Geräts, Ingest,
+  Terminal-Anmeldung, Stempeln, bestehende API-Schlüssel und das Speichern von Phorest-Zugangsdaten ohne neue
+  Kopplung. Dieselbe Regel gilt für Mandanten- und Betreiberwege.
+- **D-06 — Nie rückwirkend.** Eine Kündigung eines Moduls oder ein Kontingent unter der Zahl der aktiven Salons ist
+  erlaubt (die Betreiberkonsole warnt nur) und ändert sonst nichts: kein Salon wird deaktiviert, kein Schlüssel,
+  Terminal, keine Quelle, Kopplung widerrufen oder gesperrt, Synchronisation und Anmeldung bleiben, Lesen, Berichte,
+  PDF, DATEV und Export sind immer verfügbar. Beweis: `tenant-packages-never-retroactive-566.test.ts` (Mandant mit
+  drei aktiven Salons, Schlüsseln, Terminal, Quelle, Kopplung und einem wirklich geschlossenen Monat; vorher/nachher
+  gleich bis auf die zwei Schlüssel der Auswertung).
+- **D-07 — Erweiterte Rollen nicht gesperrt.** Eine Sperre von Kundenrollen und Bereichszuweisungen könnte
+  bestehenden Zugriff entziehen; Folge-Issue #624 (nur Neuanlage, nie die Auflösung).
+- **D-08 — Betreiber-Schnittstelle.** `PUT /api/v1/operator/tenants/:id/packages` (streng validiert: `bookedModules`
+  höchstens vier bekannte Module, `salonQuota` ganzzahlig 1 bis 500; Ratenbegrenzung; `requireOperator`; ein
+  deaktivierter Mandant wird mit 409 `TENANT_DEACTIVATED` abgewiesen). Eine tatsächliche Änderung schreibt in
+  **einer** Transaktion die Zeile `TENANT_PACKAGES_CHANGED` in den `OperatorAuditLog` (Aufbewahrung wie
+  Lebenszyklus-Aktionen) und eine Zeile mit Akteurstempel `OPERATOR` in den Mandanten-`AuditLog`
+  (`operator-tenant-audit.ts`, Entität `TenantPackages`, alt/neu); ein unveränderter Körper (auch umsortiert oder mit
+  Doppelten) schreibt nichts. Die Mandantenantworten des Betreibers tragen `packages` (`bookedModules`, `salonQuota`,
+  `activeSalonCount`; die Zahl ist eine Stammdatenzahl über Salons, kein Zählwert über Mandantendaten, Eintrag Y/89
+  D-14a). Die Konsole hat den Abschnitt „Pakete“ (kein `animate`, #570).
+- **D-09 — Bestandsschutz.** Die Migration `20261013233636_tenant_packages` ergänzt die Spalten und führt genau eine
+  `UPDATE`-Anweisung aus, die jedem vorhandenen Mandanten (auch deaktivierten) gibt, was er nutzt: `salonQuota` =
+  Zahl aktiver Salons (mindestens 1); `CHAIN` bei mehr als einem Salon in beliebigem Zustand, einer Kundenrolle,
+  einer Rollenzuweisung mit Bereich `SALONS`/`PERSONS` oder einer Einsatz-Zuordnung; `INTEGRATIONS` bei
+  Kopplung, API-Schlüssel (auch widerrufen) oder Phorest-Zugangsdaten; `HARDWARE_CLOCK` bei Terminal-Schlüssel oder
+  Anwesenheitsquelle in jedem Zustand; `ANALYTICS` bei klassifiziertem Eintrag oder Tätigkeitsanteil. Das
+  überschreibt absichtlich zu großzügig (weiche Löschung und Widerruf zählen); der Betreiber korrigiert danach. Ein
+  zweiter Lauf ist wirkungslos, ein vom Betreiber bereits bearbeiteter Mandant bleibt unberührt. Neue Mandanten
+  bekommen die Grundversion ausdrücklich (`createTenantWithConfig`). Weil die Tätigkeitsarten (Phase 81) im selben
+  Release ausgeliefert werden, kann `ANALYTICS` auf int und prod nicht auslösen. Die Vorschau
+  `apps/api/scripts/audit-566-package-backfill.ts` ist eine unabhängige, rein lesende Umsetzung (nur Lesezugriffe,
+  kein Schreib-Schalter, nur Ids, Zahlen, Modul- und Signalnamen) und prüft vor dem Deploy lesend, ob die
+  Tätigkeitsart-Spalten schon existieren; sonst meldet sie `analytics=not-evaluable`. Anleitung: `docs/migrations.md`,
+  Abschnitt „Phase 566“.
+- **D-10 — Neutrale Testdaten.** `seedTestData`, der Neutralitäts-Bootstrap und `test-bootstrap.ts` buchen alle
+  Module mit Kontingent 500 (`FIXTURE_PACKAGES`), damit die aufgezeichneten Matrixzellen unverändert bleiben (nichts
+  neu aufgezeichnet). Paket-Tests bauen ihren Mandanten mit `seedGrundversionTenant`. Die Seeds buchen, was die Demo
+  zeigt (alle vier Module, Kontingent 5).
+- **D-11 — Quellwächter für den gesetzlichen Kern.** `packages-legal-core-isolation-566.test.ts` (TypeScript-AST,
+  nicht vakuös: Untergrenzen der durchsuchten Dateien, benannte Dateien, Positivkontrolle des Detektors,
+  Kontrolllauf an der Entscheidungsstelle) beweist, dass `contexts/absence/**`, `contexts/working-time-account/**`,
+  `services/clock/**`, `services/phorest/**`, der Scheduler, Ingest, Authentifizierung und Berechtigungen,
+  Anonymisierung (einschließlich der DSGVO-Löschroute in `employees.ts`), Aufbewahrung, Berichte, PDF, Dashboard,
+  Auditlog sowie Rollen kein Paket lesen. In `contexts/time-tracking/**` und `contexts/scheduling/**` sind nur die
+  benannten Einrichtungsstellen erlaubt; der Wächter prüft für alle neun Stellen, dass genau ein Gate genau einmal
+  _vor_ dem Schreibaufruf in derselben Funktion steht (Positivkontrolle mit synthetischen Quellen) und dass nur die
+  bekannten Dateien eine Kopplung, einen Salon, einen Schlüssel, eine Quelle oder ein Terminal anlegen.
+- **D-12 — Web (Mandantenseite).** `GET /api/v1/me/context` liefert additiv `packages` (`bookedModules`,
+  `salonLimit`; nur Anzeige, keine neue Berechtigung). `moduleBooked()` im Store `$stores/salon-context` liefert
+  bei unbekanntem Zustand `null` und blendet dann nichts aus; die Pakete liegen nie in `base`, `showSalonOptions()`
+  und `isMultiSalonTenant()` lesen sie nicht. `ModuleHint` ersetzt das Anlegen-Bedienelement an genau vier Stellen
+  unter `/admin` (NFC-Terminals und API-Schlüssel in `/admin/system`, Anwesenheitsquellen in `/admin/integrations`,
+  neue Phorest-Kopplung in `/admin/phorest`); bestehende Einträge bleiben sichtbar und bedienbar. Nie im Stempeln,
+  Kalender oder Dashboard, nie als Dialog. Eine 409-Ablehnung zeigt weiterhin den Text des Servers.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** neue Terminals und neue Anwesenheitsquellen sowie die Auswertung der Tätigkeitsarten in
+  `GET /time-entries/summary` sind an Module gebunden. Stempeln, Ingest, Erfassung und Korrektur sind unverändert,
+  ebenso jede Zahl der Summe außer `activityMinutes`.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** eine neue Phorest-Kopplung ist an Integrationen gebunden (`facade/couplings.ts`,
+  `api/integrations.ts`); bestehende Kopplungen, ihr Ersetzen, Entfernen und der Abgleich sind unverändert.
+- **Arbeitszeitkonto:** keine — kein Saldo, kein Monatsabschluss und keine Soll-Berechnung liest ein Paket
+  (vom Wächter bewiesen).
+- **Kompositionsschicht:** keine Regel. Berichte, PDF, DATEV und Dashboard sind paketfrei (vom Wächter bewiesen);
+  `app.ts` bildet die zwei Ablehnungen auf 409 ab, das ist die einzige Ergänzung.
+- **Unterbau:** zwei Spalten und der Typ `TenantModule` am Mandanten, `tenant-packages.ts`, die neue Betreiberroute
+  und die Audit-Aktion `TENANT_PACKAGES_CHANGED`. **Semantikänderung:** `createSalon` (für einen aktiven Salon) und
+  `activateSalon` lehnen jetzt oberhalb des Limits mit 409 ab — für jeden Aufrufer (Mandantenroute,
+  Betreiberanschluss, Provisionierung; dessen erster Salon besteht, weil das Limit 1 ist und der Mandant noch
+  keinen aktiven Salon hat). Die Fassadensignaturen sind unverändert (`lint:facade-signatures` weiterhin 142).
+
+### Grenzen
+
+- **Letzter Schreiber gewinnt.** Schreiben zwei Betreiber gleichzeitig dieselben Pakete, gilt die zuletzt
+  festgeschriebene Änderung; beide stehen im `OperatorAuditLog`. Es gibt kein `If-Match`.
+- **Die Betreiberkonsole hat eigene Hinweistexte.** `SALON_QUOTA_REACHED` und `MODULE_NOT_BOOKED` werden dort
+  nach dem Code in neutraler Betreibersprache erklärt, nicht mit dem Satz des Servers (der den Mandanten anspricht).
+- **Kein Salon-Hinweis im Mandanten bis #563.** Es gibt keine Salonverwaltung für Mandanten-Admins; eine
+  Ablehnung beim Anlegen oder Aktivieren erreicht den Mandanten nur über die API-Antwort. Der Hinweis wird mit
+  #563 ergänzt (anzeigen mit `packagesForDisplay` / `moduleBooked`; der Server antwortet weiter mit 409).
+- **Großzügige Zuteilung ist gewollt.** Die Bestandsschutz-Migration rechnet weiche Löschungen und Widerrufe mit;
+  die Zuteilung ist ein Ausgangspunkt für den Betreiber, keine Rechnungsgrundlage.
+- **Der Wächter sieht nur die benannten Verzeichnisse.** Greift eine Datei des gesetzlichen Kerns über einen Helfer
+  mit unbeteiligtem Namen auf Paketzustand zu, ohne die verbotenen Namen zu tragen, sieht der Wächter das nicht
+  (im Kopfkommentar des Tests benannt).
+- **Die Vorschau vor dem Deploy läuft mit dem Image des neuen Release.** Sie darf den Standard-Einstiegspunkt dieses
+  Images nicht starten (er führt `prisma migrate deploy` aus); Befehl und Begründung in `docs/migrations.md`.
+
+### Folge-Issues
+
+- **#624** — Erweiterte Rollen an das Ketten-Paket binden (nur Neuanlage, nie Auflösung; D-07).
+- **#563** — Salonverwaltung für Mandanten-Admins; bekommt den Ketten-Paket-Hinweis am Anlegen/Aktivieren
+  (Kommentar am Issue).
+
+### Nachweis
+
+`tenant-packages-566` (Entscheidung, Sperre, Rennen), `operator-packages-566`, `tenant-packages-addons-566`
+(Gates und was frei bleibt), `tenant-packages-never-retroactive-566`, `packages-legal-core-isolation-566`,
+`tenant-packages-migration-566` und `scripts/__tests__/audit-566-package-backfill.test.ts` (Migration gegen die
+Vorschau, Mandant für Mandant), `tenant-provisioning-88` (Grundversion, Seeds), `me-context-82`; Web:
+`tenant-modules`, `ModuleHint`, `PackagesSection`, `module-teaser-placement-566`, `salon-context`; Playwright
+`operator-console.spec.ts` (Abschnitt „Pakete“, 360 px, axe). Die Neutralitätsmatrix (1712 Zellen) und die
+Ausnahmeliste des Tenant-Scoping-Gates (44) sind unverändert.

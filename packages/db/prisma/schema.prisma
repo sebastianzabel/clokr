@@ -26,6 +26,14 @@ model Tenant {
   deactivatedByOperatorId String?
   deactivatedByOperator   OperatorAccount? @relation(fields: [deactivatedByOperatorId], references: [id], onDelete: Restrict)
 
+  // Phase 566 (#566) — booked packages per tenant. Unterbau-Erweiterung: additive, no existing reader
+  // has to change. Written only by the operator and read only through
+  // contexts/platform/tenant-packages.ts, the one decider. `salonQuota` has a database CHECK
+  // (>= 1, constraint "Tenant_salonQuota_positive") that lives in the migration because Prisma cannot
+  // model it. The empty default and quota 1 are the Grundversion.
+  bookedModules           TenantModule[]   @default([])
+  salonQuota              Int              @default(1)
+
   employees            Employee[]
   leaveTypes           LeaveType[]
   publicHolidays       PublicHoliday[]
@@ -55,6 +63,14 @@ model Tenant {
   salonAssignments     EmployeeSalonAssignment[]
 
   @@index([deactivatedAt])
+}
+
+// Phase 566 (#566) — bookable add-on packages of a tenant. The Grundversion (no module) is never gated.
+enum TenantModule {
+  CHAIN
+  INTEGRATIONS
+  HARDWARE_CLOCK
+  ANALYTICS
 }
 
 // Phase 64b (issue #64) — Unterbau level below Tenant (ADR 0001): a Salon is never hard-deleted,

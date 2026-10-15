@@ -49,6 +49,7 @@ import { FederalState, type Prisma, type Salon } from "@clokr/db";
 import { z } from "zod";
 import type { AccessReach } from "../access-context";
 import type { CalendarDay } from "../salon-assignment-rules";
+import { assertSalonActivationAllowed, lockTenantForPackages } from "../tenant-packages";
 import {
   endDeploymentsOnSalonDeactivation,
   homeSalonUsageFrom,
@@ -320,6 +321,13 @@ export async function salonExistsInForeignTenant(
  * Phase 71b (issue #71), D-01: when `input.federalState` is absent, the new salon inherits the
  * tenant's CURRENT `federalState`, read through the SAME `db` (Tenant is an Unterbau model, same
  * context — no cross-context read).
+ *
+ * Phase 566 (#566), D-04: the salon quota applies to every caller of this function (tenant route,
+ * operator route, provisioning), so a salon created as ACTIVE first passes
+ * `assertSalonActivationAllowed()` — it takes the Tenant lock (same order as `activateSalon`:
+ * Tenant, then Salon) and counts afterwards, which is what serialises two concurrent creates (a
+ * create locks no existing Salon row). An INACTIVE salon is never refused. With a bare client
+ * (test bootstrap) the lock is a single autocommit statement and the count still applies.
  */
 export async function createSalon(
   db: Prisma.TransactionClient,
@@ -327,6 +335,9 @@ export async function createSalon(
   input: CreateSalonInput,
 ): Promise<Salon> {
   const isActive = input.isActive ?? true;
+  if (isActive) {
+    await assertSalonActivationAllowed(db, tenantId);
+  }
   const federalState =
     input.federalState ??
     (
@@ -538,17 +549,31 @@ export async function deactivateSalon(
   };
 }
 
-/** D-07: the mirror of {@link deactivateSalon} — same lock, same lookup shape. */
+/**
+ * D-07: the mirror of {@link deactivateSalon} — same lock, same lookup shape.
+ *
+ * Phase 566 (D-04): activating a salon is bounded by the tenant's effective salon limit
+ * (`tenant-packages.ts`). Lock order is Tenant first, then the Salon rows — the only order used
+ * anywhere, so no activation can deadlock against a role change or another activation. The count
+ * runs AFTER the existence and already-active checks on purpose: an unknown or already-active id
+ * keeps its unchanged answer (404 / `ALREADY_ACTIVE`) even on a tenant at its limit, so the quota
+ * never turns into a tenant-membership oracle. A refusal throws `SalonQuotaReachedError`, which
+ * `app.ts` maps to 409 `SALON_QUOTA_REACHED`; it rolls the transaction back, so no audit row is
+ * written.
+ */
 export async function activateSalon(
   db: Prisma.TransactionClient,
   tenantId: string,
   salonId: string,
 ): Promise<SalonActivation> {
+  await lockTenantForPackages(db, tenantId);
   await db.$queryRaw`SELECT "id" FROM "Salon" WHERE "tenantId" = ${tenantId} ORDER BY "id" FOR UPDATE`;
 
   const existing = await db.salon.findFirst({ where: { id: salonId, tenantId } });
   if (!existing) return { status: "NOT_FOUND" };
   if (existing.isActive) return { status: "ALREADY_ACTIVE" };
+
+  await assertSalonActivationAllowed(db, tenantId);
 
   const updated = await db.salon.update({
     where: { id: salonId, tenantId },

@@ -3,6 +3,7 @@
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import type { FederalState } from "@clokr/types";
+import type { TenantModule } from "$lib/packages/tenant-modules";
 import { CONNECTION_TEXT, RATE_LIMIT_TEXT, SERVER_FAULT_TEXT } from "./reasons";
 
 const LABELS: Record<FederalState, string> = {
@@ -55,3 +56,14 @@ export function describeLoadError(error: unknown, fallback: string): string {
   if (status >= 500) return SERVER_FAULT_TEXT;
   return fallback;
 }
+
+/**
+ * One neutral line per bookable module for the "Pakete" section. The module names come from
+ * `TENANT_MODULE_LABELS` (`lib/packages/tenant-modules.ts`), the one web place that names them.
+ */
+export const TENANT_MODULE_DESCRIPTIONS: Readonly<Record<TenantModule, string>> = {
+  CHAIN: "Mehrere aktive Salons bis zum Salon-Kontingent",
+  INTEGRATIONS: "Phorest-Synchronisation und API-Schlüssel",
+  HARDWARE_CLOCK: "NFC-Terminals und WLAN-Anwesenheit",
+  ANALYTICS: "Auswertung nach Tätigkeitsarten",
+};

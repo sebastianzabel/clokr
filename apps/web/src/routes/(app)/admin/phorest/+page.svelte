@@ -8,6 +8,9 @@
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
+  import { authStore } from "$stores/auth";
+  import { salonContext, moduleBooked } from "$stores/salon-context";
+  import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
 
   // Phase 85.1-03 — extracted from admin/system/+page.svelte (D-10: eigener Admin-Tab).
   // Phorest
@@ -16,7 +19,25 @@
   // Phase 65b (issue #65, D-20): true iff the tenant has exactly one active salon — the API is the
   // authority here, the page only reflects it. When false the Branch-ID field is locked (the branch
   // now lives on a per-salon coupling; multi-coupling UI is deferred to #82 ff.).
-  let phBranchIdEditable = $state(true);
+  let phSoleSalon = $state(true);
+  // The sole active salon's existing coupling branch as the API returned it (null = none yet).
+  let phServerBranchId = $state<string | null>(null);
+  // Phase 566 (D-05, D-12): true when the tenant has not booked Integrationen and the sole active
+  // salon has no coupling yet — a first coupling would be refused, so the field is locked and the
+  // request carries no `branchId` (the credentials still save on the free path). Display only: the
+  // server refuses the coupling regardless. An existing coupling stays editable (updating the
+  // branch is free). Unknown package state never blocks. Derived from the store, never read once:
+  // the layout's own forced load supersedes this page's load on a hard reload, so a one-shot read
+  // right after `await salonContext.load(...)` would still see the unloaded state.
+  let phConfigLoaded = $state(false);
+  const phCouplingBlocked = $derived(
+    phConfigLoaded &&
+      moduleBooked($salonContext, "INTEGRATIONS") === false &&
+      phServerBranchId === null,
+  );
+  const phBranchIdEditable = $derived(phSoleSalon && !phCouplingBlocked);
+  // True when more than one salon is active (the branch is then coupled per salon).
+  let phMultiSalon = $state(false);
   let phUsername = $state("");
   let phPassword = $state("");
   let phConfigured = $state(false);
@@ -166,6 +187,8 @@
 
   onMount(async () => {
     try {
+      // Forced, so the package state is fresh before the Branch-ID field is decided.
+      await salonContext.load($authStore.user?.id ?? null, { force: true }).catch(() => undefined);
       const ph = await api.get<{
         configured: boolean;
         phorestBusinessId: string | null;
@@ -185,7 +208,12 @@
       phConfigured = ph.configured;
       phBusinessId = ph.phorestBusinessId ?? "";
       phBranchId = ph.branchId ?? "";
-      phBranchIdEditable = ph.branchIdEditable;
+      phMultiSalon = !ph.branchIdEditable;
+      phServerBranchId = ph.branchId;
+      phSoleSalon = ph.branchIdEditable;
+      phConfigLoaded = true;
+      // The request spread `...(phBranchIdEditable ? { branchId: phBranchId } : {})` stays as it is
+      // (pinned contract): a blocked field is simply not editable, so no branch is sent.
       phUsername = ph.phorestUsername ?? "";
       phAutoSync = ph.phorestAutoSync ?? false;
       phSyncCron = ph.phorestSyncCron ?? "0 3 * * *";
@@ -525,10 +553,13 @@
           placeholder="z.B. branch-001"
           disabled={!phBranchIdEditable}
         />
-        {#if !phBranchIdEditable}
+        {#if phMultiSalon}
           <p class="form-hint text-muted">
             Mehrere aktive Salons — die Phorest-Filiale wird je Salon gekoppelt.
           </p>
+        {/if}
+        {#if phCouplingBlocked}
+          <ModuleHint module="INTEGRATIONS" subject="Phorest-Kopplungen" />
         {/if}
       </div>
       <div class="form-group">

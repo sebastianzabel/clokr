@@ -28,6 +28,7 @@ import type { FastifyInstance } from "fastify";
 import type { FederalState, Prisma } from "@clokr/db";
 import { DEFAULT_SALON_OPENING_HOURS, createSalon } from "./facade/salons.js";
 import { operatorTenantAudit } from "./operator-tenant-audit.js";
+import { GRUNDVERSION } from "./tenant-packages.js";
 import { uniqueViolationTarget } from "../../utils/prisma-unique-violation.js";
 import {
   createEmployeeInTransaction,
@@ -65,6 +66,11 @@ export async function createTenantWithConfig(
       name: input.name,
       slug: input.slug,
       federalState: input.federalState,
+      // Phase 566 (D-09): a new tenant always starts on the Grundversion; only the operator books
+      // packages afterwards. Equal to the column defaults on purpose, so a later change of a
+      // default can never silently grant a tenant more than it booked.
+      bookedModules: [...GRUNDVERSION.bookedModules],
+      salonQuota: GRUNDVERSION.salonQuota,
     },
   });
   const config = await db.tenantConfig.create({

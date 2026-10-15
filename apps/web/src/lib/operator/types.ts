@@ -1,6 +1,21 @@
 // Wire types of the operator API (Issue #89). Mirrors the metadata-only DTOs of
 // `contexts/platform/api/operator/{tenants,salons}.ts`; the console shows master data only.
 import type { FederalState } from "@clokr/types";
+import type { TenantModule } from "$lib/packages/tenant-modules";
+
+/** Booked packages of a tenant as the operator API reports them (Phase 566). */
+export interface OperatorTenantPackages {
+  bookedModules: TenantModule[];
+  salonQuota: number;
+  /** Number of active salons; display only (the warning when the limit lies below it). */
+  activeSalonCount: number;
+}
+
+/** Body of `PUT /operator/tenants/:id/packages`; the strict API schema accepts exactly these keys. */
+export interface SetTenantPackagesBody {
+  bookedModules: TenantModule[];
+  salonQuota: number;
+}
 
 export interface OperatorTenant {
   id: string;
@@ -10,6 +25,7 @@ export interface OperatorTenant {
   createdAt: string;
   deactivatedAt: string | null;
   deactivatedReason: string | null;
+  packages: OperatorTenantPackages;
 }
 
 /** One weekday of the opening hours; `day` 0 = Montag … 6 = Sonntag (API order). */

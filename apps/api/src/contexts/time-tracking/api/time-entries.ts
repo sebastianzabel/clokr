@@ -16,6 +16,7 @@ import {
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
   findSalon, // Phase 81 (#81), D-09 — summary salon filter, identical 404
   resolveSalonInReach, // Issue #85 (Phase 85b-03), D-08/D-13 — the one validator of a chosen salon
+  isModuleBooked, // Issue #566 (D-05) — the activity-kind evaluation is the Auswertungen module
 } from "../../platform";
 import type { PermissionKey } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
@@ -2908,7 +2909,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         "activityMinutes: working minutes per activity kind (PRODUCTIVE, SETUP_CLEANING, UNSPECIFIED) over the " +
         "same entries — minutes only, never amounts, rates or ratios; the three values sum to workingMinutes " +
         "before rounding, each is rounded once. Optional salonId (a salon of the caller's tenant; a foreign or " +
-        "unknown id answers 404) narrows every figure of the body to that salon's entries.",
+        "unknown id answers 404) narrows every figure of the body to that salon's entries. " +
+        "When the tenant has not booked the Auswertungen module, activityMinutes is null and " +
+        "activityMinutesUnavailableReason is MODULE_NOT_BOOKED; every other figure is unchanged.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requireAuth,
@@ -2992,6 +2995,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         entries = entries.filter((e) => activityRows.get(e.id)?.salonId === q.salonId);
       }
 
+      const analyticsBooked = await isModuleBooked(app.prisma, tenantId, "ANALYTICS");
+
       // Exact per-entry values summed, rounded once at the end.
       let presence = 0;
       let working = 0;
@@ -3018,11 +3023,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         breakMinutes: Math.round(breaks),
         entryCount: entries.length,
         // Issue #81 (D-10): minutes only — never amounts, rates or ratios.
-        activityMinutes: {
-          PRODUCTIVE: Math.round(perKind.PRODUCTIVE),
-          SETUP_CLEANING: Math.round(perKind.SETUP_CLEANING),
-          UNSPECIFIED: Math.round(perKind.UNSPECIFIED),
-        },
+        // Issue #566 (D-05): the per-kind evaluation is the Auswertungen module. Without it only this
+        // figure is withheld; the reason key is omitted when booked, so the body stays byte-identical.
+        ...(analyticsBooked
+          ? {
+              activityMinutes: {
+                PRODUCTIVE: Math.round(perKind.PRODUCTIVE),
+                SETUP_CLEANING: Math.round(perKind.SETUP_CLEANING),
+                UNSPECIFIED: Math.round(perKind.UNSPECIFIED),
+              },
+            }
+          : {
+              activityMinutes: null,
+              activityMinutesUnavailableReason: "MODULE_NOT_BOOKED" as const,
+            }),
       };
     },
   });

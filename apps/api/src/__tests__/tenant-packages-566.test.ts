@@ -1,0 +1,787 @@
+/**
+ * Phase 566 (#566), plan 01 — booked packages per tenant: the one decider, the salon limit on
+ * activation, the database CHECK and the neutral fixture.
+ *
+ * Package tests create Grundversion tenants explicitly (`seedGrundversionTenant`); the shared
+ * `seedTestData` fixture books everything (D-10), pinned in the last block.
+ */
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import type { FastifyInstance } from "fastify";
+import type { Prisma } from "@clokr/db";
+import {
+  getTestApp,
+  seedTestData,
+  seedGrundversionTenant,
+  seedOperator,
+  createTestSalon,
+  cleanupTestData,
+  FIXTURE_PACKAGES,
+} from "./setup";
+import {
+  DEFAULT_SALON_OPENING_HOURS,
+  activateSalon,
+  createSalon,
+} from "../contexts/platform/facade/salons";
+import { signOperatorToken } from "../contexts/platform/operator-auth";
+import {
+  GRUNDVERSION,
+  ModuleNotBookedError,
+  SALON_QUOTA_REACHED_MESSAGE,
+  SalonQuotaReachedError,
+  TENANT_MODULES,
+  assertModuleBooked,
+  isModuleBooked,
+  moduleBookedIn,
+  normalizeStoredPackages,
+  packagesForDisplay,
+  salonLimit,
+} from "../contexts/platform/tenant-packages";
+
+describe("salon activation against the booked limit (Phase 566, D-04, AC-566-02)", () => {
+  let app: FastifyInstance;
+  let grund: Awaited<ReturnType<typeof seedGrundversionTenant>>;
+  let chainTenant: Awaited<ReturnType<typeof seedGrundversionTenant>>;
+  let noChainTenant: Awaited<ReturnType<typeof seedGrundversionTenant>>;
+
+  function activate(token: string, salonId: string) {
+    return app.inject({
+      method: "POST",
+      url: `/api/v1/salons/${salonId}/activate`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    grund = await seedGrundversionTenant(app, "pkg566-grund");
+    chainTenant = await seedGrundversionTenant(app, "pkg566-chain");
+    noChainTenant = await seedGrundversionTenant(app, "pkg566-nochain");
+  });
+
+  afterAll(async () => {
+    for (const t of [grund, chainTenant, noChainTenant]) {
+      try {
+        await cleanupTestData(app, t.tenant.id);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  it("(a) refuses activation beyond the Grundversion limit with exactly { error, code } and writes nothing", async () => {
+    const inactive = await createTestSalon(app.prisma, grund.tenant.id, {
+      name: "Vorbereiteter Salon",
+      isActive: false,
+    });
+    const before = await app.prisma.auditLog.count({ where: { entityId: inactive.id } });
+
+    const res = await activate(grund.adminToken, inactive.id);
+
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect(Object.keys(body).sort((a, b) => a.localeCompare(b))).toEqual(["code", "error"]);
+    expect(body.code).toBe("SALON_QUOTA_REACHED");
+    expect(body.error).toBe(SALON_QUOTA_REACHED_MESSAGE);
+    expect(String(body.error)).toContain("Ketten-Paket");
+
+    const row = await app.prisma.salon.findUniqueOrThrow({ where: { id: inactive.id } });
+    expect(row.isActive).toBe(false);
+    expect(await app.prisma.auditLog.count({ where: { entityId: inactive.id } })).toBe(before);
+  });
+
+  it("(b) activates below the limit with CHAIN and a quota of 2, refuses the next one", async () => {
+    await app.prisma.tenant.update({
+      where: { id: chainTenant.tenant.id },
+      data: { bookedModules: ["CHAIN"], salonQuota: 2 },
+    });
+    // The fixture tenant already owns one active default salon, so the quota of 2 has one free slot.
+    const second = await createTestSalon(app.prisma, chainTenant.tenant.id, {
+      name: "Zweiter Salon",
+      isActive: false,
+    });
+    const third = await createTestSalon(app.prisma, chainTenant.tenant.id, {
+      name: "Dritter Salon",
+      isActive: false,
+    });
+
+    const ok = await activate(chainTenant.adminToken, second.id);
+    expect(ok.statusCode).toBe(200);
+    expect(JSON.parse(ok.body).isActive).toBe(true);
+
+    const refused = await activate(chainTenant.adminToken, third.id);
+    expect(refused.statusCode).toBe(409);
+    expect(JSON.parse(refused.body).code).toBe("SALON_QUOTA_REACHED");
+  });
+
+  it("(c) a quota above 1 without CHAIN has no effect (D-02)", async () => {
+    await app.prisma.tenant.update({
+      where: { id: noChainTenant.tenant.id },
+      data: { bookedModules: ["INTEGRATIONS"], salonQuota: 3 },
+    });
+    const inactive = await createTestSalon(app.prisma, noChainTenant.tenant.id, {
+      name: "Zweiter Salon",
+      isActive: false,
+    });
+
+    const res = await activate(noChainTenant.adminToken, inactive.id);
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).code).toBe("SALON_QUOTA_REACHED");
+  });
+
+  it("(d) an unknown salon id on a tenant at its limit keeps the unchanged 404", async () => {
+    const atLimit = await activate(grund.adminToken, randomUUID());
+    expect(atLimit.statusCode).toBe(404);
+    expect(JSON.parse(atLimit.body)).toEqual({ error: "Salon nicht gefunden" });
+  });
+
+  it("(e) an already-active salon on a tenant at its limit keeps the unchanged already-active reply", async () => {
+    const active = await app.prisma.salon.findFirstOrThrow({
+      where: { tenantId: grund.tenant.id, isActive: true },
+    });
+    const res = await activate(grund.adminToken, active.id);
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({ error: "Der Salon ist bereits aktiv." });
+  });
+});
+
+describe("Tenant_salonQuota_positive (Phase 566, D-01, T-566-04)", () => {
+  let app: FastifyInstance;
+  let fixture: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    fixture = await seedTestData(app, "pkg566-check");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, fixture.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  it("(f) the database rejects a salon quota below 1 and names the constraint", async () => {
+    const attempt = app.prisma
+      .$executeRaw`UPDATE "Tenant" SET "salonQuota" = 0 WHERE "id" = ${fixture.tenant.id}`;
+    await expect(attempt).rejects.toThrow(/Tenant_salonQuota_positive/);
+    const row = await app.prisma.tenant.findUniqueOrThrow({ where: { id: fixture.tenant.id } });
+    expect(row.salonQuota).toBe(FIXTURE_PACKAGES.salonQuota);
+  });
+});
+
+describe("the decider as pure functions (Phase 566, D-02/D-03)", () => {
+  let app: FastifyInstance;
+  let fixture: Awaited<ReturnType<typeof seedGrundversionTenant>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    fixture = await seedGrundversionTenant(app, "pkg566-unit");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, fixture.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  it("(g) salonLimit is the quota only with CHAIN", () => {
+    expect(salonLimit({ bookedModules: ["CHAIN"], salonQuota: 5 })).toBe(5);
+    expect(salonLimit({ bookedModules: ["INTEGRATIONS", "ANALYTICS"], salonQuota: 5 })).toBe(1);
+    expect(salonLimit({ bookedModules: ["CHAIN"], salonQuota: 1 })).toBe(1);
+    expect(salonLimit(GRUNDVERSION)).toBe(1);
+  });
+
+  it("(g) normalizeStoredPackages reads NULL as empty and orders canonically without duplicates", () => {
+    expect(normalizeStoredPackages({ bookedModules: null, salonQuota: 1 })).toEqual({
+      bookedModules: [],
+      salonQuota: 1,
+    });
+    expect(
+      normalizeStoredPackages({
+        bookedModules: ["ANALYTICS", "CHAIN", "ANALYTICS", "HARDWARE_CLOCK"],
+        salonQuota: 4,
+      }),
+    ).toEqual({ bookedModules: ["CHAIN", "HARDWARE_CLOCK", "ANALYTICS"], salonQuota: 4 });
+    expect(TENANT_MODULES).toEqual(["CHAIN", "INTEGRATIONS", "HARDWARE_CLOCK", "ANALYTICS"]);
+    expect(moduleBookedIn({ bookedModules: ["CHAIN"] }, "CHAIN")).toBe(true);
+    expect(moduleBookedIn({ bookedModules: ["CHAIN"] }, "ANALYTICS")).toBe(false);
+  });
+
+  it("(g) isModuleBooked answers true, false and false for an unknown tenant", async () => {
+    await app.prisma.tenant.update({
+      where: { id: fixture.tenant.id },
+      data: { bookedModules: ["INTEGRATIONS"] },
+    });
+    expect(await isModuleBooked(app.prisma, fixture.tenant.id, "INTEGRATIONS")).toBe(true);
+    expect(await isModuleBooked(app.prisma, fixture.tenant.id, "ANALYTICS")).toBe(false);
+    expect(await isModuleBooked(app.prisma, randomUUID(), "INTEGRATIONS")).toBe(false);
+  });
+
+  it("(g) packagesForDisplay shows the Grundversion for an unknown tenant", async () => {
+    expect(await packagesForDisplay(app.prisma, randomUUID())).toEqual({
+      bookedModules: [],
+      salonLimit: 1,
+    });
+  });
+
+  it("(g) assertModuleBooked throws a 409 MODULE_NOT_BOOKED naming the module", async () => {
+    const error = await assertModuleBooked(app.prisma, fixture.tenant.id, "HARDWARE_CLOCK").then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(error).toBeInstanceOf(ModuleNotBookedError);
+    const refusal = error as ModuleNotBookedError;
+    expect(refusal.code).toBe("MODULE_NOT_BOOKED");
+    expect(refusal.statusCode).toBe(409);
+    expect(refusal.message).toContain("Hardware-Stempeln");
+  });
+});
+
+describe("the shared fixture books everything (Phase 566, D-10)", () => {
+  let app: FastifyInstance;
+  let fixture: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    fixture = await seedTestData(app, "pkg566-fixture");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, fixture.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  it("(h) a seedTestData tenant reads back all four modules and quota 500", async () => {
+    const row = await app.prisma.tenant.findUniqueOrThrow({ where: { id: fixture.tenant.id } });
+    expect(row.bookedModules).toEqual([...TENANT_MODULES]);
+    expect(row.salonQuota).toBe(500);
+    expect(fixture.tenant.salonQuota).toBe(500);
+  });
+});
+
+describe("salon creation against the booked limit (Phase 566, D-04, AC-566-02)", () => {
+  let app: FastifyInstance;
+  let grund: Awaited<ReturnType<typeof seedGrundversionTenant>>;
+  let chainTenant: Awaited<ReturnType<typeof seedGrundversionTenant>>;
+
+  function create(token: string, body: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: "/api/v1/salons",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { openingHours: DEFAULT_SALON_OPENING_HOURS, ...body },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    grund = await seedGrundversionTenant(app, "pkg566-create-grund");
+    chainTenant = await seedGrundversionTenant(app, "pkg566-create-chain");
+  });
+
+  afterAll(async () => {
+    for (const t of [grund, chainTenant]) {
+      try {
+        await cleanupTestData(app, t.tenant.id);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  it("(a) refuses an active create beyond the Grundversion limit with exactly { error, code } and persists nothing", async () => {
+    const name = `Zweiter Salon ${randomUUID().slice(0, 8)}`;
+    const salonsBefore = await app.prisma.salon.count({ where: { tenantId: grund.tenant.id } });
+
+    const res = await create(grund.adminToken, { name });
+
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect(Object.keys(body).sort((a, b) => a.localeCompare(b))).toEqual(["code", "error"]);
+    expect(body.code).toBe("SALON_QUOTA_REACHED");
+    expect(body.error).toBe(SALON_QUOTA_REACHED_MESSAGE);
+
+    // Nothing leaked: no Salon row and no audit row carrying the refused name.
+    expect(await app.prisma.salon.count({ where: { tenantId: grund.tenant.id } })).toBe(
+      salonsBefore,
+    );
+    expect(await app.prisma.salon.count({ where: { tenantId: grund.tenant.id, name } })).toBe(0);
+    expect(
+      await app.prisma.auditLog.count({
+        where: { entity: "Salon", action: "CREATE", newValue: { path: ["name"], equals: name } },
+      }),
+    ).toBe(0);
+  });
+
+  it("(b) an inactive create is never refused, even at the limit", async () => {
+    const res = await create(grund.adminToken, { name: "Vorbereitet", isActive: false });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body.isActive).toBe(false);
+    expect(body.deactivatedAt).not.toBeNull();
+  });
+
+  it("(c) with CHAIN and a quota of 2 the first active create passes and the second is refused", async () => {
+    await app.prisma.tenant.update({
+      where: { id: chainTenant.tenant.id },
+      data: { bookedModules: ["CHAIN"], salonQuota: 2 },
+    });
+    // The fixture tenant already owns one active default salon, so one slot is free.
+    const first = await create(chainTenant.adminToken, { name: "Zweiter Salon" });
+    expect(first.statusCode).toBe(201);
+
+    const second = await create(chainTenant.adminToken, { name: "Dritter Salon" });
+    expect(second.statusCode).toBe(409);
+    expect(JSON.parse(second.body).code).toBe("SALON_QUOTA_REACHED");
+  });
+});
+
+// ── Operator paths (Phase 566, D-04, D-09, AC-566-02) ─────────────────────────────────────────
+
+let operatorAddressCounter = 0;
+
+/** Every operator request carries its own remote address so the per-route rate limits never trip. */
+function operatorAddress(): string {
+  const n = operatorAddressCounter++;
+  return `10.56.${Math.floor(n / 250) % 250}.${(n % 250) + 1}`;
+}
+
+describe("operator paths against the booked limit (Phase 566, D-04, D-09, AC-566-02)", () => {
+  let app: FastifyInstance;
+  let operatorToken: string;
+  let grund: Awaited<ReturnType<typeof seedGrundversionTenant>>;
+  const createdTenantIds: string[] = [];
+
+  function operatorCall(method: "POST", url: string, payload?: object) {
+    return app.inject({
+      method,
+      url,
+      headers: { authorization: `Bearer ${operatorToken}`, "user-agent": "vitest-packages-566" },
+      ...(payload ? { payload } : {}),
+      remoteAddress: operatorAddress(),
+    });
+  }
+
+  function salonBody(name: string) {
+    return {
+      name,
+      street: "Hauptstrasse 1",
+      postalCode: "30159",
+      city: "Hannover",
+      openingHours: DEFAULT_SALON_OPENING_HOURS,
+      federalState: "NIEDERSACHSEN",
+    };
+  }
+
+  /** Everything one operator request could have left behind for a salon of this name. */
+  async function leftovers(tenantId: string, name: string) {
+    return {
+      salons: await app.prisma.salon.count({ where: { tenantId, name } }),
+      operatorRows: await app.prisma.operatorAuditLog.count({
+        where: { action: "SALON_CREATED", newValue: { path: ["name"], equals: name } },
+      }),
+      tenantRows: await app.prisma.auditLog.count({
+        where: { entity: "Salon", action: "CREATE", newValue: { path: ["name"], equals: name } },
+      }),
+    };
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    grund = await seedGrundversionTenant(app, "pkg566-op");
+    const operator = await seedOperator(app);
+    operatorToken = signOperatorToken(app, operator.id, "access", operator.tokenVersion);
+  });
+
+  afterAll(async () => {
+    for (const id of [grund.tenant.id, ...createdTenantIds]) {
+      try {
+        await cleanupTestData(app, id);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  it("(a) the operator create refuses an active salon beyond the limit with the tenant route's body and persists nothing", async () => {
+    const name = `Operator Zweiter ${randomUUID().slice(0, 8)}`;
+    const res = await operatorCall(
+      "POST",
+      `/api/v1/operator/tenants/${grund.tenant.id}/salons`,
+      salonBody(name),
+    );
+
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect(Object.keys(body).sort((a, b) => a.localeCompare(b))).toEqual(["code", "error"]);
+    expect(body.code).toBe("SALON_QUOTA_REACHED");
+    expect(body.error).toBe(SALON_QUOTA_REACHED_MESSAGE);
+    expect(await leftovers(grund.tenant.id, name)).toEqual({
+      salons: 0,
+      operatorRows: 0,
+      tenantRows: 0,
+    });
+  });
+
+  it("(b) the operator activate refuses beyond the limit with the identical body and leaves the salon inactive", async () => {
+    const inactive = await createTestSalon(app.prisma, grund.tenant.id, {
+      name: "Operator vorbereitet",
+      isActive: false,
+    });
+    const operatorBefore = await app.prisma.operatorAuditLog.count({
+      where: { subjectTenantId: grund.tenant.id, entityId: inactive.id },
+    });
+    const tenantBefore = await app.prisma.auditLog.count({
+      where: { entity: "Salon", entityId: inactive.id },
+    });
+
+    const res = await operatorCall(
+      "POST",
+      `/api/v1/operator/tenants/${grund.tenant.id}/salons/${inactive.id}/activate`,
+    );
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: SALON_QUOTA_REACHED_MESSAGE,
+      code: "SALON_QUOTA_REACHED",
+    });
+    const row = await app.prisma.salon.findUniqueOrThrow({ where: { id: inactive.id } });
+    expect(row.isActive).toBe(false);
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: { subjectTenantId: grund.tenant.id, entityId: inactive.id },
+      }),
+    ).toBe(operatorBefore);
+    expect(
+      await app.prisma.auditLog.count({ where: { entity: "Salon", entityId: inactive.id } }),
+    ).toBe(tenantBefore);
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: { subjectTenantId: grund.tenant.id, action: "SALON_ACTIVATED" },
+      }),
+    ).toBe(0);
+  });
+
+  it("(b2) the operator activate of an already-active salon at the limit keeps the ALREADY_ACTIVE body", async () => {
+    const active = await app.prisma.salon.findFirstOrThrow({
+      where: { tenantId: grund.tenant.id, isActive: true },
+    });
+    const res = await operatorCall(
+      "POST",
+      `/api/v1/operator/tenants/${grund.tenant.id}/salons/${active.id}/activate`,
+    );
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    expect(body.error).toBe("Der Salon ist bereits aktiv.");
+    expect(body.code).not.toBe("SALON_QUOTA_REACHED");
+  });
+
+  it("(c) a new operator-created tenant starts on the Grundversion and still gets its active default salon", async () => {
+    const mailSpy = vi.spyOn(app.mailer, "sendInvitation").mockImplementation(async () => {});
+    try {
+      const slug = `p566-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const res = await operatorCall("POST", "/api/v1/operator/tenants", {
+        name: `Mandant ${slug}`,
+        slug,
+        federalState: "SACHSEN",
+        admin: { email: `${slug}@example.invalid`, firstName: "Erste", lastName: "Leitung" },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      const parsed = JSON.parse(res.body) as { tenant: { id: string }; defaultSalonId: string };
+      createdTenantIds.push(parsed.tenant.id);
+
+      const salon = await app.prisma.salon.findUniqueOrThrow({
+        where: { id: parsed.defaultSalonId },
+      });
+      expect(salon.isActive).toBe(true);
+      const stored = await app.prisma.tenant.findUniqueOrThrow({ where: { id: parsed.tenant.id } });
+      expect(stored.bookedModules).toEqual([]);
+      expect(stored.salonQuota).toBe(1);
+    } finally {
+      mailSpy.mockRestore();
+    }
+  });
+
+  it("(d) a deactivated tenant at its limit still answers TENANT_DEACTIVATED, the gate runs first", async () => {
+    const dead = await seedGrundversionTenant(app, "pkg566-op-dead");
+    createdTenantIds.push(dead.tenant.id);
+    await app.prisma.tenant.update({
+      where: { id: dead.tenant.id },
+      data: { deactivatedAt: new Date(), deactivatedReason: "test" },
+    });
+
+    const res = await operatorCall(
+      "POST",
+      `/api/v1/operator/tenants/${dead.tenant.id}/salons`,
+      salonBody(`Operator Tot ${randomUUID().slice(0, 8)}`),
+    );
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).code).toBe("TENANT_DEACTIVATED");
+  });
+});
+
+// ── Concurrency (Phase 566, D-04, T-566-06, AC-566-02) ────────────────────────────────────────
+//
+// Two kinds of race. `activateSalon` also locks every Salon row of the tenant (`FOR UPDATE`), so two
+// ACTIVATIONS serialise even without the Tenant lock. Two CREATES lock no existing Salon row, so
+// only the Tenant lock serialises them: the deterministic proof that the Tenant lock carries the
+// invariant is therefore the create race (a). The activation races prove the user-visible outcome.
+//
+// Mutation recorded in the SUMMARY (not re-run by CI): `lockTenantForPackages` turned into a no-op
+// -> case (a) goes red because tx2 is never observed waiting on tx1.
+
+interface RaceResult<A, B> {
+  first: PromiseSettledResult<A>;
+  second: PromiseSettledResult<B>;
+  /** PostgreSQL reported the second transaction as blocked by the first while it was held open. */
+  blocked: boolean;
+}
+
+/**
+ * Runs `firstWork` in one transaction and holds it open (after the work returned, so all its locks
+ * are held), starts `secondWork` in another, and polls `pg_blocking_pids` until the second is seen
+ * waiting on the first — synchronised on observed database state, never on a fixed sleep.
+ */
+async function raceTwoTransactions<A, B>(
+  app: FastifyInstance,
+  firstWork: (tx: Prisma.TransactionClient) => Promise<A>,
+  secondWork: (tx: Prisma.TransactionClient) => Promise<B>,
+): Promise<RaceResult<A, B>> {
+  let releaseFirst: (() => void) | undefined;
+  const holdGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let signalFirstLocked: ((pid: number) => void) | undefined;
+  const firstLocked = new Promise<number>((resolve) => {
+    signalFirstLocked = resolve;
+  });
+  const firstPromise = app.prisma.$transaction(
+    async (tx) => {
+      const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+      const result = await firstWork(tx);
+      signalFirstLocked?.(pid);
+      await holdGate;
+      return result;
+    },
+    { timeout: 20000, maxWait: 20000 },
+  );
+  // A work failure in tx1 would never signal; surface it instead of hanging.
+  const firstPid = await Promise.race([
+    firstLocked,
+    firstPromise.then(
+      () => Promise.reject(new Error("first transaction ended before it signalled")),
+      (err: unknown) => Promise.reject(err),
+    ),
+  ]);
+
+  let signalSecondPid: ((pid: number) => void) | undefined;
+  const secondPidKnown = new Promise<number>((resolve) => {
+    signalSecondPid = resolve;
+  });
+  let secondSettled = false;
+  const secondPromise = app.prisma
+    .$transaction(
+      async (tx) => {
+        const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+        signalSecondPid?.(pid);
+        return secondWork(tx);
+      },
+      { timeout: 20000, maxWait: 20000 },
+    )
+    .finally(() => {
+      secondSettled = true;
+    });
+  const secondPid = await secondPidKnown;
+
+  const deadline = Date.now() + 10000;
+  let blocked = false;
+  while (!secondSettled && Date.now() < deadline) {
+    const [{ blockers }] = await app.prisma.$queryRaw<{ blockers: number[] }[]>`
+      SELECT pg_blocking_pids(${secondPid}::int) AS blockers`;
+    if (blockers.includes(firstPid)) {
+      blocked = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  releaseFirst?.();
+  const [first, second] = await Promise.allSettled([firstPromise, secondPromise]);
+  return { first, second, blocked };
+}
+
+function expectQuotaRefusal(result: PromiseSettledResult<unknown>) {
+  expect(result.status).toBe("rejected");
+  expect((result as PromiseRejectedResult).reason).toBeInstanceOf(SalonQuotaReachedError);
+}
+
+describe("concurrent creates and activations at the limit (Phase 566, AC-566-02)", () => {
+  let app: FastifyInstance;
+  let operatorToken: string;
+  const tenants: Awaited<ReturnType<typeof seedGrundversionTenant>>[] = [];
+
+  /** A CHAIN tenant with a quota of 2 and its one active default salon: exactly one slot is free. */
+  async function atLimitMinusOne(label: string) {
+    const fixture = await seedGrundversionTenant(app, `pkg566-race-${label}`);
+    tenants.push(fixture);
+    await app.prisma.tenant.update({
+      where: { id: fixture.tenant.id },
+      data: { bookedModules: ["CHAIN"], salonQuota: 2 },
+    });
+    return fixture;
+  }
+
+  function newSalonInput(name: string) {
+    return {
+      name,
+      openingHours: DEFAULT_SALON_OPENING_HOURS,
+      street: null,
+      postalCode: null,
+      city: null,
+    };
+  }
+
+  async function activeCount(tenantId: string) {
+    return app.prisma.salon.count({ where: { tenantId, isActive: true } });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const operator = await seedOperator(app);
+    operatorToken = signOperatorToken(app, operator.id, "access", operator.tokenVersion);
+  });
+
+  afterAll(async () => {
+    for (const t of tenants) {
+      try {
+        await cleanupTestData(app, t.tenant.id);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    }
+  });
+
+  it("(a) two concurrent creates: the second waits on the first's Tenant lock and is then refused", async () => {
+    const fixture = await atLimitMinusOne("create");
+
+    const { first, second, blocked } = await raceTwoTransactions(
+      app,
+      (tx) => createSalon(tx, fixture.tenant.id, newSalonInput("Rennen A")),
+      (tx) => createSalon(tx, fixture.tenant.id, newSalonInput("Rennen B")),
+    );
+
+    expect(blocked, "tx2 was never observed waiting on tx1's Tenant lock").toBe(true);
+    expect(first.status).toBe("fulfilled");
+    expectQuotaRefusal(second);
+    expect(await activeCount(fixture.tenant.id)).toBe(2);
+  });
+
+  it("(b) two concurrent activations end with exactly one success", async () => {
+    const fixture = await atLimitMinusOne("activate");
+    const x = await createTestSalon(app.prisma, fixture.tenant.id, { name: "X", isActive: false });
+    const y = await createTestSalon(app.prisma, fixture.tenant.id, { name: "Y", isActive: false });
+
+    const { first, second } = await raceTwoTransactions(
+      app,
+      (tx) => activateSalon(tx, fixture.tenant.id, x.id),
+      (tx) => activateSalon(tx, fixture.tenant.id, y.id),
+    );
+
+    expect(first.status).toBe("fulfilled");
+    expect((first as PromiseFulfilledResult<{ status: string }>).value.status).toBe("OK");
+    expectQuotaRefusal(second);
+    expect(await activeCount(fixture.tenant.id)).toBe(2);
+  });
+
+  it("(c) a create racing an activation ends with exactly one success", async () => {
+    const fixture = await atLimitMinusOne("mixed");
+    const x = await createTestSalon(app.prisma, fixture.tenant.id, { name: "X", isActive: false });
+
+    const { first, second } = await raceTwoTransactions(
+      app,
+      (tx) => createSalon(tx, fixture.tenant.id, newSalonInput("Rennen C")),
+      (tx) => activateSalon(tx, fixture.tenant.id, x.id),
+    );
+
+    expect(first.status).toBe("fulfilled");
+    expectQuotaRefusal(second);
+    expect(await activeCount(fixture.tenant.id)).toBe(2);
+  });
+
+  it("(d) two parallel tenant-route activations answer {200, 409 SALON_QUOTA_REACHED}", async () => {
+    const fixture = await atLimitMinusOne("route");
+    const x = await createTestSalon(app.prisma, fixture.tenant.id, { name: "X", isActive: false });
+    const y = await createTestSalon(app.prisma, fixture.tenant.id, { name: "Y", isActive: false });
+
+    const responses = await Promise.all(
+      [x.id, y.id].map((id) =>
+        app.inject({
+          method: "POST",
+          url: `/api/v1/salons/${id}/activate`,
+          headers: { authorization: `Bearer ${fixture.adminToken}` },
+        }),
+      ),
+    );
+
+    expect(responses.map((r) => r.statusCode).sort((a, b) => a - b)).toEqual([200, 409]);
+    const refused = responses.find((r) => r.statusCode === 409);
+    expect(JSON.parse(refused?.body ?? "{}")).toEqual({
+      error: SALON_QUOTA_REACHED_MESSAGE,
+      code: "SALON_QUOTA_REACHED",
+    });
+    expect(await activeCount(fixture.tenant.id)).toBe(2);
+  });
+
+  it("(e) two parallel operator activations answer {200, 409} and write exactly one SALON_ACTIVATED row", async () => {
+    const fixture = await atLimitMinusOne("operator");
+    const x = await createTestSalon(app.prisma, fixture.tenant.id, { name: "X", isActive: false });
+    const y = await createTestSalon(app.prisma, fixture.tenant.id, { name: "Y", isActive: false });
+
+    const responses = await Promise.all(
+      [x.id, y.id].map((id) =>
+        app.inject({
+          method: "POST",
+          url: `/api/v1/operator/tenants/${fixture.tenant.id}/salons/${id}/activate`,
+          headers: { authorization: `Bearer ${operatorToken}` },
+          remoteAddress: operatorAddress(),
+        }),
+      ),
+    );
+
+    expect(responses.map((r) => r.statusCode).sort((a, b) => a - b)).toEqual([200, 409]);
+    const refused = responses.find((r) => r.statusCode === 409);
+    expect(JSON.parse(refused?.body ?? "{}")).toEqual({
+      error: SALON_QUOTA_REACHED_MESSAGE,
+      code: "SALON_QUOTA_REACHED",
+    });
+    expect(await activeCount(fixture.tenant.id)).toBe(2);
+    expect(
+      await app.prisma.operatorAuditLog.count({
+        where: { subjectTenantId: fixture.tenant.id, action: "SALON_ACTIVATED" },
+      }),
+    ).toBe(1);
+  });
+
+  it("(f) two parallel tenant-route creates answer {201, 409} and leave the active count at the limit", async () => {
+    const fixture = await atLimitMinusOne("route-create");
+    const responses = await Promise.all(
+      ["Rennen D", "Rennen E"].map((name) =>
+        app.inject({
+          method: "POST",
+          url: "/api/v1/salons",
+          headers: { authorization: `Bearer ${fixture.adminToken}` },
+          payload: { name, openingHours: DEFAULT_SALON_OPENING_HOURS },
+        }),
+      ),
+    );
+    expect(responses.map((r) => r.statusCode).sort((a, b) => a - b)).toEqual([201, 409]);
+    expect(await activeCount(fixture.tenant.id)).toBe(2);
+  });
+});

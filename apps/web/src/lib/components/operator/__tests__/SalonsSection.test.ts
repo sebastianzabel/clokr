@@ -211,6 +211,27 @@ describe("SalonsSection", () => {
     expect(onReload).not.toHaveBeenCalled();
   });
 
+  it("a create refused with SALON_QUOTA_REACHED shows the console's own reason, not the server sentence (Phase 566)", async () => {
+    const serverSentence = "Ihr Anbieter schaltet das frei (Satz fuer Mandanten).";
+    const onCreate = vi
+      .fn()
+      .mockRejectedValue(new OperatorApiError(409, "SALON_QUOTA_REACHED", serverSentence));
+    mount(TWO, { onCreate });
+    await fireEvent.click(el("op-salon-create"));
+    await tick();
+    await typeInto("op-salon-name", "Neuer Salon");
+    await choose("op-salon-federal-state", "BAYERN");
+    await fireEvent.click(el("op-salon-submit"));
+    await settle();
+
+    const shown = el("op-salon-error");
+    expect(shown).toHaveTextContent("Salon-Kontingent erreicht.");
+    expect(shown).toHaveTextContent("Abschnitt „Pakete“");
+    expect(shown).not.toHaveTextContent("Ihr Anbieter");
+    expect(byId("op-salon-dialog")).not.toBeNull();
+    expect(toastMessages).toEqual([]);
+  });
+
   it("a stale-list refusal reloads the list while the dialog stays open", async () => {
     const onUpdate = vi
       .fn()
@@ -365,6 +386,31 @@ describe("SalonsSection", () => {
       await settle();
       expect(byId("op-salons-notice")).toBeNull();
       expect(toastMessages).toContain("Salon aktiviert.");
+    });
+
+    it("activation refused with SALON_QUOTA_REACHED / MODULE_NOT_BOOKED shows the console's own reason by code (Phase 566)", async () => {
+      const salons = [...TWO, salon({ id: "s3", name: "Altsalon", isActive: false })];
+      const { onActivate } = mount(salons);
+      onActivate.mockRejectedValueOnce(
+        refusal("SALON_QUOTA_REACHED", "Ihr Anbieter schaltet das frei."),
+      );
+      await fireEvent.click(el("op-salon-activate-s3"));
+      await settle();
+      const quota = el("op-salons-notice");
+      expect(quota).toHaveAttribute("data-code", "SALON_QUOTA_REACHED");
+      expect(quota).toHaveTextContent("Salon-Kontingent erreicht.");
+      expect(quota).toHaveTextContent("Abschnitt „Pakete“");
+      expect(quota).not.toHaveTextContent("Ihr Anbieter");
+
+      onActivate.mockRejectedValueOnce(
+        refusal("MODULE_NOT_BOOKED", "Ihr Anbieter schaltet es frei."),
+      );
+      await fireEvent.click(el("op-salon-activate-s3"));
+      await settle();
+      const module = el("op-salons-notice");
+      expect(module).toHaveAttribute("data-code", "MODULE_NOT_BOOKED");
+      expect(module).toHaveTextContent("Zusatzmodul ist nicht gebucht");
+      expect(module).not.toHaveTextContent("Ihr Anbieter");
     });
 
     it("a missing salon (404) lands in the notice as SALON_NOT_FOUND", async () => {
