@@ -24,6 +24,7 @@ import {
   seedTestData,
   cleanupTestData,
   reissueTokenNow,
+  grantSystemRole,
 } from "../../__tests__/setup";
 
 const FAKE_NOW = new Date("2026-10-07T10:00:00Z");
@@ -75,6 +76,7 @@ describe("Issue #493 — dashboard week/month boundaries", () => {
         hireDate: new Date("2025-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId: d.tenant.id, userId: user.id, role: "EMPLOYEE" });
     monthlyEmployeeId = employee.id;
     await prisma.workSchedule.create({
       data: {

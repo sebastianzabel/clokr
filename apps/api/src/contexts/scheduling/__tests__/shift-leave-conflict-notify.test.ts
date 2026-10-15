@@ -7,7 +7,13 @@
  * `absence/api/leave.ts` so both directions share one implementation (D-02/D-03).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  grantSystemRole,
+} from "../../../__tests__/setup";
 import { flagShiftIfConflictsWithApprovedLeave } from "../shift-leave-check"; // Phase 430-06 — moved out of the index barrel, see that module's docblock
 import { notifyShiftLeaveConflicts } from "../index";
 import type { FastifyInstance } from "fastify";
@@ -255,6 +261,11 @@ describe("Schichtplanung — flagShiftIfConflictsWithApprovedLeave / notifyShift
           lastName: "Manager",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: mgrUser.id,
+        role: "MANAGER",
       });
 
       const shift1 = await app.prisma.shift.create({

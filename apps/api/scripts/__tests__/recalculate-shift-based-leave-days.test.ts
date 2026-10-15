@@ -19,7 +19,12 @@
  * Uses initials-only for employee names (no PII per memory feedback_no_pii_in_github).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon } from "../../src/__tests__/setup";
+import {
+  getTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "../../src/__tests__/setup";
 import { utcMidnight, dbDateStr, todayStr } from "../../src/__tests__/test-dates";
 import { getHolidays, STATE_MAP } from "../../src/contexts/platform/holidays";
 import { main, parseCli } from "../recalculate-shift-based-leave-days";
@@ -97,6 +102,7 @@ describe("recalculate-shift-based-leave-days — --status/--request-id filters (
           hireDate: PAST_ANCHOR,
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role });
       const login = await app.inject({
         method: "POST",
         url: "/api/v1/auth/login",
@@ -281,6 +287,7 @@ describe("recalculate-shift-based-leave-days — Bestand list (Issue #436, D-04/
         hireDate: PAST_ANCHOR,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: employee.id,

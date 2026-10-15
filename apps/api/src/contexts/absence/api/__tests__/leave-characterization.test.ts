@@ -21,6 +21,7 @@ import {
   closeTestApp,
   seedTestData,
   cleanupTestData,
+  grantSystemRole,
 } from "../../../../__tests__/setup";
 import { holidayFreeMondayStr } from "../../../../__tests__/test-dates";
 import { leaveTypeFields } from "../../leave-type";
@@ -55,6 +56,11 @@ describe("leave.ts characterization — cancellation-approval Rückbuchung (Phas
         lastName: "Pruefer",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: mgrUser.id,
+      role: "MANAGER",
     });
     const login = await app.inject({
       method: "POST",

@@ -4,7 +4,12 @@
 
 import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, salonIdForEmployee, createTestSalon } from "../../../__tests__/setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  salonIdForEmployee,
+  createTestSalon,
+  grantSystemRole,
+} from "../../../__tests__/setup"; // Phase 325 (issue #325)
 import { syncPhorestShifts } from "../sync-shifts";
 import { extractWorkTimes } from "../types";
 import type { PhorestApiResponse } from "../types";
@@ -1210,6 +1215,11 @@ describe("Phase 430 — Type-1 leave conflict on Phorest import", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: seed.tenantId,
+        userId: mgrUser.id,
+        role: "MANAGER",
+      });
 
       await seedPendingLeaveRequest(
         app,
@@ -1347,6 +1357,11 @@ describe("Phase 430 — Type-2 week-capacity conflict on Phorest import", () => 
           lastName: "Manager",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: seed.tenantId,
+        userId: mgrUser.id,
+        role: "MANAGER",
       });
 
       mockPhorest(wttFixture);
