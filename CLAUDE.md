@@ -1271,7 +1271,7 @@ previous image finds consistent values), and read by exactly three documented re
 stored assignments (`null` shows „Keine Rolle zugewiesen“). Before deploying Release A to any
 instance, run `apps/api/scripts/backfill-539-role-assignments.ts` (dry run, then `--confirm` when it
 lists users; runbook: `docs/migrations.md` „Phase 539“). Column and enum go with Release B
-(@@RELEASE_B@@). A role comparison, a `requireRole(` call or a Prisma `where` on a role value in
+(#641). A role comparison, a `requireRole(` call or a Prisma `where` on a role value in
 non-test `apps/api/src` fails CI and `.husky/pre-commit`:
 
 | Source | What it governs |
@@ -1317,7 +1317,7 @@ a hit is converted, never excepted.
   (`admin-route-permissions.test.ts` fails otherwise). Page-internal role checks that change content
   are #538; the fallback is gone since #539 Release A (owner decision, Unterbau Semantikänderung), the web session
   carries no role and the employee screen shows „Keine Rolle zugewiesen“ for a person without an assignment;
-  dropping the column and the enum is Release B (@@RELEASE_B@@).
+  dropping the column and the enum is Release B (#641).
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->

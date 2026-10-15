@@ -734,7 +734,7 @@ erfassen müssen oder der absichtlich keine Rolle hat (das Mitarbeiterformular z
 Zuweisungen weiterschreibt (D-06), findet es konsistente Werte. Die übernommenen Zuweisungen bleiben bestehen und
 schaden dem alten Code nicht (er liest gespeicherte Zuweisungen zuerst). Ein altes Token mit `role`-Claim bleibt gültig,
 der Claim wird aber von Release A nicht mehr gelesen. Spalte und Enum entfernt erst Release B (eigene Migration nach dem
-Muster #470, Folge-Issue @@RELEASE_B@@).
+Muster #470, Folge-Issue #641).
 
 ## Retention EOL policy (COMP-V1814-07)
 

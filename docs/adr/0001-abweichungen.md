@@ -1554,7 +1554,7 @@ der Sweep rot (siehe Summary der Quick-Task 261013-bhk).
 
 **Entscheidung.** Owner-Entscheidung vom 15.10.2026 (am Issue #539 dokumentiert): Der Altrollen-Rückfall, die Spalte
 `User.role` und das Enum `Role` werden in **zwei Releases** entfernt. Dieser Nachtrag beschreibt **Release A**; Release B
-(Spalte und Enum per Migration, Muster #470) steht im Folge-Issue @@RELEASE_B@@. Release A ist eine
+(Spalte und Enum per Migration, Muster #470) steht im Folge-Issue #641. Release A ist eine
 **Unterbau-Semantikänderung** im Sinn von ADR 0002, Entscheidung 7 (Bedeutung und Rückgabe mehrerer Exporte von
 `contexts/platform/index.ts` ändern sich; ein Nutzer ohne gespeicherte Zuweisung hielt bisher implizit die Systemrolle seiner
 Spalte und hält jetzt nichts).
@@ -1660,7 +1660,7 @@ Namen der gelöschten Funktionen. `lint:role-checks` behält `compat-role.ts` al
 (Ablauf: `docs/migrations.md`, „Phase 539“). Ohne ihn können sich aktive Nutzer ohne Zuweisung nach dem Deploy nicht anmelden.
 
 **Release B.** Spalte `User.role` und Enum `Role` entfernen, `compat-role.ts` und die `lint:role-checks`-Ausnahme streichen,
-den Firmen-PDF-Filter über Zuweisungen ausdrücken, das Übernahme-Skript stilllegen: @@RELEASE_B@@.
+den Firmen-PDF-Filter über Zuweisungen ausdrücken, das Übernahme-Skript stilllegen: #641.
 
 ---
 
