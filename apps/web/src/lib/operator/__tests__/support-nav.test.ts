@@ -34,3 +34,24 @@ describe("support paths", () => {
     expect(supportLeavePath("t1", "A&B")).toBe("/betreiber/mandanten/t1?hinweis=A%26B");
   });
 });
+
+describe("protocol path with filters", () => {
+  it("carries the filters in the query and leaves the first page implicit", () => {
+    expect(
+      supportProtocolPath("t1", {
+        from: "2026-09-15",
+        to: "2026-10-15",
+        employeeId: "e1",
+        page: 1,
+      }),
+    ).toBe("/betreiber/mandanten/t1/support/protokoll?von=2026-09-15&bis=2026-10-15&person=e1");
+    expect(supportProtocolPath("t1", { from: "2026-09-15", to: "2026-10-15", page: 3 })).toBe(
+      "/betreiber/mandanten/t1/support/protokoll?von=2026-09-15&bis=2026-10-15&seite=3",
+    );
+  });
+
+  it("is the bare path without a query or with an empty one", () => {
+    expect(supportProtocolPath("t1", {})).toBe("/betreiber/mandanten/t1/support/protokoll");
+    expect(supportProtocolPath("t1")).toBe("/betreiber/mandanten/t1/support/protokoll");
+  });
+});

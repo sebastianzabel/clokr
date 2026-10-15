@@ -93,6 +93,26 @@ export const FIGURES_UNAVAILABLE_LABELS = {
   NO_ACTIVE_SALON: "Der Mandant hat keinen aktiven Salon.",
 } as const;
 
+/** `WorkSchedule.overtimeMode` (a plain string column: "CARRY_FORWARD" | "TRACK_ONLY"). */
+export const OVERTIME_MODE_LABELS = {
+  CARRY_FORWARD: "Überstunden übertragen",
+  TRACK_ONLY: "Nur erfassen",
+} as const;
+
+/** Weekday numbers of the schedule columns (0 = Sunday .. 6 = Saturday), short German names. */
+export const WEEKDAY_SHORT_LABELS = {
+  "0": "So",
+  "1": "Mo",
+  "2": "Di",
+  "3": "Mi",
+  "4": "Do",
+  "5": "Fr",
+  "6": "Sa",
+} as const;
+
+/** The weekday order of the support views: Monday first, Sunday last. */
+export const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
+
 /**
  * The German label of a control value. An unknown value is returned as it is (never hidden), a
  * missing one is a dash. Own keys only, so a value such as `constructor` is never resolved through
@@ -137,4 +157,19 @@ export function employeeStatusBadgeClass(status: string): string {
   if (status === "ACTIVE") return "badge-green";
   if (status === "ANONYMIZED") return "badge-yellow";
   return "badge-gray";
+}
+
+/**
+ * A list of weekday numbers (0 = Sunday .. 6 = Saturday) as `Mo, Di, ...` in Monday-first order.
+ * A number outside 0..6 is shown raw after the known ones; an empty list is a dash.
+ */
+export function formatWeekdays(days: readonly number[]): string {
+  if (days.length === 0) return "–";
+  const known = WEEKDAY_ORDER.filter((day) => days.includes(day)).map((day) =>
+    labelFor(WEEKDAY_SHORT_LABELS, String(day)),
+  );
+  const unknown = days.filter(
+    (day) => !WEEKDAY_ORDER.includes(day as (typeof WEEKDAY_ORDER)[number]),
+  );
+  return [...known, ...unknown.map(String)].join(", ");
 }

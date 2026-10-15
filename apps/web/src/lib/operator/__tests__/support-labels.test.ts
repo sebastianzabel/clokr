@@ -12,8 +12,11 @@ import {
   INVALID_REASON_LABELS,
   LEAVE_STATUS_LABELS,
   LEAVE_TYPE_LABELS,
+  OVERTIME_MODE_LABELS,
   SCHEDULE_TYPE_LABELS,
+  WEEKDAY_SHORT_LABELS,
   formatDays,
+  formatWeekdays,
   formatSignedMinutes,
   formatMinutes,
   labelFor,
@@ -73,6 +76,10 @@ const ENUMS: Array<[string, Readonly<Record<string, string>>, string[]]> = [
   ["AbsenceSource", ABSENCE_SOURCE_LABELS, ["PATTERN", "MANUAL"]],
   // derived employee status of the support DTOs
   ["employee status", EMPLOYEE_STATUS_LABELS, ["ACTIVE", "EXITED", "ANONYMIZED"]],
+  // WorkSchedule.overtimeMode (plain string column, values named in schema.prisma)
+  ["overtimeMode", OVERTIME_MODE_LABELS, ["CARRY_FORWARD", "TRACK_ONLY"]],
+  // weekday numbers 0 (Sunday) .. 6 (Saturday)
+  ["weekday", WEEKDAY_SHORT_LABELS, ["0", "1", "2", "3", "4", "5", "6"]],
   // figures basis of computeMonthReportFigures
   ["figures basis", FIGURES_BASIS_LABELS, ["snapshot", "fullMonth", "toDate", "untracked"]],
 ];
@@ -142,5 +149,17 @@ describe("formatDays", () => {
     expect(formatDays(5)).toBe("5");
     expect(formatDays(0.5)).toBe("0,5");
     expect(formatDays(12.5)).toBe("12,5");
+  });
+});
+
+describe("formatWeekdays", () => {
+  it("lists weekdays Monday first and Sunday last, whatever the stored order", () => {
+    expect(formatWeekdays([0, 3, 1])).toBe("Mo, Mi, So");
+    expect(formatWeekdays([5, 4, 3, 2, 1])).toBe("Mo, Di, Mi, Do, Fr");
+  });
+
+  it("shows a number outside 0..6 raw after the known days and an empty list as a dash", () => {
+    expect(formatWeekdays([9, 1])).toBe("Mo, 9");
+    expect(formatWeekdays([])).toBe("–");
   });
 });

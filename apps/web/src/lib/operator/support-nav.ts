@@ -27,7 +27,23 @@ export function supportContractsPath(tenantId: string, employeeId: string): stri
   return `${supportBasePath(tenantId)}/mitarbeitende/${encodeURIComponent(employeeId)}/vertraege`;
 }
 
-/** The change-log view of the tenant. */
-export function supportProtocolPath(tenantId: string): string {
-  return `${supportBasePath(tenantId)}/protokoll`;
+/** The filters of the change-log view as they live in its URL query (`von`, `bis`, `person`, `seite`). */
+export interface SupportProtocolQuery {
+  from?: string;
+  to?: string;
+  employeeId?: string;
+  page?: number;
+}
+
+/** The change-log view of the tenant, optionally with its filters in the query. */
+export function supportProtocolPath(tenantId: string, query?: SupportProtocolQuery): string {
+  const path = `${supportBasePath(tenantId)}/protokoll`;
+  if (query === undefined) return path;
+  const params = new URLSearchParams();
+  if (query.from) params.set("von", query.from);
+  if (query.to) params.set("bis", query.to);
+  if (query.employeeId) params.set("person", query.employeeId);
+  if (query.page !== undefined && query.page > 1) params.set("seite", String(query.page));
+  const text = params.toString();
+  return text === "" ? path : `${path}?${text}`;
 }
