@@ -446,18 +446,27 @@ seeded entry:
 {
   "file": "apps/api/src/routes/company-shutdowns.ts",
   "handler": "DELETE /api/v1/company-shutdowns/:id/exceptions/:employeeId",
-  "validatedAt": 190,
+  "validatedBy": "const shutdown = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });",
   "calls": [
     { "call": "companyShutdownException.findUnique", "line": 194 },
     { "call": "companyShutdownException.deleteMany", "line": 198 }
   ],
-  "reason": "shutdownId (the client-supplied :id) is tenant-validated at line 190 (companyShutdown.findFirst({ id, tenantId })). CompanyShutdownException rows only ever exist for a (shutdownId, employeeId) pair created together by the tenant-validated POST /:id/exceptions handler above (compound unique key shutdownId_employeeId, enforced at create time), so an employeeId from a different tenant can never match an existing row for this already-tenant-scoped shutdownId."
+  "reason": "shutdownId (the client-supplied :id) is tenant-validated at the `validatedBy` line (companyShutdown.findFirst({ id, tenantId })). CompanyShutdownException rows only ever exist for a (shutdownId, employeeId) pair created together by the tenant-validated POST /:id/exceptions handler above (compound unique key shutdownId_employeeId, enforced at create time), so an employeeId from a different tenant can never match an existing row for this already-tenant-scoped shutdownId."
 }
 ```
 
-`file` names the handler's file, `handler` its route, `validatedAt` the line number of the
-validating check that makes the rest of the handler safe (`null` only for the pre-authentication
-category, where no tenant context exists yet at all), `calls[]` every covered call, `reason` why.
+`file` names the handler's file, `handler` its route, `validatedBy` the text of the validating
+check that makes the rest of the handler safe (`null` only for the pre-authentication category,
+where no tenant context exists yet at all), `calls[]` every covered call, `reason` why.
+
+`validatedBy` is a text anchor, not a line number (Issue #620; it replaced `validatedAt`, which no
+code ever read and which drifted off its check with every insertion above it). The gate verifies it
+on every run: the snippet (whitespace-insensitive, one source line) must still occur in `file`,
+must mention the tenant (`/tenant/i`), and its nearest occurrence must lie within
+`VALIDATED_BY_MAX_DISTANCE` (500) lines of a listed call. It survives pure line shifts - only
+`calls[].line` is re-pinned, as before. A removed or reworded check, or an anchor that ended up in
+another handler, fails the run with the entry named. Pick a snippet that quotes the check itself
+(`if (x.tenantId !== req.user.tenantId) {`, `where: { id, tenantId }`), not a comment.
 
 **The nullish-tenant rule (Phase 88, GitHub #88, D-08/D-08a).** The same command additionally
 fails when a `tenantId` value that can be `undefined` reaches ANY Prisma model call (every method,

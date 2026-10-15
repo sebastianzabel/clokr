@@ -14,6 +14,8 @@ import * as os from "node:os";
 import {
   loadExceptions,
   validateExceptions,
+  verifyValidatedBy,
+  VALIDATED_BY_MAX_DISTANCE,
   matchException,
   matchNullishException,
   EXCEPTIONS_FILE,
@@ -45,7 +47,7 @@ describe("exception validation (D-06)", () => {
         {
           file: call().file,
           handler: "GET /:id",
-          validatedAt: 1,
+          validatedBy: null,
           calls: [{ call: "x.findFirst", line: 1 }],
         },
       ],
@@ -65,7 +67,7 @@ describe("exception validation (D-06)", () => {
         {
           file: call().file,
           handler: "GET /:id",
-          validatedAt: 1,
+          validatedBy: null,
           calls: [{ call: "x.findFirst", line: 1 }],
           reason: "",
         },
@@ -82,7 +84,7 @@ describe("exception validation (D-06)", () => {
         {
           file: call().file,
           handler: "GET /:id",
-          validatedAt: 1,
+          validatedBy: null,
           calls: [{ call: "x.findFirst", line: 1 }],
           reason: "   \n\t ",
         },
@@ -99,7 +101,7 @@ describe("exception validation (D-06)", () => {
         {
           file: call().file,
           handler: "GET /:id",
-          validatedAt: 1,
+          validatedBy: null,
           calls: [{ call: "x.findFirst", line: 1 }],
           reason: "too short",
         },
@@ -119,7 +121,7 @@ describe("exception validation (D-06)", () => {
         {
           file: call().file,
           handler: "GET /:id",
-          validatedAt: 1,
+          validatedBy: null,
           calls: [{ call: "x.findFirst", line: 1 }],
           reason: REASON,
         },
@@ -140,7 +142,7 @@ describe("exception validation (D-06)", () => {
         {
           file: call().file,
           handler: "DELETE /:id/hard-delete",
-          validatedAt: 1,
+          validatedBy: null,
           calls: [
             { call: "break.deleteMany", line: 10 },
             { call: "timeEntry.deleteMany", line: 12 },
@@ -170,7 +172,7 @@ describe("exception validation (D-06)", () => {
         {
           file: call().file,
           handler: "DELETE /:id/hard-delete",
-          validatedAt: 1,
+          validatedBy: null,
           calls: [{ call: "break.deleteMany", line: 10 }],
           reason: REASON,
         },
@@ -190,7 +192,7 @@ describe("exception validation (D-06)", () => {
       [
         {
           handler: "GET /:id",
-          validatedAt: 1,
+          validatedBy: null,
           calls: [{ call: "x.findFirst", line: 1 }],
           reason: REASON,
         },
@@ -200,32 +202,39 @@ describe("exception validation (D-06)", () => {
     expect(missingFile.ok).toBe(false);
 
     const missingHandler = validateExceptions(
-      [{ file: "a.ts", validatedAt: 1, calls: [{ call: "x.findFirst", line: 1 }], reason: REASON }],
+      [
+        {
+          file: "a.ts",
+          validatedBy: null,
+          calls: [{ call: "x.findFirst", line: 1 }],
+          reason: REASON,
+        },
+      ],
       findings,
     );
     expect(missingHandler.ok).toBe(false);
 
     const missingCalls = validateExceptions(
-      [{ file: "a.ts", handler: "GET /:id", validatedAt: 1, reason: REASON }],
+      [{ file: "a.ts", handler: "GET /:id", validatedBy: null, reason: REASON }],
       findings,
     );
     expect(missingCalls.ok).toBe(false);
 
     const emptyCalls = validateExceptions(
-      [{ file: "a.ts", handler: "GET /:id", validatedAt: 1, calls: [], reason: REASON }],
+      [{ file: "a.ts", handler: "GET /:id", validatedBy: null, calls: [], reason: REASON }],
       findings,
     );
     expect(emptyCalls.ok).toBe(false);
   });
 
-  it("exception: accepts validatedAt: null for a pre-authentication / no-tenant-check case", () => {
+  it("exception: accepts validatedBy: null for a pre-authentication / no-tenant-check case", () => {
     const findings = [call()];
     const result = validateExceptions(
       [
         {
           file: call().file,
           handler: "POST /login",
-          validatedAt: null,
+          validatedBy: null,
           calls: [{ call: "x.findFirst", line: 1 }],
           reason:
             "Pre-authentication flow — req.user does not exist yet, so no tenant check applies.",
@@ -236,15 +245,15 @@ describe("exception validation (D-06)", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("exception: rejects a non-null, non-integer, or non-positive validatedAt", () => {
+  it("exception: rejects a validatedBy that is not a non-empty string (or null)", () => {
     const findings = [call()];
-    for (const bad of ["not-a-number", 0, -1, 1.5]) {
+    for (const bad of [42, 0, "", "   ", {}]) {
       const result = validateExceptions(
         [
           {
             file: call().file,
             handler: "GET /:id",
-            validatedAt: bad,
+            validatedBy: bad,
             calls: [{ call: "x.findFirst", line: 1 }],
             reason: REASON,
           },
@@ -270,7 +279,7 @@ describe("exception validation (D-06)", () => {
         {
           file: "apps/api/src/routes/x.ts",
           handler: "GET /:id",
-          validatedAt: 1,
+          validatedBy: null,
           calls: [{ call: "x.findFirst", line: 1 }],
           reason: "This was tenant-safe once, but the call has since been removed from the tree.",
         },
@@ -290,7 +299,7 @@ describe("exception validation (D-06)", () => {
         {
           file: call().file,
           handler: "DELETE /:id/hard-delete",
-          validatedAt: 1,
+          validatedBy: null,
           calls: [
             { call: "break.deleteMany", line: 10 },
             { call: "timeEntry.deleteMany", line: 12 },
@@ -315,7 +324,7 @@ describe("exception validation (D-06)", () => {
         {
           file: "apps/api/src/routes/__tests__/x.test.ts",
           handler: "GET /:id",
-          validatedAt: 1,
+          validatedBy: null,
           calls: [{ call: "x.findFirst", line: 1 }],
           reason:
             "A test fixture constructs its own literal identifier, so this is not client input.",
@@ -362,12 +371,104 @@ describe("exception validation (D-06)", () => {
   });
 });
 
+// ── Issue #620: validatedBy is verified, not decorative ───────────────────────────────────────
+
+describe("validatedBy anchor (Issue #620)", () => {
+  const FILE = "apps/api/src/routes/x.ts";
+  const CHECK = "if (employee.tenantId !== req.user.tenantId) {";
+  const filler = (n: number) => Array.from({ length: n }, (_, i) => `// filler ${i}`).join("\n");
+  // call() sits at line 1 by default; the source puts the check a few lines below it.
+  const SRC = `const a = 1;\n${filler(3)}\n    ${CHECK}\n  return;\n}\n`;
+  const entry = (validatedBy: unknown, line = 3) => ({
+    file: FILE,
+    handler: "GET /:id",
+    validatedBy,
+    calls: [{ call: "x.findFirst", line }],
+    reason: REASON,
+  });
+  const run = (validatedBy: unknown, src: string | null, line = 3) =>
+    validateExceptions([entry(validatedBy, line)], [call({ file: FILE, line })], [], () => src);
+
+  it("accepts an anchor that occurs near the call (whitespace-insensitive)", () => {
+    expect(run(CHECK, SRC).ok).toBe(true);
+    expect(run("if (employee.tenantId  !==\treq.user.tenantId) {", SRC).ok).toBe(true);
+  });
+
+  it("stays green when lines are inserted above the check (shift-proof)", () => {
+    expect(run(CHECK, `${filler(40)}\n${SRC}`, 43).ok).toBe(true);
+  });
+
+  it("goes red when the anchored check no longer occurs in the file", () => {
+    const result = run(CHECK, SRC.replace("employee.tenantId", "employee.id"));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.join("\n")).toMatch(/no longer occurs/);
+  });
+
+  it("goes red when the only occurrence moved away from the listed calls", () => {
+    const far = `const a = 1;\n${filler(VALIDATED_BY_MAX_DISTANCE + 50)}\n${CHECK}\n`;
+    const farResult = run(CHECK, far);
+    expect(farResult.ok).toBe(false);
+    if (!farResult.ok)
+      expect(farResult.errors.join("\n")).toMatch(/lines from the nearest listed call/);
+  });
+
+  it("goes red when the anchor does not mention the tenant", () => {
+    const result = run("if (employee.id !== id) {", "if (employee.id !== id) {\n");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.join("\n")).toMatch(/does not mention the tenant/);
+  });
+
+  it("fails closed when the source cannot be read or no reader is supplied", () => {
+    expect(run(CHECK, null).ok).toBe(false);
+    const noReader = validateExceptions([entry(CHECK)], [call({ file: FILE, line: 3 })]);
+    expect(noReader.ok).toBe(false);
+  });
+});
+
+describe("seeded exception list anchors (Issue #620)", () => {
+  const repoRoot = path.resolve(__dirname, "../../../..");
+  const raw = loadExceptions(repoRoot);
+
+  it("is not vacuous: the list has anchored entries", () => {
+    expect(raw.length).toBeGreaterThan(10);
+    expect(raw.filter((e) => typeof e.validatedBy === "string").length).toBeGreaterThan(10);
+  });
+
+  it("every anchored entry resolves to a tenant check near its calls in the real source", () => {
+    for (const e of raw) {
+      if (e.validatedBy === null) continue;
+      const src = fs.readFileSync(path.join(repoRoot, e.file), "utf8");
+      const err = verifyValidatedBy(
+        e.file,
+        e.validatedBy,
+        e.calls.map((c) => c.line),
+        () => src,
+      );
+      expect(err, `${e.file} — ${e.handler}`).toBeNull();
+    }
+  });
+
+  it("a validatedBy that points at a non-tenant line is rejected for every entry", () => {
+    for (const e of raw) {
+      if (e.validatedBy === null) continue;
+      const src = fs.readFileSync(path.join(repoRoot, e.file), "utf8");
+      const err = verifyValidatedBy(
+        e.file,
+        "return reply;",
+        e.calls.map((c) => c.line),
+        () => src,
+      );
+      expect(err).not.toBeNull();
+    }
+  });
+});
+
 describe("matchException (exception near-miss)", () => {
   const entries: TenantScopingException[] = [
     {
       file: "apps/api/src/routes/x.ts",
       handler: "GET /:id",
-      validatedAt: 1,
+      validatedBy: null,
       calls: [{ call: "x.findFirst", line: 10 }],
       reason: REASON,
     },
@@ -532,7 +633,7 @@ describe("runLint", () => {
       {
         file: finding.file,
         handler: "GET /widgets/:id",
-        validatedAt: null,
+        validatedBy: null,
         calls: [{ call: `${finding.model}.${finding.method}`, line: finding.line }],
         reason: "This fixture models a deliberately excepted call for the runLint test itself.",
       },
@@ -544,13 +645,42 @@ describe("runLint", () => {
     expect(result.findings).toHaveLength(0);
   });
 
+  it("Issue #620: runLint exits 1 when validatedBy is moved/wrong, 0 when the code shifts", () => {
+    const check = "if (widget.tenantId !== req.user.tenantId) {";
+    const handler = `${UNSCOPED_HANDLER}\n${check}\n`;
+    writeFixtureTree(tmpRoot, { [SCOPED_ROUTE]: handler });
+    const finding = runLint({ repoRoot: tmpRoot }).findings[0].call;
+    const entry = (validatedBy: string, shift = 0) => [
+      {
+        file: finding.file,
+        handler: "GET /widgets/:id",
+        validatedBy,
+        calls: [{ call: `${finding.model}.${finding.method}`, line: finding.line + shift }],
+        reason: "This fixture models a deliberately excepted call for the runLint test itself.",
+      },
+    ];
+    writeExceptions(tmpRoot, entry(check));
+    expect(runLint({ repoRoot: tmpRoot }).exitCode).toBe(0);
+
+    // The check text changed: the anchor no longer occurs, the gate is red.
+    writeFixtureTree(tmpRoot, { [SCOPED_ROUTE]: handler.replace("widget.tenantId", "widget.id") });
+    const moved = runLint({ repoRoot: tmpRoot });
+    expect(moved.exitCode).toBe(1);
+    expect(moved.errors.join("\n")).toMatch(/validatedBy/);
+
+    // Lines inserted above shift the call and the check together: only the call line is re-pinned.
+    writeFixtureTree(tmpRoot, { [SCOPED_ROUTE]: `// a\n// b\n${handler}` });
+    writeExceptions(tmpRoot, entry(check, 2));
+    expect(runLint({ repoRoot: tmpRoot }).exitCode).toBe(0);
+  });
+
   it("returns exit code 1 when the exceptions file has an invalid entry, even with zero findings", () => {
     writeFixtureTree(tmpRoot, { [SCOPED_ROUTE]: SCOPED_HANDLER });
     writeExceptions(tmpRoot, [
       {
         file: "a.ts",
         handler: "GET /:id",
-        validatedAt: 1,
+        validatedBy: null,
         calls: [{ call: "x.findFirst", line: 1 }],
         reason: "",
       },
@@ -567,7 +697,7 @@ describe("runLint", () => {
       {
         file: SCOPED_ROUTE,
         handler: "GET /widgets/:id",
-        validatedAt: null,
+        validatedBy: null,
         calls: [{ call: "widget.findFirst", line: 999 }],
         reason: "This entry deliberately points at a line that no longer has any finding on it.",
       },
@@ -652,7 +782,7 @@ describe("exception rule discriminator (nullish-tenant)", () => {
   const entry = (extra: Record<string, unknown> = {}) => ({
     file: nullishFinding.file,
     handler: "plugin hook",
-    validatedAt: null,
+    validatedBy: null,
     calls: [{ call: "salon.findMany", line: 12 }],
     reason: REASON,
     ...extra,
