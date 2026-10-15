@@ -683,3 +683,454 @@ describe("GET …/support/employees/:employeeId/contracts", () => {
     expect(await operatorReadRows(operator.id, fx.tenant.id)).toHaveLength(0);
   });
 });
+
+// ── GET …/support/audit-log (Phase 93b-05, D-05(4), D-17, D-26) ─────────────────────────────────────
+
+const auditUrl = (tenantId: string, query: Record<string, string | undefined>) => {
+  const qs = Object.entries(query)
+    .filter((entry): entry is [string, string] => entry[1] !== undefined)
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join("&");
+  return `/api/v1/operator/tenants/${tenantId}/support/audit-log${qs === "" ? "" : `?${qs}`}`;
+};
+
+/** A UTC calendar day `offset` days from now, `YYYY-MM-DD` (a window of -1..+1 survives a midnight straddle). */
+const utcDay = (offset: number) =>
+  new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+
+const AUDIT_ITEM_KEYS = [
+  "action",
+  "createdAt",
+  "entity",
+  "entityId",
+  "id",
+  "newValue",
+  "oldValue",
+  "userId",
+];
+
+describe("GET …/support/audit-log", () => {
+  const markers = {
+    entryNote: `audit-note-${randomUUID()}`,
+    updateNote: `audit-update-${randomUUID()}`,
+    updateReason: `audit-reason-${randomUUID()}`,
+    waivedReason: `audit-waived-${randomUUID()}`,
+    reviewNote: `audit-review-${randomUUID()}`,
+    foreignNote: `audit-foreign-${randomUUID()}`,
+  };
+
+  let fx: Fixture;
+  let fxB: Fixture;
+  let entryId: string;
+  let foreignEntryId: string;
+  // Rows written directly (mirrors of shapes no cheap route produces; research C1).
+  let employeeRowId: string;
+  let otherEmployeeRowId: string;
+  let oldValueOnlyRowId: string;
+
+  const window = () => ({ from: utcDay(-1), to: utcDay(1) });
+
+  beforeAll(async () => {
+    fx = await newTenant("audit-a");
+    fxB = await newTenant("audit-b");
+
+    // Real tenant routes: the stored shapes are exactly what production writes.
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/time-entries",
+      headers: { authorization: `Bearer ${fx.adminToken}` },
+      payload: {
+        employeeId: fx.employee.id,
+        date: "2026-03-10",
+        startTime: "2026-03-10T08:00:00.000Z",
+        endTime: "2026-03-10T16:00:00.000Z",
+        breakMinutes: 30,
+        note: markers.entryNote,
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    entryId = (JSON.parse(created.body) as { entry: { id: string } }).entry.id;
+
+    const updated = await app.inject({
+      method: "PUT",
+      url: `/api/v1/time-entries/${entryId}`,
+      headers: { authorization: `Bearer ${fx.adminToken}` },
+      payload: { note: markers.updateNote, reason: markers.updateReason },
+    });
+    expect(updated.statusCode, updated.body).toBe(200);
+
+    const createdB = await app.inject({
+      method: "POST",
+      url: "/api/v1/time-entries",
+      headers: { authorization: `Bearer ${fxB.adminToken}` },
+      payload: {
+        employeeId: fxB.employee.id,
+        date: "2026-03-10",
+        startTime: "2026-03-10T08:00:00.000Z",
+        endTime: "2026-03-10T16:00:00.000Z",
+        breakMinutes: 30,
+        note: markers.foreignNote,
+      },
+    });
+    expect(createdB.statusCode, createdB.body).toBe(201);
+    foreignEntryId = (JSON.parse(createdB.body) as { entry: { id: string } }).entry.id;
+
+    // Mirrors of the free-text shapes of research C1: BREAK_WAIVED (time-entries.ts:2836) and the
+    // cancellation REJECT with a review note (leave.ts:1487).
+    await app.prisma.auditLog.create({
+      data: {
+        userId: fx.adminUser.id,
+        action: "BREAK_WAIVED",
+        entity: "TimeEntry",
+        entityId: entryId,
+        oldValue: {
+          breakStatus: "AUTO",
+          breakMinutes: 30,
+          breaks: [
+            {
+              id: randomUUID(),
+              startTime: "2026-03-10T12:00:00.000Z",
+              endTime: "2026-03-10T12:30:00.000Z",
+            },
+          ],
+        },
+        newValue: {
+          breakStatus: "WAIVED",
+          breakMinutes: 0,
+          breakWaivedReason: markers.waivedReason,
+        },
+      },
+    });
+    await app.prisma.auditLog.create({
+      data: {
+        userId: fx.adminUser.id,
+        action: "REJECT",
+        entity: "LeaveRequest",
+        entityId: randomUUID(),
+        newValue: { cancellationDecision: "REJECTED", reviewNote: markers.reviewNote },
+      },
+    });
+
+    // D-26 fixtures: a row about the employee itself, a row about another employee, a row that
+    // carries the employee only in its oldValue.
+    employeeRowId = (
+      await app.prisma.auditLog.create({
+        data: {
+          userId: fx.adminUser.id,
+          action: "UPDATE",
+          entity: "Employee",
+          entityId: fx.employee.id,
+          newValue: { annualVacationDays: 30 },
+        },
+      })
+    ).id;
+    otherEmployeeRowId = (
+      await app.prisma.auditLog.create({
+        data: {
+          userId: fx.adminUser.id,
+          action: "UPDATE",
+          entity: "Employee",
+          entityId: fx.adminEmployee.id,
+          newValue: { employeeId: fx.adminEmployee.id, annualVacationDays: 28 },
+        },
+      })
+    ).id;
+    oldValueOnlyRowId = (
+      await app.prisma.auditLog.create({
+        data: {
+          userId: fx.adminUser.id,
+          action: "DELETE",
+          entity: "Absence",
+          entityId: randomUUID(),
+          oldValue: { employeeId: fx.employee.id, type: "VOCATIONAL_SCHOOL" },
+        },
+      })
+    ).id;
+  });
+
+  it("serves a page of items with exactly the item keys, redacted by type, and no e-mail", async () => {
+    const operator = await grantedPrincipal(fx.tenant.id);
+    const res = await get(auditUrl(fx.tenant.id, window()), operator.token);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(String(res.headers["cache-control"])).toContain("no-store");
+    const body = JSON.parse(res.body) as {
+      items: Record<string, unknown>[];
+      total: number;
+      page: number;
+      pageSize: number;
+      from: string;
+      to: string;
+    };
+    expect(Object.keys(body).sort(byKey)).toEqual([
+      "from",
+      "items",
+      "page",
+      "pageSize",
+      "to",
+      "total",
+    ]);
+    expect(body.page).toBe(1);
+    expect(body.pageSize).toBe(50);
+    expect(body.from).toBe(window().from);
+    expect(body.to).toBe(window().to);
+    expect(body.total).toBeGreaterThanOrEqual(body.items.length);
+    expect(body.items.length).toBeGreaterThan(0);
+    for (const item of body.items) {
+      expect(Object.keys(item).sort(byKey)).toEqual(AUDIT_ITEM_KEYS);
+    }
+    expect(res.body).not.toContain("email");
+    expect(res.body).not.toContain("@test.de");
+
+    // Newest first.
+    const times = body.items.map((item) => String(item.createdAt));
+    expect([...times].sort((a, b) => b.localeCompare(a))).toEqual(times);
+
+    // None of the free-text values of the six rows leaves the API; the placeholder is there instead.
+    for (const [name, value] of Object.entries(markers)) {
+      expect(res.body, `marker ${name} leaked`).not.toContain(value);
+    }
+    expect(res.body).toContain("[ausgeblendet]");
+  });
+
+  it("redacts the note of a row written by a real tenant route and keeps ids, dates and enums", async () => {
+    const operator = await grantedPrincipal(fx.tenant.id);
+    const res = await get(auditUrl(fx.tenant.id, window()), operator.token);
+    const body = JSON.parse(res.body) as {
+      items: {
+        id: string;
+        action: string;
+        entityId: string | null;
+        userId: string | null;
+        oldValue: Record<string, unknown> | null;
+        newValue: Record<string, unknown> | null;
+      }[];
+    };
+    const create = body.items.find((i) => i.action === "CREATE" && i.entityId === entryId);
+    expect(create, "CREATE row of the real POST").toBeDefined();
+    const created = create!.newValue as Record<string, unknown>;
+    expect(created.note).toBe("[ausgeblendet]");
+    expect(created.id).toBe(entryId);
+    expect(created.employeeId).toBe(fx.employee.id);
+    expect(created.type).toBe("WORK");
+    expect(created.breakMinutes).toBe(30);
+    expect(String(created.startTime)).toBe("2026-03-10T08:00:00.000Z");
+    expect(create!.userId).toBe(fx.adminUser.id);
+
+    const update = body.items.find(
+      (i) => (i.action === "UPDATE" || i.action === "MANAGER_CORRECTION") && i.entityId === entryId,
+    );
+    expect(update, "UPDATE row of the real PUT").toBeDefined();
+    expect((update!.oldValue as Record<string, unknown>).note).toBe("[ausgeblendet]");
+    expect((update!.newValue as Record<string, unknown>).note).toBe("[ausgeblendet]");
+
+    const waived = body.items.find((i) => i.action === "BREAK_WAIVED");
+    expect((waived!.newValue as Record<string, unknown>).breakWaivedReason).toBe("[ausgeblendet]");
+    expect((waived!.newValue as Record<string, unknown>).breakStatus).toBe("WAIVED");
+    expect((waived!.oldValue as Record<string, unknown>).breakStatus).toBe("AUTO");
+
+    const rejected = body.items.find((i) => i.action === "REJECT");
+    expect((rejected!.newValue as Record<string, unknown>).reviewNote).toBe("[ausgeblendet]");
+    expect((rejected!.newValue as Record<string, unknown>).cancellationDecision).toBe("REJECTED");
+  });
+
+  it("keeps the operator stamp of an operator-written row as stored", async () => {
+    const operator = await grantedPrincipal(fx.tenant.id);
+    // The first read writes a tenant AuditLog row with the operator stamp; the second one shows it.
+    const first = await get(auditUrl(fx.tenant.id, window()), operator.token);
+    expect(first.statusCode).toBe(200);
+    const second = await get(auditUrl(fx.tenant.id, window()), operator.token);
+    const body = JSON.parse(second.body) as {
+      items: { action: string; entityId: string | null; newValue: Record<string, unknown> }[];
+    };
+    const read = body.items.find(
+      (i) => i.action === "SUPPORT_DATA_READ" && i.entityId === operator.accessId,
+    );
+    expect(read, "the operator's own earlier read row").toBeDefined();
+    expect(read!.newValue.actor).toEqual({
+      type: "OPERATOR",
+      operatorId: operator.id,
+      tenantId: fx.tenant.id,
+    });
+    expect(read!.newValue.category).toBe("AUDIT_LOG");
+    // The grant reason is free text and is redacted like any other.
+    expect(read!.newValue.reason).toBe("[ausgeblendet]");
+  });
+
+  it("never returns another tenant's rows", async () => {
+    const operator = await grantedPrincipal(fx.tenant.id);
+    const res = await get(auditUrl(fx.tenant.id, window()), operator.token);
+    expect(res.body).not.toContain(foreignEntryId);
+    expect(res.body).not.toContain(fxB.employee.id);
+    expect(res.body).not.toContain(fxB.tenant.id);
+    expect(res.body).not.toContain(markers.foreignNote);
+
+    // Tenant B's grant sees B's row (the scope is the tenant of the grant, not a blanket filter).
+    const operatorB = await grantedPrincipal(fxB.tenant.id);
+    const resB = await get(auditUrl(fxB.tenant.id, window()), operatorB.token);
+    expect(resB.statusCode).toBe(200);
+    expect(resB.body).toContain(foreignEntryId);
+    expect(resB.body).not.toContain(entryId);
+  });
+
+  it("filters by employeeId: entityId OR a value that carries the employee, not another employee", async () => {
+    const operator = await grantedPrincipal(fx.tenant.id);
+    const res = await get(
+      auditUrl(fx.tenant.id, { ...window(), employeeId: fx.employee.id }),
+      operator.token,
+    );
+    expect(res.statusCode, res.body).toBe(200);
+    const ids = (JSON.parse(res.body) as { items: { id: string; entityId: string | null }[] })
+      .items;
+    const idSet = new Set(ids.map((i) => i.id));
+    expect(idSet.has(employeeRowId), "entityId = employee").toBe(true);
+    expect(idSet.has(oldValueOnlyRowId), "oldValue.employeeId").toBe(true);
+    expect(
+      ids.some((i) => i.entityId === entryId),
+      "newValue.employeeId (time entry rows)",
+    ).toBe(true);
+    expect(idSet.has(otherEmployeeRowId), "a row about another employee").toBe(false);
+
+    const rows = await operatorReadRows(operator.id, fx.tenant.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].newValue).toMatchObject({
+      category: "AUDIT_LOG",
+      employeeId: fx.employee.id,
+      filters: { ...window(), page: 1, employeeId: fx.employee.id },
+    });
+  });
+
+  it("answers a foreign or unknown employeeId with one byte-identical 404 and writes no read row", async () => {
+    const operator = await grantedPrincipal(fx.tenant.id);
+    const foreign = await get(
+      auditUrl(fx.tenant.id, { ...window(), employeeId: fxB.employee.id }),
+      operator.token,
+    );
+    const unknown = await get(
+      auditUrl(fx.tenant.id, { ...window(), employeeId: randomUUID() }),
+      operator.token,
+    );
+    expect(foreign.statusCode).toBe(404);
+    expect(unknown.statusCode).toBe(404);
+    expect(foreign.body).toBe(unknown.body);
+    expect(await operatorReadRows(operator.id, fx.tenant.id)).toHaveLength(0);
+  });
+
+  it("writes both read records with category AUDIT_LOG and the filters, before the read", async () => {
+    const operator = await grantedPrincipal(fx.tenant.id);
+    const query = { ...window(), page: "1" };
+    const res = await get(auditUrl(fx.tenant.id, query), operator.token);
+    expect(res.statusCode).toBe(200);
+    const rows = await operatorReadRows(operator.id, fx.tenant.id);
+    expect(rows).toHaveLength(1);
+    const value = rows[0].newValue as Record<string, unknown>;
+    expect(value.category).toBe("AUDIT_LOG");
+    expect(value.filters).toEqual({ ...window(), page: 1 });
+    expect(typeof value.reason).toBe("string");
+    expect(
+      await app.prisma.auditLog.count({
+        where: { action: "SUPPORT_DATA_READ", entityId: operator.accessId },
+      }),
+    ).toBe(1);
+  });
+
+  it("is fail-closed: a failing audit write is a 500 and the port is never called", async () => {
+    const operator = await grantedPrincipal(fx.tenant.id);
+    const portSpy = vi.spyOn(operatorSupportPorts, "auditPage");
+    vi.spyOn(app, "audit").mockRejectedValueOnce(new Error("audit store down"));
+    const res = await get(auditUrl(fx.tenant.id, window()), operator.token);
+    expect(res.statusCode).toBe(500);
+    expect(res.body).not.toContain(entryId);
+    expect(portSpy).not.toHaveBeenCalled();
+    expect(await operatorReadRows(operator.id, fx.tenant.id)).toHaveLength(0);
+  });
+
+  describe("validation (after the grant decision)", () => {
+    it.each([
+      ["from missing", { to: "2026-03-10" }],
+      ["to missing", { from: "2026-03-10" }],
+      ["both missing", {}],
+      ["from after to", { from: "2026-03-11", to: "2026-03-10" }],
+      ["malformed date", { from: "2026-3-1", to: "2026-03-10" }],
+      ["impossible date", { from: "2026-02-30", to: "2026-03-10" }],
+      ["window of 93 days", { from: "2026-01-01", to: "2026-04-04" }],
+      ["page 0", { from: "2026-03-01", to: "2026-03-10", page: "0" }],
+      ["page not a number", { from: "2026-03-01", to: "2026-03-10", page: "x" }],
+      ["employeeId not a uuid", { from: "2026-03-01", to: "2026-03-10", employeeId: "abc" }],
+      ["unknown query key", { from: "2026-03-01", to: "2026-03-10", limit: "500" }],
+    ])("answers 400 for %s and writes no read row", async (_label, query) => {
+      const operator = await grantedPrincipal(fx.tenant.id);
+      const res = await get(auditUrl(fx.tenant.id, query), operator.token);
+      expect(res.statusCode, res.body).toBe(400);
+      expect(String(res.headers["cache-control"])).toContain("no-store");
+      expect(await operatorReadRows(operator.id, fx.tenant.id)).toHaveLength(0);
+    });
+
+    it("accepts a window of exactly 92 days and refuses 93", async () => {
+      const operator = await grantedPrincipal(fx.tenant.id);
+      // 2026-01-01 .. 2026-04-02 inclusive = 92 days
+      const ok = await get(
+        auditUrl(fx.tenant.id, { from: "2026-01-01", to: "2026-04-02" }),
+        operator.token,
+      );
+      expect(ok.statusCode, ok.body).toBe(200);
+      const tooLong = await get(
+        auditUrl(fx.tenant.id, { from: "2026-01-01", to: "2026-04-03" }),
+        operator.token,
+      );
+      expect(tooLong.statusCode).toBe(400);
+    });
+
+    it("answers a missing grant with 403 and a refusal row even for an invalid query", async () => {
+      const bare = await newPrincipal();
+      const res = await get(auditUrl(fx.tenant.id, {}), bare.token);
+      expect(res.statusCode).toBe(403);
+      expect(res.body).not.toContain(entryId);
+      expect(await refusalRows(bare.id, fx.tenant.id)).toHaveLength(1);
+      expect(await operatorReadRows(bare.id, fx.tenant.id)).toHaveLength(0);
+    });
+
+    it("refuses a tenant admin token", async () => {
+      const res = await get(auditUrl(fx.tenant.id, window()), fx.adminToken);
+      expect(res.statusCode).toBe(403);
+    });
+  });
+
+  it("pages by 50, newest first, and counts the whole window", async () => {
+    const fxP = await newTenant("audit-page");
+    // A day of its own in the past: the reads below write their own rows "now", which must not shift the pages.
+    const pageDay = utcDay(-10);
+    const marker = new Date(`${pageDay}T12:00:00.000Z`);
+    await app.prisma.auditLog.createMany({
+      data: Array.from({ length: 52 }, (_, i) => ({
+        userId: fxP.adminUser.id,
+        action: "TEST_ROW",
+        entity: "Test",
+        entityId: randomUUID(),
+        newValue: { index: i },
+        createdAt: new Date(marker.getTime() - i * 1000),
+      })),
+    });
+    const operator = await grantedPrincipal(fxP.tenant.id);
+    const pageWindow = { from: pageDay, to: pageDay };
+    const first = await get(auditUrl(fxP.tenant.id, { ...pageWindow, page: "1" }), operator.token);
+    const second = await get(auditUrl(fxP.tenant.id, { ...pageWindow, page: "2" }), operator.token);
+    const one = JSON.parse(first.body) as {
+      items: { id: string; createdAt: string }[];
+      total: number;
+    };
+    const two = JSON.parse(second.body) as {
+      items: { id: string; createdAt: string }[];
+      total: number;
+      page: number;
+    };
+    expect(one.items).toHaveLength(50);
+    expect(one.total).toBe(52);
+    expect(two.total).toBe(52);
+    expect(two.page).toBe(2);
+    expect(two.items).toHaveLength(2);
+    const firstIds = new Set(one.items.map((i) => i.id));
+    expect(two.items.every((i) => !firstIds.has(i.id))).toBe(true);
+    // Page 2 continues where page 1 stopped (descending order across the page boundary).
+    expect(one.items[49].createdAt >= two.items[0].createdAt).toBe(true);
+  });
+});

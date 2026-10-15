@@ -23,9 +23,11 @@ import {
   employeeScopeFor,
   homeSalonsForDays,
   listSalons,
+  redactSupportAuditValue,
   supportEmployeeStatus,
   type OperatorSupportPorts,
   type SupportAbsenceDto,
+  type SupportAuditPageDto,
   type SupportContractDto,
   type SupportDayBreakDto,
   type SupportEmployeeDto,
@@ -305,9 +307,112 @@ async function employeeContracts(
   }));
 }
 
+/** Rows per page of the support audit-log read (Phase 93b-05 discretion; the page size is not client-controlled). */
+const AUDIT_PAGE_SIZE = 50;
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * One page of the tenant's own change log (D-05(4), D-17, D-26). Same tenant scope as the tenant
+ * `GET /audit-logs` (`contexts/platform/api/audit-logs.ts`), spelled inline in its own `AND` member so no
+ * filter can widen it: rows written by a tenant user, and rows written by the operator principal, which
+ * have no user and carry the tenant in their `newValue.actor` stamp. The window is the UTC calendar days
+ * `[from 00:00Z, to + 1 day 00:00Z)`; it is a filter, not a legal figure.
+ *
+ * `employeeId` (D-26) matches a row about the employee (`entityId`) or a row whose old or new value
+ * carries `employeeId` — no inference beyond that. Every `oldValue`/`newValue` leaves through
+ * `redactSupportAuditValue`; the acting user's e-mail is never selected.
+ */
+async function auditPage(
+  app: FastifyInstance,
+  input: { tenantId: string; employeeId?: string; from: string; to: string; page: number },
+): Promise<SupportAuditPageDto> {
+  const { tenantId, employeeId, from, to, page } = input;
+  const start = new Date(`${from}T00:00:00.000Z`);
+  const end = new Date(new Date(`${to}T00:00:00.000Z`).getTime() + MS_PER_DAY);
+
+  // D-26: only present with an employee filter. A plain array member, so the tenant scope below stays
+  // spelled inline in both queries (the tenant-scoping gate does not follow helpers).
+  const employeeClause: Prisma.AuditLogWhereInput[] =
+    employeeId === undefined
+      ? []
+      : [
+          {
+            OR: [
+              { entityId: employeeId },
+              { newValue: { path: ["employeeId"], equals: employeeId } },
+              { oldValue: { path: ["employeeId"], equals: employeeId } },
+            ],
+          },
+        ];
+
+  const [rows, total] = await Promise.all([
+    app.prisma.auditLog.findMany({
+      where: {
+        AND: [
+          {
+            OR: [
+              { user: { employee: { tenantId } } },
+              { userId: null, newValue: { path: ["actor", "tenantId"], equals: tenantId } },
+            ],
+          },
+          { createdAt: { gte: start, lt: end } },
+          ...employeeClause,
+        ],
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: AUDIT_PAGE_SIZE,
+      skip: (page - 1) * AUDIT_PAGE_SIZE,
+      select: {
+        id: true,
+        createdAt: true,
+        action: true,
+        entity: true,
+        entityId: true,
+        userId: true,
+        oldValue: true,
+        newValue: true,
+      },
+    }),
+    app.prisma.auditLog.count({
+      where: {
+        AND: [
+          {
+            OR: [
+              { user: { employee: { tenantId } } },
+              { userId: null, newValue: { path: ["actor", "tenantId"], equals: tenantId } },
+            ],
+          },
+          { createdAt: { gte: start, lt: end } },
+          ...employeeClause,
+        ],
+      },
+    }),
+  ]);
+
+  return {
+    items: rows.map((row) => ({
+      id: row.id,
+      createdAt: row.createdAt.toISOString(),
+      action: row.action,
+      entity: row.entity,
+      entityId: row.entityId,
+      userId: row.userId,
+      oldValue: redactSupportAuditValue(row.oldValue),
+      newValue: redactSupportAuditValue(row.newValue),
+    })),
+    total,
+    page,
+    pageSize: AUDIT_PAGE_SIZE,
+    from,
+    to,
+  };
+}
+
 export const operatorSupportPorts = {
   employeeExists,
   listEmployees,
   employeeMonth,
   employeeContracts,
+  auditPage,
 } satisfies OperatorSupportPorts;

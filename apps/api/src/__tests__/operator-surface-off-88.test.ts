@@ -74,6 +74,11 @@ describe("operator surface off (OPERATOR_JWT_SECRET unset)", () => {
       url: `/api/v1/operator/tenants/${tenantId}/support/employees/${randomUUID()}/contracts`,
     });
     expect(contracts.statusCode).toBe(404);
+    const auditLog = await app.inject({
+      method: "GET",
+      url: `/api/v1/operator/tenants/${tenantId}/support/audit-log?from=2026-03-01&to=2026-03-10`,
+    });
+    expect(auditLog.statusCode).toBe(404);
   });
 
   it("keeps the tenant routes working and requireAuth answers 401, not a crash", async () => {

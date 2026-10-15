@@ -174,6 +174,33 @@ export interface SupportContractDto {
 }
 
 /**
+ * One row of the tenant change log as the operator sees it (D-05(4), D-17): the AuditLog columns only,
+ * never the user's e-mail, IP address or user agent. `oldValue`/`newValue` are already redacted by type
+ * (`redactSupportAuditValue`): every free-text string is the constant placeholder.
+ */
+export interface SupportAuditItemDto {
+  id: string;
+  /** Instant, ISO string. */
+  createdAt: string;
+  action: string;
+  entity: string;
+  entityId: string | null;
+  userId: string | null;
+  oldValue: unknown;
+  newValue: unknown;
+}
+
+/** One page of the support audit-log read. `from`/`to` are the validated UTC calendar days of the window. */
+export interface SupportAuditPageDto {
+  items: SupportAuditItemDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+  from: string;
+  to: string;
+}
+
+/**
  * The reads the operator support routes receive from the composition layer (pattern of the operator
  * salon ports). Declared structurally here so the Unterbau names no context; 93b-02 implements it in
  * `composition/operator-support-ports.ts` and later plans extend it.
@@ -196,4 +223,12 @@ export interface OperatorSupportPorts {
     app: FastifyInstance,
     input: { tenantId: string; employeeId: string },
   ): Promise<SupportContractDto[]>;
+  /**
+   * One page of the tenant's own change log inside `[from, to]` (UTC calendar days, inclusive), newest
+   * first, values redacted by type. `employeeId`, when given, has already been resolved inside the tenant.
+   */
+  auditPage(
+    app: FastifyInstance,
+    input: { tenantId: string; employeeId?: string; from: string; to: string; page: number },
+  ): Promise<SupportAuditPageDto>;
 }

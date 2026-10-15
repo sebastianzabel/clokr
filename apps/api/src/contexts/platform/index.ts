@@ -238,6 +238,8 @@ export type {
   SupportAccessEndedBy,
   SupportAccessStatus,
   SupportAbsenceDto,
+  SupportAuditItemDto,
+  SupportAuditPageDto,
   SupportContractDto,
   SupportDayBreakDto,
   SupportEmployeeDto,

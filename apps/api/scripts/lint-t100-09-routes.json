@@ -1285,6 +1285,16 @@
       "reason": "The operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. `:employeeId` is resolved together with the tenant id inside the audit transaction (support.ts `runSupportRead`, port `employeeExists`: `{ id, tenantId }`), so another tenant's employee and an unknown id answer the same 404 `Mitarbeiter nicht gefunden` with no audit row and no data read - proven byte-identical (status and body) by support-access-reads-93.test.ts.",
       "ticket": null,
       "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/operator/tenants/:id/support/audit-log",
+      "file": "apps/api/src/contexts/platform/api/operator/support.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. `:id` is the tenant the operator holds a grant for (decided by the one decider before any read) and the optional `employeeId` query value is resolved together with that tenant id inside the audit transaction (support.ts `runSupportRead`, port `employeeExists`: `{ id, tenantId }`), so another tenant's employee and an unknown id answer the same 404 `Mitarbeiter nicht gefunden` with no audit row and no data read - proven byte-identical (status and body) by support-access-reads-93.test.ts; the rows themselves are scoped by the tenant two-branch `OR` of the port and never include another tenant's row (same file).",
+      "ticket": null,
+      "validatedAt": null
     }
   ]
 }

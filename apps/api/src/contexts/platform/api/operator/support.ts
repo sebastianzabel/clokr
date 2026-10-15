@@ -5,6 +5,13 @@
  *                                           NFC id or address)
  *   GET /employees/:employeeId/month        one employee's month: entries, breaks, leave, absences, figures
  *   GET /employees/:employeeId/contracts    one employee's contract history
+ *   GET /audit-log                          the tenant's own change log, values redacted by type
+ *                                           (D-17); `from` and `to` are mandatory
+ *
+ * Audit-log discretion (Phase 93b-05): the window is at most 92 calendar days (inclusive), a page holds
+ * 50 rows, and `from`/`to` are UTC calendar days (`[from 00:00Z, to + 1 day 00:00Z)`); the window is a
+ * filter, not a legal figure, and the console shows instants in the operator's browser zone (D-03). The
+ * cap and the mandatory window exist because the JSON-path filters are unindexed (T-93b-22).
  *
  * Mounted at `/api/v1/operator/tenants/:id/support`; `:id` is the tenant. This plugin registers GET
  * routes only (D-05): a write method here would be a write path for the operator into tenant data. Every
@@ -57,6 +64,48 @@ const monthQuerySchema = z
       }, "Jahr außerhalb des unterstützten Bereichs"),
   })
   .strict();
+
+/** The longest audit-log window in calendar days, both ends included (D-05(4), T-93b-22). */
+const AUDIT_MAX_WINDOW_DAYS = 92;
+
+const MS_PER_DAY = 86_400_000;
+
+/** `YYYY-MM-DD` that names a real calendar day (`2026-02-30` is refused, not rolled over). */
+const calendarDaySchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Datum muss das Format JJJJ-MM-TT haben")
+  .refine((value) => {
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  }, "Ungültiges Datum");
+
+const auditQuerySchema = z
+  .object({
+    from: calendarDaySchema,
+    to: calendarDaySchema,
+    employeeId: z.string().uuid().optional(),
+    page: z
+      .string()
+      .regex(/^[1-9]\d{0,5}$/, "Seite muss eine positive Zahl sein")
+      .optional(),
+  })
+  .strict()
+  .superRefine((query, ctx) => {
+    const days =
+      (new Date(`${query.to}T00:00:00.000Z`).getTime() -
+        new Date(`${query.from}T00:00:00.000Z`).getTime()) /
+        MS_PER_DAY +
+      1;
+    if (days < 1) {
+      ctx.addIssue({ code: "custom", path: ["to"], message: "Ende liegt vor dem Beginn" });
+    } else if (days > AUDIT_MAX_WINDOW_DAYS) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["to"],
+        message: `Der Zeitraum darf höchstens ${AUDIT_MAX_WINDOW_DAYS} Tage umfassen`,
+      });
+    }
+  });
 
 const TENANT_NOT_FOUND = { error: "Mandant nicht gefunden" };
 const EMPLOYEE_NOT_FOUND = { error: "Mitarbeiter nicht gefunden" };
@@ -271,6 +320,47 @@ export async function operatorSupportRoutes(
             employeeId: input.employeeId,
           }),
         }),
+      ),
+  });
+
+  // GET /api/v1/operator/tenants/:id/support/audit-log?from&to&employeeId?&page?
+  app.get("/audit-log", {
+    config: readRateLimit,
+    schema: {
+      tags: ["Betreiber"],
+      description:
+        "Change log of one tenant (at most 92 days, 50 rows per page), old and new values redacted by type, only under an active support access; every read is logged twice.",
+    },
+    preHandler: requireOperator,
+    handler: async (req, reply) =>
+      runSupportRead(
+        req,
+        reply,
+        () => {
+          const query = auditQuerySchema.parse(req.query);
+          const page = query.page === undefined ? 1 : Number(query.page);
+          return {
+            spec: {
+              category: "AUDIT_LOG",
+              employeeId: query.employeeId,
+              filters: {
+                from: query.from,
+                to: query.to,
+                page,
+                employeeId: query.employeeId,
+              },
+            },
+            input: { employeeId: query.employeeId, from: query.from, to: query.to, page },
+          };
+        },
+        async (tenantId, input) =>
+          opts.ports.auditPage(app, {
+            tenantId,
+            employeeId: input.employeeId,
+            from: input.from,
+            to: input.to,
+            page: input.page,
+          }),
       ),
   });
 }
