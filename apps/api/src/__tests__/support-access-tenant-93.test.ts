@@ -9,7 +9,7 @@
  * tests (audit rows reference them with onDelete Restrict), so each case that needs a fresh principal
  * seeds a fresh synthetic one. Tenants are cleaned up in `afterAll`, which also removes their grants.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -24,6 +24,16 @@ import {
 } from "./setup";
 import { signOperatorToken } from "../contexts/platform/operator-auth";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
+
+// The transporter is built inline in notify.ts through a dynamic `import("nodemailer")`; mocking
+// createTransport captures every mail without a real SMTP server (same idiom as
+// notification-email.test.ts).
+const { sendMailMock } = vi.hoisted(() => ({ sendMailMock: vi.fn() }));
+
+vi.mock("nodemailer", () => {
+  const createTransport = vi.fn(() => ({ sendMail: sendMailMock }));
+  return { default: { createTransport }, createTransport };
+});
 
 type Fixture = Awaited<ReturnType<typeof seedGrundversionTenant>>;
 type Principal = { id: string; token: string; displayName: string; email: string };
@@ -620,5 +630,184 @@ describe("no tenant write path on the access or the logs (AC-93-6)", () => {
       }
     }
     expect(app.hasRoute({ method: "POST", url: "/api/v1/support-accesses" })).toBe(false);
+  });
+});
+
+// ── In-app notification (D-08, D-14) ──────────────────────────────────────────────────────────────
+
+const SMTP_CONFIGURED = {
+  smtpHost: "smtp.test.local",
+  smtpPort: 587,
+  smtpUser: "smtp-user",
+  smtpPassword: "smtp-pass",
+  smtpFromEmail: "noreply@test.local",
+  smtpFromName: "Clokr Test",
+  smtpSecure: false,
+};
+
+/** Every start notice of one access, oldest first. */
+function noticesFor(accessId: string) {
+  return app.prisma.notification.findMany({
+    where: { type: "SUPPORT_ACCESS_STARTED", relatedType: "SupportAccess", relatedId: accessId },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+}
+
+const idsOf = (rows: { userId: string }[]) => rows.map((row) => row.userId).sort(byKey);
+
+describe("the tenant is told in-app when an access starts", () => {
+  beforeEach(() => {
+    sendMailMock.mockReset();
+    sendMailMock.mockResolvedValue({ messageId: "test-message-id" });
+  });
+
+  it("notifies exactly the whole-tenant tenant-settings:update holders, with the link only for audit-log:read holders", async () => {
+    const t = await newTenant("notify");
+    const other = await newTenant("notify-other");
+    const operator = await newPrincipal();
+
+    const settingsOnly = await createUserWithRole(t, "settingsOnly", [
+      "tenant-settings:update:ZUGEWIESEN",
+    ]);
+    const auditOnly = await createUserWithRole(t, "auditOnly", ["audit-log:read:ZUGEWIESEN"]);
+    const salonScoped = await createUserWithRole(
+      t,
+      "salonSettings",
+      ["tenant-settings:update:ZUGEWIESEN"],
+      { scopeType: "SALONS", salonIds: [t.salonId] },
+    );
+    const inactive = await createUserWithRole(t, "inactiveAdmin", [
+      "tenant-settings:update:ZUGEWIESEN",
+    ]);
+    await app.prisma.user.update({ where: { id: inactive.user.id }, data: { isActive: false } });
+
+    const grant = await requestGrant(t.tenant.id, operator, 4);
+    const row = await app.prisma.supportAccess.findUniqueOrThrow({ where: { id: grant.id } });
+
+    const notices = await noticesFor(grant.id);
+    // The seeded admin (legacy ADMIN fallback) and the tenant-settings:update-only user; never the
+    // EMPLOYEE, the audit-log:read-only user, a salon-scoped holder, an inactive user or tenant B's admin.
+    expect(idsOf(notices)).toEqual([t.adminUser.id, settingsOnly.user.id].sort(byKey));
+    for (const excluded of [
+      t.empUser.id,
+      auditOnly.user.id,
+      salonScoped.user.id,
+      inactive.user.id,
+      other.adminUser.id,
+    ]) {
+      expect(notices.map((n) => n.userId)).not.toContain(excluded);
+    }
+    // No notice anywhere else for this access.
+    expect(await app.prisma.notification.count({ where: { relatedId: grant.id } })).toBe(2);
+
+    // The link follows the target page's guard: only the admin also holds audit-log:read.
+    const withLink = notices.filter((n) => n.link !== null).map((n) => n.userId);
+    expect(withLink).toEqual([t.adminUser.id]);
+    const admin = notices.find((n) => n.userId === t.adminUser.id);
+    expect(admin?.link).toBe(`/admin/support-access/${grant.id}`);
+
+    const config = await app.prisma.tenantConfig.findUniqueOrThrow({
+      where: { tenantId: t.tenant.id },
+      select: { timezone: true },
+    });
+    const endsAt = new Intl.DateTimeFormat("de-DE", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: config.timezone,
+    }).format(row.expiresAt);
+    for (const notice of notices) {
+      expect(notice.title).toBe("Support-Zugriff gestartet");
+      expect(notice.message).toContain(REASON);
+      expect(notice.message).toContain(endsAt);
+      expect(notice.relatedType).toBe("SupportAccess");
+      expect(notice.relatedId).toBe(grant.id);
+      expect(notice.dismissedAt).toBeNull();
+    }
+    // Same text for every recipient: only the link differs.
+    expect(new Set(notices.map((n) => n.message)).size).toBe(1);
+
+    // Tenant B learned nothing about tenant A's access.
+    expect(await app.prisma.notification.count({ where: { userId: other.adminUser.id } })).toBe(0);
+  });
+
+  it("never undoes the grant when the notification layer fails", async () => {
+    const t = await newTenant("notify-fail");
+    const operator = await newPrincipal();
+    const spy = vi.spyOn(app, "notify").mockRejectedValue(new Error("notify exploded"));
+    try {
+      const res = await operatorRequest(
+        "POST",
+        `/api/v1/operator/tenants/${t.tenant.id}/support-access`,
+        operator.token,
+        { reason: REASON },
+      );
+      expect(res.statusCode, res.body).toBe(201);
+      const id = (JSON.parse(res.body) as { access: { id: string } }).access.id;
+      expect(spy).toHaveBeenCalled();
+      const row = await app.prisma.supportAccess.findUniqueOrThrow({ where: { id } });
+      expect(row.endedAt).toBeNull();
+      expect(await noticesFor(id)).toHaveLength(0);
+      // The grant works: the operator can read under it.
+      expect((await readEmployees(t.tenant.id, operator.token)).statusCode).toBe(200);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("dismisses the start notices when the tenant ends the access", async () => {
+    const t = await newTenant("dismiss-tenant");
+    const operator = await newPrincipal();
+    const grant = await requestGrant(t.tenant.id, operator);
+    const before = await noticesFor(grant.id);
+    expect(before.length).toBeGreaterThan(0);
+    expect(before.every((n) => n.dismissedAt === null)).toBe(true);
+
+    expect((await tenantEnd(grant.id, t.adminToken)).statusCode).toBe(200);
+    const after = await noticesFor(grant.id);
+    expect(after).toHaveLength(before.length);
+    expect(after.every((n) => n.dismissedAt !== null)).toBe(true);
+  });
+
+  it("dismisses the start notices when the operator ends the access", async () => {
+    const t = await newTenant("dismiss-operator");
+    const operator = await newPrincipal();
+    const grant = await requestGrant(t.tenant.id, operator);
+    expect((await noticesFor(grant.id)).every((n) => n.dismissedAt === null)).toBe(true);
+
+    const res = await operatorRequest(
+      "POST",
+      `/api/v1/operator/tenants/${t.tenant.id}/support-access/${grant.id}/end`,
+      operator.token,
+    );
+    expect(res.statusCode, res.body).toBe(200);
+    const after = await noticesFor(grant.id);
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.every((n) => n.dismissedAt !== null)).toBe(true);
+  });
+
+  it("never sends a mail for it, while a mailed type still goes out under the same configuration", async () => {
+    const t = await newTenant("no-mail");
+    const operator = await newPrincipal();
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: t.tenant.id },
+      data: { ...SMTP_CONFIGURED, emailNotificationsEnabled: true, emailOnLeaveRequest: true },
+    });
+
+    // Control: the same configuration does mail a type whose policy allows it, so the silence
+    // below proves the policy and not a broken mail path.
+    await app.notify({
+      userId: t.adminUser.id,
+      type: "LEAVE_REQUEST",
+      title: "Neuer Urlaubsantrag",
+      message: "Ein Urlaubsantrag wurde gestellt.",
+      tenantId: t.tenant.id,
+    });
+    await vi.waitFor(() => expect(sendMailMock).toHaveBeenCalledTimes(1));
+    sendMailMock.mockClear();
+
+    const grant = await requestGrant(t.tenant.id, operator);
+    expect((await noticesFor(grant.id)).length).toBeGreaterThan(0);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(sendMailMock).not.toHaveBeenCalled();
   });
 });

@@ -38,7 +38,7 @@ import { requestAuditFields } from "../request-audit-fields";
 import { isAnonymizedEmployee } from "../employee-anonymization-filter";
 import { OPERATOR_AUDIT_ACTIONS, recordOperatorAudit } from "../operator-audit";
 import { readTenantTimezone } from "../facade/salon-assignments";
-import { supportAccessStatus } from "../support-access";
+import { dismissSupportAccessNotices, supportAccessStatus } from "../support-access";
 import type {
   SupportAccessEndedBy,
   TenantSupportAccessItemDto,
@@ -302,6 +302,13 @@ export async function supportAccessRoutes(app: FastifyInstance) {
           error: "Der Support-Zugriff ist nicht mehr aktiv.",
           code: "SUPPORT_ACCESS_NOT_ACTIVE",
         });
+      }
+
+      // Reactive: the start notices of this access disappear for every recipient (D-14).
+      try {
+        await dismissSupportAccessNotices(app, id);
+      } catch (err) {
+        req.log.warn({ err, accessId: id }, "Support access notice dismissal failed");
       }
 
       const readCount = await app.prisma.auditLog.count({

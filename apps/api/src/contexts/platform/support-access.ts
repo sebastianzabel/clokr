@@ -25,6 +25,8 @@
 import type { FastifyInstance } from "fastify";
 import type { Prisma, PrismaClient, SupportAccess } from "@clokr/db";
 import { isAnonymizedEmployee } from "./employee-anonymization-filter";
+import { userIdsHoldingPermission } from "./facade/role-assignments";
+import { readTenantTimezone } from "./facade/salon-assignments";
 import {
   OPERATOR_AUDIT_ACTIONS,
   OPERATOR_AUDIT_RETENTION_MONTHS,
@@ -459,4 +461,82 @@ export async function purgeExpiredSupportAccess(
     const { count } = await tx.supportAccess.deleteMany({ where: { createdAt: { lt: cutoff } } });
     return { deleted: count };
   });
+}
+
+// ── Tenant notification (D-08, D-14) ──────────────────────────────────────────────────────────────
+
+/**
+ * Tells the controlling tenant, in-app, that a support access has started. A REACTIVE handler (ADR 0002,
+ * Entscheidung 10): the caller runs it after the grant transaction committed and inside its own
+ * try/catch, it may fail, and it never undoes or delays the grant. It is never mailed (the
+ * `SUPPORT_ACCESS_STARTED` entry of the email policy is "never") — the in-app notice and the log are the
+ * accountability record, not an inbox item.
+ *
+ * Recipients follow D-08: every active user of the tenant who holds `tenant-settings:update` with
+ * whole-tenant reach (the controller's administrators; the key has the relation MANDANT, so only
+ * tenant-scope holders are candidates and no salon narrowing applies). The LINK to the admin page is
+ * set only for a recipient who also holds `audit-log:read` with whole-tenant reach — the guard of the
+ * link's target `/admin/support-access/[id]` — so nobody receives a dead link. A `tenant-settings:update`
+ * holder without `audit-log:read` is still informed (D-08's recipient set stays whole), just without the
+ * link it could not open.
+ *
+ * The end time is written in the tenant's time zone; the reason is the operator's free text and is
+ * escaped by the notification layer (mail) and by Svelte (in-app).
+ */
+export async function notifySupportAccessStarted(
+  app: FastifyInstance,
+  input: { tenantId: string; accessId: string; reason: string; expiresAt: Date },
+): Promise<void> {
+  const holderIds = await userIdsHoldingPermission(
+    app.prisma,
+    input.tenantId,
+    "tenant-settings:update:ZUGEWIESEN",
+  );
+  const recipients = await app.prisma.user.findMany({
+    where: { id: { in: holderIds }, isActive: true, employee: { tenantId: input.tenantId } },
+    select: { id: true },
+  });
+  if (recipients.length === 0) return;
+
+  const linkHolderIds = new Set(
+    await userIdsHoldingPermission(app.prisma, input.tenantId, "audit-log:read:ZUGEWIESEN"),
+  );
+  const timeZone = await readTenantTimezone(app.prisma, input.tenantId);
+  const endsAt = new Intl.DateTimeFormat("de-DE", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone,
+  }).format(input.expiresAt);
+  const message = `Ein Support-Zugriff auf Ihren Mandanten wurde gestartet. Er endet am ${endsAt} Uhr. Grund: ${input.reason}`;
+
+  for (const recipient of recipients) {
+    try {
+      await app.notify({
+        userId: recipient.id,
+        type: "SUPPORT_ACCESS_STARTED",
+        title: "Support-Zugriff gestartet",
+        message,
+        ...(linkHolderIds.has(recipient.id)
+          ? { link: `/admin/support-access/${input.accessId}` }
+          : {}),
+        tenantId: input.tenantId,
+        relatedType: "SupportAccess",
+        relatedId: input.accessId,
+      });
+    } catch (err) {
+      // One failing recipient never stops the others; the grant itself is long committed.
+      app.log.warn(
+        { err, accessId: input.accessId, userId: recipient.id },
+        "Support access notification failed",
+      );
+    }
+  }
+}
+
+/** Dismisses the start notices of one access for every recipient — called after every end (D-14). */
+export async function dismissSupportAccessNotices(
+  app: FastifyInstance,
+  accessId: string,
+): Promise<void> {
+  await app.dismissByRelated("SupportAccess", accessId);
 }

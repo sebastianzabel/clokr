@@ -27,8 +27,10 @@ import {
   SUPPORT_ACCESS_REASON_MAX,
   SUPPORT_ACCESS_REASON_MIN,
   createSupportAccess,
+  dismissSupportAccessNotices,
   endSupportAccessByOperator,
   listSupportAccessesForOperator,
+  notifySupportAccessStarted,
   toSupportAccessDto,
 } from "../../support-access";
 
@@ -97,6 +99,18 @@ export async function operatorSupportAccessRoutes(app: FastifyInstance) {
             code: "SUPPORT_ACCESS_ALREADY_ACTIVE",
           });
         case "CREATED":
+          // Reactive handler (ADR 0002, Entscheidung 10, D-14): after the grant committed, may fail,
+          // never undoes the grant. The tenant learns in-app that an access started.
+          try {
+            await notifySupportAccessStarted(app, {
+              tenantId,
+              accessId: result.row.id,
+              reason: result.row.reason,
+              expiresAt: result.row.expiresAt,
+            });
+          } catch (err) {
+            req.log.warn({ err, accessId: result.row.id }, "Support access notification failed");
+          }
           return reply.code(201).send({ access: toSupportAccessDto(result.row, now) });
       }
     },
@@ -150,6 +164,12 @@ export async function operatorSupportAccessRoutes(app: FastifyInstance) {
             code: "SUPPORT_ACCESS_NOT_ACTIVE",
           });
         case "ENDED":
+          // Reactive: the start notices of this access disappear for every recipient (D-14).
+          try {
+            await dismissSupportAccessNotices(app, accessId);
+          } catch (err) {
+            req.log.warn({ err, accessId }, "Support access notice dismissal failed");
+          }
           return reply.code(200).send({ access: result.access });
       }
     },
