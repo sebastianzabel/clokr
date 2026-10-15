@@ -24,6 +24,51 @@ const PHASE_83 = [
   "apps/web/src/lib/components/layout/BottomTabBar.svelte",
 ];
 
+// Issue #538: the remaining pages and shell parts. Sidebar was already in scope (its two label
+// lines were the allowlisted exceptions); the persona store was deleted, nothing imported it.
+const ISSUE_538 = [
+  "apps/web/src/routes/(app)/admin/employees/+page.svelte",
+  "apps/web/src/routes/(app)/admin/employees/[id]/+page.svelte",
+  "apps/web/src/routes/(app)/reports/+page.svelte",
+  "apps/web/src/routes/(app)/time-entries/+page.svelte",
+  "apps/web/src/routes/(app)/settings/+page.svelte",
+  "apps/web/src/lib/components/layout/Topbar.svelte",
+  "apps/web/src/lib/components/layout/Sidebar.svelte",
+  "apps/web/src/lib/leave/team-calendar-visibility.ts",
+  "apps/web/src/lib/page-rights.ts",
+];
+
+describe("web role-check gate covers Issue #538 without an exception", () => {
+  it("lists every file, each exists and carries no role check", () => {
+    for (const file of ISSUE_538) {
+      expect(SCOPE_FILES).toContain(file);
+      expect(existsSync(resolve(REPO, file)), file).toBe(true);
+      expect(findRoleChecks(readFileSync(resolve(REPO, file), "utf8")), file).toEqual([]);
+    }
+  });
+
+  it("the persona store is gone", () => {
+    expect(existsSync(resolve(REPO, "apps/web/src/lib/stores/persona.ts"))).toBe(false);
+  });
+
+  it("flags a compat-role read through a store snapshot", () => {
+    expect(findRoleChecks("const role = get(authStore).user?.role;").length).toBeGreaterThan(0);
+    expect(findRoleChecks("currentRole = auth.user?.role ?? null;").length).toBeGreaterThan(0);
+  });
+
+  it("the shell shows the assigned role names, not the compat role", () => {
+    for (const file of [
+      "apps/web/src/lib/components/layout/Topbar.svelte",
+      "apps/web/src/lib/components/layout/Sidebar.svelte",
+      "apps/web/src/routes/(app)/settings/+page.svelte",
+    ]) {
+      const src = readFileSync(resolve(REPO, file), "utf8");
+      expect(src, file).toContain("roleNamesLabel(");
+      expect(src, file).not.toContain("Administrator");
+    }
+  });
+});
+
 describe("web role-check gate covers Phase 83 (Issue #83)", () => {
   it("lists every converted file, and each exists", () => {
     for (const file of PHASE_83) {
@@ -43,8 +88,8 @@ describe("web role-check gate covers Phase 83 (Issue #83)", () => {
     expect(findRoleChecks("const r = $authStore.user?.role;").length).toBeGreaterThan(0);
   });
 
-  it("keeps only the two display-label exceptions and flags stale ones", () => {
-    expect([...ALLOWLIST]).toHaveLength(2);
+  it("keeps no exception (Issue #538) and still flags stale ones", () => {
+    expect([...ALLOWLIST]).toHaveLength(0);
     const read = (file: string) => readFileSync(resolve(REPO, file), "utf8");
     expect(staleAllowlistEntries(ALLOWLIST, SCOPE_FILES, read)).toEqual([]);
     const outOfScope = "apps/web/src/no-such-file.svelte::x";
