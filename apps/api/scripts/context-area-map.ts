@@ -184,6 +184,9 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/operator/dashboard.ts": "unterbau", // Issue #90 — operator dashboard route (aggregated tenant metrics, DASHBOARD_VIEWED audit); reads Tenant and calls the metrics facade, owns no model
   "src/contexts/platform/api/operator/salons.ts": "unterbau", // Phase 89 (#89, D-05/D-06/D-07) — operator salon routes (list now, mutations in later plans); reads Salon through the Unterbau facade and gets coupling and time-entry count through a port from the composition root
   "src/composition/operator-salon-ports.ts": "komposition", // Phase 89 (#89, D-07/D-12) — maps the time-tracking and scheduling index exports onto the operator salon port; owns no model, carries no rule
+  "src/contexts/platform/api/operator/support-access.ts": "unterbau", // Issue #93 (D-18) — operator support access grant request (POST); reads and writes the SupportAccess grant through the Unterbau decider and owns no model
+  "src/contexts/platform/api/operator/support.ts": "unterbau", // Issue #93 (D-05/D-18/D-19/D-24) — GET-only operator support reads behind the grant decider and the audit-first transaction; tenant data comes in through the composition port, never read here
+  "src/composition/operator-support-ports.ts": "komposition", // Issue #93 (D-05/D-24) — assembles the curated support DTOs from the platform and working-time-account index exports for the operator support routes; owns no model, carries no rule
 
   // ── zeiterfassung — TimeEntry/Break/RetroEntryRequest/TerminalApiKey/PresenceSource/
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────

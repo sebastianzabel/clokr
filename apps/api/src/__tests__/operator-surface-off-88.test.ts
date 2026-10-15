@@ -3,6 +3,7 @@
  * its routes answer 404, the tenant side is unchanged and a missing second JWT registration breaks nothing.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 
 describe("operator surface off (OPERATOR_JWT_SECRET unset)", () => {
@@ -38,6 +39,21 @@ describe("operator surface off (OPERATOR_JWT_SECRET unset)", () => {
   it("does not register the operator dashboard route (Issue #90)", async () => {
     const res = await app.inject({ method: "GET", url: "/api/v1/operator/dashboard" });
     expect(res.statusCode).toBe(404);
+  });
+
+  it("does not register the operator support routes (Issue #93)", async () => {
+    const tenantId = randomUUID();
+    const grant = await app.inject({
+      method: "POST",
+      url: `/api/v1/operator/tenants/${tenantId}/support-access`,
+      payload: { reason: "Support ticket: surface off" },
+    });
+    expect(grant.statusCode).toBe(404);
+    const read = await app.inject({
+      method: "GET",
+      url: `/api/v1/operator/tenants/${tenantId}/support/employees`,
+    });
+    expect(read.statusCode).toBe(404);
   });
 
   it("keeps the tenant routes working and requireAuth answers 401, not a crash", async () => {
