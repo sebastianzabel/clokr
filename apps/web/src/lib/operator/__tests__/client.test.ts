@@ -603,3 +603,81 @@ describe("support access (Issue #93, D-21)", () => {
     expect(init.body).toBeUndefined();
   });
 });
+
+describe("support reads (Issue #93, D-05)", () => {
+  async function ready() {
+    const loaded = await load();
+    loaded.setSession("op-token", 900, NOW);
+    return loaded;
+  }
+
+  it("listSupportEmployees GETs the employees path with the encoded tenant id", async () => {
+    const { operatorApi } = await ready();
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+
+    await expect(operatorApi.listSupportEmployees("t/1")).resolves.toEqual({ items: [] });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/t%2F1/support/employees");
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer op-token");
+  });
+
+  it("getSupportEmployeeMonth GETs the month path with both ids encoded and the month query", async () => {
+    const { operatorApi } = await ready();
+    fetchMock.mockResolvedValue(jsonResponse({ month: "2026-09" }));
+
+    await operatorApi.getSupportEmployeeMonth("t 1", "e/1", "2026-09");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/t%201/support/employees/e%2F1/month?month=2026-09");
+    expect(init.method).toBe("GET");
+  });
+
+  it("getSupportContracts GETs the contracts path", async () => {
+    const { operatorApi } = await ready();
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+
+    await operatorApi.getSupportContracts("t1", "e1");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operator/tenants/t1/support/employees/e1/contracts");
+    expect(init.method).toBe("GET");
+  });
+
+  it("getSupportAuditLog sends from and to, and adds employeeId and page only when given", async () => {
+    const { operatorApi } = await ready();
+    fetchMock.mockResolvedValue(jsonResponse({ items: [] }));
+
+    await operatorApi.getSupportAuditLog("t1", { from: "2026-09-01", to: "2026-09-30" });
+    await operatorApi.getSupportAuditLog("t1", {
+      from: "2026-09-01",
+      to: "2026-09-30",
+      employeeId: "e 1",
+      page: 3,
+    });
+
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe(
+      "/api/v1/operator/tenants/t1/support/audit-log?from=2026-09-01&to=2026-09-30",
+    );
+    expect((fetchMock.mock.calls[1] as [string])[0]).toBe(
+      "/api/v1/operator/tenants/t1/support/audit-log?from=2026-09-01&to=2026-09-30&employeeId=e+1&page=3",
+    );
+  });
+
+  it("a refused read keeps the session and carries the code", async () => {
+    const { operatorApi, setUnauthorizedHandler, currentToken } = await ready();
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    fetchMock.mockResolvedValue(
+      jsonResponse({ error: "Kein Zugriff", code: "SUPPORT_ACCESS_REQUIRED" }, 403),
+    );
+
+    await expect(operatorApi.listSupportEmployees("t1")).rejects.toMatchObject({
+      status: 403,
+      code: "SUPPORT_ACCESS_REQUIRED",
+    });
+    expect(handler).not.toHaveBeenCalled();
+    expect(currentToken()).toBe("op-token");
+  });
+});

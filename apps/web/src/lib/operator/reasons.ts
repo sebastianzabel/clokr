@@ -66,6 +66,11 @@ export const SUPPORT_NOTICE_CODES: readonly string[] = [
   SUPPORT_ACCESS_EXPIRED,
 ];
 
+/** Sentences that win over `REASON_TEXTS` when a support READ is refused (nothing is changed there). */
+export const SUPPORT_READ_OVERRIDES: Readonly<Record<string, string>> = {
+  TENANT_DEACTIVATED: "Der Mandant ist deaktiviert. Eine Einsicht ist nicht möglich.",
+};
+
 /** Keys a caller passes as `notFoundCode` so a code-less 404 reads as a missing grant or employee. */
 export const SUPPORT_ACCESS_NOT_FOUND = "SUPPORT_ACCESS_NOT_FOUND";
 export const EMPLOYEE_NOT_FOUND = "EMPLOYEE_NOT_FOUND";

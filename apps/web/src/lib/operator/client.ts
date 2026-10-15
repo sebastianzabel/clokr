@@ -26,6 +26,11 @@ import type {
   ResendInvitationResult,
   SetTenantPackagesBody,
   SupportAccessResult,
+  SupportAuditPage,
+  SupportAuditQuery,
+  SupportContractList,
+  SupportEmployeeList,
+  SupportEmployeeMonth,
   UpdateSalonBody,
 } from "./types";
 
@@ -192,4 +197,30 @@ export const operatorApi = {
       "POST",
       `/tenants/${encodeURIComponent(tenantId)}/support-access/${encodeURIComponent(accessId)}/end`,
     ),
+  // Support reads (Issue #93, D-05). Each one is refused 403 SUPPORT_ACCESS_REQUIRED without an active
+  // access; the client keeps the operator signed in on exactly that answer.
+  listSupportEmployees: (tenantId: string) =>
+    request<SupportEmployeeList>(
+      "GET",
+      `/tenants/${encodeURIComponent(tenantId)}/support/employees`,
+    ),
+  getSupportEmployeeMonth: (tenantId: string, employeeId: string, month: string) =>
+    request<SupportEmployeeMonth>(
+      "GET",
+      `/tenants/${encodeURIComponent(tenantId)}/support/employees/${encodeURIComponent(employeeId)}/month?month=${encodeURIComponent(month)}`,
+    ),
+  getSupportContracts: (tenantId: string, employeeId: string) =>
+    request<SupportContractList>(
+      "GET",
+      `/tenants/${encodeURIComponent(tenantId)}/support/employees/${encodeURIComponent(employeeId)}/contracts`,
+    ),
+  getSupportAuditLog: (tenantId: string, query: SupportAuditQuery) => {
+    const params = new URLSearchParams({ from: query.from, to: query.to });
+    if (query.employeeId !== undefined) params.set("employeeId", query.employeeId);
+    if (query.page !== undefined) params.set("page", String(query.page));
+    return request<SupportAuditPage>(
+      "GET",
+      `/tenants/${encodeURIComponent(tenantId)}/support/audit-log?${params.toString()}`,
+    );
+  },
 };
