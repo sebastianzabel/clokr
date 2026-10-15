@@ -663,6 +663,10 @@ describe("Phase 74b review fixes", () => {
       "role:manage:ZUGEWIESEN",
       "role-assignment:manage:ZUGEWIESEN",
     ]);
+    // #539 (D-09): the seed admin holds a stored Admin row, so the tenant has genuine holders of
+    // both keys before the malformed row exists; "grants nothing — not even holder status" is the
+    // statement that the malformed row adds none to that baseline.
+    const holdersBefore = await countGuardedPermissionHolders(app.prisma, tenantA.tenant.id);
     await writeMalformed(holder.user.id, roleManage.id, {
       scopeType: "TENANT",
       salonIds: [salonA1.id],
@@ -673,7 +677,9 @@ describe("Phase 74b review fixes", () => {
       userMayApply(app.prisma, tenantA.tenant.id, holder.user.id, "role:manage:ZUGEWIESEN", {}),
     ).resolves.toBe(false);
     const holders = await countGuardedPermissionHolders(app.prisma, tenantA.tenant.id);
-    expect(holders["role:manage:ZUGEWIESEN"]).toBe(0);
-    expect(holders["role-assignment:manage:ZUGEWIESEN"]).toBe(0);
+    expect(holders["role:manage:ZUGEWIESEN"]).toBe(holdersBefore["role:manage:ZUGEWIESEN"]);
+    expect(holders["role-assignment:manage:ZUGEWIESEN"]).toBe(
+      holdersBefore["role-assignment:manage:ZUGEWIESEN"],
+    );
   });
 });
