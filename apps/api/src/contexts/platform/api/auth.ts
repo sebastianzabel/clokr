@@ -2,10 +2,8 @@ import { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
 import { z } from "zod";
-import { Role } from "@clokr/db";
 import { JwtPayload } from "../../../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
-import { compatRoleForUser } from "../compat-role";
 import { NO_ROLE_ASSIGNED_ERROR, effectivePermissionKeysForUser } from "../request-permissions"; // Phase 378 (#378); #539 (D-14)
 import { userIdsHoldingPermission, resolveScopedHolderIds } from "../facade/role-assignments"; // Phase 75b Plan 10 (#75), D-16/D-17; Phase 91b Plan 09 (#91), D-17
 import { isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 09 (#91), D-10/D-17
@@ -458,18 +456,13 @@ export async function authRoutes(app: FastifyInstance) {
         data: { revokedAt: new Date() },
       });
 
-      // Phase 75b (#75), D-14: the role claim is DERIVED from the user's role assignments at the one
-      // derivation site (compat-role.ts); no access decision reads it (D-12). It stays in the token
-      // because the frontend still consumes it until #539 removes User.role.
-      const role = await compatRoleForUser(app.prisma, stored.user.id, tenantId, stored.user.role);
-
       // Phase 408 (#408): /auth/refresh is the only round-trip a running or restored session makes
       // by itself, so it carries the same effective-permissions list login/verify-otp already
       // compute (see the #539 refusal above).
 
-      const payload = {
+      // Issue #539 (D-05): no role claim - an old refresh token's claim is not carried over.
+      const payload: JwtPayload = {
         sub: stored.user.id,
-        role,
         tenantId,
         employeeId: stored.user.employee?.id,
       };
@@ -732,7 +725,6 @@ async function issueTokens(
   user: {
     id: string;
     email: string;
-    role: Role;
     employee: { id: string; tenantId: string; firstName: string } | null;
   },
   // Issue #539 (D-14): the effective permission keys, computed ONCE by the caller (which refused an
@@ -755,20 +747,11 @@ async function issueTokens(
     ? (tenantConfig?.rememberMeDays ?? 30)
     : (tenantConfig?.refreshTokenDays ?? 7);
 
-  // Phase 75b (#75), D-14: the role published in the JWT and in the login body is DERIVED from the
-  // user's role assignments, computed once here at the one derivation site (compat-role.ts). No
-  // access decision reads it (D-12); the frontend still consumes it until #539 removes User.role.
-  const role = await compatRoleForUser(app.prisma, user.id, tenantId, user.role);
-
-  // Phase 378 (#378): the web decides Team-Bereich visibility by permission, not by the compat
-  // role above — a Salon/Personen-scope assignment (Salonmanager, Ausbilder templates) never
-  // contributes to `role`, but its permissions are real. The list is computed by the caller at
-  // login/OTP-verify AND on every `/auth/refresh` (Phase 408, #408) — unlike `role`, it is
-  // recomputed on every refresh, not just on the next login.
-
-  const payload = {
+  // Issue #539 (D-05): the token and the body carry no role. The web decides by the effective
+  // permission list (Phase 378, #378), computed by the caller at login/OTP-verify AND on every
+  // `/auth/refresh` (Phase 408, #408).
+  const payload: JwtPayload = {
     sub: user.id,
-    role,
     tenantId,
     employeeId: user.employee?.id,
   };
@@ -825,8 +808,6 @@ async function issueTokens(
     user: {
       id: user.id,
       email: user.email,
-      // The derived compat role (D-14), the same value as the JWT claim above.
-      role,
       employeeId: user.employee?.id ?? null,
       firstName: user.employee?.firstName ?? null,
       // Phase 378 (#378): effective permission keys, for web-side visibility decisions.

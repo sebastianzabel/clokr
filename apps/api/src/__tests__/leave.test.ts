@@ -1035,7 +1035,7 @@ describe("Leave / Absence API", () => {
       }
     });
 
-    it("MANAGER creates absence on behalf of an employee in their tenant", async () => {
+    it("MANAGER creates absence on behalf of an employee in their tenant (new audit row without actorRole, #539 D-13)", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/leave/requests",
@@ -1059,7 +1059,9 @@ describe("Leave / Absence API", () => {
       expect(auditEntry).not.toBeNull();
       const newValue = auditEntry?.newValue as Record<string, unknown> | null;
       expect(newValue?.source).toBe("MANAGER_CREATED");
-      expect(newValue?.actorRole).toBe("MANAGER");
+      // Issue #539 (D-13): NEW rows carry no actorRole any more (existing rows keep theirs, the
+      // audit log is append-only); the actor is the row's userId.
+      expect(newValue).not.toHaveProperty("actorRole");
       expect(newValue?.targetEmployeeId).toBe(data.employee.id);
     });
 

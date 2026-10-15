@@ -218,7 +218,6 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
   let remoteCounter = 0;
   const userIdOf = new Map<string, string>();
   const employeeIdOf = new Map<string, string>();
-  const columnRoleOf = new Map<string, Role>();
   const emailOf = new Map<string, string>();
   /** Access tokens from the login step, used for the activity calls. */
   const accessTokenOf = new Map<string, string>();
@@ -274,7 +273,6 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
     });
     registry.register(`${label}.user`, user.id);
     userIdOf.set(label, user.id);
-    columnRoleOf.set(label, role);
     emailOf.set(label, email);
     if (tenantId === null) return { userId: user.id };
     const employee = await app.prisma.employee.create({
@@ -536,13 +534,13 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
         const loginBody = JSON.parse(login.body) as {
           accessToken?: string;
           refreshToken?: string;
-          user?: { role: string };
+          user?: Record<string, unknown>;
         };
         const loginRecord: TokenRecord = { status: login.statusCode };
         if (loginBody.accessToken) {
           const c = claims(loginBody.accessToken);
-          loginRecord.bodyRole = loginBody.user?.role;
-          loginRecord.tokenRole = c.role;
+          // Issue #539 (D-05): neither the body's user nor the token carries a role any more, so the
+          // record no longer sets `bodyRole` / `tokenRole` (the absence is asserted below).
           loginRecord.tokenTenant = tenantLabel(c.tenantId);
           loginRecord.tokenEmployee = employeeLabel(c.employeeId);
           accessTokenOf.set(label, loginBody.accessToken);
@@ -557,7 +555,6 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
         });
         const refreshBody = JSON.parse(refresh.body) as { accessToken?: string; user?: unknown };
         const refreshRecord: TokenRecord = { status: refresh.statusCode };
-        if (refreshBody.accessToken) refreshRecord.tokenRole = claims(refreshBody.accessToken).role;
         record(`auth | ${label} | refresh`, refreshRecord);
 
         if (label === "A.noEmployee") {
@@ -585,11 +582,15 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
           expect(refreshRecord).toEqual(amendmentByKey.get(`auth | ${label} | refresh`)?.to);
           return;
         }
-        // Pre-switch sanity: the column IS the source, so every recorded role equals it; the
-        // refresh body carries no user object (C-4).
-        const column = columnRoleOf.get(label);
-        expect(loginRecord).toMatchObject({ status: 200, bodyRole: column, tokenRole: column });
-        expect(refreshRecord).toEqual({ status: 200, tokenRole: column });
+        // Since #539 (D-05) no role is published: the body's user and the claims of the access
+        // token (and of the refreshed one) have none; the refresh body carries no user object (C-4).
+        expect(loginRecord).toMatchObject({ status: 200 });
+        expect(loginRecord).not.toHaveProperty("bodyRole");
+        expect(loginRecord).not.toHaveProperty("tokenRole");
+        expect(refreshRecord).toEqual({ status: 200 });
+        expect(Object.keys(loginBody.user ?? {})).not.toContain("role");
+        expect(Object.keys(claims(loginBody.accessToken as string))).not.toContain("role");
+        expect(Object.keys(claims(refreshBody.accessToken as string))).not.toContain("role");
         expect(refreshBody.user).toBeUndefined();
       });
     }
@@ -616,13 +617,12 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
       const verifyBody = JSON.parse(verify.body) as {
         accessToken?: string;
         refreshToken?: string;
-        user?: { role: string };
+        user?: Record<string, unknown>;
       };
       const verifyRecord: TokenRecord = { status: verify.statusCode };
       if (verifyBody.accessToken) {
         const c = claims(verifyBody.accessToken);
-        verifyRecord.bodyRole = verifyBody.user?.role;
-        verifyRecord.tokenRole = c.role;
+        // Issue #539 (D-05): no role in the body or the token (asserted below).
         verifyRecord.tokenTenant = tenantLabel(c.tenantId);
         verifyRecord.tokenEmployee = employeeLabel(c.employeeId);
       }
@@ -637,12 +637,15 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
       });
       const refreshBody = JSON.parse(refresh.body) as { accessToken?: string };
       const refreshRecord: TokenRecord = { status: refresh.statusCode };
-      if (refreshBody.accessToken) refreshRecord.tokenRole = claims(refreshBody.accessToken).role;
       record(`auth | ${label} | refresh`, refreshRecord);
 
-      const column = columnRoleOf.get(label);
-      expect(verifyRecord).toMatchObject({ status: 200, bodyRole: column, tokenRole: column });
-      expect(refreshRecord).toEqual({ status: 200, tokenRole: column });
+      expect(verifyRecord).toMatchObject({ status: 200 });
+      expect(verifyRecord).not.toHaveProperty("bodyRole");
+      expect(verifyRecord).not.toHaveProperty("tokenRole");
+      expect(refreshRecord).toEqual({ status: 200 });
+      expect(Object.keys(verifyBody.user ?? {})).not.toContain("role");
+      expect(Object.keys(claims(verifyBody.accessToken as string))).not.toContain("role");
+      expect(Object.keys(claims(refreshBody.accessToken as string))).not.toContain("role");
     });
   });
 
@@ -653,12 +656,11 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
       it(`GET /activity?limit=20 — ${caller.label}`, async () => {
         // Issue #539 (D-14): since a user without a stored assignment cannot sign in, the
         // fallback callers get their token signed directly with exactly the claims a login would
-        // have issued (sub, role column, tenant, employee). The feed is still measured, to prove
+        // have issued (sub, tenant, employee - no role claim since #539 D-05). The feed is still measured, to prove
         // that such a principal reads nothing (the 'stored ADMIN feed' case below).
         const token = caller.label.startsWith("A.fallback.")
           ? app.jwt.sign({
               sub: userId(caller.label),
-              role: columnRoleOf.get(caller.label) as Role,
               tenantId: tenantA,
               employeeId: employeeIdOf.get(caller.label),
             } as JwtPayload)

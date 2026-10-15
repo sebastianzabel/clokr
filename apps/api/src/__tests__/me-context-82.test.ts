@@ -227,7 +227,6 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
     const unassigned = await createEmployee("roles539", "ADMIN");
     const unassignedToken = app.jwt.sign({
       sub: unassigned.user.id,
-      role: "ADMIN",
       tenantId: data.tenant.id,
       employeeId: unassigned.employee.id,
     } as unknown as JwtPayload);
@@ -266,7 +265,6 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
     const { user, employee } = await createEmployee("noRowAdmin", "ADMIN");
     const token = app.jwt.sign({
       sub: user.id,
-      role: "ADMIN",
       tenantId: data.tenant.id,
       employeeId: employee.id,
     } as unknown as JwtPayload);
@@ -358,7 +356,6 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
   it("a valid JWT for a nonexistent user answers 404 Benutzer nicht gefunden", async () => {
     const payload: JwtPayload = {
       sub: randomUUID(),
-      role: "EMPLOYEE",
       tenantId: data.tenant.id,
       employeeId: undefined,
     };
@@ -370,7 +367,6 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
   it("a valid JWT of an existing user with an unknown tenant answers 404 Mandant nicht gefunden", async () => {
     const payload: JwtPayload = {
       sub: data.empUser.id,
-      role: "EMPLOYEE",
       tenantId: randomUUID(),
       employeeId: undefined,
     };

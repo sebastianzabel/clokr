@@ -334,16 +334,14 @@ beforeAll(async () => {
   legacyUserId = legacy.id;
   emptyTenantToken = app.jwt.sign({
     sub: legacyUserId,
-    role: "ADMIN",
     tenantId: "",
   } as unknown as JwtPayload);
   whitespaceTenantToken = app.jwt.sign({
     sub: legacyUserId,
-    role: "ADMIN",
     tenantId: "   ",
   } as unknown as JwtPayload);
   // No tenantId claim at all: the claim is absent at runtime, which the JwtPayload type cannot express.
-  absentTenantToken = app.jwt.sign({ sub: legacyUserId, role: "ADMIN" } as unknown as JwtPayload);
+  absentTenantToken = app.jwt.sign({ sub: legacyUserId } as unknown as JwtPayload);
   // A real admin of a second, otherwise empty tenant (stored tenant-wide ADMIN assignment, #539): its token
   // is "foreign" to the victim and still passes every permission guard, so the handlers run.
   actor = await seedTestData(app, "act88");

@@ -127,8 +127,9 @@ export function reissueTokenNow(app: FastifyInstance, token: string): string {
   if (!decoded) {
     throw new Error("reissueTokenNow: could not decode token");
   }
-  const { sub, role, tenantId, employeeId } = decoded;
-  return app.jwt.sign({ sub, role, tenantId, employeeId });
+  // Issue #539 (D-05): no role claim - re-signed with exactly what a login issues.
+  const { sub, tenantId, employeeId } = decoded;
+  return app.jwt.sign({ sub, tenantId, employeeId });
 }
 
 /**
@@ -371,7 +372,7 @@ export async function grantSystemRole(
  * chosen scope) is refused at login with 403 `NO_ROLE_ASSIGNED`, but several tests exist precisely
  * to prove that such a principal gets 403 on a guarded route (an empty SALONS scope, a salon-scoped
  * holder of a whole-tenant key). They obtain their token here: signed with exactly the claims a
- * login would have issued (sub, role column, tenant, employee). `email` is the user's login email.
+ * login would have issued (sub, tenant, employee - no role claim since #539 D-05). `email` is the user's login email.
  */
 export async function tokenWithoutSignIn(app: FastifyInstance, email: string): Promise<string> {
   const user = await app.prisma.user.findUniqueOrThrow({
@@ -380,7 +381,6 @@ export async function tokenWithoutSignIn(app: FastifyInstance, email: string): P
   });
   return app.jwt.sign({
     sub: user.id,
-    role: user.role,
     tenantId: user.employee?.tenantId ?? "",
     employeeId: user.employee?.id,
   } as JwtPayload);

@@ -41,7 +41,9 @@ describe("Auth API", () => {
       const body = JSON.parse(res.body);
       expect(body.accessToken).toBeDefined();
       expect(body.refreshToken).toBeDefined();
-      expect(body.user.role).toBe("ADMIN");
+      // Issue #539 (D-05): the body carries no role; the permissions are the access information.
+      expect(Object.keys(body.user)).not.toContain("role");
+      expect(body.user.permissions).toContain("employee:read:ZUGEWIESEN");
     });
 
     it("rejects invalid password", async () => {

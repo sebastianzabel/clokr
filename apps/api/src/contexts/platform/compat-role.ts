@@ -3,10 +3,12 @@
  * (`ADMIN` / `MANAGER` / `EMPLOYEE`) are produced from, or mapped onto, role assignments.
  *
  * Since #75 no access decision reads a role value any more (D-12): guards and handler checks ask
- * `request-permissions.ts` for catalog permissions. The legacy value survives only as a compat
- * field — the JWT claim `role` and the login body `user.role`, which the frontend still consumes
- * until #539 removes `User.role` and the enum. This module is the allowlisted exception of the
- * role-check gate (D-19): every comparison of a role value, in either direction, lives here.
+ * `request-permissions.ts` for catalog permissions. Since #539 Release A the legacy value is no
+ * longer published at all (no JWT claim, no sign-in body field - D-05): it is written to the
+ * `User.role` column only (D-06) and read only for the D-12 company-PDF filter and the employee
+ * form's derived role. Release B removes the column, the enum and this module. This module is the
+ * allowlisted exception of the role-check gate (D-19): every comparison of a role value, in
+ * either direction, lives here.
  *
  * Two directions:
  * - {@link systemRoleIdForLegacyRole}: `User.role` → the system role it stands for. This is the
@@ -24,11 +26,6 @@
  *   actually do at the API (Issue #357 sub-fix A; before the fix a SALONS/PERSONS assignment
  *   holding a ZUGEWIESEN key wrongly derived MANAGER). A role grants through `roleGrants` only
  *   (AK-73-7).
- *
- * {@link compatRoleForUser} combines both for token issuance: a user without a stored assignment
- * in the tenant (every user without Employee, whose tenant is "", and every fallback user) keeps
- * exactly the column value. That equals deriving over the implicit fallback assignment — the unit
- * tests prove the equivalence for all three system roles — without a second query.
  *
  * The write half (Phase 75b Plan 11, D-14/D-15/D-29) keeps the column and the stored
  * assignments consistent on every assignment write path — the employee form, the CSV import, the
@@ -171,31 +168,6 @@ export function deriveCompatRole(tenantId: string, rows: readonly CompatRoleAssi
     return "MANAGER";
   }
   return "EMPLOYEE";
-}
-
-/**
- * The compat role to publish for `userId` at token issuance (login, OTP, refresh): the column
- * value `legacyRole` when the user has no stored assignment in `tenantId` (always so for an empty
- * tenant — a user without Employee), otherwise {@link deriveCompatRole} over the stored rows.
- */
-export async function compatRoleForUser(
-  db: Prisma.TransactionClient,
-  userId: string,
-  tenantId: string,
-  legacyRole: Role,
-): Promise<Role> {
-  if (tenantId === "") return legacyRole;
-  const rows = await db.roleAssignment.findMany({
-    where: { tenantId, userId },
-    select: {
-      scopeType: true,
-      salonIds: true,
-      employeeIds: true,
-      accessRole: { select: { id: true, tenantId: true, permissions: true } },
-    },
-  });
-  if (rows.length === 0) return legacyRole;
-  return deriveCompatRole(tenantId, rows);
 }
 
 // ── Report data filter (Phase 75b Plan 12) ──────────────────────────────────────────────────────

@@ -330,11 +330,10 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
     });
   }
 
-  function bearer(label: string, role: Role): string {
+  function bearer(label: string): string {
     const p = person(label);
     const payload: JwtPayload = {
       sub: p.userId,
-      role,
       tenantId: tenantR,
       employeeId: p.employeeId,
     };
@@ -726,7 +725,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "POST",
             url: "/api/v1/leave/requests",
-            authorization: bearer("R.requester", "EMPLOYEE"),
+            authorization: bearer("R.requester"),
             payload: {
               type: "VACATION",
               startDate: DAY.leaveRequestStart,
@@ -772,7 +771,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "PATCH",
             url: `/api/v1/leave/requests/${sick.id}/review`,
-            authorization: bearer("R.manager", "MANAGER"),
+            authorization: bearer("R.manager"),
             payload: { status: "APPROVED" },
           });
           expect(res.statusCode, res.body).toBe(200);
@@ -814,7 +813,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "PATCH",
             url: `/api/v1/leave/requests/${leave.id}/review`,
-            authorization: bearer("R.manager", "MANAGER"),
+            authorization: bearer("R.manager"),
             payload: { status: "APPROVED" },
           });
           expect(res.statusCode, res.body).toBe(200);
@@ -842,7 +841,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "POST",
             url: `/api/v1/leave/section9/${creditId}/reopen`,
-            authorization: bearer("R.manager", "MANAGER"),
+            authorization: bearer("R.manager"),
           });
           expect(res.statusCode, res.body).toBe(200);
         },
@@ -1015,7 +1014,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "POST",
             url: "/api/v1/time-entries",
-            authorization: bearer("R.requester", "EMPLOYEE"),
+            authorization: bearer("R.requester"),
             payload: {
               date: DAY.retroTarget,
               startTime: `${DAY.retroTarget}T07:00:00.000Z`,
@@ -1042,7 +1041,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "PUT",
             url: `/api/v1/time-entries/${registry.idOf("R.requester.retroEntry")}`,
-            authorization: bearer("R.requester", "EMPLOYEE"),
+            authorization: bearer("R.requester"),
             payload: {
               startTime: `${DAY.retroTarget}T08:00:00.000Z`,
               endTime: `${DAY.retroTarget}T16:00:00.000Z`,
@@ -1063,7 +1062,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "PATCH",
             url: `/api/v1/time-entries/${registry.idOf("R.requester.autoBreakEntry")}/break-status`,
-            authorization: bearer("R.requester", "EMPLOYEE"),
+            authorization: bearer("R.requester"),
             payload: { action: "waive", reason: "Durchgearbeitet" },
           });
           expect(res.statusCode, res.body).toBe(200);
@@ -1080,7 +1079,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "DELETE",
             url: `/api/v1/retro-entry-requests/${registry.idOf("R.requester.retroRequest")}`,
-            authorization: bearer("R.requester", "EMPLOYEE"),
+            authorization: bearer("R.requester"),
           });
           expect(res.statusCode, res.body).toBe(200);
         },

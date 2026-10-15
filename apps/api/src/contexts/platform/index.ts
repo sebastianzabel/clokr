@@ -193,13 +193,9 @@ export {
   requireAnyPermission,
 } from "./request-permissions";
 export type { EffectiveGrants } from "./request-permissions";
-export {
-  systemRoleIdForLegacyRole,
-  deriveCompatRole,
-  compatRoleForUser,
-  parseCompatRoleFilter,
-  compatRoleUserWhere,
-} from "./compat-role";
+// Issue #539 (D-16): `systemRoleIdForLegacyRole`, `deriveCompatRole` and `compatRoleForUser` are no
+// longer exported - Unterbau export removal announced on the issue; the module's own writers use them.
+export { parseCompatRoleFilter, compatRoleUserWhere } from "./compat-role";
 export type { CompatRoleAssignmentRow, CompatRoleFilter } from "./compat-role";
 // Issue #450 (D-04) — Erweiterung, additive; consumed by contexts/absence/leave-days.ts
 export { snapToMonthFirstUtc } from "./month-first-date";

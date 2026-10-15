@@ -953,7 +953,6 @@ export async function buildActorTenant(
   } else {
     const payload: JwtPayload = {
       sub: own.userId,
-      role: ownRole,
       tenantId,
       employeeId: own.employeeId,
     };
