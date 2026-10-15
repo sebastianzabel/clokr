@@ -9,7 +9,8 @@
   The component only asks: the page owns the API calls and the reload, like PackagesSection. The
   limits (10 to 500 characters, four durations) mirror the server, which stays the authority; a
   refusal is worded by its machine code, never by the server's text. A deactivated tenant freezes
-  every control and says why. A `notice` code handed back from a read view is shown as a callout.
+  the request form and the read links and says why; "Zugriff beenden" stays enabled, because
+  ending only narrows the access (data minimisation). A `notice` code handed back from a read view is shown as a callout.
 -->
 <script lang="ts">
   import { onMount } from "svelte";
@@ -40,7 +41,7 @@
   interface Props {
     tenantId: string;
     state: OperatorSupportAccessState;
-    /** The tenant is deactivated: every control is disabled and the reason is shown. */
+    /** The tenant is deactivated: the request form and read links are disabled, ending stays possible. */
     tenantDeactivated?: boolean;
     /** Code a read view handed back (`SUPPORT_ACCESS_REQUIRED` / `SUPPORT_ACCESS_EXPIRED`); anything else is ignored. */
     notice?: string | null;
@@ -251,8 +252,6 @@
             type="button"
             class="btn btn-ghost danger"
             aria-haspopup="dialog"
-            aria-describedby={tenantDeactivated ? FROZEN_HINT_ID : undefined}
-            disabled={tenantDeactivated}
             data-testid="op-support-end"
             onclick={openEnd}>Zugriff beenden</button
           >

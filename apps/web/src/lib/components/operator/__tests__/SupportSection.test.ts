@@ -363,13 +363,25 @@ describe("SupportSection deactivated tenant", () => {
     }
   });
 
-  it("disables every control of a running access too", () => {
+  it("freezes the reads of a running access but keeps the end enabled", () => {
     mount({ state: running(), tenantDeactivated: true });
     expect(el("op-support-frozen-hint")).toBeInTheDocument();
-    expect(el<HTMLButtonElement>("op-support-end").disabled).toBe(true);
+    expect(el<HTMLButtonElement>("op-support-end").disabled).toBe(false);
     expect(el("op-support-link-employees")).toHaveAttribute("aria-disabled", "true");
     expect(el("op-support-link-employees")).not.toHaveAttribute("href");
     expect(el("op-support-link-protocol")).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("ends a running access of a deactivated tenant (ending only narrows the access)", async () => {
+    const { onEnd } = mount({ state: running({ id: "acc-d" }), tenantDeactivated: true });
+    await fireEvent.click(el("op-support-end"));
+    await settle();
+    const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
+    await fireEvent.click(dialog.querySelector(".btn-danger") as HTMLElement);
+    await settle();
+
+    expect(onEnd).toHaveBeenCalledTimes(1);
+    expect(onEnd).toHaveBeenCalledWith("acc-d");
   });
 });
 
