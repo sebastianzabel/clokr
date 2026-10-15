@@ -307,6 +307,12 @@ describe("salon list page", () => {
     expect(LIST).toContain("<th>Bundesland</th>");
   });
 
+  it("reads the CHAIN hint's inputs from the package state and renders the hint component", () => {
+    expect(LIST).toMatch(/import ModuleHint from /);
+    expect(LIST).toMatch(/import \{[^}]*\bmoduleBooked\b[^}]*\} from "\$stores\/salon-context"/);
+    expect(LIST).toContain("moduleBooked(");
+  });
+
   it("offers 'Salon anlegen' only inside a canManage condition, linking to the create route", () => {
     expect(LIST).toContain("salonAdminRights(");
     const link = LIST.indexOf('href="/admin/salons/neu"');

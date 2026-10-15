@@ -1139,8 +1139,10 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   `packages-legal-core-isolation-566.test.ts` (AST) proves the legally required paths read no package and
   pins every gate before its create. `isMultiSalonTenant()` / `showSalonOptions()` never read packages. The
   web only displays: `GET /me/context` `packages` (`bookedModules`, `salonLimit`), `moduleBooked()` in
-  `$stores/salon-context` (unknown state hides nothing) and `ModuleHint` at exactly four set-up spots under
-  `/admin` (never in clock, calendar or dashboard; existing items stay manageable). Test fixtures book
+  `$stores/salon-context` (unknown state hides nothing) and `ModuleHint` at exactly five set-up spots under
+  `/admin` (the fifth, Issue #563: the salon create action on `/admin/salons` when `CHAIN` is not booked and
+  the active salons reach the salon limit; never in clock, calendar or dashboard; existing items stay
+  manageable). Test fixtures book
   everything (`FIXTURE_PACKAGES`, so recorded neutrality cells stay unchanged); package tests build their
   tenant with `seedGrundversionTenant`. Existing tenants keep what they use (migration
   `*_tenant_packages`, Bestandsschutz); run the read-only dry run `scripts/audit-566-package-backfill.ts`

@@ -2,9 +2,11 @@
   import { onMount } from "svelte";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { salonContext, moduleBooked } from "$stores/salon-context";
   import { salonAdminRights } from "$lib/page-rights";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
   import { federalStateLabel } from "$lib/salons/federal-states";
   import type { SalonDto } from "$lib/salons/salon-form";
 
@@ -15,6 +17,15 @@
   let loading = $state(true);
   let loadError = $state("");
   let forbidden = $state(false);
+
+  const activeCount = $derived(salons.filter((salon) => salon.isActive).length);
+  // Display only (Phase 566, D-12; fifth set-up spot, Issue #563 D-18): without the CHAIN module
+  // the salon limit is reached with the first active salon. An unknown package state (null) hides
+  // nothing, and the server's 409 on create and activate stays the authority.
+  const chainHint = $derived(
+    moduleBooked($salonContext, "CHAIN") === false &&
+      activeCount >= ($salonContext.packages?.salonLimit ?? Number.POSITIVE_INFINITY),
+  );
 
   /** "Straße, PLZ Ort" from the non-empty parts, "—" when the salon has no address at all. */
   function addressOf(salon: SalonDto): string {
@@ -50,7 +61,11 @@
 >
   {#snippet actions()}
     {#if rights.canManage}
-      <a class="btn btn-primary btn-sm" href="/admin/salons/neu">Salon anlegen</a>
+      {#if chainHint}
+        <ModuleHint module="CHAIN" subject="Weitere Salons" />
+      {:else}
+        <a class="btn btn-primary btn-sm" href="/admin/salons/neu">Salon anlegen</a>
+      {/if}
     {/if}
   {/snippet}
 

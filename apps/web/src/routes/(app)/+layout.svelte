@@ -54,6 +54,7 @@
     "/admin/vacation": "Urlaub",
     "/admin/roles": "Rollen & Rechte",
     "/admin/availability": "Verfügbarkeit",
+    "/admin/salons": "Salons",
     "/admin/phorest": "Phorest",
     "/admin": "Administration",
     "/settings": "Mein Profil",
@@ -173,10 +174,10 @@
     }
   });
 
-  // Issue #82 (D-10 adaptation): apps/web has no salon admin screen yet (#563 will call
-  // `salonContext.load(..., { force: true })` itself after create/deactivate/activate), so the
-  // context is re-validated after in-app navigation — throttled by the store, so options appear or
-  // vanish at a later page change without a reload. The initial mount is covered by onMount.
+  // Issue #82 (D-10 adaptation): the context is re-validated after in-app navigation — throttled by
+  // the store, so options appear or vanish at a later page change without a reload. `/admin/salons`
+  // itself forces a reload after every successful write (Issue #563), so it never waits for this
+  // throttle. The initial mount is covered by onMount.
   afterNavigate((navigation) => {
     if (navigation.from === null || !$authStore.accessToken) return;
     void salonContext.load($authStore.user?.id ?? null);

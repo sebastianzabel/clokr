@@ -15,9 +15,9 @@
  * load validates it against the freshly fetched list (`resolveSelection`).
  *
  * Loading (D-10): the (app) layout loads once on mount (forced) and again after in-app navigation
- * (throttled: skipped while a load is in flight or within 30 s of the last success). apps/web has
- * no salon admin screen yet — the tenant-side salon UI of #563 must call `load({ force: true })` after creating,
- * deactivating or activating a salon so the options appear or vanish without a reload. A failure
+ * (throttled: skipped while a load is in flight or within 30 s of the last success). The tenant-side
+ * salon admin screen `/admin/salons` calls `load({ force: true })` after every successful create,
+ * edit, deactivate and activate (Issue #563), so the options appear or vanish without a reload. A failure
  * without a previous good answer, and a 401, fail closed for presentation (no options, no
  * selection); a transient failure (5xx, network) keeps the last good answer instead of widening the
  * selection silently.
