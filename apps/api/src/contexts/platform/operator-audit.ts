@@ -170,8 +170,11 @@ export async function recordOperatorAudit(
   });
 }
 
-/** `months` UTC calendar months before `from` (day of month clamped to the target month's length). */
-function subtractUtcMonths(from: Date, months: number): Date {
+/**
+ * `months` UTC calendar months before `from` (day of month clamped to the target month's length). Also
+ * used by the support access retention purge, so there is one month subtraction (Issue #93, D-25).
+ */
+export function subtractUtcMonths(from: Date, months: number): Date {
   const result = new Date(from.getTime());
   const day = result.getUTCDate();
   result.setUTCDate(1);

@@ -226,8 +226,9 @@ export {
 export type { TenantPackages } from "./tenant-packages";
 // Issue #93 (Phase 93b-01): the support access types and the employee status helper, for the
 // composition layer's operator support ports. The decider, the grant writer and the audit writers stay
-// internal to the platform context: no other context decides whether a grant is active.
-export { supportEmployeeStatus } from "./support-access";
+// internal to the platform context: no other context decides whether a grant is active. The retention
+// purge (D-25) is the one exception: the composition layer's daily data-retention run calls it.
+export { supportEmployeeStatus, purgeExpiredSupportAccess } from "./support-access";
 export { SUPPORT_READ_CATEGORIES } from "./support-access-types";
 export type {
   OperatorSupportPorts,

@@ -27,8 +27,10 @@ import type { Prisma, PrismaClient, SupportAccess } from "@clokr/db";
 import { isAnonymizedEmployee } from "./employee-anonymization-filter";
 import {
   OPERATOR_AUDIT_ACTIONS,
+  OPERATOR_AUDIT_RETENTION_MONTHS,
   operatorAuditRequestFields,
   recordOperatorAudit,
+  subtractUtcMonths,
 } from "./operator-audit";
 import { operatorTenantAudit } from "./operator-tenant-audit";
 import { isTenantRowActive } from "./tenant-status";
@@ -435,4 +437,26 @@ export async function endSupportAccessByOperator(
     },
     { timeout: 15_000, maxWait: 15_000 },
   );
+}
+
+// ── Retention (D-07, D-25) ────────────────────────────────────────────────────────────────────────
+
+/**
+ * The only deletion path of `SupportAccess`: removes grants created more than 120 months before `now`
+ * (`OPERATOR_AUDIT_RETENTION_MONTHS.LIFECYCLE` — a grant is part of the operator lifecycle record and
+ * follows that retention class). The delete runs in a transaction that sets the transaction-local flag
+ * `clokr.support_access_retention`, which the append-only trigger requires for any DELETE; the trigger
+ * additionally refuses rows younger than 120 months, so even a misused flag cannot erase a recent grant.
+ * Called by the daily data-retention run, for every tenant — deactivated ones included.
+ */
+export async function purgeExpiredSupportAccess(
+  db: PrismaClient,
+  now: Date,
+): Promise<{ deleted: number }> {
+  const cutoff = subtractUtcMonths(now, OPERATOR_AUDIT_RETENTION_MONTHS.LIFECYCLE);
+  return db.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL clokr.support_access_retention = 'on'`);
+    const { count } = await tx.supportAccess.deleteMany({ where: { createdAt: { lt: cutoff } } });
+    return { deleted: count };
+  });
 }
