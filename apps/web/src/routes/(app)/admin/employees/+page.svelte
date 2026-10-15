@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
+  import { employeeAdminRights } from "$lib/page-rights";
   import { api } from "$api/client";
   import Pagination from "$components/ui/Pagination.svelte";
   import Modal from "$components/ui/Modal.svelte";
@@ -151,7 +152,12 @@
     cRequiresSupervision = applyDefaults(cClassification).requiresSupervision;
   }
 
-  let isAdmin = $derived($authStore.user?.role === "ADMIN");
+  // Controls follow the caller's permissions (Issue #538); the API refuses anything beyond them.
+  let rights = $derived(employeeAdminRights($authStore.user));
+  let canCreate = $derived(rights.canCreate);
+  let canManageAccess = $derived(rights.canManageAccess);
+  let canAssignRoles = $derived(rights.canAssignRoles);
+  let showActions = $derived(rights.showActions);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   function isAnonymized(emp: Employee): boolean {
@@ -179,7 +185,7 @@
           `${emp.firstName} ${emp.lastName} ${emp.user.email} ${emp.employeeNumber}`.toLowerCase();
         if (!match.includes(q)) return false;
       }
-      if (filterRole && emp.user.role !== filterRole) return false;
+      if (filterRole && !hasCompatRole(emp, filterRole)) return false;
       if (filterStatus) {
         if (filterStatus === "active" && !emp.user.isActive) return false;
         if (filterStatus === "pending" && (emp.user.isActive || emp.invitationStatus !== "PENDING"))
@@ -205,12 +211,8 @@
   // KPI mini-stats (exclude anonymized)
   let statTotal = $derived(employees.filter((e) => !isAnonymized(e)).length);
   let statActive = $derived(employees.filter((e) => e.user.isActive && !isAnonymized(e)).length);
-  let statManagers = $derived(
-    employees.filter((e) => e.user.role === "MANAGER" && !isAnonymized(e)).length,
-  );
-  let statAdmins = $derived(
-    employees.filter((e) => e.user.role === "ADMIN" && !isAnonymized(e)).length,
-  );
+  let statManagers = $derived(countWithCompatRole("MANAGER"));
+  let statAdmins = $derived(countWithCompatRole("ADMIN"));
 
   $effect(() => {
     filteredEmployees.length;
@@ -432,12 +434,34 @@
     }
   }
 
+  // The listed person's role as the API derives it from their role assignments (a coarse
+  // three-way summary of someone else's data, not a decision about the caller). Lookup tables
+  // instead of comparisons keep it out of the role-check gate (Issue #538).
+  const ROLE_LABELS: Record<Role, string> = {
+    ADMIN: "Administrator",
+    MANAGER: "Manager",
+    EMPLOYEE: "Mitarbeiter",
+  };
+  const ROLE_CHIP_CLASSES: Record<Role, string> = {
+    ADMIN: "chip chip-brand",
+    MANAGER: "chip chip-warn",
+    EMPLOYEE: "chip",
+  };
+
   function roleLabel(role: Role): string {
-    return role === "ADMIN" ? "Administrator" : role === "MANAGER" ? "Manager" : "Mitarbeiter";
+    return ROLE_LABELS[role] ?? ROLE_LABELS.EMPLOYEE;
   }
 
   function roleChipClass(role: Role): string {
-    return role === "ADMIN" ? "chip chip-brand" : role === "MANAGER" ? "chip chip-warn" : "chip";
+    return ROLE_CHIP_CLASSES[role] ?? ROLE_CHIP_CLASSES.EMPLOYEE;
+  }
+
+  function hasCompatRole(emp: Employee, role: Role): boolean {
+    return roleLabel(emp.user.role) === ROLE_LABELS[role];
+  }
+
+  function countWithCompatRole(role: Role): number {
+    return employees.filter((e) => hasCompatRole(e, role) && !isAnonymized(e)).length;
   }
 
   function statusLabel(emp: Employee): string {
@@ -470,7 +494,7 @@
     sub="Einladungsbasiertes Onboarding · Rollen · CSV-Import · DSGVO-konforme Anonymisierung beim Löschen."
   >
     {#snippet actions()}
-      {#if isAdmin}
+      {#if canCreate}
         <button class="btn btn-primary" onclick={openCreate} data-testid="admin-employees-add"
           >+ Mitarbeiter anlegen</button
         >
@@ -485,7 +509,7 @@
       {:else if employees.length === 0}
         <div class="empty-state">
           <p>Noch keine Mitarbeiter angelegt.</p>
-          {#if isAdmin}<button class="btn btn-primary" onclick={openCreate}>Jetzt anlegen</button
+          {#if canCreate}<button class="btn btn-primary" onclick={openCreate}>Jetzt anlegen</button
             >{/if}
         </div>
       {:else}
@@ -555,7 +579,7 @@
                   <th>Arbeitszeitmodell</th>
                   <th>Status</th>
                   <th>Letzter Login</th>
-                  {#if isAdmin}<th>Aktionen</th>{/if}
+                  {#if showActions}<th>Aktionen</th>{/if}
                 </tr>
               </thead>
               <tbody>
@@ -614,10 +638,10 @@
                           })
                         : "—"}
                     </td>
-                    {#if isAdmin}
+                    {#if showActions}
                       <td class="col-actions" onclick={(e) => e.stopPropagation()} role="cell">
                         <div class="action-group">
-                          {#if !emp.user.isActive && (emp.invitationStatus === "PENDING" || emp.invitationStatus === "EXPIRED")}
+                          {#if canManageAccess && !emp.user.isActive && (emp.invitationStatus === "PENDING" || emp.invitationStatus === "EXPIRED")}
                             <button
                               class="btn btn-ghost btn-sm"
                               onclick={() => resendInvitation(emp)}
@@ -634,7 +658,9 @@
                           >
                             Bearbeiten
                           </a>
-                          {#if emp.user.isActive}
+                          {#if !canManageAccess}
+                            <!-- no access-management right: no (de)activation control -->
+                          {:else if emp.user.isActive}
                             <button
                               class="btn btn-ghost btn-sm"
                               onclick={() => askDeactivate(emp)}
@@ -706,14 +732,16 @@
           onchange={refreshVacationPrefill}
         />
       </div>
-      <div class="form-group">
-        <label class="form-label" for="c-role">Rolle</label>
-        <select id="c-role" bind:value={cRole} class="select">
-          <option value="EMPLOYEE">Mitarbeiter</option>
-          <option value="MANAGER">Manager</option>
-          <option value="ADMIN">Administrator</option>
-        </select>
-      </div>
+      {#if canAssignRoles}
+        <div class="form-group">
+          <label class="form-label" for="c-role">Rolle</label>
+          <select id="c-role" bind:value={cRole} class="select">
+            <option value="EMPLOYEE">Mitarbeiter</option>
+            <option value="MANAGER">Manager</option>
+            <option value="ADMIN">Administrator</option>
+          </select>
+        </div>
+      {/if}
       <!-- ── Personalstruktur (Phase 41) ────────────────────────────────── -->
       <div class="form-group form-group--full form-subhead">
         <h4 class="form-subhead-title">Personalstruktur</h4>

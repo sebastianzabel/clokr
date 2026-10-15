@@ -39,6 +39,8 @@ export interface MeContextResponse {
   salons: ContextSalon[];
   /** Optional on the wire so a mixed deploy cannot crash (Phase 566). */
   packages?: { bookedModules: string[]; salonLimit: number };
+  /** Names of the caller's own roles (Issue #538); optional on the wire for a mixed deploy. */
+  roles?: string[];
 }
 
 /** The booked packages of the tenant, display only (Phase 566, D-12). */
@@ -60,6 +62,12 @@ export interface SalonContextState {
    * only: never an input of `showSalonOptions`, `resolveSelection` or any salon id.
    */
   packages: ContextPackages | null;
+  /**
+   * Names of the roles assigned to the caller (Issue #538), shown as the role label in Topbar,
+   * Sidebar and profile. Empty until loaded and after a fail-closed load. Display only: decides
+   * nothing, every decision reads the permission list.
+   */
+  roles: string[];
 }
 
 /** The selection value for "every reachable salon" (D-08: the default with several salons). */
@@ -76,6 +84,7 @@ const INITIAL: SalonContextState = {
   homeSalonId: null,
   selection: null,
   packages: null,
+  roles: [],
 };
 
 export function salonContextStorageKey(tenantId: string, userId: string): string {
@@ -101,6 +110,17 @@ export function moduleBooked(
 ): boolean | null {
   if (state.packages === null) return null;
   return state.packages.bookedModules.includes(module);
+}
+
+/** The role label for the shell: the assigned role names, joined; empty while unknown. */
+export function roleNamesLabel(state: Pick<SalonContextState, "roles">): string {
+  return state.roles.join(", ");
+}
+
+/** Copies the wire role names; anything that is not a non-empty string is dropped. */
+function readRoles(wire: MeContextResponse["roles"]): string[] {
+  if (!Array.isArray(wire)) return [];
+  return wire.filter((name): name is string => typeof name === "string" && name.length > 0);
 }
 
 /** Copies the two display fields of the wire value; unknown module names are dropped. */
@@ -236,7 +256,13 @@ function createSalonContext() {
       lastSuccessAt = Date.now();
       hasGoodState = true;
       // Packages sit next to `base`, not in it: selection logic never sees them (D-12).
-      set({ ...base, loaded: true, selection, packages: readPackages(response.packages) });
+      set({
+        ...base,
+        loaded: true,
+        selection,
+        packages: readPackages(response.packages),
+        roles: readRoles(response.roles),
+      });
     },
 
     /** Accepts only `ALL_SALONS` or a listed id, and only while options are shown. */

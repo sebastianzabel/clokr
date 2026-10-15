@@ -2,6 +2,7 @@
   import { api } from "$api/client";
   import { fetchAvatarObjectUrl } from "$api/avatar";
   import { authStore } from "$stores/auth";
+  import { salonContext, roleNamesLabel } from "$stores/salon-context";
   import { toasts } from "$stores/toast";
   import { avatarVersion, bumpAvatarVersion } from "$stores/avatar";
   import PageHead from "$components/layout/PageHead.svelte";
@@ -450,11 +451,7 @@
     <p class="text-muted"><strong>E-Mail:</strong> {$authStore.user?.email}</p>
     <p class="text-muted">
       <strong>Rolle:</strong>
-      {$authStore.user?.role === "ADMIN"
-        ? "Administrator"
-        : $authStore.user?.role === "MANAGER"
-          ? "Manager"
-          : "Mitarbeiter"}
+      {roleNamesLabel($salonContext) || "–"}
     </p>
   </div>
 </div>

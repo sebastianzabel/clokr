@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { mode } from "$stores/mode";
   import { authStore } from "$stores/auth";
+  import { salonContext, roleNamesLabel } from "$stores/salon-context";
   import { avatarVersion } from "$stores/avatar";
   import { clearUnsaved } from "$stores/unsaved";
   import { api } from "$api/client";
@@ -76,12 +77,8 @@
     goto("/settings");
   }
 
-  let roleLabel = $derived.by(() => {
-    const r = $authStore.user?.role;
-    if (r === "ADMIN") return "Administrator";
-    if (r === "MANAGER") return "Manager";
-    return "Mitarbeiter";
-  });
+  // Names of the assigned roles (Issue #538), from GET /me/context; empty until loaded.
+  let roleLabel = $derived(roleNamesLabel($salonContext));
 
   let displayName = $derived.by(() => {
     const u = $authStore.user;

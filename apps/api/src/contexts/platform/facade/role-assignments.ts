@@ -151,13 +151,13 @@ async function loadLegacyFallbackRole(
   db: Prisma.TransactionClient,
   userId: string,
   caller: string,
-): Promise<{ id: string; tenantId: string | null; permissions: string[] } | null> {
+): Promise<{ id: string; tenantId: string | null; name: string; permissions: string[] } | null> {
   const user = await db.user.findUnique({ where: { id: userId }, select: { role: true } });
   if (!user) return null;
   const fallbackRoleId = systemRoleIdForLegacyRole(user.role);
   const fallbackRole = await db.accessRole.findUnique({
     where: { id: fallbackRoleId },
-    select: { id: true, tenantId: true, permissions: true },
+    select: { id: true, tenantId: true, name: true, permissions: true },
   });
   if (!fallbackRole) {
     throw new Error(
@@ -751,4 +751,33 @@ export async function resolveScopedHolderIds(
     }
   }
   return kept;
+}
+
+/**
+ * Issue #538: the display names of the roles the caller holds, for the role label in the web
+ * (Topbar, Sidebar, profile). Presentation only - decides nothing; own data, names only.
+ * Same source as the access decision: the stored assignments of this tenant (system roles and
+ * this tenant's own roles), or, with none stored, the system role of the legacy `User.role`
+ * column as one implicit assignment ({@link loadLegacyFallbackRole}). Distinct, sorted by name.
+ * Not re-exported from `contexts/platform/index.ts` (read only by platform's own `me.ts`).
+ */
+export async function ownRoleNames(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  userId: string,
+): Promise<string[]> {
+  const assignments = await db.roleAssignment.findMany({
+    where: { tenantId, userId },
+    select: { accessRole: { select: { name: true, tenantId: true } } },
+  });
+  const names = new Set<string>();
+  for (const assignment of assignments) {
+    const role = assignment.accessRole;
+    if (role.tenantId === null || role.tenantId === tenantId) names.add(role.name);
+  }
+  if (assignments.length === 0) {
+    const fallbackRole = await loadLegacyFallbackRole(db, userId, "ownRoleNames");
+    if (fallbackRole) names.add(fallbackRole.name);
+  }
+  return [...names].sort((a, b) => a.localeCompare(b, "de"));
 }
