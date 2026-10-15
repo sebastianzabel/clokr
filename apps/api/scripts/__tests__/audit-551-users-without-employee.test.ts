@@ -2,7 +2,7 @@
  * Issue #551 — fixture test for audit-551-users-without-employee.ts.
  *
  * The script is a read-only survey of users without an Employee (they can no longer sign in since
- * #551). It prints ids, role, flags and counts only. The worker test database may hold bare users
+ * #551). It prints ids, flags and counts only. The worker test database may hold bare users
  * left behind by other files, so the assertions look for the fixture's own line and never for
  * exact totals.
  */
@@ -85,7 +85,9 @@ describe("audit-551-users-without-employee (Issue #551)", () => {
     expect(run.code).toBe(EXIT_FINDINGS);
     const own = run.lines.filter((l) => l.includes(`userId=${bareUserId}`));
     expect(own).toHaveLength(1);
-    expect(own[0]).toContain("role=ADMIN");
+    // #539 (D-12): the compat role is not part of the output any more.
+    expect(own[0]).not.toContain("role=ADMIN");
+    expect(own[0]).not.toMatch(/\brole=/);
     expect(own[0]).toContain("isActive=true");
     expect(own[0]).toContain("openRefreshTokens=1");
     expect(own[0]).toContain("roleAssignments=0");

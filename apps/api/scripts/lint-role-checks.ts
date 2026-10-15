@@ -4,10 +4,13 @@
  *
  * Since #75 every access decision in the API asks for a catalog permission
  * (`requirePermission` / `requireAnyPermission` / `hasPermission` / `permissionReach` /
- * `userIdsHoldingPermission`, all from `contexts/platform`). The legacy role value (`User.role`,
- * the JWT claim `role`) survives only as a compat field until #539. This gate keeps it that way: a
- * role check that comes back — in a guard, in a handler, or in a Prisma predicate — fails CI and
- * `.husky/pre-commit`, not just review.
+ * `userIdsHoldingPermission`, all from `contexts/platform`). Since #539 Release A there is no JWT
+ * `role` claim, no `actorRole` audit value and no fallback from the column to permissions: the
+ * legacy role column (`User.role`) is only WRITTEN from the stored assignments (`compat-role.ts`)
+ * and READ by the documented readers alone (the company-PDF role filter, the takeover script, the
+ * write-back comparison), pinned by `legacy-role-reads-539.test.ts`; Release B drops the column.
+ * This gate keeps it that way: a role check that comes back — in a guard, in a handler, or in a
+ * Prisma predicate — fails CI and `.husky/pre-commit`, not just review.
  *
  * ── What is flagged (in every non-test `.ts` file under `apps/api/src`) ─────────────────────────
  * A "role literal" is a string literal `"ADMIN"`, `"MANAGER"` or `"EMPLOYEE"`. A "role-valued"
@@ -42,10 +45,9 @@
  *     not expressions, the AST walk never sees them as values;
  *   - `data.roleFilter === "EMPLOYEE"` — a property named `roleFilter`, the PDF's label switch;
  *   - `const { role } = req.query …; role === "MANAGER"` — a query parameter, not a user;
- *   - `role: emp.user.role`, `actorRole: req.user.role` — report data and audit values: the role
- *     is copied, not compared;
- *   - `role: isAdmin ? "ADMIN" : "MANAGER"` — the API-key compat assignment in
- *     `middleware/auth.ts` (D-11): it sets the compat field, it decides nothing;
+ *   - copying a role value into report data or an audit value (`role: someUser.role`) — copied,
+ *     not compared (since #539 neither `actorRole: req.user.role` nor a report row's `role`
+ *     exists any more; the shape is still not a finding);
  *   - everything in `__tests__/` and `*.test.ts` (fixtures create users with legacy roles).
  *
  * ── The single allowlist, and why there is no exceptions file ────────────────────────────────────

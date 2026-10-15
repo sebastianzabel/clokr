@@ -76,7 +76,6 @@ export interface CompanyMonthlyReportData {
   rows: Array<{
     employeeName: string;
     employeeNumber: string;
-    role: "ADMIN" | "MANAGER" | "EMPLOYEE";
     workedHours: number;
     targetHours: number;
     overtimeHours: number;
