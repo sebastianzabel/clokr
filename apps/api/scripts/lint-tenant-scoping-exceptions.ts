@@ -30,18 +30,24 @@
  * every claim it makes, and an entry answers exactly the calls it names, not a directory or a
  * handler in the abstract.
  *
- * `validatedAt` is the file:line where the shared identifier is tenant-checked — usually an
- * inline `where.tenantId` or a fetch-then-compare. It is `null` ONLY for the small set of cases
- * that have no such line at all (pre-authentication flows, where no `req.user` exists to check
- * against; an env-gated test-only surface with a wholly different authorization model). Every
- * `null`-validatedAt entry's `reason` must say explicitly why no tenant check applies, not just
- * that none was found.
+ * `validatedBy` (Issue #620; it replaced the numeric `validatedAt`) is a code snippet — one source
+ * line's text, whitespace-insensitive — of the check where the shared identifier is tenant-checked:
+ * an inline `where.tenantId` or a fetch-then-compare. A line NUMBER there was never read by the
+ * gate and drifted off its check with every insertion above it (a re-pin in #568 moved one by
+ * three and nothing went red). The gate now resolves the snippet itself: it must occur in `file`,
+ * must mention the tenant (`/tenant/i`), and its nearest occurrence must lie within
+ * `VALIDATED_BY_MAX_DISTANCE` lines of a listed call. A snippet that vanished, a snippet that no
+ * longer names the tenant, or one whose only occurrences moved away all fail the run. It survives
+ * pure line shifts. It is `null` ONLY for the small set of cases that have no such line at all
+ * (pre-authentication flows, where no `req.user` exists to check against; an env-gated test-only
+ * surface with a wholly different authorization model). Every `null` entry's `reason` must say
+ * explicitly why no tenant check applies, not just that none was found.
  *
  * ── How a developer adds a justified exception ────────────────────────────────────────────────
  * 1. Run `pnpm --filter @clokr/api exec tsx scripts/lint-tenant-scoping.ts --json` and find the
  *    finding's `file`, `call` (`<model>.<method>`) and `line`.
  * 2. Read the surrounding handler. If ANOTHER call in the SAME handler is already covered by an
- *    exception whose `validatedAt` also protects this new call (same shared identifier, same
+ *    exception whose `validatedBy` also protects this new call (same shared identifier, same
  *    validating line), add `{ call, line }` to that entry's `calls` array — do not create a
  *    second entry for the same handler. Otherwise, decide WHY the call is tenant-safe for a
  *    reason the checker cannot see (D-16 chained validation, a model with `ModelTenancy: none`, a
@@ -52,7 +58,7 @@
  *    {
  *      "file": "apps/api/src/routes/....ts",
  *      "handler": "DELETE /:id/hard-delete",
- *      "validatedAt": 1108,
+ *      "validatedBy": "if (employee.tenantId !== req.user.tenantId) {",
  *      "calls": [{ "call": "model.method", "line": 123 }],
  *      "reason": "<a full sentence explaining why this exact identifier is tenant-safe here>"
  *    }
@@ -101,12 +107,14 @@ export type TenantScopingException = {
    * never used for matching (matching is always by exact file+call+line, see matchException). */
   handler: string;
   /**
-   * file:line (within `file`) where the shared identifier is tenant-checked — an inline
-   * `where.tenantId`/relation filter, or a fetch-then-compare against `req.user.tenantId`. `null`
-   * ONLY when no such line exists at all (pre-authentication, or a wholly different authorization
-   * model) — the `reason` must then say so explicitly.
+   * Text of the line (within `file`) where the shared identifier is tenant-checked — an inline
+   * `where.tenantId`/relation filter, or a fetch-then-compare against `req.user.tenantId`.
+   * Verified by `validateExceptions` (present, tenant-related, near a listed call), so it stays
+   * correct across line shifts and turns the gate red when the check moves away or changes.
+   * `null` ONLY when no such line exists at all (pre-authentication, or a wholly different
+   * authorization model) — the `reason` must then say so explicitly.
    */
-  validatedAt: number | null;
+  validatedBy: string | null;
   /** Every call this entry covers, each named explicitly — NEVER "every call in this handler". */
   calls: TenantScopingExceptionCall[];
   /**
@@ -116,7 +124,7 @@ export type TenantScopingException = {
    */
   rule?: ExceptionRule;
   /**
-   * WHY the calls above are tenant-safe, in prose, referencing `validatedAt` when it is set.
+   * WHY the calls above are tenant-safe, in prose, referencing `validatedBy` when it is set.
    * Mandatory, enforced here rather than in code review (D-06). This field is the whole point of
    * the list: "Die Ausnahmeliste ist dabei kein Makel, sondern der eigentliche Wert: sie macht die
    * Entscheidung sichtbar, statt sie im Schweigen zu lassen." (Issue #204)
@@ -141,6 +149,76 @@ export type ExceptionRule = (typeof EXCEPTION_RULES)[number];
  * real prose.
  */
 export const MIN_REASON_LENGTH = 30;
+
+/**
+ * How far (in lines) the nearest occurrence of a `validatedBy` snippet may lie from the closest
+ * listed call. Measured on the seeded entries: the validating check sits 0-390 lines from the
+ * calls it protects (PUT /time-entries/:id: check 160 lines above the first call, last call 380
+ * below it); 500 keeps every genuine handler inside while still rejecting an anchor that drifted
+ * to another handler of a multi-thousand-line route file.
+ */
+export const VALIDATED_BY_MAX_DISTANCE = 500;
+
+/** A `validatedBy` snippet must mention the tenant — `tenantId`, `TENANT_ID_RE`, `tenant: {…}`. */
+export const VALIDATED_BY_PATTERN = /tenant/i;
+
+/** Collapses whitespace so a re-formatted line still matches its snippet. */
+function squash(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** 1-based lines of `source` whose whitespace-squashed text contains the squashed `snippet`. */
+export function findSnippetLines(source: string, snippet: string): number[] {
+  const needle = squash(snippet);
+  if (needle.length === 0) return [];
+  const lines: number[] = [];
+  source.split("\n").forEach((text, i) => {
+    if (squash(text).includes(needle)) lines.push(i + 1);
+  });
+  return lines;
+}
+
+/**
+ * Verifies one entry's `validatedBy` anchor against the file's source. Returns an error message,
+ * or null when the anchor holds. Exported for the tests.
+ */
+export function verifyValidatedBy(
+  file: string,
+  snippet: string,
+  callLines: readonly number[],
+  readSource: ((file: string) => string | null) | undefined,
+): string | null {
+  if (squash(snippet).length === 0) return "'validatedBy' is empty";
+  if (!VALIDATED_BY_PATTERN.test(snippet)) {
+    return (
+      `'validatedBy' ${JSON.stringify(snippet)} does not mention the tenant ` +
+      `(${VALIDATED_BY_PATTERN}) — it must quote the tenant check itself`
+    );
+  }
+  if (readSource === undefined) {
+    return "'validatedBy' cannot be verified: no source reader was supplied (fail closed)";
+  }
+  const source = readSource(file);
+  if (source === null) {
+    return `'validatedBy' cannot be verified: ${file} could not be read`;
+  }
+  const hits = findSnippetLines(source, snippet);
+  if (hits.length === 0) {
+    return (
+      `'validatedBy' ${JSON.stringify(snippet)} no longer occurs in ${file} — the tenant check ` +
+      `was changed or removed; re-read the handler and update the anchor (or the entry)`
+    );
+  }
+  const distance = Math.min(...hits.flatMap((h) => callLines.map((c) => Math.abs(h - c))));
+  if (distance > VALIDATED_BY_MAX_DISTANCE) {
+    return (
+      `'validatedBy' ${JSON.stringify(snippet)} occurs in ${file} only at line(s) ` +
+      `${hits.join(", ")}, ${distance} lines from the nearest listed call (maximum ` +
+      `${VALIDATED_BY_MAX_DISTANCE}) — the check no longer sits near the calls it protects`
+    );
+  }
+  return null;
+}
 
 function callKey(call: { model: string; method: string }): string {
   return `${call.model}.${call.method}`;
@@ -173,6 +251,7 @@ export function validateExceptions(
   entries: unknown,
   findings: readonly FindingLocation[],
   nullishFindings: readonly NullishTenantFinding[] = [],
+  readSource?: (file: string) => string | null,
 ): { ok: true; entries: TenantScopingException[] } | { ok: false; errors: string[] } {
   if (!Array.isArray(entries)) {
     return {
@@ -192,7 +271,7 @@ export function validateExceptions(
       return;
     }
 
-    const { file, handler, validatedAt, calls, reason, rule } = raw;
+    const { file, handler, validatedBy, calls, reason, rule } = raw;
 
     if (rule !== undefined && !(EXCEPTION_RULES as readonly unknown[]).includes(rule)) {
       errors.push(
@@ -220,13 +299,10 @@ export function validateExceptions(
       );
       return;
     }
-    if (
-      validatedAt !== null &&
-      (typeof validatedAt !== "number" || !Number.isInteger(validatedAt) || validatedAt < 1)
-    ) {
+    if (validatedBy !== null && (typeof validatedBy !== "string" || validatedBy.trim() === "")) {
       errors.push(
-        `${label}: 'validatedAt' must be a positive integer line number, or null when no tenant ` +
-          `check applies at all (e.g. pre-authentication) — see the module header`,
+        `${label}: 'validatedBy' must be a non-empty code snippet of the tenant check, or null ` +
+          `when no tenant check applies at all (e.g. pre-authentication) — see the module header`,
       );
       return;
     }
@@ -274,6 +350,19 @@ export function validateExceptions(
       return;
     }
 
+    if (typeof validatedBy === "string") {
+      const anchorError = verifyValidatedBy(
+        file,
+        validatedBy,
+        parsedCalls.map((c) => c.line),
+        readSource,
+      );
+      if (anchorError !== null) {
+        errors.push(`${label}: ${anchorError}`);
+        return;
+      }
+    }
+
     const pool: readonly FindingLocation[] = rule === "nullish-tenant" ? nullishFindings : findings;
     const staleCalls = parsedCalls.filter(
       (c) => !pool.some((f) => f.file === file && callKey(f) === c.call && f.line === c.line),
@@ -291,7 +380,7 @@ export function validateExceptions(
     valid.push({
       file,
       handler: handler.trim(),
-      validatedAt: validatedAt as number | null,
+      validatedBy: validatedBy as string | null,
       calls: parsedCalls,
       reason: reason.trim(),
       ...(rule === undefined ? {} : { rule: rule as ExceptionRule }),
