@@ -1695,7 +1695,7 @@ async function pageOverflow(page: Page): Promise<string[]> {
 
 /**
  * The open dialog's backdrop must cover the whole viewport. A dialog rendered inside a transformed
- * ancestor (a Section with a finished card-animate entrance keeps `transform: matrix(...)`) is
+ * ancestor (before #570, a Section with a finished card-animate entrance kept `transform: matrix(...)`) is
  * positioned against that ancestor instead: the scrim then covers only the card and the dialog is
  * shifted and clipped. Returns what is wrong, empty when the scrim is the viewport.
  */
@@ -1861,6 +1861,17 @@ for (const viewport of VIEWPORTS) {
       const box = await page.locator('[role="dialog"]').first().boundingBox();
       expect(box).not.toBeNull();
       expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(viewport.width + 0.5);
+    });
+
+    test("animated sections keep no transform after their entrance (#570)", async ({ page }) => {
+      await openDetail(page, longTenant);
+      await animationsSettled(page);
+      const transforms = await page.evaluate(() =>
+        [...document.querySelectorAll(".card-animate")].map((el) => getComputedStyle(el).transform),
+      );
+      // Non-vacuous: the Mandant and the Pakete section are animated again since #570.
+      expect(transforms.length).toBeGreaterThanOrEqual(2);
+      expect(transforms.every((t) => t === "none")).toBe(true);
     });
 
     test("the deactivate-tenant reason dialog fits with a 500-character reason", async ({

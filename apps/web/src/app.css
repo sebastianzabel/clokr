@@ -1059,7 +1059,7 @@ select.form-input {
 }
 
 .page-enter {
-  animation: page-enter 0.3s var(--ease-out) both;
+  animation: page-enter 0.3s var(--ease-out) backwards;
 }
 
 /* ─── Staggered Card Animations ─────────────────────────────────────── */
@@ -1075,7 +1075,7 @@ select.form-input {
 }
 
 .card-animate {
-  animation: card-enter 0.4s var(--ease-out) both;
+  animation: card-enter 0.4s var(--ease-out) backwards;
 }
 
 .card-animate:nth-child(1) {
@@ -1136,7 +1136,7 @@ select.form-input {
 }
 
 .stat-value-animate {
-  animation: count-up 0.5s var(--ease-out) both;
+  animation: count-up 0.5s var(--ease-out) backwards;
   animation-delay: 0.2s;
 }
 
@@ -2330,8 +2330,14 @@ textarea.form-input {
    fadeUp keyframe is declared once in tokens.css (Phase 26). Staggered delays via
    :nth-child for natural cascade. Reduced-motion users see no animation (universal
    guard at line ~1660 sets animation-duration: 0.01ms). */
+/* Issue #570: `backwards`, never `both`. A forwards fill keeps the interpolated end transform
+   (`matrix(1, 0, 0, 1, 0, 0)`, even when the keyframe says `none`) on the element after the
+   animation, and any transform makes the element the containing block of every `position: fixed`
+   descendant — a dialog inside the card was then positioned against the card, not the viewport.
+   `backwards` keeps the hidden start state during the stagger delay; afterwards the element's own
+   style (opacity 1, no transform) applies, so the entrance looks the same. */
 .card-animate {
-  animation: fadeUp 400ms var(--ease-out) both;
+  animation: fadeUp 400ms var(--ease-out) backwards;
 }
 .card-animate:nth-child(1) {
   animation-delay: 0ms;
@@ -2355,7 +2361,7 @@ textarea.form-input {
 /* Shared `.fade-up` utility (matches handoff styles.css:636 — for one-off elements
    outside the .card pattern, e.g. toasts, modals, callouts) */
 .fade-up {
-  animation: fadeUp 400ms var(--ease-out) both;
+  animation: fadeUp 400ms var(--ease-out) backwards;
 }
 
 /* ─── Brand rule helper (used by PageHead, also reusable in section headers) ─── */
