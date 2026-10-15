@@ -24,6 +24,15 @@ import {
   grantSystemRole,
   soleAuditRow,
 } from "../../src/__tests__/setup";
+import {
+  PERMISSIONS,
+  permissionKey,
+  resolveAccessReach,
+  userIdsHoldingPermission,
+  type AccessContext,
+  type PermissionKey,
+} from "../../src/contexts/platform";
+import { effectivePermissionKeysForUser } from "../../src/contexts/platform/request-permissions";
 import { SYSTEM_ROLE_IDS } from "../../src/contexts/platform/system-roles";
 import { deriveCompatRole } from "../../src/contexts/platform/compat-role";
 import {
@@ -37,6 +46,11 @@ import {
 } from "../backfill-539-role-assignments";
 
 const REASON = "Übernahme der Alt-Rolle (#75)";
+
+/** Every ZUGEWIESEN key of the catalog — derived, never typed by hand. */
+const ZUGEWIESEN_KEYS: PermissionKey[] = PERMISSIONS.filter((p) => p.reach === "ZUGEWIESEN").map(
+  permissionKey,
+);
 
 async function capture(fn: () => Promise<number>): Promise<{ code: number; lines: string[] }> {
   const lines: string[] = [];
@@ -81,6 +95,8 @@ describe("backfill-539-role-assignments (Issue #539, D-01)", () => {
   let finalDryRun: Run;
   let rowsBefore: Map<string, number>;
   let columnsBefore: Map<string, Role>;
+  /** What each fixture user resolved to BEFORE the first --confirm (through the fallback, if unassigned). */
+  const profilesBefore = new Map<string, Awaited<ReturnType<typeof profileOf>>>();
 
   async function createUser(input: {
     key: keyof typeof fixture;
@@ -123,6 +139,30 @@ describe("backfill-539-role-assignments (Issue #539, D-01)", () => {
     return run.lines
       .map((line) => /^userId=(\S+) tenantId=(\S+) legacyRole=(\S+)$/.exec(line)?.[1])
       .filter((id): id is string => id !== undefined);
+  }
+
+  /**
+   * The three answers a takeover must not change: the effective permission keys, the reach for
+   * every ZUGEWIESEN key, and membership in the recipient list of every ZUGEWIESEN key.
+   */
+  async function profileOf(userId: string, tenantId: string) {
+    const ctx: AccessContext = {
+      tenantId,
+      actor: { kind: "user", userId },
+      reach: { kind: "wholeTenant" },
+    };
+    const keys = await effectivePermissionKeysForUser(app.prisma, userId, tenantId);
+    const reach: Record<string, unknown> = {};
+    const recipient: Record<string, boolean> = {};
+    for (const key of ZUGEWIESEN_KEYS) {
+      reach[key] = await resolveAccessReach(app.prisma, ctx, key);
+      recipient[key] = (await userIdsHoldingPermission(app.prisma, tenantId, key)).includes(userId);
+    }
+    return { keys, reach, recipient };
+  }
+
+  function tenantOf(key: keyof typeof fixture): string {
+    return key === "deactivatedTenant" ? deactivatedSeed.tenant.id : seed.tenant.id;
   }
 
   async function rowsOf(userId: string) {
@@ -200,6 +240,11 @@ describe("backfill-539-role-assignments (Issue #539, D-01)", () => {
       columnsBefore.set(id, fixture[key].role);
     }
 
+    for (const key of [...eligibleKeys, ...excludedKeys]) {
+      if (key === "noEmployee") continue; // no tenant, nothing resolves
+      profilesBefore.set(fixture[key].id, await profileOf(fixture[key].id, tenantOf(key)));
+    }
+
     dryRun = await capture(() => main([], app.prisma));
     everyListedUserId = listedIds(dryRun);
     confirmRun = await capture(() => main(["--confirm"], app.prisma));
@@ -247,8 +292,6 @@ describe("backfill-539-role-assignments (Issue #539, D-01)", () => {
         expect(own, key).toHaveLength(1);
         expect(own[0]).toContain(`legacyRole=${fixture[key].role}`);
       }
-      const tenantOf = (key: (typeof eligibleKeys)[number]) =>
-        key === "deactivatedTenant" ? deactivatedSeed.tenant.id : seed.tenant.id;
       for (const key of eligibleKeys) {
         const line = dryRun.lines.find((l) => l.includes(`userId=${fixture[key].id} `));
         expect(line).toContain(`tenantId=${tenantOf(key)}`);
@@ -358,7 +401,7 @@ describe("backfill-539-role-assignments (Issue #539, D-01)", () => {
           salonIds: [],
           employeeIds: [],
           accessRoleId: expectedRoleId[fixture[key].role],
-          tenantId: key === "deactivatedTenant" ? deactivatedSeed.tenant.id : seed.tenant.id,
+          tenantId: tenantOf(key),
         });
       }
     });
@@ -428,9 +471,8 @@ describe("backfill-539-role-assignments (Issue #539, D-01)", () => {
         expect(user.role, key).toBe(columnsBefore.get(fixture[key].id));
       }
       for (const key of eligibleKeys) {
-        const tenantId = key === "deactivatedTenant" ? deactivatedSeed.tenant.id : seed.tenant.id;
         const rows = await rowsOf(fixture[key].id);
-        expect(deriveCompatRole(tenantId, rows), key).toBe(fixture[key].role);
+        expect(deriveCompatRole(tenantOf(key), rows), key).toBe(fixture[key].role);
       }
     });
   });
@@ -447,6 +489,105 @@ describe("backfill-539-role-assignments (Issue #539, D-01)", () => {
           await app.prisma.roleAssignment.count({ where: { userId: fixture[key].id } }),
           key,
         ).toBe(1);
+      }
+    });
+  });
+
+  describe("rights neutrality (AC-539-2)", () => {
+    describe("while the fallback exists — rewritten by #539 plan 07", () => {
+      it("the profiles compared are not empty and tell the three roles apart (anti-vacuity)", () => {
+        expect(ZUGEWIESEN_KEYS.length).toBeGreaterThan(0);
+        const admin = profilesBefore.get(fixture.admin.id)!;
+        const manager = profilesBefore.get(fixture.manager.id)!;
+        const employee = profilesBefore.get(fixture.employee.id)!;
+        expect(admin.keys.length).toBeGreaterThan(0);
+        expect(employee.keys.length).toBeGreaterThan(0);
+        // The fallback gave each user something, and not the same thing: Admin holds a recipient
+        // slot the Mitarbeiter does not, and the Mitarbeiter holds no whole-tenant reach at all.
+        expect(Object.values(admin.recipient).some(Boolean)).toBe(true);
+        expect(Object.values(employee.recipient).some(Boolean)).toBe(false);
+        expect(admin.keys.length).toBeGreaterThan(manager.keys.length);
+        expect(manager.keys.length).toBeGreaterThan(employee.keys.length);
+      });
+
+      it("each taken-over user resolves to the same permissions, reach and recipient membership before and after the takeover", async () => {
+        for (const key of eligibleKeys) {
+          const before = profilesBefore.get(fixture[key].id);
+          expect(before, key).toBeDefined();
+          const after = await profileOf(fixture[key].id, tenantOf(key));
+          expect(after.keys, `${key} permission keys`).toEqual(before!.keys);
+          expect(after.reach, `${key} reach`).toEqual(before!.reach);
+          expect(after.recipient, `${key} recipient membership`).toEqual(before!.recipient);
+        }
+      });
+
+      it("no excluded user changes either: what it resolved to before, it resolves to after", async () => {
+        for (const key of excludedKeys) {
+          if (key === "noEmployee") continue;
+          const before = profilesBefore.get(fixture[key].id);
+          expect(before, key).toBeDefined();
+          expect(await profileOf(fixture[key].id, tenantOf(key)), key).toEqual(before);
+        }
+      });
+    });
+
+    describe("against a holder created through the production path", () => {
+      async function createThroughApi(role: Role) {
+        const uid = randomBytes(4).toString("hex");
+        const email = `bf539-api-${role.toLowerCase()}-${uid}@example.invalid`;
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/employees",
+          headers: { authorization: `Bearer ${seed.adminToken}` },
+          payload: {
+            usualWorkDays: [1, 2, 3, 4, 5],
+            email,
+            firstName: role,
+            lastName: "Fixture",
+            employeeNumber: `BA-${uid}`,
+            hireDate: "2026-01-01T00:00:00.000Z",
+            role,
+            password: "Test@1234567!",
+          },
+        });
+        expect(res.statusCode).toBe(201);
+        const user = await app.prisma.user.findUniqueOrThrow({ where: { email } });
+        userIds.push(user.id);
+        return user;
+      }
+
+      for (const [key, role] of [
+        ["admin", "ADMIN"],
+        ["manager", "MANAGER"],
+        ["employee", "EMPLOYEE"],
+      ] as const) {
+        it(`the taken-over ${role} equals a ${role} created through POST /api/v1/employees`, async () => {
+          const reference = await createThroughApi(role);
+          // Same stored row, not merely the same answers: the takeover writes what employee creation writes.
+          const taken = await rowsOf(fixture[key].id);
+          const referenceRows = await rowsOf(reference.id);
+          expect(referenceRows).toHaveLength(1);
+          expect(taken).toHaveLength(1);
+          expect({
+            accessRoleId: taken[0].accessRoleId,
+            scopeType: taken[0].scopeType,
+            salonIds: taken[0].salonIds,
+            employeeIds: taken[0].employeeIds,
+            tenantId: taken[0].tenantId,
+          }).toEqual({
+            accessRoleId: referenceRows[0].accessRoleId,
+            scopeType: referenceRows[0].scopeType,
+            salonIds: referenceRows[0].salonIds,
+            employeeIds: referenceRows[0].employeeIds,
+            tenantId: referenceRows[0].tenantId,
+          });
+          const takenProfile = await profileOf(fixture[key].id, seed.tenant.id);
+          const referenceProfile = await profileOf(reference.id, seed.tenant.id);
+          expect(takenProfile.keys.length).toBeGreaterThan(0);
+          expect(takenProfile.keys).toEqual(referenceProfile.keys);
+          expect(takenProfile.reach).toEqual(referenceProfile.reach);
+          expect(takenProfile.recipient).toEqual(referenceProfile.recipient);
+        });
       }
     });
   });
