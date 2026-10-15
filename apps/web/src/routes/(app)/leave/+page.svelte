@@ -1507,8 +1507,11 @@
     min-height: 96px;
   }
   @media (max-width: 768px) {
+    /* minmax(0, 1fr): a bare 1fr track is minmax(auto, 1fr) and grew with the widest nowrap
+       content of the Überstundenkonto card, pushing the page past a 320 px viewport (Issue #564,
+       seen on CI with wider fallback fonts). */
     .kpi-row {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
       gap: 12px;
     }
   }
@@ -2079,10 +2082,13 @@
     color: var(--text-muted);
     margin: 0;
   }
+  /* Wraps and may shrink to its widest button: at 320 px the two buttons side by side were
+     wider than the page (Issue #564). */
   .ical-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
-    flex-shrink: 0;
+    min-width: 0;
   }
 
   /* ── Responsive ───────────────────────────────────────────────────── */

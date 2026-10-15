@@ -29,7 +29,7 @@
     {
       "file": "apps/e2e/tests/month-bar-narrow-viewport.spec.ts",
       "category": "in-ci",
-      "reason": "Issue #553 narrow-viewport gate for every month bar consumer (6 surfaces x editorial/modern x 390 and 360 px). Needs only the tenant fixture, no seed, and no date dependency because the browser clock is fixed at 2026-09-16 (widest German month label). Measured RED on the unfixed tree: 21 of 24 fail (20 with the Heute button plus the modern /leave year bar at 360 px, where the nav row sits 1 px outside the bar); 24/24 green after the fix."
+      "reason": "Issue #553 narrow-viewport gate for every month bar consumer (6 surfaces x editorial/modern x 390, 360 and, since Issue #564, 320 px, with a whole-page element-geometry check). Needs only the tenant fixture, no seed, and no date dependency because the browser clock is fixed at 2026-09-16 (widest German month label). Measured RED on the unfixed tree: 21 of 24 fail (20 with the Heute button plus the modern /leave year bar at 360 px, where the nav row sits 1 px outside the bar); 24/24 green after the fix."
     },
     {
       "file": "apps/e2e/tests/admin-tabs-narrow-viewport.spec.ts",

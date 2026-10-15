@@ -289,6 +289,15 @@
     position: relative;
     z-index: 30;
   }
+  /* 320-360 px (Issue #564): the card's own 24-28px side padding plus the MonthBar's left too
+     little room between the arrows for the month label; the MonthBar owns the side spacing here.
+     Compound selector (0,2,0) beats the v1.5 `.card { padding }` in app.css. */
+  @media (max-width: 360px) {
+    :global(.card.teamcal-monthbar-card) {
+      padding-left: 0;
+      padding-right: 0;
+    }
+  }
   .legend {
     display: flex;
     gap: 16px;
