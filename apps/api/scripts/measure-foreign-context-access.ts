@@ -131,6 +131,7 @@ export type PrismaModelName =
   | "auditLog"
   | "operatorAccount"
   | "operatorAuditLog"
+  | "supportAccess" // Issue #93 — time-boxed operator support grant
   | "terminalApiKey"
   | "presenceSource"
   | "presenceDevice"
@@ -165,6 +166,7 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   auditLog: "platform",
   operatorAccount: "platform",
   operatorAuditLog: "platform",
+  supportAccess: "platform", // Issue #93 (Phase 93b-01) — SupportAccess, a time-boxed operator support grant, an Unterbau model
   apiKey: "platform",
   invitation: "platform",
   otpToken: "platform",

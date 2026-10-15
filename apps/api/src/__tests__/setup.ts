@@ -708,6 +708,15 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.salonCoupling.deleteMany({ where: { tenantId } });
   await prisma.phorestSyncRun.deleteMany({ where: { tenantId } });
   await prisma.salon.deleteMany({ where: { tenantId } });
+  // Issue #93 (D-20): SupportAccess.tenant is onDelete: Restrict AND the table is append-only by
+  // trigger (DELETE refused), so a fixture tenant holding a grant could never be deleted and would leak
+  // into the shared test database. The trigger is disabled for exactly this one transaction (DDL is
+  // transactional, so a failure re-enables it) — test code only, app code never does this.
+  await prisma.$transaction([
+    prisma.$executeRawUnsafe(`ALTER TABLE "SupportAccess" DISABLE TRIGGER USER`),
+    prisma.supportAccess.deleteMany({ where: { tenantId } }),
+    prisma.$executeRawUnsafe(`ALTER TABLE "SupportAccess" ENABLE TRIGGER USER`),
+  ]);
   await prisma.tenant.delete({ where: { id: tenantId } });
 }
 
@@ -768,4 +777,39 @@ export async function seedOperator(
     tokenVersion,
     totpFor: (stepOffset = 0) => totp.generate({ timestamp: Date.now() + stepOffset * 30_000 }),
   };
+}
+
+/**
+ * Issue #93: inserts a support access grant directly (an INSERT is allowed by the immutability trigger),
+ * so a test can create grants the API never would — already expired, already ended, or backdated. Defaults
+ * to a running one-hour grant. Returns the stored row.
+ */
+export async function seedSupportAccess(
+  testApp: FastifyInstance,
+  opts: {
+    tenantId: string;
+    operatorId: string;
+    reason?: string;
+    startedAt?: Date;
+    expiresAt?: Date;
+    endedAt?: Date | null;
+    endedBy?: "OPERATOR" | "TENANT" | null;
+    endedByUserId?: string | null;
+    createdAt?: Date;
+  },
+) {
+  const startedAt = opts.startedAt ?? new Date();
+  return testApp.prisma.supportAccess.create({
+    data: {
+      tenantId: opts.tenantId,
+      operatorId: opts.operatorId,
+      reason: opts.reason ?? "Support ticket: fixture grant for a test",
+      startedAt,
+      expiresAt: opts.expiresAt ?? new Date(startedAt.getTime() + 3_600_000),
+      endedAt: opts.endedAt ?? null,
+      endedBy: opts.endedBy ?? null,
+      endedByUserId: opts.endedByUserId ?? null,
+      createdAt: opts.createdAt,
+    },
+  });
 }

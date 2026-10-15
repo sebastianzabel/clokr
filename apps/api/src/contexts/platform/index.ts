@@ -42,7 +42,10 @@ export type { EmployeeScope } from "./facade/employee-scope";
 export { auditReasonSchema, AUDIT_REASON_REQUIRED } from "./audit-reason";
 export { calculateWorkDays } from "./calculate-work-days";
 export { syncSchoolHolidaysForTenant } from "./plugins/school-holidays-sync";
-export { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "./employee-anonymization-filter";
+export {
+  NOT_ANONYMIZED_EMPLOYEE_WHERE,
+  isAnonymizedEmployee,
+} from "./employee-anonymization-filter";
 // Phase 77b (Issue #77): the central, fail-closed access context and the one EmployeeScope factory.
 export {
   accessContextFromRequest,
@@ -221,3 +224,16 @@ export {
   ModuleNotBookedError,
 } from "./tenant-packages";
 export type { TenantPackages } from "./tenant-packages";
+// Issue #93 (Phase 93b-01): the support access types and the employee status helper, for the
+// composition layer's operator support ports. The decider, the grant writer and the audit writers stay
+// internal to the platform context: no other context decides whether a grant is active.
+export { supportEmployeeStatus } from "./support-access";
+export { SUPPORT_READ_CATEGORIES } from "./support-access-types";
+export type {
+  OperatorSupportPorts,
+  SupportAccessDto,
+  SupportAccessEndedBy,
+  SupportAccessStatus,
+  SupportEmployeeDto,
+  SupportReadCategory,
+} from "./support-access-types";
