@@ -340,7 +340,7 @@ model TenantConfig {
   // Default: Mo-Sa 08:00-20:00, So closed
   /// RETIRED (Issue #563): no code reads or writes this column. Opening hours live only on
   /// `Salon.openingHours`; `PUT /api/v1/settings/work` strips the key and every read omits it
-  /// (`RETIRED_TENANT_CONFIG_COLUMNS`). Dropped in a follow-up release (follow-up issue
+  /// (`RETIRED_TENANT_CONFIG_COLUMNS`). Dropped in a follow-up release (GitHub #638,
   /// „storeHours-Spalte entfernen“).
   storeHours                        Json     @default("[{\"day\":0,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":1,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":2,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":3,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":4,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":5,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":6,\"open\":\"08:00\",\"close\":\"20:00\",\"closed\":true}]")
   // Phase 47.5 — How tightly to bind shifts to store hours.

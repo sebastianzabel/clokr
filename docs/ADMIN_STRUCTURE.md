@@ -925,6 +925,12 @@ remaining „Schichtprüfung gegen Öffnungszeiten“ section of `admin/system` 
 `shiftStoreHoursMode` radios; it stays button-gated and sends the minimal payload
 `{ shiftStoreHoursMode }`.
 
+**Salon lifecycle on `admin/salons/[id]` (Issue #563).** An active salon is deactivated from a Danger
+Zone (§3.1) behind a `ConfirmDialog`; an inactive salon is reactivated from an activation `Section`,
+also behind a `ConfirmDialog`. A salon is never deleted, and the server's refusal text (last active
+salon, salon quota) is shown as it is and keeps the dialog open. The create page `/admin/salons/neu`
+reuses the detail component and needs an explicitly chosen Bundesland.
+
 ### 3.3 Breadcrumbs on Detail Pages
 
 Detail pages (Template B, `view="detail"`) MUST display a breadcrumb trail above the page title.

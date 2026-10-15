@@ -942,8 +942,20 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   in-app navigation), and `selectedSalonId()` is the value a view passes as `salonId` (`null` = every
   reachable salon). No endpoint reads a salon context from a header, cookie or session; an endpoint
   that takes `salonId` validates it itself — proof: `salon-context-manipulation-82.test.ts`. The
-  tenant-side salon admin screen of #563 calls `salonContext.load(…, { force: true })` after
-  create/deactivate/activate.
+  tenant-side salon admin (`/admin/salons`, Issue #563) calls `salonContext.load(…, { force: true })`
+  after every successful create, edit, deactivate and activate.
+- **Opening hours live only on the salon (Issue #563).** `Salon.openingHours` is the only source.
+  `TenantConfig.storeHours` is retired (strip on write, omit on read via `RETIRED_TENANT_CONFIG_COLUMNS`
+  in `contexts/platform/api/settings.ts`; the column is dropped by #638) and the mirror
+  `syncSoleActiveSalonOpeningHours()` is gone. `admin/system` keeps only `shiftStoreHoursMode` (a tenant
+  policy, minimal payload `{ shiftStoreHoursMode }`). `/admin/salons` (list and detail, create at
+  `/admin/salons/neu` with an explicit Bundesland) uses the tenant API `/api/v1/salons` and the facade
+  shared with the operator console — quota (#566), `FEDERAL_STATE_IN_USE`, never delete and the
+  identical 404 are unchanged; it is visible with `salon:read` and changes need `salon:manage`. The
+  `/shifts` week view dims closed days from `salonOpeningHours` of `GET /shifts/week` (the salons in the
+  caller's `shift:read` reach) through `closedDaysFor()` — the one salon in view or the chosen one, a hint
+  otherwise, never a merged value. The guard is `store-hours-readers.test.ts` (api, db and web, exactly
+  one allowed occurrence). Details: `docs/adr/0001-abweichungen.md` Eintrag L, Nachtrag Phase 563.
 - **The dashboard Team block follows the salon context (Issue #84).** The web decides whether to
   filter only through `teamSalonFilter()` (`apps/web/src/lib/dashboard/team-view.ts`): it is guarded
   by `showSalonOptions`, because the store preselects a sole reachable salon and that preselection
@@ -1111,8 +1123,7 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   salon is never deleted (deactivate/activate only); the Bundesland is required on create; the
   coupling is Phorest or none. The `.card-animate` transform traps fixed dialogs inside an animated
   `Section` (#570) — the tenant page's „Mandant“ section therefore has no `animate`. Follow-ups:
-  #567 (tenant-create SLUG/EMAIL conflict classification), #563 (tenant-side salon admin and
-  removal of the `storeHours` mirror), #566 (packages per tenant).
+  #567 (tenant-create SLUG/EMAIL conflict classification), #566 (packages per tenant).
 - **Tenants are deactivated, never deleted.** `ACTIVE_TENANT_WHERE` (`contexts/platform/tenant-status.ts`)
   is the one spelling of "active tenant" in a query. A deactivated tenant is refused on every credential
   path (login after the password matched, OTP, refresh, password reset, invitation accept) and on every
