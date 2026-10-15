@@ -18,7 +18,14 @@
 import type { FastifyInstance } from "fastify";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 
 async function loginAs(app: FastifyInstance, email: string, password = "test1234") {
   const res = await app.inject({
@@ -53,6 +60,7 @@ async function createFixedEmployee(
       hireDate: new Date(`${hireDate}T00:00:00Z`),
     },
   });
+  await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
   await app.prisma.workSchedule.create({
     data: {
       employeeId: employee.id,
@@ -282,6 +290,7 @@ describe("Issue #433 (D-03/D-11) — dashboard.ts GET / and reports.ts GET /mont
         hireDate: new Date("2025-01-01"),
       },
     });
+    await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     monthlyEmpId = employee.id;
     await app.prisma.workSchedule.create({
       data: {

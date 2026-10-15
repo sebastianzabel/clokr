@@ -19,7 +19,14 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 import { normalizeRolePermissions, roleNameKey, SYSTEM_ROLE_IDS } from "../contexts/platform";
 
 const PASSWORD = "test1234";
@@ -46,7 +53,8 @@ describe("Issue #85 (Phase 85b Plan 16) — GET /leave/overtime-balance saldo ma
     return `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   }
 
-  async function createPerson(label: string) {
+  // grant: false for a person whose stored assignment is the one the caller adds (no system-role grant).
+  async function createPerson(label: string, grant = true) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const email = `${s}@test.de`;
@@ -63,6 +71,13 @@ describe("Issue #85 (Phase 85b Plan 16) — GET /leave/overtime-balance saldo ma
         hireDate: new Date("2020-01-01"),
       },
     });
+    if (grant) {
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
+      });
+    }
     await app.prisma.overtimeAccount.create({
       data: { employeeId: employee.id, balanceHours: "5" },
     });
@@ -99,7 +114,7 @@ describe("Issue #85 (Phase 85b Plan 16) — GET /leave/overtime-balance saldo ma
     permissions: string[],
     scope: { scopeType: "SALONS" | "TENANT"; salonIds?: string[] },
   ) {
-    const person = await createPerson(label);
+    const person = await createPerson(label, false);
     await assignHome(person.id, salonB.id);
     const name = `Bm85b ${crypto.randomBytes(3).toString("hex")}`;
     const role = await app.prisma.accessRole.create({
@@ -160,7 +175,7 @@ describe("Issue #85 (Phase 85b Plan 16) — GET /leave/overtime-balance saldo ma
     });
 
     // The Salonmanager of A (system template: leave-entitlement:read, no overtime:read).
-    await createPerson("bm85b-sm");
+    await createPerson("bm85b-sm", false);
     await assignHome(emp["bm85b-sm"].id, salonB.id);
     await app.prisma.roleAssignment.create({
       data: {
@@ -247,7 +262,7 @@ describe("Issue #85 (Phase 85b Plan 16) — GET /leave/overtime-balance saldo ma
   });
 
   it("the Personalabteilung (overtime:read:ZUGEWIESEN, tenant scope) gets the numbers", async () => {
-    const hr = await createPerson("bm85b-hr");
+    const hr = await createPerson("bm85b-hr", false);
     await assignHome(hr.id, salonB.id);
     await app.prisma.roleAssignment.create({
       data: {

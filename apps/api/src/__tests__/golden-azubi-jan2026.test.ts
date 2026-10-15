@@ -34,7 +34,13 @@
  * close-employee-month.test.ts case 9 (pure-core parity pin pattern).
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+  grantSystemRole,
+} from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
 import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
@@ -313,6 +319,7 @@ describe("Phase 76.32 — GOLDEN Azubi Jan 2026: BS + Urlaub + Feiertag", () => 
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -364,6 +371,7 @@ describe("Phase 76.32 — GOLDEN Azubi Jan 2026: BS + Urlaub + Feiertag", () => 
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     empId = emp.id;
 
     // SHIFT_BASED 38h/5-day — spec §1.1

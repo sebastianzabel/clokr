@@ -21,7 +21,7 @@
  * its past-anchored literals for a documented reason in its own header).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
+import { getTestApp, cleanupTestData, createTestSalon, grantSystemRole } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -153,6 +153,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED schedu
         hireDate: PAST_ANCHOR,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: shiftUser.id, role: "EMPLOYEE" });
 
     // mondayHours deliberately 8 (SHIFT_BASED ignores every per-Tag-Soll field — it happens to
     // equal the Ø-Methode day for this fixture, but that is coincidence, not the source of the
@@ -295,6 +296,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED schedu
         hireDate: PAST_ANCHOR,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: fixedUser.id, role: "EMPLOYEE" });
 
     await prisma.workSchedule.create({
       data: {
@@ -553,6 +555,7 @@ describe("scheduledLeaveMinutes SHIFT_BASED == saldo credit (Issue #429, D-13)",
         hireDate: PAST_ANCHOR,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     // Same divisor mismatch as D13_SCHEDULE above (contractWorkDaysPerWeek 4, workDays length 5).
     await prisma.workSchedule.create({
       data: {
