@@ -196,8 +196,8 @@ describe("D-22: gaps and the segments they produce", () => {
     ]);
   });
 
-  it("a day break in a same-salon gap above 120 minutes is a day-break segment and the gap does not count", () => {
-    const rows = [row(A, "08:00", "12:00", { id: "a1" }), row(A, "15:00", "18:00", { id: "a2" })];
+  it("a day break in a cross-salon gap is a day-break segment and the gap does not count", () => {
+    const rows = [row(A, "08:00", "12:00", { id: "a1" }), row(B, "15:00", "18:00", { id: "b1" })];
     const withBreak = evaluate(rows, [brk("13:00", "13:30")]);
     expect(withBreak.breakSegments).toEqual([
       {
@@ -211,8 +211,27 @@ describe("D-22: gaps and the segments they produce", () => {
     expect(withBreak.gaps).toHaveLength(1);
     expect(withBreak.gaps[0]).toMatchObject({
       minutes: 180,
-      crossSalon: false,
+      crossSalon: true,
       countsAsBreak: false,
+    });
+  });
+
+  it("a same-salon gap above 120 minutes is the segment itself; a day break inside adds none (#523)", () => {
+    const rows = [row(A, "08:00", "12:00", { id: "a1" }), row(A, "15:00", "18:00", { id: "a2" })];
+    const withBreak = evaluate(rows, [brk("13:00", "13:30")]);
+    expect(withBreak.breakSegments).toEqual([
+      {
+        source: "same-salon-gap",
+        entryId: null,
+        startTime: t("12:00"),
+        endTime: t("15:00"),
+        minutes: 180,
+      },
+    ]);
+    expect(withBreak.gaps[0]).toMatchObject({
+      minutes: 180,
+      crossSalon: false,
+      countsAsBreak: true,
     });
   });
 
