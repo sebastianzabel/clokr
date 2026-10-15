@@ -5,18 +5,18 @@
   import { onMount } from "svelte";
   import { activeNavHref } from "$lib/nav/active-route";
 
-  type NavItem = { href: string; label: string; icon: string };
+  import type { NavSection } from "$lib/nav/app-nav";
 
   interface Props {
     /** Two-way bindable open state. Parent holds the flag. */
     open: boolean;
-    /** Persona-filtered overflow nav items. */
-    items: NavItem[];
+    /** The permission-filtered sections, the same ones the desktop Sidebar renders (#516). */
+    sections: NavSection[];
     /** Used to mark the active item with brand-soft highlight. */
     currentPath: string;
   }
 
-  let { open = $bindable(), items, currentPath }: Props = $props();
+  let { open = $bindable(), sections, currentPath }: Props = $props();
 
   // Phase 69 (DEVOPS-V8-02): mobile runtime version display.
   // Subscribes to the shared $versionStore (hydrated by loadVersion()) so
@@ -53,7 +53,7 @@
   // Shared rule ($lib/nav/active-route): the same item is current here as in the tab bar.
   const currentHref = $derived(
     activeNavHref(
-      items.map((item) => item.href),
+      sections.flatMap((section) => section.items.map((item) => item.href)),
       currentPath,
     ),
   );
@@ -203,21 +203,25 @@
         </button>
       </header>
       <div class="mehr-sheet-body">
-        <nav class="mehr-sheet-nav" aria-label="Weitere Navigation">
-          {#each items as item (item.href)}
-            {@const active = item.href === currentHref}
-            <a
-              href={item.href}
-              class="mehr-item"
-              class:mehr-item-active={active}
-              aria-current={active ? "page" : undefined}
-              onclick={onItemClick}
-            >
-              <span class="mehr-item-icon" aria-hidden="true">{@render sheetIcon(item.icon)}</span>
-              <span class="mehr-item-label" translate="no">{item.label}</span>
-            </a>
-          {/each}
-        </nav>
+        {#each sections as section (section.label)}
+          <h4 class="mehr-section-label" translate="no">{section.label}</h4>
+          <nav class="mehr-sheet-nav" aria-label={section.label}>
+            {#each section.items as item (item.href)}
+              {@const active = item.href === currentHref}
+              <a
+                href={item.href}
+                class="mehr-item"
+                class:mehr-item-active={active}
+                aria-current={active ? "page" : undefined}
+                onclick={onItemClick}
+              >
+                <span class="mehr-item-icon" aria-hidden="true">{@render sheetIcon(item.icon)}</span
+                >
+                <span class="mehr-item-label" translate="no">{item.label}</span>
+              </a>
+            {/each}
+          </nav>
+        {/each}
         {#if $versionStore}
           <div class="mehr-sheet-version" aria-label="Anwendungsversion">
             <button
@@ -336,6 +340,17 @@
   .mehr-sheet-nav {
     display: flex;
     flex-direction: column;
+  }
+
+  /* Group heading, same wording and casing as the desktop sidebar's section labels. */
+  .mehr-section-label {
+    margin: 0;
+    padding: var(--s-4) 18px var(--s-1);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
   }
 
   .mehr-item {

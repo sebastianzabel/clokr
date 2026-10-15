@@ -26,6 +26,27 @@ import {
   type LegacyDaySlot,
   type LegacyDayWarning,
 } from "./fixtures/legacy-day-warnings-pre80";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+// Amendment register (Issue #523): cells whose expected result changed on purpose. The frozen
+// legacy fixture itself is untouched; see the register for the rule and the reason.
+interface EquivalenceAmendment {
+  id: string;
+  issue: number;
+  date: string;
+  capMinutes: number;
+  reason: string;
+}
+const AMENDMENT_REGISTER = (
+  JSON.parse(
+    readFileSync(join(__dirname, "fixtures", "day-break-equivalence-80-amendments.json"), "utf8"),
+  ) as { amendments: EquivalenceAmendment[] }
+).amendments;
+const GAP_AMENDMENT = AMENDMENT_REGISTER.find((a) => a.id === "SAME_SALON_GAP_OVER_CAP");
+if (GAP_AMENDMENT === undefined || GAP_AMENDMENT.reason.length < 80) {
+  throw new Error("equivalence amendment register: SAME_SALON_GAP_OVER_CAP missing or unexplained");
+}
 
 /** mulberry32 — a seeded PRNG so every run sees the same matrix. */
 function mulberry32(seed: number): () => number {
@@ -141,6 +162,71 @@ function randomDay(
   return inLookupOrder(rows);
 }
 
+/** True when the amendment applies: a gap longer than the cap between two entries of one salon. */
+function hasSameSalonGapOverCap(rows: Row[]): boolean {
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i].salonId !== rows[i - 1].salonId) continue;
+    const gap = (rows[i].startTime.getTime() - rows[i - 1].endTime.getTime()) / MS_MIN;
+    if (gap > GAP_AMENDMENT!.capMinutes) return true;
+  }
+  return false;
+}
+
+/**
+ * The expected warnings of an amended cell: the frozen legacy day statement with ONE change, a
+ * same-salon gap counts whatever its length (a cross-salon gap never counts, D-01). Test-local
+ * copy, independent of the kernel; the frozen fixture is not touched.
+ */
+function amendedLegacyWarnings(daySlots: Row[], bsMinutesToday: number): LegacyDayWarning[] {
+  const warnings: LegacyDayWarning[] = [];
+  const dayIsWaived = daySlots.some((s) => s.breakStatus === "WAIVED");
+  let netWorkedMin = 0;
+  let explicitBreakMin = 0;
+  for (const slot of daySlots) {
+    const d = entryDurations(slot);
+    explicitBreakMin += d.breakMinutes;
+    netWorkedMin += d.workingMinutes;
+  }
+  let gapBreakMin = 0;
+  for (let i = 1; i < daySlots.length; i++) {
+    if (daySlots[i].salonId !== daySlots[i - 1].salonId) continue;
+    const gap = (daySlots[i].startTime.getTime() - daySlots[i - 1].endTime.getTime()) / 60000;
+    if (gap > 0) gapBreakMin += gap;
+  }
+  const totalBreakMin = explicitBreakMin + gapBreakMin;
+  if (netWorkedMin > 9 * 60 && totalBreakMin < 45) {
+    warnings.push({
+      code: "BREAK_TOO_SHORT",
+      severity: dayIsWaived ? "warning" : "error",
+      message: `§ 4 ArbZG: Bei über 9 Stunden Arbeitszeit sind mindestens 45 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
+      ...(dayIsWaived ? { waived: true } : {}),
+    });
+  } else if (netWorkedMin > 6 * 60 && totalBreakMin < 30) {
+    warnings.push({
+      code: "BREAK_TOO_SHORT",
+      severity: "warning",
+      message: `§ 4 ArbZG: Bei über 6 Stunden Arbeitszeit sind mindestens 30 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
+      ...(dayIsWaived ? { waived: true } : {}),
+    });
+  }
+  const dailyTotalMin = netWorkedMin + bsMinutesToday;
+  if (dailyTotalMin > 10 * 60) {
+    warnings.push({
+      code: "MAX_DAILY_EXCEEDED",
+      severity: "error",
+      message: `§ 3 ArbZG: Tägliche Höchstarbeitszeit von 10 Stunden überschritten. Erfasst: ${(dailyTotalMin / 60).toFixed(1)} h.`,
+    });
+  }
+  return warnings;
+}
+
+/** Legacy expectation, or the register's amended expectation for an amended cell. */
+function expectedWarnings(rows: Row[], bs: number): LegacyDayWarning[] {
+  return hasSameSalonGapOverCap(rows)
+    ? amendedLegacyWarnings(rows, bs)
+    : legacyDayWarningsPre80(rows, bs);
+}
+
 // ── (a) single-entry matrix ───────────────────────────────────────────────────────────────────
 
 describe("Issue #80 80-AC6 (a) — every single-entry day is unchanged", () => {
@@ -193,9 +279,17 @@ describe("Issue #80 80-AC6 (b) — every same-salon multi-entry day is unchanged
   it("equals the frozen pre-80 warnings", () => {
     let withFinding = 0;
     let withGapCounted = 0;
+    let amended = 0;
+    let amendedDiffersFromLegacy = 0;
     const mismatches: string[] = [];
     for (const { rows, bs } of SAME_SALON_CASES) {
-      const legacy = legacyDayWarningsPre80(rows, bs);
+      const legacy = expectedWarnings(rows, bs);
+      if (hasSameSalonGapOverCap(rows)) {
+        amended++;
+        if (JSON.stringify(legacy) !== JSON.stringify(legacyDayWarningsPre80(rows, bs))) {
+          amendedDiffersFromLegacy++;
+        }
+      }
       const current = newWarnings(rows, bs);
       if (legacy.length > 0) withFinding++;
       if (evaluateDayBreaks({ rows, dayBreaks: [], acks: [] }).gapBreakMin > 0) withGapCounted++;
@@ -209,6 +303,9 @@ describe("Issue #80 80-AC6 (b) — every same-salon multi-entry day is unchanged
     expect(SAME_SALON_CASES.length).toBeGreaterThan(3000);
     expect(withFinding).toBeGreaterThan(300);
     expect(withGapCounted).toBeGreaterThan(1000);
+    // anti-vacuity for the register: it matched many cells and is not stale (it changes results)
+    expect(amended).toBeGreaterThan(500);
+    expect(amendedDiffersFromLegacy).toBeGreaterThan(0);
     if (mismatches.length > 0) console.error(mismatches.slice(0, 5));
     expect(mismatches).toHaveLength(0);
   });
@@ -216,13 +313,13 @@ describe("Issue #80 80-AC6 (b) — every same-salon multi-entry day is unchanged
 
 // ── (c) cross-salon: the only delta is the travel gap ─────────────────────────────────────────
 
-/** Sum of the gaps of 0 < gap <= 120 minutes between consecutive rows of DIFFERENT salons. */
-function crossSalonGapSum(rows: Row[]): number {
+/** Sum of the gaps of 0 < gap <= maxMinutes between consecutive rows of DIFFERENT salons. */
+function crossSalonGapSum(rows: Row[], maxMinutes = 120): number {
   let sum = 0;
   for (let i = 1; i < rows.length; i++) {
     if (rows[i].salonId === rows[i - 1].salonId) continue;
     const gap = (rows[i].startTime.getTime() - rows[i - 1].endTime.getTime()) / MS_MIN;
-    if (gap > 0 && gap <= 120) sum += gap;
+    if (gap > 0 && gap <= maxMinutes) sum += gap;
   }
   return sum;
 }
@@ -262,14 +359,17 @@ describe("Issue #80 80-AC6 (c) — a cross-salon day differs from the legacy res
         mismatches.push(`not cross-salon: ${describeCase(rows, bs)}`);
         continue;
       }
-      if (cross.totalBreakMin !== oneSalon.totalBreakMin - s) {
+      // Since #523 the one-salon copy counts every gap, so the travel gaps removed from it are all
+      // positive cross-salon gaps, not only those up to 120 minutes (register amendment).
+      const sAll = crossSalonGapSum(rows, Infinity);
+      if (cross.totalBreakMin !== oneSalon.totalBreakMin - sAll) {
         mismatches.push(`(c1) ${describeCase(rows, bs)}`);
       }
       if (s > 0) {
         withTravel++;
       } else {
         withoutTravel++;
-        const legacy = legacyDayWarningsPre80(rows, bs);
+        const legacy = expectedWarnings(rows, bs);
         const current = newWarnings(rows, bs).map(withoutCrossFlag);
         try {
           expect(current).toEqual(legacy);

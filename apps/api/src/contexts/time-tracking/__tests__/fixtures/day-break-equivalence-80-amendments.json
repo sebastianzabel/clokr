@@ -1,0 +1,15 @@
+{
+  "description": "Amendment register of the frozen Issue #80 equivalence matrix (day-break-equivalence-80.test.ts). The frozen legacy fixture (legacy-day-warnings-pre80.ts) is never edited; a matrix cell whose expected result changed ON PURPOSE is named here with a rule, a reason and the issue, and the test applies the register. A cell not matched by any amendment is still compared strictly against the frozen fixture. Same mechanism as neutrality/recorded/matrix-amendments.json.",
+  "amendments": [
+    {
+      "id": "SAME_SALON_GAP_OVER_CAP",
+      "issue": 523,
+      "date": "2026-10-15",
+      "appliesTo": "every matrix day with at least one gap between two consecutive entries of the SAME salon that is longer than capMinutes (matrix groups b and c2; in group c1 the one-salon baseline changes the same way)",
+      "capMinutes": 120,
+      "from": "the gap does not count towards the break total (pre-80 rule, kept by Phase 80 D-01 and Phase 511 D-16)",
+      "to": "the gap counts towards the break total like every shorter same-salon gap; a gap between different salons still never counts",
+      "reason": "Owner decision of 15.10.2026 on Issue #523: a Ruhepause has no maximum duration under § 4 ArbZG (BAG 25.02.2015, 5 AZR 886/12, Rn. 21), so the 120-minute cap on same-salon gaps is removed. Only the break total of days with such a gap changes; entry durations, working time and the saldo do not. Closed months are never re-evaluated."
+    }
+  ]
+}
