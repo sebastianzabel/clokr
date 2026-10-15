@@ -334,7 +334,9 @@ test.describe("admin salons (Issue #563)", () => {
         const where = `${path} at ${viewport.width} px`;
         await page.goto(path);
         if (path === "/admin/salons") {
-          await expect(page.getByRole("row", { name: /Niedersachsen/ })).toBeVisible();
+          // Below 640 px the Bundesland column is hidden (it is no longer in the row's name); the
+          // status badge is what this view must keep.
+          await expect(page.getByRole("row", { name: /Aktiv/ })).toBeVisible();
         } else {
           await expect(page.getByLabel("Geschlossen Sonntag")).toBeVisible();
         }
@@ -350,6 +352,21 @@ test.describe("admin salons (Issue #563)", () => {
         expect(overflow, `${where}: the document does not scroll sideways`).toBeLessThanOrEqual(
           TOLERANCE_PX,
         );
+
+        if (path === "/admin/salons") {
+          // The list's own scroll box must not hide the status column either (measured at 390 px
+          // before the Bundesland column gave way: the badge sat cut off inside `.table-wrap`).
+          const inner = await page
+            .locator(".table-wrap")
+            .first()
+            .evaluate((el) => ({
+              overflow: el.scrollWidth - el.clientWidth,
+            }));
+          expect(
+            inner.overflow,
+            `${where}: the table does not scroll inside its card`,
+          ).toBeLessThanOrEqual(TOLERANCE_PX);
+        }
 
         if (path !== "/admin/salons") {
           const rows = page.locator(".ohe-row:not(.ohe-row--head)");

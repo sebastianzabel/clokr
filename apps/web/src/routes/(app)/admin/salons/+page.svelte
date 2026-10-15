@@ -89,7 +89,7 @@
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Bundesland</th>
+                <th class="col-state">Bundesland</th>
                 <th class="col-address">Adresse</th>
                 <th>Status</th>
               </tr>
@@ -98,7 +98,7 @@
               {#each salons as salon (salon.id)}
                 <tr>
                   <td><a href="/admin/salons/{salon.id}">{salon.name}</a></td>
-                  <td>{federalStateLabel(salon.federalState)}</td>
+                  <td class="col-state">{federalStateLabel(salon.federalState)}</td>
                   <td class="text-muted col-address">{addressOf(salon)}</td>
                   <td>
                     <span
@@ -120,10 +120,13 @@
 </ListDetail>
 
 <style>
-  /* The address is the widest column; below the phone breakpoint it gives way so the table never
-     forces a horizontal page scroll. The address stays readable on the salon's detail page. */
+  /* Below the phone breakpoint the address and the Bundesland give way so the name and the status
+     badge always fit the card: with all four columns the status column was cut off inside the
+     table's own scroll box at 390 and 360 px (measured, Issue #563). Both values stay readable on
+     the salon's detail page. */
   @media (max-width: 640px) {
-    .col-address {
+    .col-address,
+    .col-state {
       display: none;
     }
   }

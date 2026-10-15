@@ -304,7 +304,7 @@ describe("salon list page", () => {
 
   it("shows the Bundesland per salon through the one label function", () => {
     expect(LIST).toContain("federalStateLabel(");
-    expect(LIST).toContain("<th>Bundesland</th>");
+    expect(LIST).toContain('<th class="col-state">Bundesland</th>');
   });
 
   it("reads the CHAIN hint's inputs from the package state and renders the hint component", () => {
