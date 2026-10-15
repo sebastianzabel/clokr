@@ -230,6 +230,8 @@ export type { TenantPackages } from "./tenant-packages";
 // purge (D-25) is the one exception: the composition layer's daily data-retention run calls it.
 export { supportEmployeeStatus, purgeExpiredSupportAccess } from "./support-access";
 export { SUPPORT_READ_CATEGORIES } from "./support-access-types";
+// Issue #93 (D-17): the type allow-list that redacts old/new values of the support audit-log read.
+export { SUPPORT_AUDIT_REDACTED, redactSupportAuditValue } from "./support-audit-redaction";
 export type {
   OperatorSupportPorts,
   SupportAccessDto,
