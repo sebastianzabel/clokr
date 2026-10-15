@@ -81,6 +81,17 @@ describe("operator surface off (OPERATOR_JWT_SECRET unset)", () => {
     expect(auditLog.statusCode).toBe(404);
   });
 
+  it("keeps the tenant's support-access routes registered: 401 without a token, never 404 (Issue #93)", async () => {
+    for (const [method, url] of [
+      ["GET", "/api/v1/support-accesses"],
+      ["GET", `/api/v1/support-accesses/${randomUUID()}`],
+      ["POST", `/api/v1/support-accesses/${randomUUID()}/end`],
+    ] as const) {
+      const res = await app.inject({ method, url });
+      expect(res.statusCode, `${method} ${url}`).toBe(401);
+    }
+  });
+
   it("keeps the tenant routes working and requireAuth answers 401, not a crash", async () => {
     const login = await app.inject({
       method: "POST",

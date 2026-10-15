@@ -50,6 +50,7 @@ import multipart from "@fastify/multipart";
 import { notificationRoutes } from "./contexts/platform/api/notifications";
 import { invitationRoutes } from "./contexts/platform/api/invitations";
 import { auditLogRoutes } from "./contexts/platform/api/audit-logs";
+import { supportAccessRoutes } from "./contexts/platform/api/support-accesses"; // Issue #93 (D-08)
 import { activityRoutes } from "./composition/activity";
 import { companyShutdownRoutes } from "./contexts/absence/api/company-shutdowns";
 import { dashboardRoutes } from "./composition/dashboard";
@@ -384,6 +385,9 @@ export async function buildApp() {
   await app.register(holidayRoutes, { prefix: "/api/v1/holidays" });
   await app.register(invitationRoutes, { prefix: "/api/v1/invitations" });
   await app.register(auditLogRoutes, { prefix: "/api/v1/audit-logs" });
+  // Issue #93 (D-08): the tenant's view of the support accesses. Registered outside the operator block —
+  // the tenant side exists with or without the operator surface.
+  await app.register(supportAccessRoutes, { prefix: "/api/v1/support-accesses" });
   await app.register(activityRoutes, { prefix: "/api/v1/activity" });
   await app.register(companyShutdownRoutes, { prefix: "/api/v1/company-shutdowns" });
   await app.register(dashboardRoutes, { prefix: "/api/v1/dashboard" });

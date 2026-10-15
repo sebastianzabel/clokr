@@ -39,6 +39,38 @@ export interface SupportAccessDto {
 }
 
 /**
+ * One support access as the controlling tenant sees it (D-08, D-29): the operator's display name only —
+ * never its e-mail or the client address — and the number of reads made under the grant.
+ */
+export interface TenantSupportAccessItemDto {
+  id: string;
+  operatorName: string;
+  reason: string;
+  startedAt: string;
+  expiresAt: string;
+  endedAt: string | null;
+  endedBy: SupportAccessEndedBy | null;
+  status: SupportAccessStatus;
+  readCount: number;
+}
+
+/** One read made under a grant, as stored in the tenant's own log (control values, dates and ids only). */
+export interface TenantSupportAccessReadDto {
+  at: string;
+  category: string;
+  /** `name` is null for an anonymised employee (D-13) and for an id that no longer resolves. */
+  employee: { id: string; name: string | null; anonymized: boolean } | null;
+  month: string | null;
+  filters: Record<string, unknown> | null;
+}
+
+export interface TenantSupportAccessDetailDto {
+  access: TenantSupportAccessItemDto;
+  reads: TenantSupportAccessReadDto[];
+  timezone: string;
+}
+
+/**
  * One employee as the operator sees it in the support list (D-05): no e-mail, birth date, NFC card id
  * or address. `status` is derived by `supportEmployeeStatus`; an anonymised employee keeps its stored
  * (anonymised) name.

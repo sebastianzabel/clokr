@@ -1097,6 +1097,30 @@
       "validatedAt": null
     },
     {
+      "route": "GET /api/v1/support-accesses/:id",
+      "file": "apps/api/src/contexts/platform/api/support-accesses.ts",
+      "category": "probe",
+      "params": {
+        "id": "supportAccess"
+      },
+      "minimalBody": null,
+      "reason": "support-accesses.ts GET /:id (Issue #93, Phase 93b-06, D-15): the access is looked up with ONE `supportAccess.findFirst({ where: { id, tenantId } })` where `tenantId` is the caller's own (`req.user.tenantId`) - a foreign tenant's real access and an unknown id both return null and fall through the single 404 `{ error: \"Support-Zugriff nicht gefunden\" }` before any read of the tenant log is made, so there is no membership oracle. GET has no body, so a bodyless probe reaches the lookup. Proven with a real tenant-B access (fixture key `supportAccess`) by this probe and by support-access-tenant-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "POST /api/v1/support-accesses/:id/end",
+      "file": "apps/api/src/contexts/platform/api/support-accesses.ts",
+      "category": "probe",
+      "params": {
+        "id": "supportAccess"
+      },
+      "minimalBody": null,
+      "reason": "support-accesses.ts POST /:id/end (Issue #93, Phase 93b-06, D-15): the end is ONE guarded `supportAccess.updateMany({ where: { id, tenantId, endedAt: null, expiresAt: { gt: now } } })` with the caller's own tenant, so a foreign tenant's real access matches nothing and is never ended; the follow-up `findFirst({ where: { id, tenantId } })` is tenant-scoped too and returns null for a foreign and for an unknown id, both answering the byte-identical 404 `{ error: \"Support-Zugriff nicht gefunden\" }` before any audit row is written. A bodyless POST reaches the lookup (no body schema). The fixture-integrity check after the sweep proves tenant B's access is still active. Proven by this probe and by support-access-tenant-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "DELETE /api/v1/day-breaks/:id",
       "file": "apps/api/src/contexts/time-tracking/api/day-breaks.ts",
       "category": "nicht anwendbar",

@@ -621,6 +621,9 @@ schlägt fehl, wenn er oder ein Rollenvergleich zurückkommt (D-19).
 | `contexts/platform/api/api-keys.ts:121`                    | `GET /scopes`                                   | A       | `api-key:manage`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/audit-logs.ts:21`                   | `GET /`                                         | A       | `audit-log:read`               | ZUGEWIESEN                                   |
 | `contexts/platform/api/audit-logs.ts:57`                   | `GET /:id`                                      | A       | `audit-log:read`               | ZUGEWIESEN                                   |
+| `contexts/platform/api/support-accesses.ts:108`            | `GET /`                                         | A       | `audit-log:read`               | ZUGEWIESEN                                   |
+| `contexts/platform/api/support-accesses.ts:168`            | `GET /:id`                                      | A       | `audit-log:read`               | ZUGEWIESEN                                   |
+| `contexts/platform/api/support-accesses.ts:245`            | `POST /:id/end`                                 | A       | `tenant-settings:update`       | ZUGEWIESEN                                   |
 | `contexts/platform/api/employees.ts:365`                   | `GET /`                                         | A, M    | `employee:read`                | ZUGEWIESEN                                   |
 | `contexts/platform/api/employees.ts:446`                   | `POST /`                                        | A       | `employee:create`              | ZUGEWIESEN                                   |
 | `contexts/platform/api/employees.ts:714`                   | `PATCH /:id`                                    | A       | `employee:update`              | ZUGEWIESEN                                   |

@@ -53,7 +53,13 @@ import { join } from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  seedOperator,
+  seedSupportAccess,
+  cleanupTestData,
+} from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import type { FastifyInstance } from "fastify";
@@ -304,13 +310,20 @@ let tenantBRoleAssignmentId: string | undefined;
 // mask a broken deactivate guard against a HOME row of the same shape).
 let tenantBSalonAssignmentId: string | undefined;
 
+// Issue #93 (Phase 93b-06, D-15): a real, RUNNING SupportAccess of tenantB, so the two
+// `/support-accesses/:id` probe entries have a foreign-tenant row to sweep against. Running on
+// purpose: an `end` that bypassed the tenant guard would change it, which the integrity check
+// below can see.
+let tenantBSupportAccessId: string | undefined;
+
 /** Resolves a register `params` fixture key to the foreign tenant's real entity id. `null` means
  * the key is unrecognised — the caller must fail loudly, never silently skip the route (D-03).
- * Today's vocabulary is exactly these NINE keys: `employee`/`leaveType` from the shared
+ * Today's vocabulary is exactly these TEN keys: `employee`/`leaveType` from the shared
  * `seedTestData` bundle, `leaveRequest`/`timeEntry`/`salon`/`salonInactive`/`customRole`/
- * `roleAssignment`/`salonAssignment` from the locally created fixtures (Issue #309/#310, Phase
- * 64b, Issue #73, Issue #74, Phase 67b Plan 02) — a register entry naming a tenth one this probe
- * does not implement is exactly the failure this function surfaces. */
+ * `roleAssignment`/`salonAssignment`/`supportAccess` from the locally created fixtures (Issue
+ * #309/#310, Phase 64b, Issue #73, Issue #74, Phase 67b Plan 02, Issue #93) — a register entry
+ * naming an eleventh one this probe does not implement is exactly the failure this function
+ * surfaces. */
 function fixtureValueFor(bundle: FixtureBundle, fixtureKey: string): string | null {
   if (fixtureKey === "employee") return bundle.employee.id;
   if (fixtureKey === "leaveType") return bundle.vacationType.id;
@@ -321,6 +334,7 @@ function fixtureValueFor(bundle: FixtureBundle, fixtureKey: string): string | nu
   if (fixtureKey === "customRole") return tenantBCustomRoleId ?? null;
   if (fixtureKey === "roleAssignment") return tenantBRoleAssignmentId ?? null;
   if (fixtureKey === "salonAssignment") return tenantBSalonAssignmentId ?? null;
+  if (fixtureKey === "supportAccess") return tenantBSupportAccessId ?? null;
   return null;
 }
 
@@ -511,6 +525,16 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         },
       });
       tenantBRoleAssignmentId = roleAssignment.id;
+
+      // Issue #93 fixture: a real running SupportAccess of tenantB (own synthetic operator), the
+      // target of GET /support-accesses/:id and POST /support-accesses/:id/end.
+      const supportOperator = await seedOperator(app);
+      const supportAccess = await seedSupportAccess(app, {
+        tenantId: tenantB.tenant.id,
+        operatorId: supportOperator.id,
+        expiresAt: new Date(Date.now() + 4 * 3_600_000),
+      });
+      tenantBSupportAccessId = supportAccess.id;
 
       // Phase 65b Plan 03 (Issue #65, D-16) fixture: a real PHOREST coupling on tenantB's active
       // Salon — the target of DELETE /phorest/couplings/:salonId. Reuses the "salon" fixture key
@@ -709,6 +733,20 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         where: { tenantId: tenantA.tenant.id },
       });
       expect(tenantARoleAssignmentCount).toBe(0);
+    });
+
+    it("fixture integrity after the sweep: tenantB's SupportAccess (Issue #93) is still running — not ended, no endedBy, no endedByUserId — and tenantA has none of its own; a guard that answers 404 while still performing the end would otherwise pass the byte comparison", async () => {
+      const after = await app.prisma.supportAccess.findUnique({
+        where: { id: tenantBSupportAccessId },
+      });
+      expect(after).not.toBeNull();
+      expect(after?.endedAt).toBeNull();
+      expect(after?.endedBy).toBeNull();
+      expect(after?.endedByUserId).toBeNull();
+      expect(after?.tenantId).toBe(tenantB.tenant.id);
+      expect(await app.prisma.supportAccess.count({ where: { tenantId: tenantA.tenant.id } })).toBe(
+        0,
+      );
     });
 
     it("fixture integrity after the sweep: tenantB's PHOREST coupling (Phase 65b, Issue #65) still exists with externalBranchId 't10009-branch' — a guard that answers 404 while still deleting the coupling would otherwise pass the byte comparison", async () => {

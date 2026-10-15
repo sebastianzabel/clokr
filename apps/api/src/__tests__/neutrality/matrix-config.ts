@@ -294,6 +294,36 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "stay byte-identical, because a PUT without the apply flag behaves exactly as before.",
   },
   {
+    route: "GET /api/v1/support-accesses",
+    reason:
+      "New route added in Issue #93 (Phase 93b-06, D-08), long after the role guard (`requireRole`) " +
+      "was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`audit-log:read:ZUGEWIESEN`, relation MANDANT, so whole-tenant reach only) from its very first " +
+      "commit and never had role-based access behavior to compare. Same vacuous-satisfaction " +
+      "reasoning as the Phase 430, Phase 468 and Phase 481 entries above: RECORD/MERGE mode " +
+      "refuses to run once the role guard is gone. Proven by support-access-tenant-93.test.ts.",
+  },
+  {
+    route: "GET /api/v1/support-accesses/:id",
+    reason:
+      "New route added in Issue #93 (Phase 93b-06, D-08), long after the role guard (`requireRole`) " +
+      "was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`audit-log:read:ZUGEWIESEN`, relation MANDANT, so whole-tenant reach only) from its very first " +
+      "commit and never had role-based access behavior to compare. Same vacuous-satisfaction " +
+      "reasoning as the Phase 430, Phase 468 and Phase 481 entries above: RECORD/MERGE mode " +
+      "refuses to run once the role guard is gone. Proven by support-access-tenant-93.test.ts.",
+  },
+  {
+    route: "POST /api/v1/support-accesses/:id/end",
+    reason:
+      "New route added in Issue #93 (Phase 93b-06, D-08), long after the role guard (`requireRole`) " +
+      "was deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`tenant-settings:update:ZUGEWIESEN`, relation MANDANT, so whole-tenant reach only) from its very first " +
+      "commit and never had role-based access behavior to compare. Same vacuous-satisfaction " +
+      "reasoning as the Phase 430, Phase 468 and Phase 481 entries above: RECORD/MERGE mode " +
+      "refuses to run once the role guard is gone. Proven by support-access-tenant-93.test.ts.",
+  },
+  {
     route: "GET /api/v1/time-entries/summary",
     reason:
       "New route added in Phase 79 (Issue #79, R3), long after the role guard (`requireRole`) " +

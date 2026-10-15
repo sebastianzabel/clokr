@@ -109,6 +109,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    WorkSchedule/PublicHoliday/SchoolHolidayPeriod/AuditLog/ApiKey/Notification ────────────
   "src/contexts/platform/api/api-keys.ts": "unterbau", // writes ApiKey only
   "src/contexts/platform/api/audit-logs.ts": "unterbau", // reads AuditLog only
+  "src/contexts/platform/api/support-accesses.ts": "unterbau", // Issue #93: tenant view of SupportAccess
   "src/contexts/platform/api/auth.ts": "unterbau", // writes OtpToken/RefreshToken/User
   "src/contexts/platform/api/avatars.ts": "unterbau", // writes Employee.avatarUrl only
   "src/contexts/platform/api/employees.ts": "unterbau", // writes Employee/User primarily; the tx.* deletes of Absence/Break/LeaveEntitlement/LeaveRequest/OvertimeAccount/TimeEntry/WorkSchedule are cascade cleanup ON employee delete, not this file's primary subject

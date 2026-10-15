@@ -248,4 +248,7 @@ export type {
   SupportMonthEntryDto,
   SupportMonthFiguresDto,
   SupportReadCategory,
+  TenantSupportAccessDetailDto,
+  TenantSupportAccessItemDto,
+  TenantSupportAccessReadDto,
 } from "./support-access-types";
