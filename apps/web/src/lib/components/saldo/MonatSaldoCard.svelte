@@ -185,6 +185,17 @@
     min-height: 220px;
   }
 
+  /* 320-360 px (Issue #564): the modern skin's 28px card padding left ~146 px for the month
+     label between the arrows, which needs ~158 px. 16px (the compact density value) fits it.
+     Compound selector (0,2,0) because the v1.5 `.card { padding }` in app.css wins by source
+     order otherwise. */
+  @media (max-width: 360px) {
+    :global(.card.msc-card) {
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+  }
+
   .msc-nav {
     margin: 0 0 var(--s-2);
   }

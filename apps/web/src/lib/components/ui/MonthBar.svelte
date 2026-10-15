@@ -369,6 +369,20 @@
     }
   }
 
+  /* 320 px (Issue #564): at 20px the modern skin's label (with the picker chevron, 172 px) was
+     wider than the ~146 px between the arrows and overlapped them by up to 13 px. Less side
+     padding and an 18px label clear them in both skins. Mirrored by .cal-monthbar in app.css. */
+  @media (max-width: 360px) {
+    .month-bar {
+      padding-left: 12px;
+      padding-right: 12px;
+    }
+
+    .month-bar-label {
+      font-size: 18px;
+    }
+  }
+
   /* ── Mini-stats cluster ──────────────────────────────────────────── */
   .month-bar-stats {
     display: flex;
