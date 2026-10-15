@@ -68,8 +68,23 @@ describe("D-01: a gap between salons is travel, a short same-salon gap stays a b
     expect(ev.gapBreakMin).toBe(120);
   });
 
-  it("same-salon gap of 121 minutes counts nothing (a separate shift)", () => {
+  it("same-salon gap of 121 minutes counts in full (#523: no upper cap)", () => {
     const ev = evaluate([row(A, "08:00", "10:00"), row(A, "12:01", "14:00")]);
+    expect(ev.gapBreakMin).toBe(121);
+  });
+
+  it("a long same-salon gap counts in full and is a placed same-salon-gap segment (#523)", () => {
+    const ev = evaluate([row(A, "08:00", "10:00"), row(A, "16:00", "18:00")]);
+    expect(ev.gapBreakMin).toBe(360);
+    expect(ev.gaps.map((g) => g.countsAsBreak)).toEqual([true]);
+    expect(ev.breakSegments.map((s) => [s.source, s.minutes])).toContainEqual([
+      "same-salon-gap",
+      360,
+    ]);
+  });
+
+  it("a long cross-salon gap still counts nothing (#523 leaves travel alone)", () => {
+    const ev = evaluate([row(A, "08:00", "10:00"), row(B, "16:00", "18:00")]);
     expect(ev.gapBreakMin).toBe(0);
   });
 
@@ -116,7 +131,7 @@ describe("D-04/D-05: recorded day breaks count only inside a gap and never reduc
     expect(ev.dayBreakMin).toBe(30);
   });
 
-  it("adds nothing for a day break inside a same-salon gap of at most 120 minutes", () => {
+  it("adds nothing for a day break inside a same-salon gap", () => {
     const rows = [row(A, "08:00", "12:00"), row(A, "12:30", "16:30")];
     const without = evaluate(rows);
     const withBreak = evaluate(rows, [brk("12:05", "12:25")]);
@@ -124,12 +139,21 @@ describe("D-04/D-05: recorded day breaks count only inside a gap and never reduc
     expect(withBreak.totalBreakMin).toBe(without.totalBreakMin);
   });
 
-  it("counts a day break inside a same-salon gap of 180 minutes in full", () => {
+  it("counts a day break inside a cross-salon gap of 180 minutes in full", () => {
+    const ev = evaluate(
+      [row(A, "08:00", "10:00"), row(B, "13:00", "16:30")],
+      [brk("11:00", "11:40")],
+    );
+    expect(ev.dayBreakMin).toBe(40);
+  });
+
+  it("adds nothing for a day break inside a same-salon gap of 180 minutes (#523)", () => {
     const ev = evaluate(
       [row(A, "08:00", "10:00"), row(A, "13:00", "16:30")],
       [brk("11:00", "11:40")],
     );
-    expect(ev.dayBreakMin).toBe(40);
+    expect(ev.dayBreakMin).toBe(0);
+    expect(ev.gapBreakMin).toBe(180);
   });
 
   it("counts a day break outside every gap as 0", () => {
