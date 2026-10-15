@@ -325,6 +325,17 @@ export function requireAnyPermission(...keys: PermissionKey[]) {
 }
 
 /**
+ * The refusal body for an active account whose effective permission set is empty (#539, D-14).
+ * The EMPTY set is the one condition: no stored role assignment at all, or only assignments of
+ * roles that grant nothing (an empty customer role). `code` is the control value; the German
+ * `error` text is display only - nobody may branch on it.
+ */
+export const NO_ROLE_ASSIGNED_ERROR = {
+  error: "Ihrem Konto ist keine Rolle zugewiesen. Bitte wenden Sie sich an Ihre Administration.",
+  code: "NO_ROLE_ASSIGNED",
+} as const;
+
+/**
  * Phase 378 (Issue #378): the caller's full effective permission set, flattened to a plain sorted
  * list of catalog keys — for exposing to a client: the login/OTP-verify response body (see
  * `api/auth.ts`'s `issueTokens()`) and, since Phase 408 (#408), the `POST /auth/refresh` response

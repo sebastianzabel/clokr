@@ -34,6 +34,7 @@ import * as compatRoleModule from "../compat-role";
 import { SYSTEM_ROLE_IDS, SYSTEM_ROLE_PERMISSIONS, type SystemRoleSlot } from "../system-roles";
 import { roleNameKey } from "../access-role";
 import { TENANT_REQUIRED_ERROR } from "../tenant-status";
+import { NO_ROLE_ASSIGNED_ERROR } from "../request-permissions";
 
 const TENANT = "tenant-under-test";
 const OTHER_TENANT = "another-tenant";
@@ -583,19 +584,27 @@ describe("compat role — login, OTP and refresh carry the derived role (D-14, D
   });
 
   it.each(["ADMIN", "MANAGER", "EMPLOYEE"] as const)(
-    "a fallback %s (no stored rows) carries the column in login, refresh and OTP",
+    "a user with column %s and no stored rows is refused at login with 403 NO_ROLE_ASSIGNED, whatever the column says (D-14)",
     async (role) => {
+      // Since #539 the column grants nothing and the sign-in of an account without any effective
+      // permission is refused (verify-otp and refresh: no-role-assigned-539.test.ts). The column is
+      // therefore never published as a claim for such a user.
       const user = await createUser(seed.tenant.id, role, `fb-${role}`);
       const res = await login(user.email);
-      expect(res.status).toBe(200);
-      expect(res.body.user?.role).toBe(role);
-      expect(tokenRole(res.body.accessToken as string)).toBe(role);
-      expect(await refreshRole(res.body.refreshToken as string)).toBe(role);
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual(NO_ROLE_ASSIGNED_ERROR);
+      expect(res.body.accessToken).toBeUndefined();
+      expect(res.body.refreshToken).toBeUndefined();
+      expect(await app.prisma.refreshToken.count({ where: { userId: user.id } })).toBe(0);
 
+      // In a two-factor tenant the refusal comes before any code is created.
       const otpUser = await createUser(otpSeed.tenant.id, role, `fb-otp-${role}`);
-      const otp = await otpLogin(otpUser.email);
-      expect(otp.user.role).toBe(role);
-      expect(tokenRole(otp.accessToken)).toBe(role);
+      const codesBefore = otpCodes.length;
+      const otpRes = await login(otpUser.email);
+      expect(otpRes.status).toBe(403);
+      expect(otpRes.body).toEqual(NO_ROLE_ASSIGNED_ERROR);
+      expect(otpCodes.length).toBe(codesBefore);
+      expect(await app.prisma.otpToken.count({ where: { userId: otpUser.id } })).toBe(0);
     },
   );
 });
