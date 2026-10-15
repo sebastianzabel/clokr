@@ -6,14 +6,14 @@
  * `packages/db` cannot import from `apps/api` (the dependency runs the other way:
  * the API imports `@clokr/db`), so this is a deliberate second copy of
  * `DEFAULT_SALON_OPENING_HOURS` in `apps/api/src/contexts/platform/facade/salons.ts`.
- * Both constants must stay byte-identical to `TenantConfig.storeHours`'s Prisma
- * column default (`packages/db/prisma/schema.prisma`) — that equality is pinned by
+ * Both constants must stay byte-identical to the retired `TenantConfig.storeHours`
+ * column's Prisma default (`packages/db/prisma/schema.prisma`) until the follow-up release
+ * drops that column — that equality is pinned by
  * `apps/api/src/__tests__/salon-migration.test.ts` on the API side.
  *
- * `seed.ts` and `seed-demo.ts` write this SAME constant into both
- * `TenantConfig.storeHours` and the tenant's default `Salon.openingHours`, so a
- * freshly bootstrapped tenant and its default salon agree by construction — even
- * if the schema default ever changes, both seed-written values change together.
+ * Since Issue #563 only `Salon.openingHours` carries opening hours: `seed.ts` and
+ * `seed-demo.ts` write this constant into the tenant's default salon and no longer write
+ * the retired column (its default fills it).
  *
  * No side effects on import — this module only exports data plus one idempotent seed
  * helper, so it is safe to pull into any seed script without affecting `main()`'s own

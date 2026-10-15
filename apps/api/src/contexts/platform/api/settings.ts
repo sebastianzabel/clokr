@@ -4,8 +4,6 @@ import { requireAuth } from "../../../middleware/auth";
 import { permissionReach, requirePermission } from "../request-permissions";
 import { FederalState, type TenantConfig, type Prisma } from "@clokr/db";
 import { encrypt } from "../../../utils/crypto";
-// Phase 64b (issue #64, D-16): mirrors a storeHours change into the tenant's sole active salon.
-import { syncSoleActiveSalonOpeningHours } from "../facade/salons";
 // eslint-disable-next-line no-restricted-imports -- E-3: PUT /settings/work/:employeeId triggers saldo recalculation and shift cancellation as side effects of a contract change — same defect class as E-1. Disappears in Block 2 via a schedule-changed event. ADR 0001 Eintrag H.
 import { recalculateSnapshots } from "../../working-time-account/recalculate-snapshots";
 import {
@@ -85,12 +83,19 @@ const decimalFromApi = (schema: z.ZodType<number>) =>
   );
 
 /**
- * Issue #433 (D-04) — the column stays in the schema for image-rollback safety until the
- * follow-up release (GitHub #470) drops it; no code path may read or write it any more.
- * Delete this constant together with the column.
+ * Retired `TenantConfig` columns — they stay in the schema for image-rollback safety until a
+ * follow-up release drops them; no code path may read or write them any more. Delete an entry
+ * together with its column.
+ *
+ * - `monthlyHoursHolidayDeduction`: Issue #433 (D-04), dropped by GitHub #470.
+ * - `storeHours`: Issue #563 (D-13) retires the tenant-level opening hours the same way. Opening
+ *   hours live only on `Salon.openingHours`; the settings schema no longer knows the key (a stale
+ *   client's value is stripped, 200, nothing written) and every read and the upsert omit the
+ *   column. The column is dropped by GitHub #638 (follow-up, pattern of #470).
  */
 const RETIRED_TENANT_CONFIG_COLUMNS: Prisma.TenantConfigOmit = {
   monthlyHoursHolidayDeduction: true,
+  storeHours: true,
 };
 
 /**
@@ -233,24 +238,8 @@ const tenantConfigSchema = z
     // Mandantennummer 5 digits.
     datevBeraterNr: z.number().int().min(1).max(9999999).nullable().optional(),
     datevMandantenNr: z.number().int().min(1).max(99999).nullable().optional(),
-    // Ladenöffnungszeiten (Phase 42) — 7 entries Mo-So. Phase 64b (issue #64): deliberately the
-    // pre-64b legacy schema, NOT the Salon facade's stricter salonOpeningHoursSchema — the admin UI
-    // round-trips the stored value, and a stricter check would lock tenants whose stored hours it
-    // rejects out of this whole settings section (review WR-03; D-04: legacy values are not
-    // re-validated). `TenantConfig.storeHours` is DEPRECATED — since Phase 325 (issue #325) the
-    // shift store-hours check reads the shift's own salon instead; this PUT is the only remaining
-    // writer, mirroring a CHANGED value into a tenant's sole active salon (D-16) until #563 removes both.
-    storeHours: z
-      .array(
-        z.object({
-          day: z.number().int().min(0).max(6),
-          open: z.string().regex(/^\d{2}:\d{2}$/),
-          close: z.string().regex(/^\d{2}:\d{2}$/),
-          closed: z.boolean().optional(),
-        }),
-      )
-      .length(7)
-      .optional(),
+    // Issue #563 (D-13): the retired tenant-level `storeHours` key is deliberately absent. The schema
+    // is not strict, so a stale client that still sends it is stripped here (200, nothing written).
     // Phase 47.5 — STRICT / DAY_ONLY / OFF
     shiftStoreHoursMode: z.enum(["STRICT", "DAY_ONLY", "OFF"]).optional(),
     // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults (tenant-level pre-fill suggestion)
@@ -785,15 +774,6 @@ export async function settingsRoutes(app: FastifyInstance) {
         dataRetentionYears: 10,
         carryoverWarningEnabled: true,
         carryoverWarningThresholds: [60, 30, 14, 7],
-        storeHours: [
-          { day: 0, open: "08:00", close: "20:00" },
-          { day: 1, open: "08:00", close: "20:00" },
-          { day: 2, open: "08:00", close: "20:00" },
-          { day: 3, open: "08:00", close: "20:00" },
-          { day: 4, open: "08:00", close: "20:00" },
-          { day: 5, open: "08:00", close: "20:00" },
-          { day: 6, open: "08:00", close: "20:00", closed: true },
-        ],
         shiftStoreHoursMode: "DAY_ONLY",
         defaultCoreStart: null,
         defaultCoreEnd: null,
@@ -919,10 +899,9 @@ export async function settingsRoutes(app: FastifyInstance) {
       if (federalState) tenantUpdate.federalState = federalState as FederalState;
       if (tenantName !== undefined) tenantUpdate.name = tenantName;
 
-      // Phase 64b (issue #64, D-16, research Pitfall 1): the tenantConfig upsert, the optional
-      // tenant update, and — ONLY when this PUT CHANGES storeHours — the D-16 salon mirror plus
-      // its own UPDATE Salon audit row all run in ONE transaction, so a mirror failure rolls back
-      // the tenantConfig write too.
+      // The tenantConfig upsert and the optional tenant update run in ONE transaction. Since
+      // Issue #563 (D-04) a settings write never touches a Salon row: the former storeHours
+      // mirror into the sole active salon is gone.
       //
       // Issue #568 (D-02, D-06): the guarded bulk apply joins this very transaction — the tenant
       // lock, the recomputation and fingerprint check, every new WorkSchedule row with its CREATE
@@ -935,7 +914,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         : undefined;
       const applied: { employeeId: string }[] = [];
       let skippedModelSwitch = 0;
-      let config: Omit<TenantConfig, "monthlyHoursHolidayDeduction">;
+      let config: Omit<TenantConfig, "monthlyHoursHolidayDeduction" | "storeHours">;
       try {
         config = await app.prisma.$transaction(
           async (tx) => {
@@ -983,20 +962,6 @@ export async function settingsRoutes(app: FastifyInstance) {
               };
             }
 
-            // Review WR-02: the tenant value BEFORE this write. The admin UI resends the full week on
-            // every save of its section (also when only shiftStoreHoursMode changed), so "the body
-            // carries storeHours" is not "storeHours changed" — mirroring on the former would
-            // overwrite a salon edited via PATCH /api/v1/salons/:id with the unchanged tenant value.
-            const previousTenantHours =
-              configData.storeHours === undefined
-                ? undefined
-                : (
-                    await tx.tenantConfig.findUnique({
-                      where: { tenantId },
-                      select: { storeHours: true },
-                    })
-                  )?.storeHours;
-
             const upserted = await tx.tenantConfig.upsert({
               where: { tenantId },
               update: configData,
@@ -1009,26 +974,6 @@ export async function settingsRoutes(app: FastifyInstance) {
                 where: { id: tenantId },
                 data: tenantUpdate,
               });
-            }
-
-            const hours = configData.storeHours;
-            if (hours !== undefined) {
-              const mirrored = await syncSoleActiveSalonOpeningHours(tx, tenantId, {
-                previousTenantHours,
-                openingHours: hours,
-              });
-              if (mirrored) {
-                await app.audit({
-                  userId: req.user.sub,
-                  action: "UPDATE",
-                  entity: "Salon",
-                  entityId: mirrored.updated.id,
-                  oldValue: mirrored.existing,
-                  newValue: mirrored.updated,
-                  request: { ip: req.ip, headers: req.headers as Record<string, string> },
-                  tx,
-                });
-              }
             }
 
             if (bulk && bulkEffectiveFrom) {

@@ -189,6 +189,11 @@ export default defineConfig({
       //   - the admin tab strip narrow-viewport gate (tenant fixture only, no seed, no date
       //     dependency)
       //
+      // Issue #563 added a seventh file:
+      //   - the tenant salon admin spec (salon list/detail, opening hours, switcher refresh, quota
+      //     hint, reduced admin/system, /shifts hint, 390/360 px; tenant fixture only, no seed, no
+      //     date dependency, one intercepted /me/context)
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -200,6 +205,7 @@ export default defineConfig({
         /month-bar-narrow-viewport\.spec\.ts/,
         /operator-console\.spec\.ts/,
         /admin-tabs-narrow-viewport\.spec\.ts/,
+        /admin-salons\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

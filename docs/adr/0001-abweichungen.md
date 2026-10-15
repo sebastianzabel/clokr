@@ -1101,7 +1101,57 @@ Nachtrag Phase 89 (13.10.2026): #89 liefert die Salonverwaltung des Betreibers, 
 `Salon.openingHours` bearbeitet; die Salonverwaltung im Mandanten gehört nicht dazu. Spiegel und
 `TenantConfig.storeHours` bleiben deshalb bis #563 (Unterbau-Semantikänderung, Entscheidung des Eigentümers
 vor `Ready`); die Verweise im Code zeigen seit Phase 89 auf #563. Der Hinweis bei genau einem aktiven Salon
-in der Betreiberoberfläche erklärt den Spiegel.
+in der Betreiberoberfläche erklärt den Spiegel. (Umgesetzt in Phase 563, siehe Nachtrag Phase 563 unter
+Eintrag L.)
+
+Nachtrag Phase 563 (15.10.2026): #563 liefert die Salonverwaltung für Mandanten-Admins und beendet die
+Doppelführung der Öffnungszeiten. Das ist eine Semantikänderung im Unterbau nach ADR 0002, Entscheidung 7
+(die Nutzung eines Unterbau-Felds entfällt): Die Owner-Entscheidung steht als Kommentar auf #563 vom
+15.10.2026, davor lief ein lesender Probelauf auf int und prod — je ein Mandant mit genau einem aktiven
+Salon, Zeiten identisch, nichts geht verloren.
+
+- **Was entfällt.** `TenantConfig.storeHours` wird weder gelesen noch geschrieben. `PUT /api/v1/settings/work`
+  entfernt den Schlüssel stillschweigend (200, nichts geschrieben; ein veralteter Web-Stand während eines
+  Rolling Deploys bricht die Einstellungsseite nicht), alle Antworten lassen ihn über
+  `RETIRED_TENANT_CONFIG_COLUMNS` weg (Muster #433). Der Spiegel `syncSoleActiveSalonOpeningHours()` samt
+  seiner `UPDATE Salon`-Zeile im Audit-Protokoll ist aus Route und Facade entfernt; die Pflege in
+  `admin/system` ist durch `/admin/salons` ersetzt.
+- **Was bleibt.** `shiftStoreHoursMode` (STRICT/DAY_ONLY/OFF) bleibt eine Mandanten-Regel in `admin/system`
+  (Mindest-Nutzlast `{ shiftStoreHoursMode }`); `DEFAULT_SALON_OPENING_HOURS` bleibt die Vorgabe für einen
+  neuen Salon; die Spalte selbst bleibt bis zum Folge-Release #638 bestehen, damit ein Image-Rollback
+  funktioniert (Muster #470). Es gibt keine Migration.
+- **Salonverwaltung im Mandanten.** `/admin/salons` (Liste, Detailseite je Salon, Anlegen unter
+  `/admin/salons/neu` mit ausdrücklich gewähltem Bundesland) benutzt die unveränderte Mandanten-API
+  `/api/v1/salons` und damit dieselbe Facade wie die Betreiberkonsole; Kontingent (#566),
+  `FEDERAL_STATE_IN_USE`, „nie löschen“ und der identische 404 sind unverändert. Sichtbar mit `salon:read`,
+  Änderungen nur mit `salon:manage` (das Web blendet aus, die API entscheidet). Nach jedem erfolgreichen
+  Anlegen, Bearbeiten, Deaktivieren und Aktivieren lädt die Seite den Salon-Kontext erzwungen neu
+  (`salonContext.load(…, { force: true })`). Der Ketten-Paket-Hinweis steht beim Anlegen als fünfte Stelle
+  des `ModuleHint`; beim Aktivieren zeigt die Seite den 409-Text des Servers, der das Ketten-Paket selbst
+  nennt.
+- **Neue additive Lesung.** `GET /api/v1/shifts/week` liefert zusätzlich `salonOpeningHours` — die
+  Öffnungszeiten genau der aktiven Salons in der Reichweite des Aufrufers (Reichweite wie die Schichten, die
+  der Aufruf liefert: ganzer Mandant oder Salon-Reichweite; eine reine Personen-Reichweite ohne Salon erhält
+  eine leere Liste und sieht keine geschlossenen Tage). Das ist eine Erweiterung (kein bestehender Leser
+  muss sich ändern). Die Schichtplanung zeigt geschlossene Tage je Salon über `closedDaysFor()`: für den
+  einen erreichbaren oder den gewählten Salon; bei mehreren Salons und „Alle Salons“ erscheint ein Hinweis,
+  nie ein gemischter Wert. Die Prüfung beim Schreiben einer Schicht (`assertWithinStoreHours`) ist
+  unverändert.
+- **Wächter.** `store-hours-readers.test.ts` läuft über `apps/api/src`, `packages/db/src` und
+  `apps/web/src` und erlaubt genau eine Stelle: den Eintrag in `RETIRED_TENANT_CONFIG_COLUMNS`. Die
+  eingefrorene Paritätstabelle in `shift-store-hours-salon.test.ts` (D-16) bleibt unverändert; nur ihre
+  Vorbedingung schreibt die Wochenzeiten jetzt über `PATCH /api/v1/salons/:id` statt über
+  `PUT storeHours`, weil der Pfad des Spiegels nicht mehr existiert.
+- **Betreiberkonsole.** Der Hinweis bei genau einem aktiven Salon (er erklärte den Spiegel) und die Zuführung
+  `activeSalonCount` an `SalonDialog` entfallen samt Tests.
+- **Neutralitätsmatrix.** Sechs Zellen `GET /api/v1/shifts/week | none` (ADMIN, MANAGER, APIKEY_ADMIN,
+  APIKEY_PLAIN, FALLBACK_ADMIN, FALLBACK_MANAGER) enthalten jetzt zusätzlich die IDs der eigenen Salons des
+  Mandanten (46 → 48 IDs); Status, Route und Guard sind unverändert. Eingetragen über das
+  Nachtrags-Register `matrix-amendments.json` (Issue 563), `matrix.json` ist unberührt.
+  `sec-13-shifts-week-role-gate.test.ts` führt `salonOpeningHours` jetzt im Schlüsselsatz der Antwort.
+
+**Auswirkung auf die Kontexte:** Schichtplanung — die Wochenansicht liest die Öffnungszeiten des Salons
+statt des Mandanten-Feldes. Zeiterfassung, Abwesenheiten, Arbeitszeitkonto, Kompositionsschicht — keine.
 
 **Mandantengrenze:** kein Datenbank-Trigger (eine Instanz pro Kunde, #226); die Anwendung prüft über
 `findSalon()` mandantengebunden, fremde und nicht existierende Salon-IDs werden byte-gleich mit 404
@@ -3816,7 +3866,8 @@ operatorId, tenantId }`. `GET /api/v1/audit-logs` (Liste und Einzelabruf) liest 
 - **Datenminimierung im Mandanten-Protokoll (Verifikation Phase 89).** Die Zeile im `AuditLog` des Mandanten trägt weder IP-Adresse noch User-Agent des Betreibers (Art. 5 Abs. 1 lit. c DSGVO). Der Mandant erfährt, dass der Betreiber etwas geändert hat und was. Die Anfrage-Metadaten stehen nur in der eigenen `OperatorAuditLog`-Zeile, beide Datensätze verbindet die `operatorId`. Belegt durch `operator-salons-89.test.ts`.
 - **Spiegel und Öffnungszeiten (Nachtrag zu Eintrag L).** Der Betreiber bearbeitet seit Phase 89
   `Salon.openingHours`; der Hinweis bei genau einem aktiven Salon erklärt den Spiegel. Eine Oberfläche für
-  die Salonverwaltung im Mandanten und der Wegfall des Spiegels gehören zu #563.
+  die Salonverwaltung im Mandanten und der Wegfall des Spiegels gehören zu #563 (umgesetzt in Phase 563,
+  siehe Nachtrag Phase 563 unter Eintrag L).
 
 #### Auswirkung auf die Kontexte
 
@@ -3836,7 +3887,8 @@ operatorId, tenantId }`. `GET /api/v1/audit-logs` (Liste und Einzelabruf) liest 
   beendet es sofort (Nachtrag #557).
 - **Offene Folgearbeiten:** #567 (Klassifizierung von `SLUG_TAKEN`/`EMAIL_TAKEN`, wenn Prisma kein
   `meta.target` liefert), #570 (`.card-animate` hält eine Transformation, die feststehende Dialoge in der
-  Karte einfängt), #563 (Salonverwaltung im Mandanten, Wegfall von `storeHours`), #566 (Pakete je Mandant).
+  Karte einfängt), #563 (Salonverwaltung im Mandanten, Wegfall von `storeHours`; umgesetzt in Phase 563, siehe Nachtrag Phase 563
+  unter Eintrag L), #566 (Pakete je Mandant).
 
 #### Nachweis
 
@@ -4235,6 +4287,8 @@ Es gibt keinen Lizenzschlüssel und keine Abrechnung; der Betreiber setzt die Pa
 - **Kein Salon-Hinweis im Mandanten bis #563.** Es gibt keine Salonverwaltung für Mandanten-Admins; eine
   Ablehnung beim Anlegen oder Aktivieren erreicht den Mandanten nur über die API-Antwort. Der Hinweis wird mit
   #563 ergänzt (anzeigen mit `packagesForDisplay` / `moduleBooked`; der Server antwortet weiter mit 409).
+  (Umgesetzt in Phase 563, siehe Nachtrag Phase 563 unter Eintrag L: der Hinweis steht beim Anlegen; beim
+  Aktivieren zeigt die Seite den 409-Text des Servers.)
 - **Großzügige Zuteilung ist gewollt.** Die Bestandsschutz-Migration rechnet weiche Löschungen und Widerrufe mit;
   die Zuteilung ist ein Ausgangspunkt für den Betreiber, keine Rechnungsgrundlage.
 - **Der Wächter sieht nur die benannten Verzeichnisse.** Greift eine Datei des gesetzlichen Kerns über einen Helfer
@@ -4247,7 +4301,7 @@ Es gibt keinen Lizenzschlüssel und keine Abrechnung; der Betreiber setzt die Pa
 
 - **#624** — Erweiterte Rollen an das Ketten-Paket binden (nur Neuanlage, nie Auflösung; D-07).
 - **#563** — Salonverwaltung für Mandanten-Admins; bekommt den Ketten-Paket-Hinweis am Anlegen/Aktivieren
-  (Kommentar am Issue).
+  (Kommentar am Issue). (Umgesetzt in Phase 563, siehe Nachtrag Phase 563 unter Eintrag L.)
 
 ### Nachweis
 

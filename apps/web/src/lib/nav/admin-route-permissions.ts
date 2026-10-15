@@ -71,6 +71,8 @@ export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
     [Z("employee:read"), Z("availability:read")],
     [Z("employee:read"), Z("availability:update")],
   ),
+  // GET /salons (writes: salon:manage, decided by the API, hidden via salonAdminRights)
+  navRoute("/admin/salons", "PLANUNG", "Salons", "store", [Z("salon:read")]),
   // GET /overtime/close-month/status
   navRoute("/admin/month-close", "COMPLIANCE", "Monatsabschluss", "lock", [Z("month-close:read")]),
   // GET /audit-logs

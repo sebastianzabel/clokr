@@ -3,8 +3,8 @@
 // The dialog takes the API call as `onSubmit`, so it is driven without the operator client. Pinned
 // here: nothing preselected for the Bundesland on create, the hours prefilled and always sent, a
 // save that stays disabled until the form is valid (and, on edit, differs), the exact bodies
-// (`{ name }`, `{ coupling: null }`), the single-salon hint, and every refusal attached to its
-// field by CODE with the dialog still open.
+// (`{ name }`, `{ coupling: null }`), the absence of any tenant-settings hint (Issue #563), and
+// every refusal attached to its field by CODE with the dialog still open.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent } from "@testing-library/svelte";
 import { tick } from "svelte";
@@ -71,7 +71,6 @@ interface MountOptions {
   mode?: "create" | "edit";
   salon?: OperatorSalon | null;
   defaultSalon?: OperatorSalon | null;
-  activeSalonCount?: number;
   onSubmit?: ReturnType<typeof vi.fn>;
 }
 
@@ -84,7 +83,6 @@ function mount(options: MountOptions = {}) {
       mode: options.mode ?? "create",
       salon: options.salon ?? null,
       defaultSalon: options.defaultSalon ?? null,
-      activeSalonCount: options.activeSalonCount ?? 2,
       onSubmit,
     },
     "nacht",
@@ -199,17 +197,16 @@ describe("SalonDialog - create", () => {
     );
   });
 
-  it("shows the single-salon hint only for exactly one active salon", () => {
-    mount({ activeSalonCount: 1 });
-    expect(el("op-salon-single-salon-hint")).toHaveTextContent(
-      "Bei nur einem aktiven Salon überschreibt eine Änderung der Öffnungszeiten in den Mandanten-Einstellungen diesen Wert.",
-    );
-    document.body.innerHTML = "";
-    mount({ activeSalonCount: 2 });
+  it("the dialog never claims that tenant settings overwrite the salon's hours (Issue #563)", () => {
+    // The tenant-settings mirror is retired; with exactly one active salon the dialog
+    // used to promise it. Assert the absence in both modes.
+    mount({ mode: "create", defaultSalon: salon() });
     expect(byId("op-salon-single-salon-hint")).toBeNull();
+    expect(document.body.textContent).not.toContain("Mandanten-Einstellungen");
     document.body.innerHTML = "";
-    mount({ activeSalonCount: 0 });
+    mount({ mode: "edit", salon: salon() });
     expect(byId("op-salon-single-salon-hint")).toBeNull();
+    expect(document.body.textContent).not.toContain("Mandanten-Einstellungen");
   });
 
   it("shows the pending label and disables the buttons while the call runs", async () => {

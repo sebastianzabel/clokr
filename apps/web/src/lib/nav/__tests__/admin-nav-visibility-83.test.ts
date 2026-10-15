@@ -65,6 +65,27 @@ describe("admin navigation (Issue #83)", () => {
     );
   });
 
+  it("PLANUNG is one group of three, Salons directly after Verfügbarkeit (Issue #563)", () => {
+    const planung = ADMIN_NAV_GROUPS.filter((g) => g.label === "PLANUNG");
+    expect(planung).toHaveLength(1);
+    expect(planung[0].items.map((i) => i.label)).toEqual([
+      "Schichtplan",
+      "Verfügbarkeit",
+      "Salons",
+    ]);
+    expect(planung[0].items[2].href).toBe("/admin/salons");
+  });
+
+  it("the nav label equals the salons list page's title character for character (Issue #563)", () => {
+    const label = ADMIN_NAV_GROUPS.flatMap((g) => g.items).find(
+      (i) => i.href === "/admin/salons",
+    )?.label;
+    expect(label).toBe("Salons");
+    const page = read("routes/(app)/admin/salons/+page.svelte");
+    expect(page).toContain(`title="${label}"`);
+    expect(read("routes/(app)/+layout.svelte")).toContain(`"/admin/salons": "${label}"`);
+  });
+
   it("filters per item, drops empty groups and the availability item when the feature is off", () => {
     expect(visibleAdminNavGroups({ permissions: p.HR }, on).map((g) => g.label)).toEqual([
       "PERSONAL",
