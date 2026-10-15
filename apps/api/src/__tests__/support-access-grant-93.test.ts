@@ -145,11 +145,13 @@ describe("POST /operator/tenants/:id/support-access", () => {
 
     const operatorRows = await app.prisma.operatorAuditLog.findMany({
       where: { action: "SUPPORT_ACCESS_STARTED", entityId: row.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(operatorRows).toHaveLength(1);
     expect(operatorRows[0].ipAddress).toBeTruthy();
     const tenantRows = await app.prisma.auditLog.findMany({
       where: { action: "SUPPORT_ACCESS_STARTED", entityId: row.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(tenantRows).toHaveLength(1);
     expect(tenantRows[0].ipAddress).toBeNull();
@@ -210,6 +212,7 @@ describe("GET /operator/tenants/:id/support/employees", () => {
     const operatorBefore = (await readRows(operator.id, tenant.id)).length;
     const tenantBefore = await app.prisma.auditLog.count({
       where: { action: "SUPPORT_DATA_READ", entityId: accessId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
 
     const res = await readEmployees(tenant.id, operator.token);
@@ -243,6 +246,7 @@ describe("GET /operator/tenants/:id/support/employees", () => {
 
     const tenantRows = await app.prisma.auditLog.findMany({
       where: { action: "SUPPORT_DATA_READ", entityId: accessId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(tenantRows).toHaveLength(tenantBefore + 1);
     expect(tenantRows[0].ipAddress).toBeNull();
@@ -871,12 +875,14 @@ describe("POST /operator/tenants/:id/support-access/:accessId/end", () => {
 
     const operatorRows = await app.prisma.operatorAuditLog.findMany({
       where: { action: "SUPPORT_ACCESS_ENDED", entityId: accessId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(operatorRows).toHaveLength(1);
     expect(operatorRows[0].ipAddress).toBeTruthy();
     expect(operatorRows[0].newValue).toMatchObject({ endedBy: "OPERATOR" });
     const tenantRows = await app.prisma.auditLog.findMany({
       where: { action: "SUPPORT_ACCESS_ENDED", entityId: accessId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(tenantRows).toHaveLength(1);
     expect(tenantRows[0].ipAddress).toBeNull();
@@ -894,6 +900,7 @@ describe("POST /operator/tenants/:id/support-access/:accessId/end", () => {
     expect(
       await app.prisma.operatorAuditLog.count({
         where: { action: "SUPPORT_ACCESS_ENDED", entityId: accessId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       }),
     ).toBe(1);
   });

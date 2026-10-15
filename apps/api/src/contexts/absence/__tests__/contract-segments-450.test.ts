@@ -228,6 +228,7 @@ describe("ensureRegularVacationEntitlement create path (Issue #450, D-09)", () =
 
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "LeaveEntitlement", entityId: result.entitlement.id, action: "CREATE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits).toHaveLength(1);
     expect((audits[0].newValue as { totalDays: number }).totalDays).toBe(24);

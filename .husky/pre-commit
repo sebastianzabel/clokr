@@ -42,4 +42,9 @@ pnpm --filter @clokr/api run lint:t100-09-routes --check || exit 1
 # 0.94s, this plan's own measurement).
 pnpm --filter @clokr/api run lint:role-checks || exit 1
 
+# One-shot lint:unordered-test-reads (Issue #561). Full-repo, not staged-only — a new test file
+# anywhere under apps/api/src can reintroduce an unordered auditLog/notification findFirst, and the
+# walked set must be the whole tree. About 1s.
+pnpm --filter @clokr/api run lint:unordered-test-reads || exit 1
+
 pnpm exec lint-staged

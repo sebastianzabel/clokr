@@ -153,6 +153,7 @@ describe("createSupportAccess", () => {
 
     const tenantRows = await app.prisma.auditLog.findMany({
       where: { action: "SUPPORT_ACCESS_STARTED", entity: "SupportAccess", entityId: result.row.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(tenantRows).toHaveLength(1);
     expect(tenantRows[0].ipAddress).toBeNull();
@@ -550,6 +551,7 @@ describe("writeSupportReadAudit and recordSupportAccessRefused", () => {
 
     const tenantRows = await app.prisma.auditLog.findMany({
       where: { action: "SUPPORT_DATA_READ", entity: "SupportAccess", entityId: grant.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(tenantRows).toHaveLength(1);
     expect(tenantRows[0].ipAddress).toBeNull();

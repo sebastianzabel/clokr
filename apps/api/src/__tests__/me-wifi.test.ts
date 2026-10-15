@@ -1,6 +1,12 @@
 import { randomBytes, createHash } from "crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("Employee self-service WiFi API", () => {
@@ -246,7 +252,7 @@ describe("Employee self-service WiFi API", () => {
       expect(res.statusCode).toBe(201);
       const body = JSON.parse(res.body);
 
-      const log = await app.prisma.auditLog.findFirst({
+      const log = await soleAuditRowOrNull(app.prisma, {
         where: {
           entity: "PresenceDevice",
           action: "CREATE",
@@ -383,7 +389,7 @@ describe("Employee self-service WiFi API", () => {
         headers: { authorization: `Bearer ${data.empToken}` },
       });
 
-      const log = await app.prisma.auditLog.findFirst({
+      const log = await soleAuditRowOrNull(app.prisma, {
         where: {
           entity: "PresenceDevice",
           action: "DELETE",

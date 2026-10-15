@@ -535,6 +535,7 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
 
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "LeaveEntitlement", entityId: result.entitlement.id, action: "CREATE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
       expect(audits[0]!.userId).toBeNull();
@@ -564,6 +565,7 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
 
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "LeaveEntitlement", entityId: placeholder.id, action: "UPDATE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
       const oldValue = audits[0]!.oldValue as { totalDays: number };
@@ -640,6 +642,7 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
 
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "LeaveEntitlement", entityId: result.entitlement.id, action: "CREATE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
       const newValue = audits[0]!.newValue as { totalDays: number; isAutoCalculated: boolean };
@@ -682,6 +685,7 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
 
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "LeaveEntitlement", entityId: result.entitlement.id, action: "CREATE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
     });

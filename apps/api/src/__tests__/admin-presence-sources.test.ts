@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRowOrNull } from "./setup";
 import type { FastifyInstance } from "fastify";
 
 const BASE = "/api/v1/admin/presence-sources";
@@ -137,7 +137,7 @@ describe("admin-presence-sources", () => {
     expect(body.name).toBe("Updated Name");
 
     // Verify audit log
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "PresenceSource", entityId: id, action: "UPDATE" },
     });
     expect(audit).not.toBeNull();
@@ -213,7 +213,7 @@ describe("admin-presence-sources", () => {
     expect(body.success).toBe(true);
 
     // Verify audit log
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "PresenceSource", entityId: id, action: "DELETE" },
     });
     expect(audit).not.toBeNull();
@@ -344,7 +344,7 @@ describe("admin-presence-sources", () => {
     });
     expect(device).not.toBeNull();
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "PresenceDevice", entityId: device!.id, action: "ASSIGN_DEVICE" },
     });
     expect(audit).not.toBeNull();
@@ -407,7 +407,7 @@ describe("admin-presence-sources", () => {
     expect(createRes.statusCode).toBe(201);
     const { id } = JSON.parse(createRes.body);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "PresenceSource", entityId: id, action: "CREATE" },
     });
     expect(audit).not.toBeNull();

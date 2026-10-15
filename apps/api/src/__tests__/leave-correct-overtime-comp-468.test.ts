@@ -18,6 +18,7 @@ import {
   seedTestData,
   cleanupTestData,
   seedEntitlementYears,
+  soleAuditRowOrNull,
 } from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import type { FastifyInstance } from "fastify";
@@ -112,9 +113,8 @@ describe("Leave correction — Überstundenausgleich reverses the stored value (
   }
 
   async function lastCorrectedAudit(leaveRequestId: string) {
-    return app.prisma.auditLog.findFirst({
+    return soleAuditRowOrNull(app.prisma, {
       where: { action: "LEAVE_CORRECTED", entity: "LeaveRequest", entityId: leaveRequestId },
-      orderBy: { createdAt: "desc" },
     });
   }
 

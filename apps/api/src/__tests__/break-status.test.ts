@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+  soleNotificationOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 // Phase 91 (BREAK-03/BREAK-04): PATCH /:id/break-status confirm/waive transitions.
@@ -85,7 +92,7 @@ describe("PATCH /:id/break-status", () => {
     const body = JSON.parse(res.body);
     expect(body.entry.breakStatus).toBe("CONFIRMED");
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "BREAK_CONFIRMED", entityId: entry.id },
     });
     expect(audit).not.toBeNull();
@@ -117,7 +124,7 @@ describe("PATCH /:id/break-status", () => {
     const remainingBreaks = await app.prisma.break.count({ where: { timeEntryId: entry.id } });
     expect(remainingBreaks).toBe(0);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "BREAK_WAIVED", entityId: entry.id },
     });
     expect(audit).not.toBeNull();
@@ -137,7 +144,7 @@ describe("PATCH /:id/break-status", () => {
     expect(capturedBreaks?.[0]).toHaveProperty("endTime");
 
     // data.adminUser is ADMIN role in the same tenant -> manager-alert recipient
-    const notification = await app.prisma.notification.findFirst({
+    const notification = await soleNotificationOrNull(app.prisma, {
       where: { type: "BREAK_COMPLIANCE_ALERT", userId: data.adminUser.id },
     });
     expect(notification).not.toBeNull();
@@ -235,7 +242,7 @@ describe("PATCH /:id/break-status", () => {
     });
     expect(res.statusCode).toBe(200);
 
-    const selfNotification = await app.prisma.notification.findFirst({
+    const selfNotification = await soleNotificationOrNull(app.prisma, {
       where: { type: "BREAK_COMPLIANCE_ALERT", userId: data.adminUser.id, relatedId: entry.id },
     });
     expect(selfNotification).toBeNull();
@@ -288,7 +295,7 @@ describe("PATCH /:id/break-status", () => {
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body).error).toBe("Eintrag nicht gefunden");
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: entry.id },
     });
     expect(audit).not.toBeNull();
@@ -454,7 +461,7 @@ describe("PATCH /:id/break-status", () => {
     const preSeededAlertAfter = await app.prisma.notification.findUnique({
       where: { id: preSeededAlert.id },
     });
-    const freshAlert = await app.prisma.notification.findFirst({
+    const freshAlert = await soleNotificationOrNull(app.prisma, {
       where: {
         type: "BREAK_COMPLIANCE_ALERT",
         relatedId: entry.id,

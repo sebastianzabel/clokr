@@ -22,6 +22,7 @@ import {
   seedTestData,
   cleanupTestData,
   seedEntitlementYears,
+  soleAuditRowOrNull,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -332,7 +333,7 @@ describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
   });
 
   it("R3 audit wording: the SECTION9_CREDIT_CONFIRMED audit row states the required text", async () => {
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "SECTION9_CREDIT_CONFIRMED",
         entity: "Section9Credit",
@@ -381,7 +382,7 @@ describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
     expect(credit.creditedDays).toBeNull();
     expect(credit.status).toBe("AU_PENDING");
 
-    const confirmedAudit = await app.prisma.auditLog.findFirst({
+    const confirmedAudit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "SECTION9_CREDIT_CONFIRMED",
         entity: "Section9Credit",

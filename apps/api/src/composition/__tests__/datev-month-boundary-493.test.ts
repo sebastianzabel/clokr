@@ -54,6 +54,22 @@ describe("Issue #493 — DATEV month boundaries", () => {
   let X1 = { id: "", number: "" };
   let X2 = { id: "", number: "" };
 
+  /**
+   * Runs one export call and returns the EXPORT audit row it wrote. The admin exports many times
+   * in this file, so the call must add exactly one row to the admin's EXPORT rows (#561).
+   */
+  async function exportRowWrittenBy(call: () => Promise<unknown>) {
+    const where = { action: "EXPORT", entity: "Report", userId: d.adminUser.id };
+    const before = await app.prisma.auditLog.count({ where });
+    await call();
+    const rows = await app.prisma.auditLog.findMany({
+      where,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    expect(rows).toHaveLength(before + 1);
+    return rows[rows.length - 1]!;
+  }
+
   async function createEmp(
     label: string,
     opts: { hireDate?: Date; exitDate?: Date; fixed?: boolean } = {},
@@ -255,12 +271,7 @@ describe("Issue #493 — DATEV month boundaries", () => {
     });
 
     it("the DATEV_EMPLOYEE EXPORT audit row of the October call keeps its shape", async () => {
-      await employeeRows(U.id, 2026, 10);
-      const entry = await app.prisma.auditLog.findFirst({
-        where: { action: "EXPORT", entity: "Report", userId: d.adminUser.id },
-        orderBy: { createdAt: "desc" },
-      });
-      expect(entry).not.toBeNull();
+      const entry = await exportRowWrittenBy(() => employeeRows(U.id, 2026, 10));
       expect(entry!.newValue).toEqual({
         type: "DATEV_EMPLOYEE",
         year: "2026",
@@ -279,12 +290,7 @@ describe("Issue #493 — DATEV month boundaries", () => {
     });
 
     it("the EXPORT audit row of the October call keeps its counts", async () => {
-      await companyRows(2026, 10);
-      const entry = await app.prisma.auditLog.findFirst({
-        where: { action: "EXPORT", entity: "Report", userId: d.adminUser.id },
-        orderBy: { createdAt: "desc" },
-      });
-      expect(entry).not.toBeNull();
+      const entry = await exportRowWrittenBy(() => companyRows(2026, 10));
       expect(entry!.newValue).toEqual({
         type: "DATEV",
         year: "2026",

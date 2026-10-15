@@ -6,7 +6,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  soleAuditRowOrNull,
+} from "./setup";
 import { addDaysStr, mondayOfWeekStr } from "./test-dates";
 
 describe("CSV import salon column + GET salonId (Phase 68b, issue #68, D-11/D-13/D-14)", () => {
@@ -118,9 +124,8 @@ describe("CSV import salon column + GET salonId (Phase 68b, issue #68, D-11/D-13
     });
     expect(entry?.salonId).toBe(salonC.id);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "TimeEntry", entityId: entry!.id, action: "CREATE" },
-      orderBy: { createdAt: "desc" },
     });
     expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(salonC.id);
   });

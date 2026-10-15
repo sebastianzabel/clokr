@@ -6,7 +6,13 @@
  * (totalDays 30) and a 2027 row (totalDays 30, carriedOverDays 3).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import { recalculateCarryOver } from "../contexts/absence/leave-days";
 import type { FastifyInstance } from "fastify";
 
@@ -176,9 +182,8 @@ describe("Issue #445 finding 5 — protected carry-over deadline with a document
 
     // case 10: the UPDATE audit of this successful PUT carries both fields. Checked BEFORE the
     // recompute below, which would itself write a later UPDATE audit (carriedOverDays only).
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "UPDATE", entity: "LeaveEntitlement", entityId: afterPut!.id },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit, "an UPDATE audit row must exist").toBeDefined();
     expect((audit!.newValue as Record<string, unknown>).carryOverReason).toBe("OTHER");
@@ -239,9 +244,8 @@ describe("Issue #445 finding 5 — protected carry-over deadline with a document
     const afterPut = await get2027(employeeId);
     expect(afterPut!.carryOverReason).toBeNull();
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "UPDATE", entity: "LeaveEntitlement", entityId: entitlementId },
-      orderBy: { createdAt: "desc" },
     });
     expect((audit!.oldValue as Record<string, unknown>).carryOverReason).toBe("MATERNITY");
     expect((audit!.newValue as Record<string, unknown>).carryOverReason).toBeNull();

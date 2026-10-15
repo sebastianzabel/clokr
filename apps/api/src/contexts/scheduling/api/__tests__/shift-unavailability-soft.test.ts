@@ -4,6 +4,7 @@ import {
   closeTestApp,
   seedTestData,
   cleanupTestData,
+  soleAuditRowOrNull,
 } from "../../../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
 import { dowOf, futureDateStr, nextWeekdayStr, todayStr } from "../../../../__tests__/test-dates";
@@ -132,7 +133,7 @@ describe("Shift Unavailability Soft-Enforcement (Phase 47.3-03)", () => {
     const shift = JSON.parse(res.body);
     expect(shift.id).toBeDefined();
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         entity: "Shift",
         entityId: shift.id,
@@ -179,7 +180,7 @@ describe("Shift Unavailability Soft-Enforcement (Phase 47.3-03)", () => {
     expect(shift.id).toBeDefined();
 
     // No SHIFT_FORCED_OVER_UNAVAILABILITY audit fired (force was not needed).
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         entity: "Shift",
         entityId: shift.id,

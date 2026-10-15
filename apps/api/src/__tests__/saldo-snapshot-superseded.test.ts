@@ -193,6 +193,7 @@ describe("cleanupTzDuplicateSnapshots — Phase 76.25 bridge hardening", () => {
     // AuditLog written for the auto-close row, NOT the bridge.
     const auditLogs = await app.prisma.auditLog.findMany({
       where: { entity: "SaldoSnapshot", userId: actorUserId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditLogs.length).toBe(1);
     expect(auditLogs[0].entityId).toBe(autoClose.id);
@@ -513,6 +514,7 @@ describe("cleanupTzDuplicateSnapshots — Phase 76.6", () => {
 
     const auditLogs = await app.prisma.auditLog.findMany({
       where: { entity: "SaldoSnapshot", entityId: duplicate.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditLogs.length).toBe(1);
     expect(auditLogs[0].action).toBe("UPDATE");

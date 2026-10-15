@@ -433,6 +433,7 @@ describe("GET …/support/employees/:employeeId/month", () => {
     const operator = await grantedPrincipal(fx.tenant.id);
     const tenantBefore = await app.prisma.auditLog.count({
       where: { action: "SUPPORT_DATA_READ", entityId: operator.accessId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect((await get(monthUrl(fx.tenant.id, fx.employee.id), operator.token)).statusCode).toBe(
       200,
@@ -449,6 +450,7 @@ describe("GET …/support/employees/:employeeId/month", () => {
     expect(afterOne[0].ipAddress).toBeTruthy();
     const tenantRows = await app.prisma.auditLog.findMany({
       where: { action: "SUPPORT_DATA_READ", entityId: operator.accessId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(tenantRows).toHaveLength(tenantBefore + 1);
     expect(tenantRows[0].ipAddress).toBeNull();
@@ -466,6 +468,7 @@ describe("GET …/support/employees/:employeeId/month", () => {
     expect(
       await app.prisma.auditLog.count({
         where: { action: "SUPPORT_DATA_READ", entityId: operator.accessId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       }),
     ).toBe(tenantBefore + 2);
   });
@@ -658,6 +661,7 @@ describe("GET …/support/employees/:employeeId/contracts", () => {
     expect(
       await app.prisma.auditLog.count({
         where: { action: "SUPPORT_DATA_READ", entityId: operator.accessId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       }),
     ).toBe(1);
   });
@@ -1029,6 +1033,7 @@ describe("GET …/support/audit-log", () => {
     expect(
       await app.prisma.auditLog.count({
         where: { action: "SUPPORT_DATA_READ", entityId: operator.accessId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       }),
     ).toBe(1);
   });

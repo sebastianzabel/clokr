@@ -813,3 +813,135 @@ export async function seedSupportAccess(
     },
   });
 }
+
+// ── Ordered audit reads (Issue #561, flake class of #555) ────────────────────────────────────────
+
+export type AuditRow = Awaited<
+  ReturnType<FastifyInstance["prisma"]["auditLog"]["findMany"]>
+>[number];
+
+/**
+ * Every audit row of an entity (optionally one action), in creation order — `createdAt`, then `id`
+ * as the tie-break for rows written in the same millisecond. One action can write several audit
+ * rows (an approval heals `totalDays` AND recomputes `carriedOverDays`), so a test never picks
+ * "the" row with an unordered `findFirst`: it reads all of them here and selects by what it means.
+ * `lint:unordered-test-reads` fails on the unordered shape.
+ */
+export async function auditRowsFor(
+  app: FastifyInstance,
+  entity: string,
+  entityId: string,
+  action?: string,
+): Promise<AuditRow[]> {
+  return app.prisma.auditLog.findMany({
+    where: { entity, entityId, ...(action === undefined ? {} : { action }) },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+}
+
+const ORDERED = [{ createdAt: "asc" as const }, { id: "asc" as const }];
+
+function describeRows(rows: { id: string; createdAt: Date; action?: string }[]): string {
+  return rows
+    .map((r) => `${r.id}${r.action ? ` ${r.action}` : ""} @ ${r.createdAt.toISOString()}`)
+    .join("; ");
+}
+
+/**
+ * The ONE audit row matching `args.where`, or `null` when none matches. Throws, listing the matched
+ * rows, when several match — a later second write of the same action must fail the test instead of
+ * being silently ignored (Issue #561, #555). Narrow the `where` when the test means one specific
+ * row, or read all rows with `auditRowsFor()` and assert on every one.
+ */
+export async function soleAuditRowOrNull<T extends Prisma.AuditLogFindManyArgs>(
+  db: { auditLog: FastifyInstance["prisma"]["auditLog"] },
+  args: T,
+): Promise<Prisma.AuditLogGetPayload<T> | null> {
+  const rows = (await db.auditLog.findMany({
+    ...args,
+    orderBy: ORDERED,
+  })) as unknown as (Prisma.AuditLogGetPayload<T> & {
+    id: string;
+    createdAt: Date;
+    action?: string;
+  })[];
+  if (rows.length > 1) {
+    throw new Error(
+      `expected at most one audit row for ${JSON.stringify(args.where)}, matched ${rows.length}: ${describeRows(rows)}`,
+    );
+  }
+  return rows[0] ?? null;
+}
+
+/** Like {@link soleAuditRowOrNull}, but throws when no row matches. */
+export async function soleAuditRow<T extends Prisma.AuditLogFindManyArgs>(
+  db: { auditLog: FastifyInstance["prisma"]["auditLog"] },
+  args: T,
+): Promise<Prisma.AuditLogGetPayload<T>> {
+  const row = await soleAuditRowOrNull(db, args);
+  if (row === null) {
+    throw new Error(`expected exactly one audit row for ${JSON.stringify(args.where)}, matched 0`);
+  }
+  return row;
+}
+
+/** The ONE notification matching `args.where`, or `null`; throws when several match. */
+export async function soleNotificationOrNull<T extends Prisma.NotificationFindManyArgs>(
+  db: { notification: FastifyInstance["prisma"]["notification"] },
+  args: T,
+): Promise<Prisma.NotificationGetPayload<T> | null> {
+  const rows = (await db.notification.findMany({
+    ...args,
+    orderBy: ORDERED,
+  })) as unknown as (Prisma.NotificationGetPayload<T> & {
+    id: string;
+    createdAt: Date;
+  })[];
+  if (rows.length > 1) {
+    throw new Error(
+      `expected at most one notification for ${JSON.stringify(args.where)}, matched ${rows.length}: ${describeRows(rows)}`,
+    );
+  }
+  return rows[0] ?? null;
+}
+
+/** Like {@link soleNotificationOrNull}, but throws when no notification matches. */
+export async function soleNotification<T extends Prisma.NotificationFindManyArgs>(
+  db: { notification: FastifyInstance["prisma"]["notification"] },
+  args: T,
+): Promise<Prisma.NotificationGetPayload<T>> {
+  const row = await soleNotificationOrNull(db, args);
+  if (row === null) {
+    throw new Error(
+      `expected exactly one notification for ${JSON.stringify(args.where)}, matched 0`,
+    );
+  }
+  return row;
+}
+
+/** The rows whose `newValue` carries `field` — exactly the audits that changed that column. */
+export function auditRowsChangingField(rows: AuditRow[], field: string): AuditRow[] {
+  return rows.filter(
+    (r) => typeof r.newValue === "object" && r.newValue !== null && field in r.newValue,
+  );
+}
+
+/**
+ * The ONE audit row that changed `field`. Throws (instead of picking one) when zero or several rows
+ * carry it, so an accidental double write surfaces as a red test, never as a coin flip.
+ */
+export async function auditRowChangingField(
+  app: FastifyInstance,
+  entity: string,
+  entityId: string,
+  action: string,
+  field: string,
+): Promise<AuditRow> {
+  const rows = auditRowsChangingField(await auditRowsFor(app, entity, entityId, action), field);
+  if (rows.length !== 1) {
+    throw new Error(
+      `expected exactly one ${entity} ${action} audit row changing "${field}" for ${entityId}, found ${rows.length}`,
+    );
+  }
+  return rows[0]!;
+}

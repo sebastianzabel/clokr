@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { createHash, randomBytes } from "crypto";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "../../../__tests__/setup";
 import { todayInTz } from "../../../contexts/working-time-account/timezone";
 
 // seedTestData provisions the tenant with TenantConfig.timezone = "Europe/Berlin" (setup.ts:249).
@@ -143,6 +149,7 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
     // Filter by entityId — shared test DB may contain stale CLOCK_IN audits from other suites.
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "TimeEntry", entityId: entries[0].id, action: "CLOCK_IN" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits).toHaveLength(1);
     // Sub-req A — closes FK violation #215: no User FK reference when actor is a Terminal.
@@ -176,6 +183,7 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
 
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "TimeEntry", entityId: entries[0].id, action: "CLOCK_IN" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits).toHaveLength(1);
     // The clk_-path produces userId = null AND actor = API_KEY (since sub starts with 'apikey:').
@@ -205,6 +213,7 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
 
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "TimeEntry", entityId: entries[0].id, action: "CLOCK_IN" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits).toHaveLength(1);
     // JWT-path: userId is set (NOT null), and the actor is NOT embedded in newValue (USER type
@@ -245,7 +254,7 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
 
     expect(res.statusCode).toBe(200);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "TimeEntry", entityId: openEntry.id, action: "CLOCK_OUT" },
     });
     expect(audit).not.toBeNull();
@@ -281,7 +290,7 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
 
     expect(res.statusCode).toBe(200);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "TimeEntry", entityId: openEntry.id, action: "CLOCK_OUT" },
     });
     expect(audit).not.toBeNull();

@@ -202,6 +202,7 @@ describe("deactivation core and the login refusal (tracer)", () => {
   it("a refused login is traceable in the tenant AuditLog as LOGIN_REFUSED", async () => {
     const rows = await app.prisma.auditLog.findMany({
       where: { action: "LOGIN_REFUSED", userId: data.adminUser.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0].entity).toBe("User");

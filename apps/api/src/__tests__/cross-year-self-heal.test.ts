@@ -5,7 +5,13 @@
  * own fresh employee (hire 2024-01-01, FIXED Mo-Fr unless stated, initials-only).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("Issue #445 finding 2 — per-year self-heal and cancellation (D-10/D-11)", () => {
@@ -271,9 +277,8 @@ describe("Issue #445 finding 2 — per-year self-heal and cancellation (D-10/D-1
     );
     expect(Number(row?.usedDays)).toBe(5);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "LeaveEntitlement", entityId: ent2026.id, action: "UPDATE" },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
     expect(audit!.userId).toBeNull();

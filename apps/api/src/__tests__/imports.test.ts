@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 
@@ -56,7 +62,7 @@ import2-${uid}@test.de;Import;Zwei;IM2-${uid};15.03.2026;EMPLOYEE;38.5;test1234`
         expect(rows[0].kind).toBe("HOME");
         expect(rows[0].salonId).toBe(data.salonId);
         expect(rows[0].validUntil).toBeNull();
-        const audit = await app.prisma.auditLog.findFirst({
+        const audit = await soleAuditRowOrNull(app.prisma, {
           where: { entity: "EmployeeSalonAssignment", action: "CREATE", entityId: rows[0].id },
         });
         expect(audit).not.toBeNull();

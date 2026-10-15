@@ -323,6 +323,7 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
 
       const audits = await app.prisma.auditLog.findMany({
         where: { action: "DAY_BREAK_ACK", entityId: acknowledgement.id },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
       expect(audits[0].entity).toBe("DayBreakAck");
@@ -360,6 +361,7 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
 
       const rows = await app.prisma.notification.findMany({
         where: { id: { in: [mine.id, peer.id, otherDay.id, otherEmployee.id, otherType.id] } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       const dismissed = (id: string) => rows.find((r) => r.id === id)?.dismissedAt;
       expect(dismissed(mine.id)).not.toBeNull();
@@ -499,6 +501,7 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
       expect((await postAck(data.adminToken, ackBody(data.employee.id))).statusCode).toBe(201);
       const rows = await app.prisma.notification.findMany({
         where: { id: { in: [cross.id, placement.id, otherDay.id, otherType.id] } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       const dismissed = (id: string) => rows.find((r) => r.id === id)?.dismissedAt;
       expect(dismissed(cross.id)).not.toBeNull();
@@ -699,6 +702,7 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
 
       const audits = await app.prisma.auditLog.findMany({
         where: { action: "DAY_BREAK_ACK_REVOKE", entityId: ackId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
       expect(audits[0].entity).toBe("DayBreakAck");
@@ -743,6 +747,7 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
           relatedType: "EmployeeDay",
           relatedId: `${data.employee.id}:${DAY}`,
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(rows).toHaveLength(1);
       expect(rows[0].id).toBe(notice.id);

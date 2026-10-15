@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 
@@ -195,7 +201,7 @@ describe("Employees API", () => {
       expect(Number(entitlement?.totalDays)).toBe(30);
       expect(entitlement?.isAutoCalculated).toBe(true);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "LeaveEntitlement", entityId: entitlement!.id, action: "CREATE" },
       });
       expect(audit).not.toBeNull();
@@ -516,7 +522,7 @@ describe("Employees API", () => {
       expect(res.statusCode).toBe(201);
       const body = JSON.parse(res.body);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "Employee", entityId: body.id, action: "CREATE" },
       });
       expect(audit).not.toBeNull();
@@ -698,9 +704,8 @@ describe("Employees API", () => {
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       expect(Number(employee?.annualVacationDays)).toBe(21);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "Employee", entityId: employeeId, action: "UPDATE" },
-        orderBy: { createdAt: "desc" },
       });
       expect(audit).not.toBeNull();
       const oldValue = audit!.oldValue as { annualVacationDays: unknown };
@@ -1101,7 +1106,7 @@ describe("Employees API", () => {
     });
 
     it("AuditLog records the anonymization", async () => {
-      const logEntry = await app.prisma.auditLog.findFirst({
+      const logEntry = await soleAuditRowOrNull(app.prisma, {
         where: {
           entity: "Employee",
           entityId: dsgvoEmployeeId,
@@ -1244,9 +1249,8 @@ describe("Employees API", () => {
       expect(patched.requiresSupervision).toBe(true);
 
       // AuditLog entry must contain the new Personalstruktur values
-      const log = await app.prisma.auditLog.findFirst({
+      const log = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "Employee", entityId: id, action: "UPDATE" },
-        orderBy: { createdAt: "desc" },
       });
       expect(log).not.toBeNull();
       const newVal = log!.newValue as Record<string, unknown>;
@@ -1414,9 +1418,8 @@ describe("Employees API", () => {
         payload: { forceDelete: true },
       });
 
-      const log = await app.prisma.auditLog.findFirst({
+      const log = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "Employee", entityId: emp.id, action: "HARD_DELETE" },
-        orderBy: { createdAt: "desc" },
       });
 
       // Cleanup — employee still exists (blocked)
