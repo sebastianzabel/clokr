@@ -3426,7 +3426,7 @@ eingefrorene Kopie von Phase 80, null Abweichungen der bisherigen Warnungen.
 - **A4: Satz 1 bei Salonwechsel bleibt streng.** Die Minutenregel nach Satz 1 für Salonwechseltage
   (Phase 80) behält `VIOLATION` und kann damit zu streng sein — dieselbe Klasse wie die 120-Min-Grenze
   unten. Nur die neuen Satz-2/3-Befunde tragen `UNCLEAR`.
-- **D-16: 120-Min-Grenze im selben Salon unverändert.** Eine Lücke im selben Salon über 120 Min zählt
+- **D-16: 120-Min-Grenze im selben Salon unverändert.** _(Überholt durch Nachtrag 2026-10-15, Issue #523: die Grenze ist entfallen.)_ Eine Lücke im selben Salon über 120 Min zählt
   für Satz 1 weiterhin nicht als Pause, obwohl eine Ruhepause nach § 4 ArbZG keine Höchstdauer hat
   (BAG 25.02.2015 – 5 AZR 886/12). Die Änderung würde die eingefrorene Äquivalenz-Fixture von Phase 80
   berühren (nie editiert) und braucht eine Owner-Entscheidung: Issue #523. Für Satz 3 beendet eine
@@ -3579,6 +3579,46 @@ Kopfzeilen der Testdateien.
 pnpm --filter @clokr/api run test:setup
 pnpm --filter @clokr/api exec vitest run src/contexts/time-tracking/__tests__/withheld-finding-85.test.ts src/contexts/time-tracking/__tests__/warning-visibility-85.test.ts src/__tests__/write-warnings-scope-85.test.ts src/contexts/time-tracking/api/__tests__/day-break-checks.test.ts src/contexts/time-tracking/__tests__/break-finding-notice.test.ts src/__tests__/cross-salon-break-notifications-80.test.ts src/contexts/time-tracking/__tests__/placement-warnings-511.test.ts src/contexts/time-tracking/__tests__/day-break-equivalence-80.test.ts
 ```
+
+### Nachtrag 2026-10-15 (Phase 523, Issue #523): Lücke im selben Salon zählt ohne Höchstdauer
+
+**Owner-Entscheidung 15.10.2026.** Eine Ruhepause hat nach § 4 ArbZG keine Höchstdauer (BAG 25.02.2015,
+5 AZR 886/12, Rn. 21). Die 120-Minuten-Grenze für Lücken zwischen zwei Einträgen im selben Salon (Phase 80,
+D-01; in Phase 511 als D-16 bewusst belassen) entfällt.
+
+**Was sich geändert hat.**
+
+- `listGaps()` (`contexts/time-tracking/day-break-rule.ts`) setzt `countsAsBreak` für jede positive Lücke
+  im selben Salon; eine Lücke zwischen verschiedenen Salons zählt weiterhin nie (Fahrzeit, #92).
+  `gapBreakMin`, `totalBreakMin`, die Segmentquelle `same-salon-gap` und die Arbeitsblöcke des Kerns
+  folgen daraus; Arbeitszeit (`entryDurations()`), Saldo und Monatsabschluss-Rechnung sind unberührt.
+- Eine erfasste Tagespause innerhalb einer Lücke im selben Salon addiert nichts (die Lücke ist schon das
+  Segment) — vorher zählte sie in Lücken über 120 Min.
+- `day-break-placement.ts` (#511): der Sonderweg „Trenner" (`separator`, Lücke über 120 Min beendet einen
+  Block, trägt aber nichts zu Satz 1 bei) entfällt ersatzlos, weil keine Lücke mehr in ihn fällt. Eine
+  lange Lücke im selben Salon ist jetzt ein gewöhnliches Segment: sie zählt für Satz 1, ist eine Ruhepause
+  (`QUALIFYING`), wenn sie mindestens 15:00 lang ist und nicht den Rand der Arbeitsperiode berührt, und
+  beendet damit den Arbeitsblock für Satz 3. Für Minderjährige gilt zusätzlich das Fenster des § 11 JArbSchG
+  (vorher umging der Trenner es).
+- Abgeschlossene Monate werden nicht neu bewertet; es gibt keine Migration und keinen Backfill.
+
+**Äquivalenz-Matrix von Phase 80.** `fixtures/legacy-day-warnings-pre80.ts` bleibt unverändert. Die
+Zellen, deren erwartetes Ergebnis sich mit Absicht ändert, stehen im neuen Nachtragsregister
+`contexts/time-tracking/__tests__/fixtures/day-break-equivalence-80-amendments.json` (Regel
+`SAME_SALON_GAP_OVER_CAP`: jeder Tag mit einer Lücke über 120 Min zwischen zwei Einträgen desselben
+Salons; Begründung, Issue und Datum im Register). `day-break-equivalence-80.test.ts` wendet das Register an
+(Muster wie `matrix-amendments.json`): ein Tag ohne Treffer wird weiter streng gegen die eingefrorene
+Fixture verglichen, ein Treffer gegen die erwartete Legacy-Aussage mit genau dieser einen Änderung;
+Untergrenzen für die Zahl der Treffer und ein Beweis, dass das Register nicht veraltet ist, sichern gegen
+Vakuität. Die Testdatei selbst bekam dafür eine rein additive Änderung (Register laden, erwartete Aussage
+wählen, Gruppe c1 rechnet gegen alle statt nur gegen die Lücken bis 120 Min); keine Behauptung wurde
+abgeschwächt.
+
+**Wirkung auf den Bestand.** Nur Tage mit einer Lücke über 120 Min im selben Salon ändern ihr Ergebnis, und
+nur in Richtung weniger Befunde (die Pausensumme steigt). Ausgewiesen wird das read-only mit
+`scripts/audit-511-break-placement.ts` (dieselbe Erkennung wie Monatsabschluss und Nachtjob): vor und nach
+dem Deploy laufen lassen, die Differenz sind die Tage, die der Wegfall der Grenze von Befund zu Nicht-Befund
+macht.
 
 ## Y — Betreiberkonto oberhalb des Mandanten und Mandantenverwaltung (Phase 88, Issue #88)
 

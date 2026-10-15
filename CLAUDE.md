@@ -308,7 +308,9 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   call it, and `day-scope.ts` (`dayCoverage()`) is the only place "scope over every closed entry of a
   day" is decided. It sums all closed WORK entries of the day regardless of salon; a gap between
   entries in DIFFERENT salons never counts as a break (travel is working time, #92), a same-salon gap
-  ≤ 120 min still does. A break lying in a gap is a `DayBreak` (employee + date, no salon, never on an
+  of ANY length does (Issue #523: the former 120-min cap is gone, § 4 ArbZG has no maximum for a
+  Ruhepause, BAG 25.02.2015 – 5 AZR 886/12 Rn. 21; amendment register
+  `fixtures/day-break-equivalence-80-amendments.json`). A break lying in a gap is a `DayBreak` (employee + date, no salon, never on an
   entry, never in `TimeEntry.breakMinutes`, never reduces working time — the saldo is untouched, an
   AST guard fails if a saldo file references the detector or the models). On a cross-salon day only a
   current `DayBreakAck` waives (an entry-level WAIVED does not); an ack whose stored snapshot no
@@ -358,8 +360,9 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   #525). The automatic break is placed by `placeAutoBreak()` at the conformant position nearest to
   `defaultBreakStart` in the TENANT time zone (minors: at least the § 11 amount, from 4.5 h);
   `scripts/audit-511-break-placement.ts` is the read-only dry run; closed months are never
-  re-evaluated. The 120-min same-salon cap of Phase 80 is unchanged (#523), § 8 JArbSchG is not
-  checked (#524). Details: `docs/adr/0001-abweichungen.md` Eintrag X, Nachtrag Phase 511.
+  re-evaluated. A same-salon gap of any length is a counting segment when it is at least 15 min and lies inside
+  the work period, and it ends a work block (#523 removed the 120-min cap of Phase 80 and with it the
+  separator-only path); § 8 JArbSchG is not checked (#524). Details: `docs/adr/0001-abweichungen.md` Eintrag X, Nachtrag Phase 511.
 - **Save responses show ArbZG warnings only within the reader's reach (Issue #85, D-12).**
   `warningsVisibleToCaller()` (`contexts/time-tracking/warning-visibility.ts`) is the ONE place: `PUT`
   and `POST /time-entries`, the on-behalf clock-out and the retro approval pass their warnings

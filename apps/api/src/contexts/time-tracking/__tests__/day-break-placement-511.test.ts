@@ -99,7 +99,7 @@ describe("Satz 3 — no more than six hours in a row without a Ruhepause (D-03)"
     expect(codes(ev)).toContain("BREAK_TOO_LATE");
   });
 
-  it("same-salon entries separated by more than 120 minutes are two blocks (D-16)", () => {
+  it("same-salon entries separated by more than 120 minutes are two blocks (#523: the gap is a rest period)", () => {
     const ev = evaluate([row(A, "08:00", "12:00"), row(A, "14:30", "18:00")]);
     expect(ev.placement.blocks.map((b) => b.minutes)).toEqual([240, 210]);
     expect(codes(ev)).not.toContain("BREAK_TOO_LATE");
@@ -269,11 +269,9 @@ describe("D-05 — minors (§ 11 JArbSchG)", () => {
     expect(minor([ok]).placement.restPeriods.map((p) => p.status)).toEqual(["QUALIFYING"]);
   });
 
-  it("a same-salon gap above two hours is never OUTSIDE_WINDOW (split shift)", () => {
+  it("a same-salon gap above two hours is an ordinary rest period inside the window (#523)", () => {
     const ev = minor([row(A, "08:00", "10:00"), row(A, "13:00", "15:00")]);
-    expect(ev.placement.restPeriods.map((p) => [p.separator, p.status])).toEqual([
-      [true, "QUALIFYING"],
-    ]);
+    expect(ev.placement.restPeriods.map((p) => p.status)).toEqual(["QUALIFYING"]);
     expect(codes(ev)).toEqual([]);
   });
 });
@@ -578,7 +576,7 @@ function matrix(): MatrixCase[] {
     adult("work exactly 360, no break", [row(A, "08:00", "14:00")], []),
     adult("work 360 + 1 ms, no break", [row(A, "08:00", "14:00", { endExtraMs: 1 })], [[L, V]]),
     adult(
-      "same-salon gap above 120 minutes separates",
+      "same-salon gap above 120 minutes is a rest period (#523)",
       [row(A, "08:00", "12:00"), row(A, "14:30", "18:00")],
       [],
     ),

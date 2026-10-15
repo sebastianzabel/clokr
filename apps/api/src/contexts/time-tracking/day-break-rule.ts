@@ -5,8 +5,9 @@
  * SEVERAL entries of one employee and one day, possibly in several salons.
  *
  *   - D-01  a gap between entries of DIFFERENT salons is travel time, never a break; a gap of
- *           0 < gap <= 120 minutes between entries of the SAME salon counts as a break (the rule
- *           that held before Phase 80, unchanged).
+ *           0 < gap between entries of the SAME salon counts as a break whatever its length
+ *           (Issue #523: the former 120-minute cap is removed, § 4 ArbZG has no maximum
+ *           duration of a Ruhepause, BAG 25.02.2015 - 5 AZR 886/12 Rn. 21).
  *   - D-04/D-05  a recorded day break counts only inside a gap between two entries (clipped to the
  *           gap, overlapping day breaks merged, nothing added inside a same-salon gap that already
  *           counts) and NEVER reduces working time: `netWorkedMin` is the sum of what
@@ -110,7 +111,7 @@ export type DayBreakSegmentSource =
  *
  *   - "entry-break"          a Break row of an entry, clipped to that entry (`entryId` set)
  *   - "day-break"            a recorded day break clipped to a gap that does not count by itself
- *   - "same-salon-gap"       a same-salon gap of at most 120 minutes (D-01)
+ *   - "same-salon-gap"       a same-salon gap of any length (D-01, #523)
  *   - "unplaced-entry-break" stored `breakMinutes` of an entry that no Break row covers
  *
  * `startTime` and `endTime` are null for "unplaced-entry-break" and only then. `entryId` is null
@@ -135,7 +136,7 @@ export interface DayGap {
   minutes: number;
   /** True when the two entries were worked in different salons (travel, D-01). */
   crossSalon: boolean;
-  /** True when the gap counts as a break by itself: same salon and at most 120 minutes (D-01). */
+  /** True when the gap counts as a break by itself: same salon, any length (D-01, #523). */
   countsAsBreak: boolean;
 }
 
@@ -163,7 +164,7 @@ export interface DayBreakEvaluation {
   netWorkedMin: number;
   /** Sum of the entries' stored break minutes. */
   explicitBreakMin: number;
-  /** Same-salon gaps of 0 < gap <= 120 minutes, counted as break (D-01). */
+  /** Same-salon gaps (0 < gap, no upper cap since #523), counted as break (D-01). */
   gapBreakMin: number;
   /** Union of the recorded day breaks inside the gaps that do not already count (D-04/D-05). */
   dayBreakMin: number;
@@ -266,7 +267,7 @@ interface GapSpan {
 /**
  * The ONE place that decides what a gap is: every positive gap between consecutive rows (start
  * order), classified by D-01 — a gap between different salons is travel, a same-salon gap of at
- * most 120 minutes counts as a break. Overlapping and adjacent rows yield no gap. Used by the
+ * any length counts as a break (#523). Overlapping and adjacent rows yield no gap. Used by the
  * evaluation (sums and interval view) and by the write-side `findGapForInterval`.
  */
 function listGaps(rows: readonly DayBreakRow[]): GapSpan[] {
@@ -284,7 +285,7 @@ function listGaps(rows: readonly DayBreakRow[]): GapSpan[] {
       endTime: next.startTime,
       minutes,
       crossSalon,
-      countsAsBreak: !crossSalon && minutes <= 120,
+      countsAsBreak: !crossSalon,
     });
   }
   return gaps;
@@ -349,11 +350,11 @@ export function evaluateDayBreaks(input: {
   let dayBreakMin = 0;
   for (const g of gapSpans) {
     if (g.countsAsBreak) {
-      // Same salon, up to two hours: counts as a break exactly as before Phase 80 (D-01).
+      // Same salon, any length: counts as a break (D-01; the former two-hour cap is gone, #523).
       // A recorded day break inside such a gap adds nothing (no double counting).
       gapBreakMin += g.minutes;
     } else {
-      // Travel between salons, or a same-salon gap above two hours (a separate shift): only a
+      // Travel between salons: only a
       // recorded day break counts, clipped to the gap and merged where they overlap (D-04/D-05).
       dayBreakMin += unionClippedMinutes(dayBreaks, g.startTime, g.endTime);
     }
@@ -427,8 +428,8 @@ export function evaluateDayBreaks(input: {
 
   // Work blocks: the working pieces of every entry (its span minus its placed breaks) plus the
   // travel between salons (a cross-salon gap minus the day breaks inside it), merged where they
-  // touch. A counting same-salon gap and a same-salon gap above two hours contribute nothing, so
-  // they end the block (D-01). Unplaced minutes have no position and split nothing.
+  // touch. A counting same-salon gap contributes nothing, so
+  // it ends the block (D-01). Unplaced minutes have no position and split nothing.
   const pieces: Array<{ span: Span; rowIndex: number | null }> = [];
   rows.forEach((row, i) => {
     let cursor = row.startTime.getTime();

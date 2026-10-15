@@ -6,12 +6,13 @@
  * minute sums and never changes them: the saldo, `totalBreakMin` and the Phase-80 warnings are
  * untouched, the result is an additive field of the evaluation (D-10).
  *
- *   - Rest periods: every placed break segment, plus the same-salon gaps above two hours as
- *     separator-only candidates (D-16), touching or overlapping candidates coalesced into one
- *     period (D-22a A1), then classified: a period touching the first start or the last end of the
+ *   - Rest periods: every placed break segment (a same-salon gap of any length is one since
+ *     #523, so it is classified like any other segment), plus the best-case free remainders of
+ *     cross-salon gaps, touching or overlapping candidates coalesced into one period (D-22a A1),
+ *     then classified: a period touching the first start or the last end of the
  *     day is EDGE (D-04), one shorter than the rule's minimum is TOO_SHORT (D-01), one inside the
  *     minors' window is OUTSIDE_WINDOW (D-05); every other period is a Ruhepause (QUALIFYING).
- *   - Blocks: the day's work period minus the qualifying periods and the separators. Short
+ *   - Blocks: the day's work period minus the qualifying periods. Short
  *     interruptions never split a block (D-03).
  *
  * Every comparison is made in integer epoch milliseconds, never in float minutes, so a break of
@@ -36,8 +37,6 @@ export interface RestPeriod {
   endTime: Date;
   /** QUALIFYING counts as a Ruhepause; the others are not counted and split nothing. */
   status: "QUALIFYING" | "TOO_SHORT" | "EDGE" | "OUTSIDE_WINDOW";
-  /** True when the period contains a same-salon gap above two hours: it always ends a block (D-16). */
-  separator: boolean;
   /** Minutes of the period that are part of the day's `totalBreakMin`. */
   countedMin: number;
   /** Minutes of the period that exist only as the best-case free remainder of a cross-salon gap (D-07). */
@@ -125,7 +124,6 @@ interface Candidate {
   end: number;
   countedMin: number;
   freeMin: number;
-  separator: boolean;
 }
 
 interface CaseResult {
@@ -157,7 +155,6 @@ function coalesce(candidates: Candidate[]): Candidate[] {
       last.end = Math.max(last.end, c.end);
       last.countedMin += c.countedMin;
       last.freeMin += c.freeMin;
-      last.separator = last.separator || c.separator;
     } else {
       merged.push({ ...c });
     }
@@ -191,20 +188,7 @@ function runCase(
       end: seg.endTime.getTime(),
       countedMin: seg.minutes,
       freeMin: 0,
-      separator: false,
     });
-  }
-  for (const gap of input.gaps) {
-    // A same-salon gap above two hours ends a block but adds nothing to the Satz-1 figure (D-16).
-    if (!gap.crossSalon && !gap.countsAsBreak) {
-      candidates.push({
-        start: gap.startTime.getTime(),
-        end: gap.endTime.getTime(),
-        countedMin: 0,
-        freeMin: 0,
-        separator: true,
-      });
-    }
   }
   for (const [start, end] of extraFree) {
     candidates.push({
@@ -212,7 +196,6 @@ function runCase(
       end,
       countedMin: 0,
       freeMin: (end - start) / MS_PER_MIN,
-      separator: false,
     });
   }
 
@@ -220,37 +203,33 @@ function runCase(
   const restPeriods: RestPeriod[] = [];
   for (const p of coalesce(candidates)) {
     let status: RestPeriod["status"] = "QUALIFYING";
-    if (!p.separator) {
-      // Order matters: an edge segment is not an interruption at all (D-04), a short one is no
-      // Ruhepause (D-01), and only then does the minors' window apply (D-05).
-      if (rules.excludeEdgeTouching && (p.start <= workStart || p.end >= workEnd)) {
-        status = "EDGE";
-        nonCounted.edge += 1;
-      } else if (p.end - p.start < rules.minSegmentMs) {
-        status = "TOO_SHORT";
-        nonCounted.tooShort += 1;
-      } else if (
-        rules.windowMin > 0 &&
-        (p.start < workStart + rules.windowMin * MS_PER_MIN ||
-          p.end > workEnd - rules.windowMin * MS_PER_MIN)
-      ) {
-        // A separator bypasses the window on purpose (D-22a A9): a split shift is not a Ruhepause
-        // candidate inside the window rule.
-        status = "OUTSIDE_WINDOW";
-        nonCounted.outsideWindow += 1;
-      }
+    // Order matters: an edge segment is not an interruption at all (D-04), a short one is no
+    // Ruhepause (D-01), and only then does the minors' window apply (D-05).
+    if (rules.excludeEdgeTouching && (p.start <= workStart || p.end >= workEnd)) {
+      status = "EDGE";
+      nonCounted.edge += 1;
+    } else if (p.end - p.start < rules.minSegmentMs) {
+      status = "TOO_SHORT";
+      nonCounted.tooShort += 1;
+    } else if (
+      rules.windowMin > 0 &&
+      (p.start < workStart + rules.windowMin * MS_PER_MIN ||
+        p.end > workEnd - rules.windowMin * MS_PER_MIN)
+    ) {
+      status = "OUTSIDE_WINDOW";
+      nonCounted.outsideWindow += 1;
     }
+
     restPeriods.push({
       startTime: new Date(p.start),
       endTime: new Date(p.end),
       status,
-      separator: p.separator,
       countedMin: p.countedMin,
       freeRemainderMin: p.freeMin,
     });
   }
 
-  // Blocks: the work period minus the qualifying periods and the separators (D-03).
+  // Blocks: the work period minus the qualifying periods (D-03).
   const blocks: PlacementBlock[] = [];
   const pushBlock = (start: number, end: number): void => {
     let pu = 0;
@@ -268,7 +247,7 @@ function runCase(
   };
   let cursor = workStart;
   for (const p of restPeriods) {
-    if (!p.separator && p.status !== "QUALIFYING") continue;
+    if (p.status !== "QUALIFYING") continue;
     const s = p.startTime.getTime();
     if (s > cursor) pushBlock(cursor, s);
     cursor = Math.max(cursor, p.endTime.getTime());
@@ -279,8 +258,7 @@ function runCase(
   let workMin = input.netWorkedMin;
   let qualifyingMin = 0;
   for (const p of restPeriods) {
-    if (p.separator || p.status === "QUALIFYING")
-      qualifyingMin += p.countedMin + p.freeRemainderMin;
+    if (p.status === "QUALIFYING") qualifyingMin += p.countedMin + p.freeRemainderMin;
     else workMin += p.countedMin;
   }
   const requiredMin = requiredBreakFor(rules, workMin);
