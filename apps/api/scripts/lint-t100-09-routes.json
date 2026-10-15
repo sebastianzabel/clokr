@@ -1265,6 +1265,26 @@
       "reason": "The operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. `:accessId` is resolved together with the tenant id and the operator id in one `where` (support-access.ts `endSupportAccessByOperator`), so another operator's or another tenant's grant id and an unknown id answer the one 404 `Support-Zugriff nicht gefunden` - proven byte-identical by support-access-grant-93.test.ts.",
       "ticket": null,
       "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/operator/tenants/:id/support/employees/:employeeId/month",
+      "file": "apps/api/src/contexts/platform/api/operator/support.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. `:employeeId` is resolved together with the tenant id inside the audit transaction (support.ts `runSupportRead`, port `employeeExists`: `{ id, tenantId }`), so another tenant's employee and an unknown id answer the same 404 `Mitarbeiter nicht gefunden` with no audit row and no data read - proven byte-identical (status and body) by support-access-reads-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "GET /api/v1/operator/tenants/:id/support/employees/:employeeId/contracts",
+      "file": "apps/api/src/contexts/platform/api/operator/support.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "The operator principal sits above the tenant, so no caller tenant exists whose foreign instance could be told apart. `:employeeId` is resolved together with the tenant id inside the audit transaction (support.ts `runSupportRead`, port `employeeExists`: `{ id, tenantId }`), so another tenant's employee and an unknown id answer the same 404 `Mitarbeiter nicht gefunden` with no audit row and no data read - proven byte-identical (status and body) by support-access-reads-93.test.ts.",
+      "ticket": null,
+      "validatedAt": null
     }
   ]
 }

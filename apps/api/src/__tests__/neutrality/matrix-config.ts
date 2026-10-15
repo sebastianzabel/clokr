@@ -237,13 +237,15 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
     "GET /api/v1/operator/tenants/:id/support/employees",
     "GET /api/v1/operator/tenants/:id/support-access",
     "POST /api/v1/operator/tenants/:id/support-access/:accessId/end",
+    "GET /api/v1/operator/tenants/:id/support/employees/:employeeId/month",
+    "GET /api/v1/operator/tenants/:id/support/employees/:employeeId/contracts",
   ].map((route) => ({
     route,
     reason:
       "Operator-authenticated (separate principal with its own signing secret, requireOperator, " +
       "Phase 88 #88) — no tenant actor can be a matrix cell; the tenant-token refusal is proven in " +
       "operator-auth-88.test.ts, operator-tenants-88.test.ts, operator-salons-89.test.ts, " +
-      "operator-packages-566.test.ts, operator-dashboard-90.test.ts and support-access-grant-93.test.ts.",
+      "operator-packages-566.test.ts, operator-dashboard-90.test.ts, support-access-grant-93.test.ts and support-access-reads-93.test.ts.",
   })),
   {
     route: "GET /api/v1/shifts/planning-overview",

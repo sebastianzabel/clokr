@@ -1,6 +1,8 @@
 │               └── /assign (POST)
 │           └── /:employeeId (DELETE)
+│           └── /:employeeId/contracts (GET, HEAD)
 │           └── /:mac (DELETE)
+│           ├── /:employeeId/month (GET, HEAD)
 │       │       └── /activate (POST)
 │       │       ├── /deactivate (POST)
 │       │   └── /:accessId/end (POST)

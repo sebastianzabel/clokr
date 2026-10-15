@@ -64,6 +64,16 @@ describe("operator surface off (OPERATOR_JWT_SECRET unset)", () => {
       url: `/api/v1/operator/tenants/${tenantId}/support-access/${randomUUID()}/end`,
     });
     expect(end.statusCode).toBe(404);
+    const month = await app.inject({
+      method: "GET",
+      url: `/api/v1/operator/tenants/${tenantId}/support/employees/${randomUUID()}/month?month=2026-03`,
+    });
+    expect(month.statusCode).toBe(404);
+    const contracts = await app.inject({
+      method: "GET",
+      url: `/api/v1/operator/tenants/${tenantId}/support/employees/${randomUUID()}/contracts`,
+    });
+    expect(contracts.statusCode).toBe(404);
   });
 
   it("keeps the tenant routes working and requireAuth answers 401, not a crash", async () => {

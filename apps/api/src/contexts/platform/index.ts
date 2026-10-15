@@ -235,6 +235,13 @@ export type {
   SupportAccessDto,
   SupportAccessEndedBy,
   SupportAccessStatus,
+  SupportAbsenceDto,
+  SupportContractDto,
+  SupportDayBreakDto,
   SupportEmployeeDto,
+  SupportEmployeeMonthDto,
+  SupportLeaveRequestDto,
+  SupportMonthEntryDto,
+  SupportMonthFiguresDto,
   SupportReadCategory,
 } from "./support-access-types";
