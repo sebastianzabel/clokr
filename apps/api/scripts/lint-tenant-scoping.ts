@@ -271,6 +271,13 @@ export function runLint(opts: { repoRoot: string; json?: boolean }): RunLintResu
       raw,
       rawFindings.map((f) => f.call),
       nullishRaw,
+      (rel) => {
+        try {
+          return fs.readFileSync(path.join(repoRoot, rel), "utf8");
+        } catch {
+          return null;
+        }
+      },
     );
     if (validated.ok) {
       exceptions = validated.entries;
@@ -412,7 +419,7 @@ function printReport(result: RunLintResult): void {
           `  3. Or, if this site is genuinely tenant-safe for a reason the check cannot see, add an\n` +
           `     entry to apps/api/scripts/lint-tenant-scoping-exceptions.json (one entry per HANDLER,\n` +
           `     naming every covered call explicitly — see that file's header):\n` +
-          `       { "file": "...", "handler": "METHOD /path", "validatedAt": 0,\n` +
+          `       { "file": "...", "handler": "METHOD /path", "validatedBy": "<tenant-check line>",\n` +
           `         "calls": [{ "call": "model.method", "line": 0 }], "reason": "<why this is safe>" }\n` +
           `     The reason is MANDATORY and is validated by this script — an entry without one fails\n` +
           `     the run, and so does a call this script finds that is not named in 'calls'. Do NOT add\n` +

@@ -2,7 +2,7 @@
   {
     "file": "apps/api/src/contexts/platform/api/auth.ts",
     "handler": "POST /api/v1/auth/login, /verify-otp, /resend-otp, /forgot-password (pre-authentication)",
-    "validatedAt": null,
+    "validatedBy": null,
     "calls": [
       {
         "call": "user.findUnique",
@@ -34,7 +34,7 @@
   {
     "file": "apps/api/src/contexts/absence/api/company-shutdowns.ts",
     "handler": "DELETE /api/v1/company-shutdowns/:id/exceptions/:employeeId",
-    "validatedAt": 207,
+    "validatedBy": "const shutdown = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });",
     "calls": [
       {
         "call": "companyShutdownException.findUnique",
@@ -50,7 +50,7 @@
   {
     "file": "apps/api/src/contexts/platform/api/employees.ts",
     "handler": "DELETE /api/v1/employees/:id/hard-delete",
-    "validatedAt": 1597,
+    "validatedBy": "where: { id, tenantId: req.user.tenantId },",
     "calls": [
       {
         "call": "auditLog.findFirst",
@@ -66,7 +66,7 @@
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "GET /api/v1/overtime/:employeeId",
-    "validatedAt": 142,
+    "validatedBy": "if (employee.tenantId !== req.user.tenantId) {",
     "calls": [
       {
         "call": "overtimeAccount.findUnique",
@@ -82,7 +82,7 @@
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "POST /api/v1/overtime/payout",
-    "validatedAt": 380,
+    "validatedBy": "if (payoutEmployee.tenantId !== req.user.tenantId) {",
     "calls": [
       {
         "call": "workSchedule.findFirst",
@@ -98,7 +98,7 @@
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "POST /api/v1/overtime/unlock-month",
-    "validatedAt": 1686,
+    "validatedBy": "if (!employee || employee.tenantId !== req.user.tenantId) {",
     "calls": [
       {
         "call": "saldoSnapshot.findFirst",
@@ -110,7 +110,7 @@
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "POST /api/v1/overtime/close-year",
-    "validatedAt": 1879,
+    "validatedBy": "if (!employee || employee.tenantId !== req.user.tenantId) {",
     "calls": [
       {
         "call": "saldoSnapshot.findFirst",
@@ -122,7 +122,7 @@
   {
     "file": "apps/api/src/contexts/working-time-account/api/overtime.ts",
     "handler": "POST /api/v1/overtime/opening-balance",
-    "validatedAt": 2093,
+    "validatedBy": "if (!employee || employee.tenantId !== req.user.tenantId) {",
     "calls": [
       {
         "call": "openingBalance.findFirst",
@@ -134,7 +134,7 @@
   {
     "file": "apps/api/src/contexts/platform/api/settings.ts",
     "handler": "GET /api/v1/settings/work/:employeeId",
-    "validatedAt": 1285,
+    "validatedBy": "if (!employee || employee.tenantId !== req.user.tenantId) {",
     "calls": [
       {
         "call": "workSchedule.findFirst",
@@ -146,7 +146,7 @@
   {
     "file": "apps/api/src/contexts/platform/api/settings.ts",
     "handler": "PUT /api/v1/settings/work/:employeeId",
-    "validatedAt": 1302,
+    "validatedBy": "if (employee.tenantId !== req.user.tenantId) {",
     "calls": [
       {
         "call": "workSchedule.findFirst",
@@ -170,7 +170,7 @@
   {
     "file": "apps/api/src/contexts/scheduling/api/shift-patterns.ts",
     "handler": "PUT /api/v1/employees/:id/shift-patterns",
-    "validatedAt": 80,
+    "validatedBy": "where: { id, tenantId: req.user.tenantId },",
     "calls": [
       {
         "call": "employeeShiftPattern.updateMany",
@@ -182,7 +182,7 @@
   {
     "file": "apps/api/src/contexts/absence/api/vocational-school-pattern.ts",
     "handler": "PUT /api/v1/employees/:id/vocational-school-pattern",
-    "validatedAt": 216,
+    "validatedBy": "where: { id, tenantId: req.user.tenantId },",
     "calls": [
       {
         "call": "employeeVocationalSchoolPattern.updateMany",
@@ -194,7 +194,7 @@
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
     "handler": "PUT /api/v1/shifts/:id",
-    "validatedAt": 2592,
+    "validatedBy": "if (!existingOwner || existingOwner.tenantId !== req.user.tenantId) {",
     "calls": [
       {
         "call": "shift.findUnique",
@@ -210,7 +210,7 @@
   {
     "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
     "handler": "DELETE /api/v1/shifts/:id",
-    "validatedAt": 4063,
+    "validatedBy": "if (!existingOwner || existingOwner.tenantId !== req.user.tenantId) {",
     "calls": [
       {
         "call": "shift.findUnique",
@@ -226,7 +226,7 @@
   {
     "file": "apps/api/src/contexts/platform/api/test-bootstrap.ts",
     "handler": "DELETE /api/v1/test/tenant/:id",
-    "validatedAt": 263,
+    "validatedBy": "if (!TENANT_ID_RE.test(id)) {",
     "calls": [
       {
         "call": "employee.deleteMany",
@@ -270,7 +270,7 @@
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
     "handler": "POST /api/v1/time-entries/nfc-punch",
-    "validatedAt": 349,
+    "validatedBy": "where: { nfcCardId: body.nfcCardId, tenantId: apiKey.tenantId },",
     "calls": [
       {
         "call": "employee.findFirst",
@@ -282,7 +282,7 @@
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
     "handler": "POST /api/v1/time-entries (manual entry)",
-    "validatedAt": 1277,
+    "validatedBy": "where: { id: employeeId, tenantId: req.user.tenantId },",
     "calls": [
       {
         "call": "retroEntryRequest.findFirst",
@@ -294,7 +294,7 @@
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
     "handler": "PUT /api/v1/time-entries/:id",
-    "validatedAt": 1893,
+    "validatedBy": "if (existing.employee.tenantId !== user.tenantId) {",
     "calls": [
       {
         "call": "retroEntryRequest.findFirst",
@@ -314,7 +314,7 @@
   {
     "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
     "handler": "PATCH /api/v1/time-entries/:id/break-status",
-    "validatedAt": 2715,
+    "validatedBy": "if (entry.employee.tenantId !== user.tenantId) {",
     "calls": [
       {
         "call": "break.deleteMany",
@@ -326,7 +326,7 @@
   {
     "file": "apps/api/src/contexts/platform/facade/role-assignments.ts",
     "handler": "contextSalonIds() own-reach employee lookup (shared facade function, not one route — its only caller is GET /api/v1/me/context, Phase 82)",
-    "validatedAt": null,
+    "validatedBy": null,
     "calls": [
       {
         "call": "employee.findFirst",

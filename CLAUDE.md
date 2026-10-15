@@ -1135,6 +1135,11 @@ Since Phase 89 the gate also accepts two strict inline forms: an `OR` only when 
 itself scoped, and a Json-path stamp `{ path: [..., "tenantId"], equals: <principal tenant> }` with
 no other key (`apps/api/scripts/README.md` § `lint-tenant-scoping.ts`).
 
+Each exception carries `validatedBy`, a text anchor quoting its tenant check (Issue #620; it replaced
+the never-verified line number `validatedAt`). The gate resolves it on every run - it must still
+occur in the file, mention the tenant and lie near a listed call - so a moved or reworded check
+turns the run red while pure line shifts do not.
+
 Verify with `pnpm --filter @clokr/api run lint:tenant-scoping`. A hit on a clean tree is a
 finding to report (Issue #204), not an exception to add.
 
