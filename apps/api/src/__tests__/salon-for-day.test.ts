@@ -6,7 +6,7 @@
 import bcrypt from "bcryptjs";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import { salonForDay, listSalonAssignments } from "../contexts/platform";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 
@@ -134,6 +134,11 @@ describe("salonForDay / listSalonAssignments (Phase 67b Plan 01 Task 2, issue #6
         lastName: "Proof",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: tenantA.tenant.id,
+      userId: sundayUser.id,
+      role: "EMPLOYEE",
     });
     sundayEmployeeId = sundayEmployee.id;
 
@@ -331,6 +336,11 @@ describe("salonForDay / listSalonAssignments (Phase 67b Plan 01 Task 2, issue #6
         hireDate: new Date("2025-03-14T23:30:00Z"),
       },
     });
+    await grantSystemRole(app.prisma, {
+      tenantId: tenantA.tenant.id,
+      userId: lateUser.id,
+      role: "EMPLOYEE",
+    });
     // The HOME row from the OLD, earlier hire date — D-07 leaves it in place when hireDate moves
     // later.
     await app.prisma.employeeSalonAssignment.create({
@@ -408,6 +418,11 @@ describe("salonForDay / listSalonAssignments (Phase 67b Plan 01 Task 2, issue #6
           lastName: "SalonForDay",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: tenantA.tenant.id,
+        userId: mgrUser.id,
+        role: "MANAGER",
       });
       const loginRes = await app.inject({
         method: "POST",

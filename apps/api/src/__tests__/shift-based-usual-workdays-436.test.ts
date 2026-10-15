@@ -25,7 +25,7 @@
  * 200 (no 400 — the validation this test pins did not exist).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, grantSystemRole } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -106,6 +106,7 @@ describe("Issue #436 — SHIFT_BASED usual workdays (D-01/D-02/D-03)", () => {
           hireDate: PAST_ANCHOR,
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role });
       const login = await app.inject({
         method: "POST",
         url: "/api/v1/auth/login",
