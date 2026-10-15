@@ -153,6 +153,37 @@ async function measure(bar: Locator, prev: string, next: string): Promise<BarGeo
   );
 }
 
+/**
+ * Issue #571: resolves once the element's box is identical in two consecutive animation frames,
+ * polled by expect (no fixed sleep). Late data above the bar moves it; measuring before it settles
+ * made "Heute" flaky in full parallel runs.
+ */
+async function waitForStableBox(locator: Locator): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        locator.evaluate(
+          (el) =>
+            new Promise<boolean>((resolve) => {
+              const a = el.getBoundingClientRect();
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => {
+                  const b = el.getBoundingClientRect();
+                  resolve(
+                    a.top === b.top &&
+                      a.left === b.left &&
+                      a.width === b.width &&
+                      a.height === b.height,
+                  );
+                }),
+              );
+            }),
+        ),
+      { message: "the month bar keeps moving" },
+    )
+    .toBe(true);
+}
+
 async function openSurface(page: Page, surface: Surface): Promise<Locator> {
   await page.goto(surface.path);
   if (surface.listView) {
@@ -235,13 +266,18 @@ for (const viewport of VIEWPORTS) {
             await expect(today, `${where}: "Heute" is missing`).toBeVisible();
             await expect(today).toHaveText("Heute");
             // The bar sits below the KPI rows, so on /leave its vertical position changes while
-            // the page data loads (measured: y 765 -> 982 at 360x800). Scroll first, so
-            // "fully on screen" answers the horizontal question this gate is about instead of
-            // racing the fold.
-            await today.scrollIntoViewIfNeeded();
-            await expect(today, `${where}: "Heute" is not fully on screen`).toBeInViewport({
-              ratio: 1,
-            });
+            // the page data loads (measured: y 765 -> 982 at 360x800). Wait until the bar holds
+            // still over two frames, then scroll and check together: if late data moves the bar
+            // after the scroll, the pair is retried instead of failing on a stale scroll
+            // position (Issue #571). The assertion itself is unchanged.
+            await waitForStableBox(bar);
+            await expect(async () => {
+              await today.scrollIntoViewIfNeeded();
+              await expect(today, `${where}: "Heute" is not fully on screen`).toBeInViewport({
+                ratio: 1,
+                timeout: 1000,
+              });
+            }).toPass();
             const box = await today.boundingBox();
             expect(box, `${where}: "Heute" has no box`).not.toBeNull();
             expect(
