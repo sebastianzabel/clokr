@@ -9,7 +9,7 @@
 import { buildApp } from "../app";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { Secret, TOTP } from "otpauth";
 // Re-export Prisma.JsonValue to keep it nameable in the inferred return type of
 // seedTestData(). Adding `uiPreferences Json?` to User caused TS2883 because the
@@ -377,6 +377,42 @@ export async function removeFixtureRoleAssignments(
 ): Promise<void> {
   if (userIds.length === 0) return;
   await prisma.roleAssignment.deleteMany({ where: { userId: { in: [...userIds] } } });
+}
+
+/**
+ * Issue #539 (plan 07): an admin-scope API key of `tenantId` and its raw token. An API key resolves
+ * to the Admin system role through its scope (`request-permissions.ts`), never through a stored
+ * `RoleAssignment`, so it passes every guard an admin passes WITHOUT being a counted holder of the
+ * guarded permissions (`countHoldersPerGuardedPermission` reads stored rows only). The lockout tests
+ * use it as the acting principal: before #539 their seed admin was exactly such an uncounted actor
+ * (it held its rights through the legacy-role fallback); a stored admin row would make it a holder
+ * and change every holder count the scenarios arrange. `removeFixtureApiKeys` deletes the keys.
+ */
+export async function createAdminApiKey(
+  prisma: Prisma.TransactionClient,
+  input: { tenantId: string; createdBy: string },
+): Promise<{ id: string; token: string }> {
+  const token = `clk_${randomBytes(24).toString("hex")}`;
+  const row = await prisma.apiKey.create({
+    data: {
+      tenantId: input.tenantId,
+      name: `fixture-admin-${randomBytes(3).toString("hex")}`,
+      keyHash: createHash("sha256").update(token).digest("hex"),
+      keyPrefix: token.slice(0, 8),
+      scopes: ["admin"],
+      createdBy: input.createdBy,
+    },
+    select: { id: true },
+  });
+  return { id: row.id, token };
+}
+
+/** Deletes every API key of `tenantId` (fixture cleanup for `createAdminApiKey`). */
+export async function removeFixtureApiKeys(
+  prisma: Prisma.TransactionClient,
+  tenantId: string,
+): Promise<void> {
+  await prisma.apiKey.deleteMany({ where: { tenantId } });
 }
 
 /** Phase 566 (D-10): what every shared fixture tenant books — all modules, a quota no scenario reaches. */

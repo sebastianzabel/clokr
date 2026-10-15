@@ -19,21 +19,19 @@
  * - `eigene`: EIGENE keys, from any well-formed assignment; they apply to `ownEmployeeId` only.
  *
  * Sources, in this order:
- * - A blank tenant (empty, whitespace-only, absent) → nothing, for a user and an API key alike: no
- *   legacy-role fallback and no query (#551, D-03). `requireAuth` already refuses such a token before
+ * - A blank tenant (empty, whitespace-only, absent) → nothing, for a user and an API key alike:
+ *   no query (#551, D-03). `requireAuth` already refuses such a token before
  *   any guard runs; this is defence in depth in the Unterbau.
  * - API key (detected by `req.apiKeyScopes`, which only the key path of `requireAuth` sets — never
  *   by reading the role on `req.user`, D-12): the Admin system role when the scopes include
  *   `admin`, else the Manager system role, with the role's FULL set (EIGENE included) and
  *   `ownEmployeeId` undefined, so every own-data comparison fails closed exactly as today (D-11,
  *   D-30, research C-3).
- * - User: ONE query loads the user's legacy column and their stored assignments in
- *   `req.user.tenantId`. When there is NO stored row, the system role of the legacy column stands
- *   in as one implicit TENANT assignment (the "Altrollen-Rückfall", D-08) — mapped by
- *   `systemRoleIdForLegacyRole` in `compat-role.ts`, the only module allowed to read role values.
- *   A single stored row (even a malformed one, or one on a foreign tenant's role) suppresses the
- *   fallback: such rows contribute nothing, so the caller then holds nothing from them (fail
- *   closed). No User row (a deleted user's still-valid token) → nothing.
+ * - User: ONE query loads the user's stored assignments in `req.user.tenantId`. Permissions come
+ *   ONLY from those rows (#539, D-02/D-03): a user with NO stored row holds nothing (fail closed)
+ *   — the former "Altrollen-Rückfall", which let the legacy column stand in as one implicit
+ *   TENANT assignment, no longer exists. A malformed row, or one on a foreign tenant's role,
+ *   contributes nothing. No User row (a deleted user's still-valid token) → nothing.
  * Every contribution goes through `roleGrants` — the one role-evaluation path (AK-73-7) — after the
  * 74b filters "the role belongs to this tenant" and `storedRoleAssignmentScope` (IN-02).
  *
@@ -44,7 +42,7 @@
  * - Does not build a 77b access context (`access-context.ts`): its request constructor throws on an
  *   empty tenant. A user without Employee carries a blank tenant; since #551 `requireAuth` refuses
  *   such a token with 403 `TENANT_REQUIRED` before any guard runs, and the resolver itself grants a
- *   blank tenant nothing (no legacy-role fallback) instead of throwing.
+ *   blank tenant nothing instead of throwing.
  * - Does not re-check `User.isActive`: a valid access token of a since-deactivated user passed the
  *   legacy guard; changing that is not neutral and is deferred hardening (D-10).
  * - Memoized per request in a `WeakMap`, never globally: a cache of role rows would hide a role
@@ -57,7 +55,6 @@ import type { Prisma } from "@clokr/db";
 import { requireAuth } from "../../middleware/auth";
 import { roleGrants } from "./access-role";
 import { isBlankTenantId } from "./tenant-status";
-import { systemRoleIdForLegacyRole } from "./compat-role";
 import {
   PERMISSIONS,
   PERMISSION_RESOURCES,
@@ -117,7 +114,7 @@ function assertKnownKey(key: string): asserts key is PermissionKey {
 /**
  * Adds what `role` grants: EIGENE keys always; a ZUGEWIESEN key always into `zugewiesenAnyScope`
  * (D-05 — the row reaching here is already known well-formed, by every call site's own filtering
- * or by being the inherently well-formed API-key/legacy-fallback path), and additionally into the
+ * or by being the inherently well-formed API-key path), and additionally into the
  * narrower `zugewiesen` only for a tenant-wide source, exactly as before D-05.
  */
 function collect(
@@ -169,13 +166,12 @@ async function computeGrantsForUser(
   const zugewiesenAnyScope = new Set<PermissionKey>();
   const eigene = new Set<PermissionKey>();
 
-  // #551, D-03: a blank tenant holds nothing — no legacy-role fallback, no query.
+  // #551, D-03: a blank tenant holds nothing, no query.
   if (isBlankTenantId(tenantId)) return { zugewiesen, zugewiesenAnyScope, eigene };
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
-      role: true,
       roleAssignments: {
         where: { tenantId },
         select: {
@@ -189,12 +185,7 @@ async function computeGrantsForUser(
   });
   if (!user) return { zugewiesen, zugewiesenAnyScope, eigene };
 
-  if (user.roleAssignments.length === 0) {
-    const fallback = await loadSystemRole(prisma, systemRoleIdForLegacyRole(user.role));
-    collect(fallback, true, zugewiesen, zugewiesenAnyScope, eigene);
-    return { zugewiesen, zugewiesenAnyScope, eigene };
-  }
-
+  // #539, D-02/D-03: zero stored rows fall through the loop and leave the sets empty (fail closed).
   for (const row of user.roleAssignments) {
     const roleBelongsHere =
       row.accessRole.tenantId === null || row.accessRole.tenantId === tenantId;

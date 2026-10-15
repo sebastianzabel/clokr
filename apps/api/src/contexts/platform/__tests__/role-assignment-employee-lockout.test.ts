@@ -9,6 +9,11 @@
  * takes a holder count from >= 1 to 0 answers 409 `ROLE_LOCKOUT_MESSAGE` and leaves every row and
  * the audit log untouched.
  *
+ * The acting principal is an admin-scope API key per tenant (#539): it passes every guard through
+ * the Admin system role but is no stored assignment and so never a counted holder - exactly what the
+ * seed admin was while the legacy-role fallback existed - so every holder count is arranged by the
+ * test alone.
+ *
  * `beforeEach` removes every assignment of both tenants. Fixture people a test deactivates,
  * anonymizes or deletes are created inside that test, so no state has to be reset between tests.
  * No person names in fixtures (CLAUDE.md PII rule).
@@ -18,7 +23,14 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
 import type { RoleAssignment } from "@clokr/db";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createAdminApiKey,
+  removeFixtureApiKeys,
+} from "../../../__tests__/setup";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 import { userMayApply } from "..";
 import { ROLE_LOCKOUT_MESSAGE } from "../role-assignment";
@@ -89,6 +101,10 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
   let roleManage: Awaited<ReturnType<typeof createRole>>;
   let roleManageB: Awaited<ReturnType<typeof createRole>>;
   let roleTimeRead: Awaited<ReturnType<typeof createRole>>;
+  /** Raw tokens of the uncounted acting principals (admin-scope API keys of tenant A and B). */
+  let actorTokenA: string;
+  let actorTokenB: string;
+  let actorKeyIdA: string;
 
   async function assignTenant(
     tenantId: string,
@@ -115,7 +131,7 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
     return app.inject({
       method: "DELETE",
       url: `/api/v1/employees/${employeeId}`,
-      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      headers: { authorization: `Bearer ${actorTokenA}` },
     });
   }
 
@@ -123,7 +139,7 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
     return app.inject({
       method: "DELETE",
       url: `/api/v1/employees/${employeeId}/hard-delete`,
-      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      headers: { authorization: `Bearer ${actorTokenA}` },
       payload: {},
     });
   }
@@ -140,7 +156,7 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
     return app.prisma.auditLog.count({ where: { entity, entityId, action } });
   }
 
-  function deactivate(employeeId: string, token = tenantA.adminToken) {
+  function deactivate(employeeId: string, token = actorTokenA) {
     return app.inject({
       method: "PATCH",
       url: `/api/v1/employees/${employeeId}/deactivate`,
@@ -153,6 +169,18 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
     app = await getTestApp();
     tenantA = await seedTestData(app, "74b-elock-a");
     tenantB = await seedTestData(app, "74b-elock-b");
+    const keyA = await createAdminApiKey(app.prisma, {
+      tenantId: tenantA.tenant.id,
+      createdBy: tenantA.adminUser.id,
+    });
+    actorTokenA = keyA.token;
+    actorKeyIdA = keyA.id;
+    actorTokenB = (
+      await createAdminApiKey(app.prisma, {
+        tenantId: tenantB.tenant.id,
+        createdBy: tenantB.adminUser.id,
+      })
+    ).token;
     roleManage = await createRole(app, tenantA.tenant.id, "RM", [ROLE_MANAGE, ASSIGNMENT_MANAGE]);
     roleManageB = await createRole(app, tenantB.tenant.id, "RM-B", [
       ROLE_MANAGE,
@@ -173,6 +201,8 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
 
   afterAll(async () => {
     try {
+      await removeFixtureApiKeys(app.prisma, tenantA.tenant.id);
+      await removeFixtureApiKeys(app.prisma, tenantB.tenant.id);
       await cleanupTestData(app, tenantA.tenant.id);
     } catch (err) {
       console.error("Cleanup tenantA failed:", err);
@@ -254,7 +284,7 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
     const reactivated = await app.inject({
       method: "PATCH",
       url: `/api/v1/employees/${holder.employee.id}/reactivate`,
-      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      headers: { authorization: `Bearer ${actorTokenA}` },
       payload: {},
     });
     expect(reactivated.statusCode).toBe(200);
@@ -289,7 +319,7 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
     // Tenant B has a role that grants both guarded permissions, but nobody holds it.
     expect(roleManageB.tenantId).toBe(tenantB.tenant.id);
     const person = await createUserWithEmployee(app, tenantB.tenant.id, "Ohne Zuweisung");
-    const res = await deactivate(person.employee.id, tenantB.adminToken);
+    const res = await deactivate(person.employee.id, actorTokenB);
     expect(res.statusCode).toBe(200);
   });
 
@@ -350,7 +380,11 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
         salonIds: removed.salonIds,
         employeeIds: removed.employeeIds,
       });
-      expect(audits[0].newValue).toEqual({ reason: "Anonymisierung" });
+      // The acting principal is the API key (#539), which the audit trail records as the actor.
+      expect(audits[0].newValue).toEqual({
+        reason: "Anonymisierung",
+        actor: { type: "API_KEY", apiKeyId: actorKeyIdA },
+      });
     }
     expect(await auditCount("Employee", holder.employee.id, "ANONYMIZE")).toBe(1);
     // Positive control for (f): the spy does see the avatar delete on the success path.
@@ -391,7 +425,7 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
     const res = await app.inject({
       method: "DELETE",
       url: `/api/v1/roles/${roleX.id}`,
-      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      headers: { authorization: `Bearer ${actorTokenA}` },
     });
     expect(res.statusCode).toBe(204);
   });

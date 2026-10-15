@@ -3,10 +3,10 @@
  * `userIdsHoldingPermission`, the Unterbau facade every notification-recipient site (17 of them)
  * asks instead of a role-based Prisma predicate.
  *
- * A holder is either a well-formed stored assignment of ANY scope (TENANT, SALONS or PERSONS)
- * whose role belongs to the tenant and grants the permission, or — for a user with NO stored
- * assignment at all in the tenant — the implicit system role of their `User.role` column (D-08's
- * "Altrollen-Rückfall", mapped through `systemRoleIdForLegacyRole`, C-10). Before Issue #367 (the
+ * A holder is a well-formed stored assignment of ANY scope (TENANT, SALONS or PERSONS) whose role
+ * belongs to the tenant and grants the permission — and nothing else: since #539 (Release A) a user
+ * with NO stored assignment in the tenant is never a holder, whatever their `User.role` column says
+ * (the former D-08 "Altrollen-Rückfall" no longer exists). Before Issue #367 (the
  * original D-09), a SALONS/PERSONS assignment never made a holder here — narrowing to the actual
  * scope is `resolveScopedHolderIds()`'s job (D-17); a malformed row (any scope) and a foreign
  * tenant's customer role still never make a holder. The facade does NOT filter `isActive` itself —
@@ -14,7 +14,7 @@
  * inactive holder is still returned here.
  *
  * Phase 355 (Issue #355): the facade DOES filter a departed holder — `Employee.exitDate` set and
- * in the past — itself, through either path (a stored assignment or the D-08 fallback), because no
+ * in the past — itself, because no
  * site filtered `exitDate` on its own before this (the personal-data leak #355 reports). A holder
  * whose `exitDate` is in the future (not yet effective) is unaffected.
  *
@@ -152,7 +152,7 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
   let dedupeHolder: Awaited<ReturnType<typeof createUserWithEmployee>>;
 
   // Phase 355 (Issue #355): a departed ADMIN/MANAGER — active user, but `exitDate` in the past —
-  // must not be returned, via either the stored TENANT-scope assignment or the D-08 fallback.
+  // must not be returned (stored TENANT-scope assignment; a user without a row is never a holder since #539).
   let departedStoredAdmin: Awaited<ReturnType<typeof createUserWithEmployee>>;
   let departedFallbackManager: Awaited<ReturnType<typeof createUserWithEmployee>>;
   let futureExitAdmin: Awaited<ReturnType<typeof createUserWithEmployee>>;
@@ -286,7 +286,7 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
     await assignTenant(app, tenantA.tenant.id, dedupeHolder.user.id, customerRoleGranting.id);
 
     // Phase 355 (Issue #355): departed (exitDate in the past), still active — a stored TENANT
-    // assignment and a D-08 fallback holder respectively.
+    // assignment, and one with no stored row at all (never a holder since #539).
     departedStoredAdmin = await createUserWithEmployee(
       app,
       tenantA.tenant.id,
@@ -334,14 +334,14 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
     expect(ids).not.toContain(storedEmployeeRole.user.id);
   });
 
-  it("a user with no stored assignment is returned iff the system role of their User.role grants the permission (D-08 fallback)", async () => {
+  it("a user with no stored assignment is never returned, whatever their User.role says (#539: no Altrollen-Rückfall)", async () => {
     const ids = await userIdsHoldingPermission(
       app.prisma,
       tenantA.tenant.id,
       LEAVE_REQUEST_APPROVE,
     );
-    expect(ids).toContain(fallbackAdmin.user.id);
-    expect(ids).toContain(fallbackManager.user.id);
+    expect(ids).not.toContain(fallbackAdmin.user.id);
+    expect(ids).not.toContain(fallbackManager.user.id);
     expect(ids).not.toContain(fallbackEmployee.user.id);
   });
 
@@ -418,7 +418,7 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
     expect(ids).not.toContain(departedStoredAdmin.user.id);
   });
 
-  it("a departed holder (exitDate in the past) is NOT returned, D-08 fallback (Issue #355)", async () => {
+  it("a departed user without a stored assignment is NOT returned either (Issue #355; since #539 never a holder)", async () => {
     const ids = await userIdsHoldingPermission(
       app.prisma,
       tenantA.tenant.id,
@@ -452,23 +452,18 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  // ── Issue #359 ───────────────────────────────────────────────────────────────
-  // A fallback-eligible user's system role used to be looked up with `Map.get`, and a miss just
-  // dropped that user from the result — a too-small (possibly empty) recipient list instead of a
-  // surfaced misconfiguration. A fake `db` (never `app.prisma`, never a real delete) mirrors the
-  // technique `request-permissions.test.ts` uses for the same failure mode in `loadSystemRole`, so
-  // no other test in this shared-fixture file is put at risk.
-  it("Issue #359: throws when the fallback's mapped system role is missing, instead of silently returning an empty list", async () => {
+  // ── Issue #359, as of #539 ───────────────────────────────────────────────────
+  // A fallback-eligible user's system role used to be looked up, and a missing system-role row made
+  // this function throw (Issue #359). Since #539 there is no fallback and no system-role lookup: the
+  // facade reads stored rows only. A fake `db` (never `app.prisma`) WITHOUT an `accessRole` or `user`
+  // delegate proves it — any such read would be a TypeError instead of the empty answer.
+  it("Issue #359 / #539: with no stored row the facade answers [] without any system-role or user lookup", async () => {
     const fakeDb = {
       roleAssignment: { findMany: async () => [] },
-      accessRole: { findMany: async () => [] }, // every system role row "missing"
-      user: {
-        findMany: async () => [{ id: "fake-user-id", role: "EMPLOYEE" as Role }],
-      },
     } as unknown as Prisma.TransactionClient;
 
     await expect(
       userIdsHoldingPermission(fakeDb, tenantA.tenant.id, LEAVE_REQUEST_APPROVE),
-    ).rejects.toThrow(/system role .* is missing/);
+    ).resolves.toEqual([]);
   });
 });

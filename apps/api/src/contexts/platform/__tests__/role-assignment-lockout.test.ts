@@ -8,13 +8,25 @@
  * the role and the audit log untouched.
  *
  * `beforeEach` removes every assignment of both tenants and re-activates every fixture user, so
- * each test states exactly the holders it needs. No person names in fixtures (CLAUDE.md PII rule).
+ * each test states exactly the holders it needs. The acting principal is an admin-scope API key
+ * (#539): it passes every guard through the Admin system role but is no stored assignment and so
+ * never a counted holder - exactly the role the seed admin played while the legacy-role fallback
+ * existed, so every holder count below is arranged by the test alone. A stored admin as actor
+ * IS a holder; case (t) states that explicitly. No person names in fixtures (CLAUDE.md PII rule).
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import type { RoleAssignment } from "@clokr/db";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createAdminApiKey,
+  removeFixtureApiKeys,
+} from "../../../__tests__/setup";
+import { SYSTEM_ROLE_IDS } from "../system-roles";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
 import { withRoleLockoutGuard } from "../facade/role-assignments";
@@ -104,6 +116,8 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
   let roleManageB: Awaited<ReturnType<typeof createRole>>;
   let roleManage2: Awaited<ReturnType<typeof createRole>>;
   let systemRoleManage: Awaited<ReturnType<typeof createRole>>;
+  /** Raw token of the uncounted acting principal (an admin-scope API key of tenant A). */
+  let actorToken: string;
 
   async function assign(
     tenantId: string,
@@ -131,7 +145,7 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
     return app.inject({
       method: "DELETE",
       url: `/api/v1/role-assignments/${assignmentId}`,
-      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      headers: { authorization: `Bearer ${actorToken}` },
     });
   }
 
@@ -150,6 +164,13 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
     app = await getTestApp();
     tenantA = await seedTestData(app, "74b-lock-a");
     tenantB = await seedTestData(app, "74b-lock-b");
+
+    actorToken = (
+      await createAdminApiKey(app.prisma, {
+        tenantId: tenantA.tenant.id,
+        createdBy: tenantA.adminUser.id,
+      })
+    ).token;
 
     holder1 = await createUserWithEmployee(app, tenantA.tenant.id, "Halter 1");
     holder2 = await createUserWithEmployee(app, tenantA.tenant.id, "Halter 2");
@@ -198,6 +219,7 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
 
   afterAll(async () => {
     try {
+      await removeFixtureApiKeys(app.prisma, tenantA.tenant.id);
       await cleanupTestData(app, tenantA.tenant.id);
     } catch (err) {
       console.error("Cleanup tenantA failed:", err);
@@ -494,7 +516,7 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
       method: "PATCH",
       url: `/api/v1/role-assignments/${assignmentId}`,
       headers: {
-        authorization: `Bearer ${tenantA.adminToken}`,
+        authorization: `Bearer ${actorToken}`,
         "content-type": "application/json",
       },
       payload: JSON.stringify(payload),
@@ -556,7 +578,7 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
       method: "PATCH",
       url: `/api/v1/roles/${roleId}`,
       headers: {
-        authorization: `Bearer ${tenantA.adminToken}`,
+        authorization: `Bearer ${actorToken}`,
         "content-type": "application/json",
       },
       payload: JSON.stringify(payload),
@@ -614,7 +636,7 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
     return app.inject({
       method: "DELETE",
       url: `/api/v1/roles/${roleId}`,
-      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      headers: { authorization: `Bearer ${actorToken}` },
     });
   }
 
@@ -662,5 +684,37 @@ describe("Role lockout protection (Phase 74b, Issue #74)", () => {
     const res = await deleteRole(systemRoleManage.id);
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.body)).toEqual({ error: "Systemrollen können nicht gelöscht werden." });
+  });
+
+  // ── #539: a stored admin as the acting principal IS a holder ─────────────────────────────────────
+
+  it("(t) #539: a stored system Admin as actor is a counted holder - revoking another holder's row succeeds, revoking its own last row is refused", async () => {
+    const actor = holder2;
+    const actorRow = await assign(tenantA.tenant.id, actor.user.id, SYSTEM_ROLE_IDS.ADMIN);
+    const other = await assign(tenantA.tenant.id, holder1.user.id, roleManage.id);
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: actor.user.email, password: "test1234" },
+      remoteAddress: "10.74.9.1",
+    });
+    expect(login.statusCode, login.body).toBe(200);
+    const token = (JSON.parse(login.body) as { accessToken: string }).accessToken;
+    const revokeAs = (id: string) =>
+      app.inject({
+        method: "DELETE",
+        url: `/api/v1/role-assignments/${id}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+    // Two holders (the actor through the system Admin role, holder 1): removing holder 1 leaves one.
+    expect((await revokeAs(other.id)).statusCode).toBe(204);
+    // The actor is now the last holder: removing its own row would empty the holder set.
+    const refused = await revokeAs(actorRow.id);
+    expect(refused.statusCode).toBe(409);
+    expect(JSON.parse(refused.body)).toEqual({ error: ROLE_LOCKOUT_MESSAGE });
+    expect(await app.prisma.roleAssignment.findUnique({ where: { id: actorRow.id } })).toEqual(
+      actorRow,
+    );
   });
 });

@@ -34,8 +34,6 @@ import {
 } from "../permission-catalog";
 import { roleGrants } from "../access-role";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter";
-import { systemRoleIdForLegacyRole } from "../compat-role";
-import { SYSTEM_ROLE_IDS } from "../system-roles";
 import { findSalon, listSalons } from "./salons";
 import { currentAndFutureAssignmentSalonIds, homeSalonAt } from "./salon-assignments";
 import {
@@ -136,38 +134,6 @@ export async function userMayApply(
 // ── Reach resolution (Phase 91b, Issue #91, D-03/D-04) ──────────────────────────────────────────
 
 /**
- * The legacy-role fallback ("Altrollen-Rückfall", Phase 75b D-08) of the two reach functions,
- * {@link resolveAccessReach} and {@link contextSalonIds}: for a user with no stored
- * `RoleAssignment`, the system role of `User.role` stands in as one implicit TENANT assignment.
- * One rule in one place, so the reach the endpoints enforce and the salon context the web shows
- * (Phase 82, Issue #82, D-03) can never drift apart. `null` for a deleted user (no `User` row) —
- * each caller fails closed on it. A missing system-role row throws (Issue #359: an incomplete
- * migration must surface, never read as "no reach"); `caller` prefixes the message.
- *
- * Private on purpose: it answers nothing on its own — only its two callers know what an implicit
- * TENANT assignment means for their question.
- */
-async function loadLegacyFallbackRole(
-  db: Prisma.TransactionClient,
-  userId: string,
-  caller: string,
-): Promise<{ id: string; tenantId: string | null; name: string; permissions: string[] } | null> {
-  const user = await db.user.findUnique({ where: { id: userId }, select: { role: true } });
-  if (!user) return null;
-  const fallbackRoleId = systemRoleIdForLegacyRole(user.role);
-  const fallbackRole = await db.accessRole.findUnique({
-    where: { id: fallbackRoleId },
-    select: { id: true, tenantId: true, name: true, permissions: true },
-  });
-  if (!fallbackRole) {
-    throw new Error(
-      `${caller}: system role ${fallbackRoleId} is missing — the migration that inserts the system roles has not been applied`,
-    );
-  }
-  return fallbackRole;
-}
-
-/**
  * D-04: how far does `ctx.actor` reach for `permission`, right now?
  *
  * Reach depends on WHICH permission is asked about — a SALONS assignment might grant
@@ -177,14 +143,12 @@ async function loadLegacyFallbackRole(
  *
  * - `ctx.actor.kind !== "user"` (apiKey, system) → `{ kind: "wholeTenant" }` unconditionally, no
  *   `RoleAssignment` read at all — API keys stay out of scope in this phase (D-04).
- * - No stored assignment at all → the SAME legacy-role fallback `resolveGrants()`/
- *   `userIdsHoldingPermission()` already apply (the "Altrollen-Rückfall"): the system role of
- *   `User.role` (`systemRoleIdForLegacyRole`) stands in as one implicit TENANT assignment. Without
- *   this, every user created before a 91b-shaped assignment existed would lose ALL reach for every
- *   ZUGEWIESEN permission the instant a scope filter runs, purely because they hold no stored row
- *   — this is the single most consequential correctness property of this function (see
- *   `resolve-access-reach.test.ts`'s mutation proof M2). A deleted user (no `User` row) fails
- *   closed: `{ kind: "scoped", salonIds: [], employeeIds: [] }`.
+ * - No stored assignment at all → `{ kind: "scoped", salonIds: [], employeeIds: [] }` (#539, D-02/
+ *   D-03): reach comes ONLY from stored rows, exactly like `resolveGrants()`/
+ *   `userIdsHoldingPermission()`. The former legacy-role fallback ("Altrollen-Rückfall", which let
+ *   the system role of `User.role` stand in as one implicit TENANT assignment) no longer exists, so
+ *   a user without a row — and a deleted user, who has none — fails closed (see
+ *   `resolve-access-reach.test.ts`'s mutation proof M2).
  * - Otherwise: union every well-formed assignment (`storedRoleAssignmentScope`, IN-02, fail closed
  *   on a malformed row exactly like `userMayApply`/`userIdsHoldingPermission`) whose role belongs
  *   to this tenant and grants `permission` via `roleGrants` (AK-73-7, the one role-evaluation
@@ -219,19 +183,7 @@ export async function resolveAccessReach(
     include: { accessRole: true },
   });
 
-  if (assignments.length === 0) {
-    // The "Altrollen-Rückfall" (D-08 of Phase 75b) — identical fallback rule to
-    // `resolveGrants()`/`userIdsHoldingPermission()`. Never diverge from it here.
-    const fallbackRole = await loadLegacyFallbackRole(db, userId, "resolveAccessReach");
-    if (!fallbackRole) {
-      // Deleted user, still-valid token — fail closed, exactly like the two sibling resolvers.
-      return { kind: "scoped", salonIds: [], employeeIds: [] };
-    }
-    return roleGrants(fallbackRole, permission)
-      ? { kind: "wholeTenant" }
-      : { kind: "scoped", salonIds: [], employeeIds: [] };
-  }
-
+  // Zero rows: the loop below sees nothing and the answer is the scoped-empty reach (fail closed).
   const salonIds = new Set<string>();
   const employeeIds = new Set<string>();
   for (const assignment of assignments) {
@@ -271,7 +223,7 @@ export async function resolveAccessReach(
 export type ContextSalonIds = {
   /** Union of `managedSalonIds` and `ownSalonIds`. */
   salonIds: string[];
-  /** Reach of the caller's role assignments (or the legacy-role fallback). */
+  /** Reach of the caller's stored role assignments (none stored → empty, #539). */
   managedSalonIds: string[];
   /** Salons of the caller's own current and future salon assignments. */
   ownSalonIds: string[];
@@ -299,9 +251,9 @@ const ZUGEWIESEN_KEYS: readonly PermissionKey[] = PERMISSIONS.filter(
  * The union of two parts:
  * - **managed:** every well-formed assignment whose role (system or this tenant's) grants at least
  *   one ZUGEWIESEN key — TENANT → every active salon, SALONS → those of its salons that are active
- *   in this tenant, PERSONS → none (a person list is not a salon). No stored assignment → the same
- *   legacy-role fallback as {@link resolveAccessReach} ({@link loadLegacyFallbackRole}); a deleted
- *   user reaches nothing. A non-user actor (API key, job) reaches every active salon, mirroring
+ *   in this tenant, PERSONS → none (a person list is not a salon). No stored assignment → no
+ *   managed salon, like {@link resolveAccessReach} (#539: the legacy-role fallback is gone); a
+ *   deleted user manages nothing. A non-user actor (API key, job) reaches every active salon, mirroring
  *   `resolveAccessReach`'s `wholeTenant` answer.
  * - **own:** the salons of the caller's own current and future salon assignments
  *   ({@link currentAndFutureAssignmentSalonIds}, Phase 87b D-10 — the validity rule lives there
@@ -341,37 +293,30 @@ export async function contextSalonIds(
     where: { tenantId, userId },
     include: { accessRole: true },
   });
-  if (assignments.length === 0) {
-    const fallbackRole = await loadLegacyFallbackRole(db, userId, "contextSalonIds");
-    if (!fallbackRole) {
-      return { salonIds: [], managedSalonIds: [], ownSalonIds: [], homeSalonId: null };
+  // #539, D-02/D-03: zero stored rows leave `managed` empty (fail closed) — no legacy-role stand-in.
+  const collected = new Set<string>();
+  let wholeTenant = false;
+  for (const assignment of assignments) {
+    const accessRole = assignment.accessRole;
+    const roleBelongsHere = accessRole.tenantId === null || accessRole.tenantId === tenantId;
+    if (!roleBelongsHere) continue;
+    if (!grantsAnyZugewiesen(accessRole)) continue;
+    const scope = storedRoleAssignmentScope(assignment);
+    if (scope === null) continue;
+    if (scope.scopeType === "TENANT") {
+      wholeTenant = true;
+      break;
     }
-    if (grantsAnyZugewiesen(fallbackRole)) managed = await activeSalonIds();
-  } else {
-    const collected = new Set<string>();
-    let wholeTenant = false;
-    for (const assignment of assignments) {
-      const accessRole = assignment.accessRole;
-      const roleBelongsHere = accessRole.tenantId === null || accessRole.tenantId === tenantId;
-      if (!roleBelongsHere) continue;
-      if (!grantsAnyZugewiesen(accessRole)) continue;
-      const scope = storedRoleAssignmentScope(assignment);
-      if (scope === null) continue;
-      if (scope.scopeType === "TENANT") {
-        wholeTenant = true;
-        break;
-      }
-      for (const salonId of scope.salonIds) collected.add(salonId);
-    }
-    if (wholeTenant) {
-      managed = await activeSalonIds();
-    } else if (collected.size > 0) {
-      const salons = await db.salon.findMany({
-        where: { tenantId, id: { in: [...collected] }, isActive: true },
-        select: { id: true },
-      });
-      managed = salons.map((salon) => salon.id).sort(byCodeUnit);
-    }
+    for (const salonId of scope.salonIds) collected.add(salonId);
+  }
+  if (wholeTenant) {
+    managed = await activeSalonIds();
+  } else if (collected.size > 0) {
+    const salons = await db.salon.findMany({
+      where: { tenantId, id: { in: [...collected] }, isActive: true },
+      select: { id: true },
+    });
+    managed = salons.map((salon) => salon.id).sort(byCodeUnit);
   }
 
   let own: string[] = [];
@@ -540,7 +485,7 @@ export async function withRoleLockoutGuard<T>(
 
 /**
  * D-16: the ids of every user of `tenantId` who holds `permission` — a ZUGEWIESEN permission only
- * (an EIGENE key answers nothing at tenant scope, so it throws — D-09). A holder is either:
+ * (an EIGENE key answers nothing at tenant scope, so it throws — D-09). A holder is
  *
  * (a) a well-formed assignment (D-03 shape — fail closed on a malformed row, IN-02:
  *     `storedRoleAssignmentScope` returns `null` for a TENANT row with a non-empty salon/employee
@@ -549,11 +494,10 @@ export async function withRoleLockoutGuard<T>(
  *     tenant grants nothing even if a row references it) and grants `permission` via `roleGrants`,
  *     the ONE role-evaluation path (AK-73-7) — a TENANT-scope row always qualifies; a SALONS/
  *     PERSONS row qualifies only when `permission`'s resource has relation `PERSON` (Issue #367,
- *     see below); or
- * (b) a user with NO stored `RoleAssignment` at all in the tenant — any scope, even a malformed
- *     one, disables the fallback for that user (D-08's "Altrollen-Rückfall") — mapped through
- *     `systemRoleIdForLegacyRole` (C-10, the compat module; never an inline role literal) onto the
- *     matching system role, kept when THAT role grants `permission`.
+ *     see below).
+ * Nobody else is a holder (#539, D-02/D-03): a user with NO stored `RoleAssignment` in the tenant
+ * holds nothing and is never returned. The former legacy-role fallback ("Altrollen-Rückfall", which
+ * mapped `User.role` onto a system role for such a user) no longer exists.
  *
  * Issue #367 (owner decision 2026-09-29, revises Phase 91b's D-09, ADR 0001-abweichungen Eintrag
  * P): before this fix, (a) required a TENANT-scope row specifically — a SALONS or PERSONS
@@ -595,12 +539,6 @@ export async function withRoleLockoutGuard<T>(
  * the FUTURE (a planned, not-yet-effective departure) is still a holder — only a past `exitDate`
  * counts as departed.
  *
- * Issue #359: a tenant user who falls into the (b) fallback throws if the system role their
- * `User.role` maps to is missing, instead of silently contributing nothing — the same fail-closed
- * choice `loadSystemRole` in `request-permissions.ts` makes for every other permission decision.
- * Before this fix a missing system-role row made this function answer a too-small (possibly
- * empty) recipient list, so a notification would silently go to no one instead of surfacing the
- * incomplete migration.
  */
 export async function userIdsHoldingPermission(
   db: Prisma.TransactionClient,
@@ -614,8 +552,8 @@ export async function userIdsHoldingPermission(
     );
   }
 
-  // Every stored assignment of the tenant, any scope: D-08's fallback triggers only for a user
-  // with NO row at all here, even a malformed or non-granting one.
+  // Every stored assignment of the tenant, any scope; only a well-formed granting one makes a holder
+  // (#539: a user without any stored row holds nothing).
   const assignments = await db.roleAssignment.findMany({
     where: { tenantId },
     select: {
@@ -641,10 +579,8 @@ export async function userIdsHoldingPermission(
   // `zugewiesenAnyScope`) — measured while building this fix's neutrality-amendment coverage.
   const isPersonRelation = PERMISSION_RESOURCES[catalogEntry.resource].relation === "PERSON";
 
-  const usersWithStoredAssignment = new Set<string>();
   const storedHolderIds = new Set<string>();
   for (const assignment of assignments) {
-    usersWithStoredAssignment.add(assignment.userId);
     // A well-formed TENANT row is always a candidate; a well-formed SALONS/PERSONS row is a
     // candidate only for a PERSON-relation permission (see above). `storedRoleAssignmentScope` is
     // the ONE D-03 shape check (IN-02, fail closed on a malformed row, whichever scope it claims).
@@ -660,40 +596,7 @@ export async function userIdsHoldingPermission(
     storedHolderIds.add(assignment.userId);
   }
 
-  // D-08 fallback: a user of the tenant with no stored assignment is implicitly assigned the
-  // system role of their `User.role` column (`systemRoleIdForLegacyRole`, C-10) — loaded live so
-  // the fallback answers through the same `roleGrants` evaluation as every stored row.
-  const systemRoles = await db.accessRole.findMany({
-    where: { id: { in: Object.values(SYSTEM_ROLE_IDS) }, tenantId: null },
-    select: { id: true, tenantId: true, permissions: true },
-  });
-  const systemRoleById = new Map(systemRoles.map((role) => [role.id, role]));
-
-  const tenantUsers = await db.user.findMany({
-    where: { employee: { tenantId } },
-    select: { id: true, role: true },
-  });
-  const fallbackHolderIds = new Set<string>();
-  for (const user of tenantUsers) {
-    if (usersWithStoredAssignment.has(user.id)) continue;
-    const roleId = systemRoleIdForLegacyRole(user.role);
-    const systemRole = systemRoleById.get(roleId);
-    // Issue #359: a missing system-role row used to be treated as "grants nothing", so a
-    // notification recipient lookup silently returned an empty (or too-small) list — a
-    // request/leave/retro notification would go to no one instead of surfacing the misconfigured
-    // migration. `loadSystemRole` in request-permissions.ts throws on the same condition; mirror
-    // that here so both resolution paths fail the same way.
-    if (systemRole === undefined) {
-      throw new Error(
-        `userIdsHoldingPermission: system role ${roleId} is missing — the migration that inserts the system roles has not been applied`,
-      );
-    }
-    if (roleGrants(systemRole, permission)) {
-      fallbackHolderIds.add(user.id);
-    }
-  }
-
-  const candidateIds = [...new Set([...storedHolderIds, ...fallbackHolderIds])];
+  const candidateIds = [...storedHolderIds];
   if (candidateIds.length === 0) return [];
 
   // Phase 355 (Issue #355): drop a departed candidate — `exitDate` set and in the past — the ONE
@@ -757,10 +660,9 @@ export async function resolveScopedHolderIds(
  * Issue #538: the display names of the roles each of `userIds` holds - the ONE derivation behind
  * the caller's own role label (`GET /me/context`) and the per-person role chip of
  * `GET /employees`. Presentation only, it decides nothing; names only. Same source as the access
- * decision: the stored assignments of this tenant (system roles and this tenant's own roles), or,
- * for a user with none stored, the system role of the legacy `User.role` column as one implicit
- * assignment (the {@link loadLegacyFallbackRole} rule). Distinct, sorted by name. A user id that
- * does not exist maps to an empty list. Two queries for any number of users. Not re-exported from
+ * decision: the stored assignments of this tenant (system roles and this tenant's own roles)
+ * and nothing else (#539: a user with none stored has no role and maps to an empty list). Distinct,
+ * sorted by name. A user id that does not exist maps to an empty list. Two queries for any number of users. Not re-exported from
  * `contexts/platform/index.ts`.
  */
 export async function roleNamesByUserId(
@@ -781,32 +683,6 @@ export async function roleNamesByUserId(
     const names = namesByUser.get(assignment.userId) ?? new Set<string>();
     names.add(role.name);
     namesByUser.set(assignment.userId, names);
-  }
-  const withoutAssignment = userIds.filter(
-    (id) => !assignments.some((assignment) => assignment.userId === id),
-  );
-  if (withoutAssignment.length > 0) {
-    const users = await db.user.findMany({
-      where: { id: { in: withoutAssignment } },
-      select: { id: true, role: true },
-    });
-    const fallbackNames = new Map<string, string>();
-    for (const role of new Set(users.map(({ role }) => role))) {
-      const fallbackRoleId = systemRoleIdForLegacyRole(role);
-      const fallbackRole = await db.accessRole.findUnique({
-        where: { id: fallbackRoleId },
-        select: { name: true },
-      });
-      if (!fallbackRole) {
-        throw new Error(
-          `roleNamesByUserId: system role ${fallbackRoleId} is missing - the migration that inserts the system roles has not been applied`,
-        );
-      }
-      fallbackNames.set(role, fallbackRole.name);
-    }
-    for (const { id, role } of users) {
-      namesByUser.set(id, new Set([fallbackNames.get(role) as string]));
-    }
   }
   for (const id of userIds) {
     result.set(

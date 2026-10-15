@@ -19,7 +19,14 @@ import bcrypt from "bcryptjs";
 import crypto, { createHash, randomBytes } from "crypto";
 import type { FastifyInstance } from "fastify";
 import type { Role } from "@clokr/db";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createAdminApiKey,
+  removeFixtureApiKeys,
+} from "./setup";
 import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
 import { SYSTEM_ROLE_IDS, normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import { ROLE_LOCKOUT_MESSAGE } from "../contexts/platform/role-assignment";
@@ -359,9 +366,15 @@ describe("Role bridge: employee form, compat column and fallback materialization
   it("demoting the last stored Admin holder answers 409 and commits nothing — not the field update either (D-31)", async () => {
     const target = await createPerson(lockTenant.tenant.id, "Letzter Admin", "ADMIN");
     await executeLegacyRoleMigration(app.prisma);
-    // The seed admin keeps acting through the fallback, so the target is the ONLY stored holder.
+    // The seed admin's stored row goes, so the target is the ONLY stored holder. The acting principal
+    // is an admin-scope API key instead (#539: without the fallback the seed admin would hold nothing
+    // and the call would be a 403, not the lockout 409 this case is about); a key is never a holder.
     await app.prisma.roleAssignment.deleteMany({
       where: { tenantId: lockTenant.tenant.id, userId: lockTenant.adminUser.id },
+    });
+    const actorKey = await createAdminApiKey(app.prisma, {
+      tenantId: lockTenant.tenant.id,
+      createdBy: lockTenant.adminUser.id,
     });
     const rowsBefore = await storedAssignments(lockTenant.tenant.id, target.user.id);
     const auditsBefore = await roleAssignmentAudits(target.user.id);
@@ -372,10 +385,11 @@ describe("Role bridge: employee form, compat column and fallback materialization
       where: { entity: "Employee", entityId: target.employee.id },
     });
 
-    const res = await patchEmployee(lockTenant.adminToken, target.employee.id, {
+    const res = await patchEmployee(actorKey.token, target.employee.id, {
       firstName: "Nicht Gespeichert",
       role: "EMPLOYEE",
     });
+    await removeFixtureApiKeys(app.prisma, lockTenant.tenant.id);
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.body)).toEqual({ error: ROLE_LOCKOUT_MESSAGE });
 

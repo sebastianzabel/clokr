@@ -189,8 +189,8 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
 
   it("a candidate holding nothing at all for the permission resolves without throwing and is excluded", async () => {
     const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "no-grant");
-    // No RoleAssignment at all AND the legacy fallback role (EMPLOYEE) does not grant
-    // leave-request:approve:ZUGEWIESEN — resolves to a scoped reach with both arrays empty.
+    // No RoleAssignment at all (#539: there is no legacy-role fallback any more) — resolves to a
+    // scoped reach with both arrays empty.
 
     const kept = await resolveScopedHolderIds(
       app.prisma,
@@ -202,6 +202,21 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
     );
 
     expect(kept).toEqual([user.id]);
+  });
+
+  it("a candidate with no stored row is never kept by wholeTenant, even with the MANAGER column (#539)", async () => {
+    const { user } = await createUser(tA.tenant.id, "MANAGER", "no-row-manager");
+
+    const kept = await resolveScopedHolderIds(
+      app.prisma,
+      tA.tenant.id,
+      [user.id],
+      "leave-request:approve:ZUGEWIESEN",
+      (reach: AccessReach) => reach.kind === "scoped" && reach.salonIds.length > 0,
+    );
+
+    // Before #539 the column made this user `wholeTenant`, which is always kept.
+    expect(kept).toEqual([]);
   });
 
   it("supports a synchronous (non-Promise) isInScope callback", async () => {

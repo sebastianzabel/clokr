@@ -330,7 +330,7 @@
     "calls": [
       {
         "call": "employee.findFirst",
-        "line": 379
+        "line": 324
       }
     ],
     "reason": "Phase 82 (Issue #82, 2026-10-12). This entry replaces the former resolveAccessReach() legacy-role fallback entry (Phase 91b Plan 01, user.findUnique at line 192): Phase 82 moved that call verbatim into the module-private helper loadLegacyFallbackRole(), whose parameters the gate does not treat as request-bound (it seeds only EXPORTED facade functions), so it is no finding any more — measured, the old entry turned STALE. The call named here, employee.findFirst in contextSalonIds(), filters `where: { tenantId, userId, ...NOT_ANONYMIZED_EMPLOYEE_WHERE }` — it IS constrained to the tenant, but `tenantId` and `userId` are read off `ctx: AccessContext` (`ctx.tenantId`, `ctx.actor.userId`), which the gate cannot bind to req.user. Every AccessContext with a `user` actor is built exclusively by accessContextFromRequest() (access-context.ts), which sets tenantId from req.user.tenantId and userId from req.user.sub — the JWT's own authenticated subject, never a client-supplied parameter; a non-user actor returns before this line. The call therefore reads only the CALLER's OWN employee row in the CALLER's tenant, and returns only its id. Same category and same reasoning as the resolveAccessReach() entry it replaces. Phase 87b, Issue #87, 2026-10-12: the own-salon read below this call moved into the Unterbau function currentAndFutureAssignmentSalonIds(), which filters by tenantId itself; this call is unchanged. Re-measured: the line stays 379 (the import block shrank by one line, the docblock grew by one)."

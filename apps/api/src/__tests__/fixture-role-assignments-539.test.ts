@@ -5,9 +5,10 @@
  *
  * What this file protects: a fixture user that holds its role through the helper must resolve to
  * exactly what the production creation path produces (`POST /api/v1/employees` writes the
- * assignment through `replaceSystemRoleAssignment`), and — as long as the fallback still exists —
- * exactly what an unassigned user of the same role resolved to. A helper that granted more or
- * less than either would make every test that uses the shared seed prove the wrong thing.
+ * assignment through `replaceSystemRoleAssignment`), and — since #539 Release A removed the
+ * fallback — a user WITHOUT a stored assignment holds nothing at all, whatever its legacy column
+ * says. A helper that granted more or less than the production path would make every test that
+ * uses the shared seed prove the wrong thing.
  *
  * Five answers are compared per system role: effective permission keys, the reach for every
  * ZUGEWIESEN key, membership in the recipient lists, the managed salons of the salon context and
@@ -130,7 +131,7 @@ describe("fixture role assignments (#539, D-09)", () => {
     };
   }
 
-  /** The five answers the fallback and a stored assignment must agree on. */
+  /** The five answers a stored assignment decides (and an unassigned user answers empty). */
   async function profileOf(userId: string) {
     const prisma = app.prisma;
     const tenantId = seed.tenant.id;
@@ -268,24 +269,35 @@ describe("fixture role assignments (#539, D-09)", () => {
     });
   }
 
-  // Rewritten by #539 plan 07 together with the fallback it describes.
-  describe("while the fallback exists — rewritten by #539 plan 07", () => {
+  // #539 Release A: the legacy-role fallback is gone, so an unassigned user holds nothing.
+  describe("a user without a stored assignment holds nothing (#539 Release A)", () => {
     for (const role of ROLES) {
-      it(`an unassigned ${role} user resolves to exactly what a helper-granted one does`, async () => {
-        const granted = await createPlainPerson(`fbg-${role.toLowerCase()}`, role);
-        await grantSystemRole(app.prisma, {
-          tenantId: seed.tenant.id,
-          userId: granted.user.id,
-          role,
-        });
+      it(`an unassigned ${role} user holds nothing: no keys, scoped-empty reach, no recipient, no managed salon, no role name`, async () => {
         const unassigned = await createPlainPerson(`fbu-${role.toLowerCase()}`, role);
         expect(
           await app.prisma.roleAssignment.count({ where: { userId: unassigned.user.id } }),
         ).toBe(0);
 
-        const a = await profileOf(granted.user.id);
         const c = await profileOf(unassigned.user.id);
-        expect(c).toEqual(a);
+        expect(c.keys).toEqual([]);
+        expect(Object.keys(c.reach)).toHaveLength(ZUGEWIESEN_KEYS.length);
+        for (const key of ZUGEWIESEN_KEYS) {
+          expect(c.reach[key], key).toEqual({ kind: "scoped", salonIds: [], employeeIds: [] });
+          expect(c.recipient[key], key).toBe(false);
+        }
+        expect(c.managedSalonIds).toEqual([]);
+        expect(c.names).toEqual([]);
+
+        // Non-vacuity: the same user WITH the helper-granted role is not empty (ADMIN holds keys).
+        await grantSystemRole(app.prisma, {
+          tenantId: seed.tenant.id,
+          userId: unassigned.user.id,
+          role,
+        });
+        const granted = await profileOf(unassigned.user.id);
+        expect(granted.names).toHaveLength(1);
+        if (role === "ADMIN") expect(granted.keys.length).toBeGreaterThan(0);
+        expect(granted).not.toEqual(c);
       });
     }
   });

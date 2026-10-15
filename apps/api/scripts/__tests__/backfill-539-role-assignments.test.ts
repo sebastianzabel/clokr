@@ -2,8 +2,9 @@
  * Issue #539 (Release A), D-01 — fixture test for backfill-539-role-assignments.ts.
  *
  * The script takes over every ACTIVE user that holds no stored role assignment in its tenant and
- * gives it, as one audited system assignment, exactly what the legacy-role fallback resolved for
- * it. The worker test database may hold users left behind by other files, so every assertion is on
+ * gives it, as one audited system assignment, exactly what the legacy-role fallback used to resolve
+ * for it (the fallback itself is gone since #539 Release A: an unassigned user holds nothing, so the
+ * takeover is what gives such a user its rights back). The worker test database may hold users left behind by other files, so every assertion is on
  * the fixture's own ids; global counts are asserted only through the exit codes and as lower bounds.
  *
  * The runs happen once, in `beforeAll`, in this order: dry run -> first `--confirm` -> second
@@ -95,7 +96,7 @@ describe("backfill-539-role-assignments (Issue #539, D-01)", () => {
   let finalDryRun: Run;
   let rowsBefore: Map<string, number>;
   let columnsBefore: Map<string, Role>;
-  /** What each fixture user resolved to BEFORE the first --confirm (through the fallback, if unassigned). */
+  /** What each fixture user resolved to BEFORE the first --confirm (nothing, if unassigned: #539). */
   const profilesBefore = new Map<string, Awaited<ReturnType<typeof profileOf>>>();
 
   async function createUser(input: {
@@ -185,7 +186,7 @@ describe("backfill-539-role-assignments (Issue #539, D-01)", () => {
     seed = await seedTestData(app, "bf539");
     deactivatedSeed = await seedTestData(app, "bf539d");
     // A deactivated tenant is a tenant state, not something the shared seed offers: the fixture
-    // flips it directly. The takeover is neutral to it (the fallback also served such a user).
+    // flips it directly. The takeover is not tenant-state-aware (the fallback used to serve such a user too).
     await app.prisma.tenant.update({
       where: { id: deactivatedSeed.tenant.id },
       data: { deactivatedAt: new Date() },
@@ -212,7 +213,7 @@ describe("backfill-539-role-assignments (Issue #539, D-01)", () => {
       isActive: true,
     });
     // A SALONS row without a salon violates the stored-row shape: it grants nothing, yet it
-    // switched the old fallback off — so the user must keep holding nothing.
+    // used to switch the old fallback off — so the user must keep holding nothing.
     await app.prisma.roleAssignment.create({
       data: {
         tenantId: t,
@@ -494,40 +495,65 @@ describe("backfill-539-role-assignments (Issue #539, D-01)", () => {
   });
 
   describe("rights neutrality (AC-539-2)", () => {
-    describe("while the fallback exists — rewritten by #539 plan 07", () => {
-      it("the profiles compared are not empty and tell the three roles apart (anti-vacuity)", () => {
+    describe("before the takeover a user holds nothing (fail-closed), after it the rights of the production-created reference (#539 Release A)", () => {
+      /** An empty profile: no keys, a scoped-empty reach for every ZUGEWIESEN key, never a recipient. */
+      function expectHoldsNothing(
+        profile: Awaited<ReturnType<typeof profileOf>> | undefined,
+        label: string,
+      ) {
+        expect(profile, label).toBeDefined();
+        expect(profile!.keys, `${label} keys`).toEqual([]);
+        for (const key of ZUGEWIESEN_KEYS) {
+          expect(profile!.reach[key], `${label} reach ${key}`).toEqual({
+            kind: "scoped",
+            salonIds: [],
+            employeeIds: [],
+          });
+          expect(profile!.recipient[key], `${label} recipient ${key}`).toBe(false);
+        }
+      }
+
+      it("the profiles compared tell the three roles apart after the takeover, and every eligible user held nothing before (anti-vacuity)", async () => {
         expect(ZUGEWIESEN_KEYS.length).toBeGreaterThan(0);
-        const admin = profilesBefore.get(fixture.admin.id)!;
-        const manager = profilesBefore.get(fixture.manager.id)!;
-        const employee = profilesBefore.get(fixture.employee.id)!;
+        for (const key of eligibleKeys) {
+          expectHoldsNothing(profilesBefore.get(fixture[key].id), `${key} before`);
+        }
+        const admin = await profileOf(fixture.admin.id, tenantOf("admin"));
+        const manager = await profileOf(fixture.manager.id, tenantOf("manager"));
+        const employee = await profileOf(fixture.employee.id, tenantOf("employee"));
         expect(admin.keys.length).toBeGreaterThan(0);
         expect(employee.keys.length).toBeGreaterThan(0);
-        // The fallback gave each user something, and not the same thing: Admin holds a recipient
-        // slot the Mitarbeiter does not, and the Mitarbeiter holds no whole-tenant reach at all.
+        // Not the same thing for each role: Admin holds a recipient slot the Mitarbeiter does not,
+        // and the Mitarbeiter holds no whole-tenant reach at all.
         expect(Object.values(admin.recipient).some(Boolean)).toBe(true);
         expect(Object.values(employee.recipient).some(Boolean)).toBe(false);
         expect(admin.keys.length).toBeGreaterThan(manager.keys.length);
         expect(manager.keys.length).toBeGreaterThan(employee.keys.length);
       });
 
-      it("each taken-over user resolves to the same permissions, reach and recipient membership before and after the takeover", async () => {
+      it("each taken-over user held nothing before the takeover and holds the rights of its system role after it", async () => {
         for (const key of eligibleKeys) {
-          const before = profilesBefore.get(fixture[key].id);
-          expect(before, key).toBeDefined();
+          expectHoldsNothing(profilesBefore.get(fixture[key].id), `${key} before`);
           const after = await profileOf(fixture[key].id, tenantOf(key));
-          expect(after.keys, `${key} permission keys`).toEqual(before!.keys);
-          expect(after.reach, `${key} reach`).toEqual(before!.reach);
-          expect(after.recipient, `${key} recipient membership`).toEqual(before!.recipient);
+          expect(after.keys.length, `${key} permission keys`).toBeGreaterThan(0);
+          expect(after, `${key} after differs from before`).not.toEqual(
+            profilesBefore.get(fixture[key].id),
+          );
         }
       });
 
-      it("no excluded user changes either: what it resolved to before, it resolves to after", async () => {
+      it("no excluded user changes: what it resolved to before, it resolves to after — and a user without a stored row still holds nothing", async () => {
         for (const key of excludedKeys) {
           if (key === "noEmployee") continue;
           const before = profilesBefore.get(fixture[key].id);
           expect(before, key).toBeDefined();
           expect(await profileOf(fixture[key].id, tenantOf(key)), key).toEqual(before);
         }
+        for (const key of ["inactive", "anonymised", "malformed"] as const) {
+          expectHoldsNothing(await profileOf(fixture[key].id, tenantOf(key)), `${key} after`);
+        }
+        // The drift user holds a stored Manager row, so its rights are the stored ones, before and after.
+        expect(profilesBefore.get(fixture.drift.id)!.keys.length).toBeGreaterThan(0);
       });
     });
 

@@ -562,8 +562,9 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             if (!current) return false;
             await tx.roleAssignment.delete({ where: { id, tenantId } });
             // D-14/D-29: the column follows the stored assignments — revoking the user's last one
-            // writes EMPLOYEE (D-08), so the fallback then yields Mitarbeiter, never a lingering
-            // Admin. No materialization (D-26): the revoked row was a stored row of the user.
+            // writes EMPLOYEE (D-08) as a display value only; since #539 the user then holds
+            // nothing (no fallback), never a lingering Admin. No materialization (D-26): the
+            // revoked row was a stored row of the user.
             await auditRoleAssignmentChange(app, req, tx, {
               userId: current.userId,
               entries: [
@@ -644,7 +645,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "List the assigned role names per user",
       description:
-        "Returns, per user id of the caller tenant's non-anonymized employees, the names of the roles that user holds (stored assignments, legacy-role fallback when none is stored). Names only, no scope or permission data.",
+        "Returns, per user id of the caller tenant's non-anonymized employees, the names of the roles that user holds (stored assignments only; a user with none stored gets an empty list). Names only, no scope or permission data.",
     },
     preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
     handler: async (req) => {

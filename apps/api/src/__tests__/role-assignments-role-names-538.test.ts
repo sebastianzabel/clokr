@@ -137,14 +137,17 @@ describe("Issue #538 - GET /role-assignments/role-names", () => {
     await closeTestApp();
   });
 
-  it("a whole-tenant holder sees sorted names per user, the legacy fallback included", async () => {
+  it("a whole-tenant holder sees sorted names per user; a user without a stored assignment has none (#539)", async () => {
     const res = await get(data.adminToken);
     expect(res.statusCode, res.body).toBe(200);
     const body = JSON.parse(res.body) as { roleNames: Record<string, string[]> };
     expect(body.roleNames[stored.userId]).toEqual(
       [customName, "Salonmanager"].sort((a, b) => a.localeCompare(b, "de")),
     );
-    expect(body.roleNames[fallback.userId]).toEqual(["Mitarbeiter"]);
+    // #539: no stored assignment -> no role name (the legacy-role fallback that used to say
+    // "Mitarbeiter" here is gone); the user is still listed, with an empty list.
+    expect(Object.keys(body.roleNames)).toContain(fallback.userId);
+    expect(body.roleNames[fallback.userId]).toEqual([]);
   });
 
   it("neither anonymized people nor another tenant's users appear", async () => {
