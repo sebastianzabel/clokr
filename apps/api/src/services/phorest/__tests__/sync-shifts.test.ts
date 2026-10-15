@@ -860,6 +860,7 @@ describe("phorest sync-shifts BS-gewinnt skip (85.1)", () => {
 
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "Shift", action: "UPDATE", entityId: null },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(
         audits.some(
@@ -985,6 +986,7 @@ describe("SHIFT-02 pending-leave protection", () => {
       // Revisionssicherheit: the protected skip is audited (no silent skip), no hard delete.
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "Shift", action: "UPDATE", entityId: null },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(
         audits.some(
@@ -1233,6 +1235,7 @@ describe("Phase 430 — Type-1 leave conflict on Phorest import", () => {
 
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "Shift", action: "SHIFT_MARKED_CONFLICTING", entityId: conflictShift!.id },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
       // Phase 120 (D-06/D-07): the cron path's sentinel is never written to AuditLog.userId.
@@ -1240,6 +1243,7 @@ describe("Phase 430 — Type-1 leave conflict on Phorest import", () => {
 
       const notifs = await app.prisma.notification.findMany({
         where: { type: "SHIFT_LEAVE_CONFLICT", userId: mgrUser.id },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(notifs.length).toBeGreaterThan(0);
       expect(notifs[0].title).toContain("Erika");
@@ -1352,6 +1356,7 @@ describe("Phase 430 — Type-2 week-capacity conflict on Phorest import", () => 
 
       const notifs = await app.prisma.notification.findMany({
         where: { type: "SHIFT_WEEK_OVERBOOKED", userId: mgrUser.id },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(notifs.length).toBeGreaterThan(0);
       expect(notifs[0].title).toContain("Erika");

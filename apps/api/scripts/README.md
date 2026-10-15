@@ -41,6 +41,7 @@ classified by lifecycle.
 | lint-e2e-spec-registry.ts                      | 2026-09-21 | CI/local/pre-commit gate: fails unless every `apps/e2e/tests/*.spec.ts` file has exactly one entry in `lint-e2e-spec-registry.json` (category `in-ci`/`später-datum`/`später-seed` plus a mandatory reason) — see § Lint gates below. Pure validation/diff/extraction lives in the sibling `lint-e2e-spec-registry-validate.ts`                                                                                                                                                                                                                                     | Lint gate (Phase 275, Issue #275, D-07)      |
 | lint-t100-09-routes.ts                         | 2026-09-22 | CI/local/pre-commit gate: fails unless every path-parameter route in `apps/api/src/contexts/*/api/**/*.ts` has exactly one entry in `lint-t100-09-routes.json` (category `probe`/`nicht anwendbar`/`bekannt-abweichend` plus a mandatory reason) — see § Lint gates below. The behavioral half — hitting every `probe` route twice and byte-comparing — runs inside the `apps/api` integration suite as `src/__tests__/t100-09-oracle-probe.test.ts`, not as its own CI job. Pure validation/diff/extraction lives in the sibling `lint-t100-09-routes-validate.ts` | Lint gate (Phase 259, Issue #259, D-01/D-07) |
 | lint-role-checks.ts                            | 2026-09-25 | CI/local/pre-commit gate: fails on any call of the removed role guard (`requireRole`) and on any comparison of a role value (`.role`, or an identifier bound to one) with `ADMIN`/`MANAGER`/`EMPLOYEE` — equality, `switch` cases, `.includes`/`.indexOf`/`.has`, and role-literal Prisma predicates under `where` — in non-test `apps/api/src`; exactly one allowlisted file (`contexts/platform/compat-role.ts`), no exceptions file — see § Lint gates below                                                                                                     | Lint gate (Phase 75b, Issue #75, D-19)       |
+| lint-unordered-test-reads.ts                   | 2026-10-15 | CI/local/pre-commit gate: fails on an unordered `auditLog`/`notification` `findFirst` in any test file under `apps/api/src`, and on an unordered `findMany` of those delegates that is indexed by position; fix with `auditRowsFor()` from `__tests__/setup.ts`, no exceptions file — see § Lint gates below                                                                                                                                                                                                                                                        | Lint gate (Issue #561)                       |
 
 ## Migration artifacts
 
@@ -446,18 +447,27 @@ seeded entry:
 {
   "file": "apps/api/src/routes/company-shutdowns.ts",
   "handler": "DELETE /api/v1/company-shutdowns/:id/exceptions/:employeeId",
-  "validatedAt": 190,
+  "validatedBy": "const shutdown = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });",
   "calls": [
     { "call": "companyShutdownException.findUnique", "line": 194 },
     { "call": "companyShutdownException.deleteMany", "line": 198 }
   ],
-  "reason": "shutdownId (the client-supplied :id) is tenant-validated at line 190 (companyShutdown.findFirst({ id, tenantId })). CompanyShutdownException rows only ever exist for a (shutdownId, employeeId) pair created together by the tenant-validated POST /:id/exceptions handler above (compound unique key shutdownId_employeeId, enforced at create time), so an employeeId from a different tenant can never match an existing row for this already-tenant-scoped shutdownId."
+  "reason": "shutdownId (the client-supplied :id) is tenant-validated at the `validatedBy` line (companyShutdown.findFirst({ id, tenantId })). CompanyShutdownException rows only ever exist for a (shutdownId, employeeId) pair created together by the tenant-validated POST /:id/exceptions handler above (compound unique key shutdownId_employeeId, enforced at create time), so an employeeId from a different tenant can never match an existing row for this already-tenant-scoped shutdownId."
 }
 ```
 
-`file` names the handler's file, `handler` its route, `validatedAt` the line number of the
-validating check that makes the rest of the handler safe (`null` only for the pre-authentication
-category, where no tenant context exists yet at all), `calls[]` every covered call, `reason` why.
+`file` names the handler's file, `handler` its route, `validatedBy` the text of the validating
+check that makes the rest of the handler safe (`null` only for the pre-authentication category,
+where no tenant context exists yet at all), `calls[]` every covered call, `reason` why.
+
+`validatedBy` is a text anchor, not a line number (Issue #620; it replaced `validatedAt`, which no
+code ever read and which drifted off its check with every insertion above it). The gate verifies it
+on every run: the snippet (whitespace-insensitive, one source line) must still occur in `file`,
+must mention the tenant (`/tenant/i`), and its nearest occurrence must lie within
+`VALIDATED_BY_MAX_DISTANCE` (500) lines of a listed call. It survives pure line shifts - only
+`calls[].line` is re-pinned, as before. A removed or reworded check, or an anchor that ended up in
+another handler, fails the run with the entry named. Pick a snippet that quotes the check itself
+(`if (x.tenantId !== req.user.tenantId) {`, `where: { id, tenantId }`), not a comment.
 
 **The nullish-tenant rule (Phase 88, GitHub #88, D-08/D-08a).** The same command additionally
 fails when a `tenantId` value that can be `undefined` reaches ANY Prisma model call (every method,
@@ -793,6 +803,37 @@ missing, stale, or genuinely non-conformant before touching the register. The on
 change is adding the missing entry, correcting a stale `route`/`file`, moving a route between
 categories once its actual situation changes, or re-validating a `bekannt-abweichend` entry's
 `validatedAt` — every such change carries its own measured reason, never a placeholder.
+
+### `lint-unordered-test-reads.ts` (Issue #561)
+
+One action can write several `AuditLog` rows (an approval heals `totalDays` AND recomputes
+`carriedOverDays`) or notify the same person twice, within the same millisecond. A test that picks
+"the" row with an unordered `findFirst` gets whichever row Postgres returns: green alone, red in the
+parallel full run (#555, `carryover-warning.test.ts` in #568). The gate refuses the shape, in every
+test file under `apps/api/src` (`__tests__/` directories and `*.test.ts`):
+
+- `bare-find-first` — `<x>.auditLog` / `<x>.notification` `.findFirst` / `.findFirstOrThrow`, ordered
+  or not: ordering makes the earliest/latest match deterministic but silently ignores a second
+  write of the same action (#555);
+- `unordered-find-many-indexed` — an unordered `findMany` on those delegates whose result is picked
+  by position (`(await …)[0]`, `.at(n)`, array destructuring, or a bound name the file indexes).
+  A `findMany` that is only counted, filtered or iterated is order-independent and not flagged.
+
+Fix: `soleAuditRow[OrNull]()` / `soleNotification[OrNull]()` from `src/__tests__/setup.ts` (ordered
+by `createdAt`, then `id`; throws, listing the matched rows, unless exactly one row matches), or
+`auditRowsFor()` / `auditRowChangingField()`, or a `findMany` with explicit length / all-row
+assertions. When a test means one of several rows, narrow the `where` (action, recipient, field) or
+assert a before/after count. Every hit was converted when the gate landed; there is
+no exceptions file. Structurally invisible: a result handed through a function return, and a
+delegate reached through a variable. Production `findFirst` (dedupe lookups) is out of scope.
+
+- **Run locally:** `pnpm --filter @clokr/api run lint:unordered-test-reads`
+- **Fixture test:** `pnpm --filter @clokr/api exec vitest run scripts/__tests__/lint-unordered-test-reads.test.ts`
+  (flagged and tolerated shapes, the file selection, the live tree — the self-test that proves an
+  unordered call is flagged)
+- **Runs in CI as:** the `Lint unordered audit/notification reads in tests` step in
+  `.github/workflows/ci.yml`, unconditional; **in `.husky/pre-commit`** as a full-repo invocation
+- **Anti-vacuity:** an empty walk exits 1 (`input-proof:empty-abort` for `lint-guard-vacuity.ts`)
 
 ### `lint-role-checks.ts` (Issue #75)
 

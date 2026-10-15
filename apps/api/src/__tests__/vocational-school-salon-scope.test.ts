@@ -10,7 +10,14 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  soleAuditRowOrNull,
+} from "./setup";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
 const PASSWORD = "test1234";
@@ -228,7 +235,7 @@ describe("Issue #91 (Phase 91b Plan 04) — Berufsschule salon/person scope", ()
     expect(res.body).toBe(nonExistentRes.body);
     expect(res.statusCode).toBe(404);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "SCOPE_ACCESS_DENIED",
         entity: "Employee",
@@ -278,7 +285,7 @@ describe("Issue #91 (Phase 91b Plan 04) — Berufsschule salon/person scope", ()
     expect(res.statusCode).toBe(404);
     expect(res.body).toBe(JSON.stringify({ error: "Berufsschultag nicht gefunden" }));
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "SCOPE_ACCESS_DENIED", entity: "Absence", entityId: absence.id },
     });
     expect(audit).not.toBeNull();
@@ -303,7 +310,7 @@ describe("Issue #91 (Phase 91b Plan 04) — Berufsschule salon/person scope", ()
     expect(res.statusCode).toBe(404);
     expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "SCOPE_ACCESS_DENIED",
         entity: "Employee",
@@ -333,7 +340,7 @@ describe("Issue #91 (Phase 91b Plan 04) — Berufsschule salon/person scope", ()
     expect(res.statusCode).toBe(404);
     expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "SCOPE_ACCESS_DENIED",
         entity: "Employee",
@@ -361,7 +368,7 @@ describe("Issue #91 (Phase 91b Plan 04) — Berufsschule salon/person scope", ()
     });
     expect(res.statusCode).toBe(404);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "SCOPE_ACCESS_DENIED",
         entity: "Employee",
@@ -391,7 +398,7 @@ describe("Issue #91 (Phase 91b Plan 04) — Berufsschule salon/person scope", ()
     expect(res.statusCode).toBe(404);
     expect(res.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "SCOPE_ACCESS_DENIED",
         entity: "Employee",

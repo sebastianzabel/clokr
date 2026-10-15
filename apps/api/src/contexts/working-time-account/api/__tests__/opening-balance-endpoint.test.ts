@@ -6,6 +6,7 @@ import {
   closeTestApp,
   seedTestData,
   cleanupTestData,
+  soleAuditRowOrNull,
 } from "../../../../__tests__/setup";
 import { recalculateSnapshots } from "../../recalculate-snapshots";
 import type { FastifyInstance } from "fastify";
@@ -177,13 +178,12 @@ describe("POST /overtime/opening-balance (OB-03)", () => {
     });
     expect(rows.length).toBe(0);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "CROSS_TENANT_ACCESS_DENIED",
         entity: "OpeningBalance",
         entityId: other.employee.id,
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
   });
@@ -211,7 +211,7 @@ describe("POST /overtime/opening-balance (OB-03)", () => {
     expect(rows.length).toBe(1);
     expect(rows[0].minutes).toBe(3000);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CREATE", entity: "OpeningBalance", entityId: rows[0].id },
     });
     expect(audit).not.toBeNull();
@@ -250,7 +250,7 @@ describe("POST /overtime/opening-balance (OB-03)", () => {
     expect(activeRows.length).toBe(1);
     expect(activeRows[0].id).toBe(body.openingBalance.id);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "SUPERSEDE", entity: "OpeningBalance", entityId: body.openingBalance.id },
     });
     expect(audit).not.toBeNull();

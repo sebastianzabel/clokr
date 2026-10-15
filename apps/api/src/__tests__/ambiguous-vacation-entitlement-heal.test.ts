@@ -14,7 +14,13 @@
  * own fresh employee (FIXED Mo-Fr WorkSchedule validFrom 2024-01-01, initials-only).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  auditRowChangingField,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("Issue #445 — ambiguous zero-placeholder heal is gated (coordinator deviation from D-05)", () => {
@@ -186,9 +192,15 @@ describe("Issue #445 — ambiguous zero-placeholder heal is gated (coordinator d
     });
     expect(Number(dbRow?.totalDays)).toBe(30);
     expect(dbRow?.isAutoCalculated).toBe(true);
-    const audit = await app.prisma.auditLog.findFirst({
-      where: { entity: "LeaveEntitlement", entityId: placeholder.id, action: "UPDATE" },
-    });
+    // The heal writes two UPDATE audits (totalDays, carriedOverDays); the one that matters is the
+    // totalDays heal, and exactly one must carry it.
+    const audit = await auditRowChangingField(
+      app,
+      "LeaveEntitlement",
+      placeholder.id,
+      "UPDATE",
+      "totalDays",
+    );
     expect(audit).not.toBeNull();
   });
 });

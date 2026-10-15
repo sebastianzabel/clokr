@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, auditRowsFor } from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("Employee Availability API (Phase 46)", () => {
@@ -338,15 +338,11 @@ describe("Employee Availability API (Phase 46)", () => {
       });
 
       // Get latest audit entry for this MA
-      const audit = await app.prisma.auditLog.findFirst({
-        where: {
-          entity: "EmployeeAvailability",
-          entityId: emp2.id,
-          action: "REPLACE",
-        },
-        orderBy: { createdAt: "desc" },
-      });
-      expect(audit).not.toBeNull();
+      // Two PUTs -> exactly two REPLACE rows; the second one is the one under test.
+      const replaceRows = await auditRowsFor(app, "EmployeeAvailability", emp2.id, "REPLACE");
+      expect(replaceRows).toHaveLength(2);
+      const audit = replaceRows[1];
+      expect(audit).toBeDefined();
       expect(audit!.action).toBe("REPLACE");
       expect(audit!.entity).toBe("EmployeeAvailability");
       expect(audit!.entityId).toBe(emp2.id);
@@ -388,6 +384,9 @@ describe("Employee Availability API (Phase 46)", () => {
     });
 
     it("PUT /me/availability replaces own entries + writes audit log", async () => {
+      const replaceBefore = (
+        await auditRowsFor(app, "EmployeeAvailability", data.employee.id, "REPLACE")
+      ).length;
       const res = await app.inject({
         method: "PUT",
         url: `/api/v1/me/availability`,
@@ -410,15 +409,16 @@ describe("Employee Availability API (Phase 46)", () => {
       expect(body.entries[0].date).toBe("2026-07-04");
 
       // Audit log was written
-      const audit = await app.prisma.auditLog.findFirst({
-        where: {
-          entity: "EmployeeAvailability",
-          entityId: data.employee.id,
-          action: "REPLACE",
-        },
-        orderBy: { createdAt: "desc" },
-      });
-      expect(audit).not.toBeNull();
+      // Earlier tests of this describe replaced the same employee's entries: this PUT adds exactly one row.
+      const replaceRows = await auditRowsFor(
+        app,
+        "EmployeeAvailability",
+        data.employee.id,
+        "REPLACE",
+      );
+      expect(replaceRows).toHaveLength(replaceBefore + 1);
+      const audit = replaceRows[replaceRows.length - 1];
+      expect(audit).toBeDefined();
       expect(audit!.userId).toBe(data.empUser.id);
     });
   });

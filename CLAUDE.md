@@ -1135,6 +1135,11 @@ Since Phase 89 the gate also accepts two strict inline forms: an `OR` only when 
 itself scoped, and a Json-path stamp `{ path: [..., "tenantId"], equals: <principal tenant> }` with
 no other key (`apps/api/scripts/README.md` § `lint-tenant-scoping.ts`).
 
+Each exception carries `validatedBy`, a text anchor quoting its tenant check (Issue #620; it replaced
+the never-verified line number `validatedAt`). The gate resolves it on every run - it must still
+occur in the file, mention the tenant and lie near a listed call - so a moved or reworded check
+turns the run red while pure line shifts do not.
+
 Verify with `pnpm --filter @clokr/api run lint:tenant-scoping`. A hit on a clean tree is a
 finding to report (Issue #204), not an exception to add.
 
@@ -1195,6 +1200,18 @@ Verify with `pnpm --filter @clokr/api run lint:role-checks` and (after `test:set
 **Never re-record a neutrality file to make it green** — the recorders refuse once `requireRole`
 is gone, and a red VERIFY is a finding (an access change), not a stale fixture. A new route gets
 `requirePermission` and a row in `docs/permissions.md`; a new role check is never the answer.
+
+### Ordered audit/notification reads in tests (Issue #561)
+
+A test never picks an `AuditLog` or `Notification` row with `findFirst` (ordered or not), nor
+indexes an unordered `findMany` by position — one action can write several rows in the same
+millisecond, the test flakes in the parallel run (#555), and even an ordered `findFirst` silently
+ignores a second write. Use `soleAuditRow[OrNull]()` / `soleNotification[OrNull]()` (throws unless
+exactly one row matches), `auditRowsFor()` / `auditRowChangingField()` from
+`apps/api/src/__tests__/setup.ts`, or a `findMany` with explicit length / all-row assertions; when a
+test means one of several rows, narrow the `where` (action, recipient, field). `lint:unordered-test-reads`
+(`apps/api/scripts/lint-unordered-test-reads.ts`, CI and pre-commit, no exceptions file) fails on it;
+a hit is converted, never excepted.
 
 ### Role management UI and the admin area (Issue #83)
 

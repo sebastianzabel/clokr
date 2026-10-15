@@ -197,6 +197,7 @@ describe("POST /presence/events — Phase 76.2 Plan 5 resolver migration", () =>
         entityId: existing.id,
         createdAt: { gte: before },
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits.length).toBeGreaterThanOrEqual(1);
   });
@@ -230,6 +231,7 @@ describe("POST /presence/events — Phase 76.2 Plan 5 resolver migration", () =>
         entityId: nfcEntry.id,
         createdAt: { gte: before },
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits.length).toBeGreaterThanOrEqual(1);
   });
@@ -267,6 +269,7 @@ describe("POST /presence/events — Phase 76.2 Plan 5 resolver migration", () =>
         entityId: data.employee.id,
         createdAt: { gte: before },
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits.length).toBeGreaterThanOrEqual(1);
     expect(audits[0].purgeable).toBe(true);

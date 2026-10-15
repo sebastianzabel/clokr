@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, soleAuditRow } from "./setup";
 import { resolveClockEvent } from "../services/clock/resolver";
 import { consolidateSameDayEntries } from "../services/clock/consolidate";
 import type { ClockEvent, ClockIntent } from "../services/clock/types";
@@ -83,9 +83,8 @@ describe("Issue #81 (D-07) — clock re-open of a classified entry", () => {
   }
 
   async function lastReopenAudit(id: string) {
-    return app.prisma.auditLog.findFirstOrThrow({
+    return soleAuditRow(app.prisma, {
       where: { entityId: id, action: "CLOCK_REOPEN" },
-      orderBy: { createdAt: "desc" },
     });
   }
 
@@ -443,9 +442,8 @@ describe("Issue #81 (D-05, D-07) — retro approval with a manager correction ob
     expect(after.isInvalid).toBe(false);
     expect(after.activityKind).toBe("PRODUCTIVE");
     expect(after.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 400 }]);
-    const audit = await app.prisma.auditLog.findFirstOrThrow({
+    const audit = await soleAuditRow(app.prisma, {
       where: { entityId: entry.id, action: "MANAGER_CORRECTION" },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit.oldValue).toMatchObject({
       activityShares: [{ kind: "SETUP_CLEANING", minutes: 400 }],

@@ -10,7 +10,7 @@
  * EMPLOYEE self-scope carve-out overtime.ts already has (D-03 there).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRowOrNull } from "./setup";
 import type { FastifyInstance } from "fastify";
 
 const GENUINELY_MISSING_EMPLOYEE_ID = "00000000-0000-4000-8000-000000000001";
@@ -59,13 +59,12 @@ describe("GET /api/v1/leave/entitlements/:employeeId — tenant isolation (sec-0
     });
     expect(afterRows).toEqual(beforeRows);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "CROSS_TENANT_ACCESS_DENIED",
         entity: "Employee",
         entityId: tenantB.employee.id,
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
     expect(audit?.userId).toBe(tenantA.adminUser.id);

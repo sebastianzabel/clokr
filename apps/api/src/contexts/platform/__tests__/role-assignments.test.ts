@@ -8,7 +8,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "../../../__tests__/setup";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
 import { SYSTEM_ROLE_IDS } from "../system-roles";
@@ -243,7 +249,7 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
       where: { entity: "RoleAssignment", action: "CREATE" },
     });
     expect(auditCountAfter - auditCountBefore).toBe(2);
-    const materializedAudit = await app.prisma.auditLog.findFirst({
+    const materializedAudit = await soleAuditRowOrNull(app.prisma, {
       where: {
         entity: "RoleAssignment",
         action: "CREATE",
@@ -262,7 +268,7 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
       reason: "Übernahme der Alt-Rolle (#75)",
       legacyRole: "EMPLOYEE",
     });
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "RoleAssignment", action: "CREATE", entityId: body.id },
     });
     // Phase 75b (D-14/D-29): roleA grants a ZUGEWIESEN permission, so the derived compat role
@@ -610,9 +616,8 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
       where: { entity: "RoleAssignment", action: "UPDATE" },
     });
     expect(auditAfter - auditBefore).toBe(1);
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "RoleAssignment", action: "UPDATE", entityId: assignmentId },
-      orderBy: { createdAt: "desc" },
     });
     expect(auditRow?.oldValue).toEqual({
       userId: before!.userId,
@@ -848,7 +853,7 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
       where: { entity: "RoleAssignment", action: "DELETE" },
     });
     expect(auditAfter - auditBefore).toBe(1);
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "RoleAssignment", action: "DELETE", entityId: id },
     });
     expect(auditRow?.oldValue).toEqual({
