@@ -37,6 +37,11 @@
       "reason": "Issue #621 narrow-viewport gate for the shared .view-tabs strip (/admin/system with five tabs, /admin/vacation) x editorial/modern x 390 and 360 px: no page-level horizontal scroll, the five-tab strip scrolls itself (non-vacuous), End/Home bring the chosen tab fully into view with its underline unclipped. Needs only the tenant fixture, no seed, no date dependency. Measured before the fix: /admin/system 565 px and /admin/vacation 641 px wide at 390 px; after the fix 390 px in both skins (scripted probe against the rebuilt test stack)."
     },
     {
+      "file": "apps/e2e/tests/admin-salons.spec.ts",
+      "category": "in-ci",
+      "reason": "Issue #563 browser proof of the tenant salon admin on the real test stack: PLANUNG navigation to the salon list, opening hours edited and persisted (reload plus GET /salons/:id), the header salon switcher appearing on create and disappearing on deactivation without a page reload (window marker), the Ketten-Paket hint replacing 'Salon anlegen' at the salon limit, admin/system reduced to the three shift-check radios with a PUT body of exactly shiftStoreHoursMode, the /shifts per-salon hint with two salons, and no horizontal page overflow at 390 and 360 px (measured 0 px on list and detail) with both time inputs of every editor row inside the row. Needs only the tenant fixture (every module booked, quota 500), one API-created shift-based admin contract and one API-created second salon, and exactly one intercepted /me/context; no seed, no date dependency. Measured on the rebuilt test stack: 8/8 pass on the first complete run, 150/150 together with operator-console.spec.ts, and 16/16 with --repeat-each=2."
+    },
+    {
       "file": "apps/e2e/tests/operator-console.spec.ts",
       "category": "in-ci",
       "reason": "Issue #89 operator console against a mocked /api/v1/operator contract (page.route fulfils every operator request in the browser): no seed, no operator account, no date dependency (the session clock test uses the Playwright fake clock). The operator session is seeded into sessionStorage by the spec; one test uses the tenant-bootstrap fixture only to prove a tenant token never reaches the operator surface. Measured: 36/36 pass on the rebuilt test stack (108/108 with --repeat-each=3)."
