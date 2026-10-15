@@ -7,8 +7,7 @@
   import { clearUnsaved } from "$stores/unsaved";
   import { api } from "$api/client";
   import Icon from "$lib/components/Icon.svelte";
-  import { visibleTeamNavItems } from "$lib/nav/team-nav";
-  import { visibleAdminNavGroups } from "$lib/nav/admin-route-permissions";
+  import { visibleNavSections } from "$lib/nav/app-nav";
   import { activeNavHref } from "$lib/nav/active-route";
   import { onMount } from "svelte";
 
@@ -30,53 +29,18 @@
     loadReleaseNotesData();
   });
 
-  type NavItem = { href: string; label: string; icon: string };
-  // NavSection is a top-level sidebar section (e.g. "Mein Bereich", "Team") or
-  // an admin sub-group (e.g. "PERSONAL", "PLANUNG"). The `isAdminGroup` flag
-  // drives which label class to render.
-  type NavSection = { label: string; items: NavItem[]; isAdminGroup?: boolean };
-
-  // German labels match docs/design/reference/i18n.js DE entries verbatim.
-  // Routes map to nearest existing screens; new routes may land in Phase 30-32.
-  const employeeNav: NavItem[] = [
-    { href: "/dashboard", label: "Übersicht", icon: "dashboard" },
-    { href: "/time-entries", label: "Zeiterfassung", icon: "clock" },
-    { href: "/leave", label: "Abwesenheiten", icon: "umbrella" },
-    { href: "/availability", label: "Verfügbarkeit", icon: "calendar-check" },
-  ];
-
-  // Phase 378 (#378): the Team-Bereich items themselves, and which permission gates each one,
-  // moved to $lib/nav/team-nav.ts (visibleTeamNavItems) — shared with BottomTabBar.svelte, and
-  // filtered per-item instead of an all-or-nothing role block, so a Salonmanager or Ausbilder
-  // (Salon-/Personen-Scope role assignment, #76) sees exactly the items their permissions allow.
-
-  // Section visibility is gated by the caller's PERMISSIONS: "Mein Bereich" and "Team" since
-  // Phase 378 (#378), the five admin groups since Phase 83 (#83) — each admin item is filtered by the
-  // permissions its page needs (`$lib/nav/admin-route-permissions.ts`, the same map the admin route
-  // guard reads). A UI-only display gate; server-side permission guards still decide every request.
+  // Sections, headings and items come from the one navigation definition ($lib/nav/app-nav),
+  // the same one the mobile "Mehr" sheet renders (#516). A UI-only display gate; server-side
+  // permission guards still decide every request.
   //
   // The Verfügbarkeits-System (Phase 47.3) is gated by a tenant feature flag.
   // While `$tenantFeatures.loaded === false` the flag is treated as on
   // (fail-open) so nav doesn't flash hidden→visible during initial load.
-  const sections = $derived.by((): NavSection[] => {
-    const availabilityOn = $tenantFeatures.availabilityEnabled;
-    const filterAvailability = (items: NavItem[]): NavItem[] =>
-      availabilityOn
-        ? items
-        : items.filter((it) => it.href !== "/availability" && it.href !== "/admin/availability");
-
-    const out: NavSection[] = [{ label: "Mein Bereich", items: filterAvailability(employeeNav) }];
-    const teamItems = visibleTeamNavItems($authStore.user);
-    if (teamItems.length > 0) {
-      out.push({ label: "Team", items: teamItems });
-    }
-    for (const group of visibleAdminNavGroups($authStore.user, {
-      availabilityEnabled: availabilityOn,
-    })) {
-      out.push({ label: group.label, items: group.items, isAdminGroup: true });
-    }
-    return out;
-  });
+  const sections = $derived(
+    visibleNavSections($authStore.user, {
+      availabilityEnabled: $tenantFeatures.availabilityEnabled,
+    }),
+  );
 
   // The one current item across all sections (shared rule, longest matching href wins).
   const currentHref = $derived(

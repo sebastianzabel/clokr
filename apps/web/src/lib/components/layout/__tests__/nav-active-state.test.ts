@@ -136,9 +136,15 @@ function isCurrent(el: Element): boolean {
 }
 
 describe("MobileMoreSheet — current page (#515)", () => {
-  const items = [
-    { href: "/admin/employees", label: "Mitarbeitende", icon: "users" },
-    { href: "/admin/vacation", label: "Urlaubsverwaltung", icon: "umbrella" },
+  const sections = [
+    {
+      label: "PERSONAL",
+      isAdminGroup: true,
+      items: [
+        { href: "/admin/employees", label: "Mitarbeitende", icon: "users" },
+        { href: "/admin/vacation", label: "Urlaubsverwaltung", icon: "umbrella" },
+      ],
+    },
   ];
 
   function sheetDialog(): HTMLElement {
@@ -148,7 +154,7 @@ describe("MobileMoreSheet — current page (#515)", () => {
   it("marks only the link that is the page, also from a nested path", () => {
     renderWithTheme(MobileMoreSheet, {
       open: true,
-      items,
+      sections,
       currentPath: "/admin/employees/abc",
     });
     const dialog = sheetDialog();
@@ -164,7 +170,7 @@ describe("MobileMoreSheet — current page (#515)", () => {
   });
 
   it("follows the current path to the other item", () => {
-    renderWithTheme(MobileMoreSheet, { open: true, items, currentPath: "/admin/vacation" });
+    renderWithTheme(MobileMoreSheet, { open: true, sections, currentPath: "/admin/vacation" });
     const dialog = sheetDialog();
 
     expect(within(dialog).getByRole("link", { name: "Urlaubsverwaltung" })).toHaveAttribute(
@@ -177,7 +183,7 @@ describe("MobileMoreSheet — current page (#515)", () => {
   });
 
   it("marks nothing when the path is none of the items", () => {
-    renderWithTheme(MobileMoreSheet, { open: true, items, currentPath: "/dashboard" });
+    renderWithTheme(MobileMoreSheet, { open: true, sections, currentPath: "/dashboard" });
 
     expect(sheetDialog().querySelectorAll("[aria-current]")).toHaveLength(0);
   });

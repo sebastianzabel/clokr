@@ -1,9 +1,8 @@
 <script lang="ts">
   import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
-  import { visibleTeamNavItems } from "$lib/nav/team-nav";
   import { activeNavHref } from "$lib/nav/active-route";
-  import { visibleAdminNavItems } from "$lib/nav/admin-route-permissions";
+  import { visibleNavSections, type NavSection } from "$lib/nav/app-nav";
   import MobileMoreSheet from "./MobileMoreSheet.svelte";
 
   interface Props {
@@ -24,38 +23,24 @@
     { href: "/leave", label: "Abwesenheiten", icon: "umbrella" },
   ];
 
-  // Mehr-sheet content, Phase 378 (#378): the Team items themselves and which permission gates
-  // each one moved to $lib/nav/team-nav.ts (visibleTeamNavItems, shared with Sidebar.svelte) —
-  // filtered per-item by permission, so a Salonmanager or Ausbilder (Salon-/Personen-Scope role
-  // assignment, #76) sees exactly the items their permissions allow, same as the desktop nav.
-  // "Mein Profil" is appended after the team items for every actor that has any (mirrors the old
-  // `managerMore`'s trailing settings entry byte-for-byte); an actor with none falls back to the
-  // plain employee overflow (Verfügbarkeit + Mein Profil).
-  // NOTE: "Berichte" intentionally absent for a plain Mitarbeiter — the /reports page is
-  // reachable for EMPLOYEEs via direct URL (EMP-06 personal monthly closes), but neither
-  // Systemrollen-Template without `report:read:ZUGEWIESEN` gets a nav entry for it either.
-
-  // moreItems follows the caller's PERMISSIONS: the team items since Phase 378 (#378), the admin
-  // items since Phase 83 (#83) — the same per-item filter and order as the Sidebar
-  // (`$lib/nav/admin-route-permissions.ts`), independent of whether team items exist. A UI-only
-  // display gate; server-side permission guards still decide every request.
+  // The Mehr sheet shows the same sections as the desktop Sidebar, generated from the one
+  // navigation definition ($lib/nav/app-nav, #516) - nothing is hand-listed here. The primary
+  // tabs above are shortcuts to targets that the sheet lists as well, so every target has an
+  // entry that can be marked as the current page.
   //
-  // Verfügbarkeits-System (Phase 47.3): the /availability entries are hidden when the tenant
+  // Verfügbarkeits-System (Phase 47.3): the /availability entry is hidden when the tenant
   // feature flag is off. Fail-open while the store is loading.
-  const moreItems = $derived.by((): NavItem[] => {
-    const availabilityOn = $tenantFeatures.availabilityEnabled;
-    const teamItems = visibleTeamNavItems($authStore.user);
-    const settingsItem: NavItem = { href: "/settings", label: "Mein Profil", icon: "settings" };
-    const base: NavItem[] =
-      teamItems.length > 0
-        ? [...teamItems, settingsItem]
-        : [{ href: "/availability", label: "Verfügbarkeit", icon: "calendar-check" }, settingsItem];
-    const own = availabilityOn ? base : base.filter((it) => it.href !== "/availability");
-    return [
-      ...own,
-      ...visibleAdminNavItems($authStore.user, { availabilityEnabled: availabilityOn }),
-    ];
+  const sections = $derived.by((): NavSection[] => {
+    const nav = visibleNavSections($authStore.user, {
+      availabilityEnabled: $tenantFeatures.availabilityEnabled,
+    });
+    // The profile page has no sidebar entry (desktop reaches it from the top bar); it stays
+    // reachable here, under the personal heading.
+    nav[0].items.push({ href: "/settings", label: "Mein Profil", icon: "settings" });
+    return nav;
   });
+  const moreItems = $derived(sections.flatMap((section) => section.items));
+  const primaryHrefs = primaryTabs.map((tab) => tab.href);
 
   let sheetOpen = $state(false);
 
@@ -67,8 +52,13 @@
       currentPath,
     ),
   );
-  // The overflow item that is the current page, if any — it is held by the "Mehr" trigger.
-  const moreCurrent = $derived(moreItems.find((it) => it.href === currentHref) ?? null);
+  // The overflow item that is the current page, if any - it is held by the "Mehr" trigger.
+  // A primary tab keeps the mark itself, so its twin in the sheet does not count here.
+  const moreCurrent = $derived(
+    currentHref !== null && !primaryHrefs.includes(currentHref)
+      ? (moreItems.find((it) => it.href === currentHref) ?? null)
+      : null,
+  );
 </script>
 
 {#snippet tabIcon(name: string)}
@@ -140,7 +130,7 @@
   </button>
 </nav>
 
-<MobileMoreSheet bind:open={sheetOpen} items={moreItems} {currentPath} />
+<MobileMoreSheet bind:open={sheetOpen} {sections} {currentPath} />
 
 <style>
   /* ── Bottom tab bar (UI-15) ───────────────────────────────────
