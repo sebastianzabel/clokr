@@ -79,10 +79,7 @@
       <PageHead eyebrow="Mandant" title={tenant.name} sub={`Kurzname ${tenant.slug}`} />
     </div>
 
-    <!-- No `animate` here: a finished card-animate entrance leaves `transform: matrix(...)` on the card,
-         and the dialogs of TenantMasterData would then be positioned against the card instead of the
-         viewport (scrim only as large as the card, dialog clipped by it). -->
-    <Section title="Mandant" sub="Stammdaten und Status">
+    <Section title="Mandant" sub="Stammdaten und Status" animate>
       <TenantMasterData
         {tenant}
         onRename={renameTenant}
@@ -92,7 +89,6 @@
       />
     </Section>
 
-    <!-- Not wrapped in an animated Section either (#570): same transform trap as above. -->
     <PackagesSection
       {tenant}
       onSave={(body) => operatorApi.setTenantPackages(tenantId, body)}

@@ -10,8 +10,6 @@
 
   Lowering the effective limit below the number of active salons is allowed: nothing becomes
   inactive, only further salons cannot be activated (D-06), which the non-blocking warning says.
-  The section is deliberately NOT animated (#570): a finished `card-animate` leaves a transform
-  on the card that traps fixed-position dialogs of the neighbouring sections.
 -->
 <script lang="ts">
   import Section from "$lib/components/admin/Section.svelte";
@@ -101,7 +99,7 @@
   }
 </script>
 
-<Section title="Pakete" sub="Gebuchte Module und Salon-Kontingent" {dirty}>
+<Section title="Pakete" sub="Gebuchte Module und Salon-Kontingent" {dirty} animate>
   <div data-testid="op-packages-section">
     {#if tenantDeactivated}
       <div class="callout brand block" id={FROZEN_HINT_ID} data-testid={FROZEN_HINT_ID}>
