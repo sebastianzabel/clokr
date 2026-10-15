@@ -43,6 +43,9 @@
     }
   }
 
+  /** Dashboard metrics of each tenant, joined to the list rows by tenant id. */
+  const metrics = $derived(new Map((dashboard?.tenants ?? []).map((item) => [item.id, item])));
+
   function openCreate() {
     showCreate = true;
   }
@@ -119,7 +122,7 @@
         />
       </div>
     {:else}
-      <TenantTable {tenants} bind:page bind:pageSize />
+      <TenantTable {tenants} {metrics} bind:page bind:pageSize />
     {/if}
   </Section>
 </div>
