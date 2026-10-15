@@ -38,6 +38,11 @@
     <rect x="3" y="5" width="18" height="16" rx="2" />
     <path d="M16 3v4M8 3v4M3 10h18" />
     <path d="M9 15l2.5 2.5L16 13" />
+  {:else if name === "store"}
+    <path d="M3 9l1.5-5h15L21 9" />
+    <path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0" />
+    <path d="M5 12.5V21h14v-8.5" />
+    <path d="M10 21v-5h4v5" />
   {:else if name === "umbrella"}
     <path d="M12 3v18M3 12a9 9 0 0 1 18 0H3z" />
     <path d="M9 12a3 3 0 0 1 6 0" />

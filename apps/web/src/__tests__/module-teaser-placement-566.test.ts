@@ -7,8 +7,9 @@
 // (c): no file outside the admin set-up areas mentions the hint, "Zusatzmodul" or "Ihr Anbieter
 // schaltet".
 // (d)-(g) (Plan 566-10): the other three spots — API-Keys (/admin/system), Presence-Quellen
-// (/admin/integrations) and the Branch-ID field (/admin/phorest) — plus the total: exactly four
-// hint usages in the web source, all under routes/(app)/admin/.
+// (/admin/integrations) and the Branch-ID field (/admin/phorest) — plus the total.
+// (i) (Issue #563, D-18): the fifth spot — the salon create action on /admin/salons.
+// Total: exactly five hint usages in the web source, all under routes/(app)/admin/.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +31,7 @@ const COMPONENTS = join(WEB_SRC, "lib", "components");
 const ADMIN_SYSTEM = join(ROUTES_APP, "admin", "system", "+page.svelte");
 const ADMIN_INTEGRATIONS = join(ROUTES_APP, "admin", "integrations", "+page.svelte");
 const ADMIN_PHOREST = join(ROUTES_APP, "admin", "phorest", "+page.svelte");
+const ADMIN_SALONS = join(ROUTES_APP, "admin", "salons", "+page.svelte");
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -211,11 +213,11 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
     expect(code).not.toMatch(/get\(\s*salonContext\s*\)/);
   });
 
-  it("(g) exactly four hint usages in the web source, one per spot, all under routes/(app)/admin/", () => {
+  it("(g) exactly five hint usages in the web source, one per spot, all under routes/(app)/admin/", () => {
     const files = walk(WEB_SRC);
-    // Anti-vacuity: the walk saw the four pages and a floor of source files.
+    // Anti-vacuity: the walk saw the five pages and a floor of source files.
     expect(files).toEqual(
-      expect.arrayContaining([ADMIN_SYSTEM, ADMIN_INTEGRATIONS, ADMIN_PHOREST]),
+      expect.arrayContaining([ADMIN_SYSTEM, ADMIN_INTEGRATIONS, ADMIN_PHOREST, ADMIN_SALONS]),
     );
     expect(files.length).toBeGreaterThanOrEqual(WEB_SRC_FLOOR);
 
@@ -225,7 +227,7 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
         tag,
       })),
     );
-    expect(usages).toHaveLength(4);
+    expect(usages).toHaveLength(5);
     for (const { file } of usages) {
       expect(file.startsWith(join("routes", "(app)", "admin") + "/"), file).toBe(true);
     }
@@ -234,10 +236,29 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
       [
         join("routes", "(app)", "admin", "integrations", "+page.svelte") + "|HARDWARE_CLOCK",
         join("routes", "(app)", "admin", "phorest", "+page.svelte") + "|INTEGRATIONS",
+        join("routes", "(app)", "admin", "salons", "+page.svelte") + "|CHAIN",
         join("routes", "(app)", "admin", "system", "+page.svelte") + "|HARDWARE_CLOCK",
         join("routes", "(app)", "admin", "system", "+page.svelte") + "|INTEGRATIONS",
       ].sort((a, b) => a.localeCompare(b)),
     );
+  });
+
+  it("(i) the salons list holds exactly one CHAIN hint and offers 'Salon anlegen' only in the {:else} of its condition", () => {
+    const code = stripComments(readFileSync(ADMIN_SALONS, "utf8"));
+    expect(code.match(/<ModuleHint\s+module="CHAIN"/g)).toHaveLength(1);
+    expect(code).toMatch(
+      /chainHint\s*=\s*\$derived\(\s*moduleBooked\(\$salonContext,\s*"CHAIN"\)\s*===\s*false\s*&&\s*activeCount\s*>=\s*\(\$salonContext\.packages\?\.salonLimit\s*\?\?\s*Number\.POSITIVE_INFINITY\)/,
+    );
+    const open = code.indexOf("{#if chainHint}");
+    expect(open).toBeGreaterThan(-1);
+    const close = code.indexOf("{/if}", open);
+    const [hintBranch, createBranch] = code.slice(open, close).split("{:else}");
+    expect(hintBranch).toContain("<ModuleHint");
+    expect(hintBranch).not.toContain("Salon anlegen");
+    expect(createBranch).toContain('href="/admin/salons/neu"');
+    expect(createBranch).toContain("Salon anlegen");
+    // The link exists nowhere else on the page.
+    expect(code.match(/href="\/admin\/salons\/neu"/g)).toHaveLength(1);
   });
 
   it("(h) no file outside routes/(app)/admin/ renders the hint (operator console and shared layout included)", () => {

@@ -820,8 +820,11 @@ import { readFileSync } from "node:fs";
 // t100-09-oracle-probe, the facade-signature and measure-foreign-context-access tests) and what merged from origin/main
 // since the #90 measurement. Both floors are set to exactly
 // these numbers; MIN_FILES 580 -> 589, MIN_TESTS 9263 -> 9496. Never lowered.
-const MIN_FILES = 589;
-const MIN_TESTS = 9496;
+// Issue #563 (2026-10-15): measured on `feat/563-salonverwaltung` after 563-07, full run (`test:coverage`) - 592 test
+// files, 9530 tests (9527 passed, 3 skipped); new files: salon-admin-563, settings-store-hours-retired-563 and the
+// rewritten store-hours-readers guard, the mirror test removed. MIN_FILES 589 -> 592, MIN_TESTS 9496 -> 9530.
+const MIN_FILES = 592;
+const MIN_TESTS = 9530;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

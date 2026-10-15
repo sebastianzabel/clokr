@@ -140,6 +140,7 @@ describe("admin route permissions (Issue #83)", () => {
     expect(visibleFor(p.MANAGER)).toEqual([
       "/admin/employees",
       "/admin/availability",
+      "/admin/salons",
       "/admin/month-close",
       "/admin/export",
     ]);

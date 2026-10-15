@@ -25,6 +25,7 @@ PERSONAL
 PLANUNG
   Schichtplan
   Verfügbarkeit
+  Salons
 
 COMPLIANCE
   Monatsabschluss
@@ -53,6 +54,8 @@ These 5 groups and their exact entries are the authoritative target structure fo
 
 > **Note (Issue #93):** „Support-Zugriffe“ (`/admin/support-access`, list plus per-access detail) is the third COMPLIANCE entry — the controller's view of operator support accesses (Art. 28 DSGVO): when and why the operator accessed the tenant's data, every single read, and the action that ends a running access. The COMPLIANCE group went from 2 to 3 entries, within the §1.3 maximum.
 
+> **Note (Issue #563):** „Salons“ (`/admin/salons`, list plus per-salon detail, create via `/admin/salons/neu`) is the third PLANUNG entry — master data and opening hours per salon. SYSTEM is already at the §1.3 maximum and the topic is site planning, so the page lives in PLANUNG. It is visible with `salon:read` (read-only) and changes with `salon:manage`. The PLANUNG group went from 2 to 3 entries, within the §1.3 maximum. The „Ladenöffnungszeiten“ table left `/admin/system`: opening hours are an attribute of the salon, edited only here.
+
 ### 1.2 Group → Pages Mapping
 
 | Group      | Sidebar label     | Route                 | Was (if renamed)                                                                        |
@@ -62,6 +65,7 @@ These 5 groups and their exact entries are the authoritative target structure fo
 | PERSONAL   | Betriebsurlaub    | /admin/shutdowns      | —                                                                                       |
 | PLANUNG    | Schichtplan       | /admin/shifts         | —                                                                                       |
 | PLANUNG    | Verfügbarkeit     | /admin/availability   | —                                                                                       |
+| PLANUNG    | Salons            | /admin/salons         | — (new in Issue #563)                                                                   |
 | COMPLIANCE | Monatsabschluss   | /admin/month-close    | —                                                                                       |
 | COMPLIANCE | Audit & Log       | /admin/audit          | —                                                                                       |
 | COMPLIANCE | Support-Zugriffe  | /admin/support-access | — (new in Issue #93)                                                                    |
@@ -289,7 +293,7 @@ Only **three page templates** are sanctioned for admin pages. Every admin `+page
 +------------------------------------------+
 ```
 
-**Pages using Template B:** Mitarbeitende, Sonderurlaubs-Typen, Betriebsurlaub, Audit & Log, Verfügbarkeit (see Appendix A).
+**Pages using Template B:** Mitarbeitende, Sonderurlaubs-Typen, Betriebsurlaub, Audit & Log, Verfügbarkeit, Salons (see Appendix A).
 
 **Full reference implementation — list mode:**
 
@@ -857,8 +861,10 @@ Section that only has an `actions` snippet (`admin/phorest`'s mapping table) —
 global `.unsaved-hint` recipe directly, next to the button it refers to. Do not add a `dirty`
 prop to a footerless Section: it renders nothing and reads as done work.
 
-**Which admin pages carry the marker and the guard.** Nine pages register; eleven are
-deliberately excluded, each with a reason:
+**Which admin pages carry the marker and the guard.** Eleven pages register; fourteen are
+deliberately excluded, each with a reason (measured from the ledger of
+`admin-unsaved-registry.test.ts`; the first table lists the registered pages with a marker
+location, `admin/roles` — `admin-roles` — keeps its marker in the role editor):
 
 | Page                              | Registry id                 | Marker location                                                                          |
 | --------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------- |
@@ -871,6 +877,7 @@ deliberately excluded, each with a reason:
 | `admin/export`                    | `admin-export`              | `Section.dirty` (Lohnartennummern only — Export konfigurieren is never dirty, see below) |
 | `admin/audit`                     | `admin-audit`               | `Section.dirty` (Aufbewahrung only — log filters are never dirty, see below)             |
 | `admin/availability/[employeeId]` | `admin-availability-detail` | inline `.unsaved-hint` in the `ListDetail` actions snippet                               |
+| `admin/salons/[id]`               | `admin-salon-detail`        | `Section.dirty` (Stammdaten, Öffnungszeiten)                                             |
 
 | Page                                                                    | Excluded because                                                                                                                                                                                            |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -881,6 +888,7 @@ deliberately excluded, each with a reason:
 | `admin/integrations`                                                    | no update endpoint exists; the single write creates a NEW API key and the two inputs clear afterwards                                                                                                       |
 | `admin/themes`                                                          | no write path and no bound form state                                                                                                                                                                       |
 | `admin/availability` (list)                                             | list view — no write path                                                                                                                                                                                   |
+| `admin/salons` (list)                                                   | list view — no form state; writes happen on the detail page                                                                                                                                                 |
 | `admin/audit/[id]`                                                      | detail view — no write path                                                                                                                                                                                 |
 | `admin/support-access` (list)                                           | list view — no write path, no form state                                                                                                                                                                    |
 | `admin/support-access/[id]`                                             | detail view — the only write is the end action behind a `ConfirmDialog` (an operation, no form state)                                                                                                       |
@@ -909,6 +917,19 @@ vitest pins in `apps/web/src/__tests__/admin-system-save-wiring.test.ts` and
 above (which controls are instant, which are button-gated) for the two admin pages that exist
 today. `apps/web/src/__tests__/admin-unsaved-registry.test.ts` is the equivalent mechanical gate
 for D-11/D-12's page coverage, described above.
+
+**`admin/system` after Issue #563.** The „Ladenöffnungszeiten“ table is no longer part of
+`admin/system`; it moved into the shared `OpeningHoursEditor` component and is edited per salon on
+`admin/salons/[id]` (a button-gated `Section` with its own Speichern button and `dirty` hint). The
+remaining „Schichtprüfung gegen Öffnungszeiten“ section of `admin/system` holds only the three
+`shiftStoreHoursMode` radios; it stays button-gated and sends the minimal payload
+`{ shiftStoreHoursMode }`.
+
+**Salon lifecycle on `admin/salons/[id]` (Issue #563).** An active salon is deactivated from a Danger
+Zone (§3.1) behind a `ConfirmDialog`; an inactive salon is reactivated from an activation `Section`,
+also behind a `ConfirmDialog`. A salon is never deleted, and the server's refusal text (last active
+salon, salon quota) is shown as it is and keeps the dialog open. The create page `/admin/salons/neu`
+reuses the detail component and needs an explicitly chosen Bundesland.
 
 ### 3.3 Breadcrumbs on Detail Pages
 
@@ -1114,7 +1135,7 @@ export function load() {
 
 ## Appendix A: Page → Template Assignment
 
-All 14 admin pages, their template assignment, migration phase, and requirement ID. (Sonderurlaubs-Typen consolidated into Urlaubsverwaltung — see §1.1 note. Phorest added Phase 85.1-03 — see §1.1 note.)
+All 16 admin pages, their template assignment, migration phase, and requirement ID. (Sonderurlaubs-Typen consolidated into Urlaubsverwaltung — see §1.1 note. Phorest added Phase 85.1-03 — see §1.1 note.)
 
 | Group      | Page              | Route                 | Template                                                                         | Phase | Requirement                                          |
 | ---------- | ----------------- | --------------------- | -------------------------------------------------------------------------------- | ----- | ---------------------------------------------------- |
@@ -1123,6 +1144,7 @@ All 14 admin pages, their template assignment, migration phase, and requirement 
 | PERSONAL   | Betriebsurlaub    | /admin/shutdowns      | List + Detail                                                                    | 57    | ADMIN-MIG-13                                         |
 | PLANUNG    | Schichtplan       | /admin/shifts         | Section-Stack                                                                    | 55    | ADMIN-MIG-08                                         |
 | PLANUNG    | Verfügbarkeit     | /admin/availability   | List + Detail                                                                    | 55    | ADMIN-MIG-09                                         |
+| PLANUNG    | Salons            | /admin/salons         | List + Detail (per-salon via /admin/salons/[id], create via /admin/salons/neu)   | 563   | AC-563-1                                             |
 | COMPLIANCE | Monatsabschluss   | /admin/month-close    | Tool / Wizard                                                                    | 53    | ADMIN-MIG-04                                         |
 | COMPLIANCE | Audit & Log       | /admin/audit          | Section-Stack (list with tabs) + List + Detail (per-entry via /admin/audit/[id]) | 53    | ADMIN-MIG-05                                         |
 | COMPLIANCE | Support-Zugriffe  | /admin/support-access | Section-Stack (list) + List + Detail (per-access via /admin/support-access/[id]) | 93b   | AC-93-7                                              |

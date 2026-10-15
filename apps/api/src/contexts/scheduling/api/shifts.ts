@@ -654,14 +654,11 @@ function assertShiftNotPast(iso: string): { code: "SHIFT_PAST_IMMUTABLE"; messag
 
 /**
  * Phase 47.5 — Verify a shift falls inside its own salon's opening hours.
- * Since Phase 325 (issue #325) this reads the SHIFT'S OWN `Salon.openingHours` (0=Mo..6=So, the
- * same shape 64b's `TenantConfig.storeHours` used — 64b D-03), not `TenantConfig.storeHours` —
- * the caller resolves and passes it (POST: the assigned salon; PUT: the new salonId if given,
- * else the shift's existing salon, D-10). `shiftStoreHoursMode` stays a TENANT setting, read from
- * `TenantConfig` here (unchanged). `PUT /api/v1/settings/work` still mirrors a `storeHours` write
- * into a tenant's sole active salon (D-13) — that mirror is why a one-salon tenant's behavior is
- * unchanged by this switch (D-11); the mirror itself is removed together with the salon
- * opening-hours UI, #563.
+ * Since Phase 325 (issue #325) this reads the SHIFT'S OWN `Salon.openingHours` (0=Mo..6=So) — the
+ * caller resolves and passes it (POST: the assigned salon; PUT: the new salonId if given, else the
+ * shift's existing salon, D-10). `shiftStoreHoursMode` stays a TENANT setting, read from
+ * `TenantConfig` here (unchanged). The tenant-level opening-hours column is retired (#563) and
+ * nothing mirrors into salons any more — hours are edited per salon only.
  * D-11 preserves every OLD null-return exactly: no TenantConfig row -> null (mirrors the old
  * combined `!cfg?.storeHours` branch — a tenant whose config row does not exist gets no check at
  * all, regardless of what its salon's hours say); mode OFF -> null; hours not a real array -> null
@@ -1249,6 +1246,14 @@ export async function shiftRoutes(app: FastifyInstance) {
         weekScopeReach.kind === "wholeTenant"
           ? "all"
           : await resolveStammsalonScopedEmployeeIds(app.prisma, tenantId, weekScopeReach, monday);
+      // Issue #563 (D-15): display data for the week view's closed-day dimming — the ACTIVE salons in
+      // the same `shift:read` reach as the shifts. The authoritative check stays
+      // `assertWithinStoreHours()` on POST/PUT.
+      const salonOpeningHours = (await listSalons(app.prisma, tenantId, { includeInactive: false }))
+        .filter(
+          (s) => weekScopeReach.kind === "wholeTenant" || weekScopeReach.salonIds.includes(s.id),
+        )
+        .map((s) => ({ salonId: s.id, name: s.name, openingHours: s.openingHours }));
 
       // Phase 47.3 — Verfügbarkeits-System toggle. When false, the EmployeeAvailability
       // merge passes are skipped (Leave + Absence still apply).
@@ -1986,6 +1991,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         // weeklyHours). Never written to OvertimeAccount (D-04, § 615 planning-only).
         contractSollMinutesByEmp,
         schoolHoliday,
+        salonOpeningHours,
       };
     },
   });

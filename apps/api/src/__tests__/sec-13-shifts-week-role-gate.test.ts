@@ -29,8 +29,9 @@ import type { FastifyInstance } from "fastify";
  */
 const TARGET_DAY_ISO = nextWeekdayStr(futureDateStr(1));
 
-// The full eleven-key response shape (`shifts.ts:1506-1527`). Pinned here so a future field-omission
+// The full twelve-key response shape of GET /week. Pinned here so a future field-omission
 // "fix" that quietly drops a key (rather than gating the whole route) shows up as a failing test.
+// Issue #563 (D-15) added `salonOpeningHours` (display data, the salons inside the caller's reach).
 const FULL_WEEK_RESPONSE_KEYS = [
   "absenceMinutesByEmp",
   "availability",
@@ -38,6 +39,7 @@ const FULL_WEEK_RESPONSE_KEYS = [
   "coverage",
   "employees",
   "leaveMinutesByEmp",
+  "salonOpeningHours",
   "schoolHoliday",
   "shiftBreakMinutesByEmp",
   "shifts",

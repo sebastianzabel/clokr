@@ -10,11 +10,11 @@
  * caller wraps the write and its own `app.audit()` call in one `$transaction`, passing `tx` to
  * both (Phase 64b Plan 02 adds the write functions this docblock originally deferred).
  *
- * Weekday encoding: `day` is 0 = Monday … 6 = Sunday — identical to `TenantConfig.storeHours`
- * (schema.prisma:217) and deliberately NOT `WorkSchedule.workDays`'s encoding (0 = Sunday). This
- * module's `openingHours` shape is a verbatim copy of `storeHours`'s shape (D-03) so the one-time
- * migration data section can copy the JSON without reshaping it, and so #325's shift-check reader
- * could switch from tenant to salon level without changing its parsing.
+ * Weekday encoding: `day` is 0 = Monday … 6 = Sunday — identical to the retired
+ * `TenantConfig.storeHours` column and deliberately NOT `WorkSchedule.workDays`'s encoding
+ * (0 = Sunday). This module's `openingHours` shape is a verbatim copy of that column's shape
+ * (D-03) so the one-time migration data section could copy the JSON without reshaping it, and so
+ * #325's shift-check reader could switch from tenant to salon level without changing its parsing.
  *
  * A `Salon` is never hard-deleted (D-06) — deactivation only (`isActive` / `deactivatedAt`). This
  * module therefore has, and will only ever have, no delete function.
@@ -31,11 +31,12 @@
  *   a config flag.
  * - Phase 71b (issue #71): every salon carries the Bundesland of its work location; a new salon
  *   without one inherits Tenant.federalState, which is otherwise no longer read for holidays.
- * - `TenantConfig.storeHours` is deprecated: no new code reads it. Since Phase 325 (issue #325)
- *   the shift check (`contexts/scheduling/api/shifts.ts`) reads the shift's own `Salon.openingHours`
- *   instead; `PUT /api/v1/settings/work` still mirrors a `storeHours` write into a tenant's single
- *   active salon (D-13) until #563 removes both the mirror and this field — pinned by
- *   `store-hours-readers.test.ts`'s living allowlist (now `settings.ts` only).
+ * - `TenantConfig.storeHours` is retired (Issue #563, D-13): nothing reads or writes it, and
+ *   opening hours live only on `Salon.openingHours`. Since Phase 325 (issue #325) the shift check
+ *   (`contexts/scheduling/api/shifts.ts`) reads the shift's own salon; the former mirror of a
+ *   `PUT /api/v1/settings/work` write into the sole active salon was removed with #563 — pinned by
+ *   `store-hours-readers.test.ts`'s living allowlist (`settings.ts` only, inside the retired-column
+ *   constant). The column itself is dropped by a follow-up release.
  * - Every tenant-creating path (`seed.ts`, `seed-demo.ts`, `test-bootstrap.ts`) creates that
  *   tenant's default salon in the same step (D-18).
  * - Phase 67b (issue #67, D-14): a salon that is, on the deactivation day, the current or future
@@ -57,12 +58,12 @@ import {
 } from "./salon-assignments";
 
 // A real HH:MM time: hours 00-23, minutes 00-59. Plain `\d{2}:\d{2}` (as `settings.ts`'s weaker,
-// pre-existing `storeHours` schema uses) would also accept "99:99" — D-04 requires a real time.
+// retired `storeHours` schema used) would also accept "99:99" — D-04 requires a real time.
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /**
- * D-04: one canonical opening-hours schema for the whole Salon surface (do not reuse
- * `settings.ts`'s weaker `storeHours` schema — it has no `superRefine` for "each day exactly
+ * D-04: one canonical opening-hours schema for the whole Salon surface (the former `storeHours`
+ * schema of `settings.ts` was weaker — it had no `superRefine` for "each day exactly
  * once" or "open < close unless closed"). Array length exactly 7; every weekday 0..6 occurs
  * exactly once; `open`/`close` are real HH:MM times; `open < close` unless `closed: true`.
  *
@@ -104,8 +105,9 @@ export type SalonOpeningHours = z.infer<typeof salonOpeningHoursSchema>;
 
 /**
  * The default default-salon opening hours (D-14's migration data section, and every future
- * `createSalon` call with no explicit hours). MUST equal `TenantConfig.storeHours`'s
- * `@default(...)` literal in `schema.prisma:217` verbatim — pinned by a living assertion in
+ * `createSalon` call with no explicit hours). Equals the retired `TenantConfig.storeHours`
+ * column's `@default(...)` literal in `schema.prisma` until the follow-up release drops it —
+ * pinned by a living assertion in
  * `salon-migration.test.ts` (comparing this constant against the migration's own COALESCE
  * fallback JSON) rather than restated as an assumption here.
  */
@@ -580,86 +582,4 @@ export async function activateSalon(
     data: { isActive: true, deactivatedAt: null },
   });
   return { status: "OK", existing, updated };
-}
-
-// ── storeHours <-> Salon mirror (Phase 64b Plan 04, D-16) — removed by #563 ──────────────────────
-
-/**
- * Tolerant equality for two `openingHours` JSON values: sorts by day and normalises an ABSENT
- * `closed` down to the same shape as an explicit `false`, so key order and an omitted `closed`
- * never register as a "change" that {@link syncSoleActiveSalonOpeningHours} would otherwise
- * mirror (and audit) for no real difference. Module-private — no caller needs the intermediate
- * string, only the equality it produces.
- */
-function normalizeOpeningHoursForCompare(value: unknown): string {
-  const rows = Array.isArray(value) ? (value as SalonOpeningHours) : [];
-  return JSON.stringify(
-    [...rows]
-      .sort((a, b) => a.day - b.day)
-      .map((row) => ({
-        day: row.day,
-        open: row.open,
-        close: row.close,
-        closed: row.closed === true,
-      })),
-  );
-}
-
-/**
- * D-13/D-16: keeps `TenantConfig.storeHours` and a tenant's single active salon in step until #563
- * removes the tenant field entirely (Phase 325, issue #325, kept this mirror deliberately — the
- * admin UI's only opening-hours editor still writes `storeHours`, and removing the mirror before
- * #563 builds a salon-level editor would make every future edit there invisible to the shift check).
- * Called ONLY from `PUT /api/v1/settings/work`
- * (`contexts/platform/api/settings.ts`) when its body carries `storeHours`, and mirrors ONLY when
- * that value differs from `previousTenantHours` — the tenant value before the write, read by the
- * caller — so resending an unchanged week never overwrites a salon edited via
- * `PATCH /api/v1/salons/:id` (Phase 64b review, WR-02). This is a WRITE into
- * the salon from inside an existing platform route, not a new read of `storeHours` (this function
- * never reads `TenantConfig` itself). `openingHours` arrives validated only by that route's legacy
- * schema (7 entries, `HH:MM` format) and is written verbatim, exactly as the migration copied the
- * tenant value — D-04: legacy values are not re-validated against {@link salonOpeningHoursSchema}
- * (Phase 64b review, WR-03). Deliberately NOT re-exported from `index.ts` (Plan 04) — the
- * PUT /work handler is this function's only legitimate caller, not a general-purpose surface for
- * Phase 67b.
- *
- * With more than one active salon the tenant value is ambiguous which salon it means — nothing is
- * mirrored, and `TenantConfig.storeHours` is still updated by the caller regardless. A salon
- * edited directly via `PATCH /api/v1/salons/:id` is never mirrored back into `TenantConfig` in the
- * other direction — #325 switches the shift check's reader instead of building a second mirror.
- */
-export async function syncSoleActiveSalonOpeningHours(
-  db: Prisma.TransactionClient,
-  tenantId: string,
-  change: { previousTenantHours: unknown; openingHours: SalonOpeningHours },
-): Promise<{ existing: Salon; updated: Salon } | null> {
-  const { previousTenantHours, openingHours } = change;
-  // Review WR-02: mirror only a CHANGE of the tenant value. A tenant without a TenantConfig row
-  // (`undefined`) effectively has the column default, which DEFAULT_SALON_OPENING_HOURS equals.
-  if (
-    normalizeOpeningHoursForCompare(previousTenantHours ?? DEFAULT_SALON_OPENING_HOURS) ===
-    normalizeOpeningHoursForCompare(openingHours)
-  ) {
-    return null;
-  }
-
-  const activeSalons = await db.salon.findMany({
-    where: { tenantId, isActive: true },
-    take: 2,
-  });
-  if (activeSalons.length !== 1) return null;
-
-  const [salon] = activeSalons;
-  if (
-    normalizeOpeningHoursForCompare(salon.openingHours) ===
-    normalizeOpeningHoursForCompare(openingHours)
-  ) {
-    return null;
-  }
-
-  const updated = await db.salon.update({
-    where: { id: salon.id, tenantId },
-    data: { openingHours: openingHours as unknown as Prisma.InputJsonValue },
-  });
-  return { existing: salon, updated };
 }

@@ -39,20 +39,11 @@
     salon?: OperatorSalon | null;
     /** The tenant's Standardsalon; its hours prefill a new salon. */
     defaultSalon?: OperatorSalon | null;
-    /** Active salons of the tenant; exactly one shows the settings-overwrite hint (D-10). */
-    activeSalonCount: number;
     /** Sends the body; rejects with the client's error on failure. The dialog closes on success. */
     onSubmit: (body: CreateSalonBody | UpdateSalonBody) => Promise<void>;
   }
 
-  let {
-    open = $bindable(),
-    mode,
-    salon = null,
-    defaultSalon = null,
-    activeSalonCount,
-    onSubmit,
-  }: Props = $props();
+  let { open = $bindable(), mode, salon = null, defaultSalon = null, onSubmit }: Props = $props();
 
   const FORM_ID = "op-salon-form";
   const REASON_ID = "op-salon-reason-callout";
@@ -317,15 +308,6 @@
           mehr änderbar.
         </p>
       </div>
-
-      {#if activeSalonCount === 1}
-        <div class="callout brand" data-testid="op-salon-single-salon-hint">
-          <p>
-            Bei nur einem aktiven Salon überschreibt eine Änderung der Öffnungszeiten in den
-            Mandanten-Einstellungen diesen Wert.
-          </p>
-        </div>
-      {/if}
 
       <OpeningHoursEditor bind:days={form.openingHours} errors={hourErrors} />
 
