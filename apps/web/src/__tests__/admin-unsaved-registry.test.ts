@@ -57,6 +57,9 @@ const EXCLUDED: Record<string, string> = {
   "themes/+page.svelte": "no write path and no bound form state",
   "availability/+page.svelte": "list view — no write path",
   "audit/[id]/+page.svelte": "detail view — no write path",
+  "support-access/+page.svelte": "list view — no write path, no form state",
+  "support-access/[id]/+page.svelte":
+    "detail view — the only write is the end action behind a ConfirmDialog (an operation, no form state)",
   "special-leave/+page.svelte": "redirect stub — no UI, no form state",
   "special-leave/[id]/+page.svelte": "redirect stub — no UI, no form state",
   "+page.svelte": "redirect stub — no UI, no form state",
