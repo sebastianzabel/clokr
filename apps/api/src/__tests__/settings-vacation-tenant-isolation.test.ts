@@ -24,7 +24,13 @@
  * literal (documented time-bomb hazard, see `.planning/STATE.md`).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+  auditRowsFor,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 // A UUID-shaped but genuinely non-existent employeeId, for the "identical 404 shape" probe.
@@ -91,19 +97,22 @@ describe("settings /vacation/:employeeId — tenant isolation (Phase 104 CR-01 f
     expect(body.totalDays).toBeUndefined();
     expect(body.carryOverDeadline).toBeUndefined();
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "CROSS_TENANT_ACCESS_DENIED",
         entity: "LeaveEntitlement",
         entityId: tenantB.employee.id,
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
     expect(audit?.userId).toBe(tenantA.adminUser.id);
   });
 
   it("PUT: tenantA ADMIN overwriting tenantB's entitlement → 404, victim row unchanged, audit row present", async () => {
+    // The GET test above already caused one denial for the same employee: the PUT adds exactly one.
+    const deniedBefore = (
+      await auditRowsFor(app, "LeaveEntitlement", tenantB.employee.id, "CROSS_TENANT_ACCESS_DENIED")
+    ).length;
     const res = await app.inject({
       method: "PUT",
       url: `/api/v1/settings/vacation/${tenantB.employee.id}`,
@@ -128,15 +137,15 @@ describe("settings /vacation/:employeeId — tenant isolation (Phase 104 CR-01 f
     expect(Number(victim.carriedOverDays)).toBe(VICTIM_CARRIED_OVER);
     expect(victim.carryOverDeadline?.toISOString()).toBe(VICTIM_DEADLINE.toISOString());
 
-    const audit = await app.prisma.auditLog.findFirst({
-      where: {
-        action: "CROSS_TENANT_ACCESS_DENIED",
-        entity: "LeaveEntitlement",
-        entityId: tenantB.employee.id,
-      },
-      orderBy: { createdAt: "desc" },
-    });
-    expect(audit).not.toBeNull();
+    const deniedRows = await auditRowsFor(
+      app,
+      "LeaveEntitlement",
+      tenantB.employee.id,
+      "CROSS_TENANT_ACCESS_DENIED",
+    );
+    expect(deniedRows).toHaveLength(deniedBefore + 1);
+    const audit = deniedRows[deniedRows.length - 1];
+    expect(audit).toBeDefined();
     expect(audit?.userId).toBe(tenantA.adminUser.id);
   });
 

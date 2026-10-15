@@ -832,6 +832,7 @@ export async function buildActorTenant(
     const logins = await app.prisma.auditLog.findMany({
       where: { userId, action: "LOGIN" },
       select: { id: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     if (logins.length !== 1) {
       throw new Error(

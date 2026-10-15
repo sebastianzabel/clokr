@@ -9,7 +9,13 @@
  * 325-02-SUMMARY.md for both runs ("recorded on old reader", "after switch").
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  soleAuditRowOrNull,
+} from "./setup";
 import { addDaysStr, holidayFreeMondayStr } from "./test-dates";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import type { FastifyInstance } from "fastify";
@@ -392,7 +398,7 @@ describe("shift store-hours check — AC-4/D-07 two-salon behavior (Phase 325 Pl
     expect(forceRes.statusCode, forceRes.body.slice(0, 300)).toBe(200);
     expect(JSON.parse(forceRes.body).salonId).toBe(salonB.id);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "Shift", entityId: shift.id, action: "SHIFT_FORCED_OUTSIDE_HOURS" },
     });
     expect(audit).not.toBeNull();

@@ -213,6 +213,7 @@ describe("Phase 75b — system roles and legacy-role migration (Issue #75)", () 
 
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "RoleAssignment", entityId: assignment.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits).toHaveLength(1);
     expect(audits[0].userId).toBeNull();
@@ -419,6 +420,7 @@ describe("legacy-role backfill edge cases (AC-75-4..AC-75-8, D-07, D-28)", () =>
       });
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "RoleAssignment", entityId: assignment.id },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits, user.label).toHaveLength(1);
       expect(audits[0].userId, user.label).toBeNull();
@@ -443,6 +445,7 @@ describe("legacy-role backfill edge cases (AC-75-4..AC-75-8, D-07, D-28)", () =>
       expect(systemRows, user.label).toEqual([]);
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "RoleAssignment", newValue: { path: ["userId"], equals: user.userId } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits, user.label).toEqual([]);
     }

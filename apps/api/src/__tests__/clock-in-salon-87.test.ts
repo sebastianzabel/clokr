@@ -170,6 +170,7 @@ describe("Issue #87 — clock-in with a chosen salon (write path)", () => {
     expect(row.invalidReason).toBeNull();
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "TimeEntry", entityId: row.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits).toHaveLength(1);
     expect(audits[0].action).toBe("CLOCK_IN");

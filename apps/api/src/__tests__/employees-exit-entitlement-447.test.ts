@@ -7,7 +7,13 @@
  * year expiring. Initials-only fixtures — no PII per CLAUDE.md.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 const CURRENT_YEAR = new Date().getUTCFullYear();
@@ -104,9 +110,8 @@ describe("Employee exit-date writes recompute the exit-year VACATION row (Issue 
     expect(Number(updated.totalDays)).toBe(8);
     expect(updated.isAutoCalculated).toBe(true);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "LeaveEntitlement", entityId: row.id, action: "UPDATE" },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
     expect(audit!.userId).toBe(adminUserId);
@@ -139,7 +144,7 @@ describe("Employee exit-date writes recompute the exit-year VACATION row (Issue 
       where: { id: row.id },
     });
     expect(Number(unchanged.totalDays)).toBe(25);
-    const exitAudit = await app.prisma.auditLog.findFirst({
+    const exitAudit = await soleAuditRowOrNull(app.prisma, {
       where: {
         entity: "LeaveEntitlement",
         entityId: row.id,

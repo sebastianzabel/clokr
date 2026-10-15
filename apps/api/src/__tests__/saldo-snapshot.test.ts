@@ -147,6 +147,7 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
       for (const e of entries) {
         const auditRows = await app.prisma.auditLog.findMany({
           where: { entity: "TimeEntry", entityId: e.id, action: "LOCK" },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         });
         expect(auditRows.length).toBe(1);
         expect(auditRows[0].userId).toBe(data.adminUser.id);

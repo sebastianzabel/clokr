@@ -246,6 +246,7 @@ describe("Issue #80 — /api/v1/day-breaks", () => {
 
       const audits = await app.prisma.auditLog.findMany({
         where: { action: "DAY_BREAK_CREATE", entityId: dayBreak.id },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
       expect(audits[0].entity).toBe("DayBreak");
@@ -380,6 +381,7 @@ describe("Issue #80 — /api/v1/day-breaks", () => {
           entity: "EmployeeDay",
           entityId: `${data.employee.id}:${DAY}`,
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
       expect(await app.prisma.dayBreak.count({ where: { employeeId: data.employee.id } })).toBe(0);
@@ -475,6 +477,7 @@ describe("Issue #80 — /api/v1/day-breaks", () => {
 
       const audits = await app.prisma.auditLog.findMany({
         where: { action: "DAY_BREAK_DELETE", entityId: created.id },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
       const oldValue = audits[0].oldValue as Record<string, string>;

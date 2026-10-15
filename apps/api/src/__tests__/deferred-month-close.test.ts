@@ -729,6 +729,7 @@ describe("Phase 292 D — closeMonthWithGapsAllowed=false schliesst nichts und e
   it("P2: die tägliche Meldung nennt jetzt den ÄLTESTEN blockierten Monat und verlinkt ihn — nicht den Vormonat", async () => {
     const notifs = await app.prisma.notification.findMany({
       where: { userId: riegelManagerUserId, type: "MONTH_CLOSE_BLOCKED" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(notifs.length).toBe(1);
     // Before Phase 292 the title named `prevMonth` — "August 2026" for a May-blocked employee
@@ -749,6 +750,7 @@ describe("Phase 292 D — closeMonthWithGapsAllowed=false schliesst nichts und e
 
     const notifs = await app.prisma.notification.findMany({
       where: { userId: riegelManagerUserId, type: "MONTH_CLOSE_BLOCKED" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(
       notifs.length,

@@ -22,6 +22,7 @@ import {
   seedEntitlementYears,
   cleanupTestData,
   closeTestApp,
+  soleAuditRowOrNull,
 } from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import { monthRangeUtc } from "../contexts/working-time-account";
@@ -179,9 +180,8 @@ describe("Issue #448 (D-04) — Berufsschultag über bestehendem Urlaub korrigie
   }
 
   async function getCorrectionAudit(requestId: string) {
-    return app.prisma.auditLog.findFirst({
+    return soleAuditRowOrNull(app.prisma, {
       where: { action: "LEAVE_CORRECTED", entity: "LeaveRequest", entityId: requestId },
-      orderBy: { createdAt: "desc" },
     });
   }
 

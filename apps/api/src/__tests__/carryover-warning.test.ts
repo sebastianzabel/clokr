@@ -9,7 +9,14 @@
  * - manual /reports/carryover-warn trigger respects tenant scope + dedup
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+  soleNotificationOrNull,
+} from "./setup";
 import { runCarryoverWarningOnce } from "../contexts/absence/plugins/carryover-warning";
 import type { FastifyInstance } from "fastify";
 
@@ -122,7 +129,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
     expect(res.warned).toBe(1);
     expect(res.scanned).toBe(1);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "CARRYOVER_WARNED",
         entity: "LeaveEntitlement",
@@ -137,7 +144,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
     expect(v.source).toBe("carryover-warning-cron");
 
     // Notification was created for the employee user
-    const notif = await app.prisma.notification.findFirst({
+    const notif = await soleNotificationOrNull(app.prisma, {
       where: { userId: data.empUser.id, type: "CARRYOVER_EXPIRING" },
     });
     expect(notif).not.toBeNull();
@@ -177,7 +184,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
     res = await runCarryoverWarningOnce(app);
     expect(res.warned).toBe(1);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CARRYOVER_WARNED" },
     });
     expect((audit!.newValue as Record<string, unknown>).thresholdDays).toBe(45);
@@ -355,7 +362,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
 
     await runCarryoverWarningOnce(app, { onlyTenantId: data.tenant.id });
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent.id },
     });
     expect(audit).not.toBeNull();
@@ -363,8 +370,15 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
     expect(v.carriedOverDays).toBe(5);
     expect(v.atRiskDays).toBe(2);
 
-    const notif = await app.prisma.notification.findFirst({
-      where: { relatedId: ent.id, type: "CARRYOVER_EXPIRING" },
+    // The cron notifies the employee AND each admin about the same entitlement within the same
+    // millisecond (#561): select the employee's own notification by recipient.
+    const riskEmployee = await app.prisma.employee.findUniqueOrThrow({ where: { id: employeeId } });
+    const notif = await soleNotificationOrNull(app.prisma, {
+      where: {
+        relatedId: ent.id,
+        type: "CARRYOVER_EXPIRING",
+        userId: riskEmployee.userId,
+      },
     });
     expect(notif).not.toBeNull();
     expect(notif!.message).toContain("(2 Tage)");
@@ -400,7 +414,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
     const res = await runCarryoverWarningOnce(app, { onlyTenantId: data.tenant.id });
     expect(res.skippedNoRisk).toBeGreaterThanOrEqual(1);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent.id },
     });
     expect(audit).toBeNull();
@@ -427,7 +441,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
 
     await runCarryoverWarningOnce(app, { onlyTenantId: data.tenant.id });
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent.id },
     });
     expect(audit).toBeNull();

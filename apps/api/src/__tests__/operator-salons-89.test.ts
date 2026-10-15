@@ -271,6 +271,7 @@ describe("POST /api/v1/operator/tenants/:id/salons", () => {
 
     const tenantRows = await app.prisma.auditLog.findMany({
       where: { entity: "Salon", entityId: dto.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(tenantRows).toHaveLength(1);
     expect(tenantRows[0].action).toBe("CREATE");
@@ -314,6 +315,7 @@ describe("POST /api/v1/operator/tenants/:id/salons", () => {
 
     const couplingAudit = await app.prisma.auditLog.findMany({
       where: { entity: "SalonCoupling", entityId: row!.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(couplingAudit).toHaveLength(1);
     expect(couplingAudit[0].action).toBe("CREATE");
@@ -720,6 +722,7 @@ describe("PATCH /api/v1/operator/tenants/:id/salons/:salonId", () => {
 
     const tenantRows = await app.prisma.auditLog.findMany({
       where: { entity: "Salon", entityId: salon.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(tenantRows).toHaveLength(1);
     expect(tenantRows[0].action).toBe("UPDATE");
@@ -888,6 +891,7 @@ describe("PATCH /api/v1/operator/tenants/:id/salons/:salonId", () => {
     ).toEqual(["SALON_COUPLING_SET"]);
     const createRow = await app.prisma.auditLog.findMany({
       where: { entity: "SalonCoupling", entityId: firstId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(createRow).toHaveLength(1);
     expect(createRow[0].action).toBe("CREATE");
@@ -934,6 +938,7 @@ describe("PATCH /api/v1/operator/tenants/:id/salons/:salonId", () => {
     ]);
     const deleteRow = await app.prisma.auditLog.findMany({
       where: { entity: "SalonCoupling", entityId: firstId, action: "DELETE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(deleteRow).toHaveLength(1);
     expect(deleteRow[0].oldValue).toMatchObject({ salonId: salon.id, externalBranchId: c1 });
@@ -1399,6 +1404,7 @@ describe("POST /api/v1/operator/tenants/:id/salons/:salonId/deactivate and /acti
 
     const tenantRows = await app.prisma.auditLog.findMany({
       where: { entity: "Salon", entityId: salon.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(tenantRows).toHaveLength(1);
     expect(tenantRows[0]).toMatchObject({ action: "DEACTIVATE", userId: null });
@@ -1409,6 +1415,7 @@ describe("POST /api/v1/operator/tenants/:id/salons/:salonId/deactivate and /acti
 
     const endRows = await app.prisma.auditLog.findMany({
       where: { entity: "EmployeeSalonAssignment", entityId: assignment.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(endRows).toHaveLength(1);
     expect(endRows[0]).toMatchObject({ action: "END", userId: null });

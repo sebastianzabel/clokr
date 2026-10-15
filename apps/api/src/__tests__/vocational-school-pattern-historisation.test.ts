@@ -14,7 +14,7 @@
 // vocational-school.test.ts / jarbschg-slot.test.ts.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, auditRowsFor } from "./setup";
 import type { FastifyInstance } from "fastify";
 import {
   BS_PATTERN_ORDER_BY,
@@ -636,18 +636,22 @@ describe("PUT vocational-school-pattern — option B close-out (Phase 103 Plan 0
       daysOfWeek: [0],
     });
 
+    // Earlier tests of this file replaced the same employee's patterns: this PUT adds exactly one row.
+    const replacesBefore = (
+      await auditRowsFor(app, "EmployeeVocationalSchoolPattern", data.employee.id, "REPLACE")
+    ).length;
     const res = await putPatterns([{ daysOfWeek: [1], validFrom: toIso(mondayWeeksAgo(2)) }]);
     expect(res.statusCode).toBe(200);
 
-    const auditRow = await app.prisma.auditLog.findFirst({
-      where: {
-        entity: "EmployeeVocationalSchoolPattern",
-        entityId: data.employee.id,
-        action: "REPLACE",
-      },
-      orderBy: { createdAt: "desc" },
-    });
-    expect(auditRow).not.toBeNull();
+    const replaceRows = await auditRowsFor(
+      app,
+      "EmployeeVocationalSchoolPattern",
+      data.employee.id,
+      "REPLACE",
+    );
+    expect(replaceRows).toHaveLength(replacesBefore + 1);
+    const auditRow = replaceRows[replaceRows.length - 1];
+    expect(auditRow).toBeDefined();
     const oldValue = auditRow!.oldValue as {
       patterns: Array<{ id: string; validUntil: string | null }>;
     };

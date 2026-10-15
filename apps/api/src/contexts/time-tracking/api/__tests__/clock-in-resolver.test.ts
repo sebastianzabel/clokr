@@ -101,6 +101,7 @@ describe("POST /clock-in — Phase 76.2 resolver migration", () => {
     // Exactly 1 AuditLog row with action: 'CLOCK_IN' referencing the JWT actor
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "TimeEntry", entityId: rows[0].id, action: "CLOCK_IN" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits).toHaveLength(1);
     expect(audits[0].userId).toBe(data.empUser.id); // sub-req A — JWT-path actor preserved
@@ -144,6 +145,7 @@ describe("POST /clock-in — Phase 76.2 resolver migration", () => {
     // Exactly 1 AuditLog row — the 4 conflicts produced zero audits
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "TimeEntry", entityId: rows[0].id, action: "CLOCK_IN" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits).toHaveLength(1);
   });

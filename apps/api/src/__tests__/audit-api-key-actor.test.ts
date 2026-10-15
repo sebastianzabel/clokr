@@ -21,7 +21,13 @@
 import { randomBytes, createHash } from "crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 
 function uniqueSuffix(label: string): string {
   return `${label}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -72,9 +78,8 @@ describe("Issue #333 — API-key audit actor", () => {
   /** Reads back the freshly-written audit row and asserts the Issue #333 invariants common to
    * every case below: `userId` is never the raw subject, and the API key is still identified. */
   async function assertApiKeyActorAudit(entity: string, entityId: string, action: string) {
-    const log = await app.prisma.auditLog.findFirst({
+    const log = await soleAuditRowOrNull(app.prisma, {
       where: { entity, entityId, action },
-      orderBy: { createdAt: "desc" },
     });
     expect(log).not.toBeNull();
     expect(log!.userId).toBeNull();
