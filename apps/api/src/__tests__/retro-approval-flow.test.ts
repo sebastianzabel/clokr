@@ -28,6 +28,7 @@ import {
   createTestSalon,
   salonIdForEmployee,
   soleAuditRowOrNull,
+  grantSystemRole,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dateStrInTz } from "../contexts/working-time-account/timezone";
@@ -78,6 +79,7 @@ async function seedApprovalTenant(app: FastifyInstance, suffix: string) {
         hireDate: new Date("2023-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: user.id, role });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,

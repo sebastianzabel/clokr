@@ -17,7 +17,7 @@
  * guarantee, § 9 credit-back, and non-VACATION isolation.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, grantSystemRole } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -132,6 +132,7 @@ describe("Issue #436 — per-ISO-week union pricing across sibling requests (D-0
           hireDate: PAST_ANCHOR,
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role });
       const login = await app.inject({
         method: "POST",
         url: "/api/v1/auth/login",

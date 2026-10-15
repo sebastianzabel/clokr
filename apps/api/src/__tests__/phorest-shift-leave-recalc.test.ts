@@ -30,7 +30,7 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp } from "./setup";
+import { getTestApp, grantSystemRole } from "./setup";
 import { utcMidnight, dbDateStr, todayStr, pastDateStr, dowOf } from "./test-dates";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 import { syncPhorestShifts } from "../services/phorest/sync-shifts";
@@ -183,6 +183,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
         hireDate: new Date("2020-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: managerUserId, role: "MANAGER" });
 
     // Erika (MAPPED_STAFF_ID): count 4, Tue-Fri — deliberately NOT the naive Mo-Fr prefix
     // [1,2,3,4] a guess-from-count algorithm would produce for count 4 (D-02: workDays is frozen

@@ -19,7 +19,7 @@
  * and that the value is NOT merely the prior-month carry-over (i.e. the current month is included).
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
+import { getTestApp, cleanupTestData, createTestSalon, grantSystemRole } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
 import {
@@ -74,6 +74,7 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
 
     const user = await prisma.user.create({
       data: { email: `b5-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
@@ -91,6 +92,7 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     employeeId = emp.id;
 
     // SHIFT_BASED, 38h/week over Mon–Fri. day-hours ARE set (7.6h Mon–Fri) so the contract Ø-Soll
@@ -361,6 +363,7 @@ describe("SALDO-DISP-01 (required_test_assertions #1) — TRACK_ONLY confirmedMi
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
 
     const user = await prisma.user.create({
       data: { email: `trko-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
@@ -375,6 +378,7 @@ describe("SALDO-DISP-01 (required_test_assertions #1) — TRACK_ONLY confirmedMi
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     employeeId = emp.id;
 
     await prisma.workSchedule.create({
@@ -497,6 +501,7 @@ describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GE
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
 
     // (a) Partly-rostered SHIFT_BASED — shifts exist ONLY for July 1–10 (all already in the past
     // relative to RI_NOW's windowEnd=July14); nothing planned for the remainder of the month.
@@ -521,6 +526,7 @@ describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GE
           breakOver9hOverride: 0,
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       partlyRosteredEmpId = emp.id;
       await prisma.workSchedule.create({
         data: {
@@ -581,6 +587,7 @@ describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GE
           hireDate: new Date("2026-07-01"),
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       nonShiftEmpId = emp.id;
       await prisma.workSchedule.create({
         data: {
@@ -619,6 +626,7 @@ describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GE
           breakOver9hOverride: 0,
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       zeroRosterEmpId = emp.id;
       await prisma.workSchedule.create({
         data: {
@@ -751,6 +759,7 @@ describe("WR-01 — rosterIncomplete anchor parity at the last calendar day of t
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     employeeId = emp.id;
 
     await prisma.workSchedule.create({

@@ -17,7 +17,7 @@
  */
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import { getVacationBalance } from "../contexts/absence/facade/vacation-balance";
 import type { FastifyInstance } from "fastify";
 
@@ -70,6 +70,11 @@ describe("Issue #451 Plan 08 (D-07, D-08) — one Resturlaub across dashboard, U
         lastName: "Parity451",
         hireDate: new Date(Date.UTC(2024, 0, 1)),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: user.id,
+      role: "EMPLOYEE",
     });
     employeeId = employee.id;
     await app.prisma.workSchedule.create({
@@ -323,6 +328,11 @@ describe("Issue #451 Plan 08 (D-07, D-08) — one Resturlaub across dashboard, U
         lastName: "Parity451",
         hireDate: new Date(Date.UTC(2024, 0, 1)),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: user2.id,
+      role: "EMPLOYEE",
     });
     await app.prisma.overtimeAccount.create({
       data: { employeeId: employee2.id, balanceHours: 0 },

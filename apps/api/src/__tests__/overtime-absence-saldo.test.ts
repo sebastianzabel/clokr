@@ -7,7 +7,13 @@
  * after a single test TimeEntry was created.
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
 import { pastDateStr, dowOf, utcMidnight } from "./test-dates";
 import type { FastifyInstance } from "fastify";
@@ -64,6 +70,7 @@ describe("Overtime Absence Saldo — pre-tracking absence coverage", () => {
         hireDate: HIRE_DATE,
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -105,6 +112,7 @@ describe("Overtime Absence Saldo — pre-tracking absence coverage", () => {
         hireDate: HIRE_DATE,
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: empUserA.id, role: "EMPLOYEE" });
     employeeWithAbsenceId = empA.id;
     await prisma.workSchedule.create({
       data: {
@@ -154,6 +162,7 @@ describe("Overtime Absence Saldo — pre-tracking absence coverage", () => {
         hireDate: HIRE_DATE,
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: empUserB.id, role: "EMPLOYEE" });
     employeeWithoutAbsenceId = empB.id;
     await prisma.workSchedule.create({
       data: {
