@@ -221,6 +221,37 @@ test.describe("Error Handling + UX Plausibility", () => {
     }
   });
 
+  // #516: every target of the desktop sidebar is offered by the mobile "Mehr" sheet as well, under
+  // the same heading, and marked as the page there. The two pages that used to be missing on
+  // mobile (and the personal Verfügbarkeit, which shares its label with the admin one) are the
+  // reason this exists; the redirect-only /admin/special-leave is in no navigation at all.
+  test("navigation offers the same targets on every device profile", async ({ page }) => {
+    const targets: { route: string; heading: string; name: string }[] = [
+      { route: "/availability", heading: "Mein Bereich", name: "Verfügbarkeit" },
+      { route: "/admin/availability", heading: "PLANUNG", name: "Verfügbarkeit" },
+      { route: "/admin/phorest", heading: "SYSTEM", name: "Phorest" },
+      { route: "/admin/audit", heading: "COMPLIANCE", name: "Audit & Log" },
+    ];
+    for (const { route, heading, name } of targets) {
+      await page.goto(route);
+      const sidebar = page.getByRole("complementary", { name: "Hauptnavigation", exact: true });
+      await expect(page.locator("h1").first()).toBeVisible();
+      let scope;
+      if ((await sidebar.count()) === 1) {
+        scope = sidebar;
+      } else {
+        await page.getByRole("button", { name: /^Mehr/ }).click();
+        scope = page.getByRole("dialog", { name: "Weitere Navigation" });
+      }
+      const group = scope.getByRole("navigation", { name: heading, exact: true });
+      const link = group.locator(`a[href="${route}"]`);
+      await expect(link, `${route}: listed under ${heading}`).toHaveCount(1);
+      await expect(link).toHaveAccessibleName(name);
+      await expect(link, `${route}: marked as the page`).toHaveAttribute("aria-current", "page");
+      await expect(scope.locator('a[href="/admin/special-leave"]')).toHaveCount(0);
+    }
+  });
+
   test("empty states provide guidance", async ({ page }) => {
     await page.goto("/admin/shutdowns");
     await page.waitForLoadState("networkidle");
