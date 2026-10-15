@@ -582,7 +582,11 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // Issue #90 (2026-10-15): new file contexts/platform/facade/operator-metrics.ts, the one
     // producer of the operator dashboard counts (operatorTenantMetrics) — 142 -> 143; passes
     // F1/F2/F3 directly, exceptions unchanged at 17.
-    expect(functions).toHaveLength(143);
+    // Issue #93 (Phase 93b-04, D-05(2), 2026-10-15): +3 operator support month reads —
+    // getEntriesForSupportMonth, getDayBreaksForSupportMonth (time-tracking/facade/time-entries.ts)
+    // and getLeaveRequestsForSupportMonth (absence/facade/leave-requests.ts) — 143 -> 146; all three
+    // pass F1/F2/F3 directly, exceptions unchanged at 17.
+    expect(functions).toHaveLength(146);
 
     const rawExceptions = JSON.parse(
       readFileSync(

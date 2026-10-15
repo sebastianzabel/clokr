@@ -717,3 +717,81 @@ export async function countEntriesForSalon(
 ): Promise<number> {
   return db.timeEntry.count({ where: { salonId, employee: { tenantId } } });
 }
+
+// ── Issue #93 (D-05(2)) — operator support month view: allow-list reads ──────────────────────────
+
+/**
+ * Issue #93 (Phase 93b-04, D-05(2)): the entries of one employee in `[firstDay, lastDay]` for the
+ * operator's support month view. The caller passes CALENDAR-DAY bounds (`monthDateRange`, Issue
+ * #493) because `TimeEntry.date` is a `@db.Date` column.
+ *
+ * Deliberately WITHOUT `deletedAt: null` — the named soft-delete carve-out of this read (same shape
+ * as {@link countEntriesForSalon}): the support month view shows a soft-deleted entry as a flag,
+ * because tracing an entry that "disappeared" is the core of support work. The row carries its
+ * `deletedAt` so the caller can render the flag; nothing is written.
+ *
+ * Data minimisation (Art. 5 (1) (c) DSGVO): an allow-list `select`. The free-text `note`, the
+ * waived-break reason, the creator id, the retro-request id and the derived invalid-reason text are
+ * never read — a column that is not selected cannot leak through a later DTO change. The tenant binds
+ * through the employee, so another tenant's id returns nothing.
+ */
+export async function getEntriesForSupportMonth(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  employeeId: string,
+  firstDay: Date,
+  lastDay: Date,
+) {
+  return db.timeEntry.findMany({
+    where: {
+      employeeId,
+      employee: { tenantId },
+      date: { gte: firstDay, lte: lastDay },
+    },
+    orderBy: [{ date: "asc" }, { startTime: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      date: true,
+      startTime: true,
+      endTime: true,
+      breakMinutes: true,
+      breakStatus: true,
+      type: true,
+      source: true,
+      isInvalid: true,
+      invalidReasonCode: true,
+      deletedAt: true,
+      isLocked: true,
+      salon: { select: { id: true, name: true } },
+      breaks: {
+        orderBy: [{ startTime: "asc" }, { id: "asc" }],
+        select: { startTime: true, endTime: true },
+      },
+    },
+  });
+}
+
+/**
+ * Issue #93 (Phase 93b-04, D-05(2)): the non-deleted day breaks (`DayBreak`, a break lying in a gap
+ * between entries) of one employee in `[firstDay, lastDay]` for the operator's support month view.
+ * Calendar-day bounds (`DayBreak.date` is `@db.Date`). Allow-list `select`: never the creator or the
+ * deleter, and never an acknowledgement (its free-text reason stays out of every support read).
+ */
+export async function getDayBreaksForSupportMonth(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  employeeId: string,
+  firstDay: Date,
+  lastDay: Date,
+) {
+  return db.dayBreak.findMany({
+    where: {
+      employeeId,
+      employee: { tenantId },
+      deletedAt: null,
+      date: { gte: firstDay, lte: lastDay },
+    },
+    orderBy: [{ date: "asc" }, { startTime: "asc" }, { id: "asc" }],
+    select: { id: true, date: true, startTime: true, endTime: true },
+  });
+}
