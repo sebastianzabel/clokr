@@ -6,6 +6,8 @@
   import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import OpeningHoursEditor from "$lib/components/admin/OpeningHoursEditor.svelte";
+  import { prefillOpeningHours, type OpeningHoursDay } from "$lib/salons/opening-hours";
   import Pagination from "$components/ui/Pagination.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import { toasts } from "$stores/toast";
@@ -57,7 +59,7 @@
     // Phase 49.5 — Standard-Arbeitstage (0=So..6=Sa)
     defaultWorkDays?: number[];
     // Phase 58 — Ladenöffnungszeiten (moved from /admin/shifts)
-    storeHours?: StoreHourEntry[];
+    storeHours?: unknown;
     shiftStoreHoursMode?: "STRICT" | "DAY_ONLY" | "OFF";
     // Phase 67.2 — Auto-Cleanup für Berufsschultag-Schichten (Plan 04 backend hook,
     // Plan 05 surfaces toggle here). Wenn true (Default): künftige Shifts auf neuen
@@ -71,13 +73,6 @@
     bsSlotSecondLongDayMinutes?: number | null;
     bsSlotShortDayMinutes?: number | null;
     bsSlotBlockWeekMinutes?: number | null;
-  }
-
-  interface StoreHourEntry {
-    day: number; // 0..6 (Mo..So)
-    open: string;
-    close: string;
-    closed?: boolean;
   }
 
   interface SecurityConfig {
@@ -139,33 +134,10 @@
   // datevNormalstundenNr / datevUrlaubNr / datevKrankNr / datevSonderurlaubNr live there.
 
   // ── Phase 58: Ladenöffnungszeiten (moved from /admin/shifts) ─────────────
-  const DAY_NAMES_LONG = [
-    "Montag",
-    "Dienstag",
-    "Mittwoch",
-    "Donnerstag",
-    "Freitag",
-    "Samstag",
-    "Sonntag",
-  ];
-  let storeHours: StoreHourEntry[] = $state([]);
+  let storeHours: OpeningHoursDay[] = $state([]);
   let shiftStoreHoursMode: "STRICT" | "DAY_ONLY" | "OFF" = $state("DAY_ONLY");
   let storeHoursSaving = $state(false);
   let storeHoursMsg = $state("");
-
-  function normalizeStoreHours(raw: StoreHourEntry[] | undefined): StoreHourEntry[] {
-    const fallback: StoreHourEntry[] = [
-      { day: 0, open: "08:00", close: "20:00" },
-      { day: 1, open: "08:00", close: "20:00" },
-      { day: 2, open: "08:00", close: "20:00" },
-      { day: 3, open: "08:00", close: "20:00" },
-      { day: 4, open: "08:00", close: "20:00" },
-      { day: 5, open: "08:00", close: "20:00" },
-      { day: 6, open: "08:00", close: "20:00", closed: true },
-    ];
-    if (!raw || !Array.isArray(raw) || raw.length !== 7) return fallback;
-    return [...raw].sort((a, b) => a.day - b.day);
-  }
 
   async function saveStoreHours() {
     if (!_gOtherFields) return; // guard: need full work-settings context
@@ -608,7 +580,7 @@
           ? [...cfg.defaultWorkDays]
           : [1, 2, 3, 4, 5];
       // Phase 58 — Ladenöffnungszeiten (moved from /admin/shifts)
-      storeHours = normalizeStoreHours(cfg.storeHours);
+      storeHours = prefillOpeningHours(cfg.storeHours);
       shiftStoreHoursMode = cfg.shiftStoreHoursMode ?? "DAY_ONLY";
 
       try {
@@ -1490,57 +1462,7 @@
             {/if}
           {/snippet}
 
-          <div class="cfg-table cfg-hours-table">
-            <div class="cfg-row cfg-row--head cfg-row--hours">
-              <div>Wochentag</div>
-              <div>Geschlossen</div>
-              <div>Öffnung</div>
-              <div>Schließung</div>
-            </div>
-            {#each storeHours as h, idx (h.day)}
-              <div class="cfg-row cfg-row--hours">
-                <div class="cfg-cell-name">{DAY_NAMES_LONG[h.day]}</div>
-                <div>
-                  <input
-                    id="hours-closed-{idx}"
-                    type="checkbox"
-                    checked={h.closed ?? false}
-                    onchange={(e) =>
-                      (storeHours[idx] = {
-                        ...h,
-                        closed: (e.currentTarget as HTMLInputElement).checked,
-                      })}
-                  />
-                </div>
-                <div>
-                  <input
-                    class="form-input"
-                    type="time"
-                    value={h.open}
-                    disabled={h.closed ?? false}
-                    onchange={(e) =>
-                      (storeHours[idx] = {
-                        ...h,
-                        open: (e.currentTarget as HTMLInputElement).value,
-                      })}
-                  />
-                </div>
-                <div>
-                  <input
-                    class="form-input"
-                    type="time"
-                    value={h.close}
-                    disabled={h.closed ?? false}
-                    onchange={(e) =>
-                      (storeHours[idx] = {
-                        ...h,
-                        close: (e.currentTarget as HTMLInputElement).value,
-                      })}
-                  />
-                </div>
-              </div>
-            {/each}
-          </div>
+          <OpeningHoursEditor bind:days={storeHours} idPrefix="system-hours" />
 
           <div class="cfg-section-title">Schicht-Zeiten an Öffnungszeiten binden</div>
           <div class="cfg-mode-options">
@@ -3338,37 +3260,7 @@
     }
   }
 
-  /* ── Ladenöffnungszeiten (Phase 58 — copied from shifts page CSS) ──────── */
-  .cfg-table {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin: 14px 0;
-  }
-  .cfg-row {
-    display: grid;
-    grid-template-columns: 1.5fr 0.8fr 1fr 1fr;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 4px;
-    border-bottom: 1px solid var(--border);
-    font-size: 14px;
-  }
-  .cfg-row--head {
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    border-bottom: 1px solid var(--border);
-  }
-  .cfg-row:last-child {
-    border-bottom: none;
-  }
-  .cfg-cell-name {
-    font-weight: 600;
-    color: var(--text);
-  }
+  /* ── Ladenöffnungszeiten / Schichtprüfung (Phase 58) ──────── */
   .cfg-muted {
     color: var(--text-muted);
     font-size: 13.5px;

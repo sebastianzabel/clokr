@@ -39,6 +39,7 @@ const REGISTERED: Record<string, string> = {
   "export/+page.svelte": "admin-export",
   "audit/+page.svelte": "admin-audit",
   "availability/[employeeId]/+page.svelte": "admin-availability-detail",
+  "salons/[id]/+page.svelte": "admin-salon-detail",
   "roles/+page.svelte": "admin-roles",
 };
 
@@ -56,6 +57,7 @@ const EXCLUDED: Record<string, string> = {
     "no update endpoint exists; the single write creates a NEW API key and the two inputs clear afterwards",
   "themes/+page.svelte": "no write path and no bound form state",
   "availability/+page.svelte": "list view — no write path",
+  "salons/+page.svelte": "list view — no form state; writes happen on the detail page",
   "audit/[id]/+page.svelte": "detail view — no write path",
   "support-access/+page.svelte": "list view — no write path, no form state",
   "support-access/[id]/+page.svelte":
