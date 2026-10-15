@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
+  import { employeeAdminRights } from "$lib/page-rights";
   import { api } from "$api/client";
   import Pagination from "$components/ui/Pagination.svelte";
   import Modal from "$components/ui/Modal.svelte";
@@ -43,9 +44,9 @@
     classification: EmployeeClassification;
     coverageWeight: string | number;
     requiresSupervision: boolean;
+    userId: string;
     user: {
       email: string;
-      role: Role;
       isActive: boolean;
       lastLoginAt: string | null;
     };
@@ -151,7 +152,12 @@
     cRequiresSupervision = applyDefaults(cClassification).requiresSupervision;
   }
 
-  let isAdmin = $derived($authStore.user?.role === "ADMIN");
+  // Controls follow the caller's permissions (Issue #538); the API refuses anything beyond them.
+  let rights = $derived(employeeAdminRights($authStore.user));
+  let canCreate = $derived(rights.canCreate);
+  let canManageAccess = $derived(rights.canManageAccess);
+  let canAssignRoles = $derived(rights.canAssignRoles);
+  let showActions = $derived(rights.showActions);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   function isAnonymized(emp: Employee): boolean {
@@ -159,9 +165,14 @@
     return emp.firstName === "Gelöscht" && emp.lastName.startsWith("GELÖSCHT-");
   }
 
+  // Assigned role names per user id (Issue #538), loaded from the role-assignment resource only
+  // for a caller who may manage role assignments; null = not offered (chip, filter and count are
+  // hidden). GET /employees itself carries no role data.
+  let roleNamesByUser = $state<Record<string, string[]> | null>(null);
+
   // Filters
   let filterSearch = $state("");
-  let filterRole = $state<Role | "">("");
+  let filterRole = $state("");
   let filterStatus = $state<"active" | "pending" | "expired" | "inactive" | "">("");
   let showAnonymized = $state(false);
 
@@ -179,7 +190,7 @@
           `${emp.firstName} ${emp.lastName} ${emp.user.email} ${emp.employeeNumber}`.toLowerCase();
         if (!match.includes(q)) return false;
       }
-      if (filterRole && emp.user.role !== filterRole) return false;
+      if (filterRole && !(roleNamesOf(emp) ?? []).includes(filterRole)) return false;
       if (filterStatus) {
         if (filterStatus === "active" && !emp.user.isActive) return false;
         if (filterStatus === "pending" && (emp.user.isActive || emp.invitationStatus !== "PENDING"))
@@ -205,11 +216,12 @@
   // KPI mini-stats (exclude anonymized)
   let statTotal = $derived(employees.filter((e) => !isAnonymized(e)).length);
   let statActive = $derived(employees.filter((e) => e.user.isActive && !isAnonymized(e)).length);
-  let statManagers = $derived(
-    employees.filter((e) => e.user.role === "MANAGER" && !isAnonymized(e)).length,
-  );
-  let statAdmins = $derived(
-    employees.filter((e) => e.user.role === "ADMIN" && !isAnonymized(e)).length,
+  // Role chip, filter and count exist only when the names were loaded (Issue #538).
+  let showRoles = $derived(roleNamesByUser !== null);
+  let roleOptions = $derived(
+    [...new Set(employees.flatMap((e) => (isAnonymized(e) ? [] : (roleNamesOf(e) ?? []))))].sort(
+      (a, b) => a.localeCompare(b, "de"),
+    ),
   );
 
   $effect(() => {
@@ -243,13 +255,36 @@
     }
   });
 
+  function roleNamesOf(emp: Employee): string[] | null {
+    return roleNamesByUser === null ? null : (roleNamesByUser[emp.userId] ?? []);
+  }
+
+  async function loadRoleNames() {
+    if (!canAssignRoles) {
+      roleNamesByUser = null;
+      return;
+    }
+    try {
+      const res = await api.get<{ roleNames: Record<string, string[]> }>(
+        "/role-assignments/role-names",
+      );
+      roleNamesByUser = res.roleNames;
+    } catch {
+      // The chip is decoration; a failed read hides it instead of blocking the list.
+      roleNamesByUser = null;
+    }
+  }
+
   async function loadEmployees() {
     loading = true;
     error = "";
     try {
       // Admin list requests anonymized rows too (ADMIN-only server-side); the
       // "Anonymisierte anzeigen" toggle then filters them client-side (isAnonymized).
-      employees = await api.get<Employee[]>("/employees?includeAnonymized=true");
+      [employees] = await Promise.all([
+        api.get<Employee[]>("/employees?includeAnonymized=true"),
+        loadRoleNames(),
+      ]);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -432,14 +467,6 @@
     }
   }
 
-  function roleLabel(role: Role): string {
-    return role === "ADMIN" ? "Administrator" : role === "MANAGER" ? "Manager" : "Mitarbeiter";
-  }
-
-  function roleChipClass(role: Role): string {
-    return role === "ADMIN" ? "chip chip-brand" : role === "MANAGER" ? "chip chip-warn" : "chip";
-  }
-
   function statusLabel(emp: Employee): string {
     if (emp.user.isActive) return "Aktiv";
     if (emp.invitationStatus === "PENDING") return "Einladung ausstehend";
@@ -470,7 +497,7 @@
     sub="Einladungsbasiertes Onboarding · Rollen · CSV-Import · DSGVO-konforme Anonymisierung beim Löschen."
   >
     {#snippet actions()}
-      {#if isAdmin}
+      {#if canCreate}
         <button class="btn btn-primary" onclick={openCreate} data-testid="admin-employees-add"
           >+ Mitarbeiter anlegen</button
         >
@@ -485,7 +512,7 @@
       {:else if employees.length === 0}
         <div class="empty-state">
           <p>Noch keine Mitarbeiter angelegt.</p>
-          {#if isAdmin}<button class="btn btn-primary" onclick={openCreate}>Jetzt anlegen</button
+          {#if canCreate}<button class="btn btn-primary" onclick={openCreate}>Jetzt anlegen</button
             >{/if}
         </div>
       {:else}
@@ -494,8 +521,9 @@
           <div class="kpi-row">
             <KPIStat label="Mitarbeitende" value={String(statTotal)} unit="gesamt" />
             <KPIStat label="Aktiv" value={String(statActive)} unit="angemeldet" />
-            <KPIStat label="Manager" value={String(statManagers)} unit="Rolle" />
-            <KPIStat label="Administratoren" value={String(statAdmins)} unit="Rolle" />
+            {#if showRoles}
+              <KPIStat label="Rollen" value={String(roleOptions.length)} unit="vergeben" />
+            {/if}
           </div>
         </Section>
 
@@ -509,16 +537,18 @@
               aria-label="Mitarbeiter suchen"
               data-testid="admin-employees-search"
             />
-            <select
-              class="select filter-select"
-              bind:value={filterRole}
-              aria-label="Nach Rolle filtern"
-            >
-              <option value="">Alle Rollen</option>
-              <option value="ADMIN">Administrator</option>
-              <option value="MANAGER">Manager</option>
-              <option value="EMPLOYEE">Mitarbeiter</option>
-            </select>
+            {#if showRoles}
+              <select
+                class="select filter-select"
+                bind:value={filterRole}
+                aria-label="Nach Rolle filtern"
+              >
+                <option value="">Alle Rollen</option>
+                {#each roleOptions as name (name)}
+                  <option value={name}>{name}</option>
+                {/each}
+              </select>
+            {/if}
             <select
               class="select filter-select"
               bind:value={filterStatus}
@@ -550,12 +580,12 @@
                   <th>Nr.</th>
                   <th>Name</th>
                   <th>E-Mail</th>
-                  <th>Rolle</th>
+                  {#if showRoles}<th>Rolle</th>{/if}
                   <th>Eintritt</th>
                   <th>Arbeitszeitmodell</th>
                   <th>Status</th>
                   <th>Letzter Login</th>
-                  {#if isAdmin}<th>Aktionen</th>{/if}
+                  {#if showActions}<th>Aktionen</th>{/if}
                 </tr>
               </thead>
               <tbody>
@@ -585,11 +615,15 @@
                       {/if}
                     </td>
                     <td class="col-email">{emp.user.email}</td>
-                    <td>
-                      <span class={roleChipClass(emp.user.role)}>
-                        <span class="dot"></span>{roleLabel(emp.user.role)}
-                      </span>
-                    </td>
+                    {#if showRoles}
+                      <td>
+                        {#if (roleNamesOf(emp) ?? []).length > 0}
+                          <span class="chip chip-brand">
+                            <span class="dot"></span>{(roleNamesOf(emp) ?? []).join(", ")}
+                          </span>
+                        {/if}
+                      </td>
+                    {/if}
                     <td class="col-date"
                       >{new Date(emp.hireDate).toLocaleDateString("de-DE", {
                         day: "2-digit",
@@ -614,10 +648,10 @@
                           })
                         : "—"}
                     </td>
-                    {#if isAdmin}
+                    {#if showActions}
                       <td class="col-actions" onclick={(e) => e.stopPropagation()} role="cell">
                         <div class="action-group">
-                          {#if !emp.user.isActive && (emp.invitationStatus === "PENDING" || emp.invitationStatus === "EXPIRED")}
+                          {#if canManageAccess && !emp.user.isActive && (emp.invitationStatus === "PENDING" || emp.invitationStatus === "EXPIRED")}
                             <button
                               class="btn btn-ghost btn-sm"
                               onclick={() => resendInvitation(emp)}
@@ -634,7 +668,9 @@
                           >
                             Bearbeiten
                           </a>
-                          {#if emp.user.isActive}
+                          {#if !canManageAccess}
+                            <!-- no access-management right: no (de)activation control -->
+                          {:else if emp.user.isActive}
                             <button
                               class="btn btn-ghost btn-sm"
                               onclick={() => askDeactivate(emp)}
@@ -706,14 +742,16 @@
           onchange={refreshVacationPrefill}
         />
       </div>
-      <div class="form-group">
-        <label class="form-label" for="c-role">Rolle</label>
-        <select id="c-role" bind:value={cRole} class="select">
-          <option value="EMPLOYEE">Mitarbeiter</option>
-          <option value="MANAGER">Manager</option>
-          <option value="ADMIN">Administrator</option>
-        </select>
-      </div>
+      {#if canAssignRoles}
+        <div class="form-group">
+          <label class="form-label" for="c-role">Rolle</label>
+          <select id="c-role" bind:value={cRole} class="select">
+            <option value="EMPLOYEE">Mitarbeiter</option>
+            <option value="MANAGER">Manager</option>
+            <option value="ADMIN">Administrator</option>
+          </select>
+        </div>
+      {/if}
       <!-- ── Personalstruktur (Phase 41) ────────────────────────────────── -->
       <div class="form-group form-group--full form-subhead">
         <h4 class="form-subhead-title">Personalstruktur</h4>

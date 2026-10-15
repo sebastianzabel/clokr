@@ -33,6 +33,7 @@
   } from "$lib/breaks/day-break-preview";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { mayFileRetroRequest } from "$lib/page-rights";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
@@ -1193,12 +1194,11 @@
       };
       if (apiErr?.status === 403 && apiErr?.data?.error === "RETRO_WINDOW_EXCEEDED") {
         // Distinguish beyond-window 403 from month-locked 403.
-        // Show retro request form only for the entry owner (EMPLOYEE or MANAGER editing own entry).
-        const userRole = $authStore.user?.role;
+        // Show retro request form only for the entry owner holding the right to file one.
         const userEmpId = $authStore.user?.employeeId;
         const entryEmpId = (editEntry as unknown as { employeeId?: string })?.employeeId ?? null;
         const isOwnEntry = !entryEmpId || userEmpId === entryEmpId;
-        if (userRole === "EMPLOYEE" || (userRole === "MANAGER" && isOwnEntry)) {
+        if (isOwnEntry && mayFileRetroRequest($authStore.user)) {
           retroWindowExceeded = true;
           retroWindowDays = apiErr.data?.windowDays ?? 0;
           retroReason = "";
@@ -1291,13 +1291,12 @@
     } catch (e: unknown) {
       const apiErr = e as { status?: number; data?: { error?: string; windowDays?: number } };
       if (apiErr?.status === 403 && apiErr?.data?.error === "RETRO_WINDOW_EXCEEDED") {
-        const userRole = $authStore.user?.role;
         const userEmpId = $authStore.user?.employeeId;
         // For delete we need to find the entry's employeeId from entries list
         const matchEntry = entries.find((en) => en.id === id);
         const entryEmpId = (matchEntry as unknown as { employeeId?: string })?.employeeId ?? null;
         const isOwnEntry = !entryEmpId || userEmpId === entryEmpId;
-        if (userRole === "EMPLOYEE" || (userRole === "MANAGER" && isOwnEntry)) {
+        if (isOwnEntry && mayFileRetroRequest($authStore.user)) {
           // Open the modal for that entry and show the retro form
           if (matchEntry) openEdit(matchEntry);
           retroWindowExceeded = true;

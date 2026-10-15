@@ -2,6 +2,7 @@
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import { authStore } from "$stores/auth";
+  import { employeeAdminRights } from "$lib/page-rights";
   import { markUnsaved } from "$stores/unsaved";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -456,6 +457,12 @@
   let eLastName = $state<string>("");
   let eEmployeeNumber = $state<string>("");
   let eRole = $state<Role>("EMPLOYEE");
+  // Permission-driven controls (Issue #538): the API refuses anything beyond these, the page only
+  // hides. Setting a role needs role-assignment:manage; the § 18 ArbZG exemption rides on the
+  // employee PATCH, hence employee:update.
+  let rights = $derived(employeeAdminRights($authStore.user));
+  let canAssignRoles = $derived(rights.canAssignRoles);
+  let canUpdateEmployee = $derived(rights.canUpdate);
   let eNfcCardId = $state<string>("");
   let eExitDate = $state<string>("");
   let eBirthDate = $state<string>(""); // Phase 65 — JArbSchG §9 needs DOB for AZUBI <18 check
@@ -817,7 +824,8 @@
           firstName: eFirstName,
           lastName: eLastName,
           employeeNumber: eEmployeeNumber,
-          role: eRole,
+          // Only a caller who may assign roles sends one (the API checks the permission first).
+          ...(canAssignRoles ? { role: eRole } : {}),
           nfcCardId: eNfcCardId || null,
           exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
           birthDate: eBirthDate ? new Date(eBirthDate).toISOString() : null,
@@ -2025,7 +2033,7 @@
             </div>
 
             <!-- Phase 76.7 (UI-V19-04a) — § 18 ArbZG exemption toggle (ADMIN-only) -->
-            {#if $authStore.user?.role === "ADMIN"}
+            {#if canUpdateEmployee}
               <div class="form-group form-group--full form-subhead">
                 <h4 class="form-subhead-title">Zeiterfassungs-Pflicht</h4>
               </div>
@@ -3703,14 +3711,16 @@
           {/if}
 
           <div class="form-grid">
-            <div class="form-group">
-              <label class="form-label" for="e-role">Rolle</label>
-              <select id="e-role" bind:value={eRole} class="select">
-                <option value="EMPLOYEE">Mitarbeiter</option>
-                <option value="MANAGER">Manager</option>
-                <option value="ADMIN">Administrator</option>
-              </select>
-            </div>
+            {#if canAssignRoles}
+              <div class="form-group">
+                <label class="form-label" for="e-role">Rolle</label>
+                <select id="e-role" bind:value={eRole} class="select">
+                  <option value="EMPLOYEE">Mitarbeiter</option>
+                  <option value="MANAGER">Manager</option>
+                  <option value="ADMIN">Administrator</option>
+                </select>
+              </div>
+            {/if}
 
             {#if employee.user}
               <div class="form-group">
@@ -3819,7 +3829,7 @@
   />
 
   <!-- Phase 76.7 (UI-V19-04a, D-18, D-20) — § 18 ArbZG exemption confirmation -->
-  {#if $authStore.user?.role === "ADMIN"}
+  {#if canUpdateEmployee}
     <ConfirmDialog
       bind:open={exemptConfirmOpen}
       title="§ 18 ArbZG — Zeiterfassungs-Befreiung"

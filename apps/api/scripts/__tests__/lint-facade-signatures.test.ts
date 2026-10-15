@@ -517,7 +517,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // facade (`contexts/time-tracking/facade/time-entries.ts`, retention archive of DayBreak /
   // DayBreakAck, same shape as `archiveEntriesBefore`) — passes F1/F2/F3 directly, no new
   // exception; exceptions unchanged at 17.
-  it("the real tree has exactly 143 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  it("the real tree has exactly 145 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -582,11 +582,14 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // Issue #90 (2026-10-15): new file contexts/platform/facade/operator-metrics.ts, the one
     // producer of the operator dashboard counts (operatorTenantMetrics) — 142 -> 143; passes
     // F1/F2/F3 directly, exceptions unchanged at 17.
+    // Issue #538 (2026-10-15): +2 roleNamesByUserId and ownRoleNames
+    // (platform/facade/role-assignments.ts, the one derivation of the assigned role names) —
+    // 143 -> 145; both pass F1/F2/F3 directly, exceptions unchanged at 17.
     // Issue #93 (Phase 93b-04, D-05(2), 2026-10-15): +3 operator support month reads —
     // getEntriesForSupportMonth, getDayBreaksForSupportMonth (time-tracking/facade/time-entries.ts)
-    // and getLeaveRequestsForSupportMonth (absence/facade/leave-requests.ts) — 143 -> 146; all three
-    // pass F1/F2/F3 directly, exceptions unchanged at 17.
-    expect(functions).toHaveLength(146);
+    // and getLeaveRequestsForSupportMonth (absence/facade/leave-requests.ts) — 145 -> 148 after the
+    // merge with #538; all three pass F1/F2/F3 directly, exceptions unchanged at 17.
+    expect(functions).toHaveLength(148);
 
     const rawExceptions = JSON.parse(
       readFileSync(

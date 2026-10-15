@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
 import { API_KEY_SUBJECT_PREFIX, accessContextFromRequest } from "../access-context";
-import { contextSalonIds } from "../facade/role-assignments";
+import { contextSalonIds, ownRoleNames } from "../facade/role-assignments";
 import { isMultiSalonTenant, listSalons } from "../facade/salons";
 import { packagesForDisplay } from "../tenant-packages";
 
@@ -211,7 +211,7 @@ export async function meRoutes(app: FastifyInstance) {
     schema: {
       tags: ["Mein Bereich"],
       description:
-        "Get the caller's tenant, the active salons it can reach and the tenant's booked packages (module names and effective salon limit). A presentation context only — every endpoint decides access itself.",
+        "Get the caller's tenant, the active salons it can reach and the tenant's booked packages (module names and effective salon limit) and the names of the caller's own roles. A presentation context only — every endpoint decides access itself.",
       security: [{ bearerAuth: [] }],
     },
     handler: async (req, reply) => {
@@ -248,6 +248,9 @@ export async function meRoutes(app: FastifyInstance) {
         // no counts. The server re-checks every write against the same decider, so this value is
         // never an access boundary. Own-tenant data, hence no new permission.
         packages: await packagesForDisplay(app.prisma, tenant.id),
+        // Issue #538: names of the caller's own roles, a display label only (Topbar, Sidebar,
+        // profile). Own data, no new permission; decides nothing.
+        roles: await ownRoleNames(app.prisma, tenant.id, user.id),
       };
     },
   });
