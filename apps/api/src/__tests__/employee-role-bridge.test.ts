@@ -91,7 +91,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     return JSON.parse(res.body) as { accessToken: string; refreshToken: string };
   }
 
-  function claimsOf(token: string): { role: string } {
+  function claimsOf(token: string): Record<string, unknown> {
     return JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
   }
 
@@ -217,7 +217,8 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       remoteAddress: nextRemoteAddress(),
     });
     expect(refresh.statusCode).toBe(200);
-    expect(claimsOf(JSON.parse(refresh.body).accessToken).role).toBe("EMPLOYEE");
+    // Issue #539 (D-05): the renewed token carries no role at all.
+    expect(Object.keys(claimsOf(JSON.parse(refresh.body).accessToken))).not.toContain("role");
   });
 
   it("EMPLOYEE → MANAGER on a migrated employee: the old token gains the right on the next request", async () => {
@@ -518,8 +519,10 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       });
       expect(loginRes.statusCode).toBe(200);
       const loginBody = JSON.parse(loginRes.body);
-      expect(loginBody.user.role).toBe("MANAGER");
-      expect(claimsOf(loginBody.accessToken).role).toBe("MANAGER");
+      // Issue #539 (D-05): no role in the body or the token; the created Manager row grants.
+      expect(Object.keys(loginBody.user)).not.toContain("role");
+      expect(Object.keys(claimsOf(loginBody.accessToken))).not.toContain("role");
+      expect(loginBody.user.permissions).toContain("leave-request:approve:ZUGEWIESEN");
     });
 
     it("the CSV import gives every new user its system-role assignment; a failing row leaves none", async () => {

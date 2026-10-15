@@ -151,14 +151,13 @@ describe("Phase 73-01: test-only tenant bootstrap", () => {
       expect(tenant?.slug).toBe(body.tenantId);
 
       // adminToken is a real JWT signed by the app — verify decode locks in
-      // role=ADMIN + tenant scope. We use the app's own jwt instance to
+      // the tenant scope (no role claim since #539; the admin right is a stored assignment). We use the app's own jwt instance to
       // avoid pinning the secret in the test file.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const decoded = (appOn as any).jwt.verify(body.adminToken) as {
-        role?: string;
         tenantId?: string;
       };
-      expect(decoded.role).toBe("ADMIN");
+      expect(Object.keys(decoded)).not.toContain("role");
       expect(decoded.tenantId).toBe(body.tenantId);
 
       // Phase 73-01 seed-extension assertion: WorkSchedule + OvertimeAccount
