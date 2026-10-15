@@ -9,7 +9,7 @@
  * employee genuinely exists in a foreign tenant.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRowOrNull } from "./setup";
 import type { FastifyInstance } from "fastify";
 
 /** Builds a minimal, valid multipart/form-data body for a single file field. */
@@ -94,6 +94,11 @@ describe("POST /api/v1/avatars/:employeeId — tenant isolation (sec-08)", () =>
   it("CROSS_TENANT_ACCESS_DENIED is audited for a real foreign employee, and NOT for an unknown id", async () => {
     const { body, contentType } = buildMultipartBody("avatar.jpg", "image/jpeg", JPEG_BYTES);
 
+    // Earlier tests of this file already caused denials for the same employee: this request adds
+    // exactly one more row.
+    const deniedWhere = { action: "CROSS_TENANT_ACCESS_DENIED", entityId: tenantB.employee.id };
+    const deniedBefore = await app.prisma.auditLog.count({ where: deniedWhere });
+
     await app.inject({
       method: "POST",
       url: `/api/v1/avatars/${tenantB.employee.id}`,
@@ -101,10 +106,7 @@ describe("POST /api/v1/avatars/:employeeId — tenant isolation (sec-08)", () =>
       payload: body,
     });
 
-    const auditForRealEmployee = await app.prisma.auditLog.findFirst({
-      where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: tenantB.employee.id },
-    });
-    expect(auditForRealEmployee).not.toBeNull();
+    expect(await app.prisma.auditLog.count({ where: deniedWhere })).toBe(deniedBefore + 1);
 
     const unknownId = "00000000-0000-0000-0000-000000000002";
     await app.inject({
@@ -114,7 +116,7 @@ describe("POST /api/v1/avatars/:employeeId — tenant isolation (sec-08)", () =>
       payload: body,
     });
 
-    const auditForUnknownId = await app.prisma.auditLog.findFirst({
+    const auditForUnknownId = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: unknownId },
     });
     expect(auditForUnknownId).toBeNull();

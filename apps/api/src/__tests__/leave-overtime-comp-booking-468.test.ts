@@ -111,6 +111,7 @@ describe("Überstundenausgleich — stored booking / stored reversal (Issue #468
 
     const bookedAudits = await app.prisma.auditLog.findMany({
       where: { entity: "LeaveRequest", entityId: leave.id, action: "OVERTIME_COMP_BOOKED" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(bookedAudits).toHaveLength(1);
     expect((bookedAudits[0].newValue as Record<string, unknown>).overtimeCompMinutes).toBe(480);
@@ -152,6 +153,7 @@ describe("Überstundenausgleich — stored booking / stored reversal (Issue #468
 
       const reversedAudits = await app.prisma.auditLog.findMany({
         where: { entity: "LeaveRequest", entityId: leave.id, action: "OVERTIME_COMP_REVERSED" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(reversedAudits).toHaveLength(1);
       const reversedValue = reversedAudits[0].newValue as Record<string, unknown>;
@@ -213,6 +215,7 @@ describe("Überstundenausgleich — stored booking / stored reversal (Issue #468
 
     const reversedAudits = await app.prisma.auditLog.findMany({
       where: { entity: "LeaveRequest", entityId: leave.id, action: "OVERTIME_COMP_REVERSED" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(reversedAudits).toHaveLength(1);
     expect((reversedAudits[0].newValue as Record<string, unknown>).source).toBe("recomputed");

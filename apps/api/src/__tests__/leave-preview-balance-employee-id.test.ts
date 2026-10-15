@@ -12,7 +12,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, auditRowsFor } from "./setup";
 
 const GENUINELY_MISSING_EMPLOYEE_ID = "00000000-0000-4000-8000-000000000002";
 const START = "2026-06-01";
@@ -85,6 +85,9 @@ describe("GET /leave/hours-preview and GET /leave/overtime-balance — optional 
     });
 
     it("tenantA ADMIN reading tenantB's employee → 404, byte-identical to a genuinely unknown id (T-100-09)", async () => {
+      const deniedBefore = (
+        await auditRowsFor(app, "Employee", tenantB.employee.id, "CROSS_TENANT_ACCESS_DENIED")
+      ).length;
       const crossTenantRes = await app.inject({
         method: "GET",
         url: `/api/v1/leave/hours-preview?startDate=${START}&endDate=${END}&employeeId=${tenantB.employee.id}`,
@@ -101,15 +104,16 @@ describe("GET /leave/hours-preview and GET /leave/overtime-balance — optional 
       expect(JSON.parse(crossTenantRes.body)).toEqual(JSON.parse(notFoundRes.body));
       expect(JSON.parse(crossTenantRes.body)).toEqual({ error: "Mitarbeiter nicht gefunden" });
 
-      const audit = await app.prisma.auditLog.findFirst({
-        where: {
-          action: "CROSS_TENANT_ACCESS_DENIED",
-          entity: "Employee",
-          entityId: tenantB.employee.id,
-        },
-        orderBy: { createdAt: "desc" },
-      });
-      expect(audit).not.toBeNull();
+      // Each test adds exactly one denial for the same foreign employee.
+      const deniedRows = await auditRowsFor(
+        app,
+        "Employee",
+        tenantB.employee.id,
+        "CROSS_TENANT_ACCESS_DENIED",
+      );
+      expect(deniedRows).toHaveLength(deniedBefore + 1);
+      const audit = deniedRows[deniedRows.length - 1];
+      expect(audit).toBeDefined();
       expect(audit?.userId).toBe(tenantA.adminUser.id);
     });
   });
@@ -156,6 +160,9 @@ describe("GET /leave/hours-preview and GET /leave/overtime-balance — optional 
     });
 
     it("tenantA ADMIN reading tenantB's employee → 404, byte-identical to a genuinely unknown id (T-100-09)", async () => {
+      const deniedBefore = (
+        await auditRowsFor(app, "Employee", tenantB.employee.id, "CROSS_TENANT_ACCESS_DENIED")
+      ).length;
       const crossTenantRes = await app.inject({
         method: "GET",
         url: `/api/v1/leave/overtime-balance?employeeId=${tenantB.employee.id}`,
@@ -172,15 +179,16 @@ describe("GET /leave/hours-preview and GET /leave/overtime-balance — optional 
       expect(JSON.parse(crossTenantRes.body)).toEqual(JSON.parse(notFoundRes.body));
       expect(JSON.parse(crossTenantRes.body)).toEqual({ error: "Mitarbeiter nicht gefunden" });
 
-      const audit = await app.prisma.auditLog.findFirst({
-        where: {
-          action: "CROSS_TENANT_ACCESS_DENIED",
-          entity: "Employee",
-          entityId: tenantB.employee.id,
-        },
-        orderBy: { createdAt: "desc" },
-      });
-      expect(audit).not.toBeNull();
+      // Each test adds exactly one denial for the same foreign employee.
+      const deniedRows = await auditRowsFor(
+        app,
+        "Employee",
+        tenantB.employee.id,
+        "CROSS_TENANT_ACCESS_DENIED",
+      );
+      expect(deniedRows).toHaveLength(deniedBefore + 1);
+      const audit = deniedRows[deniedRows.length - 1];
+      expect(audit).toBeDefined();
       expect(audit?.userId).toBe(tenantA.adminUser.id);
     });
   });

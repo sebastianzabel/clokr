@@ -6,7 +6,7 @@
  * mirroring overtime.ts (Shift itself has no tenantId column — go via employee).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRowOrNull } from "./setup";
 import { dowOf, futureDateStr, nextWeekdayStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
@@ -91,9 +91,8 @@ describe("DELETE /api/v1/shifts/:id — tenant isolation (sec-02)", () => {
     expect(victimAfter).not.toBeNull();
     expect(victimAfter?.deletedAt).toBeNull();
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entity: "Shift", entityId: victimShiftId },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
     expect(audit?.userId).toBe(tenantA.adminUser.id);

@@ -9,7 +9,7 @@
  */
 import { createHash } from "crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRowOrNull } from "./setup";
 import type { FastifyInstance } from "fastify";
 
 // ── Test constants ──────────────────────────────────────────────────────────
@@ -206,9 +206,8 @@ describe("POST /api/v1/presence/events", () => {
 
     expect(res.statusCode).toBe(200);
 
-    const log = await app.prisma.auditLog.findFirst({
+    const log = await soleAuditRowOrNull(app.prisma, {
       where: { action: "WIFI_UNKNOWN_MAC", createdAt: { gte: before } },
-      orderBy: { createdAt: "desc" },
     });
     expect(log).not.toBeNull();
     expect(log!.purgeable).toBe(true);
@@ -238,7 +237,7 @@ describe("POST /api/v1/presence/events", () => {
       expect(JSON.parse(res.body)).toEqual({ error: "Ungültige MAC-Adresse" });
       expect(res.body).not.toContain(malformedMac);
 
-      const log = await app.prisma.auditLog.findFirst({
+      const log = await soleAuditRowOrNull(app.prisma, {
         where: { action: { startsWith: "WIFI_" }, createdAt: { gte: before } },
       });
       expect(log).toBeNull();
@@ -265,13 +264,12 @@ describe("POST /api/v1/presence/events", () => {
 
     expect(res.statusCode).toBe(200);
 
-    const log = await app.prisma.auditLog.findFirst({
+    const log = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "WIFI_OPT_OUT",
         entityId: data.employee.id,
         createdAt: { gte: before },
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(log).not.toBeNull();
     expect(log!.purgeable).toBe(true);
@@ -306,13 +304,12 @@ describe("POST /api/v1/presence/events", () => {
 
     expect(res.statusCode).toBe(200);
 
-    const log = await app.prisma.auditLog.findFirst({
+    const log = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "WIFI_NO_SHIFT",
         entityId: data.employee.id,
         createdAt: { gte: before },
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(log).not.toBeNull();
     expect(log!.purgeable).toBe(true);
@@ -357,13 +354,12 @@ describe("POST /api/v1/presence/events", () => {
     expect(res.statusCode).toBe(200);
 
     // AuditLog must have WIFI_PRESENCE_CONFIRMED referencing the NFC entry
-    const log = await app.prisma.auditLog.findFirst({
+    const log = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "WIFI_PRESENCE_CONFIRMED",
         entityId: nfcEntry.id,
         createdAt: { gte: before },
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(log).not.toBeNull();
 
@@ -410,13 +406,12 @@ describe("POST /api/v1/presence/events", () => {
     expect(entry!.endTime).toBeNull();
 
     // AuditLog must have CLOCK_IN (was WIFI_CLOCK_IN pre-Plan-5)
-    const log = await app.prisma.auditLog.findFirst({
+    const log = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "CLOCK_IN",
         entityId: entry!.id,
         createdAt: { gte: before },
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(log).not.toBeNull();
 
@@ -467,13 +462,12 @@ describe("POST /api/v1/presence/events", () => {
     expect(updated!.endTime!.toISOString()).toBe(new Date(DISCONNECT_TIMESTAMP).toISOString());
 
     // AuditLog must have CLOCK_OUT (was WIFI_CLOCK_OUT pre-Plan-5)
-    const log = await app.prisma.auditLog.findFirst({
+    const log = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "CLOCK_OUT",
         entityId: openEntry.id,
         createdAt: { gte: before },
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(log).not.toBeNull();
 
@@ -523,7 +517,7 @@ describe("POST /api/v1/presence/events", () => {
     expect(entry).not.toBeNull();
 
     // No WIFI_UNKNOWN_MAC was written
-    const unknownLog = await app.prisma.auditLog.findFirst({
+    const unknownLog = await soleAuditRowOrNull(app.prisma, {
       where: { action: "WIFI_UNKNOWN_MAC", createdAt: { gte: before } },
     });
     expect(unknownLog).toBeNull();
@@ -630,7 +624,7 @@ describe("POST /api/v1/presence/events", () => {
       // D-00d/AC5: date stays the shift's start day
       expect(closedEntry!.date.toISOString()).toBe(OVERNIGHT_DAY_D.toISOString());
 
-      const closeAudit = await app.prisma.auditLog.findFirst({
+      const closeAudit = await soleAuditRowOrNull(app.prisma, {
         where: {
           action: "CLOCK_OUT",
           entityId: openEntry!.id,
@@ -639,7 +633,7 @@ describe("POST /api/v1/presence/events", () => {
       });
       expect(closeAudit).not.toBeNull();
 
-      const noOpenEntryAudit = await app.prisma.auditLog.findFirst({
+      const noOpenEntryAudit = await soleAuditRowOrNull(app.prisma, {
         where: {
           action: "WIFI_NO_OPEN_ENTRY",
           entityId: data.employee.id,

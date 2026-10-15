@@ -9,7 +9,7 @@
  * itself has no tenantId column — go via employee).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRowOrNull } from "./setup";
 import { dowOf, futureDateStr, nextWeekdayStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
@@ -108,9 +108,8 @@ describe("PUT /api/v1/shifts/:id — tenant isolation (sec-03)", () => {
     const victimAfter = await app.prisma.shift.findUnique({ where: { id: victimShiftId } });
     expect(victimAfter?.note).toBe("victim-original");
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entity: "Shift", entityId: victimShiftId },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
     expect(audit?.userId).toBe(tenantA.adminUser.id);

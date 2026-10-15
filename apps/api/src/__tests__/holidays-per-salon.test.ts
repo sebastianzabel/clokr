@@ -11,7 +11,13 @@
 import { randomBytes, createHash } from "crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  soleAuditRowOrNull,
+} from "./setup";
 
 function getHolidays(app: FastifyInstance, token: string, query: string) {
   return app.inject({
@@ -68,9 +74,8 @@ describe("Single-salon tenant: GET/POST /api/v1/holidays default to it (D-09)", 
     const body = JSON.parse(res.body);
     expect(body.salonId).toBe(data.salonId);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CREATE", entity: "PublicHoliday", entityId: body.id },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
     expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(data.salonId);
@@ -252,9 +257,8 @@ describe("Two-salon tenant: SALON_REQUIRED, per-salon manual holidays, byte-iden
     const ownDelete = await deleteHoliday(app, data.adminToken, holidayId);
     expect(ownDelete.statusCode).toBe(204);
 
-    const auditLog = await app.prisma.auditLog.findFirst({
+    const auditLog = await soleAuditRowOrNull(app.prisma, {
       where: { action: "DELETE", entity: "PublicHoliday", entityId: holidayId },
-      orderBy: { createdAt: "desc" },
     });
     expect(auditLog).not.toBeNull();
     expect((auditLog?.oldValue as { salonId?: string } | null)?.salonId).toBe(salonA.id);

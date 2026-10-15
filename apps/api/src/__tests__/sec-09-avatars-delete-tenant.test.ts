@@ -6,7 +6,7 @@
  * verbatim.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRowOrNull } from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("DELETE /api/v1/avatars/:employeeId — tenant isolation (sec-09)", () => {
@@ -70,7 +70,7 @@ describe("DELETE /api/v1/avatars/:employeeId — tenant isolation (sec-09)", () 
       `avatars/${tenantB.tenant.id}/${tenantB.employee.id}.webp`,
     );
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: tenantB.employee.id },
     });
     expect(audit).not.toBeNull();
@@ -134,16 +134,18 @@ describe("DELETE /api/v1/avatars/:employeeId — tenant isolation (sec-09)", () 
       data: { avatarPath: `avatars/${tenantB.tenant.id}/${tenantB.employee.id}.webp` },
     });
 
+    // Earlier tests of this file already caused denials for the same employee: this request adds
+    // exactly one more row.
+    const deniedWhere = { action: "CROSS_TENANT_ACCESS_DENIED", entityId: tenantB.employee.id };
+    const deniedBefore = await app.prisma.auditLog.count({ where: deniedWhere });
+
     await app.inject({
       method: "DELETE",
       url: `/api/v1/avatars/${tenantB.employee.id}`,
       headers: { authorization: `Bearer ${tenantA.adminToken}` },
     });
 
-    const auditForRealEmployee = await app.prisma.auditLog.findFirst({
-      where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: tenantB.employee.id },
-    });
-    expect(auditForRealEmployee).not.toBeNull();
+    expect(await app.prisma.auditLog.count({ where: deniedWhere })).toBe(deniedBefore + 1);
 
     const unknownId = "00000000-0000-0000-0000-000000000002";
     await app.inject({
@@ -152,7 +154,7 @@ describe("DELETE /api/v1/avatars/:employeeId — tenant isolation (sec-09)", () 
       headers: { authorization: `Bearer ${tenantA.adminToken}` },
     });
 
-    const auditForUnknownId = await app.prisma.auditLog.findFirst({
+    const auditForUnknownId = await soleAuditRowOrNull(app.prisma, {
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: unknownId },
     });
     expect(auditForUnknownId).toBeNull();

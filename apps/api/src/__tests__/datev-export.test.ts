@@ -534,12 +534,18 @@ describe("Personenkreis nach dem Abrechnungszeitraum (#256-02)", () => {
   });
 
   it("#256-02f: the EXPORT audit row names how many people were skipped and why", async () => {
+    // Scoped to this tenant's admin: other tests of the file export too, so one call adds exactly
+    // one row to this person's EXPORT rows.
+    const exportWhere = { action: "EXPORT", entity: "Report", userId: d.adminUser.id };
+    const exportsBefore = await app.prisma.auditLog.count({ where: exportWhere });
     await julyRows();
-    const entry = await app.prisma.auditLog.findFirst({
-      where: { action: "EXPORT", entity: "Report" },
-      orderBy: { createdAt: "desc" },
+    const exportRows = await app.prisma.auditLog.findMany({
+      where: exportWhere,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
-    expect(entry).not.toBeNull();
+    expect(exportRows).toHaveLength(exportsBefore + 1);
+    const entry = exportRows[exportRows.length - 1];
+    expect(entry).toBeDefined();
     const v = entry!.newValue as Record<string, unknown>;
     expect(v.type).toBe("DATEV");
     expect(v.employeesIncluded).toBeGreaterThan(0);

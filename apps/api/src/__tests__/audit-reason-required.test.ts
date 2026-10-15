@@ -15,7 +15,13 @@
  * no auditReason key on the resulting UPDATE audit row).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import { pastDateStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
@@ -87,9 +93,8 @@ describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints"
       });
       expect(res.statusCode).toBe(200);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { action: "LEAVE_CORRECTED", entity: "LeaveRequest", entityId: req.id },
-        orderBy: { createdAt: "desc" },
       });
       expect(audit).not.toBeNull();
       const newValue = audit?.newValue as { auditReason?: string } | null;
@@ -131,9 +136,8 @@ describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints"
       });
       expect(res.statusCode).toBeLessThan(300);
 
-      const audit = await app.prisma.auditLog.findFirst({
-        where: { entity: "LeaveRequest", entityId: id },
-        orderBy: { createdAt: "desc" },
+      const audit = await soleAuditRowOrNull(app.prisma, {
+        where: { action: "UPDATE", entity: "LeaveRequest", entityId: id },
       });
       expect(audit).not.toBeNull();
       const newValue = audit?.newValue as { auditReason?: string } | null;
@@ -198,9 +202,8 @@ describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints"
       });
       expect(res.statusCode).toBe(204);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { action: "DELETE", entity: "TimeEntry", entityId: entry.id },
-        orderBy: { createdAt: "desc" },
       });
       expect(audit).not.toBeNull();
       const newValue = audit?.newValue as { auditReason?: string } | null;
@@ -271,9 +274,8 @@ describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints"
       });
       expect(res.statusCode).toBe(200);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { action: "MANAGER_CORRECTION", entity: "TimeEntry", entityId: entry.id },
-        orderBy: { createdAt: "desc" },
       });
       expect(audit).not.toBeNull();
       const newValue = audit?.newValue as { auditReason?: string } | null;
@@ -301,9 +303,8 @@ describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints"
       });
       expect(res.statusCode).toBe(200);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "TimeEntry", entityId: entry.id },
-        orderBy: { createdAt: "desc" },
       });
       expect(audit).not.toBeNull();
       expect(audit?.action).toBe("UPDATE");

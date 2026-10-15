@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import type { ActivityKind } from "@clokr/db";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, soleAuditRow } from "./setup";
 import { AUDIT_REASON_REQUIRED } from "../contexts/platform";
 
 const SUM_MESSAGE = "Die zugeordnete Tätigkeitszeit übersteigt die Arbeitszeit des Eintrags.";
@@ -101,9 +101,8 @@ describe("Issue #81 (Phase 81 Plan 02) — activity kind and shares on the entry
   }
 
   async function newestAudit(entityId: string) {
-    return app.prisma.auditLog.findFirstOrThrow({
+    return soleAuditRow(app.prisma, {
       where: { entity: "TimeEntry", entityId },
-      orderBy: { createdAt: "desc" },
     });
   }
 
@@ -451,7 +450,7 @@ describe("Issue #81 (Phase 81 Plan 02) — activity kind and shares on the entry
       };
       expect(body.entry.activityKind).toBe("PRODUCTIVE");
       expect(body.entry.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 60 }]);
-      const audit = await app.prisma.auditLog.findFirstOrThrow({
+      const audit = await soleAuditRow(app.prisma, {
         where: { entity: "TimeEntry", entityId: body.entry.id, action: "CREATE" },
       });
       expect((audit.newValue as { activityShares: unknown[] }).activityShares).toEqual([

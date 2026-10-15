@@ -30,7 +30,7 @@
  * no-literal discipline.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRowOrNull } from "./setup";
 import type { FastifyInstance } from "fastify";
 
 /**
@@ -133,13 +133,12 @@ describe("PUT /api/v1/settings/work/:employeeId — tenant isolation + tolerance
     });
     expect(victimAfter.maxNegativeBalanceMinutes).toBe(KNOWN_VICTIM_TOLERANCE);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "CROSS_TENANT_ACCESS_DENIED",
         entity: "WorkSchedule",
         entityId: tenantB.employee.id,
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
     expect(audit?.userId).toBe(tenantA.adminUser.id);
@@ -177,9 +176,8 @@ describe("PUT /api/v1/settings/work/:employeeId — tenant isolation + tolerance
     expect(body.employeeId).toBe(tenantB.employee.id);
     expect(body.maxNegativeBalanceMinutes).toBe(90);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: { in: ["CREATE", "UPDATE"] }, entity: "WorkSchedule", entityId: body.id },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
   });
@@ -311,13 +309,12 @@ describe("GET /api/v1/settings/work/:employeeId — tenant isolation (Phase 100 
     // The 404 body must not leak any WorkSchedule field (e.g. maxNegativeBalanceMinutes).
     expect(body.maxNegativeBalanceMinutes).toBeUndefined();
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "CROSS_TENANT_ACCESS_DENIED",
         entity: "WorkSchedule",
         entityId: tenantB.employee.id,
       },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit).not.toBeNull();
     expect(audit?.userId).toBe(tenantA.adminUser.id);

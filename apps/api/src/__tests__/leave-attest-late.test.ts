@@ -14,7 +14,13 @@
  * `leave.ts`'s attest handler `update()` call for the reasoning this file pins.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import type { FastifyInstance } from "fastify";
 
@@ -163,9 +169,8 @@ describe("Leave / Attest — late (post-approval, post-Monatsabschluss) recordin
       });
       expect(res.statusCode).toBe(200);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "LeaveRequest", entityId: requestId, action: "UPDATE" },
-        orderBy: { createdAt: "desc" },
       });
       expect(audit).not.toBeNull();
 

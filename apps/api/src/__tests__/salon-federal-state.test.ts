@@ -14,7 +14,13 @@ import { join } from "node:path";
 import ts from "typescript";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  soleAuditRowOrNull,
+} from "./setup";
 
 describe("Phase 71b — Salon.federalState (D-01, AC-1)", () => {
   let app: FastifyInstance;
@@ -60,9 +66,8 @@ describe("Phase 71b — Salon.federalState (D-01, AC-1)", () => {
     const body = JSON.parse(res.body);
     expect(body.federalState).toBe("BAYERN");
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "Salon", entityId: body.id, action: "CREATE" },
-      orderBy: { createdAt: "desc" },
     });
     expect(auditRow).not.toBeNull();
     expect((auditRow!.newValue as Record<string, unknown>).federalState).toBe("BAYERN");
@@ -171,6 +176,7 @@ describe("PATCH /api/v1/salons/:id — D-12 federalState guard", () => {
 
     const audits = await app.prisma.auditLog.findMany({
       where: { action: "UPDATE", entity: "Salon", entityId: salon.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits.length).toBe(1);
     expect((audits[0].oldValue as { federalState?: string } | null)?.federalState).toBe(

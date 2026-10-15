@@ -21,6 +21,7 @@ import {
   closeTestApp,
   seedTestData,
   cleanupTestData,
+  soleAuditRowOrNull,
 } from "../../../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
 
@@ -139,7 +140,7 @@ describe("shifts.ts characterization — Absence-conflict branch of findShiftCon
     expect(res.statusCode).toBe(201);
     const shift = JSON.parse(res.body);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "Shift", entityId: shift.id, action: "SHIFT_FORCED_OVER_LEAVE" },
     });
     expect(

@@ -10,7 +10,13 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
@@ -352,9 +358,8 @@ describe("Issue #91 (Phase 91b Plan 03) — TimeEntry salon/person scope", () =>
       expect(res.body).toBe(nonExistentRes.body);
       expect(res.statusCode).toBe(404);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { action: "SCOPE_ACCESS_DENIED", entity: "TimeEntry", entityId: openEntry.id },
-        orderBy: { createdAt: "desc" },
       });
       expect(audit).not.toBeNull();
     });
@@ -417,9 +422,8 @@ describe("Issue #91 (Phase 91b Plan 03) — TimeEntry salon/person scope", () =>
       expect(res.body).toBe(nonExistentRes.body);
       expect(res.statusCode).toBe(404);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { action: "SCOPE_ACCESS_DENIED", entity: "TimeEntry", entityId: entry.id },
-        orderBy: { createdAt: "desc" },
       });
       expect(audit).not.toBeNull();
     });
@@ -451,9 +455,8 @@ describe("Issue #91 (Phase 91b Plan 03) — TimeEntry salon/person scope", () =>
       expect(res.body).toBe(nonExistentRes.body);
       expect(res.statusCode).toBe(404);
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { action: "SCOPE_ACCESS_DENIED", entity: "TimeEntry", entityId: entry.id },
-        orderBy: { createdAt: "desc" },
       });
       expect(audit).not.toBeNull();
     });

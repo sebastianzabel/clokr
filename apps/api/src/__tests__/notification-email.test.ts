@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleNotificationOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -260,7 +266,7 @@ describe("Notification email dispatch (notify.ts sendEmailNotification)", () => 
     await vi.waitFor(() => expect(sendMailMock).toHaveBeenCalled());
 
     // In-app: type-specific title, as the issue asks.
-    const inApp = await app.prisma.notification.findFirst({
+    const inApp = await soleNotificationOrNull(app.prisma, {
       where: { userId: data.adminUser.id, type: "LEAVE_REQUEST", relatedId: requestId },
     });
     expect(inApp?.title).toBe("Neue Krankmeldung");
@@ -346,9 +352,8 @@ describe("Notification email dispatch (notify.ts sendEmailNotification)", () => 
         expect(sendMailMock).not.toHaveBeenCalled();
 
         // The in-app bell entry must still be created — suppression is email-only.
-        const inApp = await app.prisma.notification.findFirst({
+        const inApp = await soleNotificationOrNull(app.prisma, {
           where: { userId: data.adminUser.id, type },
-          orderBy: { createdAt: "desc" },
         });
         expect(inApp).not.toBeNull();
       });
@@ -411,9 +416,8 @@ describe("Notification email dispatch (notify.ts sendEmailNotification)", () => 
         ).toBeDefined();
 
         // Fail-closed is email-only — the in-app bell entry must still be created.
-        const inApp = await app.prisma.notification.findFirst({
+        const inApp = await soleNotificationOrNull(app.prisma, {
           where: { userId: data.adminUser.id, type: "__UNREGISTERED_QUICK_TEST_TYPE__" },
-          orderBy: { createdAt: "desc" },
         });
         expect(inApp).not.toBeNull();
       } finally {

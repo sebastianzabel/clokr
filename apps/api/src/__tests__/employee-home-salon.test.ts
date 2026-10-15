@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRowOrNull } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 
 function minimalEmployeeBody(overrides: Record<string, unknown> = {}) {
@@ -114,7 +114,7 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
     expect(row.validUntil).toBeNull();
     expect(row.weekdays).toEqual([]);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "EmployeeSalonAssignment", action: "CREATE", entityId: row.id },
     });
     expect(audit).not.toBeNull();
@@ -208,7 +208,7 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
     expect(foreignRes.body).toBe(unknownRes.body);
     expect(JSON.parse(foreignRes.body)).toEqual({ error: "Salon nicht gefunden" });
 
-    const foreignAudit = await app.prisma.auditLog.findFirst({
+    const foreignAudit = await soleAuditRowOrNull(app.prisma, {
       where: {
         entity: "Salon",
         action: "CROSS_TENANT_ACCESS_DENIED",
@@ -216,7 +216,7 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
       },
     });
     expect(foreignAudit).not.toBeNull();
-    const unknownAudit = await app.prisma.auditLog.findFirst({
+    const unknownAudit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "Salon", action: "CROSS_TENANT_ACCESS_DENIED", entityId: unknownSalonId },
     });
     expect(unknownAudit).toBeNull();
@@ -332,7 +332,7 @@ describe("PATCH /api/v1/employees/:id — Stammsalon-Lücke bei früherem Eintri
     expect(original.validFrom.toISOString().slice(0, 10)).toBe("2024-01-01");
     expect(original.validUntil).toBeNull();
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "EmployeeSalonAssignment", action: "CREATE", entityId: gapRow.id },
     });
     expect(audit).not.toBeNull();
@@ -363,6 +363,7 @@ describe("PATCH /api/v1/employees/:id — Stammsalon-Lücke bei früherem Eintri
 
     const updateAudits = await app.prisma.auditLog.findMany({
       where: { entity: "Employee", action: "UPDATE", entityId: emp.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(updateAudits).toHaveLength(1);
     expect(updateAudits[0].userId).toBeNull();

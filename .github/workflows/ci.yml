@@ -358,6 +358,16 @@ jobs:
         # and in apps/api/scripts/README.md § lint-role-checks.ts.
         run: pnpm --filter @clokr/api run lint:role-checks
 
+      - name: Lint unordered audit/notification reads in tests (Issue #561 — flake class of #555)
+        # One action can write several AuditLog rows (or notify twice) in the same millisecond; a
+        # test that picks "the" row with an unordered findFirst passes alone and flakes in the full
+        # parallel run, and even an ordered findFirst silently ignores a second write. This AST gate
+        # fails on any auditLog/notification findFirst(OrThrow) and on an unordered findMany that is
+        # indexed by position, in every test file under apps/api/src. Fix: soleAuditRow[OrNull]() /
+        # soleNotification[OrNull]() / auditRowsFor() from src/__tests__/setup.ts.
+        # No exceptions file. Unconditional, ~1s.
+        run: pnpm --filter @clokr/api run lint:unordered-test-reads
+
       - name: Lint saldo-lock periodStart derivation (Issue #241 — five sites found by hand)
         # A periodType:"MONTHLY" SaldoSnapshot where-comparison on periodStart whose value does
         # not trace back to monthRangeUtc() is the exact defect class of #241 (three route gates
