@@ -57,9 +57,8 @@ async function main() {
       defaultSundayHours: 0,
       overtimeThreshold: 60,
       allowOvertimePayout: false,
-      // D-18 (Phase 64b, issue #64): explicit so it stays in step, on write, with
-      // the default salon's openingHours below — both come from the same constant.
-      storeHours: DEFAULT_SALON_OPENING_HOURS as unknown as Prisma.InputJsonValue,
+      // Issue #563: no opening hours here — `TenantConfig.storeHours` is retired and its column
+      // default fills it; the hours live only on the default salon created below.
     },
   });
   console.log("TenantConfig angelegt");
