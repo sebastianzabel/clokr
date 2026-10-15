@@ -65,6 +65,12 @@
     margin: 0 0 24px;
   }
 
+  /* In dark mode .callout.brand sets the brand-light text, 4.16:1 on its own tint (WCAG AA asks 4.5:1
+     for 13 px text); the banner takes the body text colour and keeps the tint as its signal. */
+  .callout.brand.banner {
+    color: var(--text);
+  }
+
   .text {
     display: flex;
     flex-direction: column;

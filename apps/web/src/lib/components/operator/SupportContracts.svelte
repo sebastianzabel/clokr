@@ -53,8 +53,8 @@
   {:else}
     <ul class="cards">
       {#each contracts as contract (contract.id)}
-        <li class="card" data-testid={`op-support-contract-row-${contract.id}`}>
-          <h3 class="card-title">
+        <li class="contract" data-testid={`op-support-contract-row-${contract.id}`}>
+          <h3 class="contract-title">
             <span class="text">{labelFor(SCHEDULE_TYPE_LABELS, contract.type)}</span>
             <span class="since">gültig ab {formatOperatorDate(contract.validFrom)}</span>
           </h3>
@@ -156,7 +156,8 @@
     list-style: none;
   }
 
-  .card {
+  /* Not `.card` / `.card-title`: those are global recipes of app.css (a muted 11 px caps title). */
+  .contract {
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -167,7 +168,7 @@
     background: var(--bg-card);
   }
 
-  .card-title {
+  .contract-title {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;

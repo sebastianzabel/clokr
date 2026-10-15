@@ -196,7 +196,7 @@
   <div data-testid="op-support-section">
     {#if shownNotice}
       <div
-        class="callout brand block first"
+        class="callout brand body-text block first"
         role="status"
         data-code={shownNotice}
         data-testid="op-support-notice"
@@ -206,7 +206,11 @@
     {/if}
 
     {#if tenantDeactivated}
-      <div class="callout brand block" id={FROZEN_HINT_ID} data-testid="op-support-frozen-hint">
+      <div
+        class="callout brand body-text block"
+        id={FROZEN_HINT_ID}
+        data-testid="op-support-frozen-hint"
+      >
         <p>{REASON_TEXTS.TENANT_DEACTIVATED}</p>
       </div>
     {/if}
@@ -390,7 +394,7 @@
   {#snippet body()}
     {#if endError}
       <div
-        class="callout brand"
+        class="callout brand body-text"
         role="alert"
         data-code={endError.code}
         data-testid="op-support-end-error"
@@ -402,6 +406,12 @@
 </ConfirmDialog>
 
 <style>
+  /* In dark mode .callout.brand sets the brand-light text, 3.75:1 on its own tint (WCAG AA asks 4.5:1
+     for 13 px text); these notices take the body text colour and keep the tint as their signal. */
+  .callout.brand.body-text {
+    color: var(--text);
+  }
+
   .block {
     margin-top: 16px;
     overflow-wrap: anywhere;
@@ -437,11 +447,23 @@
     overflow-wrap: anywhere;
   }
 
-  /* Four options at the segmented control's padding exceed a 360 px Section: scroll inside the
-     row instead of widening the page. */
+  /* Four options in one row exceed a 360 px Section, and a row that scrolls inside itself still
+     reaches past the Section's edge: below 520 px the options form two rows of two instead. */
   .duration {
     max-width: 100%;
-    overflow-x: auto;
+  }
+
+  @media (max-width: 519px) {
+    .duration :global(.seg-control) {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .duration :global(.seg-btn) {
+      min-height: 44px;
+    }
   }
 
   .facts {

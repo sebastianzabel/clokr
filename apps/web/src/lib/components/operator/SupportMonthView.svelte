@@ -161,13 +161,13 @@
                   <td data-label="Quelle">{labelFor(ENTRY_SOURCE_LABELS, entry.source)}</td>
                   <td class="cell-marks">
                     {#if entry.isInvalid}
-                      <span class="badge badge-red">{invalidText(entry)}</span>
+                      <span class="badge badge-red mark">{invalidText(entry)}</span>
                     {/if}
                     {#if entry.deleted}
                       <span class="badge badge-gray">gelöscht</span>
                     {/if}
                     {#if entry.isLocked}
-                      <span class="badge badge-blue">gesperrt</span>
+                      <span class="badge badge-blue mark">gesperrt</span>
                     {/if}
                   </td>
                 </tr>
@@ -237,7 +237,7 @@
                   <td data-label="Tage">
                     {formatDays(request.days)}
                     {#if request.daysProvisional === true}
-                      <span class="badge badge-yellow">vorläufig</span>
+                      <span class="badge badge-yellow mark">vorläufig</span>
                     {/if}
                   </td>
                 </tr>
@@ -364,6 +364,12 @@
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
+  }
+
+  /* The tinted text of .badge-red / -yellow / -blue misses 4.5:1 on its own tint (13 px text; dark
+     mode worst): the label takes the body text colour, the tint and border still carry the meaning. */
+  .mark {
+    color: var(--text);
   }
 
   /* A deleted entry stays in the list but reads as no longer valid. */
