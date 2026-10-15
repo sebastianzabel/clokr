@@ -25,6 +25,9 @@
  *   (default) VERIFY               compare every cell with the recording (default path, or
  *                                  NEUTRALITY_MATRIX_IN); a cell missing from it fails "not
  *                                  recorded".
+ * Measured-result dump (Issue #539, D-15): VERIFY with NEUTRALITY_ACTUAL_OUT_DIR=<dir> also writes
+ * every measured cell to `<dir>/matrix.actual.json` (never into `neutrality/recorded/`, which is
+ * refused) — the input of `scripts/neutrality-amendments-from-run.ts`.
  * Both modes build the fixture, then execute the checked-in migration SQL (D-25: the old code
  * ignores stored assignments for every access decision, so a recording with the migration applied
  * is still a recording of the unchanged code), then build the fallback tenants, then run the cells.
@@ -105,6 +108,12 @@ import {
   type CellPhase,
 } from "./neutrality/matrix-config";
 import { buildActorTenant, cleanupMatrixExtras, type ActorFixture } from "./neutrality/fixture";
+import {
+  effectiveAmendmentLinks,
+  resolveAmendmentChains,
+  type AmendmentLink,
+} from "./neutrality/amendment-chain";
+import { measuredDumpDir, writeMeasuredDump } from "./neutrality/measured-dump";
 import { installExternalStubs, type ExternalStubs } from "./neutrality/external-stubs";
 import {
   actorRunsVariant,
@@ -179,24 +188,23 @@ const MIN_REASON_LENGTH = 20;
  * — Issue #333 is the first, Issues #346/#358/#359 the concrete second/third/fourth) — any future
  * issue that needs to amend a named cell for a reason unrelated to Issue #75's own switch adds an
  * entry here instead of building its own escape hatch.
+ *
+ * Chains (Issue #539, D-15): one key may carry SEVERAL dated links, applied in file order — the
+ * first link's `from` equals the recording, every next link's `from` equals the previous link's
+ * `to`, dates never go back, and the effective expectation is the last link's `to`. The rule lives
+ * in `neutrality/amendment-chain.ts` (shared with the other two registers and with
+ * `scripts/neutrality-amendments-from-run.ts`); a register with one link per key is a chain of
+ * length one and stays valid unchanged.
  */
-interface MatrixAmendment {
-  readonly key: string;
-  readonly from: CellResult;
-  readonly to: CellResult;
-  readonly issue: number;
-  readonly reason: string;
-  readonly date: string;
-}
+type MatrixAmendment = AmendmentLink<CellResult>;
 const AMENDMENTS_PATH = join(__dirname, "neutrality", "recorded", "matrix-amendments.json");
 const amendments: readonly MatrixAmendment[] = (
   JSON.parse(readFileSync(AMENDMENTS_PATH, "utf8")) as { amendments: MatrixAmendment[] }
 ).amendments;
-/** Last-wins lookup for the sweep below. A duplicate KEY is its own validation failure (the
- * "amendments register" describe below), never silently resolved by this map. */
-const amendmentByKey: ReadonlyMap<string, MatrixAmendment> = new Map(
-  amendments.map((a) => [a.key, a]),
-);
+/** The effective link per key for the sweep below: the LAST link of the key's chain. A broken chain
+ * is its own validation failure (the "amendments register" describe below), never silently fixed
+ * by this map. */
+const amendmentByKey: ReadonlyMap<string, MatrixAmendment> = effectiveAmendmentLinks(amendments);
 
 const derivedRoutes = deriveMatrixRoutes();
 
@@ -273,6 +281,8 @@ describe("permission neutrality matrix (Issue #75)", () => {
           `Re-record only per D-24 on a pre-switch tree (plan 75b-13).`,
       );
     }
+    // Issue #539 (D-15): refuse a dump directory inside `neutrality/recorded` before the long setup.
+    measuredDumpDir();
     app = await getTestApp();
     vi.useFakeTimers({ now: PINNED_NOW, toFake: ["Date"] });
 
@@ -306,6 +316,11 @@ describe("permission neutrality matrix (Issue #75)", () => {
   afterAll(async () => {
     vi.useRealTimers();
     stubs?.restore();
+    // Issue #539 (D-15): a measurement for `scripts/neutrality-amendments-from-run.ts` — never a
+    // recording. Only with NEUTRALITY_ACTUAL_OUT_DIR set, only in VERIFY, only after a complete setup.
+    if (MODE === "verify" && setupComplete) {
+      writeMeasuredDump("matrix", serializeRecording(collected));
+    }
     if (MERGE && setupComplete) {
       if (mergeRefusals.length > 0 || recording === undefined) {
         console.error(
@@ -412,46 +427,13 @@ describe("permission neutrality matrix (Issue #75)", () => {
       expect(Array.isArray(amendments)).toBe(true);
     });
 
-    it("no two amendments name the same cell key", () => {
-      const counts = new Map<string, number>();
-      for (const a of amendments) counts.set(a.key, (counts.get(a.key) ?? 0) + 1);
-      const duplicates = [...counts.entries()].filter(([, n]) => n > 1).map(([key]) => key);
-      expect(duplicates).toEqual([]);
-    });
-
-    it("every amendment names a positive integer GitHub issue, an ISO date, and a written reason of at least MIN_REASON_LENGTH characters", () => {
-      const problems = amendments
-        .filter(
-          (a) =>
-            !Number.isInteger(a.issue) ||
-            a.issue <= 0 ||
-            typeof a.reason !== "string" ||
-            a.reason.trim().length < MIN_REASON_LENGTH ||
-            !/^\d{4}-\d{2}-\d{2}$/.test(a.date),
-        )
-        .map((a) => a.key);
+    it("every amendment chain is valid — the first link's 'from' is the recording, every next link continues the previous 'to', dates never go back, and each link names an issue, an ISO date and a reason (Issue #539, D-15)", () => {
+      const { problems } = resolveAmendmentChains<CellResult>({
+        links: amendments,
+        recordedValueOf: recording === undefined ? undefined : (key) => recording?.[key],
+        minReasonLength: MIN_REASON_LENGTH,
+      });
       expect(problems).toEqual([]);
-    });
-
-    it("every amendment's cell key exists in the checked-in recording — an amendment for a route/actor/variant the recording never held is stale or invalid", () => {
-      if (recording === undefined) return; // MODE=record: the beforeAll guard above already refused.
-      const currentRecording = recording;
-      const missing = amendments.filter((a) => !(a.key in currentRecording)).map((a) => a.key);
-      expect(missing).toEqual([]);
-    });
-
-    it("every amendment's 'from' matches the recording BYTE-FOR-BYTE — a mismatch means the recording moved on and the amendment must be re-derived, never trusted as-is", () => {
-      if (recording === undefined) return;
-      const currentRecording = recording;
-      const stale = amendments
-        .filter((a) => a.key in currentRecording)
-        .filter((a) => !isDeepStrictEqual(a.from, currentRecording[a.key]))
-        .map(
-          (a) =>
-            `${a.key}: amendment 'from' ${JSON.stringify(a.from)} does not match the recorded ` +
-            `${JSON.stringify(currentRecording[a.key])}`,
-        );
-      expect(stale).toEqual([]);
     });
   });
 

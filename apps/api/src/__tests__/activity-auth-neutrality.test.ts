@@ -40,6 +40,9 @@
  *                                         NEUTRALITY_ACTIVITY_AUTH_OUT) in `afterAll`;
  *   (default) VERIFY                      compare with the recording (default path, or
  *                                         NEUTRALITY_ACTIVITY_AUTH_IN).
+ * Measured-result dump (Issue #539, D-15): VERIFY with NEUTRALITY_ACTUAL_OUT_DIR=<dir> also writes
+ * every measured entry to `<dir>/activity-auth.actual.json` (never into `neutrality/recorded/`,
+ * which is refused) — the input of `scripts/neutrality-amendments-from-run.ts`.
  * RECORD refuses once the legacy role guard's definition is gone from `middleware/auth.ts` (same
  * guard as the matrix). Both modes build the fixture, run the checked-in migration SQL (D-25), then
  * create the fallback users. Every run starts with `pnpm --filter @clokr/api run test:setup`.
@@ -55,13 +58,18 @@ import type { Role } from "@clokr/db";
 import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup";
 import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
 import { LabelRegistry, cleanupMatrixExtras, type ActorFixture } from "./neutrality/fixture";
+import {
+  effectiveAmendmentLinks,
+  resolveAmendmentChains,
+  type AmendmentLink,
+} from "./neutrality/amendment-chain";
+import { measuredDumpDir, writeMeasuredDump } from "./neutrality/measured-dump";
 import { installExternalStubs, type ExternalStubs } from "./neutrality/external-stubs";
 import { runCell, type CellResult, type LabelContext } from "./neutrality/cell-runner";
 import type { ActorKind, RouteSpec, VariantSpec } from "./neutrality/matrix-config";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import type { JwtPayload } from "../middleware/auth";
 import { TENANT_REQUIRED_ERROR } from "../contexts/platform/tenant-status";
-import { isDeepStrictEqual } from "node:util";
 
 const MODE = process.env.NEUTRALITY_ACTIVITY_AUTH_MODE === "record" ? "record" : "verify";
 const DEFAULT_RECORDING = join(__dirname, "neutrality", "recorded", "activity-auth.json");
@@ -81,22 +89,21 @@ const FIXTURE_PASSWORD = "activity-auth-neutrality";
  * the amendment's `to` instead (checked against the measured result exactly like an unamended cell),
  * and the `from` is pinned byte-for-byte to the recording so a recording that moved out from under an
  * amendment turns the register describe red. An unnamed cell is completely unaffected.
+ *
+ * Chains (Issue #539, D-15): one key may carry SEVERAL dated links, applied in file order — the
+ * first link's `from` equals the recording, every next link's `from` equals the previous link's
+ * `to`, dates never go back, and the effective expectation is the last link's `to`. The rule lives
+ * in `neutrality/amendment-chain.ts`, shared with the other two registers.
  */
-interface ActivityAuthAmendment {
-  readonly key: string;
-  readonly from: unknown;
-  readonly to: unknown;
-  readonly issue: number;
-  readonly reason: string;
-  readonly date: string;
-}
+type ActivityAuthAmendment = AmendmentLink<unknown>;
 const AMENDMENTS_PATH = join(__dirname, "neutrality", "recorded", "activity-auth-amendments.json");
 const amendments: readonly ActivityAuthAmendment[] = (
   JSON.parse(readFileSync(AMENDMENTS_PATH, "utf8")) as { amendments: ActivityAuthAmendment[] }
 ).amendments;
-const amendmentByKey: ReadonlyMap<string, ActivityAuthAmendment> = new Map(
-  amendments.map((a) => [a.key, a]),
-);
+/** The effective link per key: the LAST link of the key's chain. A broken chain is its own
+ * validation failure (the "amendments register" describe below). */
+const amendmentByKey: ReadonlyMap<string, ActivityAuthAmendment> =
+  effectiveAmendmentLinks(amendments);
 /** The shortest acceptable written reason of an amendment (same threshold as the other registers). */
 const MIN_REASON_LENGTH = 20;
 
@@ -232,8 +239,10 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
     if (MODE === "verify") {
       const amended = amendmentByKey.get(key);
       const expected = amended ? amended.to : recording?.[key];
-      expect(expected, `${key}: not recorded`).toBeDefined();
-      expect(entry, key).toEqual(expected);
+      // Soft (Issue #539, D-15): a mismatch is reported but never stops the remaining entries, so
+      // the measured-result dump is always complete.
+      expect.soft(expected, `${key}: not recorded`).toBeDefined();
+      expect.soft(entry, key).toEqual(expected);
     }
   }
 
@@ -378,6 +387,8 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
           `switched code would make the neutrality proof compare the new code with itself.`,
       );
     }
+    // Issue #539 (D-15): refuse a dump directory inside `neutrality/recorded` before the long setup.
+    measuredDumpDir();
     app = await getTestApp();
     stubs = installExternalStubs(app);
     const stubSendOtp = app.mailer.sendOtp;
@@ -469,6 +480,11 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
 
   afterAll(async () => {
     stubs?.restore();
+    // Issue #539 (D-15): a measurement for `scripts/neutrality-amendments-from-run.ts` — never a
+    // recording. Only with NEUTRALITY_ACTUAL_OUT_DIR set, only in VERIFY, only after a complete setup.
+    if (MODE === "verify" && setupComplete) {
+      writeMeasuredDump("activity-auth", serializeRecording(collected));
+    }
     if (MODE === "record" && setupComplete) {
       mkdirSync(dirname(RECORD_OUT), { recursive: true });
       writeFileSync(RECORD_OUT, serializeRecording(collected));
@@ -689,37 +705,13 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
       expect(amendments.length).toBeGreaterThan(0);
     });
 
-    it("no two amendments name the same cell key", () => {
-      const counts = new Map<string, number>();
-      for (const a of amendments) counts.set(a.key, (counts.get(a.key) ?? 0) + 1);
-      const duplicates = [...counts.entries()].filter(([, n]) => n > 1).map(([key]) => key);
-      expect(duplicates).toEqual([]);
-    });
-
-    it("every amendment names a positive integer GitHub issue, an ISO date, and a written reason of at least MIN_REASON_LENGTH characters", () => {
-      const problems = amendments
-        .filter(
-          (a) =>
-            !Number.isInteger(a.issue) ||
-            a.issue <= 0 ||
-            typeof a.reason !== "string" ||
-            a.reason.trim().length < MIN_REASON_LENGTH ||
-            !/^\d{4}-\d{2}-\d{2}$/.test(a.date),
-        )
-        .map((a) => a.key);
+    it("every amendment chain is valid — the first link's 'from' is the recording, every next link continues the previous 'to', dates never go back, and each link names an issue, an ISO date and a reason (Issue #539, D-15)", () => {
+      const { problems } = resolveAmendmentChains<unknown>({
+        links: amendments,
+        recordedValueOf: recording === undefined ? undefined : (key) => recording?.[key],
+        minReasonLength: MIN_REASON_LENGTH,
+      });
       expect(problems).toEqual([]);
-    });
-
-    it("every amendment's key exists in the checked-in recording, and its 'from' matches the recording BYTE-FOR-BYTE", () => {
-      if (recording === undefined) return; // MODE=record: the beforeAll guard above already refused.
-      const currentRecording = recording;
-      const missing = amendments.filter((a) => !(a.key in currentRecording)).map((a) => a.key);
-      expect(missing).toEqual([]);
-      const stale = amendments
-        .filter((a) => a.key in currentRecording)
-        .filter((a) => !isDeepStrictEqual(a.from, currentRecording[a.key]))
-        .map((a) => `${a.key}: amendment 'from' does not match the recorded entry`);
-      expect(stale).toEqual([]);
     });
   });
 });
