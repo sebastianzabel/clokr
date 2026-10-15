@@ -54,6 +54,7 @@ describe("Company Shutdowns — audit coverage", () => {
         entityId: shutdownId,
         createdAt: { gte: beforeTs },
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
 
     expect(logs.length).toBeGreaterThanOrEqual(1);
@@ -89,6 +90,7 @@ describe("Company Shutdowns — audit coverage", () => {
         entityId: shutdownId,
         createdAt: { gte: beforeTs },
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
 
     expect(logs.length).toBeGreaterThanOrEqual(1);
@@ -123,6 +125,7 @@ describe("Company Shutdowns — audit coverage", () => {
         entityId: shutdownId,
         createdAt: { gte: beforeTs },
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
 
     expect(logs.length).toBeGreaterThanOrEqual(1);

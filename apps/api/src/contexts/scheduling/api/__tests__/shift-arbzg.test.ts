@@ -4,6 +4,7 @@ import {
   closeTestApp,
   seedTestData,
   cleanupTestData,
+  soleAuditRowOrNull,
 } from "../../../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
 import {
@@ -260,7 +261,7 @@ describe("Shift ArbZG Validation (Phase 47.4-01)", () => {
     const shift = JSON.parse(res.body);
     expect(shift.id).toBeDefined();
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: {
         entity: "Shift",
         entityId: shift.id,

@@ -32,7 +32,7 @@
  * observed.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
+import { getTestApp, cleanupTestData, createTestSalon, soleAuditRowOrNull } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -585,7 +585,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     expect(persisted!.daysProvisional).toBe(false); // converged — never provisional again
     expect(await usedDaysFor(emp.id, start)).toBe(usedBefore - 2); // delta = 3 - 5 = -2
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: { action: "LEAVE_DAYS_ADJUSTED", entityId: created.id },
     });
     expect(auditRow).toBeTruthy();
@@ -641,7 +641,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     expect(persisted!.daysProvisional).toBe(false);
     expect(await usedDaysFor(emp.id, start)).toBe(usedBefore + 3); // delta = 4 - 1 = +3
 
-    const auditRow = await app.prisma.auditLog.findFirst({
+    const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: { action: "LEAVE_DAYS_ADJUSTED", entityId: created.id },
     });
     expect(auditRow).toBeTruthy();

@@ -9,7 +9,14 @@
  * hazard, see CLAUDE.md / docs/testing.md).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+  auditRowsFor,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("PUT /api/v1/settings/vacation/:employeeId — CREATE-vs-UPDATE audit action (Issue #416)", () => {
@@ -64,11 +71,8 @@ describe("PUT /api/v1/settings/vacation/:employeeId — CREATE-vs-UPDATE audit a
     });
     expect(entitlement).not.toBeNull();
 
-    const firstAudit = await app.prisma.auditLog.findFirst({
-      where: { entity: "LeaveEntitlement", entityId: entitlement!.id },
-      orderBy: { createdAt: "asc" },
-    });
-    expect(firstAudit?.action).toBe("CREATE");
+    const afterFirst = await auditRowsFor(app, "LeaveEntitlement", entitlement!.id);
+    expect(afterFirst.map((r) => r.action)).toEqual(["CREATE"]);
 
     // Second write for the SAME employee+year — the row now exists, so this must be UPDATE.
     const secondRes = await app.inject({
@@ -79,11 +83,8 @@ describe("PUT /api/v1/settings/vacation/:employeeId — CREATE-vs-UPDATE audit a
     });
     expect(secondRes.statusCode).toBe(200);
 
-    const secondAudit = await app.prisma.auditLog.findFirst({
-      where: { entity: "LeaveEntitlement", entityId: entitlement!.id },
-      orderBy: { createdAt: "desc" },
-    });
-    expect(secondAudit?.action).toBe("UPDATE");
+    const afterSecond = await auditRowsFor(app, "LeaveEntitlement", entitlement!.id);
+    expect(afterSecond.map((r) => r.action)).toEqual(["CREATE", "UPDATE"]);
   });
 
   it("audits UPDATE for a year that already has a seeded entitlement row (regression guard)", async () => {
@@ -106,9 +107,8 @@ describe("PUT /api/v1/settings/vacation/:employeeId — CREATE-vs-UPDATE audit a
         },
       },
     });
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "LeaveEntitlement", entityId: entitlement!.id },
-      orderBy: { createdAt: "desc" },
     });
     expect(audit?.action).toBe("UPDATE");
   });

@@ -150,6 +150,7 @@ describe("PATCH /settings/work/:employeeId/usual-work-days — Nachtrag on an ex
   it("exactly one AuditLog UPDATE WorkSchedule with old [] and new [2,3,4,5] by the admin", async () => {
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "WorkSchedule", entityId: row1Id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits).toHaveLength(1);
     expect(audits[0].action).toBe("UPDATE");

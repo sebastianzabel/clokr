@@ -339,6 +339,7 @@ describe("Role lockout protection — employee triggers (Phase 74b, Issue #74)",
     ] as const) {
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "RoleAssignment", entityId: removed.id, action: "DELETE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
       expect(audits[0].oldValue).toEqual({

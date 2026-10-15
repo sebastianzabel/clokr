@@ -307,6 +307,7 @@ describe("Schichtplanung — flagShiftIfConflictsWithApprovedLeave / notifyShift
           action: "SHIFT_MARKED_CONFLICTING",
           entityId: { in: [shift1.id, shift2.id] },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(2);
       expect((audits[0].newValue as { leaveRequestId?: string })?.leaveRequestId).toBe(approved.id);
@@ -317,6 +318,7 @@ describe("Schichtplanung — flagShiftIfConflictsWithApprovedLeave / notifyShift
           relatedType: "LeaveRequest",
           relatedId: approved.id,
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(notifs.length).toBeGreaterThan(0);
       expect(notifs.some((n) => n.userId === mgrUser.id)).toBe(true);
@@ -358,6 +360,7 @@ describe("Schichtplanung — flagShiftIfConflictsWithApprovedLeave / notifyShift
           relatedType: "LeaveRequest",
           relatedId: approved.id,
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(notifs).toHaveLength(0);
 

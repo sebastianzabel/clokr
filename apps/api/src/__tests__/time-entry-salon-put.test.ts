@@ -8,7 +8,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  soleAuditRowOrNull,
+} from "./setup";
 import { addDaysStr, mondayOfWeekStr, pastDateStr } from "./test-dates";
 
 describe("PUT /time-entries/:id salon change (Phase 68b, issue #68, D-12/D-15)", () => {
@@ -110,9 +116,8 @@ describe("PUT /time-entries/:id salon change (Phase 68b, issue #68, D-12/D-15)",
     const body = JSON.parse(res.body) as { entry: { salonId: string } };
     expect(body.entry.salonId).toBe(salonC.id);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "MANAGER_CORRECTION", entity: "TimeEntry", entityId: entry.id },
-      orderBy: { createdAt: "desc" },
     });
     expect((audit?.oldValue as { salonId?: string } | null)?.salonId).toBe(salonA.id);
     expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(salonC.id);

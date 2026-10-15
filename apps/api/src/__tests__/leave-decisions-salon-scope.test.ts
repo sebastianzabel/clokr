@@ -10,7 +10,13 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+} from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
@@ -182,7 +188,7 @@ describe("Issue #91 (Phase 91b Plan 04) — LeaveRequest/Section9Credit decision
     expect(res.body).toBe(nonExistentRes.body);
     expect(res.statusCode).toBe(404);
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "SCOPE_ACCESS_DENIED", entity: "LeaveRequest", entityId: request.id },
     });
     expect(audit).not.toBeNull();
@@ -239,7 +245,7 @@ describe("Issue #91 (Phase 91b Plan 04) — LeaveRequest/Section9Credit decision
     expect(res.statusCode).toBe(404);
     expect(res.body).toBe(JSON.stringify({ error: "Antrag nicht gefunden" }));
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "SCOPE_ACCESS_DENIED", entity: "LeaveRequest", entityId: request.id },
     });
     expect(audit).not.toBeNull();
@@ -272,7 +278,7 @@ describe("Issue #91 (Phase 91b Plan 04) — LeaveRequest/Section9Credit decision
     expect(res.statusCode).toBe(404);
     expect(res.body).toBe(JSON.stringify({ error: "Antrag nicht gefunden" }));
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "SCOPE_ACCESS_DENIED", entity: "LeaveRequest", entityId: request.id },
     });
     expect(audit).not.toBeNull();
@@ -364,7 +370,7 @@ describe("Issue #91 (Phase 91b Plan 04) — LeaveRequest/Section9Credit decision
     expect(res.statusCode).toBe(404);
     expect(res.body).toBe(JSON.stringify({ error: "§-9-Vorgang nicht gefunden" }));
 
-    const audit = await app.prisma.auditLog.findFirst({
+    const audit = await soleAuditRowOrNull(app.prisma, {
       where: { action: "SCOPE_ACCESS_DENIED", entity: "Section9Credit", entityId: credit.id },
     });
     expect(audit).not.toBeNull();

@@ -339,6 +339,7 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
     for (const row of [rowOpenFromPast, rowBounded, rowFuture]) {
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "EmployeeSalonAssignment", entityId: row.id, action: "END" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
       const newValue = audits[0].newValue as { trigger?: string };
@@ -347,6 +348,7 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
     for (const row of [rowEndedBefore, rowEndedAtD]) {
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "EmployeeSalonAssignment", entityId: row.id, action: "END" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(0);
     }

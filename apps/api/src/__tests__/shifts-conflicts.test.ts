@@ -407,6 +407,7 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
 
     const audit = await app.prisma.auditLog.findMany({
       where: { entity: "Shift", entityId: shift.id, action: "SHIFT_RESTORED" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit.length).toBe(1);
     expect(audit[0].oldValue).toBeTruthy();

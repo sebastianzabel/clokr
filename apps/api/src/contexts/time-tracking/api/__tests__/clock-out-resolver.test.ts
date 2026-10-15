@@ -171,6 +171,7 @@ describe("POST /:id/clock-out — Phase 76.2 resolver migration", () => {
     // Exactly 1 CLOCK_OUT audit row for the :id (4 conflicts produced 0 audits)
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "TimeEntry", entityId: id, action: "CLOCK_OUT" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits).toHaveLength(1);
   });

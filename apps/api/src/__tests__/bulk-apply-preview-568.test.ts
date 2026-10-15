@@ -583,6 +583,7 @@ describe("Issue #568 — bulk apply preview and guarded apply", () => {
       });
       const bulk = await app.prisma.auditLog.findMany({
         where: { userId: t.data.adminUser.id, action: "BULK_APPLY" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(bulk).toHaveLength(1);
       expect(bulk[0].entity).toBe("TenantConfig");
@@ -607,6 +608,7 @@ describe("Issue #568 — bulk apply preview and guarded apply", () => {
 
       const update = await app.prisma.auditLog.findMany({
         where: { userId: t.data.adminUser.id, action: "UPDATE", entity: "TenantConfig" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(update).toHaveLength(1);
       const updateValue = update[0].newValue as Record<string, unknown>;

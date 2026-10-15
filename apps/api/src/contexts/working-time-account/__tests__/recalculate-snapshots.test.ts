@@ -16,6 +16,7 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee,
+  soleAuditRowOrNull,
 } from "../../../__tests__/setup"; // Phase 68b (issue #68)
 import { recalculateSnapshots } from "../recalculate-snapshots";
 import type { FastifyInstance } from "fastify";
@@ -739,9 +740,8 @@ describe("recalculateSnapshots — injectedDelta preservation for real-activity 
 
     // Audit trail: this recompute's SUPERSEDE entry for the pre-final July row
     // records the non-zero injectedDelta explicitly — traceable, not mysterious.
-    const julySupersedeAudit = await prisma.auditLog.findFirst({
+    const julySupersedeAudit = await soleAuditRowOrNull(prisma, {
       where: { entity: "SaldoSnapshot", entityId: julyRowIdBeforeFinalRecalc, action: "SUPERSEDE" },
-      orderBy: { createdAt: "desc" },
     });
     expect(julySupersedeAudit).not.toBeNull();
     const newVal = julySupersedeAudit!.newValue as Record<string, unknown>;

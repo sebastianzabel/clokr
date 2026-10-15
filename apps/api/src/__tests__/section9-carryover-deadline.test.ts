@@ -25,7 +25,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  soleAuditRowOrNull,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 
@@ -589,7 +595,7 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
     });
     expect(db!.carryOverDeadline?.toISOString().slice(0, 10)).toBe(correctedDeadline);
 
-    const overrideAudit = await app.prisma.auditLog.findFirst({
+    const overrideAudit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "LEAVE_ENTITLEMENT_ILLNESS_DEADLINE_OVERRIDDEN",
         entity: "LeaveEntitlement",
@@ -624,7 +630,7 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
     });
     expect(db!.carryOverDeadline).toBeNull();
 
-    const overrideAudit = await app.prisma.auditLog.findFirst({
+    const overrideAudit = await soleAuditRowOrNull(app.prisma, {
       where: {
         action: "LEAVE_ENTITLEMENT_ILLNESS_DEADLINE_OVERRIDDEN",
         entity: "LeaveEntitlement",

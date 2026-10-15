@@ -4,7 +4,8 @@ import {
   closeTestApp,
   seedTestData,
   cleanupTestData,
-  createTestSalon, // Phase 325 (issue #325)
+  createTestSalon,
+  soleAuditRowOrNull, // Phase 325 (issue #325)
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dbDateStr, futureDateStr, nextWeekdayStr, utcMidnight } from "./test-dates";
@@ -849,7 +850,7 @@ describe("Shift Planning API", () => {
       const shift = JSON.parse(res.body);
       expect(shift.id).toBeDefined();
 
-      const audit = await app.prisma.auditLog.findFirst({
+      const audit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "Shift", entityId: shift.id, action: "SHIFT_FORCED_OVER_LEAVE" },
       });
       expect(audit).toBeDefined();
@@ -909,7 +910,7 @@ describe("Shift Planning API", () => {
       const reloaded = await app.prisma.shift.findUnique({ where: { id: shift.id } });
       expect(reloaded?.conflictsWithLeave).toBe(true);
 
-      const markedAudit = await app.prisma.auditLog.findFirst({
+      const markedAudit = await soleAuditRowOrNull(app.prisma, {
         where: {
           entity: "Shift",
           entityId: shift.id,
@@ -966,14 +967,14 @@ describe("Shift Planning API", () => {
       const reloaded = await app.prisma.shift.findUnique({ where: { id: shift.id } });
       expect(reloaded?.conflictsWithLeave).toBe(true);
 
-      const markedAudit = await app.prisma.auditLog.findFirst({
+      const markedAudit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "Shift", entityId: shift.id, action: "SHIFT_MARKED_CONFLICTING" },
       });
       expect(markedAudit).toBeDefined();
       expect((markedAudit?.newValue as { leaveRequestId?: string })?.leaveRequestId).toBe(leave.id);
 
       // The pre-existing force-override audit still fires unchanged — both now coexist.
-      const forcedAudit = await app.prisma.auditLog.findFirst({
+      const forcedAudit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "Shift", entityId: shift.id, action: "SHIFT_FORCED_OVER_LEAVE" },
       });
       expect(forcedAudit).toBeDefined();
@@ -1029,7 +1030,7 @@ describe("Shift Planning API", () => {
       // active decision to keep the shift). Phase 430's new check must not silently undo it.
       expect(reloaded?.conflictsWithLeave).toBe(false);
 
-      const markedAudit = await app.prisma.auditLog.findFirst({
+      const markedAudit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "Shift", entityId: shift.id, action: "SHIFT_MARKED_CONFLICTING" },
       });
       expect(markedAudit).toBeNull();
@@ -1069,7 +1070,7 @@ describe("Shift Planning API", () => {
       });
       expect(shift?.conflictsWithLeave).toBe(true);
 
-      const markedAudit = await app.prisma.auditLog.findFirst({
+      const markedAudit = await soleAuditRowOrNull(app.prisma, {
         where: { entity: "Shift", entityId: shift!.id, action: "SHIFT_MARKED_CONFLICTING" },
       });
       expect(markedAudit).toBeDefined();
