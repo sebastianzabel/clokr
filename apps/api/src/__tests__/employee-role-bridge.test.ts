@@ -259,14 +259,16 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     expect(await columnRole(target.user.id)).toBe("MANAGER");
   });
 
-  it("an unchanged role writes nothing — neither for a migrated nor for a fallback user", async () => {
+  it("an unchanged role writes nothing for a user with a stored row; a user without one gets the requested role (#539 D-11)", async () => {
     const migrated = await createPerson(tenant.tenant.id, "Gleich Manager", "MANAGER");
     await executeLegacyRoleMigration(app.prisma);
-    const fallback = await createPerson(tenant.tenant.id, "Gleich Rueckfall", "MANAGER");
+    // The column says MANAGER, but no row is stored: the person holds no role, so the echoed
+    // column value is no "unchanged" - the form assigns it (it used to be silently skipped).
+    const unassigned = await createPerson(tenant.tenant.id, "Gleich Ohne Rolle", "MANAGER");
     const migratedRowsBefore = await storedAssignments(tenant.tenant.id, migrated.user.id);
     const migratedAuditsBefore = await roleAssignmentAudits(migrated.user.id);
 
-    for (const person of [migrated, fallback]) {
+    for (const person of [migrated, unassigned]) {
       const res = await patchEmployee(tenant.adminToken, person.employee.id, {
         role: "MANAGER",
         firstName: "Gleich Geaendert",
@@ -277,8 +279,9 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
 
     expect(await storedAssignments(tenant.tenant.id, migrated.user.id)).toEqual(migratedRowsBefore);
     expect(await newAuditsSince(migrated.user.id, migratedAuditsBefore)).toEqual([]);
-    expect(await storedAssignments(tenant.tenant.id, fallback.user.id)).toEqual([]);
-    expect(await roleAssignmentAudits(fallback.user.id)).toEqual([]);
+    const unassignedRows = await storedAssignments(tenant.tenant.id, unassigned.user.id);
+    expect(unassignedRows.map((row) => row.accessRoleId)).toEqual([SYSTEM_ROLE_IDS.MANAGER]);
+    expect(await roleAssignmentAudits(unassigned.user.id)).toHaveLength(1);
   });
 
   // Issue #357 sub-fix B (before the fix this test was named "a customer-role assignment survives
@@ -837,8 +840,10 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       });
       const before = await roleAssignmentAudits(target.user.id);
 
+      // Issue #539 (D-11): this person's derived role is already MANAGER (the Inhaber row grants
+      // ZUGEWIESEN keys), so MANAGER would be "unchanged"; ADMIN is the genuine change.
       const res = await patchEmployee(tenant.adminToken, target.employee.id, {
-        role: "MANAGER",
+        role: "ADMIN",
         lastName: "Geaendert",
       });
       expect(res.statusCode).toBe(200);
@@ -847,7 +852,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       // The OWNER row is untouched — same id, same content — exactly as a customer-role row would be.
       expect(rows.find((row) => row.id === ownerRow.id)).toEqual(ownerRow);
       expect(rows.map((row) => row.accessRoleId).sort()).toEqual(
-        [SYSTEM_ROLE_IDS.OWNER, SYSTEM_ROLE_IDS.MANAGER].sort(),
+        [SYSTEM_ROLE_IDS.OWNER, SYSTEM_ROLE_IDS.ADMIN].sort(),
       );
 
       const audits = await newAuditsSince(target.user.id, before);
@@ -860,7 +865,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       const deleted = audits.find((row) => row.action === "DELETE");
       expect(deleted?.entityId).toBe(employeeRow.id);
       const created = audits.find((row) => row.action === "CREATE");
-      expect(created?.newValue).toMatchObject({ accessRoleId: SYSTEM_ROLE_IDS.MANAGER });
+      expect(created?.newValue).toMatchObject({ accessRoleId: SYSTEM_ROLE_IDS.ADMIN });
     });
 
     it("a demotion to Mitarbeiter is rejected while a TENANT Personalabteilung (HR) assignment survives it, naming that row (P-01)", async () => {
