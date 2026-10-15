@@ -152,6 +152,24 @@ type CreateOutcome = "ok" | "SLUG_TAKEN" | "EMAIL_TAKEN";
 type ResendOutcome =
   "sent" | "not-sent" | "TENANT_DEACTIVATED" | "TENANT_IN_USE" | "NO_PENDING_INVITATION";
 
+/** Per-tenant aggregates of the mocked GET /dashboard (Issue #90). */
+interface MockMetrics {
+  activeSalons: number;
+  totalSalons: number;
+  activeEmployees: number;
+  lastActivityAt: string | null;
+  inactive: boolean;
+}
+
+/** What the mock serves for a tenant that has no entry of its own (created, bulk or long-name tenants). */
+const DEFAULT_METRICS: MockMetrics = {
+  activeSalons: 1,
+  totalSalons: 1,
+  activeEmployees: 1,
+  lastActivityAt: "2026-10-01",
+  inactive: false,
+};
+
 interface OperatorMock {
   /** "METHOD /path" of every operator request, in order. */
   seen: string[];
@@ -163,6 +181,10 @@ interface OperatorMock {
     tenants: MockTenant[];
     /** Status of GET /tenants; anything but 200 serves an error body. */
     listStatus: number;
+    /** Aggregates of GET /dashboard by tenant id; an id without an entry gets DEFAULT_METRICS. */
+    metrics: Record<string, MockMetrics>;
+    /** Status of GET /dashboard; anything but 200 serves an error body. */
+    dashboardStatus: number;
     /** What POST /tenants answers. */
     create: CreateOutcome;
     /** `invitationMailSent` of a successful create. */
@@ -191,6 +213,23 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
       surfaceOff: false,
       tenants: [TENANT, OFF_TENANT],
       listStatus: 200,
+      metrics: {
+        [TENANT_ID]: {
+          activeSalons: 1,
+          totalSalons: 2,
+          activeEmployees: 7,
+          lastActivityAt: "2026-10-01",
+          inactive: false,
+        },
+        [OFF_TENANT_ID]: {
+          activeSalons: 0,
+          totalSalons: 1,
+          activeEmployees: 0,
+          lastActivityAt: null,
+          inactive: false,
+        },
+      },
+      dashboardStatus: 200,
       create: "ok",
       mailSent: true,
       detail: structuredClone(TENANT),
@@ -255,6 +294,39 @@ async function mockOperatorApi(page: Page): Promise<OperatorMock> {
             status: mock.state.listStatus,
             json: { error: "Interner Serverfehler" },
           });
+    }
+    if (path === "/dashboard" && method === "GET") {
+      if (mock.state.dashboardStatus !== 200) {
+        return route.fulfill({
+          status: mock.state.dashboardStatus,
+          json: { error: "Interner Serverfehler" },
+        });
+      }
+      const items = [...mock.state.tenants]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((tenant) => ({
+          id: tenant.id,
+          name: tenant.name,
+          slug: tenant.slug,
+          deactivatedAt: tenant.deactivatedAt,
+          ...(mock.state.metrics[tenant.id] ?? DEFAULT_METRICS),
+        }));
+      const live = items.filter((item) => item.deactivatedAt === null);
+      return route.fulfill({
+        status: 200,
+        json: {
+          inactivityDays: 30,
+          totals: {
+            tenants: items.length,
+            activeTenants: live.length,
+            deactivatedTenants: items.length - live.length,
+            activeSalons: live.reduce((sum, item) => sum + item.activeSalons, 0),
+            activeEmployees: live.reduce((sum, item) => sum + item.activeEmployees, 0),
+            inactiveTenants: live.filter((item) => item.inactive).length,
+          },
+          tenants: items,
+        },
+      });
     }
     if (path === "/tenants" && method === "POST") {
       if (mock.state.create === "SLUG_TAKEN") {
@@ -851,6 +923,172 @@ test.describe("operator console - tenant list", () => {
     await expect(page.getByTestId("op-signin-page")).toBeVisible();
     expect(seen.length).toBeGreaterThan(0);
     expect(seen.every((entry) => entry === "GET /auth/me")).toBe(true);
+  });
+});
+
+const INACTIVE_TENANT_ID = randomUUID();
+const INACTIVE_TENANT: MockTenant = {
+  ...TENANT,
+  id: INACTIVE_TENANT_ID,
+  name: "Ruhender Betrieb",
+  slug: "ruhender-betrieb",
+  packages: { bookedModules: [], salonQuota: 1, activeSalonCount: 1 },
+};
+
+/** The list page with the extra tenant that has never signed in and is flagged inactive. */
+async function openDashboard(page: Page, mock?: (state: OperatorMock["state"]) => void) {
+  return openTenantList(page, (state) => {
+    state.tenants = [TENANT, OFF_TENANT, INACTIVE_TENANT];
+    state.metrics[INACTIVE_TENANT_ID] = {
+      activeSalons: 1,
+      totalSalons: 1,
+      activeEmployees: 2,
+      lastActivityAt: null,
+      inactive: true,
+    };
+    mock?.(state);
+  });
+}
+
+test.describe("operator console - dashboard (#90)", () => {
+  test("the four tiles show the computed totals and the server's inactivity threshold", async ({
+    page,
+  }) => {
+    const { seen } = await openDashboard(page);
+
+    await expect(page.getByTestId("op-overview")).toBeVisible();
+    // Totals over the non-deactivated tenants: TENANT (1 salon, 7 people) + INACTIVE (1 salon, 2 people).
+    await expect(page.getByTestId("op-overview-tenants").locator(".kpi-value")).toHaveText("3");
+    await expect(page.getByTestId("op-overview-tenants")).toContainText("2 aktiv · 1 deaktiviert");
+    await expect(page.getByTestId("op-overview-inactive")).toContainText("Inaktive Mandanten");
+    await expect(page.getByTestId("op-overview-inactive").locator(".kpi-value")).toHaveText("1");
+    await expect(page.getByTestId("op-overview-inactive")).toContainText(
+      "keine Anmeldung seit 30 Tagen",
+    );
+    await expect(page.getByTestId("op-overview-salons").locator(".kpi-value")).toHaveText("2");
+    await expect(page.getByTestId("op-overview-employees").locator(".kpi-value")).toHaveText("9");
+
+    expect(seen.filter((entry) => entry === "GET /dashboard")).toHaveLength(1);
+    expect(seen.filter((entry) => entry === "GET /tenants")).toHaveLength(1);
+  });
+
+  test("the list shows the metric columns and the Inaktiv badge only for the inactive tenant", async ({
+    page,
+  }) => {
+    await openDashboard(page);
+
+    await expect(page.locator('[data-testid="op-tenants-table"] thead th')).toHaveText([
+      "Name",
+      "Kurzname",
+      "Bundesland",
+      "Angelegt",
+      "Salons",
+      "Mitarbeitende",
+      "Letzte Aktivität",
+      "Status",
+    ]);
+
+    await expect(page.getByTestId(`op-tenant-salons-${TENANT_ID}`)).toContainText("1 / 2");
+    await expect(page.getByTestId(`op-tenant-employees-${TENANT_ID}`)).toContainText("7");
+    await expect(page.getByTestId(`op-tenant-activity-${TENANT_ID}`)).toContainText("01.10.2026");
+    await expect(page.getByTestId(`op-tenant-inactive-${TENANT_ID}`)).toHaveCount(0);
+
+    await expect(page.getByTestId(`op-tenant-activity-${INACTIVE_TENANT_ID}`)).toContainText(
+      "Keine Anmeldung",
+    );
+    await expect(page.getByTestId(`op-tenant-inactive-${INACTIVE_TENANT_ID}`)).toHaveText(
+      "Inaktiv",
+    );
+
+    // A deactivated tenant is never flagged inactive.
+    await expect(page.getByTestId(`op-tenant-status-${OFF_TENANT_ID}`)).toHaveAttribute(
+      "data-state",
+      "deactivated",
+    );
+    await expect(page.getByTestId(`op-tenant-inactive-${OFF_TENANT_ID}`)).toHaveCount(0);
+  });
+
+  test("a failed dashboard load shows the error and the retry shows overview and list", async ({
+    page,
+  }) => {
+    const { state, seen } = await openDashboard(page, (s) => {
+      s.dashboardStatus = 500;
+    });
+
+    await expect(page.getByTestId("op-tenants-error")).toBeVisible();
+    await expect(page.getByTestId("op-tenants-table")).toHaveCount(0);
+    await expect(page.getByTestId("op-overview")).toHaveCount(0);
+
+    state.dashboardStatus = 200;
+    await page.getByTestId("op-tenants-retry").click();
+
+    await expect(page.getByTestId("op-overview")).toBeVisible();
+    await expect(page.getByTestId("op-tenants-table")).toBeVisible();
+    await expect(page.getByTestId("op-tenants-error")).toHaveCount(0);
+    expect(seen.filter((entry) => entry === "GET /dashboard")).toHaveLength(2);
+  });
+
+  test("overview and list have no WCAG 2 A/AA violations with the Inaktiv badge", async ({
+    page,
+  }) => {
+    await openDashboard(page);
+    await expect(page.getByTestId(`op-tenant-inactive-${INACTIVE_TENANT_ID}`)).toBeVisible();
+    await animationsSettled(page);
+
+    const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
+    const serious = results.violations.filter(
+      (v) => v.impact === "serious" || v.impact === "critical",
+    );
+    expect(
+      serious.map(
+        (v) =>
+          `${v.id}: ${v.nodes
+            .map((n) => {
+              const data = (n.any[0]?.data ?? {}) as Record<string, unknown>;
+              return `${n.target.join(" ")} [${data.fgColor ?? ""} on ${data.bgColor ?? ""}, ${data.contrastRatio ?? ""}]`;
+            })
+            .join(" | ")}`,
+      ),
+    ).toEqual([]);
+  });
+
+  test.describe("at 360 px", () => {
+    test.use({ viewport: { width: 360, height: 800 } });
+
+    test("the overview and the stacked row fit the width and carry visible labels", async ({
+      page,
+    }) => {
+      await openDashboard(page);
+      await expect(page.getByTestId("op-overview")).toBeVisible();
+      await animationsSettled(page);
+
+      const fit = await page.evaluate(() => {
+        const html = document.documentElement;
+        const tiles = [...document.querySelectorAll('[data-testid^="op-overview-"]')].map(
+          (tile) => {
+            const box = tile.getBoundingClientRect();
+            return { left: box.left, right: box.right };
+          },
+        );
+        return {
+          overflow: html.scrollWidth - window.innerWidth,
+          width: window.innerWidth,
+          tiles,
+        };
+      });
+      expect(fit.overflow).toBeLessThanOrEqual(0);
+      expect(fit.tiles.length).toBeGreaterThanOrEqual(4);
+      for (const tile of fit.tiles) {
+        expect(tile.left).toBeGreaterThanOrEqual(0);
+        expect(tile.right).toBeLessThanOrEqual(fit.width);
+      }
+
+      const row = page.getByTestId(`op-tenant-row-${TENANT_ID}`);
+      await expect(row).toHaveCSS("display", "flex");
+      await expect(row.getByText("Salons", { exact: true })).toBeVisible();
+      await expect(row.getByText("Mitarbeitende", { exact: true })).toBeVisible();
+      await expect(row.getByText("Letzte Aktivität", { exact: true })).toBeVisible();
+    });
   });
 });
 

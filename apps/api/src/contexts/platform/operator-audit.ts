@@ -18,6 +18,9 @@
  * Phase 89 (#89) adds the salon and coupling lifecycle of a customer tenant (create, update,
  * deactivate, activate, Phorest coupling set/removed), written by the operator salon routes. Each
  * of those actions is also written to the tenant's own AuditLog through `operator-tenant-audit.ts`.
+ *
+ * Issue #90 adds `DASHBOARD_VIEWED`: every read of the aggregated cross-tenant dashboard is an access
+ * event of the operator (Art. 32 DSGVO), class AUTH_EVENT, written in the same transaction as the read.
  */
 
 import type { Prisma, PrismaClient } from "@clokr/db";
@@ -46,6 +49,7 @@ export const OPERATOR_AUDIT_ACTIONS = {
   SALON_ACTIVATED: "SALON_ACTIVATED",
   SALON_COUPLING_SET: "SALON_COUPLING_SET",
   SALON_COUPLING_REMOVED: "SALON_COUPLING_REMOVED",
+  DASHBOARD_VIEWED: "DASHBOARD_VIEWED",
 } as const;
 
 export type OperatorAuditAction =
@@ -84,6 +88,7 @@ export const OPERATOR_AUDIT_RETENTION_CLASS: Record<
   SALON_ACTIVATED: "LIFECYCLE",
   SALON_COUPLING_SET: "LIFECYCLE",
   SALON_COUPLING_REMOVED: "LIFECYCLE",
+  DASHBOARD_VIEWED: "AUTH_EVENT",
 };
 
 /**

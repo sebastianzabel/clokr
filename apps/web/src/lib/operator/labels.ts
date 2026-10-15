@@ -43,6 +43,17 @@ export function formatOperatorDate(iso: string): string {
 }
 
 /**
+ * `dd.MM.yyyy` of a `YYYY-MM-DD` calendar day (Issue #90). Pure string split on purpose: the API
+ * sends a UTC day, and parsing it through a Date would shift it by the viewer's time zone.
+ * Anything that is not that shape is shown as a dash.
+ */
+export function formatOperatorDay(day: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!match) return "–";
+  return `${match[3]}.${match[2]}.${match[1]}`;
+}
+
+/**
  * The sentence a failed load shows. Distinguishes the three causes the operator can act on
  * (no connection, server fault, rate limit) and falls back to the caller's page-specific text for
  * everything else. It reads the numeric `status` only - never a message text (D-13).

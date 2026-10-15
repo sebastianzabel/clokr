@@ -3806,6 +3806,95 @@ operatorId, tenantId }`. `GET /api/v1/audit-logs` (Liste und Einzelabruf) liest 
 `operator-console.spec.ts` (Anmeldung, Mandanten- und Salonlebenszyklus, Geometrie von 1440 bis 360 px,
 axe in hell und dunkel). Die Neutralitätsmatrix (1712 Zellen) ist unverändert.
 
+### Nachtrag (Issue #90, 2026-10-15): Betreiber-Übersicht mit aggregierten Mandantenkennzahlen
+
+**Schwere: informativ. Keine Unterbau-Änderung im Sinne von ADR 0002, Entscheidung 7 (kein Feld, keine
+Relation, keine Migration, keine geänderte Ausfuhr von `contexts/platform/index.ts`). Bewusste Abweichung
+von D-14a (Nachtrag Phase 89).**
+
+Issue #90 gibt dem Betreiber eine Übersicht der Mandantenlage: je Mandant die Zahl der aktiven und aller
+Salons, die aktiven Mitarbeitenden und den Tag der letzten Anmeldung, dazu Summen und ein Kennzeichen
+„inaktiv“.
+
+#### Was sich geändert hat
+
+- **Route.** `GET /api/v1/operator/dashboard` (`contexts/platform/api/operator/dashboard.ts`,
+  `requireOperator`, Lese-Ratenlimit 60 pro Minute). Die Antwort wird aus ausdrücklich benannten Schlüsseln
+  gebaut (`buildOperatorDashboardBody`), nie aus einem durchgereichten Datenbankobjekt.
+- **Fassade.** `operatorTenantMetrics(db, now)` in `contexts/platform/facade/operator-metrics.ts` ist die
+  einzige Stelle, die diese Zahlen bildet. Sie liegt im Unterbau und ist bewusst nicht aus `index.ts`
+  ausgeführt. Fünf Anweisungen für alle Mandanten zusammen (Mandanten, zwei Salon-Gruppierungen, eine
+  Mitarbeiter-Gruppierung, ein `MAX(lastLoginAt)`-Join), die Anzahl hängt nicht von der Zahl der Mandanten ab.
+- **Zählregeln.** Aktive Mitarbeitende = nicht anonymisiert und nicht vor heute (UTC) ausgetreten; der
+  Ausschluss anonymisierter Zeilen nutzt dieselbe Marke wie `NOT_ANONYMIZED_EMPLOYEE_WHERE`. Letzte Aktivität
+  = UTC-Tag der jüngsten Anmeldung irgendeines Benutzers des Mandanten, ohne Uhrzeit. Inaktiv ist nur ein
+  nicht deaktivierter Mandant ohne Anmeldung oder mit einer älteren als `OPERATOR_INACTIVITY_DAYS` (30) Tage;
+  genau 30 Tage gelten noch als aktiv. Die Schwelle steht einmal in der Konstante und wird als
+  `inactivityDays` ausgeliefert, die Konsole liest sie dort. Die Summen der Salons, Mitarbeitenden und
+  inaktiven Mandanten laufen über nicht deaktivierte Mandanten.
+- **Protokoll.** `DASHBOARD_VIEWED` in `operator-audit.ts`, Aufbewahrungsklasse `AUTH_EVENT` (12 Monate),
+  geschrieben in derselben Transaktion wie die Lesung (RepeatableRead); jeder erfolgreiche Aufruf erzeugt
+  genau eine Zeile.
+- **Konsole.** Die Startseite zeigt eine „Übersicht“ (vier Kennzahlen), die Mandantenliste die Spalten
+  Salons, Mitarbeitende und Letzte Aktivität mit einem Kennzeichen „Inaktiv“. Beide Anfragen laufen
+  gemeinsam (`listTenants` und `getDashboard`), ein Fehler einer von beiden zeigt einen Fehlerzustand mit
+  erneutem Laden. Unter 768 px ist die Tabelle die gestapelte Liste (statt wie zuvor unter 640 px: acht
+  Spalten passen nicht in eine Tabelle von 640 bis 767 px), von 768 bis 1099 px eine kompakte Tabelle. Zwei
+  Kontrastwerte unter WCAG AA wurden angehoben (Kennzahlbeschriftung, Text des Kennzeichens).
+
+#### Abweichung von D-14a und Begründung
+
+D-14a (Phase 89) schloss Zahlen in Betreiberantworten aus. Die Übersicht ist die **eine** dokumentierte
+Ausnahme; D-14a gilt für jede andere Betreiberantwort unverändert und die Übersicht ist kein Präzedenzfall
+für eine weitere Zahl.
+
+- **Datenminimierung, Art. 5 Abs. 1 lit. c DSGVO.** Es gibt nur Summen und Zählwerte je Mandant, nie eine
+  Person, eine Personenkennung, einen Zeiteintrag oder einen Saldo; die Aktivität steht in Tagesgenauigkeit
+  statt als Anmeldezeitpunkt. Die Betreiberdateien lesen die Personenmodelle weiterhin nicht selbst, das
+  tut allein die Fassade, und sie gibt nur Zahlen und einen Tag zurück (Whitelist-Test auf die Schlüssel).
+- **Auftragsverarbeitung, Art. 28 DSGVO.** Der Betreiber braucht die Nutzungslage der Mandanten, um den
+  Dienst zu betreiben (Lizenz- und Betreuungsentscheidungen, Erkennen verwaister Mandanten), nicht die
+  Personen dahinter.
+- **Protokollierung, Art. 32 DSGVO.** Jeder Aufruf wird als `DASHBOARD_VIEWED` festgehalten und wie
+  Anmeldeereignisse zwölf Monate aufbewahrt; ein Lesen ohne Spur ist nicht möglich, weil der Schreibvorgang
+  und die Lesung eine Transaktion bilden.
+
+#### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine — die Fassade liest bewusst keine `TimeEntry`-Zeilen.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** keine.
+- **Kompositionsschicht:** `app.ts` registriert eine Route mehr; der Zähler der Kompositionswurzel in
+  `context-boundary-import-exceptions.json` steigt von 57 auf 58. Keine Fachregel.
+- **Unterbau:** neue Fassade außerhalb von `index.ts`, eine neue Betreiberroute, eine neue Audit-Aktion. Kein
+  Feld, keine Migration, keine Änderung einer bestehenden Ausfuhr — damit keine Unterbau-Änderung im Sinne
+  von Entscheidung 7.
+
+#### Grenzen
+
+- **Nur am Terminal stempelnde Mandanten gelten als inaktiv.** Die Aktivität ist die letzte Anmeldung eines
+  Benutzers; die Fassade liest keine Zeiteinträge (Absicht, siehe Zeiterfassung), ein Mandant, dessen Personal
+  nur per NFC-Karte stempelt, erscheint daher als „inaktiv“.
+- **„Heute“ und der Aktivitätstag in UTC.** Die Mitarbeiterzählung (Austritt) und die Tagesgrenze der Schwelle
+  laufen nicht in der Zeitzone des Mandanten.
+- **Summen über aktive Mandanten.** Deaktivierte Mandanten zählen weder in die Summen noch gelten sie je als
+  inaktiv; ihre Zeile zeigt ihre Zahlen.
+- **Kein Verlauf.** Die Übersicht ist ein Momentbild, es wird nichts gespeichert außer der Protokollzeile.
+
+#### Nachweis
+
+API: `operator-dashboard-90.test.ts` (15 Tests: Zählungen, Tag der letzten Anmeldung, nie angemeldet,
+Schwelle bei 30 Tagen und 30 Tagen plus 1 ms mit eingespeister Uhr, Ausschluss anonymisierter Benutzer,
+deaktivierter Mandant und Summen, Sortierung, Whitelist der Schlüssel, 401/403 samt
+`TENANT_PRINCIPAL_REFUSED`, zwei Aufrufe gleich zwei Protokollzeilen, konstante Zahl der Anweisungen,
+Quelltextgrenzen), `operator-surface-off-88` (Route ohne Betreibergeheimnis nicht vorhanden),
+`operator-audit-append-only-88`, `lint-facade-signatures` (143 Funktionen / 17 Ausnahmen / 0 Funde), die
+Importgrenzen-Messung (Kompositionswurzel 58). Web: `OperatorOverview.test.ts` (7), `TenantTable.test.ts`
+(sechs neue Fälle zu den Spalten), `operator-isolation-89`. E2E: die Beschreibung „operator console -
+dashboard (#90)“ in `operator-console.spec.ts` (fünf neue Fälle, 119 von 119 grün gegen den gebauten
+Teststack, einschließlich axe in hell und dunkel). Die Neutralitätsmatrix (1712 Zellen) ist unverändert.
+
 ---
 
 ## Z — Gebuchte Pakete je Mandant (Phase 566, Issue #566)
