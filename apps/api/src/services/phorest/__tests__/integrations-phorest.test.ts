@@ -792,6 +792,7 @@ describe("GET/PUT /phorest/config branchId / branchIdEditable (Phase 65b, issue 
       expect(created?.externalBranchId).toBe("fresh-branch");
       const audit = await app.prisma.auditLog.findFirst({
         where: { entity: "SalonCoupling", entityId: created!.id, action: "CREATE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit?.newValue).toEqual({
         salonId: fresh.salonId,

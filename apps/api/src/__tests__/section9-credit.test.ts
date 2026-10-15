@@ -312,6 +312,7 @@ describe("Section9Credit detection (AU_PENDING) — Phase 104-05", () => {
     });
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "SECTION9_CREDIT_DETECTED", entity: "Section9Credit", entityId: credit.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     const newValue = audit!.newValue as {
@@ -426,6 +427,7 @@ describe("Section9Credit notifications and listing — Phase 104-05 Task 3", () 
         relatedType: "Section9Credit",
         relatedId: creditId,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(notes).toHaveLength(1);
     expect(notes[0].title).toContain("AU nachreichen");
@@ -456,6 +458,7 @@ describe("Section9Credit notifications and listing — Phase 104-05 Task 3", () 
   it("Test 2b: the notification texts render dates German (DD.MM.YYYY), never ISO", async () => {
     const notes = await app.prisma.notification.findMany({
       where: { relatedType: "Section9Credit", relatedId: creditId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(notes.length).toBeGreaterThanOrEqual(2); // employee + at least one manager
     for (const n of notes) {
@@ -544,6 +547,7 @@ describe("Section9Credit notifications and listing — Phase 104-05 Task 3", () 
         entity: "Section9Credit",
         entityId: creditId,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -989,6 +993,7 @@ describe("confirm — Phase 104-06 Task 1", () => {
         entity: "Section9Credit",
         entityId: test1CreditId,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     const newValue = audit!.newValue as {

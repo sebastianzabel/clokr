@@ -405,6 +405,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
         // written inside the same $transaction as the SaldoSnapshot UNLOCK audit.
         const timeEntryAudits = await app.prisma.auditLog.findMany({
           where: { entity: "TimeEntry", entityId: lockedEntry.id, action: "UNLOCK" },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         });
         expect(timeEntryAudits.length).toBe(1);
         expect(timeEntryAudits[0].userId).toBe(data.adminUser.id);

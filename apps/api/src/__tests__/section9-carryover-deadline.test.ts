@@ -595,6 +595,7 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
         entity: "LeaveEntitlement",
         entityId: entitlement.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(overrideAudit, "a distinct override audit row must exist").toBeDefined();
     expect(overrideAudit!.oldValue).toMatchObject({ carryOverReason: "ILLNESS" });
@@ -630,6 +631,7 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
         entity: "LeaveEntitlement",
         entityId: entitlement.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(overrideAudit, "no override audit row for a non-protected row").toBeNull();
   });

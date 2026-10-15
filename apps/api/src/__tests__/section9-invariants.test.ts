@@ -338,6 +338,7 @@ describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
         entity: "Section9Credit",
         entityId: r7CreditId,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     const newValue = audit!.newValue as { note: string };
@@ -387,6 +388,7 @@ describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
         entity: "Section9Credit",
         entityId: creditId,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(confirmedAudit).toBeNull();
   });

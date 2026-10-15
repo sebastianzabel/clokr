@@ -234,6 +234,7 @@ describe("Issue #91 (Phase 91b Plan 04) — Berufsschule salon/person scope", ()
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -280,6 +281,7 @@ describe("Issue #91 (Phase 91b Plan 04) — Berufsschule salon/person scope", ()
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "SCOPE_ACCESS_DENIED", entity: "Absence", entityId: absence.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -309,6 +311,7 @@ describe("Issue #91 (Phase 91b Plan 04) — Berufsschule salon/person scope", ()
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -339,6 +342,7 @@ describe("Issue #91 (Phase 91b Plan 04) — Berufsschule salon/person scope", ()
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -367,6 +371,7 @@ describe("Issue #91 (Phase 91b Plan 04) — Berufsschule salon/person scope", ()
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -397,6 +402,7 @@ describe("Issue #91 (Phase 91b Plan 04) — Berufsschule salon/person scope", ()
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });

@@ -139,6 +139,7 @@ describe("admin-presence-sources", () => {
     // Verify audit log
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "PresenceSource", entityId: id, action: "UPDATE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect((audit!.newValue as Record<string, unknown>).name).toBe("Updated Name");
@@ -215,6 +216,7 @@ describe("admin-presence-sources", () => {
     // Verify audit log
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "PresenceSource", entityId: id, action: "DELETE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
 
@@ -346,6 +348,7 @@ describe("admin-presence-sources", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "PresenceDevice", entityId: device!.id, action: "ASSIGN_DEVICE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -409,6 +412,7 @@ describe("admin-presence-sources", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "PresenceSource", entityId: id, action: "CREATE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect(audit!.entity).toBe("PresenceSource");

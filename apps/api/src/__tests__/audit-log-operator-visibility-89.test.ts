@@ -99,13 +99,22 @@ beforeAll(async () => {
   });
 
   stampedAId = (
-    await app.prisma.auditLog.findFirstOrThrow({ where: { entityId: stampedA.entityId } })
+    await app.prisma.auditLog.findFirstOrThrow({
+      where: { entityId: stampedA.entityId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    })
   ).id;
   stampedBId = (
-    await app.prisma.auditLog.findFirstOrThrow({ where: { entityId: stampedB.entityId } })
+    await app.prisma.auditLog.findFirstOrThrow({
+      where: { entityId: stampedB.entityId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    })
   ).id;
   unstampedId = (
-    await app.prisma.auditLog.findFirstOrThrow({ where: { entityId: unstamped.entityId } })
+    await app.prisma.auditLog.findFirstOrThrow({
+      where: { entityId: unstamped.entityId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    })
   ).id;
 });
 
@@ -222,6 +231,7 @@ describe("GET /api/v1/audit-logs/:id — operator rows (D-09a, T-100-09)", () =>
     });
     const row = await app.prisma.auditLog.findFirstOrThrow({
       where: { userId: tenantB.adminUser.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     const res = await get(`/api/v1/audit-logs/${row.id}`, tenantA.adminToken);
     const unknown = await get(`/api/v1/audit-logs/${randomUUID()}`, tenantA.adminToken);

@@ -213,6 +213,7 @@ describe("POST /overtime/opening-balance (OB-03)", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "CREATE", entity: "OpeningBalance", entityId: rows[0].id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -252,6 +253,7 @@ describe("POST /overtime/opening-balance (OB-03)", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "SUPERSEDE", entity: "OpeningBalance", entityId: body.openingBalance.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect((audit?.oldValue as { id?: string } | null)?.id).toBe(firstId);

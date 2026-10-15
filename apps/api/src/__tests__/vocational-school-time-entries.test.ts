@@ -164,6 +164,7 @@ describe("POST /api/v1/time-entries — JArbSchG pre-check (Phase 63 Plan 03)", 
         entity: "TimeEntry",
         entityId: body.entry.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).not.toBeNull();
   });
@@ -368,6 +369,7 @@ describe("PUT /api/v1/time-entries/:id — JArbSchG pre-check (Phase 63 Plan 03)
         entity: "TimeEntry",
         entityId: initial.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).not.toBeNull();
   });

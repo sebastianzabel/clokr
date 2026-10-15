@@ -41,6 +41,7 @@ classified by lifecycle.
 | lint-e2e-spec-registry.ts                      | 2026-09-21 | CI/local/pre-commit gate: fails unless every `apps/e2e/tests/*.spec.ts` file has exactly one entry in `lint-e2e-spec-registry.json` (category `in-ci`/`später-datum`/`später-seed` plus a mandatory reason) — see § Lint gates below. Pure validation/diff/extraction lives in the sibling `lint-e2e-spec-registry-validate.ts`                                                                                                                                                                                                                                     | Lint gate (Phase 275, Issue #275, D-07)      |
 | lint-t100-09-routes.ts                         | 2026-09-22 | CI/local/pre-commit gate: fails unless every path-parameter route in `apps/api/src/contexts/*/api/**/*.ts` has exactly one entry in `lint-t100-09-routes.json` (category `probe`/`nicht anwendbar`/`bekannt-abweichend` plus a mandatory reason) — see § Lint gates below. The behavioral half — hitting every `probe` route twice and byte-comparing — runs inside the `apps/api` integration suite as `src/__tests__/t100-09-oracle-probe.test.ts`, not as its own CI job. Pure validation/diff/extraction lives in the sibling `lint-t100-09-routes-validate.ts` | Lint gate (Phase 259, Issue #259, D-01/D-07) |
 | lint-role-checks.ts                            | 2026-09-25 | CI/local/pre-commit gate: fails on any call of the removed role guard (`requireRole`) and on any comparison of a role value (`.role`, or an identifier bound to one) with `ADMIN`/`MANAGER`/`EMPLOYEE` — equality, `switch` cases, `.includes`/`.indexOf`/`.has`, and role-literal Prisma predicates under `where` — in non-test `apps/api/src`; exactly one allowlisted file (`contexts/platform/compat-role.ts`), no exceptions file — see § Lint gates below                                                                                                     | Lint gate (Phase 75b, Issue #75, D-19)       |
+| lint-unordered-test-reads.ts                   | 2026-10-15 | CI/local/pre-commit gate: fails on an unordered `auditLog`/`notification` `findFirst` in any test file under `apps/api/src`, and on an unordered `findMany` of those delegates that is indexed by position; fix with `auditRowsFor()` from `__tests__/setup.ts`, no exceptions file — see § Lint gates below                                                                                                                                                                                                                                                        | Lint gate (Issue #561)                       |
 
 ## Migration artifacts
 
@@ -793,6 +794,35 @@ missing, stale, or genuinely non-conformant before touching the register. The on
 change is adding the missing entry, correcting a stale `route`/`file`, moving a route between
 categories once its actual situation changes, or re-validating a `bekannt-abweichend` entry's
 `validatedAt` — every such change carries its own measured reason, never a placeholder.
+
+### `lint-unordered-test-reads.ts` (Issue #561)
+
+One action can write several `AuditLog` rows (an approval heals `totalDays` AND recomputes
+`carriedOverDays`) or notify the same person twice, within the same millisecond. A test that picks
+"the" row with an unordered `findFirst` gets whichever row Postgres returns: green alone, red in the
+parallel full run (#555, `carryover-warning.test.ts` in #568). The gate refuses the shape, in every
+test file under `apps/api/src` (`__tests__/` directories and `*.test.ts`):
+
+- `unordered-find-first` — `<x>.auditLog` / `<x>.notification` `.findFirst` / `.findFirstOrThrow`
+  whose first argument is not an object literal holding `orderBy` (a spread or a variable argument
+  cannot be proven ordered);
+- `unordered-find-many-indexed` — an unordered `findMany` on those delegates whose result is picked
+  by position (`(await …)[0]`, `.at(n)`, array destructuring, or a bound name the file indexes).
+  A `findMany` that is only counted, filtered or iterated is order-independent and not flagged.
+
+Fix: `auditRowsFor()` / `auditRowsChangingField()` / `auditRowChangingField()` from
+`src/__tests__/setup.ts` (ordered by `createdAt`, then `id`; the last throws unless exactly one row
+changed the field), or an explicit `orderBy`. Every hit was converted when the gate landed; there is
+no exceptions file. Structurally invisible: a result handed through a function return, and a
+delegate reached through a variable. Production `findFirst` (dedupe lookups) is out of scope.
+
+- **Run locally:** `pnpm --filter @clokr/api run lint:unordered-test-reads`
+- **Fixture test:** `pnpm --filter @clokr/api exec vitest run scripts/__tests__/lint-unordered-test-reads.test.ts`
+  (flagged and tolerated shapes, the file selection, the live tree — the self-test that proves an
+  unordered call is flagged)
+- **Runs in CI as:** the `Lint unordered audit/notification reads in tests` step in
+  `.github/workflows/ci.yml`, unconditional; **in `.husky/pre-commit`** as a full-repo invocation
+- **Anti-vacuity:** an empty walk exits 1 (`input-proof:empty-abort` for `lint-guard-vacuity.ts`)
 
 ### `lint-role-checks.ts` (Issue #75)
 

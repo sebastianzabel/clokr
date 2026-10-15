@@ -262,6 +262,7 @@ describe("Notification email dispatch (notify.ts sendEmailNotification)", () => 
     // In-app: type-specific title, as the issue asks.
     const inApp = await app.prisma.notification.findFirst({
       where: { userId: data.adminUser.id, type: "LEAVE_REQUEST", relatedId: requestId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(inApp?.title).toBe("Neue Krankmeldung");
 

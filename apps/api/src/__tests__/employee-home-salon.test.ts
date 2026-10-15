@@ -116,6 +116,7 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "EmployeeSalonAssignment", action: "CREATE", entityId: row.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(single.salonId);
@@ -214,10 +215,12 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
         action: "CROSS_TENANT_ACCESS_DENIED",
         entityId: foreignTenant.salonId,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(foreignAudit).not.toBeNull();
     const unknownAudit = await app.prisma.auditLog.findFirst({
       where: { entity: "Salon", action: "CROSS_TENANT_ACCESS_DENIED", entityId: unknownSalonId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(unknownAudit).toBeNull();
   });
@@ -334,6 +337,7 @@ describe("PATCH /api/v1/employees/:id — Stammsalon-Lücke bei früherem Eintri
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "EmployeeSalonAssignment", action: "CREATE", entityId: gapRow.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect((audit?.newValue as { trigger?: string } | null)?.trigger).toBe("HIRE_DATE_CHANGED");
@@ -363,6 +367,7 @@ describe("PATCH /api/v1/employees/:id — Stammsalon-Lücke bei früherem Eintri
 
     const updateAudits = await app.prisma.auditLog.findMany({
       where: { entity: "Employee", action: "UPDATE", entityId: emp.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(updateAudits).toHaveLength(1);
     expect(updateAudits[0].userId).toBeNull();

@@ -394,6 +394,7 @@ describe("shift store-hours check — AC-4/D-07 two-salon behavior (Phase 325 Pl
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "Shift", entityId: shift.id, action: "SHIFT_FORCED_OUTSIDE_HOURS" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });

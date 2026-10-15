@@ -146,6 +146,7 @@ describe("exit-year VACATION entitlement sync (Issue #447, D-06/D-07/D-08/D-14)"
 
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "LeaveEntitlement", entityId: row.id, action: "UPDATE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits.length).toBe(1);
   });

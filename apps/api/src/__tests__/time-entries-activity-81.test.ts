@@ -453,6 +453,7 @@ describe("Issue #81 (Phase 81 Plan 02) — activity kind and shares on the entry
       expect(body.entry.activityShares).toEqual([{ kind: "SETUP_CLEANING", minutes: 60 }]);
       const audit = await app.prisma.auditLog.findFirstOrThrow({
         where: { entity: "TimeEntry", entityId: body.entry.id, action: "CREATE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect((audit.newValue as { activityShares: unknown[] }).activityShares).toEqual([
         { kind: "SETUP_CLEANING", minutes: 60 },

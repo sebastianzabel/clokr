@@ -211,6 +211,7 @@ describe("break-config: tenant defaults", () => {
         action: "BREAK_DEFAULT_CHANGED",
         entity: "TenantConfig",
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeNull();
   });
@@ -230,6 +231,7 @@ describe("break-config: tenant defaults", () => {
         action: "BREAK_DEFAULT_CHANGED",
         entity: "TenantConfig",
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeNull();
   });
@@ -408,6 +410,7 @@ describe("break-config: employee overrides", () => {
         entity: "Employee",
         entityId: data.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeNull();
   });
@@ -440,6 +443,7 @@ describe("break-config: employee overrides", () => {
         entity: "Employee",
         entityId: data.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeNull();
   });
@@ -589,6 +593,7 @@ describe("phorest puffer: employee overrides (85.1.1)", () => {
         entity: "Employee",
         entityId: data.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeNull();
   });
@@ -621,6 +626,7 @@ describe("phorest puffer: employee overrides (85.1.1)", () => {
         entity: "Employee",
         entityId: data.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeNull();
   });

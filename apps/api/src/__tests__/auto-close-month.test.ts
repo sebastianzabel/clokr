@@ -2120,6 +2120,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
 
     const notif = await app.prisma.notification.findFirst({
       where: { userId: seed.mgrUserId, type: "MONTH_CLOSE_BLOCKED" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(
       notif,

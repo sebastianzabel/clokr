@@ -324,6 +324,7 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "SCOPE_ACCESS_DENIED", entity: "LeaveEntitlement", entityId: ent.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -375,6 +376,7 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -402,6 +404,7 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });

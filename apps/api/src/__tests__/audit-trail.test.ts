@@ -104,6 +104,7 @@ describe("Audit Trail Completeness", () => {
           action: "CREATE",
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
 
       expect(logs.length).toBeGreaterThanOrEqual(1);
@@ -146,6 +147,7 @@ describe("Audit Trail Completeness", () => {
           entityId: createdTimeEntryId,
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expectAuditRow(log, {
         userId: data.adminUser.id,
@@ -182,6 +184,7 @@ describe("Audit Trail Completeness", () => {
           entityId: createdTimeEntryId,
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expectAuditRow(log, {
         userId: data.adminUser.id,
@@ -224,6 +227,7 @@ describe("Audit Trail Completeness", () => {
           entityId: entry.id,
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expectAuditRow(log, {
         userId: data.adminUser.id,
@@ -291,6 +295,7 @@ describe("Audit Trail Completeness", () => {
           action: "UPDATE",
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expectAuditRow(timeEntryLog, {
         userId: data.empUser.id,
@@ -302,6 +307,7 @@ describe("Audit Trail Completeness", () => {
       // The pre-existing BREAK_APPEND audit (entity Break) for the new break must still exist.
       const breakAppendLog = await app.prisma.auditLog.findFirst({
         where: { entity: "Break", entityId: body.break.id, action: "BREAK_APPEND" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(breakAppendLog).not.toBeNull();
     });
@@ -411,6 +417,7 @@ describe("Audit Trail Completeness", () => {
           entityId: requestId!,
           action: "RETRO_ENTRY_REQUESTED",
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expectAuditRow(requestedLog, { userId: data.empUser.id, beforeTs });
 
@@ -489,6 +496,7 @@ describe("Audit Trail Completeness", () => {
 
       const requestLog = await app.prisma.auditLog.findFirst({
         where: { entity: "RetroEntryRequest", entityId: requestId, action: "RETRO_ENTRY_REJECTED" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expectAuditRow(requestLog, {
         userId: data.adminUser.id,
@@ -504,6 +512,7 @@ describe("Audit Trail Completeness", () => {
           action: "DELETE",
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expectAuditRow(entryLog, {
         userId: data.adminUser.id,
@@ -552,6 +561,7 @@ describe("Audit Trail Completeness", () => {
           entityId: requestId,
           action: "RETRO_ENTRY_WITHDRAWN",
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expectAuditRow(requestLog, {
         userId: data.empUser.id,
@@ -570,6 +580,7 @@ describe("Audit Trail Completeness", () => {
           action: "DELETE",
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expectAuditRow(entryLog, {
         userId: data.empUser.id,
@@ -609,6 +620,7 @@ describe("Audit Trail Completeness", () => {
           entityId: body.id,
           action: "RETRO_ENTRY_REQUESTED",
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expectAuditRow(log, {
         userId: data.empUser.id,
@@ -648,6 +660,7 @@ describe("Audit Trail Completeness", () => {
 
       const log = await app.prisma.auditLog.findFirst({
         where: { entity: "RetroEntryRequest", entityId: requestId, action: "RETRO_ENTRY_APPROVED" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expectAuditRow(log, {
         userId: data.adminUser.id,
@@ -692,6 +705,7 @@ describe("Audit Trail Completeness", () => {
 
       const log = await app.prisma.auditLog.findFirst({
         where: { entity: "RetroEntryRequest", entityId: requestId, action: "RETRO_ENTRY_REJECTED" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expectAuditRow(log, {
         userId: data.adminUser.id,
@@ -739,6 +753,7 @@ describe("Audit Trail Completeness", () => {
           entityId: createdEmployeeId,
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
 
       expect(logs.length).toBeGreaterThanOrEqual(1);
@@ -772,6 +787,7 @@ describe("Audit Trail Completeness", () => {
           entityId: createdEmployeeId,
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
 
       expect(logs.length).toBeGreaterThanOrEqual(1);
@@ -805,6 +821,7 @@ describe("Audit Trail Completeness", () => {
           entityId: createdEmployeeId,
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
 
       expect(logs.length).toBeGreaterThanOrEqual(1);
@@ -843,6 +860,7 @@ describe("Audit Trail Completeness", () => {
           entityId: createdLeaveRequestId,
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
 
       expect(logs.length).toBeGreaterThanOrEqual(1);
@@ -883,6 +901,7 @@ describe("Audit Trail Completeness", () => {
           entityId: createdLeaveRequestId,
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
 
       expect(logs.length).toBeGreaterThanOrEqual(1);
@@ -913,6 +932,7 @@ describe("Audit Trail Completeness", () => {
           entityId: data.empUser.id,
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
 
       expect(logs.length).toBeGreaterThanOrEqual(1);
@@ -946,6 +966,7 @@ describe("Audit Trail Completeness", () => {
           entityId: body.id,
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
 
       expect(logs.length).toBeGreaterThanOrEqual(1);

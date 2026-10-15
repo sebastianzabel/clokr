@@ -81,6 +81,7 @@ describe("GET /api/v1/settings/vacation/:employeeId — first-access self-heal (
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "LeaveEntitlement", entityId: entitlement!.id, action: "CREATE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
 

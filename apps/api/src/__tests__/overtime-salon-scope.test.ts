@@ -164,6 +164,7 @@ describe("Issue #91 (Phase 91b Plan 05) — overtime.ts salon/person scope", () 
         entity: "OvertimeAccount",
         entityId: outOfScope.account.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -251,6 +252,7 @@ describe("Issue #91 (Phase 91b Plan 05) — overtime.ts salon/person scope", () 
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -279,6 +281,7 @@ describe("Issue #91 (Phase 91b Plan 05) — overtime.ts salon/person scope", () 
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -312,6 +315,7 @@ describe("Issue #91 (Phase 91b Plan 05) — overtime.ts salon/person scope", () 
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -341,6 +345,7 @@ describe("Issue #91 (Phase 91b Plan 05) — overtime.ts salon/person scope", () 
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -370,6 +375,7 @@ describe("Issue #91 (Phase 91b Plan 05) — overtime.ts salon/person scope", () 
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -404,6 +410,7 @@ describe("Issue #91 (Phase 91b Plan 05) — overtime.ts salon/person scope", () 
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -434,6 +441,7 @@ describe("Issue #91 (Phase 91b Plan 05) — overtime.ts salon/person scope", () 
         entity: "Employee",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -469,6 +477,7 @@ describe("Issue #91 (Phase 91b Plan 05) — overtime.ts salon/person scope", () 
         entity: "OpeningBalance",
         entityId: outOfScope.employee.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });

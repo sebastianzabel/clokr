@@ -103,6 +103,7 @@ describe("POST /api/v1/avatars/:employeeId — tenant isolation (sec-08)", () =>
 
     const auditForRealEmployee = await app.prisma.auditLog.findFirst({
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: tenantB.employee.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditForRealEmployee).not.toBeNull();
 
@@ -116,6 +117,7 @@ describe("POST /api/v1/avatars/:employeeId — tenant isolation (sec-08)", () =>
 
     const auditForUnknownId = await app.prisma.auditLog.findFirst({
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: unknownId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditForUnknownId).toBeNull();
   });

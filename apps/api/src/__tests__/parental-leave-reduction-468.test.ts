@@ -286,6 +286,7 @@ describe("Elternzeit-Kürzung (§ 17 Abs. 1 BEEG) — Issue #468, D-08..D-11", (
         entityId: reductions[0].id,
         action: "PARENTAL_LEAVE_REDUCTION_DECLARED",
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(reductionAudit).toBeTruthy();
 
@@ -568,6 +569,7 @@ describe("Elternzeit-Kürzung (§ 17 Abs. 1 BEEG) — Issue #468, D-08..D-11", (
         entityId: reductions[0].id,
         action: "PARENTAL_LEAVE_REDUCTION_REVOKED",
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(revocationAudit).toBeTruthy();
     expect(revocationAudit!.oldValue).toMatchObject({ status: "ACTIVE" });

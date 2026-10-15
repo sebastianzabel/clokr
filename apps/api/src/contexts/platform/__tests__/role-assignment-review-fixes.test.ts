@@ -408,6 +408,7 @@ describe("Phase 74b review fixes", () => {
     ] as const) {
       const row = await app.prisma.auditLog.findFirst({
         where: { entity: "AccessRole", entityId, action },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(row, `${action} audit row`).not.toBeNull();
       expect(row?.userId, `${action} userId`).toBeNull();

@@ -231,6 +231,7 @@ describe("Exit-year VACATION booking/GET/approval (Issue #447, D-06/D-08/D-09)",
         ).id,
         newValue: { path: ["reason"], equals: "Austritt — anteiliger Anspruch (§ 5 BUrlG)" },
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(exitAuditD).toBeNull();
   });

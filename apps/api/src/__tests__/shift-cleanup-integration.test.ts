@@ -128,6 +128,7 @@ describe("Shift-Auto-Cleanup integration (Phase 67.2 Plan 04)", () => {
     // SHIFT_BS_CLEANUP notification.
     const adminNotifs = await app.prisma.notification.findMany({
       where: { userId: data.adminUser.id, type: "SHIFT_BS_CLEANUP" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(adminNotifs.length).toBeGreaterThan(0);
     expect(adminNotifs[0].title).toBe("Schichten auf Berufsschultagen");

@@ -482,6 +482,7 @@ describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (
 
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "EmployeeSalonAssignment", entityId: created.id, action: "CREATE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits).toHaveLength(1);
     const newValue = audits[0].newValue as { validFrom: string; validUntil: string };
@@ -1134,6 +1135,7 @@ describe("POST .../salon-assignments/home & .../:assignmentId/end — Stammsalon
 
       const audits = await app.prisma.auditLog.findMany({
         where: { entity: "EmployeeSalonAssignment", entityId: assignmentId, action: "END" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audits).toHaveLength(1);
       const oldValue = audits[0].oldValue as { validUntil: string | null };

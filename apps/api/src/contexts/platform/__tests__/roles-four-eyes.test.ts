@@ -189,6 +189,7 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
 
       const audit = await app.prisma.auditLog.findFirst({
         where: { entity: "AccessRole", entityId: body.id, action: "CREATE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).not.toBeNull();
       const newValue = audit!.newValue as Record<string, unknown>;
@@ -209,6 +210,7 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
 
       const audit = await app.prisma.auditLog.findFirst({
         where: { entity: "AccessRole", entityId: body.id, action: "CREATE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).not.toBeNull();
       const newValue = audit!.newValue as Record<string, unknown>;
@@ -656,6 +658,7 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
 
       const audit = await app.prisma.auditLog.findFirst({
         where: { entity: "AccessRole", entityId: body.id, action: "COPY" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).not.toBeNull();
       const newValue = audit!.newValue as Record<string, unknown>;
@@ -679,6 +682,7 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
 
       const audit = await app.prisma.auditLog.findFirst({
         where: { entity: "AccessRole", entityId: body.id, action: "COPY" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       const newValue = audit!.newValue as Record<string, unknown>;
       expect("fourEyesWarningConfirmed" in newValue).toBe(false);

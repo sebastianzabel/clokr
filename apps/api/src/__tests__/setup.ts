@@ -769,3 +769,55 @@ export async function seedOperator(
     totpFor: (stepOffset = 0) => totp.generate({ timestamp: Date.now() + stepOffset * 30_000 }),
   };
 }
+
+// ── Ordered audit reads (Issue #561, flake class of #555) ────────────────────────────────────────
+
+export type AuditRow = Awaited<
+  ReturnType<FastifyInstance["prisma"]["auditLog"]["findMany"]>
+>[number];
+
+/**
+ * Every audit row of an entity (optionally one action), in creation order — `createdAt`, then `id`
+ * as the tie-break for rows written in the same millisecond. One action can write several audit
+ * rows (an approval heals `totalDays` AND recomputes `carriedOverDays`), so a test never picks
+ * "the" row with an unordered `findFirst`: it reads all of them here and selects by what it means.
+ * `lint:unordered-test-reads` fails on the unordered shape.
+ */
+export async function auditRowsFor(
+  app: FastifyInstance,
+  entity: string,
+  entityId: string,
+  action?: string,
+): Promise<AuditRow[]> {
+  return app.prisma.auditLog.findMany({
+    where: { entity, entityId, ...(action === undefined ? {} : { action }) },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+}
+
+/** The rows whose `newValue` carries `field` — exactly the audits that changed that column. */
+export function auditRowsChangingField(rows: AuditRow[], field: string): AuditRow[] {
+  return rows.filter(
+    (r) => typeof r.newValue === "object" && r.newValue !== null && field in r.newValue,
+  );
+}
+
+/**
+ * The ONE audit row that changed `field`. Throws (instead of picking one) when zero or several rows
+ * carry it, so an accidental double write surfaces as a red test, never as a coin flip.
+ */
+export async function auditRowChangingField(
+  app: FastifyInstance,
+  entity: string,
+  entityId: string,
+  action: string,
+  field: string,
+): Promise<AuditRow> {
+  const rows = auditRowsChangingField(await auditRowsFor(app, entity, entityId, action), field);
+  if (rows.length !== 1) {
+    throw new Error(
+      `expected exactly one ${entity} ${action} audit row changing "${field}" for ${entityId}, found ${rows.length}`,
+    );
+  }
+  return rows[0]!;
+}

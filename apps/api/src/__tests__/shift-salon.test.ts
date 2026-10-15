@@ -82,6 +82,7 @@ describe("POST /api/v1/shifts — default-salon tracer (Phase 325, issue #325)",
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "Shift", entityId: body.id, action: "CREATE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(seed.salonId);
@@ -516,6 +517,7 @@ describe("POST/PUT/bulk /api/v1/shifts — explicit salonId (Phase 325 Plan 02, 
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "Shift", entityId: body.id, action: "CREATE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect((audit?.newValue as { salonId?: string } | null)?.salonId).toBe(secondSalon.id);
   });

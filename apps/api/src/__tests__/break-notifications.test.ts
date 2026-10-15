@@ -177,6 +177,7 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
 
     const notifs = await app.prisma.notification.findMany({
       where: { userId: seed.empUser.id, type: "BREAK_UNCONFIRMED" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(notifs).toHaveLength(1);
     expect(notifs[0].relatedType).toBe("TimeEntry");
@@ -194,6 +195,7 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
 
     const notifs = await app.prisma.notification.findMany({
       where: { userId: seed.empUser.id, type: "BREAK_UNCONFIRMED" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(notifs, "dedup: exactly 1 row, not 2, after the second cron invocation").toHaveLength(1);
   });
@@ -223,6 +225,7 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
 
     const notifs = await app.prisma.notification.findMany({
       where: { userId: seed.empUser.id, type: "BREAK_UNCONFIRMED" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(
       notifs,
@@ -256,9 +259,11 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
 
     const notifA = await app.prisma.notification.findFirst({
       where: { relatedType: "TimeEntry", relatedId: entryA.id, type: "BREAK_UNCONFIRMED" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     const notifB = await app.prisma.notification.findFirst({
       where: { relatedType: "TimeEntry", relatedId: entryB.id, type: "BREAK_UNCONFIRMED" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(notifA?.dismissedAt, "confirmed entry's own nudge must auto-dismiss").not.toBeNull();
     expect(notifB?.dismissedAt, "the OTHER (still-AUTO) entry's nudge must stay open").toBeNull();
@@ -296,9 +301,11 @@ describe("break-notifications — BREAK-06 nudge cron (RED — app.tryBreakUncon
 
       const notifA = await app.prisma.notification.findFirst({
         where: { relatedType: "TimeEntry", relatedId: entryA.id, type: "BREAK_UNCONFIRMED" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       const notifB = await app.prisma.notification.findFirst({
         where: { relatedType: "TimeEntry", relatedId: entryB.id, type: "BREAK_UNCONFIRMED" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(notifA, "entry on the 1st must be nudged even though today IS the 1st").not.toBeNull();
       expect(

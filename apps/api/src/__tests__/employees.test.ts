@@ -197,6 +197,7 @@ describe("Employees API", () => {
 
       const audit = await app.prisma.auditLog.findFirst({
         where: { entity: "LeaveEntitlement", entityId: entitlement!.id, action: "CREATE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).not.toBeNull();
     });
@@ -518,6 +519,7 @@ describe("Employees API", () => {
 
       const audit = await app.prisma.auditLog.findFirst({
         where: { entity: "Employee", entityId: body.id, action: "CREATE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).not.toBeNull();
       const newValue = audit!.newValue as { annualVacationDays: unknown };
@@ -1107,6 +1109,7 @@ describe("Employees API", () => {
           entityId: dsgvoEmployeeId,
           action: "ANONYMIZE",
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(logEntry).not.toBeNull();
     });

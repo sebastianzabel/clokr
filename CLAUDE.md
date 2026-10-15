@@ -1191,6 +1191,15 @@ Verify with `pnpm --filter @clokr/api run lint:role-checks` and (after `test:set
 is gone, and a red VERIFY is a finding (an access change), not a stale fixture. A new route gets
 `requirePermission` and a row in `docs/permissions.md`; a new role check is never the answer.
 
+### Ordered audit/notification reads in tests (Issue #561)
+
+A test never picks an `AuditLog` or `Notification` row with an unordered `findFirst`, nor indexes an
+unordered `findMany` by position — one action can write several rows in the same millisecond and the
+test then flakes in the parallel run (#555). Use `auditRowsFor()` / `auditRowChangingField()` from
+`apps/api/src/__tests__/setup.ts` or an explicit `orderBy`. `lint:unordered-test-reads`
+(`apps/api/scripts/lint-unordered-test-reads.ts`, CI and pre-commit, no exceptions file) fails on it;
+a hit is converted, never excepted.
+
 ### Role management UI and the admin area (Issue #83)
 
 - **Permission labels live once, on the server.** `contexts/platform/permission-labels.ts` holds the

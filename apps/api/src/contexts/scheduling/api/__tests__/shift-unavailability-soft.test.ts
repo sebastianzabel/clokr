@@ -138,6 +138,7 @@ describe("Shift Unavailability Soft-Enforcement (Phase 47.3-03)", () => {
         entityId: shift.id,
         action: "SHIFT_FORCED_OVER_UNAVAILABILITY",
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
 
@@ -185,6 +186,7 @@ describe("Shift Unavailability Soft-Enforcement (Phase 47.3-03)", () => {
         entityId: shift.id,
         action: "SHIFT_FORCED_OVER_UNAVAILABILITY",
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).toBeNull();
   });

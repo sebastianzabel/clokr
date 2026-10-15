@@ -128,6 +128,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
         entity: "LeaveEntitlement",
         entityId: entitlementId,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     const v = audit!.newValue as Record<string, unknown>;
@@ -139,6 +140,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
     // Notification was created for the employee user
     const notif = await app.prisma.notification.findFirst({
       where: { userId: data.empUser.id, type: "CARRYOVER_EXPIRING" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(notif).not.toBeNull();
     expect(notif!.title).toMatch(/Resturlaub verfällt am /);
@@ -179,6 +181,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "CARRYOVER_WARNED" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect((audit!.newValue as Record<string, unknown>).thresholdDays).toBe(45);
   });
@@ -357,6 +360,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     const v = audit!.newValue as Record<string, unknown>;
@@ -365,6 +369,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
 
     const notif = await app.prisma.notification.findFirst({
       where: { relatedId: ent.id, type: "CARRYOVER_EXPIRING" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(notif).not.toBeNull();
     expect(notif!.message).toContain("(2 Tage)");
@@ -402,6 +407,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).toBeNull();
   });
@@ -429,6 +435,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).toBeNull();
   });

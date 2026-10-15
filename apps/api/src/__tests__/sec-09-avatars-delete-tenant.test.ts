@@ -72,6 +72,7 @@ describe("DELETE /api/v1/avatars/:employeeId — tenant isolation (sec-09)", () 
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: tenantB.employee.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -142,6 +143,7 @@ describe("DELETE /api/v1/avatars/:employeeId — tenant isolation (sec-09)", () 
 
     const auditForRealEmployee = await app.prisma.auditLog.findFirst({
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: tenantB.employee.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditForRealEmployee).not.toBeNull();
 
@@ -154,6 +156,7 @@ describe("DELETE /api/v1/avatars/:employeeId — tenant isolation (sec-09)", () 
 
     const auditForUnknownId = await app.prisma.auditLog.findFirst({
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: unknownId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditForUnknownId).toBeNull();
   });

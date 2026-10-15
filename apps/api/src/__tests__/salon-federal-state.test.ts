@@ -171,6 +171,7 @@ describe("PATCH /api/v1/salons/:id — D-12 federalState guard", () => {
 
     const audits = await app.prisma.auditLog.findMany({
       where: { action: "UPDATE", entity: "Salon", entityId: salon.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits.length).toBe(1);
     expect((audits[0].oldValue as { federalState?: string } | null)?.federalState).toBe(

@@ -254,6 +254,7 @@ describe("Roles API (Phase 73b, Issue #73)", () => {
   it("(g) writes exactly one CREATE audit row per successful create and none for a 409", async () => {
     const auditForA = await app.prisma.auditLog.findFirst({
       where: { entity: "AccessRole", action: "CREATE", entityId: createdRoleId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditForA).not.toBeNull();
     expect(auditForA?.newValue).toEqual({
@@ -373,6 +374,7 @@ describe("Roles API (Phase 73b, Issue #73)", () => {
 
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "AccessRole", action: "UPDATE", entityId: created.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits.length).toBe(1);
     expect(audits[0].oldValue).toEqual({ name: oldName, permissions: oldPermissions });
@@ -511,6 +513,7 @@ describe("Roles API (Phase 73b, Issue #73)", () => {
 
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "AccessRole", action: "DELETE", entityId: created.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits.length).toBe(1);
     expect(audits[0].oldValue).toEqual({
@@ -796,6 +799,7 @@ describe("Roles API (Phase 73b, Issue #73)", () => {
 
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "AccessRole", action: "COPY", entityId: body.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audits.length).toBe(1);
     expect(audits[0].newValue).toEqual({
@@ -839,6 +843,7 @@ describe("Roles API (Phase 73b, Issue #73)", () => {
 
     const audits = await app.prisma.auditLog.findMany({
       where: { entity: "AccessRole", action: "COPY" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     const leaksSourceId = audits.some(
       (a) => (a.newValue as { copiedFromId?: string } | null)?.copiedFromId === foreignRole.id,

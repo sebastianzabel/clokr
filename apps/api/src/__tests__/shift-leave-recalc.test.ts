@@ -587,6 +587,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
 
     const auditRow = await app.prisma.auditLog.findFirst({
       where: { action: "LEAVE_DAYS_ADJUSTED", entityId: created.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeTruthy();
   });
@@ -643,6 +644,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
 
     const auditRow = await app.prisma.auditLog.findFirst({
       where: { action: "LEAVE_DAYS_ADJUSTED", entityId: created.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).toBeTruthy();
   });

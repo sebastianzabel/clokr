@@ -250,6 +250,7 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
         entityId: { not: body.id },
         newValue: { path: ["userId"], equals: granteeTenant.user.id },
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(materializedAudit?.newValue).toEqual({
       userId: granteeTenant.user.id,
@@ -264,6 +265,7 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
     });
     const auditRow = await app.prisma.auditLog.findFirst({
       where: { entity: "RoleAssignment", action: "CREATE", entityId: body.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     // Phase 75b (D-14/D-29): roleA grants a ZUGEWIESEN permission, so the derived compat role
     // moves from EMPLOYEE to MANAGER, recorded on the grant's CREATE row (the change's last row).
@@ -850,6 +852,7 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
     expect(auditAfter - auditBefore).toBe(1);
     const auditRow = await app.prisma.auditLog.findFirst({
       where: { entity: "RoleAssignment", action: "DELETE", entityId: id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow?.oldValue).toEqual({
       userId: before!.userId,

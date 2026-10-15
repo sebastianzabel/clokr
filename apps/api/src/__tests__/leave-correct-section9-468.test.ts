@@ -151,6 +151,7 @@ describe("Leave correction and § 9 credits (Issue #468, D-04/A-3)", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "SECTION9_CREDIT_SUPERSEDED", entity: "Section9Credit", entityId: creditId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     const oldVal = audit?.oldValue as { status?: string; creditedDays?: number } | null;
@@ -279,6 +280,7 @@ describe("Leave correction and § 9 credits (Issue #468, D-04/A-3)", () => {
 
     const supersedeAudit = await app.prisma.auditLog.findFirst({
       where: { action: "SECTION9_CREDIT_SUPERSEDED", entity: "Section9Credit", entityId: creditId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(supersedeAudit).not.toBeNull();
     const correctedAudit = await app.prisma.auditLog.findFirst({
@@ -287,6 +289,7 @@ describe("Leave correction and § 9 credits (Issue #468, D-04/A-3)", () => {
         entity: "Section9Credit",
         entityId: revision1.id,
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(correctedAudit).not.toBeNull();
     const correctedNewVal = correctedAudit?.newValue as {

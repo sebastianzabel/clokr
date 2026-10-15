@@ -266,6 +266,7 @@ describe("Shift ArbZG Validation (Phase 47.4-01)", () => {
         entityId: shift.id,
         action: "SHIFT_FORCED_OVER_ARBZG",
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
 

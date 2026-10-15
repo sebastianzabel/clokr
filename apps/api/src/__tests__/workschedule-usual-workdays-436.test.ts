@@ -456,6 +456,7 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "Employee", entityId: body.id, action: "CREATE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     const newValue = audit!.newValue as { workSchedule: Record<string, unknown> };

@@ -45,7 +45,10 @@ describe("Phase 89 — operatorTenantAudit writer (D-09b)", () => {
       newValue: { name: "Fixture salon" },
     });
 
-    const rows = await app.prisma.auditLog.findMany({ where: { entityId } });
+    const rows = await app.prisma.auditLog.findMany({
+      where: { entityId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
     expect(rows).toHaveLength(1);
     const row = rows[0];
     expect(row.userId).toBeNull();
@@ -65,7 +68,10 @@ describe("Phase 89 — operatorTenantAudit writer (D-09b)", () => {
       entity: "Salon",
       entityId,
     });
-    const row = await app.prisma.auditLog.findFirstOrThrow({ where: { entityId } });
+    const row = await app.prisma.auditLog.findFirstOrThrow({
+      where: { entityId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
     expect(row.newValue).toEqual({ actor: { type: "OPERATOR", operatorId, tenantId } });
   });
 
@@ -77,7 +83,10 @@ describe("Phase 89 — operatorTenantAudit writer (D-09b)", () => {
       entityId,
       newValue: { actor: { type: "OPERATOR", operatorId, tenantId: randomUUID() } },
     });
-    const row = await app.prisma.auditLog.findFirstOrThrow({ where: { entityId } });
+    const row = await app.prisma.auditLog.findFirstOrThrow({
+      where: { entityId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
     expect((row.newValue as { actor: { tenantId: string } }).actor.tenantId).toBe(tenantId);
   });
 

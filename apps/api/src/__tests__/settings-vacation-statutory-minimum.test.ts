@@ -114,6 +114,7 @@ describe("PUT/GET /api/v1/settings/vacation/:employeeId — statutory minimum (I
       expect(row).toBeNull();
       const audit = await app.prisma.auditLog.findFirst({
         where: { entity: "LeaveEntitlement", entityId: employeeId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).toBeNull();
     });

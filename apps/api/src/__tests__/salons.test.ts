@@ -312,11 +312,13 @@ describe("Salon lifecycle: read by id, create, update, deactivate, activate (Pha
 
     const auditForForeign = await app.prisma.auditLog.findFirst({
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entity: "Salon", entityId: salonA.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditForForeign).not.toBeNull();
 
     const auditForUnknown = await app.prisma.auditLog.findFirst({
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entity: "Salon", entityId: unknownId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditForUnknown).toBeNull();
   });
@@ -357,6 +359,7 @@ describe("Salon lifecycle: read by id, create, update, deactivate, activate (Pha
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "CREATE", entity: "Salon", entityId: body.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect(audit?.oldValue).toBeNull();
@@ -600,6 +603,7 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "DEACTIVATE", entity: "Salon", entityId: salonA2.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     expect((audit?.oldValue as { isActive?: boolean } | null)?.isActive).toBe(true);
@@ -620,6 +624,7 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "DEACTIVATE", entity: "Salon", entityId: salonA1.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).toBeNull();
   });

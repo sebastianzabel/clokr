@@ -47,6 +47,7 @@ describe("Leave-request notification copy (Issue #200)", () => {
 
     const notif = await app.prisma.notification.findFirst({
       where: { userId: data.adminUser.id, type: "LEAVE_REQUEST", relatedId: requestId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(notif).not.toBeNull();
     return notif!;

@@ -428,6 +428,7 @@ describe("Issue #76 (Phase 76b Plan 04), AK-76b-4 — Personalabteilung behaviou
       // never an update-in-place, so there is exactly one audit row for this new id.
       const rows = await app.prisma.auditLog.findMany({
         where: { entity: "WorkSchedule", entityId: body.id },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(rows).toHaveLength(1);
       expect(rows[0].userId).toBe(hr.user.id);

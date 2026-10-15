@@ -160,6 +160,7 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
     expect(res.statusCode).toBe(404);
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entity: "LeaveRequest", entityId: req.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -684,6 +685,7 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
     // Issue #370: the correction must audit the revalidated removed-day TimeEntry row.
     const timeEntryAudits = await app.prisma.auditLog.findMany({
       where: { entity: "TimeEntry", entityId: eOpen.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(timeEntryAudits.length).toBe(1);
     expect(timeEntryAudits[0].action).toBe("UPDATE");

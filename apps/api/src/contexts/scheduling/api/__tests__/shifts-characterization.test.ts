@@ -141,6 +141,7 @@ describe("shifts.ts characterization — Absence-conflict branch of findShiftCon
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "Shift", entityId: shift.id, action: "SHIFT_FORCED_OVER_LEAVE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(
       audit,

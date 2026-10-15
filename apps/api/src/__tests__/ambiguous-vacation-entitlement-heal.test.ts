@@ -188,6 +188,7 @@ describe("Issue #445 — ambiguous zero-placeholder heal is gated (coordinator d
     expect(dbRow?.isAutoCalculated).toBe(true);
     const audit = await app.prisma.auditLog.findFirst({
       where: { entity: "LeaveEntitlement", entityId: placeholder.id, action: "UPDATE" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });

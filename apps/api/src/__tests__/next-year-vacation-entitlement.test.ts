@@ -7,33 +7,26 @@
  * never interferes.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  auditRowsFor,
+  auditRowsChangingField,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 
 describe("Issue #445 finding 1 — next-year VACATION entitlement (D-04/D-05/D-06)", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
 
-  type AuditRow = Awaited<ReturnType<FastifyInstance["prisma"]["auditLog"]["findMany"]>>[number];
-  /**
-   * Issue #555: one action can write several UPDATE audits on the same entitlement row (an approval heals
-   * `totalDays` AND recomputes `carriedOverDays`, two milliseconds apart). An unordered `findFirst` then picks
-   * either one at random. Every audit lookup here reads ALL rows of the action in creation order and selects by
-   * the field the scenario is about, so the assertion always looks at the row it means.
-   */
-  async function auditRows(entityId: string, action: "CREATE" | "UPDATE"): Promise<AuditRow[]> {
-    return app.prisma.auditLog.findMany({
-      where: { entity: "LeaveEntitlement", entityId, action },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    });
-  }
-
-  /** The rows whose `newValue` carries `field` — exactly the audits that changed that column. */
-  function changing(rows: AuditRow[], field: string) {
-    return rows.filter(
-      (r) => typeof r.newValue === "object" && r.newValue !== null && field in r.newValue,
-    );
-  }
+  // Issue #555/#561: one action can write several UPDATE audits on the same entitlement row, so
+  // every lookup reads ALL rows of the action in creation order (shared helpers in ./setup) and
+  // selects by the field the scenario is about.
+  const auditRows = (entityId: string, action: "CREATE" | "UPDATE") =>
+    auditRowsFor(app, "LeaveEntitlement", entityId, action);
+  const changing = auditRowsChangingField;
 
   async function mkEmployee(
     label: string,

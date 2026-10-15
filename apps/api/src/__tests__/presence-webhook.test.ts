@@ -240,6 +240,7 @@ describe("POST /api/v1/presence/events", () => {
 
       const log = await app.prisma.auditLog.findFirst({
         where: { action: { startsWith: "WIFI_" }, createdAt: { gte: before } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(log).toBeNull();
     },
@@ -525,6 +526,7 @@ describe("POST /api/v1/presence/events", () => {
     // No WIFI_UNKNOWN_MAC was written
     const unknownLog = await app.prisma.auditLog.findFirst({
       where: { action: "WIFI_UNKNOWN_MAC", createdAt: { gte: before } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(unknownLog).toBeNull();
 
@@ -636,6 +638,7 @@ describe("POST /api/v1/presence/events", () => {
           entityId: openEntry!.id,
           createdAt: { gte: beforeDisconnect },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(closeAudit).not.toBeNull();
 
@@ -645,6 +648,7 @@ describe("POST /api/v1/presence/events", () => {
           entityId: data.employee.id,
           createdAt: { gte: beforeConnect },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(noOpenEntryAudit).toBeNull();
 

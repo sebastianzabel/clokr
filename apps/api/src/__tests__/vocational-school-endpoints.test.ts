@@ -356,6 +356,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     // Audit log entry was written.
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "VOCATIONAL_SCHOOL_MANUAL_INSERTED", entityId: body.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).toBeTruthy();
 
@@ -515,6 +516,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
       // Audit row exists with oldValue snapshot.
       const audit = await app.prisma.auditLog.findFirst({
         where: { action: "VOCATIONAL_SCHOOL_MANUAL_DELETED", entityId: absence.id },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).toBeTruthy();
       expect(audit?.entity).toBe("Absence");

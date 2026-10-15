@@ -253,6 +253,7 @@ describe("Employee self-service WiFi API", () => {
           entityId: body.id,
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
 
       expect(log).toBeDefined();
@@ -390,6 +391,7 @@ describe("Employee self-service WiFi API", () => {
           entityId: tempDeviceId,
           createdAt: { gte: beforeTs },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
 
       expect(log).toBeDefined();

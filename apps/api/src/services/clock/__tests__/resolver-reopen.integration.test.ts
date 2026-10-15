@@ -142,6 +142,7 @@ describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integrat
     // Assert a CLOCK_REOPEN AuditLog row exists for this entry (D-01c)
     const auditRow = await app.prisma.auditLog.findFirst({
       where: { action: "CLOCK_REOPEN", entityId: active[0].id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditRow).not.toBeNull();
     expect(auditRow?.action).toBe("CLOCK_REOPEN");

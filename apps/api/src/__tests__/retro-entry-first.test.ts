@@ -959,6 +959,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
             entity: "RetroEntryRequest",
             entityId: request.id,
           },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         });
         expect(audit, "CROSS_TENANT_ACCESS_DENIED audit must exist").not.toBeNull();
       } finally {
@@ -1252,6 +1253,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
 
         const entryAudit = await app.prisma.auditLog.findFirst({
           where: { entity: "TimeEntry", entityId: entry.id, action: "MANAGER_CORRECTION" },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         });
         expect(entryAudit, "no MANAGER_CORRECTION audit on a hard-blocked correction").toBeNull();
       } finally {

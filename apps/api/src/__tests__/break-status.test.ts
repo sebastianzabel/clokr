@@ -87,6 +87,7 @@ describe("PATCH /:id/break-status", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "BREAK_CONFIRMED", entityId: entry.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     // D-09: actor, time window and before/after — not just row existence.
@@ -119,6 +120,7 @@ describe("PATCH /:id/break-status", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "BREAK_WAIVED", entityId: entry.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
     // D-09: actor, time window and before/after — not just row existence.
@@ -139,6 +141,7 @@ describe("PATCH /:id/break-status", () => {
     // data.adminUser is ADMIN role in the same tenant -> manager-alert recipient
     const notification = await app.prisma.notification.findFirst({
       where: { type: "BREAK_COMPLIANCE_ALERT", userId: data.adminUser.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(notification).not.toBeNull();
   });
@@ -237,6 +240,7 @@ describe("PATCH /:id/break-status", () => {
 
     const selfNotification = await app.prisma.notification.findFirst({
       where: { type: "BREAK_COMPLIANCE_ALERT", userId: data.adminUser.id, relatedId: entry.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(selfNotification).toBeNull();
 
@@ -290,6 +294,7 @@ describe("PATCH /:id/break-status", () => {
 
     const audit = await app.prisma.auditLog.findFirst({
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: entry.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(audit).not.toBeNull();
   });
@@ -461,6 +466,7 @@ describe("PATCH /:id/break-status", () => {
         userId: data.adminUser.id,
         id: { not: preSeededAlert.id },
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
 
     expect(

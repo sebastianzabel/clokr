@@ -1043,6 +1043,7 @@ describe("Leave / Absence API", () => {
       // Audit log captures the manager-on-behalf-of marker.
       const auditEntry = await app.prisma.auditLog.findFirst({
         where: { entity: "LeaveRequest", entityId: body.id, action: "CREATE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(auditEntry).not.toBeNull();
       const newValue = auditEntry?.newValue as Record<string, unknown> | null;
@@ -1099,6 +1100,7 @@ describe("Leave / Absence API", () => {
 
       const auditEntry = await app.prisma.auditLog.findFirst({
         where: { entity: "LeaveRequest", entityId: body.id, action: "CREATE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       const newValue = auditEntry?.newValue as Record<string, unknown> | null;
       expect(newValue?.source).toBeUndefined();
@@ -1236,6 +1238,7 @@ describe("Leave / Absence API", () => {
       // Issue #370: approving the cancellation must audit the revalidated TimeEntry row.
       const timeEntryAudits = await app.prisma.auditLog.findMany({
         where: { entity: "TimeEntry", entityId: live.id },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(timeEntryAudits.length).toBe(1);
       expect(timeEntryAudits[0].action).toBe("UPDATE");

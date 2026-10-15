@@ -181,6 +181,7 @@ describe("GET /api/v1/avatars/:employeeId — outcomes phase 258 must NOT change
 
     const auditForRealEmployee = await app.prisma.auditLog.findFirst({
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: tenantB.employee.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditForRealEmployee).not.toBeNull();
 
@@ -193,6 +194,7 @@ describe("GET /api/v1/avatars/:employeeId — outcomes phase 258 must NOT change
 
     const auditForUnknownId = await app.prisma.auditLog.findFirst({
       where: { action: "CROSS_TENANT_ACCESS_DENIED", entityId: unknownId },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(auditForUnknownId).toBeNull();
   });

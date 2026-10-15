@@ -58,6 +58,7 @@ import2-${uid}@test.de;Import;Zwei;IM2-${uid};15.03.2026;EMPLOYEE;38.5;test1234`
         expect(rows[0].validUntil).toBeNull();
         const audit = await app.prisma.auditLog.findFirst({
           where: { entity: "EmployeeSalonAssignment", action: "CREATE", entityId: rows[0].id },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         });
         expect(audit).not.toBeNull();
       }

@@ -146,6 +146,7 @@ describe("Employee exit-date writes recompute the exit-year VACATION row (Issue 
         action: "UPDATE",
         newValue: { path: ["reason"], equals: "Austritt — anteiliger Anspruch (§ 5 BUrlG)" },
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
     expect(exitAudit).toBeNull();
   });

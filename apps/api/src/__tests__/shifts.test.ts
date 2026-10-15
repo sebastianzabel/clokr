@@ -851,6 +851,7 @@ describe("Shift Planning API", () => {
 
       const audit = await app.prisma.auditLog.findFirst({
         where: { entity: "Shift", entityId: shift.id, action: "SHIFT_FORCED_OVER_LEAVE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(audit).toBeDefined();
       expect((audit?.newValue as { leaveRequestId?: string })?.leaveRequestId).toBe(leave.id);
@@ -915,6 +916,7 @@ describe("Shift Planning API", () => {
           entityId: shift.id,
           action: "SHIFT_MARKED_CONFLICTING",
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(markedAudit).toBeDefined();
 
@@ -968,6 +970,7 @@ describe("Shift Planning API", () => {
 
       const markedAudit = await app.prisma.auditLog.findFirst({
         where: { entity: "Shift", entityId: shift.id, action: "SHIFT_MARKED_CONFLICTING" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(markedAudit).toBeDefined();
       expect((markedAudit?.newValue as { leaveRequestId?: string })?.leaveRequestId).toBe(leave.id);
@@ -975,6 +978,7 @@ describe("Shift Planning API", () => {
       // The pre-existing force-override audit still fires unchanged — both now coexist.
       const forcedAudit = await app.prisma.auditLog.findFirst({
         where: { entity: "Shift", entityId: shift.id, action: "SHIFT_FORCED_OVER_LEAVE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(forcedAudit).toBeDefined();
 
@@ -1031,6 +1035,7 @@ describe("Shift Planning API", () => {
 
       const markedAudit = await app.prisma.auditLog.findFirst({
         where: { entity: "Shift", entityId: shift.id, action: "SHIFT_MARKED_CONFLICTING" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(markedAudit).toBeNull();
 
@@ -1071,6 +1076,7 @@ describe("Shift Planning API", () => {
 
       const markedAudit = await app.prisma.auditLog.findFirst({
         where: { entity: "Shift", entityId: shift!.id, action: "SHIFT_MARKED_CONFLICTING" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       expect(markedAudit).toBeDefined();
 
