@@ -28,6 +28,7 @@ import {
   createTestSalon, // Phase 325 (issue #325)
   salonIdForEmployee,
   soleNotificationOrNull, // Phase 68b (issue #68)
+  grantSystemRole,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
@@ -160,6 +161,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         isTimeTrackingExempt: exempt,
       },
     });
+    await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     await app.prisma.workSchedule.create({
       data: {
         employeeId: emp.id,
@@ -313,6 +315,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
           isTimeTrackingExempt: false,
         },
       });
+      await grantSystemRole(app.prisma, { tenantId: tenant.id, userId: user.id, role: "EMPLOYEE" });
       // SHIFT_BASED: set non-zero marker hours only on Tue + Thu + Fri so the
       // readiness check only demands time entries on those three days.
       // weeklyHours=38 → Ø-Methode (3 days/wk, Jan 2024 has 3+3+5=11 such days) would give
@@ -1039,6 +1042,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
           isTimeTrackingExempt: false,
         },
       });
+      await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       await app.prisma.workSchedule.create({
         data: {
           employeeId: emp.id,
@@ -1404,6 +1408,7 @@ describe("cron gap-note (closeMonthWithGapsAllowed)", () => {
         isTimeTrackingExempt: false,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,
@@ -1605,6 +1610,7 @@ describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)"
         isTimeTrackingExempt: false,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: gapUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: gapEmp.id,
@@ -1644,6 +1650,7 @@ describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)"
         isTimeTrackingExempt: false,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: cleanUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: cleanEmp.id,
@@ -2027,6 +2034,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
         isTimeTrackingExempt: false,
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: empUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,
@@ -2076,6 +2084,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: mgrUser.id, role: "ADMIN" });
 
     return { tenant, empId: emp.id, mgrUserId: mgrUser.id };
   }
@@ -2274,6 +2283,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
         isTimeTrackingExempt: false,
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: empUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,

@@ -22,7 +22,14 @@ import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "node:crypto";
 import { fromZonedTime } from "date-fns-tz";
-import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+  removeFixtureRoleAssignments,
+} from "./setup";
 import { addDaysStr, mondayOfWeekStr, TEST_TZ } from "./test-dates";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
@@ -119,6 +126,7 @@ describe("Issue #87 — GET /time-entries/clock-salon (read path)", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(app.prisma, { tenantId, userId: user.id, role });
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
@@ -409,6 +417,9 @@ describe("Issue #87 — GET /time-entries/clock-salon (read path)", () => {
 
   it("D-03: a caller holding neither reach of time-entry:create -> 403 Forbidden", async () => {
     const p = await createPerson(seed.tenant.id, "kunde");
+    // This person's only stored assignment is the custom role below; the login in createPerson ran
+    // while the system-role row existed.
+    await removeFixtureRoleAssignments(app.prisma, [p.user.id]);
     const name = `Kundenrolle ${randomBytes(3).toString("hex")}`;
     const role = await app.prisma.accessRole.create({
       data: {

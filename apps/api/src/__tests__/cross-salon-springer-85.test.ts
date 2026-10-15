@@ -43,7 +43,14 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
 
 // The day-check leg needs a day with two entries, which the partial unique index forbids for real
@@ -166,7 +173,8 @@ describe("Issue #85 D-10 — one cross-salon Springer, every read path, three ma
   // Every parsed body answered to the Einsatzsalon manager (b), for the numeric leak scan.
   const bResponses: unknown[] = [];
 
-  async function createPerson(label: string, opts: { schedule?: boolean } = {}) {
+  // grant: false for a person whose stored assignment is the one the caller adds (no system-role grant).
+  async function createPerson(label: string, opts: { schedule?: boolean; grant?: boolean } = {}) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 4);
     const user = await app.prisma.user.create({
@@ -182,6 +190,13 @@ describe("Issue #85 D-10 — one cross-salon Springer, every read path, three ma
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    if (opts.grant ?? true) {
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
+      });
+    }
     if (opts.schedule) {
       await app.prisma.workSchedule.create({
         data: {
@@ -254,7 +269,7 @@ describe("Issue #85 D-10 — one cross-salon Springer, every read path, three ma
   }
 
   async function manager(label: string, salonId: string): Promise<string> {
-    const m = await createPerson(label);
+    const m = await createPerson(label, { grant: false });
     await assignment(m.employee.id, salonId, "HOME", "2024-01-01");
     await app.prisma.roleAssignment.create({
       data: {
@@ -270,7 +285,7 @@ describe("Issue #85 D-10 — one cross-salon Springer, every read path, three ma
   }
 
   async function tenantWide(label: string, accessRoleId: string): Promise<string> {
-    const m = await createPerson(label);
+    const m = await createPerson(label, { grant: false });
     await assignment(m.employee.id, salonA, "HOME", "2024-01-01");
     await app.prisma.roleAssignment.create({
       data: {

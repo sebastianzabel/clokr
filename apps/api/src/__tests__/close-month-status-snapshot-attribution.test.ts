@@ -22,7 +22,13 @@
  */
 
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup";
+import {
+  getTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+  grantSystemRole,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import bcrypt from "bcryptjs";
@@ -98,6 +104,7 @@ describe("close-month/status — snapshot month attribution (month-detail-shows-
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -134,6 +141,7 @@ describe("close-month/status — snapshot month attribution (month-detail-shows-
         hireDate: new Date("2026-06-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: bugUser.id, role: "EMPLOYEE" });
     bugEmpId = bugEmp.id;
     await prisma.workSchedule.create({
       data: {
@@ -192,6 +200,7 @@ describe("close-month/status — snapshot month attribution (month-detail-shows-
         hireDate: new Date("2026-06-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: closedUser.id, role: "EMPLOYEE" });
     closedEmpId = closedEmp.id;
     await prisma.workSchedule.create({
       data: {

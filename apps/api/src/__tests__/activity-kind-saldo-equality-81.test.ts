@@ -31,6 +31,7 @@ import {
   createTestSalon,
   salonIdForEmployee,
   configureDatevKanzlei,
+  grantSystemRole,
 } from "./setup";
 import * as pdfUtils from "../composition/pdf";
 import { checkArbZG } from "../contexts/time-tracking/arbzg";
@@ -88,6 +89,7 @@ async function createEmployee(
       hireDate,
     },
   });
+  await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
   await app.prisma.workSchedule.create({
     data: opts.monthlyHours
       ? {

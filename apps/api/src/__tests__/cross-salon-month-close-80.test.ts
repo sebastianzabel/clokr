@@ -16,7 +16,13 @@ import { vi, describe, it, expect, beforeAll, afterAll, beforeEach } from "vites
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 import { getDeferredMonthCloseState } from "../contexts/working-time-account/deferred-month-close";
 import { evaluateDayBreaks } from "../contexts/time-tracking/day-break-rule";
 
@@ -137,6 +143,7 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
         hireDate: new Date("2026-03-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     const fixed = scheduleType === "FIXED_SCHEDULE";
     await prisma.workSchedule.create({
       data: {
@@ -233,6 +240,7 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
         isTimeTrackingExempt: true,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     const login = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
