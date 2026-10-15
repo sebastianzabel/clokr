@@ -4,17 +4,19 @@
   import PageHead from "$components/layout/PageHead.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import OperatorOverview from "$lib/components/operator/OperatorOverview.svelte";
   import TenantCreateDialog from "$lib/components/operator/TenantCreateDialog.svelte";
   import TenantTable from "$lib/components/operator/TenantTable.svelte";
   import { operatorApi } from "$lib/operator/client";
   import { describeLoadError } from "$lib/operator/labels";
-  import type { CreateTenantBody, OperatorTenant } from "$lib/operator/types";
+  import type { CreateTenantBody, OperatorDashboard, OperatorTenant } from "$lib/operator/types";
 
   type LoadState = "loading" | "ready" | "error";
 
   const LOAD_FAILED = "Mandanten konnten nicht geladen werden. Bitte erneut versuchen.";
 
   let tenants = $state<OperatorTenant[]>([]);
+  let dashboard = $state<OperatorDashboard | null>(null);
   let loadState = $state<LoadState>("loading");
   let loadError = $state(LOAD_FAILED);
   let page = $state(1);
@@ -25,7 +27,14 @@
   async function load(silent = false) {
     if (!silent) loadState = "loading";
     try {
-      tenants = await operatorApi.listTenants();
+      // The list (master data) and the dashboard (aggregates) load together; either failing is the
+      // one error state, so a half-filled console never shows.
+      const [list, summary] = await Promise.all([
+        operatorApi.listTenants(),
+        operatorApi.getDashboard(),
+      ]);
+      tenants = list;
+      dashboard = summary;
       loadState = "ready";
     } catch (err) {
       // A 401/403 was already handled by the client (session cleared, redirect to the sign-in).
@@ -33,6 +42,9 @@
       loadState = "error";
     }
   }
+
+  /** Dashboard metrics of each tenant, joined to the list rows by tenant id. */
+  const metrics = $derived(new Map((dashboard?.tenants ?? []).map((item) => [item.id, item])));
 
   function openCreate() {
     showCreate = true;
@@ -73,6 +85,12 @@
     {/snippet}
   </PageHead>
 
+  {#if loadState === "ready" && dashboard && tenants.length > 0}
+    <Section animate title="Übersicht" sub="Summen über alle aktiven Mandanten">
+      <OperatorOverview {dashboard} />
+    </Section>
+  {/if}
+
   <Section animate>
     {#if loadState === "loading"}
       <div aria-busy="true" data-testid="op-tenants-loading">
@@ -104,7 +122,7 @@
         />
       </div>
     {:else}
-      <TenantTable {tenants} bind:page bind:pageSize />
+      <TenantTable {tenants} {metrics} bind:page bind:pageSize />
     {/if}
   </Section>
 </div>

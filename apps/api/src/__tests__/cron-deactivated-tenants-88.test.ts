@@ -228,6 +228,16 @@ describe("Phase 88 — source scan: every tenant loop is filtered or on the name
       count: 1,
       reason: "the operator tenant list must show deactivated tenants",
     },
+    "contexts/platform/api/operator/dashboard.ts": {
+      count: 1,
+      reason:
+        "the operator dashboard lists deactivated tenants next to the active ones (Issue #90); its totals exclude them in the body builder",
+    },
+    "contexts/platform/facade/operator-metrics.ts": {
+      count: 1,
+      reason:
+        "the metrics facade keys one row per tenant including deactivated ones, so the dashboard can show them (Issue #90)",
+    },
   };
   /** Floor of filtered calls at the time of writing: 10 attendance loops + 6 other jobs. */
   const FILTERED_FLOOR = 16;

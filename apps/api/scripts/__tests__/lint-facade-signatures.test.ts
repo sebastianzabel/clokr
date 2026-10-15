@@ -517,7 +517,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // facade (`contexts/time-tracking/facade/time-entries.ts`, retention archive of DayBreak /
   // DayBreakAck, same shape as `archiveEntriesBefore`) — passes F1/F2/F3 directly, no new
   // exception; exceptions unchanged at 17.
-  it("the real tree has exactly 142 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  it("the real tree has exactly 143 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -528,6 +528,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/platform/facade/salon-assignments.ts",
         "apps/api/src/contexts/platform/facade/salon-assignment-changes.ts",
         "apps/api/src/contexts/platform/facade/holiday-resolution.ts",
+        "apps/api/src/contexts/platform/facade/operator-metrics.ts",
         "apps/api/src/contexts/scheduling/facade/shifts.ts",
         "apps/api/src/contexts/scheduling/facade/availability.ts",
         "apps/api/src/contexts/scheduling/facade/couplings.ts",
@@ -578,7 +579,10 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // Phase 89 (#89, plans 01 and 07): new file contexts/scheduling/facade/couplings.ts, the one
     // SalonCoupling access path (listSalonCouplings, createSalonCoupling, setSalonCoupling,
     // removeSalonCoupling) — 138 -> 142; all four pass F1/F2/F3 directly, exceptions unchanged at 17.
-    expect(functions).toHaveLength(142);
+    // Issue #90 (2026-10-15): new file contexts/platform/facade/operator-metrics.ts, the one
+    // producer of the operator dashboard counts (operatorTenantMetrics) — 142 -> 143; passes
+    // F1/F2/F3 directly, exceptions unchanged at 17.
+    expect(functions).toHaveLength(143);
 
     const rawExceptions = JSON.parse(
       readFileSync(

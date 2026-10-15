@@ -810,8 +810,12 @@ import { readFileSync } from "node:fs";
 // tenant-packages-addons-566, tenant-packages-never-retroactive-566, packages-legal-core-isolation-566,
 // tenant-packages-migration-566, scripts/__tests__/audit-566-package-backfill, plus the cases added to existing files.
 // Both floors are set to exactly these numbers; MIN_FILES 571 -> 579, MIN_TESTS 9110 -> 9246, never lowered.
-const MIN_FILES = 579;
-const MIN_TESTS = 9246;
+// Issue #90 (2026-10-15): measured on `feat/90-operator-dashboard` after 261015-f9i-03, full run (`test:coverage`) - 580
+// test files, 9263 tests (9260 passed, 3 skipped). New file: operator-dashboard-90.test.ts (15 cases), plus the cases
+// added to operator-surface-off-88 and the existing files the dashboard touched. Both floors are set to exactly these
+// numbers; MIN_FILES 579 -> 580, MIN_TESTS 9246 -> 9263, never lowered.
+const MIN_FILES = 580;
+const MIN_TESTS = 9263;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

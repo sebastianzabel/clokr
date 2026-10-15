@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { renderWithTheme } from "$tests/test-utils";
-import type { OperatorTenant } from "$lib/operator/types";
+import type { OperatorDashboardTenant, OperatorTenant } from "$lib/operator/types";
 import TenantTable from "../TenantTable.svelte";
 
 function tenant(overrides: Partial<OperatorTenant> & { id: string }): OperatorTenant {
@@ -32,6 +32,27 @@ const OFF = tenant({
   deactivatedAt: "2026-03-01T08:00:00.000Z",
   deactivatedReason: "Vertrag beendet",
 });
+
+function metric(
+  id: string,
+  overrides: Partial<OperatorDashboardTenant> = {},
+): [string, OperatorDashboardTenant] {
+  return [
+    id,
+    {
+      id,
+      name: "n",
+      slug: "s",
+      deactivatedAt: null,
+      activeSalons: 2,
+      totalSalons: 3,
+      activeEmployees: 7,
+      lastActivityAt: "2026-10-01",
+      inactive: false,
+      ...overrides,
+    },
+  ];
+}
 
 function many(count: number): OperatorTenant[] {
   return Array.from({ length: count }, (_, i) =>
@@ -138,12 +159,21 @@ describe("TenantTable", () => {
     expect(byId("op-tenants-pagination")).toHaveTextContent("30 Mandanten");
   });
 
-  it("has a screen-reader caption and the five column headers", () => {
+  it("has a screen-reader caption and the eight column headers", () => {
     renderWithTheme(TenantTable, { tenants: [ACTIVE], page: 1, pageSize: 25 }, "nacht");
     const table = byId("op-tenants-table") as HTMLElement;
     expect(table.querySelector("caption")).toHaveTextContent("Mandanten");
     const headers = [...table.querySelectorAll("thead th")].map((th) => th.textContent?.trim());
-    expect(headers).toEqual(["Name", "Kurzname", "Bundesland", "Angelegt", "Status"]);
+    expect(headers).toEqual([
+      "Name",
+      "Kurzname",
+      "Bundesland",
+      "Angelegt",
+      "Salons",
+      "Mitarbeitende",
+      "Letzte Aktivität",
+      "Status",
+    ]);
   });
 
   it("is styled: the table differs from a control element with an invented class", () => {
@@ -172,5 +202,70 @@ describe("TenantTable", () => {
     expect(source).toContain("overflow-wrap: anywhere");
     expect(source).toContain("-webkit-line-clamp: 2");
     expect(source).not.toContain("nowrap");
+  });
+
+  describe("metric columns (Issue #90)", () => {
+    it("shows salons, employees and the last activity from the metrics", () => {
+      const metrics = new Map([metric("t-active")]);
+      renderWithTheme(TenantTable, { tenants: [ACTIVE], metrics, page: 1, pageSize: 25 }, "nacht");
+      expect(byId("op-tenant-salons-t-active")).toHaveTextContent("2 / 3");
+      expect(byId("op-tenant-salons-t-active")).toHaveTextContent("2 von 3 aktiv");
+      expect(byId("op-tenant-employees-t-active")).toHaveTextContent("7");
+      expect(byId("op-tenant-activity-t-active")).toHaveTextContent("01.10.2026");
+    });
+
+    it("shows Keine Anmeldung when the tenant never signed in", () => {
+      const metrics = new Map([metric("t-active", { lastActivityAt: null })]);
+      renderWithTheme(TenantTable, { tenants: [ACTIVE], metrics, page: 1, pageSize: 25 }, "nacht");
+      expect(byId("op-tenant-activity-t-active")).toHaveTextContent("Keine Anmeldung");
+    });
+
+    it("shows the Inaktiv badge only for an inactive tenant", () => {
+      const metrics = new Map([
+        metric("t-active", { inactive: true }),
+        metric("t-off", { inactive: false }),
+      ]);
+      renderWithTheme(
+        TenantTable,
+        { tenants: [ACTIVE, OFF], metrics, page: 1, pageSize: 25 },
+        "nacht",
+      );
+      const badge = byId("op-tenant-inactive-t-active");
+      expect(badge).toHaveTextContent("Inaktiv");
+      expect(badge).toHaveClass("badge-yellow");
+      expect(byId("op-tenant-inactive-t-off")).toBeNull();
+    });
+
+    it("shows dashes and no badge for a tenant without metrics", () => {
+      renderWithTheme(TenantTable, { tenants: [ACTIVE], page: 1, pageSize: 25 }, "nacht");
+      for (const id of ["salons", "employees", "activity"]) {
+        expect(byId(`op-tenant-${id}-t-active`)?.textContent?.replace(/\s+/g, " ").trim()).toMatch(
+          /–$/,
+        );
+      }
+      expect(byId("op-tenant-inactive-t-active")).toBeNull();
+    });
+
+    it("gives every metric cell a label element for the stacked view", () => {
+      const metrics = new Map([metric("t-active")]);
+      renderWithTheme(TenantTable, { tenants: [ACTIVE], metrics, page: 1, pageSize: 25 }, "nacht");
+      const labels = ["salons", "employees", "activity"].map((id) => {
+        const label = byId(`op-tenant-${id}-t-active`)?.querySelector(".m-label");
+        expect(label).toHaveAttribute("aria-hidden", "true");
+        return label?.textContent;
+      });
+      expect(labels).toEqual(["Salons", "Mitarbeitende", "Letzte Aktivität"]);
+    });
+
+    it("shows the metric label only inside the stacked-list media query (source)", () => {
+      const source = readFileSync(
+        resolve(process.cwd(), "src/lib/components/operator/TenantTable.svelte"),
+        "utf8",
+      );
+      const mediaAt = source.indexOf("@media (max-width: 767px)");
+      expect(mediaAt).toBeGreaterThan(-1);
+      expect(source.slice(0, mediaAt)).toMatch(/\.m-label \{\s*display: none;/);
+      expect(source.slice(mediaAt)).toMatch(/\.tenant-table \.m-label \{\s*display: inline;/);
+    });
   });
 });
