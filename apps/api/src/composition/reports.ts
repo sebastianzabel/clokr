@@ -788,6 +788,19 @@ async function fetchPricedDaysByRequestId(
   return result;
 }
 
+// Issue #613 — the report year as tenant-local INSTANTS (1 January 00:00 to 31 December 23:59:59.999
+// in the tenant time zone), the bounds `reportPopulationWhere` expects. Deliberately named
+// `population*` at the call sites: the UTC-naive `yearStart`/`yearEnd` of the PDF handlers bound
+// `@db.Date` leave columns and are a different thing (CLAUDE.md #493).
+async function yearPopulationPeriod(
+  app: FastifyInstance,
+  tenantId: string,
+  year: number,
+): Promise<{ start: Date; end: Date }> {
+  const tz = await getTenantTimezone(app.prisma, tenantId);
+  return { start: monthRangeUtc(year, 1, tz).start, end: monthRangeUtc(year, 12, tz).end };
+}
+
 export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/monthly?employeeId=&year=&month=
   app.get("/monthly", {
@@ -946,7 +959,15 @@ export async function reportRoutes(app: FastifyInstance) {
       const { year } = req.query as { year: string };
       const y = parseInt(year ?? now.getFullYear().toString());
 
-      const allEntitlements = await listEntitlementsForYear(app.prisma, req.user.tenantId, y);
+      // Issue #613 — the year's persons come from the shared population rule (exited during the
+      // year: listed; left before it or anonymised: not; a deactivated login does not matter).
+      const populationPeriod = await yearPopulationPeriod(app, req.user.tenantId, y);
+      const allEntitlements = await listEntitlementsForYear(
+        app.prisma,
+        req.user.tenantId,
+        y,
+        populationPeriod,
+      );
 
       // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
       // self-healing (an out-of-scope employee's usedDays must not even be WRITTEN by this route,
@@ -975,6 +996,8 @@ export async function reportRoutes(app: FastifyInstance) {
           : allEntitlements.filter((e) => leaveOverviewScopedIds.includes(e.employeeId));
 
       // Self-heal usedDays from Σ approved LeaveRequest.days BEFORE we shape the response.
+      // Issue #613 — `entitlements` holds population rows only, so viewing the report never
+      // writes the entitlement of an anonymised or long-departed person.
       // Mirrors the heal that GET /entitlements/:employeeId has done since v1.4.
       // Fixes the report-vs-leave-page divergence (a-tenant incident 2026-05-27).
       // healZeroPlaceholder (Issue #445, D-05) and healUsedDays (Issue #445, D-10) are injected
@@ -1077,10 +1100,11 @@ export async function reportRoutes(app: FastifyInstance) {
       const vacationEmployeeIds = new Set(
         entitlements.filter((e) => e.leaveType.code === "VACATION").map((e) => e.employeeId),
       );
+      // Issue #613 — "active" means the year's population (shared rule), not `exitDate: null`.
       const activeEmployees = await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
-          exitDate: null,
+          AND: [reportPopulationWhere(populationPeriod.start, populationPeriod.end)],
           ...(leaveOverviewScopedIds !== "all" ? { id: { in: leaveOverviewScopedIds } } : {}),
         },
         select: { id: true, firstName: true, lastName: true, employeeNumber: true },
@@ -2122,6 +2146,8 @@ export async function reportRoutes(app: FastifyInstance) {
               yearEnd,
             );
 
+      const populationPeriod = await yearPopulationPeriod(app, req.user.tenantId, y);
+
       // Fetch both datasets in parallel
       const [employees, allVacationEntitlements] = await Promise.all([
         app.prisma.employee.findMany({
@@ -2145,7 +2171,7 @@ export async function reportRoutes(app: FastifyInstance) {
           },
           orderBy: { lastName: "asc" },
         }),
-        listEntitlementsForYear(app.prisma, req.user.tenantId, y),
+        listEntitlementsForYear(app.prisma, req.user.tenantId, y, populationPeriod),
       ]);
       const entitlements =
         vacationPdfScopedIds === "all"
@@ -2302,10 +2328,12 @@ export async function reportRoutes(app: FastifyInstance) {
         select: { name: true },
       });
 
+      const populationPeriod = await yearPopulationPeriod(app, req.user.tenantId, y);
       const allLeaveOverviewPdfEntitlements = await listEntitlementsForYear(
         app.prisma,
         req.user.tenantId,
         y,
+        populationPeriod,
       );
 
       // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
