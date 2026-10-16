@@ -705,7 +705,9 @@
                 <li>
                   {e.employeeName} – offen seit {monthLabel(e.oldestOpenMonth)}
                   {#if gapCountOf(e) > 0}
-                    · {e.dayDetailsWithheld ? "" : "fehlende Tage: "}{missingDaysText(e)}
+                    · {e.dayDetailsWithheld ? "" : "fehlende Tage: "}{missingDaysText(e, {
+                      iso: true,
+                    })}
                   {:else}
                     · keine Tageslücken gefunden
                   {/if}

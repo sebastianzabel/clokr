@@ -143,6 +143,10 @@ describe("/admin/month-close - withheld day lists render as counts (Issue #86, D
     }
   });
 
+  it("the deferred list prints the stored ISO dates (visual baseline 09)", () => {
+    expect(MONTH_CLOSE).toMatch(/missingDaysText\(e, \{ iso: true \}\)/);
+  });
+
   it("no render site formats a date list or reads an array length itself", () => {
     expect(MONTH_CLOSE).not.toMatch(/function formatMissing/);
     expect(MONTH_CLOSE).not.toMatch(/\.missingDates(\?)?\.length/);

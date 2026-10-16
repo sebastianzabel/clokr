@@ -70,11 +70,17 @@ function gapDatesOf(row: DayListRow): string[] {
 
 /**
  * The text for the days without an entry: the dates when present, the count text when the dates
- * were withheld, an empty string when there is nothing to show (count 0).
+ * were withheld, an empty string when there is nothing to show (count 0). `iso` prints the stored
+ * `YYYY-MM-DD` strings unchanged (the deferred list), the default is the short `DD.MM.` form.
  */
-export function missingDaysText(row: DayListRow, options: { short?: boolean } = {}): string {
+export function missingDaysText(
+  row: DayListRow,
+  options: { short?: boolean; iso?: boolean } = {},
+): string {
   const dates = gapDatesOf(row);
   if (dates.length > 0) {
+    // `iso`: the deferred-close list has always printed the stored YYYY-MM-DD values (visual baseline 09).
+    if (options.iso) return dates.join(", ");
     return options.short ? formatMissingShort(dates) : formatMissingDates(dates);
   }
   const count = gapCountOf(row);
