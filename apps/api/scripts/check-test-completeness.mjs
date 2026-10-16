@@ -844,11 +844,21 @@ import { readFileSync } from "node:fs";
 // reports-hr-86, hr-no-day-level-data-86, hr-view-86; amended system-roles and system-role-template-personalabteilung)
 // plus #650's `cancel-orphan-shifts-permission-650.test.ts` (+1 file, +6 tests). Both floors equal the measured numbers.
 // Issue #654 (2026-10-16): +1 file (import-reach-654.test.ts), counted from the source, no full run: MIN_FILES 612 -> 613.
-const MIN_FILES = 613;
+// Phase 70b / Issue #70 (2026-10-16): measured on `feat/70-mehrere-eintraege` after 70b-08, full run
+// (`pnpm --filter @clokr/api test`, merged with origin/main @ 5afdbac9) - 629 test files, 9918 tests (9915 passed,
+// 3 skipped). New files: scripts/__tests__/audit-70-entry-overlaps, time-entry-multi-entry-70, time-entry-overlap-message-70,
+// time-entry-locked-day-70, clock-second-salon-70, day-entries-selectors-70, retro-approve-overlap-70, imports-multi-entry-70,
+// find-unconfirmed-break-days-70, jarbschg-day-sum-70, time-entry-multi-entry-migration-70, time-entry-overlap-constraint-70,
+// multi-entry-saldo-equality-70, multi-entry-month-close-70, clock-salon-choice-70, time-entry-list-salon-name-70 (16 files,
+// the shared helper entry-lock-race-helpers.ts has no cases) on top of the baseline of 607 files plus the 6 files that came
+// in from origin/main meanwhile (#86, #650, #654); amended files kept or raised their case counts, none was
+// removed, skipped or loosened. MIN_FILES 613 -> 629, never lowered.
+const MIN_FILES = 629;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
-const MIN_TESTS = 9796;
+// Phase 70b / Issue #70 (2026-10-16): MIN_TESTS 9796 -> 9918, the measured total of the run above (see MIN_FILES). Never lowered.
+const MIN_TESTS = 9918;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
