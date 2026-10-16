@@ -27,8 +27,6 @@ import type { Prisma, TimeEntry } from "@clokr/db";
 import { resolveAccessReach, type AccessContext } from "../platform";
 import { findEntriesOfDay } from "./day-entries";
 import { dayCoverage } from "./day-scope";
-import { listDayBreaksOfDay } from "./day-break-store";
-import { intervalsOverlap } from "./day-break-rule";
 import { resolveEntrySalon } from "./entry-salon";
 
 // ── Codes and German texts (the only place they are spelled) ──────────────────────────────────
@@ -508,13 +506,22 @@ export async function validateTravelEntry(
   });
   if (!anchored.ok) return anchored;
 
-  const dayBreaks = await listDayBreaksOfDay(db, {
-    tenantId: input.tenantId,
-    employeeId: input.employeeId,
-    date: input.date,
+  // T4 — the half-open overlap rule of `intervalsOverlap()` (adjacency is no overlap), asked of the
+  // database. `day-break-store.ts` is deliberately NOT imported here: it imports the T1/T2 facade,
+  // and the facade imports this module for the import writer's neighbour check — a cycle that
+  // would defeat the `vi.mock` of the facade in the #80/#85 suites.
+  const overlappingBreak = await db.dayBreak.findFirst({
+    where: {
+      employeeId: input.employeeId,
+      date: input.date,
+      deletedAt: null,
+      employee: { tenantId: input.tenantId },
+      startTime: { lt: input.endTime },
+      endTime: { gt: input.startTime },
+    },
+    select: { id: true },
   });
-  const interval = { startTime: input.startTime, endTime: input.endTime };
-  if (dayBreaks.some((b) => intervalsOverlap(b, interval))) {
+  if (overlappingBreak) {
     return refusal(409, TRAVEL_OVERLAPS_DAY_BREAK_CODE, TRAVEL_OVERLAPS_DAY_BREAK_MESSAGE);
   }
   return { ok: true };
