@@ -12,16 +12,20 @@
  * The weekly pattern is a PRESELECTION, never truth: a deviation from it is not an error, so
  * nothing in here marks one.
  *
- * Rule, in this order (D-11):
- * 1. Today already has an entry → no choice, the answer names the salon that entry is fixed to
- *    (the row a re-clock would reopen: the open row, else the closed row ending last). The salon
+ * Rule, in this order (D-02/D-11, Issue #70 — a day may hold several entries):
+ * 1. Today has a RUNNING entry → no choice; the answer names the salon of the open entry. The salon
  *    is named only in a multi-salon tenant (#64: a single-salon tenant never sees salon wording).
- * 2. Not a multi-salon tenant → nothing to offer.
- * 3. Otherwise: the pattern salon of today is preselected when it is an active salon; the choice
- *    is offered unless the employee's current and future assignments name exactly that one salon.
+ * 2. Today has only FINISHED entries → `fixedSalon` is the salon of the closed entry ending last
+ *    (what a plain re-clock continues, deactivated or not), and in a multi-salon tenant a second
+ *    salon may be chosen, which starts a NEW entry: the active salons except that one are offered,
+ *    unless the employee's current and future assignments name exactly that one salon. The pattern
+ *    salon of today is preselected when it is one of the offered salons.
+ * 3. Today has no entry → the #87 rules unchanged: not a multi-salon tenant → nothing to offer;
+ *    otherwise the pattern salon is preselected when it is an active salon, and the choice is offered
+ *    unless the current and future assignments name exactly that one salon.
  * 4. The salon list is only returned when a choice is offered (Art. 5 Abs. 1 lit. c DSGVO).
  */
-import type { Prisma, TimeEntry } from "@clokr/db";
+import type { Prisma } from "@clokr/db";
 import {
   currentAndFutureAssignmentSalonIds,
   findSalon,
@@ -29,7 +33,7 @@ import {
   listSalons,
   salonForDay,
 } from "../platform";
-import { findEntriesOfDay } from "./day-entries";
+import { findEntriesOfDay, latestEndingClosed, openEntryOf } from "./day-entries";
 
 export type ClockSalonChoice = {
   offerChoice: boolean;
@@ -47,15 +51,11 @@ export type ClockSalonChoiceInput = {
   today: Date;
 };
 
-/** The row a re-clock would act on: the open row, else the closed row with the latest end. */
-function entryOfDay(entries: TimeEntry[]): TimeEntry | null {
-  const open = entries.find((e) => e.endTime === null);
-  if (open) return open;
-  return entries.reduce<TimeEntry | null>(
-    (best, e) => (e.endTime !== null && (best === null || e.endTime > best.endTime!) ? e : best),
-    null,
-  );
-}
+/** An active salon of the tenant as the answer lists it: name (de), then id. */
+type SalonOption = { id: string; name: string };
+
+const byNameThenId = (a: SalonOption, b: SalonOption) =>
+  a.name.localeCompare(b.name, "de") || (a.id < b.id ? -1 : 1);
 
 export async function clockSalonChoice(
   db: Prisma.TransactionClient,
@@ -71,37 +71,52 @@ export async function clockSalonChoice(
 
   const multiSalon = await isMultiSalonTenant(db, tenantId);
 
-  // MULTI-ENTRY: with several entries per day (#70) a second salon would start a new entry instead of being fixed to this one.
-  const dayEntry = entryOfDay(await findEntriesOfDay(db, { tenantId, employeeId, date: today }));
+  // Decision (Issue #70, D-02/D-11): the row a clock event acts on is picked by the shared selectors
+  // of day-entries.ts (open row first, else the closed row ending last) — never by a local rule.
+  const dayEntries = await findEntriesOfDay(db, { tenantId, employeeId, date: today });
+  const running = openEntryOf(dayEntries);
+  const dayEntry = running ?? latestEndingClosed(dayEntries);
+  if (dayEntry && !multiSalon) return nothingOffered;
+
+  // The entry's own salon, deactivated or not — it is the entry's history.
+  let fixedSalon: SalonOption | null = null;
   if (dayEntry) {
-    if (!multiSalon) return nothingOffered;
-    // The entry's own salon, deactivated or not — it is the entry's history.
     const salon = await findSalon(db, tenantId, dayEntry.salonId);
-    return {
-      ...nothingOffered,
-      fixedSalon: salon ? { id: salon.id, name: salon.name } : null,
-    };
+    fixedSalon = salon ? { id: salon.id, name: salon.name } : null;
+    // A running day offers nothing: the open entry names the salon.
+    if (running) return { ...nothingOffered, fixedSalon };
   }
 
   if (!multiSalon) return nothingOffered;
 
-  const active = (await listSalons(db, tenantId, { includeInactive: false }))
+  const allActive = (await listSalons(db, tenantId, { includeInactive: false }))
     .map((salon) => ({ id: salon.id, name: salon.name }))
-    .sort((a, b) => a.name.localeCompare(b.name, "de") || (a.id < b.id ? -1 : 1));
-  const activeIds = new Set(active.map((salon) => salon.id));
+    .sort(byNameThenId);
+  const activeIds = new Set(allActive.map((salon) => salon.id));
+  // On a finished day the salon a plain re-clock continues is not offered a second time.
+  const active = fixedSalon ? allActive.filter((salon) => salon.id !== fixedSalon.id) : allActive;
+  const offeredIds = new Set(active.map((salon) => salon.id));
 
   const pattern = await salonForDay(db, tenantId, employeeId, now);
   const named = (await currentAndFutureAssignmentSalonIds(db, tenantId, employeeId, now)).filter(
     (id) => activeIds.has(id),
   );
-  // A deactivated pattern salon is never preselected: nothing can be clocked into it.
-  const preselectedSalonId = pattern && activeIds.has(pattern.salonId) ? pattern.salonId : null;
+  // A deactivated pattern salon is never preselected: nothing can be clocked into it. On a finished
+  // day the pattern salon is preselected only when it is one of the offered salons.
+  const preselectedSalonId =
+    pattern && activeIds.has(pattern.salonId) && offeredIds.has(pattern.salonId)
+      ? pattern.salonId
+      : null;
 
-  const offerChoice = !(named.length === 1 && named[0] === preselectedSalonId);
+  // "Nothing to choose": the assignments name exactly one salon and it is the one already in use —
+  // the fixed salon of a finished day, else the preselected pattern salon.
+  const offerChoice =
+    active.length > 0 &&
+    !(named.length === 1 && named[0] === (fixedSalon ? fixedSalon.id : preselectedSalonId));
   return {
     offerChoice,
     preselectedSalonId,
     salons: offerChoice ? active : [],
-    fixedSalon: null,
+    fixedSalon,
   };
 }

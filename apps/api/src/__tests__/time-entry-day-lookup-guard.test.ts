@@ -20,9 +20,9 @@
  * inspected; `apps/api/scripts/**` is out of scope on purpose (operator tools, Issue #69 "Nicht Teil
  * davon").
  *
- * It also pins two things the issue asks to stay true: the one-per-day function stays gone, and the
- * `// MULTI-ENTRY: <reason>` markers are complete (REQUIRED_MARKERS is the full list — a marker
- * anywhere else, or a missing one, turns this red).
+ * It also pins two things the issue asks to stay true: the one-per-day function stays gone, and no
+ * `// MULTI-ENTRY: <reason>` marker is left in production source (since Phase 70b-06 the list of
+ * places that had to compute differently with several entries per day is empty).
  *
  * Amendment 2026-10-16 (Issue #70, Phase 70b-02): the rule "at most one entry per employee and day"
  * left the code. `checkOneEntryPerDay` and its call sites are deleted, so the two files whose
@@ -42,10 +42,14 @@
  * kernel already reads every row; the rest-period rules select by latest end / earliest start) and
  * `platform/facade/holiday-resolution.ts` (the salon of the earliest entry of the day is the final
  * work-location rule, owner decision 2026-10-16) became decision comments and left REQUIRED_MARKERS in
- * the task that rewrote them. Only `clock-salon-choice.ts` is left; it leaves with 70b-06. Case count
- * unchanged; "nowhere else" is still enforced.
+ * the task that rewrote them. Only `clock-salon-choice.ts` was left.
+ *
+ * Amendment 2026-10-16 (Issue #70, Phase 70b-06): `clock-salon-choice.ts` resolved its marker (a
+ * finished day offers a second salon, D-02/D-11) and REQUIRED_MARKERS is gone. The case "markers are
+ * complete and nowhere else" became "no MULTI-ENTRY marker remains" over the same source walk, with an
+ * explicit non-empty floor. Case count unchanged.
  */
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, extname } from "node:path";
 import ts from "typescript";
 import { describe, it, expect } from "vitest";
@@ -66,12 +70,10 @@ const FIND_METHODS = new Set([
 // 35 before the conversion; 25 after (eleven day lookups disappear, one appears in day-entries.ts).
 const MIN_TIME_ENTRY_FIND_CALLS = 20;
 
-// The complete list of files carrying `// MULTI-ENTRY: <reason>` and the minimum number of marked
-// lines in each. Every place that would have to compute differently with several entries per day.
-const REQUIRED_MARKERS: Record<string, number> = {
-  "apps/api/src/contexts/time-tracking/clock-salon-choice.ts": 1,
-};
-const MARKER_RE = /\/\/ MULTI-ENTRY: .{10,}/;
+// Floor for the number of production source files the marker walk must see. Measured 2026-10-16
+// (Phase 70b-06): 249 files under apps/api/src outside __tests__ and *.test.ts; floor rounded down to
+// the next ten. A moved or emptied source tree must turn the case red, never pass having checked nothing.
+const MIN_WALKED_SOURCE_FILES = 240;
 
 function collectFiles(): string[] {
   const out: string[] = [];
@@ -278,25 +280,19 @@ describe("Phase 69b — time-entry day lookups go through findEntriesOfDay", () 
     ).toEqual([]);
   });
 
-  it("MULTI-ENTRY markers are complete and nowhere else", () => {
-    const missing: string[] = [];
-    for (const [rel, min] of Object.entries(REQUIRED_MARKERS)) {
-      const abs = join(REPO_ROOT, rel);
-      const count = existsSync(abs)
-        ? readFileSync(abs, "utf8")
-            .split("\n")
-            .filter((l) => MARKER_RE.test(l)).length
-        : 0;
-      if (count < min) missing.push(`${rel} has ${count} marker line(s), needs ${min}`);
-    }
-    expect(missing, `missing MULTI-ENTRY markers:\n${missing.join("\n")}`).toEqual([]);
-    const markedFiles = collectFiles()
+  it("no MULTI-ENTRY marker remains in production source (every place now handles several entries per day)", () => {
+    const files = collectFiles();
+    // Anti-vacuity: the walk must have seen the production source tree.
+    expect(
+      files.length,
+      `the marker walk saw only ${files.length} files — the source tree moved or emptied`,
+    ).toBeGreaterThanOrEqual(MIN_WALKED_SOURCE_FILES);
+    const markedFiles = files
       .filter((abs) => readFileSync(abs, "utf8").includes("MULTI-ENTRY:"))
       .map(repoRel)
       .sort();
-    expect(
-      markedFiles,
-      "a MULTI-ENTRY marker outside REQUIRED_MARKERS — add the file to the table",
-    ).toEqual(Object.keys(REQUIRED_MARKERS).sort());
+    expect(markedFiles, "a MULTI-ENTRY marker is left — resolve it as a decision comment").toEqual(
+      [],
+    );
   });
 });

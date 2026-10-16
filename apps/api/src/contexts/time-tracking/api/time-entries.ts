@@ -1119,7 +1119,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     schema: {
       tags: ["Zeiterfassung"],
       description:
-        "presenceMinutes/workingMinutes are per-entry display values (rounded, null for open entries; invalid and non-WORK rows included). Do not sum them: period totals come from GET /time-entries/summary. With salonId (time-entry:read:ZUGEWIESEN, from and to required, at most 31 days) the list is the salon view: every in-scope entry recorded in that active salon in the caller's reach, for all persons.",
+        "presenceMinutes/workingMinutes are per-entry display values (rounded, null for open entries; invalid and non-WORK rows included). Do not sum them: period totals come from GET /time-entries/summary. salonName is the display name of the entry's own salon (also when it was deactivated); the control value stays salonId. With salonId (time-entry:read:ZUGEWIESEN, from and to required, at most 31 days) the list is the salon view: every in-scope entry recorded in that active salon in the caller's reach, for all persons.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requireAuth,
@@ -1274,6 +1274,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           // Issue #81 (D-11): the wire shape equals the write shape — a later UI can send the list
           // back unchanged.
           activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+          // Issue #70 (D-07): the entry's own salon, for display only — flattened to `salonName`
+          // below so no nested object and no additional id reaches the wire.
+          salon: { select: { name: true } },
         },
         take: TIME_ENTRIES_MAX,
         orderBy:
@@ -1303,13 +1306,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Phase 79 (Issue #79), D-06/D-14: every item additionally states its presence and working
       // time as integer minutes (Math.round here at the API edge only; the kernel stays exact).
       // An open entry has no duration yet, which is not the same as zero, hence null.
-      return entries.map((entry) => {
+      return entries.map(({ salon, ...entry }) => {
+        const salonName = salon.name;
         if (!entry.endTime) {
-          return { ...entry, presenceMinutes: null, workingMinutes: null };
+          return { ...entry, salonName, presenceMinutes: null, workingMinutes: null };
         }
         const { presenceMinutes, workingMinutes } = entryDurations(entry);
         return {
           ...entry,
+          salonName,
           presenceMinutes: Math.round(presenceMinutes),
           workingMinutes: Math.round(workingMinutes),
         };
@@ -3191,8 +3196,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       description:
         "Answers for the calling employee only (no employee parameter): the pattern salon of today as a " +
         "preselection, whether a salon choice is offered at all, the active salons (ids and names) when it " +
-        "is, or the salon today's existing entry is fixed to. Any active salon may be chosen at clock-in; a " +
-        "deviation from the pattern is not an error.",
+        "is, or the salon today's entry is fixed to. A running day names the salon of the open entry and " +
+        "offers nothing; a finished day names the salon a plain re-clock continues (fixedSalon) and offers " +
+        "the other active salons — choosing one starts a new entry. Any active salon may be chosen at " +
+        "clock-in; a deviation from the pattern is not an error.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requireAnyPermission("time-entry:create:EIGENE", "time-entry:create:ZUGEWIESEN"),
