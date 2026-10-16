@@ -179,3 +179,27 @@ describe("/team/time-entries - guards itself by its own permission (Issue #86, A
     expect(TEAM_TIMES).toContain('"/dashboard"');
   });
 });
+
+describe("/admin/employees - Stammsalon in the create form (Issue #86, AC-86-1)", () => {
+  it("reads GET /salons only for a caller with salon:read", () => {
+    expect(LIST).toMatch(/salonAdminRights\(\$authStore\.user\)\.canRead/);
+    expect(LIST).toMatch(/if \(!canReadSalons\) \{\s*createSalons = null;\s*return;/);
+    expect(LIST).toMatch(/api\.get<\{ salons: SalonRef\[\] \}>\("\/salons"\)/);
+  });
+
+  it("renders the field, blocks the submit while a required Stammsalon is missing and refreshes the list when the dialog opens", () => {
+    expect(LIST).toMatch(/<HomeSalonField salons=\{createSalons\} bind:value=\{cHomeSalonId\} \/>/);
+    expect(LIST).toMatch(/createBlockedByHomeSalon[\s\S]{0,160}offerHomeSalonChoice\(true,/);
+    expect(LIST).toMatch(
+      /disabled=\{creating \|\| createBlockedByUsualWorkDays \|\| createBlockedByHomeSalon\}/,
+    );
+    expect(LIST).toMatch(/cHomeSalonId = "";\s*void loadCreateSalons\(\);/);
+  });
+
+  it("sends homeSalonId only through homeSalonPayload and shows the server's German error", () => {
+    expect(LIST).toMatch(/Object\.assign\(payload, homeSalonPayload\(cHomeSalonId\)\)/);
+    expect(LIST).not.toMatch(/homeSalonId:/);
+    expect(LIST).toMatch(/createError = e instanceof Error \? e\.message : "Fehler beim Anlegen"/);
+    expect(LIST).toMatch(/\{#if createError\}\s*<div class="callout error">\{createError\}<\/div>/);
+  });
+});

@@ -7,6 +7,9 @@ import {
   endBody,
   formatCalendarDay,
   homeBody,
+  homeSalonOptions,
+  homeSalonPayload,
+  offerHomeSalonChoice,
   type SalonAssignment,
   type SalonRef,
 } from "$lib/employees/salon-assignments";
@@ -158,5 +161,34 @@ describe("request body builders (Issue #86, AC-86-5)", () => {
 
   it("endBody sends exactly validUntil", () => {
     expect(endBody("2026-11-30")).toEqual({ validUntil: "2026-11-30" });
+  });
+});
+
+describe("Stammsalon at creation (Issue #86, AC-86-1)", () => {
+  const salons: SalonRef[] = [
+    { id: "b", name: "Zentrum", isActive: true },
+    { id: "a", name: "Ärztehaus", isActive: true },
+    { id: "c", name: "Alt", isActive: false },
+    { id: "d", name: "Nord", isActive: true },
+  ];
+
+  it("homeSalonOptions keeps active salons only, sorted by name with German collation", () => {
+    expect(homeSalonOptions(salons).map((s) => s.id)).toEqual(["a", "d", "b"]);
+    const copy = JSON.parse(JSON.stringify(salons));
+    homeSalonOptions(salons);
+    expect(salons).toEqual(copy);
+  });
+
+  it("the choice is offered only to a caller who can list salons and only with more than one active salon", () => {
+    expect(offerHomeSalonChoice(true, 2)).toBe(true);
+    expect(offerHomeSalonChoice(true, 1)).toBe(false);
+    expect(offerHomeSalonChoice(true, 0)).toBe(false);
+    expect(offerHomeSalonChoice(false, 5)).toBe(false);
+  });
+
+  it("homeSalonId is part of the body only when a salon was chosen", () => {
+    expect(homeSalonPayload("a")).toEqual({ homeSalonId: "a" });
+    expect(homeSalonPayload("")).toEqual({});
+    expect("homeSalonId" in homeSalonPayload("")).toBe(false);
   });
 });

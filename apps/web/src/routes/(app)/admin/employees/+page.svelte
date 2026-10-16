@@ -2,7 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
-  import { employeeAdminRights } from "$lib/page-rights";
+  import { employeeAdminRights, salonAdminRights } from "$lib/page-rights";
   import { api } from "$api/client";
   import { salonContext } from "$stores/salon-context";
   import {
@@ -18,6 +18,13 @@
   import KPIStat from "$components/ui/KPIStat.svelte";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import HomeSalonField from "$lib/components/employees/HomeSalonField.svelte";
+  import {
+    homeSalonOptions,
+    homeSalonPayload,
+    offerHomeSalonChoice,
+    type SalonRef,
+  } from "$lib/employees/salon-assignments";
   import {
     type EmployeeClassification,
     CLASSIFICATION_OPTIONS,
@@ -108,6 +115,16 @@
       (usualWorkDaysMissing(cScheduleType, cUsualWorkDays) ||
         usualWorkDaysShortfall(cUsualWorkDays, cContractWorkDays) > 0),
   );
+  // Issue #86 (AC-86-1) — the Stammsalon is required in a tenant with several active salons. The
+  // salon list is read only for a caller who may list salons; null = not available, then no field
+  // is offered and the server's own German error answers a missing Stammsalon.
+  let createSalons = $state<SalonRef[] | null>(null);
+  let cHomeSalonId = $state("");
+  let createBlockedByHomeSalon = $derived(
+    createSalons !== null &&
+      offerHomeSalonChoice(true, homeSalonOptions(createSalons).length) &&
+      cHomeSalonId === "",
+  );
   let cUsePassword = $state(false);
   let cPassword = $state("");
   // Phase 49.2 — FLEXTIME Kernarbeitszeit fields + tenant defaults for pre-fill
@@ -181,6 +198,21 @@
   let canManageAccess = $derived(rights.canManageAccess);
   let canAssignRoles = $derived(rights.canAssignRoles);
   let showActions = $derived(rights.showActions);
+  let canReadSalons = $derived(salonAdminRights($authStore.user).canRead);
+
+  async function loadCreateSalons() {
+    if (!canReadSalons) {
+      createSalons = null;
+      return;
+    }
+    try {
+      const res = await api.get<{ salons: SalonRef[] }>("/salons");
+      createSalons = res.salons;
+    } catch {
+      // Without the list no choice is offered; the API still answers a missing Stammsalon.
+      createSalons = null;
+    }
+  }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   function isAnonymized(emp: Employee): boolean {
@@ -370,6 +402,8 @@
     cVacationPrefill = null;
     cBirthDate = "";
     refreshVacationPrefill();
+    cHomeSalonId = "";
+    void loadCreateSalons();
     createError = "";
     createEmailError = "";
     createOpen = true;
@@ -438,6 +472,7 @@
           tenantDefaultApprenticeVacationDays,
         ),
       };
+      Object.assign(payload, homeSalonPayload(cHomeSalonId));
       if (cUsePassword && cPassword) payload.password = cPassword;
       const res = await api.post<Employee & { emailError?: string }>("/employees", payload);
       employees = [...employees, res].sort((a, b) => a.lastName.localeCompare(b.lastName));
@@ -813,6 +848,7 @@
           onchange={refreshVacationPrefill}
         />
       </div>
+      <HomeSalonField salons={createSalons} bind:value={cHomeSalonId} />
       {#if canAssignRoles}
         <div class="form-group">
           <label class="form-label" for="c-role">Rolle</label>
@@ -1104,7 +1140,7 @@
       <button
         class="btn btn-primary"
         onclick={createEmployee}
-        disabled={creating || createBlockedByUsualWorkDays}
+        disabled={creating || createBlockedByUsualWorkDays || createBlockedByHomeSalon}
       >
         {creating ? "Anlegen…" : "Mitarbeiter anlegen"}
       </button>

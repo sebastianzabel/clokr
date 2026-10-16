@@ -156,3 +156,25 @@ export function homeBody(draft: { salonId: string; validFrom: string }): {
 export function endBody(validUntil: string): { validUntil: string } {
   return { validUntil };
 }
+
+// ── Stammsalon at creation ───────────────────────────────────────────────────
+
+/** Active salons for the Stammsalon select, sorted by name (German collation). */
+export function homeSalonOptions(salons: readonly SalonRef[]): SalonRef[] {
+  return salons.filter((s) => s.isActive).sort((a, b) => a.name.localeCompare(b.name, "de"));
+}
+
+/**
+ * Whether the create form asks for the Stammsalon. The API refuses a new employee without one as
+ * soon as the tenant has more than one active salon (400 on the missing `homeSalonId`); with exactly
+ * one active salon it resolves the salon itself, so the field stays hidden. A caller who cannot
+ * list salons (no salon:read) cannot be offered a choice - the server's answer is shown instead.
+ */
+export function offerHomeSalonChoice(canReadSalons: boolean, activeCount: number): boolean {
+  return canReadSalons && activeCount > 1;
+}
+
+/** `homeSalonId` for the `POST /employees` body: present only when a salon was chosen. */
+export function homeSalonPayload(chosenSalonId: string): { homeSalonId?: string } {
+  return chosenSalonId ? { homeSalonId: chosenSalonId } : {};
+}
