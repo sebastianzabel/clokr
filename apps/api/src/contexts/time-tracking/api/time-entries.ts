@@ -79,6 +79,7 @@ import {
 } from "../entry-invariants";
 import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
 import {
+  CLOCK_ENTRY_OVERLAP_MESSAGE,
   EntryConflictError,
   isEntryOverlapViolation,
   isOpenEntryPerDayViolation,
@@ -449,6 +450,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             resolution,
           });
         }
+        // Issue #70 (D-10): the punch would overlap a recorded entry (a closed neighbour, or a
+        // re-open that would run over later time); nothing was written.
+        if (resolution.reason === "ENTRY_OVERLAP") {
+          return reply.code(409).send({
+            error: CLOCK_ENTRY_OVERLAP_MESSAGE,
+            code: "ENTRY_OVERLAP",
+            resolution,
+          });
+        }
         return reply.code(409).send({ error: "Konflikt", resolution });
       }
 
@@ -663,12 +673,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (resolution.reason === "SALON_INACTIVE") {
           return reply.code(400).send(SALON_INACTIVE_BODY);
         }
-        // Issue #87 (D-04): a reopened entry never changes its salon.
-        if (resolution.reason === "SALON_DIFFERS_FROM_DAY_ENTRY") {
+        // Issue #70 (D-10/D-11): the START or the re-open would overlap a recorded entry — a
+        // closed neighbour, or time that is already booked later today. Nothing was written. (The
+        // former differing-salon 409 is gone: a different explicit salon starts a new entry.)
+        if (resolution.reason === "ENTRY_OVERLAP") {
           return reply.code(409).send({
-            error:
-              "Für heute ist bereits ein Eintrag in einem anderen Salon erfasst. Ein zweiter Salon am selben Tag ist noch nicht möglich.",
-            code: "SALON_DIFFERS_FROM_DAY_ENTRY",
+            error: CLOCK_ENTRY_OVERLAP_MESSAGE,
+            code: "ENTRY_OVERLAP",
             resolution,
           });
         }
@@ -784,6 +795,16 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (resolution.reason === "RETRO_PENDING") {
           return reply.code(409).send({
             error: "Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.",
+            resolution,
+          });
+        }
+        // Issue #70 (D-10): closing the entry now would overlap a recorded entry of the day (the
+        // database exclusion constraint refused it); the entry stays open and can be corrected
+        // through the form.
+        if (resolution.reason === "ENTRY_OVERLAP") {
+          return reply.code(409).send({
+            error: CLOCK_ENTRY_OVERLAP_MESSAGE,
+            code: "ENTRY_OVERLAP",
             resolution,
           });
         }

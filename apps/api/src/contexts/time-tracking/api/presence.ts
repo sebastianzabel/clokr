@@ -6,7 +6,7 @@ import { getCurrentShift } from "../../scheduling"; // Phase 101B (Issue #101, w
 import { getTenantTimezone, dateStrInTz } from "../../working-time-account"; // Phase 101B
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import type { ClockEvent } from "../../../services/clock/types";
-import { findEntriesOfDay } from "../day-entries"; // Phase 69b — the single day lookup
+import { findEntriesOfDay, openEntryOf } from "../day-entries"; // Phase 69b — the single day lookup
 
 // ── Zod schema ────────────────────────────────────────────
 const presenceEventSchema = z.object({
@@ -208,8 +208,10 @@ export async function presenceRoutes(app: FastifyInstance) {
         employeeId: employee.id,
         date: today,
       });
-      // MULTI-ENTRY: "any non-WIFI row of the day" — with several entries the confirm targets the
-      // first one in start order; decide whether presence should attach to a specific entry.
+      // Issue #70 (D-11): "any non-WIFI row of the day". With several entries per day the confirm
+      // targets the first such row in start order — a presence ping is a confirmation of the day,
+      // not a clock event, and never starts, re-opens or splits an entry, so it needs no salon
+      // decision and no overlap check.
       const existingNonWifiEntry =
         dayEntries.find((e) => ["NFC", "MANUAL", "CORRECTION"].includes(e.source)) ?? null;
 
@@ -240,8 +242,10 @@ export async function presenceRoutes(app: FastifyInstance) {
       // for a presence-confirm ping. See RESEARCH.md Pitfall 4.
       if (body.eventType === "connected") {
         // Check for existing WIFI entry — never create a second entry
-        // MULTI-ENTRY: "never a second entry" for WIFI relies on one row per day. Re-read (not the
-        // list above) so the query timing stays exactly as before the Phase 69b refactor.
+        // Issue #70 (D-11): "never a second entry" for WIFI — a WIFI row of the day is confirmed,
+        // never duplicated, and WIFI never starts a second salon's entry (a router has no salon
+        // input; #541 adds terminal salons through `event.salonId`). Re-read (not the list above)
+        // so the query timing stays exactly as before the Phase 69b refactor.
         const existingWifiEntry =
           (
             await findEntriesOfDay(app.prisma, { tenantId, employeeId: employee.id, date: today })
@@ -305,16 +309,16 @@ export async function presenceRoutes(app: FastifyInstance) {
             // entries this phase makes reachable would silently lose the
             // WIFI_PRESENCE_CONFIRMED audit entry — a gap in Revisionssicherheit.
             // The soft-delete filter stays (CLAUDE.md requirement).
-            // MULTI-ENTRY: the race winner is "the open row of the day" — unambiguous only while
-            // at most one row per day exists.
-            const winnerEntry =
-              (
-                await findEntriesOfDay(app.prisma, {
-                  tenantId,
-                  employeeId: employee.id,
-                  date: today,
-                })
-              ).find((e) => e.endTime === null) ?? null;
+            // Issue #70 (D-11): the race winner is "the open row of the day" — unambiguous, because
+            // the open-per-day index allows at most one open row per employee and day
+            // (`openEntryOf`).
+            const winnerEntry = openEntryOf(
+              await findEntriesOfDay(app.prisma, {
+                tenantId,
+                employeeId: employee.id,
+                date: today,
+              }),
+            );
             if (winnerEntry) {
               await app.prisma.auditLog.create({
                 data: {
@@ -330,7 +334,8 @@ export async function presenceRoutes(app: FastifyInstance) {
             return reply.code(200).send({ ok: true });
           }
           // Other CONFLICTs (LEAVE_APPROVED, MONTH_LOCKED, RETRO_PENDING, NOT_CLOCKED_IN —
-          // NOT_CLOCKED_IN shouldn't fire on IN — and Phase 68b's NO_ACTIVE_SALON) — log +
+          // NOT_CLOCKED_IN shouldn't fire on IN — Phase 68b's NO_ACTIVE_SALON and Issue #70's
+          // ENTRY_OVERLAP, an event instant inside or before a recorded entry) — log +
           // still return 200 to preserve the adapter's idempotent contract (Pitfall 4 — never
           // 409 on /events). Phase 118: that new reason deliberately gets no branch of its own
           // here — the /events adapter never responds with 409.
@@ -381,6 +386,14 @@ export async function presenceRoutes(app: FastifyInstance) {
           // Locked month — silent 200 (preserves pre-Plan-5 line 301-306 behavior;
           // no user-facing error for the adapter poll loop).
           app.log.warn({ employeeId: employee.id, mac }, "WIFI_DISCONNECTED_BLOCKED_BY_MONTH_LOCK");
+          return reply.code(200).send({ ok: true });
+        }
+        if (disconnectResolution.reason === "ENTRY_OVERLAP") {
+          // Issue #70: closing the entry at the observed instant would overlap a recorded entry
+          // (the database refused it); the entry stays open for the attendance checker / a
+          // correction. Logged, silent 200 like the month lock — the adapter poll loop never sees
+          // a 409 or a 500.
+          app.log.warn({ employeeId: employee.id, mac }, "WIFI_DISCONNECTED_ENTRY_OVERLAP");
           return reply.code(200).send({ ok: true });
         }
         // Other CONFLICT reasons (LEAVE_APPROVED, ALREADY_CLOCKED_IN — shouldn't

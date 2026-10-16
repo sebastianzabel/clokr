@@ -30,6 +30,13 @@
  * and the AST case that pinned the function's read path now pins its ABSENCE (same case count). The
  * remaining markers stay: each still names a place that must compute differently once several
  * entries per day exist, and is resolved by a later 70b plan.
+ *
+ * Amendment 2026-10-16 (Issue #70, Phase 70b-03): the clock resolved its markers — `resolver.ts`
+ * (a different explicit salon starts a new entry, every START checks month lock and overlap),
+ * `day-entries.ts` (the selectors `openEntryOf` / `latestEndingClosed`) and `api/presence.ts`
+ * (WIFI keeps never starting a second salon) left REQUIRED_MARKERS in the task that removed their
+ * markers; `consolidate.ts` (never merges across salons) leaves with its own task. Case count
+ * unchanged; "nowhere else" is still enforced.
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, extname } from "node:path";
@@ -55,11 +62,8 @@ const MIN_TIME_ENTRY_FIND_CALLS = 20;
 // The complete list of files carrying `// MULTI-ENTRY: <reason>` and the minimum number of marked
 // lines in each. Every place that would have to compute differently with several entries per day.
 const REQUIRED_MARKERS: Record<string, number> = {
-  "apps/api/src/contexts/time-tracking/day-entries.ts": 1,
   "apps/api/src/contexts/time-tracking/arbzg.ts": 4,
   "apps/api/src/contexts/time-tracking/clock-salon-choice.ts": 1,
-  "apps/api/src/contexts/time-tracking/api/presence.ts": 3,
-  "apps/api/src/services/clock/resolver.ts": 4,
   "apps/api/src/services/clock/consolidate.ts": 1,
   "apps/api/src/contexts/platform/facade/holiday-resolution.ts": 1,
 };

@@ -9,14 +9,23 @@
  * - a foreign tenant's salon and an unknown id answer the byte-identical 404 in every state —
  *   no open entry, a closed entry of the day (REOPEN) and an open entry (T-100-09, D-12);
  * - a deactivated salon answers 400 SALON_INACTIVE, a null or malformed id 400 Validierungsfehler;
- * - re-clocking a finished day reopens its entry and never moves its salon: a differing explicit
- *   salon is a 409 SALON_DIFFERS_FROM_DAY_ENTRY and leaves the entry untouched (D-04).
+ * - re-clocking a finished day reopens its entry and never moves its salon (D-04); since #70 a
+ *   differing explicit salon starts a NEW entry in that salon and leaves the first one untouched
+ *   (see the amendment below).
+ *
+ * Amendment 2026-10-16 (Issue #70, Phase 70b-03, D-02/D-11): the case "REOPEN: a differing salon
+ * answers 409 SALON_DIFFERS_FROM_DAY_ENTRY and changes nothing" described the one-entry-per-day
+ * rule, which is gone. It is rewritten in place (same case, case count unchanged): a differing
+ * salon now starts a new entry in that salon, and the day's first entry stays exactly as it was.
+ * The foreign/unknown/inactive salon cases, the same-salon re-open and the locked-entry case are
+ * unchanged.
  *
  * Mutation proofs (recorded here, not re-run by CI), both on services/clock/resolver.ts:
  * - M1, removing the conditional `explicitSalonId` spread in START, turns red: the tracer, AC-5,
  *   the START foreign/unknown 404, the START inactive 400 and the on-behalf case;
- * - M2, removing the differing-salon comparison in REOPEN, turns red: "REOPEN: a differing salon
- *   answers 409 SALON_DIFFERS_FROM_DAY_ENTRY and changes nothing (D-04)".
+ * - M2 (before #70), removing the differing-salon comparison in REOPEN, turned the former 409 case
+ *   red. Since #70 the salon comparison decides START versus REOPEN, and the amended case
+ *   "REOPEN: a differing salon starts a NEW entry ..." fails when it is removed.
  *
  * No person names in fixtures. Every fixture id is a UUID.
  */
@@ -46,8 +55,7 @@ describe("Issue #87 — clock-in with a chosen salon (write path)", () => {
   let salonInactive: { id: string };
   let foreign: Awaited<ReturnType<typeof seedTestData>>;
 
-  // One distinct past Thursday per case: the one-entry-per-day index allows a single non-deleted
-  // row per employee and day, so no case ever shares a day with another.
+  // One distinct past Thursday per case, so no case ever shares a day with another.
   const baseMonday = addDaysStr(mondayOfWeekStr(), -14 * 7);
   const thursdayOf = (weekOffset: number): string => addDaysStr(baseMonday, weekOffset * 7 + 3);
 
@@ -218,19 +226,29 @@ describe("Issue #87 — clock-in with a chosen salon (write path)", () => {
     expect(rows).toBe(0);
   });
 
-  it("REOPEN: a differing salon answers 409 SALON_DIFFERS_FROM_DAY_ENTRY and changes nothing (D-04)", async () => {
+  it("REOPEN: a differing salon starts a NEW entry in that salon and leaves the first untouched (#70, D-02)", async () => {
     const day = thursdayOf(6);
     const entry = await seedClosedEntry(day, salonA.id);
     const res = await clockIn(day, "13:00", { source: "MOBILE", salonId: salonB.id });
-    expect(res.statusCode).toBe(409);
-    const body = JSON.parse(res.body) as { error: string; code: string };
-    expect(body.code).toBe("SALON_DIFFERS_FROM_DAY_ENTRY");
-    expect(body.error).toContain("anderen Salon");
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as ClockInBody;
+    expect(body.resolution.kind).toBe("CLOCKED_IN");
+    expect(body.resolution.entry.id).not.toBe(entry.id);
+    expect(body.resolution.entry.salonId).toBe(salonB.id);
     const after = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
     expect(after.endTime?.toISOString()).toBe(instant(day, "12:00").toISOString());
     expect(after.salonId).toBe(salonA.id);
     expect(await app.prisma.break.count({ where: { timeEntryId: entry.id } })).toBe(0);
     expect(await app.prisma.auditLog.count({ where: { entityId: entry.id } })).toBe(0);
+    expect(
+      await app.prisma.timeEntry.count({
+        where: {
+          employeeId: seed.employee.id,
+          date: new Date(`${day}T00:00:00Z`),
+          deletedAt: null,
+        },
+      }),
+    ).toBe(2);
   });
 
   it("REOPEN: the same salon reopens the entry normally and keeps the salon", async () => {

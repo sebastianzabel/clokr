@@ -28,6 +28,12 @@ const OPEN_PER_DAY_INDEX = "TimeEntry_employeeId_date_open_unique";
 
 /** Neutral overlap text: names neither a date nor a time (see `overlapMessageForCaller`). */
 export const OVERLAP_MESSAGE_NEUTRAL = "Überschneidung mit einem bestehenden Eintrag dieses Tages.";
+/**
+ * Clock text (Issue #70, 70b-03): a clock event — start, re-open or clock-out — would overlap a
+ * recorded entry. It names no date, time or salon, so the clock routes need no reach decision.
+ */
+export const CLOCK_ENTRY_OVERLAP_MESSAGE =
+  "Der Eintrag überschneidet sich mit einem bestehenden Eintrag dieses Tages.";
 /** Open-per-day text: another entry of the day is still running. */
 export const OPEN_ENTRY_PER_DAY_MESSAGE = "Es läuft bereits ein Eintrag an diesem Tag.";
 
