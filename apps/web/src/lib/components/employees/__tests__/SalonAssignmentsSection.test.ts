@@ -120,6 +120,20 @@ describe("SalonAssignmentsSection - read (Issue #86, AC-86-5)", () => {
     expect(rows[3]).toContain("alle Tage");
   });
 
+  it("keeps the change buttons out of the header and the table in a scrolling wrapper (phone width)", async () => {
+    answer();
+    renderWithTheme(SalonAssignmentsSection, { employeeId: E, canEdit: true });
+    await settle();
+    // The Section header never wraps: a button there overflows the card on a phone (e2e matrix).
+    for (const id of ["salon-assignment-add", "salon-assignment-home"]) {
+      const button = document.querySelector(`[data-testid="${id}"]`);
+      expect(button, id).not.toBeNull();
+      expect(button?.closest(".section-hd"), id).toBeNull();
+    }
+    const table = document.querySelector('[data-testid="salon-assignments-table"]');
+    expect(table?.parentElement?.classList.contains("table-wrap")).toBe(true);
+  });
+
   it("renders no button for a read-only caller", async () => {
     answer();
     renderWithTheme(SalonAssignmentsSection, { employeeId: E, canEdit: false });

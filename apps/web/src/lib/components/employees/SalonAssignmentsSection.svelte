@@ -163,8 +163,10 @@
   title="Salonzuordnungen"
   sub="Stammsalon und Einsatzsalons; beendete Zuordnungen bleiben sichtbar."
 >
-  {#snippet actions()}
-    {#if canEdit && activeSalons.length > 0}
+  <!-- The buttons sit in the body, not in the Section header actions: the header never wraps, so
+       two buttons next to the title overflow the card on a phone (Issue #86, AC-86-7). -->
+  {#if canEdit && activeSalons.length > 0}
+    <div class="assign-toolbar">
       <button
         type="button"
         class="btn btn-ghost btn-sm"
@@ -183,8 +185,8 @@
       >
         Stammsalon ändern
       </button>
-    {/if}
-  {/snippet}
+    </div>
+  {/if}
   {#if loadError}
     <div class="callout error">{loadError}</div>
   {:else if loading}
@@ -198,41 +200,43 @@
     {#if rows.length === 0}
       <p class="hint">Keine Salonzuordnung vorhanden.</p>
     {:else}
-      <table class="data-table" data-testid="salon-assignments-table">
-        <thead>
-          <tr>
-            <th scope="col">Art</th>
-            <th scope="col">Salon</th>
-            <th scope="col">Zeitraum</th>
-            <th scope="col">Wochentage</th>
-            <th scope="col">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each rows as row (row.id)}
-            <tr data-testid="salon-assignment-row-{row.id}">
-              <td>{row.kindLabel}</td>
-              <td>{row.salonName}</td>
-              <td>{row.periodLabel}</td>
-              <td>{row.weekdaysLabel}</td>
-              <td>
-                {#if row.ended}<span class="badge badge-gray">beendet</span>{/if}
-                {#if canEdit && row.canEnd}
-                  <button
-                    type="button"
-                    class="btn btn-ghost btn-sm"
-                    data-testid="salon-assignment-end-{row.id}"
-                    disabled={submitting}
-                    onclick={() => openEnd(row)}
-                  >
-                    Beenden
-                  </button>
-                {/if}
-              </td>
+      <div class="table-wrap">
+        <table class="data-table" data-testid="salon-assignments-table">
+          <thead>
+            <tr>
+              <th scope="col">Art</th>
+              <th scope="col">Salon</th>
+              <th scope="col">Zeitraum</th>
+              <th scope="col">Wochentage</th>
+              <th scope="col">Status</th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {#each rows as row (row.id)}
+              <tr data-testid="salon-assignment-row-{row.id}">
+                <td>{row.kindLabel}</td>
+                <td>{row.salonName}</td>
+                <td>{row.periodLabel}</td>
+                <td>{row.weekdaysLabel}</td>
+                <td>
+                  {#if row.ended}<span class="badge badge-gray">beendet</span>{/if}
+                  {#if canEdit && row.canEnd}
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm"
+                      data-testid="salon-assignment-end-{row.id}"
+                      disabled={submitting}
+                      onclick={() => openEnd(row)}
+                    >
+                      Beenden
+                    </button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     {/if}
 
     {#if canEdit && mode !== null}
@@ -321,6 +325,13 @@
 </Section>
 
 <style>
+  .assign-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    margin-bottom: var(--s-3);
+  }
+
   .assign-form {
     margin-top: var(--s-4);
     padding-top: var(--s-4);
