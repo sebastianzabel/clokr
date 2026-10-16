@@ -14,7 +14,6 @@ import {
   isMonthClosed,
   getClosedMonthsForDates,
   getClosedMonthsInRange,
-  getMonthClosingBalance,
   getMonthlySnapshotsInRange,
   sumCarryOverByMonth,
   countSnapshotsBefore,
@@ -186,33 +185,6 @@ describe("Arbeitszeitkonto facade — SaldoSnapshot (Phase 100B Plan 07)", () =>
     it("returns an empty Set for an empty employeeIds array (no query)", async () => {
       const closedSet = await getClosedMonthsForDates(app.prisma, [], data.tenant.id, [new Date()]);
       expect(closedSet.size).toBe(0);
-    });
-  });
-
-  describe("getMonthClosingBalance (W4) — bare periodStart match, preserved as-is", () => {
-    it("returns balanceMinutes for a closed month", async () => {
-      const target = new Date("2031-09-15T00:00:00.000Z");
-      await createSnapshot(data.employee.id, target, { balanceMinutes: 245 });
-      const { start: monthStart } = saldoSnapshotPeriodBounds(target);
-
-      const balance = await getMonthClosingBalance(
-        app.prisma,
-        data.employee.id,
-        data.tenant.id,
-        monthStart,
-      );
-      expect(balance).toBe(245);
-    });
-
-    it("returns null for an open month", async () => {
-      const { start: monthStart } = saldoSnapshotPeriodBounds(new Date("2031-10-15T00:00:00.000Z"));
-      const balance = await getMonthClosingBalance(
-        app.prisma,
-        data.employee.id,
-        data.tenant.id,
-        monthStart,
-      );
-      expect(balance).toBeNull();
     });
   });
 

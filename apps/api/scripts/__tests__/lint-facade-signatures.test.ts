@@ -591,7 +591,10 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // merge with #538; all three pass F1/F2/F3 directly, exceptions unchanged at 17.
     // Phase 563 (Issue #563, 2026-10-15): the storeHours mirror was removed from facade/salons.ts
     // (-1, syncSoleActiveSalonOpeningHours) — 148 -> 147; exceptions unchanged at 17.
-    expect(functions).toHaveLength(147);
+    // Issue #595 (2026-10-16): -1, the dead W4 closing-balance reader of
+    // working-time-account/facade/saldo-snapshot.ts (no caller, exact periodStart match) —
+    // 147 -> 146; exceptions unchanged at 17.
+    expect(functions).toHaveLength(146);
 
     const rawExceptions = JSON.parse(
       readFileSync(

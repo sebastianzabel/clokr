@@ -52,7 +52,6 @@ export {
   isMonthClosed,
   getClosedMonthsForDates,
   getClosedMonthsInRange,
-  getMonthClosingBalance,
   getMonthlySnapshotsInRange,
   sumCarryOverByMonth,
   countSnapshotsBefore,
