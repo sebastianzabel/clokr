@@ -67,6 +67,20 @@ export function employeeAdminRights(user: Caller): EmployeeAdminRights {
   };
 }
 
+/** `/admin/employees/:id`, Arbeitszeit tab: what a contract change may do beyond the contract. */
+export interface ContractShiftRights {
+  /**
+   * Discarding the future shifts of a SHIFT_BASED employee while switching the contract type
+   * (`cancelOrphanShifts`) is a planning decision - shift:plan (#650). The API still checks that
+   * the reach covers every affected shift; this only hides the control.
+   */
+  canDiscardShifts: boolean;
+}
+
+export function contractShiftRights(user: Caller): ContractShiftRights {
+  return { canDiscardShifts: hasPermission(user, "shift:plan:ZUGEWIESEN") };
+}
+
 /** `/time-entries`: may the caller file a Zeitnachtrag for their own entry
  *  (`POST /retro-entry-requests`, retro-request:create:EIGENE)? */
 export function mayFileRetroRequest(user: Caller): boolean {
