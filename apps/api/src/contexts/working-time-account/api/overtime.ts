@@ -1,7 +1,12 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
-import { permissionReach, requirePermission } from "../../platform";
+import {
+  permissionReach,
+  requirePermission,
+  reportPopulationWhere, // Issue #613 — the one period population rule
+  isEmployedInPeriod, // Issue #613 — its in-memory twin
+} from "../../platform";
 import {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
@@ -620,15 +625,19 @@ export async function overtimeRoutes(app: FastifyInstance) {
             );
 
       // PERF-V1814-01: Get employees with tenant JOIN (folds tenant.findUnique, no extra query)
+      // Issue #613: the month's population is the one period rule (employed in the month, never
+      // anonymised); the login state (`user.isActive`) never decides it, so a person who left in
+      // this month is listed for it and a deactivated login without an exit date stays.
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
-          user: { isActive: true },
           ...EXCLUDE_EXEMPT_EMPLOYEE_FILTER, // Phase 76.7 (D-07, SALDO-V19-04a)
-          ...(statusScopedEmployeeIds !== "all" ? { id: { in: statusScopedEmployeeIds } } : {}),
+          AND: [
+            reportPopulationWhere(monthStart, monthEnd),
+            ...(statusScopedEmployeeIds !== "all" ? [{ id: { in: statusScopedEmployeeIds } }] : []),
+          ],
         },
         include: {
-          user: { select: { isActive: true } },
           workSchedules: { orderBy: { validFrom: "desc" } },
         },
         orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
@@ -668,11 +677,17 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const breakFindingDaysOf = (employeeId: string): string[] =>
         (breakFindingsByEmp.get(employeeId) ?? []).map((d) => d.date);
 
+      // Issue #613 (P-03): the exit day as the tenant-local calendar day, so the web formats a string
+      // and never parses an instant.
+      const statusExitDate = (exit: Date | null): string | null =>
+        exit ? dateStrInTz(exit, tz) : null;
+
       const result: {
         employeeId: string;
         employeeName: string;
         employeeNumber: string;
         status: "ready" | "missing" | "closed";
+        exitDate: string | null; // Issue #613 (P-03) — tenant-local exit day, additive
         missingDates?: string[];
         snapshot?: Record<string, unknown>;
         unconfirmedBreakDays?: string[]; // Phase 92 (BREAK-05)
@@ -681,11 +696,6 @@ export async function overtimeRoutes(app: FastifyInstance) {
       }[] = [];
 
       for (const emp of employees) {
-        // Skip employees hired after this month
-        if (emp.hireDate > monthEnd) {
-          continue;
-        }
-
         // Check if snapshot already exists (= closed) — PERF-V1814-01: Map lookup, no DB call
         // isPeriodStartInMonth is REQUIRED here, not optional: fetchCloseMonthData's Q1 range
         // pre-fetch (periodStart gte start / lte end) is one day too wide at the upper bound
@@ -705,6 +715,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeId: emp.id,
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
+            exitDate: statusExitDate(emp.exitDate),
             status: "closed",
             snapshot: {
               id: existingSnapshot.id,
@@ -731,6 +742,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeId: emp.id,
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
+            exitDate: statusExitDate(emp.exitDate),
             status: "ready",
             unconfirmedBreakDays: [], // RESOLVED Q1 — no daily gate for flexible schedules
             breakFindingDays: breakFindingDaysOf(emp.id), // Issue #511 (D-12) — every schedule type
@@ -820,6 +832,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeId: emp.id,
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
+            exitDate: statusExitDate(emp.exitDate),
             status: "missing",
             missingDates,
             unconfirmedBreakDays,
@@ -831,6 +844,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeId: emp.id,
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
+            exitDate: statusExitDate(emp.exitDate),
             status: "ready",
             unconfirmedBreakDays,
             breakFindingDays: breakFindingDaysOf(emp.id),
@@ -920,18 +934,25 @@ export async function overtimeRoutes(app: FastifyInstance) {
               yearStatusStichtag,
             );
 
+      // Issue #613: the year's population is selected once by the one period rule over the whole
+      // year; each month then counts a person only while they are employed in it
+      // (`isEmployedInPeriod`, the in-memory twin of the same rule).
+      const { start: yearStart } = monthRangeUtc(year, 1, tz);
+      const { end: yearEnd } = monthRangeUtc(year, 12, tz);
+
       // PERF-V1814-01: Get employees with tenant JOIN (folds tenant.findUnique, no extra query)
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
-          user: { isActive: true },
           ...EXCLUDE_EXEMPT_EMPLOYEE_FILTER, // Phase 76.7 (D-07, SALDO-V19-04a)
-          ...(yearStatusScopedEmployeeIds !== "all"
-            ? { id: { in: yearStatusScopedEmployeeIds } }
-            : {}),
+          AND: [
+            reportPopulationWhere(yearStart, yearEnd),
+            ...(yearStatusScopedEmployeeIds !== "all"
+              ? [{ id: { in: yearStatusScopedEmployeeIds } }]
+              : []),
+          ],
         },
         include: {
-          user: { select: { isActive: true } },
           workSchedules: { orderBy: { validFrom: "desc" } },
         },
         orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
@@ -939,8 +960,6 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       // PERF-V1814-01: bulk-fetch full-year data (4 queries + 1 batched work-location
       // holiday resolution, Phase 71b issue #71)
-      const { start: yearStart } = monthRangeUtc(year, 1, tz);
-      const { end: yearEnd } = monthRangeUtc(year, 12, tz);
       const yearEmployeeIds = employees.map((e) => e.id);
       const { snapshotsByEmp, entriesByEmp, leaveByEmp, absencesByEmp, holidaysByEmp } =
         await fetchCloseMonthData(app.prisma, tenantId, yearEmployeeIds, yearStart, yearEnd, tz);
@@ -966,8 +985,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
       for (let m = 1; m <= 12; m++) {
         const { start: monthStart, end: monthEnd } = monthRangeUtc(year, m, tz);
 
-        // Determine which employees are relevant for this month (hired before month end)
-        const relevantEmployees = employees.filter((emp) => emp.hireDate <= monthEnd);
+        // Issue #613: a person counts in the months of their employment only (hired by the month
+        // end, not yet exited before the month start).
+        const relevantEmployees = employees.filter((emp) =>
+          isEmployedInPeriod(emp, monthStart, monthEnd),
+        );
         const totalCount = relevantEmployees.length;
 
         // No relevant employees for this month (no one hired yet)
