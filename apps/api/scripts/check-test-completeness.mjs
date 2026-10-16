@@ -844,11 +844,13 @@ import { readFileSync } from "node:fs";
 // reports-hr-86, hr-no-day-level-data-86, hr-view-86; amended system-roles and system-role-template-personalabteilung)
 // plus #650's `cancel-orphan-shifts-permission-650.test.ts` (+1 file, +6 tests). Both floors equal the measured numbers.
 // Issue #654 (2026-10-16): +1 file (import-reach-654.test.ts), counted from the source, no full run: MIN_FILES 612 -> 613.
-const MIN_FILES = 613;
+// Issue #658 (2026-10-16): +1 file (time-entry-create-reach-658.test.ts), source-counted, no full run: MIN_FILES 613 -> 614.
+const MIN_FILES = 614;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
-const MIN_TESTS = 9796;
+// Issue #658: +5 cases in time-entry-create-reach-658.test.ts (source-counted): MIN_TESTS 9796 -> 9801.
+const MIN_TESTS = 9801;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

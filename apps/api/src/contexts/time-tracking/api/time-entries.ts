@@ -1305,6 +1305,38 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if (!targetEmployee) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
+      // Issue #658: a ZUGEWIESEN caller creating for ANOTHER person is bound to their reach, by
+      // the same per-entry rule as PUT (#85/#91): the person's Stammsalon / person list at the entry
+      // date, OR the salon the entry will be recorded in (a Springer's guest-salon entry). Out of
+      // reach answers byte-identical to an unknown id, before any other check that could leak
+      // existence (deactivated, hire date, leave) and before any write. A salon that does not
+      // resolve is out of reach too. Own entries and whole-tenant reach are unchanged.
+      if (isManager && employeeId !== user.employeeId) {
+        const createScopeReach = await resolveAccessReach(
+          app.prisma,
+          accessContextFromRequest(req),
+          "time-entry:create:ZUGEWIESEN",
+        );
+        let createInScope = await isStammsalonScopeMatch(
+          app.prisma,
+          user.tenantId,
+          createScopeReach,
+          employeeId,
+          new Date(body.date),
+        );
+        if (!createInScope && createScopeReach.kind === "scoped") {
+          const entrySalon = await resolveEntrySalon(app.prisma, {
+            tenantId: user.tenantId,
+            employeeId,
+            startTime: new Date(body.startTime),
+            explicitSalonId: body.salonId,
+          });
+          createInScope = entrySalon.ok && createScopeReach.salonIds.includes(entrySalon.salonId);
+        }
+        if (!createInScope) {
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
       if (!targetEmployee.user.isActive) {
         return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
       }
