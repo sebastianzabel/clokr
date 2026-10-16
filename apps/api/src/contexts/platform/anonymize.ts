@@ -13,6 +13,11 @@
  *   - Employee.lastName        → "GELÖSCHT-{employeeNumber-or-id-prefix}"
  *   - Employee.employeeNumber  → same anonymized label as lastName
  *   - Employee.nfcCardId       → null
+ *   - Employee.exitDate        → the caller's `exitDayIfUnset`, ONLY when it was empty (Issue #614,
+ *     D-01: an anonymized person is no longer employed; an existing exit date, past or future,
+ *     is never changed). The caller passes the tenant-local calendar day as UTC midnight (the
+ *     convention of web-entered exit dates) and, when it was newly set, runs the #447 exit-year
+ *     entitlement sync.
  *   - User.email               → "deleted-{id-prefix}@anonymized.local"
  *   - User.passwordHash        → "ANONYMIZED"
  *   - User.isActive            → false
@@ -51,6 +56,9 @@
  *
  * Caller responsibilities:
  *   - Open the transaction (`prisma.$transaction(...)`)
+ *   - Route only (Issue #614): end the person's absences through `app.absenceExit` BEFORE calling
+ *     this helper, so the PII sweep below also nulls the notes / document paths / § 9 reasons of
+ *     every row the exit wrote. The batch copy-erasure (`scripts/anonymize-dump.ts`) does not.
  *   - Emit the AuditLog entry — this helper does NOT log itself.
  *     The route emits action="ANONYMIZE" (per-employee).
  *     The batch script emits action="ANONYMIZATION_RUN" (whole-DB sweep), whose newValue lists
@@ -81,11 +89,18 @@ export {
 export interface AnonymizeEmployeeOptions {
   tx: Prisma.TransactionClient;
   employeeId: string;
+  /**
+   * Issue #614 (D-01): UTC midnight of the tenant-local calendar day the caller decided to be the
+   * exit day (`todayInTz`). Written to `Employee.exitDate` only when the stored value is null.
+   */
+  exitDayIfUnset: Date;
 }
 
 /** What the anonymization removed that the caller must audit (Phase 74b, D-22). */
 export interface AnonymizeEmployeeResult {
   removedRoleAssignments: RemovedRoleAssignment[];
+  /** Issue #614 (D-01): the exit date before and after; `before` null means this call set it. */
+  exitDate: { before: Date | null; after: Date };
 }
 
 /**
@@ -96,11 +111,11 @@ export interface AnonymizeEmployeeResult {
 export async function anonymizeEmployeeData(
   opts: AnonymizeEmployeeOptions,
 ): Promise<AnonymizeEmployeeResult> {
-  const { tx, employeeId } = opts;
+  const { tx, employeeId, exitDayIfUnset } = opts;
 
   const employee = await tx.employee.findUnique({
     where: { id: employeeId },
-    select: { id: true, tenantId: true, userId: true, employeeNumber: true },
+    select: { id: true, tenantId: true, userId: true, employeeNumber: true, exitDate: true },
   });
   if (!employee) {
     throw new Error(`anonymizeEmployeeData: employee ${employeeId} not found`);
@@ -119,6 +134,8 @@ export async function anonymizeEmployeeData(
       lastName: anonymizedLabel,
       employeeNumber: anonymizedLabel,
       nfcCardId: null,
+      // Issue #614 (D-01): ends the employment when no exit date was entered; never moves one.
+      ...(employee.exitDate === null ? { exitDate: exitDayIfUnset } : {}),
     },
   });
 
@@ -191,5 +208,8 @@ export async function anonymizeEmployeeData(
   await tx.otpToken.deleteMany({ where: { userId } });
   await tx.refreshToken.deleteMany({ where: { userId } });
 
-  return { removedRoleAssignments };
+  return {
+    removedRoleAssignments,
+    exitDate: { before: employee.exitDate, after: employee.exitDate ?? exitDayIfUnset },
+  };
 }

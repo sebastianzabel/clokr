@@ -37,7 +37,11 @@ import {
   createdAssignmentAuditEntry,
   removedAssignmentAuditEntry,
 } from "../role-assignment-audit";
-import { hardDeleteOvertimeDataForEmployee, getTenantTimezone } from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15; Phase 67b Plan 03 — D-22/D-07
+import {
+  hardDeleteOvertimeDataForEmployee,
+  getTenantTimezone,
+  todayInTz,
+} from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15; Phase 67b Plan 03 — D-22/D-07
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -1553,6 +1557,10 @@ export async function employeeRoutes(app: FastifyInstance) {
       // deletion just as reliably as an avatar or absence document.
       const section9Docs = await getSection9DocumentPaths(app.prisma, id);
 
+      // Issue #614 (D-01): an anonymized person is no longer employed. Without an exit date the
+      // exit day is the tenant-local today, stored as UTC midnight like a web-entered exit date.
+      const exitDayIfUnset = todayInTz(await getTenantTimezone(app.prisma, req.user.tenantId));
+
       // Phase 74b (D-19/D-20/D-22): the anonymization, the per-assignment DELETE audits and the
       // ANONYMIZE audit run under the lockout guard. Anonymizing the tenant's last active
       // tenant-wide holder of role:manage / role-assignment:manage rolls all of it back and
@@ -1561,10 +1569,32 @@ export async function employeeRoutes(app: FastifyInstance) {
       try {
         await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
           await withRoleLockoutGuard(tx, req.user.tenantId, async () => {
-            const { removedRoleAssignments } = await anonymizeEmployeeData({
+            const { removedRoleAssignments, exitDate } = await anonymizeEmployeeData({
               tx,
               employeeId: id,
+              exitDayIfUnset,
             });
+            // Issue #614 (D-01): when the anonymization itself set the exit date, bring the
+            // exit-year VACATION row to its § 5 BUrlG value exactly as PATCH /:id/deactivate does
+            // (Issue #447 invariant; never past years, never a human-written row).
+            const exitDateSet = exitDate.before === null;
+            if (exitDateSet) {
+              await syncExitYearVacationEntitlement(
+                tx,
+                id,
+                req.user.tenantId,
+                exitDate.after.getUTCFullYear(),
+                (entry) =>
+                  app.audit({
+                    action: entry.action,
+                    entity: "LeaveEntitlement",
+                    entityId: entry.entityId,
+                    oldValue: entry.oldValue,
+                    tx,
+                    ...requestAuditFields(req, entry.newValue as object | undefined),
+                  }),
+              );
+            }
             await auditRemovedRoleAssignments(
               app,
               req,
@@ -1577,7 +1607,10 @@ export async function employeeRoutes(app: FastifyInstance) {
               entity: "Employee",
               entityId: id,
               oldValue: { employeeNumber: employee.employeeNumber },
-              ...requestAuditFields(req),
+              ...requestAuditFields(req, {
+                exitDate: exitDate.after.toISOString().slice(0, 10),
+                exitDateSet,
+              }),
               tx,
             });
           });
