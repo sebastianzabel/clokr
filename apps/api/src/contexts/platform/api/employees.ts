@@ -4,8 +4,9 @@ import { Prisma, type Role, type RoleAssignmentScopeType } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { hasPermission, permissionReach, requirePermission } from "../request-permissions";
 import { loadPasswordPolicy } from "../password-policy";
-import { accessContextFromRequest } from "../access-context"; // Phase 91b Plan 10 (#91), D-12/D-14
+import { accessContextFromRequest, salonOnlyReach } from "../access-context"; // Phase 91b Plan 10 (#91), D-12/D-14; Issue #558 D-12
 import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-12/D-14
+import { resolveSalonInReach } from "../facade/salons"; // Issue #558 D-01 — the one validator of a chosen salon
 import {
   isPersonMasterDataInScope,
   isStammsalonScopeMatch,
@@ -400,6 +401,20 @@ function maskOvertimeAccount<A extends { balanceHours: unknown }>(
   return visible ? account : { ...account, balanceHours: null };
 }
 
+/**
+ * Issue #558 D-01 — the only key of the list query that is validated by a schema. Every other key
+ * (`includeAnonymized`) is still read as before and zod strips it; a malformed salon id answers
+ * 400 through the global error handler.
+ */
+const employeeListQuerySchema = z.object({ salonId: z.string().uuid().optional() });
+
+/**
+ * Issue #558 D-01 — byte-identical with the dashboard's `TEAM_SALON_NOT_FOUND` and the Salonansicht
+ * of `GET /time-entries`: foreign, unknown, inactive and out-of-reach salons are indistinguishable
+ * (T-100-09).
+ */
+const SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
+
 export async function employeeRoutes(app: FastifyInstance) {
   // GET /api/v1/employees
   //
@@ -411,10 +426,19 @@ export async function employeeRoutes(app: FastifyInstance) {
   // reach covers the person; otherwise it is `null`, never a fabricated 0 (owner decision
   // 2026-08-27: the total saldo is visible to Inhaber, Personalabteilung and the employee). A
   // whole-tenant caller receives the unchanged response.
+  //
+  // Issue #558 (D-01/D-08/D-11): an optional `salonId` narrows the list to the persons of that salon
+  // by the same master-data rule (Stammsalon today OR an active deployment today), evaluated for a
+  // salon-only reach (`salonOnlyReach`) and intersected with the caller's own `employee:read`
+  // reach — the filter can only narrow. The salon is validated by `resolveSalonInReach` against
+  // that reach before any employee row is read; every rejection answers the one 404 body. Under a
+  // filter the caller's own row follows the filter (listed only when the caller belongs to the
+  // salon): the filtered list is a view of the salon, not a self lookup. Without `salonId` the
+  // statements below run exactly as before.
   app.get("/", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("employee:read:ZUGEWIESEN"),
-    handler: async (req) => {
+    handler: async (req, reply) => {
       // v1.8.8 — anonymized rows are hidden by default (team picker etc. must stay clean).
       // ADMINs can opt in via ?includeAnonymized=true so the admin employee list can surface
       // DSGVO-deleted rows for audit/management (the "Anonymisierte anzeigen" toggle). The flag
@@ -433,14 +457,37 @@ export async function employeeRoutes(app: FastifyInstance) {
       const readReach = await resolveAccessReach(app.prisma, access, "employee:read:ZUGEWIESEN");
       const personIds = await resolvePersonScopedEmployeeIds(app.prisma, tenantId, readReach);
 
+      // Issue #558 D-01: validate the chosen salon before any employee row is read.
+      const { salonId } = employeeListQuerySchema.parse(req.query);
+      const salon = await resolveSalonInReach(app.prisma, tenantId, readReach, salonId);
+      if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
+
+      // Issue #558 D-08: the persons of the chosen salon, intersected with the caller's reach.
+      let inSalonIds: ReadonlySet<string> | null = null;
+      if (salon.salonId !== null) {
+        const inSalon = await resolvePersonScopedEmployeeIds(
+          app.prisma,
+          tenantId,
+          salonOnlyReach(salon.salonId),
+        );
+        const limit = personIds === "all" ? null : new Set(personIds);
+        // A scoped reach always resolves to a list; "all" cannot occur here and fails closed.
+        inSalonIds = new Set(
+          inSalon === "all" ? [] : inSalon.filter((id) => limit === null || limit.has(id)),
+        );
+      }
+
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
           ...(showAnonymized ? {} : NOT_ANONYMIZED_EMPLOYEE_WHERE),
-          // The caller's own row is always part of the list (the self rule of GET /:id).
-          ...(personIds !== "all"
-            ? { id: { in: ownEmployeeId ? [...personIds, ownEmployeeId] : personIds } }
-            : {}),
+          ...(inSalonIds !== null
+            ? // Under a salon filter the own row follows the filter (Issue #558).
+              { id: { in: [...inSalonIds] } }
+            : // The caller's own row is always part of the list (the self rule of GET /:id).
+              personIds !== "all"
+              ? { id: { in: ownEmployeeId ? [...personIds, ownEmployeeId] : personIds } }
+              : {}),
         },
         include: {
           user: { select: { email: true, isActive: true, lastLoginAt: true } },

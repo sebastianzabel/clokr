@@ -112,6 +112,22 @@ export function accessContextForJob(
 }
 
 /**
+ * Issue #558 D-12 — the ONE constructor of a salon-only {@link AccessReach}.
+ *
+ * A salon filter on a view endpoint is that endpoint's own scope resolver evaluated as if the
+ * caller reached only the chosen salon, intersected with the caller's real reach — so the filter
+ * can only narrow (D-01). The salon must already have passed `resolveSalonInReach`; this function
+ * validates nothing and reads nothing from the database. Route files never build the literal
+ * themselves (`route-employee-scope-literals.test.ts`).
+ *
+ * Unterbau-Erweiterung (additive, no existing reader changes; ADR 0002 Entscheidung 7), announced
+ * on Issue #558.
+ */
+export function salonOnlyReach(salonId: string): AccessReach {
+  return { kind: "scoped", salonIds: [salonId], employeeIds: [] };
+}
+
+/**
  * The ONE function that turns an access context into an {@link EmployeeScope}.
  *
  * For a `wholeTenant` reach: no target → the whole tenant; `{ employeeId }` → that employee;

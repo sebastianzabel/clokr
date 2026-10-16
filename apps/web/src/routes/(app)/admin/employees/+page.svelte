@@ -1,9 +1,17 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
   import { employeeAdminRights } from "$lib/page-rights";
   import { api } from "$api/client";
+  import { salonContext } from "$stores/salon-context";
+  import {
+    isSalonFilterRejected,
+    salonPageFilter,
+    salonScopeLabel,
+    withSalonId,
+  } from "$lib/salons/page-scope";
+  import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
@@ -56,6 +64,15 @@
 
   let employees: Employee[] = $state([]);
   let loading = $state(true);
+  // Issue #558 D-11: the header salon narrows the list. The page decides only through
+  // `salonPageFilter` (never the store's raw selection) and reloads from an effect that reads
+  // primitive deriveds only.
+  const contextLoaded = $derived($salonContext.loaded);
+  const pageSalonId = $derived(salonPageFilter($salonContext));
+  const scopeLabel = $derived(salonScopeLabel($salonContext));
+  let salonRejected = $state(false);
+  // Plain let: an older response never overwrites a newer one (not reactive on purpose).
+  let listGeneration = 0;
   let error = $state("");
 
   // Create modal
@@ -229,8 +246,17 @@
     empPage = 1;
   });
 
+  // Issue #558: this effect owns the list loads; it waits for the salon context so the first
+  // request is already filtered, and reloads when the header salon changes.
+  $effect(() => {
+    if (!contextLoaded) return;
+    void pageSalonId;
+    untrack(() => {
+      void loadEmployees();
+    });
+  });
+
   onMount(async () => {
-    await loadEmployees();
     // Phase 49.2 — load tenant FLEXTIME core defaults for pre-fill in create modal
     // Issue #435 (D-01) — same fetch also reads the vacation-days tenant defaults.
     try {
@@ -276,19 +302,30 @@
   }
 
   async function loadEmployees() {
+    const generation = ++listGeneration;
     loading = true;
     error = "";
     try {
       // Admin list requests anonymized rows too (ADMIN-only server-side); the
       // "Anonymisierte anzeigen" toggle then filters them client-side (isAnonymized).
-      [employees] = await Promise.all([
-        api.get<Employee[]>("/employees?includeAnonymized=true"),
+      const [list] = await Promise.all([
+        api.get<Employee[]>(withSalonId("/employees?includeAnonymized=true", pageSalonId)),
         loadRoleNames(),
       ]);
+      if (generation !== listGeneration) return;
+      employees = list;
+      salonRejected = false;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : "Fehler beim Laden";
+      if (generation !== listGeneration) return;
+      if (isSalonFilterRejected(e)) {
+        // The one 404 of an inadmissible salon: a calm text, no toast, no error banner.
+        employees = [];
+        salonRejected = true;
+      } else {
+        error = e instanceof Error ? e.message : "Fehler beim Laden";
+      }
     } finally {
-      loading = false;
+      if (generation === listGeneration) loading = false;
     }
   }
 
@@ -505,10 +542,13 @@
     {/snippet}
 
     {#snippet list()}
+      <SalonScopeLabel label={scopeLabel} rejected={salonRejected} />
       {#if loading}
         <div class="loading">Laden…</div>
       {:else if error}
         <div class="callout error">{error}</div>
+      {:else if salonRejected}
+        <!-- The calm text is rendered by the scope label above. -->
       {:else if employees.length === 0}
         <div class="empty-state">
           <p>Noch keine Mitarbeiter angelegt.</p>
