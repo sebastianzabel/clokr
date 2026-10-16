@@ -18,67 +18,16 @@ import {
   computeEntryAgeInDays,
 } from "./retro-config"; // Phase 76.29 — RETRO-01 window guard
 import {
+  checkOverlap,
   EntryConflictError,
   overlapMessageForCaller,
   type OverlapConflict,
 } from "./entry-overlap-error"; // Issue #70, D-13
 import type { AccessContext } from "../platform"; // Issue #70, D-13 — the caller of the write
 
-// ── Überlappungsprüfung ────────────────────────────────────────────────────────
-// entryDate (optional): the calendar date of the entry being created/updated.
-// An open entry (endTime = null) has no natural upper bound, so it must only be
-// treated as "still running" for conflict purposes ON ITS OWN DAY. Without this
-// scoping a single stale open entry (e.g. a forgotten clock-out) would be treated
-// as running until year 9999 and would block creating OR editing entries on any
-// later day — even in a following month (v1.8.13 cross-day/cross-month fix).
-// Closed entries that legitimately span midnight are still caught by the
-// { endTime: { gt: startTime } } branch, which is not date-scoped.
-//
-// Returns the conflicting entry (or null). Wording the 409 is NOT done here: since Issue #70 the
-// text depends on who asks (`overlapMessageForCaller` in ./entry-overlap-error.ts, D-13).
-// Prisma client shape shared by `app.prisma` (top-level) and the `tx` handle inside
-// `$transaction(async (tx) => ...)` — lets checkOverlap / checkEntryConflicts run
-// against either, which the grant-consumption race fix (retro-grant-race-403-vs-409)
-// relies on to re-run conflict checks INSIDE the tx after the single-use grant flip.
-type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
-
-export async function checkOverlap(
-  db: DbClient,
-  employeeId: string,
-  startTime: Date,
-  endTime: Date | null,
-  excludeId?: string,
-  entryDate?: Date,
-): Promise<OverlapConflict | null> {
-  // Kein endTime = offener Eintrag → als "läuft noch" behandeln
-  const effectiveEnd = endTime ?? new Date("9999-12-31");
-
-  // When the entry date is known, only open entries on the SAME calendar date
-  // count as an active conflict. Fall back to the original broad match otherwise.
-  const openEntryCondition: Prisma.TimeEntryWhereInput = entryDate
-    ? { endTime: null, date: entryDate }
-    : { endTime: null };
-
-  // Soft-deleted entries free their interval (deletedAt: null), exactly like the database
-  // exclusion constraint. The caller words the conflict (`overlapMessageForCaller`), because the
-  // wording depends on who is asking.
-  return db.timeEntry.findFirst({
-    where: {
-      employeeId,
-      deletedAt: null,
-      id: excludeId ? { not: excludeId } : undefined,
-      startTime: { lt: effectiveEnd },
-      OR: [
-        openEntryCondition, // offener Eintrag am selben Tag läuft noch
-        { endTime: { gt: startTime } }, // abgeschlossener Eintrag endet nach neuem Start
-      ],
-    },
-    select: { id: true, date: true, startTime: true, endTime: true },
-    // Several rows may conflict (a long new entry spanning two existing ones): the one named in the
-    // 409 text is the earliest, whatever order the database happens to return — Issue #70 (70b-06).
-    orderBy: [{ startTime: "asc" }, { id: "asc" }],
-  });
-}
+// `checkOverlap` lives in ./entry-overlap-error.ts (a leaf): the facade needs it too, and importing it
+// from here would route the facade through working-time-account and back (import cycle, Issue #92).
+export { checkOverlap };
 
 // The in-transaction overlap re-check of every manual writer (Issue #70, D-10). Runs AFTER
 // `lockEmployeeForEntryWrite(tx, …)`, so it sees every committed row of a racing writer of the

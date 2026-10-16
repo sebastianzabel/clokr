@@ -81,12 +81,12 @@ import type { InvalidReasonCode, Prisma } from "@clokr/db";
 import { type EmployeeScope, employeeScopeWhere } from "../../platform";
 import { CLEARED_INVALID_REASON } from "../invalid-reason";
 import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
-import { checkOverlap } from "../entry-invariants"; // Issue #70 (D-10)
 // Issue #92 (T6): the facade imports ONLY the neighbour check. It reads no travel field itself —
 // an imported row is never a travel entry (the importer has no destination column), and the T1/T2
 // readers living here must stay free of travel fields (the 92b-04 sibling guard bans them in this file).
 import { checkTravelNeighbours, TravelRefusalError } from "../travel-entry";
 import {
+  checkOverlap,
   isEntryOverlapViolation,
   isOpenEntryPerDayViolation,
   OPEN_ENTRY_PER_DAY_MESSAGE,
