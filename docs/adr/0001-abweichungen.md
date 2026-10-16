@@ -2200,6 +2200,146 @@ pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest 
 pnpm --filter @clokr/api run lint:facade-signatures   # meldet weiterhin 137 Funktionen
 ```
 
+### Nachtrag 2026-10-16 (Phase 558, Issue #558) — Salonauswahl wirkt auf Personenlisten, Team-Kalender, Team-Anträge und Schichtplanung; `planning-overview` geprüft
+
+**Schwere: Unterbau-Erweiterung (additiv) nach ADR 0002, Entscheidung 7 — angekündigt auf #558; eine
+Geschäftsregel zieht aus der Kompositionsschicht in Abwesenheiten (die Zuordnung „Stammsalon pro Tag“); eine
+bewusste Verschärfung zweier aufgezeichneter Tests. Keine Schemaänderung, keine Migration, keine neue Route,
+keine neue Katalog-Permission, keine Neuaufnahme der Neutralitätsmatrix.**
+
+Vor Phase 558 nahmen nur drei Endpunkte `salonId` an (`GET /time-entries`, `/time-entries/summary`,
+`/shifts/planning-overview`); alle anderen Seiten luden ihre Personen und Zeilen ohne Salonbezug, die
+Salonauswahl der Kopfleiste wirkte nur auf das Dashboard und die Salonansicht (#84, #85). Phase 558 dehnt sie
+auf die Team- und Planungsseiten aus. Die Auswahl bleibt Darstellung, nie Zugriffsgrenze (#82).
+
+**Was sich geändert hat:**
+
+- **Ein Parameter, sechs Endpunkte.** `GET /employees`, `GET /leave/requests`, `GET /leave/calendar`,
+  `GET /leave/ical/team`, `GET /leave/section9` und `GET /shifts/week` nehmen ein optionales `salonId` an
+  (ungültige Kennung: 400 durch die globale Fehlerbehandlung). `resolveSalonInReach()` prüft es gegen die
+  Reichweite der eigenen Permission des Endpunkts vor jedem Lesen; inaktiver, fremder, unbekannter und
+  nicht erreichbarer Salon sowie ein Aufrufer mit nur eigener Datenreichweite erhalten dieselbe 404
+  (`{ "error": "Salon nicht gefunden" }`, byte-identisch mit Dashboard und Salonansicht, T-100-09). Ohne
+  `salonId` laufen die Anweisungen unverändert (eingefrorene Pins und Neutralitätsmatrix bleiben ohne
+  Nachtrag grün).
+- **Das eine Prinzip.** `salonOnlyReach(salonId)` (`contexts/platform/access-context.ts`, additiver Export
+  von `contexts/platform/index.ts`) ist der einzige Konstruktor einer Salon-Reichweite. Der Filter eines
+  Endpunkts ist dessen eigener Reichweiten-Auflöser, ausgewertet, als erreiche der Aufrufer nur diesen Salon,
+  geschnitten mit der echten Reichweite des Aufrufers. Der Filter kann deshalb nur verengen, nie erweitern
+  (D-01). Der Export prüft nichts und liest nichts; der Salon muss `resolveSalonInReach` bereits passiert haben.
+- **Personen nach der Stammdatenregel (91b D-12).** Die Personenmenge unter einem Filter ist
+  `resolvePersonScopedEmployeeIds(salonOnlyReach(X))` geschnitten mit der Personenmenge des Aufrufers
+  (Stammsalon heute oder aktiver Einsatz). Die eigene Zeile folgt dem Filter: Unter `salonId` steht sie nur
+  dort, wo der Aufrufer selbst nach der Stammdatenregel zum Salon gehört; ohne Filter bleibt die
+  #547-Regel unverändert.
+- **Schichten nach ihrem Salon (91b D-11).** `GET /shifts/week` hängt die Schichtbedingung
+  `shiftScopeWhere(salonOnlyReach(X))` als `AND` an die unveränderte Bedingung des Aufrufers: der eigene Salon
+  der Schicht entscheidet, nie der Stammsalon. Die Besetzungsprüfung läuft über die gefilterten Schichten.
+- **Abwesenheiten nach dem Stammsalon pro Tag, eine Funktion.** `filterLeaveRowsToHomeSalon()`
+  (`contexts/absence/salon-leave-attribution.ts`, exportiert über `contexts/absence/index.ts`) ist der einzige
+  Ort dieser Zuordnung. Sie wurde aus dem Dashboard (`team-upcoming-leave`, #84) herausgelöst, das sie seitdem
+  aufruft; die Schleife in `composition/dashboard.ts` ist entfernt. Eine Zeile bleibt, wenn der Stammsalon
+  der Person an mindestens einem Tag der (auf ein optionales Fenster beschnittenen) Zeile der gewählte Salon
+  ist; ein Stammsalonwechsel mitten im Zeitraum zeigt die Zeile in beiden Salons, ein Kalenderjahrwechsel
+  wird je Jahr gebündelt, `homeSalonsForDays` wird je Bündel einmal gerufen. Die vier Lesewege nutzen sie:
+  `/leave/requests` (vor § 9-, Audit- und Berufsschul-Bündellesungen, damit diese nur behaltene Zeilen sehen),
+  `/leave/calendar` (mit Kalendertag-Grenzen, #493), `/leave/ical/team` (Anträge und aufgezwungene
+  Abwesenheiten je eigenem Bereich) und `/leave/section9` (§ 9-Fälle nach dem Überlappungsbereich, nicht nach
+  dem Bereich des Krankheits- oder Urlaubsantrags: der Fall ist die angezeigte Einheit, und #644 entscheidet
+  die Reichweite bereits am Beginn des Überlappungsbereichs).
+- **§ 9 und #644.** `GET /leave/section9` ist seit #644 (PR #646) reichweitenbeschränkt; der Salonfilter setzt
+  darauf auf und schneidet die Fälle zusätzlich mit dem Salon, er ersetzt die Reichweitenprüfung nicht.
+- **Soll unter dem Filter.** Unter einem Filter läuft die Soll-Schleife von `GET /shifts/week` nicht;
+  `contractSollMinutesByEmp` ist `null`, `sollUnavailableReason` ist `"SALON_FILTER"` (wie beim Dashboard,
+  Soll und Saldo werden nie nach Salon aufgeteilt). Ohne Filter ist der Schlüssel an derselben Stelle der
+  Antwort und die JSON-Ausgabe byte-identisch.
+- **`planning-overview` geprüft (D-07).** `GET /shifts/planning-overview` prüft `salonId` jetzt durch
+  `resolveSalonInReach` gegen die Reichweite von `shift:plan`: ein nicht erreichbarer, fremder, unbekannter
+  oder inaktiver Salon ergibt die identische 404 statt 200 mit leerer Liste. Die Population bleibt unverändert
+  (Stammsalon am `weekStart`, jetzt über `resolveStammsalonScopedEmployeeIds` mit `salonOnlyReach` statt einer
+  eigenen `employeeSalonAssignment`-Abfrage in der Route). **Zwei aufgezeichnete Tests wurden bewusst
+  strenger:** `salon-context-manipulation-82.test.ts` (Manager-B-Fall und Fremd-/Unbekannt-Fall, jeweils
+  200 → 404 mit Literal-Körper, im Kopf als „Amendment Issue #558 D-07“ vermerkt) und
+  `shifts-planning-overview.test.ts` (Fall 430-05: 200 + `[]` → 404, rohe Körper gleich, Körper gleich dem
+  Literal, die Kennung der fremden Person nicht im Körper). Keine Erwartung wurde ersatzlos entfernt.
+- **Web.** Die Seiten Admin-Mitarbeiterliste, Team-Zeiten (nur die Personenauswahl; der Monat der gewählten
+  Person bleibt vollständig, weil Soll und Saldo nicht geteilt werden), Team-Kalender, Team-Anträge
+  (Jahresliste, Genehmigungswarteschlange, Kalender, § 9, iCal), Schichtplanung und Planungsbedarf senden den
+  Salon der Kopfleiste und laden bei einem Wechsel neu. Entschieden wird allein durch `salonPageFilter()`
+  (`apps/web/src/lib/salons/page-scope.ts`, dieselbe Funktion wie `teamSalonFilter()`, kein Blick auf die
+  rohe Auswahl des Speichers); angezeigt wird der Bezug durch einen Baustein, `SalonScopeLabel.svelte`
+  („Salon: Name“ oder „Alle Salons“); eine abgelehnte Auswahl (404) zeigt einen ruhigen Text, keinen Fehler,
+  und blendet die Leerzustände aus. Jeder Lader trägt einen Generationszähler, damit eine ältere Antwort eine
+  neuere nie überschreibt. Schlägt das Laden einer Liste aus einem anderen Grund als 404 fehl, leert sich die
+  Auswahlliste, statt die Liste des vorigen Salons unter dem neuen Etikett zu zeigen.
+- **Die Fallen von `/shifts`.** Das Soll steht durch den Code der Antwort (`SALON_FILTER`), nie durch den
+  Zustand des Filters im Web. Eine neu angelegte Schicht (Ziehen und Dialog) trägt den gewählten Salon
+  ausdrücklich (`salonId` im Anlegen, nie im Ändern). „Woche erzeugen“ und „Woche kopieren“ wirken weiter auf
+  die ganze Reichweite und sagen es, solange ein Salon gewählt ist („Diese Aktion gilt für alle Salons Ihrer
+  Reichweite, nicht nur für den gewählten Salon.“); `generate-week` und `copy-week` sind unverändert.
+
+**Nicht gefiltert, mit Begründung** (je Seite als Quellprüfung in `salon-filter-exempt-pages-558.test.ts`
+festgehalten): Posteingang (eine Arbeitsliste darf keinen fälligen Antrag verstecken), Schichtkonflikte (#645,
+die Gruppen sind nur mandantenweit; ein Filter würde einen unbeschränkten Lesepfad nur schmücken),
+Monatsabschluss (mandantenweite Aktion), Protokoll (revisionssicher, nicht salonbezogen), Konfigurationsseiten
+mit ihren Auswahllisten (Verfügbarkeiten, Betriebsurlaub, Phorest-Zuordnung, Integrationen, Schichtvorlagen und
+Besetzungsregeln), `/admin/salons` (ist selbst die Salonverwaltung), persönliche Seiten und die
+Überschneidungsprüfung im Prüfdialog (Entscheidungshilfe). Berichte: #542.
+
+**Auswirkung auf die Kontexte:**
+
+- Zeiterfassung: keine. `GET /time-entries` filtert seit #85; die Team-Zeiten-Seite verengt nur ihre
+  Personenauswahl.
+- Abwesenheiten: vier Lesewege nehmen `salonId` an; die Zuordnung „Stammsalon pro Tag“ ist eine Funktion
+  (`filterLeaveRowsToHomeSalon`), das Dashboard ruft sie.
+- Schichtplanung: `GET /shifts/week` nimmt `salonId` an, `GET /shifts/planning-overview` prüft es; an den
+  Besetzungsregeln und am Algorithmus ändert sich nichts.
+- Arbeitszeitkonto: keine. Soll und Saldo werden nie geteilt, `calcLeaveAbsenceMinutesTz` und die einmalige
+  Soll-Minderung pro Tag sind nicht berührt.
+- Kompositionsschicht: keine neue Regel; das Dashboard ruft die herausgelöste Funktion statt einer eigenen
+  Schleife; die Geschäftsregel steht nicht mehr in der Kompositionsschicht.
+- Unterbau: ein neuer reiner Export `salonOnlyReach`; kein bestehender Leser ändert sich, keine
+  Semantikänderung eines Exports.
+
+**Was bewusst NICHT geschah:**
+
+- #645 (Schichtkonflikte ohne Reichweite) ist nicht behoben; der Salonfilter ist nicht ihre Behebung und
+  `GET /shifts/conflicts` bleibt ungefiltert. #644 (`GET /leave/section9` ohne Reichweite) ist durch PR #646
+  behoben; der Filter setzt auf dieser Reichweite auf.
+- `GET /leave/calendar` bleibt für Aufrufer ohne Vollzugriff mandantenweit, typmaskiert wie zuvor; unter einem
+  Filter zeigt er weiterhin die Feiertage des Arbeitsorts des Anfragenden.
+- Berichte (#542) bekommen keinen Salonfilter.
+- Mindestbesetzung je Salon (Folge-Issue #647): `CoverageRule` hat keinen Salonbezug, unter einem Filter
+  gelten die mandantenweiten Regeln für die Schichten des Salons.
+- Keine Änderung an `generate-week` / `copy-week`, an `scope-filter.ts`, `homeSalonAt`, `salonForDay` oder
+  `contextSalonIds`; kein Eingriff in das Soll, keine Neuaufnahme einer Neutralitätsaufzeichnung, keine Änderung
+  am Route-Surface-Golden oder am T-100-09-Register.
+- Zwei Darstellungsbefunde der Sichtprüfung (angeschnittener Wochenpfeil in `/shifts`, abgeschnittene
+  E-Mail-Spalte in `/admin/employees` bei 360 px) bestanden vorher und sind als #648 erfasst.
+
+**Gemessen** (Quelle: die SUMMARY-Dateien 558-01 bis 558-06): vier neue API-Testdateien
+(`employees-list-salon-filter-558`, `leave-salon-filter-558`, `salon-leave-attribution-558`,
+`shifts-week-salon-filter-558`), drei geänderte (`access-context`, `salon-context-manipulation-82`,
+`shifts-planning-overview`) und neun neue Web-Testdateien (sieben Quellprüfungen der Seiten und der ausgenommenen Seiten, `page-scope`
+und `SalonScopeLabel`); 22
+Mutationsnachweise, jeder im Kopf der zugehörigen Testdatei vermerkt (die Datei wurde nach der Mutation
+byte-gleich wiederhergestellt). Sichtprüfung: 28 Aufnahmen (sechs Seiten mal 390 und 360 px mal hell und
+dunkel, dazu die abgelehnte Auswahl), jede gelesen; zwei echte Mängel des Bausteins gefunden und in einem
+Commit behoben (der ruhige Text war als Warnung gestaltet und verfehlte WCAG AA, 4,06 : 1; der Baustein hatte
+keinen Abstand nach unten). Die übrigen axe-Funde auf diesen Seiten bestanden vorher (Eyebrow, Kalenderzellen,
+Gantt-Kopf; siehe #636) und werden durch den Baustein weder verursacht noch verändert, gemessen als
+Gleichstand der Knoten mit und ohne Baustein auf derselben Seite.
+
+### Nachrechnen (Nachtrag Phase 558)
+
+```bash
+pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest run src/__tests__/employees-list-salon-filter-558.test.ts src/__tests__/leave-salon-filter-558.test.ts src/contexts/absence/__tests__/salon-leave-attribution-558.test.ts src/__tests__/shifts-week-salon-filter-558.test.ts src/contexts/platform/__tests__/access-context.test.ts src/__tests__/salon-context-manipulation-82.test.ts src/contexts/scheduling/api/__tests__/shifts-planning-overview.test.ts src/__tests__/section9-reach-644.test.ts src/composition/__tests__/dashboard-team-salon-filter-84.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts   # unverändert grün, ohne Nachtrag
+pnpm --filter @clokr/web exec vitest run src/__tests__ src/lib/salons src/lib/components/team
+grep -c "homeSalon === filterSalonId" apps/api/src/composition/dashboard.ts   # 0: die Zuordnung steht nur noch in Abwesenheiten
+grep -c "employeeSalonAssignment" apps/api/src/contexts/scheduling/api/shifts.ts   # 0: planning-overview liest über den Unterbau
+```
+
 ## Q — Systemrollen-Templates und zwei Saldo-Gates (Phase 76b, Issue #76)
 
 **Schwere: informativ. Unterbau-Erweiterung nach ADR 0002, Entscheidung 7 (additiv, kein
