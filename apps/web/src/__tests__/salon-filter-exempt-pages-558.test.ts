@@ -75,11 +75,25 @@ const EXEMPT_PAGES: ReadonlyArray<{
     reason:
       "decision support: the overlap check of an approval must see every colleague of the tenant, whatever salon the header shows (D-09)",
   },
+  {
+    page: "shifts/conflicts",
+    file: "(app)/shifts/conflicts/+page.svelte",
+    loads: "/shifts/conflicts",
+    reason:
+      "work queue whose buckets are tenant-only today (#645, D-15): a header salon would decorate an unscoped read and pretend a scope the server does not apply",
+  },
+  {
+    page: "admin/shifts",
+    file: "(app)/admin/shifts/+page.svelte",
+    loads: "/shifts/coverage-rules",
+    reason:
+      "configuration of templates and coverage rules: the rules are tenant-wide (no salon column), so the page must not look filtered (D-15)",
+  },
 ];
 
 describe("Issue #558 D-11 — configuration pickers stay unfiltered", () => {
   it("[vacuity gate] the table names pages and every route file is read", () => {
-    expect(EXEMPT_PAGES.length).toBeGreaterThanOrEqual(7);
+    expect(EXEMPT_PAGES.length).toBeGreaterThanOrEqual(9);
   });
 
   for (const { page, file, loads, reason } of EXEMPT_PAGES) {
