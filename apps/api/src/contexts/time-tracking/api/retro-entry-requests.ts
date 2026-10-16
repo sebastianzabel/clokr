@@ -647,7 +647,7 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         // prisma.delete(), Revisionssicherheit) + REJECTED + audit, in one
         // transaction. retroRequestId stays set (the audit link is preserved);
         // deletedAt alone drops the row out of every deletedAt:null query
-        // (checkArbZG, saldo, the partial unique index), freeing the day for a
+        // (checkArbZG, saldo, the no-overlap guarantee), freeing the interval for a
         // corrected resubmission. No new enum value — reuses the existing
         // deletedAt soft-delete convention (D-11).
         const entryIdToReject = coupledEntry.id;

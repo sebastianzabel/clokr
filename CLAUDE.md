@@ -112,7 +112,7 @@ Deviations from the target picture, with file references: `docs/adr/0001-abweich
 
 Clokr has **four business contexts**, a shared substrate (**Unterbau**, the Shared Kernel) that belongs to none of them, and a rule-free **composition layer**:
 
-- **Zeiterfassung** (`contexts/time-tracking/` + `services/clock/`) — clock in/out, correction, validity, ArbZG. Records what happened. Minute-level, one row per employee and day.
+- **Zeiterfassung** (`contexts/time-tracking/` + `services/clock/`) — clock in/out, correction, validity, ArbZG. Records what happened. Minute-level, one or more non-overlapping rows per employee and day (Issue #70, `docs/adr/0001-abweichungen.md` entry AA).
 - **Abwesenheiten** (`contexts/absence/`) — request, approval, entitlement, carry-over. A workflow with status, not a recording. Date ranges in days.
 - **Schichtplanung** (`contexts/scheduling/` + `services/phorest/`) — shifts, templates, coverage, availability, Phorest sync. Plans the future. Since Phase 107 it feeds Arbeitszeitkonto (SHIFT_BASED Soll) and Abwesenheiten (SHIFT_BASED leave-day count).
 - **Arbeitszeitkonto** (`contexts/working-time-account/`) — Soll vs. Ist, saldo, Monatsabschluss. Reads from the others. Owns the once-per-day rule.
@@ -265,11 +265,27 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
 
 ## Time Entry Rules
 
-- **One entry per day** per employee (multiple breaks allowed within that entry)
+- **Several entries per day** per employee, never overlapping (Issue #70): each entry carries its own salon; multiple breaks are allowed within an entry
 - Break model: `Break[]` records with startTime/endTime (legacy: `breakMinutes` integer)
-- `openAdd()` on frontend redirects to edit if entry already exists for that day
-- API POST rejects with 409 if entry already exists for employee+date
-- **Every entry carries a required `salonId`** (FK onto `Salon`, `onDelete: Restrict`, Phase 68b / issue #68), decided by `resolveEntrySalon()` in `apps/api/src/contexts/time-tracking/entry-salon.ts` — the only place this rule lives: an explicit, active salon of the same tenant on manual entries, corrections, Zeitnachträge and the CSV import (400 `SALON_INACTIVE` when deactivated, 404 indistinguishable for a foreign or unknown id); otherwise `salonForDay()`, then the tenant's default salon, 409 `NO_ACTIVE_SALON` if none exists. Since Issue #87 the web clock-in (`POST /time-entries/clock-in`, optional `salonId`, never null) passes an explicit salon to `resolveEntrySalon()` (same 400/404 rules), while NFC and WIFI take no salon input (terminal binding: #541). The preselection and whether a choice is offered come only from `clockSalonChoice()` (`apps/api/src/contexts/time-tracking/clock-salon-choice.ts`, served by `GET /time-entries/clock-salon`): a booked day shows its fixed salon; at most one active salon, or exactly one current/future assignment salon (`currentAndFutureAssignmentSalonIds()`, Unterbau) equal to today's pattern salon, offers no choice; otherwise a choice preselected with `salonForDay()`. A deviation is never an error, and the #82 salon context never decides the clock salon. Re-clocking a day reopens its entry and never changes its salon — an explicit different salon is 409 `SALON_DIFFERS_FROM_DAY_ENTRY` (#70 will start a second entry instead). `PUT` may change the salon (never on a locked entry, never re-derived from a changed date). The salon hangs on the entry, not the day (#70).
+- `openAdd()` on frontend: with salon options (`showSalonOptions`, multi-salon tenants) it opens a NEW entry whose start is preset to the day's latest end; without them it still opens the day's existing entry for editing. A calendar cell with one entry opens that entry, a cell with several switches to the list focused on the day
+- API POST and PUT answer 409 when the interval overlaps another non-deleted entry of the employee (worded by the caller's reach, see "Several entries per day") or when a second OPEN entry would start the same day; a locked day or closed month stays 403
+- **Every entry carries a required `salonId`** (FK onto `Salon`, `onDelete: Restrict`, Phase 68b / issue #68), decided by `resolveEntrySalon()` in `apps/api/src/contexts/time-tracking/entry-salon.ts` — the only place this rule lives: an explicit, active salon of the same tenant on manual entries, corrections, Zeitnachträge and the CSV import (400 `SALON_INACTIVE` when deactivated, 404 indistinguishable for a foreign or unknown id); otherwise `salonForDay()`, then the tenant's default salon, 409 `NO_ACTIVE_SALON` if none exists. Since Issue #87 the web clock-in (`POST /time-entries/clock-in`, optional `salonId`, never null) passes an explicit salon to `resolveEntrySalon()` (same 400/404 rules), while NFC and WIFI take no salon input (terminal binding: #541). The preselection and whether a choice is offered come only from `clockSalonChoice()` (`apps/api/src/contexts/time-tracking/clock-salon-choice.ts`, served by `GET /time-entries/clock-salon`): a booked day names its salon (a finished day additionally offers the other active salons); at most one active salon, or exactly one current/future assignment salon (`currentAndFutureAssignmentSalonIds()`, Unterbau) equal to today's pattern salon, offers no choice; otherwise a choice preselected with `salonForDay()`. A deviation is never an error, and the #82 salon context never decides the clock salon. Re-clocking without a salon, or in the salon of the day's latest-ending entry, reopens that entry and never changes its salon; an explicitly different active salon starts a NEW entry (Issue #70) unless the day or month is locked (`MONTH_LOCKED`) or the instant lies inside or before another closed entry of the day (409 `ENTRY_OVERLAP`). `PUT` may change the salon (never on a locked entry, never re-derived from a changed date). The salon hangs on the entry, not the day.
+- **Several entries per day (Issue #70, `docs/adr/0001-abweichungen.md` entry AA).** The database guarantees it:
+  exclusion constraint `TimeEntry_no_overlap_closed` (closed, non-deleted entries of one employee never overlap;
+  `btree_gist`, half-open `tstzrange`) and partial unique index `TimeEntry_employeeId_date_open_unique` (at most one
+  open entry per employee and day). Both are hand-written because Prisma models neither; the CI drift check stays empty.
+  `lockEmployeeForEntryWrite()` (`contexts/time-tracking/entry-write-lock.ts`) is the ONE Employee row lock and the FIRST
+  statement of every transaction that creates or moves an interval (POST, PUT, revalidate, clock resolver, Nachtrag
+  approval, CSV import), followed by the in-transaction overlap re-check. `overlapMessageForCaller()`
+  (`entry-overlap-error.ts`) is the ONE wording rule for an overlap 409: the detailed text only for the person
+  themself, a whole-tenant `time-entry:read` reader or a reader whose reach contains the conflicting entry, a neutral
+  text for everyone else (a database refusal is always neutral). Database refusals are recognised structurally
+  (`P2039` + `23P01`, `P2002` + index name), never by message; an inverted row (SQLSTATE `22000`) is deliberately not
+  mapped to an overlap. `openEntryOf()` / `latestEndingClosed()` (`contexts/time-tracking/day-entries.ts`) are the ONE
+  choice of "the entry of the day" a clock acts on (Phase 92b adds TRAVEL there); consolidation never merges across
+  salons. Run `apps/api/scripts/audit-70-entry-overlaps.ts` (read-only) before deploying
+  (`docs/migrations.md`, "Phase 70b"). Never re-create a one-entry-per-day rule — not as an index, a check or a
+  comment. Zeitnachtrag stays one request per employee and day for now.
 - **Presence and working time come from one function (Issue #79).** `entryDurations()` and its
   fold step `addWorkingMinutes()` (`apps/api/src/contexts/time-tracking/entry-durations.ts`,
   exported via `contexts/time-tracking/index.ts`) are the ONLY place presence time (end − start)
@@ -335,8 +351,8 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   notifies once per recipient, employee and day for yesterday and the two days before it (3-day
   catch-up), full text only for recipients whose own reach covers the whole day (every other recipient
   gets the same neutral text as the redacted day check, title and mail subject included; Issue #85
-  D-07). With one entry per
-  day (#70 still open) every result equals the pre-80 behaviour, proven by the frozen-copy
+  D-07). For a day with one
+  entry every result equals the pre-80 behaviour, proven by the frozen-copy
   equivalence test (`day-break-equivalence-80.test.ts`; its frozen fixture is never edited, and a deliberate
   behaviour change enters only through the amendment register
   `fixtures/day-break-equivalence-80-amendments.json` with rule, reason and issue — #523 is the first).
@@ -407,7 +423,8 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
 - **One resolution, in the Unterbau:** `holidaysAtWorkLocation()` / `holidaysForSalon()` in
   `apps/api/src/contexts/platform/facade/holiday-resolution.ts` are the ONLY place a holiday set is
   built. A holiday applies at the work location of that day (§ 2 EFZG): the salon of the employee's
-  closed work entry on that day, else `salonForDay()`, else the tenant's default salon. Callers pass
+  closed work entry on that day (with several entries the one with the earliest start — final, owner decision
+  2026-10-16, Issue #70), else `salonForDay()`, else the tenant's default salon. Callers pass
   the `getWorkedEntriesInRange()` rows of their range — the Unterbau never reads `TimeEntry`. No
   active salon where one is needed → it throws (fail-closed).
 - Outside `contexts/platform/` no production code computes holidays itself or reads `PublicHoliday`

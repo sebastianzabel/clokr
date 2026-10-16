@@ -1457,7 +1457,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         callerEmployeeId: user.employeeId ?? null,
         isCorrectionByManager: postIsCorrectionByManager,
         grantId: resolvedGrantId,
-        // Grant race fix: defer the one-per-day + overlap checks to the $transaction
+        // Grant race fix: defer the overlap check to the $transaction
         // below so the single-use grant flip (checked first, before create) is the sole
         // discriminator for concurrent same-grant writes — see param doc on
         // validateTimeEntryInvariants. Re-run against `tx` after a successful flip.
@@ -1621,7 +1621,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // updateMany (WHERE status=APPROVED) ensures exactly one concurrent write wins —
       // if count !== 1 the tx rolls back before the create is ever attempted, so the
       // loser is rejected with GRANT_ALREADY_USED (403) instead of racing into the
-      // (employeeId,date) unique index and getting a P2002 (409) (fixed 2026-07: see
+      // database's overlap guarantee and getting a 409 (fixed 2026-07: see
       // .planning/debug/resolved/retro-grant-race-403-vs-409.md).
       let entry: Awaited<ReturnType<typeof app.prisma.timeEntry.create>>;
       try {
@@ -1702,8 +1702,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           // second CREATE audit here — the shared post-create tail below (unchanged)
           // already writes the generic TimeEntry CREATE audit for every create path,
           // including this one; this branch only owns the RETRO_ENTRY_REQUESTED audit
-          // for the request. Reuses the SAME try/catch as the plain path — a P2002 on
-          // the (employeeId,date) unique index maps to the existing 409 below.
+          // for the request. Reuses the SAME try/catch as the plain path — a database refusal
+          // (open-entry P2002 or overlap 23P01) maps to the existing 409 below.
           const result = await app.prisma.$transaction(async (tx) => {
             // Issue #70 (D-10): lock first, then re-check overlap BEFORE the request and the coupled
             // entry exist — the pre-tx invariant returns early on RETRO_WINDOW_EXCEEDED and never

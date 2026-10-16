@@ -814,6 +814,141 @@ schaden dem alten Code nicht (er liest gespeicherte Zuweisungen zuerst). Ein alt
 der Claim wird aber von Release A nicht mehr gelesen. Spalte und Enum entfernt erst Release B (eigene Migration nach dem
 Muster #470, Folge-Issue #641).
 
+## Phase 70b — Mehrere Zeiteinträge pro Tag (Issue #70)
+
+**Hinweis für die Release Notes.** #70 und #92 erscheinen im **selben Release** (v1.16.0): ohne erfassbare Fahrzeit wäre
+jeder Tag mit Salonwechsel ein Klärungsfall. Für die Notes: Mitarbeitende in Mandanten mit mehreren Salons können an
+einem Tag mehrere Einträge in verschiedenen Salons erfassen (Stempeln im anderen Salon, Feld „Salon“ in der
+Zeiterfassung); Mandanten mit einem Salon sehen keine Änderung. Ein **CSV-Import** desselben Tages mit anderen Zeiten legt
+jetzt einen zweiten Eintrag an (statt eines Fehlers), überlappende Zeilen werden weiter als Fehler gemeldet. Der Feiertag
+eines Tages mit mehreren Einträgen gilt im Salon des frühesten Eintrags (§ 2 EFZG). Der Zeitnachtrag bleibt ein Antrag
+je Tag.
+
+**Was die Migrationen tun.** Zwei Verzeichnisse in `packages/db/prisma/migrations/`, beide ändern keine Zeile:
+
+- `20261016130000_time_entry_multi_entry_per_day` — vom Generator erzeugt (`prisma migrate diff`), eine Anweisung: der
+  einfache Index `TimeEntry_employeeId_date_idx` auf `("employeeId", "date")`.
+- `20261016130001_time_entry_no_overlap` — von Hand geschrieben, weil Prisma weder Ausschlussbedingungen noch partielle
+  Indizes modelliert und die CI-Driftprüfung beides nicht sieht (gemessen: Exit 0): `DROP INDEX` des alten partiellen
+  Unique-Index `TimeEntry_employeeId_date_unique_not_deleted` (Prisma erzeugt dafür kein `DROP`), `CREATE EXTENSION IF NOT
+EXISTS btree_gist`, die Ausschlussbedingung `TimeEntry_no_overlap_closed` (zwei nicht gelöschte **abgeschlossene**
+  Einträge einer Person überschneiden sich nie) und der partielle Unique-Index `TimeEntry_employeeId_date_open_unique`
+  (höchstens ein **offener** Eintrag je Person und Tag). Gewählt wurde der Weg „Ausschlussbedingung“ (Weg A, kein
+  Trigger); Begründung und Messungen: `docs/adr/0001-abweichungen.md`, Eintrag AA.
+
+**1. Vor dem Deploy — Prüfung (lesend, auf int UND prod).**
+`ADD CONSTRAINT … EXCLUDE` prüft jede vorhandene Zeile; **eine** verletzende Altzeile bricht den ganzen Deploy ab (der
+Entrypoint stoppt dann). `apps/api/scripts/audit-70-entry-overlaps.ts` schreibt nichts (nur `SELECT`, kein Schreib-Schalter),
+nennt je Treffer nur Ids und Kalendertage (keine Namen) und danach eine Zeile `Totals:` mit `overlap`, `inverted` und
+`multipleOpen`.
+
+```bash
+# DATABASE_URL zeigt per Port-Forward auf die Datenbank der Umgebung (int bzw. prod); aus der Umgebung
+# weitergereicht, nicht auf der Kommandozeile ausgeschrieben.
+DATABASE_URL="$DSN" pnpm --filter @clokr/api exec tsx scripts/audit-70-entry-overlaps.ts \
+  | tee "70-overlaps-<umgebung>-$(date +%Y%m%d).txt"
+echo "exit=${PIPESTATUS[0]}"
+```
+
+Das Skript liegt erst im Image des neuen Release; der Standard-Einstiegspunkt dieses Images führt `prisma migrate deploy`
+aus und darf vor der Deploy-Entscheidung nicht gegen int oder prod gestartet werden. Deshalb aus einem Checkout des
+Release-Stands per Port-Forward (wie oben) oder mit überschriebenem Einstiegspunkt:
+
+```bash
+docker run --rm -e DATABASE_URL --entrypoint sh <neues-api-image> \
+  -lc 'cd /app/apps/api && pnpm tsx scripts/audit-70-entry-overlaps.ts'
+```
+
+Erwartet: **Exit-Code 0** (Messung vom 16.10.2026, nur lesend: auf int und prod gibt es keine überlappenden
+abgeschlossenen Einträge und je Person und Tag höchstens einen offenen). **Exit-Code 2** heißt: mindestens ein Befund. Ihn
+zuerst über die Korrekturbuchung (Zeitkorrektur durch die Verwaltung, mit Begründung und Audit) beheben, **nie** per
+Direktzugriff auf die Tabelle und nie durch Lockern der Bedingung; danach den Lauf wiederholen. **Exit-Code 1** ist ein
+Fehler (fehlende `DATABASE_URL`, Verbindung).
+
+Zusätzlich je Umgebung prüfen (lesend):
+
+```sql
+-- Erweiterung verfügbar? (int: PostgreSQL 18, prod: PostgreSQL 17 — die Migrationen sind auf beiden Versionen belegt)
+SELECT name, default_version, trusted FROM pg_available_extensions WHERE name = 'btree_gist';
+SELECT version();
+-- Darf die Rolle der Anwendung die Erweiterung anlegen? (Eigentümer oder Superuser genügt; btree_gist ist "trusted")
+SELECT rolsuper, (SELECT pg_get_userbyid(datdba) = current_user FROM pg_database WHERE datname = current_database()) AS is_db_owner
+FROM pg_roles WHERE rolname = current_user;
+-- Größenordnung der Tabelle (für die Sperrzeit unten)
+SELECT count(*) FROM "TimeEntry";
+```
+
+Messung vom 16.10.2026: `btree_gist` ist auf int (PostgreSQL 18.4) und prod (PostgreSQL 17.9) verfügbar, und der
+Datenbanknutzer der Anwendung ist dort Eigentümer und Superuser. Ist die Erweiterung nicht anlegbar, vorher als Superuser
+`CREATE EXTENSION IF NOT EXISTS btree_gist;` ausführen (die Anweisung in der Migration ändert dann nichts mehr).
+
+**2. Deploy.** Wie gewohnt: vorher `pg_dump`, dann der Einstiegspunkt des neuen Images (`prisma migrate deploy`). **Kurze
+Sperre auf `TimeEntry`:** `ADD CONSTRAINT … EXCLUDE` baut seinen GiST-Index unter einer ACCESS EXCLUSIVE-Sperre auf
+`TimeEntry`, und der partielle Unique-Index wird nicht nebenläufig (`CONCURRENTLY`) angelegt, sodass Schreibzugriffe
+blockiert sind. Lese- und Schreibzugriffe auf Zeiteinträge warten also, solange die Migration beim Start der API läuft.
+Gemessen auf einer Wegwerf-Datenbank (PostgreSQL 18, Entwicklungscontainer, einfache Tabelle mit denselben Spalten,
+100 000 Einträge ohne Überschneidung): 1,6 Sekunden für die Bedingung, 41 Millisekunden für den offenen Index. Die
+Zeilenzahl auf int und prod mit der Abfrage aus Schritt 1 ermitteln: die Sperrzeit wächst ungefähr linear mit ihr, die
+Messung ist eine Größenordnung und kein Versprechen. **Außerhalb der Öffnungszeiten deployen** (Stempeln und Erfassen scheitern in dieser Zeit sonst mit Zeitüberschreitung).
+
+**3. Nach dem Deploy — Prüfung (lesend).**
+
+```sql
+SELECT extname, extversion FROM pg_extension WHERE extname = 'btree_gist';
+SELECT conname, contype, pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'TimeEntry_no_overlap_closed';
+-- erwartet: contype x, EXCLUDE USING gist ("employeeId" WITH =, tstzrange("startTime","endTime",'[)') WITH &&)
+--           WHERE (("deletedAt" IS NULL) AND ("endTime" IS NOT NULL))
+SELECT indexname, indexdef FROM pg_indexes
+WHERE tablename = 'TimeEntry' AND indexname IN ('TimeEntry_employeeId_date_open_unique',
+  'TimeEntry_employeeId_date_idx', 'TimeEntry_employeeId_date_unique_not_deleted') ORDER BY indexname;
+-- erwartet: die ersten beiden vorhanden, der dritte (alter Unique-Index) NICHT
+```
+
+Stichprobe in der Oberfläche: ein Mandant mit mehreren Salons kann an einem Tag in einem zweiten Salon einstempeln (Karte
+„In anderem Salon einstempeln“); eine überlappende manuelle Erfassung wird mit 409 abgewiesen.
+
+**4. Rollback.** Das vorige Image funktioniert mit den neuen Objekten weiter: es erzwingt „ein Eintrag pro Tag“ im Code
+(zusätzlich zur Bedingung), die Migrationen werden **standardmäßig nicht zurückgenommen**. Nur **solange kein Tag mit mehreren
+Einträgen existiert** lassen sich die Objekte von Hand in einer Transaktion entfernen und der alte Index wieder anlegen.
+Vorab muss diese Abfrage **keine Zeile** liefern:
+
+```sql
+SELECT "employeeId", "date", count(*) FROM "TimeEntry" WHERE "deletedAt" IS NULL GROUP BY 1, 2 HAVING count(*) > 1;
+```
+
+Liefert sie Zeilen, ist der Schritt **nur vorwärts**: der alte Unique-Index kann nie wieder angelegt werden, ein Zurückgehen
+geht nur über eine Korrekturbuchung der betroffenen Tage (und die Sperre des Monats) oder über das Einspielen der Sicherung
+vor dem Deploy (Einträge danach gehen dabei verloren). Sonst, in einer Transaktion (die Prüfung steht noch einmal darin und
+bricht ab, falls inzwischen ein Mehr-Eintrag-Tag entstand):
+
+```sql
+BEGIN;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM "TimeEntry" WHERE "deletedAt" IS NULL GROUP BY "employeeId", "date" HAVING count(*) > 1
+  ) THEN
+    RAISE EXCEPTION 'A multi-entry day exists: the rollback is forward-only';
+  END IF;
+END $$;
+ALTER TABLE "TimeEntry" DROP CONSTRAINT IF EXISTS "TimeEntry_no_overlap_closed";
+DROP INDEX IF EXISTS "TimeEntry_employeeId_date_open_unique";
+DROP INDEX IF EXISTS "TimeEntry_employeeId_date_idx";
+CREATE UNIQUE INDEX "TimeEntry_employeeId_date_unique_not_deleted"
+  ON "TimeEntry"("employeeId", "date") WHERE "deletedAt" IS NULL;
+DELETE FROM "_prisma_migrations"
+  WHERE migration_name IN ('20261016130000_time_entry_multi_entry_per_day', '20261016130001_time_entry_no_overlap');
+COMMIT;
+```
+
+Der SQL-Block wurde am 16.10.2026 gegen eine frische Datenbank mit allen Migrationen geprüft: mit einem Tag mit zwei
+Einträgen bricht er in der Prüfung ab und ändert nichts, ohne einen solchen Tag entfernt er die Bedingung und beide Indizes,
+legt den alten Unique-Index wieder an und löscht die zwei Zeilen in `_prisma_migrations`.
+
+Das Löschen der beiden Zeilen in `_prisma_migrations` sorgt dafür, dass ein späteres Deploy des neuen Release die Objekte
+wieder anlegt; `btree_gist` darf stehen bleiben. Danach das vorige Image starten; der alte Unique-Index ist wieder
+vorhanden.
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:

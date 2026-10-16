@@ -26,7 +26,9 @@ Das Dashboard zeigt auf einen Blick:
 2. Datum, Beginn, Ende und optional Pausen eintragen
 3. Speichern
 
-> Pro Tag ist genau ein Zeiteintrag erlaubt. Existiert bereits einer, öffnet sich automatisch das Bearbeitungsformular.
+> Arbeiten Sie nur in einem Salon, ist pro Tag ein Zeiteintrag vorgesehen: Existiert bereits einer, öffnet sich automatisch das Bearbeitungsformular.
+>
+> Arbeiten Sie in einem Betrieb mit mehreren Salons, können Sie an einem Tag mehrere Einträge erfassen, zum Beispiel vormittags in einem und nachmittags in einem anderen Salon. Wählen Sie im Formular das Feld **Salon**, oder öffnen Sie einen vorhandenen Eintrag und wählen Sie **Weiteren Eintrag an diesem Tag**; der Beginn ist dann auf das Ende des letzten Eintrags vorbelegt. Einträge eines Tages dürfen sich nicht überschneiden. Eine Überschneidung wird abgewiesen, direkt aufeinanderfolgende Einträge sind erlaubt. Auf der Startseite stempeln Sie nach dem Ende des ersten Einsatzes mit **In anderem Salon einstempeln** im anderen Salon ein. Die Lücke zwischen zwei Salons gilt nicht als Pause; war es eine Pause, erfassen Sie sie nachträglich als Pause für den Tag.
 
 ### Kalenderansicht
 

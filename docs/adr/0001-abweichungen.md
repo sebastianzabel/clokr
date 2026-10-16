@@ -1190,6 +1190,19 @@ Salonangabe entgegen; die Bindung eines Terminals an einen Salon ist #541. Kein 
 Mitarbeiter: ein erneutes Stempeln öffnet den Eintrag des Tages und lässt dessen Salon unverändert, ein
 ausdrücklich abweichender Salon ist 409 `SALON_DIFFERS_FROM_DAY_ENTRY` (#70).
 
+### Nachtrag 2026-10-16 (Phase 70b, Issue #70): Ein ausdrücklich anderer Salon beginnt einen neuen Eintrag
+
+Der letzte Satz oben („Kein zweiter Salon je Tag und Mitarbeiter … 409 `SALON_DIFFERS_FROM_DAY_ENTRY`“) gilt nicht mehr.
+Seit #70 beginnt ein Stempeln mit einem ausdrücklich anderen, aktiven Salon an einem abgeschlossenen Tag einen **neuen
+Eintrag** in diesem Salon; der erste Eintrag bleibt unverändert. Der Fehlercode `SALON_DIFFERS_FROM_DAY_ENTRY` und seine
+Verzweigung sind entfernt. Ohne Salonangabe oder mit dem Salon des zuletzt endenden Eintrags wird dieser Eintrag wie bisher
+wieder geöffnet; an einem laufenden Tag bleibt die Antwort `ALREADY_CLOCKED_IN`, und fremde und unbekannte Salon-Ids
+antworten weiter identisch mit 404. `clockSalonChoice()` nennt am abgeschlossenen Tag den Salon des zuletzt endenden
+Eintrags („Zuletzt erfasst in …“) und bietet in einem Mandanten mit mehreren Salons die anderen aktiven Salons an
+(Ausnahme: nennen die aktuellen und künftigen Zuordnungen genau diesen einen Salon); an einem laufenden Tag bietet es
+nichts an. Unverändert: NFC und WLAN nehmen weiter keine Salonangabe entgegen (#541). Begründung, Sicherung und Grenzen:
+Eintrag AA.
+
 ---
 
 ## M — Phorest-Filiale je Salon: `SalonCoupling` löst `TenantConfig.phorestBranchId` ab (Phase 65b, Issue #65)
@@ -1737,6 +1750,14 @@ dieselbe 404 (T-100-09). Schreibende Aufrufe (`POST /api/v1/holidays`) verlangen
 aktiven Salon weiterhin eine `salonId` (400 `SALON_REQUIRED`). Die beiden Web-Seiten, die ohne
 Salon fragen, zeigen bei mehreren Salons damit die Feiertage aller Salons, bis Block D (#82 ff.)
 eine Salonauswahl bringt.
+
+### Nachtrag 2026-10-16 (Phase 70b, Issue #70): Der Salon des frühesten Eintrags ist die endgültige Regel
+
+Der Satz „Bei mehreren Einträgen an einem Tag entscheidet übergangsweise der früheste (`// MULTI-ENTRY:`, #70)“ ist
+keine Übergangsregel mehr. Mit #70 gibt es echte Tage mit mehreren Einträgen; die Owner-Entscheidung vom 16.10.2026
+legt fest: Arbeitsort des Tages (§ 2 EFZG) ist der Salon des Eintrags mit dem **frühesten Beginn**, der Feiertag wird
+einmal je Tag aufgelöst, nie je Eintrag. `holidaysAtWorkLocation()` ändert dafür weder Signatur noch Ergebnis, nur der
+Kommentar (der Marker ist entfernt, der Wächter des Eintrags verlangt jetzt, dass keiner mehr vorkommt). Siehe Eintrag AA.
 
 ---
 
@@ -4040,6 +4061,28 @@ nur in Richtung weniger Befunde (die Pausensumme steigt). Ausgewiesen wird das r
 dem Deploy laufen lassen, die Differenz sind die Tage, die der Wegfall der Grenze von Befund zu Nicht-Befund
 macht.
 
+### Nachtrag 2026-10-16 (Phase 70b, Issue #70): Tage mit mehreren Einträgen gibt es jetzt
+
+Die Formulierungen „Solange #70 offen ist, gibt es pro Mitarbeiter und Tag nur einen Eintrag“, „Kein Aufheben von ‚ein
+Eintrag pro Tag‘ (#70)“ und die Erwartung „weil mit #70 offen kaum Salonwechseltage existieren“ beschreiben den Stand vor
+#70 und gelten nicht mehr. Seit #70 (Eintrag AA) kann ein Mitarbeiter an einem Tag mehrere, sich nicht überschneidende
+Einträge in verschiedenen Salons haben; damit wirkt, was Phase 80 vorbereitet hat:
+
+- Die Tagesregel (`evaluateDayBreaks()`, `evaluatePlacement()`), die Tagespause, die Quittung, die Hinweise und das
+  Gate des Monatsabschlusses sehen jetzt echte Tage. Die Route `POST /day-breaks` antwortet weiter 409 für einen Tag
+  ohne Lücke und legt für einen Tag mit zwei Einträgen und einer Lücke die Tagespause an (belegt an echten Zeilen von
+  `multi-entry-month-close-70`); der Monatsabschluss listet einen solchen Tag genau einmal (`findUnconfirmedBreakDays`
+  führt jeden Tag einmal auf).
+- Die Logik selbst bleibt unverändert: kein Eintrag im Nachtragsregister `day-break-equivalence-80-amendments.json`, die
+  eingefrorene Fixture ist unberührt, und für Tage mit einem Eintrag ist jedes Ergebnis weiter gleich dem der Fassung vor
+  Phase 80.
+- Ein Tag mit Salonwechsel ohne erfasste Fahrzeit oder Tagespause bleibt bis #92 ein Klärungsfall („Fahrzeit oder
+  Pause?“). Das ist der Grund, #70 und #92 gemeinsam auszuliefern (Eintrag AA, Auslieferung).
+- Die Erwartung `staleAckTotal` ≈ 0 galt für den Bestand zum Zeitpunkt von Phase 511; Tage mit zwei Einträgen entstehen
+  erst mit der Auslieferung von #70 und sind keine veralteten Quittungen.
+- Neu ist der § 9 Abs. 1 Nr. 2 JArbSchG: Er vergleicht an einem Berufsschultag die Tagessumme statt den einzelnen Eintrag
+  (Eintrag AA, Tagesregeln).
+
 ## Y — Betreiberkonto oberhalb des Mandanten und Mandantenverwaltung (Phase 88, Issue #88)
 
 **Schwere: informativ. Nachtrag nach Auslieferung (D-06) — Unterbau-Erweiterung nach ADR 0002, Entscheidung 7.**
@@ -4682,3 +4725,248 @@ Vorschau, Mandant für Mandant), `tenant-provisioning-88` (Grundversion, Seeds),
 `tenant-modules`, `ModuleHint`, `PackagesSection`, `module-teaser-placement-566`, `salon-context`; Playwright
 `operator-console.spec.ts` (Abschnitt „Pakete“, 360 px, axe). Die Neutralitätsmatrix (1712 Zellen) und die
 Ausnahmeliste des Tenant-Scoping-Gates (44) sind unverändert.
+
+---
+
+## AA — Mehrere Zeiteinträge pro Mitarbeiter und Tag (Phase 70b, Issue #70)
+
+**Schwere: Änderung einer Festlegung von ADR 0001 („Zeiterfassung: minutengenau, eine Zeile pro Mitarbeiter und
+Tag“) — Akzeptanzkriterium von Issue #70, daher als eigener Eintrag mit Nachträgen zu den Einträgen L, O und X und zu
+`0001-drei-kontexte.md`. Kein Eingriff in den Unterbau nach ADR 0002, Entscheidung 7 (kein Feld, Modell oder Export des
+Unterbaus ändert sich; `holiday-resolution.ts` bekam nur Kommentare). Owner-Entscheidung = die Kommentare auf Issue #70
+vom 16.10.2026. Auslieferung nur gemeinsam mit #92 (v1.16.0).**
+
+### Ausgangslage
+
+ADR 0001 definiert die Zeiterfassung als „eine Zeile pro Mitarbeiter und Tag“. Durchgesetzt wurde das von einem
+einzigen Datenbankobjekt, dem partiellen Unique-Index `TimeEntry_employeeId_date_unique_not_deleted`, und im Code von
+`checkOneEntryPerDay`, drei Abbildungen von `P2002` auf 409, dem Stempel-Resolver (nur Wiedereröffnen am gebuchten Tag)
+und der Konsolidierung. Wer vormittags in Salon A und nachmittags in Salon B arbeitet, konnte das nicht abbilden: Seit
+#87 antwortete der Server auf einen ausdrücklich anderen Salon mit 409 `SALON_DIFFERS_FROM_DAY_ENTRY`. Und die
+Fahrzeit zwischen zwei Salons (#92, rechtlich Arbeitszeit, BAG 12.12.2012 – 5 AZR 355/12) braucht einen eigenen Eintrag
+zwischen den beiden.
+
+### Entscheidung (Owner, 16.10.2026)
+
+- **D-01 — Mehrere Einträge je Mitarbeiter und Tag, nie überlappend.** Der Index und `checkOneEntryPerDay` entfallen;
+  an ihre Stelle tritt die Regel „keine zwei nicht gelöschten Einträge derselben Person überschneiden sich“. Der Salon
+  hängt am Eintrag, nicht am Tag (#68).
+- **D-02/D-03 — Stempeln und Konsolidierung.** Ein ausdrücklich anderer Salon beginnt einen neuen Eintrag; die
+  Konsolidierung führt nie Einträge verschiedener Salons zusammen.
+- **D-05 — Saldoneutral.** Die Migration schreibt und ändert keine Zeile; ein auf zwei Einträge geteilter Tag ergibt
+  denselben Saldo wie ein einzelner.
+- **D-07/D-12 — Oberfläche nur für Mandanten mit Salonauswahl** (Regel aus #64, `showSalonOptions`); Mandanten mit
+  einem Salon sehen keine Änderung.
+- **D-13 — Auslieferung nur gemeinsam mit #92.** Ohne erfassbare Fahrzeit wäre jeder Tag mit Salonwechsel ein
+  Klärungsfall („Fahrzeit oder Pause?“, #80/#511).
+
+### Durchsetzung — vier Ebenen
+
+Gemessen im Probelauf (Spike S1/S2) und gewählt wurde **Weg A**, die Ausschlussbedingung. Sie besteht aus zwei von Hand
+geschriebenen Migrationen (`20261016130000_time_entry_multi_entry_per_day` erzeugt, `20261016130001_time_entry_no_overlap`
+von Hand):
+
+1. **Ausschlussbedingung** `TimeEntry_no_overlap_closed` (`EXCLUDE USING gist ("employeeId" WITH =,
+tstzrange("startTime","endTime",'[)') WITH &&) WHERE ("deletedAt" IS NULL AND "endTime" IS NOT NULL)`, Erweiterung
+   `btree_gist`): zwei nicht gelöschte **abgeschlossene** Einträge einer Person überschneiden sich an keinem Datum
+   (auch über Mitternacht); halboffen, direkt anschließende Einträge sind erlaubt, ein Eintrag der Länge null ist leer
+   und kollidiert mit nichts. Offene Einträge stehen bewusst außerhalb: ein unbegrenzter Bereich ließe ein vergessenes
+   Ausstempeln jeden Folgetag sperren (die Regression von v1.8.13).
+2. **Partieller Unique-Index** `TimeEntry_employeeId_date_open_unique` (`WHERE "deletedAt" IS NULL AND "endTime" IS
+NULL`): höchstens ein **offener** Eintrag je Person und Tag. Er erhält den Vertrag des Resolvers (ein gleichzeitiges
+   zweites Einstempeln ist `ALREADY_CLOCKED_IN`). Dazu ein einfacher Index `TimeEntry_employeeId_date_idx`.
+3. **Zeilensperre `lockEmployeeForEntryWrite`** (`contexts/time-tracking/entry-write-lock.ts`): die EINE Sperre der
+   Mitarbeiterzeile (`FOR UPDATE`, mit Mandantenklausel) ist die erste Anweisung jeder Transaktion, die ein Intervall
+   anlegt oder verschiebt — POST (drei Zweige), PUT, Revalidierung mit Korrektur, Stempel-Resolver, Freigabe eines
+   Zeitnachtrags und CSV-Import. Sie schließt auch die Lücke offen-gegen-abgeschlossen, die die Bedingung nicht sieht.
+4. **`checkOverlap` in derselben Transaktion** (`recheckOverlapInTx`, nach der Sperre): der Treffer wird mit dem Text
+   des Aufrufers beantwortet (siehe Datenschutz), die Datenbank ist nur noch der Rückhalt.
+
+Wie ein Datenbankfehler erkannt wird (strukturiert, nie über `err.message`): Überschneidung = Prisma-Code `P2039`,
+`cause.originalCode` `23P01` und der Name `TimeEntry_no_overlap_closed` im Text des Treibers; zweiter offener Eintrag =
+`P2002` mit `cause.constraint.index` `TimeEntry_employeeId_date_open_unique` (`entry-overlap-error.ts`).
+
+**Ein vertauschter Eintrag (Ende vor Beginn) wird von der Datenbank abgelehnt (`P2039`, SQLSTATE `22000`, Bereichs-
+konstruktor) und bewusst NICHT als Überschneidung gemeldet.** Kein Schreibweg kann ihn erzeugen, weil jeder vorab
+Ende > Beginn verlangt; käme er trotzdem vor, soll er ein sichtbarer Serverfehler bleiben und nicht als gewöhnlicher 409
+verschwinden.
+
+### Stempelregeln
+
+Die Entscheidung trifft der Resolver (`services/clock/resolver.ts`); welcher Eintrag eines Tages gemeint ist, bestimmen
+ausschließlich `openEntryOf()` und `latestEndingClosed()` (`contexts/time-tracking/day-entries.ts`; Phase 92b ergänzt dort
+das Überspringen von Fahrzeiteinträgen):
+
+| Lage                                                            | Ergebnis                                                                                              |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Offener Eintrag am Tag, beliebiger Salon genannt                | `ALREADY_CLOCKED_IN` (kein Salon-Orakel)                                                              |
+| Abgeschlossener Tag, kein Salon oder Salon des letzten Eintrags | der Eintrag mit dem spätesten Ende wird wieder geöffnet (wie bisher)                                  |
+| Abgeschlossener Tag, ausdrücklich anderer, aktiver Salon        | **neuer Eintrag** in diesem Salon; der erste bleibt unverändert                                       |
+| Fremder / unbekannter Salon                                     | identische 404, inaktiver Salon 400 `SALON_INACTIVE`                                                  |
+| NFC / WLAN                                                      | nehmen keine Salonangabe entgegen: setzen den letzten Eintrag fort (Salonbindung des Terminals: #541) |
+
+Vor **jedem** START prüft der Resolver Monatssperre und Überschneidung, bevor er etwas schreibt: ein Tag mit einem
+gesperrten Eintrag oder ein Tag in einem abgeschlossenen Monat ergibt `MONTH_LOCKED` (auch bei einem anderen Salon);
+ein Zeitpunkt innerhalb eines abgeschlossenen Eintrags — oder **vor einem späteren abgeschlossenen Eintrag desselben
+Tages** — ergibt `ENTRY_OVERLAP` (409). Der zweite Fall folgt aus der Regel, dass ein offener Eintrag bis zum Ende
+seines Tages „läuft“; die Lücke wird über das Formular erfasst. Ein Wiedereröffnen, dessen letzter Eintrag nach dem
+Zeitpunkt endet, wird abgelehnt statt eine negative Pause zu schreiben. Auch das Ausstempeln kann an der Bedingung
+scheitern und antwortet dann 409 `ENTRY_OVERLAP`; die WLAN-Pfade melden einen Konflikt nur im Log (nie 409/500).
+
+### Revisionssicherheit
+
+Der Monatsabschluss gilt je Eintrag und je Tag: Ein zweiter Eintrag in einem gesperrten Tag oder abgeschlossenen
+Monat ist 403 (manuell) bzw. `MONTH_LOCKED` (Stempeln); ein gesperrter Eintrag bleibt unveränderbar. Keine Zeile wird
+durch die Migration oder durch das Stempeln eines weiteren Eintrags geändert; jeder neue Eintrag hat genau eine
+`CREATE`-Auditzeile (der CSV-Import schreibt sie jetzt in derselben Transaktion wie den Eintrag). Weiche Löschung
+bleibt: ein gelöschter Eintrag gibt sein Intervall frei (auf Datenbankebene würde das Zurücksetzen von `deletedAt`
+auf ein besetztes Intervall abgelehnt).
+
+### Konsolidierung
+
+`consolidateSameDayEntries` führt nie Einträge verschiedener Salons zusammen (`merge_skipped`, Grund
+`different_salon`; das Ausstempeln selbst bleibt erhalten). Innerhalb eines Salons ist die Schreibreihenfolge
+umgekehrt: erst den Nachfolger weich löschen, dann den Vorgänger verlängern — die Bedingung wird nach jeder Anweisung
+geprüft, die alte Reihenfolge hätte jedes zulässige Zusammenführen als Überschneidung zurückgerollt.
+
+### Tagesregeln
+
+Die Kerne (`entryDurations()`, `evaluateDayBreaks()`, `evaluatePlacement()`, Saldo, DATEV, Berichte, Dashboard) rechneten
+bereits tageweise über alle Einträge (#69/#79/#80/#511) und bleiben unverändert. Lücken zwischen Einträgen
+verschiedener Salons zählen nie als Pause, Lücken im selben Salon schon (#523). Geändert wurden die Ränder:
+
+- `findUnconfirmedBreakDays` führt jeden Tag einmal auf (die Variante je Eintrag bleibt).
+- **§ 9 Abs. 1 Nr. 2 JArbSchG (Berufsschultag) vergleicht die Tagessumme.** Vor #70 war ein Tag gleich ein Eintrag; eine
+  Aufteilung in zwei Einträge hätte die Grenze umgehen können. `otherWorkingMinutesOfDay()` wird in POST, PUT und der
+  Freigabe eines Zeitnachtrags mit korrigierten Zeiten zur geplanten Netto-Arbeitszeit addiert (ohne weiteren Eintrag
+  ist der Wert 0 — Einzeleintragstage unverändert). Diese Stelle stand nicht im Recherche-Inventar, sie wurde bei der
+  Planung gefunden.
+- **Ruhezeit (§ 5 ArbZG)** misst ab dem spätesten Ende des Vortags und bis zum frühesten Beginn des Folgetags.
+
+### Feiertagsort
+
+Bei mehreren Einträgen eines Tages ist der **Salon des Eintrags mit dem frühesten Beginn** der Arbeitsort des Tages
+(§ 2 EFZG); der Feiertag wird einmal je Tag aufgelöst, nie je Eintrag. Das war in Eintrag O eine Übergangsregel
+(`// MULTI-ENTRY:`) und ist jetzt **endgültig** (Owner-Entscheidung 16.10.2026). Nur Kommentare im Unterbau.
+
+### Zeitnachtrag
+
+Der Zeitnachtrag bleibt vorerst **ein Antrag je Mitarbeiter und Tag** (Owner-Entscheidung). Ein ausstehender Antrag
+des heutigen Tages blockiert weiterhin das Stempeln (`RETRO_PENDING`). Die Freigabe mit korrigierten Zeiten sperrt die
+Mitarbeiterzeile und prüft die Überschneidung in derselben Transaktion; bei einem Treffer bleibt der Antrag `PENDING`
+und nichts wird geschrieben. Folge-Issue: #ZEITNACHTRAG-FOLGEISSUE (Antrag je Eintrag).
+
+### Oberfläche
+
+Nur wo `showSalonOptions()` gilt (mehr als ein aktiver Salon im Mandanten UND mehr als einer erreichbar): Dashboard-
+Karte („In anderem Salon einstempeln“, „Eingestempelt in {Salon}“, Tagessummen, „2 Einträge heute“ und die kompakte
+Liste), Zeiterfassung und Team-Zeiterfassung (Feld „Salon“, Spalte „Salon“, „Weiteren Eintrag an diesem Tag“,
+Kalenderzelle nach Zahl der Einträge). Die Salonoptionen des Formulars sind die erreichbaren Salons aus dem
+Salon-Kontext (#82); die Auswahl im Kopf entscheidet nichts (Präsentation, kein Zugriffsrand). Mandanten mit einem
+Salon und Tage mit einem Eintrag rendern wie zuvor (Einzelsalon-Basisbilder der Sichtprüfung unverändert).
+`GET /time-entries` liefert zusätzlich `salonName` je Zeile (Anzeigewert, keine weitere Id).
+
+### Datenschutz
+
+Die Überschneidungsmeldung nennt Datum und Zeiten des Konfliktseintrags nur der Person selbst, einem Leser mit
+`time-entry:read` für den ganzen Mandanten und einem Leser, dessen Bereich den Eintrag enthält
+(`overlapMessageForCaller()`, die EINE Formulierungsregel; gleiche Bausteine wie `warningsVisibleToCaller()`, #85);
+jeder andere bekommt „Überschneidung mit einem bestehenden Eintrag dieses Tages.“, das den Konflikt bestätigt und sonst nichts. Eine
+Ablehnung durch die Datenbank trägt keinen Konfliktseintrag und ist immer neutral. Das Prüfskript nennt nur Ids und
+Kalendertage.
+
+### Gemessen
+
+- **Probelauf vor dem Bau (16.10.2026):** `prisma migrate diff --from-migrations … --to-schema … --exit-code` gegen
+  eine frische Schattendatenbank: Exit 0 („No difference detected“), die `--script`-Form ist leer — die CI-Driftprüfung
+  trägt beide handgeschriebenen Objekte, der Trigger-Weg war nicht nötig. Fehlerformen (Prisma 7, Treiberadapter) wie
+  oben, mit und ohne Transaktion; Mitternachtsfall erkannt, direkt anschließende Einträge, Länge null, gelöschter Eintrag
+  und andere Person akzeptiert. Die gesamte Migrationskette läuft auf PostgreSQL 17.11 (`btree_gist` 1.7, wie prod) und
+  18.3 (`btree_gist` 1.8, wie int und CI) mit identischem Katalog.
+- **Abweichung vom Plan:** Prisma sieht partielle Indizes nicht; das Entfernen des `@@unique` erzeugt kein `DROP
+INDEX`. Das `DROP INDEX` des alten Index steht daher von Hand als erste Anweisung der zweiten Migration.
+- **Betriebsprobe (nur lesend, 16.10.2026):** `btree_gist` ist auf int (PostgreSQL 18.4) und prod (17.9) verfügbar; der
+  Datenbanknutzer der Anwendung ist Eigentümer und Superuser; auf beiden Stufen gibt es keine überlappenden
+  abgeschlossenen Einträge und je Person und Tag höchstens einen offenen. Das Prüfskript auf der Entwicklungsdatenbank:
+  Exit 0.
+- **Migration saldoneutral (AC-70-5):** `time-entry-multi-entry-migration-70` führt die echten Anweisungen beider
+  Migrationen in einer zurückgerollten Transaktion über einen Altdatensatz (2 Mandanten × 2 Mitarbeiter × 8 Einträge,
+  Nachtschicht, ungültiger und gelöschter Eintrag, laufender Eintrag, geschlossener Februar mit Schnappschuss) aus; sechs
+  Hash-Gruppen vorher und nachher bytegleich, eine Kontrolländerung bewegt den Hash.
+- **Teilung ergibt dieselben Zahlen (AC-70-3):** `multi-entry-saldo-equality-70` vergleicht einen Tag 08:00–17:00 mit
+  zwei Einträgen 08:00–12:00 (Salon A) und 13:00–17:00 (Salon B) für `FIXED_SCHEDULE`, `SHIFT_BASED`,
+  `MONTHLY_HOURS` und `FLEXTIME` über Monatssaldo, Livesaldo, Monatsabschluss samt gespeichertem Schnappschuss,
+  Monatsbericht, PDF-Summe, DATEV, Zeitraumsumme und Dashboard: gleich bis auf die Identität. Der wörtliche Fall des
+  Issues (4 h + 3 h) ergibt 420 Arbeitsminuten und hebt die Monats-Ist um genau diese Zahl.
+- **Rennen:** zwei gleichzeitige überlappende POST → `[201, 409]`; zwei PUT auf dasselbe Intervall → eins gewinnt;
+  ein START gegen einen gehaltenen manuellen Schreibvorgang wartet (`pg_blocking_pids` beobachtet) und endet mit
+  `ENTRY_OVERLAP`; auf Datenbankebene wartet der zweite Schreiber und wird nach dem Commit abgelehnt. Mutationsproben:
+  ohne Sperre und erneute Prüfung, ohne Monatssperre, ohne die Überschneidungsprüfung des START bzw. des Wiedereröffnens,
+  ohne Salonwächter der Konsolidierung, ohne Bedingung (zurückgerollt) werden die jeweiligen Fälle rot.
+- **Neutralität:** die drei Neutralitätstests (`permission-neutrality-matrix`, `notification-recipients-neutrality`,
+  `activity-auth-neutrality`) bestehen mit 1752 Fällen und **0 geänderten Zellen**; nichts neu aufgezeichnet, kein
+  Nachtragsregister berührt. Die eingefrorenen Tests (`golden-matrix`, `day-break-equivalence-80` samt Fixture,
+  `saldo-neutrality-characterisation-79`, …) blieben unberührt grün.
+- **Testbestand:** Ausgangswert vor Phase 70b 607 API-Dateien / 9716 Fälle / 3 übersprungen und 201 Web-Dateien /
+  3150 Fälle; kein Test gelöscht, übersprungen oder abgeschwächt, jede bewusste Änderung eines Testes trägt einen
+  datierten Kopfkommentar „Amended 2026-10-16 for #70“ bei gleicher oder höherer Fallzahl. Endstand: siehe
+  `apps/api/scripts/check-test-completeness.mjs` (Untergrenzen angehoben).
+- **Browser:** `apps/e2e/tests/multi-entry-day.spec.ts` (e2e-ci, zwei Tests): zwei Salons, 08:00–12:00 und 13:00–16:00,
+  Liste mit Salonspalte, Zelle „2 Einträge“, überlappender dritter Eintrag mit 409 und Text, Einzelsalon-Mandant ohne
+  neue Elemente. Sichtprüfung der Stempelkarte (12 Bilder) und der Zeiterfassungsseiten (16 Bilder), 390 und 360 px,
+  hell und dunkel; dabei gefunden und behoben: ein falsches „§ 4 ArbZG verletzt“ auf Tagen mit zwei Einträgen, ein
+  umbrechender Zähler und eine kontrastlose Schaltfläche im Dunkelmodus.
+
+### Was bewusst NICHT geschah
+
+- **Kein „Salon wechseln“ per Klick.** Der Wechsel ist ein neues Einstempeln im anderen Salon; die Lücke ist bis #92
+  ein Klärungsfall.
+- **Kein Salon je Eintrag in den PDFs.** Berichte und DATEV rechnen je Tag.
+- **Die automatische Pause bleibt je Eintrag** (`placeAutoBreak`, #81); die Pause zwischen Salons ist weiter eine
+  erfasste Tagespause (`DayBreak`) oder Quittung.
+- **Kein Zeitnachtrag je Eintrag** (siehe oben), **keine Fahrzeit** (#92), **keine Salonbindung von NFC und WLAN** (#541).
+- **Keine Neuberechnung und kein Backfill:** geschlossene Monate werden nie neu bewertet.
+- **Entfallen sind** `checkOneEntryPerDay`, `SALON_DIFFERS_FROM_DAY_ENTRY`, das Bereinigungsskript
+  `cleanup-time-entry-duplicates.ts` (es hätte rechtmäßige zweite Einträge weich gelöscht) und alle
+  `// MULTI-ENTRY:`-Markierungen samt ihrer Tabelle im Wächtertest, der jetzt prüft, dass keine mehr vorkommt.
+
+### Akzeptierte Restrisiken
+
+- **Ein alter offener Eintrag, der später über einen neueren Eintrag hinweg geschlossen wird**, wird beim Ausstempeln
+  abgelehnt (die Bedingung sieht dann den Überschnitt); die Korrektur ist eine Zeitkorrektur (`PUT`).
+- **Ein CSV-Import desselben Tages mit anderen Zeiten legt einen zweiten Eintrag an** (es gibt keine Tageseindeutigkeit
+  mehr); identische oder überlappende Zeilen werden je Zeile als Fehler gemeldet.
+- **Salonoptionen des Formulars = erreichbare Salons**, während die Stempelkarte jeden aktiven Salon anbietet; der
+  Server entscheidet in beiden Fällen (`resolveEntrySalon`).
+- **Nur vorwärts:** Sobald ein Tag mit mehreren Einträgen existiert, kann der alte Unique-Index nie wieder angelegt
+  werden (Rollback-Hinweis in `docs/migrations.md`).
+- **Ein START zwischen zwei Einträgen eines Tages ist abgelehnt**, bis die Lücke erfasst ist (oben).
+- **Die JArbSchG-Prüfung** läuft weiter nur in den drei manuellen Schreibwegen, nicht beim Stempeln (unverändert, #655).
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** Datenmodell (Ausschlussbedingung statt Eindeutigkeit je Tag), Stempeln, Konsolidierung, Erfassung,
+  Import, Zeitnachtrag, Oberfläche.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** keine Codeänderung; der Gleichheitstest belegt, dass `calcLeaveAbsenceMinutesTz()` und die
+  Einmal-Regel („ein Tag mindert das Soll genau einmal“) unberührt bleiben.
+- **Unterbau:** keine. Die Feiertagsauflösung bleibt „Salon des frühesten Eintrags“ (nur Kommentare).
+- **Kompositionsschicht:** keine Regel.
+
+### Auslieferung
+
+Die beiden Migrationen laufen beim API-Start (`prisma migrate deploy`); **vorher** läuft das lesende Prüfskript
+`apps/api/scripts/audit-70-entry-overlaps.ts` auf int UND prod (Exit 0 erwartet). Das Anlegen der Bedingung hält kurz
+eine ACCESS EXCLUSIVE-Sperre auf `TimeEntry`: Deploy außerhalb der Öffnungszeiten. Anleitung, Prüfung nach dem Deploy
+und Rollback-SQL: `docs/migrations.md`, Abschnitt „Phase 70b“. **#70 und #92 erscheinen im selben Release.**
+
+### Nachweis
+
+API: `time-entry-multi-entry-70`, `time-entry-overlap-message-70`, `time-entry-locked-day-70`, `clock-second-salon-70`,
+`day-entries-selectors-70`, `retro-approve-overlap-70`, `imports-multi-entry-70`, `find-unconfirmed-break-days-70`,
+`jarbschg-day-sum-70`, `time-entry-multi-entry-migration-70`, `time-entry-overlap-constraint-70`,
+`multi-entry-saldo-equality-70`, `multi-entry-month-close-70`, `clock-salon-choice-70`,
+`time-entry-list-salon-name-70` und `scripts/__tests__/audit-70-entry-overlaps.test.ts`; Web:
+`clock-card-multi-entry-70`, `day-entry-actions`, `time-entries-multi-entry-wiring-70`; Playwright
+`multi-entry-day.spec.ts`.
