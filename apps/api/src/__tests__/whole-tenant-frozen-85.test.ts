@@ -1142,6 +1142,11 @@ function normalize(value: unknown): unknown {
  * display field `salonName` (the name of the entry's own salon). The frozen literals below are NOT
  * re-captured: the field is taken out of the rows before the comparison and proven separately
  * against the salon the row's `salonId` names, so every other key and value stays pinned.
+ *
+ * Amendment 2026-10-16 (Issue #92, Phase 92b-01): the rows additionally carry `travelToSalonId`
+ * (the arrival salon of a travel entry, `null` for every ordinary entry — and every entry of these
+ * fixtures is ordinary). Same mechanism, nothing re-captured: the key is taken out before the
+ * comparison and proven to be `null` on every row.
  */
 async function withoutSalonName(
   prisma: FastifyInstance["prisma"],
@@ -1152,9 +1157,10 @@ async function withoutSalonName(
     where: { id: { in: rows.map((r) => r.salonId as string) } },
     select: { id: true, name: true },
   });
-  return rows.map(({ salonName, ...rest }) => {
+  return rows.map(({ salonName, travelToSalonId, ...rest }) => {
     expect(typeof salonName).toBe("string");
     expect(salonName).toBe(salons.find((s) => s.id === rest.salonId)?.name);
+    expect(travelToSalonId, "an ordinary entry has no travel destination").toBeNull();
     return rest;
   });
 }
