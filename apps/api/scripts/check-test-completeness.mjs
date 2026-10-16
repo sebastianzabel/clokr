@@ -838,10 +838,12 @@ import { readFileSync } from "node:fs";
 // shifts-week-salon-filter-558 and contexts/absence/__tests__/salon-leave-attribution-558; amended: access-context
 // (salonOnlyReach), salon-context-manipulation-82 and shifts-planning-overview (planning-overview now answers 404 for an
 // unreachable salon, stricter than before). Both floors are set to exactly these numbers; MIN_FILES 603 -> 607, MIN_TESTS 9653 -> 9716. Never lowered.
-const MIN_FILES = 607;
+// Issue #650 (2026-10-16): new file `cancel-orphan-shifts-permission-650.test.ts` with 6 cases, counted from the source
+// (lower-bound convention as above, no full run): MIN_FILES 607 -> 608, MIN_TESTS 9716 -> 9722.
+const MIN_FILES = 608;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
-const MIN_TESTS = 9716;
+const MIN_TESTS = 9722;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

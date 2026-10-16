@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  contractShiftRights,
   employeeAdminRights,
   mayFileRetroRequest,
   reportRights,
@@ -239,5 +240,22 @@ describe("the employee list shows roles only from roleNames (Issue #538)", () =>
     );
     expect(cal.length).toBeGreaterThan(5_000);
     expect(cal).not.toContain("u.role");
+  });
+});
+
+describe("contractShiftRights (/admin/employees/:id, #650)", () => {
+  it("only shift:plan offers discarding shifts; the HR template does not", () => {
+    expect(contractShiftRights({ permissions: p.HR }).canDiscardShifts).toBe(false);
+    expect(contractShiftRights({ permissions: p.ADMIN }).canDiscardShifts).toBe(true);
+    expect(contractShiftRights({ permissions: p.SALON_MANAGER }).canDiscardShifts).toBe(true);
+    expect(
+      contractShiftRights({ permissions: ["contract:update:ZUGEWIESEN"] }).canDiscardShifts,
+    ).toBe(false);
+  });
+
+  it("is fail-closed for a missing caller or an admin compat role without permissions", () => {
+    expect(contractShiftRights(null).canDiscardShifts).toBe(false);
+    expect(contractShiftRights(adminRoleNoPermissions).canDiscardShifts).toBe(false);
+    expect(contractShiftRights(noList).canDiscardShifts).toBe(false);
   });
 });
