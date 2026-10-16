@@ -20,6 +20,8 @@ import {
   shiftScopeWhere, // Phase 91b Plan 08 (#91), D-11
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 08 (#91), D-10 (GET /week's leave/absence facade calls)
   resolvePersonScopedEmployeeIds, // Phase 91b Plan 08 (#91), D-12 (GET /week's plannable-staff list)
+  resolveSalonInReach, // Issue #558, D-01/D-07 — the one validator of a client-given salon
+  salonOnlyReach, // Issue #558, D-12 — the reach "only this salon", intersected with the caller's own
   holidaysAtWorkLocation, // Phase 71b (issue #71, D-07) — legal holidays by work location, week view only
 } from "../../platform";
 import {
@@ -66,6 +68,15 @@ const templateSchema = z.object({
   endTime: z.string().regex(/^\d{2}:\d{2}$/),
   color: z.string().default("#3B82F6"),
 });
+
+// Issue #558 (D-01): the optional salon the week view narrows to. `date` keeps its cast in the handler;
+// a malformed id answers 400 through the global Zod handler.
+const shiftWeekSalonQuerySchema = z.object({ salonId: z.string().uuid().optional() });
+
+// Issue #558 (D-01/D-07): the one rejection body of every salon-taking view endpoint — byte-identical
+// with the dashboard and `resolveShiftSalon`'s 404 (T-100-09: foreign, unknown, inactive and
+// out-of-reach salons are indistinguishable).
+const SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
 
 const shiftSchema = z.object({
   employeeId: z.string(),
@@ -1204,7 +1215,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   app.get("/week", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("shift:read:ZUGEWIESEN"),
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const access = accessContextFromRequest(req);
       // Phase 47.1 verify-check (2026-05-20): GET /week resolver merges APPROVED LeaveRequest
       // (deletedAt: null) + non-deleted Absence + EmployeeAvailability into availability map.
@@ -1238,10 +1249,42 @@ export async function shiftRoutes(app: FastifyInstance) {
       //     `resolveStammsalonScopedEmployeeIds` at the week's Monday, fed through a `scopedAccess`.
       const weekScopeReach = await resolveAccessReach(app.prisma, access, "shift:read:ZUGEWIESEN");
       const weekScopedAccess = { ...access, reach: weekScopeReach };
-      const weekPersonScopedIds =
+
+      // Issue #558 (D-01): the optional salon filter. The salon is validated by the one validator
+      // against the caller's own `shift:read` reach BEFORE any read; a foreign, unknown, inactive or
+      // out-of-reach salon is the identical 404. The filter below only ever narrows what the caller's
+      // reach already admits.
+      const { salonId: requestedSalonId } = shiftWeekSalonQuerySchema.parse(req.query);
+      const weekSalon = await resolveSalonInReach(
+        app.prisma,
+        tenantId,
+        weekScopeReach,
+        requestedSalonId,
+      );
+      if (!weekSalon.ok) return reply.code(404).send(SALON_NOT_FOUND);
+      const chosenSalonId = weekSalon.salonId;
+
+      const reachPersonScopedIds =
         weekScopeReach.kind === "wholeTenant"
           ? "all"
           : await resolvePersonScopedEmployeeIds(app.prisma, tenantId, weekScopeReach);
+      // Issue #558 (D-12): under a filter the plannable people are the master-data rule (Stammsalon
+      // today OR an active deployment, D-12 of Phase 91b) evaluated for "only this salon",
+      // intersected with the caller's own plannable set.
+      let weekPersonScopedIds: "all" | string[] = reachPersonScopedIds;
+      if (chosenSalonId !== null) {
+        const inSalon = await resolvePersonScopedEmployeeIds(
+          app.prisma,
+          tenantId,
+          salonOnlyReach(chosenSalonId),
+        );
+        weekPersonScopedIds =
+          reachPersonScopedIds === "all"
+            ? inSalon
+            : inSalon === "all"
+              ? reachPersonScopedIds
+              : inSalon.filter((id) => reachPersonScopedIds.includes(id));
+      }
       const weekLeaveAbsenceScopedIds =
         weekScopeReach.kind === "wholeTenant"
           ? "all"
@@ -1290,6 +1333,14 @@ export async function shiftRoutes(app: FastifyInstance) {
             deletedAt: null, // Phase 67.2 — hide soft-deleted shifts from /shifts/week
             // Phase 91b Plan 08 (Issue #91), D-11 — `{}` for a wholeTenant reach, no narrowing.
             ...shiftScopeWhere(weekScopeReach),
+            // Issue #558 (D-02/D-12): under a filter only shifts whose OWN salon is the chosen one
+            // (D-11 of Phase 91b, no Stammsalon fallback), ANDed with the caller's scope above. The
+            // unfiltered `where` is exactly as before. Leave, absence and availability reads below
+            // stay as they are: they are person facts of the caller's reach and the grid renders
+            // only the listed people.
+            ...(chosenSalonId !== null
+              ? { AND: [shiftScopeWhere(salonOnlyReach(chosenSalonId))] }
+              : {}),
           },
           include: {
             employee: {
@@ -1602,6 +1653,9 @@ export async function shiftRoutes(app: FastifyInstance) {
         }
       }
 
+      // Issue #558 (D-02): under a salon filter the coverage is computed from the filtered shifts and
+      // people. `CoverageRule` has no salon, so its tenant-wide minima are applied per salon view;
+      // per-salon rules are a follow-up (schema change, not part of this phase).
       // Compute coverage per day
       // weekday lookup: iso → 0..6 (Mo=0..So=6) — note JS getUTCDay returns 0=Sun..6=Sat
       function isoToDow(iso: string): number {
@@ -1918,7 +1972,10 @@ export async function shiftRoutes(app: FastifyInstance) {
       // the Soll from sched.weeklyHours (D-02). This field is READ-ONLY; it is NEVER
       // written to OvertimeAccount.balanceHours or SaldoSnapshot (D-04, § 615).
       const contractSollMinutesByEmp: Record<string, number> = {};
-      for (const emp of employees) {
+      // Issue #558 (D-02/D-13): under a salon filter the contract Soll is not computed at all — it is a
+      // person figure and is never split by salon, and comparing it with one salon's shifts would
+      // report a false "Unterdeckung" for a person who also works elsewhere.
+      for (const emp of chosenSalonId === null ? employees : []) {
         const sched = scheduleByEmp.get(emp.id);
         if (!sched) continue;
         if (String(sched.type ?? "") !== "SHIFT_BASED") continue;
@@ -1989,7 +2046,15 @@ export async function shiftRoutes(app: FastifyInstance) {
         // credits (Ausfallprinzip) plus Berufsschule — the 76.22 C_net contract exactly.
         // The frontend MUST render this value as the Soll (D-02 — no re-derivation from
         // weeklyHours). Never written to OvertimeAccount (D-04, § 615 planning-only).
-        contractSollMinutesByEmp,
+        // Issue #558 (D-02/D-13): `null` plus a reason CODE under a filter — the planner hides the Soll
+        // row by this code, never by the filter state; without a filter the response carries neither
+        // the null nor the key.
+        ...(chosenSalonId === null
+          ? { contractSollMinutesByEmp }
+          : {
+              contractSollMinutesByEmp: null,
+              sollUnavailableReason: "SALON_FILTER" as const,
+            }),
         schoolHoliday,
         salonOpeningHours,
       };
