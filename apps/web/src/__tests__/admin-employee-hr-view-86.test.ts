@@ -110,3 +110,62 @@ describe("/admin/employees/[id] - no day-level data (Issue #86, AC-86-3, T-86b-1
     }
   });
 });
+
+const MONTH_CLOSE = readRouteFile(
+  "../routes/(app)/admin/month-close/+page.svelte",
+  "src/routes/(app)/admin/month-close/+page.svelte",
+);
+const TEAM_TIMES = readRouteFile(
+  "../routes/(app)/team/time-entries/+page.svelte",
+  "src/routes/(app)/team/time-entries/+page.svelte",
+);
+
+describe("/admin/month-close - withheld day lists render as counts (Issue #86, D-02)", () => {
+  it("imports its date-list texts from lib/month-close/day-lists", () => {
+    expect(MONTH_CLOSE).toMatch(/from "\$lib\/month-close\/day-lists"/);
+    for (const fn of [
+      "missingDaysText",
+      "gapCountOf",
+      "breakFindingHintFor",
+      "karenzOverrunTitle",
+    ]) {
+      expect(MONTH_CLOSE, fn).toContain(fn);
+    }
+  });
+
+  it("no render site formats a date list or reads an array length itself", () => {
+    expect(MONTH_CLOSE).not.toMatch(/function formatMissing/);
+    expect(MONTH_CLOSE).not.toMatch(/\.missingDates(\?)?\.length/);
+    expect(MONTH_CLOSE).not.toMatch(/\.karenzOverrunDays(\?)?\.length/);
+    expect(MONTH_CLOSE).not.toMatch(/gapDates\.join/);
+    expect(MONTH_CLOSE).not.toMatch(/breakFindingMonthCloseHint\(/);
+  });
+
+  it("shows the one neutral hint when any row was withheld", () => {
+    expect(MONTH_CLOSE).toMatch(/anyDayDetailsWithheld\(/);
+    expect(MONTH_CLOSE).toContain("DAY_DETAILS_WITHHELD_HINT");
+  });
+
+  it("decides confirmGaps by the count, never by the array", () => {
+    expect(MONTH_CLOSE).toMatch(/confirmGaps: gapCountOf\(emp\) > 0/);
+    expect(MONTH_CLOSE).toMatch(/confirmGaps: pendingGapCount > 0/);
+    expect(MONTH_CLOSE).not.toMatch(/confirmGaps: pendingGaps/);
+  });
+});
+
+describe("/team/time-entries - guards itself by its own permission (Issue #86, AC-86-3)", () => {
+  it("calls mayOpenTeamPage before its first api call and falls back to the leave page", () => {
+    expect(TEAM_TIMES).toMatch(
+      /import \{[^}]*\bmayOpenTeamPage\b[^}]*\} from "\$lib\/nav\/team-nav"/,
+    );
+    const guard = TEAM_TIMES.indexOf('mayOpenTeamPage("/team/time-entries"');
+    expect(guard).toBeGreaterThan(-1);
+    const onMount = TEAM_TIMES.indexOf("onMount(async () => {");
+    expect(onMount).toBeGreaterThan(-1);
+    expect(guard).toBeGreaterThan(onMount);
+    // no request between the start of onMount and the guard
+    expect(TEAM_TIMES.slice(onMount, guard)).not.toMatch(/api\./);
+    expect(TEAM_TIMES).toMatch(/mayOpenTeamPage\("\/team\/leave"/);
+    expect(TEAM_TIMES).toContain('"/dashboard"');
+  });
+});

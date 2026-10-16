@@ -6,7 +6,7 @@
 // too, not only in the API's own template tests.
 
 import { describe, it, expect } from "vitest";
-import { visibleTeamNavItems } from "../team-nav";
+import { mayOpenTeamPage, visibleTeamNavItems } from "../team-nav";
 
 // docs/permissions.md:444 — Salonmanager (intended scope: Salons).
 const SALONMANAGER_PERMISSIONS = [
@@ -123,5 +123,41 @@ describe("visibleTeamNavItems", () => {
       "/teamcal",
       "/shifts",
     ]);
+  });
+});
+
+describe("mayOpenTeamPage (Issue #86, AC-86-3)", () => {
+  it("the Personalabteilung may open Team-Abwesenheiten but not Team-Zeiten", () => {
+    const hr = { permissions: PERSONALABTEILUNG_PERMISSIONS };
+    expect(mayOpenTeamPage("/team/time-entries", hr)).toBe(false);
+    expect(mayOpenTeamPage("/team/leave", hr)).toBe(true);
+  });
+
+  it("the Salonmanager may open both", () => {
+    const sm = { permissions: SALONMANAGER_PERMISSIONS };
+    expect(mayOpenTeamPage("/team/time-entries", sm)).toBe(true);
+    expect(mayOpenTeamPage("/team/leave", sm)).toBe(true);
+  });
+
+  it("agrees with the nav for every entry (one source)", () => {
+    for (const permissions of [
+      SALONMANAGER_PERMISSIONS,
+      AUSBILDER_PERMISSIONS,
+      PERSONALABTEILUNG_PERMISSIONS,
+    ]) {
+      const user = { permissions };
+      const hrefs = visibleTeamNavItems(user).map((i) => i.href);
+      expect(hrefs.length).toBeGreaterThan(0);
+      for (const href of hrefs) expect(mayOpenTeamPage(href, user), href).toBe(true);
+    }
+  });
+
+  it("refuses an unknown page, a plain Mitarbeiter and a caller without a permission list", () => {
+    expect(mayOpenTeamPage("/team/unknown", { permissions: SALONMANAGER_PERMISSIONS })).toBe(false);
+    expect(mayOpenTeamPage("/team/time-entries", { permissions: ["time-entry:read:EIGENE"] })).toBe(
+      false,
+    );
+    expect(mayOpenTeamPage("/team/time-entries", {})).toBe(false);
+    expect(mayOpenTeamPage("/team/time-entries", null)).toBe(false);
   });
 });

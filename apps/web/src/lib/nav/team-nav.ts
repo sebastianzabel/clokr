@@ -86,3 +86,14 @@ export function visibleTeamNavItems(user: PermissionHolder | null | undefined): 
     ({ href, label, icon }) => ({ href, label, icon }),
   );
 }
+
+/**
+ * Issue #86 (AC-86-3) - may `user` open the team page `href`? Answers from the same
+ * `TEAM_NAV_ENTRIES` permission as the nav, so a page that guards itself by this function and the
+ * nav entry that links to it can never disagree. UX only - the API refuses a caller without the
+ * permission anyway. An href that is not a team nav entry is refused (fail-closed).
+ */
+export function mayOpenTeamPage(href: string, user: PermissionHolder | null | undefined): boolean {
+  const entry = TEAM_NAV_ENTRIES.find((e) => e.href === href);
+  return entry !== undefined && isVisible(entry, user);
+}
