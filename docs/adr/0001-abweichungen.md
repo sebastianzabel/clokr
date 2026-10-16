@@ -1675,6 +1675,86 @@ Namen der gelöschten Funktionen. `lint:role-checks` behält `compat-role.ts` al
 **Release B.** Spalte `User.role` und Enum `Role` entfernen, `compat-role.ts` und die `lint:role-checks`-Ausnahme streichen,
 den Firmen-PDF-Filter über Zuweisungen ausdrücken, das Übernahme-Skript stilllegen: #641.
 
+### Nachtrag 2026-10-17 (Issue #614) — Anonymisierung beendet die Beschäftigung, Personalnummer bleibt
+
+**Entscheidung.** Owner-Entscheidung vom 16.10.2026 (am Issue #614 dokumentiert). Eine DSGVO-Löschung
+(`DELETE /api/v1/employees/:id`) beendet die Beschäftigung der Person und behält ihre Personalnummer. Das ist eine
+**Unterbau-Semantikänderung** im Sinn von ADR 0002, Entscheidung 7: Zwei Bedeutungen von `anonymizeEmployeeData` ändern sich
+(`Employee.exitDate` wird gesetzt, `Employee.employeeNumber` wird nicht mehr überschrieben). Die Lage davor: Die Person blieb
+ohne Austrittsdatum, ihre genehmigten Urlaube und Berufsschultage liefen weiter, der DATEV-Export künftiger Monate führte sie
+weiter, und die überschriebene Personalnummer ließ spätere Lohnkorrekturen alter Monate nicht mehr zuordnen (§ 41 EStG,
+§ 147 AO; Art. 17 Abs. 3 lit. b DSGVO erlaubt die Aufbewahrung).
+
+**Was sich geändert hat.**
+
+- **Austrittsdatum.** Ist es leer, setzt die Anonymisierung den Tag der Anonymisierung in der Zeitzone des Mandanten (UTC-Mitternacht
+  dieses Kalendertags, wie ein im Web eingegebenes Austrittsdatum) und führt den Abgleich des Austrittsjahres aus #447 aus. Ein
+  vorhandenes Datum, ob vergangen oder künftig, wird nie geändert. Ein gespeichertes Austrittsdatum wird als sein UTC-Kalendertag
+  gelesen (die Konvention, mit der es geschrieben wurde).
+- **Personalnummer.** Sie bleibt und bleibt im Mandanten reserviert: die Eindeutigkeit `[tenantId, employeeNumber]` besteht
+  weiter, das Anlegen oder Ändern auf eine vergebene Nummer antwortet **409** mit deutscher Meldung statt eines internen Fehlers
+  (`employee-creation.ts`). Das Namensmuster `GELÖSCHT-<Nummer>` im Nachnamen bleibt der Anonymisierungsmarker; er hängt nicht
+  von der Nummer ab.
+- **Abwesenheiten nach dem Austritt.** Die Regel liegt **nur** in `contexts/absence/employment-exit.ts`. Der Unterbau erreicht
+  sie über die Dekoration `app.absenceExit` (`plan` vor der Transaktion, `apply` in ihr, `afterCommit` danach) — dieselbe
+  Reichweite wie E-5, ohne neuen Import; der Importzyklus bleibt bei 22 Modulen. Ein Antrag, der nach dem Austrittstag beginnt,
+  wird storniert (PENDING, APPROVED, CANCELLATION_REQUESTED, jeder Urlaubstyp) mit denselben Rückbuchungen wie eine genehmigte
+  Stornierung (Urlaubstage, Überstundenausgleich über die **gespeicherten** Minuten, Revalidierung ungültiger Zeiteinträge).
+  Berufsschultage (`Absence`) nach dem Austritt werden weich gelöscht.
+- **Überschneidung statt Stornierung (D-02).** Ein Antrag, der den Austrittstag überspannt, wird auf den Austrittstag **gekürzt**,
+  nicht storniert: Urlaub ist die Freistellung innerhalb eines bestehenden Arbeitsverhältnisses (§ 1, § 7 Abs. 1 BUrlG), die
+  gewährten Tage bis zum Austritt bleiben Urlaub, der Rest wird abgegolten (§ 7 Abs. 4 BUrlG). Dafür ist der Korrekturkern der
+  Route `PATCH /leave/requests/:id/correct` nach `contexts/absence/leave-correction.ts` herausgelöst (Plan, Anwendung und
+  Abschluss hinter einem Audit-Port); Route und Austritt teilen **eine** Implementierung. Bleibt vom Antrag nichts übrig, wird er
+  storniert; ein offener Antrag wird wie bei der Bearbeitung neu bepreist.
+- **Übersprungene Fälle.** Nie angefasst, sondern im ANONYMIZE-Audit unter `skipped` mit ID und Code gelistet: `CLOSED_MONTH`
+  (ein betroffener Tag liegt in einem abgeschlossenen Monat, Zeilen und Salden bleiben unverändert), `PARENTAL_REDUCTION_ACTIVE`
+  (aktive § 17-BEEG-Kürzung; nur ihr eigener Widerruf ändert die Zeile), `SECTION9_CREDIT_ACTIVE` (eine Stornierung hebt keine
+  § 9-Gutschrift auf, es würde doppelt gutgeschrieben) und `CORRECTION_REFUSED` (der Korrekturkern lehnt aus eigenem Grund ab).
+  Die Anonymisierung wird dadurch nie blockiert (Art. 17 DSGVO). Ändert sich ein geplanter Antrag zwischen Plan und Anwendung,
+  antwortet die Route **409** `EMPLOYMENT_EXIT_CONFLICT` und schreibt nichts.
+- **Audit ohne Freitext.** Jede geänderte Zeile bekommt ihren eigenen Audit-Eintrag mit `auditReason` „Anonymisierung“ und
+  `trigger: "ANONYMIZATION"`, ohne Notiz, Name oder E-Mail. Der ANONYMIZE-Eintrag trägt die Zahlen je Gruppe, das Austrittsdatum
+  und die übersprungenen Zeilen (IDs und Codes). Zeilen, die die Anonymisierung ändert, werden vor dem Bereinigen der
+  personenbezogenen Felder geschrieben, damit deren Notizen und Pfade danach geleert werden.
+- **„Bevorstehende Urlaube“.** Die Dashboard-Karte (`GET /dashboard/team-upcoming-leave`) listet keine anonymisierte Person mehr;
+  der Filter liegt in der Abwesenheiten-Fassade, nicht in der Kompositionsschicht.
+- **Dialog.** Der Lösch-Dialog im Web nennt, dass die Beschäftigung endet und die Personalnummer bestehen bleibt.
+
+**Auswirkung auf die Kontexte.**
+
+| Kontext             | Wirkung                                                                                                                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unterbau            | `Employee.exitDate` wird gesetzt, `Employee.employeeNumber` bleibt und ist reserviert (409); `anonymizeEmployeeData` bekommt `exitDayIfUnset` und liefert das Austrittsdatum zurück |
+| Zeiterfassung       | keine fachliche Wirkung; Einträge stornierter Zeiträume werden wie bei jeder Stornierung revalidiert (`revalidateLeaveCancellationEntries`)                                         |
+| Abwesenheiten       | neue Regel `employment-exit.ts` (Stornieren, Kürzen, weich Löschen) und der aus der Route gelöste Korrekturkern `leave-correction.ts`; Dashboard-Filter in der Fassade              |
+| Schichtplanung      | keine, wie heute (der Berufsschul-Generator überspringt Tage nach dem Austritt bereits)                                                                                             |
+| Arbeitszeitkonto    | abgeschlossene Monate unverändert (summenidentisch bewiesen); offene Monate werden nach den Stornos wie bei jeder Stornierung neu berechnet                                         |
+| Kompositionsschicht | DATEV führt die Person ab dem Folgemonat des Austritts bei unverändertem Code nicht mehr; die Personalnummer bleibt in den Zeilen alter Monate; keine neue Geschäftsregel           |
+
+**Grenzen.**
+
+- _Bestand wird nicht korrigiert._ Personen, die vor diesem Release anonymisiert wurden, haben weiter kein Austrittsdatum, ihre
+  Abwesenheiten laufen weiter und ihre Personalnummer ist überschrieben. Die Entscheidung, ob und wie das nachgezogen wird,
+  liegt bei #666; das lesende Skript `scripts/audit-614-anonymized-employment.ts` listet die Fälle (nur IDs).
+- _`anonymize-dump.ts`._ Das Batch-Skript der Kopie-Löschung setzt das Austrittsdatum, behält die Personalnummer, beendet aber
+  keine Abwesenheiten: Die Kopie hat keine Lohnfolgen, und eine Abwesenheitsregel gehört nicht in ein Skript.
+- _Übersprungene Zeilen bleiben_ bis zur fachlichen Klärung (Urlaub, der vollständig nach dem Austritt liegt und eine
+  § 9-Gutschrift mit einem überspannenden Krankheitsantrag teilt, wird übersprungen und gemeldet). Der Genehmigungsweg der
+  Stornierung hebt eine § 9-Gutschrift weiterhin nicht auf — das ist ein eigener Fehler (#662), der hier nicht mitbehoben wird.
+- _Aufbewahrung._ Die Frist des endgültigen Löschens beginnt bei neuen Anonymisierungen am Austrittstag statt am Anlagedatum der
+  Person.
+
+**Betreiberschritt vor dem Deploy.** Lese-Skript auf int UND prod, Ausgabe aufbewahren (Ablauf: `docs/migrations.md`,
+„Phase 614“). Es gibt keine Migration und keinen Schemawechsel.
+
+**Nachweis.** `anonymization-ends-employment-614.test.ts` (Austrittsdatum, Stornierung, Audit, Transaktion),
+`anonymization-absence-kinds-614.test.ts` (alle Status und Typen, Berufsschule, übersprungene Fälle),
+`anonymization-spanning-exit-614.test.ts` (Kürzung, § 9, § 17, Konflikt), `anonymization-closed-months-614.test.ts`
+(abgeschlossene Monate summenidentisch, kein Freitext im Audit), `anonymization-employee-number-614.test.ts` (Nummer bleibt,
+409), dazu `leave-correction-core-614.test.ts`, `dashboard-upcoming-leave-anonymized-614.test.ts` und
+`scripts/__tests__/audit-614-anonymized-employment.test.ts`.
+
 ---
 
 ## O — Bundesland und manuelle Feiertage wandern an den Salon (Phase 71b, Issue #71)
