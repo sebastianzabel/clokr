@@ -23,6 +23,7 @@ import { CLEARED_INVALID_REASON } from "../invalid-reason"; // Phase 96 (T1)
 import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
 import { otherWorkingMinutesOfDay } from "../day-entries"; // Issue #70 (D-04)
 import { recheckOverlapInTx } from "../entry-invariants"; // Issue #70 (D-10)
+import { checkTravelNeighbours, TravelRefusalError } from "../travel-entry"; // Issue #92 (T6)
 import {
   EntryConflictError,
   isEntryOverlapViolation,
@@ -545,6 +546,29 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
                 access: accessContextFromRequest(req),
               });
             }
+            // Issue #92 (T6): the release turns a pending row, which never anchors a travel entry,
+            // into a recorded one, possibly with corrected times — it may not land between a travel
+            // entry and its arrival entry in another salon. ONE evaluation: the approval keeps the
+            // date, so the stored state (`without`) and the released, possibly corrected state
+            // (`with`) go into the same call. A refusal rolls everything back (the request stays
+            // PENDING) and is answered below.
+            await checkTravelNeighbours(tx, {
+              tenantId: user.tenantId,
+              employeeId: existing.employeeId,
+              date: coupledEntry.date,
+              without: entryIdToRelease,
+              with: {
+                id: entryIdToRelease,
+                startTime: correctedFields.startTime ?? coupledEntry.startTime,
+                endTime:
+                  correctedFields.endTime !== undefined
+                    ? correctedFields.endTime
+                    : coupledEntry.endTime,
+                salonId: coupledEntry.salonId,
+                type: coupledEntry.type,
+                invalidReasonCode: null,
+              },
+            });
             const reqAfter = await tx.retroEntryRequest.findUniqueOrThrow({ where: { id } });
             const entryAfter = await tx.timeEntry.update({
               where: { id: entryIdToRelease },
@@ -592,6 +616,10 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           // database refusal carries no conflicting row to judge the reach with).
           if (err instanceof EntryConflictError) {
             return reply.code(409).send({ error: err.userMessage });
+          }
+          // Issue #92 (T6): the release would orphan a travel entry of the day.
+          if (err instanceof TravelRefusalError) {
+            return reply.code(err.refusal.status).send(err.refusal.body);
           }
           if (isEntryOverlapViolation(err)) {
             return reply.code(409).send({ error: OVERLAP_MESSAGE_NEUTRAL });
