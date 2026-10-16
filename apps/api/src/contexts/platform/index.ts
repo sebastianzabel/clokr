@@ -46,6 +46,13 @@ export {
   NOT_ANONYMIZED_EMPLOYEE_WHERE,
   isAnonymizedEmployee,
 } from "./employee-anonymization-filter";
+// Issue #613 — Unterbau-Erweiterung (ADR 0002 Entscheidung 7), additive; announced on #613 with its
+// per-context impact section. The one period population rule.
+export {
+  employedInPeriodWhere,
+  reportPopulationWhere,
+  isEmployedInPeriod,
+} from "./employed-in-period";
 // Phase 77b (Issue #77): the central, fail-closed access context and the one EmployeeScope factory.
 export {
   accessContextFromRequest,

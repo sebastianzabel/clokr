@@ -5,6 +5,7 @@ import {
   dateStrInTz,
   getDayOfWeekInTz,
   monthRangeUtc,
+  dayRangeUtc,
   monthDayBounds,
   monthDateRange,
   weekRangeUtc,
@@ -475,5 +476,26 @@ describe("weekDateRange (Issue #493, D-10)", () => {
       `${first}T00:00:00.000Z`,
       `${last}T00:00:00.000Z`,
     ]);
+  });
+});
+
+describe("dayRangeUtc (Issue #613)", () => {
+  it("returns the local day as instants on a CEST day", () => {
+    const { start, end } = dayRangeUtc("2026-09-30", "Europe/Berlin");
+    expect(start.toISOString()).toBe("2026-09-29T22:00:00.000Z");
+    expect(end.toISOString()).toBe("2026-09-30T21:59:59.999Z");
+  });
+
+  it("returns the local day as instants on a CET day", () => {
+    const { start, end } = dayRangeUtc("2026-11-18", "Europe/Berlin");
+    expect(start.toISOString()).toBe("2026-11-17T23:00:00.000Z");
+    expect(end.toISOString()).toBe("2026-11-18T22:59:59.999Z");
+  });
+
+  it("spans exactly 23 h on the spring-forward day and 25 h on the fall-back day", () => {
+    const spring = dayRangeUtc("2026-03-29", "Europe/Berlin");
+    expect(spring.end.getTime() + 1 - spring.start.getTime()).toBe(23 * 3600 * 1000);
+    const autumn = dayRangeUtc("2026-10-25", "Europe/Berlin");
+    expect(autumn.end.getTime() + 1 - autumn.start.getTime()).toBe(25 * 3600 * 1000);
   });
 });

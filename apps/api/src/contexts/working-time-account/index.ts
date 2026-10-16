@@ -74,6 +74,7 @@ export {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
   dateStrInTz,
+  dayRangeUtc, // Issue #613
   getDayHoursFromSchedule,
   getDayOfWeekInTz,
   getTenantTimezone,

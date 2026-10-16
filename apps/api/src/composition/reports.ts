@@ -14,6 +14,7 @@ import {
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 07 (#91), D-10
   isStammsalonScopeMatch, // Phase 91b Plan 07 (#91), D-10/D-14
   employeeScopeFor, // Issue #448 (D-05, plan 03) — T-448-12 scoped BS-date reads
+  reportPopulationWhere, // Issue #613 (D-01) — the one period population
 } from "../contexts/platform";
 import {
   SECTION9_LEGEND,
@@ -834,7 +835,7 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
       }
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { end } = monthRangeUtc(y, m, tz);
+      const { start, end } = monthRangeUtc(y, m, tz);
       // Issue #493 (D-10): @db.Date columns and the day clip take calendar-day bounds; the
       // instant `end` above stays for the Stichtag lookup only.
       const { firstDay, lastDay } = monthDateRange(y, m, tz);
@@ -858,19 +859,16 @@ export async function reportRoutes(app: FastifyInstance) {
       const employees = (await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
-          exitDate: null,
-          user: { isActive: true },
-          // Both constraints must combine when a manager ALSO supplies an explicit employeeId
-          // (same AND-array idiom as leave.ts's GET /requests, Plan 91b-04 Task 1): an
+          // Issue #613 (D-01): the period population (employed in the month, never anonymised)
+          // replaces "employed today with an active login". The login state never decides.
+          // All constraints combine in ONE AND array, also when a manager supplies an explicit
+          // employeeId (same idiom as leave.ts's GET /requests, Plan 91b-04 Task 1): an
           // out-of-scope named employeeId must yield zero rows, not bypass the scope filter.
-          ...(employeeId || scopedEmployeeIds !== "all"
-            ? {
-                AND: [
-                  ...(employeeId ? [{ id: employeeId }] : []),
-                  ...(scopedEmployeeIds !== "all" ? [{ id: { in: scopedEmployeeIds } }] : []),
-                ],
-              }
-            : {}),
+          AND: [
+            reportPopulationWhere(start, end),
+            ...(employeeId ? [{ id: employeeId }] : []),
+            ...(scopedEmployeeIds !== "all" ? [{ id: { in: scopedEmployeeIds } }] : []),
+          ],
         },
         include: buildEmployeeInclude(firstDay, lastDay),
         orderBy: { lastName: "asc" },
