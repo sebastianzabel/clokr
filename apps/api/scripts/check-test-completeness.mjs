@@ -823,8 +823,10 @@ import { readFileSync } from "node:fs";
 // Issue #563 (2026-10-15): measured on `feat/563-salonverwaltung` after 563-07, full run (`test:coverage`) - 592 test
 // files, 9530 tests (9527 passed, 3 skipped); new files: salon-admin-563, settings-store-hours-retired-563 and the
 // rewritten store-hours-readers guard, the mirror test removed. MIN_FILES 589 -> 592, MIN_TESTS 9496 -> 9530.
+// Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
+// the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9530 -> 9531, MIN_FILES unchanged.
 const MIN_FILES = 592;
-const MIN_TESTS = 9530;
+const MIN_TESTS = 9531;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
