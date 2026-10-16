@@ -14,8 +14,10 @@
  *  1. D 08:00-12:00 salon A + D 13:00-17:00 salon B import; a third row D 11:00-14:00 is a per-row
  *     overlap error; an identical re-import of row 1 is a per-row overlap error, never the former
  *     duplicate-day text (`OLD_DUPLICATE_TEXT` below)
- *  2. Reach: an importer scoped on salon A whose conflicting row lies in salon B gets the neutral
- *     text; a whole-tenant importer gets date and times.
+ *  2. Reach: an importer whose `time-entry:read` reach does not contain the conflicting entry gets
+ *     the neutral text; a whole-tenant importer gets date and times. (Amended 2026-10-16 for #654:
+ *     the import reach now decides which persons a row may name, so the importer holds an import
+ *     reach over the imported person and a read reach elsewhere; see `createScopedImporter`.)
  *  3. Race: an overlapping entry committed while the import waits for the employee lock is found by
  *     the in-transaction re-check (neutral text), the loop continues with the next row.
  *  4. Backstop: with the application check blinded, the database's exclusion constraint refuses the
@@ -53,6 +55,7 @@ describe("Issue #70 — CSV time-entry import with several entries per day", () 
   let seed: Awaited<ReturnType<typeof seedTestData>>;
   let salonA: { id: string };
   let salonB: { id: string };
+  let salonC: { id: string };
   let empNo: string;
   let scopedImporterToken: string;
 
@@ -95,28 +98,35 @@ describe("Issue #70 — CSV time-entry import with several entries per day", () 
         hireDate: new Date("2020-01-01"),
       },
     });
-    const name = `Import70 ${crypto.randomBytes(3).toString("hex")}`;
-    const role = await app.prisma.accessRole.create({
-      data: {
-        tenantId: seed.tenant.id,
-        name,
-        nameKey: roleNameKey(name),
-        permissions: normalizeRolePermissions([
-          "time-entry:import:ZUGEWIESEN",
-          "time-entry:read:ZUGEWIESEN",
-        ]),
-      },
-    });
-    await app.prisma.roleAssignment.create({
-      data: {
-        tenantId: seed.tenant.id,
-        userId: user.id,
-        accessRoleId: role.id,
-        scopeType: "SALONS",
-        salonIds: [salonA.id],
-        employeeIds: [],
-      },
-    });
+    // Amended 2026-10-16 for #654 (merged into #70): the importer reaches the imported person
+    // through the IMPORT reach (salon A = the person's Stammsalon), while its READ reach lies on
+    // another salon (C). The overlap wording follows the READ reach, so a conflicting entry in
+    // salon B (person and entry both outside salon C) is still worded neutrally — the case keeps
+    // testing exactly that branch, now that an import row of an out-of-reach person is refused
+    // earlier as "not found".
+    const grant = async (permission: string, salonId: string) => {
+      const name = `Import70 ${crypto.randomBytes(3).toString("hex")}`;
+      const role = await app.prisma.accessRole.create({
+        data: {
+          tenantId: seed.tenant.id,
+          name,
+          nameKey: roleNameKey(name),
+          permissions: normalizeRolePermissions([permission]),
+        },
+      });
+      await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: seed.tenant.id,
+          userId: user.id,
+          accessRoleId: role.id,
+          scopeType: "SALONS",
+          salonIds: [salonId],
+          employeeIds: [],
+        },
+      });
+    };
+    await grant("time-entry:import:ZUGEWIESEN", salonA.id);
+    await grant("time-entry:read:ZUGEWIESEN", salonC.id);
     const login = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
@@ -131,7 +141,22 @@ describe("Issue #70 — CSV time-entry import with several entries per day", () 
     seed = await seedTestData(app, "imm70");
     salonA = await createTestSalon(app.prisma, seed.tenant.id, { name: "Salon A" });
     salonB = await createTestSalon(app.prisma, seed.tenant.id, { name: "Salon B" });
+    salonC = await createTestSalon(app.prisma, seed.tenant.id, { name: "Salon C" });
     empNo = seed.employee.employeeNumber;
+    // Amended 2026-10-16 for #654 (merged into #70): a scoped importer only reaches rows of persons
+    // whose Stammsalon lies in its reach. The imported person therefore belongs to salon A, so the
+    // case below still isolates what it tests: the CONFLICTING ENTRY lies outside the importer's read reach.
+    await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: seed.tenant.id,
+        employeeId: seed.employee.id,
+        salonId: salonA.id,
+        kind: "HOME",
+        validFrom: new Date("2020-01-01"),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
     scopedImporterToken = await createScopedImporter();
   });
 
