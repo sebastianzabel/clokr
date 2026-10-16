@@ -141,7 +141,8 @@ describe("mayFileRetroRequest (/time-entries)", () => {
 
 describe("salonAdminRights (/admin/salons, Issue #563)", () => {
   // Hand-written expectations, re-checked against the fixture: ADMIN and OWNER hold salon:read and
-  // salon:manage, MANAGER holds salon:read only, every other system role holds neither.
+  // salon:manage, MANAGER and HR hold salon:read only (HR since Issue #86, owner decision
+  // 16.10.2026), every other system role holds neither.
   it("admin and owner read and manage", () => {
     for (const key of ["ADMIN", "OWNER"]) {
       expect(salonAdminRights({ permissions: p[key] }), key).toEqual({
@@ -158,8 +159,15 @@ describe("salonAdminRights (/admin/salons, Issue #563)", () => {
     });
   });
 
-  it("salon manager, HR, trainer and employee neither read nor manage", () => {
-    for (const key of ["SALON_MANAGER", "HR", "TRAINER", "EMPLOYEE"]) {
+  it("HR reads but cannot create or edit (salon:read since Issue #86, owner decision 16.10.2026)", () => {
+    expect(salonAdminRights({ permissions: p.HR })).toEqual({
+      canRead: true,
+      canManage: false,
+    });
+  });
+
+  it("salon manager, trainer and employee neither read nor manage", () => {
+    for (const key of ["SALON_MANAGER", "TRAINER", "EMPLOYEE"]) {
       expect(salonAdminRights({ permissions: p[key] }), key).toEqual({
         canRead: false,
         canManage: false,
