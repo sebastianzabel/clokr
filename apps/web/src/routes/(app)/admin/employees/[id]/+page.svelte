@@ -2,7 +2,7 @@
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import { authStore } from "$stores/auth";
-  import { employeeAdminRights } from "$lib/page-rights";
+  import { employeeAdminRights, contractShiftRights } from "$lib/page-rights";
   import { markUnsaved } from "$stores/unsaved";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -468,6 +468,7 @@
   // employee PATCH, hence employee:update.
   let rights = $derived(employeeAdminRights($authStore.user));
   let canAssignRoles = $derived(rights.canAssignRoles);
+  let canDiscardShifts = $derived(contractShiftRights($authStore.user).canDiscardShifts);
   let canUpdateEmployee = $derived(rights.canUpdate);
   let eNfcCardId = $state<string>("");
   let eExitDate = $state<string>("");
@@ -3563,10 +3564,22 @@
                 <button class="btn btn-secondary" onclick={orphanKeep} disabled={arbeitszeitSaving}>
                   {arbeitszeitSaving ? "Speichern…" : "Behalten"}
                 </button>
-                <button class="btn btn-danger" onclick={orphanCancel} disabled={arbeitszeitSaving}>
-                  {arbeitszeitSaving ? "Speichern…" : "Stornieren"}
-                </button>
+                {#if canDiscardShifts}
+                  <button
+                    class="btn btn-danger"
+                    onclick={orphanCancel}
+                    disabled={arbeitszeitSaving}
+                  >
+                    {arbeitszeitSaving ? "Speichern…" : "Stornieren"}
+                  </button>
+                {/if}
               </div>
+              {#if !canDiscardShifts}
+                <p class="form-hint">
+                  Zum Verwerfen von Schichten ist das Recht zur Schichtplanung erforderlich. Bitte
+                  die Schichtplanung darum, die Schichten zu verwerfen, oder wähle „Behalten“.
+                </p>
+              {/if}
             </div>
           </div>
         {/if}

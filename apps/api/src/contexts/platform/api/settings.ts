@@ -15,7 +15,7 @@ import {
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { accessContextFromRequest, employeeScopeFor } from "../access-context";
 import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-10/D-14
-import { isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-14
+import { isShiftInScope, isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-14
 import {
   DEFAULT_MISSING_ENTRIES_DAYS, // issue #246, E-6
   dateStrInTz, // Issue #568 review IN-02 — the "already effective" check compares tenant-local day strings
@@ -1391,6 +1391,19 @@ export async function settingsRoutes(app: FastifyInstance) {
           }
 
           if (body.cancelOrphanShifts && futureShifts.length > 0) {
+            // Issue #650: discarding shifts is a planning decision, not a contract decision
+            // (least privilege, Art. 25/32 DSGVO). The caller needs `shift:plan` with a reach
+            // covering EVERY affected shift — refused before any write, so contract and shifts
+            // stay unchanged.
+            const planReach = await resolveAccessReach(app.prisma, access, "shift:plan:ZUGEWIESEN");
+            const allShiftsInPlanReach = futureShifts.every((s) =>
+              isShiftInScope(planReach, { salonId: s.salonId, employeeId }),
+            );
+            if (!allShiftsInPlanReach) {
+              return reply.code(403).send({
+                error: "Zum Verwerfen von Schichten ist das Recht zur Schichtplanung erforderlich.",
+              });
+            }
             // cancelOrphanShifts: hard-delete all future shifts + audit each one,
             // then write the WorkSchedule change — all in one $transaction.
             const futureShiftIds = futureShifts.map((s) => s.id);
