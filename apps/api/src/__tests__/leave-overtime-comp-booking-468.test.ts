@@ -14,7 +14,7 @@
  * request's current dates/schedule instead of reading back what was actually booked.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import type { FastifyInstance } from "fastify";
 
@@ -52,6 +52,11 @@ describe("Überstundenausgleich — stored booking / stored reversal (Issue #468
         lastName: "PR",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: mgrUser.id,
+      role: "MANAGER",
     });
     const login = await app.inject({
       method: "POST",

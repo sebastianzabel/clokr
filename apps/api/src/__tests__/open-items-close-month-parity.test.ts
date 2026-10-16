@@ -18,7 +18,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import { pastDateStr, dowOf, utcMidnight } from "./test-dates";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 
@@ -86,6 +86,7 @@ describe("open-items vs close-month/status parity on a divergent workDays/{day}H
         // exitDate left null — only the card also clamps to it (window_alignment)
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: employee.id,

@@ -150,7 +150,6 @@ type EmployeeWithIncludes = {
   timeEntries: TimeEntryRecord[];
   absences: AbsenceRecord[];
   leaveRequests: LeaveRequestWithType[];
-  user: { role: "ADMIN" | "MANAGER" | "EMPLOYEE" };
 };
 
 // ── computeEmployeeSummary ────────────────────────────────────────────────────
@@ -587,7 +586,6 @@ function buildDatevLodas(params: {
 // clipping — never a monthRangeUtc instant (Issue #493, D-01).
 function buildEmployeeInclude(firstDay: Date, lastDay: Date) {
   return {
-    user: { select: { role: true } },
     workSchedules: { orderBy: { validFrom: "asc" } },
     timeEntries: {
       where: {
@@ -1836,6 +1834,9 @@ export async function reportRoutes(app: FastifyInstance) {
       // where-fragment live in contexts/platform/compat-role.ts, the one module that compares role
       // values (Phase 75b, Issue #75, D-19): this filters the LISTED employees, it decides nothing
       // about the caller.
+      // #539 D-12: the single remaining reader of the compat column for a business purpose, kept
+      // until Release B (follow-up issue) because the column is still written from the stored
+      // assignments. The per-row role of the report data is gone; only this filter reads it.
       const roleFilter: CompatRoleFilter | undefined = parseCompatRoleFilter(role);
 
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
@@ -1907,7 +1908,6 @@ export async function reportRoutes(app: FastifyInstance) {
       const rows: Array<{
         employeeName: string;
         employeeNumber: string;
-        role: "ADMIN" | "MANAGER" | "EMPLOYEE";
         workedHours: number;
         targetHours: number;
         overtimeHours: number;
@@ -1933,7 +1933,6 @@ export async function reportRoutes(app: FastifyInstance) {
         rows.push({
           employeeName: `${emp.firstName} ${emp.lastName}`,
           employeeNumber: emp.employeeNumber,
-          role: emp.user.role,
           workedHours: Math.round((figures.workedMinutes / 60) * 100) / 100,
           targetHours: Math.round((figures.expectedMinutes / 60) * 100) / 100,
           overtimeHours: Math.round((figures.balanceMinutes / 60) * 100) / 100,

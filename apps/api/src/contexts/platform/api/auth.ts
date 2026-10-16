@@ -2,11 +2,9 @@ import { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
 import { z } from "zod";
-import { Role } from "@clokr/db";
 import { JwtPayload } from "../../../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../password-policy";
-import { compatRoleForUser } from "../compat-role";
-import { effectivePermissionKeysForUser } from "../request-permissions"; // Phase 378 (#378)
+import { NO_ROLE_ASSIGNED_ERROR, effectivePermissionKeysForUser } from "../request-permissions"; // Phase 378 (#378); #539 (D-14)
 import { userIdsHoldingPermission, resolveScopedHolderIds } from "../facade/role-assignments"; // Phase 75b Plan 10 (#75), D-16/D-17; Phase 91b Plan 09 (#91), D-17
 import { isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 09 (#91), D-10/D-17
 import { readTenantTimezone } from "../facade/salon-assignments";
@@ -219,6 +217,29 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.code(403).send(TENANT_REQUIRED_ERROR);
       }
 
+      // Issue #539 (D-14): an active account whose effective permission set is empty (no stored role
+      // assignment, or only roles that grant nothing) is refused instead of being signed into an
+      // app where every request answers 403. Same position as the #551 refusal above - after the
+      // password matched (a wrong password keeps the unchanged 401, no account-state oracle) and
+      // before any OTP is created or mailed. The list is computed once here and handed to
+      // issueTokens.
+      const permissions = await effectivePermissionKeysForUser(
+        app.prisma,
+        user.id,
+        user.employee?.tenantId ?? "",
+      );
+      if (permissions.length === 0) {
+        await app.audit({
+          userId: user.id,
+          action: "LOGIN_REFUSED",
+          entity: "User",
+          entityId: user.id,
+          newValue: { reason: "NO_ROLE_ASSIGNED" },
+          request: { ip: req.ip, headers: req.headers },
+        });
+        return reply.code(403).send(NO_ROLE_ASSIGNED_ERROR);
+      }
+
       // 2FA prüfen
       const twoFaEnabled = user.employee?.tenant?.config?.twoFaEnabled ?? false;
       if (twoFaEnabled) {
@@ -255,7 +276,7 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.code(202).send({ requiresOtp: true, userId: user.id });
       }
 
-      return issueTokens(app, req, reply, user);
+      return issueTokens(app, req, reply, user, permissions);
     },
   });
 
@@ -308,7 +329,19 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.code(403).send(TENANT_REQUIRED_ERROR);
       }
 
-      return issueTokens(app, req, reply, user);
+      // Issue #539 (D-14): the code matched, but an account without any effective permission gets no
+      // tokens (e.g. its last role was revoked between login and code entry). No second audit row -
+      // the login already wrote its own refusal (pattern of #551).
+      const permissions = await effectivePermissionKeysForUser(
+        app.prisma,
+        user.id,
+        user.employee?.tenantId ?? "",
+      );
+      if (permissions.length === 0) {
+        return reply.code(403).send(NO_ROLE_ASSIGNED_ERROR);
+      }
+
+      return issueTokens(app, req, reply, user, permissions);
     },
   });
 
@@ -403,31 +436,33 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.code(403).send(TENANT_REQUIRED_ERROR);
       }
 
+      // Issue #539 (D-14): a session whose last role was revoked cannot be renewed. Computed BEFORE
+      // the rotation (like the refusals above), so the stored token stays exactly as it was - the
+      // role revocation itself was audited. The same list is returned below.
+      // The #551 refusal above guarantees an Employee, hence a non-blank tenant.
+      const tenantId = stored.user.employee?.tenantId ?? "";
+      const permissions = await effectivePermissionKeysForUser(
+        app.prisma,
+        stored.user.id,
+        tenantId,
+      );
+      if (permissions.length === 0) {
+        return reply.code(403).send(NO_ROLE_ASSIGNED_ERROR);
+      }
+
       // Rotate refresh token
       await app.prisma.refreshToken.update({
         where: { id: stored.id },
         data: { revokedAt: new Date() },
       });
 
-      // Phase 75b (#75), D-14: the role claim is DERIVED from the user's role assignments at the one
-      // derivation site (compat-role.ts); no access decision reads it (D-12). It stays in the token
-      // because the frontend still consumes it until #539 removes User.role.
-      // The #551 refusal above guarantees an Employee, hence a non-blank tenant.
-      const tenantId = stored.user.employee?.tenantId ?? "";
-      const role = await compatRoleForUser(app.prisma, stored.user.id, tenantId, stored.user.role);
-
       // Phase 408 (#408): /auth/refresh is the only round-trip a running or restored session makes
       // by itself, so it carries the same effective-permissions list login/verify-otp already
-      // compute — same function as issueTokens().
-      const permissions = await effectivePermissionKeysForUser(
-        app.prisma,
-        stored.user.id,
-        tenantId,
-      );
+      // compute (see the #539 refusal above).
 
-      const payload = {
+      // Issue #539 (D-05): no role claim - an old refresh token's claim is not carried over.
+      const payload: JwtPayload = {
         sub: stored.user.id,
-        role,
         tenantId,
         employeeId: stored.user.employee?.id,
       };
@@ -690,9 +725,11 @@ async function issueTokens(
   user: {
     id: string;
     email: string;
-    role: Role;
     employee: { id: string; tenantId: string; firstName: string } | null;
   },
+  // Issue #539 (D-14): the effective permission keys, computed ONCE by the caller (which refused an
+  // empty set with NO_ROLE_ASSIGNED before getting here).
+  permissions: readonly string[],
 ) {
   const tenantId = user.employee?.tenantId ?? "";
   // Issue #551 (D-02): never sign a token without a tenant. Both callers (login, verify-otp) refuse
@@ -710,21 +747,11 @@ async function issueTokens(
     ? (tenantConfig?.rememberMeDays ?? 30)
     : (tenantConfig?.refreshTokenDays ?? 7);
 
-  // Phase 75b (#75), D-14: the role published in the JWT and in the login body is DERIVED from the
-  // user's role assignments, computed once here at the one derivation site (compat-role.ts). No
-  // access decision reads it (D-12); the frontend still consumes it until #539 removes User.role.
-  const role = await compatRoleForUser(app.prisma, user.id, tenantId, user.role);
-
-  // Phase 378 (#378): the web decides Team-Bereich visibility by permission, not by the compat
-  // role above — a Salon/Personen-scope assignment (Salonmanager, Ausbilder templates) never
-  // contributes to `role`, but its permissions are real. Computed at login/OTP-verify AND on every
-  // `/auth/refresh` (Phase 408, #408) — unlike `role`, this list is recomputed on every refresh,
-  // not just on the next login.
-  const permissions = await effectivePermissionKeysForUser(app.prisma, user.id, tenantId);
-
-  const payload = {
+  // Issue #539 (D-05): the token and the body carry no role. The web decides by the effective
+  // permission list (Phase 378, #378), computed by the caller at login/OTP-verify AND on every
+  // `/auth/refresh` (Phase 408, #408).
+  const payload: JwtPayload = {
     sub: user.id,
-    role,
     tenantId,
     employeeId: user.employee?.id,
   };
@@ -781,8 +808,6 @@ async function issueTokens(
     user: {
       id: user.id,
       email: user.email,
-      // The derived compat role (D-14), the same value as the JWT claim above.
-      role,
       employeeId: user.employee?.id ?? null,
       firstName: user.employee?.firstName ?? null,
       // Phase 378 (#378): effective permission keys, for web-side visibility decisions.

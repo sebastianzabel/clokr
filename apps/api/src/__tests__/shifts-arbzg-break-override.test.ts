@@ -22,7 +22,13 @@
  *     proves the validator still rejects truly illegal cases.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup"; // Phase 325 (issue #325)
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 
@@ -104,6 +110,7 @@ describe("Phase 76.10 — ArbZG § 3 daily-max honors employee break override (A
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
 
     const loginRes = await app.inject({
       method: "POST",
@@ -150,6 +157,7 @@ describe("Phase 76.10 — ArbZG § 3 daily-max honors employee break override (A
         breakOver9hOverride: overrides.breakOver9hOverride ?? null,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,

@@ -20,3 +20,6 @@
 # as a manipulated localStorage value in a web unit test, no secret. The test now generates the
 # uuid at runtime; this fingerprint covers the already-pushed commit.
 5abaa16d4ab886e4281e12f2162093aeea44508e:apps/web/src/lib/components/layout/__tests__/SalonSwitcher.test.ts:generic-api-key:125
+# Issue #539 (2026-10-16): `WRONG_PASSWORD = "definitely-wrong-1"` in a test — a deliberately wrong login
+# password, no secret. The test now generates it at runtime; this fingerprint covers the already-pushed commit.
+559fc04fa16367c1ef9cc971af5138f6d0e3739b:apps/api/src/__tests__/no-role-assigned-539.test.ts:generic-api-key:36

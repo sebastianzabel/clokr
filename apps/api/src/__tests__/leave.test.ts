@@ -8,6 +8,7 @@ import {
   cleanupTestData,
   seedEntitlementYears,
   soleAuditRowOrNull,
+  grantSystemRole,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -745,6 +746,11 @@ describe("Leave / Absence API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "MANAGER",
+      });
       await app.prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
       const loginRes = await app.inject({
         method: "POST",
@@ -1004,6 +1010,11 @@ describe("Leave / Absence API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: mgrUser.id,
+        role: "MANAGER",
+      });
       mgrEmployeeId = mgrEmp.id;
       const loginRes = await app.inject({
         method: "POST",
@@ -1024,7 +1035,7 @@ describe("Leave / Absence API", () => {
       }
     });
 
-    it("MANAGER creates absence on behalf of an employee in their tenant", async () => {
+    it("MANAGER creates absence on behalf of an employee in their tenant (new audit row without actorRole, #539 D-13)", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/leave/requests",
@@ -1048,7 +1059,9 @@ describe("Leave / Absence API", () => {
       expect(auditEntry).not.toBeNull();
       const newValue = auditEntry?.newValue as Record<string, unknown> | null;
       expect(newValue?.source).toBe("MANAGER_CREATED");
-      expect(newValue?.actorRole).toBe("MANAGER");
+      // Issue #539 (D-13): NEW rows carry no actorRole any more (existing rows keep theirs, the
+      // audit log is append-only); the actor is the row's userId.
+      expect(newValue).not.toHaveProperty("actorRole");
       expect(newValue?.targetEmployeeId).toBe(data.employee.id);
     });
 
@@ -1130,6 +1143,11 @@ describe("Leave / Absence API", () => {
           lastName: "Worker",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
       });
       await app.prisma.workSchedule.create({
         data: {
@@ -1293,6 +1311,11 @@ describe("Leave / Absence API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(prisma, {
+        tenantId: data.tenant.id,
+        userId: userA.id,
+        role: "MANAGER",
+      });
       await prisma.overtimeAccount.create({ data: { employeeId: empA.id, balanceHours: 0 } });
 
       // Manager B: cancellation requester (different from original approver)
@@ -1315,6 +1338,11 @@ describe("Leave / Absence API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(prisma, {
+        tenantId: data.tenant.id,
+        userId: userB.id,
+        role: "MANAGER",
+      });
       await prisma.overtimeAccount.create({ data: { employeeId: empB.id, balanceHours: 0 } });
 
       // Manager C: neutral third manager (neither requester nor original approver)
@@ -1335,6 +1363,11 @@ describe("Leave / Absence API", () => {
           lastName: "C",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(prisma, {
+        tenantId: data.tenant.id,
+        userId: userC.id,
+        role: "MANAGER",
       });
       await prisma.overtimeAccount.create({ data: { employeeId: empC.id, balanceHours: 0 } });
 
@@ -1573,6 +1606,11 @@ describe("Leave / Absence API", () => {
           lastName: "B",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: managerBUser.id,
+        role: "MANAGER",
       });
       managerBEmployeeId = managerBEmp.id;
       await app.prisma.overtimeAccount.create({

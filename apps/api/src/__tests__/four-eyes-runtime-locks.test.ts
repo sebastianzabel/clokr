@@ -102,7 +102,6 @@ describe("Runtime self-approval locks hold for a confirmed four-eyes combination
     });
     const payload: JwtPayload = {
       sub: user.id,
-      role: "EMPLOYEE",
       tenantId: data.tenant.id,
       employeeId: employee.id,
     };

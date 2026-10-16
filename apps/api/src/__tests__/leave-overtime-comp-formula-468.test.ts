@@ -16,7 +16,7 @@
  * widening of a still-PENDING OVERTIME_COMP request was accepted unconditionally).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import { calcLeaveAbsenceMinutesTz, getTenantTimezone } from "../contexts/working-time-account";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -89,6 +89,11 @@ describe("Überstundenausgleich — ONE formula for gate, booking and preview (I
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: f1User.id,
+      role: "EMPLOYEE",
+    });
     f1EmployeeId = f1Employee.id;
     await app.prisma.workSchedule.create({
       data: {
@@ -135,6 +140,11 @@ describe("Überstundenausgleich — ONE formula for gate, booking and preview (I
         lastName: "NT",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: m1User.id,
+      role: "EMPLOYEE",
     });
     m1EmployeeId = m1Employee.id;
     await app.prisma.workSchedule.create({
@@ -389,6 +399,11 @@ describe("Überstundenausgleich — ONE formula for gate, booking and preview (I
         lastName: "N2",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: m2User.id,
+      role: "EMPLOYEE",
     });
     await app.prisma.workSchedule.create({
       data: {

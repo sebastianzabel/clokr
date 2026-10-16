@@ -91,6 +91,12 @@ Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `doc
   fails if it ever reaches the runtime image.
 - `?schema=` is a Prisma-only connection-string parameter that the `pg` driver silently ignores —
   it must never reappear in `TEST_DATABASE_URL`.
+- **Test users need a stored role assignment (Issue #539).** Permissions come only from stored rows, so a
+  fixture user without one holds nothing. Give each user its system role explicitly with
+  `grantSystemRole(prisma, { tenantId, userId, role })` from `apps/api/src/__tests__/setup.ts` (a stored
+  TENANT row, idempotent; `seedTestData`/`seedTenantFixture` users already have one). A test that needs the
+  unassigned state uses `removeFixtureRoleAssignments` or creates a user without calling the helper. The
+  seeds use `ensureSystemRoleAssignment` (`packages/db/src/seed-role-assignments.ts`).
 - Full details, provisioning rationale, and the clean-slate procedure: `docs/testing.md`.
 
 ## Language
@@ -181,7 +187,7 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **Documents**: Absence documentPath → null
 - **§ 9-Vorgänge**: Section9Credit documentPath → null, reason → null (Zeilen bleiben erhalten — Korrektureintrag nach R7)
 - **Auth tokens**: Invitations, OTP, RefreshTokens are hard-deleted (not retention-relevant)
-- **Role assignments** (Phase 74b, #74): the user's `RoleAssignment` rows are hard-deleted inside the anonymization transaction, each with a `DELETE` audit entry (`newValue.reason` "Anonymisierung"); person-scope lists that contain the employee's id stay unchanged (ids only — the resolution ignores anonymized targets). `User.role` IS rewritten to EMPLOYEE in the same update as `isActive: false` (Issue #357 sub-fix C, revises Phase 75b D-14, #75): with no stored assignment left it used to be the legacy-role fallback a still-valid access token resolves through, which handed a self-anonymizing MANAGER/ADMIN's live token full rights for the rest of its lifetime — the exact gap #357's security review reported. Two neutrality cells changed on purpose (`DELETE /api/v1/employees/:id | foreign` for ADMIN and FALLBACK_ADMIN, 204→403) and are recorded as an amendment (`contexts/platform/anonymize.ts`, `apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json`, ADR 0001-abweichungen Eintrag N).
+- **Role assignments** (Phase 74b, #74): the user's `RoleAssignment` rows are hard-deleted inside the anonymization transaction, each with a `DELETE` audit entry (`newValue.reason` "Anonymisierung"); person-scope lists that contain the employee's id stay unchanged (ids only — the resolution ignores anonymized targets). `User.role` IS rewritten to EMPLOYEE in the same update as `isActive: false` (Issue #357 sub-fix C, revises Phase 75b D-14, #75) and stays so while the column exists: it used to be the legacy-role fallback a still-valid access token resolved through, which handed a self-anonymizing MANAGER/ADMIN's live token full rights for the rest of its lifetime — the exact gap #357's security review reported. Since #539 (Release A) a user without a stored assignment holds nothing anyway, so the rewrite is defence in depth for a rollback to the previous image. Two neutrality cells changed on purpose (`DELETE /api/v1/employees/:id | foreign` for ADMIN and FALLBACK_ADMIN, 204→403) and are recorded as an amendment (`contexts/platform/anonymize.ts`, `apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json`, ADR 0001-abweichungen Eintrag N).
 - **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount, `ParentalLeaveReduction` rows (no free text, nothing to anonymize — Issue #468) (for retention compliance)
 - **AuditLog**: userId → null (anonymized, not deleted)
 
@@ -931,8 +937,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   `isMultiSalon` (`isMultiSalonTenant()`, #64), `homeSalonId` and the ACTIVE salons the caller
   reaches — `id` and `name` only. `contextSalonIds()` (`contexts/platform/facade/role-assignments.ts`,
   not re-exported from `index.ts`) is the ONLY place "salons the caller can reach" is computed: the
-  managed part from the same building blocks and the same legacy-role fallback
-  (`loadLegacyFallbackRole`) as `resolveAccessReach`, pinned equal over every ZUGEWIESEN key by
+  managed part from the same building blocks (stored role assignments only, #539) as `resolveAccessReach`, pinned equal over every ZUGEWIESEN key by
   `context-salon-ids-82.test.ts`, plus the salons of the caller's own current or future salon
   assignments. In the web, `$stores/salon-context` holds the selection: `showSalonOptions()` is the
   ONLY place of the #64 rule (options only with more than one active salon in the tenant AND more
@@ -1183,6 +1188,13 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   nothing (no legacy-role fallback). The rule lives only in `isBlankTenantId()`
   (`contexts/platform/tenant-status.ts`, defined in the zero-import leaf `access-context-error.ts`).
   `scripts/audit-551-users-without-employee.ts` lists the affected users (read-only).
+  **An account without any permission is refused at sign-in in one place (Issue #539).** `POST
+  /auth/login` (after the password matched, before any OTP row or mail; audited as `LOGIN_REFUSED`
+  with reason `NO_ROLE_ASSIGNED`), `verify-otp` and `refresh` (before the rotation, the stored token
+  stays untouched) answer 403 `NO_ROLE_ASSIGNED_ERROR` (`{ error, code: "NO_ROLE_ASSIGNED" }`,
+  defined in `contexts/platform/request-permissions.ts`, applied in `api/auth.ts`) when
+  `effectivePermissionKeysForUser()` is empty; a wrong password keeps its 401. The code is the control
+  value, the German text only display (the web shows the server's message and branches on neither).
 
 ### Tenant-scoping gate (Issue #204)
 
@@ -1244,12 +1256,22 @@ hit on a clean tree is a finding to report, not an exception to add.
 
 ### Role-check gate and neutrality recordings (Issue #75)
 
-Since Phase 75b the API decides access by permission, never by role. `User.role` (and the JWT
-`role` claim) is a **compat field derived from the user's role assignments** — written back by
-`deriveCompatRole()` in `apps/api/src/contexts/platform/compat-role.ts` after every assignment
-change, read only for display, logging and the legacy-role fallback (a user with no stored
-assignment resolves through the system role of `User.role`). Both the column and the fallback are
-removed with #539. A role comparison, a `requireRole(` call or a Prisma `where` on a role value in
+Since Phase 75b the API decides access by permission, never by role. Since #539 (Release A) a
+permission comes ONLY from stored role assignments: there is no legacy-role fallback, so a user
+without a stored assignment holds nothing, and an active account whose effective permission set is
+empty is refused at sign-in with 403 `NO_ROLE_ASSIGNED` (login, verify-otp and refresh). No token
+carries a `role` claim any more (an old token that still has one is ignored — proven by
+`token-claims-539.test.ts`), the login body has no `user.role`, and `actorRole` is no longer written
+to new leave audit rows. `User.role` is only a **rollback-safety column derived from the user's role
+assignments** — written back by `deriveCompatRole()` in
+`apps/api/src/contexts/platform/compat-role.ts` after every assignment change (so a rollback to the
+previous image finds consistent values), and read by exactly three documented readers, pinned by
+`legacy-role-reads-539.test.ts`: the company-PDF role filter (D-12), the write-back comparison of
+`syncCompatRoleColumn` (D-06) and the takeover script. The employee form's role is derived from the
+stored assignments (`null` shows „Keine Rolle zugewiesen“). Before deploying Release A to any
+instance, run `apps/api/scripts/backfill-539-role-assignments.ts` (dry run, then `--confirm` when it
+lists users; runbook: `docs/migrations.md` „Phase 539“). Column and enum go with Release B
+(#641). A role comparison, a `requireRole(` call or a Prisma `where` on a role value in
 non-test `apps/api/src` fails CI and `.husky/pre-commit`:
 
 | Source | What it governs |
@@ -1293,7 +1315,9 @@ a hit is converted, never excepted.
   permission sets derived from the API guards its page calls; the admin layout guard, Sidebar, the
   mobile „Mehr“ sheet and the command palette read it. A new admin route needs an entry
   (`admin-route-permissions.test.ts` fails otherwise). Page-internal role checks that change content
-  are #538; removing `User.role` and the fallback is #539 (owner decision, Unterbau Semantikänderung).
+  are #538; the fallback is gone since #539 Release A (owner decision, Unterbau Semantikänderung), the web session
+  carries no role and the employee screen shows „Keine Rolle zugewiesen“ for a person without an assignment;
+  dropping the column and the enum is Release B (#641).
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->

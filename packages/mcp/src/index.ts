@@ -68,7 +68,7 @@ server.tool(
         content: [
           {
             type: "text" as const,
-            text: `✅ Logged in as ${user.email} (${user.role}). Token stored for subsequent requests.`,
+            text: `✅ Logged in as ${user.email}. Token stored for subsequent requests.`,
           },
         ],
       };
@@ -93,7 +93,7 @@ server.tool("list_employees", "List all employees in the tenant", {}, async () =
   const emps = data as any[];
   const summary = emps.map(
     (e) =>
-      `• ${e.employeeNumber} — ${e.lastName}, ${e.firstName} (${e.user?.email}) [${e.user?.role}] ${e.user?.isActive ? "✅" : "❌"}`,
+      `• ${e.employeeNumber} — ${e.lastName}, ${e.firstName} (${e.user?.email}) ${e.user?.isActive ? "✅" : "❌"}`,
   );
   return {
     content: [

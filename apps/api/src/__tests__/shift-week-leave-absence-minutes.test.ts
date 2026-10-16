@@ -47,7 +47,13 @@
  * of the shared, tenant-TZ-correct string helpers in test-dates.ts.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup"; // Phase 325 (issue #325)
 import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -107,6 +113,7 @@ describe("Phase 76.11 — /shifts/week emits leaveMinutesByEmp + absenceMinutesB
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
 
     const vacationType = await prisma.leaveType.create({
       data: {
@@ -160,6 +167,7 @@ describe("Phase 76.11 — /shifts/week emits leaveMinutesByEmp + absenceMinutesB
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,

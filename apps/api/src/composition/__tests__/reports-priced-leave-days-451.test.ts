@@ -23,6 +23,7 @@ import {
   seedTestData,
   seedEntitlementYears,
   cleanupTestData,
+  grantSystemRole,
 } from "../../__tests__/setup";
 import * as pdfUtils from "../pdf";
 
@@ -85,6 +86,7 @@ async function createFixedScheduleEmployee(
       hireDate: new Date(`${hireDate}T00:00:00Z`),
     },
   });
+  await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
   await app.prisma.workSchedule.create({
     data: {
       employeeId: employee.id,

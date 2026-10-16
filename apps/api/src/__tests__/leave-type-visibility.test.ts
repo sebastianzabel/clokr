@@ -21,7 +21,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 
 // ── Target month derivation ────────────────────────────────────────────────
@@ -92,6 +92,11 @@ describe("Leave type visibility — /overlap and /calendar answer the same quest
         // acceptance criteria explicitly permits to remain.
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: managerUser.id,
+      role: "MANAGER",
     });
     const managerLoginRes = await app.inject({
       method: "POST",

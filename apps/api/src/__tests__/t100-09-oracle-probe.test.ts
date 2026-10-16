@@ -729,8 +729,13 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
       expect(after?.salonIds).toEqual([]);
       expect(after?.employeeIds).toEqual([]);
 
+      // #539 (D-09): the two seed users hold their system role as a stored row from the fixture —
+      // this assertion is about rows the sweep itself could have created, so they are excluded.
       const tenantARoleAssignmentCount = await app.prisma.roleAssignment.count({
-        where: { tenantId: tenantA.tenant.id },
+        where: {
+          tenantId: tenantA.tenant.id,
+          userId: { notIn: [tenantA.adminUser.id, tenantA.empUser.id] },
+        },
       });
       expect(tenantARoleAssignmentCount).toBe(0);
     });

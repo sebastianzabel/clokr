@@ -31,7 +31,14 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 import { normalizeRolePermissions, roleNameKey, SYSTEM_ROLE_IDS } from "../contexts/platform";
 
 const PASSWORD = "test1234";
@@ -67,7 +74,9 @@ describe("Issue #547 (Phase 85b Plan 01) — employee list scope and balance mas
 
   async function createPerson(
     label: string,
-    opts: { balance?: string | null; anonymized?: boolean } = {},
+    // grant: false for a person whose stored assignment is the one the caller adds; an anonymized
+    // person holds none (anonymization deletes the rows).
+    opts: { balance?: string | null; anonymized?: boolean; grant?: boolean } = {},
   ) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
@@ -85,6 +94,13 @@ describe("Issue #547 (Phase 85b Plan 01) — employee list scope and balance mas
         hireDate: new Date("2020-01-01"),
       },
     });
+    if (opts.grant ?? !opts.anonymized) {
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
+      });
+    }
     if (opts.balance !== null && opts.balance !== undefined) {
       await app.prisma.overtimeAccount.create({
         data: { employeeId: employee.id, balanceHours: opts.balance },
@@ -119,7 +135,7 @@ describe("Issue #547 (Phase 85b Plan 01) — employee list scope and balance mas
     permissions: string[],
     scope: { scopeType: "SALONS" | "PERSONS"; salonIds?: string[]; employeeIds?: string[] },
   ) {
-    const person = await createPerson(label, { balance: "9" });
+    const person = await createPerson(label, { balance: "9", grant: false });
     await assign(person.id, salonB.id, "HOME", "2020-01-01");
     const name = `El85 ${crypto.randomBytes(3).toString("hex")}`;
     const role = await app.prisma.accessRole.create({
@@ -225,7 +241,7 @@ describe("Issue #547 (Phase 85b Plan 01) — employee list scope and balance mas
 
     // The Salonmanager of A (system template: employee:read, no overtime:read at all). Their own
     // employee row is homed in B on purpose: the own row must appear although B is out of reach.
-    await createPerson("el85-sm", { balance: "2" });
+    await createPerson("el85-sm", { balance: "2", grant: false });
     await assign(emp["el85-sm"].id, salonB.id, "HOME", "2020-01-01");
     await app.prisma.roleAssignment.create({
       data: {

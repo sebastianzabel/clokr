@@ -29,7 +29,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dateStrInTz } from "../contexts/working-time-account/timezone";
 
@@ -86,6 +92,7 @@ async function mkUser(
       classification: "VOLLZEIT",
     },
   });
+  await grantSystemRole(prisma, { tenantId, userId: user.id, role });
   // FIXED_SCHEDULE (the "was FIXED_WEEKLY" default type), 40h/week Mon-Fri 8h — matches
   // the plan's "FIXED_WEEKLY employee" wording (see schema.prisma ScheduleType comment).
   await prisma.workSchedule.create({

@@ -29,7 +29,7 @@
  * login` and `| refresh`) are amended through `recorded/activity-auth-amendments.json` — the same
  * register mechanism the permission matrix and the recipients recording use; `activity-auth.json`
  * itself stays byte-identical, and the login-time refusal and the stored-token refresh refusal are
- * proven in `tenant-required-551.test.ts`. One user of a tenant with two-factor login goes through the OTP
+ * proven in `tenant-required-551.test.ts`. Since Issue #539 (D-14) the same holds for the three fallback users (no stored assignment): their login is refused with NO_ROLE_ASSIGNED, their `auth | A.fallback.* | login` and `| refresh` cells are amended too, and their activity feeds are measured with directly signed tokens. One user of a tenant with two-factor login goes through the OTP
  * path: the code is captured from the stubbed mailer's `sendOtp` call and sent to
  * `POST /auth/verify-otp`. Pre-switch, every recorded role must equal the user's `User.role`
  * column — that column IS the source today — and the test asserts that in both modes.
@@ -40,9 +40,12 @@
  *                                         NEUTRALITY_ACTIVITY_AUTH_OUT) in `afterAll`;
  *   (default) VERIFY                      compare with the recording (default path, or
  *                                         NEUTRALITY_ACTIVITY_AUTH_IN).
+ * Measured-result dump (Issue #539, D-15): VERIFY with NEUTRALITY_ACTUAL_OUT_DIR=<dir> also writes
+ * every measured entry to `<dir>/activity-auth.actual.json` (never into `neutrality/recorded/`,
+ * which is refused) — the input of `scripts/neutrality-amendments-from-run.ts`.
  * RECORD refuses once the legacy role guard's definition is gone from `middleware/auth.ts` (same
  * guard as the matrix). Both modes build the fixture, run the checked-in migration SQL (D-25), then
- * create the fallback users. Every run starts with `pnpm --filter @clokr/api run test:setup`.
+ * create the fallback users (users without a stored assignment, who hold nothing since #539). Every run starts with `pnpm --filter @clokr/api run test:setup`.
  * Mailer, storage and `fetch` are stubbed in both modes; every request carries its own
  * `remoteAddress`, so no rate limit (verify-otp: 5 per 10 minutes) can interfere.
  */
@@ -55,13 +58,19 @@ import type { Role } from "@clokr/db";
 import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup";
 import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
 import { LabelRegistry, cleanupMatrixExtras, type ActorFixture } from "./neutrality/fixture";
+import {
+  effectiveAmendmentLinks,
+  resolveAmendmentChains,
+  type AmendmentLink,
+} from "./neutrality/amendment-chain";
+import { measuredDumpDir, writeMeasuredDump } from "./neutrality/measured-dump";
 import { installExternalStubs, type ExternalStubs } from "./neutrality/external-stubs";
 import { runCell, type CellResult, type LabelContext } from "./neutrality/cell-runner";
 import type { ActorKind, RouteSpec, VariantSpec } from "./neutrality/matrix-config";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import type { JwtPayload } from "../middleware/auth";
 import { TENANT_REQUIRED_ERROR } from "../contexts/platform/tenant-status";
-import { isDeepStrictEqual } from "node:util";
+import { NO_ROLE_ASSIGNED_ERROR } from "../contexts/platform/request-permissions";
 
 const MODE = process.env.NEUTRALITY_ACTIVITY_AUTH_MODE === "record" ? "record" : "verify";
 const DEFAULT_RECORDING = join(__dirname, "neutrality", "recorded", "activity-auth.json");
@@ -81,22 +90,21 @@ const FIXTURE_PASSWORD = "activity-auth-neutrality";
  * the amendment's `to` instead (checked against the measured result exactly like an unamended cell),
  * and the `from` is pinned byte-for-byte to the recording so a recording that moved out from under an
  * amendment turns the register describe red. An unnamed cell is completely unaffected.
+ *
+ * Chains (Issue #539, D-15): one key may carry SEVERAL dated links, applied in file order — the
+ * first link's `from` equals the recording, every next link's `from` equals the previous link's
+ * `to`, dates never go back, and the effective expectation is the last link's `to`. The rule lives
+ * in `neutrality/amendment-chain.ts`, shared with the other two registers.
  */
-interface ActivityAuthAmendment {
-  readonly key: string;
-  readonly from: unknown;
-  readonly to: unknown;
-  readonly issue: number;
-  readonly reason: string;
-  readonly date: string;
-}
+type ActivityAuthAmendment = AmendmentLink<unknown>;
 const AMENDMENTS_PATH = join(__dirname, "neutrality", "recorded", "activity-auth-amendments.json");
 const amendments: readonly ActivityAuthAmendment[] = (
   JSON.parse(readFileSync(AMENDMENTS_PATH, "utf8")) as { amendments: ActivityAuthAmendment[] }
 ).amendments;
-const amendmentByKey: ReadonlyMap<string, ActivityAuthAmendment> = new Map(
-  amendments.map((a) => [a.key, a]),
-);
+/** The effective link per key: the LAST link of the key's chain. A broken chain is its own
+ * validation failure (the "amendments register" describe below). */
+const amendmentByKey: ReadonlyMap<string, ActivityAuthAmendment> =
+  effectiveAmendmentLinks(amendments);
 /** The shortest acceptable written reason of an amendment (same threshold as the other registers). */
 const MIN_REASON_LENGTH = 20;
 
@@ -210,7 +218,6 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
   let remoteCounter = 0;
   const userIdOf = new Map<string, string>();
   const employeeIdOf = new Map<string, string>();
-  const columnRoleOf = new Map<string, Role>();
   const emailOf = new Map<string, string>();
   /** Access tokens from the login step, used for the activity calls. */
   const accessTokenOf = new Map<string, string>();
@@ -232,8 +239,10 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
     if (MODE === "verify") {
       const amended = amendmentByKey.get(key);
       const expected = amended ? amended.to : recording?.[key];
-      expect(expected, `${key}: not recorded`).toBeDefined();
-      expect(entry, key).toEqual(expected);
+      // Soft (Issue #539, D-15): a mismatch is reported but never stops the remaining entries, so
+      // the measured-result dump is always complete.
+      expect.soft(expected, `${key}: not recorded`).toBeDefined();
+      expect.soft(entry, key).toEqual(expected);
     }
   }
 
@@ -264,7 +273,6 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
     });
     registry.register(`${label}.user`, user.id);
     userIdOf.set(label, user.id);
-    columnRoleOf.set(label, role);
     emailOf.set(label, email);
     if (tenantId === null) return { userId: user.id };
     const employee = await app.prisma.employee.create({
@@ -378,6 +386,8 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
           `switched code would make the neutrality proof compare the new code with itself.`,
       );
     }
+    // Issue #539 (D-15): refuse a dump directory inside `neutrality/recorded` before the long setup.
+    measuredDumpDir();
     app = await getTestApp();
     stubs = installExternalStubs(app);
     const stubSendOtp = app.mailer.sendOtp;
@@ -469,6 +479,11 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
 
   afterAll(async () => {
     stubs?.restore();
+    // Issue #539 (D-15): a measurement for `scripts/neutrality-amendments-from-run.ts` — never a
+    // recording. Only with NEUTRALITY_ACTUAL_OUT_DIR set, only in VERIFY, only after a complete setup.
+    if (MODE === "verify" && setupComplete) {
+      writeMeasuredDump("activity-auth", serializeRecording(collected));
+    }
     if (MODE === "record" && setupComplete) {
       mkdirSync(dirname(RECORD_OUT), { recursive: true });
       writeFileSync(RECORD_OUT, serializeRecording(collected));
@@ -519,13 +534,13 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
         const loginBody = JSON.parse(login.body) as {
           accessToken?: string;
           refreshToken?: string;
-          user?: { role: string };
+          user?: Record<string, unknown>;
         };
         const loginRecord: TokenRecord = { status: login.statusCode };
         if (loginBody.accessToken) {
           const c = claims(loginBody.accessToken);
-          loginRecord.bodyRole = loginBody.user?.role;
-          loginRecord.tokenRole = c.role;
+          // Issue #539 (D-05): neither the body's user nor the token carries a role any more, so the
+          // record no longer sets `bodyRole` / `tokenRole` (the absence is asserted below).
           loginRecord.tokenTenant = tenantLabel(c.tenantId);
           loginRecord.tokenEmployee = employeeLabel(c.employeeId);
           accessTokenOf.set(label, loginBody.accessToken);
@@ -540,7 +555,6 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
         });
         const refreshBody = JSON.parse(refresh.body) as { accessToken?: string; user?: unknown };
         const refreshRecord: TokenRecord = { status: refresh.statusCode };
-        if (refreshBody.accessToken) refreshRecord.tokenRole = claims(refreshBody.accessToken).role;
         record(`auth | ${label} | refresh`, refreshRecord);
 
         if (label === "A.noEmployee") {
@@ -553,11 +567,30 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
           expect(refreshRecord).toEqual(amendmentByKey.get(`auth | ${label} | refresh`)?.to);
           return;
         }
-        // Pre-switch sanity: the column IS the source, so every recorded role equals it; the
-        // refresh body carries no user object (C-4).
-        const column = columnRoleOf.get(label);
-        expect(loginRecord).toMatchObject({ status: 200, bodyRole: column, tokenRole: column });
-        expect(refreshRecord).toEqual({ status: 200, tokenRole: column });
+        if (label.startsWith("A.fallback.")) {
+          // Issue #539 (D-14): a user without a stored assignment holds no permission and can no
+          // longer sign in - the login is refused with NO_ROLE_ASSIGNED and hands out no tokens, so
+          // there is nothing to refresh either (the refresh request carries no token and is
+          // answered like the one of A.noEmployee). Both recorded cells are amended through
+          // `recorded/activity-auth-amendments.json`; the refusal itself is proven in
+          // `no-role-assigned-539.test.ts`.
+          expect(login.statusCode).toBe(403);
+          expect(loginBody).toEqual(NO_ROLE_ASSIGNED_ERROR);
+          expect(loginBody.accessToken).toBeUndefined();
+          expect(loginBody.refreshToken).toBeUndefined();
+          expect(loginRecord).toEqual(amendmentByKey.get(`auth | ${label} | login`)?.to);
+          expect(refreshRecord).toEqual(amendmentByKey.get(`auth | ${label} | refresh`)?.to);
+          return;
+        }
+        // Since #539 (D-05) no role is published: the body's user and the claims of the access
+        // token (and of the refreshed one) have none; the refresh body carries no user object (C-4).
+        expect(loginRecord).toMatchObject({ status: 200 });
+        expect(loginRecord).not.toHaveProperty("bodyRole");
+        expect(loginRecord).not.toHaveProperty("tokenRole");
+        expect(refreshRecord).toEqual({ status: 200 });
+        expect(Object.keys(loginBody.user ?? {})).not.toContain("role");
+        expect(Object.keys(claims(loginBody.accessToken as string))).not.toContain("role");
+        expect(Object.keys(claims(refreshBody.accessToken as string))).not.toContain("role");
         expect(refreshBody.user).toBeUndefined();
       });
     }
@@ -584,13 +617,12 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
       const verifyBody = JSON.parse(verify.body) as {
         accessToken?: string;
         refreshToken?: string;
-        user?: { role: string };
+        user?: Record<string, unknown>;
       };
       const verifyRecord: TokenRecord = { status: verify.statusCode };
       if (verifyBody.accessToken) {
         const c = claims(verifyBody.accessToken);
-        verifyRecord.bodyRole = verifyBody.user?.role;
-        verifyRecord.tokenRole = c.role;
+        // Issue #539 (D-05): no role in the body or the token (asserted below).
         verifyRecord.tokenTenant = tenantLabel(c.tenantId);
         verifyRecord.tokenEmployee = employeeLabel(c.employeeId);
       }
@@ -605,12 +637,15 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
       });
       const refreshBody = JSON.parse(refresh.body) as { accessToken?: string };
       const refreshRecord: TokenRecord = { status: refresh.statusCode };
-      if (refreshBody.accessToken) refreshRecord.tokenRole = claims(refreshBody.accessToken).role;
       record(`auth | ${label} | refresh`, refreshRecord);
 
-      const column = columnRoleOf.get(label);
-      expect(verifyRecord).toMatchObject({ status: 200, bodyRole: column, tokenRole: column });
-      expect(refreshRecord).toEqual({ status: 200, tokenRole: column });
+      expect(verifyRecord).toMatchObject({ status: 200 });
+      expect(verifyRecord).not.toHaveProperty("bodyRole");
+      expect(verifyRecord).not.toHaveProperty("tokenRole");
+      expect(refreshRecord).toEqual({ status: 200 });
+      expect(Object.keys(verifyBody.user ?? {})).not.toContain("role");
+      expect(Object.keys(claims(verifyBody.accessToken as string))).not.toContain("role");
+      expect(Object.keys(claims(refreshBody.accessToken as string))).not.toContain("role");
     });
   });
 
@@ -619,7 +654,17 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
 
     for (const [index, caller] of FEED_CALLERS.entries()) {
       it(`GET /activity?limit=20 — ${caller.label}`, async () => {
-        const token = accessTokenOf.get(caller.label);
+        // Issue #539 (D-14): since a user without a stored assignment cannot sign in, the
+        // fallback callers get their token signed directly with exactly the claims a login would
+        // have issued (sub, tenant, employee - no role claim since #539 D-05). The feed is still measured, to prove
+        // that such a principal reads nothing (the 'stored ADMIN feed' case below).
+        const token = caller.label.startsWith("A.fallback.")
+          ? app.jwt.sign({
+              sub: userId(caller.label),
+              tenantId: tenantA,
+              employeeId: employeeIdOf.get(caller.label),
+            } as JwtPayload)
+          : accessTokenOf.get(caller.label);
         if (!token) throw new Error(`activity-auth: ${caller.label} has no token from the login`);
         const self: ActorFixture = {
           actor: caller.actor,
@@ -643,8 +688,24 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
       });
     }
 
-    it("the ADMIN-class feeds are fully labelled: 20 tenant/global rows, no <new>, no foreign row", () => {
-      for (const label of ["A.admin", "A.fallback.admin"]) {
+    it("the stored ADMIN feed is fully labelled: 20 tenant/global rows, no <new>, no foreign row; the ADMIN-column user without a stored assignment gets none (#539)", () => {
+      // A user without a stored assignment holds neither the audit nor the review/leave-request
+      // permissions: nothing of the ADMIN or MANAGER classes, at most its own time entry.
+      for (const label of ["A.fallback.admin", "A.fallback.manager"]) {
+        const ids = feeds.get(label)?.ids ?? ["<missing>"];
+        expect(ids.length, label).toBeLessThanOrEqual(1);
+        expect(
+          ids.filter((id) => !id.includes(`${label}.`)),
+          label,
+        ).toEqual([]);
+        expect(
+          ids.some(
+            (id) => id.startsWith("audit.") || id.startsWith("rev-") || id.startsWith("tlr-"),
+          ),
+          label,
+        ).toBe(false);
+      }
+      for (const label of ["A.admin"]) {
         const ids = feeds.get(label)?.ids ?? [];
         expect(ids, label).toHaveLength(FEED_LIMIT);
         expect(
@@ -689,37 +750,13 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
       expect(amendments.length).toBeGreaterThan(0);
     });
 
-    it("no two amendments name the same cell key", () => {
-      const counts = new Map<string, number>();
-      for (const a of amendments) counts.set(a.key, (counts.get(a.key) ?? 0) + 1);
-      const duplicates = [...counts.entries()].filter(([, n]) => n > 1).map(([key]) => key);
-      expect(duplicates).toEqual([]);
-    });
-
-    it("every amendment names a positive integer GitHub issue, an ISO date, and a written reason of at least MIN_REASON_LENGTH characters", () => {
-      const problems = amendments
-        .filter(
-          (a) =>
-            !Number.isInteger(a.issue) ||
-            a.issue <= 0 ||
-            typeof a.reason !== "string" ||
-            a.reason.trim().length < MIN_REASON_LENGTH ||
-            !/^\d{4}-\d{2}-\d{2}$/.test(a.date),
-        )
-        .map((a) => a.key);
+    it("every amendment chain is valid — the first link's 'from' is the recording, every next link continues the previous 'to', dates never go back, and each link names an issue, an ISO date and a reason (Issue #539, D-15)", () => {
+      const { problems } = resolveAmendmentChains<unknown>({
+        links: amendments,
+        recordedValueOf: recording === undefined ? undefined : (key) => recording?.[key],
+        minReasonLength: MIN_REASON_LENGTH,
+      });
       expect(problems).toEqual([]);
-    });
-
-    it("every amendment's key exists in the checked-in recording, and its 'from' matches the recording BYTE-FOR-BYTE", () => {
-      if (recording === undefined) return; // MODE=record: the beforeAll guard above already refused.
-      const currentRecording = recording;
-      const missing = amendments.filter((a) => !(a.key in currentRecording)).map((a) => a.key);
-      expect(missing).toEqual([]);
-      const stale = amendments
-        .filter((a) => a.key in currentRecording)
-        .filter((a) => !isDeepStrictEqual(a.from, currentRecording[a.key]))
-        .map((a) => `${a.key}: amendment 'from' does not match the recorded entry`);
-      expect(stale).toEqual([]);
     });
   });
 });

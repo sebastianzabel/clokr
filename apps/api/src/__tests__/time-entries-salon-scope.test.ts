@@ -16,6 +16,7 @@ import {
   seedTestData,
   cleanupTestData,
   soleAuditRowOrNull,
+  tokenWithoutSignIn,
 } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
@@ -264,7 +265,8 @@ describe("Issue #91 (Phase 91b Plan 03) — TimeEntry salon/person scope", () =>
         scopeType: "SALONS",
         salonIds: [],
       });
-      const token = await login(manager.user.email);
+      // #539 (D-14): no effective permission, no sign-in - the token is signed directly.
+      const token = await tokenWithoutSignIn(app, manager.user.email);
 
       const res = await app.inject({
         method: "GET",

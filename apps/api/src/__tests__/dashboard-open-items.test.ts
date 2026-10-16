@@ -16,7 +16,13 @@
  * known time bomb in this repo (`shifts.test.ts` expired exactly that way).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup"; // Phase 325 (issue #325)
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { todayInTz } from "../contexts/working-time-account/timezone";
@@ -103,6 +109,7 @@ describe("GET /api/v1/dashboard/open-items — work obligation per schedule type
         isTimeTrackingExempt: opts.isTimeTrackingExempt ?? false,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,

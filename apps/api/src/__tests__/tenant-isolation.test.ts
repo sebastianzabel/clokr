@@ -11,7 +11,7 @@
  * security test — tenant isolation is not owned by any single route file.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 
@@ -331,6 +331,11 @@ describe("Tenant Isolation", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: tenantA.tenant.id,
+        userId: mgrUser.id,
+        role: "MANAGER",
+      });
       mgrEmployee = mgr;
       await app.prisma.workSchedule.create({
         data: {
@@ -482,6 +487,11 @@ describe("Tenant Isolation", () => {
           lastName: "Sec02",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: tenantB.tenant.id,
+        userId: pendingUser.id,
+        role: "EMPLOYEE",
       });
       await app.prisma.workSchedule.create({
         data: {

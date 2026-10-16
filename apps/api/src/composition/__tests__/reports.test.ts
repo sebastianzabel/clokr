@@ -7,6 +7,7 @@ import {
   seedTestData,
   cleanupTestData,
   configureDatevKanzlei,
+  grantSystemRole,
 } from "../../__tests__/setup";
 import { computeOvertimeBalanceHours } from "../../contexts/time-tracking/api/time-entries";
 import * as pdfUtils from "../pdf";
@@ -325,6 +326,11 @@ describe("Reports API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: datevData.tenant.id,
+        userId: mgrUser.id,
+        role: "MANAGER",
+      });
       const loginRes = await app.inject({
         method: "POST",
         url: "/api/v1/auth/login",
@@ -465,6 +471,11 @@ describe("Reports API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: d13Data.tenant.id,
+        userId: employee2.userId,
+        role: "EMPLOYEE",
+      });
       // Issue #206 made `LeaveType.code` NOT NULL — a codeless row can no longer exist. `OTHER`
       // preserves the exact case this test exercises: `daysForCode()` (reports.ts) is only ever
       // called with VACATION/OVERTIME_COMP/SPECIAL/EDUCATION/UNPAID/MATERNITY/PARENTAL, and sick
@@ -527,6 +538,11 @@ describe("Reports API", () => {
           lastName: "CodeTest",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: d13Data.tenant.id,
+        userId: employee3.userId,
+        role: "EMPLOYEE",
       });
       const sickType = await app.prisma.leaveType.create({
         data: {
@@ -723,6 +739,11 @@ describe("Reports API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: d210Data.tenant.id,
+        userId: employee2.userId,
+        role: "EMPLOYEE",
+      });
       await app.prisma.leaveRequest.create({
         data: {
           employeeId: employee2.id,
@@ -763,6 +784,11 @@ describe("Reports API", () => {
           lastName: "E3",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: d210Data.tenant.id,
+        userId: employee3.userId,
+        role: "EMPLOYEE",
       });
       const sickReq = await app.prisma.leaveRequest.create({
         data: {
@@ -835,6 +861,11 @@ describe("Reports API", () => {
           lastName: "E4",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: d210Data.tenant.id,
+        userId: employee4.userId,
+        role: "EMPLOYEE",
       });
       const vacReq = await app.prisma.leaveRequest.create({
         data: {
@@ -1260,6 +1291,7 @@ describe("Reports API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(prisma, { tenantId: data.tenant.id, userId: u.id, role: "EMPLOYEE" });
       await prisma.workSchedule.create({
         data: {
           employeeId: e.id,
@@ -1346,6 +1378,11 @@ describe("Reports API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(prisma, {
+        tenantId: attData.tenant.id,
+        userId: mgrUser.id,
+        role: "MANAGER",
+      });
       await prisma.workSchedule.create({
         data: {
           employeeId: mgrEmp.id,
@@ -1410,6 +1447,11 @@ describe("Reports API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(prisma, {
+        tenantId: attData.tenant.id,
+        userId: empCIUser.id,
+        role: "EMPLOYEE",
+      });
       await makeWorkSchedule(empCIRecord.id);
       await prisma.overtimeAccount.create({
         data: { employeeId: empCIRecord.id, balanceHours: 0 },
@@ -1446,6 +1488,11 @@ describe("Reports API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(prisma, {
+        tenantId: attData.tenant.id,
+        userId: empPUser.id,
+        role: "EMPLOYEE",
+      });
       await makeWorkSchedule(empPRecord.id);
       await prisma.overtimeAccount.create({ data: { employeeId: empPRecord.id, balanceHours: 0 } });
       await prisma.timeEntry.create({
@@ -1480,6 +1527,11 @@ describe("Reports API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(prisma, {
+        tenantId: attData.tenant.id,
+        userId: empLUser.id,
+        role: "EMPLOYEE",
+      });
       await makeWorkSchedule(empLRecord.id);
       await prisma.overtimeAccount.create({ data: { employeeId: empLRecord.id, balanceHours: 0 } });
       await prisma.leaveRequest.create({
@@ -1512,6 +1564,11 @@ describe("Reports API", () => {
           lastName: "Emp",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(prisma, {
+        tenantId: attData.tenant.id,
+        userId: empSUser.id,
+        role: "EMPLOYEE",
       });
       await makeWorkSchedule(empSRecord.id);
       await prisma.overtimeAccount.create({ data: { employeeId: empSRecord.id, balanceHours: 0 } });
@@ -1546,6 +1603,11 @@ describe("Reports API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(prisma, {
+        tenantId: attData.tenant.id,
+        userId: empMUser.id,
+        role: "EMPLOYEE",
+      });
       await makeWorkSchedule(empMRecord.id);
       await prisma.overtimeAccount.create({ data: { employeeId: empMRecord.id, balanceHours: 0 } });
       empMissing = { id: empMRecord.id, employeeNumber: empMRecord.employeeNumber };
@@ -1568,6 +1630,11 @@ describe("Reports API", () => {
           lastName: "Emp",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(prisma, {
+        tenantId: attData.tenant.id,
+        userId: empNWUser.id,
+        role: "EMPLOYEE",
       });
       // All-zero schedule → every day is a non-workday
       await prisma.workSchedule.create({
@@ -2499,6 +2566,11 @@ describe("Reports API", () => {
           hireDate: new Date(Date.UTC(currentYear - 1, 0, 1)),
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: meData.tenant.id,
+        userId: activeUser.id,
+        role: "EMPLOYEE",
+      });
       noEntitlementEmployeeId = activeEmployee.id;
 
       const inactiveUser = await app.prisma.user.create({
@@ -2519,6 +2591,11 @@ describe("Reports API", () => {
           hireDate: new Date(Date.UTC(currentYear - 2, 0, 1)),
           exitDate: new Date(Date.UTC(currentYear - 1, 5, 30)),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: meData.tenant.id,
+        userId: inactiveUser.id,
+        role: "EMPLOYEE",
       });
       inactiveEmployeeId = inactiveEmployee.id;
     });
@@ -2621,6 +2698,11 @@ describe("Reports API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(prisma, {
+        tenantId: otData.tenant.id,
+        userId: mgrUser.id,
+        role: "MANAGER",
+      });
       await prisma.workSchedule.create({
         data: {
           employeeId: mgrEmp.id,
@@ -2675,6 +2757,11 @@ describe("Reports API", () => {
           lastName: "Worker",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(prisma, {
+        tenantId: otData.tenant.id,
+        userId: critUser.id,
+        role: "EMPLOYEE",
       });
       await prisma.workSchedule.create({
         data: {

@@ -8,12 +8,12 @@
  * fallback with an empty tenant id (measured in 88-13). This script lists every such user so the
  * operator knows who loses the ability to sign in with the release.
  *
- * What it lists: per User without an Employee one line — user id, legacy role, isActive flag, the
+ * What it lists: per User without an Employee one line — user id, isActive flag, the
  * number of OPEN refresh tokens (not revoked, not expired) and the number of role assignments (all
  * tenants). A totals line follows: users, active users, open refresh tokens, role assignments.
  *
  * READ-ONLY. ZERO mutations: only Prisma reads run, there is no write flag, and none may ever be
- * added. The output carries ids, the role, flags and counts only — no mail address and no name
+ * added. The output carries ids, flags and counts only (no role since #539) — no mail address and no name
  * (DSGVO); the script never selects those columns. Full, untruncated UUIDs, so each user can be
  * located directly.
  *
@@ -61,7 +61,7 @@ Usage:
   DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx \\
     scripts/audit-551-users-without-employee.ts [--help]
 
-READ-ONLY — lists every user without an Employee (Issue #551): user id, role, isActive, open
+READ-ONLY — lists every user without an Employee (Issue #551): user id, isActive, open
 refresh tokens and role assignments, then a totals line. Ids and counts only, no personal data.
 Run it on int and prod before deploying the release: every listed ACTIVE user can no longer sign in.
 `;
@@ -97,12 +97,11 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
 
   try {
     const now = new Date();
-    // Only the id, role and isActive columns are selected, plus two relation counts.
+    // Only the id and isActive columns are selected, plus two relation counts.
     const users = await prisma.user.findMany({
       where: { employee: { is: null } },
       select: {
         id: true,
-        role: true,
         isActive: true,
         _count: {
           select: {
@@ -124,7 +123,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       openRefreshTokens += open;
       roleAssignments += assignments;
       console.info(
-        `userId=${user.id} role=${user.role} isActive=${user.isActive} ` +
+        `userId=${user.id} isActive=${user.isActive} ` +
           `openRefreshTokens=${open} roleAssignments=${assignments}`,
       );
     }

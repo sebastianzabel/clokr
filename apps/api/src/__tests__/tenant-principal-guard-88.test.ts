@@ -122,7 +122,6 @@ describe("operator tokens on tenant routes", () => {
       aud: "clokr-operator",
       typ: "access",
       tenantId: data.tenant.id,
-      role: "ADMIN",
     } as never);
 
     const res = await get("/api/v1/employees", token);
@@ -142,7 +141,6 @@ describe("operator tokens on tenant routes", () => {
       sub: data.adminUser.id,
       aud: "clokr-operator",
       tenantId: data.tenant.id,
-      role: "ADMIN",
     } as never);
     const res = await get("/api/v1/employees", token);
     expect(res.statusCode).toBe(403);

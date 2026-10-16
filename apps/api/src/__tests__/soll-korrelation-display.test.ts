@@ -22,7 +22,13 @@
  * (weeksAhead=8) to avoid collision with shifts-under-coverage.test.ts (6 weeks ahead).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup"; // Phase 325 (issue #325)
 import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -158,6 +164,7 @@ describe("Phase 76.32 — SOLL-KORRELATION display correctness (BS single-count 
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmployee.id,
@@ -204,6 +211,7 @@ describe("Phase 76.32 — SOLL-KORRELATION display correctness (BS single-count 
         classification: "AZUBI",
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     empId = emp.id;
 
     await prisma.workSchedule.create({
@@ -453,6 +461,7 @@ describe("WR-02 RED→GREEN: leave inside Feiertag week — leave credit must ex
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -498,6 +507,7 @@ describe("WR-02 RED→GREEN: leave inside Feiertag week — leave credit must ex
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     empId = emp.id;
     await prisma.workSchedule.create({
       data: {
@@ -663,6 +673,7 @@ describe("WR-01 RED→GREEN: manual PublicHoliday applies by the employee's work
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -708,6 +719,7 @@ describe("WR-01 RED→GREEN: manual PublicHoliday applies by the employee's work
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: niUser.id, role: "EMPLOYEE" });
     niEmpId = niEmp.id;
     await prisma.workSchedule.create({
       data: {
@@ -762,6 +774,7 @@ describe("WR-01 RED→GREEN: manual PublicHoliday applies by the employee's work
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: byUser.id, role: "EMPLOYEE" });
     byEmpId = byEmp.id;
     await prisma.workSchedule.create({
       data: {

@@ -31,11 +31,11 @@
 import { randomBytes, createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Role } from "@clokr/db";
-import { configureDatevKanzlei, seedTestData } from "../setup";
+import { configureDatevKanzlei, removeFixtureRoleAssignments, seedTestData } from "../setup";
 import { leaveTypeFields } from "../../contexts/absence/leave-type";
 import { DEFAULT_SALON_OPENING_HOURS } from "../../contexts/platform";
 import type { JwtPayload } from "../../middleware/auth";
-import { ACTIVITY_FEED_LIMIT, API_KEY_ACTORS, type ActorKind } from "./matrix-config";
+import { ACTIVITY_FEED_LIMIT, API_KEY_ACTORS, ORACLE_ACTOR, type ActorKind } from "./matrix-config";
 
 /** A bijective id ↔ label map for one actor's tenant. */
 export class LabelRegistry {
@@ -802,6 +802,11 @@ export async function buildActorTenant(
 ): Promise<ActorFixture> {
   const registry = new LabelRegistry();
   const seed = await seedTestData(app, `75b-matrix-${actor.toLowerCase()}`);
+  // Issue #539 (D-04, D-15): the recordings were taken on seed users WITHOUT stored role rows.
+  // Main-actor tenants receive theirs from the checked-in migration SQL (D-25 of #75), fallback-
+  // actor tenants keep none (D-21). The logins inside seedTestData already ran while the rows
+  // existed, so the LOGIN audit rows registered below are unchanged.
+  await removeFixtureRoleAssignments(app.prisma, [seed.adminUser.id, seed.empUser.id]);
   const tenantId = seed.tenant.id;
   const t: TenantContext = {
     app,
@@ -904,6 +909,31 @@ export async function buildActorTenant(
   });
   registry.register("tenant.roleAssignment.customer", customerAssignment.id);
 
+  // #539 (D-15): the oracle actor holds a STORED assignment of a customer role without any permission,
+  // the independent reference for "a user without a stored assignment holds nothing".
+  if (actor === ORACLE_ACTOR) {
+    const emptyRole = await app.prisma.accessRole.create({
+      data: {
+        tenantId,
+        name: "Matrix Leere Rolle",
+        nameKey: "matrix leere rolle",
+        permissions: [],
+      },
+    });
+    registry.register("tenant.customRole.empty", emptyRole.id);
+    const emptyAssignment = await app.prisma.roleAssignment.create({
+      data: {
+        tenantId,
+        userId: own.userId,
+        accessRoleId: emptyRole.id,
+        scopeType: "TENANT",
+        salonIds: [],
+        employeeIds: [],
+      },
+    });
+    registry.register("own.roleAssignment.empty", emptyAssignment.id);
+  }
+
   // The DELETE target of `/api-keys/:id` — never the actor's own key (75b-RESEARCH Q6).
   await createApiKey(t, {
     label: "tenant.apiKey.secondary",
@@ -923,7 +953,6 @@ export async function buildActorTenant(
   } else {
     const payload: JwtPayload = {
       sub: own.userId,
-      role: ownRole,
       tenantId,
       employeeId: own.employeeId,
     };

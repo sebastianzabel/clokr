@@ -15,7 +15,14 @@
 import type { FastifyInstance } from "fastify";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 
 describe("Issue #433 review (WR-01) — dashboard MONTHLY_HOURS Soll with a vanished employee row", () => {
   let app: FastifyInstance;
@@ -48,6 +55,7 @@ describe("Issue #433 review (WR-01) — dashboard MONTHLY_HOURS Soll with a vani
         hireDate: new Date("2025-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     await app.prisma.workSchedule.create({
       data: {
         employeeId: employee.id,

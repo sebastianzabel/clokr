@@ -319,12 +319,9 @@ describe("Phase 74b review fixes", () => {
   it("WR-02: a customer role deleted between the reference check and the insert answers 404 'Rolle nicht gefunden', not 500", async () => {
     const grantee = await createUserWithEmployee(app, tenantA.tenant.id, "Grantee");
     const doomedRole = await createRole(app, tenantA.tenant.id, "RDoomed", [TIME_ENTRY_READ]);
-    // Phase 75b (D-26): the grantee relies on the legacy-role fallback, so the POST transaction now
-    // calls roleAssignment.create twice — first for the materialized Mitarbeiter row, then for the
-    // grant. The hook fires before each call; `deleteMany` keeps the second firing a no-op instead
-    // of a P2025 from deleting the already deleted role. The role is gone before the grant's
-    // insert either way, and its foreign-key 404 must roll the materialization back as well (the
-    // two counts below).
+    // The hook fires before the grant's roleAssignment.create; `deleteMany` stays a no-op instead
+    // of a P2025 if the role is already gone. The role is gone before the grant's insert, and its
+    // foreign-key 404 must leave no row and no audit behind (the two counts below).
     wrapNextTransactionClient((tx) =>
       beforeDelegateCall(tx, "roleAssignment", "create", () =>
         app.prisma.accessRole.deleteMany({ where: { id: doomedRole.id } }),
@@ -663,6 +660,10 @@ describe("Phase 74b review fixes", () => {
       "role:manage:ZUGEWIESEN",
       "role-assignment:manage:ZUGEWIESEN",
     ]);
+    // #539 (D-09): the seed admin holds a stored Admin row, so the tenant has genuine holders of
+    // both keys before the malformed row exists; "grants nothing — not even holder status" is the
+    // statement that the malformed row adds none to that baseline.
+    const holdersBefore = await countGuardedPermissionHolders(app.prisma, tenantA.tenant.id);
     await writeMalformed(holder.user.id, roleManage.id, {
       scopeType: "TENANT",
       salonIds: [salonA1.id],
@@ -673,7 +674,9 @@ describe("Phase 74b review fixes", () => {
       userMayApply(app.prisma, tenantA.tenant.id, holder.user.id, "role:manage:ZUGEWIESEN", {}),
     ).resolves.toBe(false);
     const holders = await countGuardedPermissionHolders(app.prisma, tenantA.tenant.id);
-    expect(holders["role:manage:ZUGEWIESEN"]).toBe(0);
-    expect(holders["role-assignment:manage:ZUGEWIESEN"]).toBe(0);
+    expect(holders["role:manage:ZUGEWIESEN"]).toBe(holdersBefore["role:manage:ZUGEWIESEN"]);
+    expect(holders["role-assignment:manage:ZUGEWIESEN"]).toBe(
+      holdersBefore["role-assignment:manage:ZUGEWIESEN"],
+    );
   });
 });

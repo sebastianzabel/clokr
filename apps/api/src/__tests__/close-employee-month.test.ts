@@ -22,6 +22,7 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee, // Phase 325 (issue #325)
+  grantSystemRole,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
@@ -197,6 +198,7 @@ describe("closeEmployeeMonth — case 1: FIXED gap month (CLOSE-05)", () => {
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -232,6 +234,7 @@ describe("closeEmployeeMonth — case 1: FIXED gap month (CLOSE-05)", () => {
         hireDate: new Date("2026-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,
@@ -373,6 +376,7 @@ describe("closeEmployeeMonth — case 2: FIXED four-path parity (CLOSE-05)", () 
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -411,6 +415,7 @@ describe("closeEmployeeMonth — case 2: FIXED four-path parity (CLOSE-05)", () 
         hireDate: new Date("2026-06-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,
@@ -563,6 +568,7 @@ describe("closeEmployeeMonth — case 3: SHIFT_BASED Model B + §615 (CLOSE-05)"
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -600,6 +606,7 @@ describe("closeEmployeeMonth — case 3: SHIFT_BASED Model B + §615 (CLOSE-05)"
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,
@@ -765,6 +772,7 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,
@@ -895,6 +903,7 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: nUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: nEmp.id,
@@ -1232,6 +1241,7 @@ describe("closeEmployeeMonth — case 9: SHIFT_BASED + VOCATIONAL_SCHOOL parity 
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -1270,6 +1280,7 @@ describe("closeEmployeeMonth — case 9: SHIFT_BASED + VOCATIONAL_SCHOOL parity 
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,
@@ -1470,6 +1481,7 @@ describe("closeEmployeeMonth — case 8: four-path parity SHIFT_BASED + FIXED (C
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -1512,6 +1524,7 @@ describe("closeEmployeeMonth — case 8: four-path parity SHIFT_BASED + FIXED (C
           breakOver9hOverride: type === "SHIFT_BASED" ? 0 : null,
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: eu.id, role: "EMPLOYEE" });
       await prisma.workSchedule.create({
         data: {
           employeeId: emp.id,
@@ -1831,6 +1844,7 @@ describe("TC-CLOSE-01 — close with gaps values 0h against full Soll", () => {
         hireDate: new Date("2026-06-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: fixedUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: fixedEmp.id,
@@ -1876,6 +1890,7 @@ describe("TC-CLOSE-01 — close with gaps values 0h against full Soll", () => {
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: shiftUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: shiftEmp.id,

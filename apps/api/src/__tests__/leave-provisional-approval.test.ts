@@ -32,6 +32,7 @@ import {
   createTestSalon,
   salonIdForEmployee,
   soleAuditRowOrNull,
+  grantSystemRole,
 } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
@@ -137,6 +138,7 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
           hireDate: PAST_ANCHOR,
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role });
       const login = await app.inject({
         method: "POST",
         url: "/api/v1/auth/login",

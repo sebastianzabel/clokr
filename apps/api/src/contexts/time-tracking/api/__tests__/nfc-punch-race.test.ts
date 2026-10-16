@@ -51,7 +51,6 @@ describe("TIME-V19-03 — NFC double-tap + clock-in race", () => {
     jwt = app.jwt.sign({
       sub: data.empUser.id,
       tenantId: data.tenant.id,
-      role: data.empUser.role,
       employeeId: data.employee.id,
     });
   });

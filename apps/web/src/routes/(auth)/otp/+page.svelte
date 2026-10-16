@@ -29,7 +29,6 @@
         user: {
           id: string;
           email: string;
-          role: "ADMIN" | "MANAGER" | "EMPLOYEE";
           employeeId: string | null;
         };
       }>("/auth/verify-otp", { userId, code });

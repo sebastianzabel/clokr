@@ -24,7 +24,8 @@
  * (the requester, whom most sites are about, and a colleague), an EMPLOYEE, an ADMIN and a MANAGER
  * with `exitDate` set, and a user whose only stored assignment is a SALONS-scope customer role that
  * holds every ZUGEWIESEN permission (the migration skips a user that already has an assignment).
- * After the migration: a fallback ADMIN, MANAGER and EMPLOYEE with zero stored assignments (D-08).
+ * After the migration: an ADMIN, MANAGER and EMPLOYEE with zero stored assignments (D-08). Since #539
+ * (Release A) there is no legacy-role fallback, so these users hold nothing and are no recipient.
  * Tenant S holds an active ADMIN and MANAGER and nothing that could trigger a notification of its
  * own, so any row S receives is a cross-tenant leak.
  *
@@ -60,6 +61,9 @@
  *                                      NEUTRALITY_RECIPIENTS_OUT) in `afterAll`;
  *   (default) VERIFY                   compare with the recording (default path, or
  *                                      NEUTRALITY_RECIPIENTS_IN).
+ * Measured-result dump (Issue #539, D-15): VERIFY with NEUTRALITY_ACTUAL_OUT_DIR=<dir> also writes
+ * every measured site to `<dir>/recipients.actual.json` (never into `neutrality/recorded/`, which
+ * is refused) — the input of `scripts/neutrality-amendments-from-run.ts`.
  * RECORD refuses once the legacy role guard's definition is gone from `middleware/auth.ts` — the
  * same guard as the permission matrix: a recording of the switched code would compare the new code
  * with itself. A recording that is not committed yet stays unstaged; every run starts with
@@ -81,7 +85,6 @@
  */
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -89,6 +92,12 @@ import type { Role } from "@clokr/db";
 import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup";
 import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
 import { LabelRegistry, cleanupMatrixExtras } from "./neutrality/fixture";
+import {
+  effectiveAmendmentLinks,
+  resolveAmendmentChains,
+  type AmendmentLink,
+} from "./neutrality/amendment-chain";
+import { measuredDumpDir, writeMeasuredDump } from "./neutrality/measured-dump";
 import { installExternalStubs, type ExternalStubs } from "./neutrality/external-stubs";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import { runVocationalSchoolGeneration } from "../contexts/absence/vocational-school-generator";
@@ -188,24 +197,23 @@ function serializeRecording(sites: ReadonlyMap<string, SiteRecord>): string {
  * under the amendment and it is stale), the exact `to` (checked against the actual measured result
  * exactly like an unamended site), the GitHub issue, a written reason (`MIN_REASON_LENGTH`), and
  * the date. An unnamed site is completely unaffected.
+ *
+ * Chains (Issue #539, D-15): one site may carry SEVERAL dated links, applied in file order — the
+ * first link's `from` equals the recording's `recipients`, every next link's `from` equals the
+ * previous link's `to`, dates never go back, and the effective expectation is the last link's
+ * `to`. The rule lives in `neutrality/amendment-chain.ts`; 16 of the 17 sites are already amended
+ * once, and #539 amends some of them a second time.
  */
-interface RecipientsAmendment {
-  readonly key: string;
-  readonly from: readonly string[];
-  readonly to: readonly string[];
-  readonly issue: number;
-  readonly reason: string;
-  readonly date: string;
-}
+type RecipientsAmendment = AmendmentLink<readonly string[]>;
 const AMENDMENTS_PATH = join(__dirname, "neutrality", "recorded", "recipients-amendments.json");
 const amendments: readonly RecipientsAmendment[] = (
   JSON.parse(readFileSync(AMENDMENTS_PATH, "utf8")) as { amendments: RecipientsAmendment[] }
 ).amendments;
-/** Last-wins lookup for the comparison below. A duplicate KEY is its own validation failure (the
- * "amendments register" describe below), never silently resolved by this map. */
-const amendmentByKey: ReadonlyMap<string, RecipientsAmendment> = new Map(
-  amendments.map((a) => [a.key, a]),
-);
+/** The effective link per site for the comparison below: the LAST link of the site's chain. A
+ * broken chain is its own validation failure (the "amendments register" describe below), never
+ * silently fixed by this map. */
+const amendmentByKey: ReadonlyMap<string, RecipientsAmendment> =
+  effectiveAmendmentLinks(amendments);
 /** The shortest acceptable written reason of an amendment (same threshold as the matrix's). */
 const MIN_REASON_LENGTH = 20;
 
@@ -322,11 +330,10 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
     });
   }
 
-  function bearer(label: string, role: Role): string {
+  function bearer(label: string): string {
     const p = person(label);
     const payload: JwtPayload = {
       sub: p.userId,
-      role,
       tenantId: tenantR,
       employeeId: p.employeeId,
     };
@@ -422,11 +429,13 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
       const notRecordedMsg = amendment
         ? `${key}: amendment (issue #${amendment.issue}) names a site with no recording`
         : `${key}: not recorded`;
-      expect(expected, notRecordedMsg).toBeDefined();
+      // Soft (Issue #539, D-15): a mismatch is reported but never stops the remaining sites, so
+      // the measured-result dump is always complete. The leak/harness checks above stay hard.
+      expect.soft(expected, notRecordedMsg).toBeDefined();
       const mismatchMsg = amendment
         ? `${key}: AMENDED (issue #${amendment.issue}) — actual result no longer matches the amendment's 'to' value; re-derive the amendment or fix the regression`
         : key;
-      expect(record, mismatchMsg).toEqual(expected);
+      expect.soft(record, mismatchMsg).toEqual(expected);
     }
     return record;
   }
@@ -442,6 +451,8 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           `switched code would make the neutrality proof compare the new code with itself.`,
       );
     }
+    // Issue #539 (D-15): refuse a dump directory inside `neutrality/recorded` before the long setup.
+    measuredDumpDir();
     app = await getTestApp();
     vi.useFakeTimers({ now: PINNED_NOW, toFake: ["Date"] });
     stubs = installExternalStubs(app);
@@ -533,7 +544,8 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
     // D-25: the checked-in migration SQL runs on the fixture before any trigger.
     await executeLegacyRoleMigration(app.prisma);
 
-    // D-08: fallback users exist only after the migration, so they hold no stored assignment.
+    // D-08: these users exist only after the migration, so they hold no stored assignment (since #539
+    // that means they hold nothing).
     await createPerson(tenantR, "R.fallback.admin", { role: "ADMIN" });
     await createPerson(tenantR, "R.fallback.manager", { role: "MANAGER" });
     await createPerson(tenantR, "R.fallback.employee", { role: "EMPLOYEE" });
@@ -612,6 +624,11 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
   afterAll(async () => {
     vi.useRealTimers();
     stubs?.restore();
+    // Issue #539 (D-15): a measurement for `scripts/neutrality-amendments-from-run.ts` — never a
+    // recording. Only with NEUTRALITY_ACTUAL_OUT_DIR set, only in VERIFY, only after a complete setup.
+    if (MODE === "verify" && setupComplete) {
+      writeMeasuredDump("recipients", serializeRecording(collected));
+    }
     if (MODE === "record" && setupComplete) {
       mkdirSync(dirname(RECORD_OUT), { recursive: true });
       writeFileSync(RECORD_OUT, serializeRecording(collected));
@@ -708,7 +725,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "POST",
             url: "/api/v1/leave/requests",
-            authorization: bearer("R.requester", "EMPLOYEE"),
+            authorization: bearer("R.requester"),
             payload: {
               type: "VACATION",
               startDate: DAY.leaveRequestStart,
@@ -754,7 +771,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "PATCH",
             url: `/api/v1/leave/requests/${sick.id}/review`,
-            authorization: bearer("R.manager", "MANAGER"),
+            authorization: bearer("R.manager"),
             payload: { status: "APPROVED" },
           });
           expect(res.statusCode, res.body).toBe(200);
@@ -796,7 +813,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "PATCH",
             url: `/api/v1/leave/requests/${leave.id}/review`,
-            authorization: bearer("R.manager", "MANAGER"),
+            authorization: bearer("R.manager"),
             payload: { status: "APPROVED" },
           });
           expect(res.statusCode, res.body).toBe(200);
@@ -824,7 +841,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "POST",
             url: `/api/v1/leave/section9/${creditId}/reopen`,
-            authorization: bearer("R.manager", "MANAGER"),
+            authorization: bearer("R.manager"),
           });
           expect(res.statusCode, res.body).toBe(200);
         },
@@ -997,7 +1014,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "POST",
             url: "/api/v1/time-entries",
-            authorization: bearer("R.requester", "EMPLOYEE"),
+            authorization: bearer("R.requester"),
             payload: {
               date: DAY.retroTarget,
               startTime: `${DAY.retroTarget}T07:00:00.000Z`,
@@ -1024,7 +1041,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "PUT",
             url: `/api/v1/time-entries/${registry.idOf("R.requester.retroEntry")}`,
-            authorization: bearer("R.requester", "EMPLOYEE"),
+            authorization: bearer("R.requester"),
             payload: {
               startTime: `${DAY.retroTarget}T08:00:00.000Z`,
               endTime: `${DAY.retroTarget}T16:00:00.000Z`,
@@ -1045,7 +1062,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "PATCH",
             url: `/api/v1/time-entries/${registry.idOf("R.requester.autoBreakEntry")}/break-status`,
-            authorization: bearer("R.requester", "EMPLOYEE"),
+            authorization: bearer("R.requester"),
             payload: { action: "waive", reason: "Durchgearbeitet" },
           });
           expect(res.statusCode, res.body).toBe(200);
@@ -1062,7 +1079,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
           const res = await inject({
             method: "DELETE",
             url: `/api/v1/retro-entry-requests/${registry.idOf("R.requester.retroRequest")}`,
-            authorization: bearer("R.requester", "EMPLOYEE"),
+            authorization: bearer("R.requester"),
           });
           expect(res.statusCode, res.body).toBe(200);
         },
@@ -1112,41 +1129,14 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
       expect(Array.isArray(amendments)).toBe(true);
     });
 
-    it("no two amendments name the same site key", () => {
-      const counts = new Map<string, number>();
-      for (const a of amendments) counts.set(a.key, (counts.get(a.key) ?? 0) + 1);
-      const duplicates = [...counts.entries()].filter(([, n]) => n > 1).map(([key]) => key);
-      expect(duplicates).toEqual([]);
-    });
-
-    it("every amendment names a positive integer GitHub issue, an ISO date, and a written reason of at least MIN_REASON_LENGTH characters", () => {
-      const problems = amendments
-        .filter(
-          (a) =>
-            !Number.isInteger(a.issue) ||
-            a.issue <= 0 ||
-            typeof a.reason !== "string" ||
-            a.reason.trim().length < MIN_REASON_LENGTH ||
-            !/^\d{4}-\d{2}-\d{2}$/.test(a.date),
-        )
-        .map((a) => a.key);
+    it("every amendment chain is valid — the first link's 'from' is the recorded recipients, every next link continues the previous 'to', dates never go back, and each link names an issue, an ISO date and a reason (Issue #539, D-15)", () => {
+      const { problems } = resolveAmendmentChains<readonly string[]>({
+        links: amendments,
+        recordedValueOf:
+          recording === undefined ? undefined : (key) => recording?.[key]?.recipients,
+        minReasonLength: MIN_REASON_LENGTH,
+      });
       expect(problems).toEqual([]);
-    });
-
-    it("every amendment's site key exists in the checked-in recording, and its 'from' matches the recording BYTE-FOR-BYTE", () => {
-      if (recording === undefined) return; // MODE=record: the beforeAll guard above already refused.
-      const currentRecording = recording;
-      const missing = amendments.filter((a) => !(a.key in currentRecording)).map((a) => a.key);
-      expect(missing).toEqual([]);
-      const stale = amendments
-        .filter((a) => a.key in currentRecording)
-        .filter((a) => !isDeepStrictEqual(a.from, currentRecording[a.key]?.recipients))
-        .map(
-          (a) =>
-            `${a.key}: amendment 'from' ${JSON.stringify(a.from)} does not match the recorded ` +
-            `${JSON.stringify(currentRecording[a.key]?.recipients)}`,
-        );
-      expect(stale).toEqual([]);
     });
   });
 });

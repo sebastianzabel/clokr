@@ -39,9 +39,9 @@ export type AccessActor =
 /**
  * How far the work reaches inside its tenant.
  *
- * `wholeTenant`: the entire tenant (a TENANT-scope assignment, or the legacy-role fallback for a
- * user with no stored `RoleAssignment` row at all — see `resolveAccessReach`,
- * `facade/role-assignments.ts`, Phase 91b/Issue #91).
+ * `wholeTenant`: the entire tenant (a TENANT-scope assignment — see `resolveAccessReach`,
+ * `facade/role-assignments.ts`, Phase 91b/Issue #91; since #539 a user with no stored
+ * `RoleAssignment` row reaches nothing).
  *
  * `scoped`: the UNION of every well-formed SALONS/PERSONS assignment that grants the permission
  * being asked about — ONE combined variant, not two independent ones (Issue #91's own acceptance

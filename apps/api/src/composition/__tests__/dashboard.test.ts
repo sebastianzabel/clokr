@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  grantSystemRole,
+} from "../../__tests__/setup";
 import { computeOvertimeBalanceHours } from "../../contexts/time-tracking/api/time-entries";
 import { leaveTypeFields } from "../../contexts/absence/leave-type";
 import type { FastifyInstance } from "fastify";
@@ -43,6 +49,7 @@ describe("GET /api/v1/dashboard - scheduleType field (Phase 49.1-03)", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: userFixed.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: empFixed.id,
@@ -74,6 +81,7 @@ describe("GET /api/v1/dashboard - scheduleType field (Phase 49.1-03)", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: userFlex.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: empFlex.id,
@@ -105,6 +113,7 @@ describe("GET /api/v1/dashboard - scheduleType field (Phase 49.1-03)", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: userMonthly.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: empMonthly.id,
@@ -137,6 +146,7 @@ describe("GET /api/v1/dashboard - scheduleType field (Phase 49.1-03)", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: userShift.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: empShift.id,
@@ -278,6 +288,7 @@ describe("GET /api/v1/dashboard - overtime KPI is live (v1.8.24)", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: userFixed.id, role: "EMPLOYEE" });
     empFixedId = empFixed.id;
     await prisma.workSchedule.create({
       data: {
@@ -318,6 +329,7 @@ describe("GET /api/v1/dashboard - overtime KPI is live (v1.8.24)", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: userTrack.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: empTrack.id,
@@ -609,6 +621,7 @@ describe("dashboard /team-week leaveTypeCode/absenceType (Issue #205, finding 3)
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: userMaternity.id, role: "EMPLOYEE" });
     await prisma.absence.create({
       data: {
         employeeId: employeeMaternity.id,

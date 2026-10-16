@@ -29,6 +29,7 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee,
+  grantSystemRole,
 } from "../../../../__tests__/setup"; // Phase 68b (issue #68)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
@@ -139,6 +140,7 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
           hireDate: HIRE_DATE,
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
 
       const vacationType = await prisma.leaveType.create({
         data: {
@@ -177,6 +179,7 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
           hireDate: HIRE_DATE,
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: asUser.id, role: "EMPLOYEE" });
       asEmpId = asEmp.id;
       await prisma.workSchedule.create({
         data: {
@@ -404,6 +407,7 @@ describe("auto-close-month plugin — per-tenant fault isolation (D-04)", () => 
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: user.id, role: "EMPLOYEE" });
     return tenant.id;
   }
 

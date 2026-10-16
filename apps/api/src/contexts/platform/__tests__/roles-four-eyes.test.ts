@@ -19,6 +19,8 @@ import {
   closeTestApp,
   seedTestData,
   cleanupTestData,
+  grantSystemRole,
+  removeFixtureRoleAssignments,
   soleAuditRowOrNull,
 } from "../../../__tests__/setup";
 import { PERMISSIONS, permissionKey } from "../permission-catalog";
@@ -486,11 +488,38 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
       // This replaces both guarded permissions with the four-eyes pair: a >=1 -> 0 transition on
       // role:manage/role-assignment:manage (the ONLY stored holder in this fresh tenant) AND a
       // combination-creating save. The lockout guard must win (P-01).
-      const res = await patchRole(roleId, { permissions: combinationPermissions });
-      expect(res.statusCode).toBe(409);
-      const body = JSON.parse(res.body);
-      expect(body.code).toBeUndefined();
-      expect(body.error).toBe(ROLE_LOCKOUT_MESSAGE);
+      //
+      // #539 (D-09): the seed admin now holds a stored Admin row and would be a second holder, so
+      // the transition would no longer be 1 -> 0. This test needs "the user is the ONLY stored
+      // holder": the seed admin's row is taken away for the duration of this test, the lockout
+      // user is the actor (its own token), and the row is granted back in `finally` so the
+      // following tests find the fixture as the seed built it.
+      await removeFixtureRoleAssignments(app.prisma, [data.adminUser.id]);
+      try {
+        const loginRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/auth/login",
+          payload: { email: `${s}@test.de`, password: "test1234" },
+        });
+        expect(loginRes.statusCode).toBe(200);
+        const { accessToken } = JSON.parse(loginRes.body);
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/roles/${roleId}`,
+          headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+          payload: JSON.stringify({ permissions: combinationPermissions }),
+        });
+        expect(res.statusCode).toBe(409);
+        const body = JSON.parse(res.body);
+        expect(body.code).toBeUndefined();
+        expect(body.error).toBe(ROLE_LOCKOUT_MESSAGE);
+      } finally {
+        await grantSystemRole(app.prisma, {
+          tenantId: data.tenant.id,
+          userId: data.adminUser.id,
+          role: "ADMIN",
+        });
+      }
 
       const row = await app.prisma.accessRole.findUniqueOrThrow({ where: { id: roleId } });
       expect(row.permissions).toEqual(normalizeRolePermissions([ROLE_MANAGE, ASSIGNMENT_MANAGE]));

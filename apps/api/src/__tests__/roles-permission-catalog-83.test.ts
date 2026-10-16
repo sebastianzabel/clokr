@@ -11,7 +11,13 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  tokenWithoutSignIn,
+} from "./setup";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import {
   PERMISSIONS,
@@ -155,7 +161,8 @@ describe("Issue #83 — GET /api/v1/roles/permission-catalog", () => {
         employeeIds: [],
       },
     });
-    expect((await catalog(await login(salonScoped.email))).statusCode).toBe(403);
+    // A SALONS assignment of a whole-tenant key holds nothing, so no sign-in since #539 (D-14).
+    expect((await catalog(await tokenWithoutSignIn(app, salonScoped.email))).statusCode).toBe(403);
   });
 
   it("an employee without role:read gets 403, no token 401", async () => {

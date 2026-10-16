@@ -21,6 +21,7 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee,
+  grantSystemRole,
 } from "./setup";
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
 import { checkArbZG } from "../contexts/time-tracking/arbzg";
@@ -80,6 +81,7 @@ describe("Phase 76.7 — § 18 ArbZG tracking exemption", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -125,6 +127,7 @@ describe("Phase 76.7 — § 18 ArbZG tracking exemption", () => {
         isTimeTrackingExempt: true, // Phase 76.7 (D-01)
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: exemptUser.id, role: "EMPLOYEE" });
     exemptEmpId = exemptEmp.id;
     await prisma.workSchedule.create({
       data: {
@@ -166,6 +169,11 @@ describe("Phase 76.7 — § 18 ArbZG tracking exemption", () => {
         hireDate: new Date("2024-01-01"),
         isTimeTrackingExempt: false, // explicit for clarity
       },
+    });
+    await grantSystemRole(prisma, {
+      tenantId: tenant.id,
+      userId: nonExemptUser.id,
+      role: "EMPLOYEE",
     });
     nonExemptEmpId = nonExemptEmp.id;
     await prisma.workSchedule.create({
@@ -464,6 +472,7 @@ describe("Phase 76.7 — PATCH /employees/:id exemption toggle", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -500,6 +509,7 @@ describe("Phase 76.7 — PATCH /employees/:id exemption toggle", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: managerUser.id, role: "MANAGER" });
     await prisma.workSchedule.create({
       data: {
         employeeId: managerEmp.id,
@@ -537,6 +547,7 @@ describe("Phase 76.7 — PATCH /employees/:id exemption toggle", () => {
         isTimeTrackingExempt: false, // explicit starting state
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: empUser.id, role: "EMPLOYEE" });
     empId = emp.id;
     await prisma.workSchedule.create({
       data: {

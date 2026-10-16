@@ -28,6 +28,7 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee,
+  grantSystemRole,
 } from "./setup";
 import { daysAgoStrInTz } from "./test-dates";
 import {
@@ -256,6 +257,7 @@ async function seedKarenzFixture(app: FastifyInstance, suffix: string) {
       hireDate: new Date("2026-06-01T00:00:00Z"),
     },
   });
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: adminUser.id, role: "ADMIN" });
 
   await prisma.workSchedule.create({
     data: {
@@ -293,6 +295,7 @@ async function seedKarenzFixture(app: FastifyInstance, suffix: string) {
       hireDate: new Date("2026-06-01T00:00:00Z"),
     },
   });
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: empUser.id, role: "EMPLOYEE" });
   await prisma.workSchedule.create({
     data: {
       employeeId: employee.id,
@@ -809,6 +812,11 @@ describe("Self-service Hinweis (D-21)", () => {
           lastName: "d21-4",
           hireDate: new Date("2026-06-01T00:00:00Z"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: fx.tenant.id,
+        userId: empBUser.id,
+        role: "EMPLOYEE",
       });
       await app.prisma.overtimeAccount.create({
         data: { employeeId: employeeB.id, balanceHours: 0 },

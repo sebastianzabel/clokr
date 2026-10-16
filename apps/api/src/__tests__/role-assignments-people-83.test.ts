@@ -12,7 +12,13 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  tokenWithoutSignIn,
+} from "./setup";
 import { SYSTEM_ROLE_IDS, normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
 const PASSWORD = "test1234";
@@ -182,11 +188,18 @@ describe("Issue #83 — GET /api/v1/role-assignments/people", () => {
     expect(JSON.parse(res.body)).toEqual(admin);
   });
 
-  it("HR (employee:read, no role-assignment:manage) and a fallback MANAGER get 403", async () => {
+  it("HR (employee:read, no role-assignment:manage), a stored Manager and a user with no stored assignment get 403", async () => {
     const { user: hr } = await createEmployee("Probe-H", "Rui83");
     await assign(hr.id, SYSTEM_ROLE_IDS.HR, "TENANT");
     expect((await people(await login(hr.email))).statusCode).toBe(403);
 
+    // The system Manager role does not hold role-assignment:manage either (was: a "fallback
+    // MANAGER" through the legacy column; since #539 the role must be stored to count at all).
+    const { user: storedManager } = await createEmployee("Probe-M", "Rui83");
+    await assign(storedManager.id, SYSTEM_ROLE_IDS.MANAGER, "TENANT");
+    expect((await people(await login(storedManager.email))).statusCode).toBe(403);
+
+    // #539: a user whose legacy column says MANAGER but who has no stored assignment holds nothing.
     const s = uniqueSuffix("mgr");
     const manager = await app.prisma.user.create({
       data: {
@@ -201,18 +214,20 @@ describe("Issue #83 — GET /api/v1/role-assignments/people", () => {
         tenantId: data.tenant.id,
         userId: manager.id,
         employeeNumber: s.toUpperCase().slice(0, 20),
-        firstName: "Probe-M",
+        firstName: "Probe-N",
         lastName: "Rui83",
         hireDate: new Date("2024-01-01"),
       },
     });
-    expect((await people(await login(manager.email))).statusCode).toBe(403);
+    // It cannot sign in since #539 (D-14): the token is signed directly (see tokenWithoutSignIn).
+    expect((await people(await tokenWithoutSignIn(app, manager.email))).statusCode).toBe(403);
   });
 
   it("the managing role at SALONS scope gets 403 (MANDANT relation), no token 401", async () => {
     const { user } = await createEmployee("Probe-S", "Rui83");
     await assign(user.id, managerRoleId, "SALONS");
-    expect((await people(await login(user.email))).statusCode).toBe(403);
+    // A SALONS assignment of a whole-tenant key holds nothing, so no sign-in since #539 (D-14).
+    expect((await people(await tokenWithoutSignIn(app, user.email))).statusCode).toBe(403);
     expect((await people()).statusCode).toBe(401);
   });
 });

@@ -33,6 +33,7 @@ import {
   closeTestApp,
   seedTestData,
   cleanupTestData,
+  grantSystemRole,
 } from "../../../../__tests__/setup";
 import { holidayFreeMondayStr } from "../../../../__tests__/test-dates";
 import { leaveTypeFields } from "../../leave-type";
@@ -83,6 +84,11 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
         hireDate: hire,
         isTimeTrackingExempt: Boolean(opts.exempt),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: user.id,
+      role: "EMPLOYEE",
     });
     await app.prisma.workSchedule.create({
       data: {
@@ -174,6 +180,11 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
         lastName: "Pruefer",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: mgrUser.id,
+      role: "MANAGER",
     });
     const login = await app.inject({
       method: "POST",
@@ -385,6 +396,11 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
         hireDate: hire,
       },
     });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: user.id,
+      role: "EMPLOYEE",
+    });
     await app.prisma.workSchedule.create({
       data: {
         employeeId: emp.id,
@@ -439,6 +455,11 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
         lastName: `ShiftControl${n}`,
         hireDate: hire,
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: vacEmp.userId,
+      role: "EMPLOYEE",
     });
     await app.prisma.workSchedule.create({
       data: {

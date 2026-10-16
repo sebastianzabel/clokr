@@ -33,7 +33,13 @@
  * References: D-01, D-02, D-05, D-06, D-07 (CONTEXT.md), SALDO-V1816-03/04 (REQUIREMENTS.md).
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+  grantSystemRole,
+} from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import { updateOvertimeAccount } from "../contexts/time-tracking/api/time-entries";
@@ -110,6 +116,7 @@ async function createFixtureTenant(
       hireDate: new Date("2024-01-01T00:00:00Z"),
     },
   });
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: adminUser.id, role: "ADMIN" });
   await prisma.workSchedule.create({
     data: {
       employeeId: adminEmp.id,
@@ -148,6 +155,7 @@ async function createFixtureTenant(
       breakOver9hOverride: 0,
     },
   });
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: empUser.id, role: "EMPLOYEE" });
   await prisma.workSchedule.create({
     data: {
       employeeId: emp.id,

@@ -665,6 +665,77 @@ SELECT tgname FROM pg_trigger WHERE tgrelid = '"SupportAccess"'::regclass AND NO
 
 Mandanten-Auffrischung int: siehe `docs/data-refresh-process.md` (`SupportAccess` bleibt unverändert erhalten).
 
+## Phase 539 — Altrollen-Rückfall entfernt (Release A, Issue #539)
+
+**Hinweis für die Release Notes.** Dieser Abschnitt ist der Release-Hinweis zu Release A von #539: **Vor dem Deploy**
+gehört der lesende Probelauf (Schritt 1) auf int UND prod in den Ablauf, und bei jedem Treffer das Übernehmen
+(Schritt 2). Ohne diesen Schritt kann sich ein aktiver Nutzer ohne gespeicherte Rollenzuweisung nach dem Deploy nicht mehr
+anmelden (403 `NO_ROLE_ASSIGNED`), weil Berechtigungen ab Release A nur noch aus gespeicherten Zuweisungen kommen.
+
+**Was sich ändert.** Es gibt **keine Schema-Migration** und keinen Backfill im Entrypoint. Der Altrollen-Rückfall
+(ein Nutzer ohne Zuweisung galt als Inhaber der Systemrolle seiner Spalte `User.role`) entfällt an allen Auflösungsstellen,
+kein Token trägt mehr einen `role`-Claim, und die Spalte bleibt bis Release B stehen und wird weiter aus den Zuweisungen
+geschrieben (D-06). Beim Weglassen der Übernahme droht genau eine Wirkung: ausgesperrte aktive Nutzer.
+
+**1. Vor dem Deploy — Probelauf (lesend, auf int UND prod).**
+`apps/api/scripts/backfill-539-role-assignments.ts` schreibt ohne `--confirm` nichts. Es gibt je Treffer nur Nutzer-Id,
+Mandant und Alt-Rolle aus (keine Namen, keine E-Mail-Adressen) und danach eine Zeile `Totals:` sowie eine Zeile
+`Informational:`. Ein Treffer ist ein **aktiver** Nutzer mit Mitarbeiterdatensatz, der in seinem Mandanten keine
+einzige Rollenzuweisung hat. Inaktive und anonymisierte Nutzer sowie Nutzer ohne Mitarbeiterdatensatz werden nie
+angefasst (Anonymisierung löscht Zuweisungen absichtlich, #74b).
+
+```bash
+# DATABASE_URL zeigt per Port-Forward auf die Datenbank der Umgebung (int bzw. prod); aus der Umgebung
+# weitergereicht, nicht auf der Kommandozeile ausgeschrieben.
+DATABASE_URL="$DSN" pnpm --filter @clokr/api exec tsx scripts/backfill-539-role-assignments.ts \
+  | tee "539-takeover-<umgebung>-$(date +%Y%m%d).txt"
+echo "exit=${PIPESTATUS[0]}"
+```
+
+Das Skript liegt erst im Image des neuen Release; der Standard-Einstiegspunkt dieses Images führt `prisma migrate deploy`
+aus und darf vor der Deploy-Entscheidung nicht gegen int oder prod gestartet werden. Deshalb entweder aus einem Checkout
+des Release-Stands per Port-Forward (wie oben) oder mit überschriebenem Einstiegspunkt:
+
+```bash
+docker run --rm -e DATABASE_URL --entrypoint sh <neues-api-image> \
+  -lc 'cd /app/apps/api && pnpm tsx scripts/backfill-539-role-assignments.ts'
+```
+
+Erwartet: Messung vom 15.10.2026 (nur lesend, Kommentar am Issue #539): int und prod sind identisch, 20 Nutzer, 17 mit
+Zuweisung, 3 ohne, und diese 3 sind **inaktiv**. Der Probelauf meldet daher auf beiden Stufen `eligible=0`
+(`No active user without a stored role assignment. Nothing to take over.`) und Exit-Code **0**. Die Zeile
+`Informational:` nennt die nicht übernommenen Nutzer (`inactiveWithoutAssignment`, `anonymisedWithoutAssignment`,
+`withoutEmployee`, `malformedOnly`) und `columnDrift` (Nutzer, deren Spalte von der aus den Zuweisungen abgeleiteten Rolle
+abweicht): **diese Zahl notieren**, sie ändert sich durch die Übernahme nicht. Exit-Code **2** heißt: es gibt mindestens
+einen übernehmbaren Nutzer; Exit-Code **1** ist ein Fehler (fehlende `DATABASE_URL`, Verbindung).
+
+**2. Bei Exit-Code 2 — Übernehmen (`--confirm`).** Die Treffer prüfen (sind es wirklich aktive Personen, die sich
+anmelden sollen?), dann:
+
+```bash
+DATABASE_URL="$DSN" pnpm --filter @clokr/api exec tsx scripts/backfill-539-role-assignments.ts --confirm
+DATABASE_URL="$DSN" pnpm --filter @clokr/api exec tsx scripts/backfill-539-role-assignments.ts   # muss Exit-Code 0 liefern
+```
+
+Jeder übernommene Nutzer bekommt genau eine Zuweisung mit Scope Mandant auf die Systemrolle seiner Spalte (dieselben
+Rechte, die der Rückfall bisher gab; der Test `backfill-539-role-assignments.test.ts` belegt die Rechteneutralität) und
+eine Audit-Zeile `CREATE RoleAssignment` mit Grund „Übernahme der Alt-Rolle (#75)“. Pro Nutzer eine Transaktion;
+ein Abbruch mitten im Lauf ist unkritisch, der Lauf ist wiederholbar (zweiter Lauf: `written=0`). Die Spalte `User.role`
+wird nie geschrieben. Wer auf int oder prod **nicht** übernommen werden soll, bekommt stattdessen vor dem Deploy
+eine bewusst gewählte Rolle über die Mitarbeiterverwaltung oder wird deaktiviert.
+
+**3. Deploy** wie gewohnt (Einstiegspunkt des neuen Images, vorher `pg_dump`). Es gibt keine Migration.
+
+**4. Nach dem Deploy — Stichprobe.** Ein Admin meldet sich an (es muss gelingen). Im Audit-Protokoll stehen
+abgewiesene Anmeldungen als `LOGIN_REFUSED` mit Grund `NO_ROLE_ASSIGNED`; jede ist ein Nutzer, den Schritt 1 und 2 hätten
+erfassen müssen oder der absichtlich keine Rolle hat (das Mitarbeiterformular zeigt „Keine Rolle zugewiesen“).
+
+**5. Rollback.** Das vorige Image liest weiter `User.role` und den Rückfall; da Release A die Spalte unverändert aus den
+Zuweisungen weiterschreibt (D-06), findet es konsistente Werte. Die übernommenen Zuweisungen bleiben bestehen und
+schaden dem alten Code nicht (er liest gespeicherte Zuweisungen zuerst). Ein altes Token mit `role`-Claim bleibt gültig,
+der Claim wird aber von Release A nicht mehr gelesen. Spalte und Enum entfernt erst Release B (eigene Migration nach dem
+Muster #470, Folge-Issue #641).
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:

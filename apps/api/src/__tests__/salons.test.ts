@@ -8,7 +8,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData, soleAuditRowOrNull } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  soleAuditRowOrNull,
+  grantSystemRole,
+} from "./setup";
 import {
   DEFAULT_SALON_OPENING_HOURS,
   findSalon,
@@ -48,6 +54,11 @@ describe("GET /api/v1/salons", () => {
         lastName: "Salons",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: tenant.tenant.id,
+      userId: mgrUser.id,
+      role: "MANAGER",
     });
     await app.prisma.workSchedule.create({
       data: {
@@ -197,6 +208,7 @@ async function createManagerFor(app: FastifyInstance, tenantId: string, labelPre
       hireDate: new Date("2024-01-01"),
     },
   });
+  await grantSystemRole(app.prisma, { tenantId, userId: mgrUser.id, role: "MANAGER" });
   await app.prisma.workSchedule.create({
     data: {
       employeeId: mgrEmployee.id,

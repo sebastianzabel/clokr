@@ -1,10 +1,13 @@
 import { FastifyRequest, FastifyReply } from "fastify";
 import { createHash } from "crypto";
-import { Role } from "@clokr/db";
 
+/**
+ * The signed token payload. Since #539 no token carries a role: access decisions come from stored
+ * role assignments only, and a token issued before the deploy that still holds a `role` claim is
+ * accepted with that extra claim ignored by every reader (there is no member to read it from).
+ */
 export interface JwtPayload {
   sub: string; // userId
-  role: Role;
   tenantId: string;
   employeeId?: string;
 }
@@ -93,11 +96,9 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
         req.server.log.error({ err }, "Failed to update API key lastUsedAt"),
       );
 
-    // Set user context from API key (role = ADMIN for admin scope, MANAGER otherwise)
-    const isAdmin = apiKey.scopes.includes("admin");
+    // Set user context from API key. No role (#539): the scopes are attached below and checked downstream.
     req.user = {
       sub: `apikey:${apiKey.id}`,
-      role: isAdmin ? "ADMIN" : ("MANAGER" as Role),
       tenantId: apiKey.tenantId,
     };
     // Attach scopes for downstream checks

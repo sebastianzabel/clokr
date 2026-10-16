@@ -13,18 +13,17 @@ import { salonContext } from "$stores/salon-context";
 export interface AuthUser {
   id: string;
   email: string;
-  role: "ADMIN" | "MANAGER" | "EMPLOYEE";
   employeeId: string | null;
   firstName: string | null;
   /**
-   * Phase 378 (#378): the caller's effective permission keys (`docs/permissions.md`), computed at
-   * login/OTP-verify by `effectivePermissionKeysForUser()`. The web decides Team-Bereich
-   * visibility from this list, never from `role` — a Salon/Personen-scope role assignment
-   * (Salonmanager, Ausbilder templates) never widens `role`, but does widen this list. Refreshed
-   * at login and on every token refresh (Phase 408, #408, via `setTokens()`) — unlike `role`, not
-   * only on the next login. Still optional: a `user` object cached in localStorage from before
-   * #378 shipped has none, and every consumer goes through `$lib/permissions.ts`, which treats a
-   * missing list as empty (fail-closed) until a refresh fills it in.
+   * The caller's effective permission keys (`docs/permissions.md`), computed at login/OTP-verify
+   * by `effectivePermissionKeysForUser()`. The web decides every visibility and access question
+   * from this list: the session carries no role (Issue #539 - the API sends none in the sign-in
+   * body or the token), and a Salon/Personen-scope role assignment widens exactly this list.
+   * Refreshed at login and on every token refresh (Phase 408, #408, via `setTokens()`). Still
+   * optional: a `user` object cached in localStorage from before #378 shipped has none, and every
+   * consumer goes through `$lib/permissions.ts`, which treats a missing list as empty
+   * (fail-closed) until a refresh fills it in.
    */
   permissions?: string[];
 }

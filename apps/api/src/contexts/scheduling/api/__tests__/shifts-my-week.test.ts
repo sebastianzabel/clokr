@@ -6,6 +6,7 @@ import {
   closeTestApp,
   seedTestData,
   cleanupTestData,
+  grantSystemRole,
 } from "../../../../__tests__/setup";
 import { futureDateStr, nextWeekdayStr, dowOf } from "../../../../__tests__/test-dates";
 import { TENANT_REQUIRED_ERROR } from "../../../platform/tenant-status";
@@ -67,6 +68,7 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: userA.id, role: "EMPLOYEE" });
     employeeAId = employeeA.id;
     await prisma.workSchedule.create({
       data: {
@@ -104,6 +106,7 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: userB.id, role: "EMPLOYEE" });
     employeeBId = employeeB.id;
     await prisma.workSchedule.create({
       data: {
@@ -141,6 +144,7 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: userC.id, role: "EMPLOYEE" });
     employeeCId = employeeC.id;
     await prisma.workSchedule.create({
       data: {

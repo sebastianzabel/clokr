@@ -5,6 +5,7 @@ import {
   seedTestData,
   cleanupTestData,
   createTestSalon, // Phase 325 (issue #325)
+  grantSystemRole,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -62,6 +63,11 @@ describe("GET /api/v1/shifts/range", () => {
         lastName: "Admin",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: otherTenant.id,
+      userId: otherAdmin.id,
+      role: "ADMIN",
     });
     otherEmployeeId = otherEmp.id;
     await app.prisma.overtimeAccount.create({

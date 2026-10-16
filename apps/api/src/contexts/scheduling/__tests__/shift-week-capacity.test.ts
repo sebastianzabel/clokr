@@ -6,7 +6,13 @@
  * a query against the existing `Notification` model (no new table).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  grantSystemRole,
+} from "../../../__tests__/setup";
 import { detectWeekCapacityConflict, notifyWeekCapacityConflictOnce } from "../shift-week-capacity"; // Phase 430-06 — moved out of the index barrel, see contexts/scheduling/index.ts's docblock
 import type { FastifyInstance } from "fastify";
 
@@ -197,6 +203,11 @@ describe("Schichtplanung — detectWeekCapacityConflict / notifyWeekCapacityConf
           lastName: "Manager",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: mgrUser.id,
+        role: "MANAGER",
       });
 
       const params = {

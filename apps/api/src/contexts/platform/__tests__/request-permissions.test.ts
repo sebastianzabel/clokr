@@ -2,8 +2,8 @@
  * Phase 75b (Issue #75), D-08..D-12, D-30 — the request-scoped permission resolver and its guards.
  *
  * The resolver answers from the database only: the caller's stored `RoleAssignment` rows in the
- * request tenant, or — only when there are none — the system role of the legacy `User.role`
- * column as one implicit TENANT assignment (the "Altrollen-Rückfall", D-08). API keys resolve to
+ * request tenant and nothing else. Since #539 (Release A, D-02/D-03) there is no "Altrollen-Rückfall"
+ * any more: a user without a stored row holds nothing, whatever `User.role` says. API keys resolve to
  * the Admin or Manager system role by their `admin` scope (D-11, D-30). The legacy JWT role claim
  * is never read (D-12): the fake requests below carry a DELIBERATELY wrong `role` wherever that
  * matters, so a resolver that read it would fail.
@@ -106,7 +106,7 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
   let tB: Seed;
   const createdUserIds: string[] = [];
 
-  /** A user with an Employee in `tenantId`, legacy column `role`, no stored assignment. */
+  /** A user with an Employee in `tenantId`, legacy column `role`, no stored assignment (holds nothing, #539). */
   async function createUser(tenantId: string, role: Role, label: string) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash("test1234", 10);
@@ -217,19 +217,34 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
     await closeTestApp();
   });
 
-  // ── D-08 fallback ────────────────────────────────────────────────────────────
+  // ── #539 (Release A, D-02/D-03): stored rows only, no Altrollen-Rückfall ─────
 
   it.each([
     ["EMPLOYEE", "EMPLOYEE"],
     ["MANAGER", "MANAGER"],
     ["ADMIN", "ADMIN"],
   ] as const)(
-    "a legacy %s without stored assignments gets exactly the %s system role's sets",
+    "a stored TENANT %s system-role assignment gets exactly the %s system role's sets",
     async (role, slot) => {
-      const { user, employee } = await createUser(tA.tenant.id, role, `fb-${role}`);
+      const { user, employee } = await createUser(tA.tenant.id, role, `st-${role}`);
+      await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS[slot], { scopeType: "TENANT" });
       const grants = await effectiveGrants(requestFor(user, employee));
       expect(setsOf(grants)).toEqual(systemSets(slot));
       expect(grants.ownEmployeeId).toBe(employee.id);
+    },
+  );
+
+  it.each([["EMPLOYEE"], ["MANAGER"], ["ADMIN"]] as const)(
+    "a legacy %s column without stored assignments holds nothing (#539, D-02/D-03)",
+    async (role) => {
+      const { user, employee } = await createUser(tA.tenant.id, role, `fb-${role}`);
+      const grants = await effectiveGrants(requestFor(user, employee));
+      expect(setsOf(grants)).toEqual({ zugewiesen: [], eigene: [] });
+      expect(grants.zugewiesenAnyScope.size).toBe(0);
+      expect(grants.ownEmployeeId).toBe(employee.id);
+      expect(await effectivePermissionKeysForUser(app.prisma, user.id, employee.tenantId)).toEqual(
+        [],
+      );
     },
   );
 
@@ -339,13 +354,14 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
 
   it("EIGENE keys are unaffected by the relation branch", async () => {
     const { user, employee } = await createUser(tA.tenant.id, "EMPLOYEE", "d05-eigene");
+    await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.EMPLOYEE, { scopeType: "TENANT" });
     const req = requestFor(user, employee);
     expect(await hasPermission(req, "time-entry:read:EIGENE")).toBe(true);
   });
 
   // ── fail closed ──────────────────────────────────────────────────────────────
 
-  it("a malformed stored row (TENANT with salon ids) contributes nothing and suppresses the fallback", async () => {
+  it("a malformed stored row (TENANT with salon ids) contributes nothing", async () => {
     const { user, employee } = await createUser(tA.tenant.id, "ADMIN", "malformed");
     await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.ADMIN, {
       scopeType: "TENANT",
@@ -355,7 +371,7 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
     expect(setsOf(grants)).toEqual({ zugewiesen: [], eigene: [] });
   });
 
-  it("a foreign tenant's customer role contributes nothing (and suppresses the fallback)", async () => {
+  it("a foreign tenant's customer role contributes nothing", async () => {
     const { user, employee } = await createUser(tA.tenant.id, "ADMIN", "foreign-role");
     const foreign = await customerRole(tB.tenant.id, "foreign", [
       "audit-log:read:ZUGEWIESEN",
@@ -366,11 +382,11 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
     expect(setsOf(grants)).toEqual({ zugewiesen: [], eigene: [] });
   });
 
-  it("an assignment in another tenant is ignored and the fallback applies", async () => {
+  it("an assignment in another tenant is ignored and the user holds nothing here (#539: no fallback)", async () => {
     const { user, employee } = await createUser(tA.tenant.id, "EMPLOYEE", "other-tenant");
     await assign(tB.tenant.id, user.id, SYSTEM_ROLE_IDS.ADMIN, { scopeType: "TENANT" });
     const grants = await effectiveGrants(requestFor(user, employee));
-    expect(setsOf(grants)).toEqual(systemSets("EMPLOYEE"));
+    expect(setsOf(grants)).toEqual({ zugewiesen: [], eigene: [] });
   });
 
   it("a deleted user (no User row) holds nothing", async () => {
@@ -418,7 +434,7 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
     expect(grants.zugewiesenAnyScope.size).toBe(0);
   });
 
-  it("a missing system role row makes the resolver throw — never a silent grant or deny", async () => {
+  it("a missing system role row makes the API-key resolver throw — never a silent grant or deny; the user path reads stored rows only (#539)", async () => {
     const { user, employee } = await createUser(tA.tenant.id, "MANAGER", "missing-role");
     const server = {
       prisma: {
@@ -432,7 +448,9 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
       tenantId: employee.tenantId,
       employeeId: employee.id,
     });
-    await expect(effectiveGrants(req)).rejects.toThrow(/system role/i);
+    // Without a stored row the user holds nothing and no system-role lookup happens, so a missing
+    // system-role row is no longer reachable on the user path (it was, through the fallback).
+    expect(setsOf(await effectiveGrants(req))).toEqual({ zugewiesen: [], eigene: [] });
     const keyReq = fakeRequest(server, { sub: "apikey:x", role: "ADMIN", tenantId: tA.tenant.id }, [
       "admin",
     ]);
@@ -499,6 +517,7 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
 
   it("hasPermission answers ZUGEWIESEN keys from the tenant-wide set and EIGENE keys from the own set", async () => {
     const { user, employee } = await createUser(tA.tenant.id, "EMPLOYEE", "has");
+    await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.EMPLOYEE, { scopeType: "TENANT" });
     const req = requestFor(user, employee);
     expect(await hasPermission(req, "time-entry:read:EIGENE")).toBe(true);
     expect(await hasPermission(req, "time-entry:read:ZUGEWIESEN")).toBe(false);
@@ -508,6 +527,9 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
     const mgr = await createUser(tA.tenant.id, "MANAGER", "reach-m");
     const emp = await createUser(tA.tenant.id, "EMPLOYEE", "reach-e");
     const none = await createUser(tA.tenant.id, "EMPLOYEE", "reach-n");
+    const unassigned = await createUser(tA.tenant.id, "ADMIN", "reach-u");
+    await assign(tA.tenant.id, mgr.user.id, SYSTEM_ROLE_IDS.MANAGER, { scopeType: "TENANT" });
+    await assign(tA.tenant.id, emp.user.id, SYSTEM_ROLE_IDS.EMPLOYEE, { scopeType: "TENANT" });
     const auditOnly = await customerRole(tA.tenant.id, "audit-only", ["audit-log:read:ZUGEWIESEN"]);
     await assign(tA.tenant.id, none.user.id, auditOnly.id, { scopeType: "TENANT" });
     expect(await permissionReach(requestFor(mgr.user, mgr.employee), "employee:read")).toBe(
@@ -517,6 +539,10 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
       "EIGENE",
     );
     expect(await permissionReach(requestFor(none.user, none.employee), "employee:read")).toBeNull();
+    // #539: a user without any stored assignment holds neither, whatever the column says.
+    expect(
+      await permissionReach(requestFor(unassigned.user, unassigned.employee), "employee:read"),
+    ).toBeNull();
   });
 
   it("an unknown catalog key throws — at call time for checks, at creation for guards", async () => {
@@ -538,6 +564,7 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
 
   it("requireAnyPermission admits a caller holding any of its keys and answers 403 Forbidden otherwise", async () => {
     const { user, employee } = await createUser(tA.tenant.id, "EMPLOYEE", "any");
+    await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.EMPLOYEE, { scopeType: "TENANT" });
     const admitted = fakeReply();
     await requireAnyPermission("audit-log:read:ZUGEWIESEN", "time-entry:read:EIGENE")(
       requestFor(user, employee),
@@ -574,7 +601,8 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
     });
 
     it("MANAGER → 403", async () => {
-      const { email } = await createUser(tA.tenant.id, "MANAGER", "http-m");
+      const { user, email } = await createUser(tA.tenant.id, "MANAGER", "http-m");
+      await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, { scopeType: "TENANT" });
       const token = await loginToken(email);
       const res = await app.inject({
         method: "GET",

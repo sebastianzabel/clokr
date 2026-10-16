@@ -35,7 +35,13 @@ import bcrypt from "bcryptjs";
 import crypto, { randomUUID } from "node:crypto";
 import { fromZonedTime } from "date-fns-tz";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 import { daysAgoStrInTz } from "./test-dates";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import { evaluateDayBreaks } from "../contexts/time-tracking/day-break-rule";
@@ -175,7 +181,8 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
 
   async function createEmployee(
     label: string,
-    opts: { role?: "EMPLOYEE" | "ADMIN"; exempt?: boolean } = {},
+    // grant: false for a person whose only stored assignment is the scoped role the case adds.
+    opts: { role?: "EMPLOYEE" | "ADMIN"; exempt?: boolean; grant?: boolean } = {},
   ) {
     const user = await createUser(label, opts.role ?? "EMPLOYEE");
     const employee = await app.prisma.employee.create({
@@ -189,12 +196,19 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
         isTimeTrackingExempt: opts.exempt ?? false,
       },
     });
+    if (opts.grant ?? true) {
+      await grantSystemRole(app.prisma, {
+        tenantId,
+        userId: user.id,
+        role: opts.role ?? "EMPLOYEE",
+      });
+    }
     return { user, employee };
   }
 
   /** A manager holding the update/read ZUGEWIESEN permissions over exactly `salonIds`. */
   async function createScopedManager(label: string, salonIds: string[]) {
-    const { user, employee } = await createEmployee(label);
+    const { user, employee } = await createEmployee(label, { grant: false });
     await assignScopedRole(user.id, salonIds);
     return { user, employee };
   }
@@ -477,7 +491,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
     });
 
     it("the employee never hears about their own day, even holding the permission over both salons", async () => {
-      const x = await createEmployee("holder-x");
+      const x = await createEmployee("holder-x", { grant: false });
       await assignScopedRole(x.user.id, [salonA, salonB]);
       const day = yesterday();
       twoSalonDay(x.employee.id, day);
@@ -673,7 +687,7 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
     });
 
     it("sends once, never to the employee, and a dismissed notice is not re-created", async () => {
-      const x = await createEmployee("place-once");
+      const x = await createEmployee("place-once", { grant: false });
       await assignScopedRole(x.user.id, [salonA]);
       const day = yesterday();
       await realDay(x.employee.id, day, "08:00", "16:00", [["14:30", "15:00"]]);

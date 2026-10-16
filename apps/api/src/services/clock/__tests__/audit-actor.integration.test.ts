@@ -83,7 +83,6 @@ describe("services/clock/audit-actor — integration (sub-req A / GH #215)", () 
     jwtToken = app.jwt.sign({
       sub: data.empUser.id,
       tenantId: data.tenant.id,
-      role: data.empUser.role,
       employeeId: data.employee.id,
     });
   });
