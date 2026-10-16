@@ -15,6 +15,7 @@ import {
   isStammsalonScopeMatch, // Phase 91b Plan 07 (#91), D-10/D-14
   employeeScopeFor, // Issue #448 (D-05, plan 03) — T-448-12 scoped BS-date reads
   reportPopulationWhere, // Issue #613 (D-01) — the one period population
+  employedInPeriodWhere, // Issue #613 — its employment core, which DATEV reads alone (P-01)
 } from "../contexts/platform";
 import {
   SECTION9_LEGEND,
@@ -266,36 +267,6 @@ function computeEmployeeSummary(
     parentalDays,
     totalAbsenceDays,
     entries,
-  };
-}
-
-// ── DATEV payroll period person set ───────────────────────────────────────────
-/**
- * Issue #256 (Befund 2): who belongs in a payroll export for [start, end]?
- *
- * The answer is "whoever was employed at some point DURING that period" — never
- * "whoever is employed today". The previous predicate (`exitDate: null` plus
- * `user.isActive`) answered the second question, so a correction run for July, made
- * after a September exit, silently dropped that person and every one of their hours
- * from the file. Nothing in the file said so.
- *
- * Both date bounds are INCLUSIVE:
- *   - `hireDate` is the first working day, so `hireDate <= end` means at least one day
- *     of the period falls inside the employment.
- *   - `exitDate` is the last working day (close-employee-month.ts, D-03), so
- *     `exitDate >= start` means the employment still reached into the period.
- *     `exitDate: null` = still employed, which always overlaps.
- *
- * `user.isActive` is deliberately NOT part of this predicate. It is a LOGIN state —
- * flipped by deactivation, by lockout and by DSGVO anonymisation — and says nothing
- * about whether a person was employed in the payroll period. The measured case was an
- * employee on Elternzeit whose login had been switched off: 31 days of Elternzeit that
- * the Lohnbüro must see, withheld because they could not sign in.
- */
-export function datevPayrollPeriodEmployeeFilter(start: Date, end: Date) {
-  return {
-    hireDate: { lte: end },
-    OR: [{ exitDate: null }, { exitDate: { gte: start } }],
   };
 }
 
@@ -1371,10 +1342,13 @@ export async function reportRoutes(app: FastifyInstance) {
             );
 
       // Issue #256 (Befund 2): employed DURING the Abrechnungszeitraum, not employed today.
+      // Issue #613: the one employment rule, from the Unterbau. DATEV deliberately reads the core
+      // WITHOUT the anonymisation clause (§ 41 EStG: the Lohnkonto of a month of employment stays
+      // complete).
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
-          ...datevPayrollPeriodEmployeeFilter(start, end),
+          ...employedInPeriodWhere(start, end),
           ...(datevScopedIds !== "all" ? { id: { in: datevScopedIds } } : {}),
         },
         include: {
@@ -1558,7 +1532,8 @@ export async function reportRoutes(app: FastifyInstance) {
           tenantId: req.user.tenantId, // tenant isolation — mandatory
           // Issue #256 (Befund 2): the SAME period predicate the company-wide export uses,
           // from the same function, so the two cannot answer "who counts" differently.
-          ...datevPayrollPeriodEmployeeFilter(start, end),
+          // Issue #613: it lives in the Unterbau (employment core, no anonymisation clause, § 41 EStG).
+          ...employedInPeriodWhere(start, end),
         },
         include: {
           timeEntries: {

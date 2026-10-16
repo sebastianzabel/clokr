@@ -157,7 +157,7 @@ month's report (old and new day count). Category C lists DATEV Krank days of the
 counted on shifted weekdays; a shift that keeps the day count is not listed (known limitation).
 A row is listed only when the output it names really contained the employee at the old code: the
 Monatsbericht JSON and the company PDF selected `exitDate: null` with an active user, the DATEV
-export selected `datevPayrollPeriodEmployeeFilter` (imported from `composition/reports.ts`, not
+export selected `employedInPeriodWhere` (imported from `contexts/platform`, not
 copied), and a single-employee PDF is attributed only through its audit row. Both report-side
 filters read the CURRENT employee state, so someone who exited or was deactivated after a file was
 delivered is not listed for the Monatsbericht although they were in that file. Every affected

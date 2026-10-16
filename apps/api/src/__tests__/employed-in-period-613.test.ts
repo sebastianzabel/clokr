@@ -14,8 +14,16 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
+import iconv from "iconv-lite";
 import * as pdfModule from "../composition/pdf";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, reissueTokenNow } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  reissueTokenNow,
+  configureDatevKanzlei,
+} from "./setup";
 import { createPopulationPerson, type PopulationPerson } from "./population-fixtures-613";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
@@ -295,6 +303,48 @@ describe("Issue #613 — the period population", () => {
       expect((await singlePdf(p.E1.employeeId, 10, own)).statusCode).toBe(404);
       // The 403 before it is unchanged: someone else's PDF stays refused for an employee.
       expect((await singlePdf(p.D.employeeId, 9, own)).statusCode).toBe(403);
+    });
+  });
+  describe("DATEV keeps the employment core", () => {
+    /** Personalnummern (column 1 of the Bewegungsdaten rows) of the company export. */
+    async function datevPnrs(month: number): Promise<string[]> {
+      const res = await withClock(d.adminToken, (t) =>
+        app.inject({
+          method: "GET",
+          url: `/api/v1/reports/datev?year=2026&month=${month}`,
+          headers: { authorization: `Bearer ${t}` },
+        }),
+      );
+      expect(res.statusCode).toBe(200);
+      const text = iconv.decode(res.rawPayload, "win1252");
+      return text
+        .split("[Bewegungsdaten]")[1]
+        .split("\r\n")
+        .filter((l) => l.trim().length > 0)
+        .map((l) => l.split(";")[1]);
+    }
+
+    it("keeps an anonymised person with an exit date in the months of the employment (§ 41 EStG)", async () => {
+      await configureDatevKanzlei(app, d.tenant.id);
+      const a2 = await createPopulationPerson(app, {
+        tenantId: d.tenant.id,
+        salonId: d.salonId,
+        tag: "a2",
+        hireDate: new Date("2025-01-01T00:00:00.000Z"),
+        exitDate: new Date("2026-09-30T00:00:00.000Z"),
+        anonymized: true,
+      });
+      const september = await datevPnrs(9);
+      expect(september).toContain(a2.employeeNumber);
+      expect(september).toContain(p.E1.employeeNumber);
+      expect(september).toContain(p.D.employeeNumber);
+      // The sentinel without any exit date is not in the monthly report, but DATEV reads the core
+      // alone: it stays in every month of its (open) employment.
+      expect(september).toContain(p.A.employeeNumber);
+      const october = await datevPnrs(10);
+      expect(october).not.toContain(a2.employeeNumber);
+      expect(october).not.toContain(p.E1.employeeNumber);
+      expect(october).toContain(p.D.employeeNumber);
     });
   });
 });
