@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
@@ -8,6 +8,14 @@
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
+  import {
+    isSalonFilterRejected,
+    salonPageFilter,
+    salonScopeLabel,
+    SALON_SOLL_NOT_ATTRIBUTABLE_NOTE,
+    withSalonId,
+  } from "$lib/salons/page-scope"; // Issue #558 (D-02/D-03/D-04/D-13)
   import Card from "$components/ui/Card.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
@@ -104,7 +112,10 @@
     // minus leave/absence credits (Ausfallprinzip) plus Berufsschule.
     // The frontend MUST render this value as the Soll (D-02 — no re-derivation
     // from weeklyHours). Never written to OvertimeAccount (D-04, § 615).
-    contractSollMinutesByEmp?: Record<string, number>;
+    // Issue #558 D-13 — under a salon filter the server sends `null` plus `sollUnavailableReason`:
+    // the contract Soll is a property of the person and cannot be attributed to one salon.
+    contractSollMinutesByEmp?: Record<string, number> | null;
+    sollUnavailableReason?: "SALON_FILTER";
     // v1.7.4 hotfix — SchoolHolidayPeriod cells for the visible week.
     schoolHoliday?: SchoolHolidayEntry[];
     // Issue #563 (D-15) — opening hours of the active salons inside the caller's shift:read reach.
@@ -145,6 +156,18 @@
   let loading = $state(true);
   let error = $state("");
   let gated = $state(false);
+
+  // Issue #558: the header salon narrows the week (people by the master-data rule, shifts by their
+  // own salon). The page decides only through `salonPageFilter` (never the store's raw selection):
+  // a single-salon tenant or a one-salon caller never sends a `salonId`.
+  const contextLoaded = $derived($salonContext.loaded);
+  const pageSalonId = $derived(salonPageFilter($salonContext));
+  const scopeLabel = $derived(salonScopeLabel($salonContext));
+  let weekRejected = $state(false);
+  // Plain `let`s (never `$state`): an effect that read them could re-trigger itself, which is the
+  // v1.8.17 `effect_update_depth_exceeded` failure described at `prevCursorMondayTime` below.
+  let weekGeneration = 0;
+  let lastLoadedSalonKey: string | null | undefined = undefined;
 
   // Modal state
   let modalOpen = $state(false);
@@ -483,12 +506,19 @@
       goto("/dashboard");
       return;
     }
-    void load();
+    // Issue #558: with the salon context not loaded yet the salon effect below issues the one
+    // initial request (it fires when `contextLoaded` turns true); with it ready this is the one.
+    if (contextLoaded) void load();
   });
 
   // ── Load ───────────────────────────────────────────────────────────────────
   async function load() {
     if (gated) return;
+    // Issue #558: read untracked, so the week-navigation effect that calls this function never
+    // depends on the salon (the salon effect owns that dependency).
+    const salonId = untrack(() => pageSalonId);
+    const generation = ++weekGeneration;
+    lastLoadedSalonKey = salonId;
     loading = true;
     // Phase 47 — clear leftover per-cell drop state when navigating weeks.
     dndCells = {};
@@ -496,9 +526,11 @@
     try {
       const date = ymd(cursorMonday);
       const [w, t] = await Promise.all([
-        api.get<WeekData>(`/shifts/week?date=${date}`),
+        api.get<WeekData>(withSalonId(`/shifts/week?date=${date}`, salonId)),
         api.get<Template[]>("/shifts/templates"),
       ]);
+      if (generation !== weekGeneration) return;
+      weekRejected = false;
       week = w;
       templates = t;
       // Phase 47 — seed one TemplateDragItem per template. svelte-dnd-action
@@ -511,9 +543,16 @@
         templateId: tpl.id,
       }));
     } catch (e: unknown) {
+      if (generation !== weekGeneration) return;
+      if (isSalonFilterRejected(e)) {
+        // The one 404 of an inadmissible salon: a calm text, no error alert, no toast.
+        week = null;
+        weekRejected = true;
+        return;
+      }
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
-      loading = false;
+      if (generation === weekGeneration) loading = false;
     }
   }
 
@@ -538,9 +577,23 @@
     const current = cursorMonday.getTime();
     if (!mounted || gated) return;
     if (prevCursorMondayTime !== null && current !== prevCursorMondayTime) {
-      void load();
+      // Issue #558: untracked, so `load()` (which reads the salon and writes state) adds no dependency.
+      untrack(() => void load());
     }
     prevCursorMondayTime = current;
+  });
+
+  // Issue #558: reload when the header salon genuinely changes. Same rules as the two notes above
+  // (WR-03 single load, v1.8.17 no loop): this effect reads only the primitive deriveds
+  // `contextLoaded` / `pageSalonId` and the `mounted` / `gated` flags, compares against the plain
+  // `let lastLoadedSalonKey` (written by `load()` itself, synchronously) and starts `load()` via
+  // `untrack`; it writes no `$state` that it reads. Exactly one initial request: either onMount
+  // loaded (the key is then already equal) or this effect does once the context is ready.
+  $effect(() => {
+    if (!mounted || gated || !contextLoaded) return;
+    if (pageSalonId !== lastLoadedSalonKey) {
+      untrack(() => void load());
+    }
   });
 
   // ── Navigation ─────────────────────────────────────────────────────────────
@@ -681,6 +734,9 @@
       }
     >();
     if (!week) return out;
+    // Issue #558 D-13 — the server withholds the contract Soll under a salon filter; the row is
+    // hidden by the response CODE, never by the filter state, so no false „Unterdeckung“ appears.
+    if (week.sollUnavailableReason === "SALON_FILTER") return out;
     const bsMap = week.vocationalSchoolMinutesByEmp ?? {};
     // v1.7.3 — server-computed effective break minutes per employee for the
     // visible week. Honors Employee.breakOver6hOverride/9hOverride and
@@ -819,6 +875,9 @@
           startTime: tpl.startTime,
           endTime: tpl.endTime,
           label: tpl.name,
+          // Issue #558 D-13 — a shift created while salon X is shown lands in X; without a salon
+          // the server's `salonForDay` default applies as before.
+          ...(pageSalonId !== null ? { salonId: pageSalonId } : {}),
         });
         toasts.success(`Schicht zugewiesen: ${tpl.name}`);
         await load();
@@ -1222,6 +1281,8 @@
           endTime: modalEndTime,
           label: modalLabel || undefined,
           note: modalNote || undefined,
+          // Issue #558 D-13 — same rule as the drag-and-drop create; editing never sends a salon.
+          ...(pageSalonId !== null ? { salonId: pageSalonId } : {}),
         });
         toasts.success(force ? "Schicht trotz Konflikt zugewiesen." : "Schicht zugewiesen.");
       }
@@ -1371,6 +1432,7 @@
       <a class="btn btn-ghost btn-sm" href="/shifts/planning">Planungsbedarf</a>
     {/snippet}
   </PageHead>
+  <SalonScopeLabel label={scopeLabel} rejected={weekRejected} />
 
   {#if error}
     <div class="callout error card-animate" role="alert">{error}</div>
@@ -1483,7 +1545,9 @@
       {#if loading}
         <div class="state-msg">Lade Woche…</div>
       {:else if !week}
-        <div class="state-msg">Keine Daten</div>
+        {#if !weekRejected}
+          <div class="state-msg">Keine Daten</div>
+        {/if}
       {:else if shiftEmployees.length === 0}
         <div class="callout info card-animate sp-empty-shift-roster" role="status">
           <strong>Keine Mitarbeiter im Schichtsystem.</strong>
@@ -1496,6 +1560,11 @@
       {:else}
         {#if closedView.hint}
           <p class="form-hint sp-hours-hint" role="status">{closedView.hint}</p>
+        {/if}
+        {#if week.sollUnavailableReason === "SALON_FILTER"}
+          <div class="callout info" role="status" data-testid="shifts-soll-unavailable">
+            <p>{SALON_SOLL_NOT_ATTRIBUTABLE_NOTE}</p>
+          </div>
         {/if}
         <div class="shift-grid">
           <div class="head">Person</div>
@@ -1874,6 +1943,12 @@
 
   <!-- Phase 43-02: generate-week diff-preview modal -->
   <Modal bind:open={generateOpen} eyebrow="Schichtplanung" title="Woche generieren">
+    {#if pageSalonId !== null}
+      <!-- Issue #558 D-10 — the bulk action keeps acting on the caller's whole reach. -->
+      <p class="form-hint sp-bulk-scope" role="note">
+        Diese Aktion gilt für alle Salons Ihrer Reichweite, nicht nur für den gewählten Salon.
+      </p>
+    {/if}
     {#if generating && !generateDiff}
       <div class="state-msg">Vorschau wird erstellt …</div>
     {:else if generateError}
@@ -1936,6 +2011,12 @@
       Schichten von der ausgewählten Quellwoche werden in die aktuell angezeigte Woche kopiert.
       Mitarbeiter mit Urlaub, Krankheit oder bestehenden Schichten werden übersprungen.
     </p>
+    {#if pageSalonId !== null}
+      <!-- Issue #558 D-10 — the bulk action keeps acting on the caller's whole reach. -->
+      <p class="form-hint sp-bulk-scope" role="note">
+        Diese Aktion gilt für alle Salons Ihrer Reichweite, nicht nur für den gewählten Salon.
+      </p>
+    {/if}
 
     <div class="form-row sp-copy-pickers">
       <div class="form-group">
@@ -2306,6 +2387,9 @@
   .sp-gen-intro {
     font-size: 14px;
     color: var(--text);
+    margin: 0 0 16px;
+  }
+  .sp-bulk-scope {
     margin: 0 0 16px;
   }
   .sp-gen-h {

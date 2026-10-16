@@ -1009,6 +1009,28 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   raw selection getter; a break-notification link to a person outside the narrowed list opens the
   Salonansicht of the linked month (D-14). A role without saldo rights sees the person view without
   the saldo cards, Ist only (a 403/404 on the saldo reads is a calm state, not an error).
+- **The header salon selection applies to the team and planning pages (Issue #558).** `GET
+  /employees`, `GET /leave/requests`, `/leave/calendar`, `/leave/ical/team`, `/leave/section9` and
+  `GET /shifts/week` take an optional `salonId`, checked by `resolveSalonInReach()` against the reach
+  of the endpoint's OWN permission before any read (one 404 body for an inactive, foreign, unknown or
+  unreachable salon); `GET /shifts/planning-overview` validates it the same way since #558. The
+  principle: `salonOnlyReach()` (`contexts/platform/access-context.ts`) is the ONE constructor of a
+  salon-only reach, and a filter is the endpoint's own scope resolver evaluated for that reach,
+  intersected with the caller's real reach — it only narrows, never widens, and it is presentation,
+  never a boundary. People follow the master-data rule (the caller's own row only when it belongs to
+  the salon), shifts their own salon, leave/absences/§ 9 cases the Stammsalon on at least one day of
+  the row through `filterLeaveRowsToHomeSalon()` (`contexts/absence/salon-leave-attribution.ts`, the
+  ONE place; the dashboard's upcoming leave calls it too). Under a `/shifts/week` filter
+  `contractSollMinutesByEmp` is `null` with `sollUnavailableReason: "SALON_FILTER"` (Soll is never split
+  by salon). In the web a page decides only through `salonPageFilter()` and labels through
+  `SalonScopeLabel` (`$lib/salons/page-scope.ts`, `lib/components/team/SalonScopeLabel.svelte`);
+  `/team/time-entries` narrows only its person selector (the month stays complete); `/shifts` creates a
+  new shift in the selected salon while generate/copy-week act on the whole reach (the dialogs say so).
+  Not filtered, each pinned with its reason in `salon-filter-exempt-pages-558.test.ts`: `/inbox`,
+  `/shifts/conflicts` (#645 — the filter is not its fix), month close, audit log, configuration pages
+  and their pickers, `/admin/salons`, personal pages; reports are #542. `GET /leave/section9` has been
+  reach-scoped since #644 (PR #646) and the salon filter intersects with that reach; per-salon
+  minimum staffing is #647.
 
 ### Operator principal and tenant deactivation (Phase 88, Issue #88)
 

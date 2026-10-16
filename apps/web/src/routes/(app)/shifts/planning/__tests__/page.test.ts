@@ -15,6 +15,28 @@ vi.mock("$api/client", () => ({
   },
 }));
 
+// Issue #558 (Plan 558-05): the page now loads only once the salon context has loaded (it sends the
+// header salon on the request), and the layout that normally loads it is not mounted here. A loaded,
+// single-salon context stands in for it: no salon options, so the page sends no `salonId` and every
+// expectation of this file about the table, the pager and the request count stays as it was.
+vi.mock("$stores/salon-context", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("$stores/salon-context")>();
+  const { writable } = await import("svelte/store");
+  return {
+    ...actual,
+    salonContext: writable({
+      loaded: true,
+      tenant: null,
+      salons: [],
+      isMultiSalon: false,
+      homeSalonId: null,
+      selection: null,
+      packages: null,
+      roles: [],
+    }),
+  };
+});
+
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, waitFor, fireEvent } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
@@ -131,6 +153,15 @@ describe("Wochenübersicht Planungsbedarf (Phase 430, Issue #430)", () => {
         new Date(`${firstWeekStart}T00:00:00Z`).getTime()) /
       (24 * 60 * 60 * 1000);
     expect(diffDays).toBe(7);
+  });
+
+  it("a single-salon context sends no salonId with the request (Issue #558)", async () => {
+    apiGet.mockResolvedValueOnce(response("2031-02-03", "2031-02-09", []));
+    renderWithTheme(PlanningOverviewPage, {});
+    await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1));
+    const url = new URL(apiGet.mock.calls[0][0] as string, "http://localhost");
+    expect(url.pathname).toBe("/shifts/planning-overview");
+    expect(url.searchParams.has("salonId")).toBe(false);
   });
 
   it("empty scope renders the empty-state row", async () => {

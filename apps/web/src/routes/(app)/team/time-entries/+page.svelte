@@ -17,6 +17,15 @@
   // the raw selection getter); the server decides which entries are visible.
   import { isTeamSalonRejected, teamSalonViewSalon } from "$lib/dashboard/team-view";
   import SalonTimeEntries from "$lib/components/team/SalonTimeEntries.svelte";
+  // Issue #558 D-14 — the header salon narrows only the person selector (the shared page layer;
+  // the page never reads the store's raw selection).
+  import {
+    isSalonFilterRejected,
+    salonPageFilter,
+    salonScopeLabel,
+    withSalonId,
+  } from "$lib/salons/page-scope";
+  import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
   import {
     type SalonViewDay,
     type SalonViewEntry,
@@ -306,7 +315,27 @@
   let empSearch = $state("");
   let empDropdownOpen = $state(false);
 
-  let selectedEmployee = $derived(employees.find((e) => e.id === selectedEmployeeId) ?? null);
+  // Issue #558 D-14: the salon narrows only who can be picked; the chosen person's month is a
+  // contract figure and is never split by salon. A person chosen before a salon change stays
+  // selected although the narrowed list no longer holds them: the chosen record is the fallback.
+  let selectedEmployeeRecord = $state<Employee | null>(null);
+  let selectedEmployee = $derived(
+    employees.find((e) => e.id === selectedEmployeeId) ??
+      (selectedEmployeeRecord !== null && selectedEmployeeRecord.id === selectedEmployeeId
+        ? selectedEmployeeRecord
+        : null),
+  );
+  const contextLoaded = $derived($salonContext.loaded);
+  const pageSalonId = $derived(salonPageFilter($salonContext));
+  const scopeLabel = $derived(salonScopeLabel($salonContext));
+  let listRejected = $state(false);
+  // Plain let: an older list response never overwrites a newer one. The deep link of `onMount`
+  // waits for the first completed list load through `firstListLoaded`.
+  let employeeListGeneration = 0;
+  let markFirstListLoaded: () => void = () => {};
+  const firstListLoaded = new Promise<void>((resolve) => {
+    markFirstListLoaded = resolve;
+  });
 
   // ── Salonansicht (Issue #85, D-09) ────────────────────────────────────────
   // "person" = the per-person view (unchanged); "salon" = every entry recorded in one salon for the
@@ -397,22 +426,24 @@
       toDate = format(endOfMonth(calMonth), "yyyy-MM-dd");
     }
 
-    // Load employee list for selector
-    try {
-      const raw = await api.get<Employee[]>("/employees");
-      employees = raw.sort((a, b) => {
-        const ln = a.lastName.localeCompare(b.lastName, "de");
-        return ln !== 0 ? ln : a.firstName.localeCompare(b.firstName, "de");
-      });
-    } catch {
-      // Non-fatal — selector stays empty
-    }
     // Issue #80 (D-10): the BREAK_CROSS_SALON_VIOLATION notification link preselects the
     // employee. Only an id present in the caller's own list counts — an unknown or foreign id
-    // selects nobody, and the server scopes every read anyway.
+    // selects nobody, and the server scopes every read anyway. The list itself is loaded by the
+    // salon effect below (Issue #558); the link waits for its first completed load.
     const linkedEmployeeId = normalizeEmployeeIdParam($page.url.searchParams.get("employeeId"));
     if (linkedEmployeeId) {
-      const linked = employees.find((e) => e.id.toLowerCase() === linkedEmployeeId);
+      await firstListLoaded;
+      let linked = employees.find((e) => e.id.toLowerCase() === linkedEmployeeId);
+      // Issue #558 D-14: a salon filter narrows the list, so a linked person of another salon is
+      // looked up once in the UNFILTERED list before the Salonansicht fallback applies.
+      if (!linked && pageSalonId !== null) {
+        try {
+          const all = await api.get<Employee[]>("/employees");
+          linked = all.find((e) => e.id.toLowerCase() === linkedEmployeeId);
+        } catch {
+          // Non-fatal — the Salonansicht fallback below applies.
+        }
+      }
       if (linked) await selectEmployee(linked);
       // Issue #85 (D-14): the employee list is narrowed to the caller's master-data reach (#547),
       // while a manager of the Einsatzsalon still sees that salon's entries of the linked day. A
@@ -422,6 +453,36 @@
     }
     // Without a (valid) employee link do NOT call loadAll() here — wait for employee selection
   });
+
+  // Issue #558 D-14: the effect owns the list loads; it waits for the salon context so the first
+  // request is already filtered, and reloads when the header salon changes.
+  $effect(() => {
+    if (!contextLoaded) return;
+    const salonId = pageSalonId;
+    untrack(() => {
+      void loadEmployeeList(salonId);
+    });
+  });
+
+  async function loadEmployeeList(salonId: string | null) {
+    const generation = ++employeeListGeneration;
+    try {
+      const raw = await api.get<Employee[]>(withSalonId("/employees", salonId));
+      if (generation !== employeeListGeneration) return;
+      employees = raw.sort((a, b) => {
+        const ln = a.lastName.localeCompare(b.lastName, "de");
+        return ln !== 0 ? ln : a.firstName.localeCompare(b.firstName, "de");
+      });
+      listRejected = false;
+    } catch (err) {
+      if (generation !== employeeListGeneration) return;
+      // Non-fatal — the selector stays empty. Only the one 404 of an inadmissible salon is
+      // announced, as a calm text and never a toast.
+      employees = [];
+      listRejected = isSalonFilterRejected(err);
+    }
+    markFirstListLoaded();
+  }
 
   async function loadAll() {
     // The salon view loads its own month (see the effect above); nothing to do for the person view.
@@ -604,6 +665,7 @@
 
   async function selectEmployee(emp: Employee) {
     selectedEmployeeId = emp.id;
+    selectedEmployeeRecord = emp;
     empSearch = "";
     empDropdownOpen = false;
     await loadAll();
@@ -1511,6 +1573,7 @@
 </div>
 
 {#if teamMode === "person"}
+  <SalonScopeLabel label={scopeLabel} rejected={listRejected} />
   <!-- ── Mitarbeiter-Auswahl ─────────────────────────────────────────── -->
   <div class="employee-selector">
     <div class="emp-combobox" class:emp-combobox--open={empDropdownOpen}>

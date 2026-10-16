@@ -1,10 +1,18 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { salonContext } from "$stores/salon-context";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
+  import {
+    isSalonFilterRejected,
+    salonPageFilter,
+    salonScopeLabel,
+    withSalonId,
+  } from "$lib/salons/page-scope"; // Issue #558 (D-03/D-04)
   import Card from "$components/ui/Card.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
   import { leaveKind } from "$lib/leave/leave-kind";
@@ -55,6 +63,17 @@
   let requests: LeaveRequest[] = $state([]);
   let loading = $state(true);
   let error = $state("");
+  // Issue #558: the header salon narrows the people and, by the Stammsalon per day, their leave.
+  // The page decides only through `salonPageFilter` (never the store's raw selection); the effect
+  // below reads these two primitives and nothing else.
+  const contextLoaded = $derived($salonContext.loaded);
+  const pageSalonId = $derived(salonPageFilter($salonContext));
+  const scopeLabel = $derived(salonScopeLabel($salonContext));
+  let salonRejected = $state(false);
+  // Set by the permission gate; the effect below only READS it.
+  let permitted = $state(false);
+  // Plain let: an older response never overwrites a newer one (not reactive on purpose).
+  let loadGeneration = 0;
 
   // ── Permission gate (Phase 378, #378) ─────────────────────────────────────
   // Same permission as Team-Abwesenheiten — this page renders the same underlying team
@@ -64,7 +83,8 @@
       void goto("/dashboard");
       return;
     }
-    void load();
+    // Issue #558: the salon effect below is the only loader; it waits for the salon context.
+    permitted = true;
   });
 
   // ── Derived ──────────────────────────────────────────────────────────────
@@ -127,28 +147,50 @@
   }
 
   // ── Load ─────────────────────────────────────────────────────────────────
-  async function load() {
+  async function load(salonId: string | null) {
+    const generation = ++loadGeneration;
     loading = true;
     error = "";
     try {
       // Fetch employees once + all effective requests (APPROVED + CANCELLATION_REQUESTED,
       // Issue #446 D-04 — a leave stays active while its cancellation is only requested); filter
       // to visible window client-side. A ?from=&to= server filter could be added if perf becomes
-      // an issue (deferred).
+      // an issue (deferred). Issue #558: with a chosen salon both requests carry `salonId`; the
+      // server narrows the people by the master-data rule and the leave by the Stammsalon per day.
       const [emp, ...leavesByStatus] = await Promise.all([
-        api.get<Employee[]>("/employees"),
+        api.get<Employee[]>(withSalonId("/employees", salonId)),
         ...EFFECTIVE_LEAVE_STATUSES.map((status) =>
-          api.get<LeaveRequest[]>(`/leave/requests?status=${status}`),
+          api.get<LeaveRequest[]>(withSalonId(`/leave/requests?status=${status}`, salonId)),
         ),
       ]);
+      if (generation !== loadGeneration) return;
       employees = emp;
       requests = leavesByStatus.flat();
+      salonRejected = false;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : "Fehler beim Laden";
+      if (generation !== loadGeneration) return;
+      if (isSalonFilterRejected(e)) {
+        // The one 404 of an inadmissible salon: a calm text, no error alert.
+        employees = [];
+        requests = [];
+        salonRejected = true;
+      } else {
+        error = e instanceof Error ? e.message : "Fehler beim Laden";
+      }
     } finally {
-      loading = false;
+      if (generation === loadGeneration) loading = false;
     }
   }
+
+  // Issue #558: this effect is the only loader. It waits for the permission gate and the salon
+  // context, so the first request is already filtered, and reruns when the header salon changes.
+  $effect(() => {
+    if (!permitted || !contextLoaded) return;
+    const salonId = pageSalonId;
+    untrack(() => {
+      void load(salonId);
+    });
+  });
 
   // Note: previously this file contained a $effect that re-fetched
   // /leave/requests (APPROVED-only at the time) whenever cursorYear/cursorMonth (or
@@ -162,6 +204,8 @@
   // load() already fetches the full effective set once (APPROVED + CANCELLATION_REQUESTED,
   // Issue #446); if month-by-month refresh is needed later, add a server-side ?from=&to= filter
   // (see also the comment in load()).
+  // Issue #558: the salon effect above is the only loader and depends on two primitives, so
+  // neither the duplicate fetch nor the out-of-order overwrite comes back.
 
   function prevMonth() {
     if (cursorMonth === 0) {
@@ -200,6 +244,7 @@
   accent="Team"
   sub="Abwesenheiten und Anwesenheit deines Teams im Überblick."
 />
+<SalonScopeLabel label={scopeLabel} rejected={salonRejected} />
 
 {#if error}
   <div class="callout error card-animate" role="alert">{error}</div>
@@ -225,55 +270,57 @@
   </MonthBar>
 </Card>
 
-<!-- Gantt grid card -->
-<Card animate class="gantt-card" style="padding: 0;">
-  {#if loading}
-    <div class="gantt-loading">Lade Team-Kalender…</div>
-  {:else if employees.length === 0}
-    <div class="gantt-loading">Keine Teammitglieder gefunden.</div>
-  {:else}
-    <div class="gantt-scroll">
-      <div class="gantt-inner" style:min-width="{700 + daysInMonth * 26}px">
-        <!-- Header row: day numbers + DOW labels -->
-        <div class="gantt-header" style:grid-template-columns={gridCols}>
-          <div class="hd-name">Person</div>
-          {#each days as d (d.getTime())}
-            {@const todayCell = isToday(d)}
-            {@const dow = isoDow(d)}
-            <div class="hd-cell" class:today={todayCell} class:weekend={dow >= 5}>
-              <div class="dow">{DOW[dow]}</div>
-              <div class="dnum">{d.getDate()}</div>
+<!-- Gantt grid card; a rejected salon shows only the calm text of the scope label above -->
+{#if !salonRejected || loading}
+  <Card animate class="gantt-card" style="padding: 0;">
+    {#if loading}
+      <div class="gantt-loading">Lade Team-Kalender…</div>
+    {:else if employees.length === 0}
+      <div class="gantt-loading">Keine Teammitglieder gefunden.</div>
+    {:else}
+      <div class="gantt-scroll">
+        <div class="gantt-inner" style:min-width="{700 + daysInMonth * 26}px">
+          <!-- Header row: day numbers + DOW labels -->
+          <div class="gantt-header" style:grid-template-columns={gridCols}>
+            <div class="hd-name">Person</div>
+            {#each days as d (d.getTime())}
+              {@const todayCell = isToday(d)}
+              {@const dow = isoDow(d)}
+              <div class="hd-cell" class:today={todayCell} class:weekend={dow >= 5}>
+                <div class="dow">{DOW[dow]}</div>
+                <div class="dnum">{d.getDate()}</div>
+              </div>
+            {/each}
+          </div>
+
+          <!-- Body rows -->
+          {#each employees as u (u.id)}
+            <div class="gantt-row" style:grid-template-columns={gridCols}>
+              <div class="row-name">
+                <div class="row-avatar">{initials(u.firstName, u.lastName)}</div>
+                <div class="row-name-text">
+                  <div class="row-name-line">{u.firstName} {u.lastName}</div>
+                </div>
+              </div>
+              {#each days as d (d.getTime())}
+                {@const kind = cellKind(u.id, d)}
+                {@const todayCell = isToday(d)}
+                <div
+                  class="cell"
+                  class:cell-vacation={kind === "vacation"}
+                  class:cell-sick={kind === "sick"}
+                  class:cell-weekend={kind === "weekend"}
+                  class:cell-work={kind === "work"}
+                  class:cell-today-marker={todayCell && kind === "work"}
+                ></div>
+              {/each}
             </div>
           {/each}
         </div>
-
-        <!-- Body rows -->
-        {#each employees as u (u.id)}
-          <div class="gantt-row" style:grid-template-columns={gridCols}>
-            <div class="row-name">
-              <div class="row-avatar">{initials(u.firstName, u.lastName)}</div>
-              <div class="row-name-text">
-                <div class="row-name-line">{u.firstName} {u.lastName}</div>
-              </div>
-            </div>
-            {#each days as d (d.getTime())}
-              {@const kind = cellKind(u.id, d)}
-              {@const todayCell = isToday(d)}
-              <div
-                class="cell"
-                class:cell-vacation={kind === "vacation"}
-                class:cell-sick={kind === "sick"}
-                class:cell-weekend={kind === "weekend"}
-                class:cell-work={kind === "work"}
-                class:cell-today-marker={todayCell && kind === "work"}
-              ></div>
-            {/each}
-          </div>
-        {/each}
       </div>
-    </div>
-  {/if}
-</Card>
+    {/if}
+  </Card>
+{/if}
 
 <style>
   /* MonthBar primitive owns its styles; only the legend slot remains. */
