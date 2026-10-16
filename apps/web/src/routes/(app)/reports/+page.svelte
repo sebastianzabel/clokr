@@ -66,7 +66,8 @@
     employeeNumber: string;
     balanceHours: number;
     status: "NORMAL" | "ELEVATED" | "CRITICAL";
-    snapshots: Array<{ periodStart: string; balanceMinutes: number; carryOver: number }>;
+    // `month` is named by the server ("YYYY-MM", null when unnameable) - Issue #595 (D-03).
+    snapshots: Array<{ month: string | null; balanceMinutes: number; carryOver: number }>;
     // Phase 97-04 — additive split fields from GET /dashboard/overtime-overview. Optional:
     // an older cached response may omit them, in which case the row falls back to a
     // single-value SaldoAnzeige derived from balanceHours (Phase 97-07).
@@ -462,7 +463,7 @@
           sparklineCharts.delete(row.id);
         }
 
-        const labels = row.snapshots.map((s) => s.periodStart.slice(0, 7));
+        const labels = row.snapshots.map((s) => s.month ?? "—");
         const data = row.snapshots.map((s) => s.carryOver / 60);
 
         const brandColor =
