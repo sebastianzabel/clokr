@@ -23,6 +23,10 @@
  * M3 `GET /leave/calendar`: the shown-month window dropped from the filter → red: "July is clipped
  *    to July: pY (Stammsalon B from 1 July) is absent for A and present for B" (1 failed | 14
  *    passed).
+ * M4 `GET /leave/section9`: the chosen salon is used as sent, the validator's rejection removed
+ *    → red: "the manager of A asking for B, an unknown, a foreign or an inactive salon gets one
+ *    404", "the admin gets the identical 404 for a foreign, an unknown and an inactive salon", "a
+ *    caller with only the own-data reach gets the same 404 with a salon" (3 failed | 23 passed).
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
@@ -30,6 +34,7 @@ import { randomUUID } from "crypto";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
+import { leaveTypeFields } from "../contexts/absence/leave-type";
 
 const PASSWORD = "test1234";
 const NOT_FOUND = '{"error":"Salon nicht gefunden"}';
@@ -363,6 +368,214 @@ describe("Issue #558 — leave reads follow the salon filter", () => {
         data.adminToken,
         "/api/v1/leave/calendar?year=2026&month=6&salonId=bad",
       );
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
+  describe("GET /leave/ical/team", () => {
+    let absenceA: string;
+    const uid = (kind: "leave" | "absence", id: string) => `UID:${kind}-${id}@clokr`;
+
+    async function ical(token: string, qs = "") {
+      const res = await get(token, `/api/v1/leave/ical/team${qs}`);
+      return res;
+    }
+
+    beforeAll(async () => {
+      // An imposed absence of pA in June (an Absence row, never a LeaveRequest).
+      const absence = await app.prisma.absence.create({
+        data: {
+          employeeId: emp.pA,
+          type: "VOCATIONAL_SCHOOL",
+          startDate: new Date("2026-06-16T00:00:00Z"),
+          endDate: new Date("2026-06-16T00:00:00Z"),
+          days: 1,
+          createdBy: data.adminUser.id,
+        },
+      });
+      absenceA = absence.id;
+    });
+
+    it("?salonId=A keeps the events of pA, pX and pY and the absence of pA — none of the springer or pB", async () => {
+      const res = await ical(data.adminToken, `?salonId=${salonA.id}`);
+      expect(res.statusCode, res.body).toBe(200);
+      for (const key of ["pA", "pX", "pY"]) {
+        expect(res.body, key).toContain(uid("leave", req[key]));
+      }
+      expect(res.body).toContain(uid("absence", absenceA));
+      for (const key of ["springer", "pB"]) {
+        expect(res.body, key).not.toContain(uid("leave", req[key]));
+      }
+    });
+
+    it("without salonId every fixture event is present", async () => {
+      const res = await ical(data.adminToken);
+      expect(res.statusCode, res.body).toBe(200);
+      for (const key of ["pA", "pX", "springer", "pB", "pY"]) {
+        expect(res.body, key).toContain(uid("leave", req[key]));
+      }
+      expect(res.body).toContain(uid("absence", absenceA));
+    });
+
+    it("the manager of A asking for B, an unknown, a foreign or an inactive salon gets one 404", async () => {
+      for (const id of [salonB.id, randomUUID(), salonF.id, salonI.id]) {
+        const res = await ical(managerToken, `?salonId=${id}`);
+        expect(res.statusCode).toBe(404);
+        expect(res.body).toBe(NOT_FOUND);
+      }
+    });
+
+    it("the guard stays: a caller without the ZUGEWIESEN reach is refused (403), with or without a salon", async () => {
+      expect((await ical(data.empToken)).statusCode).toBe(403);
+      expect((await ical(data.empToken, `?salonId=${salonA.id}`)).statusCode).toBe(403);
+    });
+
+    it("a malformed salonId is a 400", async () => {
+      expect((await ical(data.adminToken, "?salonId=bad")).statusCode).toBe(400);
+    });
+  });
+
+  describe("GET /leave/section9", () => {
+    let s9: Awaited<ReturnType<typeof seedTestData>>;
+    let s9SalonA: { id: string };
+    let s9SalonB: { id: string };
+    let s9SalonI: { id: string };
+    let s9ManagerToken: string;
+    let creditA: string;
+    let creditB: string;
+
+    async function seedCase(label: string, salonId: string, overlapDay: string) {
+      const { employee } = await createEmployee(label, s9.tenant.id);
+      await app.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: s9.tenant.id,
+          employeeId: employee.id,
+          salonId,
+          kind: "HOME",
+          validFrom: new Date("2024-01-01T00:00:00Z"),
+          weekdays: [],
+        },
+      });
+      const sickType = await app.prisma.leaveType.findFirstOrThrow({
+        where: { tenantId: s9.tenant.id, code: "SICK" },
+      });
+      const mk = (leaveTypeId: string) =>
+        app.prisma.leaveRequest.create({
+          data: {
+            employeeId: employee.id,
+            leaveTypeId,
+            startDate: new Date(`${overlapDay}T00:00:00Z`),
+            endDate: new Date(`${overlapDay}T00:00:00Z`),
+            days: 1,
+            status: "APPROVED",
+          },
+        });
+      const sick = await mk(sickType.id);
+      const vacation = await mk(s9.vacationType.id);
+      const credit = await app.prisma.section9Credit.create({
+        data: {
+          employeeId: employee.id,
+          sickRequestId: sick.id,
+          vacationRequestId: vacation.id,
+          overlapStart: new Date(`${overlapDay}T00:00:00Z`),
+          overlapEnd: new Date(`${overlapDay}T00:00:00Z`),
+        },
+      });
+      return credit.id;
+    }
+
+    async function cases(token: string, qs = ""): Promise<string[]> {
+      const res = await get(token, `/api/v1/leave/section9${qs}`);
+      expect(res.statusCode, res.body).toBe(200);
+      return (JSON.parse(res.body) as { id: string }[]).map((r) => r.id);
+    }
+
+    beforeAll(async () => {
+      // A tenant of its own: the extra sick requests must not enter the exact sets above.
+      s9 = await seedTestData(app, "lv558s9");
+      s9SalonA = await createTestSalon(app.prisma, s9.tenant.id, { name: "Salon Nord" });
+      s9SalonB = await createTestSalon(app.prisma, s9.tenant.id, { name: "Salon Ost" });
+      s9SalonI = await createTestSalon(app.prisma, s9.tenant.id, {
+        name: "Salon Alt",
+        isActive: false,
+      });
+      await app.prisma.leaveType.create({
+        data: { tenantId: s9.tenant.id, ...leaveTypeFields("SICK"), color: "#EF4444" },
+      });
+      creditA = await seedCase("c9A", s9SalonA.id, "2026-06-10");
+      creditB = await seedCase("c9B", s9SalonB.id, "2026-07-08");
+
+      const manager = await createEmployee("manager9", s9.tenant.id);
+      await app.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: s9.tenant.id,
+          employeeId: manager.employee.id,
+          salonId: s9SalonA.id,
+          kind: "HOME",
+          validFrom: new Date("2024-01-01T00:00:00Z"),
+          weekdays: [],
+        },
+      });
+      await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: s9.tenant.id,
+          userId: manager.user.id,
+          accessRoleId: SYSTEM_ROLE_IDS.SALON_MANAGER,
+          scopeType: "SALONS",
+          salonIds: [s9SalonA.id],
+          employeeIds: [],
+        },
+      });
+      s9ManagerToken = await login(manager.user.email);
+    });
+
+    afterAll(async () => {
+      try {
+        await app.prisma.section9Credit.deleteMany({
+          where: { employee: { tenantId: s9.tenant.id } },
+        });
+        await app.prisma.roleAssignment.deleteMany({ where: { tenantId: s9.tenant.id } });
+        await cleanupTestData(app, s9.tenant.id);
+      } catch (err) {
+        console.error("leave-salon-filter-558 section9 cleanup failed:", err);
+      }
+    });
+
+    it("the admin sees the case of A under A, the case of B under B and both without a salon", async () => {
+      expect(await cases(s9.adminToken, `?salonId=${s9SalonA.id}`)).toEqual([creditA]);
+      expect(await cases(s9.adminToken, `?salonId=${s9SalonB.id}`)).toEqual([creditB]);
+      expect(sorted(await cases(s9.adminToken))).toEqual(sorted([creditA, creditB]));
+    });
+
+    it("a Salonmanager of A sees only the case of A, with or without a salon (reach of #644)", async () => {
+      expect(await cases(s9ManagerToken)).toEqual([creditA]);
+      expect(await cases(s9ManagerToken, `?salonId=${s9SalonA.id}`)).toEqual([creditA]);
+    });
+
+    it("the manager of A asking for B, an unknown, a foreign or an inactive salon gets one 404", async () => {
+      for (const id of [s9SalonB.id, randomUUID(), salonF.id, s9SalonI.id]) {
+        const res = await get(s9ManagerToken, `/api/v1/leave/section9?salonId=${id}`);
+        expect(res.statusCode).toBe(404);
+        expect(res.body).toBe(NOT_FOUND);
+      }
+    });
+
+    it("the admin gets the identical 404 for a foreign, an unknown and an inactive salon", async () => {
+      for (const id of [salonF.id, randomUUID(), s9SalonI.id]) {
+        const res = await get(s9.adminToken, `/api/v1/leave/section9?salonId=${id}`);
+        expect(res.statusCode).toBe(404);
+        expect(res.body).toBe(NOT_FOUND);
+      }
+    });
+
+    it("a caller with only the own-data reach gets the same 404 with a salon", async () => {
+      const res = await get(s9.empToken, `/api/v1/leave/section9?salonId=${s9SalonA.id}`);
+      expect(res.statusCode).toBe(404);
+      expect(res.body).toBe(NOT_FOUND);
+    });
+
+    it("a malformed salonId is a 400", async () => {
+      const res = await get(s9.adminToken, "/api/v1/leave/section9?salonId=bad");
       expect(res.statusCode).toBe(400);
     });
   });

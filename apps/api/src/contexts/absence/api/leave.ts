@@ -3766,8 +3766,13 @@ export async function leaveRoutes(app: FastifyInstance) {
       // requested cancellation is still active) to use as a Stichtag, unlike the plan's own text
       // assumed; treated the same as GET /requests's own "no single natural period" case:
       // tenant-local today.
+      const { salonId } = leaveSalonQuerySchema.parse(req.query);
       const access = accessContextFromRequest(req);
       const reach = await resolveAccessReach(app.prisma, access, "leave-request:read:ZUGEWIESEN");
+      // Issue #558 (D-01): validated against the guard's own reach before any row read.
+      const salon = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
+      if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
+      const chosenSalonId = salon.salonId;
       const scopedEmployeeIds =
         reach.kind === "wholeTenant"
           ? "all"
@@ -3778,7 +3783,7 @@ export async function leaveRoutes(app: FastifyInstance) {
               todayInTz(await getTenantTimezone(app.prisma, tenantId)),
             );
 
-      const [requests, absences] = await Promise.all([
+      const [allRequests, allAbsences] = await Promise.all([
         app.prisma.leaveRequest.findMany({
           where: {
             deletedAt: null,
@@ -3797,6 +3802,17 @@ export async function leaveRoutes(app: FastifyInstance) {
           include: { employee: { select: { firstName: true, lastName: true } } },
         }),
       ]);
+
+      // Issue #558 (D-08): under a salon choice a request or an imposed absence is kept by its OWN
+      // range (the feed has no window) — the Stammsalon per day, never a deployment. The
+      // unfiltered feed is unchanged.
+      const [requests, absences] =
+        chosenSalonId === null
+          ? [allRequests, allAbsences]
+          : await Promise.all([
+              filterLeaveRowsToHomeSalon(app.prisma, tenantId, allRequests, chosenSalonId),
+              filterLeaveRowsToHomeSalon(app.prisma, tenantId, allAbsences, chosenSalonId),
+            ]);
 
       const events: ICalEvent[] = requests.map((r) => {
         const name = `${r.employee.firstName} ${r.employee.lastName}`;
@@ -4193,7 +4209,7 @@ export async function leaveRoutes(app: FastifyInstance) {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req, reply) => {
-      const { status } = section9StatusQuerySchema.parse(req.query);
+      const { status, salonId } = section9StatusQuerySchema.parse(req.query);
       // Issue #368: same error form as `GET /requests` above — a caller holding neither
       // `section9:read:ZUGEWIESEN` nor `section9:read:EIGENE` (e.g. a template without an own
       // Employee record) used to get 200 with an empty list instead of 403.
@@ -4213,6 +4229,22 @@ export async function leaveRoutes(app: FastifyInstance) {
             "section9:read:ZUGEWIESEN",
           )
         : null;
+      // Issue #558 (D-01, P-10): a chosen salon is validated against the `section9:read:ZUGEWIESEN`
+      // reach before any read — the same reach the #644 check below applies. A caller with only
+      // the own-data reach has a scoped-empty reach, which rejects every salon with the same 404.
+      let chosenSalonId: string | null = null;
+      if (salonId !== undefined) {
+        const salonReach =
+          scopeReach ??
+          (await resolveAccessReach(
+            app.prisma,
+            accessContextFromRequest(req),
+            "section9:read:ZUGEWIESEN",
+          ));
+        const salon = await resolveSalonInReach(app.prisma, req.user.tenantId, salonReach, salonId);
+        if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
+        chosenSalonId = salon.salonId;
+      }
       const allRows = await app.prisma.section9Credit.findMany({
         where: {
           employee: { tenantId: req.user.tenantId },
@@ -4235,7 +4267,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         },
         orderBy: [{ status: "asc" }, { overlapStart: "desc" }],
       });
-      const rows =
+      const reachRows =
         scopeReach === null || scopeReach.kind === "wholeTenant"
           ? allRows
           : (
@@ -4253,6 +4285,25 @@ export async function leaveRoutes(app: FastifyInstance) {
                 ),
               )
             ).filter((r): r is (typeof allRows)[number] => r !== null);
+      // Issue #558 (D-08): the salon filter is INTERSECTED with the `section9:read:ZUGEWIESEN`
+      // reach that #644 (PR #646) applied just above — it narrows only, never widens. A case
+      // belongs to the salon that is the person's Stammsalon on a day of the case's overlap range.
+      const rows =
+        chosenSalonId === null
+          ? reachRows
+          : (
+              await filterLeaveRowsToHomeSalon(
+                app.prisma,
+                req.user.tenantId,
+                reachRows.map((row) => ({
+                  employeeId: row.employeeId,
+                  startDate: row.overlapStart,
+                  endDate: row.overlapEnd,
+                  row,
+                })),
+                chosenSalonId,
+              )
+            ).map((kept) => kept.row);
       return rows.map((r) => ({
         id: r.id,
         employeeId: r.employeeId,
