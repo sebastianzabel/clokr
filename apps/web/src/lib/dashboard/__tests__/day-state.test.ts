@@ -328,3 +328,65 @@ describe("the count label and the list lines (Issue #70, D-07)", () => {
     expect(input.map((e) => e.id)).toEqual(["e-b", "e-a"]);
   });
 });
+
+// Issue #92 (Phase 92b-05, D-06) - deliberate amendment, dated 2026-10-16: a trip between two salons is
+// never the entry a clock event acts on. The server's `latestEndingClosed` skips rows of the kind
+// TRAVEL; this module mirrors the selector, so the entry it names stays the one a re-clock reopens.
+describe("resolveDayState - a travel entry is never the entry a clock event acts on (Issue #92, D-06)", () => {
+  const SALON_ROW_A: ClockDayEntry = {
+    id: "e-a",
+    startTime: "2026-08-28T06:00:00.000Z",
+    endTime: "2026-08-28T10:00:00.000Z",
+    activityKind: "UNSPECIFIED",
+  };
+  const TRIP: ClockDayEntry = {
+    id: "e-t",
+    startTime: "2026-08-28T10:00:00.000Z",
+    endTime: "2026-08-28T10:30:00.000Z",
+    activityKind: "TRAVEL",
+  };
+  const SALON_ROW_B_OPEN: ClockDayEntry = {
+    id: "e-b",
+    startTime: "2026-08-28T10:30:00.000Z",
+    endTime: null,
+    activityKind: "UNSPECIFIED",
+  };
+
+  it("[A closed, trip closed, B open] is running with entry B", () => {
+    const day = resolveDayState([SALON_ROW_A, TRIP, SALON_ROW_B_OPEN]);
+    expect(day.kind).toBe("running");
+    expect(day.entry?.id).toBe("e-b");
+  });
+
+  it("[A closed, trip closed] is finished with entry A - the trip ends later but is skipped", () => {
+    for (const order of [
+      [SALON_ROW_A, TRIP],
+      [TRIP, SALON_ROW_A],
+    ]) {
+      const day = resolveDayState(order);
+      expect(day.kind).toBe("finished");
+      expect(day.entry?.id).toBe("e-a");
+    }
+  });
+
+  it("the tie-break among salon rows is unchanged next to a trip (later start, then larger id)", () => {
+    const sameEndEarlierStart: ClockDayEntry = {
+      ...SALON_ROW_A,
+      id: "e-x",
+      startTime: "2026-08-28T05:00:00.000Z",
+    };
+    expect(resolveDayState([TRIP, sameEndEarlierStart, SALON_ROW_A]).entry?.id).toBe("e-a");
+  });
+
+  it("a day of one trip alone is not finished (the server never meets this shape)", () => {
+    expect(resolveDayState([TRIP]).kind).toBe("idle");
+  });
+
+  it("a trip's working minutes still count in the day sum (a trip is working time)", () => {
+    const rows = [
+      { ...SALON_ROW_A, workingMinutes: 240 },
+      { ...TRIP, workingMinutes: 30 },
+    ];
+    expect(dayTotals(rows, new Date("2026-08-28T18:00:00.000Z")).workingMinutes).toBe(270);
+  });
+});

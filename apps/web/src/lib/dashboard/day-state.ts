@@ -33,7 +33,8 @@
  * ENTRY SELECTION — a deliberate mirror of `openEntryOf` / `latestEndingClosed`
  * (`apps/api/src/contexts/time-tracking/day-entries.ts`, Issue #70), the two selectors every
  * clock path uses: the open entry wins if there is one; otherwise the closed entry with the LATEST
- * `endTime`, ties going to the later start and then the larger id. That is what makes the entry this
+ * `endTime`, ties going to the later start and then the larger id, and a trip between two salons
+ * (Issue #92, kind TRAVEL) is never chosen. That is what makes the entry this
  * module names provably the entry the resolver would REOPEN — and therefore what makes
  * `reopenGapStartLabel()` able to state the gap-break start as fact.
  *
@@ -65,10 +66,12 @@
  * here may be mistaken for a security boundary.
  */
 
+import { isTravelRow, type TravelRowFields } from "$lib/time-entries/travel-entry-form";
+
 export type DayStateKind = "running" | "finished" | "idle";
 
 /** The subset of a GET /api/v1/time-entries row this module needs. */
-export interface ClockDayEntry {
+export interface ClockDayEntry extends TravelRowFields {
   id: string;
   startTime: string; // full ISO instant
   endTime: string | null; // full ISO instant or null
@@ -109,8 +112,12 @@ export function resolveDayState(entries: ClockDayEntry[] | null | undefined): Da
   // Otherwise the closed entry with the LATEST endTime — mirrors `latestEndingClosed`: a tie goes to
   // the later start, then to the larger id, so the same row wins whatever order the list arrives in.
   let closed: ClockDayEntry | null = null;
+  // Issue #92 (D-06): a trip between two salons is skipped, exactly like the server's
+  // `latestEndingClosed` — a re-clock never acts on a trip, so the entry named here stays the one
+  // the resolver would reopen.
   for (const e of rows) {
     if (!e.endTime) continue;
+    if (isTravelRow(e)) continue;
     if (closed === null) {
       closed = e;
       continue;
