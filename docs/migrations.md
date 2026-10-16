@@ -1032,6 +1032,59 @@ Zurückgehens. Wegen der gemeinsamen Auslieferung gilt dasselbe für #70: ein Ta
 Einträge, das Rollback-SQL aus „Phase 70b“ ist dann ebenfalls nicht mehr möglich. Die Migrationen von Hand zu entfernen ist
 nicht nötig; ein Enum-Wert lässt sich in PostgreSQL ohnehin nicht entfernen.
 
+## Phase 614 — Anonymisierung beendet die Beschäftigung (Issue #614)
+
+**Hinweis für die Release Notes.** Dieser Abschnitt ist der Release-Hinweis zu Phase 614: Vor dem Deploy gehört die
+lesende Vorschau (Schritt 1) auf int und prod in den Ablauf, und ihre Ausgabe gehört zum Material der Release Notes.
+Verhaltensänderung für Personalabteilung und Administration: Eine DSGVO-Löschung beendet die Beschäftigung und die
+**Personalnummer bleibt erhalten**.
+
+**Was sich ändert.** Es gibt **keine Migration und keinen Schemawechsel**. Ab diesem Release setzt die Anonymisierung
+(`DELETE /api/v1/employees/:id`) ein leeres Austrittsdatum auf den Tag der Anonymisierung, behält die Personalnummer (sie
+bleibt im Mandanten reserviert, Wiederverwendung antwortet 409) und storniert bzw. kürzt Urlaube und Berufsschultage nach
+dem Austritt; abgeschlossene Monate bleiben unverändert (ADR 0001-abweichungen, Eintrag N, Nachtrag Issue #614). **Dieses
+Release korrigiert keine Bestandszeile:** Personen, die vorher anonymisiert wurden, behalten ihren Zustand. Ob und wie sie
+nachgezogen werden, entscheidet das Folge-Issue #666.
+
+**1. Vor dem Deploy — Vorschau (lesend, auf int UND prod).**
+`apps/api/scripts/audit-614-anonymized-employment.ts` schreibt nichts (es gibt keinen Schreib-Schalter, `--apply` und
+`--confirm` werden abgelehnt) und gibt je anonymisierter Person mit Befund nur Mandanten-Id, Personen-Id, die Kategorien und
+die Ids der betroffenen Anträge und Abwesenheiten aus — keine Namen, keine Personalnummern, keine E-Mail-Adressen. Das
+Skript liegt erst im Image des neuen Release; **der Standard-Einstiegspunkt dieses Images führt `prisma migrate deploy` aus
+und darf vor der Deploy-Entscheidung niemals gegen int oder prod gestartet werden.** Deshalb wird der Einstiegspunkt
+überschrieben:
+
+```bash
+# DATABASE_URL zeigt auf die Datenbank der Umgebung (int bzw. prod); aus der Umgebung weitergereicht,
+# nicht auf der Kommandozeile ausgeschrieben.
+docker run --rm -e DATABASE_URL --entrypoint sh <neues-api-image> \
+  -lc 'cd /app/apps/api && pnpm tsx scripts/audit-614-anonymized-employment.ts' \
+  | tee "614-bestand-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+Gleichwertig und ebenso sicher: aus einem Checkout des Release-Stands gegen eine wiederhergestellte Kopie des Dumps
+(`DATABASE_URL=<Kopie> pnpm --filter @clokr/api exec tsx scripts/audit-614-anonymized-employment.ts`). Ein Aufruf mit
+`--tenant <id>` begrenzt die Ausgabe auf einen Mandanten. Exit-Code `0` heißt: kein Befund; `2`: mindestens ein Befund (die
+Liste steht in der Ausgabe); `1`: Aufruf- oder Verbindungsfehler. Die Kategorien: `NO_EXIT_DATE` (kein Austrittsdatum),
+`LEAVE_AFTER_EXIT` (aktiver Antrag endet nach dem Austritt), `ABSENCE_AFTER_EXIT` (aktive Abwesenheit endet nach dem
+Austritt), `NUMBER_OVERWRITTEN` (Personalnummer trägt noch die frühere Überschreibung; `anonymizeAudit=present` sagt nur, ob
+der ANONYMIZE-Audit der Person existiert, der die alte Nummer noch enthalten kann). Die letzte Zeile `Totals:` nennt die
+Zahl je Kategorie. Die Ausgabe aufbewahren (Material der Release Notes und Grundlage für #666). Prüfen: Stimmt die Zahl der
+Befunde mit der Erwartung überein? Weicht sie ab, vor dem Deploy mit dem Betreiber klären — nichts still korrigieren.
+
+**2. Deploy** wie gewohnt (Einstiegspunkt des neuen Images, vorher `pg_dump`). Es läuft keine Migration.
+
+**3. Nichts still korrigieren.** Bestandsfälle gehören zu #666: weder Austrittsdaten noch Abwesenheiten oder
+Personalnummern der Vorschau werden von Hand oder per Skript geändert, bevor dort entschieden ist. Eine neue
+Anonymisierung nach dem Deploy braucht keinen Eingriff; ihre übersprungenen Zeilen (`skipped` im ANONYMIZE-Audit, IDs und
+Codes) werden fachlich geklärt, nicht still nachgezogen.
+
+**4. Rollback.** Das vorige Image überschreibt die Personalnummer bei einer Anonymisierung wieder und beendet keine
+Abwesenheiten; das gilt für Anonymisierungen, die **nach** dem Rollback laufen. Was das neue Release bis dahin gemacht hat
+(Austrittsdatum, Stornos, Kürzungen), bleibt bestehen und ist auditiert (`auditReason` „Anonymisierung“); es gibt nichts
+zurückzunehmen. Beim erneuten Vorwärts-Deploy die Vorschau aus Schritt 1 wiederholen, weil zwischenzeitlich nach dem alten
+Muster anonymisiert worden sein kann.
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:

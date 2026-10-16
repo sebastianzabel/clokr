@@ -180,16 +180,16 @@ describe("Section9Credit — model shape (Phase 104 Plan 01)", () => {
     // `where: { documentPath: { not: null } }` — both present in employees.ts's DSGVO
     // deletion flow — do not trip this check; only an actual write payload counts.
     //
-    // Issue #468 (D-04/A-3, plan 05): a SECOND named exception, `leave.ts` — `/correct`'s
+    // Issue #468 (D-04/A-3, plan 05): a SECOND named exception, `leave-correction.ts` (Issue #614: moved there from `api/leave.ts`) — `/correct`'s
     // revision+1 correction credit (Step 10b) copies the ORIGINAL credit's `documentPath`
     // forward (`documentPath: original.documentPath`) rather than nulling it. This is not a
     // new sickness-document write (no new upload happens here) — it carries an EXISTING
     // attest document reference along the supersession chain so a correction never silently
     // drops a paper-AU's stored document. Excluded by name, same pattern as section9-
-    // documents.ts above; `leave.ts` had zero OTHER documentPath write sites before this plan
-    // (verified below) and still has exactly one after it.
+    // documents.ts above; `leave-correction.ts` has exactly one documentPath write site (verified
+    // below), and `api/leave.ts` has none any more, so it is scanned like any other file.
     const filesExceptKnownNonNullWrites = files.filter(
-      (f) => !f.endsWith("section9-documents.ts") && !f.endsWith("/api/leave.ts"),
+      (f) => !f.endsWith("section9-documents.ts") && !f.endsWith("/leave-correction.ts"),
     );
     const srcExceptKnownNonNullWrites = filesExceptKnownNonNullWrites
       .map((f) => readFileSync(f, "utf8"))
@@ -209,10 +209,10 @@ describe("Section9Credit — model shape (Phase 104 Plan 01)", () => {
     const section9UploadSrc = readFileSync(section9UploadFile!, "utf8");
     expect(section9UploadSrc).toMatch(/section9Credit\.update\(\{[\s\S]*?documentPath:\s*path/);
 
-    // Positive pin (Issue #468): `leave.ts` has EXACTLY ONE documentPath write — the
+    // Positive pin (Issue #468): `leave-correction.ts` has EXACTLY ONE documentPath write — the
     // correction-credit forward-copy — and it is non-null-valued by construction (a variable
     // carrying the original credit's own value forward, never a hardcoded new document path).
-    const leaveFile = files.find((f) => f.endsWith("/api/leave.ts"));
+    const leaveFile = files.find((f) => f.endsWith("/leave-correction.ts"));
     expect(leaveFile).toBeTruthy();
     const leaveSrc = readFileSync(leaveFile!, "utf8");
     const leaveDocumentPathWrites = leaveSrc.match(/documentPath:\s*[^,\n]+/g) ?? [];

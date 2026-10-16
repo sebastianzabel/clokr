@@ -2,7 +2,7 @@
 
 The integration environment (`https://clokr-int.example.com`) is periodically refreshed from production using **pseudonymized** data per **DSGVO Art. 32 (security of processing)** and **BDSG**. This refresh is currently **operator-driven** — no scheduled CronJob, no GitHub Action, no automated trigger.
 
-`scripts/pseudonymize-dump.ts` (this workflow) gives each employee a distinct realistic fake name and preserves `Employee.id` + `employeeNumber` so int reports stay readable; its sibling `anonymize-dump.ts` is the full DSGVO-Art.-17 erasure that turns EVERY employee into "Gelöscht"/"GELÖSCHT-XXX" — do not use it here.
+`scripts/pseudonymize-dump.ts` (this workflow) gives each employee a distinct realistic fake name and preserves `Employee.id` + `employeeNumber` so int reports stay readable; its sibling `anonymize-dump.ts` is the full DSGVO-Art.-17 erasure that turns EVERY employee into "Gelöscht"/"GELÖSCHT-XXX" (it keeps the employee number and sets the exit date since Issue #614, but ends no absences) — do not use it here.
 
 When an automated pipeline lands later, this manual runbook becomes the fall-back / debugging path.
 

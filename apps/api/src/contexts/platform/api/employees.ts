@@ -37,7 +37,11 @@ import {
   createdAssignmentAuditEntry,
   removedAssignmentAuditEntry,
 } from "../role-assignment-audit";
-import { hardDeleteOvertimeDataForEmployee, getTenantTimezone } from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15; Phase 67b Plan 03 — D-22/D-07
+import {
+  hardDeleteOvertimeDataForEmployee,
+  getTenantTimezone,
+  todayInTz,
+} from "../../working-time-account"; // Phase 100B Plan 06 — W13/W15; Phase 67b Plan 03 — D-22/D-07
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -69,6 +73,9 @@ import {
   createEmployeeSchema,
   employeeClassificationSchema,
   employeeCreatedAuditValue,
+  EMPLOYEE_NUMBER_RESERVED_MESSAGE,
+  isEmployeeNumberReserved,
+  isEmployeeNumberUniqueViolation,
   prepareEmployeeCreation,
   reissueEmployeeInvitation,
   type EmployeeCreationAudit,
@@ -849,6 +856,17 @@ export async function employeeRoutes(app: FastifyInstance) {
         }
       }
 
+      // Issue #614 (D-03): the number of an exited or anonymized person stays reserved. A change to a
+      // number held by ANOTHER employee of the tenant answers 409 before any write; the unique
+      // constraint is only the backstop for the race (translated in the catch below).
+      if (
+        body.employeeNumber !== undefined &&
+        body.employeeNumber !== employee.employeeNumber &&
+        (await isEmployeeNumberReserved(app.prisma, req.user.tenantId, body.employeeNumber, id))
+      ) {
+        return reply.code(409).send({ error: EMPLOYEE_NUMBER_RESERVED_MESSAGE });
+      }
+
       const updates: Record<string, unknown> = {};
       if (body.firstName !== undefined) updates.firstName = body.firstName;
       if (body.lastName !== undefined) updates.lastName = body.lastName;
@@ -1022,6 +1040,9 @@ export async function employeeRoutes(app: FastifyInstance) {
           return updatedEmp;
         });
       } catch (err) {
+        if (isEmployeeNumberUniqueViolation(err)) {
+          return reply.code(409).send({ error: EMPLOYEE_NUMBER_RESERVED_MESSAGE });
+        }
         if (err instanceof RoleLockoutError) {
           return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
         }
@@ -1553,6 +1574,27 @@ export async function employeeRoutes(app: FastifyInstance) {
       // deletion just as reliably as an avatar or absence document.
       const section9Docs = await getSection9DocumentPaths(app.prisma, id);
 
+      // Issue #614 (D-01): an anonymized person is no longer employed. Without an exit date the
+      // exit day is the tenant-local today, stored as UTC midnight like a web-entered exit date.
+      const exitDayIfUnset = todayInTz(await getTenantTimezone(app.prisma, req.user.tenantId));
+      // A STORED exit date is read with the convention that wrote it - its UTC calendar day (exit
+      // dates are written as UTC midnight, see the #447 WR-01 comment in PATCH /:id); only an
+      // empty one falls back to the tenant-local today the helper stores below.
+      const exitDay = employee.exitDate
+        ? new Date(`${employee.exitDate.toISOString().slice(0, 10)}T00:00:00Z`)
+        : exitDayIfUnset;
+      // Issue #614 (D-02): the Abwesenheiten rule decides what the exit ends. Pure reads, BEFORE
+      // the transaction opens; reached through the app.absenceExit decoration (no import: the
+      // Unterbau never imports a business context and an index re-export would grow the cycle).
+      const exitPlan = await app.absenceExit.plan({
+        tenantId: req.user.tenantId,
+        employeeId: id,
+        exitDay,
+        // The acting user (null for an API key); the audit actor itself comes from the port below.
+        actorUserId: requestAuditFields(req).userId ?? null,
+      });
+      let exitResult: Awaited<ReturnType<FastifyInstance["absenceExit"]["apply"]>> | undefined;
+
       // Phase 74b (D-19/D-20/D-22): the anonymization, the per-assignment DELETE audits and the
       // ANONYMIZE audit run under the lockout guard. Anonymizing the tenant's last active
       // tenant-wide holder of role:manage / role-assignment:manage rolls all of it back and
@@ -1561,10 +1603,45 @@ export async function employeeRoutes(app: FastifyInstance) {
       try {
         await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
           await withRoleLockoutGuard(tx, req.user.tenantId, async () => {
-            const { removedRoleAssignments } = await anonymizeEmployeeData({
+            // Issue #614 (D-02): every absence change and its audit row come FIRST, so the PII
+            // sweep inside anonymizeEmployeeData also nulls the notes / document paths / § 9
+            // reasons of every row the exit wrote. One audit row per changed row, no free text.
+            exitResult = await app.absenceExit.apply(tx, exitPlan, (entry) =>
+              app.audit({
+                tx,
+                action: entry.action,
+                entity: entry.entity,
+                entityId: entry.entityId,
+                oldValue: entry.oldValue,
+                ...requestAuditFields(req, entry.newValue),
+              }),
+            );
+            const { removedRoleAssignments, exitDate } = await anonymizeEmployeeData({
               tx,
               employeeId: id,
+              exitDayIfUnset,
             });
+            // Issue #614 (D-01): when the anonymization itself set the exit date, bring the
+            // exit-year VACATION row to its § 5 BUrlG value exactly as PATCH /:id/deactivate does
+            // (Issue #447 invariant; never past years, never a human-written row).
+            const exitDateSet = exitDate.before === null;
+            if (exitDateSet) {
+              await syncExitYearVacationEntitlement(
+                tx,
+                id,
+                req.user.tenantId,
+                exitDate.after.getUTCFullYear(),
+                (entry) =>
+                  app.audit({
+                    action: entry.action,
+                    entity: "LeaveEntitlement",
+                    entityId: entry.entityId,
+                    oldValue: entry.oldValue,
+                    tx,
+                    ...requestAuditFields(req, entry.newValue as object | undefined),
+                  }),
+              );
+            }
             await auditRemovedRoleAssignments(
               app,
               req,
@@ -1577,7 +1654,17 @@ export async function employeeRoutes(app: FastifyInstance) {
               entity: "Employee",
               entityId: id,
               oldValue: { employeeNumber: employee.employeeNumber },
-              ...requestAuditFields(req),
+              ...requestAuditFields(req, {
+                exitDate: exitDate.after.toISOString().slice(0, 10),
+                exitDateSet,
+                // Counts per bucket and the rows left alone (ids and UPPER_SNAKE codes only).
+                absencesEnded: {
+                  cancelled: exitResult.cancelled.length,
+                  shortened: exitResult.shortened.length,
+                  deleted: exitResult.deleted.length,
+                },
+                skipped: exitResult.skipped,
+              }),
               tx,
             });
           });
@@ -1586,8 +1673,19 @@ export async function employeeRoutes(app: FastifyInstance) {
         if (err instanceof RoleLockoutError) {
           return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
         }
+        // Issue #614: a planned absence changed between plan and apply; nothing was written.
+        if ((err as { code?: unknown }).code === "EMPLOYMENT_EXIT_CONFLICT") {
+          return reply.code(409).send({
+            error: "Abwesenheiten wurden gleichzeitig geändert – bitte erneut versuchen.",
+            code: "EMPLOYMENT_EXIT_CONFLICT",
+          });
+        }
         throw err;
       }
+
+      // Issue #614: reactive follow-up after the commit (snapshots, overtime balance, notices).
+      // Logs its own failures and never throws; runs before the MinIO deletes.
+      if (exitResult) await app.absenceExit.afterCommit(exitResult);
 
       // Delete MinIO objects after the Postgres tx has committed successfully.
       // Failures are non-fatal — legal anonymization is already committed.

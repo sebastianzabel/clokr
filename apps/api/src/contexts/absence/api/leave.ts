@@ -4,11 +4,11 @@ import { LeaveRequestStatus, Prisma } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { generateICal, addOneDay, type ICalEvent } from "../ical";
 import {
-  shiftBasedLeaveMinutesForRequest, // Issue #429, D-13 — receipt shares the saldo's per-week formula
   mondayOfWeekUtc, // Phase 430 Plan 04 (D-15) — the one shared Monday derivation
 } from "../vacation-calc"; // Phase 107 (D-04/D-09)
+import { scheduledLeaveMinutes, overtimeCompReversalMinutes } from "../overtime-comp-minutes"; // Issue #614 — moved out of this route (Issue #468 D-01/D-02)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
-import { computeAffectedMonths, closedMonthLeaveMessage, monthsInRange } from "../correction-lock"; // Issue #446 (D-07/D-08); monthsInRange also WR-03 (Issue #468 review)
+import { closedMonthLeaveMessage } from "../correction-lock"; // Issue #446 (D-07/D-08)
 import { findClosedMonthsInRange } from "../closed-month-guard"; // Issue #446 (D-07)
 import { EFFECTIVE_LEAVE_STATUSES } from "../effective-leave-statuses"; // Issue #446 (D-04)
 // Phase 101B (Issue #101, D-11 Welle absence): lifted out of this file into ./leave-days.ts.
@@ -24,14 +24,18 @@ import {
   deductVacationDays,
   reverseVacationDays,
   recalculateCarryOver,
-  contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the scheduledLeaveMinutes SHIFT_BASED branch below
-  usualWorkDaysFrom, // Issue #436, D-03 — the same branch, threading the Angabe into the receipt
   type LeaveDaysPricing, // Issue #436, D-04/D-09
 } from "../leave-days";
 import { BS_ONLY_LEAVE_ERROR, BS_ONLY_LEAVE_ERROR_CODE } from "../bs-leave-days"; // Issue #448 (D-02)
 import { vocationalSchoolDatesForLeaveRequests } from "../bs-leave-days"; // Issue #448 (D-05, plan 03)
-import { vocationalSchoolDateSet } from "../bs-leave-days"; // Issue #468 (D-01) — same BS exclusion the saldo uses
 import { formatMinutesHM } from "../format-hm"; // Phase 100
+import { ensureLeaveType } from "../ensure-leave-type"; // Issue #614 — moved out of this route
+import {
+  prepareLeaveCorrection,
+  applyLeaveCorrection,
+  finishLeaveCorrection,
+  Section9ConcurrentCorrectionError,
+} from "../leave-correction"; // Issue #614 — the /correct domain body
 import {
   flagShiftsConflictingWithLeave,
   notifyShiftLeaveConflicts, // Phase 100B Plan 05 — S1/S2; Phase 430 (D-02) — shared audit+notify helper
@@ -41,14 +45,11 @@ import {
   getOvertimeAccount,
   bookOvertimeCompensation,
   reverseOvertimeCompensation,
-  isMonthClosed,
   getTenantTimezone,
-  monthRangeUtc,
   monthDateRange, // Issue #493 (D-10)
   recalculateSnapshots,
   getConfirmedCarryOver,
   loadNegativeBalanceTolerance,
-  calcLeaveAbsenceMinutesTz, // Issue #468 (D-01) — the saldo's own per-row credit/withdrawal
   computeOvertimeBalanceBreakdown,
   computeOvertimeBalanceHours, // Issue #294 — pure read, run BEFORE the booking+persist transaction
   persistOvertimeBalance, // Issue #294 — booking + recompute in one $transaction
@@ -71,13 +72,9 @@ import {
 } from "../../platform"; // Quick 260824-cjd
 import { filterLeaveRowsToHomeSalon } from "../salon-leave-attribution"; // Issue #558 (D-02/D-08)
 import { preserveCarryOverDeadline } from "../illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
-import {
-  findSection9Overlaps,
-  intersectRanges,
-  planSection9CreditsForCorrection,
-} from "../section9-detect"; // Phase 104-05/06, Issue #468 (D-04/A-3)
+import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06, Issue #468 (D-04/A-3)
 import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
-import { activeParentalReductions, reducedYearsAffectedByRange } from "../parental-leave-reduction"; // Issue #468 plan 07 (D-10) — revoke-before-change guards
+import { activeParentalReductions } from "../parental-leave-reduction"; // Issue #468 plan 07 (D-10) — revoke-before-change guards
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
 import { sickLeaveDayCounts } from "../sick-leave-days"; // Issue #595 (D-04) — the one sick-day counter
 import {
@@ -102,10 +99,8 @@ import {
   REQUESTABLE_CODES as TYPE_CODES,
   LEAVE_TYPE_DEFS,
   LEAVE_REQUEST_EMAIL_SUBJECT,
-  leaveTypeFields,
   DISPLAY_NAME,
 } from "../leave-type"; // Phase 97 (T2, D-04) — the one mapping; DISPLAY_NAME added Phase 98b (D-04)
-import type { RequestableCode } from "../leave-type"; // Phase 98b (D-01) — request-side type
 
 // Forwarded for the same backward-compatibility reason as the import above.
 export { resolveLeaveDays, getHolidayMap, deductVacationDays, reverseVacationDays };
@@ -138,8 +133,6 @@ function formatDayMonth(d: Date | null | undefined): string {
  * this union so the leave-correction handler can run them inside a single
  * $transaction (Phase 94 CR-01: atomic reverse-OLD → apply-NEW booking).
  */
-type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
-
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
 // Phase 97 (T2, D-04): the nine codes, their German display names and the legacy seed aliases
 // now live in ONE place, `utils/leave-type.ts`. `TYPE_CODES` is a transitional import alias so
@@ -147,82 +140,6 @@ type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
 // `LEGACY_ALIASES`) was removed with issue #206 once `ensureLeaveType()`'s legacy-name self-heal
 // step — its only caller in this file — was removed; the name-to-code mapping still lives in
 // `leave-type.ts` for its other caller.
-//
-// `RequestableCode`, not `LeaveTypeCode` (Phase 98b, D-01): `ensureLeaveType()` resolves a
-// `LeaveType` row, and a `LeaveType` row never exists for an imposed absence — every one of its
-// call sites only ever passes a requestable code.
-type TypeCode = RequestableCode;
-
-/**
- * Resolves the LeaveType row for `tenantId` / `code`, creating it when absent. Returns its id.
- *
- * Phase 97 (T2, AC-1): the CODE is the identity. `name` is display text a tenant may rename
- * freely (AC-2), so this function never rewrites the name of a row that already has a code.
- *
- * Two steps: an identity lookup by `{ tenantId, code }`, then a P2002-guarded create for the
- * first request of a given code. Issue #206 made `LeaveType.code` NOT NULL in the database, so
- * a row with no code can no longer exist; the self-heal step that used to repair one (a one-time
- * migration path for rows written before the phase-97 backfill, or by the OLD image during a
- * rolling-deploy window, D-21) is gone — its target row is unreachable by construction, not
- * merely unused, and the six preconditions measured against int/prod on 2026-09-23 (recorded on
- * issue #206) confirm no such row survived to this point.
- *
- * Auditing: unchanged from the pre-phase-97 implementation — this find-or-create writes no
- * AuditLog row and did not before either. Not a regression introduced here; tracked as the
- * pre-existing gap it is.
- *
- * Review WR-01 (phase 97): step 2's create is P2002-guarded — step 1 above is a
- * check-then-create race, so two concurrent first-time requests for the same code can both
- * reach the create. The loser re-reads by `{ tenantId, code }` and resolves to the winner's
- * row instead of surfacing a bare 500. If that re-read comes up empty, the P2002 did not come
- * from `@@unique([tenantId, code])` (the model also carries `@@unique([tenantId, name])`) and
- * is rethrown unchanged rather than guessed at.
- */
-async function ensureLeaveType(
-  prisma: FastifyInstance["prisma"],
-  log: FastifyInstance["log"],
-  tenantId: string,
-  code: TypeCode,
-): Promise<string> {
-  // 1. Identity path.
-  const byCode = await prisma.leaveType.findFirst({ where: { tenantId, code } });
-  if (byCode) return byCode.id;
-
-  // 2. Create. leaveTypeFields() makes code and name structurally inseparable.
-  //
-  // Review WR-01 (phase 97): step 1 above is a check-then-create race. Two concurrent
-  // first-time requests for the same (tenantId, code) both pass them and both arrive here;
-  // @@unique([tenantId, code]) lets exactly one win and raises P2002 on the loser, which
-  // used to surface as a bare HTTP 500 for an operation that had in fact succeeded. Same
-  // race class, same shape as the Section9Credit create below ("§ 9: concurrent detection
-  // lost the race"). Not a phase-97 regression — the name-keyed version had the same gap.
-  try {
-    const created = await prisma.leaveType.create({ data: { tenantId, ...leaveTypeFields(code) } });
-    return created.id;
-  } catch (err: unknown) {
-    if (
-      err &&
-      typeof err === "object" &&
-      "code" in err &&
-      (err as { code: unknown }).code === "P2002"
-    ) {
-      // The winner committed between our step-1 read and this create — re-read and use it.
-      const winner = await prisma.leaveType.findFirst({ where: { tenantId, code } });
-      if (winner) {
-        log.info(
-          { tenantId, code },
-          "LeaveType: concurrent create lost the race, row already exists",
-        );
-        return winner.id;
-      }
-      // No row for this code, so the P2002 did NOT come from @@unique([tenantId, code]) —
-      // LeaveType also carries @@unique([tenantId, name]), which a tenant-renamed row can
-      // violate. There is no id to return here, and returning any other type's id would
-      // book the request onto the WRONG absence type. Fall through and rethrow unchanged.
-    }
-    throw err;
-  }
-}
 
 /**
  * Issue #449 (D-1): a half-day leave request may only ever cover a single calendar date.
@@ -1459,31 +1376,26 @@ export async function leaveRoutes(app: FastifyInstance) {
             // amount for a still-pending-cancellation request) must not change what gets
             // reversed. Only a legacy row with no stored value falls back to today's
             // recomputation, logged so the fallback stays visible.
-            let reversalMinutes: number;
-            let reversalSource: "stored" | "recomputed";
-            if (existing.overtimeCompMinutes != null) {
-              reversalMinutes = existing.overtimeCompMinutes;
-              reversalSource = "stored";
-            } else {
-              const hMap = await getHolidayMap(
+            const { minutes: reversalMinutes, source: reversalSource } =
+              await overtimeCompReversalMinutes(
                 app.prisma,
                 tenantIdForReversal,
-                existing.employeeId,
-                existing.startDate,
-                existing.endDate,
+                existing,
+                async () => {
+                  const hMap = await getHolidayMap(
+                    app.prisma,
+                    tenantIdForReversal,
+                    existing.employeeId,
+                    existing.startDate,
+                    existing.endDate,
+                  );
+                  return {
+                    holidays: new Set(hMap.keys()),
+                    tz: await getTenantTimezone(app.prisma, tenantIdForReversal),
+                  };
+                },
               );
-              const tzForReversal = await getTenantTimezone(app.prisma, tenantIdForReversal);
-              reversalMinutes = await scheduledLeaveMinutes(
-                app.prisma,
-                existing.employeeId,
-                tenantIdForReversal,
-                existing.startDate,
-                existing.endDate,
-                existing.halfDay,
-                new Set(hMap.keys()),
-                tzForReversal,
-              );
-              reversalSource = "recomputed";
+            if (reversalSource === "recomputed") {
               app.log.warn(
                 { leaveRequestId: existing.id, employeeId: existing.employeeId },
                 "OVERTIME_COMP reversal without a stored booking — recomputed (Issue #468 A-4 legacy fallback)",
@@ -2322,641 +2234,57 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "Nur genehmigte Anträge können korrigiert werden" });
       }
 
-      // start <= end ist bereits durch correctSchema.refine (Zod → 400) garantiert.
+      // start <= end is already guaranteed by correctSchema.refine (Zod → 400).
       const start = new Date(body.startDate);
       const end = new Date(body.endDate);
 
-      // ── Delta-Lock guard (EDIT-03 / T-94-01) ───────────────────────────────
-      // Blocks (409) any correction whose CHANGED days (symmetric date diff; plus
-      // retained days when type/halfDay changed) touch a finalized (locked) month.
-      // The retained overlap of a shortened leave stays untouched, so shortening a
-      // long Elternzeit at its unlocked tail is allowed even if early months closed.
-      const existingTypeCode = existing.leaveType.code;
-      const typeChanged = body.type != null && body.type !== existingTypeCode;
-      const halfDayChanged = body.halfDay !== existing.halfDay;
-      const affectedMonths = computeAffectedMonths({
-        oldStart: existing.startDate,
-        oldEnd: existing.endDate,
-        newStart: start,
-        newEnd: end,
-        typeChanged,
-        halfDayChanged,
-      });
-
-      // WR-94-01: a day-invariant metadata edit (note-only — identical dates, type
-      // and halfDay) produces zero affected days, so the day-based delta-lock above
-      // would wave it through. But Revisionssicherheit forbids editing an entry that
-      // lies in a finalized (locked) month — even a note change fires a net-zero
-      // reverse/apply pair against the locked year's entitlement ledger. When nothing
-      // day-related changed but the note did, lock-check the FULL retained range.
-      const noteChanged = (body.note ?? null) !== (existing.note ?? null);
-      const monthsToCheck =
-        affectedMonths.length === 0 && noteChanged
-          ? computeAffectedMonths({
-              oldStart: existing.startDate,
-              oldEnd: existing.endDate,
-              newStart: start,
-              newEnd: end,
-              typeChanged: true, // force the retained intersection into the affected set
-              halfDayChanged: false,
-            })
-          : affectedMonths;
-
-      if (monthsToCheck.length > 0) {
-        const tz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
-        for (const { year, month } of monthsToCheck) {
-          const { start: monthStart } = monthRangeUtc(year, month, tz);
-          // Phase 100B Plan 07 (W1, isMonthClosed) — THE canonical Monatsabschluss signal.
-          const locked = await isMonthClosed(
-            app.prisma,
-            existing.employeeId,
-            existing.employee.tenantId,
-            monthStart,
-          );
-          if (locked) {
-            return reply.code(409).send({ error: "Gesperrter Monat — Korrektur nicht möglich" });
-          }
-        }
-      }
-
-      // ── Recalc model (94-02): REVERSE the OLD booking (by the OLD leaveType),
-      //    then APPLY the NEW booking (by the NEW leaveType). Never branches on
-      //    the effective type alone — that would leave a VACATION/OVERTIME_COMP
-      //    day consumed when corrected INTO a sick type. All domain guards run
-      //    PRE-WRITE so a rejected correction never leaves a partial saldo write.
-      const tenantId = req.user.tenantId;
-      const oldTypeCode = existingTypeCode; // from existing.leaveType.code (delta-lock step)
-      const newType = body.type ?? oldTypeCode;
-
-      // IN-94-01 (Phase 97, D-21) used to guard here: a LeaveType row whose `code` was NULL
-      // (pre-backfill, or written by the old image during a rolling deploy) left oldTypeCode
-      // undefined, and the reverse/apply dispatch below would silently fall through to a no-op —
-      // updating dates/days WITHOUT adjusting the entitlement ledger (a stranded Kontingent).
-      // Issue #206's migration (20260923090815_leave_type_code_not_null) tightened that column to
-      // required, making that state impossible to construct: `existing.leaveType.code` is a
-      // required `LeaveTypeCode` now, so `oldTypeCode` (and therefore `newType`) can never be
-      // falsy for a real row. The assertion moved from this application guard into the database
-      // constraint — it did not disappear.
-
-      // ── Step 7a: half-day-sick reject (pre-write) — Krankheit ist immer ganztägig.
-      if (body.halfDay && (newType === "SICK" || newType === "SICK_CHILD")) {
-        return reply.code(400).send({
-          error:
-            "Halbe Kranktage sind nicht zulässig — Krankheit wird immer ganztägig gutgeschrieben.",
-        });
-      }
-
-      // ── Step 7b: overlap guard (pre-write) for a CHANGED date range. Excludes
-      //    the request itself (id:{not}). An identical-range correction (type/
-      //    halfDay-only) introduces no new collision, so it is not re-checked.
-      const dateChanged =
-        start.getTime() !== existing.startDate.getTime() ||
-        end.getTime() !== existing.endDate.getTime();
-      if (dateChanged) {
-        const overlaps = await app.prisma.leaveRequest.findMany({
-          where: {
-            employeeId: existing.employeeId,
-            deletedAt: null,
-            status: { in: ["PENDING", "APPROVED"] },
-            startDate: { lte: end },
-            endDate: { gte: start },
-            id: { not: existing.id },
-          },
-          include: { leaveType: true },
-        });
-        // Issue #468 (Rule 1/3 auto-fix, blocking): the R1 exception from POST /requests
-        // (leave.ts above, "§ 9 BUrlG — wird ein Mitarbeiter während genehmigten Urlaubs
-        // krank...") was never mirrored here, so correcting EITHER side of an already-APPROVED
-        // sick-over-vacation § 9 pair always 409'd — even a trivial shortening of the vacation's
-        // tail that leaves the sick days fully inside the new range. Without this, the § 9
-        // credit-aware correction this plan adds (Steps 8b/10b above) could never actually be
-        // exercised through PATCH /correct for the "credit stays inside" shape central to this
-        // phase. Mirrored bidirectionally: /correct can be called on either side of the pair.
-        const correctedIsSick = isSickLeaveTypeCode(newType);
-        const blockingOverlap = overlaps.find((o) => {
-          if (o.status !== "APPROVED") return true; // § 9 exception never applies vs PENDING
-          const otherIsSick = isSickLeaveTypeCode(o.leaveType.code);
-          if (correctedIsSick !== otherIsSick) return false; // § 9 case — permitted either way
-          return true; // same-kind overlap (vacation/vacation, sick/sick) — still blocked
-        });
-        if (blockingOverlap) {
-          return reply.code(409).send({ error: "Überschneidung mit bestehendem Antrag" });
-        }
-      }
-
-      // ── Step 7c (Issue #468 plan 07, D-10): a declared Elternzeit-Kürzung is changed only by
-      // its own correction entry (revocation), never implicitly by moving the Elternzeit it
-      // anchors on. A type change away from PARENTAL always invalidates every ACTIVE reduction's
-      // anchor; a date change invalidates it only when a reduced year's own full-month count
-      // would actually differ — a day-level shift inside the same full months stays allowed.
-      if (existingTypeCode === "PARENTAL") {
-        const activeReductions = await activeParentalReductions(app.prisma, existing.id, tenantId);
-        if (activeReductions.length > 0) {
-          if (typeChanged) {
-            return reply.code(409).send({
-              error:
-                "Für diese Elternzeit ist eine Kürzung erklärt — bitte die Kürzung zuerst widerrufen.",
-            });
-          }
-          const affectedYears = reducedYearsAffectedByRange({
-            oldStart: existing.startDate,
-            oldEnd: existing.endDate,
-            newStart: start,
-            newEnd: end,
-            reducedYears: activeReductions,
-          });
-          if (affectedYears.length > 0) {
-            return reply.code(409).send({
-              error: `Für diese Elternzeit ist eine Kürzung für ${affectedYears.join(", ")} erklärt — bitte die Kürzung zuerst widerrufen.`,
-            });
-          }
-        }
-      }
-
-      // Holidays across the UNION of old+new range: the reverse needs the OLD
-      // range, the apply + day recompute need the NEW range.
-      const unionStart = existing.startDate < start ? existing.startDate : start;
-      const unionEnd = existing.endDate > end ? existing.endDate : end;
-      const holidayMap = await getHolidayMap(
-        app.prisma,
-        tenantId,
-        existing.employeeId,
-        unionStart,
-        unionEnd,
-      );
-      const holidays = new Set(holidayMap.keys());
-      // Phase 107 (D-09/D-10): roster-aware recompute of the corrected (NEW) range. Unlike
-      // POST /requests and the PENDING edit above, this path produces a new APPROVED value, so
-      // daysProvisional is also written below -- but only when the employee is actually
-      // SHIFT_BASED (a separate check, since resolveLeaveDays()'s `.provisional` is always
-      // `false` for every other type and would otherwise overwrite the column's `null` "not
-      // applicable" state with a misleading `false`).
-      // Issue #436 (D-04/D-09): priced against the corrected (NEW) leave type, excluding this
-      // request itself.
-      const {
-        days,
-        provisional: correctionProvisional,
-        vocationalSchoolOnly: correctVocationalSchoolOnly,
-      } = await resolveLeaveDays(
-        app.prisma,
-        existing.employeeId,
-        tenantId,
+      // Issue #614: the domain body of this correction (delta-lock, half-day-sick, overlap,
+      // parental reductions, pricing, § 9 plan, closed-month guards — every pre-write refusal, in
+      // this order) lives in contexts/absence/leave-correction.ts, shared with the exit-day
+      // shortening of the anonymization. This handler keeps tenant, scope and status checks, the
+      // transaction, the LEAVE_CORRECTED audit and the response.
+      const prepared = await prepareLeaveCorrection(app, {
+        existing,
         start,
         end,
-        body.halfDay,
-        holidays,
-        { mode: "request", leaveTypeCode: newType, excludeRequestId: existing.id },
-      );
-
-      // Issue #448 (D-02): one rule on every write path — before the transaction opens, same
-      // guard shape as the delta-lock 409 above.
-      if (correctVocationalSchoolOnly) {
-        return reply.code(400).send({ error: BS_ONLY_LEAVE_ERROR, code: BS_ONLY_LEAVE_ERROR_CODE });
-      }
-
-      const wsForCorrection = await app.prisma.workSchedule.findFirst({
-        where: { employeeId: existing.employeeId },
-        orderBy: { validFrom: "desc" },
-        select: { type: true },
+        halfDay: body.halfDay,
+        type: body.type,
+        note: body.note,
+        reason: body.reason,
+        tenantId: req.user.tenantId,
       });
-      const daysProvisionalForCorrection =
-        wsForCorrection?.type === "SHIFT_BASED" ? correctionProvisional : null;
-
-      // Resolve the NEW leaveTypeId when the type changed (ensureLeaveType migrates
-      // legacy names / creates the canonical type on demand).
-      const newLeaveTypeId =
-        typeChanged && body.type != null
-          ? await ensureLeaveType(app.prisma, app.log, tenantId, body.type)
-          : existing.leaveTypeId;
-
-      // Issue #468 (D-01): resolved ONCE on app.prisma, BEFORE the transaction opens —
-      // getTenantTimezone() is typed against FastifyInstance["prisma"], not a tx client, and
-      // its own 5-minute cache makes a second lookup pointless.
-      const tzForCorrection = await getTenantTimezone(app.prisma, tenantId);
-
-      // Issue #468 (D-02): the OLD and NEW Überstundenausgleich amounts are resolved HERE — pure
-      // reads on app.prisma, before the transaction opens — never inside it. The OLD side reverses
-      // the STORED booking (never a recomputation, so a schedule edited after approval cannot
-      // change what gets reversed); a legacy row with no stored value falls back to today's
-      // recomputation (A-4), logged so the fallback stays visible. The NEW side is always priced
-      // fresh against the corrected range.
-      let oldOtMinutes: number | null = null;
-      let oldOtSource: "stored" | "recomputed" | null = null;
-      if (oldTypeCode === "OVERTIME_COMP") {
-        if (existing.overtimeCompMinutes != null) {
-          oldOtMinutes = existing.overtimeCompMinutes;
-          oldOtSource = "stored";
-        } else {
-          oldOtMinutes = await scheduledLeaveMinutes(
-            app.prisma,
-            existing.employeeId,
-            tenantId,
-            existing.startDate,
-            existing.endDate,
-            existing.halfDay,
-            holidays,
-            tzForCorrection,
-          );
-          oldOtSource = "recomputed";
-          app.log.warn(
-            { leaveRequestId: existing.id, employeeId: existing.employeeId },
-            "OVERTIME_COMP correction without a stored booking — recomputed (Issue #468 A-4 legacy fallback)",
-          );
-        }
+      if (!prepared.ok) {
+        return reply.code(prepared.statusCode).send(prepared.body);
       }
-      let newOtMinutes: number | null = null;
-      if (newType === "OVERTIME_COMP") {
-        newOtMinutes = await scheduledLeaveMinutes(
-          app.prisma,
-          existing.employeeId,
-          tenantId,
-          start,
-          end,
-          body.halfDay,
-          holidays,
-          tzForCorrection,
-        );
-      }
+      const { plan } = prepared;
+      const { oldTypeCode, newType, oldOtMinutes, newOtMinutes, oldOtSource } = plan;
 
-      // Issue #468 (D-04/A-3, finding 2/G18): pure reads BEFORE the transaction opens — the §
-      // 9 credits touching this request (either side), classified against the NEW range by
-      // planSection9CreditsForCorrection, then every clipped replacement range re-priced. Only
-      // the write (status, ledger undo/re-credit, audit) happens inside the CR-01 transaction
-      // below (Steps 8b/10b).
-      const touchingSection9Credits = await app.prisma.section9Credit.findMany({
-        where: {
-          OR: [{ vacationRequestId: existing.id }, { sickRequestId: existing.id }],
-          status: { not: "SUPERSEDED" },
-          employee: { tenantId },
-        },
-        include: {
-          vacationRequest: {
-            select: {
-              id: true,
-              leaveTypeId: true,
-              halfDay: true,
-              leaveType: { select: { code: true } },
-            },
-          },
-        },
-      });
-      const section9CorrectionPlan = planSection9CreditsForCorrection({
-        credits: touchingSection9Credits.map((c) => ({
-          id: c.id,
-          status: c.status,
-          creditedStart: c.creditedStart,
-          creditedEnd: c.creditedEnd,
-          overlapStart: c.overlapStart,
-          overlapEnd: c.overlapEnd,
-        })),
-        newStart: start,
-        newEnd: end,
-        typeChanged,
-      });
-      type Section9ClipPricing = {
-        id: string;
-        start: Date;
-        end: Date;
-        priced: number;
-        vacationLeaveTypeId: string;
-      };
-      const section9ClipPricings: Section9ClipPricing[] = [];
-      for (const clip of section9CorrectionPlan.clip) {
-        const credit = touchingSection9Credits.find((c) => c.id === clip.id)!;
-        // D-04: the VACATION-side type code never changes on this path (a type change on the
-        // vacation side always forces a full supersede above, never a clip) — stable for
-        // either side of the correction.
-        const isVacationSide = credit.vacationRequestId === existing.id;
-        const { days: priced } = await resolveLeaveDays(
-          app.prisma,
-          existing.employeeId,
-          tenantId,
-          clip.start,
-          clip.end,
-          isVacationSide ? body.halfDay : credit.vacationRequest.halfDay,
-          holidays,
-          {
-            mode: "request",
-            leaveTypeCode: credit.vacationRequest.leaveType.code,
-            excludeRequestId: isVacationSide ? existing.id : credit.vacationRequest.id,
-          },
-        );
-        section9ClipPricings.push({
-          id: clip.id,
-          start: clip.start,
-          end: clip.end,
-          priced,
-          vacationLeaveTypeId: credit.vacationRequest.leaveTypeId,
-        });
-      }
-
-      // ── WR-03 (Issue #468 review): locked-month guard for the § 9 ledger writes below ──
-      // The delta-lock above (computeAffectedMonths) only covers THIS request's own
-      // changed days. The § 9 ledger undo (Step 8b, deductVacationDays over a superseded
-      // credit's OWN creditedStart/creditedEnd) and the re-credit (Step 10b,
-      // reverseVacationDays over the clipped replacement range) move LeaveEntitlement days
-      // for ranges that are not guaranteed to be a subset of that delta — guard every
-      // distinct month either write actually touches, same 409 message/convention as the
-      // delta-lock check above.
-      const section9LedgerMonths = new Map<string, { year: number; month: number }>();
-      for (const sup of section9CorrectionPlan.supersede) {
-        if (!sup.ledgerUndo) continue;
-        const credit = touchingSection9Credits.find((c) => c.id === sup.id)!;
-        for (const m of monthsInRange(credit.creditedStart!, credit.creditedEnd!)) {
-          section9LedgerMonths.set(`${m.year}-${m.month}`, m);
-        }
-      }
-      for (const cp of section9ClipPricings) {
-        if (cp.priced <= 0) continue;
-        for (const m of monthsInRange(cp.start, cp.end)) {
-          section9LedgerMonths.set(`${m.year}-${m.month}`, m);
-        }
-      }
-      for (const { year, month } of section9LedgerMonths.values()) {
-        const { start: monthStart } = monthRangeUtc(year, month, tzForCorrection);
-        const locked = await isMonthClosed(app.prisma, existing.employeeId, tenantId, monthStart);
-        if (locked) {
-          return reply.code(409).send({ error: "Gesperrter Monat — Korrektur nicht möglich" });
-        }
-      }
-
-      // ── Steps 8-11 run inside ONE interactive transaction (94 CR-01) ──────────
-      //    The correction issues TWO authoritative ledger writes (reverse OLD +
-      //    apply NEW). Without a transaction a mid-sequence failure would leave the
-      //    OLD booking reversed but the NEW one unapplied — permanently corrupting
-      //    the vacation Kontingent (usedDays is never self-healed by the recalc
-      //    tail). All pre-write guards (half-day-sick 400, overlap 409, delta-lock
-      //    409) already ran ABOVE, so a rejection never opens the transaction.
+      // Steps 8-11 run inside ONE interactive transaction (94 CR-01): the correction issues TWO
+      // authoritative ledger writes (reverse OLD + apply NEW); without a transaction a
+      // mid-sequence failure would leave the OLD booking reversed but the NEW one unapplied. All
+      // pre-write guards already ran in prepareLeaveCorrection, so a rejection never opens it.
       let updated;
       try {
-        updated = await app.prisma.$transaction(async (tx) => {
-          // ── Step 8: REVERSE the OLD booking (dispatch on the OLD typeCode) ──────
-          if (oldTypeCode === "VACATION") {
-            await reverseVacationDays(
-              tx,
-              existing.employeeId,
-              existing.leaveTypeId,
-              existing.startDate,
-              existing.endDate,
-              Number(existing.days),
-              holidays,
-              tenantId,
-            );
-          } else if (oldTypeCode === "OVERTIME_COMP") {
-            // Issue #468 (D-02): reverses the STORED/recomputed-fallback amount resolved ABOVE,
-            // before the transaction opened — never a fresh recomputation inside the transaction.
-            await reverseOvertimeCompensation(
-              tx,
-              existing.employeeId,
-              tenantId,
-              (oldOtMinutes ?? 0) / 60,
-              `Korrektur Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
-            );
-          }
-          // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
-          // entitlement-neutral on the reverse side (no usedDays / balance booking).
-
-          // ── Step 8b: SUPERSEDE § 9 credits the new range leaves behind (Issue #468, D-04/A-3,
-          //    finding 2/G18) — classified ABOVE (section9CorrectionPlan), written here. A
-          //    CONFIRMED credit actually booked a ledger entry at confirm time (reverseVacationDays
-          //    — gave the day back); undoing it here is the exact mirror: deductVacationDays takes
-          //    the day back out again. AU_PENDING/REJECTED credits never booked anything, so only
-          //    their status changes. Worked numbers (see <objective>): approve 10 → 10; confirm 3
-          //    → 7; correct to 7 with the credit now outside: reverse 10 → −3, undo (deduct) 3 → 0,
-          //    apply 7 → 7.
-          for (const sup of section9CorrectionPlan.supersede) {
-            const credit = touchingSection9Credits.find((c) => c.id === sup.id)!;
-            // WR-02 (Issue #468 review): `touchingSection9Credits` was read on app.prisma BEFORE
-            // this transaction opened (by design — see that read site's own comment), so a
-            // concurrent/replayed /correct touching the SAME credit could otherwise both plan
-            // against the identical pre-transaction snapshot and both execute the ledger undo
-            // below for the same creditedDays (double deduction). Guard the status transition
-            // itself with updateMany + count check — mirroring the optimistic-lock pattern
-            // parental-leave-reductions.ts uses for exactly this class of race — so only the
-            // FIRST writer's ledger undo ever runs; the second throws and the whole correction
-            // aborts (409), never partially applying.
-            const { count: supersedeCount } = await tx.section9Credit.updateMany({
-              where: { id: sup.id, status: { not: "SUPERSEDED" } },
-              data: { status: "SUPERSEDED" },
-            });
-            if (supersedeCount !== 1) {
-              throw new Section9ConcurrentCorrectionError();
-            }
-            // CR-01 (Issue #468 review): undo the ledger entry for WHATEVER type the confirm
-            // path booked for (leave.ts's SECTION9_CREDIT_CONFIRMED handler calls
-            // reverseVacationDays() unconditionally — SPECIAL/UNPAID/EDUCATION/MATERNITY/PARENTAL
-            // all legally receive a § 9 credit, not just VACATION). A type-only gate here left
-            // every non-VACATION credit's reversal un-clawed-back — a permanent silent
-            // over-credit. `sup.ledgerUndo` already IS the correct gate (true only when the
-            // credit was CONFIRMED and therefore actually booked something at confirm time).
-            if (sup.ledgerUndo) {
-              await deductVacationDays(
+        updated = await app.prisma.$transaction(async (tx) =>
+          applyLeaveCorrection(tx, plan, {
+            actorUserId: req.user.sub,
+            audit: async (entry) => {
+              await app.audit({
                 tx,
-                existing.employeeId,
-                credit.vacationRequest.leaveTypeId,
-                credit.creditedStart!,
-                credit.creditedEnd!,
-                Number(credit.creditedDays),
-                holidays,
-                tenantId,
-              );
-            }
-            await app.audit({
-              tx,
-              userId: req.user.sub,
-              action: "SECTION9_CREDIT_SUPERSEDED",
-              entity: "Section9Credit",
-              entityId: sup.id,
-              oldValue: {
-                status: credit.status,
-                creditedStart: credit.creditedStart?.toISOString().split("T")[0] ?? null,
-                creditedEnd: credit.creditedEnd?.toISOString().split("T")[0] ?? null,
-                creditedDays: credit.creditedDays !== null ? Number(credit.creditedDays) : null,
-              },
-              newValue: {
-                status: "SUPERSEDED",
-                correctedLeaveRequestId: existing.id,
-                newStartDate: start.toISOString().split("T")[0],
-                newEndDate: end.toISOString().split("T")[0],
-                auditReason: body.reason,
-                note: "§ 9 BUrlG — durch Korrektur des Antrags überholt",
-              },
-              request: { ip: req.ip, headers: req.headers as Record<string, string> },
-            });
-          }
-
-          // ── Step 9: update the row (94-01 base + NEW leaveTypeId) ───────────────
-          const updatedRow = await tx.leaveRequest.update({
-            where: { id },
-            data: {
-              startDate: start,
-              endDate: end,
-              halfDay: body.halfDay,
-              days,
-              daysProvisional: daysProvisionalForCorrection, // Phase 107 (D-10)
-              note: body.note,
-              leaveTypeId: newLeaveTypeId,
-              // Issue #468 (D-02): keeps the stored booking current — null when the corrected
-              // type is no longer OVERTIME_COMP, so a later correction never reverses a stale
-              // amount from a type the request has since moved away from.
-              overtimeCompMinutes: newType === "OVERTIME_COMP" ? newOtMinutes : null,
+                userId: req.user.sub,
+                action: entry.action,
+                entity: entry.entity,
+                entityId: entry.entityId,
+                oldValue: entry.oldValue,
+                newValue: entry.newValue,
+                request: { ip: req.ip, headers: req.headers as Record<string, string> },
+              });
             },
-            include: {
-              leaveType: true,
-              employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
-            },
-          });
-
-          // ── Step 10: APPLY the NEW booking (dispatch on the NEW typeCode) ───────
-          //    "Light" for Krankheit = NO entitlement apply on the new side (it does
-          //    NOT skip the OLD-side reversal nor the recalc tail).
-          if (newType === "VACATION") {
-            await deductVacationDays(
-              tx,
-              existing.employeeId,
-              newLeaveTypeId,
-              start,
-              end,
-              days,
-              holidays,
-              tenantId,
-            );
-          } else if (newType === "OVERTIME_COMP") {
-            // Issue #468 (D-02): books the amount resolved ABOVE, before the transaction opened —
-            // never a fresh recomputation inside the transaction.
-            await bookOvertimeCompensation(
-              tx,
-              existing.employeeId,
-              tenantId,
-              (newOtMinutes ?? 0) / 60,
-              `Überstundenausgleich ${start.toISOString().split("T")[0]} – ${end.toISOString().split("T")[0]}`,
-            );
-          }
-          // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
-          // entitlement-neutral on the apply side (light).
-
-          // ── Step 10b: RE-CREDIT the clipped part of a partially-superseded CONFIRMED credit
-          //    (Issue #468, D-04/A-3) — a new revision+1 correction credit for exactly the part
-          //    that is still inside the new range, re-priced ABOVE (section9ClipPricings). A clip
-          //    priced at 0 days (e.g. the clipped range is a non-workday) becomes a plain
-          //    supersede — no replacement row, nothing to re-credit. Worked: partial (2 of 3 days
-          //    stay) — reverse 10 → −3, undo (deduct) 3 → 0, apply 7 → 7, re-credit 2 → 5.
-          for (const cp of section9ClipPricings) {
-            if (cp.priced <= 0) continue;
-            const original = touchingSection9Credits.find((c) => c.id === cp.id)!;
-            // The sick/vacation overlap is recomputed against the NEW range of whichever side of
-            // the pair this correction touches — `start`/`end` are the corrected request's own
-            // new range, which is exactly the side `original` references via existing.id.
-            const overlapClip = intersectRanges(
-              original.overlapStart,
-              original.overlapEnd,
-              start,
-              end,
-            )!;
-            const created = await tx.section9Credit.create({
-              data: {
-                employeeId: original.employeeId,
-                sickRequestId: original.sickRequestId,
-                vacationRequestId: original.vacationRequestId,
-                revision: original.revision + 1,
-                supersedesId: original.id,
-                status: "CONFIRMED",
-                overlapStart: overlapClip.start,
-                overlapEnd: overlapClip.end,
-                creditedStart: cp.start,
-                creditedEnd: cp.end,
-                creditedDays: cp.priced,
-                attestSource: original.attestSource,
-                attestValidFrom: original.attestValidFrom,
-                attestValidTo: original.attestValidTo,
-                documentPath: original.documentPath,
-                reason: "Korrektur: Antrag geändert — § 9-Gutschrift angepasst",
-                reviewedBy: req.user.sub,
-                reviewedAt: new Date(),
-              },
-            });
-            // CR-01 (Issue #468 review): re-credit the clipped part for WHATEVER type the
-            // original credit's vacation side is — symmetric with the Step 8b undo above and
-            // with the confirm path's unconditional reverseVacationDays() call.
-            await reverseVacationDays(
-              tx,
-              existing.employeeId,
-              cp.vacationLeaveTypeId,
-              cp.start,
-              cp.end,
-              cp.priced,
-              holidays,
-              tenantId,
-            );
-            await app.audit({
-              tx,
-              userId: req.user.sub,
-              action: "SECTION9_CREDIT_CORRECTED",
-              entity: "Section9Credit",
-              entityId: created.id,
-              newValue: {
-                supersedesId: original.id,
-                revision: created.revision,
-                creditedStart: cp.start.toISOString().split("T")[0],
-                creditedEnd: cp.end.toISOString().split("T")[0],
-                creditedDays: cp.priced,
-                correctedLeaveRequestId: existing.id,
-              },
-              request: { ip: req.ip, headers: req.headers as Record<string, string> },
-            });
-          }
-
-          // ── Step 11: revalidate removed-day time entries (old range \ new range).
-          //    A shortened/moved leave frees days whose leave-caused invalidation must
-          //    be cleared. Delta-lock already guarantees these fall in unlocked months;
-          //    locked / soft-deleted entries are never touched (Revisionssicherheit).
-          // Phase 100B Plan 08 — T6, contexts/time-tracking facade (H2 guard unchanged).
-          // Issue #370, D-05: accumulate the revalidated rows across both calls below so they
-          // can be audited once, inside this same transaction, before it closes.
-          const revalidatedEntries: Awaited<ReturnType<typeof revalidateLeaveCancellationEntries>> =
-            [];
-          const revalidateRemoved = async (from: Date, to: Date) => {
-            if (from > to) return;
-            revalidatedEntries.push(
-              ...(await revalidateLeaveCancellationEntries(
-                tx,
-                existing.employeeId,
-                tenantId,
-                from,
-                to,
-              )),
-            );
-          };
-          const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-          if (start > existing.startDate) {
-            // head removed: [oldStart .. newStart-1]
-            await revalidateRemoved(existing.startDate, new Date(start.getTime() - ONE_DAY_MS));
-          }
-          if (end < existing.endDate) {
-            // tail removed: [newEnd+1 .. oldEnd]
-            await revalidateRemoved(new Date(end.getTime() + ONE_DAY_MS), existing.endDate);
-          }
-          // Issue #370, D-05: one TimeEntry UPDATE audit per revalidated row, inside the tx so a
-          // rollback (94 CR-01) never leaves an orphan audit row — same rule as overtime.ts's
-          // COMP-V1814-05 comment.
-          for (const row of revalidatedEntries) {
-            await app.audit({
-              tx,
-              userId: req.user.sub,
-              action: "UPDATE",
-              entity: "TimeEntry",
-              entityId: row.id,
-              oldValue: row.oldValue,
-              newValue: row.newValue,
-              request: { ip: req.ip, headers: req.headers as Record<string, string> },
-            });
-          }
-
-          return updatedRow;
-        });
+          }),
+        );
       } catch (err) {
-        // WR-02 (Issue #468 review): the § 9 optimistic-lock conflict thrown inside Step 8b above
-        // — translated into a retry-able 409, same convention as every other conflict in this
+        // WR-02 (Issue #468 review): the § 9 optimistic-lock conflict thrown inside Step 8b —
+        // translated into a retry-able 409, same convention as every other conflict in this
         // file (see Section9MissingEntitlementError's own handler further down).
         if (err instanceof Section9ConcurrentCorrectionError) {
           return reply.code(409).send({
@@ -2995,37 +2323,8 @@ export async function leaveRoutes(app: FastifyInstance) {
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
-      // Saldo-Recalc: ab dem FRÜHEREN von alt/neu Start, damit ein erweiterter
-      // Bereich vom richtigen Monat an neu berechnet wird (EDIT / T-94-05).
-      const recalcFrom = existing.startDate < start ? existing.startDate : start;
-      await recalculateSnapshots(app, existing.employeeId, recalcFrom).catch((err) =>
-        app.log.error(
-          { err, employeeId: existing.employeeId },
-          "Failed to recalculate snapshots after leave correction",
-        ),
-      );
-      // Issue #294: swallower removed — a failing recompute now answers non-2xx instead of a
-      // silent 200 with a stale balance. Full atomicity is NOT available at this site: the
-      // booking pair above is already committed inside the CR-01 transaction (`app.prisma.
-      // $transaction` earlier in this handler), and this recompute reads the leave row through
-      // `app.prisma` — it must run AFTER that transaction commits, or it would read the
-      // pre-correction state. Threading a client through computeOvertimeBalanceBreakdown() was
-      // ruled out (it performs ~15 separate app.prisma reads plus getEffectiveSchedule(app, …)).
-      // Inlined via computeOvertimeBalanceHours + persistOvertimeBalance (rather than the
-      // updateOvertimeAccount() wrapper) — byte-identical behaviour, same null-guard for the
-      // §18-exempt path, same non-transactional app.prisma write.
-      const effectiveBalanceHoursForCorrection = await computeOvertimeBalanceHours(
-        app,
-        existing.employeeId,
-      );
-      if (effectiveBalanceHoursForCorrection !== null) {
-        await persistOvertimeBalance(
-          app,
-          app.prisma,
-          existing.employeeId,
-          effectiveBalanceHoursForCorrection,
-        );
-      }
+      // Snapshot recalculation + overtime balance persist (after commit, Issue #294 semantics).
+      await finishLeaveCorrection(app, plan);
 
       return {
         ...updated,
@@ -5171,115 +4470,7 @@ class Section9MissingEntitlementError extends Error {
   }
 }
 
-/**
- * WR-02 (Issue #468 review): thrown inside the `/correct` transaction (Step 8b) when the
- * optimistic-lock `updateMany` on a § 9 credit's status affected 0 rows — a concurrent or
- * replayed correction already superseded it first. Never escapes the handler — translated
- * into a 409 asking the caller to retry, same pattern as Section9MissingEntitlementError.
- */
-class Section9ConcurrentCorrectionError extends Error {
-  constructor() {
-    super("SECTION9_CONCURRENT_CORRECTION");
-    this.name = "Section9ConcurrentCorrectionError";
-  }
-}
-
 // calculateWorkDays moved to ../utils/calculate-work-days (Phase 61).
-
-/**
- * Issue #468 (D-01) — the ONE function behind every Überstundenausgleich amount: the POST/PATCH
- * negative-balance gate, the approval booking, the cancellation-reversal legacy fallback, the
- * `/correct` reverse/apply pair, and GET /hours-preview all call this, never a second formula.
- *
- * SHIFT_BASED keeps the #293/#429 "receipt follows the account" branch verbatim — do not route
- * it through `calcLeaveAbsenceMinutesTz` (that function's own SHIFT_BASED branch is a DIFFERENT,
- * already-correct formula per #429, see its own docblock).
- *
- * Every other schedule type calls `calcLeaveAbsenceMinutesTz` below — the Arbeitszeitkonto's own
- * per-row credit/withdrawal function (`close-employee-month.ts` uses the SAME call for the
- * saldo's non-SHIFT leave credit, #220 model B) — reached through the
- * `contexts/working-time-account` facade, never a local `{day}Hours` placeholder read. This is
- * what makes a FLEXTIME day cost the real Ø-Methode average (480 min, not the measured
- * placeholder's 60) and keeps MONTHLY_HOURS following whatever the Arbeitszeitkonto returns
- * (hard 0 until Phase 433 merges, a real rate afterward) rather than a number hardcoded here.
- *
- * Holidays AND Berufsschultage are excluded exactly like the saldo's own `excludeHolidays` set
- * (#448 D-03) — an Azubi's Ausgleichstag on a school day costs nothing, mirroring the saldo,
- * which never withdraws for that day either.
- */
-async function scheduledLeaveMinutes(
-  db: DbClient,
-  employeeId: string,
-  tenantId: string,
-  start: Date,
-  end: Date,
-  halfDay: boolean,
-  holidays: Set<string>,
-  tz: string,
-): Promise<number> {
-  const employee = await db.employee.findUnique({
-    where: { id: employeeId },
-    include: {
-      workSchedules: {
-        where: { validFrom: { lte: start } },
-        orderBy: { validFrom: "desc" },
-        take: 1,
-      },
-    },
-  });
-  const ws = employee?.workSchedules[0] ?? null;
-  const cfg = await db.tenantConfig.findUnique({ where: { tenantId } });
-
-  // SHIFT_BASED (issue #293/#429): the receipt follows the account — see the docblock above.
-  // Returns BEFORE the saldo-facade path below, which stays untouched for every other type.
-  if (ws?.type === "SHIFT_BASED") {
-    // Issue #429, D-13: `c` via the SAME fallback chain the saldo uses (Phase 107, D-04) —
-    // `contractWorkDaysPerWeek` -> `workDays.length` -> tenant `defaultWorkDays.length` -> 5.
-    const c = contractWorkDaysPerWeekFrom(ws, cfg?.defaultWorkDays);
-
-    // `shiftBasedLeaveMinutesForRequest` is timezone-free (it operates on calendar `Date`
-    // boundaries via `leaveDaysPerWeek`, like the saldo's `shiftBasedLeaveCreditByDate`) and,
-    // mirroring `close-employee-month.ts`'s D-05 decision, is never given a holiday set — a
-    // holiday inside a leave range keeps being a Soll-free day via the leave itself. Phase 436
-    // (D-03): the Angabe follows the receipt through the same `usualWorkDaysFrom()` reader.
-    return shiftBasedLeaveMinutesForRequest(ws, start, end, halfDay, c, usualWorkDaysFrom(ws));
-  }
-
-  // Issue #468 (D-01): the WorkSchedule row when present, else the tenant-default
-  // FIXED_SCHEDULE shape — mirrors `getEffectiveSchedule()`'s shape (entry-invariants.ts), not
-  // imported (that helper takes `app`, a time-tracking module this file does not reach into).
-  const schedule =
-    ws ??
-    ({
-      type: "FIXED_SCHEDULE" as const,
-      weeklyHours: cfg?.defaultWeeklyHours ?? 40,
-      monthlyHours: null,
-      mondayHours: cfg?.defaultMondayHours ?? 8,
-      tuesdayHours: cfg?.defaultTuesdayHours ?? 8,
-      wednesdayHours: cfg?.defaultWednesdayHours ?? 8,
-      thursdayHours: cfg?.defaultThursdayHours ?? 8,
-      fridayHours: cfg?.defaultFridayHours ?? 8,
-      saturdayHours: cfg?.defaultSaturdayHours ?? 0,
-      sundayHours: cfg?.defaultSundayHours ?? 0,
-    } as const);
-
-  // Issue #468 (D-01, mirrors #448 D-03): a Berufsschultag is excluded exactly like a holiday —
-  // the saldo never withdraws Soll for either inside a leave range, so the booking must not
-  // either.
-  const excluded = new Set<string>([
-    ...holidays,
-    ...(await vocationalSchoolDateSet(db, employeeId, tenantId, start, end)), // Issue #468 (D-01)
-  ]);
-
-  return calcLeaveAbsenceMinutesTz(schedule, start, end, tz, {
-    halfDay,
-    excludeHolidays: excluded,
-    // Phase 433 (D-05) — the MONTHLY_HOURS workday tier, same as the saldo: a WorkSchedule
-    // with no explicit workDays falls through to the tenant's defaultWorkDays before Mo-Fr.
-    // Every other schedule type ignores this opt.
-    defaultWorkDays: cfg?.defaultWorkDays ?? null,
-  });
-}
 
 /**
  * Issue #468 (D-01) — the shared Überstundenausgleich negative-balance gate, lifted out of

@@ -3821,7 +3821,7 @@
         <!-- ── Gefahrenzone ────────────────────────────────────────────────── -->
         <DangerZone
           title="Anonymisieren (DSGVO Art. 17)"
-          description="Persönliche Daten werden anonymisiert (Name → 'Gelöscht / GELÖSCHT-XXX', E-Mail anonymisiert). Zeiterfassungen, Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist (10 Jahre nach § 147 AO) erhalten."
+          description="Persönliche Daten werden anonymisiert (Name → 'Gelöscht / GELÖSCHT-Personalnummer', E-Mail anonymisiert). Die Personalnummer bleibt für die Lohnunterlagen erhalten (§ 41 EStG, § 147 AO). Ist kein Austrittsdatum eingetragen, wird das heutige Datum als Austrittsdatum gesetzt; Abwesenheiten nach dem Austritt werden storniert. Zeiterfassungen, Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist (10 Jahre nach § 147 AO) erhalten."
           animate
         >
           {#snippet actions()}
@@ -3876,7 +3876,7 @@
   <ConfirmDialog
     bind:open={anonConfirmOpen}
     title="Mitarbeiter anonymisieren?"
-    description="Möchten Sie diesen Mitarbeiter wirklich anonymisieren? Persönliche Daten (Name, E-Mail, Notizen) werden gemäß DSGVO gelöscht. Zeiteinträge, Urlaubsanträge und Salden bleiben erhalten."
+    description="Möchten Sie diesen Mitarbeiter wirklich anonymisieren? Persönliche Daten (Name, E-Mail, Notizen) werden gemäß DSGVO gelöscht; die Personalnummer bleibt erhalten. Ein leeres Austrittsdatum wird auf heute gesetzt, Abwesenheiten nach dem Austritt werden storniert. Zeiteinträge, Urlaubsanträge und Salden bleiben erhalten."
     confirmLabel="Anonymisieren"
     danger
     onConfirm={anonymize}

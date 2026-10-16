@@ -104,7 +104,11 @@ describe("DayBreak / DayBreakAck compliance (Issue #80, D-06)", () => {
       });
 
       await app.prisma.$transaction(async (tx) => {
-        await anonymizeEmployeeData({ tx, employeeId: target.id });
+        await anonymizeEmployeeData({
+          tx,
+          employeeId: target.id,
+          exitDayIfUnset: new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`),
+        });
       });
 
       const ackRows = await app.prisma.dayBreakAck.findMany({ where: { employeeId: target.id } });

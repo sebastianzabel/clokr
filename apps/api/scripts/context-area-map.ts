@@ -266,6 +266,11 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/age-at-date.ts": "abwesenheiten", // Issue #435 — zero-import ageAtDate leaf (extracted from jarbschg.ts), consumed by vacation-calc.ts's statutory-minimum floor
   "src/contexts/absence/plugins/carryover-warning.ts": "abwesenheiten", // BUrlG carry-over expiry reminders over LeaveEntitlement
   "src/contexts/absence/plugins/vocational-school-generator.ts": "abwesenheiten", // cron wrapper around utils/vocational-school-generator.ts's Absence generation
+  "src/contexts/absence/plugins/employment-exit-decorate.ts": "abwesenheiten", // Issue #614 — composition-root decoration plugin exposing employment-exit.ts as app.absenceExit
+  "src/contexts/absence/employment-exit.ts": "abwesenheiten", // Issue #614 (D-02) — the one rule that ends a person's absences after the exit day on anonymization; writes LeaveRequest/Absence/LeaveEntitlement
+  "src/contexts/absence/leave-correction.ts": "abwesenheiten", // Issue #614 — correction core extracted from the /correct route (plan/apply/finish behind an audit port); writes LeaveRequest/LeaveEntitlement
+  "src/contexts/absence/overtime-comp-minutes.ts": "abwesenheiten", // Issue #614 — the Überstundenausgleich amount rule moved out of the leave route; read-only over the stored minutes and the schedule
+  "src/contexts/absence/ensure-leave-type.ts": "abwesenheiten", // Issue #614 — find-or-create of a LeaveType by code for the correction core; LeaveType belongs to Abwesenheiten
   "src/contexts/absence/bs-leave-days.ts": "abwesenheiten", // Issue #448 — BS-vs-leave rule, reads Absence through the A6 facade (getVocationalSchoolDays)
   "src/contexts/absence/bs-leave-correction.ts": "abwesenheiten", // Issue #448 (D-04) — writes LeaveRequest/LeaveEntitlement primarily; notification.create is a side effect
   "src/contexts/absence/bs-slot-resolver.ts": "abwesenheiten", // Berufsschule (VOCATIONAL_SCHOOL Absence) time-slot resolution

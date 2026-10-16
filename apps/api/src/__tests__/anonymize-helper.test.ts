@@ -25,12 +25,17 @@ import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData } from "./setup";
 import { anonymizeEmployeeData } from "../contexts/platform/anonymize";
 
+// Issue #614 (D-01): the caller decides the exit day; any UTC-midnight day serves the helper tests.
+const EXIT_DAY = new Date("2026-03-10T00:00:00Z");
+const OTHER_EXIT_DAY = new Date("2026-04-20T00:00:00Z");
+
 describe("anonymizeEmployeeData (helper)", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
 
   let employeeId: string;
   let userId: string;
+  let employeeNumber: string;
   let timeEntryId: string;
   let leaveRequestId: string;
   let absenceId: string;
@@ -55,6 +60,7 @@ describe("anonymizeEmployeeData (helper)", () => {
       },
     });
     userId = user.id;
+    employeeNumber = `ANON-${suffix}`;
 
     const employee = await app.prisma.employee.create({
       data: {
@@ -183,7 +189,7 @@ describe("anonymizeEmployeeData (helper)", () => {
     }
   });
 
-  it("anonymizes Employee PII (firstName, lastName, employeeNumber, nfcCardId) and preserves retention row counts", async () => {
+  it("anonymizes Employee PII (firstName, lastName, nfcCardId), keeps the employee number and preserves retention row counts", async () => {
     // Snapshot row counts before — assertions cover the test target only,
     // so we count for the target's employeeId/userId. Helper does NOT touch
     // other employees, so global counts would also work but per-employee
@@ -191,7 +197,7 @@ describe("anonymizeEmployeeData (helper)", () => {
     const before = await collectCounts(app, employeeId, userId);
 
     await app.prisma.$transaction(async (tx) => {
-      await anonymizeEmployeeData({ tx, employeeId });
+      await anonymizeEmployeeData({ tx, employeeId, exitDayIfUnset: EXIT_DAY });
     });
 
     // (1) Employee PII anonymized
@@ -199,7 +205,10 @@ describe("anonymizeEmployeeData (helper)", () => {
     expect(emp).not.toBeNull();
     expect(emp!.firstName).toBe("Gelöscht");
     expect(emp!.lastName).toMatch(/^GELÖSCHT-/);
-    expect(emp!.employeeNumber).toMatch(/^GELÖSCHT-/);
+    // Issue #614 (D-03, owner decision 16.10.2026): the employee number is KEPT (§ 41 EStG, § 147 AO,
+    // Art. 17 Abs. 3 lit. b DSGVO). It used to be overwritten with the anonymized label.
+    expect(emp!.employeeNumber).toBe(employeeNumber);
+    expect(emp!.lastName).toBe(`GELÖSCHT-${employeeNumber}`);
     expect(emp!.nfcCardId).toBeNull();
 
     // (2) User deactivated + anonymized
@@ -241,6 +250,56 @@ describe("anonymizeEmployeeData (helper)", () => {
     expect(after.absences).toBe(before.absences);
     expect(after.schedules).toBe(before.schedules);
     expect(after.overtimeAccounts).toBe(before.overtimeAccounts);
+  });
+
+  describe("exit date (Issue #614, D-01)", () => {
+    async function throwawayEmployee(exitDate: Date | null) {
+      const suffix = crypto.randomUUID().slice(0, 8);
+      const user = await app.prisma.user.create({
+        data: {
+          email: `exit-${suffix}@example.invalid`,
+          passwordHash: "x",
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      return app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          firstName: "Exit614",
+          lastName: "Fixture",
+          employeeNumber: `EX-${suffix}`,
+          hireDate: new Date("2024-01-01"),
+          exitDate,
+        },
+      });
+    }
+
+    it("sets the exit date to the passed day when it was empty and reports before/after", async () => {
+      const emp = await throwawayEmployee(null);
+      const result = await app.prisma.$transaction((tx) =>
+        anonymizeEmployeeData({ tx, employeeId: emp.id, exitDayIfUnset: EXIT_DAY }),
+      );
+      expect(result.exitDate.before).toBeNull();
+      expect(result.exitDate.after.toISOString()).toBe(EXIT_DAY.toISOString());
+      const stored = await app.prisma.employee.findUniqueOrThrow({ where: { id: emp.id } });
+      expect(stored.exitDate!.toISOString()).toBe(EXIT_DAY.toISOString());
+    });
+
+    it("leaves a stored exit date unchanged, also on a second call with another day", async () => {
+      const emp = await throwawayEmployee(null);
+      await app.prisma.$transaction((tx) =>
+        anonymizeEmployeeData({ tx, employeeId: emp.id, exitDayIfUnset: EXIT_DAY }),
+      );
+      const second = await app.prisma.$transaction((tx) =>
+        anonymizeEmployeeData({ tx, employeeId: emp.id, exitDayIfUnset: OTHER_EXIT_DAY }),
+      );
+      expect(second.exitDate.before!.toISOString()).toBe(EXIT_DAY.toISOString());
+      expect(second.exitDate.after.toISOString()).toBe(EXIT_DAY.toISOString());
+      const stored = await app.prisma.employee.findUniqueOrThrow({ where: { id: emp.id } });
+      expect(stored.exitDate!.toISOString()).toBe(EXIT_DAY.toISOString());
+    });
   });
 
   /**

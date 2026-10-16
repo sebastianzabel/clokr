@@ -211,21 +211,25 @@ sowohl `computeRegularVacationDays()` als auch der Mindesturlaubs-Schwellenwert 
 
 Mitarbeiter werden **anonymisiert, nicht hard-gelöscht** (siehe `CLAUDE.md` „DSGVO Employee Deletion = Anonymization"):
 
-| Feld                                                  | Anonymisierung                                         |
-| ----------------------------------------------------- | ------------------------------------------------------ |
-| `Employee.firstName`                                  | „Gelöscht"                                             |
-| `Employee.lastName`, `employeeNumber`                 | „GELÖSCHT-XXX"                                         |
-| `Employee.nfcCardId`, `wifiMacs`                      | `null` / `[]`                                          |
-| `User.email`                                          | anonymisiert (`gelöscht-<hash>@anon.local`)            |
-| `User.passwordHash`, `isActive`                       | `"ANONYMIZED"`, `false`                                |
-| `TimeEntry.note`, `LeaveRequest.note`, `Absence.note` | `null`                                                 |
-| `Absence.documentPath`                                | `null` (Dateien im S3 gelöscht)                        |
-| `Invitation`, `OtpCode`, `RefreshToken`               | hart gelöscht (nicht aufbewahrungspflichtig)           |
-| `AuditLog.userId`                                     | `null` (anonymisiert, nicht gelöscht — Audit-Pflicht!) |
+| Feld                                                  | Anonymisierung                                           |
+| ----------------------------------------------------- | -------------------------------------------------------- |
+| `Employee.firstName`                                  | „Gelöscht"                                               |
+| `Employee.lastName`                                   | „GELÖSCHT-XXX"                                           |
+| `Employee.employeeNumber`                             | bleibt erhalten und im Mandanten reserviert (Issue #614) |
+| `Employee.exitDate`                                   | wird gesetzt, wenn leer (Issue #614)                     |
+| `Employee.nfcCardId`, `wifiMacs`                      | `null` / `[]`                                            |
+| `User.email`                                          | anonymisiert (`gelöscht-<hash>@anon.local`)              |
+| `User.passwordHash`, `isActive`                       | `"ANONYMIZED"`, `false`                                  |
+| `TimeEntry.note`, `LeaveRequest.note`, `Absence.note` | `null`                                                   |
+| `Absence.documentPath`                                | `null` (Dateien im S3 gelöscht)                          |
+| `Invitation`, `OtpCode`, `RefreshToken`               | hart gelöscht (nicht aufbewahrungspflichtig)             |
+| `AuditLog.userId`                                     | `null` (anonymisiert, nicht gelöscht — Audit-Pflicht!)   |
 
 **Erhalten bleiben** (gesetzliche Aufbewahrungspflicht):
 
 - TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount, SaldoSnapshots
+
+**Die Anonymisierung beendet die Beschäftigung** (Issue #614): Ein leeres Austrittsdatum wird auf den Tag der Anonymisierung gesetzt; Urlaube und Berufsschultage nach dem Austritt werden storniert bzw. gekürzt, abgeschlossene Monate bleiben unverändert. Die Personalnummer bleibt erhalten (§ 41 EStG, § 147 AO), damit die Lohnabrechnung Korrekturen alter Monate zuordnen kann.
 
 ### Art. 6 Abs. 1 lit. a — Einwilligung (WiFi-Presence)
 
