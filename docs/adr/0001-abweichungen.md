@@ -4101,7 +4101,7 @@ zwei Salons als eigener Zeiteintrag der Art `TRAVEL` erfasst, und:
   Ids der Einträge und die Nettominuten; eine schon erteilte `DayBreakAck` für diesen Tag wird dadurch veraltet und muss
   neu erteilt werden (der bestehende Mechanismus, keine neue Regel).
 - Der Satz „Kein Fahrzeitmodell (#92)“ ist **überholt**; das Folge-Issue für ein Angebot „Lücke als Fahrzeit erfassen“ ist
-  #FOLGEISSUE.
+  #660.
 
 ## Y — Betreiberkonto oberhalb des Mandanten und Mandantenverwaltung (Phase 88, Issue #88)
 
@@ -5106,7 +5106,7 @@ verschiedenen Salons. Die Fahrt dazwischen ist Arbeitszeit, hatte aber keinen Or
   Zeilen, Plan 92b-01). Ein Tag mit Fahrzeit und ohne Pause über 6 Stunden wird damit ein **eindeutiger** Befund
   (`BREAK_TOO_SHORT`); `MAX_DAILY_EXCEEDED` entsteht bei 630 Minuten (5 h + 30 Min + 5 h).
 - Eine **nicht erfasste** Lücke bleibt die Klärungsfrage „Fahrzeit oder Pause?“ (Grenzfall-Rechnung). Das System erkennt
-  eine Fahrt nicht selbst; ein Angebot „Lücke als Fahrzeit erfassen“ ist das Folge-Issue #FOLGEISSUE.
+  eine Fahrt nicht selbst; ein Angebot „Lücke als Fahrzeit erfassen“ ist das Folge-Issue #660.
 - **Das Erfassen, Ändern oder Löschen einer Fahrzeit ändert den Tagesstand.** Der Schnappschuss einer Quittung
   (`DayBreakAck`) enthält die Ids der Einträge und die Nettominuten des Tages (`DaySnapshot`, D-17 des Tageskerns). Eine
   schon erteilte Quittung für diesen Tag wird dadurch **veraltet** und muss neu erteilt werden; das ist der bestehende
@@ -5185,7 +5185,7 @@ gestellt (die Seite zeigt einen Text statt des Zeitnachtrag-Formulars). Mandante
 
 - **Kein Geld:** keine Kilometer-, Reisekosten- oder Spesenabrechnung; **keine Standorterkennung**; **keine Wegezeit**
   Wohnung ↔ Salon.
-- **Kein Lücken-Angebot:** „Als Fahrzeit erfassen“ für eine nicht aufgelöste Lücke (D-08, nur Folge-Issue #FOLGEISSUE).
+- **Kein Lücken-Angebot:** „Als Fahrzeit erfassen“ für eine nicht aufgelöste Lücke (D-08, nur Folge-Issue #660).
 - **Keine Fahrzeit als Zeitnachtrag** (409 `TRAVEL_NOT_AS_RETRO_REQUEST`; solange ein Zeitnachtrag je Tag gilt, Folge-Issue
   #657). **Keine Fahrzeit per CSV-Import oder Stempelereignis.**
 - **Berichte, PDFs, DATEV und Dashboard** zeigen die Fahrzeit als gewöhnliche Arbeitszeitzeile; es gibt weder eine eigene
