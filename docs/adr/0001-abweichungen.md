@@ -4854,7 +4854,7 @@ Bei mehreren Einträgen eines Tages ist der **Salon des Eintrags mit dem frühes
 Der Zeitnachtrag bleibt vorerst **ein Antrag je Mitarbeiter und Tag** (Owner-Entscheidung). Ein ausstehender Antrag
 des heutigen Tages blockiert weiterhin das Stempeln (`RETRO_PENDING`). Die Freigabe mit korrigierten Zeiten sperrt die
 Mitarbeiterzeile und prüft die Überschneidung in derselben Transaktion; bei einem Treffer bleibt der Antrag `PENDING`
-und nichts wird geschrieben. Folge-Issue: #ZEITNACHTRAG-FOLGEISSUE (Antrag je Eintrag).
+und nichts wird geschrieben. Folge-Issue: #657 (Antrag je Eintrag).
 
 ### Oberfläche
 
