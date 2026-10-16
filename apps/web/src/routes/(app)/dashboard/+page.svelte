@@ -1319,6 +1319,15 @@
         body: "Sobald du startest, wird die Pausenpflicht hier angezeigt.",
       };
     }
+    // Issue #70: with several entries the § 4 verdict belongs to the whole day (breaks between
+    // entries in the same salon count, gaps between salons do not) and is decided by the server —
+    // a verdict computed here from the day sums would be wrong in both directions.
+    if (multiRowDay) {
+      return {
+        title: "Mehrere Einträge heute.",
+        body: "Die Pausenprüfung nach § 4 ArbZG bewertet den ganzen Tag; Hinweise erscheinen beim Ausstempeln.",
+      };
+    }
     const workedHours = entryWorkedMin / 60;
     if (workedHours < 6) {
       const need = Math.max(0, 30 - entryBreakMin);
@@ -1563,7 +1572,7 @@
         <CardHeader
           title="Heutiger Eintrag"
           sub={entryCount
-            ? `${format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })} · ${entryCount}`
+            ? `${format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })} · ${entryCount.replaceAll(" ", "\u00A0")}`
             : format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })}
         >
           {#snippet actions()}
