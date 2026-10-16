@@ -19,16 +19,25 @@
   <p class="salon-scope-label" data-testid="salon-scope-label">{label}</p>
 {/if}
 {#if rejected}
-  <div class="callout" role="status" data-testid="salon-scope-unavailable">
+  <!-- Informational variant: a rejected salon is a calm hint, not a warning (D-04). -->
+  <div class="callout brand salon-scope-calm" role="status" data-testid="salon-scope-unavailable">
     <p>{SALON_VIEW_UNAVAILABLE_TEXT}</p>
   </div>
 {/if}
 
 <style>
   .salon-scope-label {
-    margin: 0;
+    /* Own bottom spacing: the label is a stand-alone line and must not touch the next block. */
+    margin: 0 0 var(--s-3);
     color: var(--text-muted);
     font-size: 0.875rem;
     overflow-wrap: anywhere;
+  }
+  /* The brand variant keeps the informational tint; its own text colour is --brand-light in dark
+     mode, 3.66:1 on the tint (measured, 558-06), so the text takes the body colour instead. The
+     selector out-ranks the global `[data-mode="dark"] .callout.brand` rule on purpose. */
+  .callout.salon-scope-calm {
+    margin-bottom: var(--s-3);
+    color: var(--text);
   }
 </style>

@@ -40,6 +40,16 @@ describe("SalonScopeLabel", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("the calm text is the informational variant, not the warning default (visual check 558-06)", () => {
+    // The default .callout is the warn variant (orange text, 4.06:1 on its tint in light mode); a
+    // rejected salon is a calm hint, so it takes the .brand variant.
+    renderWithTheme(SalonScopeLabel, { label: "Salon: Nord", rejected: true });
+    const calm = screen.getByTestId("salon-scope-unavailable");
+    expect(calm.classList.contains("callout")).toBe(true);
+    expect(calm.classList.contains("brand")).toBe(true);
+    expect(calm.classList.contains("error")).toBe(false);
+  });
+
   it("a rejected salon without a label still shows the calm text and no label line", () => {
     renderWithTheme(SalonScopeLabel, { label: null, rejected: true });
     expect(screen.queryByTestId("salon-scope-label")).toBeNull();
