@@ -17,6 +17,12 @@ import {
   computeRetroLimitStr,
   computeEntryAgeInDays,
 } from "./retro-config"; // Phase 76.29 — RETRO-01 window guard
+import {
+  EntryConflictError,
+  overlapMessageForCaller,
+  type OverlapConflict,
+} from "./entry-overlap-error"; // Issue #70, D-13
+import type { AccessContext } from "../platform"; // Issue #70, D-13 — the caller of the write
 
 // ── Überlappungsprüfung ────────────────────────────────────────────────────────
 // entryDate (optional): the calendar date of the entry being created/updated.
@@ -28,9 +34,8 @@ import {
 // Closed entries that legitimately span midnight are still caught by the
 // { endTime: { gt: startTime } } branch, which is not date-scoped.
 //
-// tz (optional): tenant timezone used to format the conflict message. The server
-// container runs in UTC, so without it the message printed times in UTC with no
-// date — making a cross-month conflict impossible for the user to identify.
+// Returns the conflicting entry (or null). Wording the 409 is NOT done here: since Issue #70 the
+// text depends on who asks (`overlapMessageForCaller` in ./entry-overlap-error.ts, D-13).
 // Prisma client shape shared by `app.prisma` (top-level) and the `tx` handle inside
 // `$transaction(async (tx) => ...)` — lets checkOverlap / checkEntryConflicts run
 // against either, which the grant-consumption race fix (retro-grant-race-403-vs-409)
@@ -44,8 +49,7 @@ export async function checkOverlap(
   endTime: Date | null,
   excludeId?: string,
   entryDate?: Date,
-  tz?: string,
-): Promise<string | null> {
+): Promise<OverlapConflict | null> {
   // Kein endTime = offener Eintrag → als "läuft noch" behandeln
   const effectiveEnd = endTime ?? new Date("9999-12-31");
 
@@ -55,7 +59,10 @@ export async function checkOverlap(
     ? { endTime: null, date: entryDate }
     : { endTime: null };
 
-  const overlapping = await db.timeEntry.findFirst({
+  // Soft-deleted entries free their interval (deletedAt: null), exactly like the database
+  // exclusion constraint. The caller words the conflict (`overlapMessageForCaller`), because the
+  // wording depends on who is asking.
+  return db.timeEntry.findFirst({
     where: {
       employeeId,
       deletedAt: null,
@@ -66,26 +73,47 @@ export async function checkOverlap(
         { endTime: { gt: startTime } }, // abgeschlossener Eintrag endet nach neuem Start
       ],
     },
+    select: { id: true, date: true, startTime: true, endTime: true },
   });
+}
 
-  if (!overlapping) return null;
-
-  // Include the date (and format in the tenant tz) so the user can identify the
-  // conflicting entry — critical when it is a stale open entry from another day.
-  const dateOpts: Intl.DateTimeFormatOptions = {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    ...(tz ? { timeZone: tz } : {}),
-  };
-  const timeOpts: Intl.DateTimeFormatOptions = {
-    hour: "2-digit",
-    minute: "2-digit",
-    ...(tz ? { timeZone: tz } : {}),
-  };
-  const dateLabel = overlapping.startTime.toLocaleDateString("de-DE", dateOpts);
-  const fmt = (d: Date | null) => (d ? d.toLocaleTimeString("de-DE", timeOpts) : "läuft");
-  return `Überschneidung mit bestehendem Eintrag vom ${dateLabel} (${fmt(overlapping.startTime)} – ${fmt(overlapping.endTime)})`;
+// The in-transaction overlap re-check of every manual writer (Issue #70, D-10). Runs AFTER
+// `lockEmployeeForEntryWrite(tx, …)`, so it sees every committed row of a racing writer of the
+// same employee; throws `EntryConflictError` (the route answers 409) carrying the text worded by
+// the caller's reach (D-13). The date scoping of open entries is `checkOverlap`'s own.
+export async function recheckOverlapInTx(
+  tx: Prisma.TransactionClient,
+  params: {
+    tenantId: string;
+    employeeId: string;
+    newStart: Date;
+    newEnd: Date | null;
+    date: Date;
+    tz: string;
+    excludeEntryId?: string;
+    callerEmployeeId: string | null;
+    access: AccessContext;
+  },
+): Promise<void> {
+  const conflict = await checkOverlap(
+    tx,
+    params.employeeId,
+    params.newStart,
+    params.newEnd,
+    params.excludeEntryId,
+    params.date,
+  );
+  if (!conflict) return;
+  throw new EntryConflictError(
+    await overlapMessageForCaller(tx, {
+      conflict,
+      tz: params.tz,
+      tenantId: params.tenantId,
+      employeeId: params.employeeId,
+      callerEmployeeId: params.callerEmployeeId,
+      access: params.access,
+    }),
+  );
 }
 
 // Shared time-entry invariants enforced by POST /time-entries, PUT /time-entries/:id
@@ -113,6 +141,11 @@ export async function validateTimeEntryInvariants(
     newEnd: Date | null;
     tz: string;
     tenantId: string;
+    // Issue #70, D-13: who is writing — the overlap text is worded by the caller's reach
+    // (`overlapMessageForCaller`). Required so no caller can forget it.
+    access: AccessContext;
+    /** The caller's own employee id; `null` for an actor without one (API key). */
+    callerEmployeeId: string | null;
     excludeEntryId?: string;
     isCorrectionByManager?: boolean; // skip retro-window guard for manager-on-behalf edits
     grantId?: string; // approved RetroEntryRequest id — Plan 03 wires consumption
@@ -133,7 +166,13 @@ export async function validateTimeEntryInvariants(
     // existing row by id (excludeEntryId) and re-checks overlap inside its own transaction.
     deferConflictChecksToTx?: boolean;
   },
-): Promise<{ error: string; windowDays?: number; entryAgeInDays?: number } | null> {
+): Promise<{
+  error: string;
+  windowDays?: number;
+  entryAgeInDays?: number;
+  /** Set when `error` is an overlap: the conflicting entry (the text is already worded by reach). */
+  overlap?: OverlapConflict;
+} | null> {
   const {
     employeeId,
     date,
@@ -146,6 +185,8 @@ export async function validateTimeEntryInvariants(
     grantId,
     isOwnPendingEdit,
     deferConflictChecksToTx,
+    access,
+    callerEmployeeId,
   } = params;
 
   // 1. month-lock via SaldoSnapshot (mirror POST) — authoritative even with no entries.
@@ -181,10 +222,19 @@ export async function validateTimeEntryInvariants(
       newEnd,
       excludeEntryId,
       date,
-      tz,
     );
     if (overlap) {
-      return { error: overlap };
+      return {
+        error: await overlapMessageForCaller(app.prisma, {
+          conflict: overlap,
+          tz,
+          tenantId,
+          employeeId,
+          callerEmployeeId,
+          access,
+        }),
+        overlap,
+      };
     }
   }
 

@@ -17,7 +17,9 @@
 //    range constructor. It is NOT an overlap and deliberately NOT mapped here: it is unreachable
 //    through the API (every writer validates end > start) and must stay a visible server error.
 
+import type { Prisma } from "@clokr/db";
 import { uniqueViolationTarget } from "../../utils/prisma-unique-violation";
+import { resolveAccessReach, scopedTimeEntryIds, type AccessContext } from "../platform";
 
 /** The exclusion constraint of closed, non-deleted entries (migration `*_time_entry_no_overlap`). */
 const OVERLAP_CONSTRAINT = "TimeEntry_no_overlap_closed";
@@ -45,4 +47,92 @@ export function isEntryOverlapViolation(err: unknown): boolean {
 export function isOpenEntryPerDayViolation(err: unknown): boolean {
   const target = uniqueViolationTarget(err);
   return target !== null && target.includes(OPEN_PER_DAY_INDEX);
+}
+
+/** The entry an overlap check found: just enough to word the message and to judge the reach. */
+export interface OverlapConflict {
+  id: string;
+  /** `@db.Date` calendar day of the conflicting entry (UTC midnight). */
+  date: Date;
+  startTime: Date;
+  endTime: Date | null;
+}
+
+/**
+ * Thrown inside a writer's transaction when the in-transaction overlap re-check finds a conflict;
+ * the route maps it to a 409 carrying `userMessage`. A typed error, so no catch classifies by
+ * reading `err.message`.
+ */
+export class EntryConflictError extends Error {
+  constructor(readonly userMessage: string) {
+    super("ENTRY_CONFLICT");
+    this.name = "EntryConflictError";
+  }
+}
+
+/**
+ * The DETAILED overlap text: date and times of the conflicting entry in the tenant time zone
+ * (without `tz` the server zone applies — the legacy fallback of `checkOverlap`). The wording is
+ * byte-identical to the one that lived inside `checkOverlap` before Issue #70.
+ */
+export function overlapConflictMessage(conflict: OverlapConflict, tz?: string): string {
+  // Include the date (and format in the tenant tz) so the user can identify the
+  // conflicting entry — critical when it is a stale open entry from another day.
+  const dateOpts: Intl.DateTimeFormatOptions = {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    ...(tz ? { timeZone: tz } : {}),
+  };
+  const timeOpts: Intl.DateTimeFormatOptions = {
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(tz ? { timeZone: tz } : {}),
+  };
+  const dateLabel = conflict.startTime.toLocaleDateString("de-DE", dateOpts);
+  const fmt = (d: Date | null) => (d ? d.toLocaleTimeString("de-DE", timeOpts) : "läuft");
+  return `Überschneidung mit bestehendem Eintrag vom ${dateLabel} (${fmt(conflict.startTime)} – ${fmt(conflict.endTime)})`;
+}
+
+export interface OverlapMessageInput {
+  conflict: OverlapConflict;
+  tz?: string;
+  tenantId: string;
+  /** The person the entry is written for. */
+  employeeId: string;
+  /** The caller's own employee id; `null` for an actor without one (API key). */
+  callerEmployeeId: string | null;
+  access: AccessContext;
+}
+
+/**
+ * The ONE place that decides how an overlap 409 is worded (Issue #70, D-13). The detailed text
+ * names the date and times of the conflicting entry — and with several entries per day, possibly
+ * of an entry in a salon the caller cannot see, so that wording is a disclosure. It is therefore
+ * given only to the person themself, to a whole-tenant `time-entry:read` reader, and to a reader
+ * whose `time-entry:read:ZUGEWIESEN` reach contains the conflicting entry; every other caller gets
+ * `OVERLAP_MESSAGE_NEUTRAL`, which confirms that a conflict exists (the writer needs that to
+ * proceed) and nothing else. Same rule and same building blocks as `warningsVisibleToCaller()`
+ * (DSGVO Art. 5 Abs. 1 lit. c, data minimisation). A database-level refusal carries no conflicting
+ * row and is always neutral.
+ */
+export async function overlapMessageForCaller(
+  db: Prisma.TransactionClient,
+  input: OverlapMessageInput,
+): Promise<string> {
+  const detailed = overlapConflictMessage(input.conflict, input.tz);
+  if (input.callerEmployeeId !== null && input.callerEmployeeId === input.employeeId) {
+    return detailed;
+  }
+  const reach = await resolveAccessReach(db, input.access, "time-entry:read:ZUGEWIESEN");
+  if (reach.kind === "wholeTenant") return detailed;
+  const scoped = await scopedTimeEntryIds(
+    db,
+    input.tenantId,
+    reach,
+    input.conflict.date,
+    input.conflict.date,
+  );
+  if (scoped === "all" || scoped.includes(input.conflict.id)) return detailed;
+  return OVERLAP_MESSAGE_NEUTRAL;
 }

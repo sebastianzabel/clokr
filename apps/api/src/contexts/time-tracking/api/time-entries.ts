@@ -73,16 +73,30 @@ import {
 // later wave converts them to import from the owning context's index.ts.
 import {
   checkOverlap,
+  recheckOverlapInTx,
   validateTimeEntryInvariants,
   getEffectiveSchedule,
 } from "../entry-invariants";
 import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
 import {
+  EntryConflictError,
   isEntryOverlapViolation,
   isOpenEntryPerDayViolation,
+  overlapMessageForCaller,
   OVERLAP_MESSAGE_NEUTRAL,
   OPEN_ENTRY_PER_DAY_MESSAGE,
-} from "../entry-overlap-error"; // Issue #70 (D-10)
+} from "../entry-overlap-error"; // Issue #70 (D-10, D-13)
+
+/**
+ * Thrown inside a grant-consuming transaction when the single-use grant was already flipped by a
+ * concurrent writer; the route answers 403. Typed, so no catch classifies by `err.message`.
+ */
+class GrantAlreadyUsedError extends Error {
+  constructor() {
+    super("GRANT_ALREADY_USED");
+    this.name = "GrantAlreadyUsedError";
+  }
+}
 
 export { validateTimeEntryInvariants, getEffectiveSchedule };
 export { updateOvertimeAccount, computeOvertimeBalanceBreakdown, computeOvertimeBalanceHours };
@@ -1412,6 +1426,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         newEnd,
         tz,
         tenantId: user.tenantId,
+        access: accessContextFromRequest(req), // Issue #70, D-13 — the overlap text follows the reach
+        callerEmployeeId: user.employeeId ?? null,
         isCorrectionByManager: postIsCorrectionByManager,
         grantId: resolvedGrantId,
         // Grant race fix: defer the one-per-day + overlap checks to the $transaction
@@ -1576,17 +1592,21 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           // Atomic: create entry + flip grant APPROVED → USED in one transaction.
           const grantIdForTx = resolvedGrantId;
           const result = await app.prisma.$transaction(async (tx) => {
-            // Conditional flip FIRST: only succeeds if still APPROVED (single-use guard).
-            // This must run before the TimeEntry create so the grant is the authoritative
-            // discriminator for concurrent same-day writes — otherwise the loser can fail
-            // on the (employeeId,date) unique index (P2002 -> 409) before the grant guard
-            // ever gets a chance to reject it with 403.
+            // Issue #70 (D-10): the Employee row lock comes FIRST — uniform lock order for every
+            // interval writer. A losing request waits here, then still meets the already-flipped
+            // grant below and gets its 403 (the grant stays the authoritative discriminator).
+            await lockEmployeeForEntryWrite(tx, user.tenantId, employeeId);
+
+            // Conditional flip: only succeeds if still APPROVED (single-use guard). It runs before
+            // the TimeEntry create so the grant is the authoritative discriminator for concurrent
+            // same-grant writes — otherwise the loser could fail on the overlap check (409) before
+            // the grant guard ever gets a chance to reject it with 403.
             const consumed = await tx.retroEntryRequest.updateMany({
               where: { id: grantIdForTx, status: "APPROVED" },
               data: { status: "USED" },
             });
             if (consumed.count !== 1) {
-              throw new Error("GRANT_ALREADY_USED");
+              throw new GrantAlreadyUsedError();
             }
 
             // Re-run the overlap check against `tx` now that this request has exclusively won
@@ -1594,19 +1614,16 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             // reaches this point, so this catches genuinely unrelated conflicts (e.g. a
             // different, non-grant write to the same interval) rather than the grant race
             // itself — the database exclusion constraint remains the final backstop.
-            const conflictDate = new Date(body.date);
-            const overlapTx = await checkOverlap(
-              tx,
+            await recheckOverlapInTx(tx, {
+              tenantId: user.tenantId,
               employeeId,
               newStart,
               newEnd,
-              undefined,
-              conflictDate,
+              date: new Date(body.date),
               tz,
-            );
-            if (overlapTx) {
-              throw new Error(`ENTRY_CONFLICT:${overlapTx}`);
-            }
+              callerEmployeeId: user.employeeId ?? null,
+              access: accessContextFromRequest(req),
+            });
 
             const created = await tx.timeEntry.create({
               data: {
@@ -1651,6 +1668,21 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           // for the request. Reuses the SAME try/catch as the plain path — a P2002 on
           // the (employeeId,date) unique index maps to the existing 409 below.
           const result = await app.prisma.$transaction(async (tx) => {
+            // Issue #70 (D-10): lock first, then re-check overlap BEFORE the request and the coupled
+            // entry exist — the pre-tx invariant returns early on RETRO_WINDOW_EXCEEDED and never
+            // reached its own overlap step for this path, so this is the only application check.
+            // A conflict rolls the transaction back: no RetroEntryRequest row, no entry.
+            await lockEmployeeForEntryWrite(tx, user.tenantId, employeeId);
+            await recheckOverlapInTx(tx, {
+              tenantId: user.tenantId,
+              employeeId,
+              newStart,
+              newEnd,
+              date: new Date(body.date),
+              tz,
+              callerEmployeeId: user.employeeId ?? null,
+              access: accessContextFromRequest(req),
+            });
             const request = await tx.retroEntryRequest.create({
               data: {
                 employeeId,
@@ -1699,18 +1731,16 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           // authoritative one, and the exclusion constraint is the backstop behind it.
           entry = await app.prisma.$transaction(async (tx) => {
             await lockEmployeeForEntryWrite(tx, user.tenantId, employeeId);
-            const overlapTx = await checkOverlap(
-              tx,
+            await recheckOverlapInTx(tx, {
+              tenantId: user.tenantId,
               employeeId,
               newStart,
               newEnd,
-              undefined,
-              new Date(body.date),
+              date: new Date(body.date),
               tz,
-            );
-            if (overlapTx) {
-              throw new Error(`ENTRY_CONFLICT:${overlapTx}`);
-            }
+              callerEmployeeId: user.employeeId ?? null,
+              access: accessContextFromRequest(req),
+            });
             return tx.timeEntry.create({
               data: {
                 employeeId,
@@ -1733,13 +1763,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       } catch (err: unknown) {
         // Grant already consumed (concurrent race) → 403
-        if (err instanceof Error && err.message === "GRANT_ALREADY_USED") {
+        if (err instanceof GrantAlreadyUsedError) {
           return reply.code(403).send({ error: "Antrag bereits verwendet oder ungültig" });
         }
-        // Overlap re-checked inside the transaction (grant branch after the flip, plain branch
-        // under the Employee row lock) → 409.
-        if (err instanceof Error && err.message.startsWith("ENTRY_CONFLICT:")) {
-          return reply.code(409).send({ error: err.message.slice("ENTRY_CONFLICT:".length) });
+        // Overlap re-checked inside the transaction (grant branch after the flip, Nachtrag and
+        // plain branch under the Employee row lock), worded by the caller's reach → 409.
+        if (err instanceof EntryConflictError) {
+          return reply.code(409).send({ error: err.userMessage });
         }
         // Issue #70 (D-10): the database refused a write the application checks did not catch
         // (a writer that raced past them, or a path outside the Employee row lock). Both are a
@@ -2091,6 +2121,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         newEnd: updatedEnd,
         tz: overlapTz,
         tenantId: existing.employee.tenantId,
+        access: accessContextFromRequest(req), // Issue #70, D-13 — the overlap text follows the reach
+        callerEmployeeId: user.employeeId ?? null,
         excludeEntryId: id,
         isCorrectionByManager: putIsCorrectionByManager,
         grantId: putResolvedGrantId,
@@ -2239,8 +2271,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         activityPatch.activityShares = activitySharesReplace(body.activityShares);
       }
 
-      // Handle break slots update (non-grant path: runs before the update, as before)
-      // For the grant path, break-slots are handled inside the $transaction below.
+      // Handle break slots update. Issue #70 (D-10): BOTH paths now replace the Break rows inside
+      // the same transaction as the entry update (below), after the Employee row lock and the
+      // overlap re-check — a request that loses a race on the interval must not leave rewritten
+      // breaks behind on an entry that kept its old times.
       let newBreakSlotsForTx: { timeEntryId: string; startTime: Date; endTime: Date }[] | undefined;
       if (body.breaks) {
         const newBreakSlots = body.breaks.map((b) => ({
@@ -2261,16 +2295,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             newBreakSlots.map((b) => ({ startTime: b.startTime, endTime: b.endTime })),
           ),
         );
-        if (putResolvedGrantId) {
-          // Defer to the tx below so the whole correction is atomic
-          newBreakSlotsForTx = newBreakSlots;
-        } else {
-          // Non-grant path: delete existing breaks and create new ones outside tx (as before)
-          await app.prisma.break.deleteMany({ where: { timeEntryId: id } });
-          if (newBreakSlots.length > 0) {
-            await app.prisma.break.createMany({ data: newBreakSlots });
-          }
-        }
+        newBreakSlotsForTx = newBreakSlots;
       }
 
       // Built AFTER the break-slot block above, which still writes `patch.breakMinutes`.
@@ -2278,63 +2303,52 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // Phase 76.29.1 Plan 02 — race-safe single-use grant consumption on PUT.
       // When a putResolvedGrantId is present, the TimeEntry update + grant flip + audit run
-      // inside one $transaction, mirroring the POST grant path (~:1095–1134).
+      // inside one $transaction, mirroring the POST grant path.
       // The conditional updateMany (WHERE status=APPROVED) ensures exactly one concurrent PUT
-      // wins — if count !== 1 the tx rolls back (GRANT_ALREADY_USED → 403).
-      // Break-slot mutations are also pulled into the tx so the entire correction is atomic.
-      // When no grant: keep the existing non-transactional update path byte-identical.
+      // wins — if count !== 1 the tx rolls back (GrantAlreadyUsedError → 403).
+      // Issue #70 (D-10): EVERY PUT now writes inside a transaction whose FIRST statement is the
+      // Employee row lock; it then re-checks overlap (excluding this entry, at the new date and
+      // times) and only then replaces the breaks and updates the entry. The pre-tx
+      // `validateTimeEntryInvariants` above stays the cheap early answer.
+      const putEffectiveDate = overlapDate;
       let updated: Awaited<ReturnType<typeof app.prisma.timeEntry.update>>;
       try {
-        if (putResolvedGrantId) {
-          const grantIdForTx = putResolvedGrantId;
-          const effectiveDateStr = dateStrInTz(overlapDate, overlapTz);
-          const result = await app.prisma.$transaction(async (tx) => {
-            // Break-slot replacement inside the tx (atomic with the update)
-            if (newBreakSlotsForTx !== undefined) {
-              await tx.break.deleteMany({ where: { timeEntryId: id } });
-              if (newBreakSlotsForTx.length > 0) {
-                await tx.break.createMany({ data: newBreakSlotsForTx });
-              }
-            }
+        updated = await app.prisma.$transaction(async (tx) => {
+          await lockEmployeeForEntryWrite(tx, user.tenantId, existing.employeeId);
 
-            const txUpdated = await tx.timeEntry.update({
-              where: { id },
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              data: putData as any,
-              include: {
-                breaks: { orderBy: { startTime: "asc" } },
-                activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
-              },
-            });
-
-            // Conditional flip: only succeeds if still APPROVED (single-use guard).
+          if (putResolvedGrantId) {
+            // Conditional flip FIRST after the lock: only succeeds if still APPROVED (single-use
+            // guard), so a losing same-grant request is rejected with 403 before any conflict check.
             const consumed = await tx.retroEntryRequest.updateMany({
-              where: { id: grantIdForTx, status: "APPROVED" },
+              where: { id: putResolvedGrantId, status: "APPROVED" },
               data: { status: "USED" },
             });
             if (consumed.count !== 1) {
-              throw new Error("GRANT_ALREADY_USED");
+              throw new GrantAlreadyUsedError();
             }
+          }
 
-            await app.audit({
-              userId: user.sub,
-              action: "RETRO_ENTRY_APPROVED_USED",
-              entity: "RetroEntryRequest",
-              entityId: grantIdForTx,
-              oldValue: { status: "APPROVED" },
-              newValue: {
-                timeEntryId: id,
-                employeeId: existing.employeeId,
-                date: effectiveDateStr,
-              },
-              tx,
-            });
-
-            return txUpdated;
+          await recheckOverlapInTx(tx, {
+            tenantId: user.tenantId,
+            employeeId: existing.employeeId,
+            newStart: updatedStart,
+            newEnd: updatedEnd,
+            date: putEffectiveDate,
+            tz: overlapTz,
+            excludeEntryId: id,
+            callerEmployeeId: user.employeeId ?? null,
+            access: accessContextFromRequest(req),
           });
-          updated = result;
-        } else {
-          updated = await app.prisma.timeEntry.update({
+
+          // Break-slot replacement inside the tx (atomic with the update)
+          if (newBreakSlotsForTx !== undefined) {
+            await tx.break.deleteMany({ where: { timeEntryId: id } });
+            if (newBreakSlotsForTx.length > 0) {
+              await tx.break.createMany({ data: newBreakSlotsForTx });
+            }
+          }
+
+          const txUpdated = await tx.timeEntry.update({
             where: { id },
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             data: putData as any,
@@ -2343,10 +2357,38 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
             },
           });
-        }
+
+          if (putResolvedGrantId) {
+            await app.audit({
+              userId: user.sub,
+              action: "RETRO_ENTRY_APPROVED_USED",
+              entity: "RetroEntryRequest",
+              entityId: putResolvedGrantId,
+              oldValue: { status: "APPROVED" },
+              newValue: {
+                timeEntryId: id,
+                employeeId: existing.employeeId,
+                date: dateStrInTz(putEffectiveDate, overlapTz),
+              },
+              tx,
+            });
+          }
+
+          return txUpdated;
+        });
       } catch (err) {
-        if (err instanceof Error && err.message === "GRANT_ALREADY_USED") {
+        if (err instanceof GrantAlreadyUsedError) {
           return reply.code(403).send({ error: "Antrag bereits verwendet oder ungültig" });
+        }
+        if (err instanceof EntryConflictError) {
+          return reply.code(409).send({ error: err.userMessage });
+        }
+        // Issue #70 (D-10): the database refused what the application checks did not catch.
+        if (isEntryOverlapViolation(err)) {
+          return reply.code(409).send({ error: OVERLAP_MESSAGE_NEUTRAL });
+        }
+        if (isOpenEntryPerDayViolation(err)) {
+          return reply.code(409).send({ error: OPEN_ENTRY_PER_DAY_MESSAGE });
         }
         throw err;
       }
@@ -2558,9 +2600,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           newEnd,
           id,
           existing.date,
-          revalidateTz,
         );
-        if (overlap) return reply.code(409).send({ error: overlap });
+        if (overlap) {
+          // Issue #70 (D-13): the text is worded by the caller's reach, never by the legacy string.
+          return reply.code(409).send({
+            error: await overlapMessageForCaller(app.prisma, {
+              conflict: overlap,
+              tz: revalidateTz,
+              tenantId: user.tenantId,
+              employeeId: existing.employeeId,
+              callerEmployeeId: user.employeeId ?? null,
+              access: accessContextFromRequest(req),
+            }),
+          });
+        }
 
         // Issue #81 (D-05): a correction that shrinks the working time (or reopens the entry) may
         // not leave the shares above it; checked on the resulting state before anything is written.
@@ -2582,14 +2635,52 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
       if ("note" in body) updateData.note = body.note ?? null;
 
-      const updated = await app.prisma.timeEntry.update({
-        where: { id },
-        data: updateData,
-        include: {
-          breaks: { orderBy: { startTime: "asc" } },
-          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
-        },
-      });
+      // Issue #70 (D-10): a correction MOVES the interval, so it is written under the Employee row
+      // lock with the overlap re-checked inside the transaction (the pre-check above is the early
+      // answer); a plain revalidation moves nothing and needs neither. A database refusal that
+      // slipped past is a clean 409, never a 500.
+      const revalidateWriteTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
+      let updated: Awaited<ReturnType<typeof app.prisma.timeEntry.update>>;
+      try {
+        updated = await app.prisma.$transaction(async (tx) => {
+          if (hasCorrection) {
+            await lockEmployeeForEntryWrite(tx, user.tenantId, existing.employeeId);
+            await recheckOverlapInTx(tx, {
+              tenantId: user.tenantId,
+              employeeId: existing.employeeId,
+              newStart: updateData.startTime ? (updateData.startTime as Date) : existing.startTime,
+              newEnd:
+                updateData.endTime !== undefined
+                  ? (updateData.endTime as Date | null)
+                  : existing.endTime,
+              date: existing.date,
+              tz: revalidateWriteTz,
+              excludeEntryId: id,
+              callerEmployeeId: user.employeeId ?? null,
+              access: accessContextFromRequest(req),
+            });
+          }
+          return tx.timeEntry.update({
+            where: { id },
+            data: updateData,
+            include: {
+              breaks: { orderBy: { startTime: "asc" } },
+              activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+            },
+          });
+        });
+      } catch (err) {
+        if (err instanceof EntryConflictError) {
+          return reply.code(409).send({ error: err.userMessage });
+        }
+        if (isEntryOverlapViolation(err)) {
+          return reply.code(409).send({ error: OVERLAP_MESSAGE_NEUTRAL });
+        }
+        if (isOpenEntryPerDayViolation(err)) {
+          return reply.code(409).send({ error: OPEN_ENTRY_PER_DAY_MESSAGE });
+        }
+        throw err;
+      }
 
       await updateOvertimeAccount(app, existing.employeeId);
 

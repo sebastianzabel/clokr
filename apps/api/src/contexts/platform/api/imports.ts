@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { Prisma } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
 import { hasPermission, requirePermission } from "../request-permissions";
+import { accessContextFromRequest } from "../access-context"; // Issue #70, D-13
 // eslint-disable-next-line no-restricted-imports -- E-2: the importer writes directly into time-tracking and working-time-account. Disappears in Block 2 (#102-#104). ADR 0001 Eintrag H.
 import {
   updateOvertimeAccount,
@@ -389,7 +390,7 @@ export async function importRoutes(app: FastifyInstance) {
           if (endTime <= startTime) throw new Error("Endzeit muss nach Startzeit liegen");
 
           // Enforce the SAME invariants as POST /time-entries: month-lock (no writes
-          // into a closed month), one-entry-per-day, and overlap. Per-row error on fail.
+          // into a closed month) and overlap. Per-row error on fail.
           // isCorrectionByManager: true — CSV import is a manager bulk-correction / tenant
           // onboarding of historical data and is exempt from the retro-window guard.
           // Parallels the NFC exemption: both represent legitimate back-fill of authoritative
@@ -402,6 +403,8 @@ export async function importRoutes(app: FastifyInstance) {
             newEnd: endTime,
             tz,
             tenantId: req.user.tenantId,
+            access: accessContextFromRequest(req), // Issue #70, D-13 — overlap text by reach
+            callerEmployeeId: req.user.employeeId ?? null,
             isCorrectionByManager: true,
           });
           if (invariantError) throw new Error(invariantError.error);
