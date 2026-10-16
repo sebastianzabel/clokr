@@ -15,8 +15,10 @@
 import { format } from "date-fns";
 
 /** The default form of a day without entries, exactly what the pages always preset. */
-const DEFAULT_START = "09:00";
-const DEFAULT_END = "17:00";
+export const DEFAULT_ENTRY_START = "09:00";
+export const DEFAULT_ENTRY_END = "17:00";
+const DEFAULT_START = DEFAULT_ENTRY_START;
+const DEFAULT_END = DEFAULT_ENTRY_END;
 /** Length of the preset for a further entry on a day that already has some. */
 const PRESET_MINUTES = 60;
 const LATEST_END = "23:59";
@@ -43,6 +45,14 @@ export type CellAction<T extends DayEntryRow> =
 
 export type AddAction<T extends DayEntryRow> =
   { kind: "edit"; entry: T } | { kind: "new"; start: string; end: string };
+
+/**
+ * Whether a new-form preset is the plain default of an empty day (09:00 - 17:00). A preset that
+ * continues after the day's last entry never equals it (its end is one hour after its start).
+ */
+export function isDefaultPreset(preset: { start: string; end: string }): boolean {
+  return preset.start === DEFAULT_ENTRY_START && preset.end === DEFAULT_ENTRY_END;
+}
 
 /**
  * What clicking a calendar cell opens: nothing recorded -> the new form, exactly one entry -> that

@@ -7,6 +7,7 @@ import {
   addActionForDay,
   cellClickAction,
   entryCountTitle,
+  isDefaultPreset,
   salonFieldOptions,
   salonIdToSend,
   type DayEntryRow,
@@ -150,5 +151,16 @@ describe("entryCountTitle", () => {
     expect(entryCountTitle(1)).toBeNull();
     expect(entryCountTitle(2)).toBe("2 Einträge");
     expect(entryCountTitle(3)).toBe("3 Einträge");
+  });
+});
+
+describe("isDefaultPreset", () => {
+  it("is true for the plain default only, never for a continuation after an entry", () => {
+    expect(isDefaultPreset({ start: "09:00", end: "17:00" })).toBe(true);
+    const continued = addActionForDay([row("a", "08:00", "09:00")], true);
+    expect(continued.kind).toBe("new");
+    if (continued.kind === "new") expect(isDefaultPreset(continued)).toBe(false);
+    const sixteen = addActionForDay([row("a", "08:00", "16:00")], true);
+    if (sixteen.kind === "new") expect(isDefaultPreset(sixteen)).toBe(false);
   });
 });

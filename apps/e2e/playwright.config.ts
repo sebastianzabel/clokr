@@ -201,6 +201,12 @@ export default defineConfig({
       //     matrix through route interception); tenant fixture only, no seed, no date dependency
       //     (every date is computed from the current day)
       //
+      // Issue #70 added a ninth file:
+      //   - several entries on one day (a two-salon day recorded through the form, the list with the
+      //     salon column, the calendar cell switching to the list, an overlap refused with the
+      //     server's text, a one-entry cell still opening edit, and a single-salon tenant seeing none
+      //     of it); tenant fixture only, no seed, every date computed from the current day
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -214,6 +220,7 @@ export default defineConfig({
         /admin-tabs-narrow-viewport\.spec\.ts/,
         /admin-salons\.spec\.ts/,
         /hr-view-86\.spec\.ts/,
+        /multi-entry-day\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

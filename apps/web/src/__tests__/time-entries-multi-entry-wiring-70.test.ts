@@ -61,6 +61,13 @@ const PAGES = [
       "src/routes/(app)/time-entries/+page.svelte",
     ),
   },
+  {
+    name: "/team/time-entries",
+    source: readRouteFile(
+      "../routes/(app)/team/time-entries/+page.svelte",
+      "src/routes/(app)/team/time-entries/+page.svelte",
+    ),
+  },
 ];
 
 describe.each(PAGES)("multi-entry wiring (#70) — $name", ({ source }) => {

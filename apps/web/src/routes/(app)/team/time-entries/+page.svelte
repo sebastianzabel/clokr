@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from "svelte";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
   import { api } from "$api/client";
@@ -14,7 +14,16 @@
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import { toasts } from "$stores/toast";
-  import { salonContext } from "$stores/salon-context";
+  import { salonContext, showSalonOptions } from "$stores/salon-context";
+  // Issue #70 (D-07, D-12) — the same presentation decisions as the own page.
+  import {
+    addActionForDay,
+    cellClickAction,
+    entryCountTitle,
+    isDefaultPreset,
+    salonFieldOptions,
+    salonIdToSend,
+  } from "$lib/time-entries/day-entry-actions";
   // Issue #85 D-09/D-14/D-15 — the Salonansicht. The salon decision lives in team-view.ts (never
   // the raw selection getter); the server decides which entries are visible.
   import { isTeamSalonRejected, teamSalonViewSalon } from "$lib/dashboard/team-view";
@@ -100,6 +109,9 @@
     isInvalid?: boolean;
     invalidReason?: string | null;
     isLocked?: boolean;
+    // Issue #70 — the salon the entry was recorded in (`salonName` is the served display name).
+    salonId?: string | null;
+    salonName?: string | null;
   }
 
   interface WorkSchedule {
@@ -139,6 +151,8 @@
     expectedMin: number;
     workedMin: number;
     hasEntries: boolean;
+    // Issue #70 — how many entries the day holds (a cell with several switches to the list).
+    entryCount: number;
     status: CalStatus;
     absenceType: string | null;
     absenceHalf: boolean;
@@ -305,6 +319,14 @@
   // Quick 260824-cjd: mandatory Begründung — required only when this is a
   // Korrektur (editEntry set AND the manager is not the entry's own employee).
   let formReason = $state("");
+  // Issue #70 (D-07, D-12): salon options and the salon field exist only where the #64 rule holds
+  // (more than one active salon, more than one reachable). The options are the salons the caller
+  // reaches from the salon-context store, never the header selection (a view filter, not a booking
+  // salon, #87 D-06); the server's per-entry scope check decides regardless (T-70b-28).
+  let multiEntryUi = $derived(showSalonOptions($salonContext));
+  let formSalonId = $state("");
+  let formSalonOptions = $derived(salonFieldOptions($salonContext.salons, editEntry));
+  let formSalonPayload = $derived(salonIdToSend(formSalonId, editEntry?.salonId ?? null));
   let defaultBreakStart: string | null = $state(null);
   // Issue #80 (D-20) + Issue #511 D-18 — the server's day checks of the loaded range: the only
   // source of the calendar markers and of the day panels. For a partially scoped manager a day
@@ -949,6 +971,7 @@
       expectedMin,
       workedMin,
       hasEntries,
+      entryCount: slots.length,
       status,
       absenceType,
       absenceHalf,
@@ -1042,27 +1065,74 @@
     return `${String(nh).padStart(2, "0")}:${String(nm).padStart(2, "0")}`;
   }
 
+  // The loaded rows of one calendar day, in the order the API served them.
+  function rowsOfDay(day: string): TimeEntry[] {
+    return entries.filter((e) => (e.date ?? e.startTime).split("T")[0] === day);
+  }
+
   function openAdd(forDate?: string) {
     const targetDate = forDate ?? selectedDate;
-    // If an entry already exists for this day, open it for editing instead
-    const existing = entries.find((e) => (e.date ?? e.startTime).split("T")[0] === targetDate);
-    if (existing) {
-      openEdit(existing);
+    // Without salon options a day that already has an entry opens that entry for editing; with
+    // them it opens a new form (D-12, see addActionForDay).
+    const action = addActionForDay(rowsOfDay(targetDate), multiEntryUi);
+    if (action.kind === "edit") {
+      openEdit(action.entry);
       return;
     }
+    openNew(targetDate, action.start, action.end);
+  }
+
+  function openNew(targetDate: string, start: string, end: string) {
     editEntry = null;
     formDate = targetDate;
-    formStart = "09:00";
-    formEnd = "17:00";
+    formStart = start;
+    formEnd = end;
     formHasEnd = true;
-    if (defaultBreakStart) {
+    formSalonId = "";
+    // The usual 30 minute break is preset for the plain default day only; a further entry that
+    // continues after the day's last one gets none (a break there would lie at its very start).
+    if (defaultBreakStart && isDefaultPreset({ start, end })) {
       formBreaks = [{ start: defaultBreakStart, end: addMinutesToTime(defaultBreakStart, 30) }];
     } else {
       formBreaks = [];
     }
     formNote = "";
+    formReason = "";
     saveError = "";
     modalOpen = true;
+  }
+
+  // Issue #70: a further entry on the day of the entry being edited. The unsaved edit of the open
+  // dialog is dropped, exactly like Abbrechen.
+  function openAdditionalEntry(day: string) {
+    const action = addActionForDay(rowsOfDay(day), true);
+    if (action.kind !== "new") return;
+    closeModal();
+    openNew(day, action.start, action.end);
+  }
+
+  // Issue #70: a calendar cell with one entry still opens it for editing, a cell with several
+  // switches to the list focused on that day, an empty cell opens the new form.
+  async function onCellClick(day: string) {
+    const action = cellClickAction(rowsOfDay(day));
+    if (action.kind === "edit") {
+      openEdit(action.entry);
+    } else if (action.kind === "list") {
+      selectedDate = day;
+      teView = "list";
+      await tick();
+      document
+        .querySelector(".row-day-focus")
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else {
+      openAdd(day);
+    }
+  }
+
+  // The tooltip of a calendar cell: its own reason (holiday, absence, ...) plus the entry count.
+  function cellTitle(base: string | undefined, entryCount: number): string | undefined {
+    const count = multiEntryUi ? entryCountTitle(entryCount) : null;
+    return [base, count].filter(Boolean).join(" · ") || undefined;
   }
 
   function openEdit(entry: TimeEntry) {
@@ -1071,6 +1141,7 @@
     formStart = format(new Date(entry.startTime), "HH:mm");
     formHasEnd = !!entry.endTime;
     formEnd = entry.endTime ? format(new Date(entry.endTime), "HH:mm") : "17:00";
+    formSalonId = entry.salonId ?? "";
     if (entry.breaks && entry.breaks.length > 0) {
       formBreaks = entry.breaks.map((b) => ({
         start: format(new Date(b.startTime), "HH:mm"),
@@ -1178,6 +1249,7 @@
           breaks: breaksPayload,
           note: formNote || null,
           source: "CORRECTION",
+          salonId: formSalonPayload,
           ...(isCorrectionEdit ? { reason: formReason.trim() } : {}),
         });
       } else {
@@ -1190,6 +1262,7 @@
           note: formNote || null,
           employeeId: selectedEmployeeId,
           source: "CORRECTION",
+          salonId: formSalonPayload,
         });
       }
       closeModal();
@@ -1440,6 +1513,7 @@
           endISO,
           breaks: breaksPayload,
           breakMinutes: formBreakTotal,
+          salonId: formSalonPayload,
         });
       } catch {
         // A half-typed time cannot be converted; nothing to evaluate yet.
@@ -1770,6 +1844,17 @@
       {:else}
         <div class="cal-grid">
           {#each calendarDays as day (day.dateStr)}
+            {@const baseTitle = day.isBeforeHire
+              ? "Vor Eintrittsdatum"
+              : day.isHoliday
+                ? day.holidayName
+                : day.absenceType
+                  ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
+                  : day.isVocationalSchoolNoLeave
+                    ? "Berufsschule – kein Urlaub"
+                    : day.isVocationalSchool
+                      ? "Berufsschule"
+                      : undefined}
             <button
               type="button"
               data-date={day.dateStr}
@@ -1788,18 +1873,8 @@
               class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
               class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
               disabled={day.isBeforeHire || !day.isCurrentMonth}
-              title={day.isBeforeHire
-                ? "Vor Eintrittsdatum"
-                : day.isHoliday
-                  ? day.holidayName
-                  : day.absenceType
-                    ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
-                    : day.isVocationalSchoolNoLeave
-                      ? "Berufsschule – kein Urlaub"
-                      : day.isVocationalSchool
-                        ? "Berufsschule"
-                        : undefined}
-              onclick={() => openAdd(day.dateStr)}
+              title={cellTitle(baseTitle, day.entryCount)}
+              onclick={() => onCellClick(day.dateStr)}
             >
               <span class="cal-day-num">{day.dayNum}</span>
               {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
@@ -1886,11 +1961,30 @@
           {#each Array(6) as _, i (i)}<div class="skeleton list-skel-row"></div>{/each}
         </div>
       {:else}
+        {#if multiEntryUi}
+          {#if rowsOfDay(selectedDate).length > 0}
+            <div class="list-day-bar" data-testid="team-time-entries-list-day-bar">
+              <span class="list-day-label"
+                >{format(new Date(selectedDate + "T12:00:00"), "EEEE, d. MMMM", {
+                  locale: de,
+                })}</span
+              >
+              <button
+                class="btn btn-secondary btn-sm"
+                type="button"
+                onclick={() => openAdditionalEntry(selectedDate)}
+                data-testid="team-time-entries-add-additional"
+                >Weiteren Eintrag an diesem Tag</button
+              >
+            </div>
+          {/if}
+        {/if}
         <div class="table-wrapper">
           <table class="data-table">
             <thead>
               <tr>
                 <th>Datum</th>
+                {#if multiEntryUi}<th>Salon</th>{/if}
                 <th>Von</th>
                 <th>Bis</th>
                 <th>Pause</th>
@@ -1911,7 +2005,10 @@
                 {#if slot.kind === "TE"}
                   {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
                   {@const slotArbzg = arbzgDayMap.get(slotDate)}
-                  <tr class:row-invalid={slot.isInvalid}>
+                  <tr
+                    class:row-invalid={slot.isInvalid}
+                    class:row-day-focus={multiEntryUi && slotDate === selectedDate}
+                  >
                     <td class="font-mono"
                       >{new Date(slot.startTime).toLocaleDateString("de-DE", {
                         day: "2-digit",
@@ -1927,6 +2024,9 @@
                         >
                       {/if}</td
                     >
+                    {#if multiEntryUi}<td data-testid={`team-time-entry-row-${slot.id}-salon`}
+                        >{slot.salonName ?? "—"}</td
+                      >{/if}
                     <td class="font-mono">{fmtTime(slot.startTime)}</td>
                     <td class="font-mono">
                       {#if slot.endTime}{fmtTime(slot.endTime)}
@@ -1979,6 +2079,7 @@
                         year: "numeric",
                       })}</td
                     >
+                    {#if multiEntryUi}<td class="text-muted">—</td>{/if}
                     <td class="font-mono text-muted">—</td>
                     <td class="font-mono text-muted">—</td>
                     <td class="text-muted">—</td>
@@ -2069,6 +2170,22 @@
     <label class="form-label" for="f-date">Datum</label>
     <input id="f-date" type="date" bind:value={formDate} class="form-input" />
   </div>
+  {#if multiEntryUi}
+    <div class="form-group">
+      <label class="form-label" for="f-salon">Salon</label>
+      <select
+        id="f-salon"
+        class="form-input"
+        bind:value={formSalonId}
+        data-testid="team-time-entry-modal-salon"
+      >
+        {#if !editEntry}<option value="">Automatisch (laut Plan)</option>{/if}
+        {#each formSalonOptions as salon (salon.id)}
+          <option value={salon.id}>{salon.name}</option>
+        {/each}
+      </select>
+    </div>
+  {/if}
   <div class="form-row-two">
     <div class="form-group">
       <label class="form-label" for="f-start">Arbeitsbeginn</label>
@@ -2191,6 +2308,19 @@
   {#each modalHints as h, i (i)}
     <p class="text-muted">{h.message}</p>
   {/each}
+  {#if multiEntryUi}
+    {#if editEntry}
+      <div class="modal-additional">
+        <button
+          class="btn btn-secondary btn-sm"
+          type="button"
+          onclick={() =>
+            openAdditionalEntry((editEntry!.date ?? editEntry!.startTime).split("T")[0])}
+          data-testid="team-time-entry-modal-add-additional">Weiteren Eintrag an diesem Tag</button
+        >
+      </div>
+    {/if}
+  {/if}
   {#snippet footer()}
     <button class="btn btn-ghost" onclick={closeModal} disabled={saving}>Abbrechen</button>
     <button class="btn btn-primary" onclick={saveEntry} disabled={saving}>
@@ -2263,6 +2393,29 @@
 
   /* ── View Tabs ───────────────────────────────────────── */
   /* view-tabs, view-tab → global in app.css */
+
+  /* ── Day bar above the list (Issue #70): the focused day and its per-day add ─── */
+  .list-day-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-2);
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--border);
+  }
+  .list-day-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .modal-additional {
+    display: flex;
+    margin-top: var(--s-3);
+  }
+  .data-table tbody tr.row-day-focus {
+    background: var(--bg-subtle);
+  }
 
   /* ── List card (v1.5) ────────────────────────────────── */
   .list-card {
