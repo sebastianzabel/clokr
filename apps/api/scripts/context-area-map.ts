@@ -323,6 +323,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   // ── arbeitszeitkonto — SaldoSnapshot/OpeningBalance/OvertimeAccount/OvertimeTransaction/
   //    OvertimePlan ─────────────────────────────────────────────────────────────────────────
   "src/contexts/working-time-account/api/overtime.ts": "arbeitszeitkonto", // writes OpeningBalance/OvertimeAccount/OvertimeTransaction/SaldoSnapshot/OvertimePlan
+  "src/contexts/working-time-account/api/day-detail-visibility.ts": "arbeitszeitkonto", // Issue #86 (D-02) — decides whether a caller may see a person's day lists in Arbeitszeitkonto responses; reads only permission/scope helpers, writes nothing
   "src/contexts/working-time-account/plugins/auto-close-month.ts": "arbeitszeitkonto", // the cron close-path (CLAUDE.md "Saldo-Rechenpfade"); writes OvertimeAccount/SaldoSnapshot/TimeEntry
   "src/contexts/working-time-account/plugins/deferred-month-close-reminder.ts": "arbeitszeitkonto", // Phase 292 (#292) — weekly escalation for a Monatsabschluss that stays deferred; writes Notification only
   "src/contexts/working-time-account/carry-over-base.ts": "arbeitszeitkonto", // OpeningBalance carry-over base
