@@ -1970,7 +1970,7 @@
                 })}</span
               >
               <button
-                class="btn btn-secondary btn-sm"
+                class="btn btn-outline btn-sm"
                 type="button"
                 onclick={() => openAdditionalEntry(selectedDate)}
                 data-testid="team-time-entries-add-additional"
@@ -2312,7 +2312,7 @@
     {#if editEntry}
       <div class="modal-additional">
         <button
-          class="btn btn-secondary btn-sm"
+          class="btn btn-outline btn-sm"
           type="button"
           onclick={() =>
             openAdditionalEntry((editEntry!.date ?? editEntry!.startTime).split("T")[0])}

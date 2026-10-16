@@ -108,6 +108,20 @@ describe.each(PAGES)("multi-entry wiring (#70) — $name", ({ source }) => {
     expect(ungated).not.toContain("slot.salonName");
   });
 
+  // Found by the 70b-07 visual check: the first version used `btn-secondary`, whose brand-coloured
+  // label measured 2.25:1 on the dark card (and read as plain text). `btn-outline` takes the body
+  // text colour in both modes.
+  it("renders every per-day add button with the btn-outline recipe", () => {
+    const ids = [...source.matchAll(/data-testid="([a-z-]*add-additional)"/g)].map((m) => m[1]);
+    expect(ids).toHaveLength(2);
+    for (const id of ids) {
+      const at = source.indexOf(`data-testid="${id}"`);
+      const opening = source.slice(source.lastIndexOf("<button", at), at);
+      expect(opening, id).toContain("btn btn-outline btn-sm");
+      expect(opening, id).not.toContain("btn-secondary");
+    }
+  });
+
   it("never lets the header salon selection decide a booking salon", () => {
     expect(source).not.toContain("selectedSalonId");
     expect(source).not.toMatch(/\$salonContext\.selection/);

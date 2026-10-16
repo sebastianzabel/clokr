@@ -2074,7 +2074,7 @@
                 })}</span
               >
               <button
-                class="btn btn-secondary btn-sm"
+                class="btn btn-outline btn-sm"
                 type="button"
                 onclick={() => openAdditionalEntry(selectedDate)}
                 data-testid="time-entries-add-additional">Weiteren Eintrag an diesem Tag</button
@@ -2612,7 +2612,7 @@
         {#if editEntry && !isExempt && !retroWindowExceeded}
           <div class="modal-additional">
             <button
-              class="btn btn-secondary btn-sm"
+              class="btn btn-outline btn-sm"
               type="button"
               onclick={() =>
                 openAdditionalEntry((editEntry!.date ?? editEntry!.startTime).split("T")[0])}
