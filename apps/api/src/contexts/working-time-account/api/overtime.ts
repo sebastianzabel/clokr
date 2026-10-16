@@ -24,6 +24,7 @@ import {
   isStammsalonScopeMatch, // Phase 91b Plan 05 (#91), D-10/D-14
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 05 (#91), D-10
 } from "../../platform";
+import { dayDetailVisibility } from "./day-detail-visibility"; // Issue #86 (D-02) — the one day-list decision
 import { fetchCloseMonthData } from "../close-month-data"; // PERF-V1814-01
 import { periodStartWindow, isPeriodStartInMonth } from "../snapshot-period";
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared saldo core
@@ -2232,7 +2233,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
   // GET /api/v1/overtime/month-saldo/:employeeId?year=&month=
   // Returns §615-consistent monthly saldo + per-day cumulative series.
-  // EMPLOYEE may only read their own; ADMIN/MANAGER may read any in their tenant.
+  // A caller without overtime:read:ZUGEWIESEN may read only their own person's saldo; a holder of
+  // it reads every person in its reach. The per-day series (`days`) is attendance data and needs
+  // time-entry:read reach over the person on top (#86, D-02) - see dayDetailVisibility().
   app.get("/month-saldo/:employeeId", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
@@ -2268,11 +2271,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // says "mirrors GET /:employeeId above"). Stichtag = the requested month's own last day —
       // this route IS period-bound (year/month query params), unlike snapshots/:employeeId's
       // unbounded list.
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const { end: monthSaldoMonthEnd } = monthRangeUtc(year, month, tz);
       if (overtimeReach === "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
         const access = accessContextFromRequest(req);
         const scopeReach = await resolveAccessReach(app.prisma, access, "overtime:read:ZUGEWIESEN");
-        const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-        const { end: monthSaldoMonthEnd } = monthRangeUtc(year, month, tz);
         if (
           !(await isStammsalonScopeMatch(
             app.prisma,
@@ -2294,7 +2297,15 @@ export async function overtimeRoutes(app: FastifyInstance) {
       }
 
       const result = await computeMonthSaldo(app, employeeId, year, month);
-      return result;
+
+      // #86 (D-02): the saldo header above stays readable under overtime:read; the per-day series
+      // only for a caller who may read this person's time entries. The Stichtag is the one the
+      // scope check above uses (the month's last day).
+      const visibility = dayDetailVisibility(app, req);
+      if (await visibility.coversEmployee(employeeId, monthSaldoMonthEnd)) {
+        return { ...result, dayDetailsWithheld: false };
+      }
+      return { ...result, days: [], dayDetailsWithheld: true };
     },
   });
 }
