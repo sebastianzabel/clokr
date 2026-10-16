@@ -60,14 +60,16 @@ describe("Issue #378 — POST /auth/login exposes effective permissions", () => 
     return { user, employee };
   }
 
-  async function login(email: string): Promise<{ role: string; permissions: string[] }> {
+  async function login(email: string): Promise<{ permissions: string[] }> {
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
       payload: { email, password: PASSWORD },
     });
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body) as { user: { role: string; permissions: string[] } };
+    const body = JSON.parse(res.body) as { user: { permissions: string[] } };
+    // Issue #539 (D-05): the body carries no role; the permission list is the only access information.
+    expect(Object.keys(body.user)).not.toContain("role");
     return body.user;
   }
 
@@ -86,17 +88,15 @@ describe("Issue #378 — POST /auth/login exposes effective permissions", () => 
     await closeTestApp();
   });
 
-  it("a Salonmanager (SALONS-scope, no tenant-wide assignment) gets approve/plan permissions while role stays EMPLOYEE", async () => {
+  it("a Salonmanager (SALONS-scope, no tenant-wide assignment) gets approve/plan permissions ", async () => {
     const salonManager = await createScopedUser("lep-salonmgr", SYSTEM_ROLE_IDS.SALON_MANAGER, {
       scopeType: "SALONS",
       salonIds: [salonA.id],
     });
 
-    const { role, permissions } = await login(salonManager.user.email);
+    const { permissions } = await login(salonManager.user.email);
 
-    // The exact gap #378 reports: compat role never reflects a Salon-scope assignment.
-    expect(role).toBe("EMPLOYEE");
-
+    // The exact gap #378 reports: a Salon-scope assignment is visible in the permission list.
     // Salonmanager template (docs/permissions.md) — approves leave and Zeitnachtrag, plans shifts,
     // reads team overview and team time entries. This is what the web needs to show the Team-Bereich.
     expect(permissions).toContain("leave-request:approve:ZUGEWIESEN");
@@ -112,7 +112,7 @@ describe("Issue #378 — POST /auth/login exposes effective permissions", () => 
     expect(permissions).not.toContain("report:read:ZUGEWIESEN");
   });
 
-  it("an Ausbilder (PERSONS-scope) gets read-only permissions, no approve/plan, role stays EMPLOYEE", async () => {
+  it("an Ausbilder (PERSONS-scope) gets read-only permissions, no approve/plan, ", async () => {
     const azubiSuffix = uniqueSuffix("lep-azubi");
     const azubiUser = await app.prisma.user.create({
       data: {
@@ -137,9 +137,7 @@ describe("Issue #378 — POST /auth/login exposes effective permissions", () => 
       employeeIds: [azubi.id],
     });
 
-    const { role, permissions } = await login(trainer.user.email);
-
-    expect(role).toBe("EMPLOYEE");
+    const { permissions } = await login(trainer.user.email);
 
     // Ausbilder template (docs/permissions.md:446) — read only.
     expect(permissions).toContain("time-entry:read:ZUGEWIESEN");
@@ -154,19 +152,17 @@ describe("Issue #378 — POST /auth/login exposes effective permissions", () => 
     expect(permissions).not.toContain("team-overview:read:ZUGEWIESEN");
   });
 
-  it("a plain EMPLOYEE (legacy fallback, no stored role assignment) gets only EIGENE permissions", async () => {
-    const { role, permissions } = await login(data.empUser.email);
+  it("a plain EMPLOYEE (stored Mitarbeiter assignment) gets only EIGENE permissions", async () => {
+    const { permissions } = await login(data.empUser.email);
 
-    expect(role).toBe("EMPLOYEE");
     expect(permissions).toContain("time-entry:read:EIGENE");
     expect(permissions).not.toContain("time-entry:read:ZUGEWIESEN");
     expect(permissions).not.toContain("leave-request:approve:ZUGEWIESEN");
   });
 
-  it("ADMIN (legacy fallback) gets the full ZUGEWIESEN set including report:read", async () => {
-    const { role, permissions } = await login(data.adminUser.email);
+  it("ADMIN (stored Admin assignment) gets the full ZUGEWIESEN set including report:read", async () => {
+    const { permissions } = await login(data.adminUser.email);
 
-    expect(role).toBe("ADMIN");
     expect(permissions).toContain("report:read:ZUGEWIESEN");
     expect(permissions).toContain("team-overview:read:ZUGEWIESEN");
     expect(permissions).toContain("overtime:read:ZUGEWIESEN");

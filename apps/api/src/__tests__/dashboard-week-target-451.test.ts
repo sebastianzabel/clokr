@@ -24,7 +24,7 @@
  */
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import type { FastifyInstance } from "fastify";
 
 async function loginAs(app: FastifyInstance, email: string, password = "test1234") {
@@ -62,6 +62,7 @@ async function createEmployee(
       hireDate: new Date(`${hireDate}T00:00:00Z`),
     },
   });
+  await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
   const dayHours = opts.dayHours ?? 8;
   await app.prisma.workSchedule.create({
     data: {

@@ -15,6 +15,7 @@ import {
   cleanupTestData,
   soleAuditRowOrNull,
   auditRowsFor,
+  grantSystemRole,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -131,6 +132,11 @@ describe("Section9 document upload/retrieval — Phase 104-07 Task 1", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: managerUser.id,
+      role: "MANAGER",
+    });
     const mgrLogin = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
@@ -157,6 +163,11 @@ describe("Section9 document upload/retrieval — Phase 104-07 Task 1", () => {
         lastName: "Mitarbeiter",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: emp2User.id,
+      role: "EMPLOYEE",
     });
     employee2Id = emp2.id;
     const emp2Login = await app.inject({

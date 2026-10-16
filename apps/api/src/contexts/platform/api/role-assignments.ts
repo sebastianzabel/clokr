@@ -14,10 +14,11 @@
  * and answers the byte-identical 404 of its own kind (D-08) — the four "not found" messages below
  * are the entire vocabulary; a caller cannot distinguish "foreign tenant" from "does not exist".
  *
- * Phase 75b Plan 11 (Issue #75): a grant to a user who still relies on the legacy-role fallback
- * first stores that fallback as an audited assignment (D-26), and every grant, change and revoke
- * rewrites `User.role` to the role derived from the stored assignments, recorded as `compatRole`
- * on the change's audit row (D-14/D-29).
+ * Phase 75b Plan 11 (Issue #75): every grant, change and revoke rewrites `User.role` to the role
+ * derived from the stored assignments, recorded as `compatRole` on the change's audit row
+ * (D-14/D-29). Since Issue #539 a grant adds exactly the requested row: the former step that first
+ * stored the legacy-role fallback as an assignment (D-26) is gone, because with the fallback
+ * removed it would have been an implicit grant of the column's role.
  */
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
@@ -37,12 +38,8 @@ import {
   withRoleLockoutGuard,
 } from "../facade/role-assignments";
 import { foreignKeyConstraintOf } from "../prisma-foreign-key";
-import {
-  auditRoleAssignmentChange,
-  materializedAssignmentAuditEntry,
-  roleAssignmentAuditValue,
-} from "../role-assignment-audit";
-import { materializeLegacyRoleAssignment, syncCompatRoleColumn } from "../compat-role";
+import { auditRoleAssignmentChange, roleAssignmentAuditValue } from "../role-assignment-audit";
+import { syncCompatRoleColumn } from "../compat-role";
 
 // D-09: plain `z.string().min(1)`, NOT `.uuid()` — both T-100-09 probe arms (a real foreign id and
 // a shaped-but-nonexistent id) must pass the same validation, same idiom as `roles.ts`'s
@@ -150,9 +147,8 @@ type CreateOutcome =
   | { kind: "CREATED"; row: RoleAssignmentRow };
 
 /**
- * Phase 75b (D-26): a duplicate found AFTER the fallback was materialized must roll the
- * materialization back too, so the POST transaction throws this instead of returning — the
- * handler maps it onto the same 409 as before.
+ * A duplicate found inside the POST transaction aborts it by throwing this instead of returning
+ * — the handler maps it onto the 409 answer.
  */
 class DuplicateAssignmentRollback extends Error {
   constructor() {
@@ -293,12 +289,6 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             });
             if (resolution.status !== "OK") return { kind: "REFERENCE_NOT_FOUND", resolution };
 
-            // Phase 75b (D-26): a grantee who still relies on the legacy-role fallback (no stored
-            // assignment) first gets that fallback stored as a real assignment, so this grant adds
-            // to the legacy rights instead of silently replacing them. A request equal to the
-            // materialized row is then a duplicate, and the throw below rolls both back.
-            const materialized = await materializeLegacyRoleAssignment(tx, tenantId, body.userId);
-
             const duplicate = await tx.roleAssignment.findFirst({
               where: {
                 tenantId,
@@ -325,7 +315,6 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             await auditRoleAssignmentChange(app, req, tx, {
               userId: body.userId,
               entries: [
-                ...(materialized !== null ? [materializedAssignmentAuditEntry(materialized)] : []),
                 {
                   action: "CREATE",
                   entityId: row.id,
@@ -487,8 +476,6 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
               include: { accessRole: true },
             });
             // D-14/D-29: the column follows the stored assignments, recorded on this UPDATE row.
-            // No materialization (D-26) here: the target is a stored row of the user, so the user
-            // never has zero stored assignments on this path.
             await auditRoleAssignmentChange(app, req, tx, {
               userId: current.userId,
               entries: [
@@ -562,8 +549,8 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             if (!current) return false;
             await tx.roleAssignment.delete({ where: { id, tenantId } });
             // D-14/D-29: the column follows the stored assignments — revoking the user's last one
-            // writes EMPLOYEE (D-08), so the fallback then yields Mitarbeiter, never a lingering
-            // Admin. No materialization (D-26): the revoked row was a stored row of the user.
+            // writes EMPLOYEE (D-08) as a display value only; since #539 the user then holds
+            // nothing (no fallback), never a lingering Admin.
             await auditRoleAssignmentChange(app, req, tx, {
               userId: current.userId,
               entries: [
@@ -644,7 +631,7 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "List the assigned role names per user",
       description:
-        "Returns, per user id of the caller tenant's non-anonymized employees, the names of the roles that user holds (stored assignments, legacy-role fallback when none is stored). Names only, no scope or permission data.",
+        "Returns, per user id of the caller tenant's non-anonymized employees, the names of the roles that user holds (stored assignments only; a user with none stored gets an empty list). Names only, no scope or permission data.",
     },
     preHandler: requirePermission("role-assignment:manage:ZUGEWIESEN"),
     handler: async (req) => {

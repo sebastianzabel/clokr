@@ -8,14 +8,18 @@
  *   1. an operator access token (a principal that carries no tenant by type),
  *   2. tenant tokens of a real User row without an Employee (the legacy user, D-10) whose tenant id is
  *      blank: `tenantId: ""`, `tenantId: "   "`, and no `tenantId` claim at all (Issue #551),
- *   3. a tenant token naming a tenant that does not exist.
+ *   3. (#539) the tenant token of a REAL admin of a different, otherwise empty tenant: a user with an
+ *      Employee and a stored tenant-wide ADMIN assignment there, aimed at the victim tenant's ids. It used to
+ *      be a tenant-less ADMIN user naming a tenant that does not exist, powerful only through the legacy-role
+ *      fallback; with the fallback gone such a user holds nothing and every handler would answer 403, so the
+ *      sweep would have stopped driving the handlers.
  *
  * Invariants:
  *   - operator token: 403 on every swept route, never a 2xx (no route is excused);
  *   - blank tenant (Issue #551): 403 `TENANT_REQUIRED` on EVERY swept route — never a 2xx, never a 5xx —
  *     and not one Prisma call is recorded while the three blank sweeps run (the refusal happens in
  *     `requireAuth`, before any permission check and before any query);
- *   - nonexistent tenant: no response body contains any identifier of the victim tenant, no victim row
+ *   - foreign tenant: no response body contains any identifier of the victim tenant, no victim row
  *     changes, every 5xx carries exactly the fixed `Interner Serverfehler` body;
  *   - a Prisma-call interceptor (call-through spies on every model method of `app.prisma`) records every call
  *     of the sweeps; none carries a `tenantId` key whose value is undefined at any depth. This is the RUNTIME
@@ -24,7 +28,9 @@
  *     are invisible here; the static gate covers the syntactic class there.
  *
  * Non-vacuity (T-88-65): the swept set equals the derived set minus the named exclusions exactly, the operator
- * routes are in the derived set, the interceptor recorded calls, and a control run with the victim admin's
+ * routes are in the derived set, the interceptor recorded calls, the foreign-tenant sweep still REACHES the
+ * handlers (at least `FOREIGN_SWEEP_HANDLER_FLOOR` responses that are neither 401 nor 403, the count measured
+ * with the fallback still present, #539), and a control run with the victim admin's
  * token receives victim data on at least one swept route (so the leak detector demonstrably sees a leak).
  *
  * D-10 / #551: before Issue #551 the legacy user without an Employee passed permission guards through the
@@ -69,6 +75,15 @@ let emptyTenantToken: string;
 let whitespaceTenantToken: string;
 let absentTenantToken: string;
 let foreignTenantToken: string;
+let actor: Awaited<ReturnType<typeof seedTestData>>;
+
+/**
+ * Measured on the tree BEFORE the fallback was removed (#539 plan 07, 212 swept routes): the foreign-tenant
+ * sweep of the tenant-less fallback ADMIN answered {200: 57, 400: 73, 401: 3, 404: 72, 409: 1, 410: 1,
+ * 500: 5}, i.e. 209 responses that are neither 401 nor 403. The stored-ADMIN actor must reach at least as
+ * many handlers, otherwise the sweep has gone vacuous.
+ */
+const FOREIGN_SWEEP_HANDLER_FLOOR = 209;
 let victimIdentifiers: string[] = [];
 
 let addressCounter = 0;
@@ -140,10 +155,45 @@ function histogram(results: readonly SweepResult[]): Record<string, number> {
   return out;
 }
 
-function leaksOf(results: readonly SweepResult[]): string[] {
+/**
+ * Removes every `CROSS_TENANT_ACCESS_DENIED` audit row from a parsed body. #539: the foreign-tenant actor is
+ * a real admin and may read its OWN tenant's audit log, in which the sweep's refused requests are recorded
+ * with the entity id the actor itself sent. That row echoes a request id back to the principal who chose
+ * it - it carries no victim data (newValue/oldValue are null) - so it is no leak; anything else in the
+ * body still has to be free of victim identifiers.
+ */
+function withoutDeniedEchoRows(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value
+      .filter(
+        (item) =>
+          !(
+            item !== null &&
+            typeof item === "object" &&
+            (item as { action?: unknown }).action === "CROSS_TENANT_ACCESS_DENIED"
+          ),
+      )
+      .map(withoutDeniedEchoRows);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, v]) => [key, withoutDeniedEchoRows(v)]),
+    );
+  }
+  return value;
+}
+
+function leaksOf(
+  results: readonly SweepResult[],
+  opts: { ignoreDeniedEcho?: boolean } = {},
+): string[] {
   const found: string[] = [];
   for (const r of results) {
-    const hit = victimIdentifiers.find((id) => r.body.includes(id));
+    let body = r.body;
+    if (opts.ignoreDeniedEcho && r.route === "GET /api/v1/audit-logs" && r.status === 200) {
+      body = JSON.stringify(withoutDeniedEchoRows(JSON.parse(r.body)));
+    }
+    const hit = victimIdentifiers.find((id) => body.includes(id));
     if (hit) found.push(`${r.route} -> ${r.status} contains ${hit}`);
   }
   return found;
@@ -284,21 +334,18 @@ beforeAll(async () => {
   legacyUserId = legacy.id;
   emptyTenantToken = app.jwt.sign({
     sub: legacyUserId,
-    role: "ADMIN",
     tenantId: "",
   } as unknown as JwtPayload);
   whitespaceTenantToken = app.jwt.sign({
     sub: legacyUserId,
-    role: "ADMIN",
     tenantId: "   ",
   } as unknown as JwtPayload);
   // No tenantId claim at all: the claim is absent at runtime, which the JwtPayload type cannot express.
-  absentTenantToken = app.jwt.sign({ sub: legacyUserId, role: "ADMIN" } as unknown as JwtPayload);
-  foreignTenantToken = app.jwt.sign({
-    sub: legacyUserId,
-    role: "ADMIN",
-    tenantId: randomUUID(),
-  } as unknown as JwtPayload);
+  absentTenantToken = app.jwt.sign({ sub: legacyUserId } as unknown as JwtPayload);
+  // A real admin of a second, otherwise empty tenant (stored tenant-wide ADMIN assignment, #539): its token
+  // is "foreign" to the victim and still passes every permission guard, so the handlers run.
+  actor = await seedTestData(app, "act88");
+  foreignTenantToken = actor.adminToken;
 
   const operator = await seedOperator(app);
   operatorToken = signOperatorToken(app, operator.id, "access", operator.tokenVersion);
@@ -307,6 +354,7 @@ beforeAll(async () => {
 afterAll(async () => {
   for (const spy of spies) spy.mockRestore();
   await app.prisma.user.deleteMany({ where: { id: legacyUserId } });
+  await cleanupTestData(app, actor.tenant.id);
   await cleanupTestData(app, victim.tenant.id);
   await closeTestApp();
 });
@@ -393,13 +441,13 @@ describe("operator and tenant-less tokens over every derived tenant route (AC-88
     expect(blankSweepCalls).toBe(0);
   });
 
-  it.each([["nonexistent tenant", () => foreignResults]])(
+  it.each([["foreign tenant", () => foreignResults]])(
     // The blank-tenant rows were dropped here: the case above is stricter (403 on every route).
     "%s: no victim identifier in any body and only the fixed 5xx body",
     (_name, results) => {
       const rs = results();
       expect(rs).toHaveLength(swept.length);
-      expect(leaksOf(rs)).toEqual([]);
+      expect(leaksOf(rs, { ignoreDeniedEcho: true })).toEqual([]);
       const badFiveHundreds = rs.filter(
         (r) => r.status >= 500 && r.body !== JSON.stringify({ error: "Interner Serverfehler" }),
       );
@@ -408,6 +456,14 @@ describe("operator and tenant-less tokens over every derived tenant route (AC-88
       ).toEqual([]);
     },
   );
+
+  it("foreign tenant: the sweep still drives the handlers - at least as many responses past the guard as with the fallback (#539)", () => {
+    const pastGuard = foreignResults.filter((r) => r.status !== 401 && r.status !== 403);
+    expect(foreignResults).toHaveLength(swept.length);
+    expect(pastGuard.length).toBeGreaterThanOrEqual(FOREIGN_SWEEP_HANDLER_FLOOR);
+    // The actor really is an admin of ANOTHER tenant than the victim.
+    expect(actor.tenant.id).not.toBe(victim.tenant.id);
+  });
 
   it("leaves every victim row count unchanged", () => {
     expect(after).toEqual(before);

@@ -36,6 +36,7 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee, // Phase 325 (issue #325)
+  grantSystemRole,
 } from "./setup";
 import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
@@ -143,6 +144,7 @@ describe("Phase 76.23 — contractSollMinutesByEmp in GET /shifts/week (§ 615 p
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmployee.id,
@@ -189,6 +191,7 @@ describe("Phase 76.23 — contractSollMinutesByEmp in GET /shifts/week (§ 615 p
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     empId = emp.id;
 
     await prisma.workSchedule.create({

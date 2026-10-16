@@ -22,7 +22,13 @@
  * the Feiertag and silently drops 480 of the pinned 1800 minutes.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup"; // Phase 325 (issue #325)
 import { holidayFreeMondayStr } from "./test-dates";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -86,6 +92,7 @@ describe("GET /shifts/week — workDays-primary divisor, end-to-end (SOLL-WORKDA
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmployee.id,
@@ -133,6 +140,7 @@ describe("GET /shifts/week — workDays-primary divisor, end-to-end (SOLL-WORKDA
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     empId = emp.id;
 
     await prisma.workSchedule.create({

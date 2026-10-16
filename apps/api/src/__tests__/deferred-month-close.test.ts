@@ -22,6 +22,7 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee,
+  grantSystemRole,
 } from "./setup"; // Phase 325 (issue #325)
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import { detectMonthGaps } from "../contexts/working-time-account/month-gap-check";
@@ -89,6 +90,7 @@ async function createEmployee(
       isTimeTrackingExempt: opts.exempt ?? false,
     },
   });
+  await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: opts.role ?? "EMPLOYEE" });
   await app.prisma.workSchedule.create({
     data: {
       employeeId: employee.id,

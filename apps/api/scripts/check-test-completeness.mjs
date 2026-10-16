@@ -823,10 +823,18 @@ import { readFileSync } from "node:fs";
 // Issue #563 (2026-10-15): measured on `feat/563-salonverwaltung` after 563-07, full run (`test:coverage`) - 592 test
 // files, 9530 tests (9527 passed, 3 skipped); new files: salon-admin-563, settings-store-hours-retired-563 and the
 // rewritten store-hours-readers guard, the mirror test removed. MIN_FILES 589 -> 592, MIN_TESTS 9496 -> 9530.
+// Issue #539 (2026-10-15): measured on `feat/539-rueckfall-entfernen` after 539-13, full run (`test:coverage`) - 602
+// test files, 9649 tests (9646 passed, 3 skipped). Ten new files: fixture-role-assignments-539, seed-role-assignments-539,
+// restorable-admin-539, backfill-539-role-assignments, neutrality-amendment-chain-539, neutrality-amendments-from-run,
+// no-role-assigned-539, token-claims-539, employee-form-role-539 and the AST guard legacy-role-reads-539. Replaced
+// cases: the fallback, materialization and role-claim cases (compat-role, request-permissions, resolve-access-reach,
+// context-salon-ids-82, user-ids-holding-permission, employee-role-bridge, the `compatRoleForUser` describe removed with the
+// function) now assert the fail-closed reality, plus the independent empty-role oracle in the permission matrix; nothing was
+// skipped or weakened. MIN_FILES 592 -> 602, MIN_TESTS 9530 -> 9649. Never lowered.
+const MIN_FILES = 602;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
-// the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9530 -> 9531, MIN_FILES unchanged.
-const MIN_FILES = 592;
-const MIN_TESTS = 9531;
+// the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
+const MIN_TESTS = 9650;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

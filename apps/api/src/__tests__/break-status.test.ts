@@ -6,6 +6,7 @@ import {
   cleanupTestData,
   soleAuditRowOrNull,
   soleNotificationOrNull,
+  grantSystemRole,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -324,6 +325,11 @@ describe("PATCH /:id/break-status", () => {
         lastName: "Test",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: otherUser.id,
+      role: "EMPLOYEE",
     });
     const loginRes = await app.inject({
       method: "POST",

@@ -100,3 +100,19 @@ describe("web role-check gate covers Phase 83 (Issue #83)", () => {
     ]);
   });
 });
+
+describe("web role-check gate covers the role-less session (Issue #539)", () => {
+  const ISSUE_539 = [
+    "apps/web/src/lib/stores/auth.ts",
+    "apps/web/src/routes/(auth)/login/+page.svelte",
+    "apps/web/src/routes/(auth)/otp/+page.svelte",
+  ];
+
+  it("lists the session store and both sign-in pages, each exists and carries no role check", () => {
+    for (const file of ISSUE_539) {
+      expect(SCOPE_FILES).toContain(file);
+      expect(existsSync(resolve(REPO, file)), file).toBe(true);
+      expect(findRoleChecks(readFileSync(resolve(REPO, file), "utf8")), file).toEqual([]);
+    }
+  });
+});

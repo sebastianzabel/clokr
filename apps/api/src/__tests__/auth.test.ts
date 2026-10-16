@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
 import type { FastifyInstance } from "fastify";
 
@@ -34,7 +41,9 @@ describe("Auth API", () => {
       const body = JSON.parse(res.body);
       expect(body.accessToken).toBeDefined();
       expect(body.refreshToken).toBeDefined();
-      expect(body.user.role).toBe("ADMIN");
+      // Issue #539 (D-05): the body carries no role; the permissions are the access information.
+      expect(Object.keys(body.user)).not.toContain("role");
+      expect(body.user.permissions).toContain("employee:read:ZUGEWIESEN");
     });
 
     it("rejects invalid password", async () => {
@@ -149,6 +158,11 @@ describe("Auth API", () => {
           lastName: "PermissionsTest",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
       });
 
       const loginRes = await app.inject({

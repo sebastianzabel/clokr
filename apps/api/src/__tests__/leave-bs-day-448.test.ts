@@ -19,6 +19,7 @@ import {
   seedEntitlementYears,
   cleanupTestData,
   closeTestApp,
+  grantSystemRole,
 } from "./setup";
 
 describe("Issue #448 — Berufsschultag kostet keinen Urlaubstag", () => {
@@ -62,6 +63,11 @@ describe("Issue #448 — Berufsschultag kostet keinen Urlaubstag", () => {
         classification: "AZUBI",
         birthDate: new Date("2010-06-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: sbUser.id,
+      role: "EMPLOYEE",
     });
     sbEmployeeId = sbEmployee.id;
     await app.prisma.workSchedule.create({

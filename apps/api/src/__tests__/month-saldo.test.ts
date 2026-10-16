@@ -19,6 +19,7 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee, // Phase 325 (issue #325)
+  grantSystemRole,
 } from "./setup";
 import { todayStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
@@ -327,6 +328,7 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
           hireDate: new Date("2026-09-01"),
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       partlyRosteredEmpId = emp.id;
       await prisma.workSchedule.create({ data: { employeeId: emp.id, ...shiftSchedule } });
       for (const d of [
@@ -376,6 +378,7 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
           hireDate: new Date("2026-09-01"),
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       fullyRosteredEmpId = emp.id;
       await prisma.workSchedule.create({ data: { employeeId: emp.id, ...shiftSchedule } });
       for (const d of [
@@ -436,6 +439,7 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
           hireDate: new Date("2026-09-01"),
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       nonShiftEmpId = emp.id;
       await prisma.workSchedule.create({
         data: {
@@ -478,6 +482,7 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
           hireDate: new Date("2026-09-01"),
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       zeroRosterEmpId = emp.id;
       await prisma.workSchedule.create({ data: { employeeId: emp.id, ...shiftSchedule } });
       await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
@@ -597,6 +602,7 @@ describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
 
     const shiftSchedule = {
       type: "SHIFT_BASED" as const,
@@ -631,6 +637,7 @@ describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
           hireDate: new Date("2026-09-01"),
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       shiftEmpAId = emp.id;
       await prisma.workSchedule.create({ data: { employeeId: emp.id, ...shiftSchedule } });
       await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
@@ -723,6 +730,7 @@ describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
           hireDate: new Date("2026-09-01"),
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       shiftEmpBId = emp.id;
       await prisma.workSchedule.create({ data: { employeeId: emp.id, ...shiftSchedule } });
       await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });

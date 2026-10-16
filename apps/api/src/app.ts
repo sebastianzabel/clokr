@@ -272,12 +272,11 @@ export async function buildApp() {
   // ── Request Context Logging ──────────────────────────────
   app.addHook("onRequest", (req, _reply, done) => {
     // Enrich log context with user/tenant info (from JWT if available)
-    const user = (req as { user?: { sub?: string; tenantId?: string; role?: string } }).user;
+    const user = (req as { user?: { sub?: string; tenantId?: string } }).user;
     if (user) {
       req.log = req.log.child({
         userId: user.sub,
         tenantId: user.tenantId,
-        role: user.role,
       });
     }
     done();

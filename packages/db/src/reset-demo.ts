@@ -29,6 +29,7 @@ import pg from "pg";
 import bcrypt from "bcryptjs";
 import { createDefaultHomeAssignment } from "./default-salon";
 import { ADMIN_EMAIL } from "./seed-credentials";
+import { ensureSystemRoleAssignment } from "./seed-role-assignments";
 
 function fatal(message: string): never {
   console.error(message);
@@ -635,6 +636,14 @@ async function main() {
         hireDate: parseDate(HIRE_DATE_STR),
         ...(def.nfcCardId ? { nfcCardId: def.nfcCardId } : {}),
       },
+    });
+
+    // Issue #539 (D-09): permissions come only from stored role assignments, so every
+    // re-created demo user holds its system role as one (the `role` column is still written).
+    await ensureSystemRoleAssignment(prisma, {
+      tenantId: tenant.id,
+      userId: user.id,
+      role: def.role,
     });
 
     // D-24 (Phase 67b Plan 04, issue #67): every re-created demo employee also gets its

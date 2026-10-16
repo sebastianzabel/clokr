@@ -16,6 +16,7 @@ import {
   cleanupTestData,
   createTestSalon,
   soleAuditRowOrNull,
+  tokenWithoutSignIn,
 } from "./setup";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import { futureDateStr, nextWeekdayStr } from "./test-dates";
@@ -376,7 +377,8 @@ describe("Issue #91 (Phase 91b Plan 08) — shifts.ts salon/person scope", () =>
         ["shift-config:manage:ZUGEWIESEN"],
         { scopeType: "SALONS", salonIds: [salonA.id] },
       );
-      const token = await login(manager.user.email);
+      // A scoped holder of a MANDANT-relation key holds nothing: no sign-in since #539 (D-14).
+      const token = await tokenWithoutSignIn(app, manager.user.email);
 
       const res = await app.inject({
         method: "POST",
@@ -394,7 +396,8 @@ describe("Issue #91 (Phase 91b Plan 08) — shifts.ts salon/person scope", () =>
         ["shift-config:manage:ZUGEWIESEN"],
         { scopeType: "PERSONS", employeeIds: [emp.employee.id] },
       );
-      const token = await login(manager.user.email);
+      // A scoped holder of a MANDANT-relation key holds nothing: no sign-in since #539 (D-14).
+      const token = await tokenWithoutSignIn(app, manager.user.email);
 
       const res = await app.inject({
         method: "POST",

@@ -25,7 +25,13 @@
  * bomb in this repo (`shifts.test.ts` expired exactly that way).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -110,6 +116,7 @@ describe("GET /api/v1/dashboard/open-items — configured window (issue #141)", 
         isTimeTrackingExempt: false,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     employeeId = emp.id;
     // Non-divergent FIXED_SCHEDULE on purpose (issue #128 out of scope): workDays [1..5]
     // AND {day}Hours = 8 Mo-Fr agree, so the workDays-primary branch cannot matter here.

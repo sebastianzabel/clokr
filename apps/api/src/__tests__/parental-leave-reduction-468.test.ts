@@ -20,6 +20,7 @@ import {
   seedTestData,
   cleanupTestData,
   soleAuditRowOrNull,
+  tokenWithoutSignIn,
 } from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import { hasHumanVacationWrite } from "../contexts/absence/leave-days";
@@ -931,7 +932,9 @@ describe("Elternzeit-Kürzung (§ 17 Abs. 1 BEEG) — Issue #468, D-08..D-11", (
       ["leave-request:approve:ZUGEWIESEN"],
       { scopeType: "SALONS", salonIds: [] },
     );
-    const noPermToken = await login(noPermUser.email);
+    // #539 (D-14): empty SALONS scope = no effective permission = no sign-in; the token is signed
+    // directly (see tokenWithoutSignIn) and the three routes must still answer 403.
+    const noPermToken = await tokenWithoutSignIn(app, noPermUser.email);
 
     const getRes = await app.inject({
       method: "GET",

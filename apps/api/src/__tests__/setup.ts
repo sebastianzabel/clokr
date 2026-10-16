@@ -9,7 +9,7 @@
 import { buildApp } from "../app";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { Secret, TOTP } from "otpauth";
 // Re-export Prisma.JsonValue to keep it nameable in the inferred return type of
 // seedTestData(). Adding `uiPreferences Json?` to User caused TS2883 because the
@@ -19,6 +19,7 @@ import { leaveTypeFields } from "../contexts/absence/leave-type";
 import {
   DEFAULT_SALON_OPENING_HOURS,
   findDefaultSalon,
+  SYSTEM_ROLE_IDS,
   type SalonOpeningHours,
 } from "../contexts/platform";
 import { readFileSync, readdirSync } from "node:fs";
@@ -126,8 +127,9 @@ export function reissueTokenNow(app: FastifyInstance, token: string): string {
   if (!decoded) {
     throw new Error("reissueTokenNow: could not decode token");
   }
-  const { sub, role, tenantId, employeeId } = decoded;
-  return app.jwt.sign({ sub, role, tenantId, employeeId });
+  // Issue #539 (D-05): no role claim - re-signed with exactly what a login issues.
+  const { sub, tenantId, employeeId } = decoded;
+  return app.jwt.sign({ sub, tenantId, employeeId });
 }
 
 /**
@@ -323,6 +325,117 @@ export async function salonIdForEmployee(
   return salon.id;
 }
 
+/**
+ * Issue #539 (D-09): the system roles a fixture user can be given. Its own union, not the Prisma
+ * `Role` enum, so it survives the removal of that enum in Release B.
+ */
+export type LegacySystemRoleName = "ADMIN" | "MANAGER" | "EMPLOYEE";
+
+/**
+ * Issue #539 (D-09): gives a fixture user its system role as a STORED tenant-wide
+ * `RoleAssignment`. From Release A on, permissions come only from stored rows, so every fixture
+ * user that is meant to hold a role says so explicitly, per user — Release B then only drops the
+ * `role:` column values. Idempotent (upsert on the unique key `userId_accessRoleId_scopeType`) and
+ * writes no `AuditLog` row: a fixture has no principal, while production writes go through
+ * employee creation or the role-assignment API, both audited. Returns the row id.
+ */
+export async function grantSystemRole(
+  prisma: Prisma.TransactionClient,
+  input: { tenantId: string; userId: string; role: LegacySystemRoleName },
+): Promise<string> {
+  const accessRoleId = SYSTEM_ROLE_IDS[input.role];
+  const row = await prisma.roleAssignment.upsert({
+    where: {
+      userId_accessRoleId_scopeType: {
+        userId: input.userId,
+        accessRoleId,
+        scopeType: "TENANT",
+      },
+    },
+    create: {
+      tenantId: input.tenantId,
+      userId: input.userId,
+      accessRoleId,
+      scopeType: "TENANT",
+      salonIds: [],
+      employeeIds: [],
+    },
+    update: {},
+    select: { id: true },
+  });
+  return row.id;
+}
+
+/**
+ * Issue #539 (D-14): a token for a user who can no longer SIGN IN. An active account whose effective
+ * permission set is empty (no stored role assignment, or only a role that grants nothing at the
+ * chosen scope) is refused at login with 403 `NO_ROLE_ASSIGNED`, but several tests exist precisely
+ * to prove that such a principal gets 403 on a guarded route (an empty SALONS scope, a salon-scoped
+ * holder of a whole-tenant key). They obtain their token here: signed with exactly the claims a
+ * login would have issued (sub, tenant, employee - no role claim since #539 D-05). `email` is the user's login email.
+ */
+export async function tokenWithoutSignIn(app: FastifyInstance, email: string): Promise<string> {
+  const user = await app.prisma.user.findUniqueOrThrow({
+    where: { email },
+    include: { employee: { select: { id: true, tenantId: true } } },
+  });
+  return app.jwt.sign({
+    sub: user.id,
+    tenantId: user.employee?.tenantId ?? "",
+    employeeId: user.employee?.id,
+  } as JwtPayload);
+}
+
+/**
+ * Issue #539: removes every stored role assignment of `userIds`. It exists only to restore a
+ * recorded precondition (the neutrality fixture, whose recordings were taken on seed users
+ * without stored rows) or — until plan 539-07 rewrites them — the pre-#539 seed state of a file
+ * that deliberately tests the unassigned state. Never a way to make an incidental test green.
+ */
+export async function removeFixtureRoleAssignments(
+  prisma: Prisma.TransactionClient,
+  userIds: readonly string[],
+): Promise<void> {
+  if (userIds.length === 0) return;
+  await prisma.roleAssignment.deleteMany({ where: { userId: { in: [...userIds] } } });
+}
+
+/**
+ * Issue #539 (plan 07): an admin-scope API key of `tenantId` and its raw token. An API key resolves
+ * to the Admin system role through its scope (`request-permissions.ts`), never through a stored
+ * `RoleAssignment`, so it passes every guard an admin passes WITHOUT being a counted holder of the
+ * guarded permissions (`countHoldersPerGuardedPermission` reads stored rows only). The lockout tests
+ * use it as the acting principal: before #539 their seed admin was exactly such an uncounted actor
+ * (it held its rights through the legacy-role fallback); a stored admin row would make it a holder
+ * and change every holder count the scenarios arrange. `removeFixtureApiKeys` deletes the keys.
+ */
+export async function createAdminApiKey(
+  prisma: Prisma.TransactionClient,
+  input: { tenantId: string; createdBy: string },
+): Promise<{ id: string; token: string }> {
+  const token = `clk_${randomBytes(24).toString("hex")}`;
+  const row = await prisma.apiKey.create({
+    data: {
+      tenantId: input.tenantId,
+      name: `fixture-admin-${randomBytes(3).toString("hex")}`,
+      keyHash: createHash("sha256").update(token).digest("hex"),
+      keyPrefix: token.slice(0, 8),
+      scopes: ["admin"],
+      createdBy: input.createdBy,
+    },
+    select: { id: true },
+  });
+  return { id: row.id, token };
+}
+
+/** Deletes every API key of `tenantId` (fixture cleanup for `createAdminApiKey`). */
+export async function removeFixtureApiKeys(
+  prisma: Prisma.TransactionClient,
+  tenantId: string,
+): Promise<void> {
+  await prisma.apiKey.deleteMany({ where: { tenantId } });
+}
+
 /** Phase 566 (D-10): what every shared fixture tenant books — all modules, a quota no scenario reaches. */
 export const FIXTURE_PACKAGES = {
   bookedModules: ["CHAIN", "INTEGRATIONS", "HARDWARE_CLOCK", "ANALYTICS"] as TenantModule[],
@@ -380,6 +493,9 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
       hireDate: new Date("2024-01-01"),
     },
   });
+  // Issue #539 (D-09): the seed users hold their system role as a stored assignment, before the
+  // logins below — permissions come only from stored rows.
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: adminUser.id, role: "ADMIN" });
 
   await prisma.workSchedule.create({
     data: {
@@ -421,6 +537,7 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
       hireDate: new Date("2024-01-01"),
     },
   });
+  await grantSystemRole(prisma, { tenantId: tenant.id, userId: empUser.id, role: "EMPLOYEE" });
 
   await prisma.workSchedule.create({
     data: {

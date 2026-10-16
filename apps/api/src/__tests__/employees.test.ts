@@ -5,6 +5,7 @@ import {
   seedTestData,
   cleanupTestData,
   soleAuditRowOrNull,
+  grantSystemRole,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
@@ -950,6 +951,11 @@ describe("Employees API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
+      });
 
       try {
         // Default: anonymized row is excluded.
@@ -1049,6 +1055,11 @@ describe("Employees API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
+      });
       dsgvoEmployeeId = employee.id;
 
       await app.prisma.overtimeAccount.create({
@@ -1137,6 +1148,11 @@ describe("Employees API", () => {
           employeeNumber: `CT-${uid}`,
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
       });
       await app.prisma.overtimeAccount.create({
         data: { employeeId: emp.id, balanceHours: 0 },
@@ -1346,6 +1362,11 @@ describe("Employees API", () => {
           hireDate: new Date("2024-01-01"), // hired 2024 → retention expires 2034-12-31
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
+      });
       await app.prisma.overtimeAccount.create({
         data: { employeeId: emp.id, balanceHours: 0 },
       });
@@ -1451,6 +1472,11 @@ describe("Employees API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
+      });
       await app.prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
 
       const res = await app.inject({
@@ -1502,6 +1528,11 @@ describe("Employees API", () => {
           exitDate,
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
+      });
       await app.prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
       return { emp, user };
     }
@@ -1527,6 +1558,11 @@ describe("Employees API", () => {
           employeeNumber: `A2-${uid}`,
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: a2User.id,
+        role: "ADMIN",
       });
       admin2EmployeeId = a2Emp.id;
       await app.prisma.overtimeAccount.create({ data: { employeeId: a2Emp.id, balanceHours: 0 } });

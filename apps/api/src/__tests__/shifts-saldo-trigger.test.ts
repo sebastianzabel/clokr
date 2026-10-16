@@ -33,7 +33,13 @@
  *     persist.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, closeTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup"; // Phase 325 (issue #325)
 import * as WorkingTimeAccountModule from "../contexts/working-time-account";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -119,6 +125,7 @@ describe("Phase 76.5 — Shift CRUD triggers OvertimeAccount recompute (SALDO-V1
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -175,6 +182,7 @@ describe("Phase 76.5 — Shift CRUD triggers OvertimeAccount recompute (SALDO-V1
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,

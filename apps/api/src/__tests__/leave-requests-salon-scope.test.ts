@@ -10,7 +10,13 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  tokenWithoutSignIn,
+} from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
@@ -318,7 +324,9 @@ describe("Issue #91 (Phase 91b Plan 04) — LeaveRequest salon/person scope", ()
         salonIds: [],
       },
     );
-    const token = await login(manager.user.email);
+    // #539 (D-14): this manager holds no effective permission and cannot sign in, so the token is
+    // signed directly (see tokenWithoutSignIn); the route must still answer 403.
+    const token = await tokenWithoutSignIn(app, manager.user.email);
 
     const res = await app.inject({
       method: "GET",

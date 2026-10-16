@@ -3,9 +3,8 @@
  *
  * `deriveCompatRole` is pure: ADMIN for a well-formed TENANT assignment on the Admin system role
  * (by id), MANAGER when any effective assignment's role grants a ZUGEWIESEN permission, EMPLOYEE
- * otherwise. `compatRoleForUser` reads the stored rows and falls back to the column when there
- * are none — which must equal deriving over the implicit fallback assignment (proved here for all
- * three system roles, so the shortcut cannot drift from the resolver's D-08 fallback).
+ * otherwise. Since #539 the derived value is no longer published in a token or a sign-in body
+ * (`token-claims-539.test.ts`); it is written to the column only (D-06).
  *
  * No person names in fixtures (CLAUDE.md PII rule).
  */
@@ -17,13 +16,11 @@ import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../.
 import {
   assignmentExceedsEmployee,
   assignmentsBlockingDemotionToEmployee,
-  compatRoleForUser,
   compatRoleUserWhere,
   deriveCompatRole,
   isDemotionToEmployee,
   isLegacySystemRoleId,
   parseCompatRoleFilter,
-  materializeLegacyRoleAssignment,
   replaceSystemRoleAssignment,
   requestedRoleUnchanged,
   RoleDemotionBlockedError,
@@ -31,9 +28,11 @@ import {
   systemRoleIdForLegacyRole,
   type CompatRoleAssignmentRow,
 } from "../compat-role";
+import * as compatRoleModule from "../compat-role";
 import { SYSTEM_ROLE_IDS, SYSTEM_ROLE_PERMISSIONS, type SystemRoleSlot } from "../system-roles";
 import { roleNameKey } from "../access-role";
 import { TENANT_REQUIRED_ERROR } from "../tenant-status";
+import { NO_ROLE_ASSIGNED_ERROR } from "../request-permissions";
 
 const TENANT = "tenant-under-test";
 const OTHER_TENANT = "another-tenant";
@@ -275,111 +274,7 @@ describe("compat role — report data filter (Phase 75b Plan 12, D-19)", () => {
   });
 });
 
-describe("compat role — compatRoleForUser against the database (D-14, AC-75-5)", () => {
-  let app: FastifyInstance;
-  let seed: Awaited<ReturnType<typeof seedTestData>>;
-
-  async function createUser(role: Role, label: string, withEmployee = true) {
-    const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-    const user = await app.prisma.user.create({
-      data: {
-        email: `cr-${s}@test.de`,
-        passwordHash: await bcrypt.hash("test1234", 10),
-        role,
-        isActive: true,
-      },
-    });
-    if (withEmployee) {
-      await app.prisma.employee.create({
-        data: {
-          tenantId: seed.tenant.id,
-          userId: user.id,
-          employeeNumber: `CR-${s}`.slice(0, 20),
-          firstName: label,
-          lastName: "Test",
-          hireDate: new Date("2024-01-01"),
-        },
-      });
-    }
-    return user;
-  }
-
-  beforeAll(async () => {
-    app = await getTestApp();
-    seed = await seedTestData(app, "compat-role");
-  });
-
-  afterAll(async () => {
-    try {
-      await app.prisma.roleAssignment.deleteMany({ where: { tenantId: seed.tenant.id } });
-      await app.prisma.accessRole.deleteMany({ where: { tenantId: seed.tenant.id } });
-      await cleanupTestData(app, seed.tenant.id);
-    } catch (err) {
-      console.error("Cleanup failed:", err);
-    }
-    await closeTestApp();
-  });
-
-  it.each(["ADMIN", "MANAGER", "EMPLOYEE"] as const)(
-    "a legacy %s without stored assignments keeps the column value",
-    async (role) => {
-      const user = await createUser(role, `fb-${role}`);
-      expect(await compatRoleForUser(app.prisma, user.id, seed.tenant.id, role)).toBe(role);
-    },
-  );
-
-  it("an empty tenant (user without Employee) keeps the column value without a query", async () => {
-    const user = await createUser("ADMIN", "no-emp", false);
-    try {
-      expect(await compatRoleForUser(app.prisma, user.id, "", "ADMIN")).toBe("ADMIN");
-    } finally {
-      await app.prisma.user.delete({ where: { id: user.id } });
-    }
-  });
-
-  it("stored assignments win over the column: a legacy EMPLOYEE with a TENANT customer role holding a ZUGEWIESEN key → MANAGER", async () => {
-    const user = await createUser("EMPLOYEE", "customer");
-    const name = `Rolle ${user.id.slice(0, 8)}`;
-    const role = await app.prisma.accessRole.create({
-      data: {
-        tenantId: seed.tenant.id,
-        name,
-        nameKey: roleNameKey(name),
-        permissions: ["team-overview:read:ZUGEWIESEN"],
-      },
-    });
-    await app.prisma.roleAssignment.create({
-      data: {
-        tenantId: seed.tenant.id,
-        userId: user.id,
-        accessRoleId: role.id,
-        scopeType: "TENANT",
-        salonIds: [],
-        employeeIds: [],
-      },
-    });
-    expect(await compatRoleForUser(app.prisma, user.id, seed.tenant.id, "EMPLOYEE")).toBe(
-      "MANAGER",
-    );
-  });
-
-  it("a stored Admin TENANT assignment → ADMIN even when the column says EMPLOYEE", async () => {
-    const user = await createUser("EMPLOYEE", "stored-admin");
-    await app.prisma.roleAssignment.create({
-      data: {
-        tenantId: seed.tenant.id,
-        userId: user.id,
-        accessRoleId: SYSTEM_ROLE_IDS.ADMIN,
-        scopeType: "TENANT",
-        salonIds: [],
-        employeeIds: [],
-      },
-    });
-    expect(await compatRoleForUser(app.prisma, user.id, seed.tenant.id, "EMPLOYEE")).toBe("ADMIN");
-  });
-});
-
-describe("compat role — login, OTP and refresh carry the derived role (D-14, D-12, AC-75-5)", () => {
+describe("compat role — sign-in refusals do not depend on the column (D-14, #539 D-05)", () => {
   let app: FastifyInstance;
   let seed: Awaited<ReturnType<typeof seedTestData>>;
   let otpSeed: Awaited<ReturnType<typeof seedTestData>>;
@@ -391,10 +286,6 @@ describe("compat role — login, OTP and refresh carry the derived role (D-14, D
   function nextIp(): string {
     ipCounter += 1;
     return `10.75.6.${ipCounter}`;
-  }
-
-  function tokenRole(token: string): unknown {
-    return (app.jwt.decode(token) as { role?: unknown } | null)?.role;
   }
 
   async function createUser(tenantId: string | null, role: Role, label: string) {
@@ -422,29 +313,6 @@ describe("compat role — login, OTP and refresh carry the derived role (D-14, D
     return user;
   }
 
-  /** A TENANT assignment on a customer role of `tenantId` holding one ZUGEWIESEN key. */
-  async function assignCustomerZugewiesen(tenantId: string, userId: string) {
-    const name = `Rolle ${userId.slice(0, 8)}`;
-    const role = await app.prisma.accessRole.create({
-      data: {
-        tenantId,
-        name,
-        nameKey: roleNameKey(name),
-        permissions: ["time-entry:read:EIGENE", "team-overview:read:ZUGEWIESEN"],
-      },
-    });
-    await app.prisma.roleAssignment.create({
-      data: {
-        tenantId,
-        userId,
-        accessRoleId: role.id,
-        scopeType: "TENANT",
-        salonIds: [],
-        employeeIds: [],
-      },
-    });
-  }
-
   async function login(email: string) {
     const res = await app.inject({
       method: "POST",
@@ -457,38 +325,10 @@ describe("compat role — login, OTP and refresh carry the derived role (D-14, D
       body: JSON.parse(res.body) as {
         accessToken?: string;
         refreshToken?: string;
-        user?: { role: string };
         requiresOtp?: boolean;
         userId?: string;
       },
     };
-  }
-
-  async function refreshRole(refreshToken: string): Promise<unknown> {
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/v1/auth/refresh",
-      payload: { refreshToken },
-      remoteAddress: nextIp(),
-    });
-    expect(res.statusCode, res.body).toBe(200);
-    return tokenRole((JSON.parse(res.body) as { accessToken: string }).accessToken);
-  }
-
-  async function otpLogin(email: string) {
-    const before = otpCodes.length;
-    const first = await login(email);
-    expect(first.status).toBe(202);
-    expect(first.body.requiresOtp).toBe(true);
-    expect(otpCodes.length).toBe(before + 1);
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/v1/auth/verify-otp",
-      payload: { userId: first.body.userId, code: otpCodes[otpCodes.length - 1] },
-      remoteAddress: nextIp(),
-    });
-    expect(res.statusCode, res.body).toBe(200);
-    return JSON.parse(res.body) as { accessToken: string; user: { role: string } };
   }
 
   beforeAll(async () => {
@@ -519,52 +359,10 @@ describe("compat role — login, OTP and refresh carry the derived role (D-14, D
     await closeTestApp();
   });
 
-  it("a migrated MANAGER (stored Manager assignment) logs in with body and token role MANAGER", async () => {
-    const user = await createUser(seed.tenant.id, "MANAGER", "migrated-m");
-    await app.prisma.roleAssignment.create({
-      data: {
-        tenantId: seed.tenant.id,
-        userId: user.id,
-        accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
-        scopeType: "TENANT",
-        salonIds: [],
-        employeeIds: [],
-      },
-    });
-    const res = await login(user.email);
-    expect(res.status).toBe(200);
-    expect(res.body.user?.role).toBe("MANAGER");
-    expect(tokenRole(res.body.accessToken as string)).toBe("MANAGER");
-    expect(await refreshRole(res.body.refreshToken as string)).toBe("MANAGER");
-  });
-
-  it("a legacy EMPLOYEE holding a TENANT customer role with a ZUGEWIESEN key logs in and refreshes as MANAGER — the column still says EMPLOYEE", async () => {
-    const user = await createUser(seed.tenant.id, "EMPLOYEE", "derived-m");
-    await assignCustomerZugewiesen(seed.tenant.id, user.id);
-    const res = await login(user.email);
-    expect(res.status).toBe(200);
-    expect(res.body.user?.role).toBe("MANAGER");
-    expect(tokenRole(res.body.accessToken as string)).toBe("MANAGER");
-    expect(await refreshRole(res.body.refreshToken as string)).toBe("MANAGER");
-    const column = await app.prisma.user.findUniqueOrThrow({
-      where: { id: user.id },
-      select: { role: true },
-    });
-    expect(column.role).toBe("EMPLOYEE");
-  });
-
-  it("the same derivation applies to the OTP login", async () => {
-    const user = await createUser(otpSeed.tenant.id, "EMPLOYEE", "derived-otp");
-    await assignCustomerZugewiesen(otpSeed.tenant.id, user.id);
-    const body = await otpLogin(user.email);
-    expect(body.user.role).toBe("MANAGER");
-    expect(tokenRole(body.accessToken)).toBe("MANAGER");
-  });
-
   it("a user without Employee (tenant '') cannot sign in any more — 403 TENANT_REQUIRED, no token (#551)", async () => {
     // Before Issue #551 this user logged in with the User.role column as its role (AC-75-5) and a
     // refresh kept it. Such a principal has no tenant and gets no token now; the derivation for an
-    // empty tenant stays proven by the unit case on compatRoleForUser above (no query, column value).
+    // derivation is gone with the claim (#539 D-05).
     const user = await createUser(null, "ADMIN", "no-emp");
     try {
       const res = await login(user.email);
@@ -583,24 +381,32 @@ describe("compat role — login, OTP and refresh carry the derived role (D-14, D
   });
 
   it.each(["ADMIN", "MANAGER", "EMPLOYEE"] as const)(
-    "a fallback %s (no stored rows) carries the column in login, refresh and OTP",
+    "a user with column %s and no stored rows is refused at login with 403 NO_ROLE_ASSIGNED, whatever the column says (D-14)",
     async (role) => {
+      // Since #539 the column grants nothing and the sign-in of an account without any effective
+      // permission is refused (verify-otp and refresh: no-role-assigned-539.test.ts). The column is
+      // therefore never published as a claim for such a user.
       const user = await createUser(seed.tenant.id, role, `fb-${role}`);
       const res = await login(user.email);
-      expect(res.status).toBe(200);
-      expect(res.body.user?.role).toBe(role);
-      expect(tokenRole(res.body.accessToken as string)).toBe(role);
-      expect(await refreshRole(res.body.refreshToken as string)).toBe(role);
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual(NO_ROLE_ASSIGNED_ERROR);
+      expect(res.body.accessToken).toBeUndefined();
+      expect(res.body.refreshToken).toBeUndefined();
+      expect(await app.prisma.refreshToken.count({ where: { userId: user.id } })).toBe(0);
 
+      // In a two-factor tenant the refusal comes before any code is created.
       const otpUser = await createUser(otpSeed.tenant.id, role, `fb-otp-${role}`);
-      const otp = await otpLogin(otpUser.email);
-      expect(otp.user.role).toBe(role);
-      expect(tokenRole(otp.accessToken)).toBe(role);
+      const codesBefore = otpCodes.length;
+      const otpRes = await login(otpUser.email);
+      expect(otpRes.status).toBe(403);
+      expect(otpRes.body).toEqual(NO_ROLE_ASSIGNED_ERROR);
+      expect(otpCodes.length).toBe(codesBefore);
+      expect(await app.prisma.otpToken.count({ where: { userId: otpUser.id } })).toBe(0);
     },
   );
 });
 
-describe("compat role — write half against the database (D-14, D-15, D-26)", () => {
+describe("compat role — write half against the database (D-14, D-15, #539)", () => {
   let app: FastifyInstance;
   let seed: Awaited<ReturnType<typeof seedTestData>>;
   let other: Awaited<ReturnType<typeof seedTestData>>;
@@ -670,43 +476,42 @@ describe("compat role — write half against the database (D-14, D-15, D-26)", (
     await closeTestApp();
   });
 
-  it("materializeLegacyRoleAssignment stores the fallback once, and never for a user of another tenant", async () => {
-    const user = await createUser(seed.tenant.id, "MANAGER", "mat");
-    const first = await materializeLegacyRoleAssignment(app.prisma, seed.tenant.id, user.id);
-    expect(first).toMatchObject({
-      legacyRole: "MANAGER",
-      assignment: {
-        userId: user.id,
-        accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
-        roleName: "Manager",
-        scopeType: "TENANT",
-        salonIds: [],
-        employeeIds: [],
-      },
-    });
-    expect(await materializeLegacyRoleAssignment(app.prisma, seed.tenant.id, user.id)).toBeNull();
-    expect((await rowsOf(user.id)).map((row) => row.id)).toEqual([first!.assignment.id]);
+  it("nothing is stored on a user's behalf (#539 D-11): the module has no materialization, a replacement writes exactly the requested row", async () => {
+    // The D-26 function is gone: with the fallback removed it would be an implicit grant.
+    expect("materializeLegacyRoleAssignment" in compatRoleModule).toBe(false);
 
-    const foreign = await createUser(other.tenant.id, "ADMIN", "mat-foreign");
-    expect(
-      await materializeLegacyRoleAssignment(app.prisma, seed.tenant.id, foreign.id),
-    ).toBeNull();
-    expect(await app.prisma.roleAssignment.count({ where: { userId: foreign.id } })).toBe(0);
+    const user = await createUser(seed.tenant.id, "MANAGER", "mat");
+    expect(await rowsOf(user.id)).toEqual([]);
+    const { removed, created } = await replaceSystemRoleAssignment(
+      app.prisma,
+      seed.tenant.id,
+      user.id,
+      "EMPLOYEE",
+    );
+    expect(removed).toEqual([]);
+    expect(created).toMatchObject({
+      userId: user.id,
+      accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
+      scopeType: "TENANT",
+    });
+    // The MANAGER column is not stored as a row: exactly the requested Mitarbeiter row exists.
+    expect((await rowsOf(user.id)).map((row) => row.accessRoleId)).toEqual([
+      SYSTEM_ROLE_IDS.EMPLOYEE,
+    ]);
   });
 
-  it("requestedRoleUnchanged compares with the User.role column, stored rows or not (D-16, P-05)", async () => {
-    const fallback = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged");
+  it("requestedRoleUnchanged compares with the role DERIVED from the stored rows; no row means no role (#539 D-11)", async () => {
+    // No stored row: the person holds no role, so even the column's own value is a change.
+    const unassigned = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged");
     const yields = (userId: string, role: Role) =>
       requestedRoleUnchanged(app.prisma, seed.tenant.id, userId, role);
-    expect(await yields(fallback.id, "EMPLOYEE")).toBe(true);
-    expect(await yields(fallback.id, "MANAGER")).toBe(false);
-    expect(await yields(fallback.id, "ADMIN")).toBe(false);
+    expect(await yields(unassigned.id, "EMPLOYEE")).toBe(false);
+    expect(await yields(unassigned.id, "MANAGER")).toBe(false);
+    expect(await yields(unassigned.id, "ADMIN")).toBe(false);
 
-    await assign(fallback.id, SYSTEM_ROLE_IDS.EMPLOYEE);
-    // Before D-16 the fallback-only predicate answered false here — it required no stored row at
-    // all — and that exclusion sent every form save of a user with stored rows through the bridge,
-    // including an unrelated save by a Personalabteilung/customer-role holder.
-    expect(await yields(fallback.id, "EMPLOYEE")).toBe(true);
+    await assign(unassigned.id, SYSTEM_ROLE_IDS.EMPLOYEE);
+    expect(await yields(unassigned.id, "EMPLOYEE")).toBe(true);
+    expect(await yields(unassigned.id, "MANAGER")).toBe(false);
 
     const hrHolder = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged-hr");
     await assign(hrHolder.id, SYSTEM_ROLE_IDS.HR);
@@ -719,15 +524,13 @@ describe("compat role — write half against the database (D-14, D-15, D-26)", (
     expect(await yields(hrHolder.id, "EMPLOYEE")).toBe(false);
     expect(await yields(hrHolder.id, "ADMIN")).toBe(false);
 
-    // P-05: a stale column wins over the derivation. The column stays EMPLOYEE (never synced)
-    // while the stored HR row derives MANAGER — input proof via compatRoleForUser.
+    // The derived role wins over a stale column: the column stays EMPLOYEE (never synced) while
+    // the stored HR row derives MANAGER. Echoing the stale column value is therefore a change,
+    // echoing the derived one is not.
     const stale = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged-stale");
     await assign(stale.id, SYSTEM_ROLE_IDS.HR);
-    expect(await compatRoleForUser(app.prisma, stale.id, seed.tenant.id, "EMPLOYEE")).toBe(
-      "MANAGER",
-    );
-    expect(await yields(stale.id, "EMPLOYEE")).toBe(true);
-    expect(await yields(stale.id, "MANAGER")).toBe(false);
+    expect(await yields(stale.id, "MANAGER")).toBe(true);
+    expect(await yields(stale.id, "EMPLOYEE")).toBe(false);
 
     const foreign = await createUser(other.tenant.id, "EMPLOYEE", "unchanged-foreign");
     expect(await yields(foreign.id, "EMPLOYEE")).toBe(false);

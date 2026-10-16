@@ -300,7 +300,6 @@ describe("credential paths issue no token without a tenant (D-02)", () => {
   function refreshTokenFor(userId: string): string {
     return app.jwt.sign({
       sub: userId,
-      role: "ADMIN",
       tenantId: "",
       jti: randomBytes(8).toString("hex"),
     } as unknown as JwtPayload);

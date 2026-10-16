@@ -41,6 +41,7 @@ import type { FastifyInstance } from "fastify";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import { salonIdForEmployee } from "./setup"; // Phase 68b (issue #68)
 import { dateToDay } from "../contexts/platform/salon-assignment-rules";
+import { SYSTEM_ROLE_IDS } from "../contexts/platform/system-roles";
 
 /**
  * Build a fresh Fastify instance with `ALLOW_TEST_BOOTSTRAP` overridden.
@@ -150,14 +151,13 @@ describe("Phase 73-01: test-only tenant bootstrap", () => {
       expect(tenant?.slug).toBe(body.tenantId);
 
       // adminToken is a real JWT signed by the app — verify decode locks in
-      // role=ADMIN + tenant scope. We use the app's own jwt instance to
+      // the tenant scope (no role claim since #539; the admin right is a stored assignment). We use the app's own jwt instance to
       // avoid pinning the secret in the test file.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const decoded = (appOn as any).jwt.verify(body.adminToken) as {
-        role?: string;
         tenantId?: string;
       };
-      expect(decoded.role).toBe("ADMIN");
+      expect(Object.keys(decoded)).not.toContain("role");
       expect(decoded.tenantId).toBe(body.tenantId);
 
       // Phase 73-01 seed-extension assertion: WorkSchedule + OvertimeAccount
@@ -373,6 +373,97 @@ describe("Phase 73-01: test-only tenant bootstrap", () => {
       expect(usersAfter).toBe(usersBefore);
       expect(employeesAfter).toBe(employeesBefore);
       expect(keysAfter).toBe(keysBefore);
+    });
+
+    // ── Issue #539 (Release A, D-09) ────────────────────────────────
+    // Permissions come only from stored role assignments, so the bootstrapped users must hold
+    // theirs as rows — the e2e specs log in as the bootstrapped admin.
+
+    it("POST /api/v1/test/bootstrap-tenant gives its admin exactly one stored TENANT row on the Admin system role, and the token is accepted", async () => {
+      const res = await appOn.inject({
+        method: "POST",
+        url: "/api/v1/test/bootstrap-tenant",
+      });
+      expect(res.statusCode).toBe(200);
+      const { tenantId, adminToken } = res.json() as { tenantId: string; adminToken: string };
+      createdTenantIds.add(tenantId);
+
+      const employee = await appOn.prisma.employee.findFirst({ where: { tenantId } });
+      expect(employee).not.toBeNull();
+      const rows = await appOn.prisma.roleAssignment.findMany({
+        where: { userId: employee!.userId },
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        tenantId,
+        accessRoleId: SYSTEM_ROLE_IDS.ADMIN,
+        scopeType: "TENANT",
+        salonIds: [],
+        employeeIds: [],
+      });
+
+      const guarded = await appOn.inject({
+        method: "GET",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(guarded.statusCode).toBe(200);
+    });
+
+    it("POST /api/v1/test/bootstrap-terminal gives the new employee exactly one stored TENANT row on the Employee system role", async () => {
+      const bootstrapRes = await appOn.inject({
+        method: "POST",
+        url: "/api/v1/test/bootstrap-tenant",
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const { tenantId } = bootstrapRes.json() as { tenantId: string };
+      createdTenantIds.add(tenantId);
+
+      const terminalRes = await appOn.inject({
+        method: "POST",
+        url: "/api/v1/test/bootstrap-terminal",
+        payload: { tenantId },
+      });
+      expect(terminalRes.statusCode).toBe(201);
+      const { userId } = terminalRes.json() as { userId: string };
+
+      const rows = await appOn.prisma.roleAssignment.findMany({ where: { userId } });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        tenantId,
+        accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
+        scopeType: "TENANT",
+        salonIds: [],
+        employeeIds: [],
+      });
+    });
+
+    it("DELETE /api/v1/test/tenant/:id leaves no role assignment of the tenant behind", async () => {
+      const bootstrapRes = await appOn.inject({
+        method: "POST",
+        url: "/api/v1/test/bootstrap-tenant",
+      });
+      expect(bootstrapRes.statusCode).toBe(200);
+      const { tenantId } = bootstrapRes.json() as { tenantId: string };
+      createdTenantIds.add(tenantId);
+      const terminalRes = await appOn.inject({
+        method: "POST",
+        url: "/api/v1/test/bootstrap-terminal",
+        payload: { tenantId },
+      });
+      expect(terminalRes.statusCode).toBe(201);
+      // Anti-vacuity: the rows exist before the delete.
+      expect(await appOn.prisma.roleAssignment.count({ where: { tenantId } })).toBe(2);
+
+      const deleteRes = await appOn.inject({
+        method: "DELETE",
+        url: `/api/v1/test/tenant/${tenantId}`,
+      });
+      expect(deleteRes.statusCode).toBe(200);
+      expect(await appOn.prisma.roleAssignment.count({ where: { tenantId } })).toBe(0);
+      expect(await appOn.prisma.tenant.findUnique({ where: { id: tenantId } })).toBeNull();
+
+      createdTenantIds.delete(tenantId);
     });
 
     it("DELETE /api/v1/test/tenant/:id removes assignment rows for both the admin and a bootstrapped terminal employee", async () => {

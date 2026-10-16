@@ -285,16 +285,26 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
     expect(reach).toEqual({ kind: "scoped", salonIds: [], employeeIds: [] });
   });
 
-  // ── the legacy-fallback regression (load-bearing, see mutation proof M2) ─────
+  // ── #539 (Release A): no legacy-role fallback — load-bearing, see mutation proof M2 ─────
 
-  it("a user with ZERO stored assignments whose legacy role grants the permission resolves to wholeTenant (Altrollen-Rückfall)", async () => {
+  it("a user with ZERO stored assignments whose legacy role WOULD have granted the permission resolves to scoped-empty (#539: no Altrollen-Rückfall)", async () => {
     const { user } = await createUser(tA.tenant.id, "MANAGER", "fallback-grants");
     const reach = await resolveAccessReach(
       app.prisma,
       ctxForUser(tA.tenant.id, user.id),
       "time-entry:read:ZUGEWIESEN",
     );
-    expect(reach).toEqual({ kind: "wholeTenant" });
+    expect(reach).toEqual({ kind: "scoped", salonIds: [], employeeIds: [] });
+  });
+
+  it("a user with ZERO stored assignments and legacy column ADMIN also resolves to scoped-empty for a tenant-level permission", async () => {
+    const { user } = await createUser(tA.tenant.id, "ADMIN", "fallback-admin");
+    const reach = await resolveAccessReach(
+      app.prisma,
+      ctxForUser(tA.tenant.id, user.id),
+      "role-assignment:manage:ZUGEWIESEN",
+    );
+    expect(reach).toEqual({ kind: "scoped", salonIds: [], employeeIds: [] });
   });
 
   it("a user with ZERO stored assignments whose legacy role does NOT grant the permission resolves to scoped-empty", async () => {

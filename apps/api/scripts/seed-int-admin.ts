@@ -7,12 +7,15 @@
  * afterwards. This script closes that gap; it is step 8 ("Restore an admin
  * login") of `docs/data-refresh-process.md`.
  *
- * It does NOT create a new person: it re-enables an EXISTING ADMIN user, so the
+ * It does NOT create a new person: it re-enables an EXISTING admin user, so the
  * employee/tenant wiring stays exactly as the refreshed data has it. Which user
- * is picked is deterministic (lowest id among active ADMINs that have an Employee)
- * unless --email pins one explicitly. Since Issue #551 a user WITHOUT an Employee has no tenant and
- * cannot sign in (403 TENANT_REQUIRED), so restoring its password would hand out a login that does
- * not work: the default pick skips such users, and a pinned --email of one is refused before any write.
+ * is picked is deterministic (lowest id among active users that have an Employee and hold a stored
+ * TENANT assignment on the Admin system role) unless --email pins one explicitly. Since Issue #551
+ * a user WITHOUT an Employee has no tenant and cannot sign in (403 TENANT_REQUIRED), and since
+ * Issue #539 a user WITHOUT a stored role assignment is refused at login (NO_ROLE_ASSIGNED), so
+ * restoring either's password would hand out a login that does not work: the default pick skips
+ * such users, and a pinned --email of one is refused before any write. The choice never reads the
+ * compat column (`restorable-admin.ts`).
  *
  * If the picked admin's tenant has 2FA enabled, a fresh password alone will not
  * be enough to log in (`POST /auth/login` returns 202 `{ requiresOtp: true }`
@@ -37,6 +40,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import pg from "pg";
+import { restorableAdminWhere, pinnedUserRefusal } from "./restorable-admin";
 
 if (!process.env.DATABASE_URL) {
   console.error("[seed-int-admin] DATABASE_URL is required");
@@ -78,6 +82,7 @@ async function main(): Promise<void> {
       ? await prisma.user.findUnique({
           where: { email: pinnedEmail },
           include: {
+            roleAssignments: { select: { accessRoleId: true, scopeType: true } },
             employee: {
               select: {
                 tenantId: true,
@@ -87,10 +92,12 @@ async function main(): Promise<void> {
           },
         })
       : await prisma.user.findFirst({
-          // Issue #551: an admin without an Employee cannot sign in any more, so it is never picked.
-          where: { role: "ADMIN", isActive: true, employee: { isNot: null } },
+          // Issues #551 and #539: only a user that can actually sign in as an admin is picked —
+          // it has an Employee and holds a stored Admin assignment.
+          where: restorableAdminWhere(),
           orderBy: { id: "asc" },
           include: {
+            roleAssignments: { select: { accessRoleId: true, scopeType: true } },
             employee: {
               select: {
                 tenantId: true,
@@ -104,21 +111,18 @@ async function main(): Promise<void> {
       console.error(
         pinnedEmail
           ? `[seed-int-admin] no user with email ${pinnedEmail}`
-          : "[seed-int-admin] no active ADMIN user with an Employee found — is the database refreshed?",
+          : "[seed-int-admin] no active admin user with an Employee and a stored Admin assignment found — is the database refreshed?",
       );
       process.exitCode = 1;
       return;
     }
-    if (!user.employee) {
-      console.error(
-        `[seed-int-admin] ${user.email} has no Employee, hence no tenant — since Issue #551 such a ` +
-          "user cannot sign in (403 TENANT_REQUIRED). Pick an admin that has an Employee. Nothing written.",
-      );
-      process.exitCode = 1;
-      return;
-    }
-    if (user.role !== "ADMIN") {
-      console.error(`[seed-int-admin] ${user.email} has role ${user.role}, expected ADMIN`);
+    const refusal = pinnedUserRefusal({
+      email: user.email,
+      hasEmployee: user.employee !== null,
+      assignments: user.roleAssignments,
+    });
+    if (refusal) {
+      console.error(`[seed-int-admin] ${refusal}`);
       process.exitCode = 1;
       return;
     }

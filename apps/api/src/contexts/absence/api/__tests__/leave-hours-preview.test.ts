@@ -19,6 +19,7 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee,
+  grantSystemRole,
 } from "../../../../__tests__/setup";
 import { holidayFreeMondayStr, addDaysStr, utcMidnight } from "../../../../__tests__/test-dates";
 import type { FastifyInstance } from "fastify";
@@ -74,6 +75,7 @@ describe("GET /leave/hours-preview — rosterImported (Phase 430, D-15)", () => 
           hireDate: PAST_ANCHOR,
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       await prisma.workSchedule.create({
         data: {
           employeeId: employee.id,
@@ -219,6 +221,7 @@ describe("GET /leave/hours-preview — type/excludeRequestId (Issue #436, D-04/D
         hireDate: PAST_ANCHOR,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     empId = employee.id;
     await prisma.workSchedule.create({
       data: {
@@ -295,6 +298,7 @@ describe("GET /leave/hours-preview — type/excludeRequestId (Issue #436, D-04/D
         hireDate: PAST_ANCHOR,
       },
     });
+    await grantSystemRole(app.prisma, { tenantId, userId: admin.id, role: "ADMIN" });
     const login = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
@@ -370,6 +374,11 @@ describe("GET /leave/hours-preview — type/excludeRequestId (Issue #436, D-04/D
         lastName: "other",
         hireDate: PAST_ANCHOR,
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: otherTenant.id,
+      userId: otherUser.id,
+      role: "EMPLOYEE",
     });
     const otherVacType = await app.prisma.leaveType.create({
       data: {

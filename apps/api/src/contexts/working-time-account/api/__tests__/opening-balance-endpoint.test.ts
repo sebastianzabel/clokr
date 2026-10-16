@@ -7,6 +7,7 @@ import {
   seedTestData,
   cleanupTestData,
   soleAuditRowOrNull,
+  grantSystemRole,
 } from "../../../../__tests__/setup";
 import { recalculateSnapshots } from "../../recalculate-snapshots";
 import type { FastifyInstance } from "fastify";
@@ -55,6 +56,11 @@ describe("POST /overtime/opening-balance (OB-03)", () => {
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: mgrUser.id,
+      role: "MANAGER",
+    });
     const loginRes = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
@@ -98,6 +104,11 @@ describe("POST /overtime/opening-balance (OB-03)", () => {
         lastName: suffix,
         hireDate: new Date(`${hireDateStr}T00:00:00Z`),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: user.id,
+      role: "EMPLOYEE",
     });
     await app.prisma.workSchedule.create({
       data: {

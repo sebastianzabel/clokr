@@ -18,7 +18,7 @@
  * confirmed-check suite.
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, grantSystemRole } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -116,6 +116,7 @@ describe("POST /leave/requests OVERTIME_COMP + GET /leave/overtime-balance — m
         hireDate: new Date("2024-01-01"), // past-anchored fixture date, cannot expire
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     employeeId = emp.id;
 
     // Monday-only, MONDAY_HOURS — requesting the one REQUEST_MONDAY day needs exactly
@@ -398,6 +399,11 @@ describe("POST /leave/requests OVERTIME_COMP + GET /leave/overtime-balance — m
           lastName: "Employee",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: tenant2.id,
+        userId: user2.id,
+        role: "EMPLOYEE",
       });
       await app.prisma.workSchedule.create({
         data: {

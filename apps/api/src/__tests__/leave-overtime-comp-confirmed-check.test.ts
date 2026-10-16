@@ -35,7 +35,7 @@
  * for a reason unrelated to what it tests.
  */
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, grantSystemRole } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -154,6 +154,7 @@ describe("POST /leave/requests OVERTIME_COMP — validates against confirmed car
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     employeeId = emp.id;
 
     // Monday-only, 4h — requesting the one REQUEST_MONDAY day needs exactly 4h.

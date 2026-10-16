@@ -36,7 +36,14 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  grantSystemRole,
+} from "./setup";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
 
 const PASSWORD = "test1234";
@@ -61,7 +68,8 @@ describe("Issue #85 (Phase 85b-08) - ArbZG warnings of a save response, D-12", (
     return `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   }
 
-  async function createEmployee(label: string) {
+  // grant: false for a person whose stored assignment is the one the caller adds (no system-role grant).
+  async function createEmployee(label: string, grant = true) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 4);
     const user = await app.prisma.user.create({
@@ -77,6 +85,13 @@ describe("Issue #85 (Phase 85b-08) - ArbZG warnings of a save response, D-12", (
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    if (grant) {
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
+      });
+    }
     return { user, employee };
   }
 
@@ -91,7 +106,7 @@ describe("Issue #85 (Phase 85b-08) - ArbZG warnings of a save response, D-12", (
   }
 
   async function salonManager(label: string, salonIds: string[]): Promise<string> {
-    const m = await createEmployee(label);
+    const m = await createEmployee(label, false);
     await app.prisma.roleAssignment.create({
       data: {
         tenantId: data.tenant.id,

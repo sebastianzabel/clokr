@@ -161,14 +161,25 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
     await closeTestApp();
   });
 
-  it("fallback MANAGER reaches every active salon, fallback EMPLOYEE none", async () => {
-    const { ctx: manager } = await createUser("MANAGER", "fbManager");
-    const { ctx: employee } = await createUser("EMPLOYEE", "fbEmployee");
+  it("a stored TENANT Manager assignment reaches every active salon, a stored Mitarbeiter assignment none", async () => {
+    const { user: managerUser, ctx: manager } = await createUser("EMPLOYEE", "stManager");
+    const { user: employeeUser, ctx: employee } = await createUser("MANAGER", "stEmployee");
+    await assign(managerUser.id, SYSTEM_ROLE_IDS.MANAGER, { scopeType: "TENANT" });
+    await assign(employeeUser.id, SYSTEM_ROLE_IDS.EMPLOYEE, { scopeType: "TENANT" });
     expect((await contextSalonIds(app.prisma, manager, TODAY)).managedSalonIds).toEqual(allActive);
     expect((await contextSalonIds(app.prisma, employee, TODAY)).managedSalonIds).toEqual([]);
   });
 
-  it("one stored row on an EIGENE-only role disables the fallback, even for User.role ADMIN", async () => {
+  it("a user without a stored assignment manages no salon, whatever User.role says (#539: no Altrollen-Rückfall)", async () => {
+    for (const role of ["MANAGER", "ADMIN", "EMPLOYEE"] as const) {
+      const { ctx } = await createUser(role, `fb${role}`);
+      const result = await contextSalonIds(app.prisma, ctx, TODAY);
+      expect(result.managedSalonIds, role).toEqual([]);
+      expect(result.salonIds, role).toEqual([]);
+    }
+  });
+
+  it("a stored row on an EIGENE-only role reaches no managed salon, even for User.role ADMIN", async () => {
     const { user, ctx } = await createUser("ADMIN", "eigeneAdmin");
     const role = await customerRole(tA.tenant.id, "eigene", ["time-entry:read:EIGENE"]);
     await assign(user.id, role.id, { scopeType: "TENANT" });
@@ -271,24 +282,31 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
     expect((await contextSalonIds(app.prisma, ctx, TODAY)).ownSalonIds).toEqual([]);
   });
 
-  it("a missing system-role row throws for both reach functions, each with its own prefix", async () => {
+  it("neither reach function reads a system role or the User row any more: with no stored row both fail closed without a lookup (#539)", async () => {
+    // The stub has NO `user` and NO `accessRole` delegate: a read of either (the old fallback, which
+    // threw `system role … is missing` here) would be a TypeError instead of an answer.
     const stub = {
       roleAssignment: { findMany: async () => [] },
-      user: { findUnique: async () => ({ role: "EMPLOYEE" }) },
-      accessRole: { findUnique: async () => null },
+      employee: { findFirst: async () => null },
     } as never;
     const ctx = ctxForUser(tA.tenant.id, "csi-stub-user");
-    await expect(contextSalonIds(stub, ctx, TODAY)).rejects.toThrow(
-      /^contextSalonIds: system role .* is missing/,
-    );
-    await expect(resolveAccessReach(stub, ctx, ZUGEWIESEN_KEYS[0])).rejects.toThrow(
-      /^resolveAccessReach: system role .* is missing/,
-    );
+    await expect(contextSalonIds(stub, ctx, TODAY)).resolves.toEqual({
+      salonIds: [],
+      managedSalonIds: [],
+      ownSalonIds: [],
+      homeSalonId: null,
+    });
+    await expect(resolveAccessReach(stub, ctx, ZUGEWIESEN_KEYS[0])).resolves.toEqual({
+      kind: "scoped",
+      salonIds: [],
+      employeeIds: [],
+    });
   });
 
   it("D-04: managed reach equals the union of resolveAccessReach over every ZUGEWIESEN key", async () => {
     expect(ZUGEWIESEN_KEYS.length).toBeGreaterThanOrEqual(50);
-    // A stored TENANT grant and a fallback admin, so every comparison class is represented.
+    // A stored TENANT grant and an unassigned admin (holds nothing since #539), so every comparison
+    // class is represented.
     const { user: tenantUser } = await createUser("EMPLOYEE", "storedTenant");
     await assign(tenantUser.id, SYSTEM_ROLE_IDS.HR, { scopeType: "TENANT" });
     await createUser("ADMIN", "fbAdmin");
@@ -313,9 +331,10 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
       if (ctx.actor.kind !== "user") continue;
       if (managed.length === 0) classes.add("empty");
       else if (managed.length === allActive.length) {
-        classes.add(stored > 0 ? "stored-tenant" : "fallback-tenant");
+        classes.add(stored > 0 ? "stored-tenant" : "unstored-tenant");
       } else classes.add("scoped");
     }
-    expect([...classes].sort()).toEqual(["empty", "fallback-tenant", "scoped", "stored-tenant"]);
+    // "unstored-tenant" (a full managed reach without a stored row) must never appear: #539.
+    expect([...classes].sort()).toEqual(["empty", "scoped", "stored-tenant"]);
   });
 });

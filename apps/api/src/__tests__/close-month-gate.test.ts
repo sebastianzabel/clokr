@@ -29,7 +29,13 @@
  */
 
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup";
+import {
+  getTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+  grantSystemRole,
+} from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import bcrypt from "bcryptjs";
@@ -92,6 +98,7 @@ async function createGapEmployee(
       hireDate: new Date("2026-06-01T00:00:00Z"),
     },
   });
+  await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
   await prisma.workSchedule.create({
     data: {
       employeeId: emp.id,
@@ -167,6 +174,7 @@ describe("close-month-gate — HTTP confirmGaps gate (Cases 1/2/3/4)", () => {
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -209,6 +217,7 @@ describe("close-month-gate — HTTP confirmGaps gate (Cases 1/2/3/4)", () => {
         hireDate: new Date("2026-06-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: noGapUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: noGapEmp.id,
@@ -441,6 +450,7 @@ describe("close-month-gate — BREAK-05 unconfirmedBreakDays gate (RED, Phase 92
         hireDate: new Date("2026-06-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,
@@ -519,6 +529,7 @@ describe("close-month-gate — BREAK-05 unconfirmedBreakDays gate (RED, Phase 92
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,

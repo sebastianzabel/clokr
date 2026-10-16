@@ -3,10 +3,12 @@
  * (`ADMIN` / `MANAGER` / `EMPLOYEE`) are produced from, or mapped onto, role assignments.
  *
  * Since #75 no access decision reads a role value any more (D-12): guards and handler checks ask
- * `request-permissions.ts` for catalog permissions. The legacy value survives only as a compat
- * field — the JWT claim `role` and the login body `user.role`, which the frontend still consumes
- * until #539 removes `User.role` and the enum. This module is the allowlisted exception of the
- * role-check gate (D-19): every comparison of a role value, in either direction, lives here.
+ * `request-permissions.ts` for catalog permissions. Since #539 Release A the legacy value is no
+ * longer published at all (no JWT claim, no sign-in body field - D-05): it is written to the
+ * `User.role` column only (D-06) and read only for the D-12 company-PDF filter and the employee
+ * form's derived role. Release B removes the column, the enum and this module. This module is the
+ * allowlisted exception of the role-check gate (D-19): every comparison of a role value, in
+ * either direction, lives here.
  *
  * Two directions:
  * - {@link systemRoleIdForLegacyRole}: `User.role` → the system role it stands for. This is the
@@ -25,16 +27,11 @@
  *   holding a ZUGEWIESEN key wrongly derived MANAGER). A role grants through `roleGrants` only
  *   (AK-73-7).
  *
- * {@link compatRoleForUser} combines both for token issuance: a user without a stored assignment
- * in the tenant (every user without Employee, whose tenant is "", and every fallback user) keeps
- * exactly the column value. That equals deriving over the implicit fallback assignment — the unit
- * tests prove the equivalence for all three system roles — without a second query.
- *
- * The write half (Phase 75b Plan 11, D-14/D-15/D-26/D-29) keeps the column and the stored
+ * The write half (Phase 75b Plan 11, D-14/D-15/D-29) keeps the column and the stored
  * assignments consistent on every assignment write path — the employee form, the CSV import, the
- * role-assignment API and the anonymization:
- * - {@link materializeLegacyRoleAssignment} turns the implicit fallback into a stored row before
- *   the first assignment write, so a first customer role never silently removes a legacy role;
+ * role-assignment API and the anonymization. There is no materialization step any more: the D-26
+ * function that stored the column's role as a real row before the first assignment write is gone
+ * since #539, because with the fallback removed it would be an implicit grant of that role:
  * - {@link replaceSystemRoleAssignment} swaps the user's tenant-wide system role, leaving every
  *   customer-role assignment untouched;
  * - {@link assignmentsBlockingDemotionToEmployee} (Issue #357 sub-fix B): the employee-form PATCH
@@ -173,31 +170,6 @@ export function deriveCompatRole(tenantId: string, rows: readonly CompatRoleAssi
   return "EMPLOYEE";
 }
 
-/**
- * The compat role to publish for `userId` at token issuance (login, OTP, refresh): the column
- * value `legacyRole` when the user has no stored assignment in `tenantId` (always so for an empty
- * tenant — a user without Employee), otherwise {@link deriveCompatRole} over the stored rows.
- */
-export async function compatRoleForUser(
-  db: Prisma.TransactionClient,
-  userId: string,
-  tenantId: string,
-  legacyRole: Role,
-): Promise<Role> {
-  if (tenantId === "") return legacyRole;
-  const rows = await db.roleAssignment.findMany({
-    where: { tenantId, userId },
-    select: {
-      scopeType: true,
-      salonIds: true,
-      employeeIds: true,
-      accessRole: { select: { id: true, tenantId: true, permissions: true } },
-    },
-  });
-  if (rows.length === 0) return legacyRole;
-  return deriveCompatRole(tenantId, rows);
-}
-
 // ── Report data filter (Phase 75b Plan 12) ──────────────────────────────────────────────────────
 
 /** The compat roles a report may filter its LISTED employees by (the company monthly PDF). */
@@ -264,7 +236,11 @@ function toWrittenAssignment(row: {
   };
 }
 
-/** The `User.role` column of `userId`, when the user belongs to an employee of `tenantId`. */
+/**
+ * The `User.role` column of `userId`, when the user belongs to an employee of `tenantId`. Since
+ * #539 (D-06) only {@link syncCompatRoleColumn} reads it, to compare before it writes the derived
+ * value back; the employee form and the employee responses use {@link formRolesByUserId}.
+ */
 async function legacyRoleColumn(
   db: Prisma.TransactionClient,
   tenantId: string,
@@ -278,61 +254,66 @@ async function legacyRoleColumn(
 }
 
 /**
- * D-26: when `userId` has NO stored role assignment in `tenantId`, stores the implicit fallback
- * (D-08) as a real TENANT assignment on the system role of its `User.role` column, and returns the
- * created row together with that legacy value (the caller audits it with origin SYSTEM). Returns
- * null when the user already has a stored row — any row, even a malformed one, disables the
- * fallback — or does not belong to an employee of the tenant.
- *
- * Runs before every assignment write on an existing user: without it, the first stored row (e.g.
- * a customer role) would end the fallback and silently remove the rights of the legacy role.
+ * Issue #539 (D-10): the role the employee screen shows and preselects for each of `userIds` in
+ * `tenantId`, DERIVED from the stored assignments ({@link deriveCompatRole}) because the
+ * `User.role` column decides nothing any more. `null` when a user holds no well-formed assignment
+ * of the tenant (no row at all, or only rows of another tenant's role or with a malformed scope):
+ * the person holds no role, which drives the „Keine Rolle zugewiesen“ hint (D-14). A row at SALONS
+ * or PERSONS scope counts as "has a role" but derives EMPLOYEE, exactly like the token claim.
+ * One query for any number of users. Lives here because this module is the one place that
+ * produces legacy role values (D-14, D-19); the value is served under the existing `user.role`
+ * key of the employee responses.
  */
-export async function materializeLegacyRoleAssignment(
+export async function formRolesByUserId(
   db: Prisma.TransactionClient,
   tenantId: string,
-  userId: string,
-): Promise<{ assignment: WrittenRoleAssignment; legacyRole: Role } | null> {
-  const stored = await db.roleAssignment.count({ where: { tenantId, userId } });
-  if (stored > 0) return null;
-  const legacyRole = await legacyRoleColumn(db, tenantId, userId);
-  if (legacyRole === null) return null;
-  const created = await db.roleAssignment.create({
-    data: {
-      tenantId,
-      userId,
-      accessRoleId: systemRoleIdForLegacyRole(legacyRole),
-      scopeType: "TENANT",
-      salonIds: [],
-      employeeIds: [],
+  userIds: readonly string[],
+): Promise<Map<string, Role | null>> {
+  const result = new Map<string, Role | null>();
+  if (userIds.length === 0) return result;
+  const rows = await db.roleAssignment.findMany({
+    where: { tenantId, userId: { in: [...userIds] } },
+    select: {
+      userId: true,
+      scopeType: true,
+      salonIds: true,
+      employeeIds: true,
+      accessRole: { select: { id: true, tenantId: true, permissions: true } },
     },
-    include: WRITTEN_ASSIGNMENT_INCLUDE,
   });
-  return { assignment: toWrittenAssignment(created), legacyRole };
+  const byUser = new Map<string, CompatRoleAssignmentRow[]>();
+  for (const row of rows) {
+    const belongsHere = row.accessRole.tenantId === null || row.accessRole.tenantId === tenantId;
+    if (!belongsHere || storedRoleAssignmentScope(row) === null) continue;
+    const list = byUser.get(row.userId) ?? [];
+    list.push(row);
+    byUser.set(row.userId, list);
+  }
+  for (const userId of userIds) {
+    const own = byUser.get(userId);
+    result.set(userId, own === undefined ? null : deriveCompatRole(tenantId, own));
+  }
+  return result;
 }
 
 /**
- * Phase 76b (Issue #76) D-16, P-05: true when setting `role` on `userId` would request nothing new
- * — the requested value equals the target's `User.role` **column**, whether or not the user has
- * any stored assignment in `tenantId`. Replaces the pre-76b fallback-only no-op predicate, which
- * excluded any user WITH stored rows and so let an unrelated employee-form save run the bridge
- * (and its demotion guard) on every save of a Phase 76b template holder or TENANT customer-role
- * holder.
+ * Phase 76b (Issue #76) D-16: true when setting `role` on `userId` would request nothing new — the
+ * requested value equals the role the employee form shows for the target, i.e. the role DERIVED
+ * from its stored assignments ({@link formRolesByUserId}, Issue #539 D-10/D-11). A target without a
+ * stored assignment has no such role (`null`), so any requested role is a change and gives them
+ * one — the form is the admin's way to assign a role to a person who holds none. Replaces the
+ * pre-539 comparison with the `User.role` column (P-05), which with the fallback gone would have
+ * turned "column says MANAGER, person holds nothing" into a silently skipped save.
  *
- * The column is what `GET /employees/:id` serves and what the employee form echoes back on every
- * "Stammdaten speichern" (`+page.svelte:602`, `:740`). For a fallback user (D-08) the column IS the
- * published compat role. For a user with stored rows, every assignment write path since 75b
- * (D-14/D-29) keeps the column in sync with the derivation over those rows — but the two CAN
- * disagree: a 74b-era write or a hand-inserted row can leave a stale column
- * (`role-assignment-audit.ts:140-142` documents that case). When they disagree, the column is the
- * only value the form has ever shown and sent back, so this compares against the column, never
- * against {@link compatRoleForUser} or {@link deriveCompatRole} (P-05): comparing against the
- * derivation would turn a stale-high column into an unrequested role change on an unrelated save —
- * exactly the defect D-16 closes. Accepted residual: for a stale-low column, an admin cannot demote
- * through the form in one step; the role-assignment API remains available for that.
+ * Accepted residual (#539 Release A, documented in the ADR Nachtrag): a browser tab opened before
+ * the deploy may echo a stale column value on an unrelated save; the comparison is against the
+ * derived role, so a stale-HIGH column would be a role change requested by an admin holding
+ * `role-assignment:manage` (and audited as such). The takeover script's dry run reports the
+ * column drift per stage beforehand.
  *
- * A request that changes nothing writes nothing: no materialized row, no demotion check, no audit
- * (74b D-07/D-12). Returns false when `userId` does not belong to an employee of `tenantId` (the
- * column lookup yields null), so that case always runs the ordinary path below.
+ * A request that changes nothing writes nothing: no replaced row, no demotion check, no audit
+ * (74b D-07/D-12). Returns false when `userId` does not belong to an employee of `tenantId` (no
+ * stored row there), so that case always runs the ordinary path below.
  *
  * Lives here, not in employees.ts, because this module is the role-check gate's single allowlisted
  * file (D-19).
@@ -343,7 +324,7 @@ export async function requestedRoleUnchanged(
   userId: string,
   role: Role,
 ): Promise<boolean> {
-  return (await legacyRoleColumn(db, tenantId, userId)) === role;
+  return (await formRolesByUserId(db, tenantId, [userId])).get(userId) === role;
 }
 
 /**
@@ -357,8 +338,8 @@ export async function requestedRoleUnchanged(
  * {@link assignmentsBlockingDemotionToEmployee}). Returns the removed and the created rows
  * (removals are written first) for the caller's audit.
  *
- * Does not materialize the fallback — a caller changing an existing user runs
- * {@link materializeLegacyRoleAssignment} first; a brand-new user has nothing to materialize.
+ * Writes exactly the requested role: nothing is stored on the user's behalf first (the legacy
+ * fallback is gone, #539).
  */
 export async function replaceSystemRoleAssignment(
   db: Prisma.TransactionClient,

@@ -156,7 +156,6 @@ describe("PUT /api/v1/me/preferences (Issue #392, lost-update race)", () => {
   it("an unknown user id (valid JWT, nonexistent user) returns 404", async () => {
     const payload: JwtPayload = {
       sub: randomUUID(),
-      role: "EMPLOYEE",
       tenantId: data.tenant.id,
       employeeId: undefined,
     };

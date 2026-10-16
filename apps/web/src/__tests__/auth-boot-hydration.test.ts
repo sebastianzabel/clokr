@@ -90,7 +90,6 @@ function seedSession() {
     JSON.stringify({
       id: "u1",
       email: "u1@test.de",
-      role: "EMPLOYEE",
       employeeId: "e1",
       firstName: null,
       permissions: [], // already resolved — no loadPermissionsIfMissing() noise in this test

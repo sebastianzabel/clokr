@@ -20,7 +20,7 @@
  * merely the prior-month carry (i.e. the open month is included with the leave credit applied).
  */
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon } from "./setup"; // Phase 325 (issue #325)
+import { getTestApp, cleanupTestData, createTestSalon, grantSystemRole } from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../contexts/working-time-account/timezone";
 import { computeOvertimeBalanceHours } from "../contexts/time-tracking/api/time-entries";
@@ -70,6 +70,7 @@ describe("v1.8.26 — future-in-month approved leave: header == month-saldo (SHI
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
 
     const user = await prisma.user.create({
       data: { email: `fiml-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
@@ -87,6 +88,7 @@ describe("v1.8.26 — future-in-month approved leave: header == month-saldo (SHI
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     employeeId = emp.id;
 
     await prisma.workSchedule.create({

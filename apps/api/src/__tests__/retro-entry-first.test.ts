@@ -33,6 +33,7 @@ import {
   salonIdForEmployee,
   soleAuditRowOrNull,
   soleNotificationOrNull,
+  grantSystemRole,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { daysAgoStrInTz, dbDateStr, TEST_TZ } from "./test-dates";
@@ -81,6 +82,7 @@ async function mkUser(
       classification: opts.classification ?? "VOLLZEIT",
     },
   });
+  await grantSystemRole(prisma, { tenantId, userId: user.id, role });
   await prisma.workSchedule.create({
     data: {
       employeeId: emp.id,

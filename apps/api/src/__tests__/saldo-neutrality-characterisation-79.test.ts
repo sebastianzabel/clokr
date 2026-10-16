@@ -42,6 +42,7 @@ import {
   createTestSalon,
   salonIdForEmployee,
   configureDatevKanzlei,
+  grantSystemRole,
 } from "./setup";
 import * as pdfUtils from "../composition/pdf";
 import { checkArbZG } from "../contexts/time-tracking/arbzg";
@@ -94,6 +95,7 @@ async function createFixedEmployee(
       hireDate: new Date("2026-01-01T00:00:00Z"),
     },
   });
+  await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
   await app.prisma.workSchedule.create({
     data: {
       employeeId: employee.id,
@@ -148,6 +150,7 @@ async function createUntrackedMonthlyHoursEmployee(
       hireDate: new Date("2026-01-01T00:00:00Z"),
     },
   });
+  await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
   await app.prisma.workSchedule.create({
     data: {
       employeeId: employee.id,

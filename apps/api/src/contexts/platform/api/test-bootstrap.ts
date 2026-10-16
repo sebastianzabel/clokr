@@ -45,6 +45,7 @@ import { listSalons } from "../facade/salons.js";
 import { readTenantTimezone } from "../facade/salon-assignments.js";
 import { dayToDate, tenantLocalDay } from "../salon-assignment-rules.js";
 import { provisionTenant } from "../tenant-provisioning.js";
+import { replaceSystemRoleAssignment } from "../compat-role.js";
 import { TENANT_MODULES, changeTenantPackages } from "../tenant-packages.js";
 
 declare module "fastify" {
@@ -163,6 +164,11 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
           hireDate: new Date("2024-01-01"),
         },
       });
+
+      // Issue #539: permissions come only from stored role assignments, so the bootstrapped
+      // admin holds its system role as one — written through the function employee creation
+      // uses. No audit row: this route has no principal (same as the package booking above).
+      await replaceSystemRoleAssignment(prisma, tenant.id, adminUser.id, "ADMIN");
 
       // D-24 (Phase 67b Plan 04, issue #67): every code path that creates an
       // employee also creates its Stammsalon (HOME) row, from that employee's
@@ -421,6 +427,11 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
           hireDate: new Date("2024-01-01"),
         },
       });
+
+      // Issue #539: the terminal employee needs a stored assignment for the same reason as the
+      // admin above; written through the function employee creation uses, no audit row (this
+      // route has no principal).
+      await replaceSystemRoleAssignment(app.prisma, body.tenantId, employeeUser.id, "EMPLOYEE");
 
       // D-24 (Phase 67b Plan 04, issue #67): this employee also gets its Stammsalon (HOME) row,
       // to the tenant's default salon resolved above, from its tenant-local hire day. No audit

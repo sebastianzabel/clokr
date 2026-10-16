@@ -83,7 +83,6 @@ function makeRow(overrides: Partial<CompanyRow>): CompanyRow {
   return {
     employeeName: "Test Employee",
     employeeNumber: "T-001",
-    role: "EMPLOYEE",
     workedHours: 0,
     targetHours: 0,
     overtimeHours: 0,

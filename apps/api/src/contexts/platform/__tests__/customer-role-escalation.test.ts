@@ -95,7 +95,7 @@ describe("Customer-role escalation guards (Issue #354, pre-merge review of #75)"
         employeeIds: [],
       },
     });
-    const payload: JwtPayload = { sub: user.id, role: "EMPLOYEE", tenantId: data.tenant.id };
+    const payload: JwtPayload = { sub: user.id, tenantId: data.tenant.id };
     return { userId: user.id, roleId: role.id, bearer: `Bearer ${app.jwt.sign(payload)}` };
   }
 

@@ -16,7 +16,13 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData, configureDatevKanzlei } from "./setup";
+import {
+  getTestApp,
+  seedTestData,
+  cleanupTestData,
+  configureDatevKanzlei,
+  grantSystemRole,
+} from "./setup";
 import { getHolidayMap } from "../contexts/absence";
 
 // Issue #256 (Befund 1): a Bewegungsdaten row is the Satz-ID followed by the 12 values declared
@@ -77,6 +83,7 @@ async function createFixedScheduleEmployee(
       hireDate: new Date(`${hireDate}T00:00:00Z`),
     },
   });
+  await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
   await app.prisma.workSchedule.create({
     data: {
       employeeId: employee.id,

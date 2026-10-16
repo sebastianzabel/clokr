@@ -250,7 +250,7 @@ Example output:
   Change it in the app if this environment is shared.
 ```
 
-The script picks an **existing active ADMIN with an Employee** (lowest id among them) and never creates a person. Since Issue #551 an admin without an Employee has no tenant and cannot sign in (403 `TENANT_REQUIRED`), so the default pick skips such users and a pinned `--email` of one is refused before anything is written. Useful flags:
+The script picks an **existing active user with an Employee who holds the Admin system role as a stored assignment** (lowest id among them; since Issue #539 the `User.role` column is not consulted) and never creates a person. Since Issue #551 an admin without an Employee has no tenant and cannot sign in (403 `TENANT_REQUIRED`), so the default pick skips such users and a pinned `--email` of one is refused before anything is written. The same refusal applies to a pinned user without any stored role assignment (it would be refused at sign-in with 403 `NO_ROLE_ASSIGNED`, so a restored password for it would not log in). Useful flags:
 
 - `--email <address>` — pin a specific admin (one that has an Employee) instead of the deterministic lowest-id pick
 - `--password <value>` — supply a password instead of letting the script generate one

@@ -6,6 +6,7 @@ import {
   cleanupTestData,
   createTestSalon,
   soleAuditRowOrNull, // Phase 325 (issue #325)
+  grantSystemRole,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dbDateStr, futureDateStr, nextWeekdayStr, utcMidnight } from "./test-dates";
@@ -40,6 +41,11 @@ describe("Shift Planning API", () => {
         lastName: "Manager",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: mgrUser.id,
+      role: "MANAGER",
     });
     await app.prisma.overtimeAccount.create({
       data: { employeeId: managerEmployee.id, balanceHours: 0 },
@@ -2097,6 +2103,11 @@ describe("Shift Planning API", () => {
             hireDate: new Date("2024-01-01"),
           },
         });
+        await grantSystemRole(app.prisma, {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          role: "EMPLOYEE",
+        });
         if (scheduleType) {
           await app.prisma.workSchedule.create({
             data: {
@@ -2227,6 +2238,11 @@ describe("Shift Planning API", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: shiftUser.id,
+        role: "EMPLOYEE",
+      });
       await app.prisma.workSchedule.create({
         data: {
           employeeId: bulkShiftEmployee.id,
@@ -2258,6 +2274,11 @@ describe("Shift Planning API", () => {
           lastName: "FixedEmp",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: fixedUser.id,
+        role: "EMPLOYEE",
       });
       await app.prisma.workSchedule.create({
         data: {
@@ -2317,6 +2338,11 @@ describe("Shift Planning API", () => {
           lastName: "Tenant",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      await grantSystemRole(app.prisma, {
+        tenantId: otherTenant.id,
+        userId: otherUser.id,
+        role: "EMPLOYEE",
       });
       await app.prisma.workSchedule.create({
         data: {

@@ -35,6 +35,13 @@
     type ContractHistoryRow,
   } from "$lib/utils/work-schedule";
   import {
+    type FormRole,
+    NO_ROLE_HINT,
+    hasNoRole,
+    initialFormRole,
+    roleForSave,
+  } from "$lib/employees/form-role";
+  import {
     statutoryMinimumFiveDayWeek,
     MISSING_BIRTH_DATE_HINT,
   } from "$lib/statutory-minimum-vacation";
@@ -47,7 +54,6 @@
   } from "$lib/leave/carry-over-reason";
 
   // ── Types ──────────────────────────────────────────────────────────────────
-  type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
   type ScheduleType = "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
 
   interface WorkSchedule {
@@ -120,7 +126,7 @@
     bsSlotShortDayMinutes?: number | null;
     bsSlotBlockWeekMinutes?: number | null;
     user?: {
-      role: Role;
+      role: FormRole | null;
       email: string;
       isActive: boolean;
       lastLoginAt?: string | null;
@@ -456,7 +462,7 @@
   let eFirstName = $state<string>("");
   let eLastName = $state<string>("");
   let eEmployeeNumber = $state<string>("");
-  let eRole = $state<Role>("EMPLOYEE");
+  let eRole = $state<FormRole | "">("");
   // Permission-driven controls (Issue #538): the API refuses anything beyond these, the page only
   // hides. Setting a role needs role-assignment:manage; the § 18 ArbZG exemption rides on the
   // employee PATCH, hence employee:update.
@@ -671,7 +677,7 @@
     eFirstName = employee.firstName ?? "";
     eLastName = employee.lastName ?? "";
     eEmployeeNumber = employee.employeeNumber ?? "";
-    eRole = employee.user?.role ?? "EMPLOYEE";
+    eRole = initialFormRole(employee.user?.role ?? null);
     eNfcCardId = employee.nfcCardId ?? "";
     eExitDate = employee.exitDate ? String(employee.exitDate).split("T")[0] : "";
     eBirthDate = employee.birthDate ? String(employee.birthDate).split("T")[0] : "";
@@ -824,8 +830,9 @@
           firstName: eFirstName,
           lastName: eLastName,
           employeeNumber: eEmployeeNumber,
-          // Only a caller who may assign roles sends one (the API checks the permission first).
-          ...(canAssignRoles ? { role: eRole } : {}),
+          // Only a caller who may assign roles sends one, and only once a role was chosen (the API
+          // checks the permission first).
+          ...roleForSave(canAssignRoles, eRole),
           nfcCardId: eNfcCardId || null,
           exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
           birthDate: eBirthDate ? new Date(eBirthDate).toISOString() : null,
@@ -3715,10 +3722,17 @@
               <div class="form-group">
                 <label class="form-label" for="e-role">Rolle</label>
                 <select id="e-role" bind:value={eRole} class="select">
+                  <option value="" disabled>Keine Rolle zugewiesen</option>
                   <option value="EMPLOYEE">Mitarbeiter</option>
                   <option value="MANAGER">Manager</option>
                   <option value="ADMIN">Administrator</option>
                 </select>
+              </div>
+            {/if}
+
+            {#if hasNoRole(employee.user)}
+              <div class="form-group form-group--full">
+                <div class="callout">{NO_ROLE_HINT}</div>
               </div>
             {/if}
 

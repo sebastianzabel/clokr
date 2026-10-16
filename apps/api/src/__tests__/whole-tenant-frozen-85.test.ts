@@ -29,6 +29,7 @@ import {
   seedTestData,
   cleanupTestData,
   createTestSalon,
+  grantSystemRole,
   reissueTokenNow,
 } from "./setup";
 
@@ -1164,6 +1165,11 @@ describe("Issue #85 / #547 — frozen whole-tenant responses (tenant admin)", ()
         isActive: !opts.anonymized,
       },
     });
+    // Issue #539 (D-10): the employee response serves the role DERIVED from stored assignments, so
+    // the frozen `user.role: "EMPLOYEE"` below needs the stored Mitarbeiter row the fixture user
+    // stands for (the literal itself is unchanged). The anonymized fixture row is synthetic: it
+    // never went through the anonymization, which would have deleted this row (role `null`).
+    await grantSystemRole(app.prisma, { tenantId: d.tenant.id, userId: user.id, role: "EMPLOYEE" });
     const number = `${label.toUpperCase()}-${stamp}`;
     const employee = await app.prisma.employee.create({
       data: {

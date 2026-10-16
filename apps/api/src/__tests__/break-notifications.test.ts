@@ -26,6 +26,7 @@ import {
   createTestSalon,
   salonIdForEmployee,
   soleNotificationOrNull,
+  grantSystemRole,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
@@ -75,6 +76,7 @@ async function seedBreakTenant(
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: user.id, role });
     await prisma.workSchedule.create({
       data: {
         employeeId: employee.id,

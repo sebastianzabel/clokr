@@ -15,8 +15,11 @@
  *
  * The five main actors hold stored role assignments (the checked-in migration SQL gives them one,
  * D-25), so after the switch they prove "migration + switched code == old code". The three fallback
- * actors are built AFTER the migration ran and hold no assignment — a test below proves that — so
- * they prove the legacy-role fallback path (D-21).
+ * actors are built AFTER the migration ran and hold no assignment — a test below proves that. Since
+ * #539 (Release A) the legacy-role fallback is gone, so these actors hold NOTHING: their changed
+ * cells are generated #539 amendment links, proven independently by the "#539 oracle (D-15)"
+ * describes - the three fallback actors answer identically and like an actor with a stored
+ * assignment of an empty customer role.
  *
  * ── RECORD vs VERIFY ────────────────────────────────────────────────────────────────────────────
  *   NEUTRALITY_MATRIX_MODE=record  run the cells and write every record to the recording file
@@ -25,6 +28,9 @@
  *   (default) VERIFY               compare every cell with the recording (default path, or
  *                                  NEUTRALITY_MATRIX_IN); a cell missing from it fails "not
  *                                  recorded".
+ * Measured-result dump (Issue #539, D-15): VERIFY with NEUTRALITY_ACTUAL_OUT_DIR=<dir> also writes
+ * every measured cell to `<dir>/matrix.actual.json` (never into `neutrality/recorded/`, which is
+ * refused) — the input of `scripts/neutrality-amendments-from-run.ts`.
  * Both modes build the fixture, then execute the checked-in migration SQL (D-25: the old code
  * ignores stored assignments for every access decision, so a recording with the migration applied
  * is still a recording of the unchanged code), then build the fallback tenants, then run the cells.
@@ -98,6 +104,7 @@ import {
   ACTOR_ORDER,
   EXCLUDED_ROUTES,
   FALLBACK_ACTORS,
+  ORACLE_ACTOR,
   OUTSIDE_DERIVATION,
   PHASES_ENABLED,
   ROUTE_SPECS,
@@ -105,6 +112,12 @@ import {
   type CellPhase,
 } from "./neutrality/matrix-config";
 import { buildActorTenant, cleanupMatrixExtras, type ActorFixture } from "./neutrality/fixture";
+import {
+  effectiveAmendmentLinks,
+  resolveAmendmentChains,
+  type AmendmentLink,
+} from "./neutrality/amendment-chain";
+import { measuredDumpDir, writeMeasuredDump } from "./neutrality/measured-dump";
 import { installExternalStubs, type ExternalStubs } from "./neutrality/external-stubs";
 import {
   actorRunsVariant,
@@ -179,24 +192,23 @@ const MIN_REASON_LENGTH = 20;
  * — Issue #333 is the first, Issues #346/#358/#359 the concrete second/third/fourth) — any future
  * issue that needs to amend a named cell for a reason unrelated to Issue #75's own switch adds an
  * entry here instead of building its own escape hatch.
+ *
+ * Chains (Issue #539, D-15): one key may carry SEVERAL dated links, applied in file order — the
+ * first link's `from` equals the recording, every next link's `from` equals the previous link's
+ * `to`, dates never go back, and the effective expectation is the last link's `to`. The rule lives
+ * in `neutrality/amendment-chain.ts` (shared with the other two registers and with
+ * `scripts/neutrality-amendments-from-run.ts`); a register with one link per key is a chain of
+ * length one and stays valid unchanged.
  */
-interface MatrixAmendment {
-  readonly key: string;
-  readonly from: CellResult;
-  readonly to: CellResult;
-  readonly issue: number;
-  readonly reason: string;
-  readonly date: string;
-}
+type MatrixAmendment = AmendmentLink<CellResult>;
 const AMENDMENTS_PATH = join(__dirname, "neutrality", "recorded", "matrix-amendments.json");
 const amendments: readonly MatrixAmendment[] = (
   JSON.parse(readFileSync(AMENDMENTS_PATH, "utf8")) as { amendments: MatrixAmendment[] }
 ).amendments;
-/** Last-wins lookup for the sweep below. A duplicate KEY is its own validation failure (the
- * "amendments register" describe below), never silently resolved by this map. */
-const amendmentByKey: ReadonlyMap<string, MatrixAmendment> = new Map(
-  amendments.map((a) => [a.key, a]),
-);
+/** The effective link per key for the sweep below: the LAST link of the key's chain. A broken chain
+ * is its own validation failure (the "amendments register" describe below), never silently fixed
+ * by this map. */
+const amendmentByKey: ReadonlyMap<string, MatrixAmendment> = effectiveAmendmentLinks(amendments);
 
 const derivedRoutes = deriveMatrixRoutes();
 
@@ -214,6 +226,9 @@ function cellKey(actor: ActorKind, route: string, variant: string): string {
 }
 
 /** The route part of a cell key (`<actor> | <METHOD path> | <variant>`). */
+/** Anti-vacuity floor of the #539 oracle: the cells compared per actor (299 per user actor when written). */
+const MIN_ORACLE_CELLS = 290;
+
 function routeOfKey(key: string): string {
   const parts = key.split(" | ");
   if (parts.length !== 3) throw new Error(`matrix: malformed cell key ${JSON.stringify(key)}`);
@@ -231,6 +246,9 @@ describe("permission neutrality matrix (Issue #75)", () => {
   let stubs: ExternalStubs | undefined;
   const fixtures = new Map<ActorKind, ActorFixture>();
   const collected = new Map<string, CellResult>();
+  /** #539 (D-15): the cells of the oracle actor (a stored assignment of an empty customer role). */
+  const oracleCollected = new Map<string, CellResult>();
+  let oracleFixture: ActorFixture | undefined;
   let recording: Record<string, CellResult> | undefined;
   /** MERGE: the routes the existing recording already holds cells for. */
   let recordedRoutes: ReadonlySet<string> = new Set();
@@ -273,6 +291,8 @@ describe("permission neutrality matrix (Issue #75)", () => {
           `Re-record only per D-24 on a pre-switch tree (plan 75b-13).`,
       );
     }
+    // Issue #539 (D-15): refuse a dump directory inside `neutrality/recorded` before the long setup.
+    measuredDumpDir();
     app = await getTestApp();
     vi.useFakeTimers({ now: PINNED_NOW, toFake: ["Date"] });
 
@@ -284,10 +304,13 @@ describe("permission neutrality matrix (Issue #75)", () => {
     // D-25: the checked-in migration SQL runs on the fixture before any cell, in both modes.
     await executeLegacyRoleMigration(app.prisma);
     for (const fixture of fixtures.values()) await registerMigrationRows(fixture);
-    // D-21: the fallback actors exist only after the migration, so they hold no assignment.
+    // D-21: the fallback actors exist only after the migration, so they hold no assignment (since #539
+    // that means they hold nothing).
     for (const actor of ACTOR_ORDER.filter((a) => FALLBACK_ACTORS.has(a))) {
       fixtures.set(actor, await buildActorTenant(app, actor));
     }
+    // #539 (D-15): the oracle actor, kept OUT of `fixtures` so no existing actor's label context changes.
+    oracleFixture = await buildActorTenant(app, ORACLE_ACTOR);
 
     if (MODE === "verify" || MERGE) {
       if (!existsSync(VERIFY_IN)) {
@@ -306,6 +329,11 @@ describe("permission neutrality matrix (Issue #75)", () => {
   afterAll(async () => {
     vi.useRealTimers();
     stubs?.restore();
+    // Issue #539 (D-15): a measurement for `scripts/neutrality-amendments-from-run.ts` — never a
+    // recording. Only with NEUTRALITY_ACTUAL_OUT_DIR set, only in VERIFY, only after a complete setup.
+    if (MODE === "verify" && setupComplete) {
+      writeMeasuredDump("matrix", serializeRecording(collected));
+    }
     if (MERGE && setupComplete) {
       if (mergeRefusals.length > 0 || recording === undefined) {
         console.error(
@@ -338,7 +366,7 @@ describe("permission neutrality matrix (Issue #75)", () => {
         );
       }
     }
-    for (const fixture of fixtures.values()) {
+    for (const fixture of [...fixtures.values(), ...(oracleFixture ? [oracleFixture] : [])]) {
       try {
         await cleanupMatrixExtras(app, fixture.tenantId);
         await cleanupTestData(app, fixture.tenantId);
@@ -412,51 +440,18 @@ describe("permission neutrality matrix (Issue #75)", () => {
       expect(Array.isArray(amendments)).toBe(true);
     });
 
-    it("no two amendments name the same cell key", () => {
-      const counts = new Map<string, number>();
-      for (const a of amendments) counts.set(a.key, (counts.get(a.key) ?? 0) + 1);
-      const duplicates = [...counts.entries()].filter(([, n]) => n > 1).map(([key]) => key);
-      expect(duplicates).toEqual([]);
-    });
-
-    it("every amendment names a positive integer GitHub issue, an ISO date, and a written reason of at least MIN_REASON_LENGTH characters", () => {
-      const problems = amendments
-        .filter(
-          (a) =>
-            !Number.isInteger(a.issue) ||
-            a.issue <= 0 ||
-            typeof a.reason !== "string" ||
-            a.reason.trim().length < MIN_REASON_LENGTH ||
-            !/^\d{4}-\d{2}-\d{2}$/.test(a.date),
-        )
-        .map((a) => a.key);
+    it("every amendment chain is valid — the first link's 'from' is the recording, every next link continues the previous 'to', dates never go back, and each link names an issue, an ISO date and a reason (Issue #539, D-15)", () => {
+      const { problems } = resolveAmendmentChains<CellResult>({
+        links: amendments,
+        recordedValueOf: recording === undefined ? undefined : (key) => recording?.[key],
+        minReasonLength: MIN_REASON_LENGTH,
+      });
       expect(problems).toEqual([]);
-    });
-
-    it("every amendment's cell key exists in the checked-in recording — an amendment for a route/actor/variant the recording never held is stale or invalid", () => {
-      if (recording === undefined) return; // MODE=record: the beforeAll guard above already refused.
-      const currentRecording = recording;
-      const missing = amendments.filter((a) => !(a.key in currentRecording)).map((a) => a.key);
-      expect(missing).toEqual([]);
-    });
-
-    it("every amendment's 'from' matches the recording BYTE-FOR-BYTE — a mismatch means the recording moved on and the amendment must be re-derived, never trusted as-is", () => {
-      if (recording === undefined) return;
-      const currentRecording = recording;
-      const stale = amendments
-        .filter((a) => a.key in currentRecording)
-        .filter((a) => !isDeepStrictEqual(a.from, currentRecording[a.key]))
-        .map(
-          (a) =>
-            `${a.key}: amendment 'from' ${JSON.stringify(a.from)} does not match the recorded ` +
-            `${JSON.stringify(currentRecording[a.key])}`,
-        );
-      expect(stale).toEqual([]);
     });
   });
 
   describe("fallback actors (D-21)", () => {
-    it("hold zero stored role assignments at run start, so every cell of theirs uses the legacy-role fallback", async () => {
+    it("hold zero stored role assignments at run start, so since #539 every cell of theirs is answered by a user who holds nothing", async () => {
       const fallbackUsers = ACTOR_ORDER.filter((a) => FALLBACK_ACTORS.has(a)).map((actor) => {
         const userId = fixtures.get(actor)?.actorUserId;
         if (!userId) throw new Error(`matrix: fallback actor ${actor} has no user`);
@@ -539,6 +534,114 @@ describe("permission neutrality matrix (Issue #75)", () => {
       }
     });
   }
+
+  // ── #539 oracle (D-15) ─────────────────────────────────────────────────────────────────────────────
+  // The amendments of the fallback actors were GENERATED from a measured run. Without an independent
+  // reference they would be green by construction. The oracle actor holds a STORED tenant-wide
+  // assignment of a customer role with no permission; "holds nothing" then means: the three fallback
+  // actors answer every route and variant identically, and like the oracle.
+  describe("#539 oracle sweep (D-15)", () => {
+    it("sweeps every route and variant once as the empty-role actor", async () => {
+      if (!oracleFixture) throw new Error("matrix: no oracle fixture");
+      const ctx: LabelContext = {
+        self: oracleFixture,
+        others: [...fixtures.values()],
+        global: GLOBAL_LABELS,
+      };
+      for (const route of orderedRoutes) {
+        const spec = ROUTE_SPECS[route];
+        for (const variant of variantsOf(route, spec)) {
+          if (!actorRunsVariant(oracleFixture, variant)) continue;
+          oracleCollected.set(
+            cellKey(ORACLE_ACTOR, route, variant.name),
+            await runCell({
+              app,
+              ctx,
+              actorSlot: ACTOR_ORDER.length + 1,
+              route,
+              spec,
+              variant,
+            }),
+          );
+        }
+      }
+      expect(oracleCollected.size).toBeGreaterThanOrEqual(MIN_ORACLE_CELLS);
+    }, 600_000);
+  });
+
+  describe("#539 oracle (D-15)", () => {
+    /** The cells of `actor` keyed by `route | variant`, from the given collection. */
+    function cellsOf(
+      source: ReadonlyMap<string, CellResult>,
+      actor: ActorKind,
+    ): Map<string, CellResult> {
+      const out = new Map<string, CellResult>();
+      for (const [key, value] of source) {
+        const [keyActor, route, variant] = key.split(" | ");
+        if (keyActor === actor) out.set(`${route} | ${variant}`, value);
+      }
+      return out;
+    }
+
+    /** `statusOnly` routes name the actors whose body is no stable function of the tenant. */
+    function comparable(routeAndVariant: string, actor: ActorKind, value: CellResult): unknown {
+      const spec = ROUTE_SPECS[routeAndVariant.split(" | ")[0]];
+      return spec?.statusOnly?.actors.includes(actor) ? { status: value.status } : value;
+    }
+
+    it("(a) the three fallback actors answer every route and variant identically", () => {
+      const employee = cellsOf(collected, "FALLBACK_EMPLOYEE");
+      const manager = cellsOf(collected, "FALLBACK_MANAGER");
+      const admin = cellsOf(collected, "FALLBACK_ADMIN");
+      expect(employee.size).toBeGreaterThanOrEqual(MIN_ORACLE_CELLS);
+      const differing: string[] = [];
+      for (const [key, value] of employee) {
+        for (const [name, other] of [
+          ["FALLBACK_MANAGER", manager],
+          ["FALLBACK_ADMIN", admin],
+        ] as const) {
+          const theirs = other.get(key);
+          if (
+            theirs === undefined ||
+            !isDeepStrictEqual(
+              JSON.parse(JSON.stringify(comparable(key, "FALLBACK_EMPLOYEE", value))),
+              JSON.parse(JSON.stringify(comparable(key, name, theirs))),
+            )
+          ) {
+            differing.push(
+              `${key}: FALLBACK_EMPLOYEE ${JSON.stringify(value)} vs ${name} ${JSON.stringify(theirs)}`,
+            );
+          }
+        }
+      }
+      expect(differing).toEqual([]);
+      expect(manager.size).toBe(employee.size);
+      expect(admin.size).toBe(employee.size);
+    });
+
+    it("(b) the fallback actors equal an actor with a stored assignment of a customer role without permissions", () => {
+      const employee = cellsOf(collected, "FALLBACK_EMPLOYEE");
+      const oracle = cellsOf(oracleCollected, ORACLE_ACTOR);
+      expect(oracle.size).toBe(employee.size);
+      expect(oracle.size).toBeGreaterThanOrEqual(MIN_ORACLE_CELLS);
+      const differing: string[] = [];
+      for (const [key, value] of employee) {
+        const theirs = oracle.get(key);
+        if (
+          theirs === undefined ||
+          !isDeepStrictEqual(
+            JSON.parse(JSON.stringify(comparable(key, "FALLBACK_EMPLOYEE", value))),
+            JSON.parse(JSON.stringify(comparable(key, "FALLBACK_EMPLOYEE", theirs))),
+          )
+        ) {
+          differing.push(
+            `${key}: FALLBACK_EMPLOYEE ${JSON.stringify(value)} vs ORACLE ${JSON.stringify(theirs)}`,
+          );
+        }
+      }
+      expect(differing).toEqual([]);
+    });
+  });
 
   describe("locks (AC-75-17)", () => {
     it("records the ADMIN's review of its own leave request as the self-approval refusal", () => {

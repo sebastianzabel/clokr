@@ -8,7 +8,7 @@
  * CLAUDE.md. Own seeded tenant per `seedTestData`.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import type { FastifyInstance } from "fastify";
 import {
   getHolidayMap,
@@ -51,6 +51,11 @@ describe("GET /leave/hours-preview priced by contract-at-time (Issue #481, R1)",
         lastName: "81",
         hireDate: rows[0].validFrom,
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: user.id,
+      role: "EMPLOYEE",
     });
     for (const row of rows) {
       await app.prisma.workSchedule.create({
@@ -219,6 +224,11 @@ describe("GET /leave/hours-preview priced by contract-at-time (Issue #481, R1)",
         lastName: "81",
         hireDate: new Date(`${rows[0].validFrom}T00:00:00.000Z`),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: user.id,
+      role: "EMPLOYEE",
     });
     for (const row of rows) {
       const h =

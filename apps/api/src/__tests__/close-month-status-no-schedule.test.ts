@@ -20,7 +20,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon } from "./setup";
+import { getTestApp, cleanupTestData, createTestSalon, grantSystemRole } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 
@@ -66,6 +66,7 @@ describe("close-month/status & year-status — employee with no WorkSchedule row
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -105,6 +106,7 @@ describe("close-month/status & year-status — employee with no WorkSchedule row
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: noScheduleUser.id, role: "EMPLOYEE" });
     noScheduleEmpId = noScheduleEmp.id;
     await prisma.overtimeAccount.create({
       data: { employeeId: noScheduleEmpId, balanceHours: 0 },

@@ -23,7 +23,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import {
   normalizeRolePermissions,
@@ -43,7 +43,8 @@ describe("Issue #91 (Phase 91b Plan 09) / Issue #367 — leave-request:approve n
     return `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   }
 
-  async function createEmployee(label: string) {
+  // grant: false for a person whose stored assignment is the one the caller adds (no system-role grant).
+  async function createEmployee(label: string, grant = true) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const user = await app.prisma.user.create({
@@ -59,6 +60,13 @@ describe("Issue #91 (Phase 91b Plan 09) / Issue #367 — leave-request:approve n
         hireDate: new Date("2020-01-01"),
       },
     });
+    if (grant) {
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
+      });
+    }
     return { user, employee };
   }
 
@@ -85,7 +93,7 @@ describe("Issue #91 (Phase 91b Plan 09) / Issue #367 — leave-request:approve n
       employeeIds?: string[];
     },
   ) {
-    const { user } = await createEmployee(label);
+    const { user } = await createEmployee(label, false);
     const name = `NotifScope ${crypto.randomBytes(3).toString("hex")}`;
     const role = await app.prisma.accessRole.create({
       data: {

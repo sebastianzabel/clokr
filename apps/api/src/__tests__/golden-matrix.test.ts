@@ -46,7 +46,13 @@
  * close-employee-month.test.ts case 9 (pure-core pin), GOLDEN-MATRIX-SPEC.md.
  */
 import { vi, describe, it, expect, afterAll } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  cleanupTestData,
+  createTestSalon,
+  salonIdForEmployee,
+  grantSystemRole,
+} from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import {
   monthRangeUtc,
@@ -1707,6 +1713,7 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
       hireDate: new Date("2024-01-01T00:00:00Z"),
     },
   });
+  await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
   await prisma.workSchedule.create({
     data: {
       employeeId: adminEmp.id,
@@ -1755,6 +1762,7 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
       breakOver9hOverride: 0,
     },
   });
+  await grantSystemRole(prisma, { tenantId, userId: empUser.id, role: "EMPLOYEE" });
   const employeeId = emp.id;
 
   const sch = cell.schedule;
@@ -2533,6 +2541,7 @@ describe("GT-08 — reopen earliest snapshot: live saldo == cumulative, not Feb-
         hireDate: new Date("2024-01-01T00:00:00Z"),
       },
     });
+    await grantSystemRole(prisma, { tenantId: gt08Tenant, userId: adminUser.id, role: "ADMIN" });
     await prisma.workSchedule.create({
       data: {
         employeeId: adminEmp.id,
@@ -2577,6 +2586,7 @@ describe("GT-08 — reopen earliest snapshot: live saldo == cumulative, not Feb-
         breakOver9hOverride: 0,
       },
     });
+    await grantSystemRole(prisma, { tenantId: gt08Tenant, userId: empUser.id, role: "EMPLOYEE" });
     const employeeId = emp.id;
 
     await prisma.workSchedule.create({

@@ -11,7 +11,14 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  tokenWithoutSignIn,
+} from "./setup";
 import { normalizeRolePermissions, roleNameKey, SYSTEM_ROLE_IDS } from "../contexts/platform";
 
 const PASSWORD = "test1234";
@@ -137,14 +144,17 @@ describe("Issue #538 - GET /role-assignments/role-names", () => {
     await closeTestApp();
   });
 
-  it("a whole-tenant holder sees sorted names per user, the legacy fallback included", async () => {
+  it("a whole-tenant holder sees sorted names per user; a user without a stored assignment has none (#539)", async () => {
     const res = await get(data.adminToken);
     expect(res.statusCode, res.body).toBe(200);
     const body = JSON.parse(res.body) as { roleNames: Record<string, string[]> };
     expect(body.roleNames[stored.userId]).toEqual(
       [customName, "Salonmanager"].sort((a, b) => a.localeCompare(b, "de")),
     );
-    expect(body.roleNames[fallback.userId]).toEqual(["Mitarbeiter"]);
+    // #539: no stored assignment -> no role name (the legacy-role fallback that used to say
+    // "Mitarbeiter" here is gone); the user is still listed, with an empty list.
+    expect(Object.keys(body.roleNames)).toContain(fallback.userId);
+    expect(body.roleNames[fallback.userId]).toEqual([]);
   });
 
   it("neither anonymized people nor another tenant's users appear", async () => {
@@ -166,7 +176,8 @@ describe("Issue #538 - GET /role-assignments/role-names", () => {
   });
 
   it("a salon-scoped holder of the permission does not pass (the resource is whole-tenant)", async () => {
-    expect((await get(await login(scopedHolder.email))).statusCode).toBe(403);
+    // The salon-scoped holder holds nothing and cannot sign in since #539 (D-14): signed directly.
+    expect((await get(await tokenWithoutSignIn(app, scopedHolder.email))).statusCode).toBe(403);
   });
 
   it("an unauthenticated request gets 401", async () => {

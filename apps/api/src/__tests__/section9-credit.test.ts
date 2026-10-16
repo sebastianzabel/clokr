@@ -15,6 +15,7 @@ import {
   cleanupTestData,
   seedEntitlementYears,
   soleAuditRowOrNull,
+  grantSystemRole,
 } from "./setup";
 import { dbDateStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
@@ -361,6 +362,11 @@ describe("Section9Credit notifications and listing — Phase 104-05 Task 3", () 
         lastName: "Test",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: managerUser.id,
+      role: "MANAGER",
     });
     const loginRes = await app.inject({
       method: "POST",
@@ -1422,6 +1428,11 @@ describe("display surface — Phase 104-10 Task 1", () => {
         lastName: "Test",
         hireDate: new Date("2024-01-01"),
       },
+    });
+    await grantSystemRole(app.prisma, {
+      tenantId: data.tenant.id,
+      userId: colleagueUser.id,
+      role: "EMPLOYEE",
     });
     const loginRes = await app.inject({
       method: "POST",

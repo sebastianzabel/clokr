@@ -10,7 +10,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
@@ -27,7 +27,8 @@ describe("Issue #79 (Phase 79 Plan 04) — GET /api/v1/time-entries/summary", ()
     return `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   }
 
-  async function createEmployee(label: string) {
+  // grant: false for a person whose stored assignment is the one the caller adds (no system-role grant).
+  async function createEmployee(label: string, grant = true) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const user = await app.prisma.user.create({
@@ -43,6 +44,13 @@ describe("Issue #79 (Phase 79 Plan 04) — GET /api/v1/time-entries/summary", ()
         hireDate: new Date("2025-01-01"),
       },
     });
+    if (grant) {
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: user.id,
+        role: "EMPLOYEE",
+      });
+    }
     return { user, employee };
   }
 
@@ -97,7 +105,7 @@ describe("Issue #79 (Phase 79 Plan 04) — GET /api/v1/time-entries/summary", ()
     permissions: string[],
     scope: { scopeType: "SALONS" | "PERSONS"; salonIds?: string[]; employeeIds?: string[] },
   ) {
-    const { user } = await createEmployee(label);
+    const { user } = await createEmployee(label, false);
     const name = `Summary ${crypto.randomBytes(3).toString("hex")}`;
     const role = await app.prisma.accessRole.create({
       data: {

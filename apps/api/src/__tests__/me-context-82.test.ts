@@ -1,6 +1,6 @@
 /**
  * Issue #82 (D-01, D-02, D-03) — `GET /api/v1/me/context` tells the logged-in caller its tenant and
- * the ACTIVE salons it can reach: its managed reach (role assignments, legacy-role fallback) united
+ * the ACTIVE salons it can reach: its managed reach (stored role assignments only, #539) united
  * with its own current and future salon assignments. The body carries ids and names only (Art. 5
  * Abs. 1 lit. c DSGVO); `isMultiSalon` is the #64 definition (more than one active salon).
  *
@@ -219,9 +219,18 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
     });
   });
 
-  it("names the caller's own roles (Issue #538): stored assignments, custom roles, legacy fallback", async () => {
-    // Legacy fallback: no stored assignment -> the system role of User.role stands in.
+  it("names the caller's own roles (Issue #538): stored assignments, custom roles, none for an unassigned user (#539)", async () => {
+    // The seed admin holds its system role as a stored assignment.
     expect((await contextBody(data.adminToken)).roles).toEqual(["Admin"]);
+
+    // #539: no stored assignment -> no role, whatever User.role says (no legacy fallback any more).
+    const unassigned = await createEmployee("roles539", "ADMIN");
+    const unassignedToken = app.jwt.sign({
+      sub: unassigned.user.id,
+      tenantId: data.tenant.id,
+      employeeId: unassigned.employee.id,
+    } as unknown as JwtPayload);
+    expect((await contextBody(unassignedToken)).roles).toEqual([]);
 
     // Stored assignments: a custom role next to a system role, distinct and sorted by name.
     const { user } = await createEmployee("roles538");
@@ -244,11 +253,25 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
     expect(JSON.stringify(body.roles)).not.toContain(salonA.id);
   });
 
-  it("legacy-role fallback admin (no stored assignment) reaches every active salon, never the inactive one", async () => {
+  it("a stored TENANT Admin assignment reaches every active salon, never the inactive one", async () => {
     const body = await contextBody(data.adminToken);
     expect(body.salons).toEqual(byName([salonA, salonB, salonC, salonD]));
     expect(ids(body)).not.toContain(salonI.id);
     expect(body.homeSalonId).toBeNull();
+    expect(body.isMultiSalon).toBe(true);
+  });
+
+  it("an admin-column user without a stored assignment reaches no salon (#539: no legacy-role fallback)", async () => {
+    const { user, employee } = await createEmployee("noRowAdmin", "ADMIN");
+    const token = app.jwt.sign({
+      sub: user.id,
+      tenantId: data.tenant.id,
+      employeeId: employee.id,
+    } as unknown as JwtPayload);
+    const body = await contextBody(token);
+    expect(body.salons).toEqual([]);
+    expect(body.homeSalonId).toBeNull();
+    expect(body.roles).toEqual([]);
     expect(body.isMultiSalon).toBe(true);
   });
 
@@ -274,6 +297,9 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
 
   it("an employee reaches the salons of its current and future assignments only", async () => {
     const { user, employee } = await createEmployee("ownReach");
+    // #539: an employee signs in only with a stored role - the plain Mitarbeiter row; it adds no
+    // managed salon, so the salons asserted below are those of the person's own assignments.
+    await assign(user.id, SYSTEM_ROLE_IDS.EMPLOYEE, { scopeType: "TENANT" });
     await salonAssignment(employee.id, salonA.id, "HOME", "2024-01-01");
     await salonAssignment(employee.id, salonB.id, "DEPLOYMENT", "2026-01-01", "2026-12-31");
     await salonAssignment(employee.id, salonD.id, "DEPLOYMENT", "2026-09-01");
@@ -289,6 +315,9 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
 
   it("an employee whose only assignment is HOME on an inactive salon reaches nothing", async () => {
     const { user, employee } = await createEmployee("inactiveHome");
+    // #539: an employee signs in only with a stored role - the plain Mitarbeiter row; it adds no
+    // managed salon, so the salons asserted below are those of the person's own assignments.
+    await assign(user.id, SYSTEM_ROLE_IDS.EMPLOYEE, { scopeType: "TENANT" });
     await salonAssignment(employee.id, salonI.id, "HOME", "2024-01-01");
     const body = await contextBody(await login(user.email));
     expect(body.salons).toEqual([]);
@@ -317,7 +346,7 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
         permissions: normalizeRolePermissions(["time-entry:read:EIGENE"]),
       },
     });
-    // One stored row disables the legacy fallback, even for User.role ADMIN.
+    // A stored EIGENE-only row reaches only the own salons, even for User.role ADMIN.
     await assign(user.id, role.id, { scopeType: "TENANT" });
     const body = await contextBody(await login(user.email));
     expect(ids(body)).toEqual([salonB.id]);
@@ -327,7 +356,6 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
   it("a valid JWT for a nonexistent user answers 404 Benutzer nicht gefunden", async () => {
     const payload: JwtPayload = {
       sub: randomUUID(),
-      role: "EMPLOYEE",
       tenantId: data.tenant.id,
       employeeId: undefined,
     };
@@ -339,7 +367,6 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
   it("a valid JWT of an existing user with an unknown tenant answers 404 Mandant nicht gefunden", async () => {
     const payload: JwtPayload = {
       sub: data.empUser.id,
-      role: "EMPLOYEE",
       tenantId: randomUUID(),
       employeeId: undefined,
     };

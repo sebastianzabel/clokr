@@ -68,6 +68,9 @@ export default [
       // tsconfig.seed.json includes it, and `project: true` auto-discovery
       // only looks for tsconfig.json.
       "packages/db/src/default-salon.ts",
+      // Issue #539 (D-09): the seeds' role-assignment helper, same shape as default-salon.ts —
+      // only tsconfig.seed.json includes it.
+      "packages/db/src/seed-role-assignments.ts",
       "apps/api/vitest.*.ts",
       // packages/types has no tsconfig.json of its own and isn't `include`d by any other
       // package's tsconfig either — genuinely pre-existing, this file was touched only twice in

@@ -896,7 +896,8 @@ export async function leaveRoutes(app: FastifyInstance) {
           days,
           ...(isOnBehalfOf && {
             source: "MANAGER_CREATED",
-            actorRole: req.user.role,
+            // Issue #539 (D-13): no actorRole on new rows (the actor is the row's userId); existing
+            // rows keep theirs - the audit log is append-only.
             targetEmployeeId: employeeId,
           }),
         },

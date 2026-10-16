@@ -32,7 +32,13 @@
  * observed.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { getTestApp, cleanupTestData, createTestSalon, soleAuditRowOrNull } from "./setup"; // Phase 325 (issue #325)
+import {
+  getTestApp,
+  cleanupTestData,
+  createTestSalon,
+  soleAuditRowOrNull,
+  grantSystemRole,
+} from "./setup"; // Phase 325 (issue #325)
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
@@ -176,6 +182,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
           hireDate: PAST_ANCHOR,
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role: "ADMIN" });
       const login = await app.inject({
         method: "POST",
         url: "/api/v1/auth/login",
@@ -203,6 +210,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
           hireDate: PAST_ANCHOR,
         },
       });
+      await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       await prisma.workSchedule.create({
         data: {
           employeeId: employee.id,

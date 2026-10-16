@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi, beforeEach } from "vitest";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, grantSystemRole } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
 
@@ -701,6 +701,12 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
           lastName: "Test",
           hireDate: new Date("2024-01-01"),
         },
+      });
+      // Issue #539 (D-09): the ad-hoc manager holds its system role as a stored assignment.
+      await grantSystemRole(app.prisma, {
+        tenantId: data.tenant.id,
+        userId: mgrUser.id,
+        role: "MANAGER",
       });
       await app.prisma.overtimeAccount.create({ data: { employeeId: mgrEmp.id, balanceHours: 0 } });
 

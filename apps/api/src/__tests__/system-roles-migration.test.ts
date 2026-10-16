@@ -19,7 +19,13 @@ import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  removeFixtureRoleAssignments,
+} from "./setup";
 import {
   executeLegacyRoleMigration,
   executeLegacyRoleMigrationCapturingNotices,
@@ -273,6 +279,10 @@ describe("legacy-role backfill edge cases (AC-75-4..AC-75-8, D-07, D-28)", () =>
     app = await getTestApp();
     // seedTestData creates one legacy ADMIN and one legacy EMPLOYEE, each with an Employee.
     tenant = await seedTestData(app, "75b-mig-edge");
+    // #539 (rewritten by plan 539-07): this file's subject is the unassigned state, so the seed
+    // users get the pre-#539 seed state back — no stored role row — and the migration under test
+    // is what creates theirs.
+    await removeFixtureRoleAssignments(app.prisma, [tenant.adminUser.id, tenant.empUser.id]);
     const tenantId = tenant.tenant.id;
     manager = await createUserWithEmployee(app, tenantId, "Manager", "MANAGER");
     inactiveEmployee = await createUserWithEmployee(app, tenantId, "Inaktiv", "EMPLOYEE", {

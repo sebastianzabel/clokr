@@ -31,6 +31,7 @@ import {
   cleanupTestData,
   createTestSalon,
   soleAuditRowOrNull,
+  grantSystemRole,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
@@ -98,6 +99,7 @@ describe("recalculateCarryOver / autoCarryOver — ILLNESS deadline protection (
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: adminUser.id, role: "ADMIN" });
     const loginRes = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
@@ -146,6 +148,7 @@ describe("recalculateCarryOver / autoCarryOver — ILLNESS deadline protection (
         hireDate: new Date(`${currentYear}-01-01T00:00:00Z`),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: u.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,
@@ -449,6 +452,7 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
         hireDate: new Date("2024-01-01"),
       },
     });
+    await grantSystemRole(prisma, { tenantId: tenant.id, userId: adminUser.id, role: "ADMIN" });
     const loginRes = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
@@ -497,6 +501,7 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
         hireDate: new Date(`${year}-01-01T00:00:00Z`),
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: u.id, role: "EMPLOYEE" });
     await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
     return emp.id;
   };

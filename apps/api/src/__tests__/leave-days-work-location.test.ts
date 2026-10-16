@@ -17,6 +17,7 @@ import {
   seedEntitlementYears,
   cleanupTestData,
   createTestSalon,
+  grantSystemRole,
 } from "./setup";
 import { TENANT_REQUIRED_ERROR } from "../contexts/platform/tenant-status";
 
@@ -61,6 +62,7 @@ describe("Leave days by work location (Phase 71b Plan 03, issue #71, AC-5/AC-7)"
           hireDate: new Date("2026-01-01"),
         },
       });
+      await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
       await app.prisma.workSchedule.create({
         data: {
           employeeId: employee.id,

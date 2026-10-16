@@ -23,6 +23,7 @@ import {
   cleanupTestData,
   createTestSalon,
   salonIdForEmployee,
+  grantSystemRole,
 } from "./setup";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -119,6 +120,7 @@ describe("GET /api/v1/dashboard/open-items — unconfirmedBreakDays contract (is
         hireDate,
       },
     });
+    await grantSystemRole(prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,

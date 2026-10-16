@@ -18,6 +18,7 @@ import {
   seedGrundversionTenant,
   cleanupTestData,
   createTestSalon,
+  grantSystemRole,
   soleAuditRow,
   auditRowsFor,
 } from "./setup";
@@ -47,6 +48,8 @@ async function createManagerToken(app: FastifyInstance, tenantId: string): Promi
       isActive: true,
     },
   });
+  // Issue #539 (D-09): the system role is a stored assignment, never the column.
+  await grantSystemRole(app.prisma, { tenantId, userId: mgrUser.id, role: "MANAGER" });
   const mgrEmployee = await app.prisma.employee.create({
     data: {
       tenantId,
