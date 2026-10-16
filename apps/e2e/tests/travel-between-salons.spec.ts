@@ -21,6 +21,7 @@
 import type { APIRequestContext, Page } from "@playwright/test";
 import { test, expect } from "../fixtures";
 import type { TestTenant } from "../fixtures";
+import { zonedInstant } from "../helpers/tenant-zone";
 
 const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:4001";
 const PASSWORD = "test1234";
@@ -122,8 +123,8 @@ async function recordEntryViaApi(
     headers: authHeaders(tenant),
     data: {
       date: day,
-      startTime: new Date(`${day}T${start}:00`).toISOString(),
-      endTime: new Date(`${day}T${end}:00`).toISOString(),
+      startTime: zonedInstant(day, start, TENANT_TZ).toISOString(),
+      endTime: zonedInstant(day, end, TENANT_TZ).toISOString(),
       breakMinutes: 0,
       ...(salonId ? { salonId } : {}),
     },
