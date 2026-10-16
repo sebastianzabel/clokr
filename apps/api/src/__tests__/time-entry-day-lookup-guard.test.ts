@@ -35,8 +35,8 @@
  * (a different explicit salon starts a new entry, every START checks month lock and overlap),
  * `day-entries.ts` (the selectors `openEntryOf` / `latestEndingClosed`) and `api/presence.ts`
  * (WIFI keeps never starting a second salon) left REQUIRED_MARKERS in the task that removed their
- * markers; `consolidate.ts` (never merges across salons) leaves with its own task. Case count
- * unchanged; "nowhere else" is still enforced.
+ * markers; `consolidate.ts` (never merges across salons, D-03) left in the following task. Case
+ * count unchanged; "nowhere else" is still enforced.
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, extname } from "node:path";
@@ -64,7 +64,6 @@ const MIN_TIME_ENTRY_FIND_CALLS = 20;
 const REQUIRED_MARKERS: Record<string, number> = {
   "apps/api/src/contexts/time-tracking/arbzg.ts": 4,
   "apps/api/src/contexts/time-tracking/clock-salon-choice.ts": 1,
-  "apps/api/src/services/clock/consolidate.ts": 1,
   "apps/api/src/contexts/platform/facade/holiday-resolution.ts": 1,
 };
 const MARKER_RE = /\/\/ MULTI-ENTRY: .{10,}/;
