@@ -65,7 +65,7 @@ import {
   computeOvertimeBalanceHours, // Phase 101B (Issue #101, wave 9) — merged in, closing the loop wave 05 deliberately left open
   type OvertimeBalanceBreakdown,
 } from "../../working-time-account"; // Phase 101B
-// Phase 101B (Issue #101, D-11 Welle time-tracking): checkOverlap/checkOneEntryPerDay/
+// Phase 101B (Issue #101, D-11 Welle time-tracking): checkOverlap/
 // validateTimeEntryInvariants/getEffectiveSchedule lifted out of this file into
 // ../entry-invariants.ts; the overtime pair lifted into working-time-account/overtime-balance.ts.
 // Re-exported below (unchanged) so external deep-import call sites across other contexts and
@@ -73,10 +73,16 @@ import {
 // later wave converts them to import from the owning context's index.ts.
 import {
   checkOverlap,
-  checkOneEntryPerDay,
   validateTimeEntryInvariants,
   getEffectiveSchedule,
 } from "../entry-invariants";
+import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
+import {
+  isEntryOverlapViolation,
+  isOpenEntryPerDayViolation,
+  OVERLAP_MESSAGE_NEUTRAL,
+  OPEN_ENTRY_PER_DAY_MESSAGE,
+} from "../entry-overlap-error"; // Issue #70 (D-10)
 
 export { validateTimeEntryInvariants, getEffectiveSchedule };
 export { updateOvertimeAccount, computeOvertimeBalanceBreakdown, computeOvertimeBalanceHours };
@@ -1583,22 +1589,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               throw new Error("GRANT_ALREADY_USED");
             }
 
-            // Re-run the one-per-day + overlap conflict checks against `tx` now that
-            // this request has exclusively won the grant (deferConflictChecksToTx above
-            // skipped these pre-tx). Only the winner ever reaches this point, so these
-            // catch genuinely unrelated conflicts (e.g. a different, non-grant write to
-            // the same day) rather than the grant race itself — the (employeeId,date)
-            // partial unique index remains the final backstop for the one-per-day case.
+            // Re-run the overlap check against `tx` now that this request has exclusively won
+            // the grant (deferConflictChecksToTx above skipped it pre-tx). Only the winner ever
+            // reaches this point, so this catches genuinely unrelated conflicts (e.g. a
+            // different, non-grant write to the same interval) rather than the grant race
+            // itself — the database exclusion constraint remains the final backstop.
             const conflictDate = new Date(body.date);
-            const oneDayErrorTx = await checkOneEntryPerDay(
-              tx,
-              user.tenantId,
-              employeeId,
-              conflictDate,
-            );
-            if (oneDayErrorTx) {
-              throw new Error(`ENTRY_CONFLICT:${oneDayErrorTx}`);
-            }
             const overlapTx = await checkOverlap(
               tx,
               employeeId,
@@ -1697,23 +1693,42 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           });
           entry = result;
         } else {
-          entry = await app.prisma.timeEntry.create({
-            data: {
+          // Issue #70 (D-10): lock the employee row, re-check overlap against the committed rows
+          // of the winner of any race, then create — all in ONE transaction. The pre-tx
+          // `validateTimeEntryInvariants` above stays the cheap early answer; this is the
+          // authoritative one, and the exclusion constraint is the backstop behind it.
+          entry = await app.prisma.$transaction(async (tx) => {
+            await lockEmployeeForEntryWrite(tx, user.tenantId, employeeId);
+            const overlapTx = await checkOverlap(
+              tx,
               employeeId,
-              date: new Date(body.date),
-              startTime: newStart,
-              endTime: newEnd,
-              breakMinutes: finalBreakMinutes,
-              note: body.note,
-              source: "MANUAL",
-              createdBy: user.sub,
-              isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
-              salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
-              ...activityCreateData, // Issue #81 (D-06)
-              ...(manualLeave
-                ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
-                : CLEARED_INVALID_REASON),
-            },
+              newStart,
+              newEnd,
+              undefined,
+              new Date(body.date),
+              tz,
+            );
+            if (overlapTx) {
+              throw new Error(`ENTRY_CONFLICT:${overlapTx}`);
+            }
+            return tx.timeEntry.create({
+              data: {
+                employeeId,
+                date: new Date(body.date),
+                startTime: newStart,
+                endTime: newEnd,
+                breakMinutes: finalBreakMinutes,
+                note: body.note,
+                source: "MANUAL",
+                createdBy: user.sub,
+                isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
+                salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
+                ...activityCreateData, // Issue #81 (D-06)
+                ...(manualLeave
+                  ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
+                  : CLEARED_INVALID_REASON),
+              },
+            });
           });
         }
       } catch (err: unknown) {
@@ -1721,24 +1736,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (err instanceof Error && err.message === "GRANT_ALREADY_USED") {
           return reply.code(403).send({ error: "Antrag bereits verwendet oder ungültig" });
         }
-        // Genuinely unrelated conflict (one-per-day/overlap), re-checked inside the tx
-        // after the grant flip succeeded (deferConflictChecksToTx) → 409.
+        // Overlap re-checked inside the transaction (grant branch after the flip, plain branch
+        // under the Employee row lock) → 409.
         if (err instanceof Error && err.message.startsWith("ENTRY_CONFLICT:")) {
           return reply.code(409).send({ error: err.message.slice("ENTRY_CONFLICT:".length) });
         }
-        // MULTI-ENTRY: this P2002 → 409 mapping only exists because of the one-per-day unique index;
-        // it disappears (or changes meaning) when the index is dropped (#70).
-        // DATA-V1814-04: the partial-unique index catches a concurrent same-day create
-        // that raced past the app-level one-per-day check → P2002 → 409 (not a 500).
-        if (
-          typeof err === "object" &&
-          err !== null &&
-          "code" in err &&
-          (err as { code: unknown }).code === "P2002"
-        ) {
-          return reply
-            .code(409)
-            .send({ error: "Es existiert bereits ein Eintrag für diesen Tag." });
+        // Issue #70 (D-10): the database refused a write the application checks did not catch
+        // (a writer that raced past them, or a path outside the Employee row lock). Both are a
+        // clean 409, never a 500; the overlap text is the neutral one because a database error
+        // carries no caller reach to word it by.
+        if (isEntryOverlapViolation(err)) {
+          return reply.code(409).send({ error: OVERLAP_MESSAGE_NEUTRAL });
+        }
+        if (isOpenEntryPerDayViolation(err)) {
+          return reply.code(409).send({ error: OPEN_ENTRY_PER_DAY_MESSAGE });
         }
         throw err;
       }

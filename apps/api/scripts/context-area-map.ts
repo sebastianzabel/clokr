@@ -228,7 +228,9 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/activity-shares.ts": "zeiterfassung", // Issue #81 (D-05) — the one share validator and nested-write builders; pure, no model access
   "src/contexts/time-tracking/activity-store.ts": "zeiterfassung", // Issue #81 (D-09) — reads TimeEntry activity fields and TimeEntryActivityShare, tenant-bound, for the evaluation
   "src/contexts/time-tracking/entry-durations.ts": "zeiterfassung", // Phase 79 (Issue #79), D-03 — pure presence/working-time kernel, no model access; TimeEntry vocabulary
-  "src/contexts/time-tracking/entry-invariants.ts": "zeiterfassung", // Phase 101B (Issue #101) — lifted out of api/time-entries.ts; one-per-day/overlap/month-lock/retro-window invariants + effective-schedule resolution over TimeEntry
+  "src/contexts/time-tracking/entry-invariants.ts": "zeiterfassung", // Phase 101B (Issue #101) — lifted out of api/time-entries.ts; overlap/month-lock/retro-window invariants + effective-schedule resolution over TimeEntry (one-per-day rule removed by Issue #70)
+  "src/contexts/time-tracking/entry-write-lock.ts": "zeiterfassung", // Issue #70 (Phase 70b-02), D-10 — the one Employee row lock of every writer that creates or moves a TimeEntry interval
+  "src/contexts/time-tracking/entry-overlap-error.ts": "zeiterfassung", // Issue #70 (Phase 70b-02), D-10/D-13 — recognises the database overlap/open-per-day refusals and words the overlap 409
   "src/contexts/time-tracking/entry-salon.ts": "zeiterfassung", // Phase 68b (issue #68) — resolveEntrySalon, the entry-salon rule; reads the Unterbau only through the platform index
   "src/contexts/time-tracking/clock-salon-choice.ts": "zeiterfassung", // Issue #87 (Phase 87b) — clockSalonChoice, the one clock-salon decision; reads the Unterbau only through the platform index
   "src/contexts/time-tracking/break-finding-days.ts": "zeiterfassung", // Issue #511 (D-12) — month-close / cron / dry-run detector over TimeEntry, Break, DayBreak and DayBreakAck

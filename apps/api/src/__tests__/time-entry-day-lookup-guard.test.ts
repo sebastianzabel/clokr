@@ -20,9 +20,16 @@
  * inspected; `apps/api/scripts/**` is out of scope on purpose (operator tools, Issue #69 "Nicht Teil
  * davon").
  *
- * It also pins two things the issue asks to stay true: `checkOneEntryPerDay` reads through
- * `findEntriesOfDay`, and the `// MULTI-ENTRY: <reason>` markers are complete (REQUIRED_MARKERS is
- * the full list — a marker anywhere else, or a missing one, turns this red).
+ * It also pins two things the issue asks to stay true: the one-per-day function stays gone, and the
+ * `// MULTI-ENTRY: <reason>` markers are complete (REQUIRED_MARKERS is the full list — a marker
+ * anywhere else, or a missing one, turns this red).
+ *
+ * Amendment 2026-10-16 (Issue #70, Phase 70b-02): the rule "at most one entry per employee and day"
+ * left the code. `checkOneEntryPerDay` and its call sites are deleted, so the two files whose
+ * markers described that rule (`entry-invariants.ts`, `api/time-entries.ts`) leave REQUIRED_MARKERS
+ * and the AST case that pinned the function's read path now pins its ABSENCE (same case count). The
+ * remaining markers stay: each still names a place that must compute differently once several
+ * entries per day exist, and is resolved by a later 70b plan.
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, extname } from "node:path";
@@ -50,10 +57,8 @@ const MIN_TIME_ENTRY_FIND_CALLS = 20;
 const REQUIRED_MARKERS: Record<string, number> = {
   "apps/api/src/contexts/time-tracking/day-entries.ts": 1,
   "apps/api/src/contexts/time-tracking/arbzg.ts": 4,
-  "apps/api/src/contexts/time-tracking/entry-invariants.ts": 1,
   "apps/api/src/contexts/time-tracking/clock-salon-choice.ts": 1,
   "apps/api/src/contexts/time-tracking/api/presence.ts": 3,
-  "apps/api/src/contexts/time-tracking/api/time-entries.ts": 1,
   "apps/api/src/services/clock/resolver.ts": 4,
   "apps/api/src/services/clock/consolidate.ts": 1,
   "apps/api/src/contexts/platform/facade/holiday-resolution.ts": 1,
@@ -248,19 +253,21 @@ describe("Phase 69b — time-entry day lookups go through findEntriesOfDay", () 
     expect(inside, "day-entries.ts must contain exactly one timeEntry day lookup").toHaveLength(1);
   });
 
-  it("checkOneEntryPerDay reads through findEntriesOfDay and touches no timeEntry delegate itself", () => {
-    const file = join(REPO_ROOT, "apps/api/src/contexts/time-tracking/entry-invariants.ts");
-    const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
-    const fn = sf.statements.find(
-      (s): s is ts.FunctionDeclaration =>
-        ts.isFunctionDeclaration(s) && s.name?.text === "checkOneEntryPerDay",
+  it("the one-per-day function is gone: no declaration or call of checkOneEntryPerDay in production source", () => {
+    const files = collectFiles();
+    // Anti-vacuity: the walk must have seen the source tree (entry-invariants.ts is part of it).
+    expect(files.length, "the source walk found no files").toBeGreaterThan(50);
+    expect(files.map(repoRel), "entry-invariants.ts must be inside the walked set").toContain(
+      "apps/api/src/contexts/time-tracking/entry-invariants.ts",
     );
-    expect(fn?.body, "checkOneEntryPerDay not found in entry-invariants.ts").toBeDefined();
-    const body = fn!.body!.getText(sf);
-    expect(body, "checkOneEntryPerDay must call findEntriesOfDay").toMatch(/\bfindEntriesOfDay\(/);
-    expect(body, "checkOneEntryPerDay must not query timeEntry directly").not.toMatch(
-      /\.timeEntry\b/,
-    );
+    const offenders = files
+      .filter((abs) => /\bcheckOneEntryPerDay\b/.test(readFileSync(abs, "utf8")))
+      .map(repoRel)
+      .sort();
+    expect(
+      offenders,
+      `the one-entry-per-day rule left the code with Issue #70 — remove:\n${offenders.join("\n")}`,
+    ).toEqual([]);
   });
 
   it("MULTI-ENTRY markers are complete and nowhere else", () => {
