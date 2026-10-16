@@ -86,6 +86,8 @@ import {
   validateTravelEntry,
   TRAVEL_NOT_AS_RETRO_REQUEST_CODE,
   TRAVEL_NOT_AS_RETRO_REQUEST_MESSAGE,
+  TRAVEL_SHAPE_CODE,
+  TRAVEL_SHAPE_MESSAGE,
 } from "../travel-entry"; // Issue #92 (Phase 92b, D-05/D-06) — the ONE travel write rule
 import { otherWorkingMinutesOfDay } from "../day-entries"; // Issue #70 (D-04)
 import {
@@ -260,6 +262,9 @@ const updateEntrySchema = z.object({
   // Issue #81 (D-06): omitted = unchanged, [] = clear, list = full replacement; `null` is not accepted.
   activityKind: activityKindSchema.optional(),
   activityShares: activitySharesSchema.optional(),
+  // Issue #92 (D-06): the arrival salon of an EXISTING travel entry may be corrected; on any other
+  // entry the field is refused (`classifyTravelUpdate`). `null` is not accepted.
+  travelToSalonId: z.string().uuid().optional(),
 });
 
 // ── Pausen-Minuten aus Break-Slots berechnen ──────────────────────────────────
@@ -1017,6 +1022,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply
           .code(409)
           .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
+      // Issue #92 (D-06): a travel entry has no break.
+      if (entry.activityKind === "TRAVEL") {
+        return reply.code(400).send({ error: TRAVEL_SHAPE_MESSAGE, code: TRAVEL_SHAPE_CODE });
       }
 
       // Phase 380 (issue #380), owner decision Variante (b), 2026-09-28: an entry that already
@@ -2100,6 +2110,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
       }
 
+      // Issue #92 (D-06): a travel entry is immutable in kind, and no other entry becomes travel.
+      // Runs right after the 404/403/scope/entry-lock guards (an entry-level lock wins) and BEFORE the
+      // shared invariants, so a forbidden conversion — also one that would otherwise surface as an
+      // overlap, like clearing the end time of a travel entry — is a German 400 here, never a
+      // database CHECK violation. It reads nothing and writes nothing.
+      const travelUpdate = classifyTravelUpdate(body, existing);
+      if (!travelUpdate.ok) return reply.code(travelUpdate.status).send(travelUpdate.body);
+      const putIsTravelRow = travelUpdate.travel;
+
       // Prüfen ob das neue Datum vor dem Eintrittsdatum liegt
       if (body.date) {
         const targetEmployee = await app.prisma.employee.findUnique({
@@ -2364,6 +2383,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const patch: Record<string, unknown> =
         putIsTimeCorrection || putResolvedGrantId ? { source: "CORRECTION" } : {};
       if (resolvedSalonId !== undefined) patch.salonId = resolvedSalonId; // Phase 68b (issue #68), D-12
+      // Issue #92 (D-06): only a travel row reaches here with a destination (classifyTravelUpdate);
+      // an unchanged value is a no-op write of the same id.
+      if (putIsTravelRow && body.travelToSalonId !== undefined) {
+        patch.travelToSalonId = body.travelToSalonId;
+      }
       if (body.date) patch.date = new Date(body.date);
       if (body.startTime) patch.startTime = new Date(body.startTime);
       if ("endTime" in body) patch.endTime = body.endTime ? new Date(body.endTime as string) : null;
@@ -2468,6 +2492,69 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             access: accessContextFromRequest(req),
           });
 
+          // Issue #92 (D-06, T3/T4/T6): next to the overlap re-check, under the same Employee row lock.
+          if (putIsTravelRow) {
+            // A travel entry is judged by the travel write rule. Salons: the departure salon was
+            // validated above ONLY when it changed (the #68 rule); the arrival salon is validated
+            // ONLY when it changed, so a salon deactivated after the trip never blocks a time or
+            // note correction of an old travel entry (W2).
+            const verdict = await validateTravelEntry(tx, {
+              tenantId: user.tenantId,
+              employeeId: existing.employeeId,
+              date: putEffectiveDate,
+              startTime: updatedStart,
+              endTime: updatedEnd as Date,
+              salonId: resolvedSalonId ?? existing.salonId,
+              travelToSalonId: body.travelToSalonId ?? (existing.travelToSalonId as string),
+              excludeEntryId: id,
+              validateArrivalSalon:
+                body.travelToSalonId !== undefined &&
+                body.travelToSalonId !== existing.travelToSalonId,
+              access: accessContextFromRequest(req),
+              callerEmployeeId: user.employeeId ?? null,
+              permission: "time-entry:update:ZUGEWIESEN",
+              outOfReachMessage: "Eintrag nicht gefunden",
+            });
+            if (!verdict.ok) throw new TravelRefusalError(verdict);
+          } else {
+            // Any other entry may not leave a travel entry of the day without its anchors. A write
+            // that stays on its date is ONE evaluation with both the stored and the resulting row;
+            // only a changed date makes two (the old date loses the row, the new date gains it).
+            const resulting = {
+              id,
+              startTime: updatedStart,
+              endTime: updatedEnd,
+              salonId: resolvedSalonId ?? existing.salonId,
+              type: existing.type,
+              invalidReasonCode:
+                updatedEnd && existing.invalidReasonCode === "MISSING_CLOCK_OUT"
+                  ? null
+                  : existing.invalidReasonCode,
+            };
+            if (putEffectiveDate.getTime() === existing.date.getTime()) {
+              await checkTravelNeighbours(tx, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                date: existing.date,
+                without: id,
+                with: resulting,
+              });
+            } else {
+              await checkTravelNeighbours(tx, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                date: existing.date,
+                without: id,
+              });
+              await checkTravelNeighbours(tx, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                date: putEffectiveDate,
+                with: resulting,
+              });
+            }
+          }
+
           // Break-slot replacement inside the tx (atomic with the update)
           if (newBreakSlotsForTx !== undefined) {
             await tx.break.deleteMany({ where: { timeEntryId: id } });
@@ -2507,6 +2594,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       } catch (err) {
         if (err instanceof GrantAlreadyUsedError) {
           return reply.code(403).send({ error: "Antrag bereits verwendet oder ungültig" });
+        }
+        // Issue #92: the travel write rule or the neighbour check refused inside the transaction.
+        if (err instanceof TravelRefusalError) {
+          return reply.code(err.refusal.status).send(err.refusal.body);
         }
         if (err instanceof EntryConflictError) {
           return reply.code(409).send({ error: err.userMessage });
@@ -2719,6 +2810,16 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
         }
 
+        // Issue #92 (D-06): a corrected travel entry stays closed and carries no break.
+        const travelShape = classifyTravelUpdate(
+          {
+            ...(body.endTime !== undefined ? { endTime: body.endTime } : {}),
+            ...(body.breakMinutes !== undefined ? { breakMinutes: body.breakMinutes } : {}),
+          },
+          existing,
+        );
+        if (!travelShape.ok) return reply.code(travelShape.status).send(travelShape.body);
+
         // Overlap check — scope open-entry conflicts to this entry's day (v1.8.13).
         const revalidateTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
         const overlap = await checkOverlap(
@@ -2787,6 +2888,49 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               callerEmployeeId: user.employeeId ?? null,
               access: accessContextFromRequest(req),
             });
+            // Issue #92: a correction MOVES the interval, so it is judged like a PUT that stays on
+            // its date — a travel entry by the travel write rule (its salons are history, never
+            // re-validated), any other entry by the neighbour check (T6).
+            const revalidatedStart = updateData.startTime
+              ? (updateData.startTime as Date)
+              : existing.startTime;
+            const revalidatedEnd =
+              updateData.endTime !== undefined
+                ? (updateData.endTime as Date | null)
+                : existing.endTime;
+            if (existing.activityKind === "TRAVEL") {
+              const verdict = await validateTravelEntry(tx, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                date: existing.date,
+                startTime: revalidatedStart,
+                endTime: revalidatedEnd as Date,
+                salonId: existing.salonId,
+                travelToSalonId: existing.travelToSalonId as string,
+                excludeEntryId: id,
+                validateArrivalSalon: false,
+                access: accessContextFromRequest(req),
+                callerEmployeeId: user.employeeId ?? null,
+                permission: "time-entry:revalidate:ZUGEWIESEN",
+                outOfReachMessage: "Eintrag nicht gefunden",
+              });
+              if (!verdict.ok) throw new TravelRefusalError(verdict);
+            } else {
+              await checkTravelNeighbours(tx, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                date: existing.date,
+                without: id,
+                with: {
+                  id,
+                  startTime: revalidatedStart,
+                  endTime: revalidatedEnd,
+                  salonId: existing.salonId,
+                  type: existing.type,
+                  invalidReasonCode: null,
+                },
+              });
+            }
           }
           return tx.timeEntry.update({
             where: { id },
@@ -2798,6 +2942,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           });
         });
       } catch (err) {
+        if (err instanceof TravelRefusalError) {
+          return reply.code(err.refusal.status).send(err.refusal.body);
+        }
         if (err instanceof EntryConflictError) {
           return reply.code(409).send({ error: err.userMessage });
         }
@@ -2915,11 +3062,30 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // reason 400 never leaks the existence of a foreign/locked/out-of-window entry.
       const { reason } = z.object({ reason: auditReasonSchema }).parse(req.body);
 
-      // Soft delete instead of hard delete
-      await app.prisma.timeEntry.update({
-        where: { id },
-        data: { deletedAt: new Date() },
-      });
+      // Soft delete instead of hard delete. Issue #92 (T6): inside a transaction whose first
+      // statement is the Employee row lock, the neighbour check runs BEFORE the delete — the entry
+      // may not be the departure or arrival entry of a travel entry (a travel entry itself can
+      // always be deleted).
+      try {
+        await app.prisma.$transaction(async (tx) => {
+          await lockEmployeeForEntryWrite(tx, user.tenantId, existing.employeeId);
+          await checkTravelNeighbours(tx, {
+            tenantId: user.tenantId,
+            employeeId: existing.employeeId,
+            date: existing.date,
+            without: id,
+          });
+          await tx.timeEntry.update({
+            where: { id },
+            data: { deletedAt: new Date() },
+          });
+        });
+      } catch (err) {
+        if (err instanceof TravelRefusalError) {
+          return reply.code(err.refusal.status).send(err.refusal.body);
+        }
+        throw err;
+      }
       await updateOvertimeAccount(app, existing.employeeId);
 
       await app.audit({
@@ -3000,6 +3166,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply
           .code(409)
           .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
+      // Issue #92 (D-06): a travel entry has no break to confirm or waive.
+      if (entry.activityKind === "TRAVEL") {
+        return reply.code(400).send({ error: TRAVEL_SHAPE_MESSAGE, code: TRAVEL_SHAPE_CODE });
       }
 
       const oldStatus = entry.breakStatus;

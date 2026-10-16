@@ -10,6 +10,10 @@
  * of a whole travel entry between two salons, never a share). The label map and every full
  * `activityMinutes()` result object gain TRAVEL (label „Fahrzeit zwischen Salons“, minutes 0 for
  * these non-travel entries); the share-kind list is unchanged. Case count unchanged.
+ *
+ * Amended 2026-10-16 for #92 (Phase 92b-02): `ActivityPutExisting` gains the stored destination
+ * `travelToSalonId` (required, so no caller can forget it); the `isActivityOnlyPut` fixture row
+ * carries `travelToSalonId: null`. No expectation changes; case count unchanged.
  */
 import { describe, it, expect } from "vitest";
 import { entryDurations } from "..";
@@ -354,6 +358,7 @@ describe("isActivityOnlyPut (D-20)", () => {
     note: null as string | null,
     type: "WORK",
     salonId: "salon-1",
+    travelToSalonId: null as string | null,
   };
   const act = { activityKind: "PRODUCTIVE" as const };
 

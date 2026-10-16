@@ -9,8 +9,11 @@
  * does.
  */
 import { describe, it, expect } from "vitest";
+import { isActivityOnlyPut } from "../activity-shares";
 import {
+  classifyTravelUpdate,
   classifyTravelWrite,
+  TRAVEL_KIND_IMMUTABLE_CODE,
   TRAVEL_KIND_DERIVED_CODE,
   TRAVEL_NOT_BETWEEN_SALON_ENTRIES_CODE,
   TRAVEL_SALONS_REQUIRED_CODE,
@@ -292,5 +295,118 @@ describe("classifyTravelWrite", () => {
       expect(verdict.status).toBe(status);
       expect(verdict.body.code).toBe(code);
     }
+  });
+});
+
+describe("classifyTravelUpdate (D-06: a travel entry is immutable in kind)", () => {
+  const travelRow = { activityKind: "TRAVEL", salonId: SALON_A, travelToSalonId: SALON_B };
+  const plainRow = { activityKind: "UNSPECIFIED", salonId: SALON_A, travelToSalonId: null };
+
+  it("a body that changes only times, note or the two salons keeps a travel entry travel", () => {
+    expect(classifyTravelUpdate({}, travelRow)).toEqual({ ok: true, travel: true });
+    expect(classifyTravelUpdate({ endTime: "2026-10-12T12:25:00.000Z" }, travelRow)).toEqual({
+      ok: true,
+      travel: true,
+    });
+    expect(classifyTravelUpdate({ salonId: SALON_C, travelToSalonId: SALON_A }, travelRow)).toEqual(
+      { ok: true, travel: true },
+    );
+  });
+
+  it("an ordinary body on an ordinary entry stays ordinary", () => {
+    expect(classifyTravelUpdate({ activityKind: "PRODUCTIVE" }, plainRow)).toEqual({
+      ok: true,
+      travel: false,
+    });
+  });
+
+  it.each([
+    [
+      "a client kind TRAVEL on an ordinary entry",
+      { activityKind: "TRAVEL" },
+      plainRow,
+      TRAVEL_KIND_DERIVED_CODE,
+    ],
+    [
+      "a client kind TRAVEL on a travel entry",
+      { activityKind: "TRAVEL" },
+      travelRow,
+      TRAVEL_KIND_DERIVED_CODE,
+    ],
+    [
+      "another kind on a travel entry",
+      { activityKind: "UNSPECIFIED" },
+      travelRow,
+      TRAVEL_KIND_IMMUTABLE_CODE,
+    ],
+    [
+      "a destination on an ordinary entry",
+      { travelToSalonId: SALON_B },
+      plainRow,
+      TRAVEL_KIND_IMMUTABLE_CODE,
+    ],
+    ["activity shares on a travel entry", { activityShares: [{}] }, travelRow, TRAVEL_SHAPE_CODE],
+    ["break minutes on a travel entry", { breakMinutes: 15 }, travelRow, TRAVEL_SHAPE_CODE],
+    ["break slots on a travel entry", { breaks: [{}] }, travelRow, TRAVEL_SHAPE_CODE],
+    ["no end time on a travel entry", { endTime: null }, travelRow, TRAVEL_SHAPE_CODE],
+    [
+      "the departure salon as destination",
+      { travelToSalonId: SALON_A },
+      travelRow,
+      TRAVEL_SAME_SALON_CODE,
+    ],
+    ["the arrival salon as departure", { salonId: SALON_B }, travelRow, TRAVEL_SAME_SALON_CODE],
+  ])("refuses %s with 400 %s", (_label, body, existing, code) => {
+    const verdict = classifyTravelUpdate(body, existing);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.status).toBe(400);
+      expect(verdict.body.code).toBe(code);
+    }
+  });
+
+  it("tolerates an empty list of breaks or shares (a form sends one when nothing was entered)", () => {
+    expect(
+      classifyTravelUpdate({ breaks: [], activityShares: [], breakMinutes: 0 }, travelRow),
+    ).toEqual({
+      ok: true,
+      travel: true,
+    });
+  });
+});
+
+describe("isActivityOnlyPut and the travel destination (research pitfall 5)", () => {
+  const stored = {
+    date: new Date("2026-10-12T00:00:00.000Z"),
+    startTime: at("12:00"),
+    endTime: at("12:30"),
+    note: null,
+    type: "WORK",
+    salonId: SALON_A,
+    travelToSalonId: SALON_B as string | null,
+  };
+
+  it("a classification-only body is activity-only", () => {
+    expect(
+      isActivityOnlyPut({ activityKind: "PRODUCTIVE" }, { ...stored, travelToSalonId: null }),
+    ).toBe(true);
+  });
+
+  it("a destination that differs from the stored one is never activity-only", () => {
+    expect(
+      isActivityOnlyPut({ activityKind: "PRODUCTIVE", travelToSalonId: SALON_C }, stored),
+    ).toBe(false);
+    expect(
+      isActivityOnlyPut(
+        { activityKind: "PRODUCTIVE", travelToSalonId: SALON_B },
+        { ...stored, travelToSalonId: null },
+      ),
+    ).toBe(false);
+  });
+
+  it("re-sending the unchanged destination stays activity-only", () => {
+    expect(
+      isActivityOnlyPut({ activityKind: "PRODUCTIVE", travelToSalonId: SALON_B }, stored),
+    ).toBe(true);
   });
 });
