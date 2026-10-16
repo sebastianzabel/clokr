@@ -171,6 +171,7 @@
 ├── /api/v1/leave/parental-reductions/:leaveRequestId (GET, HEAD, POST)
 ├── /api/v1/leave/requests (POST, GET, HEAD)
 ├── /api/v1/leave/section9 (GET, HEAD)
+├── /api/v1/leave/sick-days (GET, HEAD)
 ├── /api/v1/logs/client (POST)
 ├── /api/v1/me/availability (GET, HEAD, PUT)
 ├── /api/v1/me/context (GET, HEAD)

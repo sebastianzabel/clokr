@@ -284,6 +284,16 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "there is no mechanism left to give these routes a recorded cell.",
   })),
   {
+    route: "GET /api/v1/leave/sick-days",
+    reason:
+      "New route added in Issue #595 (D-04), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — built with the #368 handler check " +
+      "`leave-request:read` (EIGENE or ZUGEWIESEN, own data only) from its very first commit and " +
+      "never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, Phase 468 and Phase 481 entries: RECORD/MERGE mode refuses to run once the " +
+      "role guard is gone. Proven by `leave-sick-days-595.test.ts`.",
+  },
+  {
     route: "PATCH /api/v1/settings/work/:employeeId/usual-work-days",
     reason:
       "New route added in Phase 481 (Issue #481, R6), long after the role guard (`requireRole`) " +

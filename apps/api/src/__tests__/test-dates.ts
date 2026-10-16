@@ -170,6 +170,26 @@ export function saldoSnapshotPeriodBounds(
   return monthRangeUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, tz);
 }
 
+/**
+ * The LEGACY UTC-naive `SaldoSnapshot.periodStart`/`periodEnd` bounds for a calendar month: UTC
+ * midnight of the 1st and of the last day (`2026-09-01` / `2026-09-30`), not the tenant-local
+ * instants `saldoSnapshotPeriodBounds` returns.
+ *
+ * This is the convention the May-2026 pre-tracking-reset script and the demo seed wrote
+ * (`snapshot-period.ts` header, `saldo-snapshot-cleanup.ts` header) and that still exists on
+ * production. Use it ONLY to reproduce or regress that convention (Issue #595) - every other lock
+ * fixture keeps using `saldoSnapshotPeriodBounds` (Issue #241).
+ */
+export function legacySaldoSnapshotPeriodBounds(
+  year: number,
+  month: number,
+): { start: Date; end: Date } {
+  return {
+    start: new Date(Date.UTC(year, month - 1, 1)),
+    end: new Date(Date.UTC(year, month, 0)),
+  };
+}
+
 /** `dateStr` shifted by `n` whole calendar days (may be negative). */
 export function addDaysStr(dateStr: string, n: number): string {
   return dbDateStr(new Date(utcMidnight(dateStr).getTime() + n * DAY_MS));

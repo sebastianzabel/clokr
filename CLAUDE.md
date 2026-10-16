@@ -215,6 +215,15 @@ Current: recalculated from hire date on every request (does not scale). Target a
   reports/DATEV go only through `leaveDaysByCodeWithin`/`leaveRequestDaysWithin`
   (`contexts/absence/leave-days.ts`) — the same priced, §9-netted day-counting kernel the absence
   context's own vacation calculation uses, never a separate calendar walk.
+- **A closed month is found and named by one rule (Issue #595).** Every MONTHLY `SaldoSnapshot` read
+  for a month uses `periodStartWindow()` (two storage conventions exist on production — TZ-converted and
+  legacy UTC-naive); several active rows of one month resolve through `monthlySnapshotOrder()`. The month a
+  row belongs to is named only by `snapshotMonthOf()` (`contexts/working-time-account/snapshot-period.ts`) —
+  the web never reads `periodStart` (`snapshot-period-source-595.test.ts`), the API never derives a month from
+  it elsewhere (`snapshot-month-naming-guard-595.test.ts`). A legacy row is READ as closed with its stored
+  figures, never rewritten; `scripts/audit-595-legacy-period-start.ts` lists such rows per stage (read-only).
+  The demo seed writes only zero pre-tracking snapshots; the previous demo month is closed by
+  `apps/api/scripts/demo-close-previous-month.ts` (the real closer), see `packages/db/README.md`.
 - **Sick days are counted in one place (Issue #84, D-14).** `sickLeaveDayCounts()`
   (`contexts/absence/sick-leave-days.ts`, exported via `contexts/absence/index.ts`) is the ONLY
   place the sick-day figure is derived: calendar days including weekends, clipped to the range, a
@@ -223,6 +232,9 @@ Current: recalculated from hire date on every request (does not scale). Target a
   uses it to attribute a day to a salon). `/reports/monthly` (JSON and both PDFs) and the dashboard
   team trend both call it — it used to live in `composition/reports.ts`, a business rule in the
   composition layer. `Absence` rows (imposed absences) never count as sick days.
+  The `/leave` KPI reads `GET /leave/sick-days` (own data, calendar days from this same kernel, Issue
+  #595); a request's stored `days` is a workday price and is shown as „Arbeitstage“ for sick types through
+  `leaveDaysLabel()` (`apps/web/src/lib/leave/leave-days-label.ts`). DATEV Lohnart counts stay workdays.
 - **`@db.Date` columns get calendar-day bounds, never a month/week instant (Issue #493).**
   `monthRangeUtc()` / `weekRangeUtc()` return tenant-local boundaries as UTC instants (local 1 Oct
   00:00 = `2026-09-30T22:00Z`); a Prisma filter or a JS clip on a `@db.Date` column

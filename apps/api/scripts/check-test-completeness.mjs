@@ -864,7 +864,15 @@ import { readFileSync } from "node:fs";
 // anonymization-employee-number-614, dashboard-upcoming-leave-anonymized-614, contexts/absence/__tests__/leave-correction-core-614
 // and scripts/__tests__/audit-614-anonymized-employment (+8 files); amended: anonymize-helper, day-break-compliance-80,
 // section9-model. MIN_FILES 642 -> 650, never lowered.
-const MIN_FILES = 650;
+// Phase 595-06 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on `feat/595-monatsbericht` -
+// 651 test files, 10152 tests (10149 passed, 3 skipped). Nine new test files: report-page-pdf-parity-595,
+// closed-month-never-recalculated-595, snapshot-period-595, snapshot-month-labels-595, snapshot-month-naming-guard-595,
+// leave-sick-days-595, scripts/__tests__/audit-595-legacy-period-start, scripts/__tests__/demo-close-previous-month-595,
+// scripts/__tests__/demo-month-bounds-595. Two facade tests were removed together with the dead W4 reader in 595-01
+// (a deliberate removal of a function without a caller, not a loosened assertion). MIN_FILES 642 -> 651, never lowered.
+// Merged on top of #595 (2026-10-17): #595's measured 651 files / 10152 tests plus #614's additions
+// (+8 files, +55 tests) = 659 / 10207, never lowered.
+const MIN_FILES = 659;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -873,7 +881,9 @@ const MIN_FILES = 650;
 // retro create on behalf): 9918 + 11 = 9929 (source-counted).
 // Phase 92b-05 (2026-10-16): MIN_TESTS 9929 -> 10087, the measured total of the full run named at MIN_FILES. Never lowered.
 // Issue #614 (2026-10-17): MIN_TESTS 10087 -> 10142 (+55), the measured total of the full run named at MIN_FILES. Never lowered.
-const MIN_TESTS = 10142;
+// Phase 595-06 (2026-10-17): MIN_TESTS 10087 -> 10152, the measured total of the full run named at MIN_FILES
+// (net +65: the nine new files minus the two W4 facade tests). Never lowered.
+const MIN_TESTS = 10207;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

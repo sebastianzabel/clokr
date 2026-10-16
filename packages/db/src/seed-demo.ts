@@ -24,6 +24,7 @@ import bcrypt from "bcryptjs";
 import { DEFAULT_SALON_OPENING_HOURS, createDefaultHomeAssignment } from "./default-salon";
 import { ADMIN_EMAIL } from "./seed-credentials";
 import { ensureSystemRoleAssignment } from "./seed-role-assignments";
+import { demoMonthRangeUtc } from "./demo-month-bounds";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool as any);
@@ -944,7 +945,7 @@ async function main() {
   const curTo = D > 1 ? d0(Y, M, D - 1) : null; // up to yesterday
 
   for (const [handle, wd] of entryEmps) {
-    await genEntries(handle, prevFrom, prevTo, wd, true); // prev month = closed → locked
+    await genEntries(handle, prevFrom, prevTo, wd, false); // prev month: the real closer locks it
     if (curTo) await genEntries(handle, curFrom, curTo, wd, false);
   }
 
@@ -966,37 +967,37 @@ async function main() {
     bump("timeEntry");
   }
 
-  // ── SaldoSnapshot (closed previous month) ──────────────────────────────────
-  const snapDelta: Record<string, number> = {
-    lena: 45,
-    jonas: 120,
-    aylin: -30,
-    tobias: 15,
-    david: -90,
-  };
-  for (const [handle, wd] of entryEmps) {
-    // count worked days actually generated (minus skips)
-    let workdaysExpected = 0;
-    for (let t = prevFrom.getTime(); t <= prevTo.getTime(); t += DAY_MS) {
-      if (wd.has(new Date(t).getUTCDay())) workdaysExpected++;
-    }
-    const dailyMin = handle === "david" ? 600 : 480;
-    const expected = workdaysExpected * dailyMin;
-    const balance = snapDelta[handle] ?? 0;
-    const worked = expected + balance;
+  // ── SaldoSnapshot (pre-tracking marker, zero) ──────────────────────────────
+  // Issue #595 (D-05, P-06): the seed no longer invents a closed month. It used to write a
+  // snapshot for the previous month with a legacy UTC-naive periodStart, a Soll of weekdays x
+  // 8 h (ignoring holidays and every kernel rule) and made-up balances — the page and the PDF
+  // then disagreed about it. packages/db cannot run the saldo kernel (it cannot import apps/api),
+  // so the seed states only what it can state truthfully: tracking starts with the previous
+  // month. That is the product's own pre-tracking pattern — one zero snapshot (all four figures
+  // 0) for the month BEFORE the previous one, stored in the TZ-converted convention the closer
+  // writes. Without a chain head the 06:00 auto-close would backfill every empty month since the
+  // hire dates (closeMonthWithGapsAllowed defaults to true). The previous month itself is closed
+  // by the real closer: apps/api/scripts/demo-close-previous-month.ts right after seeding (see
+  // packages/db/README.md), or the running API's next 06:00 auto-close. Demo realism beyond that
+  // (the OvertimeAccount balances and the ACCRUAL line below) stays with #577.
+  const DEMO_TZ = "Europe/Berlin"; // the TenantConfig default this seed relies on (schema.prisma)
+  const preTrackingYear = PM === 0 ? PY - 1 : PY;
+  const preTrackingMonth = PM === 0 ? 12 : PM; // 1-based month before the previous one
+  const preTrackingBounds = demoMonthRangeUtc(preTrackingYear, preTrackingMonth, DEMO_TZ);
+  for (const [handle] of entryEmps) {
     await prisma.saldoSnapshot.create({
       data: {
         employeeId: emp[handle].empId,
         periodType: "MONTHLY",
-        periodStart: prevFrom,
-        periodEnd: prevTo,
-        workedMinutes: worked,
-        expectedMinutes: expected,
-        balanceMinutes: balance,
-        carryOver: balance,
-        closedAt: addDays(todayUTC, -1),
+        periodStart: preTrackingBounds.start,
+        periodEnd: preTrackingBounds.end,
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: prevFrom,
         closedBy: adminUserId,
-        note: "Monatsabschluss (Demo)",
+        note: "Vor Erfassungsbeginn (Demo)",
         superseded: false,
       },
     });

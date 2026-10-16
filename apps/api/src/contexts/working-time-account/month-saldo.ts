@@ -11,7 +11,7 @@
  * This is exactly what closeEmployeeMonth() computes.  We must NOT replicate
  * the §615 formula here — we just call the core and surface its result.
  *
- * Closed month: a non-superseded MONTHLY SaldoSnapshot for this period exists.
+ * Closed month: a non-superseded MONTHLY SaldoSnapshot for this period (periodStartWindow) exists.
  *   → Return snapshot values verbatim (Revisionssicherheit).
  *   → days[] is a single terminal entry with cumulativeSaldoMinutes = snapshot.carryOver.
  *
@@ -26,6 +26,7 @@
 
 import type { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
+import { periodStartWindow, monthlySnapshotOrder } from "./snapshot-period";
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
@@ -272,13 +273,20 @@ export async function computeMonthSaldo(
   );
 
   // ── Check for closed month (non-superseded MONTHLY snapshot) ─────────────
+  // Issue #595 (D-01): the same convention-robust window every other reader of this context uses
+  // (plugins/auto-close-month.ts, api/overtime.ts, facade/saldo-snapshot.ts W1). The former exact
+  // match missed legacy UTC-naive rows, so a closed month was recomputed and printed as Prognose
+  // in both PDFs while the snapshot list showed it closed. The stored row is still returned
+  // verbatim below (Revisionssicherheit); with duplicates the first row of
+  // monthlySnapshotOrder() wins (P-01).
   const snapshot = await app.prisma.saldoSnapshot.findFirst({
     where: {
       employeeId,
       periodType: "MONTHLY",
-      periodStart: monthStart,
+      periodStart: periodStartWindow(monthStart),
       superseded: false,
     },
+    orderBy: monthlySnapshotOrder(),
   });
 
   if (snapshot) {

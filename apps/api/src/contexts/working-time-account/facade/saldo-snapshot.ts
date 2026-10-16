@@ -50,11 +50,10 @@
  * checkpoint's resolution explicitly closed: "the facade carries the `monthRangeUtc`-derived form.
  * There is no second form to preserve." Do not reopen either question here.
  *
- * `getMonthClosingBalance` (W4, `composition/reports.ts`) is a DIFFERENT function asking a
- * DIFFERENT question (the closing BALANCE for a month, not whether it is locked) and was never
- * part of the D1 divergence or the #241 defect (its `monthStart` was always correctly
- * `monthRangeUtc`-derived, and #241 never touched `reports.ts`) — its bare-form `where` is
- * preserved exactly as-is, not extended by this decision (D-13: no opportunistic improvement).
+ * The former W4 closing-balance reader was removed in Issue #595: it had no caller since the
+ * monthly report reads `computeMonthReportFigures`, and its exact `periodStart` match was the
+ * last closed-month reader of this context that missed legacy UTC-naive rows. Every remaining
+ * MONTHLY read here uses `periodStartWindow` (W1) or a range.
  */
 import type { Prisma } from "@clokr/db";
 import { periodStartWindow } from "../snapshot-period";
@@ -166,34 +165,6 @@ export async function getClosedMonthsInRange(
     select: { employeeId: true, periodStart: true },
   });
   return new Set(rows.map((r) => `${r.employeeId}::${toIsoDate(r.periodStart)}`));
-}
-
-// ── W4 — a single month's closing balance ────────────────────────────────────────────────────
-
-/**
- * W4 — the closing `balanceMinutes` for `employeeId`'s month beginning at `monthStart`, or `null`
- * if that month has no active (non-superseded) MONTHLY snapshot yet (still open). Sole caller:
- * `composition/reports.ts`'s `resolveReportOvertimeHours` (the legal Stundennachweis PDF). Its
- * bare `periodStart: monthStart` comparison is preserved EXACTLY — see the module header's note on
- * why this is a different question from W1's and was never part of the D1 divergence.
- */
-export async function getMonthClosingBalance(
-  db: Prisma.TransactionClient,
-  employeeId: string,
-  tenantId: string,
-  monthStart: Date,
-): Promise<number | null> {
-  const snapshot = await db.saldoSnapshot.findFirst({
-    where: {
-      employeeId,
-      employee: { tenantId },
-      periodType: "MONTHLY",
-      periodStart: monthStart,
-      superseded: false,
-    },
-    select: { balanceMinutes: true },
-  });
-  return snapshot ? snapshot.balanceMinutes : null;
 }
 
 // ── W5 — snapshots in a range, for many employees ────────────────────────────────────────────

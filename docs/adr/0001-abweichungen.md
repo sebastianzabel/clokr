@@ -303,6 +303,87 @@ eigenen Index, die Übergangsbäume aus Eintrag F, die Test-Bootstrap-Ausnahme) 
 damit niemand sie für eine vergessene Aufräumarbeit hält. Weiteres: `docs/context-cut-map.md` § 7,
 `.planning/phases/100B-t5-fassade/100B-14-SUMMARY.md`.
 
+### Nachtrag 2026-10-17 (Issue #595) — Ein abgeschlossener Monat wird von jedem Leser gleich erkannt und gleich benannt; Krankheitstage haben eine Bedeutung
+
+Auslöser war ein Monat, den die Seite als abgeschlossen zeigte und beide PDFs als „Prognose“ druckten, mit
+zwei verschiedenen Zahlen. Ursache: auf den Stages liegen zwei Speicherkonventionen für `SaldoSnapshot.periodStart`
+nebeneinander (mandantenzeitzonen-konvertiert und Altbestand „UTC-naiv“, 1. des Monats um 00:00 UTC), und genau
+ein Leser — `computeMonthSaldo` — fand den Abschluss nur mit exaktem Vergleich auf die konvertierte Konvention.
+
+**Was sich geändert hat**
+
+- `computeMonthSaldo` sucht den Monatsabschluss über `periodStartWindow()` wie alle anderen Leser des Kontexts.
+  Gibt es mehrere aktive Zeilen eines Monats, gewinnt die erste nach `monthlySnapshotOrder()` — dieselbe Zeile,
+  die der exakte Vergleich vorher gefunden hat, daher ändert sich keine bereits als bestätigt angezeigte Zahl.
+- Der tote Leser W4 der Snapshot-Fassade (`getMonthClosingBalance`, der letzte Abschluss-Leser mit exaktem
+  Treffer, ohne Aufrufer) ist entfernt statt umgestellt; die Fassadenfunktionen sinken von 147 auf 146.
+- `snapshotMonthOf()` (`contexts/working-time-account/snapshot-period.ts`) benennt den Monat einer Zeile als
+  Umkehrung des Fensters. Snapshot-Antwort (`year`/`month`, eine MONTHLY-Zeile je Monat), Aktivitätsfeed,
+  Saldenübersicht und Überstundenverlauf gehen alle durch diese eine Funktion; der Verlauf führt beide
+  Konventionen eines Monats zu einem Punkt zusammen. Die Seite nimmt Monat und Status aus der Antwort, nie aus
+  `periodStart`; der Status-Chip leitet sich aus dem Abschlusszustand ab (vorher war er fest „Offen“).
+- `GET /api/v1/leave/sick-days` liefert die eigenen Krankheitstage eines Jahres in Kalendertagen über
+  `sickLeaveDayCounts()` (dieselbe Zählung wie der Bericht); der gespeicherte `days`-Wert eines
+  Krankheitsantrags heißt in der Oberfläche „Arbeitstage“ (ein Web-Helfer, ein Wächtertest).
+- Der Demo-Seed erfindet keinen abgeschlossenen Monat mehr: er schreibt nur Null-Snapshots in der Konvention des
+  echten Abschlusses; der Vormonat wird vom echten Abschluss-Kern geschlossen
+  (`apps/api/scripts/demo-close-previous-month.ts`).
+- Ein reines Lese-Skript (`apps/api/scripts/audit-595-legacy-period-start.ts`) listet Altbestands- und Doppelzeilen
+  je Stage.
+
+**Was bewusst NICHT geschah**
+
+- Keine gespeicherte Zeile wurde geändert, nichts neu berechnet, keine Altformat-Zeile bereinigt oder umgeschrieben.
+  Eine Altbestands-Zeile wird als abgeschlossen mit ihren gespeicherten Zahlen GELESEN. Kein Schreibpfad änderte sich
+  (Monatsabschluss, Entsperren, Jahresabschluss, Eröffnungssalden, `recalculate-snapshots`, Nachtragsskript).
+- `computeFirstOpenMonth` bleibt mit eigener Ableitung; ein Test setzt sie mit der neuen Regel gleich.
+- DATEV-Lohnarten zählen weiter Arbeitstage und heißen nie „Krankheitstage“. Die PDFs sind unverändert — sie
+  zählten schon Kalendertage; ihre Formatierung ist #617.
+- Zahlen offener Monate auf der Seite kommen mit #612 (`GET /reports/period`); dort ist die Zahlengleichheit
+  Seite = PDF für offene Monate noch festzuschreiben. Die Tabelle zeigt offene Monate nur mit Status und PDF.
+- Die übrige Demo-Realität (erfundene Überstundenkonten, Ledger-Zeile) ist #577.
+- Die Sperrprüfungen `getClosedMonthsForDates`/`getClosedMonthsInRange` (W2a/W2b der Fassade; genutzt von
+  Schichtbereinigung und Berufsschul-Generator) vergleichen weiterhin auf das konvertierte Datum und erkennen einen
+  Altbestands-Abschluss nicht. Das ist eine Frage der Schreibsperre, kein Berichtsleser; sie wird im Folge-Issue
+  (Milestone v1.16.0) behoben, nicht hier.
+- Bekannter Rest: `sumCarryOverByMonth` im Überstundenverlauf zählt einen Mitarbeiter mit Altbestands- UND
+  konvertierter Zeile desselben Monats doppelt. Der Abschnitt „Duplicate months“ des Prüfskripts misst, ob es
+  das gibt (dev: keine); die Behebung steht im selben Folge-Issue.
+- Verwandt, nicht Teil von #595: #663 (das Nachtragsskript `backfill-month-snapshots.ts` übergibt
+  Abwesenheitszeilen ohne `isOvertimeCompensation`/`creditBasis` an den Abschluss).
+
+**Auswirkung auf die Kontexte**
+
+- Zeiterfassung: keine.
+- Abwesenheiten: neue eigene Leseroute `GET /leave/sick-days` (eigene Daten), Beschriftung „Arbeitstage“.
+- Schichtplanung: keine (die Sperrprüfung von Schichtbereinigung ist das Folge-Issue).
+- Arbeitszeitkonto: Abschlusserkennung über das Fenster, `snapshotMonthOf`, Reihenfolge `monthlySnapshotOrder`,
+  W4 entfernt, Snapshot-Antwort mit Jahr und Monat.
+- Kompositionsschicht: Monatsnamen in Aktivität und Dashboard; additives Feld `month` an den Einträgen der
+  Saldenübersicht. Keine Geschäftsregel hierher verschoben.
+- Unterbau: keine.
+
+**Gemessen**
+
+- Prüfskript auf dev (nur lesend): Mandant 1 — 245 Zeilen, davon 1 Altbestand, 244 konvertiert, 0 Doppelmonate,
+  1 Monat wechselt zu „Bestätigt“, 244 Monatsnamen korrigiert; Mandant 2 — 72 Zeilen, alle konvertiert, 0 Doppelmonate,
+  72 Monatsnamen korrigiert. int und prod sind ein Schritt des Eigentümers.
+- Vor der Korrektur rot, danach grün: `report-page-pdf-parity-595.test.ts` (Altbestand in Sommer- und Winterzeit-Monat),
+  `snapshot-month-labels-595.test.ts` (3 Fälle), `leave-sick-days-595.test.ts` (Route = Summe der zwölf
+  Berichtszeilen, 15,5 = 15,5).
+- Vierpfad-Vergleich der Saldopfade: `measure-saldo-path-parity.ts --check` unverändert grün; Neutralitätsaufzeichnungen und die drei
+  eingefrorenen Berichtstests byte-gleich zum Merge-Base.
+- Demo-Lauf (Wegwerf-Datenbank): fünf Mitarbeiter, Kernzahlen vor und nach dem echten Abschluss identisch
+  (Ist, Soll, Saldo), Zeilen in der Konvention des Abschlusses, fünf Auditzeilen.
+
+**Nachrechnen**
+
+- `pnpm --filter @clokr/api exec vitest run src/__tests__/report-page-pdf-parity-595.test.ts src/__tests__/closed-month-never-recalculated-595.test.ts src/__tests__/snapshot-month-labels-595.test.ts src/__tests__/snapshot-month-naming-guard-595.test.ts src/__tests__/leave-sick-days-595.test.ts`,
+  dazu `snapshot-period-595.test.ts` und im Web `snapshot-period-source-595.test.ts`, `leave-days-label-guard-595.test.ts`.
+- `pnpm --filter @clokr/api exec tsx scripts/measure-saldo-path-parity.ts --check`.
+- `DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx scripts/audit-595-legacy-period-start.ts [--tenant <uuid>]`
+  (Abschnitte „Status wechselt zu Bestaetigt“ und „Duplicate months“).
+
 ---
 
 ## H — Routen und Querschnittsmodule in den richtigen Kontext (Phase 243, Issue #243), das Ausnahmeregister für #101

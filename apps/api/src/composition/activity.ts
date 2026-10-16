@@ -9,6 +9,7 @@ import {
 } from "../contexts/platform";
 import {
   getMonthlySnapshotsInRange, // Phase 100B Plan 07 — W5
+  snapshotMonthOf, // Issue #595 (D-03) — the one place a stored snapshot gets a calendar month
   getTenantTimezone,
   timeStrInTz,
 } from "../contexts/working-time-account"; // Phase 101B
@@ -200,15 +201,24 @@ export async function activityRoutes(app: FastifyInstance) {
           .sort((a, b) => b.closedAt.getTime() - a.closedAt.getTime())
           .slice(0, fetchLimit);
         for (const s of snapshots) {
-          const month = s.periodStart.toLocaleDateString("de-DE", {
-            month: "long",
-            year: "numeric",
-          });
+          // Issue #595 (D-03): the stored date of a TZ-converted row is the last day of the
+          // PREVIOUS month, so formatting it names the month one too early; only the window's
+          // inverse (snapshotMonthOf) names it. An unnameable row is listed without a month.
+          const named = snapshotMonthOf(s.periodStart, tz);
+          const month =
+            named === null
+              ? null
+              : new Date(Date.UTC(named.year, named.month - 1, 15)).toLocaleDateString("de-DE", {
+                  month: "long",
+                  year: "numeric",
+                  timeZone: "UTC",
+                });
           items.push({
             id: `ss-${s.id}`,
             icon: "lock",
             who: "System",
-            what: `Monatsabschluss ${month} bestätigt`,
+            what:
+              month === null ? "Monatsabschluss bestätigt" : `Monatsabschluss ${month} bestätigt`,
             when: s.closedAt.toISOString(),
             category: "close",
           });
