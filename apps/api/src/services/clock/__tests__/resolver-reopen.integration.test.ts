@@ -347,6 +347,9 @@ describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integrat
         breakMinutes: 0,
         type: "WORK",
         source: "MOBILE",
+        // Issue #70 (D-03, fixture fix): consolidation compares the salons of the two rows, so the
+        // never-inserted "open" value carries the salon of the rows it is consolidated with.
+        salonId: data.salonId,
         retroRequestId: null,
         deletedAt: null,
       };
