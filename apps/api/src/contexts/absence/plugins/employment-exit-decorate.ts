@@ -22,6 +22,9 @@ import {
  * directly (the documented composition-root exception), so registering it adds no cross-context
  * import edge: this file is never reachable from `contexts/absence/index.ts`.
  *
+ * `planEmploymentExit` takes the whole app: shortening a request that spans the exit day runs the
+ * leave correction core (`prepareLeaveCorrection`), whose pure reads need `app.prisma` and `app.log`.
+ *
  * The three functions are the three phases of the contract in `employment-exit.ts`: `plan` before
  * the anonymization transaction, `apply` inside it, `afterCommit` after it (reactive, never throws).
  */
@@ -41,7 +44,7 @@ declare module "fastify" {
 
 export const employmentExitDecoratePlugin = fp(async (app) => {
   app.decorate("absenceExit", {
-    plan: (input: EmploymentExitInput) => planEmploymentExit(app.prisma, input, app.log),
+    plan: (input: EmploymentExitInput) => planEmploymentExit(app, input),
     apply: (
       tx: Prisma.TransactionClient,
       plan: EmploymentExitPlan,

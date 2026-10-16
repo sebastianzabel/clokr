@@ -9,14 +9,20 @@
  *
  *   - a request starting AFTER the exit day is CANCELLED by status change (never deleted); an
  *     approved one is booked back exactly as an approved cancellation books it;
- *   - a request spanning the exit day is SHORTENED to the exit day, never cancelled (later plans);
- *   - imposed absences after the exit day are soft-deleted (later plans);
- *   - a row whose changed days touch a CLOSED month is never touched, only reported (`skipped`).
+ *   - a request spanning the exit day (`startDate <= exit day < endDate`) is SHORTENED to end ON the
+ *     exit day, never cancelled: an APPROVED / CANCELLATION_REQUESTED one through the leave
+ *     correction core (`leave-correction.ts`, the one implementation `PATCH /leave/requests/:id/correct`
+ *     runs: old booking reversed, new booking applied, days re-priced, § 9 credits superseded or
+ *     clipped, removed days' invalid entries revalidated), a PENDING one by re-pricing its days
+ *     exactly like the pending edit. Only when no leave day is left up to the exit (re-priced to 0
+ *     days, or Berufsschule only) is it cancelled instead;
+ *   - imposed absences after the exit day are soft-deleted;
+ *   - a row whose changed days touch a CLOSED month, or that the correction core refuses, is never
+ *     touched, only reported (`skipped`).
  *
- * This file covers every absence lying wholly after the exit day: PENDING, APPROVED and
- * CANCELLATION_REQUESTED requests of every leave type (an approved or cancellation-requested one is
- * booked back exactly as an approved cancellation books it) and the imposed Berufsschule rows.
- * Plans 03-04 add the shortening of a request that spans the exit day.
+ * This file covers every absence of the person that reaches past the exit day: PENDING, APPROVED
+ * and CANCELLATION_REQUESTED requests of every leave type (cancelled when wholly after the exit
+ * day, shortened when spanning it) and the imposed Berufsschule rows.
  *
  * Contract — three phases, so the Unterbau route can run them around its own transaction:
  *   1. {@link planEmploymentExit}   pure reads, BEFORE the transaction opens;
@@ -46,7 +52,13 @@ import {
 } from "../working-time-account";
 import { revalidateLeaveCancellationEntries } from "../time-tracking";
 import { findClosedMonthsInRange } from "./closed-month-guard";
-import { getHolidayMap, reverseVacationDays } from "./leave-days";
+import { getHolidayMap, resolveLeaveDays, reverseVacationDays } from "./leave-days";
+import {
+  applyLeaveCorrection,
+  prepareLeaveCorrection,
+  Section9ConcurrentCorrectionError,
+  type LeaveCorrectionPlan,
+} from "./leave-correction";
 import { overtimeCompReversalMinutes } from "./overtime-comp-minutes";
 import { activeParentalReductions } from "./parental-leave-reduction";
 
@@ -55,6 +67,11 @@ export interface EmploymentExitInput {
   employeeId: string;
   /** UTC midnight of the exit day (the convention of stored `Employee.exitDate` values). */
   exitDay: Date;
+  /**
+   * The acting `User.id` (written as `reviewedBy` of a § 9 correction credit the shortening
+   * creates); null / absent for an API-key actor, never the raw `apikey:` subject.
+   */
+  actorUserId?: string | null;
 }
 
 /** One row the exit did not touch, reported in the ANONYMIZE audit (ids and codes only). */
@@ -92,7 +109,30 @@ interface DeleteAbsenceAction {
   guard: { startDate: Date; endDate: Date };
 }
 
-export type EmploymentExitAction = CancelLeaveAction | DeleteAbsenceAction;
+/**
+ * An APPROVED / CANCELLATION_REQUESTED request spanning the exit day: end it ON the exit day through
+ * the leave correction core. The core's plan was built (all reads, all refusals) before the
+ * transaction opened.
+ */
+interface ShortenLeaveAction {
+  kind: "shortenLeave";
+  requestId: string;
+  correction: LeaveCorrectionPlan;
+  guard: { status: OpenLeaveStatus; startDate: Date; endDate: Date; updatedAt: Date };
+}
+
+/** A PENDING request spanning the exit day: end it on the exit day and re-price its days. */
+interface RepricePendingAction {
+  kind: "repricePending";
+  requestId: string;
+  leaveTypeCode: string;
+  /** The re-priced day count of [startDate, exit day] (never 0 — that case is a cancel). */
+  days: number;
+  guard: { startDate: Date; endDate: Date; updatedAt: Date; days: number };
+}
+
+export type EmploymentExitAction =
+  CancelLeaveAction | ShortenLeaveAction | RepricePendingAction | DeleteAbsenceAction;
 
 export interface EmploymentExitPlan {
   input: EmploymentExitInput;
@@ -132,44 +172,61 @@ export class EmploymentExitConflictError extends Error {
 
 const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
 
-/** Phase 1 — pure reads. Decides what the exit cancels and what it must leave alone. */
+/** The columns of a leave request the cancel branch of the plan reads. */
+interface CancelableRow {
+  id: string;
+  leaveTypeId: string;
+  status: string;
+  days: { toString(): string };
+  halfDay: boolean;
+  overtimeCompMinutes: number | null;
+  startDate: Date;
+  endDate: Date;
+  updatedAt: Date;
+  leaveType: { code: string };
+}
+
+/** The correction plan minus the § 9 credits an earlier shortening of the same run already settled. */
+function withoutHandledCredits(
+  plan: LeaveCorrectionPlan,
+  handled: ReadonlySet<string>,
+): LeaveCorrectionPlan {
+  if (handled.size === 0) return plan;
+  const open = <T extends { id: string }>(list: T[]): T[] => list.filter((c) => !handled.has(c.id));
+  const { keep, supersede, clip } = plan.section9CorrectionPlan;
+  return {
+    ...plan,
+    touchingSection9Credits: open(plan.touchingSection9Credits),
+    section9CorrectionPlan: {
+      keep: keep.filter((id) => !handled.has(id)),
+      supersede: open(supersede),
+      clip: open(clip),
+    },
+    section9ClipPricings: open(plan.section9ClipPricings),
+  };
+}
+
+/** Phase 1 — pure reads. Decides what the exit cancels, shortens and must leave alone. */
 export async function planEmploymentExit(
-  prisma: FastifyInstance["prisma"],
+  app: FastifyInstance,
   input: EmploymentExitInput,
-  log?: Pick<FastifyBaseLogger, "warn">,
 ): Promise<EmploymentExitPlan> {
+  const prisma = app.prisma;
+  const log: Pick<FastifyBaseLogger, "warn"> = app.log;
   const { tenantId, employeeId, exitDay } = input;
   const actions: EmploymentExitAction[] = [];
   const skipped: EmploymentExitSkipped[] = [];
+  const dayAfterExit = new Date(exitDay.getTime() + 86_400_000);
 
-  // ── Leave requests wholly after the exit day (all open statuses, every leave type) ──────────
-  const requests = await prisma.leaveRequest.findMany({
-    where: {
-      employeeId,
-      employee: { tenantId },
-      deletedAt: null,
-      status: { in: ["PENDING", "APPROVED", "CANCELLATION_REQUESTED"] },
-      startDate: { gt: exitDay },
-    },
-    select: {
-      id: true,
-      leaveTypeId: true,
-      status: true,
-      days: true,
-      halfDay: true,
-      overtimeCompMinutes: true,
-      startDate: true,
-      endDate: true,
-      updatedAt: true,
-      leaveType: { select: { code: true } },
-    },
-    orderBy: [{ startDate: "asc" }, { id: "asc" }],
-  });
+  let tzCache: string | null = null;
+  const tenantTz = async () => (tzCache ??= await getTenantTimezone(prisma, tenantId));
 
-  const tz = requests.length > 0 ? await getTenantTimezone(prisma, tenantId) : "UTC";
-  for (const row of requests) {
-    // Skip precedence (one reason per row): D-05 closed month, then the § 17 BEEG reduction, then
-    // a live § 9 credit. The row stays as it is and is reported instead.
+  /**
+   * Cancels `row` as a whole (and books back what its approval booked) unless a protection rule
+   * applies. Skip precedence (one reason per row): D-05 closed month anywhere in the row's range,
+   * then the § 17 BEEG reduction, then a live § 9 credit. The row stays as it is and is reported.
+   */
+  const cancelOrSkip = async (row: CancelableRow): Promise<void> => {
     const closed = await findClosedMonthsInRange(
       prisma,
       employeeId,
@@ -179,13 +236,13 @@ export async function planEmploymentExit(
     );
     if (closed.length > 0) {
       skipped.push({ entity: "LeaveRequest", id: row.id, reason: "CLOSED_MONTH" });
-      continue;
+      return;
     }
     if (row.leaveType.code === "PARENTAL") {
       const reductions = await activeParentalReductions(prisma, row.id, tenantId);
       if (reductions.length > 0) {
         skipped.push({ entity: "LeaveRequest", id: row.id, reason: "PARENTAL_REDUCTION_ACTIVE" });
-        continue;
+        return;
       }
     }
     const credit = await prisma.section9Credit.findFirst({
@@ -199,7 +256,7 @@ export async function planEmploymentExit(
     });
     if (credit) {
       skipped.push({ entity: "LeaveRequest", id: row.id, reason: "SECTION9_CREDIT_ACTIVE" });
-      continue;
+      return;
     }
 
     // A PENDING request booked nothing; every other status reverses what its approval booked.
@@ -231,11 +288,11 @@ export async function planEmploymentExit(
             row.startDate,
             row.endDate,
           );
-          return { holidays: new Set(holidays.keys()), tz };
+          return { holidays: new Set(holidays.keys()), tz: await tenantTz() };
         },
       );
       if (overtimeReversal.source === "recomputed") {
-        log?.warn(
+        log.warn(
           { leaveRequestId: row.id, employeeId },
           "OVERTIME_COMP reversal without a stored booking — recomputed (Issue #468 A-4 legacy fallback)",
         );
@@ -256,6 +313,149 @@ export async function planEmploymentExit(
       holidayDates,
       overtimeReversal,
     });
+  };
+
+  // ── Leave requests wholly after the exit day (all open statuses, every leave type) ──────────
+  const requests = await prisma.leaveRequest.findMany({
+    where: {
+      employeeId,
+      employee: { tenantId },
+      deletedAt: null,
+      status: { in: ["PENDING", "APPROVED", "CANCELLATION_REQUESTED"] },
+      startDate: { gt: exitDay },
+    },
+    select: {
+      id: true,
+      leaveTypeId: true,
+      status: true,
+      days: true,
+      halfDay: true,
+      overtimeCompMinutes: true,
+      startDate: true,
+      endDate: true,
+      updatedAt: true,
+      leaveType: { select: { code: true } },
+    },
+    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+  });
+  for (const row of requests) await cancelOrSkip(row);
+
+  // ── Leave requests spanning the exit day (D-02: shorten to the exit day, never cancel) ──────
+  const spanning = await prisma.leaveRequest.findMany({
+    where: {
+      employeeId,
+      employee: { tenantId },
+      deletedAt: null,
+      status: { in: ["PENDING", "APPROVED", "CANCELLATION_REQUESTED"] },
+      startDate: { lte: exitDay },
+      endDate: { gt: exitDay },
+    },
+    include: { leaveType: true, employee: { select: { tenantId: true } } },
+    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+  });
+  // § 9 credits already handled by an earlier shortening of this run. A sick/vacation pair that
+  // BOTH span the exit day shares one credit: the second correction would plan against the stale
+  // pre-run credit and abort the whole anonymization with a concurrent-correction conflict. Both
+  // requests end on the same day, so the first correction's supersede/clip already covers the
+  // second request's new range — the second one must not touch that credit again.
+  const handledCredits = new Set<string>();
+  for (const row of spanning) {
+    const status = row.status as OpenLeaveStatus;
+    const guard = {
+      status,
+      startDate: row.startDate,
+      endDate: row.endDate,
+      updatedAt: row.updatedAt,
+    };
+
+    if (status === "PENDING") {
+      // The removed days [exit day + 1 .. old end] must not lie in a closed month (D-05), and a
+      // declared § 17 reduction anchors the request (same conservative rule as a wholly-after row).
+      const closed = await findClosedMonthsInRange(
+        prisma,
+        employeeId,
+        tenantId,
+        dayAfterExit,
+        row.endDate,
+      );
+      if (closed.length > 0) {
+        skipped.push({ entity: "LeaveRequest", id: row.id, reason: "CLOSED_MONTH" });
+        continue;
+      }
+      if (row.leaveType.code === "PARENTAL") {
+        const reductions = await activeParentalReductions(prisma, row.id, tenantId);
+        if (reductions.length > 0) {
+          skipped.push({
+            entity: "LeaveRequest",
+            id: row.id,
+            reason: "PARENTAL_REDUCTION_ACTIVE",
+          });
+          continue;
+        }
+      }
+      // Priced exactly like the pending edit (PATCH /requests/:id): self-excluded, request mode.
+      const holidays = await getHolidayMap(prisma, tenantId, employeeId, row.startDate, exitDay);
+      const priced = await resolveLeaveDays(
+        prisma,
+        employeeId,
+        tenantId,
+        row.startDate,
+        exitDay,
+        row.halfDay,
+        new Set(holidays.keys()),
+        { mode: "request", leaveTypeCode: row.leaveType.code, excludeRequestId: row.id },
+      );
+      if (priced.days <= 0 || priced.vocationalSchoolOnly) {
+        await cancelOrSkip(row);
+        continue;
+      }
+      actions.push({
+        kind: "repricePending",
+        requestId: row.id,
+        leaveTypeCode: row.leaveType.code,
+        days: priced.days,
+        guard: { ...guard, days: Number(row.days) },
+      });
+      continue;
+    }
+
+    // APPROVED / CANCELLATION_REQUESTED: the correction core decides (delta-lock, § 17 anchor,
+    // overlap, pricing, § 9 plan). `note: null` — the PII sweep nulls notes anyway and the exit
+    // never writes one back.
+    const prepared = await prepareLeaveCorrection(app, {
+      existing: row,
+      start: row.startDate,
+      end: exitDay,
+      halfDay: row.halfDay,
+      note: null,
+      reason: "Anonymisierung",
+      tenantId,
+    });
+    if (!prepared.ok) {
+      if (prepared.reason === "BS_ONLY") {
+        await cancelOrSkip(row);
+      } else {
+        skipped.push({
+          entity: "LeaveRequest",
+          id: row.id,
+          reason:
+            prepared.reason === "CLOSED_MONTH"
+              ? "CLOSED_MONTH"
+              : prepared.reason === "PARENTAL_REDUCTION"
+                ? "PARENTAL_REDUCTION_ACTIVE"
+                : "CORRECTION_REFUSED",
+        });
+      }
+      continue;
+    }
+    if (prepared.plan.days <= 0) {
+      // No leave day is left up to the exit: nothing to keep, cancel with the reversal instead.
+      await cancelOrSkip(row);
+      continue;
+    }
+    const correction = withoutHandledCredits(prepared.plan, handledCredits);
+    for (const credit of prepared.plan.touchingSection9Credits) handledCredits.add(credit.id);
+    actions.push({ kind: "shortenLeave", requestId: row.id, correction, guard });
   }
 
   // ── Imposed absences (Berufsschule) ──────────────────────────────────────────────────────────
@@ -331,12 +531,140 @@ export async function applyEmploymentExit(
       touch(action.guard.startDate);
       continue;
     }
+    if (action.kind === "shortenLeave") {
+      await shortenLeave(tx, plan.input, action, audit);
+      result.shortened.push(action.requestId);
+      // The saldo recalculation starts from the ORIGINAL start (the route's "earlier of old/new").
+      touch(action.guard.startDate);
+      continue;
+    }
+    if (action.kind === "repricePending") {
+      await repricePending(tx, plan.input, action, audit);
+      result.shortened.push(action.requestId);
+      touch(action.guard.startDate);
+      continue;
+    }
     await cancelLeave(tx, plan.input, action, audit);
     result.cancelled.push(action.requestId);
     touch(action.guard.startDate);
   }
 
   return result;
+}
+
+/**
+ * Optimistic lock on a planned request: a guarded no-op write that takes the row lock and answers
+ * 0 rows when the request changed between plan and apply (the caller throws the conflict).
+ */
+async function lockPlannedRequest(
+  tx: Prisma.TransactionClient,
+  input: EmploymentExitInput,
+  requestId: string,
+  guard: { status?: OpenLeaveStatus; startDate: Date; endDate: Date; updatedAt: Date },
+): Promise<void> {
+  const { count } = await tx.leaveRequest.updateMany({
+    where: {
+      id: requestId,
+      employeeId: input.employeeId,
+      employee: { tenantId: input.tenantId },
+      deletedAt: null,
+      status: guard.status ?? "PENDING",
+      startDate: guard.startDate,
+      endDate: guard.endDate,
+      updatedAt: guard.updatedAt,
+    },
+    data: { status: guard.status ?? "PENDING" },
+  });
+  if (count !== 1) throw new EmploymentExitConflictError("LeaveRequest", requestId);
+}
+
+/**
+ * Ends an APPROVED / CANCELLATION_REQUESTED request ON the exit day through the leave correction
+ * core (D-02): the status stays, the days are re-priced, the booking is moved by the core. The
+ * core's own audit rows (§ 9, revalidated entries) get the exit marker merged into `newValue`.
+ */
+async function shortenLeave(
+  tx: Prisma.TransactionClient,
+  input: EmploymentExitInput,
+  action: ShortenLeaveAction,
+  audit: EmploymentExitAuditPort,
+): Promise<void> {
+  const { exitDay } = input;
+  const marker = { auditReason: "Anonymisierung", trigger: "ANONYMIZATION" } as const;
+  const { correction } = action;
+  const { existing } = correction;
+
+  await lockPlannedRequest(tx, input, action.requestId, action.guard);
+  try {
+    await applyLeaveCorrection(tx, correction, {
+      actorUserId: input.actorUserId ?? null,
+      audit: (entry) => audit({ ...entry, newValue: { ...(entry.newValue ?? {}), ...marker } }),
+    });
+  } catch (err) {
+    // A concurrent § 9 correction of a credit this request touches: same 409 as a changed row.
+    if (err instanceof Section9ConcurrentCorrectionError) {
+      throw new EmploymentExitConflictError("LeaveRequest", action.requestId);
+    }
+    throw err;
+  }
+
+  const otDelta =
+    existing.leaveType.code === "OVERTIME_COMP"
+      ? (correction.newOtMinutes ?? 0) - (correction.oldOtMinutes ?? 0)
+      : null;
+  await audit({
+    action: "LEAVE_CORRECTED",
+    entity: "LeaveRequest",
+    entityId: action.requestId,
+    oldValue: {
+      status: action.guard.status,
+      startDate: isoDay(existing.startDate),
+      endDate: isoDay(existing.endDate),
+      days: Number(existing.days),
+      leaveTypeCode: existing.leaveType.code,
+    },
+    newValue: {
+      startDate: isoDay(correction.start),
+      endDate: isoDay(correction.end),
+      days: correction.days,
+      ...marker,
+      exitDate: isoDay(exitDay),
+      ...(otDelta !== null ? { overtimeCompDeltaMinutes: otDelta } : {}),
+    },
+  });
+}
+
+/** Ends a PENDING request on the exit day and re-prices its days (nothing was booked). */
+async function repricePending(
+  tx: Prisma.TransactionClient,
+  input: EmploymentExitInput,
+  action: RepricePendingAction,
+  audit: EmploymentExitAuditPort,
+): Promise<void> {
+  await lockPlannedRequest(tx, input, action.requestId, { ...action.guard, status: "PENDING" });
+  await tx.leaveRequest.update({
+    where: { id: action.requestId },
+    data: { endDate: input.exitDay, days: action.days },
+  });
+  await audit({
+    action: "UPDATE",
+    entity: "LeaveRequest",
+    entityId: action.requestId,
+    oldValue: {
+      status: "PENDING",
+      startDate: isoDay(action.guard.startDate),
+      endDate: isoDay(action.guard.endDate),
+      days: action.guard.days,
+      leaveTypeCode: action.leaveTypeCode,
+    },
+    newValue: {
+      endDate: isoDay(input.exitDay),
+      days: action.days,
+      auditReason: "Anonymisierung",
+      trigger: "ANONYMIZATION",
+      exitDate: isoDay(input.exitDay),
+    },
+  });
 }
 
 /** Cancels one request and books back exactly what an approved cancellation books back. */

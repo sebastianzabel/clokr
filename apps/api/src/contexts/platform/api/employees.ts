@@ -1590,6 +1590,8 @@ export async function employeeRoutes(app: FastifyInstance) {
         tenantId: req.user.tenantId,
         employeeId: id,
         exitDay,
+        // The acting user (null for an API key); the audit actor itself comes from the port below.
+        actorUserId: requestAuditFields(req).userId ?? null,
       });
       let exitResult: Awaited<ReturnType<FastifyInstance["absenceExit"]["apply"]>> | undefined;
 
