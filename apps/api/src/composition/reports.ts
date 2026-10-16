@@ -24,6 +24,7 @@ import {
   streamCompanyMonthlyReportPdf,
   streamLeaveListPdf,
   streamVacationOverviewPdf,
+  type VacationOverviewPdfRow,
 } from "./pdf";
 import {
   getTenantTimezone,
@@ -801,6 +802,76 @@ async function yearPopulationPeriod(
   return { start: monthRangeUtc(year, 1, tz).start, end: monthRangeUtc(year, 12, tz).end };
 }
 
+// Issue #613 (AC-3) — the one order of every person list in a leave or vacation document: last name,
+// first name, id (the id makes two identical names deterministic).
+const REPORT_PERSON_ORDER = [
+  { lastName: "asc" as const },
+  { firstName: "asc" as const },
+  { id: "asc" as const },
+];
+
+// Issue #613 (AC-3, P-04) — the ONE builder of the vacation overview rows for /vacation/pdf and
+// /leave-overview/pdf. It walks the report POPULATION in the order it arrives and yields per person
+// either the aggregated VACATION figures or a placeholder row; it never reads the tenant's entitlements
+// as a person list, so an anonymised or long-departed person cannot appear, and a person without an
+// entitlement row is visible instead of silently missing. Assembly only — every figure comes from
+// `app.vacationBalanceForRow` (the #451 D-07 facade), this layer carries no rule.
+async function buildVacationOverviewRows(
+  app: FastifyInstance,
+  tenantId: string,
+  now: Date,
+  population: Array<{ id: string; firstName: string; lastName: string; employeeNumber: string }>,
+  entitlements: Awaited<ReturnType<typeof listEntitlementsForYear>>,
+): Promise<VacationOverviewPdfRow[]> {
+  // Phase 97 (D-11): the annual-leave overview is the VACATION entitlement, selected by code, never
+  // by a display-name substring.
+  const vacationRows = entitlements.filter((e) => e.leaveType.code === "VACATION");
+  // Issue #451 (D-07) — bulk Hinweis prefetch (the GET /entitlements pattern), no N+1.
+  const warnedIds = new Set(
+    (
+      await app.prisma.auditLog.findMany({
+        where: {
+          action: "CARRYOVER_WARNED",
+          entity: "LeaveEntitlement",
+          entityId: { in: vacationRows.map((e) => e.id) },
+        },
+        select: { entityId: true },
+        distinct: ["entityId"],
+      })
+    ).map((al) => al.entityId!),
+  );
+  const figuresByEmployee = new Map<string, VacationOverviewPdfRow>();
+  for (const e of vacationRows) {
+    const balance = await app.vacationBalanceForRow(e, tenantId, now, {
+      hinweisIssued: warnedIds.has(e.id),
+    });
+    const existing = figuresByEmployee.get(e.employeeId);
+    if (existing) {
+      existing.totalDays = (existing.totalDays ?? 0) + balance.entitlementDays;
+      existing.carriedOver = (existing.carriedOver ?? 0) + balance.carriedOverEffectiveDays;
+      existing.usedDays = (existing.usedDays ?? 0) + balance.usedDays;
+      existing.remainingDays = (existing.remainingDays ?? 0) + balance.remainingDays;
+    } else {
+      figuresByEmployee.set(e.employeeId, {
+        name: `${e.employee.firstName} ${e.employee.lastName}`,
+        employeeNumber: e.employee.employeeNumber,
+        totalDays: balance.entitlementDays,
+        carriedOver: balance.carriedOverEffectiveDays,
+        usedDays: balance.usedDays,
+        remainingDays: balance.remainingDays,
+      });
+    }
+  }
+  return population.map(
+    (emp): VacationOverviewPdfRow =>
+      figuresByEmployee.get(emp.id) ?? {
+        name: `${emp.firstName} ${emp.lastName}`,
+        employeeNumber: emp.employeeNumber,
+        missingEntitlement: true,
+      },
+  );
+}
+
 export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/monthly?employeeId=&year=&month=
   app.get("/monthly", {
@@ -1093,10 +1164,8 @@ export async function reportRoutes(app: FastifyInstance) {
       // placeholder rows — this is the Urlaubsbericht's own contribution to visibility, it must
       // NOT call ensureVacationEntitlementForYear here (display only, never create — otherwise
       // the gap this AC requires visible would already be gone by the time it's rendered).
-      // GET /vacation/pdf and /leave-overview/pdf (below, ~2080/~2215) build their OWN
-      // listEntitlementsForYear query independently rather than sharing this handler's — they do
-      // NOT inherit this fix and are deliberately out of scope for this phase (issue #416's AC
-      // names the JSON leave-overview endpoint only).
+      // Issue #613 — GET /vacation/pdf and /leave-overview/pdf show the same placeholder rows
+      // through `buildVacationOverviewRows`, from the same population.
       const vacationEmployeeIds = new Set(
         entitlements.filter((e) => e.leaveType.code === "VACATION").map((e) => e.employeeId),
       );
@@ -2017,11 +2086,13 @@ export async function reportRoutes(app: FastifyInstance) {
               yearEnd,
             );
 
+      // Issue #613 (AC-3) — the year's population in the one report order, the same persons and
+      // order as the list and overview parts of /vacation/pdf and /leave-overview/pdf.
+      const populationPeriod = await yearPopulationPeriod(app, req.user.tenantId, y);
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
-          exitDate: null,
-          user: { isActive: true },
+          AND: [reportPopulationWhere(populationPeriod.start, populationPeriod.end)],
           ...(leaveListPdfScopedIds !== "all" ? { id: { in: leaveListPdfScopedIds } } : {}),
         },
         include: {
@@ -2036,7 +2107,7 @@ export async function reportRoutes(app: FastifyInstance) {
             orderBy: { startDate: "asc" },
           },
         },
-        orderBy: { lastName: "asc" },
+        orderBy: REPORT_PERSON_ORDER,
       });
 
       // Issue #448 (D-05, plan 03): ONE batch BS-date read for every employee's requests in this
@@ -2146,6 +2217,8 @@ export async function reportRoutes(app: FastifyInstance) {
               yearEnd,
             );
 
+      // Issue #613 (AC-3, D-01) — ONE population for the list part and the overview part, in ONE
+      // order; the overview part below walks this array, it never reads the tenant's entitlements.
       const populationPeriod = await yearPopulationPeriod(app, req.user.tenantId, y);
 
       // Fetch both datasets in parallel
@@ -2153,8 +2226,7 @@ export async function reportRoutes(app: FastifyInstance) {
         app.prisma.employee.findMany({
           where: {
             tenantId: req.user.tenantId,
-            exitDate: null,
-            user: { isActive: true },
+            AND: [reportPopulationWhere(populationPeriod.start, populationPeriod.end)],
             ...(vacationPdfScopedIds !== "all" ? { id: { in: vacationPdfScopedIds } } : {}),
           },
           include: {
@@ -2169,7 +2241,7 @@ export async function reportRoutes(app: FastifyInstance) {
               orderBy: { startDate: "asc" },
             },
           },
-          orderBy: { lastName: "asc" },
+          orderBy: REPORT_PERSON_ORDER,
         }),
         listEntitlementsForYear(app.prisma, req.user.tenantId, y, populationPeriod),
       ]);
@@ -2229,70 +2301,17 @@ export async function reportRoutes(app: FastifyInstance) {
         }),
       };
 
-      // Build overview data. Issue #451 (D-07) — the ONE Resturlaub facade, bulk Hinweis
-      // prefetch (the GET /entitlements pattern), no composition remaining arithmetic any more.
-      const vacationOverviewVacationRows = entitlements.filter(
-        // Phase 97 (D-11): the annual-leave overview is the VACATION entitlement, selected by
-        // code. The previous version lower-cased the display name and matched a substring of it,
-        // which caught four of the nine canonical names — annual leave plus the special, unpaid
-        // and further-education types, all of which end in the same German word — and summed all
-        // four into a single annual-leave figure. Behaviour change, deliberate and tested.
-        (e) => e.leaveType.code === "VACATION",
-      );
-      const vacationOverviewWarnedIds = new Set(
-        (
-          await app.prisma.auditLog.findMany({
-            where: {
-              action: "CARRYOVER_WARNED",
-              entity: "LeaveEntitlement",
-              entityId: { in: vacationOverviewVacationRows.map((e) => e.id) },
-            },
-            select: { entityId: true },
-            distinct: ["entityId"],
-          })
-        ).map((al) => al.entityId!),
-      );
-      const empMap = new Map<
-        string,
-        {
-          name: string;
-          employeeNumber: string;
-          totalDays: number;
-          usedDays: number;
-          remainingDays: number;
-          carriedOver: number;
-        }
-      >();
-      for (const e of vacationOverviewVacationRows) {
-        const balance = await app.vacationBalanceForRow(e, req.user.tenantId, now, {
-          hinweisIssued: vacationOverviewWarnedIds.has(e.id),
-        });
-        const key = e.employee.employeeNumber;
-        const existing = empMap.get(key);
-        const total = balance.entitlementDays;
-        const carried = balance.carriedOverEffectiveDays;
-        const used = balance.usedDays;
-        const remaining = balance.remainingDays;
-        if (existing) {
-          existing.totalDays += total;
-          existing.carriedOver += carried;
-          existing.usedDays += used;
-          existing.remainingDays += remaining;
-        } else {
-          empMap.set(key, {
-            name: `${e.employee.firstName} ${e.employee.lastName}`,
-            employeeNumber: e.employee.employeeNumber,
-            totalDays: total,
-            carriedOver: carried,
-            usedDays: used,
-            remainingDays: remaining,
-          });
-        }
-      }
+      // Build overview data from the SAME population array as the list part (AC-3).
       const overviewData = {
         tenantName: tenant?.name ?? "",
         year: y,
-        employees: [...empMap.values()].sort((a, b) => a.name.localeCompare(b.name)),
+        employees: await buildVacationOverviewRows(
+          app,
+          req.user.tenantId,
+          now,
+          employees,
+          entitlements,
+        ),
       };
 
       const doc = new PDFDocument({ size: "A4", margin: 50 });
@@ -2328,6 +2347,9 @@ export async function reportRoutes(app: FastifyInstance) {
         select: { name: true },
       });
 
+      // Issue #613 (AC-3) — the year's population in the one report order, the same persons and
+      // order as the overview part of /vacation/pdf; entitlements through the absence facade with
+      // the same period.
       const populationPeriod = await yearPopulationPeriod(app, req.user.tenantId, y);
       const allLeaveOverviewPdfEntitlements = await listEntitlementsForYear(
         app.prisma,
@@ -2353,81 +2375,26 @@ export async function reportRoutes(app: FastifyInstance) {
               leaveOverviewPdfScopeReach,
               new Date(`${y}-12-31T23:59:59.999Z`),
             );
-      const entitlements =
-        leaveOverviewPdfScopedIds === "all"
-          ? allLeaveOverviewPdfEntitlements
-          : allLeaveOverviewPdfEntitlements.filter((e) =>
-              leaveOverviewPdfScopedIds.includes(e.employeeId),
-            );
-
-      // Group by employee and aggregate (VACATION entitlement only, selected by code). Issue
-      // #451 (D-07) — the ONE Resturlaub facade, bulk Hinweis prefetch, no composition
-      // remaining arithmetic any more.
-      const leaveOverviewPdfVacationRows = entitlements.filter(
-        // Phase 97 (D-11): the annual-leave overview is the VACATION entitlement, selected by
-        // code. The previous version lower-cased the display name and matched a substring of it,
-        // which caught four of the nine canonical names — annual leave plus the special, unpaid
-        // and further-education types, all of which end in the same German word — and summed all
-        // four into a single annual-leave figure. Behaviour change, deliberate and tested.
-        (e) => e.leaveType.code === "VACATION",
-      );
-      const leaveOverviewPdfWarnedIds = new Set(
-        (
-          await app.prisma.auditLog.findMany({
-            where: {
-              action: "CARRYOVER_WARNED",
-              entity: "LeaveEntitlement",
-              entityId: { in: leaveOverviewPdfVacationRows.map((e) => e.id) },
-            },
-            select: { entityId: true },
-            distinct: ["entityId"],
-          })
-        ).map((al) => al.entityId!),
-      );
-      const empMap = new Map<
-        string,
-        {
-          name: string;
-          employeeNumber: string;
-          totalDays: number;
-          usedDays: number;
-          remainingDays: number;
-          carriedOver: number;
-        }
-      >();
-
-      for (const e of leaveOverviewPdfVacationRows) {
-        const balance = await app.vacationBalanceForRow(e, req.user.tenantId, now, {
-          hinweisIssued: leaveOverviewPdfWarnedIds.has(e.id),
-        });
-        const key = e.employee.employeeNumber;
-        const existing = empMap.get(key);
-        const total = balance.entitlementDays;
-        const carried = balance.carriedOverEffectiveDays;
-        const used = balance.usedDays;
-        const remaining = balance.remainingDays;
-
-        if (existing) {
-          existing.totalDays += total;
-          existing.carriedOver += carried;
-          existing.usedDays += used;
-          existing.remainingDays += remaining;
-        } else {
-          empMap.set(key, {
-            name: `${e.employee.firstName} ${e.employee.lastName}`,
-            employeeNumber: e.employee.employeeNumber,
-            totalDays: total,
-            carriedOver: carried,
-            usedDays: used,
-            remainingDays: remaining,
-          });
-        }
-      }
+      const population = await app.prisma.employee.findMany({
+        where: {
+          tenantId: req.user.tenantId,
+          AND: [reportPopulationWhere(populationPeriod.start, populationPeriod.end)],
+          ...(leaveOverviewPdfScopedIds !== "all" ? { id: { in: leaveOverviewPdfScopedIds } } : {}),
+        },
+        select: { id: true, firstName: true, lastName: true, employeeNumber: true },
+        orderBy: REPORT_PERSON_ORDER,
+      });
 
       const pdfBuffer = await generateVacationOverviewPdf({
         tenantName: tenant?.name ?? "",
         year: y,
-        employees: [...empMap.values()].sort((a, b) => a.name.localeCompare(b.name)),
+        employees: await buildVacationOverviewRows(
+          app,
+          req.user.tenantId,
+          now,
+          population,
+          allLeaveOverviewPdfEntitlements,
+        ),
       });
 
       await app.audit({

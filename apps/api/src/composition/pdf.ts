@@ -591,6 +591,57 @@ export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData)
   }
 }
 
+// ── Vacation overview rows ────────────────────────────────────────────────────
+// Issue #613 (AC-3) — a person of the report population without a VACATION entitlement row is part
+// of the overview as a placeholder row, never silently dropped. The wording is the web overview's.
+export const NO_ENTITLEMENT_LABEL = "kein Anspruch hinterlegt";
+
+// One row type, optional figures: a placeholder row carries `missingEntitlement: true` and no
+// figures. A row without figures is printed as a placeholder whatever its flag says, so the text
+// `undefined` can never reach a document.
+export interface VacationOverviewPdfRow {
+  name: string;
+  employeeNumber: string;
+  totalDays?: number;
+  usedDays?: number;
+  remainingDays?: number;
+  carriedOver?: number;
+  missingEntitlement?: boolean;
+}
+
+// One row of the overview table, shared by the streamed and the standalone renderer so the two
+// documents cannot drift. A placeholder prints the German note across the four figure columns.
+function drawVacationOverviewRow(
+  doc: PDFKit.PDFDocument,
+  emp: VacationOverviewPdfRow,
+  rowY: number,
+  colWidths: number[],
+): void {
+  let x = 50;
+  doc.text(emp.name, x, rowY, { width: colWidths[0] });
+  x += colWidths[0];
+  doc.text(emp.employeeNumber, x, rowY, { width: colWidths[1] });
+  x += colWidths[1];
+  if (
+    emp.missingEntitlement ||
+    emp.totalDays === undefined ||
+    emp.carriedOver === undefined ||
+    emp.usedDays === undefined ||
+    emp.remainingDays === undefined
+  ) {
+    const figureWidth = colWidths.slice(2).reduce((a, b) => a + b, 0);
+    doc.text(NO_ENTITLEMENT_LABEL, x, rowY, { width: figureWidth });
+    return;
+  }
+  doc.text(`${emp.totalDays}`, x, rowY, { width: colWidths[2] });
+  x += colWidths[2];
+  doc.text(`${emp.carriedOver}`, x, rowY, { width: colWidths[3] });
+  x += colWidths[3];
+  doc.text(`${emp.usedDays}`, x, rowY, { width: colWidths[4] });
+  x += colWidths[4];
+  doc.text(`${emp.remainingDays}`, x, rowY, { width: colWidths[5] });
+}
+
 // ── streamVacationOverviewPdf ─────────────────────────────────────────────────
 // Streaming counterpart to generateVacationOverviewPdf.
 // Appends landscape pages to an existing doc. Does NOT call doc.end().
@@ -599,14 +650,7 @@ export function streamVacationOverviewPdf(
   data: {
     tenantName: string;
     year: number;
-    employees: Array<{
-      name: string;
-      employeeNumber: string;
-      totalDays: number;
-      usedDays: number;
-      remainingDays: number;
-      carriedOver: number;
-    }>;
+    employees: VacationOverviewPdfRow[];
   },
 ): void {
   doc.addPage({ size: "A4", layout: "landscape" });
@@ -644,18 +688,7 @@ export function streamVacationOverviewPdf(
       doc.addPage({ size: "A4", layout: "landscape" });
       rowY = 50;
     }
-    x = 50;
-    doc.text(emp.name, x, rowY, { width: colWidths[0] });
-    x += colWidths[0];
-    doc.text(emp.employeeNumber, x, rowY, { width: colWidths[1] });
-    x += colWidths[1];
-    doc.text(`${emp.totalDays}`, x, rowY, { width: colWidths[2] });
-    x += colWidths[2];
-    doc.text(`${emp.carriedOver}`, x, rowY, { width: colWidths[3] });
-    x += colWidths[3];
-    doc.text(`${emp.usedDays}`, x, rowY, { width: colWidths[4] });
-    x += colWidths[4];
-    doc.text(`${emp.remainingDays}`, x, rowY, { width: colWidths[5] });
+    drawVacationOverviewRow(doc, emp, rowY, colWidths);
     rowY += 16;
   }
 
@@ -673,14 +706,7 @@ export function streamVacationOverviewPdf(
 export function generateVacationOverviewPdf(data: {
   tenantName: string;
   year: number;
-  employees: Array<{
-    name: string;
-    employeeNumber: string;
-    totalDays: number;
-    usedDays: number;
-    remainingDays: number;
-    carriedOver: number;
-  }>;
+  employees: VacationOverviewPdfRow[];
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 50 });
@@ -724,18 +750,7 @@ export function generateVacationOverviewPdf(data: {
         doc.addPage();
         rowY = 50;
       }
-      x = 50;
-      doc.text(emp.name, x, rowY, { width: colWidths[0] });
-      x += colWidths[0];
-      doc.text(emp.employeeNumber, x, rowY, { width: colWidths[1] });
-      x += colWidths[1];
-      doc.text(`${emp.totalDays}`, x, rowY, { width: colWidths[2] });
-      x += colWidths[2];
-      doc.text(`${emp.carriedOver}`, x, rowY, { width: colWidths[3] });
-      x += colWidths[3];
-      doc.text(`${emp.usedDays}`, x, rowY, { width: colWidths[4] });
-      x += colWidths[4];
-      doc.text(`${emp.remainingDays}`, x, rowY, { width: colWidths[5] });
+      drawVacationOverviewRow(doc, emp, rowY, colWidths);
       rowY += 16;
     }
 
