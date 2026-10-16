@@ -194,6 +194,13 @@ export default defineConfig({
       //     hint, reduced admin/system, /shifts hint, 390/360 px; tenant fixture only, no seed, no
       //     date dependency, one intercepted /me/context)
       //
+      // Issue #86 added an eighth file:
+      //   - the Personalabteilung view (HR person on the real stack: no API error and no time-data
+      //     request on the employee, reports, month-close and salon pages; contract change, salon
+      //     assignment, exit date and employee creation with a Stammsalon; 390/360 px light/dark
+      //     matrix through route interception); tenant fixture only, no seed, no date dependency
+      //     (every date is computed from the current day)
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -206,6 +213,7 @@ export default defineConfig({
         /operator-console\.spec\.ts/,
         /admin-tabs-narrow-viewport\.spec\.ts/,
         /admin-salons\.spec\.ts/,
+        /hr-view-86\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],
