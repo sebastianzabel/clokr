@@ -1,9 +1,11 @@
 /**
  * Phase 76b Plan 04 (Issue #76), AK-76b-4 — proves the SHIPPED Personalabteilung template bundle
  * (`SYSTEM_ROLE_IDS.HR`, migrated in Plan 76b-01) against real routes: 403 on daily time data
- * (time entries/breaks, monthly report with daily rows) regardless of the id passed, 200 on
+ * (time entries/breaks, the report PDFs with daily rows) regardless of the id passed, 200 on
  * account/contract-shaped data (saldo, month-close status, leave requests, Berufsschule absences,
  * Stammdaten, WorkSchedule) for ANY employee of the tenant, and 403 on every approval.
+ * Since Issue #86 (owner decision 16.10.2026) the bundle also holds `report:read` (the JSON monthly
+ * report answers 200) and `salon:read`; the report PDFs stay 403 (`report:export`).
  *
  * D-12/RESEARCH.md anti-pattern: the role assignment below points at the REAL
  * `SYSTEM_ROLE_IDS.HR` row, never an ad-hoc custom `AccessRole` — the point is proving the shipped
@@ -220,14 +222,18 @@ describe("Issue #76 (Phase 76b Plan 04), AK-76b-4 — Personalabteilung behaviou
     });
   });
 
-  describe("Task 1: monthly report routes are 403 for the HR bundle (report:* excluded, D-07)", () => {
-    it("GET /reports/monthly?employeeId=<X> → 403", async () => {
+  describe("Task 1: report routes for the HR bundle (report:read held since #86, report:export excluded)", () => {
+    // Owner decision 16.10.2026 (Issue #86, Unterbau-Semantikänderung): the template holds
+    // `report:read` because the three JSON routes carry only sums per person and month — pinned
+    // by reports-hr-86.test.ts. Phase 76b D-07 had this case at 403; the PDFs (files with daily
+    // rows, `report:export`) stay 403.
+    it("GET /reports/monthly?employeeId=<X> → 200 (report:read, owner decision 16.10.2026, #86)", async () => {
       const res = await app.inject({
         method: "GET",
         url: `/api/v1/reports/monthly?employeeId=${x.employee.id}&year=${year}&month=${month}`,
         headers: { authorization: `Bearer ${hrToken}` },
       });
-      expect(res.statusCode).toBe(403);
+      expect(res.statusCode).toBe(200);
     });
 
     it("GET /reports/monthly/pdf?employeeId=<X> → 403", async () => {

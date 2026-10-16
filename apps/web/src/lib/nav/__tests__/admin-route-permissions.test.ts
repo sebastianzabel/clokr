@@ -145,7 +145,8 @@ describe("admin route permissions (Issue #83)", () => {
       "/admin/export",
     ]);
     expect(visibleFor(p.SALON_MANAGER)).toEqual(["/admin/employees", "/admin/availability"]);
-    expect(visibleFor(p.HR)).toEqual(["/admin/employees", "/admin/month-close"]);
+    // Issue #86 (owner decision 16.10.2026): the HR template holds salon:read, so "Salons" joins.
+    expect(visibleFor(p.HR)).toEqual(["/admin/employees", "/admin/salons", "/admin/month-close"]);
     expect(visibleFor(p.TRAINER)).toEqual(["/admin/employees"]);
     expect(visibleFor(p.EMPLOYEE)).toEqual([]);
     for (const slot of Object.keys(p)) {

@@ -45,6 +45,26 @@ const AUSBILDER_PERMISSIONS = [
   "shift:read:ZUGEWIESEN",
 ];
 
+// docs/permissions.md § Systemrollen-Templates — Personalabteilung (intended scope: Mandant). Since
+// Issue #86 (owner decision 16.10.2026) the template holds report:read and salon:read.
+const PERSONALABTEILUNG_PERMISSIONS = [
+  "employee:read:ZUGEWIESEN",
+  "employee:create:ZUGEWIESEN",
+  "employee:update:ZUGEWIESEN",
+  "employee:update-avatar:ZUGEWIESEN",
+  "contract:read:ZUGEWIESEN",
+  "contract:update:ZUGEWIESEN",
+  "salon:read:ZUGEWIESEN",
+  "leave-request:read:ZUGEWIESEN",
+  "section9:read:ZUGEWIESEN",
+  "leave-entitlement:read:ZUGEWIESEN",
+  "leave-entitlement:update:ZUGEWIESEN",
+  "vocational-school:read:ZUGEWIESEN",
+  "overtime:read:ZUGEWIESEN",
+  "month-close:read:ZUGEWIESEN",
+  "report:read:ZUGEWIESEN",
+];
+
 describe("visibleTeamNavItems", () => {
   it("AK-378-1: Salonmanager sees Anträge, Team-Zeiten, Team-Abwesenheiten, Team-Kalender, Schichtplanung — not Berichte", () => {
     const items = visibleTeamNavItems({ permissions: SALONMANAGER_PERMISSIONS });
@@ -64,6 +84,16 @@ describe("visibleTeamNavItems", () => {
 
   it("AK-378-3: a plain Mitarbeiter (no ZUGEWIESEN permissions at all) sees no Team-Bereich items", () => {
     expect(visibleTeamNavItems({ permissions: ["time-entry:read:EIGENE"] })).toEqual([]);
+  });
+
+  it("Issue #86: the Personalabteilung persona sees Berichte (report:read, owner decision 16.10.2026) and no Team-Zeiten", () => {
+    const hrefs = visibleTeamNavItems({ permissions: PERSONALABTEILUNG_PERMISSIONS }).map(
+      (i) => i.href,
+    );
+    expect(hrefs).toEqual(["/team/leave", "/teamcal", "/reports"]);
+    expect(hrefs).not.toContain("/team/time-entries"); // no time-entry:read — no daily times
+    expect(hrefs).not.toContain("/shifts");
+    expect(hrefs).not.toContain("/inbox"); // no approve permission
   });
 
   it("a user object with no permissions list at all sees no Team-Bereich items (fail-closed)", () => {

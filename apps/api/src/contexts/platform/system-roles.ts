@@ -10,7 +10,9 @@
  * `packages/db/prisma/migrations/<timestamp>_system_roles_and_legacy_role_assignments`; the four
  * 76b rows by the separate, later, data-only
  * `packages/db/prisma/migrations/<timestamp>_system_role_templates` (D-02) — never by editing the
- * 75b file. Drift tests (`src/__tests__/system-roles-migration.test.ts`,
+ * 75b file. Issue #86 widened the Personalabteilung row by the data-only
+ * `<timestamp>_hr_template_report_salon_read` (an UPDATE of that one row, again never an edit of
+ * the 76b file; `src/__tests__/hr-template-migration-86.test.ts` proves it). Drift tests (`src/__tests__/system-roles-migration.test.ts`,
  * `src/__tests__/system-role-templates-migration.test.ts`) prove the migrated rows equal the
  * constants below for all seven slots. Changing a system role later therefore means a NEW
  * migration plus a code change here, never an edit of either alone.
@@ -384,14 +386,21 @@ const SALON_MANAGER_PERMISSION_KEYS = [
 ] as const;
 
 /**
- * Personalabteilung (D-07), intended scope TENANT — ZUGEWIESEN only, no EIGENE. Excludes every
- * `time-entry:`/`retro-request:` key, presence-source/terminal, every `shift:`/`shift-pattern:`/
- * `availability:` key (attendance = movement profile), `team-overview:read`, `report:*` (bundles
- * daily rows with the monthly report), every approve/decide/attest/correct/cancel permission
- * ("jede Genehmigung" stays with Inhaber/Salonmanager), `employee:anonymize` (DSGVO deletion stays
- * Inhaber), `employee:import` (the CSV import sets roles), `employee:manage-access`
- * (login/roles), `overtime:settle`/`overtime:set-opening-balance`, `month-close:close`/
- * `unlock`/`close-year`, and every MANDANT permission.
+ * Personalabteilung (D-07, widened by Issue #86), intended scope TENANT — ZUGEWIESEN only, no
+ * EIGENE. Excludes every `time-entry:`/`retro-request:` key, presence-source/terminal, every
+ * `shift:`/`shift-pattern:`/`availability:` key (attendance = movement profile),
+ * `team-overview:read`, `report:export` (files with daily rows) and `report:notify` (dispatch),
+ * every approve/decide/attest/correct/cancel permission ("jede Genehmigung" stays with
+ * Inhaber/Salonmanager), `employee:anonymize` (DSGVO deletion stays Inhaber), `employee:import`
+ * (the CSV import sets roles), `employee:manage-access` (login/roles),
+ * `overtime:settle`/`overtime:set-opening-balance`, `month-close:close`/`unlock`/`close-year`, and
+ * every MANDANT permission except `salon:read`.
+ *
+ * Owner decision 16.10.2026 on Issue #86 (an Unterbau semantic change, reverses Phase 76b D-07 for
+ * `report:read`): `report:read` is held because the three JSON routes carry only sums per person
+ * and month (pinned by `src/__tests__/reports-hr-86.test.ts`); `salon:read` is held to maintain
+ * salon assignments, inactive salons included. Shipped by the data-only migration
+ * `<timestamp>_hr_template_report_salon_read`.
  */
 const HR_PERMISSION_KEYS = [
   "employee:read:ZUGEWIESEN",
@@ -400,6 +409,7 @@ const HR_PERMISSION_KEYS = [
   "employee:update-avatar:ZUGEWIESEN",
   "contract:read:ZUGEWIESEN",
   "contract:update:ZUGEWIESEN",
+  "salon:read:ZUGEWIESEN",
   "leave-request:read:ZUGEWIESEN",
   "section9:read:ZUGEWIESEN",
   "leave-entitlement:read:ZUGEWIESEN",
@@ -407,6 +417,7 @@ const HR_PERMISSION_KEYS = [
   "vocational-school:read:ZUGEWIESEN",
   "overtime:read:ZUGEWIESEN",
   "month-close:read:ZUGEWIESEN",
+  "report:read:ZUGEWIESEN",
 ] as const;
 
 /**
