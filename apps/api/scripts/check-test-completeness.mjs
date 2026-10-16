@@ -857,7 +857,14 @@ import { readFileSync } from "node:fs";
 // Phase 92b-05 (2026-10-16): measured with a full run (`pnpm --filter @clokr/api test`) after the merge of origin/main
 // @ 7e9a2f8f - 642 test files, 10087 tests (10084 passed, 3 skipped); this includes the Phase 92b test files (travel entries).
 // MIN_FILES 630 -> 642, never lowered.
-const MIN_FILES = 642;
+// Issue #614 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on `feat/614-anonymisierung-austritt`
+// (origin/main @ b83fb1bf, no later commit) - 650 test files, 10142 tests (10138 passed, 3 skipped, 1 red on an unmapped
+// file that the same commit's context-area-map entries fix). New files: anonymization-ends-employment-614,
+// anonymization-absence-kinds-614, anonymization-spanning-exit-614, anonymization-closed-months-614,
+// anonymization-employee-number-614, dashboard-upcoming-leave-anonymized-614, contexts/absence/__tests__/leave-correction-core-614
+// and scripts/__tests__/audit-614-anonymized-employment (+8 files); amended: anonymize-helper, day-break-compliance-80,
+// section9-model. MIN_FILES 642 -> 650, never lowered.
+const MIN_FILES = 650;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -865,7 +872,8 @@ const MIN_FILES = 642;
 // Issue #658: +5 cases in time-entry-create-reach-658.test.ts (source-counted); extension: +6 cases (clock-in on behalf,
 // retro create on behalf): 9918 + 11 = 9929 (source-counted).
 // Phase 92b-05 (2026-10-16): MIN_TESTS 9929 -> 10087, the measured total of the full run named at MIN_FILES. Never lowered.
-const MIN_TESTS = 10087;
+// Issue #614 (2026-10-17): MIN_TESTS 10087 -> 10142 (+55), the measured total of the full run named at MIN_FILES. Never lowered.
+const MIN_TESTS = 10142;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
