@@ -4318,6 +4318,12 @@ export async function shiftRoutes(app: FastifyInstance) {
   //   T-430-10 (Info Disclosure): EmployeeScope/salon scoping via accessContextFromRequest chain.
   //   T-430-11 (Elevation): shift:plan:ZUGEWIESEN guard, tested against a shift:read-only actor.
   //
+  // Issue #558 D-07: the optional salonId is validated by resolveSalonInReach against the
+  //   shift:plan reach — foreign, unknown, inactive and out-of-reach salons are the one 404
+  //   (it used to be 200 + an empty list). The population stays "Stammsalon at weekStart" (D-05:
+  //   an existing filter keeps its semantics), now read through
+  //   resolveStammsalonScopedEmployeeIds(salonOnlyReach(chosen), weekStart).
+  //
   // Phase 430-06 (follow-up to #437/#429): "this week's approved leave days" (leaveDays below)
   // now uses the SAME per-week kernel the saldo side uses (leaveDaysPerWeek(), Issue #429
   // D-01/D-02), via getShiftBasedLeaveDaysForWeek() — see that function's own docblock
@@ -4332,7 +4338,7 @@ export async function shiftRoutes(app: FastifyInstance) {
   app.get("/planning-overview", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("shift:plan:ZUGEWIESEN"),
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const { weekStart: weekStartRaw, salonId } = planningOverviewQuerySchema.parse(req.query);
       const weekStart = mondayOfWeekUtc(new Date(`${weekStartRaw}T00:00:00.000Z`));
       const weekEnd = new Date(weekStart);
@@ -4344,30 +4350,34 @@ export async function shiftRoutes(app: FastifyInstance) {
       // Same "plannable staff" question GET /week's own D-12 answers, same answer function.
       const reach = await resolveAccessReach(app.prisma, access, "shift:plan:ZUGEWIESEN");
       const scopedAccess = { ...access, reach };
+
+      // Issue #558 D-07 (hardening of the Phase 430-05 behaviour): the client's salon is validated
+      // by the one validator against the caller's own `shift:plan` reach BEFORE any read. A foreign,
+      // unknown, inactive or out-of-reach salon is the identical 404 — the route used to answer
+      // 200 + an empty list for all four (a 200-for-everything oracle shape, against D-01).
+      const planningSalon = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
+      if (!planningSalon.ok) return reply.code(404).send(SALON_NOT_FOUND);
+      const chosenSalonId = planningSalon.salonId;
+
       const personScopedIds =
         reach.kind === "wholeTenant"
           ? "all"
           : await resolvePersonScopedEmployeeIds(app.prisma, tenantId, reach);
 
-      // Optional further narrowing to one specific salon's Stammsalon (HOME) population, intersected
-      // with the reach above — same `employeeSalonAssignment` HOME-kind query shape
-      // `resolveStammsalonScopedEmployeeIds` uses internally, inlined here because this answers "is
-      // this ONE client-given salonId valid/theirs", not "which of reach.salonIds".
+      // Optional further narrowing to one salon's Stammsalon (HOME) population at `weekStart`,
+      // intersected with the reach above. The population semantics are unchanged (D-05: an existing
+      // filter keeps its meaning); it is now read through the Stammsalon resolver evaluated for
+      // "only this salon" instead of an inline assignment query.
       let inScopeIds: "all" | string[] = personScopedIds;
-      if (salonId) {
-        const homeRows = await app.prisma.employeeSalonAssignment.findMany({
-          where: {
-            tenantId,
-            kind: "HOME",
-            salonId,
-            validFrom: { lte: weekStart },
-            OR: [{ validUntil: null }, { validUntil: { gte: weekStart } }],
-          },
-          select: { employeeId: true },
-        });
-        const homeIds = homeRows.map((r) => r.employeeId);
+      if (chosenSalonId !== null) {
+        const homeIds = await resolveStammsalonScopedEmployeeIds(
+          app.prisma,
+          tenantId,
+          salonOnlyReach(chosenSalonId),
+          weekStart,
+        );
         inScopeIds =
-          personScopedIds === "all"
+          personScopedIds === "all" || homeIds === "all"
             ? homeIds
             : homeIds.filter((id) => personScopedIds.includes(id));
       }

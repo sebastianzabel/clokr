@@ -26,6 +26,23 @@
  * M5 `contextSalonIds` treats a SALONS row like TENANT → red: "the manager's own context lists
  *    only salon A …" (B appeared).
  *
+ * Amendment Issue #558 D-07 (2026-10-16) — hardening, not a weakening: `planning-overview` now
+ * validates `salonId` like every other view endpoint (`resolveSalonInReach`), so a salon outside
+ * the reach, a foreign tenant's salon, an inactive salon and an unknown id answer the identical 404
+ * instead of 200 + []; the T-100-09 property (foreign == unknown, byte-identical) is kept and
+ * strengthened. Changed assertions: manager-for-B 200 → 404; foreign/unknown 200 → 404 (status,
+ * body and the literal body). Mutation proofs M2/M4 above describe the Phase-82 code; the #558
+ * proofs are M6/M7 below (recorded 2026-10-16, not re-run by CI):
+ * M6 the new validator removed from `planning-overview` (`if (!planningSalon.ok) return …`
+ *    commented out) → red: "planning-overview for salonId=B answers 404 for the manager; the admin
+ *    sees E" and "a foreign tenant's salon and an unknown id are indistinguishable on both
+ *    endpoints (T-100-09)" (here), plus the 430-05 "a salon-A-only planner …" case and the 558
+ *    "an inactive salon answers the identical 404 for admin and manager" case.
+ * M7 the caller's `reach` passed to `resolveStammsalonScopedEmployeeIds` instead of
+ *    `salonOnlyReach(chosen)` → red: "salonId query param narrows to that salon's employees only;
+ *    omitted -> all salons in scope" (shifts-planning-overview.test.ts; an admin's whole-tenant
+ *    reach narrows to no salon).
+ *
  * Harness: fake clock 2026-06-15T10:00Z installed BEFORE the app boots. No person names in
  * fixtures.
  */
@@ -225,13 +242,12 @@ describe("Issue #82 — a manipulated salon context yields no foreign data", () 
     expect(await summary(data.adminToken)).toMatchObject({ entryCount: 2, workingMinutes: 540 });
   });
 
-  it("planning-overview for salonId=B lists no row for E for the manager; the admin sees it", async () => {
+  it("planning-overview for salonId=B answers 404 for the manager; the admin sees E", async () => {
+    // Amendment Issue #558 D-07: was 200 + [] — a salon outside the reach is now the one 404.
     const managerRes = await planning(managerToken, salonB.id);
-    expect(managerRes.statusCode, managerRes.body).toBe(200);
-    const managerRows = (JSON.parse(managerRes.body) as { employees: { employeeId: string }[] })
-      .employees;
-    expect(managerRows.map((r) => r.employeeId)).not.toContain(employeeE.id);
-    expect(managerRows).toEqual([]);
+    expect(managerRes.statusCode, managerRes.body).toBe(404);
+    expect(managerRes.body).toBe('{"error":"Salon nicht gefunden"}');
+    expect(managerRes.body).not.toContain(employeeE.id);
 
     const adminRes = await planning(data.adminToken, salonB.id);
     expect(adminRes.statusCode, adminRes.body).toBe(200);
@@ -257,10 +273,12 @@ describe("Issue #82 — a manipulated salon context yields no foreign data", () 
       expect(sumForeign.body).toBe('{"error":"Salon nicht gefunden"}');
       expect(sumForeign.body).toBe(sumUnknown.body);
 
+      // Amendment Issue #558 D-07: both planning requests are the 404 now (was 200 + the same body).
       const planForeign = await planning(token, salonF.id);
       const planUnknown = await planning(token, unknown);
-      expect(planForeign.statusCode).toBe(200);
+      expect(planForeign.statusCode).toBe(404);
       expect(planForeign.statusCode).toBe(planUnknown.statusCode);
+      expect(planForeign.body).toBe('{"error":"Salon nicht gefunden"}');
       expect(planForeign.body).toBe(planUnknown.body);
     }
   });

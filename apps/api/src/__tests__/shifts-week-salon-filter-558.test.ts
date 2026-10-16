@@ -316,4 +316,31 @@ describe("Issue #558 — GET /shifts/week?salonId", () => {
     expect("sollUnavailableReason" in body).toBe(false);
     expect(body.contractSollMinutesByEmp).not.toBeNull();
   });
+
+  describe("planning-overview hardening (D-07)", () => {
+    const planning = (token: string, salonId: string) =>
+      get(token, `/api/v1/shifts/planning-overview?weekStart=2026-06-15&salonId=${salonId}`);
+
+    it("an inactive salon answers the identical 404 for admin and manager", async () => {
+      const unknown = await planning(data.adminToken, randomUUID());
+      expect(unknown.statusCode).toBe(404);
+      expect(unknown.body).toBe(NOT_FOUND);
+      for (const token of [data.adminToken, managerToken]) {
+        const res = await planning(token, salonI.id);
+        expect(res.statusCode).toBe(404);
+        expect(res.body).toBe(unknown.body);
+      }
+    });
+
+    it("the manager's own salon A is a 200 listing the SHIFT_BASED person homed in A at weekStart", async () => {
+      const res = await planning(managerToken, salonA.id);
+      expect(res.statusCode, res.body).toBe(200);
+      const ids = (JSON.parse(res.body) as { employees: { employeeId: string }[] }).employees.map(
+        (e) => e.employeeId,
+      );
+      expect(ids).toContain(pA.id);
+      expect(ids).not.toContain(springer.id);
+      expect(ids).not.toContain(pB.id);
+    });
+  });
 });
