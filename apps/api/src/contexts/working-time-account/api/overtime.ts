@@ -536,21 +536,38 @@ export async function overtimeRoutes(app: FastifyInstance) {
         access,
         "month-close:read:ZUGEWIESEN",
       );
+      const deferredTz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const deferredStichtag = todayInTz(deferredTz);
       let deferredScopedEmployeeIds: "all" | string[] = "all";
       if (deferredScopeReach.kind !== "wholeTenant") {
-        const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
         deferredScopedEmployeeIds = await resolveStammsalonScopedEmployeeIds(
           app.prisma,
           req.user.tenantId,
           deferredScopeReach,
-          todayInTz(tz),
+          deferredStichtag,
         );
       }
 
-      return getDeferredMonthCloseState(app.prisma, req.user.tenantId, {
+      const state = await getDeferredMonthCloseState(app.prisma, req.user.tenantId, {
         detailed: detailed ?? false,
         ...(deferredScopedEmployeeIds !== "all" ? { employeeIds: deferredScopedEmployeeIds } : {}),
       });
+
+      // #86 (D-02): `gapDates` is a per-day list. The redaction happens HERE, never in
+      // getDeferredMonthCloseState, because the cron reminder reads the same facade and needs the
+      // dates. `gapCount` (and every other figure) stays for every caller.
+      const covered = await dayDetailVisibility(app, req).coveredAmong(
+        state.employees.map((e) => e.employeeId),
+        deferredStichtag,
+      );
+      return {
+        ...state,
+        employees: state.employees.map((e) =>
+          covered.has(e.employeeId)
+            ? { ...e, dayDetailsWithheld: false }
+            : { ...e, gapDates: [], dayDetailsWithheld: true },
+        ),
+      };
     },
   });
 
@@ -816,7 +833,34 @@ export async function overtimeRoutes(app: FastifyInstance) {
         }
       }
 
-      return { year, month, employees: result };
+      // #86 (D-02): the four day lists are per-day attendance data. Every row gets the counts of
+      // its lists, computed from the full arrays BEFORE the redaction, so the counts a withheld
+      // reader sees equal the admin's; the lists themselves stay only for persons the caller may
+      // read time entries of (Stichtag = the month's last day, as the scope narrowing above).
+      const statusCovered = await dayDetailVisibility(app, req).coveredAmong(
+        result.map((r) => r.employeeId),
+        monthLastDay,
+      );
+      const statusEmployees = result.map((row) => {
+        const counted = {
+          ...row,
+          missingDateCount: row.missingDates?.length ?? 0,
+          unconfirmedBreakDayCount: row.unconfirmedBreakDays?.length ?? 0,
+          breakFindingDayCount: row.breakFindingDays?.length ?? 0,
+          karenzOverrunDayCount: row.karenzOverrunDays?.length ?? 0,
+        };
+        if (statusCovered.has(row.employeeId)) return { ...counted, dayDetailsWithheld: false };
+        return {
+          ...counted,
+          ...(row.missingDates ? { missingDates: [] } : {}),
+          ...(row.unconfirmedBreakDays ? { unconfirmedBreakDays: [] } : {}),
+          ...(row.breakFindingDays ? { breakFindingDays: [] } : {}),
+          ...(row.karenzOverrunDays ? { karenzOverrunDays: [] } : {}),
+          dayDetailsWithheld: true,
+        };
+      });
+
+      return { year, month, employees: statusEmployees };
     },
   });
 
@@ -906,6 +950,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
           employeeName: string;
           employeeNumber: string;
           missingDates: string[];
+          missingDateCount: number; // #86 (D-02) — survives the redaction of missingDates
+          dayDetailsWithheld: boolean; // #86 (D-02)
         }[];
       }[] = [];
 
@@ -991,7 +1037,12 @@ export async function overtimeRoutes(app: FastifyInstance) {
           employeeName: string;
           employeeNumber: string;
           missingDates: string[];
+          missingDateCount: number;
+          dayDetailsWithheld: boolean;
         }[] = [];
+        // #86 (D-02): who of this month's unclosed persons the caller may see day lists of
+        // (Stichtag = this month's last day); resolved once per month, on the first missing day.
+        let ysCovered: ReadonlySet<string> | null = null;
 
         let anyMissing = false;
 
@@ -1076,10 +1127,17 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
           if (empMissingDates.length > 0) {
             anyMissing = true;
+            ysCovered ??= await dayDetailVisibility(app, req).coveredAmong(
+              unclosedEmployees.map((e) => e.id),
+              ysMonthLastDay,
+            );
+            const ysMayListDays = ysCovered.has(emp.id);
             missingDetails.push({
               employeeName: `${emp.firstName} ${emp.lastName}`,
               employeeNumber: emp.employeeNumber,
-              missingDates: empMissingDates,
+              missingDates: ysMayListDays ? empMissingDates : [],
+              missingDateCount: empMissingDates.length,
+              dayDetailsWithheld: !ysMayListDays,
             });
           }
         }
