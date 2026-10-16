@@ -678,6 +678,8 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         // (checkArbZG, saldo, the no-overlap guarantee), freeing the interval for a
         // corrected resubmission. No new enum value — reuses the existing
         // deletedAt soft-delete convention (D-11).
+        // Issue #92: no travel-neighbour hook here — a pending row never anchored a travel entry, so
+        // removing it cannot orphan one (see the `checkTravelNeighbours` docblock in ../travel-entry).
         const entryIdToReject = coupledEntry.id;
         try {
           updated = await app.prisma.$transaction(async (tx) => {
@@ -905,6 +907,8 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           });
 
           if (coupledEntry) {
+            // Issue #92: no travel-neighbour hook on a withdrawal either — a pending row never
+            // anchored a travel entry (see the `checkTravelNeighbours` docblock in ../travel-entry).
             // Phase 96-review (WR-01) — defense-in-depth: only re-soft-delete the
             // coupled TimeEntry if it is STILL the pre-decision pending row
             // (isInvalid=true, deletedAt=null). The request-status guard above
