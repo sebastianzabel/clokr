@@ -853,12 +853,16 @@ import { readFileSync } from "node:fs";
 // the shared helper entry-lock-race-helpers.ts has no cases) on top of the baseline of 607 files plus the 6 files that came
 // in from origin/main meanwhile (#86, #650, #654); amended files kept or raised their case counts, none was
 // removed, skipped or loosened. MIN_FILES 613 -> 629, never lowered.
-const MIN_FILES = 629;
+// Issue #658 (2026-10-16, merged from origin/main @ 7e9a2f8f): +1 file (time-entry-create-reach-658.test.ts), source-counted.
+// Phase 92b-05 (2026-10-16): the floor below is re-measured by the full run after that merge (see the comment on MIN_TESTS).
+const MIN_FILES = 630;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
 // Phase 70b / Issue #70 (2026-10-16): MIN_TESTS 9796 -> 9918, the measured total of the run above (see MIN_FILES). Never lowered.
-const MIN_TESTS = 9918;
+// Issue #658: +5 cases in time-entry-create-reach-658.test.ts (source-counted); extension: +6 cases (clock-in on behalf,
+// retro create on behalf): 9918 + 11 = 9929 (source-counted, replaced by the measured number below).
+const MIN_TESTS = 9929;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

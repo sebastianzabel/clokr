@@ -140,6 +140,28 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
       if (!targetEmployee) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
+      // Issue #658: a ZUGEWIESEN caller submitting for ANOTHER person is bound to their reach.
+      // RetroEntryRequest has no salon of its own, so the rule is the Stammsalon / person list at
+      // the request's targetDate (as in the review below). Out of reach answers byte-identical to
+      // an unknown id, before any duplicate check and before any write; no audit row.
+      if (retroCreateReach === "ZUGEWIESEN" && employeeId !== user.employeeId) {
+        const createReach = await resolveAccessReach(
+          app.prisma,
+          accessContextFromRequest(req),
+          "retro-request:create:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            user.tenantId,
+            createReach,
+            employeeId,
+            new Date(body.targetDate),
+          ))
+        ) {
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+      }
 
       const tz = await getTenantTimezone(app.prisma, user.tenantId);
       const todayStr = dateStrInTz(todayInTz(tz), tz);
