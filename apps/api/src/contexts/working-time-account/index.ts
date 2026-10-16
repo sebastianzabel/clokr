@@ -59,6 +59,15 @@ export {
   type CarryOverByMonth,
 } from "./facade/saldo-snapshot";
 
+// ── Snapshot month naming (Issue #595, D-03) ─────────────────────────────────────────────────
+// Composition names the month of a stored MONTHLY snapshot only through snapshotMonthOf - never
+// with a date getter or a date-string slice (Plan 595-03 uses it for the PDF month list).
+export {
+  snapshotMonthOf,
+  selectMonthlySnapshotPerMonth,
+  yearlySnapshotYearOf,
+} from "./snapshot-period";
+
 // ── Missing-entries-window default (issue #246, E-6) ─────────────────────────────────────────
 // Declared public: a constant carries no query semantics, no soft-delete guard, no tenant scope
 // — the number itself IS the invariant, so a value re-export needs no facade function around it.

@@ -26,7 +26,13 @@ import {
 } from "../../platform";
 import { dayDetailVisibility } from "./day-detail-visibility"; // Issue #86 (D-02) — the one day-list decision
 import { fetchCloseMonthData } from "../close-month-data"; // PERF-V1814-01
-import { periodStartWindow, isPeriodStartInMonth } from "../snapshot-period";
+import {
+  periodStartWindow,
+  isPeriodStartInMonth,
+  snapshotMonthOf,
+  selectMonthlySnapshotPerMonth,
+  yearlySnapshotYearOf,
+} from "../snapshot-period";
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared saldo core
 import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — gap detector
 import { getDeferredMonthCloseState } from "../deferred-month-close"; // Phase 292 (#292)
@@ -1913,7 +1919,27 @@ export async function overtimeRoutes(app: FastifyInstance) {
         orderBy: { periodStart: "desc" },
         take: 120,
       });
-      return snapshots;
+
+      // Issue #595 (D-02/D-03, P-04) - the employee table renders these server-named months. MONTHLY
+      // rows are one per month (the record computeMonthSaldo reads), so the page and the PDF can
+      // never show two different closed figures for one month; the month comes from
+      // snapshotMonthOf, never from a date getter in the browser. YEARLY rows keep the year only.
+      const snapshotTz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const monthlyKept = new Set(
+        selectMonthlySnapshotPerMonth(
+          snapshots.filter((s) => s.periodType === "MONTHLY"),
+          snapshotTz,
+        ),
+      );
+      return snapshots
+        .filter((s) => s.periodType !== "MONTHLY" || monthlyKept.has(s))
+        .map((s) => {
+          if (s.periodType === "MONTHLY") {
+            const named = snapshotMonthOf(s.periodStart, snapshotTz);
+            return { ...s, year: named?.year ?? null, month: named?.month ?? null };
+          }
+          return { ...s, year: yearlySnapshotYearOf(s.periodStart), month: null };
+        });
     },
   });
 

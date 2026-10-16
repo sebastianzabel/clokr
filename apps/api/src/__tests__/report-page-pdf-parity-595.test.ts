@@ -247,6 +247,23 @@ describe("Issue #595 (D-01) - page, JSON and PDFs agree on a closed month stored
       adminUserId,
     );
 
+    // A YEARLY row written like the close-year handler writes it: a plain UTC year boundary.
+    await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId: empA.id,
+        periodType: "YEARLY",
+        periodStart: new Date("2025-01-01T00:00:00Z"),
+        periodEnd: new Date("2025-12-31T23:59:59Z"),
+        workedMinutes: 100000,
+        expectedMinutes: 99000,
+        balanceMinutes: 1000,
+        carryOver: 1000,
+        closedAt: new Date(),
+        closedBy: adminUserId,
+        note: "Jahresübertrag: test",
+      },
+    });
+
     await createSnapshot(
       app,
       empB.id,
@@ -337,6 +354,9 @@ describe("Issue #595 (D-01) - page, JSON and PDFs agree on a closed month stored
     });
     expect(res.statusCode).toBe(200);
     return JSON.parse(res.body) as Array<{
+      periodType: "MONTHLY" | "YEARLY";
+      year: number | null;
+      month: number | null;
       periodStart: string;
       workedMinutes: number;
       expectedMinutes: number;
@@ -438,5 +458,53 @@ describe("Issue #595 (D-01) - page, JSON and PDFs agree on a closed month stored
     expect(ms.workedMinutes).toBe(B_SEP_CONVERTED.workedMinutes);
     expect(ms.expectedMinutes).toBe(B_SEP_CONVERTED.expectedMinutes);
     expect(ms.balanceMinutes).toBe(B_SEP_CONVERTED.balanceMinutes);
+  });
+  describe("snapshot answer names months on the server (Issue #595, D-02/D-03)", () => {
+    it("every row carries year and month: TZ-converted August (stored 2026-07-31) is month 8, legacy September is month 9", async () => {
+      const snaps = await snapshotRows(empA.id);
+      const aug = snaps.find((s) => s.periodStart.slice(0, 10) === "2026-07-31");
+      expect(aug?.year).toBe(2026);
+      // A browser-local label derived from the stored date would have said July here.
+      expect(aug?.month).toBe(8);
+      const sep = snaps.find((s) => s.periodStart.slice(0, 10) === "2026-09-01");
+      expect(sep?.year).toBe(2026);
+      expect(sep?.month).toBe(9);
+      const jan = snaps.find((s) => s.periodStart.slice(0, 10) === "2026-01-01");
+      expect(jan?.year).toBe(2026);
+      expect(jan?.month).toBe(1);
+    });
+
+    it("a YEARLY row keeps year = the UTC year of its periodStart and month null", async () => {
+      const snaps = await snapshotRows(empA.id);
+      const yearly = snaps.filter((s) => s.periodType === "YEARLY");
+      expect(yearly).toHaveLength(1);
+      expect(yearly[0].year).toBe(2025);
+      expect(yearly[0].month).toBeNull();
+    });
+
+    it("MONTHLY rows are one per month: employee B's September duplicate pair lists only the row the account reads, equal to the single PDF", async () => {
+      const snaps = await snapshotRows(empB.id);
+      const monthly = snaps.filter((s) => s.periodType === "MONTHLY");
+      expect(monthly).toHaveLength(1);
+      expect(monthly[0].periodStart.slice(0, 10)).toBe("2026-08-31");
+      expect(monthly[0].year).toBe(2026);
+      expect(monthly[0].month).toBe(9);
+      const payload = await singlePdf(empB.id, 2026, 9);
+      expect(payload.overtimeConfirmed).toBe(true);
+      expect(payload.workedHours).toBe(hours(monthly[0].workedMinutes));
+      expect(payload.targetHours).toBe(hours(monthly[0].expectedMinutes));
+      expect(payload.overtimeHours).toBe(hours(monthly[0].balanceMinutes));
+    });
+
+    it("the answer stays an array and the status codes for foreign and unknown employees are unchanged", async () => {
+      const snaps = await snapshotRows(empA.id);
+      expect(Array.isArray(snaps)).toBe(true);
+      const unknown = await app.inject({
+        method: "GET",
+        url: "/api/v1/overtime/snapshots/00000000-0000-4000-8000-000000000000",
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(unknown.statusCode).toBe(404);
+    });
   });
 });
