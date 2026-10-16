@@ -220,15 +220,51 @@ describe("operator sign-in hardening", () => {
 
   it("refuses a TOTP code that was already used (replay), audited as REPLAY", async () => {
     const operator = await seedOperator(app);
-    await signIn(operator, 0);
+    // Generate the code once and reuse the exact string: a second totpFor(0) call could cross a
+    // 30 s step boundary and yield a fresh, valid code (Issue #619).
+    const code = operator.totpFor(0);
+    const first = await challengeFor(operator);
+    const accepted = await post("/api/v1/operator/auth/verify", { challengeToken: first, code });
+    expect(accepted.statusCode).toBe(200);
     const challengeToken = await challengeFor(operator);
-    const replay = await post("/api/v1/operator/auth/verify", {
-      challengeToken,
-      code: operator.totpFor(0),
-    });
+    const replay = await post("/api/v1/operator/auth/verify", { challengeToken, code });
     expect(replay.statusCode).toBe(401);
     const rows = await auditRows(operator.id, "OPERATOR_MFA_FAILED");
     expect(JSON.stringify(rows[0].newValue)).toContain("REPLAY");
+  });
+
+  it("refuses a code of the same time step after a sign-in but accepts the next step's code", async () => {
+    const operator = await seedOperator(app);
+    // Freeze the clock in the middle of a 30 s step so step arithmetic is deterministic.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Math.floor(Date.now() / 30_000) * 30_000 + 15_000);
+      const sameStepCode = operator.totpFor(0);
+      const nextStepCode = operator.totpFor(1);
+      expect(nextStepCode).not.toBe(sameStepCode);
+
+      const first = await post("/api/v1/operator/auth/verify", {
+        challengeToken: await challengeFor(operator),
+        code: sameStepCode,
+      });
+      expect(first.statusCode).toBe(200);
+
+      const sameStep = await post("/api/v1/operator/auth/verify", {
+        challengeToken: await challengeFor(operator),
+        code: sameStepCode,
+      });
+      expect(sameStep.statusCode).toBe(401);
+      const rows = await auditRows(operator.id, "OPERATOR_MFA_FAILED");
+      expect(JSON.stringify(rows[0].newValue)).toContain("REPLAY");
+
+      const nextStep = await post("/api/v1/operator/auth/verify", {
+        challengeToken: await challengeFor(operator),
+        code: nextStepCode,
+      });
+      expect(nextStep.statusCode).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("lets exactly one of two parallel verifications with the same code succeed", async () => {

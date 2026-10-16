@@ -832,7 +832,9 @@ import { readFileSync } from "node:fs";
 // function) now assert the fail-closed reality, plus the independent empty-role oracle in the permission matrix; nothing was
 // skipped or weakened. MIN_FILES 592 -> 602, MIN_TESTS 9530 -> 9649. Never lowered.
 const MIN_FILES = 602;
-const MIN_TESTS = 9649;
+// Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
+// the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
+const MIN_TESTS = 9650;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
