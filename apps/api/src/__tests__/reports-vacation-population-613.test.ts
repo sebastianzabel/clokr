@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import * as pdfModule from "../composition/pdf";
+import { runCarryoverWarningOnce } from "../contexts/absence/plugins/carryover-warning";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData, reissueTokenNow } from "./setup";
 import { createPopulationPerson, type PopulationPerson } from "./population-fixtures-613";
 
@@ -237,6 +238,109 @@ describe("Issue #613 — leave and vacation population", () => {
       const fromVacation = numbersOf(lastCall(pdfModule.streamLeaveListPdf)[1].employees);
       await getPdf(`/api/v1/reports/leave-list/pdf?year=${YEAR}`);
       expect(numbersOf(lastCall(pdfModule.streamLeaveListPdf)[1].employees)).toEqual(fromVacation);
+    });
+  });
+
+  describe("carry-over list and cron", () => {
+    const CARRY_NOW = new Date("2026-02-10T10:00:00Z");
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    it("neither the warning list nor the cron names an anonymised person; the exit rule stays", async () => {
+      const base = { tenantId: d.tenant.id, salonId: d.salonId };
+      const hire = new Date("2024-01-01T00:00:00.000Z");
+      const carry = {
+        K: await createPopulationPerson(app, { ...base, tag: "ck", hireDate: hire }),
+        D: await createPopulationPerson(app, {
+          ...base,
+          tag: "cd",
+          hireDate: hire,
+          loginActive: false,
+        }),
+        A: await createPopulationPerson(app, {
+          ...base,
+          tag: "ca",
+          hireDate: hire,
+          anonymized: true,
+        }),
+        F: await createPopulationPerson(app, {
+          ...base,
+          tag: "cf",
+          hireDate: hire,
+          exitDate: new Date("2026-06-30T00:00:00.000Z"),
+        }),
+      };
+      // 30 days after the faked "now": a default warning threshold (60/30/14/7) matches
+      const deadline = new Date(CARRY_NOW.getTime() + 30 * DAY_MS);
+      const entitlementIds: Record<string, string> = {};
+      for (const [key, person] of Object.entries(carry)) {
+        const ent = await app.prisma.leaveEntitlement.create({
+          data: {
+            employeeId: person.employeeId,
+            leaveTypeId: d.vacationType.id,
+            year: YEAR,
+            totalDays: 28,
+            usedDays: 0,
+            carriedOverDays: 5,
+            carryOverDeadline: deadline,
+          },
+        });
+        entitlementIds[key] = ent.id;
+      }
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: d.tenant.id },
+        data: { carryoverWarningEnabled: true, carryoverWarningThresholds: [60, 30, 14, 7] },
+      });
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(CARRY_NOW);
+      let listed: string[];
+      try {
+        const token = reissueTokenNow(app, d.adminToken);
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/reports/carryover-at-risk",
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect(res.statusCode).toBe(200);
+        listed = (JSON.parse(res.body) as { rows: Array<{ entitlementId: string }> }).rows.map(
+          (r) => r.entitlementId,
+        );
+        await runCarryoverWarningOnce(app, { onlyTenantId: d.tenant.id });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      const warned = (
+        await app.prisma.auditLog.findMany({
+          where: {
+            action: "CARRYOVER_WARNED",
+            entity: "LeaveEntitlement",
+            entityId: { in: Object.values(entitlementIds) },
+          },
+          select: { entityId: true },
+        })
+      ).map((r) => r.entityId);
+
+      // the unchanged BUrlG rule: no exit date; the login state does not matter
+      expect(listed).toEqual(expect.arrayContaining([entitlementIds.K, entitlementIds.D]));
+      expect(warned).toEqual(expect.arrayContaining([entitlementIds.K, entitlementIds.D]));
+      expect(listed).not.toContain(entitlementIds.F);
+      expect(warned).not.toContain(entitlementIds.F);
+      // Issue #613: the anonymised person is neither listed nor warned
+      expect(listed).not.toContain(entitlementIds.A);
+      expect(warned).not.toContain(entitlementIds.A);
+      expect(
+        await app.prisma.notification.count({
+          where: { userId: carry.A.userId, type: "CARRYOVER_EXPIRING" },
+        }),
+      ).toBe(0);
+      // list and cron select the same entitlements of the fixture
+      const mine = new Set(Object.values(entitlementIds));
+      expect(listed.filter((id) => mine.has(id)).sort((a, b) => a.localeCompare(b))).toEqual(
+        warned
+          .filter((id): id is string => id !== null && mine.has(id))
+          .sort((a, b) => a.localeCompare(b)),
+      );
     });
   });
 });

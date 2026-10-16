@@ -43,11 +43,12 @@
  * ── H2 — {@link getExpiringCarryOver}'s `where` is BUrlG law, not a filter to simplify ─────────
  * `docs/burlg-carryover.md` is the rule (EuGH C-684/16 Hinweispflicht, the carry-over deadline
  * window). The `where` below is copied verbatim from `composition/reports.ts`'s pre-facade query,
- * not re-derived.
+ * not re-derived. The `exitDate: null` rule is unchanged BUrlG law; Issue #613 adds only the DSGVO
+ * anonymisation sentinel (an anonymised person is never named in a warning list).
  */
 import type { LeaveEntitlement, Prisma } from "@clokr/db";
 import { getLeaveTypeByCode } from "./leave-types";
-import { reportPopulationWhere } from "../../platform";
+import { NOT_ANONYMIZED_EMPLOYEE_WHERE, reportPopulationWhere } from "../../platform";
 import {
   computeRegularVacationDays, // Issue #445 (D-01) — the one regular-entitlement computation
   computeRegularVacationDaysBySegments, // Issue #450 (D-09) — the segment-aware form
@@ -157,7 +158,8 @@ export async function getEntitlementById(
  * entitlement only — `recalculateCarryOver`/`autoCarryOver` and PUT /settings/vacation write
  * carry-over on VACATION rows only, same rule the carry-over warning cron's own `where` already
  * applies (`plugins/carryover-warning.ts`) — so a different leave type's row is never scanned
- * here either.
+ * here either. The `exitDate: null` rule is unchanged BUrlG law; Issue #613 adds only the DSGVO
+ * anonymisation sentinel (`NOT_ANONYMIZED_EMPLOYEE_WHERE`), the same one the cron applies.
  */
 export async function getExpiringCarryOver(
   db: Prisma.TransactionClient,
@@ -167,7 +169,7 @@ export async function getExpiringCarryOver(
 ) {
   return db.leaveEntitlement.findMany({
     where: {
-      employee: { tenantId, exitDate: null },
+      employee: { tenantId, exitDate: null, ...NOT_ANONYMIZED_EMPLOYEE_WHERE },
       carriedOverDays: { gt: 0 },
       carryOverDeadline: { gt: now, lte: cutoff },
       leaveType: { code: "VACATION" },

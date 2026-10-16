@@ -5,6 +5,7 @@ import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-adviso
 import {
   userIdsHoldingPermission, // Phase 75b Plan 10 (#75), D-16
   ACTIVE_TENANT_WHERE, // Phase 88 (D-05a) — deactivated tenants get no warnings
+  NOT_ANONYMIZED_EMPLOYEE_WHERE, // Issue #613 — an anonymised person is never warned
 } from "../../platform";
 import { vacationBalanceForRow } from "../facade/vacation-balance"; // Issue #451 (D-08) — same context, relative import (no index.ts detour — see 451-07-SUMMARY.md)
 
@@ -117,7 +118,9 @@ export async function runCarryoverWarningOnce(
       // `recalculateCarryOver`/`autoCarryOver` and PUT /settings/vacation write carry-over on
       // VACATION rows only, so a different leave type's row is never scanned.
       const where: Record<string, unknown> = {
-        employee: { tenantId: tenant.id, exitDate: null },
+        // Issue #613 — same persons as `/reports/carryover-at-risk` (facade A15): the BUrlG
+        // `exitDate: null` rule is unchanged, an anonymised person is never warned.
+        employee: { tenantId: tenant.id, exitDate: null, ...NOT_ANONYMIZED_EMPLOYEE_WHERE },
         carryOverDeadline: { gt: now },
         carriedOverDays: { gt: 0 },
         leaveType: { code: "VACATION" },
