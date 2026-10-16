@@ -48,3 +48,17 @@ export function isPeriodStartInMonth(periodStart: Date, monthStart: Date): boole
   const t = periodStart.getTime();
   return t >= base && t < base + TWO_DAYS_MS;
 }
+
+/**
+ * The one tie-break for several active MONTHLY rows that match one month's window
+ * (Issue #595, P-01): legacy UTC-naive and TZ-converted duplicates of the same month exist on
+ * production (see the header). Every account read takes the FIRST row of this order. The
+ * smallest `periodStart` is exactly the row the former exact-match lookup returned whenever it
+ * returned one, so a month already shown as confirmed keeps its figures; `closedAt` and `id`
+ * only make the rare remaining tie deterministic.
+ */
+export function monthlySnapshotOrder(): Array<
+  { periodStart: "asc" } | { closedAt: "asc" } | { id: "asc" }
+> {
+  return [{ periodStart: "asc" }, { closedAt: "asc" }, { id: "asc" }];
+}
