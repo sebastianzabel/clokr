@@ -120,7 +120,7 @@
   }
   .salon-view-route {
     display: inline-block;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
   }
   .salon-view-note {
     margin: 0;

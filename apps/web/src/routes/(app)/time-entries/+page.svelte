@@ -2995,6 +2995,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
+    min-height: 2.5rem;
     cursor: pointer;
   }
   .travel-hint {
@@ -3004,8 +3005,7 @@
   }
   .travel-route {
     display: inline-block;
-    margin-left: 0.25rem;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
   }
 
   /* ── List card (v1.5) ────────────────────────────────── */
