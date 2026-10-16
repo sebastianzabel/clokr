@@ -1137,6 +1137,28 @@ function normalize(value: unknown): unknown {
   return value;
 }
 
+/**
+ * Amendment 2026-10-16 (Issue #70, Phase 70b-06): GET /time-entries rows additionally carry the
+ * display field `salonName` (the name of the entry's own salon). The frozen literals below are NOT
+ * re-captured: the field is taken out of the rows before the comparison and proven separately
+ * against the salon the row's `salonId` names, so every other key and value stays pinned.
+ */
+async function withoutSalonName(
+  prisma: FastifyInstance["prisma"],
+  rows: Array<Record<string, unknown>>,
+): Promise<Array<Record<string, unknown>>> {
+  expect(rows.length).toBeGreaterThan(0);
+  const salons = await prisma.salon.findMany({
+    where: { id: { in: rows.map((r) => r.salonId as string) } },
+    select: { id: true, name: true },
+  });
+  return rows.map(({ salonName, ...rest }) => {
+    expect(typeof salonName).toBe("string");
+    expect(salonName).toBe(salons.find((s) => s.id === rest.salonId)?.name);
+    return rest;
+  });
+}
+
 function day(date: string) {
   return new Date(`${date}T00:00:00Z`);
 }
@@ -1457,7 +1479,7 @@ describe("Issue #85 / #547 — frozen whole-tenant responses (tenant admin)", ()
       Record<string, unknown>
     >;
     expect(body.map((r) => r.id)).toEqual(ownEntryIds);
-    expect(normalize(body)).toEqual(EXPECTED_TIME_ENTRIES_OWN);
+    expect(normalize(await withoutSalonName(app.prisma, body))).toEqual(EXPECTED_TIME_ENTRIES_OWN);
   });
 
   it("(e) GET /time-entries?employeeId= answers the frozen literal", async () => {
@@ -1465,6 +1487,8 @@ describe("Issue #85 / #547 — frozen whole-tenant responses (tenant admin)", ()
       `/api/v1/time-entries?from=2026-06-01&to=2026-06-30&employeeId=${ids.seeded}`,
     )) as Array<Record<string, unknown>>;
     expect(body.map((r) => r.id)).toEqual(otherEntryIds);
-    expect(normalize(body)).toEqual(EXPECTED_TIME_ENTRIES_OTHER);
+    expect(normalize(await withoutSalonName(app.prisma, body))).toEqual(
+      EXPECTED_TIME_ENTRIES_OTHER,
+    );
   });
 });

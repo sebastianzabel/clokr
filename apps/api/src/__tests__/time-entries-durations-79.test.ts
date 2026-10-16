@@ -121,7 +121,9 @@ describe("Issue #79 — per-entry presence and working time on GET /time-entries
   it("every pre-existing key of an item is unchanged", async () => {
     const items = await list(data.adminToken, true);
     const a = byId(items, ids.a)!;
-    const { presenceMinutes: _p, workingMinutes: _w, ...rest } = a;
+    // Issue #70 (70b-06): the list row also carries the display field `salonName`; it is taken out
+    // here and proven against the salon's own name below, every other key stays pinned to the row.
+    const { presenceMinutes: _p, workingMinutes: _w, salonName, ...rest } = a;
     void _p;
     void _w;
     const row = await app.prisma.timeEntry.findUnique({
@@ -134,5 +136,7 @@ describe("Issue #79 — per-entry presence and working time on GET /time-entries
       },
     });
     expect(rest).toEqual(JSON.parse(JSON.stringify(row)));
+    const salon = await app.prisma.salon.findUniqueOrThrow({ where: { id: row!.salonId } });
+    expect(salonName).toBe(salon.name);
   });
 });

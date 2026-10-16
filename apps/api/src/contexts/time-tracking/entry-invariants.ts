@@ -74,6 +74,9 @@ export async function checkOverlap(
       ],
     },
     select: { id: true, date: true, startTime: true, endTime: true },
+    // Several rows may conflict (a long new entry spanning two existing ones): the one named in the
+    // 409 text is the earliest, whatever order the database happens to return — Issue #70 (70b-06).
+    orderBy: [{ startTime: "asc" }, { id: "asc" }],
   });
 }
 
