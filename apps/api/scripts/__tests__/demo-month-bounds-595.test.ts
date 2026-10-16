@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { demoMonthRangeUtc } from "../../../../packages/db/src/demo-month-bounds";
 import { monthRangeUtc } from "../../src/contexts/working-time-account/timezone";
+import { DEMO_TENANT_SLUG } from "../demo-close-previous-month";
 
 const REPO_ROOT = join(__dirname, "..", "..", "..", "..");
 const ZONES = ["Europe/Berlin", "UTC", "America/New_York", "Asia/Kolkata"] as const;
@@ -101,5 +102,14 @@ describe("seed-demo.ts — no fabricated closed month (D-05)", () => {
       .filter((line) => line.includes("genEntries(handle, prevFrom, prevTo"));
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatch(/,\s*false\)/);
+  });
+});
+
+describe("the dev wrapper targets the seed's tenant", () => {
+  it("DEMO_TENANT_SLUG equals the TENANT_SLUG literal of seed-demo.ts", () => {
+    const source = readFileSync(join(REPO_ROOT, "packages/db/src/seed-demo.ts"), "utf8");
+    const match = /const TENANT_SLUG = "([^"]+)"/.exec(source);
+    expect(match, "no TENANT_SLUG literal in seed-demo.ts").not.toBeNull();
+    expect(DEMO_TENANT_SLUG).toBe(match?.[1]);
   });
 });
