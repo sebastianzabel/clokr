@@ -40,10 +40,17 @@ function addDaysIso(iso: string, days: number): string {
 /** Mirrors the identical helper in leave-days-by-contract-417.test.ts. */
 function nextHolidayFreeMonday(daysOut: number, weekSpan = 1): string {
   const anchor = utcMidnight(todayStr());
-  let candidateIso = dbDateStr(new Date(anchor.getTime() + daysOut * DAY_MS));
+  const candidateIso = dbDateStr(new Date(anchor.getTime() + daysOut * DAY_MS));
   const daysUntilMonday = (8 - utcMidnight(candidateIso).getUTCDay()) % 7;
-  candidateIso = addDaysIso(candidateIso, daysUntilMonday);
+  return holidayFreeMondayFrom(addDaysIso(candidateIso, daysUntilMonday), weekSpan);
+}
 
+/** Anchored at a known Monday instead of "today" (pattern of leave-week-union-436.test.ts): two
+ * independent `nextHolidayFreeMonday(daysOut)` calls can land on the SAME Monday once the first
+ * one's holiday-skip loop crosses Christmas/New Year (measured 2026-10-16: both 2027-01-04), and
+ * the per-employee overlap guard then answers 409. */
+function holidayFreeMondayFrom(fromMondayIso: string, weekSpan = 1): string {
+  let candidateIso = fromMondayIso;
   const spanDays = weekSpan * 7;
   const MAX_ADVANCES = 16;
   for (let i = 0; i < MAX_ADVANCES; i++) {
@@ -59,13 +66,14 @@ function nextHolidayFreeMonday(daysOut: number, weekSpan = 1): string {
     candidateIso = addDaysIso(candidateIso, 7);
   }
   throw new Error(
-    `nextHolidayFreeMonday: exceeded MAX_ADVANCES without a holiday-free ${weekSpan}-week span`,
+    `holidayFreeMondayFrom: exceeded MAX_ADVANCES without a holiday-free ${weekSpan}-week span`,
   );
 }
 
 const PAST_ANCHOR = new Date(Date.UTC(new Date().getUTCFullYear() - 2, 0, 1));
 const PENDING_MONDAY = nextHolidayFreeMonday(60);
-const APPROVED_MONDAY = nextHolidayFreeMonday(75);
+// Built from PENDING_MONDAY so the two ranges of the shared employee can never coincide.
+const APPROVED_MONDAY = holidayFreeMondayFrom(addDaysIso(PENDING_MONDAY, 14));
 
 describe("recalculate-shift-based-leave-days — --status/--request-id filters (Issue #425)", () => {
   let app: FastifyInstance;
