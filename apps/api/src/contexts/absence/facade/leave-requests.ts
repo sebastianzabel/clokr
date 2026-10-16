@@ -164,7 +164,11 @@
  * facade. `LeaveRequest` — 28 accesses, the largest single model — is the closing conversion.
  */
 import type { LeaveRequestStatus, LeaveTypeCode, Prisma } from "@clokr/db";
-import { type EmployeeScope, employeeScopeWhere } from "../../platform";
+import {
+  type EmployeeScope,
+  employeeScopeWhere,
+  NOT_ANONYMIZED_EMPLOYEE_WHERE,
+} from "../../platform";
 import { EFFECTIVE_LEAVE_STATUSES } from "../effective-leave-statuses"; // Issue #446 (D-01/D-02)
 
 // ── A2 — today's presence / roster-Soll set: APPROVED + CANCELLATION_REQUESTED ───────────────────
@@ -458,7 +462,12 @@ export interface TeamUpcomingLeave {
  * set is `APPROVED` only, like the list it replaces — deliberately not `EFFECTIVE_LEAVE_STATUSES`:
  * a leave under `CANCELLATION_REQUESTED` is not shown as upcoming on that card today.
  *
- * No limit here: the caller filters by Stammsalon first and slices afterwards.
+ * Issue #614 (AC-614-4): the request of a DSGVO-anonymized person is never returned — such a person
+ * is not a team member whose leave is upcoming. This also covers the Bestand anonymized before
+ * Phase 614 (no exit date, approved future leave still in place).
+ *
+ * No limit here: the caller filters by Stammsalon first and slices afterwards, so the caller's
+ * `slice(0, 8)` in `composition/dashboard.ts` counts only listable rows.
  */
 export async function getApprovedLeaveEndingOnOrAfter(
   db: Prisma.TransactionClient,
@@ -467,7 +476,8 @@ export async function getApprovedLeaveEndingOnOrAfter(
 ): Promise<TeamUpcomingLeave[]> {
   return db.leaveRequest.findMany({
     where: {
-      ...employeeScopeWhere(scope),
+      // `employeeScopeWhere` may itself carry an `employee` key: compose with AND, never overwrite.
+      AND: [{ ...employeeScopeWhere(scope) }, { employee: NOT_ANONYMIZED_EMPLOYEE_WHERE }],
       status: "APPROVED",
       deletedAt: null,
       endDate: { gte: fromDay },
