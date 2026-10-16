@@ -426,12 +426,12 @@ Rückfallsicherung und liefert dieselbe 409.
 
 ### `report` — Berichte und Exporte
 
-| Permission                 | erlaubt                                                                                                                                                                                                           | erlaubt ausdrücklich nicht                                                                                                                                              |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `report:read:ZUGEWIESEN`   | Berichtsdaten der Mitarbeiter im Scope in der App lesen: Monatsbericht, Urlaubsübersicht, verfallsbedrohter Resturlaub (`GET /reports/monthly`, `GET /reports/leave-overview`, `GET /reports/carryover-at-risk`). | Dateien exportieren (`report:export`); Resturlaub-Warnungen versenden (`report:notify`); nichts außerhalb des Scopes der Zuweisung.                                     |
-| `report:export:EIGENE`     | Den eigenen Monatsbericht als PDF herunterladen (`GET /reports/monthly/pdf` für sich selbst).                                                                                                                     | Berichte anderer Mitarbeiter; DATEV-Exporte und Sammel-PDFs; Berichtsdaten in der App (`report:read`).                                                                  |
-| `report:export:ZUGEWIESEN` | Dateien für die Mitarbeiter im Scope exportieren: DATEV (`GET /reports/datev`, `GET /reports/datev/employee`) und PDFs (Monatsbericht einzeln und gesammelt, Urlaubsliste, Urlaubsübersicht, beide zusammen).     | Resturlaub-Warnungen versenden (`report:notify`); Daten ändern; nichts außerhalb des Scopes der Zuweisung.                                                              |
-| `report:notify:ZUGEWIESEN` | Mitarbeiter im Scope vor verfallendem Resturlaub warnen (`POST /reports/carryover-warn`).                                                                                                                         | Berichtsdaten lesen oder exportieren (`report:read`, `report:export`); Urlaubsansprüche ändern (`leave-entitlement:update`); nichts außerhalb des Scopes der Zuweisung. |
+| Permission                 | erlaubt                                                                                                                                                                                                           | erlaubt ausdrücklich nicht                                                                                                                                                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `report:read:ZUGEWIESEN`   | Berichtsdaten der Mitarbeiter im Scope in der App lesen: Monatsbericht, Urlaubsübersicht, verfallsbedrohter Resturlaub (`GET /reports/monthly`, `GET /reports/leave-overview`, `GET /reports/carryover-at-risk`). | Dateien exportieren (`report:export`); Resturlaub-Warnungen versenden (`report:notify`); Tageszeilen — die drei Antworten tragen keine Tagesstruktur (nur in den `report:export`-PDFs); nichts außerhalb des Scopes der Zuweisung. |
+| `report:export:EIGENE`     | Den eigenen Monatsbericht als PDF herunterladen (`GET /reports/monthly/pdf` für sich selbst).                                                                                                                     | Berichte anderer Mitarbeiter; DATEV-Exporte und Sammel-PDFs; Berichtsdaten in der App (`report:read`).                                                                                                                             |
+| `report:export:ZUGEWIESEN` | Dateien für die Mitarbeiter im Scope exportieren: DATEV (`GET /reports/datev`, `GET /reports/datev/employee`) und PDFs (Monatsbericht einzeln und gesammelt, Urlaubsliste, Urlaubsübersicht, beide zusammen).     | Resturlaub-Warnungen versenden (`report:notify`); Daten ändern; nichts außerhalb des Scopes der Zuweisung.                                                                                                                         |
+| `report:notify:ZUGEWIESEN` | Mitarbeiter im Scope vor verfallendem Resturlaub warnen (`POST /reports/carryover-warn`).                                                                                                                         | Berichtsdaten lesen oder exportieren (`report:read`, `report:export`); Urlaubsansprüche ändern (`leave-entitlement:update`); nichts außerhalb des Scopes der Zuweisung.                                                            |
 
 ### `team-overview` — Team-Übersichten
 
@@ -477,20 +477,28 @@ Liste — eine neue Katalog-Permission macht diesen Test rot, bis jemand für de
   sind ein Bewegungsprofil (Datenminimierung, Art. 5 DSGVO).
 - Jede `shift:*`/`shift-pattern:*`/`availability:*`-Permission, `team-overview:read` — Anwesenheit
   ist ebenfalls ein Bewegungsprofil.
-- `report:*` — `report:read` bündelt den Monatsbericht MIT Tageszeilen; damit fällt auch die
-  Urlaubsübersicht vorerst weg (Aufteilung: #86).
+- `report:export` und `report:notify` — Dateien mit Tageszeilen (PDFs, DATEV) und der Versand von
+  Resturlaub-Warnungen.
 - Jede Genehmigungs-Permission (`approve`/`decide`/`attest`/`correct`/`cancel`) — „jede
   Genehmigung" bleibt bei Inhaber/Salonmanager.
 - `employee:anonymize` — die DSGVO-Löschung bleibt beim Inhaber.
 - `employee:import` — der CSV-Import setzt Rollen über die Spalte `rolle`.
 - `employee:manage-access` — Login/Rollen.
 - `overtime:settle`, `overtime:set-opening-balance`, `month-close:close`/`unlock`/`close-year`.
-- Jede MANDANT-Permission.
+- Jede MANDANT-Permission außer `salon:read`.
 
 `leave-entitlement:update` ist enthalten, weil der Urlaubsanspruch Vertragsbestandteil ist;
 `section9:read` ist enthalten als Teil von „Abwesenheiten lesen", obwohl es sich um
 Gesundheitsdaten nach Art. 9 DSGVO handelt — die Personalabteilung ist die übliche Halterin
 ärztlicher Bescheinigungen.
+
+**Seit #86 (Owner-Entscheidung 16.10.2026).** `report:read` ist enthalten, weil die drei
+JSON-Antworten (`GET /reports/monthly`, `/reports/leave-overview`, `/reports/carryover-at-risk`)
+nur Summen je Person und Monat bzw. Jahr tragen — das ist durch `reports-hr-86.test.ts` festgenagelt
+(Schlüsselpfad-Allowlist und Tages-Detektor); Tageszeilen gibt es nur in den `report:export`-PDFs.
+`salon:read` ist enthalten, damit die Personalabteilung Salonzuordnungen pflegen kann, auch zu
+inaktiven Salons. Das ist eine Semantikänderung des Unterbaus und kehrt Phase 76b D-07 für
+`report:read` um.
 
 **Ausbilder — nicht enthalten, mit Grund (D-08):** alles außer den fünf gelisteten Lese-Rechten,
 insbesondere jede Genehmigung, jede Korrektur, Saldo und Vertrag (403, AK-76b-6). `employee:read`

@@ -552,6 +552,84 @@ Route selektiert jede globale Rolle, nicht nur die per Id bekannten) — der alt
 Problem für einen kurzen Rollback ohne Bedienung dieser Rollen; bei einem längeren Rollback vorher
 mit dem Betreiber klären.
 
+## Phase 86b — Personalabteilung erhält Berichte lesen und Salons lesen (Issue #86)
+
+**Release-Hinweis.** Die Migration gilt sofort für **alle** Konten mit der Systemrolle
+Personalabteilung (Owner-Entscheidung 16.10.2026, Semantikänderung des Unterbaus): Sie erhalten
+`report:read:ZUGEWIESEN` und `salon:read:ZUGEWIESEN`. Kundenkopien des Templates (mandanteneigene
+Rollen) bleiben unverändert.
+
+**Was die Migration tut.** `packages/db/prisma/migrations/20261016102152_hr_template_report_salon_read`
+ist eine reine Datenmigration — keine Tabelle, keine Spalte, kein Index, kein Typ wird angelegt,
+geändert oder gelöscht (`prisma migrate diff` bleibt leer). Sie aktualisiert genau eine Zeile: die
+globale Personalabteilung (`…a006`, `tenantId` NULL) von 13 auf 15 Permissions. Der
+`IS DISTINCT FROM`-Schutz macht einen zweiten Lauf zu einem No-op, der weder eine Zeile noch einen
+Zeitstempel ändert. Niemandem wird etwas zugewiesen, es entsteht kein Audit-Eintrag.
+
+**1. Vor `migrate deploy` — wer die Rechte erhält (lesend).**
+
+```sql
+-- Assignments of the global HR template per tenant and scope: these accounts gain the two keys.
+SELECT "tenantId", "scopeType", count(*) AS assignments
+FROM "RoleAssignment"
+WHERE "accessRoleId" = '00000000-0000-4000-8000-00000000a006'
+GROUP BY "tenantId", "scopeType"
+ORDER BY "tenantId", "scopeType";
+
+-- Tenant-owned roles whose permissions equal the OLD 13-key template (copies). Informational:
+-- they are NOT changed by the migration; expected rows stay unchanged afterwards.
+SELECT "id", "tenantId", "name"
+FROM "AccessRole"
+WHERE "tenantId" IS NOT NULL
+  AND "permissions" = ARRAY[
+    'employee:read:ZUGEWIESEN', 'employee:create:ZUGEWIESEN', 'employee:update:ZUGEWIESEN',
+    'employee:update-avatar:ZUGEWIESEN', 'contract:read:ZUGEWIESEN', 'contract:update:ZUGEWIESEN',
+    'leave-request:read:ZUGEWIESEN', 'section9:read:ZUGEWIESEN', 'leave-entitlement:read:ZUGEWIESEN',
+    'leave-entitlement:update:ZUGEWIESEN', 'vocational-school:read:ZUGEWIESEN',
+    'overtime:read:ZUGEWIESEN', 'month-close:read:ZUGEWIESEN'
+  ]::text[];
+```
+
+**2. Nach `migrate deploy` — Kontrolle (lesend).**
+
+```sql
+-- The seven global system-role rows. Expected: 7 rows, 87/63/22/87/24/15/5 permissions, tenantId
+-- NULL for all; only the Personalabteilung row (a006) differs from Phase 76b (13 -> 15).
+SELECT "id", "name", cardinality("permissions") AS permissions, "tenantId"
+FROM "AccessRole"
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a002',
+  '00000000-0000-4000-8000-00000000a003',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005',
+  '00000000-0000-4000-8000-00000000a006',
+  '00000000-0000-4000-8000-00000000a007'
+)
+ORDER BY "id";
+```
+
+**3. Rollback.** Das vorige Image liest die Zeile aus der Datenbank: Die Personalabteilung behielte
+unter dem alten Code die zwei neuen Keys, und dem alten Code fehlt die Tageslisten-Schwärzung aus
+Plan 86b-02. Für einen Rollback, der länger als ein kurzes Fenster dauert, die alte Zeile mit dem
+Gegen-UPDATE wiederherstellen und das im Audit-Pfad des Releases vermerken. Es gibt keine
+Schemaänderung und in beiden Richtungen keinen Datenverlust.
+
+```sql
+-- Reverse of the Phase 86b migration: restores the 13-key Phase 76b template row.
+UPDATE "AccessRole"
+SET "permissions" = ARRAY[
+      'employee:read:ZUGEWIESEN', 'employee:create:ZUGEWIESEN', 'employee:update:ZUGEWIESEN',
+      'employee:update-avatar:ZUGEWIESEN', 'contract:read:ZUGEWIESEN', 'contract:update:ZUGEWIESEN',
+      'leave-request:read:ZUGEWIESEN', 'section9:read:ZUGEWIESEN', 'leave-entitlement:read:ZUGEWIESEN',
+      'leave-entitlement:update:ZUGEWIESEN', 'vocational-school:read:ZUGEWIESEN',
+      'overtime:read:ZUGEWIESEN', 'month-close:read:ZUGEWIESEN'
+    ]::text[],
+    "updatedAt" = NOW()
+WHERE "id" = '00000000-0000-4000-8000-00000000a006'
+  AND "tenantId" IS NULL;
+```
+
 ## Phase 566 — Gebuchte Pakete je Mandant (Bestandsschutz, Issue #566)
 
 **Hinweis für die Release Notes (v1.16.0).** Dieser Abschnitt ist der Release-Hinweis zu Phase 566: Vor dem
