@@ -31,6 +31,11 @@ export interface DayPreviewRequest {
   entryId?: string;
   startTime: string;
   endTime: string;
+  /**
+   * The explicit salon of the form (Issue #70); absent without a pick, then the server derives
+   * the salon exactly as the save does.
+   */
+  salonId?: string;
   breaks: DayPreviewBreak[];
   /** Legacy break minutes without positions; only read by the server when there are no slots. */
   breakMinutes?: number;
@@ -59,6 +64,8 @@ export interface BuildDayPreviewInput {
   endISO: string | null;
   breaks: DayPreviewBreak[];
   breakMinutes?: number;
+  /** The explicit salon of the form; null, undefined and "" mean "none picked". */
+  salonId?: string | null;
 }
 
 /**
@@ -79,6 +86,7 @@ export function buildDayPreviewRequest(input: BuildDayPreviewInput): DayPreviewR
     breaks: input.breaks,
   };
   if (input.entryId) body.entryId = input.entryId;
+  if (input.salonId) body.salonId = input.salonId;
   if (input.breakMinutes !== undefined) body.breakMinutes = input.breakMinutes;
   return body;
 }

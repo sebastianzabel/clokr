@@ -33,6 +33,14 @@
   } from "$lib/breaks/day-break-preview";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { salonContext, showSalonOptions } from "$stores/salon-context"; // Issue #70, D-12
+  import {
+    addActionForDay,
+    cellClickAction,
+    entryCountTitle,
+    salonFieldOptions,
+    salonIdToSend,
+  } from "$lib/time-entries/day-entry-actions"; // Issue #70, D-07
   import { mayFileRetroRequest } from "$lib/page-rights";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
@@ -101,6 +109,9 @@
     // TenantConfig.enforceBreakConfirmation is on.
     breakStatus?: "AUTO" | "CONFIRMED" | "WAIVED";
     breakWaivedReason?: string | null;
+    // Issue #70 — the salon the entry was recorded in (`salonName` is the served display name).
+    salonId?: string | null;
+    salonName?: string | null;
   }
 
   interface WorkSchedule {
@@ -140,6 +151,8 @@
     expectedMin: number;
     workedMin: number;
     hasEntries: boolean;
+    // Issue #70 — how many entries the day holds (a cell with several switches to the list).
+    entryCount: number;
     status: CalStatus;
     absenceType: string | null;
     absenceHalf: boolean;
@@ -326,6 +339,14 @@
     return Math.max(0, gross - formBreakTotal);
   });
   let formNote = $state("");
+  // Issue #70 (D-07, D-12): salon options and the salon field exist only where the #64 rule
+  // holds (more than one active salon, more than one reachable). The options are the salons the
+  // caller reaches from the salon-context store, never the clock-salon answer (that one describes
+  // today) and never the header selection (a view filter, not a booking salon, #87 D-06).
+  let multiEntryUi = $derived(showSalonOptions($salonContext));
+  let formSalonId = $state("");
+  let formSalonOptions = $derived(salonFieldOptions($salonContext.salons, editEntry));
+  let formSalonPayload = $derived(salonIdToSend(formSalonId, editEntry?.salonId ?? null));
   let defaultBreakStart: string | null = $state(null);
   // Phase 93 (BREAK-07) — tenant-configured break durations for the new-entry
   // prefill. Sourced from GET /settings/work (defaultBreakOver6h/9h). These are
@@ -896,6 +917,7 @@
       expectedMin,
       workedMin,
       hasEntries,
+      entryCount: slots.length,
       status,
       absenceType,
       absenceHalf,
@@ -1026,19 +1048,30 @@
     return breakOver9h; // > 9h — tenant default
   }
 
+  // The loaded rows of one calendar day, in the order the API served them.
+  function rowsOfDay(day: string): TimeEntry[] {
+    return entries.filter((e) => (e.date ?? e.startTime).split("T")[0] === day);
+  }
+
   function openAdd(forDate?: string) {
     const targetDate = forDate ?? selectedDate;
-    // If an entry already exists for this day, open it for editing instead
-    const existing = entries.find((e) => (e.date ?? e.startTime).split("T")[0] === targetDate);
-    if (existing) {
-      openEdit(existing);
+    // Without salon options a day that already has an entry opens that entry for editing; with
+    // them it opens a new form (D-12, see addActionForDay).
+    const action = addActionForDay(rowsOfDay(targetDate), multiEntryUi);
+    if (action.kind === "edit") {
+      openEdit(action.entry);
       return;
     }
+    openNew(targetDate, action.start, action.end);
+  }
+
+  function openNew(targetDate: string, start: string, end: string) {
     editEntry = null;
     formDate = targetDate;
-    formStart = "09:00";
-    formEnd = "17:00";
+    formStart = start;
+    formEnd = end;
     formHasEnd = true;
+    formSalonId = "";
     // Phase 93 (BREAK-07) — dynamic 0/30/45 prefill for NEW entries. <=6h yields
     // no break row (no auto-break, no AUTO, no nudge). When defaultBreakStart is
     // null, fall back to no prefilled row — do not invent a start time.
@@ -1055,12 +1088,46 @@
     modalOpen = true;
   }
 
+  // Issue #70: a further entry on the day of the entry being edited. The unsaved edit of the open
+  // dialog is dropped, exactly like Abbrechen.
+  function openAdditionalEntry(day: string) {
+    const action = addActionForDay(rowsOfDay(day), true);
+    if (action.kind !== "new") return;
+    closeModal();
+    openNew(day, action.start, action.end);
+  }
+
+  // Issue #70: a calendar cell with one entry still opens it for editing, a cell with several
+  // switches to the list focused on that day, an empty cell opens the new form.
+  async function onCellClick(day: string) {
+    const action = cellClickAction(rowsOfDay(day));
+    if (action.kind === "edit") {
+      openEdit(action.entry);
+    } else if (action.kind === "list") {
+      selectedDate = day;
+      teView = "list";
+      await tick();
+      document
+        .querySelector(".row-day-focus")
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else {
+      openAdd(day);
+    }
+  }
+
+  // The tooltip of a calendar cell: its own reason (holiday, absence, ...) plus the entry count.
+  function cellTitle(base: string | undefined, entryCount: number): string | undefined {
+    const count = multiEntryUi ? entryCountTitle(entryCount) : null;
+    return [base, count].filter(Boolean).join(" · ") || undefined;
+  }
+
   function openEdit(entry: TimeEntry) {
     editEntry = entry;
     formDate = (entry.date ?? entry.startTime).split("T")[0];
     formStart = format(new Date(entry.startTime), "HH:mm");
     formHasEnd = !!entry.endTime;
     formEnd = entry.endTime ? format(new Date(entry.endTime), "HH:mm") : "17:00";
+    formSalonId = entry.salonId ?? "";
     if (entry.breaks && entry.breaks.length > 0) {
       formBreaks = entry.breaks.map((b) => ({
         start: format(new Date(b.startTime), "HH:mm"),
@@ -1172,6 +1239,7 @@
           breakMinutes: formBreakTotal,
           breaks: breaksPayload,
           note: formNote || null,
+          salonId: formSalonPayload,
         });
       } else {
         saved = await api.post<{ warnings?: unknown }>("/time-entries", {
@@ -1181,6 +1249,7 @@
           breakMinutes: formBreakTotal,
           breaks: breaksPayload,
           note: formNote || null,
+          salonId: formSalonPayload,
         });
       }
       closeModal();
@@ -1351,6 +1420,7 @@
           breakMinutes: formBreakTotal,
           breaks: breaksPayload,
           note: formNote || null,
+          salonId: formSalonPayload,
           reason: retroReason,
         });
         closeModal();
@@ -1631,6 +1701,7 @@
           endISO,
           breaks: breaksPayload,
           breakMinutes: formBreakTotal,
+          salonId: formSalonPayload,
         });
       } catch {
         // A half-typed time cannot be converted; nothing to evaluate yet.
@@ -1875,6 +1946,19 @@
       {:else}
         <div class="cal-grid" data-testid="calendar-grid">
           {#each calendarDays as day (day.dateStr)}
+            {@const baseTitle = day.isBeforeHire
+              ? "Vor Eintrittsdatum"
+              : isExempt
+                ? "Keine Zeiterfassungs-Pflicht (§ 18 ArbZG)"
+                : day.isHoliday
+                  ? day.holidayName
+                  : day.absenceType
+                    ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
+                    : day.isVocationalSchoolNoLeave
+                      ? "Berufsschule – kein Urlaub"
+                      : day.isVocationalSchool
+                        ? "Berufsschule"
+                        : undefined}
             <button
               type="button"
               data-date={day.dateStr}
@@ -1894,20 +1978,8 @@
               class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
               class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
               disabled={day.isBeforeHire || !day.isCurrentMonth || isExempt}
-              title={day.isBeforeHire
-                ? "Vor Eintrittsdatum"
-                : isExempt
-                  ? "Keine Zeiterfassungs-Pflicht (§ 18 ArbZG)"
-                  : day.isHoliday
-                    ? day.holidayName
-                    : day.absenceType
-                      ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
-                      : day.isVocationalSchoolNoLeave
-                        ? "Berufsschule – kein Urlaub"
-                        : day.isVocationalSchool
-                          ? "Berufsschule"
-                          : undefined}
-              onclick={isExempt ? undefined : () => openAdd(day.dateStr)}
+              title={cellTitle(baseTitle, day.entryCount)}
+              onclick={isExempt ? undefined : () => onCellClick(day.dateStr)}
             >
               <span class="cal-day-num">{day.dayNum}</span>
               {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
@@ -1993,11 +2065,29 @@
           {#each Array(6) as _, i (i)}<div class="skeleton list-skel-row"></div>{/each}
         </div>
       {:else}
+        {#if multiEntryUi}
+          {#if !isExempt && rowsOfDay(selectedDate).length > 0}
+            <div class="list-day-bar" data-testid="time-entries-list-day-bar">
+              <span class="list-day-label"
+                >{format(new Date(selectedDate + "T12:00:00"), "EEEE, d. MMMM", {
+                  locale: de,
+                })}</span
+              >
+              <button
+                class="btn btn-secondary btn-sm"
+                type="button"
+                onclick={() => openAdditionalEntry(selectedDate)}
+                data-testid="time-entries-add-additional">Weiteren Eintrag an diesem Tag</button
+              >
+            </div>
+          {/if}
+        {/if}
         <div class="table-wrapper">
           <table class="data-table">
             <thead>
               <tr>
                 <th>Datum</th>
+                {#if multiEntryUi}<th>Salon</th>{/if}
                 <th>Von</th>
                 <th>Bis</th>
                 <th>Pause</th>
@@ -2039,6 +2129,9 @@
                         >
                       {/if}</td
                     >
+                    {#if multiEntryUi}<td data-testid={`time-entry-row-${slot.id}-salon`}
+                        >{slot.salonName ?? "—"}</td
+                      >{/if}
                     <td class="font-mono">{fmtTime(slot.startTime)}</td>
                     <td class="font-mono">
                       {#if slot.endTime}{fmtTime(slot.endTime)}
@@ -2163,6 +2256,7 @@
                         year: "numeric",
                       })}</td
                     >
+                    {#if multiEntryUi}<td class="text-muted">—</td>{/if}
                     <td class="font-mono text-muted">—</td>
                     <td class="font-mono text-muted">—</td>
                     <td class="text-muted">—</td>
@@ -2233,6 +2327,22 @@
           data-testid="time-entry-modal-date"
         />
       </div>
+      {#if multiEntryUi}
+        <div class="form-group">
+          <label class="form-label" for="f-salon">Salon</label>
+          <select
+            id="f-salon"
+            class="form-input"
+            bind:value={formSalonId}
+            data-testid="time-entry-modal-salon"
+          >
+            {#if !editEntry}<option value="">Automatisch (laut Plan)</option>{/if}
+            {#each formSalonOptions as salon (salon.id)}
+              <option value={salon.id}>{salon.name}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
       <div class="form-row-two">
         <div class="form-group">
           <label class="form-label" for="f-start">Arbeitsbeginn</label>
@@ -2498,6 +2608,20 @@
         </div>
       {/if}
 
+      {#if multiEntryUi}
+        {#if editEntry && !isExempt && !retroWindowExceeded}
+          <div class="modal-additional">
+            <button
+              class="btn btn-secondary btn-sm"
+              type="button"
+              onclick={() =>
+                openAdditionalEntry((editEntry!.date ?? editEntry!.startTime).split("T")[0])}
+              data-testid="time-entry-modal-add-additional">Weiteren Eintrag an diesem Tag</button
+            >
+          </div>
+        {/if}
+      {/if}
+
       <!-- ── Beyond-window retro request form (Surface 2) ─────────────────── -->
       <!-- Shown when save/delete returns 403 RETRO_WINDOW_EXCEEDED for own entries. -->
       {#if retroWindowExceeded}
@@ -2724,6 +2848,26 @@
 
   /* ── View Tabs ───────────────────────────────────────── */
   /* view-tabs, view-tab → global in app.css */
+
+  /* ── Day bar above the list (Issue #70): the focused day and its per-day add ─── */
+  .list-day-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-2);
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--border);
+  }
+  .list-day-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .modal-additional {
+    display: flex;
+    margin-top: var(--s-3);
+  }
 
   /* ── List card (v1.5) ────────────────────────────────── */
   .list-card {
