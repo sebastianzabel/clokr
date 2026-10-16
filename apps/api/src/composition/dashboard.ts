@@ -46,6 +46,8 @@ import {
   getBalances,
   getMonthlySnapshotsInRange,
   sumCarryOverByMonth,
+  snapshotMonthOf, // Issue #595 (D-03) — the one place a stored snapshot gets a calendar month
+  selectMonthlySnapshotPerMonth, // Issue #595 (P-01) — one record per month, the one the account reads
   getTenantTimezone,
   todayInTz,
   dateStrInTz,
@@ -1204,7 +1206,10 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Query 2: last 6 months of MONTHLY SaldoSnapshots for these employees
       const sixMonthsAgo = new Date();
       sixMonthsAgo.setUTCMonth(sixMonthsAgo.getUTCMonth() - 6);
-      sixMonthsAgo.setUTCDate(1);
+      // Issue #595 (D-03): day 0 = the last day of the month BEFORE the window's first month. A
+      // TZ-converted row of that first month is stored on exactly that day, so a bound on the 1st
+      // would list only the legacy row of the month.
+      sixMonthsAgo.setUTCDate(0);
       sixMonthsAgo.setUTCHours(0, 0, 0, 0);
 
       const snapshots = await getMonthlySnapshotsInRange(
@@ -1213,6 +1218,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         tenantId,
         sixMonthsAgo,
       );
+      const snapshotTz = await getTenantTimezone(app.prisma, tenantId);
 
       // Group snapshots by employeeId
       const snapshotsByEmp = new Map<string, typeof snapshots>();
@@ -1295,11 +1301,22 @@ export async function dashboardRoutes(app: FastifyInstance) {
             openMonthMinutes,
             hasClosedMonth,
             ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
-            snapshots: (snapshotsByEmp.get(a.employeeId) ?? []).map((s) => ({
-              periodStart: s.periodStart.toISOString().slice(0, 10),
-              balanceMinutes: s.balanceMinutes,
-              carryOver: s.carryOver,
-            })),
+            // Issue #595 (D-03/P-01): one item per month (the record the account reads), each
+            // named by the server - `month` ("YYYY-MM", null when unnameable) is what the page
+            // labels the sparkline with; `periodStart` stays for existing readers.
+            snapshots: selectMonthlySnapshotPerMonth(
+              snapshotsByEmp.get(a.employeeId) ?? [],
+              snapshotTz,
+            ).map((s) => {
+              const named = snapshotMonthOf(s.periodStart, snapshotTz);
+              return {
+                periodStart: s.periodStart.toISOString().slice(0, 10),
+                month:
+                  named === null ? null : `${named.year}-${String(named.month).padStart(2, "0")}`,
+                balanceMinutes: s.balanceMinutes,
+                carryOver: s.carryOver,
+              };
+            }),
           };
         }),
       );
@@ -1754,7 +1771,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // 6-month window (inclusive of current month)
       const sixMonthsAgo = new Date();
       sixMonthsAgo.setUTCMonth(sixMonthsAgo.getUTCMonth() - 5);
-      sixMonthsAgo.setUTCDate(1);
+      // Issue #595 (D-03): day 0 = the last day of the month before the window's first month,
+      // where the TZ-converted row of that first month is stored.
+      sixMonthsAgo.setUTCDate(0);
       sixMonthsAgo.setUTCHours(0, 0, 0, 0);
 
       // First fetch active employee IDs for this tenant.
@@ -1791,10 +1810,31 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Query 1: SUM(carryOver) grouped by periodStart, MONTHLY only, within 6-month window.
       const grouped = await sumCarryOverByMonth(app.prisma, employeeIds, tenantId, sixMonthsAgo);
 
-      const snapshots = grouped.map((g) => ({
-        month: g.periodStart.toISOString().slice(0, 10), // "YYYY-MM-DD" (always day 01)
-        teamCarryOverMinutes: g.carryOver,
-      }));
+      // Issue #595 (D-03): the groups are keyed by the STORED date, so a month with a legacy and a
+      // TZ-converted row formed two groups, one under the wrong month. Every group is named by
+      // snapshotMonthOf and groups of one month are summed, so `month` honours its documented
+      // "always day 01" contract for both storage conventions.
+      const trendTz = await getTenantTimezone(app.prisma, tenantId);
+      const carryByMonth = new Map<string, number>();
+      let unnamedGroups = 0;
+      for (const g of grouped) {
+        const named = snapshotMonthOf(g.periodStart, trendTz);
+        if (named === null) {
+          unnamedGroups += 1;
+          continue;
+        }
+        const key = `${named.year}-${String(named.month).padStart(2, "0")}-01`;
+        carryByMonth.set(key, (carryByMonth.get(key) ?? 0) + g.carryOver);
+      }
+      if (unnamedGroups > 0) {
+        app.log.warn(
+          { tenantId, unnamedGroups },
+          "overtime-trend: snapshot groups with no nameable month left out",
+        );
+      }
+      const snapshots = [...carryByMonth.entries()]
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([month, teamCarryOverMinutes]) => ({ month, teamCarryOverMinutes }));
 
       // Query 2: SUM(balanceHours * 60) across all active employees' OvertimeAccounts.
       const accounts = await getBalances(app.prisma, employeeIds, tenantId);

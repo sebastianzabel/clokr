@@ -32,6 +32,7 @@
     isDrawnInCalendar,
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility"; // Phase 257, Phase 262, #269, Issue #446 (D-04)
+  import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // #265
   import { resolveAdjustmentBadge, type LastDaysAdjustment } from "$lib/leave/vacation-balance"; // Phase 107-07
   import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
@@ -797,11 +798,6 @@
             : "Zurückgezogen";
   }
 
-  function daysLabel(days: number, halfDay: boolean): string {
-    if (halfDay) return "½ Tag";
-    return days === 1 ? "1 Tag" : `${days} Tage`;
-  }
-
   // ── Mitarbeiter-Filter (global für alle Tabs) ────────────────────────────
   let filterEmployeeId = $state<string>("");
   let empSearch = $state("");
@@ -1418,7 +1414,9 @@
                 <td>{typeName(req.typeCode)}</td>
                 <td class="font-mono">{fmtDate(req.startDate)}</td>
                 <td class="font-mono">{fmtDate(req.endDate)}</td>
-                <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
+                <td class="text-center"
+                  >{leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}</td
+                >
                 <td>
                   <span
                     class="badge {statusClass(req.status)}"
@@ -1615,7 +1613,9 @@
               <span class="pending-type">{typeName(req.typeCode)}</span>
             {/if}
             <span class="pending-dates">{fmtDate(req.startDate)} – {fmtDate(req.endDate)}</span>
-            <span class="pending-days text-muted">{daysLabel(Number(req.days), req.halfDay)}</span>
+            <span class="pending-days text-muted"
+              >{leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}</span
+            >
             {#if req.note}
               <span class="pending-note text-muted">„{req.note}"</span>
             {/if}
