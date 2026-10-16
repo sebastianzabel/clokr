@@ -4138,7 +4138,18 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Forbidden" });
       }
       const isManager = readReach === "ZUGEWIESEN";
-      const rows = await app.prisma.section9Credit.findMany({
+      // Issue #644 — a ZUGEWIESEN reach is only whole-tenant when it resolves so. A scoped
+      // caller (e.g. a Salonmanager) gets only the cases of people in reach, decided with the
+      // same building blocks as `section9:decide` below: the Stammsalon at the credit's own
+      // `overlapStart` (sick-leave periods are health data, Art. 9 DSGVO).
+      const scopeReach = isManager
+        ? await resolveAccessReach(
+            app.prisma,
+            accessContextFromRequest(req),
+            "section9:read:ZUGEWIESEN",
+          )
+        : null;
+      const allRows = await app.prisma.section9Credit.findMany({
         where: {
           employee: { tenantId: req.user.tenantId },
           ...(isManager ? {} : { employeeId: req.user.employeeId ?? "__none__" }),
@@ -4160,6 +4171,24 @@ export async function leaveRoutes(app: FastifyInstance) {
         },
         orderBy: [{ status: "asc" }, { overlapStart: "desc" }],
       });
+      const rows =
+        scopeReach === null || scopeReach.kind === "wholeTenant"
+          ? allRows
+          : (
+              await Promise.all(
+                allRows.map(async (r) =>
+                  (await isStammsalonScopeMatch(
+                    app.prisma,
+                    req.user.tenantId,
+                    scopeReach,
+                    r.employeeId,
+                    r.overlapStart,
+                  ))
+                    ? r
+                    : null,
+                ),
+              )
+            ).filter((r): r is (typeof allRows)[number] => r !== null);
       return rows.map((r) => ({
         id: r.id,
         employeeId: r.employeeId,
@@ -4237,6 +4266,26 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       if (section9Reach !== "ZUGEWIESEN" && row.employeeId !== req.user.employeeId) {
         return reply.code(404).send({ error: "Vorgang nicht gefunden" });
+      }
+
+      // Issue #644 — same reach rule as the list above; out of reach is the identical 404.
+      if (section9Reach === "ZUGEWIESEN") {
+        const scopeReach = await resolveAccessReach(
+          app.prisma,
+          accessContextFromRequest(req),
+          "section9:read:ZUGEWIESEN",
+        );
+        if (
+          !(await isStammsalonScopeMatch(
+            app.prisma,
+            req.user.tenantId,
+            scopeReach,
+            row.employeeId,
+            row.overlapStart,
+          ))
+        ) {
+          return reply.code(404).send({ error: "Vorgang nicht gefunden" });
+        }
       }
 
       return {
