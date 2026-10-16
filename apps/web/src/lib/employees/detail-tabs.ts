@@ -21,6 +21,9 @@ export function employeeDetailTabs(
     { id: "stammdaten", label: "Stammdaten" },
     { id: "arbeitszeit", label: "Arbeitszeit" },
     { id: "urlaub", label: "Urlaub" },
+    // Salon assignments (Issue #86, AC-86-5): the page itself needs employee:read, which every
+    // caller of it holds; the maintaining buttons inside follow employee:update.
+    { id: "salons", label: "Salons" },
   ];
   // Account lock/unlock/invite (employee:manage-access) and the role choice (role-assignment:manage)
   // both live on this tab.

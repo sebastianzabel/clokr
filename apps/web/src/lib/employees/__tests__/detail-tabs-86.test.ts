@@ -23,19 +23,20 @@ describe("employeeDetailTabs (Issue #86, D-04)", () => {
         "stammdaten",
         "arbeitszeit",
         "urlaub",
+        "salons",
         "berechtigungen",
         "danger",
       ]);
     }
   });
 
-  it("HR gets Stammdaten, Arbeitszeit and Urlaub only", () => {
-    expect(ids(p.HR)).toEqual(["stammdaten", "arbeitszeit", "urlaub"]);
+  it("HR gets Stammdaten, Arbeitszeit, Urlaub and Salons only", () => {
+    expect(ids(p.HR)).toEqual(["stammdaten", "arbeitszeit", "urlaub", "salons"]);
   });
 
-  it("manager, salon manager, trainer and employee get the three base tabs", () => {
+  it("manager, salon manager, trainer and employee get the four base tabs", () => {
     for (const key of ["MANAGER", "SALON_MANAGER", "TRAINER", "EMPLOYEE"]) {
-      expect(ids(p[key]), key).toEqual(["stammdaten", "arbeitszeit", "urlaub"]);
+      expect(ids(p[key]), key).toEqual(["stammdaten", "arbeitszeit", "urlaub", "salons"]);
     }
   });
 
@@ -57,6 +58,7 @@ describe("employeeDetailTabs (Issue #86, D-04)", () => {
       "stammdaten",
       "arbeitszeit",
       "urlaub",
+      "salons",
     ]);
   });
 
@@ -66,6 +68,7 @@ describe("employeeDetailTabs (Issue #86, D-04)", () => {
       "Stammdaten",
       "Arbeitszeit",
       "Urlaub",
+      "Salons",
       "Berechtigungen",
       "Gefahrenzone",
     ]);

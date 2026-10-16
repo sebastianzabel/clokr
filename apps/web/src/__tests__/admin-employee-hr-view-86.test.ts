@@ -39,6 +39,16 @@ describe("/admin/employees/[id] - tabs follow permissions (Issue #86, D-04)", ()
     expect(DETAIL).not.toMatch(/tabs=\{TABS\}/);
   });
 
+  it("mounts the salon assignments section in the Salons tab with canEdit from employee:update", () => {
+    expect(DETAIL).toMatch(
+      /import SalonAssignmentsSection from "\$lib\/components\/employees\/SalonAssignmentsSection\.svelte"/,
+    );
+    expect(DETAIL).toMatch(/tab === "salons"/);
+    expect(DETAIL).toMatch(
+      /<SalonAssignmentsSection \{employeeId\} canEdit=\{rights\.canUpdate\} \/>/,
+    );
+  });
+
   it("uses the German label, the English two-word label is gone", () => {
     expect(DETAIL).not.toContain(["Danger", "Zone"].join(" "));
   });

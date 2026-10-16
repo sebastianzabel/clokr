@@ -15,6 +15,7 @@
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import RetroactiveBSWizard from "$lib/components/vocational-school/RetroactiveBSWizard.svelte";
   import OvertimeModeField from "$lib/components/schedule/OvertimeModeField.svelte";
+  import SalonAssignmentsSection from "$lib/components/employees/SalonAssignmentsSection.svelte";
   import {
     shouldOfferRetroactiveRun,
     type RetroactivePreview,
@@ -3731,6 +3732,9 @@
             </div>
           {/if}
         </Section>
+      {:else if tab === "salons"}
+        <!-- ── Salons (Issue #86, AC-86-5) ────────────────────────────────── -->
+        <SalonAssignmentsSection {employeeId} canEdit={rights.canUpdate} />
       {:else if tab === "berechtigungen"}
         <!-- ── Berechtigungen ─────────────────────────────────────────────── -->
         <Section
