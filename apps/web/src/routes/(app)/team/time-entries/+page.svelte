@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from "svelte";
   import { page } from "$app/stores";
+  import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { mayOpenTeamPage } from "$lib/nav/team-nav";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
@@ -411,6 +413,13 @@
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   onMount(async () => {
+    // Issue #86 (AC-86-3): the page's own permission, checked before any request. A caller who
+    // only holds the team leave read (e.g. the Personalabteilung) is sent to the leave page; the
+    // team layout's OR-guard lets them in, the API would answer 403 to every time read. UX only.
+    if (!mayOpenTeamPage("/team/time-entries", $authStore.user)) {
+      await goto(mayOpenTeamPage("/team/leave", $authStore.user) ? "/team/leave" : "/dashboard");
+      return;
+    }
     // Read URL params
     const viewParam = $page.url.searchParams.get("view");
     if (viewParam === "list") teView = "list";
@@ -465,6 +474,8 @@
   });
 
   async function loadEmployeeList(salonId: string | null) {
+    // Issue #86: no request for a caller who may not open the page (the onMount guard redirects).
+    if (!mayOpenTeamPage("/team/time-entries", $authStore.user)) return;
     const generation = ++employeeListGeneration;
     try {
       const raw = await api.get<Employee[]>(withSalonId("/employees", salonId));

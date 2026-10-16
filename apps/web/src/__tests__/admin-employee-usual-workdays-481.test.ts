@@ -93,7 +93,10 @@ describe("übliche Arbeitstage are Pflicht in both contract entry points (Issue 
   });
 
   it("create dialog: Anlegen is blocked by the Angabe rule", () => {
-    expect(LIST).toContain("disabled={creating || createBlockedByUsualWorkDays}");
+    // Issue #86 appended the Stammsalon rule to the same expression; the Angabe rule stays in it.
+    expect(LIST).toContain(
+      "disabled={creating || createBlockedByUsualWorkDays || createBlockedByHomeSalon}",
+    );
     expect(LIST).toMatch(
       /createBlockedByUsualWorkDays = \$derived\([\s\S]{0,200}usualWorkDaysMissing\([\s\S]{0,120}usualWorkDaysShortfall\(/,
     );

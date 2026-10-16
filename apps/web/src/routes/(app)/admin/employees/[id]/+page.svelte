@@ -3,6 +3,8 @@
   import { toasts } from "$stores/toast";
   import { authStore } from "$stores/auth";
   import { employeeAdminRights, contractShiftRights } from "$lib/page-rights";
+  import { employeeDetailTabs } from "$lib/employees/detail-tabs";
+  import { contractHistoryRows, type ContractHistoryInput } from "$lib/employees/contract-history";
   import { markUnsaved } from "$stores/unsaved";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -13,6 +15,7 @@
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import RetroactiveBSWizard from "$lib/components/vocational-school/RetroactiveBSWizard.svelte";
   import OvertimeModeField from "$lib/components/schedule/OvertimeModeField.svelte";
+  import SalonAssignmentsSection from "$lib/components/employees/SalonAssignmentsSection.svelte";
   import {
     shouldOfferRetroactiveRun,
     type RetroactivePreview,
@@ -435,20 +438,15 @@
   });
 
   // ── Tabs ───────────────────────────────────────────────────────────────────
-  const TABS = [
-    { id: "stammdaten", label: "Stammdaten" },
-    { id: "arbeitszeit", label: "Arbeitszeit" },
-    { id: "urlaub", label: "Urlaub" },
-    { id: "berechtigungen", label: "Berechtigungen" },
-    { id: "danger", label: "Danger Zone" },
-  ];
+  // The tab list follows the caller's permissions (Issue #86, D-04); it is derived below, next to
+  // `rights`, from employeeDetailTabs().
 
   let activeTab = $state<string>("stammdaten");
 
   $effect(() => {
     if (typeof window !== "undefined" && window.location.hash) {
       const hash = decodeURIComponent(window.location.hash.slice(1));
-      if (TABS.some((t) => t.id === hash)) activeTab = hash;
+      if (tabs.some((t) => t.id === hash)) activeTab = hash;
     }
   });
 
@@ -468,6 +466,7 @@
   // employee PATCH, hence employee:update.
   let rights = $derived(employeeAdminRights($authStore.user));
   let canAssignRoles = $derived(rights.canAssignRoles);
+  let tabs = $derived(employeeDetailTabs(rights));
   let canDiscardShifts = $derived(contractShiftRights($authStore.user).canDiscardShifts);
   let canUpdateEmployee = $derived(rights.canUpdate);
   let eNfcCardId = $state<string>("");
@@ -1597,7 +1596,7 @@
   }
 
   // ── Issue #481 R6/R7 — Nachtrag übliche Arbeitstage on existing SHIFT_BASED rows ──
-  let contractHistory = $state<ContractHistoryRow[]>([]);
+  let contractHistory = $state<ContractHistoryInput[]>([]);
   let backfillSelection = $state<Record<string, number[]>>({});
   let backfillSaving = $state(false);
   let backfillError = $state("");
@@ -1617,7 +1616,9 @@
 
   async function loadContractHistory() {
     try {
-      contractHistory = await api.get<ContractHistoryRow[]>(`/settings/work/${employeeId}/history`);
+      contractHistory = await api.get<ContractHistoryInput[]>(
+        `/settings/work/${employeeId}/history`,
+      );
     } catch {
       // Without contract:read (or on any error) the section simply stays hidden.
       contractHistory = [];
@@ -1893,7 +1894,7 @@
     return () => markUnsaved("admin-employee-detail", false);
   });
 
-  // ── Danger Zone state ──────────────────────────────────────────────────────
+  // ── Anonymize / hard-delete state ──────────────────────────────────────────────────────
   let anonConfirmOpen = $state(false);
   let hardDelConfirmOpen = $state(false);
   let hardDeleteForce = $state(false);
@@ -1952,7 +1953,7 @@
       { label: "Mitarbeitende", href: "/admin/employees" },
       { label: displayName || "Mitarbeiter" },
     ]}
-    tabs={TABS}
+    {tabs}
     bind:activeTab
   >
     {#snippet tabContent(tab)}
@@ -2118,7 +2119,9 @@
               <p class="hint">
                 Bei gesetztem Datum wird der Jahresurlaub anteilig berechnet (<span translate="no"
                   >§ 5 Abs. 2 BUrlG</span
-                >).
+                >). Das Austrittsdatum beendet das Beschäftigungsverhältnis: Die Person bleibt mit
+                allen Daten sichtbar, der Zugang zur App bleibt aktiv, bis er gesondert gesperrt
+                wird.
               </p>
             </div>
             <div class="form-group form-group--full">
@@ -2603,6 +2606,36 @@
             <p class="form-hint">Wechsel werden zum 1. eines Monats wirksam.</p>
           </div>
         </Section>
+
+        <!-- Issue #86 (D-01) — the employment history on today's model: one row per contract
+             version, read-only (a change is made through the Arbeitszeitmodell section above). -->
+        {#if contractHistory.length > 0}
+          <Section
+            title="Vertragsverlauf"
+            sub="Jede Vertragsänderung gilt ab dem Monatsersten; frühere Verträge bleiben erhalten."
+          >
+            <div class="table-wrap">
+              <table class="data-table" data-testid="contract-history">
+                <thead>
+                  <tr>
+                    <th>Zeitraum</th>
+                    <th>Modell</th>
+                    <th>Umfang</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each contractHistoryRows(contractHistory) as row (row.id)}
+                    <tr>
+                      <td>{row.period}</td>
+                      <td>{row.model}</td>
+                      <td>{row.extent}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+        {/if}
 
         <!-- Issue #481 R6/R7 — Nachtrag of the übliche Arbeitstage on existing SHIFT_BASED contract
              rows (current or historic) that have none. Button-gated per ADMIN_STRUCTURE §3.2.1:
@@ -3712,6 +3745,9 @@
             </div>
           {/if}
         </Section>
+      {:else if tab === "salons"}
+        <!-- ── Salons (Issue #86, AC-86-5) ────────────────────────────────── -->
+        <SalonAssignmentsSection {employeeId} canEdit={rights.canUpdate} />
       {:else if tab === "berechtigungen"}
         <!-- ── Berechtigungen ─────────────────────────────────────────────── -->
         <Section
@@ -3782,7 +3818,7 @@
           </div>
         </Section>
       {:else if tab === "danger"}
-        <!-- ── Danger Zone ─────────────────────────────────────────────────── -->
+        <!-- ── Gefahrenzone ────────────────────────────────────────────────── -->
         <DangerZone
           title="Anonymisieren (DSGVO Art. 17)"
           description="Persönliche Daten werden anonymisiert (Name → 'Gelöscht / GELÖSCHT-XXX', E-Mail anonymisiert). Zeiterfassungen, Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist (10 Jahre nach § 147 AO) erhalten."

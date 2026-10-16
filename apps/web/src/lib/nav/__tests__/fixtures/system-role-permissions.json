@@ -124,6 +124,8 @@
     "leave-request:read:ZUGEWIESEN",
     "month-close:read:ZUGEWIESEN",
     "overtime:read:ZUGEWIESEN",
+    "report:read:ZUGEWIESEN",
+    "salon:read:ZUGEWIESEN",
     "section9:read:ZUGEWIESEN",
     "vocational-school:read:ZUGEWIESEN"
   ],

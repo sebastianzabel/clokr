@@ -6,7 +6,7 @@
 // too, not only in the API's own template tests.
 
 import { describe, it, expect } from "vitest";
-import { visibleTeamNavItems } from "../team-nav";
+import { mayOpenTeamPage, visibleTeamNavItems } from "../team-nav";
 
 // docs/permissions.md:444 — Salonmanager (intended scope: Salons).
 const SALONMANAGER_PERMISSIONS = [
@@ -45,6 +45,26 @@ const AUSBILDER_PERMISSIONS = [
   "shift:read:ZUGEWIESEN",
 ];
 
+// docs/permissions.md § Systemrollen-Templates — Personalabteilung (intended scope: Mandant). Since
+// Issue #86 (owner decision 16.10.2026) the template holds report:read and salon:read.
+const PERSONALABTEILUNG_PERMISSIONS = [
+  "employee:read:ZUGEWIESEN",
+  "employee:create:ZUGEWIESEN",
+  "employee:update:ZUGEWIESEN",
+  "employee:update-avatar:ZUGEWIESEN",
+  "contract:read:ZUGEWIESEN",
+  "contract:update:ZUGEWIESEN",
+  "salon:read:ZUGEWIESEN",
+  "leave-request:read:ZUGEWIESEN",
+  "section9:read:ZUGEWIESEN",
+  "leave-entitlement:read:ZUGEWIESEN",
+  "leave-entitlement:update:ZUGEWIESEN",
+  "vocational-school:read:ZUGEWIESEN",
+  "overtime:read:ZUGEWIESEN",
+  "month-close:read:ZUGEWIESEN",
+  "report:read:ZUGEWIESEN",
+];
+
 describe("visibleTeamNavItems", () => {
   it("AK-378-1: Salonmanager sees Anträge, Team-Zeiten, Team-Abwesenheiten, Team-Kalender, Schichtplanung — not Berichte", () => {
     const items = visibleTeamNavItems({ permissions: SALONMANAGER_PERMISSIONS });
@@ -64,6 +84,16 @@ describe("visibleTeamNavItems", () => {
 
   it("AK-378-3: a plain Mitarbeiter (no ZUGEWIESEN permissions at all) sees no Team-Bereich items", () => {
     expect(visibleTeamNavItems({ permissions: ["time-entry:read:EIGENE"] })).toEqual([]);
+  });
+
+  it("Issue #86: the Personalabteilung persona sees Berichte (report:read, owner decision 16.10.2026) and no Team-Zeiten", () => {
+    const hrefs = visibleTeamNavItems({ permissions: PERSONALABTEILUNG_PERMISSIONS }).map(
+      (i) => i.href,
+    );
+    expect(hrefs).toEqual(["/team/leave", "/teamcal", "/reports"]);
+    expect(hrefs).not.toContain("/team/time-entries"); // no time-entry:read — no daily times
+    expect(hrefs).not.toContain("/shifts");
+    expect(hrefs).not.toContain("/inbox"); // no approve permission
   });
 
   it("a user object with no permissions list at all sees no Team-Bereich items (fail-closed)", () => {
@@ -93,5 +123,41 @@ describe("visibleTeamNavItems", () => {
       "/teamcal",
       "/shifts",
     ]);
+  });
+});
+
+describe("mayOpenTeamPage (Issue #86, AC-86-3)", () => {
+  it("the Personalabteilung may open Team-Abwesenheiten but not Team-Zeiten", () => {
+    const hr = { permissions: PERSONALABTEILUNG_PERMISSIONS };
+    expect(mayOpenTeamPage("/team/time-entries", hr)).toBe(false);
+    expect(mayOpenTeamPage("/team/leave", hr)).toBe(true);
+  });
+
+  it("the Salonmanager may open both", () => {
+    const sm = { permissions: SALONMANAGER_PERMISSIONS };
+    expect(mayOpenTeamPage("/team/time-entries", sm)).toBe(true);
+    expect(mayOpenTeamPage("/team/leave", sm)).toBe(true);
+  });
+
+  it("agrees with the nav for every entry (one source)", () => {
+    for (const permissions of [
+      SALONMANAGER_PERMISSIONS,
+      AUSBILDER_PERMISSIONS,
+      PERSONALABTEILUNG_PERMISSIONS,
+    ]) {
+      const user = { permissions };
+      const hrefs = visibleTeamNavItems(user).map((i) => i.href);
+      expect(hrefs.length).toBeGreaterThan(0);
+      for (const href of hrefs) expect(mayOpenTeamPage(href, user), href).toBe(true);
+    }
+  });
+
+  it("refuses an unknown page, a plain Mitarbeiter and a caller without a permission list", () => {
+    expect(mayOpenTeamPage("/team/unknown", { permissions: SALONMANAGER_PERMISSIONS })).toBe(false);
+    expect(mayOpenTeamPage("/team/time-entries", { permissions: ["time-entry:read:EIGENE"] })).toBe(
+      false,
+    );
+    expect(mayOpenTeamPage("/team/time-entries", {})).toBe(false);
+    expect(mayOpenTeamPage("/team/time-entries", null)).toBe(false);
   });
 });

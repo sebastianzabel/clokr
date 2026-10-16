@@ -87,8 +87,10 @@ describe("admin navigation (Issue #83)", () => {
   });
 
   it("filters per item, drops empty groups and the availability item when the feature is off", () => {
+    // Issue #86 (owner decision 16.10.2026): salon:read adds the PLANUNG group (Salons only).
     expect(visibleAdminNavGroups({ permissions: p.HR }, on).map((g) => g.label)).toEqual([
       "PERSONAL",
+      "PLANUNG",
       "COMPLIANCE",
     ]);
     expect(visibleAdminNavItems({ permissions: p.SALON_MANAGER }, on).map((i) => i.href)).toEqual([

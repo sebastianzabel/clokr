@@ -51,6 +51,8 @@ export interface EmployeeAdminRights {
   canUpdate: boolean;
   /** Setting or choosing a role (create, PATCH, import) - role-assignment:manage (#78, #354). */
   canAssignRoles: boolean;
+  /** `DELETE /employees/:id` (anonymize) and the hard-delete authorize/delete pair - employee:anonymize (#86). */
+  canAnonymize: boolean;
   /** The list's action column exists when it holds at least one action. */
   showActions: boolean;
 }
@@ -63,6 +65,7 @@ export function employeeAdminRights(user: Caller): EmployeeAdminRights {
     canManageAccess,
     canUpdate,
     canAssignRoles: hasPermission(user, "role-assignment:manage:ZUGEWIESEN"),
+    canAnonymize: hasPermission(user, "employee:anonymize:ZUGEWIESEN"),
     showActions: canManageAccess || canUpdate,
   };
 }

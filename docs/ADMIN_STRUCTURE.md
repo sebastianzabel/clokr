@@ -286,7 +286,7 @@ Only **three page templates** are sanctioned for admin pages. Every admin `+page
 | Personal / Mitarbeitende / Max Mustermann|  ← breadcrumb
 | <PageHead title="Max Mustermann">        |
 +------------------------------------------+
-| Stammdaten | Arbeitszeit | Urlaub | Berechtigungen | Danger Zone |  ← tab strip
+| Stammdaten | Arbeitszeit | Urlaub | Berechtigungen | Gefahrenzone |  ← tab strip (the last two only for holders, see below)
 +------------------------------------------+
 | Active tab content (Section-Stack style) |
 |   <Section title="STAMMDATEN"> … </Section> |
@@ -381,7 +381,7 @@ Only **three page templates** are sanctioned for admin pages. Every admin `+page
     { id: "arbeitszeit", label: "Arbeitszeit" },
     { id: "urlaub", label: "Urlaub" },
     { id: "berechtigungen", label: "Berechtigungen" },
-    { id: "danger", label: "Danger Zone" },
+    { id: "danger", label: "Gefahrenzone" },
   ]}
   {activeTab}
   onTabChange={(id) => (activeTab = id)}
@@ -429,7 +429,7 @@ Only **three page templates** are sanctioned for admin pages. Every admin `+page
 - `ListDetail` with `view="list"` renders the list content via the `list` snippet.
 - `ListDetail` with `view="detail"` renders tab content via `tabContent(tab)` — the snippet receives the active tab ID as an argument.
 - `crumbs` prop is required in detail mode. Format: `[{ label: "Group" }, { label: "Page", href: "/route" }, { label: "Detail name" }]`. (Composes the existing `ui/Breadcrumb.svelte` component, which uses the `crumbs` prop name.)
-- `DangerZone` in detail mode MUST be placed as the last tab (e.g. `{ id: "danger", label: "Danger Zone" }`), not as an additional sibling outside the tab strip.
+- `DangerZone` in detail mode MUST be placed as the last tab (e.g. `{ id: "danger", label: "Gefahrenzone" }`), not as an additional sibling outside the tab strip. On the employee detail page the tab strip is decided by `employeeDetailTabs()` (`apps/web/src/lib/employees/detail-tabs.ts`, #86): „Berechtigungen“ is shown only with `employee:manage-access` or `role-assignment:manage`, „Gefahrenzone“ only with `employee:anonymize` — a hidden tab cannot be opened through the URL hash, and the API refuses the actions anyway.
 - `activeTab` is `$bindable()` — use `bind:activeTab={selectedTab}` for two-way binding. The parent reactively reads the active tab without wiring an explicit callback.
 
 ### 2.3 Template C — Tool / Wizard
@@ -665,7 +665,7 @@ The **Danger Zone** is a distinct card section for irreversible or high-impact d
 **Placement rules:**
 
 - In a `SectionStack`: `<DangerZone>` MUST be the **last child**, placed after all regular `<Section>` cards.
-- In a `ListDetail` detail view: `<DangerZone>` MUST be inside the **last tab panel** (typically a tab labeled "Danger Zone").
+- In a `ListDetail` detail view: `<DangerZone>` MUST be inside the **last tab panel** (typically a tab labeled "Gefahrenzone" on detail pages).
 - `DangerZone` MUST NOT appear in the middle of a section stack, inside a regular `<Section>`, or in list mode.
 
 **Visual contract:**
