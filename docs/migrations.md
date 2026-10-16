@@ -949,6 +949,89 @@ Das Löschen der beiden Zeilen in `_prisma_migrations` sorgt dafür, dass ein sp
 wieder anlegt; `btree_gist` darf stehen bleiben. Danach das vorige Image starten; der alte Unique-Index ist wieder
 vorhanden.
 
+## Phase 92b — Fahrzeit zwischen Salons (Issue #92)
+
+**Hinweis für die Release Notes.** #92 erscheint **nur gemeinsam mit #70** (v1.16.0, Abschnitt „Phase 70b“ oben): eine
+Fahrzeit liegt zwischen zwei Einträgen eines Tages, und die gibt es erst mit #70. Für die Notes: Mitarbeitende und
+Führungskräfte in Mandanten mit mehreren Salons erfassen die Fahrt zwischen zwei Salons als eigenen Zeiteintrag
+(Schalter „Fahrzeit zwischen Salons“, „Von Salon“, „Nach Salon“); sie zählt voll als Arbeitszeit (§ 2 Abs. 1 ArbZG) und
+beendet für diese Lücke die Rückfrage „Fahrzeit oder Pause?“. Der Weg von und nach Hause ist keine Arbeitszeit und
+nicht erfassbar. Die getrennte Auswertung (`activityMinutes.TRAVEL`) gehört zum Modul „Auswertungen“; die Erfassung wird
+nie durch ein Modul gesperrt. Berichte, PDFs und DATEV zeigen die Fahrzeit als gewöhnliche Arbeitszeitzeile. Mandanten
+mit einem Salon sehen keine Änderung. Hinweis für Mandanten mit Betriebsrat: `docs/compliance.md`, Abschnitt „Fahrzeit
+zwischen Salons“.
+
+**Was die Migrationen tun.** Drei Verzeichnisse in `packages/db/prisma/migrations/`, alle rein additiv, keine Zeile
+wird geschrieben oder geändert:
+
+- `20261016171900_activity_kind_travel` — eine Anweisung, `ALTER TYPE "ActivityKind" ADD VALUE 'TRAVEL'` (vom Generator
+  erzeugt). Der neue Wert steht bewusst in einer eigenen Datei: ein neuer Enum-Wert ist in der Transaktion, die ihn
+  anlegt, nicht verwendbar.
+- `20261016171901_time_entry_travel_to_salon` — vom Generator erzeugt, drei Anweisungen: die Spalte
+  `TimeEntry.travelToSalonId` (`TEXT`, nullable, ohne Vorgabe), der Index `TimeEntry_travelToSalonId_idx` und der
+  Fremdschlüssel `TimeEntry_travelToSalonId_fkey` auf `Salon` mit `ON DELETE RESTRICT` (neue Abhängigkeit auf den
+  Unterbau, genehmigt mit Issue #92 in `Ready`).
+- `20261016171902_time_entry_travel_shape_check` — von Hand geschrieben (Prisma modelliert keine CHECK-Bedingung, die
+  CI-Driftprüfung bleibt leer, gemessen), die Bedingung `TimeEntry_travel_shape_check`: eine Fahrzeit-Zeile hat ein Ziel
+  und ein Ziel gehört nur zu einer Fahrzeit-Zeile; Ziel ≠ Abfahrtssalon, Art `WORK`, abgeschlossen, Ende nach Beginn,
+  `breakMinutes = 0`. **Jede vorhandene Zeile erfüllt sie** (kein Ziel, nicht `TRAVEL`), deshalb braucht es keine
+  Datenprüfung vor dem Deploy. Gemessen: die Migrationskette (59 Verzeichnisse) läuft auf PostgreSQL 17.11 und 18.3 mit
+  identischem Katalog; ein Test spielt die echten Anweisungen über einen Altdatensatz ab, alle Saldo-Eingaben danach
+  bytegleich (`travel-migration-92.test.ts`).
+
+**1. Vor dem Deploy.** Keine Datenprüfung nötig (siehe oben). Die Prüfung aus Abschnitt „Phase 70b“
+(`audit-70-entry-overlaps.ts`, int UND prod) gilt weiterhin und ist wegen der gemeinsamen Auslieferung der erste Schritt.
+
+**2. Deploy.** Wie gewohnt: vorher `pg_dump`, dann der Einstiegspunkt des neuen Images (`prisma migrate deploy`; dieselbe
+Auslieferung wie #70, ein Neustart). **Sperren:** das Anlegen der CHECK-Bedingung prüft jede vorhandene Zeile unter einer
+ACCESS EXCLUSIVE-Sperre auf `TimeEntry`; der (nicht nebenläufige) Index und der Fremdschlüssel halten ebenfalls kurz eine
+Sperre, die Spalte (nullable, ohne Vorgabe) und der Enum-Wert nur Katalogeinträge. Gemessen am 16.10.2026 auf einer
+Wegwerf-Datenbank (PostgreSQL 18.3, Entwicklungscontainer, `TimeEntry`-förmige Tabelle mit denselben Spalten,
+**1 000 000 Einträge**, keine gleichzeitigen Zugriffe): Enum-Wert 0,6 ms, Spalte 0,4 ms, Index 124 ms, Fremdschlüssel
+49 ms, CHECK-Bedingung 59 ms. Das ist eine Größenordnung und kein Versprechen; sie liegt weit unter der Sperrzeit der
+Ausschlussbedingung aus #70 und wird zusammen mit ihr im selben Zeitfenster abgedeckt: **außerhalb der Öffnungszeiten
+deployen**.
+
+**3. Nach dem Deploy — Prüfung (lesend).**
+
+```sql
+SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+WHERE t.typname = 'ActivityKind' ORDER BY e.enumsortorder;
+-- erwartet: UNSPECIFIED, PRODUCTIVE, SETUP_CLEANING, TRAVEL (TRAVEL zuletzt)
+SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns
+WHERE table_name = 'TimeEntry' AND column_name = 'travelToSalonId';
+-- erwartet: text, YES, NULL
+SELECT conname, contype, confdeltype, confrelid::regclass FROM pg_constraint
+WHERE conname = 'TimeEntry_travelToSalonId_fkey';
+-- erwartet: contype f, confdeltype r (RESTRICT), "Salon"
+SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'TimeEntry_travel_shape_check';
+-- erwartet: CHECK mit den sechs Klauseln der Migration (Paarung Art/Ziel, Ziel <> salonId, type = 'WORK',
+--           endTime IS NOT NULL, endTime > startTime, breakMinutes = 0)
+SELECT indexname FROM pg_indexes WHERE tablename = 'TimeEntry' AND indexname = 'TimeEntry_travelToSalonId_idx';
+-- erwartet: eine Zeile
+SELECT count(*) FROM "TimeEntry" WHERE "activityKind" = 'TRAVEL' OR "travelToSalonId" IS NOT NULL;
+-- erwartet direkt nach dem Deploy: 0
+```
+
+Stichprobe in der Oberfläche: in einem Mandanten mit mehreren Salons einen Tag mit je einem Eintrag in zwei Salons
+anlegen und die Fahrt dazwischen mit „Fahrzeit zwischen Salons“ erfassen (Zeile mit Kennzeichen „Fahrzeit“ und
+„Von → Nach“); dieselbe Fahrt von zu Hause (vor dem ersten Eintrag) wird mit 409 abgewiesen.
+
+**4. Rollback.** Die Migrationen werden **standardmäßig nicht zurückgenommen**. Das vorige Image läuft mit den neuen
+Objekten weiter und ignoriert die neue Spalte; die CHECK-Bedingung erfüllt jeder Schreibvorgang des alten Codes (kein
+Ziel, nie `TRAVEL`). **Bedingung: es existiert noch keine Fahrzeit.** Das alte Prisma-Client kann den Enum-Wert `TRAVEL`
+nicht lesen, sobald eine Zeile ihn trägt; jede Abfrage, die eine solche Zeile liefert, schlägt fehl (für Zeiterfassung,
+Saldo und Berichte der betroffenen Person). Vorab muss diese Abfrage **0** liefern:
+
+```sql
+SELECT count(*) FROM "TimeEntry" WHERE "activityKind" = 'TRAVEL';
+```
+
+Liefert sie mehr als 0, ist der Rückschritt **nur vorwärts**: weiter mit einem korrigierten Release statt eines
+Zurückgehens. Wegen der gemeinsamen Auslieferung gilt dasselbe für #70: ein Tag mit einer Fahrzeit hat mindestens drei
+Einträge, das Rollback-SQL aus „Phase 70b“ ist dann ebenfalls nicht mehr möglich. Die Migrationen von Hand zu entfernen ist
+nicht nötig; ein Enum-Wert lässt sich in PostgreSQL ohnehin nicht entfernen.
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:

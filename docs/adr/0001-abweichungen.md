@@ -4083,6 +4083,26 @@ Einträge in verschiedenen Salons haben; damit wirkt, was Phase 80 vorbereitet h
 - Neu ist der § 9 Abs. 1 Nr. 2 JArbSchG: Er vergleicht an einem Berufsschultag die Tagessumme statt den einzelnen Eintrag
   (Eintrag AA, Tagesregeln).
 
+### Nachtrag 2026-10-16 (Phase 92b, Issue #92): Fahrzeit ist erfassbar
+
+Die Aussagen „Kein Fahrzeitmodell (#92)“ (Was bewusst NICHT geschah), „Fahrzeit-Erfassung → #92“ und der Hinweis, die
+Fahrzeit gehöre zu #92, beschreiben den Stand vor #92 und gelten nicht mehr. Seit #92 (Eintrag AB) wird eine Fahrt zwischen
+zwei Salons als eigener Zeiteintrag der Art `TRAVEL` erfasst, und:
+
+- **Die Klärungsfrage „Fahrzeit oder Pause?“ wird auch durch einen Fahrzeit-Eintrag aufgelöst.** Zu den beiden
+  bisherigen Wegen (erfasste Tagespause, Quittung) kommt ein dritter: die erfasste Fahrt füllt die Lücke zwischen den
+  Salons als gewöhnlicher Arbeitsblock, es bleibt keine Lücke zu beurteilen, der Befund `UNCLEAR` entfällt für diese Lücke.
+  Der Kern (`evaluateDayBreaks()`, `evaluatePlacement()`) ist dafür **nicht verändert**; das Nachtragsregister
+  `day-break-equivalence-80-amendments.json` und die eingefrorene Fixture sind unberührt, belegt an echten Zeilen
+  (360/0 → 390/30 Minuten).
+- **Eine nicht erfasste Lücke bleibt die Grenzfall-Rechnung** (ganze Lücke Arbeitszeit, freier Anteil am Anfang und am Ende
+  der Lücke); das System erkennt eine Fahrt nicht selbst.
+- **Das Erfassen, Ändern oder Löschen einer Fahrzeit ändert den Tagesstand.** Der Schnappschuss einer Quittung enthält die
+  Ids der Einträge und die Nettominuten; eine schon erteilte `DayBreakAck` für diesen Tag wird dadurch veraltet und muss
+  neu erteilt werden (der bestehende Mechanismus, keine neue Regel).
+- Der Satz „Kein Fahrzeitmodell (#92)“ ist **überholt**; das Folge-Issue für ein Angebot „Lücke als Fahrzeit erfassen“ ist
+  #FOLGEISSUE.
+
 ## Y — Betreiberkonto oberhalb des Mandanten und Mandantenverwaltung (Phase 88, Issue #88)
 
 **Schwere: informativ. Nachtrag nach Auslieferung (D-06) — Unterbau-Erweiterung nach ADR 0002, Entscheidung 7.**
@@ -4970,3 +4990,259 @@ API: `time-entry-multi-entry-70`, `time-entry-overlap-message-70`, `time-entry-l
 `time-entry-list-salon-name-70` und `scripts/__tests__/audit-70-entry-overlaps.test.ts`; Web:
 `clock-card-multi-entry-70`, `day-entry-actions`, `time-entries-multi-entry-wiring-70`; Playwright
 `multi-entry-day.spec.ts`.
+
+### Nachtrag 2026-10-16 (Phase 92b, Issue #92): Auswahlfunktionen überspringen Fahrzeit, Konsolidierung nie über eine Fahrt
+
+Die Aussagen „keine Fahrzeit (#92)“ und „die Lücke ist bis #92 ein Klärungsfall“ (Was bewusst NICHT geschah) beschreiben
+den Stand vor #92 und gelten nicht mehr (Eintrag AB). Für die Regeln dieses Eintrags folgt daraus:
+
+- **`openEntryOf()` / `latestEndingClosed()`** (`contexts/time-tracking/day-entries.ts`) überspringen Zeilen der Art
+  `TRAVEL`; `openEntryOf` bleibt unverändert, weil eine Fahrt nach der Bedingung `TimeEntry_travel_shape_check` nie offen
+  ist. Die Web-Spiegelung `resolveDayState()` folgt einschließlich der Gleichstandsregel. Weil die Schreibregeln sicherstellen,
+  dass nach einer Fahrt immer ein Eintrag im Zielsalon folgt, ist die Regel Verteidigung in der Tiefe.
+- **Die Konsolidierung führt nie in oder über eine Fahrt hinweg zusammen** (`merge_skipped`, Grund `travel_row`, vor dem
+  Salonwächter; das Ausstempeln selbst bleibt erhalten).
+- Eine Fahrzeit ist eine abgeschlossene Zeile und fällt unter die Ausschlussbedingung `TimeEntry_no_overlap_closed` und
+  die Zeilensperre `lockEmployeeForEntryWrite()`; ein START zwischen einer Fahrt und ihrem Zieleintrag wird von der
+  Überschneidungsregel mit `ENTRY_OVERLAP` abgelehnt, ohne Zusatzcode.
+- Der **Feiertagsort** (Salon des Eintrags mit dem frühesten Beginn) bleibt unberührt: eine Fahrt ist nie die früheste Zeile
+  eines Tages.
+- Der Zeitnachtrag bleibt ein Antrag je Tag; eine Fahrt ist als Zeitnachtrag nicht beantragbar (409
+  `TRAVEL_NOT_AS_RETRO_REQUEST`, Hinweis am Folge-Issue #657).
+
+## AB — Fahrzeit zwischen Salons als eigener Zeiteintrag (Phase 92b, Issue #92)
+
+**Schwere: Neue Abhängigkeit auf den Unterbau (Fremdschlüssel `TimeEntry.travelToSalonId → Salon`), nach ADR 0002,
+Entscheidung 7 eine Erweiterung: additiv, kein bestehender Leser muss sich ändern, genehmigt dadurch, dass Issue #92 mit
+dem Abschnitt „Auswirkung auf die Kontexte“ auf `Ready` stand. Keine Semantikänderung des Unterbaus, kein Eingriff in
+Kerne, Arbeitszeitkonto oder Kompositionsschicht. Owner-Entscheidung = die Kommentare auf Issue #92 vom 16.10.2026.
+Auslieferung nur gemeinsam mit #70 (Eintrag AA, v1.16.0).**
+
+### Ausgangslage
+
+Seit #80/#511 rechnet der Tageskern eine nicht erfasste Lücke zwischen zwei Salons als Grenzfall: ganze Lücke
+Arbeitszeit, freier Anteil am Anfang und am Ende der Lücke; ist nicht beides regelkonform oder beides verletzt, ist der
+Befund `UNCLEAR` („Klärung nötig: Fahrzeit oder Pause?“). Mit #70 (Eintrag AA) gibt es Tage mit mehreren Einträgen in
+verschiedenen Salons. Die Fahrt dazwischen ist Arbeitszeit, hatte aber keinen Ort, an dem sie erfasst werden konnte.
+
+### Rechtslage
+
+- **§ 2 Abs. 1 ArbZG; BAG 12.12.2012 – 5 AZR 355/12, Rn. 16** (<https://www.bundesarbeitsgericht.de/?p=1148442>):
+  Wegezeiten für die Fahrt vom Betriebssitz zu einer auswärtigen Arbeitsstätte werden – anders als der Weg von der Wohnung
+  zum Betrieb – arbeitszeitschutzrechtlich der Arbeitszeit zugerechnet; die Fahrt auf Weisung ist primär fremdnützig.
+  Damit zählt die Fahrt zwischen zwei Salons für § 3 (Tageshöchstgrenze) und § 4 (Pausenschwellen) und ist selbst keine
+  Ruhepause (BAG 25.02.2015 – 5 AZR 886/12, <https://www.bundesarbeitsgericht.de/?p=1150836>).
+- **EuGH 10.09.2015 – C-266/14 (Tyco)** (<https://curia.europa.eu/jcms/upload/docs/application/pdf/2015-09/cp150099de.pdf>)
+  wertet für Beschäftigte **ohne festen oder gewöhnlichen Arbeitsort** auch die erste und die letzte Fahrt als Arbeitszeit.
+  **Nicht angewandt**, weil jede Person in Clokr genau einen wirksamen Stammsalon hat (`EmployeeSalonAssignment`).
+  Restrisiko siehe unten.
+- **EuGH 09.10.2025 – C-110/24** (<https://www.hensche.de/hin-und-rueckfahrt-zu-einsatzorten-als-arbeitszeit-eugh-urteil-vom-09.10.2025-c-110-24.html>,
+  <https://www.lto.de/recht/hintergruende/h/eugh-c11024-reisezeit-arbeit-mitfahrer>) bestätigt die Richtung (vom
+  Arbeitgeber vorgegebene Fahrt als Arbeitszeit, auch für Mitfahrer); gelesen über Zusammenfassungen, nicht im
+  Volltext, und nicht Voraussetzung dieser Entscheidung.
+- Der Weg Wohnung ↔ erster/letzter Salon bleibt Wegezeit und ist keine Arbeitszeit (Issue #92, „Nicht Teil davon“).
+
+### Entscheidung (Owner, 16.10.2026)
+
+- **D-05 — Ein eigener Zeiteintrag.** Eine Fahrzeit ist eine gewöhnliche, abgeschlossene `WORK`-Zeile mit
+  `activityKind = TRAVEL` (neuer letzter Wert des Enums). `salonId` ist der **Abfahrtssalon**, das neue nullable Feld
+  `TimeEntry.travelToSalonId` der **Zielsalon** (Fremdschlüssel auf `Salon`, `ON DELETE RESTRICT`, indiziert; auf `Salon`
+  nur die Prisma-Gegenrelation `travelEntriesTo`, keine Spalte). Weil die Fahrzeit ein gewöhnlicher Eintrag ist, rechnen
+  Saldo, § 3 und § 4 sie ohne zweite Berechnung mit (D-03). Die Art wird **serverseitig aus dem Ziel abgeleitet**, nie
+  vom Client gesendet und nach dem Anlegen nicht änderbar.
+- **D-06 — Ein Prüfer.** Eine Fahrzeit liegt zwischen zwei Einträgen desselben Tages, so ist der Weg von und nach Hause
+  nicht erfassbar (AC-92-6).
+- **D-07 — Getrennt auswertbar.** `GET /time-entries/summary` liefert `activityMinutes.TRAVEL`, dem Abfahrtssalon
+  zugerechnet; die Auswertung steht hinter dem Modul „Auswertungen“ (`ANALYTICS`, #566), die **Erfassung nie**.
+- **D-08 — Oberfläche minimal.** Nur für Mandanten mit Salonauswahl (#64) in Zeiterfassung und Team-Zeiterfassung;
+  vom Mandantenschalter aus #529 ausgenommen, weil Erfassung Arbeitszeiterfassung ist und keine Auswertung.
+- **D-09 — Zusammenspiel mit #80/#511** (nächster Abschnitt).
+
+### Verworfen
+
+- **Fahrzeit als Anteil innerhalb eines Eintrags** (`TimeEntryActivityShare`, Art `TRAVEL`): ein Anteil liegt innerhalb
+  der erfassten Anwesenheit eines Eintrags und kann eine Fahrt in der **Lücke** zwischen zwei Einträgen nicht abbilden,
+  die mit #70 der Normalfall ist.
+- **Eigene Tabelle:** eine zweite Quelle von Arbeitszeit neben `TimeEntry`; jeder Leser (Saldo, Berichte, DATEV,
+  Dashboard) müsste sie kennen und in der Tagessumme einmal zählen. Genau das verhindert der Gleichheitstest jetzt für
+  den einen Eintrag.
+
+### Durchsetzung
+
+1. **`validateTravelEntry()`** (`contexts/time-tracking/travel-entry.ts`, die EINE Stelle der Schreibregel; läuft in der
+   Schreibtransaktion nach `lockEmployeeForEntryWrite()` und der Überschneidungsprüfung): beide Salons gehören zum
+   Mandanten (ein fremder oder unbekannter Salon ist die **identische** 404, ein inaktiver Zielsalon 400
+   `SALON_INACTIVE`, Abfahrts- und Zielsalon verschieden), die **Reichweite des Aufrufers über alle Einträge des Tages**
+   (`dayCoverage` „all“; die Person selbst braucht keine; ein nicht erreichbarer Tag antwortet mit dem eigenen
+   Nicht-gefunden-Text der Route, kein 201/409-Orakel), die **Verankerung** (die Fahrt liegt nach einem Nicht-Fahrzeit-
+   Eintrag im Abfahrtssalon und vor einem im Zielsalon, `TRAVEL_NOT_BETWEEN_SALON_ENTRIES`; eine noch nicht freigegebene
+   Zeile eines Zeitnachtrags verankert nie) und keine Überschneidung mit einer erfassten Tagespause
+   (`TRAVEL_OVERLAPS_DAY_BREAK`). Form: Ende gesetzt, keine Pause, keine Pausenzeilen, keine Tätigkeitsanteile
+   (`TRAVEL_SHAPE`, `TRAVEL_KIND_DERIVED`, `TRAVEL_KIND_IMMUTABLE`, `TRAVEL_SAME_SALON`, `TRAVEL_SALONS_REQUIRED`).
+2. **`checkTravelNeighbours()`**, die EINE Nachbarschaftsprüfung als **harte Sperre auf jedem Schreibweg**: POST (einfach,
+   Freigabe-Zweig, Zeitnachtrag-Zweig), PUT (auch Datums- und Salonwechsel), DELETE, `POST /:id/breaks`,
+   `PATCH /:id/break-status`, `PATCH /:id/revalidate` mit Korrektur, die Freigabe eines Zeitnachtrags und der CSV-Import.
+   Kein Schreibvorgang darf eine Fahrt ohne ihre beiden Einträge zurücklassen (409 `TRAVEL_NEEDS_NEIGHBOUR`). Sie
+   verweigert nur Fahrten, die der Schreibvorgang **neu** verwaist (Waisen danach minus Waisen davor), damit ein bereits
+   inkonsistenter Tag keine unabhängige Korrektur blockiert.
+3. **Prüfbedingung `TimeEntry_travel_shape_check`** (von Hand geschrieben, Prisma modelliert keine CHECK-Bedingung, die
+   Driftprüfung bleibt leer; Vorbild `Tenant_salonQuota_positive`): Art `TRAVEL` genau dann, wenn ein Ziel gesetzt ist;
+   Ziel ≠ Abfahrtssalon, `type = 'WORK'`, abgeschlossen, Ende nach Beginn, `breakMinutes = 0`. Sie ist der **Rückhalt der
+   Form** für jeden Schreiber, auch einen künftigen, nicht die Schnittstelle (die Anwendung antwortet mit den deutschen
+   Codes oben). Über die Empfehlung der Recherche hinaus gewählt, weil 70b handgeschriebene Bedingungen als Weg
+   etabliert hat und der Owner-Auftrag die nachhaltigste Variante verlangt.
+4. **Auswahlfunktionen:** `latestEndingClosed()` überspringt Fahrzeit (und die Web-Spiegelung `resolveDayState()`),
+   die Konsolidierung führt nie in oder über eine Fahrt hinweg zusammen (`merge_skipped`, Grund `travel_row`). Das ist
+   **Verteidigung in der Tiefe**: weil die Schreibregeln sicherstellen, dass nach einer Fahrt immer ein Eintrag im Zielsalon
+   folgt, ist eine Fahrt nie die zuletzt endende Zeile; nur eine von Hand erzeugte verwaiste Fahrt (Test) erreicht den
+   Überspringen-Zweig. Ein START zwischen Fahrt und Zieleintrag wird ohne Zusatzcode von der Überschneidungsregel
+   abgelehnt (`ENTRY_OVERLAP`, belegt).
+
+### Zusammenspiel mit #80/#511
+
+- Eine **erfasste** Fahrzeit füllt die Lücke zwischen den Salons als gewöhnlicher Arbeitsblock. Der Kern bleibt
+  unverändert (kein Eintrag im Nachtragsregister `day-break-equivalence-80-amendments.json`): Tagessumme 390 statt 360
+  Minuten, Pflichtpause 30 Minuten statt 0, **keine Lücke mehr zu beurteilen, also kein `UNCLEAR`** (gemessen an echten
+  Zeilen, Plan 92b-01). Ein Tag mit Fahrzeit und ohne Pause über 6 Stunden wird damit ein **eindeutiger** Befund
+  (`BREAK_TOO_SHORT`); `MAX_DAILY_EXCEEDED` entsteht bei 630 Minuten (5 h + 30 Min + 5 h).
+- Eine **nicht erfasste** Lücke bleibt die Klärungsfrage „Fahrzeit oder Pause?“ (Grenzfall-Rechnung). Das System erkennt
+  eine Fahrt nicht selbst; ein Angebot „Lücke als Fahrzeit erfassen“ ist das Folge-Issue #FOLGEISSUE.
+- **Das Erfassen, Ändern oder Löschen einer Fahrzeit ändert den Tagesstand.** Der Schnappschuss einer Quittung
+  (`DayBreakAck`) enthält die Ids der Einträge und die Nettominuten des Tages (`DaySnapshot`, D-17 des Tageskerns). Eine
+  schon erteilte Quittung für diesen Tag wird dadurch **veraltet** und muss neu erteilt werden; das ist der bestehende
+  Mechanismus „eine veraltete Quittung entlastet nie“, keine neue Regel. Der Hinweis steht in `docs/user-guide.md`.
+
+### Auswertung
+
+`activityMinutes` hat vier Schlüssel (`UNSPECIFIED`, `PRODUCTIVE`, `SETUP_CLEANING`, `TRAVEL`), alle ganze Minuten, nie
+Beträge, Quoten oder Anteile. Eine Fahrzeit ist ein **ganzer Eintrag** und nie ein Anteil (`ACTIVITY_SHARE_KINDS`
+enthält `TRAVEL` nicht, ein Anteil der Art `TRAVEL` ist 400). Der Salonfilter rechnet die Fahrzeit dem Abfahrtssalon zu;
+`entryCount` zählt Fahrten mit. Hinter dem Modul „Auswertungen“ liefert die Antwort ohne Buchung wie bisher `null` mit
+`activityMinutesUnavailableReason: MODULE_NOT_BOOKED`; Erfassen, Ändern und Löschen sind nie vom Paket abhängig.
+Betriebsrat: Minuten je Person und Art sind objektiv geeignet, Verhalten zu überwachen (§ 87 Abs. 1 Nr. 6 BetrVG);
+Hinweis in `docs/compliance.md`, Abschnitt „Fahrzeit zwischen Salons“ – die Erfassung ist Pflicht, die Auswertung
+mitbestimmungspflichtig.
+
+### Oberfläche
+
+Nur wo die #64-Regel `showSalonOptions()` gilt: Schalter „Fahrzeit zwischen Salons“ mit „Von Salon“ und „Nach Salon“
+beim neuen Eintrag (ersetzt das Feld „Salon“, blendet Pausen- und Endzeit-Schalter aus), „Fahrzeit bearbeiten“ im
+Bearbeiten-Dialog, Kennzeichen „Fahrzeit“ und die Strecke „Von → Nach“ in der Salonspalte, in der Salonansicht der
+Führungskraft und in der Heute-Liste des Dashboards. Beide Seiten teilen eine reine Präsentationsdatei
+(`travel-entry-form.ts`); die Web-Seite rechnet keine Regel. Eine Fahrzeit wird im Web nie als Zeitnachtrag-Antrag
+gestellt (die Seite zeigt einen Text statt des Zeitnachtrag-Formulars). Mandanten mit einem Salon sehen keine Änderung
+(Einzelsalon-Basisbilder unverändert).
+
+### Gemessen
+
+- **Migrationen** (Plan 92b-01): drei Verzeichnisse, additiv, die erzeugten Dateien byte-gleich der Ausgabe von
+  `prisma migrate diff` gegen eine frische Schattendatenbank (Naming der bestehenden Relation erzeugt keinen SQL);
+  Drift-Prüfung „No difference detected“, die `--script`-Form leer. Die gesamte Kette (59 Migrationen) läuft auf
+  **PostgreSQL 17.11 und 18.3** mit identischem Katalog (Enum-Labels, Spalte, Fremdschlüssel `confdeltype r`, Index,
+  Bedingung). `travel-migration-92.test.ts`: die Bedingung lehnt sieben falsche Formen ab (Fahrt ohne Ziel, Ziel an
+  gewöhnlicher Zeile, Ziel = Abfahrtssalon, offene Fahrt, Pause 15 Min, Typ `OVERTIME`, Ende = Beginn), mit entfernter
+  Bedingung (zurückgerollt) werden zwei davon angenommen; ein Altdatensatz (26 `TimeEntry`-Zeilen, 8 Fassadenlesungen
+  für 4 Personen zweier Mandanten) ist nach den echten Anweisungen **byte-gleich** in allen Saldo-Eingaben (AC-92-8).
+- **Sperrzeit** (Wegwerf-Datenbank, PostgreSQL 18.3, 1 000 000 Einträge, 16.10.2026): Enum-Wert 0,6 ms, Spalte 0,4 ms,
+  Index 124 ms, Fremdschlüssel 49 ms, CHECK 59 ms (`docs/migrations.md`, „Phase 92b“).
+- **Kernbelege an echten Zeilen** (`travel-entry-tracer-92.test.ts`, 17 Fälle): ohne Fahrt 360 Minuten/0 Pause, eine
+  Lücke, `crossSalon`; mit der 30-Minuten-Fahrt **390/30**, keine Lücke, kein `UNCLEAR`; Livesaldo genau + 30;
+  `GET /time-entries/summary` 360 → 390; 5 h + 5 h mit 30-Minuten-Fahrt → `MAX_DAILY_EXCEEDED` bei 630. Weg von Hause,
+  nach Hause und über einen Eintrag im falschen Salon: je 409, nichts geschrieben.
+- **Schreibwege** (Pläne 92b-02/03): Reichweite (Mutationsprobe: ohne Abdeckungsprüfung werden genau die zwei Fälle der
+  Salonleitung rot), identische 404 (Bytevergleich fremd/unbekannt), Freigabe verbraucht (`USED`), Rennen
+  Löschen/Anlegen mit genau einem Gewinner und leerer Waisenliste, Nachbarsperre in allen Wegen, Stempeln und
+  Konsolidierung (Mutationsprobe des Überspringens: 5 Fälle rot), Feiertagsort (Fronleichnam: Fahrt von BY nach NI am
+  Tag, kein Feiertag im umgekehrten Fall; die Fahrt ist nie die früheste Zeile, kein Unterbau-Commit).
+- **Auswertung und Saldo** (Plan 92b-04): `activityMinutes.TRAVEL` unfiltert 30, Abfahrtssalon 30, Zielsalon 0,
+  Grundversion `null`; **A/B-Gleichheit** `travel-saldo-equality-92.test.ts` (Zwillinge, neun Tage): Livesaldo,
+  Monatssaldo offen und abgeschlossen, Monatsbericht, PDF-Nutzlast, DATEV, Zeitraumsumme, `checkArbZG` je Tag,
+  Tagesprüfung, Dashboard, Monatsabschluss samt Schnappschuss – alles gleich; der einzige beabsichtigte Unterschied
+  (`activityMinutes.TRAVEL` 270 = 9 × 30) ist ausdrücklich geprüft. Wächter `travel-saldo-isolation-92.test.ts`
+  (AST, 6 Fälle; Geschwister des #81-Wächters): Lauf über `contexts/working-time-account` mit 31 gemessenen Dateien
+  (Untergrenze 30), neun geschützte Dateien, Positiv- und Kontrolllauf, zwei Mutationsproben (Konto, Fassade) und
+  eine Empfindlichkeitsprobe des Gleichheitstests (fünf von sechs Fällen rot). Die **Fassade** `facade/time-entries.ts`
+  hat genau **einen** erlaubten Import aus `travel-entry` (`checkTravelNeighbours`, `TravelRefusalError` für den
+  CSV-Import-Schreiber) und liest kein Fahrzeit-Feld.
+- **Neutralität:** `permission-neutrality-matrix`, `notification-recipients-neutrality`, `activity-auth-neutrality`
+  bestehen mit 1752 Fällen und **0 geänderten Zellen**; nichts neu aufgezeichnet, kein Nachtragsregister berührt.
+  Eingefrorene Tests (`golden-matrix`, `day-break-equivalence-80`, `saldo-neutrality-characterisation-79`, …) blieben
+  unberührt grün; kein Commit der Phase in den Kernen, dem Arbeitszeitkonto, der Kompositionsschicht oder dem Unterbau.
+- **Bewusst angepasste Tests** (datierte Kopfkommentare „Amended 2026-10-16 for #92“, Fallzahl je Datei gleich):
+  Formen von `activityMinutes` (nun vier Schlüssel) in acht Dateien, Schlüsselmenge der Listenzeile
+  (`travelToSalonName`, `travelToSalonId: null`) in drei Dateien, die Fixture von `activity-81`; keine Aufzeichnung neu
+  erstellt, keine Zusicherung gelockert.
+- **Browser:** `apps/e2e/tests/travel-between-salons.spec.ts` (e2e-ci, zwei Tests): zwei Salons, 08:00–12:00 und 12:30–16:00,
+  die Fahrt 12:00–12:30 wird erfasst (HTTP 201, drei Zeilen, genau ein Kennzeichen „Fahrzeit“, Strecke „Von → Nach“),
+  dieselbe Fahrt von Hause (07:00–07:30) wird mit 409 und dem Text zum Weg von und nach Hause abgewiesen; Einzelsalon-
+  Mandant ohne Schalter. Vier Läufe hintereinander grün (3,2–3,8 s), die gesamte e2e-ci-Auswahl 228 bestanden, 1
+  übersprungen (bedingt, vorbestehend). Sichtprüfung des Formulars und der Liste mit Fahrt (8 Bilder, 390/360 px, hell
+  und dunkel); dabei gefunden und behoben: ein Zeilenumbruch mitten im Wort der Strecke und ein zu enger Schalter.
+- **Nicht im Browser belegt** (Server-Seite jeweils belegt): die Fahrt auf der Team-Seite (Verdrahtungstest und
+  gemeinsame Präsentationsdatei), das Bearbeiten und das Löschen einer Fahrt, der Fall außerhalb der Erfassungsfrist.
+
+### Was bewusst NICHT geschah
+
+- **Kein Geld:** keine Kilometer-, Reisekosten- oder Spesenabrechnung; **keine Standorterkennung**; **keine Wegezeit**
+  Wohnung ↔ Salon.
+- **Kein Lücken-Angebot:** „Als Fahrzeit erfassen“ für eine nicht aufgelöste Lücke (D-08, nur Folge-Issue #FOLGEISSUE).
+- **Keine Fahrzeit als Zeitnachtrag** (409 `TRAVEL_NOT_AS_RETRO_REQUEST`; solange ein Zeitnachtrag je Tag gilt, Folge-Issue
+  #657). **Keine Fahrzeit per CSV-Import oder Stempelereignis.**
+- **Berichte, PDFs, DATEV und Dashboard** zeigen die Fahrzeit als gewöhnliche Arbeitszeitzeile; es gibt weder eine eigene
+  Spalte noch einen eigenen Bericht.
+- **Keine Neuberechnung und kein Backfill:** die Migration schreibt keine Zeile, geschlossene Monate werden nie neu
+  bewertet.
+- **Keine Änderung der Reichweite gewöhnlicher Einträge** durch diese Phase: für die Fahrzeit gilt die Reichweite über
+  den ganzen Tag, die des gewöhnlichen Eintrags regelt #658.
+
+### Akzeptierte Restrisiken
+
+- **Echte Springer ohne gewöhnlichen Arbeitsort** (Tyco): Wege von und zu Hause wären dort Arbeitszeit und werden nicht
+  erfasst; die rechtliche Bewertung liegt beim Arbeitgeber, kein Modellwechsel.
+- **Eine privat genutzte Lücke kann als Fahrzeit erfasst werden** (die Person trägt die Fahrt selbst ein; das System kann
+  das nicht unterscheiden); die Korrektur ist Sache der Führungskraft (Korrektur mit Begründung, Audit), die
+  Protokollierung lässt jede Fahrt nachvollziehen.
+- **Ein 409 der Nachbarschaftssperre** (`TRAVEL_NEEDS_NEIGHBOUR`) verrät einer Salonleitung, dass an dem Eintrag eine
+  Fahrzeit hängt (ohne Zeit und Salon); die ältere Überschneidungsmeldung aus #70 nennt wie bisher nur neutral, dass ein
+  Eintrag existiert.
+- **Der Name des Zielsalons** ist für jeden Leser der Zeile sichtbar (die Strecke ist der Inhalt der Zeile, die Zeile liegt
+  in seiner Reichweite, ein Salonname ist Stammdatum des Mandanten; dasselbe Prinzip wie `salonName` in #70).
+- **Ein Image vor diesem Release kann eine Zeile mit `TRAVEL` nicht lesen**; der Rückschritt ist daher vorwärts
+  gerichtet, sobald die erste Fahrzeit existiert (`docs/migrations.md`, „Phase 92b“, Rollback).
+- **Verteidigung in der Tiefe, nicht Schutz:** das Überspringen in `latestEndingClosed()` ist nur durch eine von Hand
+  verwaist erzeugte Fahrt erreichbar; ohne die Schreibregeln hätte es Wirkung.
+
+### Neue Shared-Kernel-Abhängigkeit
+
+`TimeEntry.travelToSalonId → Salon` (Fremdschlüssel, `ON DELETE RESTRICT`, Mandantengleichheit durch die Anwendung wie bei
+`salonId`, `Salon` wird nie hart gelöscht). Eine **Erweiterung** nach ADR 0002, Entscheidung 7: additiv; am Unterbau
+ändert sich keine Spalte, kein Export von `contexts/platform/index.ts` und kein bestehender Leser (keine Änderung von
+`holiday-resolution.ts`; eine Fahrt ist nie die früheste Zeile eines Tages). Genehmigt dadurch, dass Issue #92 mit dem
+Abschnitt „Auswirkung auf die Kontexte“ auf `Ready` stand; ein Nachtrag zu Semantikänderungen entfällt.
+
+### Auswirkung auf die Kontexte
+
+- **Unterbau:** neue eingehende Beziehung `Salon` ← `TimeEntry.travelToSalonId` (Erweiterung, additiv).
+- **Zeiterfassung:** neuer Wert `TRAVEL` der Tätigkeitsart, der Prüfer `validateTravelEntry` samt Nachbarsperre,
+  Auswahlfunktionen, Konsolidierung, Auswertung in `GET /time-entries/summary`, Oberfläche.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** keine Codeänderung. Eine Fahrzeit zählt als gewöhnlicher Arbeitseintrag; der Gleichheitstest
+  belegt es, der Wächter hält die Felder heraus; `calcLeaveAbsenceMinutesTz()` und die Einmal-Regel („ein Tag mindert das
+  Soll genau einmal“) bleiben unberührt.
+- **Kompositionsschicht:** keine Regel.
+
+### Auslieferung
+
+**Gemeinsam mit #70** (v1.16.0, ein Pull-Request): die drei Migrationen laufen beim API-Start (`prisma migrate deploy`) im
+selben Deploy wie die zwei Migrationen aus Eintrag AA. Vorher `audit-70-entry-overlaps.ts` auf int UND prod; Deploy
+außerhalb der Öffnungszeiten; Prüfung nach dem Deploy und Rollback-Regel: `docs/migrations.md`, Abschnitt „Phase 92b“.
+Ohne #92 wäre jeder Tag mit Salonwechsel aus #70 ein Klärungsfall.
+
+### Nachweis
+
+API: `travel-activity-kind-92`, `travel-entry-tracer-92`, `travel-migration-92`, `travel-entry-92`,
+`time-entries-travel-92`, `time-entries-travel-lifecycle-92`, `travel-neighbour-writers-92`,
+`travel-clock-selectors-92`, `time-entries-travel-list-92`, `time-entries-travel-summary-92`,
+`travel-saldo-isolation-92`, `travel-saldo-equality-92`; Web: `travel-entry-form`, `today-entries-travel-92`,
+`time-entries-travel-wiring-92`; Playwright `travel-between-salons.spec.ts`.
