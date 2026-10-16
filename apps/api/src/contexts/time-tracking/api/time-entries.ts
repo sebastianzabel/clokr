@@ -78,6 +78,13 @@ import {
   getEffectiveSchedule,
 } from "../entry-invariants";
 import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
+import {
+  classifyTravelWrite,
+  TravelRefusalError,
+  validateTravelEntry,
+  TRAVEL_NOT_AS_RETRO_REQUEST_CODE,
+  TRAVEL_NOT_AS_RETRO_REQUEST_MESSAGE,
+} from "../travel-entry"; // Issue #92 (Phase 92b, D-05/D-06) — the ONE travel write rule
 import { otherWorkingMinutesOfDay } from "../day-entries"; // Issue #70 (D-04)
 import {
   CLOCK_ENTRY_OVERLAP_MESSAGE,
@@ -182,6 +189,10 @@ const manualEntrySchema = z.object({
   // full replacement; `null` is not accepted.
   activityKind: activityKindSchema.optional(),
   activityShares: activitySharesSchema.optional(),
+  // Issue #92 (D-05/D-06): the ARRIVAL salon of a travel entry between two salons (`salonId` is the
+  // departure salon). `null` is not accepted — same convention as `salonId`. The kind TRAVEL is
+  // never sent by a client; `classifyTravelWrite` derives it from this field.
+  travelToSalonId: z.string().uuid().optional(),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -1328,6 +1339,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const body = manualEntrySchema.parse(req.body);
+      // Issue #92 (D-06): classify the write BEFORE any read — a client kind TRAVEL or a malformed
+      // travel shape is a German 400 here, never a database CHECK violation.
+      const travelClass = classifyTravelWrite(body);
+      if (!travelClass.ok) return reply.code(travelClass.status).send(travelClass.body);
+      const travelToSalonId = travelClass.travel ? travelClass.travelToSalonId : undefined;
       const user = req.user;
       // Feeds both the employeeId selection below and postIsCorrectionByManager (issue #75, D-13)
       const postCreateReach = await permissionReach(req, "time-entry:create");
@@ -1478,6 +1494,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (invariantError.error === "RETRO_WINDOW_EXCEEDED") {
           const retroReason = body.reason?.trim();
           if (retroReason && !resolvedGrantId) {
+            // Issue #92: one Zeitnachtrag per day (70b D-13) and a day with travel already holds
+            // two entries, so travel is never filed as a request — a manager books it as a
+            // correction, which the retro window exempts.
+            if (travelToSalonId !== undefined) {
+              return reply.code(409).send({
+                error: TRAVEL_NOT_AS_RETRO_REQUEST_MESSAGE,
+                code: TRAVEL_NOT_AS_RETRO_REQUEST_CODE,
+              });
+            }
             pendingRetroCreate = true;
           } else {
             return reply.code(403).send({
@@ -1562,8 +1587,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // call). `new Date(body.date)` is the same UTC-midnight instant the create stores as
       // `entry.date`.
       let autoBreakPlanOnCreate: AutoBreakPlan | null = null;
+      // Issue #92 (D-06): a travel entry has no break — no automatic break is planned for it; the
+      // day-level § 4 duty stays the kernel's finding.
       if (
         newEnd &&
+        travelToSalonId === undefined &&
         autoBreakAppliesOnCreate({ slotCount: breakSlots.length, breakMinutes: finalBreakMinutes })
       ) {
         // Auto-break: check tenant config
@@ -1610,6 +1638,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // plain); the shares are a nested write, so they exist with the entry or not at all.
       const activityCreateData = {
         ...(body.activityKind !== undefined ? { activityKind: body.activityKind } : {}),
+        // Issue #92 (D-05/D-06): the kind is derived from the destination, never taken from the client.
+        ...(travelToSalonId !== undefined
+          ? { activityKind: "TRAVEL" as const, travelToSalonId }
+          : {}),
         ...(body.activityShares && body.activityShares.length > 0
           ? { activityShares: activitySharesCreate(body.activityShares) }
           : {}),
@@ -1624,6 +1656,23 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // database's overlap guarantee and getting a 409 (fixed 2026-07: see
       // .planning/debug/resolved/retro-grant-race-403-vs-409.md).
       let entry: Awaited<ReturnType<typeof app.prisma.timeEntry.create>>;
+      // Issue #92 (D-06): the travel write rule runs inside the writer transaction, after the Employee
+      // row lock and the overlap re-check, so the neighbour entries it reads cannot change under it.
+      // A refusal throws and rolls the transaction back; the catch below answers it.
+      const assertTravelEntry = async (tx: Prisma.TransactionClient) => {
+        if (travelToSalonId === undefined || newEnd === null) return;
+        const verdict = await validateTravelEntry(tx, {
+          tenantId: user.tenantId,
+          employeeId,
+          date: new Date(body.date),
+          startTime: newStart,
+          endTime: newEnd,
+          salonId: salonResolution.salonId,
+          travelToSalonId,
+          validateArrivalSalon: true,
+        });
+        if (!verdict.ok) throw new TravelRefusalError(verdict);
+      };
       try {
         if (resolvedGrantId) {
           // Atomic: create entry + flip grant APPROVED → USED in one transaction.
@@ -1661,6 +1710,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               callerEmployeeId: user.employeeId ?? null,
               access: accessContextFromRequest(req),
             });
+            await assertTravelEntry(tx);
 
             const created = await tx.timeEntry.create({
               data: {
@@ -1778,6 +1828,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               callerEmployeeId: user.employeeId ?? null,
               access: accessContextFromRequest(req),
             });
+            await assertTravelEntry(tx);
             return tx.timeEntry.create({
               data: {
                 employeeId,
@@ -1802,6 +1853,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // Grant already consumed (concurrent race) → 403
         if (err instanceof GrantAlreadyUsedError) {
           return reply.code(403).send({ error: "Antrag bereits verwendet oder ungültig" });
+        }
+        // Issue #92: the travel write rule refused inside the transaction (404/400 salon, 409 anchors).
+        if (err instanceof TravelRefusalError) {
+          return reply.code(err.refusal.status).send(err.refusal.body);
         }
         // Overlap re-checked inside the transaction (grant branch after the flip, Nachtrag and
         // plain branch under the Employee row lock), worded by the caller's reach → 409.

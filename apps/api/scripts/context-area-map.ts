@@ -233,6 +233,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/entry-write-lock.ts": "zeiterfassung", // Issue #70 (Phase 70b-02), D-10 — the one Employee row lock of every writer that creates or moves a TimeEntry interval
   "src/contexts/time-tracking/entry-overlap-error.ts": "zeiterfassung", // Issue #70 (Phase 70b-02), D-10/D-13 — recognises the database overlap/open-per-day refusals and words the overlap 409
   "src/contexts/time-tracking/entry-salon.ts": "zeiterfassung", // Phase 68b (issue #68) — resolveEntrySalon, the entry-salon rule; reads the Unterbau only through the platform index
+  "src/contexts/time-tracking/travel-entry.ts": "zeiterfassung", // Issue #92 (Phase 92b-01), D-05/D-06 — the one travel-entry write rule (classify, neighbour anchors, arrival salon through resolveEntrySalon); reads only findEntriesOfDay and the entry-salon rule
   "src/contexts/time-tracking/clock-salon-choice.ts": "zeiterfassung", // Issue #87 (Phase 87b) — clockSalonChoice, the one clock-salon decision; reads the Unterbau only through the platform index
   "src/contexts/time-tracking/break-finding-days.ts": "zeiterfassung", // Issue #511 (D-12) — month-close / cron / dry-run detector over TimeEntry, Break, DayBreak and DayBreakAck
   "src/contexts/time-tracking/break-finding-notice.ts": "zeiterfassung", // Issue #80 (D-11) / #511 (D-13) — pure notification texts for break findings
