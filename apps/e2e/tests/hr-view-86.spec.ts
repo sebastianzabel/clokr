@@ -35,7 +35,7 @@ const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:4001";
 const SECOND_SALON_NAME = "Zweitsalon Testheim";
 
 /** The HR person signs in with a direct password the admin sets at creation. */
-const HR_PASSWORD = "Hr-Pruefung-86-test1234";
+const HR_PASSWORD = `Hr-${randomUUID()}!`;
 
 /**
  * The system role template „Personalabteilung“. Copied from `SYSTEM_ROLE_IDS.HR` in

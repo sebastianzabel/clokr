@@ -18,6 +18,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import {
   getTestApp,
@@ -181,7 +182,7 @@ describe("Issue #86 (Phase 86b Plan 06) — Personalabteilung acceptance on the 
         weeklyHours: 40,
         homeSalonId: salonB.id,
         // A direct password, so no invitation mail is attempted (the test mailer has no SMTP).
-        password: "Zx9!hr86-direct-Pw",
+        password: `Hr-${randomUUID()}!`,
       });
       expect(res.statusCode, res.body).toBe(201);
       const created = JSON.parse(res.body) as { id: string };

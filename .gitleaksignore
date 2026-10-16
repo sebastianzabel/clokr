@@ -23,3 +23,7 @@
 # Issue #539 (2026-10-16): `WRONG_PASSWORD = "definitely-wrong-1"` in a test — a deliberately wrong login
 # password, no secret. The test now generates it at runtime; this fingerprint covers the already-pushed commit.
 559fc04fa16367c1ef9cc971af5138f6d0e3739b:apps/api/src/__tests__/no-role-assigned-539.test.ts:generic-api-key:36
+# Issue #86 (2026-10-16): `const HR_PASSWORD = "..."` in the e2e spec for the Personalabteilung view - a throwaway
+# password of a synthetic test user in a disposable tenant, no secret. The spec now generates it at runtime; this
+# fingerprint covers the already-pushed commit.
+2d595b883277096987764da431b87ca7863a891e:apps/e2e/tests/hr-view-86.spec.ts:generic-api-key:32
