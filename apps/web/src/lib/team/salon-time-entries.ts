@@ -10,9 +10,14 @@
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { withSalonId } from "$lib/dashboard/team-view";
+import type { TravelRowFields } from "$lib/time-entries/travel-entry-form";
 
-/** One entry of `GET /time-entries?salonId` (the fields the Salonansicht reads). */
-export interface SalonViewEntry {
+/**
+ * One entry of `GET /time-entries?salonId` (the fields the Salonansicht reads). A trip between two
+ * salons (Issue #92) is listed under its departure salon and names its route through the served
+ * display names of `TravelRowFields`.
+ */
+export interface SalonViewEntry extends TravelRowFields {
   id: string;
   employeeId: string;
   /** ISO timestamp at UTC midnight of the work day (`@db.Date`). */

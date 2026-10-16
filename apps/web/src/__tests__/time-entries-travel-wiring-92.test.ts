@@ -60,6 +60,13 @@ const PAGES = [
       "src/routes/(app)/time-entries/+page.svelte",
     ),
   },
+  {
+    name: "/team/time-entries",
+    source: readRouteFile(
+      "../routes/(app)/team/time-entries/+page.svelte",
+      "src/routes/(app)/team/time-entries/+page.svelte",
+    ),
+  },
 ];
 
 describe.each(PAGES)("travel wiring (#92) - $name", ({ source }) => {
@@ -116,5 +123,26 @@ describe.each(PAGES)("travel wiring (#92) - $name", ({ source }) => {
   it("builds the travel request only through travelPayload", () => {
     expect(source).toMatch(/\.\.\.travelPayload\(|travelPayload\(\{/);
     expect(source).not.toMatch(/travelToSalonId:\s*formTravelTo/);
+  });
+});
+
+describe("travel wiring (#92) - the Salonansicht and the team request", () => {
+  const salonView = readRouteFile(
+    "../lib/components/team/SalonTimeEntries.svelte",
+    "src/lib/components/team/SalonTimeEntries.svelte",
+  );
+  const teamPage = PAGES[1]!.source;
+
+  it("renders a trip in the Salonansicht through the shared label and kind read", () => {
+    expect(salonView).toContain("isTravelRow(entry)");
+    expect(salonView).toContain("travelRouteLabel(entry)");
+    expect(salonView).not.toContain("activityKind");
+  });
+
+  it("sends a manager's trip on behalf of the selected person as a correction, never with a kind", () => {
+    expect(teamPage).toMatch(
+      /\.\.\.travel,\s*employeeId: selectedEmployeeId,\s*source: "CORRECTION"/,
+    );
+    expect(teamPage).toMatch(/\.\.\.travel,\s*source: "CORRECTION"/);
   });
 });

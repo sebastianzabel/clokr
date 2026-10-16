@@ -124,3 +124,31 @@ describe("SalonTimeEntries — states", () => {
     expect(document.body.textContent ?? "").not.toContain("unvollständig");
   });
 });
+
+// Issue #92 (Phase 92b-05): a trip between two salons is listed under its departure salon, with the
+// badge and its route from the served display names.
+describe("SalonTimeEntries - a trip between two salons", () => {
+  it("shows the badge and the route next to the person; an ordinary row shows neither", () => {
+    const tripDays = groupSalonEntries([
+      entry({
+        id: "t1",
+        startTime: "2026-06-15T12:00:00.000Z",
+        endTime: "2026-06-15T12:30:00.000Z",
+        activityKind: "TRAVEL",
+        salonName: "Hauptsalon",
+        travelToSalonId: "s2",
+        travelToSalonName: "Zweitsalon",
+        workingMinutes: 30,
+      }),
+      entry({ id: "o1", employeeId: "e2", employee: { firstName: "Bernd", lastName: "Adler" } }),
+    ]);
+    renderWithTheme(SalonTimeEntries, {
+      days: tripDays,
+      status: "rows",
+      capReached: false,
+      salonName: "Hauptsalon",
+    });
+    expect(screen.getAllByText("Fahrzeit")).toHaveLength(1);
+    expect(screen.getByText("Hauptsalon → Zweitsalon")).toBeTruthy();
+  });
+});

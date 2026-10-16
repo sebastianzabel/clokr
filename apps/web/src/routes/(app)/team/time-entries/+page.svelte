@@ -24,6 +24,15 @@
     salonFieldOptions,
     salonIdToSend,
   } from "$lib/time-entries/day-entry-actions";
+  import {
+    TRAVEL_TEXTS,
+    isTravelRow,
+    travelArrivalOptions,
+    travelFormMode,
+    travelPayload,
+    travelRouteLabel,
+    type TravelRowFields,
+  } from "$lib/time-entries/travel-entry-form"; // Issue #92, D-08
   // Issue #85 D-09/D-14/D-15 — the Salonansicht. The salon decision lives in team-view.ts (never
   // the raw selection getter); the server decides which entries are visible.
   import { isTeamSalonRejected, teamSalonViewSalon } from "$lib/dashboard/team-view";
@@ -96,7 +105,9 @@
     endTime: string;
   }
 
-  interface TimeEntry {
+  // Issue #92: `TravelRowFields` carries the served kind, the arrival salon and its name; the page
+  // reads the kind only through `isTravelRow`.
+  interface TimeEntry extends TravelRowFields {
     id: string;
     date: string;
     startTime: string;
@@ -327,6 +338,17 @@
   let formSalonId = $state("");
   let formSalonOptions = $derived(salonFieldOptions($salonContext.salons, editEntry));
   let formSalonPayload = $derived(salonIdToSend(formSalonId, editEntry?.salonId ?? null));
+  // Issue #92 (D-06/D-08): the trip form, same rules as on /time-entries. The switch exists only on
+  // a NEW entry where the #64 rule holds; an existing trip opens the travel form; any other entry
+  // never gets it (the kind is immutable). Von/Nach come from the same reachable-salon options as
+  // the salon field - never from the header selection. The server decides whether a trip is
+  // recordable.
+  let travelMode = $derived(travelFormMode(multiEntryUi, editEntry));
+  let formTravel = $state(false);
+  let formTravelFrom = $state("");
+  let formTravelTo = $state("");
+  let travelActive = $derived(travelMode === "travel" || (travelMode === "offer" && formTravel));
+  let travelToOptions = $derived(travelArrivalOptions(formSalonOptions, editEntry));
   let defaultBreakStart: string | null = $state(null);
   // Issue #80 (D-20) + Issue #511 D-18 — the server's day checks of the loaded range: the only
   // source of the calendar markers and of the day panels. For a partially scoped manager a day
@@ -1089,6 +1111,9 @@
     formEnd = end;
     formHasEnd = true;
     formSalonId = "";
+    formTravel = false;
+    formTravelFrom = "";
+    formTravelTo = "";
     // The usual 30 minute break is preset for the plain default day only; a further entry that
     // continues after the day's last one gets none (a break there would lie at its very start).
     if (defaultBreakStart && isDefaultPreset({ start, end })) {
@@ -1142,6 +1167,9 @@
     formHasEnd = !!entry.endTime;
     formEnd = entry.endTime ? format(new Date(entry.endTime), "HH:mm") : "17:00";
     formSalonId = entry.salonId ?? "";
+    formTravel = false;
+    formTravelFrom = entry.salonId ?? "";
+    formTravelTo = entry.travelToSalonId ?? "";
     if (entry.breaks && entry.breaks.length > 0) {
       formBreaks = entry.breaks.map((b) => ({
         start: format(new Date(b.startTime), "HH:mm"),
@@ -1232,6 +1260,10 @@
       saveError = "Begründung ist erforderlich (revisionssicherheitspflichtig).";
       return;
     }
+    if (travelActive && (!formTravelFrom || !formTravelTo)) {
+      saveError = TRAVEL_TEXTS.salonsRequired;
+      return;
+    }
     saving = true;
     saveError = "";
     const { startISO, endISO, breaksPayload } = buildManualEntryFields();
@@ -1240,7 +1272,29 @@
       // the notice below names the cross-salon and the Satz-2/3 ones. The form's own findings
       // came from the preview before saving.
       let saved: { warnings?: unknown } | undefined;
-      if (editEntry) {
+      if (travelActive && endISO) {
+        // Issue #92 (D-06): a trip carries no break, no share and no kind - the server derives the
+        // kind from the arrival salon and answers every refusal in German, shown below.
+        const travel = travelPayload({
+          date: formDate,
+          start: startISO,
+          end: endISO,
+          fromSalonId: formTravelFrom,
+          toSalonId: formTravelTo,
+          note: formNote || null,
+        });
+        saved = editEntry
+          ? await api.put<{ warnings?: unknown }>(`/time-entries/${editEntry.id}`, {
+              ...travel,
+              source: "CORRECTION",
+              ...(isCorrectionEdit ? { reason: formReason.trim() } : {}),
+            })
+          : await api.post<{ warnings?: unknown }>("/time-entries", {
+              ...travel,
+              employeeId: selectedEmployeeId,
+              source: "CORRECTION",
+            });
+      } else if (editEntry) {
         saved = await api.put<{ warnings?: unknown }>(`/time-entries/${editEntry.id}`, {
           date: formDate,
           startTime: startISO,
@@ -1500,7 +1554,9 @@
   );
   onDestroy(() => previewRunner.dispose());
   $effect(() => {
-    const active = arbzgEnabled && modalOpen && formHasEnd && !!formStart && !!formEnd;
+    // Issue #92: a trip has no break to evaluate; the server judges it on save.
+    const active =
+      arbzgEnabled && modalOpen && formHasEnd && !!formStart && !!formEnd && !travelActive;
     let body: DayPreviewRequest | null = null;
     if (active && selectedEmployeeId && formDate) {
       try {
@@ -2025,7 +2081,16 @@
                       {/if}</td
                     >
                     {#if multiEntryUi}<td data-testid={`team-time-entry-row-${slot.id}-salon`}
-                        >{slot.salonName ?? "—"}</td
+                        >{#if isTravelRow(slot)}<span
+                            class="badge badge-gray"
+                            data-testid={`team-time-entry-row-${slot.id}-travel-badge`}
+                            >{TRAVEL_TEXTS.badge}</span
+                          >
+                          <span
+                            class="travel-route"
+                            data-testid={`team-time-entry-row-${slot.id}-travel-route`}
+                            >{travelRouteLabel(slot)}</span
+                          >{:else}{slot.salonName ?? "—"}{/if}</td
                       >{/if}
                     <td class="font-mono">{fmtTime(slot.startTime)}</td>
                     <td class="font-mono">
@@ -2157,7 +2222,11 @@
 <!-- ── Modal (Modal primitive — owns backdrop/escape/focus-trap) ────────── -->
 <Modal
   bind:open={modalOpen}
-  eyebrow={(editEntry ? "Eintrag bearbeiten" : "Neuer Eintrag") +
+  eyebrow={(travelMode === "travel"
+    ? TRAVEL_TEXTS.editTitle
+    : editEntry
+      ? "Eintrag bearbeiten"
+      : "Neuer Eintrag") +
     (selectedEmployee ? ` · ${selectedEmployee.firstName} ${selectedEmployee.lastName}` : "")}
   title={formDate
     ? format(new Date(formDate + "T12:00:00"), "EEEE, d. MMMM yyyy", { locale: de })
@@ -2171,20 +2240,72 @@
     <input id="f-date" type="date" bind:value={formDate} class="form-input" />
   </div>
   {#if multiEntryUi}
-    <div class="form-group">
-      <label class="form-label" for="f-salon">Salon</label>
-      <select
-        id="f-salon"
-        class="form-input"
-        bind:value={formSalonId}
-        data-testid="team-time-entry-modal-salon"
-      >
-        {#if !editEntry}<option value="">Automatisch (laut Plan)</option>{/if}
-        {#each formSalonOptions as salon (salon.id)}
-          <option value={salon.id}>{salon.name}</option>
-        {/each}
-      </select>
-    </div>
+    {#if travelMode === "offer"}
+      <div class="form-group">
+        <label class="travel-switch">
+          <input
+            type="checkbox"
+            bind:checked={formTravel}
+            onchange={(e) => {
+              // A trip always has an end.
+              if (e.currentTarget.checked) formHasEnd = true;
+            }}
+            data-testid="team-time-entry-modal-travel-switch"
+          />
+          <span>{TRAVEL_TEXTS.switchLabel}</span>
+        </label>
+      </div>
+    {/if}
+    {#if travelActive}
+      <div class="form-group">
+        <label class="form-label" for="f-travel-from">{TRAVEL_TEXTS.from}</label>
+        <select
+          id="f-travel-from"
+          class="form-input"
+          required
+          bind:value={formTravelFrom}
+          data-testid="team-time-entry-modal-travel-from"
+        >
+          <option value="" disabled>{TRAVEL_TEXTS.placeholder}</option>
+          {#each formSalonOptions as salon (salon.id)}
+            <option value={salon.id}>{salon.name}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="f-travel-to">{TRAVEL_TEXTS.to}</label>
+        <select
+          id="f-travel-to"
+          class="form-input"
+          required
+          bind:value={formTravelTo}
+          data-testid="team-time-entry-modal-travel-to"
+        >
+          <option value="" disabled>{TRAVEL_TEXTS.placeholder}</option>
+          {#each travelToOptions as salon (salon.id)}
+            <option value={salon.id}>{salon.name}</option>
+          {/each}
+        </select>
+      </div>
+      <p class="text-muted travel-hint" data-testid="team-time-entry-modal-travel-hint">
+        {TRAVEL_TEXTS.hint}
+      </p>
+    {:else}
+      <div class="form-group">
+        <label class="form-label" for="f-salon">Salon</label>
+        <select
+          id="f-salon"
+          class="form-input"
+          bind:value={formSalonId}
+          data-testid="team-time-entry-modal-salon"
+        >
+          {#if !editEntry}<option value="">Automatisch (laut Plan)</option>{/if}
+          {#each formSalonOptions as salon (salon.id)}
+            <option value={salon.id}>{salon.name}</option>
+          {/each}
+        </select>
+      </div>
+    {/if}
   {/if}
   <div class="form-row-two">
     <div class="form-group">
@@ -2194,10 +2315,12 @@
     <div class="form-group">
       <div class="form-label-row">
         <label class="form-label" for="f-end">Arbeitsende</label>
-        <label class="end-toggle">
-          <input type="checkbox" bind:checked={formHasEnd} aria-label="Arbeitsende erfasst" />
-          <span class="text-muted end-toggle-hint">erfasst</span>
-        </label>
+        {#if !travelActive}
+          <label class="end-toggle">
+            <input type="checkbox" bind:checked={formHasEnd} aria-label="Arbeitsende erfasst" />
+            <span class="text-muted end-toggle-hint">erfasst</span>
+          </label>
+        {/if}
       </div>
       <input
         id="f-end"
@@ -2208,55 +2331,57 @@
       />
     </div>
   </div>
-  <div class="breaks-section">
-    <span class="form-label">Pausen</span>
-    {#if editEntry && !editEntry.breaks?.length && (editEntry.breakMinutes ?? 0) > 0 && formBreaks.length === 0}
-      <div class="break-legacy">
-        <span class="text-muted">Pauschale: {editEntry.breakMinutes} Min.</span>
-        <button
-          class="btn btn-sm btn-ghost"
-          type="button"
-          onclick={() => {
-            formBreaks = [
-              { start: "12:00", end: addMinutesToTime("12:00", editEntry!.breakMinutes) },
-            ];
-          }}>In Pausen umwandeln</button
-        >
-      </div>
-    {/if}
-    {#each formBreaks as brk, i (i)}
-      <div class="break-row">
-        <input
-          type="time"
-          bind:value={brk.start}
-          class="form-input"
-          aria-label={`Pause ${i + 1} Beginn`}
-        />
-        <span class="break-sep">&ndash;</span>
-        <input
-          type="time"
-          bind:value={brk.end}
-          class="form-input"
-          aria-label={`Pause ${i + 1} Ende`}
-        />
-        <button
-          class="btn-icon"
-          type="button"
-          onclick={() => (formBreaks = formBreaks.filter((_, j) => j !== i))}
-          title="Pause entfernen">✕</button
-        >
-      </div>
-    {/each}
-    <button
-      class="btn btn-sm btn-ghost"
-      type="button"
-      onclick={() => (formBreaks = [...formBreaks, { start: "12:00", end: "12:30" }])}
-      >+ Pause hinzufügen</button
-    >
-    {#if formBreakTotal > 0}
-      <span class="text-muted break-total">Gesamt: {formBreakTotal} Min.</span>
-    {/if}
-  </div>
+  {#if !travelActive}
+    <div class="breaks-section">
+      <span class="form-label">Pausen</span>
+      {#if editEntry && !editEntry.breaks?.length && (editEntry.breakMinutes ?? 0) > 0 && formBreaks.length === 0}
+        <div class="break-legacy">
+          <span class="text-muted">Pauschale: {editEntry.breakMinutes} Min.</span>
+          <button
+            class="btn btn-sm btn-ghost"
+            type="button"
+            onclick={() => {
+              formBreaks = [
+                { start: "12:00", end: addMinutesToTime("12:00", editEntry!.breakMinutes) },
+              ];
+            }}>In Pausen umwandeln</button
+          >
+        </div>
+      {/if}
+      {#each formBreaks as brk, i (i)}
+        <div class="break-row">
+          <input
+            type="time"
+            bind:value={brk.start}
+            class="form-input"
+            aria-label={`Pause ${i + 1} Beginn`}
+          />
+          <span class="break-sep">&ndash;</span>
+          <input
+            type="time"
+            bind:value={brk.end}
+            class="form-input"
+            aria-label={`Pause ${i + 1} Ende`}
+          />
+          <button
+            class="btn-icon"
+            type="button"
+            onclick={() => (formBreaks = formBreaks.filter((_, j) => j !== i))}
+            title="Pause entfernen">✕</button
+          >
+        </div>
+      {/each}
+      <button
+        class="btn btn-sm btn-ghost"
+        type="button"
+        onclick={() => (formBreaks = [...formBreaks, { start: "12:00", end: "12:30" }])}
+        >+ Pause hinzufügen</button
+      >
+      {#if formBreakTotal > 0}
+        <span class="text-muted break-total">Gesamt: {formBreakTotal} Min.</span>
+      {/if}
+    </div>
+  {/if}
   <div class="form-group">
     <label class="form-label" for="f-note">Notiz <span class="text-muted">(optional)</span></label>
     <input
@@ -2408,6 +2533,23 @@
     font-size: 0.875rem;
     font-weight: 500;
     color: var(--text);
+  }
+  /* Issue #92 - the trip switch, hint and route of the entry form and list. */
+  .travel-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+  .travel-hint {
+    margin: 0 0 var(--s-3);
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+  .travel-route {
+    display: inline-block;
+    margin-left: 0.25rem;
+    overflow-wrap: anywhere;
   }
   .modal-additional {
     display: flex;

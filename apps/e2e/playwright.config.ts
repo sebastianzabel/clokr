@@ -206,6 +206,10 @@ export default defineConfig({
       //     salon column, the calendar cell switching to the list, an overlap refused with the
       //     server's text, a one-entry cell still opening edit, and a single-salon tenant seeing none
       //     of it); tenant fixture only, no seed, every date computed from the current day
+      //   - a trip between two salons (the switch "Fahrzeit zwischen Salons" with Von/Nach recorded
+      //     through the form, the list showing the badge and the route, a trip from home refused
+      //     with the server's German text, a single-salon tenant offered no switch); tenant fixture
+      //     only, no seed, the day computed from the current day
       //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
@@ -221,6 +225,7 @@ export default defineConfig({
         /admin-salons\.spec\.ts/,
         /hr-view-86\.spec\.ts/,
         /multi-entry-day\.spec\.ts/,
+        /travel-between-salons\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

@@ -7,6 +7,7 @@
   import type { SalonViewDay, SalonViewStatus } from "$lib/team/salon-time-entries";
   import { salonNameLabel } from "$lib/salons/page-scope";
   import SalonScopeLabel from "./SalonScopeLabel.svelte";
+  import { TRAVEL_TEXTS, isTravelRow, travelRouteLabel } from "$lib/time-entries/travel-entry-form";
 
   interface Props {
     days: SalonViewDay[];
@@ -77,7 +78,11 @@
               {#each day.persons as person (person.employeeId)}
                 {#each person.entries as entry (entry.id)}
                   <tr>
-                    <td>{person.name}</td>
+                    <td
+                      >{person.name}{#if isTravelRow(entry)}
+                        <span class="badge badge-gray">{TRAVEL_TEXTS.badge}</span>
+                        <span class="salon-view-route">{travelRouteLabel(entry)}</span>{/if}</td
+                    >
                     <td>{time(entry.startTime)}</td>
                     <td>{entry.endTime ? time(entry.endTime) : "offen"}</td>
                     <td>{entry.breakMinutes} min</td>
@@ -112,6 +117,10 @@
     font-size: 1rem;
     font-weight: 600;
     color: var(--text);
+  }
+  .salon-view-route {
+    display: inline-block;
+    overflow-wrap: anywhere;
   }
   .salon-view-note {
     margin: 0;
