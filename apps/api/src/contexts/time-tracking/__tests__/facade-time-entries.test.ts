@@ -654,6 +654,7 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
   describe("T12 createImportedTimeEntry", () => {
     it("creates a WORK/MANUAL entry", async () => {
       const created = await createImportedTimeEntry(app.prisma, {
+        tenantId: data.tenant.id, // Issue #70 (70b-04): the Employee row lock carries the tenant
         employeeId: data.adminEmployee.id,
         date: new Date("2026-07-01T00:00:00Z"),
         startTime: new Date("2026-07-01T08:00:00Z"),
@@ -669,6 +670,33 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
       expect(
         await app.prisma.timeEntryActivityShare.count({ where: { timeEntryId: created.id } }),
       ).toBe(0);
+    });
+
+    // Issue #70 (70b-04, I-21): the write is lock -> overlap re-check -> create, run in a
+    // transaction by the caller; an overlapping interval is refused with the neutral text and
+    // writes nothing, a second non-overlapping entry of the same day is created.
+    it("refuses an overlapping interval of the same employee and accepts a second entry of the day", async () => {
+      const day = new Date("2026-07-02T00:00:00Z");
+      const row = (startHour: number, endHour: number) => ({
+        tenantId: data.tenant.id,
+        employeeId: data.adminEmployee.id,
+        date: day,
+        startTime: new Date(`2026-07-02T${String(startHour).padStart(2, "0")}:00:00Z`),
+        endTime: new Date(`2026-07-02T${String(endHour).padStart(2, "0")}:00:00Z`),
+        breakMinutes: 0,
+        note: null,
+        salonId: data.salonId,
+      });
+      await app.prisma.$transaction((tx) => createImportedTimeEntry(tx, row(8, 12)));
+      await expect(
+        app.prisma.$transaction((tx) => createImportedTimeEntry(tx, row(11, 14))),
+      ).rejects.toThrow("Überschneidung mit einem bestehenden Eintrag dieses Tages.");
+      await app.prisma.$transaction((tx) => createImportedTimeEntry(tx, row(13, 17)));
+      expect(
+        await app.prisma.timeEntry.count({
+          where: { employeeId: data.adminEmployee.id, date: day, deletedAt: null },
+        }),
+      ).toBe(2);
     });
   });
 

@@ -80,6 +80,14 @@
 import type { InvalidReasonCode, Prisma } from "@clokr/db";
 import { type EmployeeScope, employeeScopeWhere } from "../../platform";
 import { CLEARED_INVALID_REASON } from "../invalid-reason";
+import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
+import { checkOverlap } from "../entry-invariants"; // Issue #70 (D-10)
+import {
+  isEntryOverlapViolation,
+  isOpenEntryPerDayViolation,
+  OPEN_ENTRY_PER_DAY_MESSAGE,
+  OVERLAP_MESSAGE_NEUTRAL,
+} from "../entry-overlap-error"; // Issue #70 (D-10/D-13)
 
 /** `periodStart`-style calendar-date keying, mirrored (not shared) from the identical helper in
  * `working-time-account/facade/saldo-snapshot.ts` / `scheduling/shift-cleanup.ts` /
@@ -654,6 +662,13 @@ export async function hardDeleteTimeDataForEmployee(
 // ── T12 — CSV bulk import ─────────────────────────────────────────────────────────────────────
 
 export type ImportedTimeEntryData = {
+  /**
+   * Issue #70 (D-10): the tenant of `employeeId`, for the Employee row lock — the lock statement
+   * carries a tenant clause so it can never be taken on a row outside the caller's tenant. The
+   * caller passes the tenant of its own request principal, the same value it already validated the
+   * row against.
+   */
+  tenantId: string;
   employeeId: string;
   date: Date;
   startTime: Date;
@@ -669,29 +684,56 @@ export type ImportedTimeEntryData = {
 
 /**
  * T12 — creates one imported `TimeEntry` row (`type: "WORK"`, `source: "MANUAL"`). No `where` (a
- * `create`), no `tenantId` parameter needed: `employeeId` is nested inside `data`, not a top-level
- * `*Id` parameter, so `lint-facade-signatures`'s F3 does not apply here, and its sole caller
- * (`platform/api/imports.ts`) already resolves+validates `employeeId` via
+ * `create`); `employeeId` and `tenantId` sit inside `data`, not as top-level `*Id` parameters, so
+ * `lint-facade-signatures`'s F3 does not apply here, and its sole caller (`platform/api/imports.ts`)
+ * already resolves+validates `employeeId` via
  * `validateTimeEntryInvariants({ ..., tenantId: req.user.tenantId })` immediately before calling
  * this.
+ *
+ * Issue #70 (Phase 70b-04, D-10, I-21): an employee may hold several entries per day, so the write
+ * is no longer a bare insert. The caller runs this inside ONE `$transaction`; the function takes the
+ * shared Employee row lock FIRST (every interval writer of the employee queues on it), re-checks the
+ * overlap against every committed row of the employee, and only then inserts. A conflict found here
+ * is a lost race — the reach-worded text already came from the caller's pre-check, so the
+ * `Error` thrown carries the NEUTRAL overlap text. A database-level refusal (the exclusion
+ * constraint, the open-entry index) that slips past the check is mapped to the same kind of
+ * message; the caller's per-row catch reports `message` as is and keeps importing the next row.
  */
 export async function createImportedTimeEntry(
   db: Prisma.TransactionClient,
   data: ImportedTimeEntryData,
 ) {
-  return db.timeEntry.create({
-    data: {
-      employeeId: data.employeeId,
-      date: data.date,
-      startTime: data.startTime,
-      endTime: data.endTime,
-      breakMinutes: data.breakMinutes,
-      note: data.note,
-      type: "WORK",
-      source: "MANUAL",
-      salonId: data.salonId, // Phase 68b (issue #68), D-11
-    },
-  });
+  await lockEmployeeForEntryWrite(db, data.tenantId, data.employeeId);
+  const conflict = await checkOverlap(
+    db,
+    data.employeeId,
+    data.startTime,
+    data.endTime,
+    undefined,
+    data.date,
+  );
+  if (conflict) throw new Error(OVERLAP_MESSAGE_NEUTRAL);
+  try {
+    return await db.timeEntry.create({
+      data: {
+        employeeId: data.employeeId,
+        date: data.date,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        breakMinutes: data.breakMinutes,
+        note: data.note,
+        type: "WORK",
+        source: "MANUAL",
+        salonId: data.salonId, // Phase 68b (issue #68), D-11
+      },
+    });
+  } catch (err) {
+    // The database backstop: a refusal that no application check saw. Never a raw Prisma error.
+    if (isEntryOverlapViolation(err)) throw new Error(OVERLAP_MESSAGE_NEUTRAL, { cause: err });
+    if (isOpenEntryPerDayViolation(err))
+      throw new Error(OPEN_ENTRY_PER_DAY_MESSAGE, { cause: err });
+    throw err;
+  }
 }
 
 // ── D-12 — "does any TimeEntry reference this salon?" ───────────────────────────────────────────

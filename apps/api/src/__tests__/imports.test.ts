@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   getTestApp,
   closeTestApp,
@@ -7,6 +7,7 @@ import {
   soleAuditRowOrNull,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
+import { holdEmployeeLockThen } from "./entry-lock-race-helpers";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
 
 describe("Bulk Import API", () => {
@@ -433,45 +434,56 @@ ${empNo};08.06.2026;08:00;12:00;0`;
       }
     });
 
-    // ── Plan 76.19-06 Task 2: DB partial-unique → P2002 reported per-row ───────
-    // A DB-level duplicate (partial-unique index, WHERE deletedAt IS NULL) raises
-    // P2002 during the per-row create. The import loop must report that row as an
-    // error with the German 409-equivalent message and keep going — never abort.
-    // The partial index cannot exist in the `db push` test database, so we simulate
-    // the driver-level P2002 on the first row's create.
-    it("DATA-V1814-04: a P2002 on a row → per-row error, loop continues", async () => {
+    // ── Plan 76.19-06 Task 2: a database-level conflict is reported per row ────
+    // Amended 2026-10-16 (Issue #70, Phase 70b-04, I-21): the day-level partial-unique index of
+    // Plan 76.19-06 is gone, and the former test only SIMULATED a driver-level P2002 with a spy on
+    // `app.prisma.timeEntry.create` (which stops intercepting once the create runs on a transaction
+    // handle). The import's write now runs lock + overlap re-check + create in one transaction, so the
+    // conflict is provoked FOR REAL: a competing writer holds the employee lock, commits an
+    // overlapping entry after the row's pre-check passed, and the row's own re-check finds it. The
+    // import loop must still report that row as an error with German text and keep going — never
+    // abort. The case count is unchanged; the neutral text replaces the old duplicate-day text.
+    it("DATA-V1814-04: a database-level conflict on a row → per-row error, loop continues (amended #70)", async () => {
       const empNo = data.employee.employeeNumber;
       const csv = `nr;datum;von;bis;pause
 ${empNo};17.06.2026;08:00;12:00;0
 ${empNo};18.06.2026;13:00;17:00;0`;
 
-      const createSpy = vi
-        .spyOn(app.prisma.timeEntry, "create")
-        .mockRejectedValueOnce(
-          Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
-        );
+      const { result: res, blocked } = await holdEmployeeLockThen(app, {
+        tenantId: data.tenant.id,
+        employeeId: data.employee.id,
+        start: () =>
+          app.inject({
+            method: "POST",
+            url: "/api/v1/imports/time-entries",
+            headers: { authorization: `Bearer ${data.adminToken}` },
+            payload: { csv },
+          }),
+        holderWork: async (tx) => {
+          await tx.timeEntry.create({
+            data: {
+              employeeId: data.employee.id,
+              date: new Date("2026-06-17T00:00:00Z"),
+              startTime: new Date("2026-06-17T07:00:00Z"),
+              endTime: new Date("2026-06-17T09:00:00Z"),
+              source: "MANUAL",
+              salonId: data.salonId,
+            },
+          });
+        },
+      });
 
-      try {
-        const res = await app.inject({
-          method: "POST",
-          url: "/api/v1/imports/time-entries",
-          headers: { authorization: `Bearer ${data.adminToken}` },
-          payload: { csv },
-        });
-
-        expect(res.statusCode).toBe(200);
-        const body = JSON.parse(res.body);
-        // first row rejected with P2002, second row imported → loop did not abort
-        expect(body.total).toBe(2);
-        expect(body.imported).toBe(1);
-        expect(body.errors).toBe(1);
-        const dupRow = body.details.find(
-          (d: { status: string; error?: string }) => d.status === "error",
-        );
-        expect(dupRow.error).toBe("Es existiert bereits ein Eintrag für diesen Tag.");
-      } finally {
-        createSpy.mockRestore();
-      }
+      expect(blocked, "the import write must queue on the employee lock").toBe(true);
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      // first row refused by the in-transaction re-check, second row imported → loop did not abort
+      expect(body.total).toBe(2);
+      expect(body.imported).toBe(1);
+      expect(body.errors).toBe(1);
+      const conflictRow = body.details.find(
+        (d: { status: string; error?: string }) => d.status === "error",
+      );
+      expect(conflictRow.error).toBe("Überschneidung mit einem bestehenden Eintrag dieses Tages.");
     });
   });
 });

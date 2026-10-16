@@ -6,6 +6,7 @@ import { Prisma } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
 import { hasPermission, requirePermission } from "../request-permissions";
 import { accessContextFromRequest } from "../access-context"; // Issue #70, D-13
+import { uniqueViolationTarget } from "../../../utils/prisma-unique-violation"; // Issue #70, I-21
 // eslint-disable-next-line no-restricted-imports -- E-2: the importer writes directly into time-tracking and working-time-account. Disappears in Block 2 (#102-#104). ADR 0001 Eintrag H.
 import {
   updateOvertimeAccount,
@@ -422,42 +423,49 @@ export async function importRoutes(app: FastifyInstance) {
           if (!salonResolution.ok) throw new Error(salonResolution.body.error);
 
           // Phase 100B Plan 08 — T12, contexts/time-tracking facade.
-          const created = await createImportedTimeEntry(app.prisma, {
-            employeeId,
-            date: new Date(dateStr),
-            startTime,
-            endTime,
-            breakMinutes: data.breakMinutes,
-            note: data.note || null,
-            salonId: salonResolution.salonId, // Phase 68b (issue #68), D-11
-          });
+          // Issue #70 (Phase 70b-04, I-21): the facade write is lock -> overlap re-check -> create,
+          // so it runs in ONE transaction together with its per-entry audit row (Revisionssicherheit:
+          // no imported entry without its CREATE audit, no audit for a row that was refused). A
+          // conflict found inside it is a lost race against a competing writer of the same employee
+          // and comes back as an Error with the neutral overlap text, reported per row below.
+          await app.prisma.$transaction(async (tx) => {
+            const created = await createImportedTimeEntry(tx, {
+              tenantId: req.user.tenantId,
+              employeeId,
+              date: new Date(dateStr),
+              startTime,
+              endTime,
+              breakMinutes: data.breakMinutes,
+              note: data.note || null,
+              salonId: salonResolution.salonId, // Phase 68b (issue #68), D-11
+            });
 
-          // Per-entry audit (Revisionssicherheit) — one AuditLog row per imported entry,
-          // not a single summary row.
-          await app.audit({
-            userId: req.user.sub,
-            action: "CREATE",
-            entity: "TimeEntry",
-            entityId: created.id,
-            newValue: created,
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            // Per-entry audit (Revisionssicherheit) — one AuditLog row per imported entry,
+            // not a single summary row.
+            await app.audit({
+              tx,
+              userId: req.user.sub,
+              action: "CREATE",
+              entity: "TimeEntry",
+              entityId: created.id,
+              newValue: created,
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
           });
 
           affectedEmployeeIds.add(employeeId);
           results.push({ row: i + 1, status: "ok" });
         } catch (e: unknown) {
-          // DATA-V1814-04: a DB-level duplicate (partial-unique index) surfaces as P2002 —
-          // report a clear per-row error and keep the import loop going (no abort).
-          const isP2002 =
-            typeof e === "object" &&
-            e !== null &&
-            "code" in e &&
-            (e as { code: unknown }).code === "P2002";
+          // Issue #70 (I-21): an overlap or an open-entry conflict arrives as an Error whose
+          // `message` is already the German per-row text (the facade maps the database refusals);
+          // the loop keeps going. A bare P2002 that names no known index (the day-level unique
+          // index of DATA-V1814-04 no longer exists) gets the generic per-row text.
+          const isUniqueViolation = uniqueViolationTarget(e) !== null;
           results.push({
             row: i + 1,
             status: "error",
-            error: isP2002
-              ? "Es existiert bereits ein Eintrag für diesen Tag."
+            error: isUniqueViolation
+              ? "Der Eintrag konnte nicht angelegt werden."
               : e instanceof Error
                 ? e.message.slice(0, 200)
                 : "Unknown error",
