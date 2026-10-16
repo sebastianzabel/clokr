@@ -79,6 +79,7 @@ import {
 import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
 import { activeParentalReductions, reducedYearsAffectedByRange } from "../parental-leave-reduction"; // Issue #468 plan 07 (D-10) — revoke-before-change guards
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
+import { sickLeaveDayCounts } from "../sick-leave-days"; // Issue #595 (D-04) — the one sick-day counter
 import {
   ensureRegularVacationEntitlement,
   daysDiffer,
@@ -377,6 +378,9 @@ const section9StatusQuerySchema = z.object({
   status: z.enum(["AU_PENDING", "CONFIRMED", "REJECTED", "SUPERSEDED"]).optional(),
   salonId: z.string().uuid().optional(), // Issue #558 (D-01) — validated by resolveSalonInReach
 });
+
+// Issue #595 (D-04) — GET /sick-days?year=: a bounded calendar year, one query per call.
+const sickDaysQuerySchema = z.object({ year: z.coerce.number().int().min(2000).max(2100) });
 
 // Issue #558 (D-01): the optional salon choice of the leave reads the team pages use. It narrows a
 // list, it is never an access boundary — every handler validates it with `resolveSalonInReach`
@@ -4201,6 +4205,54 @@ export async function leaveRoutes(app: FastifyInstance) {
       }));
       const totalDays = new Set(overruns.flatMap((o) => o.days)).size;
       return { graceDays, overruns, totalDays };
+    },
+  });
+
+  // ── GET /sick-days — the caller's own sick days of a year, in calendar days ─────────────
+  // Issue #595 (D-04): the one meaning of "Krankheitstage" — calendar days, weekends included,
+  // counted by `sickLeaveDayCounts()`, the same kernel the monthly report and both PDFs use. The
+  // /leave page used to sum the stored (workday-priced) `days` of the requests in the browser.
+  //
+  // STRICTLY self-referential like /karenz-overrun above: no employee parameter, no manager
+  // special case. Sick days are health data (Art. 9 DSGVO); the manager view lives at its own
+  // role-guarded places. The total is invariant under the attest split and the § 9 shift, so no
+  // credits are fetched; the kernel filters sick codes and effective statuses itself.
+  app.get("/sick-days", {
+    schema: {
+      tags: ["Abwesenheiten"],
+      description:
+        "The caller's own sick days of a calendar year in calendar days (weekends included).",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      // Issue #368: same refusal as `GET /requests` — no leave-request:read reach, no answer.
+      const readReach = await permissionReach(req, "leave-request:read");
+      if (readReach === null) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+      const { year } = sickDaysQuerySchema.parse(req.query);
+
+      const employeeId = req.user.employeeId;
+      if (!employeeId) return { year, sickDays: 0 };
+
+      // Calendar-day bounds for the @db.Date columns (Issue #493), never month instants.
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const firstDay = monthDateRange(year, 1, tz).firstDay;
+      const lastDay = monthDateRange(year, 12, tz).lastDay;
+
+      const rows = await app.prisma.leaveRequest.findMany({
+        where: {
+          employeeId,
+          employee: { tenantId: req.user.tenantId },
+          deletedAt: null,
+          startDate: { lte: lastDay },
+          endDate: { gte: firstDay },
+        },
+        include: { leaveType: true },
+      });
+
+      return { year, sickDays: sickLeaveDayCounts(rows, firstDay, lastDay).sickDays };
     },
   });
 
