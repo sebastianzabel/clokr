@@ -118,7 +118,10 @@ describe("Issue #658 — POST /time-entries is narrowed to the create reach", ()
         tenantId: data.tenant.id,
         name,
         nameKey: roleNameKey(name),
-        permissions: normalizeRolePermissions(["time-entry:create:ZUGEWIESEN"]),
+        permissions: normalizeRolePermissions([
+          "time-entry:create:ZUGEWIESEN",
+          "retro-request:create:ZUGEWIESEN",
+        ]),
       },
     });
     await app.prisma.roleAssignment.create({
@@ -186,5 +189,87 @@ describe("Issue #658 — POST /time-entries is narrowed to the create reach", ()
   it("lets an employee create their own entry", async () => {
     const res = await create(data.empToken);
     expect(res.statusCode).toBe(201);
+  });
+
+  describe("POST /time-entries/clock-in on behalf", () => {
+    function clockIn(token: string, payload: Record<string, unknown>) {
+      return app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/clock-in",
+        headers: { authorization: `Bearer ${token}` },
+        payload,
+      });
+    }
+
+    it("answers a salon B person exactly like an unknown id (employeeId), writes nothing", async () => {
+      const p = await person("ci-b", salonB.id);
+      const foreign = await clockIn(scopedToken, { employeeId: p.id, source: "MANUAL" });
+      const unknown = await clockIn(scopedToken, {
+        employeeId: crypto.randomUUID(),
+        source: "MANUAL",
+      });
+      expect(foreign.statusCode).toBe(404);
+      expect(foreign.body).toBe(unknown.body);
+      expect(await entryCount(p.id)).toBe(0);
+      expect(await auditCount(p.id)).toBe(0);
+    });
+
+    it("answers a salon B card exactly like an unknown card (nfcCardId)", async () => {
+      const p = await person("ci-nfc", salonB.id);
+      const card = `NFC658-${crypto.randomBytes(4).toString("hex")}`;
+      await app.prisma.employee.update({ where: { id: p.id }, data: { nfcCardId: card } });
+      const foreign = await clockIn(scopedToken, { nfcCardId: card, source: "MANUAL" });
+      const unknown = await clockIn(scopedToken, { nfcCardId: "NOSUCH-658", source: "MANUAL" });
+      expect(foreign.statusCode).toBe(404);
+      expect(foreign.body).toBe(unknown.body);
+      expect(await entryCount(p.id)).toBe(0);
+    });
+
+    it("clocks in a salon A person, a whole-tenant admin clocks in a salon B person", async () => {
+      const a = await person("ci-a", salonA.id);
+      expect((await clockIn(scopedToken, { employeeId: a.id, source: "MANUAL" })).statusCode).toBe(
+        200,
+      );
+      const b = await person("ci-b2", salonB.id);
+      expect(
+        (await clockIn(data.adminToken, { employeeId: b.id, source: "MANUAL" })).statusCode,
+      ).toBe(200);
+    });
+
+    it("lets the scoped manager clock in themselves", async () => {
+      const res = await clockIn(scopedToken, { source: "MANUAL" });
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
+  describe("POST /retro-entry-requests on behalf", () => {
+    function retro(token: string, employeeId: string) {
+      return app.inject({
+        method: "POST",
+        url: "/api/v1/retro-entry-requests",
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          employeeId,
+          targetDate: day,
+          reason: "Nachtrag 658",
+          startTime: "08:00",
+          endTime: "16:00",
+        },
+      });
+    }
+
+    it("answers a salon B person exactly like an unknown id and writes nothing", async () => {
+      const p = await person("rr-b", salonB.id);
+      const foreign = await retro(scopedToken, p.id);
+      const unknown = await retro(scopedToken, crypto.randomUUID());
+      expect(foreign.statusCode).toBe(404);
+      expect(foreign.body).toBe(unknown.body);
+      expect(await app.prisma.retroEntryRequest.count({ where: { employeeId: p.id } })).toBe(0);
+    });
+
+    it("accepts a salon A person", async () => {
+      const p = await person("rr-a", salonA.id);
+      expect((await retro(scopedToken, p.id)).statusCode).toBe(201);
+    });
   });
 });

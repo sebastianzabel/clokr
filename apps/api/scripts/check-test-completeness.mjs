@@ -850,7 +850,8 @@ const MIN_FILES = 614;
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
 // Issue #658: +5 cases in time-entry-create-reach-658.test.ts (source-counted): MIN_TESTS 9796 -> 9801.
-const MIN_TESTS = 9801;
+// Issue #658 (extension): +6 cases (clock-in on behalf, retro create on behalf) in time-entry-create-reach-658.test.ts, source-counted: MIN_TESTS 9801 -> 9807.
+const MIN_TESTS = 9807;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

@@ -299,6 +299,45 @@ function validateBreakSlots(
 }
 
 /**
+ * Issue #658 — the ONE reach rule for creating a time entry (or clocking in) for ANOTHER person
+ * as a `time-entry:create:ZUGEWIESEN` caller, the same per-entry rule as PUT (#85/#91): in reach
+ * when the person's Stammsalon / person list matches at the Stichtag, OR the salon the entry will
+ * be recorded in (explicit salon, else the derived one) is one of the caller's salons. A salon
+ * that does not resolve is out of reach. Whole-tenant reach is always in reach. Callers answer an
+ * out-of-reach target exactly like an unknown id, before any write; this writes no audit row.
+ */
+async function isCreateTargetInReach(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  target: { employeeId: string; stichtag: Date; startTime: Date; explicitSalonId?: string },
+): Promise<boolean> {
+  const reach = await resolveAccessReach(
+    app.prisma,
+    accessContextFromRequest(req),
+    "time-entry:create:ZUGEWIESEN",
+  );
+  if (
+    await isStammsalonScopeMatch(
+      app.prisma,
+      req.user.tenantId,
+      reach,
+      target.employeeId,
+      target.stichtag,
+    )
+  ) {
+    return true;
+  }
+  if (reach.kind !== "scoped") return false;
+  const entrySalon = await resolveEntrySalon(app.prisma, {
+    tenantId: req.user.tenantId,
+    employeeId: target.employeeId,
+    startTime: target.startTime,
+    explicitSalonId: target.explicitSalonId,
+  });
+  return entrySalon.ok && reach.salonIds.includes(entrySalon.salonId);
+}
+
+/**
  * Phase 91b Plan 03 (Issue #91), D-09/D-14 — the single place every single-`TimeEntry`
  * `isOnBehalfOf && reach === "ZUGEWIESEN"` route site (clock-out, PUT/DELETE/:id, revalidate,
  * breaks, break-status) checks salon/person scope on an already-fetched entry row. Returns
@@ -577,6 +616,23 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+      // Issue #658: on behalf of another person only within the caller's reach; out of reach reads
+      // exactly like the unknown id / unknown card answer above, before any write.
+      if (isOnBehalfOf) {
+        const clockNow = new Date();
+        if (
+          !(await isCreateTargetInReach(app, req, {
+            employeeId,
+            stichtag: clockNow,
+            startTime: clockNow,
+            explicitSalonId: body.salonId,
+          }))
+        ) {
+          return body.nfcCardId
+            ? reply.code(404).send({ error: "NFC Karte nicht gefunden" })
+            : reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
       }
       if (!employeeRecord.user.isActive) {
         return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
@@ -1305,37 +1361,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if (!targetEmployee) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
-      // Issue #658: a ZUGEWIESEN caller creating for ANOTHER person is bound to their reach, by
-      // the same per-entry rule as PUT (#85/#91): the person's Stammsalon / person list at the entry
-      // date, OR the salon the entry will be recorded in (a Springer's guest-salon entry). Out of
-      // reach answers byte-identical to an unknown id, before any other check that could leak
-      // existence (deactivated, hire date, leave) and before any write. A salon that does not
-      // resolve is out of reach too. Own entries and whole-tenant reach are unchanged.
-      if (isManager && employeeId !== user.employeeId) {
-        const createScopeReach = await resolveAccessReach(
-          app.prisma,
-          accessContextFromRequest(req),
-          "time-entry:create:ZUGEWIESEN",
-        );
-        let createInScope = await isStammsalonScopeMatch(
-          app.prisma,
-          user.tenantId,
-          createScopeReach,
+      // Issue #658: a ZUGEWIESEN caller creating for ANOTHER person is bound to their reach.
+      // Out of reach answers byte-identical to an unknown id, before any other check that could
+      // leak existence (deactivated, hire date, leave) and before any write.
+      if (
+        isManager &&
+        employeeId !== user.employeeId &&
+        !(await isCreateTargetInReach(app, req, {
           employeeId,
-          new Date(body.date),
-        );
-        if (!createInScope && createScopeReach.kind === "scoped") {
-          const entrySalon = await resolveEntrySalon(app.prisma, {
-            tenantId: user.tenantId,
-            employeeId,
-            startTime: new Date(body.startTime),
-            explicitSalonId: body.salonId,
-          });
-          createInScope = entrySalon.ok && createScopeReach.salonIds.includes(entrySalon.salonId);
-        }
-        if (!createInScope) {
-          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
-        }
+          stichtag: new Date(body.date),
+          startTime: new Date(body.startTime),
+          explicitSalonId: body.salonId,
+        }))
+      ) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
       if (!targetEmployee.user.isActive) {
         return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
