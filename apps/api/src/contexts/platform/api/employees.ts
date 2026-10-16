@@ -73,6 +73,9 @@ import {
   createEmployeeSchema,
   employeeClassificationSchema,
   employeeCreatedAuditValue,
+  EMPLOYEE_NUMBER_RESERVED_MESSAGE,
+  isEmployeeNumberReserved,
+  isEmployeeNumberUniqueViolation,
   prepareEmployeeCreation,
   reissueEmployeeInvitation,
   type EmployeeCreationAudit,
@@ -853,6 +856,17 @@ export async function employeeRoutes(app: FastifyInstance) {
         }
       }
 
+      // Issue #614 (D-03): the number of an exited or anonymized person stays reserved. A change to a
+      // number held by ANOTHER employee of the tenant answers 409 before any write; the unique
+      // constraint is only the backstop for the race (translated in the catch below).
+      if (
+        body.employeeNumber !== undefined &&
+        body.employeeNumber !== employee.employeeNumber &&
+        (await isEmployeeNumberReserved(app.prisma, req.user.tenantId, body.employeeNumber, id))
+      ) {
+        return reply.code(409).send({ error: EMPLOYEE_NUMBER_RESERVED_MESSAGE });
+      }
+
       const updates: Record<string, unknown> = {};
       if (body.firstName !== undefined) updates.firstName = body.firstName;
       if (body.lastName !== undefined) updates.lastName = body.lastName;
@@ -1026,6 +1040,9 @@ export async function employeeRoutes(app: FastifyInstance) {
           return updatedEmp;
         });
       } catch (err) {
+        if (isEmployeeNumberUniqueViolation(err)) {
+          return reply.code(409).send({ error: EMPLOYEE_NUMBER_RESERVED_MESSAGE });
+        }
         if (err instanceof RoleLockoutError) {
           return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
         }

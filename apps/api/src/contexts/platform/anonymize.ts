@@ -11,7 +11,12 @@
  *
  *   - Employee.firstName       → "Gelöscht"
  *   - Employee.lastName        → "GELÖSCHT-{employeeNumber-or-id-prefix}"
- *   - Employee.employeeNumber  → same anonymized label as lastName
+ *   - Employee.employeeNumber  → KEPT unchanged (Issue #614, D-03, owner decision 16.10.2026). Legal
+ *     basis: § 41 EStG (Lohnkonto, 6 years), § 147 AO (10 years), Art. 17 Abs. 3 lit. b DSGVO; the
+ *     payroll office assigns corrections of old months by the DATEV `pnr`. Without name, e-mail and
+ *     notes the number is a pseudonym. It stays reserved in the tenant (the unique constraint stays;
+ *     create/change answer 409, see employee-creation.ts). The anonymization sentinel
+ *     (firstName + lastName) does not depend on it.
  *   - Employee.nfcCardId       → null
  *   - Employee.exitDate        → the caller's `exitDayIfUnset`, ONLY when it was empty (Issue #614,
  *     D-01: an anonymized person is no longer employed; an existing exit date, past or future,
@@ -132,7 +137,7 @@ export async function anonymizeEmployeeData(
     data: {
       firstName: "Gelöscht",
       lastName: anonymizedLabel,
-      employeeNumber: anonymizedLabel,
+      // The employee number is deliberately NOT written here (Issue #614, D-03, see the header contract).
       nfcCardId: null,
       // Issue #614 (D-01): ends the employment when no exit date was entered; never moves one.
       ...(employee.exitDate === null ? { exitDate: exitDayIfUnset } : {}),

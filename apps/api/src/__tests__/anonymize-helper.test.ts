@@ -35,6 +35,7 @@ describe("anonymizeEmployeeData (helper)", () => {
 
   let employeeId: string;
   let userId: string;
+  let employeeNumber: string;
   let timeEntryId: string;
   let leaveRequestId: string;
   let absenceId: string;
@@ -59,6 +60,7 @@ describe("anonymizeEmployeeData (helper)", () => {
       },
     });
     userId = user.id;
+    employeeNumber = `ANON-${suffix}`;
 
     const employee = await app.prisma.employee.create({
       data: {
@@ -187,7 +189,7 @@ describe("anonymizeEmployeeData (helper)", () => {
     }
   });
 
-  it("anonymizes Employee PII (firstName, lastName, employeeNumber, nfcCardId) and preserves retention row counts", async () => {
+  it("anonymizes Employee PII (firstName, lastName, nfcCardId), keeps the employee number and preserves retention row counts", async () => {
     // Snapshot row counts before — assertions cover the test target only,
     // so we count for the target's employeeId/userId. Helper does NOT touch
     // other employees, so global counts would also work but per-employee
@@ -203,7 +205,10 @@ describe("anonymizeEmployeeData (helper)", () => {
     expect(emp).not.toBeNull();
     expect(emp!.firstName).toBe("Gelöscht");
     expect(emp!.lastName).toMatch(/^GELÖSCHT-/);
-    expect(emp!.employeeNumber).toMatch(/^GELÖSCHT-/);
+    // Issue #614 (D-03, owner decision 16.10.2026): the employee number is KEPT (§ 41 EStG, § 147 AO,
+    // Art. 17 Abs. 3 lit. b DSGVO). It used to be overwritten with the anonymized label.
+    expect(emp!.employeeNumber).toBe(employeeNumber);
+    expect(emp!.lastName).toBe(`GELÖSCHT-${employeeNumber}`);
     expect(emp!.nfcCardId).toBeNull();
 
     // (2) User deactivated + anonymized
