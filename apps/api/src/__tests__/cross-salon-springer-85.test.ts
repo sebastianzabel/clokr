@@ -53,8 +53,9 @@ import {
 } from "./setup";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
 
-// The day-check leg needs a day with two entries, which the partial unique index forbids for real
-// rows (#70 open). The range read of closed WORK entries is wrapped: it delegates to the original
+// The day-check leg needs a day with two entries. Since #70 (Phase 70b) real rows can hold such a
+// day; this leg stays a pure-kernel proof with exact synthetic rows (real-database proofs:
+// multi-entry-month-close-70, multi-entry-saldo-equality-70). The range read of closed WORK entries is wrapped: it delegates to the original
 // UNLESS the flag below holds rows, and only the day-check describe ever fills the flag, so no
 // other leg (holiday reads, account Ist) sees a synthetic row.
 const synthetic = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }));
