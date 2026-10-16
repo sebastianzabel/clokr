@@ -167,8 +167,9 @@ export async function holidaysForSalon(
  *
  * Per employee and day, the salon in effect is:
  *   1. the caller-supplied closed work `entries` of that employee on that day — if more than one
- *      (MULTI-ENTRY, #70 not yet decided), the EARLIEST `startTime` wins, as an interim, explicitly
- *      flagged choice (mirrors the pattern already established elsewhere per #69);
+ *      (Issue #70: an employee may work in several salons on one day), the salon of the EARLIEST
+ *      `startTime` of the day decides. That is the FINAL rule, not an interim one (owner decision
+ *      2026-10-16, Issue #70, D-13) — the holiday is resolved once per day, never per entry;
  *   2. else `salonsForDays()` (the batched form of #67's `salonForDay`, work-location fallback);
  *   3. else the tenant's default salon (`findDefaultSalon`) — and if THAT does not exist either,
  *      this throws (fail-closed; unreachable in production, Phase 64b D-18 guarantees every tenant
@@ -210,7 +211,8 @@ export async function holidaysAtWorkLocation(
       entriesByEmployeeDay.set(entry.employeeId, perEmployee);
     }
     const existing = perEmployee.get(day);
-    // MULTI-ENTRY: several entries of one employee on one day (#70) — the earliest start decides the work location until #70 defines a rule
+    // Decision (Issue #70, owner decision 2026-10-16): several entries of one employee on one day —
+    // the salon of the earliest start is the work location of the day (see the function doc).
     if (!existing || entry.startTime.getTime() < existing.startTime.getTime()) {
       perEmployee.set(day, entry);
     }

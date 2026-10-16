@@ -21,6 +21,7 @@ import { getTenantTimezone, dateStrInTz, todayInTz } from "../../working-time-ac
 import { computeEntryAgeInDays } from "../retro-config";
 import { CLEARED_INVALID_REASON } from "../invalid-reason"; // Phase 96 (T1)
 import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
+import { otherWorkingMinutesOfDay } from "../day-entries"; // Issue #70 (D-04)
 import { recheckOverlapInTx } from "../entry-invariants"; // Issue #70 (D-10)
 import {
   EntryConflictError,
@@ -449,10 +450,20 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
                   (correctedFields.breakMinutes ?? 0),
               )
             : 0;
+          // Issue #70 (70b-04, D-04): the day sum of § 9 JArbSchG, like POST and PUT — the
+          // corrected minutes plus the day's other closed WORK entries (the coupled entry itself
+          // excluded), so splitting a Berufsschultag over entries cannot bypass the limit.
           const jarbSchgApprove = await checkJArbSchG(app.prisma, {
             employeeId: existing.employeeId,
             date: existing.targetDate,
-            plannedNetWorkMin: correctedNetWorkMin,
+            plannedNetWorkMin:
+              correctedNetWorkMin +
+              (await otherWorkingMinutesOfDay(app.prisma, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                date: existing.targetDate,
+                excludeEntryId: coupledEntry.id,
+              })),
           });
           if (jarbSchgApprove.blocked) {
             return reply

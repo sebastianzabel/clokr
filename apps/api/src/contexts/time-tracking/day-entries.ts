@@ -12,6 +12,7 @@
 // apps/api/src.
 import type { FastifyInstance } from "fastify";
 import type { Prisma, TimeEntry } from "@clokr/db";
+import { addWorkingMinutes } from "./entry-durations"; // Issue #70 (70b-04) — the one working-time fold
 
 /** `app.prisma` or the `tx` handle inside `$transaction(async (tx) => …)`. */
 export type DayEntriesDb = FastifyInstance["prisma"] | Prisma.TransactionClient;
@@ -84,4 +85,29 @@ export function latestEndingClosed<T extends DayRowShape>(entries: readonly T[])
     }
   }
   return best;
+}
+
+/**
+ * Issue #70 (Phase 70b-04, D-04): the working minutes the employee already has on `date` in OTHER
+ * entries — the closed WORK rows of the day (the very row set `checkArbZG` evaluates), folded with
+ * `addWorkingMinutes`, the one working-time formula of #79 — excluding `excludeEntryId` (the entry a
+ * PUT or an approval is about to rewrite, so it is never counted against itself). Rounded to whole
+ * minutes and never negative, like the JArbSchG plan values it is added to.
+ *
+ * § 9 Abs. 1 Nr. 2 JArbSchG is a DAY rule: the minor-protection pre-checks add this value to the
+ * planned minutes of the entry being written (`checkJArbSchG` itself stays untouched). With no other
+ * entry the result is 0, so a single-entry day keeps the value it always had.
+ */
+export async function otherWorkingMinutesOfDay(
+  db: DayEntriesDb,
+  params: { tenantId: string; employeeId: string; date: Date; excludeEntryId?: string },
+): Promise<number> {
+  const rows = await findEntriesOfDay(db, params);
+  let sum = 0;
+  for (const row of rows) {
+    if (row.id === params.excludeEntryId) continue;
+    if (row.endTime === null || row.type !== "WORK") continue;
+    sum = addWorkingMinutes(sum, row);
+  }
+  return Math.max(0, Math.round(sum));
 }

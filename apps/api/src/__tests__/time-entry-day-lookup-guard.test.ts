@@ -37,6 +37,13 @@
  * (WIFI keeps never starting a second salon) left REQUIRED_MARKERS in the task that removed their
  * markers; `consolidate.ts` (never merges across salons, D-03) left in the following task. Case
  * count unchanged; "nowhere else" is still enforced.
+ *
+ * Amendment 2026-10-16 (Issue #70, Phase 70b-04): the day rules were swept — `arbzg.ts` (the day-break
+ * kernel already reads every row; the rest-period rules select by latest end / earliest start) and
+ * `platform/facade/holiday-resolution.ts` (the salon of the earliest entry of the day is the final
+ * work-location rule, owner decision 2026-10-16) became decision comments and left REQUIRED_MARKERS in
+ * the task that rewrote them. Only `clock-salon-choice.ts` is left; it leaves with 70b-06. Case count
+ * unchanged; "nowhere else" is still enforced.
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, extname } from "node:path";
@@ -62,9 +69,7 @@ const MIN_TIME_ENTRY_FIND_CALLS = 20;
 // The complete list of files carrying `// MULTI-ENTRY: <reason>` and the minimum number of marked
 // lines in each. Every place that would have to compute differently with several entries per day.
 const REQUIRED_MARKERS: Record<string, number> = {
-  "apps/api/src/contexts/time-tracking/arbzg.ts": 4,
   "apps/api/src/contexts/time-tracking/clock-salon-choice.ts": 1,
-  "apps/api/src/contexts/platform/facade/holiday-resolution.ts": 1,
 };
 const MARKER_RE = /\/\/ MULTI-ENTRY: .{10,}/;
 

@@ -125,11 +125,17 @@ export async function findUnconfirmedBreakEntries(
  * DB-aware convenience — string[] of unconfirmed AUTO days. Inherits the master
  * gate + exclusions from findUnconfirmedBreakEntries with zero duplication.
  * Used by the manual-close 409 block (task 3) and the auto-close defer (plan 04).
+ *
+ * Issue #70: an employee may hold several entries per day, so two entries of one day can both
+ * carry the automatic break. This answers "which DAYS need a confirmation": each day appears once,
+ * in date order (the same result the pure funnel `unconfirmedDaysFromEntries` gives). The per-entry
+ * variant above keeps listing every entry — the nudge cron addresses entries, not days.
  */
 export async function findUnconfirmedBreakDays(
   prisma: PrismaClient,
   opts: FindUnconfirmedBreakOpts,
 ): Promise<string[]> {
   const entries = await findUnconfirmedBreakEntries(prisma, opts);
-  return entries.map((e) => e.date);
+  // "YYYY-MM-DD" strings sort chronologically; the comparator keeps the order explicit.
+  return Array.from(new Set(entries.map((e) => e.date))).sort((a, b) => a.localeCompare(b));
 }

@@ -78,6 +78,7 @@ import {
   getEffectiveSchedule,
 } from "../entry-invariants";
 import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
+import { otherWorkingMinutesOfDay } from "../day-entries"; // Issue #70 (D-04)
 import {
   CLOCK_ENTRY_OVERLAP_MESSAGE,
   EntryConflictError,
@@ -1529,10 +1530,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 (finalBreakMinutes ?? 0),
             )
           : 0;
+      // Issue #70 (70b-04, D-04): § 9 Abs. 1 Nr. 2 JArbSchG is a day rule, so the value compared
+      // with the limit is this entry's planned minutes PLUS the working minutes of the day's other
+      // closed WORK entries — a Berufsschultag split into two entries cannot bypass it. One entry
+      // on the day: the other minutes are 0 and the value is the old one.
       const jarbSchgPost = await checkJArbSchG(app.prisma, {
         employeeId,
         date: new Date(body.date),
-        plannedNetWorkMin: plannedNetMinPost,
+        plannedNetWorkMin:
+          plannedNetMinPost +
+          (await otherWorkingMinutesOfDay(app.prisma, {
+            tenantId: user.tenantId,
+            employeeId,
+            date: new Date(body.date),
+          })),
       });
       if (jarbSchgPost.blocked) {
         return reply
@@ -2184,10 +2195,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 Number(editBreakMinutes ?? 0),
             )
           : 0;
+      // Issue #70 (70b-04, D-04): the day sum, with the edited entry excluded (see the POST above).
       const jarbSchgPut = await checkJArbSchG(app.prisma, {
         employeeId: existing.employeeId,
         date: editDate,
-        plannedNetWorkMin: plannedNetMinPut,
+        plannedNetWorkMin:
+          plannedNetMinPut +
+          (await otherWorkingMinutesOfDay(app.prisma, {
+            tenantId: existing.employee.tenantId,
+            employeeId: existing.employeeId,
+            date: editDate,
+            excludeEntryId: id,
+          })),
       });
       if (jarbSchgPut.blocked) {
         return reply

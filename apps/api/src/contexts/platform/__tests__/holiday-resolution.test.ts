@@ -157,7 +157,7 @@ describe("Resolver behaviour matrix — AC-5/AC-6/AC-7, holidaysForSalon, fail-c
   let e5Id: string; // HOME B + DEPLOYMENT A Thursdays, closed entry on B on Fronleichnam
   let e6Id: string; // hireDate 2026-06-15, NO assignment row at all
   let e7Id: string; // HOME A only
-  let e8Id: string; // HOME B — used only for hand-built MULTI-ENTRY entries
+  let e8Id: string; // HOME B — used only for hand-built several-entries-per-day fixtures
   let e9Id: string; // HOME B — padding for the 7-employee query-count case
   let stadtfestId: string; // manual PublicHoliday id on salon A, 2026-06-10 "Stadtfest A"
 
@@ -343,6 +343,8 @@ describe("Resolver behaviour matrix — AC-5/AC-6/AC-7, holidaysForSalon, fail-c
     expect(result.get(e6Id)?.size).toBe(0);
   });
 
+  // Issue #70 (70b-04): the earliest-start rule below is the FINAL work-location rule for a day with
+  // several entries (owner decision 2026-10-16), no longer an interim one — the assertions are unchanged.
   it("MULTI-ENTRY: several entries for one employee on one day — the earliest start decides", async () => {
     const day = "2026-06-04";
     const entry = (startTime: string, salonId: string): WorkLocationEntry => ({
