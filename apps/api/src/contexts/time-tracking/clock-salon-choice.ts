@@ -16,7 +16,8 @@
  * 1. Today has a RUNNING entry → no choice; the answer names the salon of the open entry. The salon
  *    is named only in a multi-salon tenant (#64: a single-salon tenant never sees salon wording).
  * 2. Today has only FINISHED entries → `fixedSalon` is the salon of the closed entry ending last
- *    (what a plain re-clock continues, deactivated or not), and in a multi-salon tenant a second
+ *    (what a plain re-clock continues, deactivated or not; `latestEndingClosed`, which skips a
+ *    TRAVEL entry — a trip is never what a re-clock continues, Issue #92), and in a multi-salon tenant a second
  *    salon may be chosen, which starts a NEW entry: the active salons except that one are offered,
  *    unless the employee's current and future assignments name exactly that one salon. The pattern
  *    salon of today is preselected when it is one of the offered salons.

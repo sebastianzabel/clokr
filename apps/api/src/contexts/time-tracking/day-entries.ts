@@ -46,6 +46,8 @@ interface DayRowShape {
   id: string;
   startTime: Date;
   endTime: Date | null;
+  /** Issue #92: a `TRAVEL` row is a trip between two salons, never a row a clock event acts on. */
+  activityKind?: string;
 }
 
 /**
@@ -55,7 +57,9 @@ interface DayRowShape {
  * Issue #70 — together with `latestEndingClosed` the ONE place that answers "which entry of the day
  * does a clock event act on" (resolver REOPEN/STOP candidate, consolidation predecessor, clock
  * salon choice). Phase 92b (Fahrzeit between salons) adds its "skip TRAVEL rows" rule HERE, so every
- * clock path changes at once; no travel logic exists yet (#92).
+ * clock path changes at once. A travel row is never open — it is closed by the database CHECK
+ * `TimeEntry_travel_shape_check` (an end time is required) — so this selector never meets one and
+ * needs no skip of its own (Issue #92, D-06).
  */
 export function openEntryOf<T extends DayRowShape>(entries: readonly T[]): T | null {
   return entries.find((e) => e.endTime === null) ?? null;
@@ -67,12 +71,19 @@ export function openEntryOf<T extends DayRowShape>(entries: readonly T[]): T | n
  * the choice is deterministic whatever order the list arrives in. `null` when no closed row exists.
  *
  * Issue #70 — the single place of the REOPEN candidate and of the consolidation predecessor
- * (see `openEntryOf`; Phase 92b adds the TRAVEL skip here).
+ * (see `openEntryOf`).
+ *
+ * Issue #92 (D-06): a row of the kind `TRAVEL` is skipped. A re-clock and the clock-salon answer
+ * never act on a trip — extending it would turn salon time into travel time (or the reverse) — so
+ * the REOPEN candidate, the fixed salon of a finished day and the consolidation predecessor are
+ * always a salon row. A trip is anchored between two salon rows (T3), so a salon row always exists
+ * on a day that holds one.
  */
 export function latestEndingClosed<T extends DayRowShape>(entries: readonly T[]): T | null {
   let best: T | null = null;
   for (const e of entries) {
     if (e.endTime === null) continue;
+    if (e.activityKind === "TRAVEL") continue;
     if (best === null) {
       best = e;
       continue;

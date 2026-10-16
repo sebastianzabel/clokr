@@ -57,7 +57,8 @@ export async function consolidateSameDayEntries(
   // - The latest-ending candidate wins.
   // - Issue #70 (D-03): with several entries per day the predecessor is the closed candidate with
   //   the latest end (`latestEndingClosed`, the one place of that choice), and consolidation never
-  //   merges across salons — see the salon guard below. An entry that carries a recorded activity
+  //   merges across salons — see the salon guard below — nor across a travel entry (Issue #92,
+  //   `travel_row` guard below). An entry that carries a recorded activity
   //   allocation is never merged away (Issue #81).
   const dayEntries = await findEntriesOfDay(tx, {
     tenantId,
@@ -77,6 +78,34 @@ export async function consolidateSameDayEntries(
   if (!previousEntry || !previousEntry.endTime) {
     log.info(
       { employeeId: openEntry.employeeId, date: openEntry.date, reason: "no_predecessor" },
+      "merge_skipped",
+    );
+    return { merged: false };
+  }
+
+  // Issue #92 (D-06): never merge into or across a trip. The selector above skips TRAVEL rows, so
+  // when a trip lies between the chosen predecessor and the row just closed, extending the
+  // predecessor over the successor would cover the trip — the database refuses that overlap and the
+  // clock-out would fail. The rows stay as they are, the clock-out itself is kept. A trip is anchored
+  // between two salon rows of different salons, so the salon guard below would end an ordinary
+  // merge anyway; this guard is checked BEFORE it so the reason is the trip, and it still holds for
+  // data that bypassed `validateTravelEntry` (same salon on both sides of the trip).
+  const tripBetween = dayEntries.some(
+    (e) =>
+      e.activityKind === "TRAVEL" &&
+      e.endTime !== null &&
+      e.endTime > previousEntry.endTime! &&
+      e.endTime <= openEntry.startTime,
+  );
+  if (tripBetween) {
+    log.info(
+      {
+        employeeId: openEntry.employeeId,
+        date: openEntry.date,
+        previousEntryId: previousEntry.id,
+        openEntryId: openEntry.id,
+        reason: "travel_row",
+      },
       "merge_skipped",
     );
     return { merged: false };
