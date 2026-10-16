@@ -3320,10 +3320,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         "Open, invalid, deleted and non-WORK entries are excluded. A SALONS/PERSONS-scoped manager receives the sum " +
         "over the entries GET /time-entries would list for them (a partial sum by design). Minutes are exact sums, " +
         "rounded once at the end. At most 366 days per request. " +
-        "activityMinutes: working minutes per activity kind (PRODUCTIVE, SETUP_CLEANING, UNSPECIFIED) over the " +
-        "same entries — minutes only, never amounts, rates or ratios; the three values sum to workingMinutes " +
-        "before rounding, each is rounded once. Optional salonId (a salon of the caller's tenant; a foreign or " +
-        "unknown id answers 404) narrows every figure of the body to that salon's entries. " +
+        "activityMinutes: working minutes per activity kind (PRODUCTIVE, SETUP_CLEANING, TRAVEL, UNSPECIFIED) " +
+        "over the same entries — minutes only, never amounts, rates or ratios; the four values sum to " +
+        "workingMinutes before rounding, each is rounded once. TRAVEL is the working time of travel entries " +
+        "between two salons (a whole entry, never a share); entryCount includes travel entries. " +
+        "Optional salonId (a salon of the caller's tenant; a foreign or unknown id answers 404) narrows " +
+        "every figure of the body to that salon's entries; a travel entry counts to its departure salon. " +
         "When the tenant has not booked the Auswertungen module, activityMinutes is null and " +
         "activityMinutesUnavailableReason is MODULE_NOT_BOOKED; every other figure is unchanged.",
       security: [{ bearerAuth: [] }],
@@ -3405,6 +3407,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       );
       entries = entries.filter((e) => activityRows.has(e.id));
       // Issue #81 (D-17): the salon filter narrows the whole body, so Σ activityMinutes = working.
+      // Issue #92 (D-07): a travel entry's own salonId is its departure salon, so it counts there.
       if (q.salonId) {
         entries = entries.filter((e) => activityRows.get(e.id)?.salonId === q.salonId);
       }
@@ -3415,7 +3418,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       let presence = 0;
       let working = 0;
       let breaks = 0;
-      const perKind = { PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 0 };
+      const perKind = { PRODUCTIVE: 0, SETUP_CLEANING: 0, TRAVEL: 0, UNSPECIFIED: 0 };
       for (const e of entries) {
         const d = entryDurations(e);
         presence += d.presenceMinutes;
@@ -3425,6 +3428,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         const m = activityMinutes({ ...e, activityKind: row.activityKind }, row.shares);
         perKind.PRODUCTIVE += m.PRODUCTIVE;
         perKind.SETUP_CLEANING += m.SETUP_CLEANING;
+        perKind.TRAVEL += m.TRAVEL;
         perKind.UNSPECIFIED += m.UNSPECIFIED;
       }
 
@@ -3444,6 +3448,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               activityMinutes: {
                 PRODUCTIVE: Math.round(perKind.PRODUCTIVE),
                 SETUP_CLEANING: Math.round(perKind.SETUP_CLEANING),
+                TRAVEL: Math.round(perKind.TRAVEL),
                 UNSPECIFIED: Math.round(perKind.UNSPECIFIED),
               },
             }
