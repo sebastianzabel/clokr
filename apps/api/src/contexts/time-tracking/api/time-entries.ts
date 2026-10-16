@@ -1142,7 +1142,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     schema: {
       tags: ["Zeiterfassung"],
       description:
-        "presenceMinutes/workingMinutes are per-entry display values (rounded, null for open entries; invalid and non-WORK rows included). Do not sum them: period totals come from GET /time-entries/summary. salonName is the display name of the entry's own salon (also when it was deactivated); the control value stays salonId. With salonId (time-entry:read:ZUGEWIESEN, from and to required, at most 31 days) the list is the salon view: every in-scope entry recorded in that active salon in the caller's reach, for all persons.",
+        "presenceMinutes/workingMinutes are per-entry display values (rounded, null for open entries; invalid and non-WORK rows included). Do not sum them: period totals come from GET /time-entries/summary. salonName is the display name of the entry's own salon (also when it was deactivated); the control value stays salonId. Travel entries (activityKind TRAVEL, Fahrzeit between two salons) carry salonId = the departure salon, travelToSalonId = the arrival salon (control value) and travelToSalonName = its display name (also when it was deactivated); both are null on every other row. With salonId (time-entry:read:ZUGEWIESEN, from and to required, at most 31 days) the list is the salon view: every in-scope entry recorded in that active salon in the caller's reach, for all persons.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requireAuth,
@@ -1300,6 +1300,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           // Issue #70 (D-07): the entry's own salon, for display only — flattened to `salonName`
           // below so no nested object and no additional id reaches the wire.
           salon: { select: { name: true } },
+          // Issue #92 (AC-92-7, D-04): the arrival salon of a travel entry, same mechanism — `null`
+          // on every ordinary row, flattened to `travelToSalonName` below.
+          travelToSalon: { select: { name: true } },
         },
         take: TIME_ENTRIES_MAX,
         orderBy:
@@ -1329,15 +1332,25 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Phase 79 (Issue #79), D-06/D-14: every item additionally states its presence and working
       // time as integer minutes (Math.round here at the API edge only; the kernel stays exact).
       // An open entry has no duration yet, which is not the same as zero, hence null.
-      return entries.map(({ salon, ...entry }) => {
+      return entries.map(({ salon, travelToSalon, ...entry }) => {
         const salonName = salon.name;
+        // Issue #92: display value of `travelToSalonId` (the control value); a deactivated arrival
+        // salon is still named, like `salonName`.
+        const travelToSalonName = travelToSalon?.name ?? null;
         if (!entry.endTime) {
-          return { ...entry, salonName, presenceMinutes: null, workingMinutes: null };
+          return {
+            ...entry,
+            salonName,
+            travelToSalonName,
+            presenceMinutes: null,
+            workingMinutes: null,
+          };
         }
         const { presenceMinutes, workingMinutes } = entryDurations(entry);
         return {
           ...entry,
           salonName,
+          travelToSalonName,
           presenceMinutes: Math.round(presenceMinutes),
           workingMinutes: Math.round(workingMinutes),
         };

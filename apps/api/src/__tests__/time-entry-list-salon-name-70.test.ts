@@ -77,7 +77,10 @@ describe("Issue #70 — GET /time-entries rows name their salon", () => {
     expect(rows.find((r) => r.salonId === salonB.id)?.salonName).toBe(salonB.name);
   });
 
-  it("the row key set is the previous one plus salonName only, and no nested salon object appears", async () => {
+  // Amendment 2026-10-16 (Issue #92, Phase 92b-03, AC-92-7): the rows additionally carry the display
+  // field `travelToSalonName` (null on every ordinary row, `travelToSalonId` is a column and already
+  // part of `Object.keys(column)` since 92b-01). Case count unchanged.
+  it("the row key set is the previous one plus salonName and travelToSalonName only, and no nested salon object appears", async () => {
     const rows = await list();
     expect(rows.length).toBeGreaterThan(0);
     // The previous wire shape: every column of the row plus the three includes and the two derived
@@ -95,8 +98,12 @@ describe("Issue #70 — GET /time-entries rows name their salon", () => {
     ].sort();
     for (const row of rows) {
       expect(row).not.toHaveProperty("salon");
+      expect(row).not.toHaveProperty("travelToSalon");
       expect(typeof row.salonName).toBe("string");
-      expect(Object.keys(row).sort()).toEqual([...previous, "salonName"].sort());
+      expect(row.travelToSalonName).toBeNull();
+      expect(Object.keys(row).sort()).toEqual(
+        [...previous, "salonName", "travelToSalonName"].sort(),
+      );
     }
   });
 });

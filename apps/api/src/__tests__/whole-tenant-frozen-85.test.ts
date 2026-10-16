@@ -1147,6 +1147,10 @@ function normalize(value: unknown): unknown {
  * (the arrival salon of a travel entry, `null` for every ordinary entry — and every entry of these
  * fixtures is ordinary). Same mechanism, nothing re-captured: the key is taken out before the
  * comparison and proven to be `null` on every row.
+ *
+ * Amendment 2026-10-16 (Issue #92, Phase 92b-03): the rows additionally carry `travelToSalonName`
+ * (the display value of `travelToSalonId`, `null` on every ordinary entry). Same mechanism: taken
+ * out before the comparison and proven to be `null` on every row.
  */
 async function withoutSalonName(
   prisma: FastifyInstance["prisma"],
@@ -1157,10 +1161,11 @@ async function withoutSalonName(
     where: { id: { in: rows.map((r) => r.salonId as string) } },
     select: { id: true, name: true },
   });
-  return rows.map(({ salonName, travelToSalonId, ...rest }) => {
+  return rows.map(({ salonName, travelToSalonId, travelToSalonName, ...rest }) => {
     expect(typeof salonName).toBe("string");
     expect(salonName).toBe(salons.find((s) => s.id === rest.salonId)?.name);
     expect(travelToSalonId, "an ordinary entry has no travel destination").toBeNull();
+    expect(travelToSalonName, "an ordinary entry has no travel destination name").toBeNull();
     return rest;
   });
 }
