@@ -89,6 +89,7 @@ describe("employeeAdminRights (/admin/employees)", () => {
       canManageAccess: true,
       canUpdate: true,
       canAssignRoles: true,
+      canAnonymize: true,
       showActions: true,
     });
   });
@@ -99,6 +100,7 @@ describe("employeeAdminRights (/admin/employees)", () => {
       canManageAccess: false,
       canUpdate: true,
       canAssignRoles: false,
+      canAnonymize: false,
       showActions: true,
     });
   });
@@ -110,6 +112,7 @@ describe("employeeAdminRights (/admin/employees)", () => {
         canManageAccess: false,
         canUpdate: false,
         canAssignRoles: false,
+        canAnonymize: false,
         showActions: false,
       });
     }

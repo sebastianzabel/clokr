@@ -3,6 +3,7 @@
   import { toasts } from "$stores/toast";
   import { authStore } from "$stores/auth";
   import { employeeAdminRights } from "$lib/page-rights";
+  import { employeeDetailTabs } from "$lib/employees/detail-tabs";
   import { markUnsaved } from "$stores/unsaved";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -435,20 +436,15 @@
   });
 
   // ── Tabs ───────────────────────────────────────────────────────────────────
-  const TABS = [
-    { id: "stammdaten", label: "Stammdaten" },
-    { id: "arbeitszeit", label: "Arbeitszeit" },
-    { id: "urlaub", label: "Urlaub" },
-    { id: "berechtigungen", label: "Berechtigungen" },
-    { id: "danger", label: "Danger Zone" },
-  ];
+  // The tab list follows the caller's permissions (Issue #86, D-04); it is derived below, next to
+  // `rights`, from employeeDetailTabs().
 
   let activeTab = $state<string>("stammdaten");
 
   $effect(() => {
     if (typeof window !== "undefined" && window.location.hash) {
       const hash = decodeURIComponent(window.location.hash.slice(1));
-      if (TABS.some((t) => t.id === hash)) activeTab = hash;
+      if (tabs.some((t) => t.id === hash)) activeTab = hash;
     }
   });
 
@@ -468,6 +464,7 @@
   // employee PATCH, hence employee:update.
   let rights = $derived(employeeAdminRights($authStore.user));
   let canAssignRoles = $derived(rights.canAssignRoles);
+  let tabs = $derived(employeeDetailTabs(rights));
   let canUpdateEmployee = $derived(rights.canUpdate);
   let eNfcCardId = $state<string>("");
   let eExitDate = $state<string>("");
@@ -1892,7 +1889,7 @@
     return () => markUnsaved("admin-employee-detail", false);
   });
 
-  // ── Danger Zone state ──────────────────────────────────────────────────────
+  // ── Anonymize / hard-delete state ──────────────────────────────────────────────────────
   let anonConfirmOpen = $state(false);
   let hardDelConfirmOpen = $state(false);
   let hardDeleteForce = $state(false);
@@ -1951,7 +1948,7 @@
       { label: "Mitarbeitende", href: "/admin/employees" },
       { label: displayName || "Mitarbeiter" },
     ]}
-    tabs={TABS}
+    {tabs}
     bind:activeTab
   >
     {#snippet tabContent(tab)}
@@ -3769,7 +3766,7 @@
           </div>
         </Section>
       {:else if tab === "danger"}
-        <!-- ── Danger Zone ─────────────────────────────────────────────────── -->
+        <!-- ── Gefahrenzone ────────────────────────────────────────────────── -->
         <DangerZone
           title="Anonymisieren (DSGVO Art. 17)"
           description="Persönliche Daten werden anonymisiert (Name → 'Gelöscht / GELÖSCHT-XXX', E-Mail anonymisiert). Zeiterfassungen, Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist (10 Jahre nach § 147 AO) erhalten."
