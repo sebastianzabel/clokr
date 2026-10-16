@@ -26,8 +26,12 @@ import {
   clockInBlocked,
   clockInBody,
   clockSalonView,
+  fixedSalonNoteLabel,
   initialClockSalonSelection,
   loadClockSalonChoice,
+  otherSalonBlocked,
+  otherSalonName,
+  otherSalonOptions,
   type ClockSalonChoice,
 } from "../clock-salon";
 
@@ -112,5 +116,100 @@ describe("clock-salon (Issue #87)", () => {
     apiGet.mockRejectedValueOnce(new ApiError(403, "forbidden"));
     await expect(loadClockSalonChoice()).resolves.toBeNull();
     expect(loggerWarn).not.toHaveBeenCalled();
+  });
+});
+
+// Issue #70 (Phase 70b-06, D-02/D-11): a FINISHED day offers a second salon. The server names the
+// salon a plain re-clock continues (`fixedSalon`) and the salons OTHER than it (`salons`); the web
+// only renders that and attaches a salon to the request for the other-salon action alone.
+describe("clock-salon — second salon on a finished day (Issue #70)", () => {
+  const C = { id: `c-${crypto.randomUUID()}`, name: "Salon West" };
+  /** The server's answer on a finished day with one entry in A: the others are offered. */
+  const finishedOffer = choice({
+    offerChoice: true,
+    preselectedSalonId: B.id,
+    salons: [B, C],
+    fixedSalon: A,
+  });
+
+  it("tracer: a finished day with an offer is a fixed view that also carries the offered salons", () => {
+    expect(clockSalonView(finishedOffer, "finished")).toEqual({
+      kind: "fixed",
+      salon: A,
+      others: [B, C],
+    });
+  });
+
+  it("a running day never carries the offer, even if a stale answer still holds one", () => {
+    expect(clockSalonView(finishedOffer, "running")).toEqual({ kind: "fixed", salon: A });
+  });
+
+  it("a finished day without an offer is the plain fixed view, exactly as before #70", () => {
+    const noOffer = choice({ offerChoice: false, salons: [], fixedSalon: A });
+    expect(clockSalonView(noOffer, "finished")).toEqual({ kind: "fixed", salon: A });
+    expect(Object.keys(clockSalonView(noOffer, "finished")).sort()).toEqual(["kind", "salon"]);
+  });
+
+  it("an offer without a named fixed salon renders nothing (single-salon tenants have none)", () => {
+    expect(clockSalonView(choice({ fixedSalon: null }), "finished")).toEqual({ kind: "none" });
+  });
+
+  it("otherSalonOptions lists the offer for the finished view and is empty for every other view", () => {
+    expect(otherSalonOptions(clockSalonView(finishedOffer, "finished"))).toEqual([B, C]);
+    expect(otherSalonOptions(clockSalonView(finishedOffer, "running"))).toEqual([]);
+    expect(otherSalonOptions({ kind: "none" })).toEqual([]);
+    expect(otherSalonOptions({ kind: "select", salons: [A, B] })).toEqual([]);
+  });
+
+  it("clockInBody sends exactly the chosen offered id for the other-salon action", () => {
+    const view = clockSalonView(finishedOffer, "finished");
+    expect(clockInBody(view, C.id, "otherSalon")).toEqual({ source: "MOBILE", salonId: C.id });
+  });
+
+  it("clockInBody sends no salon for „Erneut einstempeln“, for a non-offered id and for null", () => {
+    const view = clockSalonView(finishedOffer, "finished");
+    expect(Object.keys(clockInBody(view, C.id, "reopen"))).toEqual(["source"]);
+    expect(Object.keys(clockInBody(view, A.id, "otherSalon"))).toEqual(["source"]); // the fixed salon is not offered
+    expect(Object.keys(clockInBody(view, "not-offered", "otherSalon"))).toEqual(["source"]);
+    expect(Object.keys(clockInBody(view, null, "otherSalon"))).toEqual(["source"]);
+    // The default action stays the idle start: a finished view never carries a salon through it.
+    expect(Object.keys(clockInBody(view, C.id))).toEqual(["source"]);
+  });
+
+  it("the idle and running views are unchanged: the start action carries the select, reopen never", () => {
+    const idle = clockSalonView(choice(), "idle");
+    expect(clockInBody(idle, A.id, "start")).toEqual({ source: "MOBILE", salonId: A.id });
+    expect(Object.keys(clockInBody(idle, A.id, "otherSalon"))).toEqual(["source"]);
+    expect(
+      Object.keys(clockInBody(clockSalonView(finishedOffer, "running"), B.id, "otherSalon")),
+    ).toEqual(["source"]);
+  });
+
+  it("otherSalonBlocked is true until an offered salon is selected", () => {
+    const view = clockSalonView(finishedOffer, "finished");
+    expect(otherSalonBlocked(view, null)).toBe(true);
+    expect(otherSalonBlocked(view, "not-offered")).toBe(true);
+    expect(otherSalonBlocked(view, A.id)).toBe(true);
+    expect(otherSalonBlocked(view, B.id)).toBe(false);
+    expect(otherSalonBlocked({ kind: "none" }, B.id)).toBe(true);
+  });
+
+  it("the preselection of the finished-day offer is the server's pattern salon when it is offered", () => {
+    expect(initialClockSalonSelection(finishedOffer)).toBe(B.id);
+    expect(initialClockSalonSelection({ ...finishedOffer, preselectedSalonId: A.id })).toBeNull();
+  });
+
+  it("otherSalonName names an offered salon and nothing else", () => {
+    const view = clockSalonView(finishedOffer, "finished");
+    expect(otherSalonName(view, C.id)).toBe("Salon West");
+    expect(otherSalonName(view, A.id)).toBeUndefined();
+    expect(otherSalonName(view, null)).toBeUndefined();
+  });
+
+  it("fixedSalonNoteLabel: running names the salon it is in, several entries the last one recorded", () => {
+    expect(fixedSalonNoteLabel("running", 1)).toBe("Eingestempelt in");
+    expect(fixedSalonNoteLabel("running", 2)).toBe("Eingestempelt in");
+    expect(fixedSalonNoteLabel("finished", 1)).toBe("Heute erfasst in");
+    expect(fixedSalonNoteLabel("finished", 2)).toBe("Zuletzt erfasst in");
   });
 });

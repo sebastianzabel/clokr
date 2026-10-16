@@ -2,7 +2,8 @@
   Issue #87 (D-05, D-13): the salon selector of the clock card. Presentation only — the server
   decides whether a choice is offered, which salon is preselected and which salon a booked day is
   fixed to; hiding or showing this control is never an access control. Choosing a salon other than
-  the preselected one is not marked in any way (AC-5).
+  the preselected one is not marked in any way (AC-5). Issue #70: the lead-in of the booked-day note
+  is handed in (running, one entry, several entries); the default is the #87 wording.
 -->
 <script lang="ts">
   import type { ClockSalonView } from "$lib/dashboard/clock-salon";
@@ -12,9 +13,11 @@
     value: string | null;
     disabled?: boolean;
     onselect: (salonId: string) => void;
+    /** Lead-in of the booked-day note, followed by the salon name. */
+    noteLabel?: string;
   }
 
-  let { view, value, disabled = false, onselect }: Props = $props();
+  let { view, value, disabled = false, onselect, noteLabel = "Heute erfasst in" }: Props = $props();
 
   function handleChange(event: Event & { currentTarget: HTMLSelectElement }) {
     onselect(event.currentTarget.value);
@@ -41,7 +44,7 @@
     </span>
   </label>
 {:else if view.kind === "fixed"}
-  <p class="clock-salon-note">Heute erfasst in {view.salon.name}</p>
+  <p class="clock-salon-note">{noteLabel} {view.salon.name}</p>
 {/if}
 
 <style>
