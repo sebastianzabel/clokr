@@ -5,6 +5,8 @@
   // Mountable: no `$app` import, no request; the page loads the data and passes the status.
   import { format } from "date-fns";
   import type { SalonViewDay, SalonViewStatus } from "$lib/team/salon-time-entries";
+  import { salonNameLabel } from "$lib/salons/page-scope";
+  import SalonScopeLabel from "./SalonScopeLabel.svelte";
 
   interface Props {
     days: SalonViewDay[];
@@ -55,7 +57,7 @@
       </div>
     {/if}
     {#if salonName}
-      <p class="salon-view-salon">Salon: {salonName}</p>
+      <SalonScopeLabel label={salonNameLabel(salonName)} />
     {/if}
     {#each days as day (day.dateKey)}
       <section class="card salon-view-day">
@@ -111,7 +113,6 @@
     font-weight: 600;
     color: var(--text);
   }
-  .salon-view-salon,
   .salon-view-note {
     margin: 0;
     color: var(--text-muted);

@@ -16,6 +16,7 @@ import {
   accessContextFromRequest,
   accessContextForJob,
   employeeScopeFor,
+  salonOnlyReach,
   AccessContextError,
   type AccessContext,
 } from "../access-context";
@@ -195,5 +196,20 @@ describe("access context purity (Phase 77b, D-01)", () => {
 
   it("access-context-error.ts has no import at all", () => {
     expect(importsOf("access-context-error.ts")).toEqual([]);
+  });
+});
+
+describe("salonOnlyReach (Issue #558, D-12)", () => {
+  it("builds a scoped reach that names exactly the one salon and no person", () => {
+    expect(salonOnlyReach("s")).toEqual({ kind: "scoped", salonIds: ["s"], employeeIds: [] });
+  });
+
+  it("returns a fresh object on every call, so no caller can mutate a shared reach", () => {
+    const first = salonOnlyReach("s");
+    const second = salonOnlyReach("s");
+    expect(first).not.toBe(second);
+    expect(first.kind === "scoped" && first.salonIds).not.toBe(
+      second.kind === "scoped" && second.salonIds,
+    );
   });
 });

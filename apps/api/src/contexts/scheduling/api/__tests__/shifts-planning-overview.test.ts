@@ -348,8 +348,13 @@ describe("GET /shifts/planning-overview (Phase 430, Issue #430)", () => {
       expect(defaultIds).not.toContain(sbEmployeeB.id);
 
       // T-100-09: explicitly asking for salon B (real, foreign-to-this-reach salon) and asking
-      // for a wholly unknown salon id must be indistinguishable — same status, same body. The
-      // route never 404s on an unknown/out-of-reach salonId; both answer an empty employees list.
+      // for a wholly unknown salon id must be indistinguishable — same status, same body.
+      //
+      // Amendment Issue #558 D-07 (2026-10-16) — hardening, not a weakening: the route used to
+      // answer 200 + an empty employees list for both (a 200-for-everything oracle shape, against
+      // D-01). It now validates the salon through `resolveSalonInReach` and answers the identical
+      // 404 `{"error":"Salon nicht gefunden"}` for an out-of-reach, foreign, inactive or unknown
+      // salon. Changed assertions: status 200 → 404, the empty-list check → the literal 404 body.
       const foreignSalonRes = await app.inject({
         method: "GET",
         url: `/api/v1/shifts/planning-overview?weekStart=${WEEK_START}&salonId=${salonB.id}`,
@@ -361,9 +366,10 @@ describe("GET /shifts/planning-overview (Phase 430, Issue #430)", () => {
         headers: { authorization: `Bearer ${accessToken}` },
       });
       expect(foreignSalonRes.statusCode).toBe(unknownSalonRes.statusCode);
-      expect(foreignSalonRes.statusCode).toBe(200);
-      expect(JSON.parse(foreignSalonRes.body)).toEqual(JSON.parse(unknownSalonRes.body));
-      expect(JSON.parse(foreignSalonRes.body).employees).toEqual([]);
+      expect(foreignSalonRes.statusCode).toBe(404);
+      expect(foreignSalonRes.body).toBe(unknownSalonRes.body);
+      expect(foreignSalonRes.body).toBe('{"error":"Salon nicht gefunden"}');
+      expect(foreignSalonRes.body).not.toContain(sbEmployeeB.id);
     } finally {
       await app.prisma.roleAssignment.deleteMany({ where: { userId: plannerUser.id } });
       await app.prisma.employee.delete({ where: { id: plannerEmployee.id } });

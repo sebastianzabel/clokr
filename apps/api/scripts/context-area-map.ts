@@ -268,6 +268,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/closed-month-guard.ts": "abwesenheiten", // Issue #446 (D-07) — closed-month 409 guard for leave transitions over isMonthClosed
   "src/contexts/absence/correction-lock.ts": "abwesenheiten", // Phase 94 manager LeaveRequest correction guard
   "src/contexts/absence/effective-leave-statuses.ts": "abwesenheiten", // Issue #446 (D-01) — the one definition of "leave that counts" (APPROVED + CANCELLATION_REQUESTED)
+  "src/contexts/absence/salon-leave-attribution.ts": "abwesenheiten", // Issue #558 (D-02/D-08) — the one Stammsalon-per-day attribution of leave/absence rows to a salon; reads HOME assignments through the Unterbau facade only
   "src/contexts/absence/entitlement-audit.ts": "abwesenheiten", // Issue #445 — system-initiated LeaveEntitlement AuditLog rows (append only)
   "src/contexts/absence/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest
   "src/contexts/absence/format-hm.ts": "abwesenheiten", // hours:minutes display formatting; sole importer is routes/leave.ts

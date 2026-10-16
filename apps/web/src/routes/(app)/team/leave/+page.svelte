@@ -1,14 +1,22 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { salonContext } from "$stores/salon-context";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import Pagination from "$components/ui/Pagination.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-ef6
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
+  import {
+    isSalonFilterRejected,
+    salonPageFilter,
+    salonScopeLabel,
+    withSalonId,
+  } from "$lib/salons/page-scope"; // Issue #558 (D-03/D-04/D-09)
   import AttestFields from "$lib/components/leave/AttestFields.svelte"; // Phase 201
   import {
     resolveStornoAction,
@@ -81,6 +89,21 @@
   let pendingRequests: LeaveRequest[] = $state([]);
   let loading = $state(true);
   let error = $state("");
+
+  // Issue #558: the header salon narrows every list of this page. The page decides only through
+  // `salonPageFilter` (never the store's raw selection); the loaders read `pageSalonId` when they
+  // are called and one effect below reruns them on a change. The approval queue is filtered with
+  // the visible reference (D-09, the label names it); the inbox stays unfiltered because a work
+  // queue must never hide a due approval, and the overlap check of the review dialog stays
+  // tenant-wide decision support.
+  const contextLoaded = $derived($salonContext.loaded);
+  const pageSalonId = $derived(salonPageFilter($salonContext));
+  const scopeLabel = $derived(salonScopeLabel($salonContext));
+  let salonRejected = $state(false);
+  // Plain lets: an older response never overwrites a newer one (not reactive on purpose).
+  let dataGeneration = 0;
+  let calendarGeneration = 0;
+  let section9Generation = 0;
 
   // Review-Modal (Modal primitive owns Escape/backdrop/focus-trap) — Phase 255: markup and
   // mutation now live in the shared LeaveReviewDialog component; the page only keeps the two
@@ -197,9 +220,13 @@
   let highlightSection9Id: string | null = $state(null);
 
   async function loadSection9Cases() {
+    const generation = ++section9Generation;
     try {
-      section9Cases = await api.get<Section9Case[]>("/leave/section9");
+      const cases = await api.get<Section9Case[]>(withSalonId("/leave/section9", pageSalonId));
+      if (generation !== section9Generation) return;
+      section9Cases = cases;
     } catch {
+      if (generation !== section9Generation) return;
       section9Cases = [];
     }
   }
@@ -422,13 +449,19 @@
   }
 
   async function loadCalendar() {
+    const generation = ++calendarGeneration;
     calLoading = true;
     try {
-      calEntries = await api.get<CalEntry[]>(`/leave/calendar?year=${calYear}&month=${calMonth}`);
+      const entries = await api.get<CalEntry[]>(
+        withSalonId(`/leave/calendar?year=${calYear}&month=${calMonth}`, pageSalonId),
+      );
+      if (generation !== calendarGeneration) return;
+      calEntries = entries;
     } catch {
+      if (generation !== calendarGeneration) return;
       calEntries = [];
     } finally {
-      calLoading = false;
+      if (generation === calendarGeneration) calLoading = false;
     }
   }
 
@@ -502,42 +535,47 @@
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   async function loadData() {
+    const generation = ++dataGeneration;
     loading = true;
     error = "";
     try {
       const [all, pending, emps] = await Promise.all([
-        api.get<LeaveRequest[]>(`/leave/requests?year=${calYear}`),
-        api.get<LeaveRequest[]>(`/leave/requests?status=PENDING`),
-        api.get<Employee[]>("/employees"),
+        api.get<LeaveRequest[]>(withSalonId(`/leave/requests?year=${calYear}`, pageSalonId)),
+        api.get<LeaveRequest[]>(withSalonId("/leave/requests?status=PENDING", pageSalonId)),
+        api.get<Employee[]>(withSalonId("/employees", pageSalonId)),
       ]);
+      if (generation !== dataGeneration) return;
       allTeamRequests = all;
       pendingRequests = pending;
       employees = emps;
+      salonRejected = false;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : "Fehler beim Laden";
+      if (generation !== dataGeneration) return;
+      if (isSalonFilterRejected(e)) {
+        // The one 404 of an inadmissible salon: a calm text, no error alert.
+        allTeamRequests = [];
+        pendingRequests = [];
+        employees = [];
+        salonRejected = true;
+      } else {
+        error = e instanceof Error ? e.message : "Fehler beim Laden";
+      }
     } finally {
-      loading = false;
+      if (generation === dataGeneration) loading = false;
     }
   }
 
-  onMount(async () => {
-    await loadData();
-    loadCalendar();
-    loadSection9Cases();
+  // Deep-link targets read from the URL by onMount; the scroll and highlight run only after the
+  // first completed (salon-filtered) load, because the rows do not exist before it.
+  let deepLinkRequestId: string | null = null;
+  let deepLinkSection9Id: string | null = null;
+  let firstLoadDone = false;
 
-    // Deep-link: ?view=approvals (Phase 378, #378) — the dashboard "Offene Vorgänge" widget links
-    // here with this param; it never selected a tab because neither /leave nor /team/leave read
-    // it before this phase. Kept separate from the ?request=/?section9= handling below: those
-    // additionally highlight and scroll to one row, this only selects the tab.
-    if ($page.url.searchParams.get("view") === "approvals") {
-      view = "approvals";
-    }
-
+  function runDeepLink() {
     // Deep-link: highlight a specific request from notification
-    const requestId = $page.url.searchParams.get("request");
+    const requestId = deepLinkRequestId;
     if (requestId) {
       highlightRequestId = requestId;
-      view = "approvals";
       requestAnimationFrame(() => {
         const el = document.getElementById(`request-${requestId}`);
         if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -549,10 +587,9 @@
 
     // Deep-link: section9=<id> from the manager notification (SECTION9_AU_PENDING_MANAGER
     // / SECTION9_CREDIT_REOPENED) — mirrors the ?request= handling above.
-    const section9Id = $page.url.searchParams.get("section9");
+    const section9Id = deepLinkSection9Id;
     if (section9Id) {
       highlightSection9Id = section9Id;
-      view = "approvals";
       requestAnimationFrame(() => {
         const el = document.getElementById(`section9-${section9Id}`);
         if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -561,6 +598,42 @@
         highlightSection9Id = null;
       }, 3000);
     }
+  }
+
+  onMount(() => {
+    // Deep-link: ?view=approvals (Phase 378, #378) — the dashboard "Offene Vorgänge" widget links
+    // here with this param; it never selected a tab because neither /leave nor /team/leave read
+    // it before this phase. Kept separate from the ?request=/?section9= handling below: those
+    // additionally highlight and scroll to one row, this only selects the tab.
+    if ($page.url.searchParams.get("view") === "approvals") {
+      view = "approvals";
+    }
+
+    // Deep-link: ?request=<id> / ?section9=<id> from a notification — the tab is chosen now, the
+    // scroll and highlight follow the first load (runDeepLink).
+    deepLinkRequestId = $page.url.searchParams.get("request");
+    if (deepLinkRequestId) view = "approvals";
+    deepLinkSection9Id = $page.url.searchParams.get("section9");
+    if (deepLinkSection9Id) view = "approvals";
+  });
+
+  // Issue #558: this effect owns the loads of the three lists. It is declared after onMount so
+  // the deep-link targets are registered first, waits for the salon context so the first request
+  // is already filtered, and reruns when the header salon changes.
+  $effect(() => {
+    if (!contextLoaded) return;
+    void pageSalonId;
+    untrack(() => {
+      void (async () => {
+        await loadData();
+        void loadCalendar();
+        void loadSection9Cases();
+        if (!firstLoadDone) {
+          firstLoadDone = true;
+          runDeepLink();
+        }
+      })();
+    });
   });
 
   // ── Review-Modal ──────────────────────────────────────────────────────────
@@ -873,7 +946,7 @@
     icalDownloading = true;
     try {
       const auth = $authStore;
-      const res = await fetch(`/api/v1/leave/ical/team`, {
+      const res = await fetch(withSalonId("/api/v1/leave/ical/team", pageSalonId), {
         headers: { Authorization: `Bearer ${auth.accessToken}` },
       });
       if (!res.ok) throw new Error("Download fehlgeschlagen");
@@ -914,6 +987,7 @@
     {/if}
   {/snippet}
 </PageHead>
+<SalonScopeLabel label={scopeLabel} rejected={salonRejected} />
 
 {#if error}
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>

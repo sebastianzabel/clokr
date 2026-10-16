@@ -50,6 +50,7 @@ export {
 export {
   accessContextFromRequest,
   accessContextForJob,
+  salonOnlyReach,
   employeeScopeFor,
   AccessContextError,
 } from "./access-context";

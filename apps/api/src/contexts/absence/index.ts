@@ -57,6 +57,9 @@
 export { hasApprovedLeaveOnDate } from "./leave-check";
 export { EFFECTIVE_LEAVE_STATUSES } from "./effective-leave-statuses"; // Issue #446 (D-01)
 export type { EffectiveLeaveStatus } from "./effective-leave-statuses";
+// Issue #558 (D-02/D-08) — Stammsalon per day, the one salon attribution of absences
+export { filterLeaveRowsToHomeSalon, isHomedInSalonOnAnyDay } from "./salon-leave-attribution";
+export type { SalonAttributableRow } from "./salon-leave-attribution";
 
 // ── LeaveRequest (plan 13, A1-A3/A7-A10/A9 + shift-protection + 3 compliance — closing model) ──
 export {

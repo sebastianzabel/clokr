@@ -6,9 +6,17 @@
   // once shifts exist for that week — the planned count and the difference. Paging is by
   // weekStart alone, no artificial upper bound (owner: leave can be booked a year ahead).
 
-  import { onMount } from "svelte";
+  import { untrack } from "svelte";
   import { api } from "$api/client";
+  import { salonContext } from "$stores/salon-context";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
+  import {
+    isSalonFilterRejected,
+    salonPageFilter,
+    salonScopeLabel,
+    withSalonId,
+  } from "$lib/salons/page-scope"; // Issue #558 (D-03/D-04/D-07)
 
   interface PlanningRow {
     employeeId: string;
@@ -42,23 +50,43 @@
   let loading = $state(true);
   let loadError = $state("");
 
+  // Issue #558: the header salon narrows the persons (master-data rule, Stammsalon today or an
+  // active deployment). The page decides only through `salonPageFilter` (never the store's raw
+  // selection); a single-salon tenant or a one-salon caller never sends a `salonId`.
+  const contextLoaded = $derived($salonContext.loaded);
+  const pageSalonId = $derived(salonPageFilter($salonContext));
+  const scopeLabel = $derived(salonScopeLabel($salonContext));
+  let salonRejected = $state(false);
+  // Plain `let` (never `$state`): the effect below starts `load()` untracked and must not depend on it.
+  let loadGeneration = 0;
+
   const hasPlannedColumns = $derived(employees.some((e) => e.plannedDays !== undefined));
 
   async function load() {
+    const salonId = pageSalonId;
+    const generation = ++loadGeneration;
     loading = true;
     loadError = "";
     try {
       const res = await api.get<PlanningOverviewResponse>(
-        `/shifts/planning-overview?weekStart=${weekStart}`,
+        withSalonId(`/shifts/planning-overview?weekStart=${weekStart}`, salonId),
       );
+      if (generation !== loadGeneration) return;
+      salonRejected = false;
       weekEnd = res.weekEnd;
       employees = res.employees;
     } catch (err) {
+      if (generation !== loadGeneration) return;
+      employees = [];
+      if (isSalonFilterRejected(err)) {
+        // The one 404 of an inadmissible salon: a calm text, no error callout.
+        salonRejected = true;
+        return;
+      }
       loadError =
         err instanceof Error ? err.message : "Planungsübersicht konnte nicht geladen werden.";
-      employees = [];
     } finally {
-      loading = false;
+      if (generation === loadGeneration) loading = false;
     }
   }
 
@@ -81,7 +109,14 @@
     return `${row.leaveDays} (${row.leaveWeekdays.join(", ")})`;
   }
 
-  onMount(load);
+  // Issue #558: this effect starts the first load (once the salon context is known, so the first
+  // request is already filtered) and every reload after a header salon change. It reads only the
+  // two primitive deriveds and starts `load()` untracked; week paging calls `load()` directly.
+  $effect(() => {
+    if (!contextLoaded) return;
+    void pageSalonId;
+    untrack(() => void load());
+  });
 </script>
 
 <svelte:head>
@@ -89,6 +124,7 @@
 </svelte:head>
 
 <PageHead eyebrow="Schichtplanung" title="Planungsbedarf" accent="Planungsbedarf" />
+<SalonScopeLabel label={scopeLabel} rejected={salonRejected} />
 
 <section class="page">
   <div class="card-animate week-pager">
@@ -108,46 +144,49 @@
     <div class="callout error">{loadError}</div>
   {/if}
 
-  <div class="card-animate table-wrap">
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Person</th>
-          <th>Vertrag</th>
-          <th>Urlaub diese Woche (Tage)</th>
-          <th>noch einzuplanen</th>
-          {#if hasPlannedColumns}
-            <th>geplant</th>
-            <th>Differenz</th>
-          {/if}
-        </tr>
-      </thead>
-      <tbody>
-        {#if loading}
-          <tr><td colspan={hasPlannedColumns ? 6 : 4}>Lädt…</td></tr>
-        {:else if employees.length === 0}
+  <!-- A rejected salon shows only the calm text of the scope label, not an empty-state row. -->
+  {#if !salonRejected}
+    <div class="card-animate table-wrap">
+      <table class="data-table">
+        <thead>
           <tr>
-            <td colspan={hasPlannedColumns ? 6 : 4} class="empty">
-              Keine SHIFT_BASED-Mitarbeiter im Scope.
-            </td>
+            <th>Person</th>
+            <th>Vertrag</th>
+            <th>Urlaub diese Woche (Tage)</th>
+            <th>noch einzuplanen</th>
+            {#if hasPlannedColumns}
+              <th>geplant</th>
+              <th>Differenz</th>
+            {/if}
           </tr>
-        {:else}
-          {#each employees as row (row.employeeId)}
+        </thead>
+        <tbody>
+          {#if loading}
+            <tr><td colspan={hasPlannedColumns ? 6 : 4}>Lädt…</td></tr>
+          {:else if employees.length === 0}
             <tr>
-              <td>{row.name}</td>
-              <td>{row.contractDays} Tage</td>
-              <td>{leaveCell(row)}</td>
-              <td>{row.stillToPlan} Tage</td>
-              {#if hasPlannedColumns}
-                <td>{row.plannedDays ?? "–"}</td>
-                <td>{row.difference ?? "–"}</td>
-              {/if}
+              <td colspan={hasPlannedColumns ? 6 : 4} class="empty">
+                Keine SHIFT_BASED-Mitarbeiter im Scope.
+              </td>
             </tr>
-          {/each}
-        {/if}
-      </tbody>
-    </table>
-  </div>
+          {:else}
+            {#each employees as row (row.employeeId)}
+              <tr>
+                <td>{row.name}</td>
+                <td>{row.contractDays} Tage</td>
+                <td>{leaveCell(row)}</td>
+                <td>{row.stillToPlan} Tage</td>
+                {#if hasPlannedColumns}
+                  <td>{row.plannedDays ?? "–"}</td>
+                  <td>{row.difference ?? "–"}</td>
+                {/if}
+              </tr>
+            {/each}
+          {/if}
+        </tbody>
+      </table>
+    </div>
+  {/if}
 </section>
 
 <style>
