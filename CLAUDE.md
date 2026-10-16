@@ -382,6 +382,21 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   The person themself and a whole-tenant caller are unchanged. Accepted residuals: that a finding
   exists (notices, save responses) and the notification family stored as `type` - never a minute or
   a threshold.
+- **Day lists only within the reader's time-entry reach (Issue #86, D-02).** `dayDetailVisibility()`
+  (`contexts/working-time-account/api/day-detail-visibility.ts`) is the ONE place that decides
+  whether a caller sees a person's day lists: the own person with `time-entry:read:EIGENE`, anyone
+  else only with `time-entry:read:ZUGEWIESEN` over the person at the route's Stichtag. Four
+  Arbeitszeitkonto responses call it: `GET /overtime/month-saldo` (`days`), `close-month/status`
+  (`missingDates`, `unconfirmedBreakDays`, `breakFindingDays`, `karenzOverrunDays`),
+  `close-month/year-status` (`missing[].missingDates`) and `close-month/deferred?detailed=true`
+  (`gapDates`). Outside the reach the arrays are empty and `dayDetailsWithheld` is `true`; counts
+  (`missingDateCount`, `unconfirmedBreakDayCount`, `breakFindingDayCount`, `karenzOverrunDayCount`,
+  `gapCount`), status values and every saldo figure stay equal to what a whole-tenant reader gets.
+  The 409 `shiftPreview` of `PUT /settings/work/:employeeId` follows `shift:read` reach instead
+  (`pendingShifts` stays). The web renders counts through `$lib/month-close/day-lists` and reads
+  `dayDetailsWithheld`, never the empty array, as "withheld". Never decide this anywhere else; the
+  409 of `POST /overtime/close-month` is a known unredacted residual (ADR Eintrag Q, Nachtrag
+  Phase 86b). Proof: `hr-no-day-level-data-86.test.ts`.
 
 ## Public Holidays
 
@@ -1340,6 +1355,18 @@ a hit is converted, never excepted.
   are #538; the fallback is gone since #539 Release A (owner decision, Unterbau Semantikänderung), the web session
   carries no role and the employee screen shows „Keine Rolle zugewiesen“ for a person without an assignment;
   dropping the column and the enum is Release B (#641).
+- **System-role templates change only through a NEW data-only migration plus the constant (Issue
+  #86).** Never edit the migration that created a template: add a migration (`UPDATE "AccessRole"`,
+  `IS DISTINCT FROM` guard) and change `SYSTEM_ROLE_PERMISSIONS` in
+  `contexts/platform/system-roles.ts` in the same commit; the DB row, the constant, the row in
+  `docs/permissions.md` and the web persona fixture
+  (`apps/web/src/lib/nav/__tests__/fixtures/system-role-permissions.json`) are pinned equal by drift
+  tests and change together. The change applies to every existing account holding the role at once,
+  so it is an Unterbau Semantikänderung (owner decision, ADR Nachtrag, runbook in `docs/migrations.md`).
+  Since #86 the Personalabteilung template holds `report:read` and `salon:read` (owner decision
+  16.10.2026) and never `report:export`, `employee:manage-access`, `employee:anonymize` or any
+  time-entry/shift/team-overview key; the three `report:read` JSON responses are pinned day-free by
+  `reports-hr-86.test.ts`, which fails on any per-day key a route grows later.
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->

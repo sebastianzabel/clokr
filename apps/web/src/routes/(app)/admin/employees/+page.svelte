@@ -2,7 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
-  import { employeeAdminRights } from "$lib/page-rights";
+  import { employeeAdminRights, salonAdminRights } from "$lib/page-rights";
   import { api } from "$api/client";
   import { salonContext } from "$stores/salon-context";
   import {
@@ -18,6 +18,13 @@
   import KPIStat from "$components/ui/KPIStat.svelte";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import HomeSalonField from "$lib/components/employees/HomeSalonField.svelte";
+  import {
+    homeSalonOptions,
+    homeSalonPayload,
+    offerHomeSalonChoice,
+    type SalonRef,
+  } from "$lib/employees/salon-assignments";
   import {
     type EmployeeClassification,
     CLASSIFICATION_OPTIONS,
@@ -35,6 +42,12 @@
     usualWorkDaysShortfall,
     usualWorkDaysMissing,
   } from "$lib/utils/work-schedule";
+
+  import {
+    employmentState,
+    localCalendarDay,
+    type EmploymentKind,
+  } from "$lib/employees/employment-state";
 
   type InvitationStatus = "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE";
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -101,6 +114,16 @@
     cScheduleType === "SHIFT_BASED" &&
       (usualWorkDaysMissing(cScheduleType, cUsualWorkDays) ||
         usualWorkDaysShortfall(cUsualWorkDays, cContractWorkDays) > 0),
+  );
+  // Issue #86 (AC-86-1) — the Stammsalon is required in a tenant with several active salons. The
+  // salon list is read only for a caller who may list salons; null = not available, then no field
+  // is offered and the server's own German error answers a missing Stammsalon.
+  let createSalons = $state<SalonRef[] | null>(null);
+  let cHomeSalonId = $state("");
+  let createBlockedByHomeSalon = $derived(
+    createSalons !== null &&
+      offerHomeSalonChoice(true, homeSalonOptions(createSalons).length) &&
+      cHomeSalonId === "",
   );
   let cUsePassword = $state(false);
   let cPassword = $state("");
@@ -175,6 +198,21 @@
   let canManageAccess = $derived(rights.canManageAccess);
   let canAssignRoles = $derived(rights.canAssignRoles);
   let showActions = $derived(rights.showActions);
+  let canReadSalons = $derived(salonAdminRights($authStore.user).canRead);
+
+  async function loadCreateSalons() {
+    if (!canReadSalons) {
+      createSalons = null;
+      return;
+    }
+    try {
+      const res = await api.get<{ salons: SalonRef[] }>("/salons");
+      createSalons = res.salons;
+    } catch {
+      // Without the list no choice is offered; the API still answers a missing Stammsalon.
+      createSalons = null;
+    }
+  }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   function isAnonymized(emp: Employee): boolean {
@@ -191,7 +229,11 @@
   let filterSearch = $state("");
   let filterRole = $state("");
   let filterStatus = $state<"active" | "pending" | "expired" | "inactive" | "">("");
+  // Employment filter (Issue #86, AC-86-6): "" lists everyone, so ended employees stay visible.
+  let filterEmployment = $state<EmploymentKind | "">("");
   let showAnonymized = $state(false);
+  // Browser-local calendar day: the web has no tenant-local "today" helper.
+  const today = localCalendarDay();
 
   // Pagination
   let empPage = $state(1);
@@ -208,6 +250,8 @@
         if (!match.includes(q)) return false;
       }
       if (filterRole && !(roleNamesOf(emp) ?? []).includes(filterRole)) return false;
+      if (filterEmployment && employmentState(emp.exitDate, today).kind !== filterEmployment)
+        return false;
       if (filterStatus) {
         if (filterStatus === "active" && !emp.user.isActive) return false;
         if (filterStatus === "pending" && (emp.user.isActive || emp.invitationStatus !== "PENDING"))
@@ -358,6 +402,8 @@
     cVacationPrefill = null;
     cBirthDate = "";
     refreshVacationPrefill();
+    cHomeSalonId = "";
+    void loadCreateSalons();
     createError = "";
     createEmailError = "";
     createOpen = true;
@@ -426,6 +472,7 @@
           tenantDefaultApprenticeVacationDays,
         ),
       };
+      Object.assign(payload, homeSalonPayload(cHomeSalonId));
       if (cUsePassword && cPassword) payload.password = cPassword;
       const res = await api.post<Employee & { emailError?: string }>("/employees", payload);
       employees = [...employees, res].sort((a, b) => a.lastName.localeCompare(b.lastName));
@@ -600,6 +647,16 @@
               <option value="expired">Einladung abgelaufen</option>
               <option value="inactive">Inaktiv</option>
             </select>
+            <select
+              class="select filter-select"
+              bind:value={filterEmployment}
+              aria-label="Nach Beschäftigung filtern"
+            >
+              <option value="">Alle Beschäftigungen</option>
+              <option value="EMPLOYED">Beschäftigt</option>
+              <option value="EXIT_PLANNED">Austritt geplant</option>
+              <option value="ENDED">Ausgeschieden</option>
+            </select>
             <button
               type="button"
               class="filter-toggle"
@@ -678,6 +735,15 @@
                       <span class={statusClass(emp)}>
                         <span class="dot"></span>{statusLabel(emp)}
                       </span>
+                      {#if employmentState(emp.exitDate, today).kind !== "EMPLOYED"}
+                        <span
+                          class={employmentState(emp.exitDate, today).kind === "ENDED"
+                            ? "chip"
+                            : "chip chip-warn"}
+                          data-testid={`admin-employees-row-${emp.id}-employment`}
+                          >{employmentState(emp.exitDate, today).label}</span
+                        >
+                      {/if}
                     </td>
                     <td class="col-login">
                       {emp.user.lastLoginAt
@@ -782,6 +848,7 @@
           onchange={refreshVacationPrefill}
         />
       </div>
+      <HomeSalonField salons={createSalons} bind:value={cHomeSalonId} />
       {#if canAssignRoles}
         <div class="form-group">
           <label class="form-label" for="c-role">Rolle</label>
@@ -1073,7 +1140,7 @@
       <button
         class="btn btn-primary"
         onclick={createEmployee}
-        disabled={creating || createBlockedByUsualWorkDays}
+        disabled={creating || createBlockedByUsualWorkDays || createBlockedByHomeSalon}
       >
         {creating ? "Anlegen…" : "Mitarbeiter anlegen"}
       </button>

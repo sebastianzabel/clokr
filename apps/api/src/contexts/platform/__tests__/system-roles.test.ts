@@ -428,6 +428,9 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
     "team-overview:read:ZUGEWIESEN",
   ];
 
+  // Issue #86 (owner decision 16.10.2026): the 13 keys of Phase 76b D-07 plus `salon:read` (to
+  // maintain salon assignments, inactive salons included) and `report:read` (the three JSON
+  // routes carry only sums per person and month, pinned by reports-hr-86.test.ts).
   const HR_EXPECTED: PermissionKey[] = [
     "employee:read:ZUGEWIESEN",
     "employee:create:ZUGEWIESEN",
@@ -435,6 +438,7 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
     "employee:update-avatar:ZUGEWIESEN",
     "contract:read:ZUGEWIESEN",
     "contract:update:ZUGEWIESEN",
+    "salon:read:ZUGEWIESEN",
     "leave-request:read:ZUGEWIESEN",
     "section9:read:ZUGEWIESEN",
     "leave-entitlement:read:ZUGEWIESEN",
@@ -442,6 +446,7 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
     "vocational-school:read:ZUGEWIESEN",
     "overtime:read:ZUGEWIESEN",
     "month-close:read:ZUGEWIESEN",
+    "report:read:ZUGEWIESEN",
   ];
 
   const TRAINER_EXPECTED: PermissionKey[] = [
@@ -457,8 +462,8 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
     expect([...SYSTEM_ROLE_PERMISSIONS.SALON_MANAGER]).toEqual(SALON_MANAGER_EXPECTED);
   });
 
-  it("(D-07) Personalabteilung equals the hand-written literal list, 13 entries", () => {
-    expect(HR_EXPECTED).toHaveLength(13);
+  it("(D-07, widened by #86) Personalabteilung equals the hand-written literal list, 15 entries", () => {
+    expect(HR_EXPECTED).toHaveLength(15);
     expect([...SYSTEM_ROLE_PERMISSIONS.HR]).toEqual(HR_EXPECTED);
   });
 
@@ -472,10 +477,10 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
   });
 
   it(
-    "(principle, D-05/D-07/D-08) Salonmanager/Personalabteilung/Ausbilder hold only " +
-      "ZUGEWIESEN permissions on PERSON-relation resources — no EIGENE, no MANDANT",
+    "(principle, D-05/D-08) Salonmanager/Ausbilder hold only ZUGEWIESEN permissions on " +
+      "PERSON-relation resources — no EIGENE, no MANDANT",
     () => {
-      for (const slot of ["SALON_MANAGER", "HR", "TRAINER"] as const) {
+      for (const slot of ["SALON_MANAGER", "TRAINER"] as const) {
         for (const key of SYSTEM_ROLE_PERMISSIONS[slot]) {
           const [resource, , reach] = key.split(":");
           expect(reach, `${slot} key ${key}`).toBe("ZUGEWIESEN");
@@ -485,6 +490,24 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
           ).toBe("PERSON");
         }
       }
+    },
+  );
+
+  it(
+    "(principle, D-07, widened by #86) Personalabteilung holds only ZUGEWIESEN permissions on " +
+      "PERSON-relation resources plus exactly one MANDANT key, salon:read (owner decision " +
+      "16.10.2026, Issue #86)",
+    () => {
+      const mandantKeys: string[] = [];
+      for (const key of SYSTEM_ROLE_PERMISSIONS.HR) {
+        const [resource, , reach] = key.split(":");
+        expect(reach, `HR key ${key}`).toBe("ZUGEWIESEN");
+        const relation =
+          PERMISSION_RESOURCES[resource as keyof typeof PERMISSION_RESOURCES].relation;
+        if (relation === "MANDANT") mandantKeys.push(key);
+        else expect(relation, `HR key ${key}`).toBe("PERSON");
+      }
+      expect(mandantKeys).toEqual(["salon:read:ZUGEWIESEN"]);
     },
   );
 
@@ -501,7 +524,17 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
     const keys = SYSTEM_ROLE_PERMISSIONS.HR;
     expect(keys.some((k) => k.startsWith("time-entry:"))).toBe(false);
     expect(keys.some((k) => k.startsWith("retro-request:"))).toBe(false);
-    expect(keys.some((k) => k.startsWith("report:"))).toBe(false);
+    // #86 (owner decision 16.10.2026): report:read is held (sums only); the files with daily rows
+    // (report:export) and the dispatch (report:notify) stay excluded.
+    expect(keys.some((k) => k.startsWith("report:export:"))).toBe(false);
+    expect(keys.some((k) => k.startsWith("report:notify:"))).toBe(false);
+    expect(keys).toContain("report:read:ZUGEWIESEN");
+    for (const family of ["shift:", "shift-pattern:", "availability:"]) {
+      expect(
+        keys.some((k) => k.startsWith(family)),
+        family,
+      ).toBe(false);
+    }
     expect(keys).not.toContain("team-overview:read:ZUGEWIESEN");
     expect(keys).not.toContain("employee:anonymize:ZUGEWIESEN");
     expect(keys).not.toContain("employee:import:ZUGEWIESEN");

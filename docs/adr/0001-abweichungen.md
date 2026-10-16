@@ -2522,6 +2522,124 @@ pnpm --filter @clokr/api test
 pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts src/__tests__/permission-site-mapping.test.ts src/contexts/platform/__tests__/system-roles.test.ts
 ```
 
+### Nachtrag 2026-10-16 (Phase 86b, Issue #86) — Personalabteilung liest Berichte und Salons; Tageslisten nur in Zeiteintrags-Reichweite
+
+**Schwere: informativ. Unterbau-Semantikänderung nach ADR 0002, Entscheidung 7 (der Inhalt einer bestehenden
+Systemrolle ändert sich und gilt sofort für jedes bestehende Konto mit dieser Rolle); nach der Auslieferung hier
+nachgetragen, wie Entscheidung 7 es verlangt.** Stand der Messungen: Branch `feat/86-personalabteilung`, Basis `83ab85f0`.
+
+#### Warum
+
+Owner-Entscheidung vom 16.10.2026
+([Kommentar am Issue #86](https://github.com/sebastianzabel/clokr/issues/86#issuecomment-6211469762)): Die Vorlage
+„Personalabteilung“ erhält `report:read` und `salon:read`, jeweils `ZUGEWIESEN`. Das kehrt die Entscheidung D-07 von
+Phase 76b für `report:read` um. Ihre Prämisse — die JSON-Antwort des Monatsberichts bündle Tageszeilen mit der
+Urlaubsübersicht — ist widerlegt: Die drei `report:read`-Routen (`GET /reports/monthly`, `/reports/leave-overview`,
+`/reports/carryover-at-risk`) tragen nur Summen je Person und Monat bzw. Jahr; Tageszeilen stehen ausschließlich in den
+PDFs und im DATEV-Export unter `report:export`, das die Personalabteilung weiterhin nicht hält. Die oben in diesem Eintrag
+offen gelassene Frage „Keine Aufteilung von `report:read` (#86)“ ist damit beantwortet: Eine Aufteilung ist nicht nötig.
+`salon:read` braucht die Personalabteilung, um Salonzuordnungen zu pflegen, auch zu inaktiven Salons.
+
+Die Vorlage hält seitdem 15 statt 13 Schlüssel. #66 (Beschäftigung als eigene Entität) ist kein Blocker: Es liegt im
+Backlog, hat keine Entität und sieht selbst keine Oberfläche vor; die Ansicht baut auf dem heutigen Modell.
+
+#### Was sich geändert hat
+
+- **Vorlage.** Neue, reine Datenmigration `20261016102152_hr_template_report_salon_read` (ein `UPDATE "AccessRole"` auf die
+  Id `…a006`, geschützt durch `IS DISTINCT FROM`, keine DDL, keine Zuweisung, kein Audit-Eintrag). Die ursprüngliche
+  Migration `…_system_role_templates` bleibt unverändert; eine Vorlage ändert sich nur über eine NEUE Datenmigration plus
+  die Konstante `SYSTEM_ROLE_PERMISSIONS.HR`. Konstante, Datenbankzeile, Zeile in `docs/permissions.md` und die Persona-Fixture
+  der Web-App sind durch Gleichheitstests aneinander gebunden. Betrieb und Rückweg: `docs/migrations.md`, Abschnitt „Phase 86b“.
+- **Berichte sind tagesfrei festgenagelt.** `reports-hr-86.test.ts` hält je Route eine Schlüsselpfad-Allowlist (24, 30 und
+  23 Pfade) und einen Detektor für Tagesstrukturen, mit Positivkontrollen; die Berichtsfamilie (11 Routen, abgeleitet aus dem
+  Quelltext) beantwortet der Personalabteilung 3 mit 200 und 8 mit 403.
+- **Tageslisten nur in Zeiteintrags-Reichweite (Datenminimierung, Art. 5 Abs. 1 lit. c DSGVO).** `dayDetailVisibility()`
+  (`contexts/working-time-account/api/day-detail-visibility.ts`) entscheidet an genau einer Stelle, ob ein Aufrufer die
+  Tageslisten einer Person sehen darf: die eigene Person mit `time-entry:read:EIGENE`, jede andere nur mit
+  `time-entry:read:ZUGEWIESEN` über die Person zum Stichtag der Route. Außerhalb dieser Reichweite sind die Listen leer,
+  `dayDetailsWithheld` ist `true`, alle Anzahlen, Statuswerte und Saldenzahlen bleiben gleich. Betroffen sind vier Antworten
+  des Arbeitszeitkontos: `GET /overtime/month-saldo` (`days`), `GET /overtime/close-month/status` (vier Listen, dazu
+  `missingDateCount`, `unconfirmedBreakDayCount`, `breakFindingDayCount`, `karenzOverrunDayCount`), `GET
+/overtime/close-month/year-status` (`missingDates`, dazu `missingDateCount`) und `GET /overtime/close-month/deferred?detailed=true`
+  (`gapDates`, `gapCount` bleibt). Die zwei zuletzt genannten hat die Planung der Umsetzung gefunden
+  ([Kommentar](https://github.com/sebastianzabel/clokr/issues/86#issuecomment-6213895582)). Die fünfte Antwort mit Tagesdaten,
+  die 409-Vorschau `shiftPreview` von `PUT /settings/work/:employeeId`, folgt der `shift:read`-Reichweite (Anzahl
+  `pendingShifts` bleibt). `getDeferredMonthCloseState` ist unverändert, weil die Erinnerung per Cron die Daten braucht; die
+  Schwärzung sitzt in der Route. `lastLoginAt` bleibt (L4): kein Arbeitszeitdatum.
+- **Web.** Die Reiter der Mitarbeiter-Detailseite richten sich nach Berechtigung (`employeeDetailTabs`: „Berechtigungen“ nur
+  mit `employee:manage-access` oder `role-assignment:manage`, „Gefahrenzone“ nur mit `employee:anonymize`), dazu der Reiter
+  „Salons“ (Zuordnungsverlauf mit Namen, inaktive Salons eingeschlossen; Einsatzsalon hinzufügen, Stammsalon ändern,
+  Einsatzsalon beenden, nichts löschbar). „Vertragsverlauf“ aus den `WorkSchedule`-Zeilen, das Austrittsdatum als Ende der
+  Beschäftigung mit Hinweis, Beschäftigungsstatus und Filter in der Mitarbeiterliste. Beim Anlegen ist der Stammsalon in einem
+  Mandanten mit mehreren aktiven Salons Pflicht (behebt den 400 des Formulars). Der Monatsabschluss zeigt bei
+  zurückgehaltenen Listen Anzahlen („N Tage ohne Eintrag“) und einen Hinweis; `/team/time-entries` weist einen Aufrufer ohne
+  `time-entry:read` vor jeder Anfrage ab.
+
+#### Was bewusst NICHT geschah
+
+- **Keine Beschäftigungs-Entität.** Mehrere Beschäftigungen je Person, ein Konto je Beschäftigung und ein `validTo` an
+  Verträgen bleiben #66. „Beschäftigung beenden“ ist „Austrittsdatum setzen“, der Verlauf sind die `WorkSchedule`-Zeilen.
+- **Keine Sperre des Zugangs.** Ohne `employee:manage-access` sperrt ein Austrittsdatum das Login nicht; die Oberfläche
+  sagt das im Hinweis.
+- **Kein `report:export`**, keine Zeiteintrags-, Schicht- oder Team-Übersichts-Schlüssel, keine `EIGENE`-Schlüssel in der
+  Vorlage: Wer in der Personalabteilung selbst arbeitet, hält zusätzlich die Systemrolle Mitarbeiter.
+- **Kundenkopien der Vorlage bleiben unverändert** (eine Kopie ist eine eigene Rolle; die Änderung wirkt nur auf die Systemrolle).
+- **Keine Löschung.** Beendete Beschäftigungen bleiben sichtbar (§ 147 AO); die Personalabteilung hält weder
+  `employee:anonymize` noch `employee:manage-access`, und die Routenliste kennt keine DELETE-Route für Verträge,
+  Urlaubsanspruch oder Salonzuordnungen.
+
+#### Restrisiken
+
+- **`POST /overtime/close-month` (409).** Die Antwort trägt ebenfalls Tageslisten und ist nicht geschwärzt. Sie verlangt
+  `month-close:close`, das die Vorlage nicht hält; eine Kundenrolle mit `month-close:close` ohne `time-entry:read` sieht sie.
+- **`cancelOrphanShifts`.** Ein Inhaber von `contract:update` ohne `shift:*` kann über `PUT /settings/work/:employeeId`
+  zukünftige Schichten hart löschen (je Schicht auditiert); die Vorlage ist so ein Inhaber. Das bestand schon vorher, ist nicht
+  Teil der Entscheidung und steht als Folge-Issue #650 beim Owner.
+- **„Heute“ der Beschäftigungsanzeige** ist der Kalendertag des Browsers, weil die Web-App keinen mandantenlokalen Tag kennt;
+  ein Browser außerhalb der Mandanten-Zeitzone kann eine Person mit Austrittstag „heute“ um wenige Stunden früher oder später
+  als ausgeschieden zeigen.
+- **Anlegen ohne `salon:read`.** Eine Rolle mit `employee:create`, aber ohne `salon:read` bekommt in einem Mandanten mit
+  mehreren aktiven Salons den Server-400 zum fehlenden Stammsalon statt einer Auswahl.
+- **Schmale Bildschirme.** Mehrere Tabellen scrollen waagerecht ohne Hinweis, Wichtiges liegt rechts hinter dem Falz
+  (Folge-Issue #651).
+
+#### Auswirkung auf die Kontexte
+
+- **Unterbau:** Die Vorlage „Personalabteilung“ erhält zwei Schlüssel (Semantikänderung, Owner-Entscheidung oben); die
+  409-Schichtvorschau in `settings.ts` folgt der `shift:read`-Reichweite.
+- **Zeiterfassung:** keine fachliche Änderung. Die Sperre der Personalabteilung wirkt serverseitig und ist über alle
+  abgeleiteten Routen von `/time-entries`, `/day-breaks` und `/retro-entry-requests` getestet.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine Codeänderung; die Schichtvorschau wird in der Unterbau-Route gefiltert, die Fassade bleibt.
+- **Arbeitszeitkonto:** `day-detail-visibility.ts` und die vier Routen in `overtime.ts`; keine Zahl, kein Saldo und kein
+  Status ändert sich, nur Listen werden geleert.
+- **Kompositionsschicht:** keine Codeänderung; `reports-hr-86.test.ts` pinnt die Antworten.
+
+#### Gemessen
+
+- **Neutralitätsregister** (`permission-neutrality-matrix.test.ts` mit 1752 Fällen über drei Dateien, jeweils mit
+  `NEUTRALITY_ACTUAL_OUT_DIR`): Probelauf der Generatoren ohne `--write`, `differing=0` für Matrix, Empfängersuchen und
+  Aktivität/Login — nach Plan 86b-01 und nach Plan 86b-02; `recorded/` ist byte-gleich zum Merge-Basisstand. Keine
+  Aufnahme wurde neu geschrieben, kein Amendment eingetragen.
+- **Zugriffswege auf Zeitdaten (AC-86-4):** 22 aus dem Quelltext abgeleitete Routen unter `/time-entries`, `/day-breaks`,
+  `/retro-entry-requests`, je mit der Personalabteilung allein und mit Personalabteilung plus Mitarbeiter geprüft (44
+  Proben); keine Antwort trägt Einträge oder Uhrzeiten einer fremden Person, keine Probe schreibt.
+- **Vorlagen-Test:** 76b-Matrix gegen die echte Vorlage (`system-role-template-personalabteilung.test.ts`) und die neue
+  Abnahme `hr-view-86.test.ts` (16 Fälle für AC-86-1/2/5/6, Mutationsnachweis mit `TEMPLATE_SLOT = "TRAINER"`: 11 Fälle rot).
+- **Sichtprüfung:** Matrix aus 16 Zellen (Mitarbeiterliste, Reiter „Salons“, Reiter „Arbeitszeit“, Monatsabschluss bei 390
+  und 360 px, hell und dunkel) in `apps/e2e/tests/hr-view-86.spec.ts`; sie fand und behob einen abgeschnittenen Reiter „Salons“.
+
+#### Nachrechnen
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/__tests__/hr-view-86.test.ts src/__tests__/hr-no-day-level-data-86.test.ts \
+  src/__tests__/reports-hr-86.test.ts src/__tests__/hr-template-migration-86.test.ts \
+  src/__tests__/system-role-template-personalabteilung.test.ts src/contexts/platform/__tests__/system-roles.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts   # danach die drei Generator-Probeläufe ohne --write
+git diff --quiet "$(git merge-base HEAD origin/main)" -- apps/api/src/__tests__/neutrality/recorded
+```
+
 ## R — Fehlender Urlaubsanspruch bei Mitarbeiteranlage (Phase 416, Issue #416)
 
 **Schwere: informativ. Keine Berechtigungsänderung — eine reine Response-Body-Erweiterung einer

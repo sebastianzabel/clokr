@@ -5,12 +5,24 @@
   import Spinner from "$components/ui/Spinner.svelte";
   import ToolPage from "$lib/components/admin/ToolPage.svelte";
   import Section from "$lib/components/admin/Section.svelte";
-  import { breakFindingMonthCloseHint } from "$lib/breaks/day-break-violation";
+  import {
+    DAY_DETAILS_WITHHELD_HINT,
+    anyDayDetailsWithheld,
+    breakFindingHintFor,
+    daysWithoutEntryText,
+    gapCountOf,
+    karenzOverrunCountOf,
+    karenzOverrunTitle,
+    missingDaysText,
+  } from "$lib/month-close/day-lists";
 
   interface MissingEmployee {
     employeeName: string;
     employeeNumber: string;
     missingDates: string[];
+    /** Issue #86 (D-02): the server's count; survives a withheld (emptied) `missingDates`. */
+    missingDateCount?: number;
+    dayDetailsWithheld?: boolean;
   }
 
   interface MonthStatus {
@@ -35,6 +47,14 @@
     employeeNumber: string;
     status: "ready" | "missing" | "closed";
     missingDates?: string[];
+    /** Issue #86 (D-02): the server's counts and the flag. A reader without time-entry:read reach
+     *  over the person gets the four day lists emptied and `dayDetailsWithheld: true`; the counts
+     *  stay. An emptied list is never "no gaps" - read the counts (see lib/month-close/day-lists). */
+    missingDateCount?: number;
+    unconfirmedBreakDayCount?: number;
+    breakFindingDayCount?: number;
+    karenzOverrunDayCount?: number;
+    dayDetailsWithheld?: boolean;
     /** Phase 104 (D-21): § 5 EFZG — Krankheitstage ohne Attest über die Karenzzeit hinaus.
      *  Reiner Hinweis, KEIN Gate: der Abschluss bleibt in jedem Fall möglich. Für
      *  abgeschlossene Monate und flexible Verträge liefert der Server bewusst []. */
@@ -61,6 +81,8 @@
     reason: "GAPS" | "UNCONFIRMED_BREAKS" | "CROSS_SALON_BREAKS" | "BREAK_PLACEMENT" | "UNKNOWN";
     gapDates: string[];
     gapCount: number;
+    /** Issue #86 (D-02): `gapDates` is emptied while `gapCount` stays. */
+    dayDetailsWithheld?: boolean;
   }
 
   interface DeferredState {
@@ -184,6 +206,17 @@
 
   // pendingGaps: gap dates for the employee(s) being confirmed.
   // Derived from status-endpoint missingDates — never client-computed (A1 parity).
+  // pendingGapCount is the server's count (Issue #86, D-02): a closer without time-entry:read reach
+  // gets no dates, but the acknowledgement of the gaps still applies.
+  let pendingGapCount = $derived.by<number>(() => {
+    if (confirmEmployeeId) {
+      const emp = detailEmployees.find((e) => e.employeeId === confirmEmployeeId);
+      return emp ? gapCountOf(emp) : 0;
+    }
+    return detailEmployees
+      .filter((e) => e.status === "missing")
+      .reduce((sum, e) => sum + gapCountOf(e), 0);
+  });
   let pendingGaps = $derived.by<string[]>(() => {
     if (confirmEmployeeId) {
       const emp = detailEmployees.find((e) => e.employeeId === confirmEmployeeId);
@@ -194,6 +227,15 @@
       .filter((e) => e.status === "missing")
       .flatMap((e) => e.missingDates ?? []);
   });
+
+  // One neutral hint for the whole page when the server withheld any day list (Issue #86, D-02).
+  let withheldAny = $derived(
+    anyDayDetailsWithheld([
+      ...detailEmployees,
+      ...monthStatuses.flatMap((m) => m.missing ?? []),
+      ...(deferred?.employees ?? []),
+    ]),
+  );
 
   const years = $derived(
     Array.from({ length: currentYear - earliestYear + 1 }, (_, i) => currentYear - i),
@@ -410,7 +452,7 @@
             employeeId: emp.employeeId,
             year: selectedYear,
             month,
-            confirmGaps: (emp.missingDates?.length ?? 0) > 0,
+            confirmGaps: gapCountOf(emp) > 0,
           });
           succeeded++;
         } catch {
@@ -435,23 +477,6 @@
       closingProgress = 0;
       closingTotal = 0;
     }
-  }
-
-  function formatMissingDates(dates: string[]): string {
-    return dates
-      .map((d) => {
-        const parts = d.split("-");
-        return `${parts[2]}.${parts[1]}.`;
-      })
-      .join(", ");
-  }
-
-  function formatMissingShort(dates: string[]): string {
-    if (dates.length <= 3) {
-      return formatMissingDates(dates);
-    }
-    const first3 = dates.slice(0, 3);
-    return formatMissingDates(first3) + ` (+${dates.length - 3})`;
   }
 
   function statusLabel(status: string): string {
@@ -509,7 +534,7 @@
     }
     if (ms.status === "open" && ms.missing && ms.missing.length > 0) {
       return ms.missing
-        .map((m) => `${shortenName(m.employeeName)}: ${formatMissingShort(m.missingDates)}`)
+        .map((m) => `${shortenName(m.employeeName)}: ${missingDaysText(m, { short: true })}`)
         .join("; ");
     }
     if (ms.status === "partial") {
@@ -530,7 +555,7 @@
         employeeId,
         year: selectedYear,
         month,
-        confirmGaps: pendingGaps.length > 0,
+        confirmGaps: pendingGapCount > 0,
       });
       const monthName = monthStatuses.find((ms) => ms.month === month)?.name ?? `Monat ${month}`;
       success = `${monthName} ${selectedYear} für Mitarbeiter abgeschlossen`;
@@ -679,8 +704,10 @@
               {#each deferred.employees.slice(0, 8) as e (e.employeeId)}
                 <li>
                   {e.employeeName} – offen seit {monthLabel(e.oldestOpenMonth)}
-                  {#if e.gapCount > 0}
-                    · fehlende Tage: {e.gapDates.join(", ")}
+                  {#if gapCountOf(e) > 0}
+                    · {e.dayDetailsWithheld ? "" : "fehlende Tage: "}{missingDaysText(e, {
+                      iso: true,
+                    })}
                   {:else}
                     · keine Tageslücken gefunden
                   {/if}
@@ -709,6 +736,12 @@
       {#if success}
         <div class="callout brand" role="status">
           <div><p>{success}</p></div>
+        </div>
+      {/if}
+
+      {#if withheldAny}
+        <div class="callout" role="note" data-testid="month-close-withheld-hint">
+          <div><p>{DAY_DETAILS_WITHHELD_HINT}</p></div>
         </div>
       {/if}
 
@@ -862,22 +895,18 @@
                                             Fehlend
                                           </span>
                                         {/if}
-                                        {#if emp.karenzOverrunDays && emp.karenzOverrunDays.length > 0}
+                                        {#if karenzOverrunCountOf(emp) > 0}
                                           <span
                                             class="chip chip-warn karenz-chip"
                                             data-testid="karenz-overrun-hint"
-                                            title="Krankheitstage ohne Attest über die Karenzzeit hinaus (§ 5 EFZG): {formatMissingShort(
-                                              emp.karenzOverrunDays,
-                                            )}"
+                                            title={karenzOverrunTitle(emp)}
                                           >
-                                            Attest fehlt ({emp.karenzOverrunDays.length})
+                                            Attest fehlt ({karenzOverrunCountOf(emp)})
                                           </span>
                                         {/if}
                                         <!-- Issue #80 (D-09b) / #511 (D-12): display-only chip, no control -->
-                                        {#if breakFindingMonthCloseHint(emp.breakFindingDays)}
-                                          {@const breakFindingHint = breakFindingMonthCloseHint(
-                                            emp.breakFindingDays,
-                                          )}
+                                        {#if breakFindingHintFor(emp)}
+                                          {@const breakFindingHint = breakFindingHintFor(emp)}
                                           <span
                                             class="chip chip-warn karenz-chip"
                                             data-testid="break-finding-hint"
@@ -888,13 +917,11 @@
                                         {/if}
                                       </td>
                                       <td class="missing-dates">
-                                        {#if emp.missingDates && emp.missingDates.length > 0}
-                                          <span class="dates-text"
-                                            >{formatMissingDates(emp.missingDates)}</span
-                                          >
-                                          <span class="dates-count"
-                                            >({emp.missingDates.length})</span
-                                          >
+                                        {#if gapCountOf(emp) > 0}
+                                          <span class="dates-text">{missingDaysText(emp)}</span>
+                                          {#if !emp.dayDetailsWithheld}
+                                            <span class="dates-count">({gapCountOf(emp)})</span>
+                                          {/if}
                                         {:else}
                                           <span class="text-muted">-</span>
                                         {/if}
@@ -1012,28 +1039,28 @@
         </p>
       </div>
     </div>
-    {#if pendingGaps.length > 0}
+    {#if pendingGapCount > 0}
       <div class="callout warn gap-warning" role="alert" data-testid="month-close-gap-warning">
         <div>
           <b
-            >{pendingGaps.length} Tag{pendingGaps.length === 1 ? "" : "e"} ohne Eintrag {pendingGaps.length ===
-            1
-              ? "wird"
-              : "werden"} als 0h gewertet</b
+            >{daysWithoutEntryText(pendingGapCount)}
+            {pendingGapCount === 1 ? "wird" : "werden"} als 0h gewertet</b
           >
           <p>
             Diese Tage zählen mit vollem Soll (kein Abzug). Der Saldo wird entsprechend negativ.
           </p>
-          <ul class="gap-date-list">
-            {#each pendingGaps as d (d)}
-              <li>{formatMissingDates([d])}</li>
-            {/each}
-          </ul>
+          {#if pendingGaps.length > 0}
+            <ul class="gap-date-list">
+              {#each pendingGaps as d (d)}
+                <li>{missingDaysText({ missingDates: [d] })}</li>
+              {/each}
+            </ul>
+          {/if}
         </div>
       </div>
       <label class="gap-ack-label">
         <input type="checkbox" bind:checked={gapAcknowledged} data-testid="month-close-gap-ack" />
-        Ich habe die {pendingGaps.length} fehlende{pendingGaps.length === 1 ? "n" : ""} Tag{pendingGaps.length ===
+        Ich habe die {pendingGapCount} fehlende{pendingGapCount === 1 ? "n" : ""} Tag{pendingGapCount ===
         1
           ? ""
           : "e"} zur Kenntnis genommen
@@ -1052,7 +1079,7 @@
       <button
         class="btn btn-primary"
         onclick={onConfirmProceed}
-        disabled={closing || (pendingGaps.length > 0 && !gapAcknowledged)}
+        disabled={closing || (pendingGapCount > 0 && !gapAcknowledged)}
         data-testid="month-close-confirm"
       >
         {#if closing}<Spinner />{/if}

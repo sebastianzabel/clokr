@@ -15,7 +15,7 @@ import {
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
 import { accessContextFromRequest, employeeScopeFor } from "../access-context";
 import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-10/D-14
-import { isShiftInScope, isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-14
+import { isShiftInScope, isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-14; #86 (D-02)
 import {
   DEFAULT_MISSING_ENTRIES_DAYS, // issue #246, E-6
   dateStrInTz, // Issue #568 review IN-02 — the "already effective" check compares tenant-local day strings
@@ -1377,12 +1377,30 @@ export async function settingsRoutes(app: FastifyInstance) {
           );
 
           if (futureShifts.length > 0 && !body.keepOrphanShifts && !body.cancelOrphanShifts) {
+            // #86 (D-02, L3): the count always stays - it is what the client needs to ask what to
+            // do - but the preview names planned shift times, which are attendance data the
+            // contract:update holder (the Personalabteilung) does not read. It lists only the
+            // shifts inside the caller's shift:read reach; no shift:read at all means none.
+            const shiftReach = await permissionReach(req, "shift:read");
+            let previewableShifts: typeof futureShifts = [];
+            if (shiftReach === "ZUGEWIESEN") {
+              const shiftScope = await resolveAccessReach(
+                app.prisma,
+                access,
+                "shift:read:ZUGEWIESEN",
+              );
+              previewableShifts = futureShifts.filter((s) =>
+                isShiftInScope(shiftScope, { salonId: s.salonId, employeeId: s.employeeId }),
+              );
+            } else if (shiftReach === "EIGENE") {
+              previewableShifts = futureShifts.filter((s) => s.employeeId === req.user.employeeId);
+            }
             // Neither flag set — ask the client what to do
             return reply.code(409).send({
               error: "Pending shifts",
               code: "ORPHAN_SHIFTS_PENDING",
               pendingShifts: futureShifts.length,
-              shiftPreview: futureShifts.slice(0, 3).map((s) => ({
+              shiftPreview: previewableShifts.slice(0, 3).map((s) => ({
                 date: s.date.toISOString().split("T")[0],
                 startTime: s.startTime,
                 endTime: s.endTime,
