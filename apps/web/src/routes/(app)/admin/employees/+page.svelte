@@ -36,6 +36,12 @@
     usualWorkDaysMissing,
   } from "$lib/utils/work-schedule";
 
+  import {
+    employmentState,
+    localCalendarDay,
+    type EmploymentKind,
+  } from "$lib/employees/employment-state";
+
   type InvitationStatus = "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE";
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
 
@@ -191,7 +197,11 @@
   let filterSearch = $state("");
   let filterRole = $state("");
   let filterStatus = $state<"active" | "pending" | "expired" | "inactive" | "">("");
+  // Employment filter (Issue #86, AC-86-6): "" lists everyone, so ended employees stay visible.
+  let filterEmployment = $state<EmploymentKind | "">("");
   let showAnonymized = $state(false);
+  // Browser-local calendar day: the web has no tenant-local "today" helper.
+  const today = localCalendarDay();
 
   // Pagination
   let empPage = $state(1);
@@ -208,6 +218,8 @@
         if (!match.includes(q)) return false;
       }
       if (filterRole && !(roleNamesOf(emp) ?? []).includes(filterRole)) return false;
+      if (filterEmployment && employmentState(emp.exitDate, today).kind !== filterEmployment)
+        return false;
       if (filterStatus) {
         if (filterStatus === "active" && !emp.user.isActive) return false;
         if (filterStatus === "pending" && (emp.user.isActive || emp.invitationStatus !== "PENDING"))
@@ -600,6 +612,16 @@
               <option value="expired">Einladung abgelaufen</option>
               <option value="inactive">Inaktiv</option>
             </select>
+            <select
+              class="select filter-select"
+              bind:value={filterEmployment}
+              aria-label="Nach Beschäftigung filtern"
+            >
+              <option value="">Alle Beschäftigungen</option>
+              <option value="EMPLOYED">Beschäftigt</option>
+              <option value="EXIT_PLANNED">Austritt geplant</option>
+              <option value="ENDED">Ausgeschieden</option>
+            </select>
             <button
               type="button"
               class="filter-toggle"
@@ -678,6 +700,15 @@
                       <span class={statusClass(emp)}>
                         <span class="dot"></span>{statusLabel(emp)}
                       </span>
+                      {#if employmentState(emp.exitDate, today).kind !== "EMPLOYED"}
+                        <span
+                          class={employmentState(emp.exitDate, today).kind === "ENDED"
+                            ? "chip"
+                            : "chip chip-warn"}
+                          data-testid={`admin-employees-row-${emp.id}-employment`}
+                          >{employmentState(emp.exitDate, today).label}</span
+                        >
+                      {/if}
                     </td>
                     <td class="col-login">
                       {emp.user.lastLoginAt

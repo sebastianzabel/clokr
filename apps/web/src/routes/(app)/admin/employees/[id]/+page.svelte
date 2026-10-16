@@ -4,6 +4,7 @@
   import { authStore } from "$stores/auth";
   import { employeeAdminRights } from "$lib/page-rights";
   import { employeeDetailTabs } from "$lib/employees/detail-tabs";
+  import { contractHistoryRows, type ContractHistoryInput } from "$lib/employees/contract-history";
   import { markUnsaved } from "$stores/unsaved";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -1593,7 +1594,7 @@
   }
 
   // ── Issue #481 R6/R7 — Nachtrag übliche Arbeitstage on existing SHIFT_BASED rows ──
-  let contractHistory = $state<ContractHistoryRow[]>([]);
+  let contractHistory = $state<ContractHistoryInput[]>([]);
   let backfillSelection = $state<Record<string, number[]>>({});
   let backfillSaving = $state(false);
   let backfillError = $state("");
@@ -1613,7 +1614,9 @@
 
   async function loadContractHistory() {
     try {
-      contractHistory = await api.get<ContractHistoryRow[]>(`/settings/work/${employeeId}/history`);
+      contractHistory = await api.get<ContractHistoryInput[]>(
+        `/settings/work/${employeeId}/history`,
+      );
     } catch {
       // Without contract:read (or on any error) the section simply stays hidden.
       contractHistory = [];
@@ -2114,7 +2117,9 @@
               <p class="hint">
                 Bei gesetztem Datum wird der Jahresurlaub anteilig berechnet (<span translate="no"
                   >§ 5 Abs. 2 BUrlG</span
-                >).
+                >). Das Austrittsdatum beendet das Beschäftigungsverhältnis: Die Person bleibt mit
+                allen Daten sichtbar, der Zugang zur App bleibt aktiv, bis er gesondert gesperrt
+                wird.
               </p>
             </div>
             <div class="form-group form-group--full">
@@ -2599,6 +2604,36 @@
             <p class="form-hint">Wechsel werden zum 1. eines Monats wirksam.</p>
           </div>
         </Section>
+
+        <!-- Issue #86 (D-01) — the employment history on today's model: one row per contract
+             version, read-only (a change is made through the Arbeitszeitmodell section above). -->
+        {#if contractHistory.length > 0}
+          <Section
+            title="Vertragsverlauf"
+            sub="Jede Vertragsänderung gilt ab dem Monatsersten; frühere Verträge bleiben erhalten."
+          >
+            <div class="table-wrap">
+              <table class="data-table" data-testid="contract-history">
+                <thead>
+                  <tr>
+                    <th>Zeitraum</th>
+                    <th>Modell</th>
+                    <th>Umfang</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each contractHistoryRows(contractHistory) as row (row.id)}
+                    <tr>
+                      <td>{row.period}</td>
+                      <td>{row.model}</td>
+                      <td>{row.extent}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+        {/if}
 
         <!-- Issue #481 R6/R7 — Nachtrag of the übliche Arbeitstage on existing SHIFT_BASED contract
              rows (current or historic) that have none. Button-gated per ADMIN_STRUCTURE §3.2.1:

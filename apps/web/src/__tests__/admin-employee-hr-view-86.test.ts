@@ -35,12 +35,63 @@ describe("/admin/employees/[id] - tabs follow permissions (Issue #86, D-04)", ()
 
   it("restores the hash only for a tab of the derived list and hands that list to the layout", () => {
     expect(DETAIL).toMatch(/tabs\.some\(\(t\) => t\.id === hash\)/);
-    expect(DETAIL).toMatch(/tabs=\{tabs\}/);
+    expect(DETAIL).toMatch(/\{tabs\}|tabs=\{tabs\}/);
     expect(DETAIL).not.toMatch(/tabs=\{TABS\}/);
   });
 
   it("uses the German label, the English two-word label is gone", () => {
     expect(DETAIL).not.toContain(["Danger", "Zone"].join(" "));
+  });
+});
+
+const LIST = readRouteFile(
+  "../routes/(app)/admin/employees/+page.svelte",
+  "src/routes/(app)/admin/employees/+page.svelte",
+);
+
+describe("/admin/employees/[id] - employment on today's model (Issue #86, D-01)", () => {
+  it("renders the read-only Vertragsverlauf from contractHistoryRows(contractHistory)", () => {
+    expect(DETAIL).toMatch(
+      /import \{[^}]*\bcontractHistoryRows\b[^}]*\} from "\$lib\/employees\/contract-history"/,
+    );
+    expect(DETAIL).toMatch(/title="Vertragsverlauf"/);
+    expect(DETAIL).toMatch(/contractHistoryRows\(contractHistory\)/);
+  });
+
+  it("words the exit date as the end of the employment and says the access stays active", () => {
+    expect(DETAIL).toContain("Austrittsdatum (optional)");
+    expect(DETAIL).toMatch(/beendet\s+das\s+Beschäftigungsverhältnis/);
+    expect(DETAIL).toMatch(/bleibt\s+mit\s+allen\s+Daten\s+sichtbar/);
+    expect(DETAIL).toMatch(
+      /Zugang\s+zur\s+App\s+bleibt\s+aktiv,\s+bis\s+er\s+gesondert\s+gesperrt\s+wird/,
+    );
+  });
+});
+
+describe("/admin/employees - employment state and filter (Issue #86, AC-86-6)", () => {
+  it("shows the label from employmentState and never reads a display string", () => {
+    expect(LIST).toMatch(
+      /import \{[^}]*\bemploymentState\b[^}]*\} from "\$lib\/employees\/employment-state"/,
+    );
+    expect(LIST).toMatch(/employmentState\([^)]*exitDate/);
+  });
+
+  it("offers the Beschäftigung select with the four options and filters by kind only", () => {
+    expect(LIST).toMatch(/aria-label="Nach Beschäftigung filtern"/);
+    for (const label of [
+      "Alle Beschäftigungen",
+      "Beschäftigt",
+      "Austritt geplant",
+      "Ausgeschieden",
+    ]) {
+      expect(LIST, label).toContain(label);
+    }
+    expect(LIST).toMatch(/filterEmployment/);
+    expect(LIST).toMatch(/employmentState\([^)]*\)\.kind/);
+  });
+
+  it("lists ended employees by default (the filter starts on Alle)", () => {
+    expect(LIST).toMatch(/let filterEmployment = \$state<[^>]*>\(""\)/);
   });
 });
 
