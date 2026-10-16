@@ -14,9 +14,20 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
+import * as pdfModule from "../composition/pdf";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData, reissueTokenNow } from "./setup";
 import { createPopulationPerson, type PopulationPerson } from "./population-fixtures-613";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
+
+// Spy that still calls through: the company PDF only exposes its rows by feeding them into pdfkit,
+// which compresses its content streams, so the test reads the payload the route built.
+vi.mock("../composition/pdf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../composition/pdf")>();
+  return {
+    ...actual,
+    streamCompanyMonthlyReportPdf: vi.fn(actual.streamCompanyMonthlyReportPdf),
+  };
+});
 
 const FAKE_NOW = new Date("2026-11-18T10:00:00Z");
 
@@ -187,6 +198,103 @@ describe("Issue #613 — the period population", () => {
       const october = await monthlyIds(2026, 10, "", token);
       expect(october).not.toContain(p.E1.employeeId);
       expect(october).toContain(p.H.employeeId);
+    });
+  });
+  describe("monthly PDFs", () => {
+    async function companyPdfNumbers(year: number, month: number, extra = ""): Promise<string[]> {
+      const spy = vi.mocked(pdfModule.streamCompanyMonthlyReportPdf);
+      spy.mockClear();
+      const res = await withClock(d.adminToken, (t) =>
+        app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly/pdf/all?year=${year}&month=${month}${extra}`,
+          headers: { authorization: `Bearer ${t}` },
+        }),
+      );
+      expect(res.statusCode).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      return spy.mock.calls[0][1].rows.map((r) => r.employeeNumber);
+    }
+
+    async function singlePdf(employeeId: string, month: number, token = d.adminToken) {
+      return withClock(token, (t) =>
+        app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly/pdf?employeeId=${employeeId}&year=2026&month=${month}`,
+          headers: { authorization: `Bearer ${t}` },
+        }),
+      );
+    }
+
+    it("the company PDF of September lists E1, E2, D, C and neither A nor H", async () => {
+      const numbers = await companyPdfNumbers(2026, 9);
+      expect(numbers).toEqual(
+        expect.arrayContaining([
+          p.E1.employeeNumber,
+          p.E2.employeeNumber,
+          p.D.employeeNumber,
+          p.C.employeeNumber,
+        ]),
+      );
+      expect(numbers).not.toContain(p.A.employeeNumber);
+      expect(numbers).not.toContain(p.H.employeeNumber);
+    });
+
+    it("the company PDF of October lists D, H, C and neither E1, E2 nor A", async () => {
+      const numbers = await companyPdfNumbers(2026, 10);
+      expect(numbers).toEqual(
+        expect.arrayContaining([p.D.employeeNumber, p.H.employeeNumber, p.C.employeeNumber]),
+      );
+      for (const gone of [p.E1, p.E2, p.A]) expect(numbers).not.toContain(gone.employeeNumber);
+    });
+
+    it("the compat role filter of the company PDF still narrows", async () => {
+      const manager = await createPopulationPerson(app, {
+        tenantId: d.tenant.id,
+        salonId: d.salonId,
+        tag: "pdfmgr",
+        hireDate: new Date("2025-01-01T00:00:00.000Z"),
+        userRole: "MANAGER",
+      });
+      const numbers = await companyPdfNumbers(2026, 9, "&role=MANAGER");
+      expect(numbers).toContain(manager.employeeNumber);
+      expect(numbers).not.toContain(p.E1.employeeNumber);
+      expect(numbers).not.toContain(p.D.employeeNumber);
+    });
+
+    it("the single PDF answers for a person in the month and 404s outside it", async () => {
+      const september = await singlePdf(p.E1.employeeId, 9);
+      expect(september.statusCode).toBe(200);
+      expect(String(september.headers["content-type"])).toContain("application/pdf");
+
+      const october = await singlePdf(p.E1.employeeId, 10);
+      const unknown = await singlePdf(crypto.randomUUID(), 10);
+      expect(october.statusCode).toBe(404);
+      expect(unknown.statusCode).toBe(404);
+      // Byte-identical: "exists, but not in this month" cannot be told from "unknown".
+      expect(october.body).toBe(unknown.body);
+      expect(october.body).toBe(JSON.stringify({ error: "Mitarbeiter nicht gefunden" }));
+    });
+
+    it("the single PDF of an anonymised person is the unknown-id 404 in any month", async () => {
+      const unknown = await singlePdf(crypto.randomUUID(), 9);
+      for (const month of [9, 10]) {
+        const res = await singlePdf(p.A.employeeId, month);
+        expect(res.statusCode).toBe(404);
+        expect(res.body).toBe(unknown.body);
+      }
+    });
+
+    it("the self download follows the same population", async () => {
+      const own = app.jwt.sign({
+        sub: p.E1.userId,
+        tenantId: d.tenant.id,
+        employeeId: p.E1.employeeId,
+      });
+      expect((await singlePdf(p.E1.employeeId, 9, own)).statusCode).toBe(200);
+      expect((await singlePdf(p.E1.employeeId, 10, own)).statusCode).toBe(404);
+      // The 403 before it is unchanged: someone else's PDF stays refused for an employee.
+      expect((await singlePdf(p.D.employeeId, 9, own)).statusCode).toBe(403);
     });
   });
 });

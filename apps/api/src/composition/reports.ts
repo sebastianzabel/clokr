@@ -1684,7 +1684,7 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
       }
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { end } = monthRangeUtc(y, m, tz);
+      const { start, end } = monthRangeUtc(y, m, tz);
       // Issue #493 (D-10): @db.Date columns and the day clip take calendar-day bounds; the
       // instant `end` above stays for the Stichtag lookup only.
       const { firstDay, lastDay } = monthDateRange(y, m, tz);
@@ -1698,6 +1698,9 @@ export async function reportRoutes(app: FastifyInstance) {
         where: {
           id: employeeId,
           tenantId: req.user.tenantId,
+          // Issue #613 (P-05): the single Stundennachweis follows the same population as the
+          // company PDF; outside it the answer below cannot be told apart from an unknown id.
+          AND: [reportPopulationWhere(start, end)],
         },
         include: buildEmployeeInclude(firstDay, lastDay),
       })) as unknown as EmployeeWithIncludes | null;
@@ -1838,7 +1841,7 @@ export async function reportRoutes(app: FastifyInstance) {
       const roleFilter: CompatRoleFilter | undefined = parseCompatRoleFilter(role);
 
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { end } = monthRangeUtc(y, m, tz);
+      const { start, end } = monthRangeUtc(y, m, tz);
       // Issue #493 (D-10): @db.Date columns and the day clip take calendar-day bounds; the
       // instant `end` above stays for the Stichtag lookup only.
       const { firstDay, lastDay } = monthDateRange(y, m, tz);
@@ -1869,9 +1872,13 @@ export async function reportRoutes(app: FastifyInstance) {
       const employees = (await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
-          exitDate: null,
-          user: { isActive: true, ...compatRoleUserWhere(roleFilter) },
-          ...(pdfAllScopedIds !== "all" ? { id: { in: pdfAllScopedIds } } : {}),
+          // Issue #613 (D-01): the period population; the compat role filter (#539 D-12) is the
+          // only login-side condition left and filters the LISTED persons, never the population.
+          ...(roleFilter ? { user: compatRoleUserWhere(roleFilter) } : {}),
+          AND: [
+            reportPopulationWhere(start, end),
+            ...(pdfAllScopedIds !== "all" ? [{ id: { in: pdfAllScopedIds } }] : []),
+          ],
         },
         include: buildEmployeeInclude(firstDay, lastDay),
         orderBy: { lastName: "asc" },
