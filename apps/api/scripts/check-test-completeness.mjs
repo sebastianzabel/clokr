@@ -838,9 +838,11 @@ import { readFileSync } from "node:fs";
 // shifts-week-salon-filter-558 and contexts/absence/__tests__/salon-leave-attribution-558; amended: access-context
 // (salonOnlyReach), salon-context-manipulation-82 and shifts-planning-overview (planning-overview now answers 404 for an
 // unreachable salon, stricter than before). Both floors are set to exactly these numbers; MIN_FILES 603 -> 607, MIN_TESTS 9653 -> 9716. Never lowered.
-// Issue #650 (2026-10-16): new file `cancel-orphan-shifts-permission-650.test.ts` with 6 cases (+1 file, +6 tests) on top of
-// the Issue #86 measurement below. Re-measured with a full run at the end of the merge of origin/main into the 86 branch.
-// Issue #86 (2026-10-16): 86b measured 611 test files / 9788 tests before merging #650.
+// Issue #86 + #650 (2026-10-16): measured with a full run (`pnpm --filter @clokr/api test`) on `feat/86-personalabteilung`
+// merged with origin/main @ 4ff81ff0 - 612 test files, 9794 tests (the three files that hit "too many clients" under
+// load pass in isolation). Composition: the 86b measurement (611 files / 9788 tests; new files hr-template-migration-86,
+// reports-hr-86, hr-no-day-level-data-86, hr-view-86; amended system-roles and system-role-template-personalabteilung)
+// plus #650's `cancel-orphan-shifts-permission-650.test.ts` (+1 file, +6 tests). Both floors equal the measured numbers.
 const MIN_FILES = 612;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
