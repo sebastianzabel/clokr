@@ -5,6 +5,15 @@
  *
  * This is the shared unit file of the phase: later plans append the cases of `isActivityOnlyPut`
  * and `materializeRemainder` here.
+ *
+ * Amended 2026-10-16 for #92 (Phase 92b, D-05): the vocabulary has a fourth value, TRAVEL (the kind
+ * of a whole travel entry between two salons, never a share). The label map and every full
+ * `activityMinutes()` result object gain TRAVEL (label „Fahrzeit zwischen Salons“, minutes 0 for
+ * these non-travel entries); the share-kind list is unchanged. Case count unchanged.
+ *
+ * Amended 2026-10-16 for #92 (Phase 92b-02): `ActivityPutExisting` gains the stored destination
+ * `travelToSalonId` (required, so no caller can forget it); the `isActivityOnlyPut` fixture row
+ * carries `travelToSalonId: null`. No expectation changes; case count unchanged.
  */
 import { describe, it, expect } from "vitest";
 import { entryDurations } from "..";
@@ -38,11 +47,12 @@ const closed = (over: Partial<ActivityState> = {}): ActivityState => ({
 const ctx = { sharesWritten: true, wasClosed: true };
 
 describe("vocabulary (D-02)", () => {
-  it("labels are exactly the three display texts", () => {
+  it("labels are exactly the four display texts", () => {
     expect(ACTIVITY_KIND_LABEL).toEqual({
       UNSPECIFIED: "nicht angegeben",
       PRODUCTIVE: "Produktive Zeit am Kunden",
       SETUP_CLEANING: "Rüst-, Reinigungs- und Vorbereitungszeit",
+      TRAVEL: "Fahrzeit zwischen Salons",
     });
   });
 
@@ -87,7 +97,7 @@ describe("activityMinutes (D-04)", () => {
       activityMinutes({ ...entry, activityKind: "PRODUCTIVE" }, [
         { kind: "SETUP_CLEANING", minutes: 60 },
       ]),
-    ).toEqual({ PRODUCTIVE: 435, SETUP_CLEANING: 60, UNSPECIFIED: 0 });
+    ).toEqual({ PRODUCTIVE: 435, SETUP_CLEANING: 60, UNSPECIFIED: 0, TRAVEL: 0 });
   });
 
   it("the same entry unclassified (legacy) is 495 UNSPECIFIED", () => {
@@ -95,6 +105,7 @@ describe("activityMinutes (D-04)", () => {
       PRODUCTIVE: 0,
       SETUP_CLEANING: 0,
       UNSPECIFIED: 495,
+      TRAVEL: 0,
     });
   });
 
@@ -104,7 +115,7 @@ describe("activityMinutes (D-04)", () => {
         { startTime: START, endTime: null, breakMinutes: 45, activityKind: "PRODUCTIVE" },
         [{ kind: "SETUP_CLEANING", minutes: 60 }],
       ),
-    ).toEqual({ PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 0 });
+    ).toEqual({ PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 0, TRAVEL: 0 });
   });
 
   it("an UNSPECIFIED entry keeps the remainder under UNSPECIFIED next to two shares", () => {
@@ -113,7 +124,7 @@ describe("activityMinutes (D-04)", () => {
         { kind: "PRODUCTIVE", minutes: 120 },
         { kind: "SETUP_CLEANING", minutes: 30 },
       ]),
-    ).toEqual({ PRODUCTIVE: 120, SETUP_CLEANING: 30, UNSPECIFIED: 345 });
+    ).toEqual({ PRODUCTIVE: 120, SETUP_CLEANING: 30, UNSPECIFIED: 345, TRAVEL: 0 });
   });
 
   it("millisecond precision: the three kinds add up to entryDurations().workingMinutes", () => {
@@ -347,6 +358,7 @@ describe("isActivityOnlyPut (D-20)", () => {
     note: null as string | null,
     type: "WORK",
     salonId: "salon-1",
+    travelToSalonId: null as string | null,
   };
   const act = { activityKind: "PRODUCTIVE" as const };
 

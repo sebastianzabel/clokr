@@ -2,6 +2,9 @@
  * Phase 566 (#566), plan 09 — AC-566-03, D-05, D-06: cancelling every module and lowering the salon
  * quota is NEVER retroactive.
  *
+ * Amended 2026-10-16 for #92 (Phase 92b-04, D-07): the exact `activityMinutes` pin of the closed-month
+ * summary names the new key TRAVEL (0). Case count unchanged.
+ *
  * One fully set-up tenant (three active salons, an API key, a terminal key, a presence source with an
  * assigned device, a Phorest coupling, a closed month with classified time entries, a DATEV Kanzlei)
  * is snapshotted, then the operator cancels every module and sets the quota to 1. Afterwards:
@@ -380,6 +383,7 @@ describe("Phase 566 AC-3 — cancelling every module and lowering the quota deac
     expect(surfacesBefore.summary.activityMinutes).toEqual({
       PRODUCTIVE: 420,
       SETUP_CLEANING: 540,
+      TRAVEL: 0,
       UNSPECIFIED: 20 * 480,
     });
     expect(surfacesBefore.datevMovements.length).toBeGreaterThan(0);

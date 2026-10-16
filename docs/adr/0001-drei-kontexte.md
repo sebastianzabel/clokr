@@ -37,6 +37,8 @@ Clokr hat **drei fachliche Kontexte** und **einen gemeinsamen Unterbau**.
 Stempeln, Korrektur, Gültigkeitsprüfung, ArbZG-Prüfung. **Zeichnet auf, was war.**
 Minutengenau, eine Zeile pro Mitarbeiter und Tag.
 
+> **Nachtrag (Issue #70, 2026-10-16):** „Eine Zeile pro Mitarbeiter und Tag“ gilt nicht mehr. Ein Mitarbeiter hat an einem Tag einen oder mehrere sich nicht überschneidende Einträge (je Eintrag ein Salon); die Datenbank sichert das durch eine Ausschlussbedingung. Siehe `0001-abweichungen.md`, Eintrag AA.
+
 ### 2. Abwesenheiten
 
 Antrag, Genehmigung, Kontingent, Resturlaub. **Ein Workflow mit Status, kein Aufzeichnungsvorgang.**

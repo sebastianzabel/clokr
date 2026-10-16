@@ -62,6 +62,26 @@ describe("buildDayPreviewRequest", () => {
     expect(body.breaks).toEqual([]);
   });
 
+  // Issue #70 (70b-07): the form's explicit salon travels with the preview, so the day check sees
+  // the same salon the save will book; without a pick the field is absent and the server derives it.
+  it("carries the explicit salon of the form, and omits the field when none was picked", () => {
+    const input = {
+      employeeId: EMPLOYEE,
+      date: "2026-03-10",
+      startISO: "2026-03-10T08:00:00.000Z",
+      endISO: "2026-03-10T16:00:00.000Z",
+      breaks: [],
+    };
+    expect(buildDayPreviewRequest({ ...input, salonId: "salon-token" })?.salonId).toBe(
+      "salon-token",
+    );
+    for (const none of [undefined, null, ""]) {
+      const body = buildDayPreviewRequest({ ...input, salonId: none });
+      expect(body).not.toBeNull();
+      expect(body && "salonId" in body).toBe(false);
+    }
+  });
+
   it("is null while the entry has no end", () => {
     expect(
       buildDayPreviewRequest({

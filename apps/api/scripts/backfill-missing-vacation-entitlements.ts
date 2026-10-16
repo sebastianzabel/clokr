@@ -43,8 +43,8 @@
  *     shared `ensureVacationEntitlementForYear` facade helper (contexts/absence), reason
  *     "Nachtrag fehlender Urlaubsanspruch".
  *   - Requires explicit tenant scope: --tenant-id OR --all-tenants (no silent default).
- *   - No PII in dry-run output — employeeNumber only (this repo's established convention;
- *     mirrors cleanup-time-entry-duplicates.ts's own id-only listing), never firstName/lastName.
+ *   - No PII in dry-run output — employeeNumber only (this repo's established convention for
+ *     operator scripts: ids and numbers only), never firstName/lastName.
  *
  * Usage:
  *   DATABASE_URL=... pnpm --filter @clokr/api exec tsx \

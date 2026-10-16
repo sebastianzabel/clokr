@@ -1,7 +1,8 @@
 // Issue #80 (D-06, D-08, D-13, D-14, D-17, D-18) — POST / DELETE /api/v1/day-breaks/acks.
 //
-// A multi-entry day cannot exist in the database while the partial unique index
-// `TimeEntry_employeeId_date_unique_not_deleted` holds, so the day lookup `findEntriesOfDay` is
+// Since #70 (Phase 70b) such days exist in the database; the mocks here stay pure-kernel
+// proofs. Real-database proofs of several entries per day: time-entry-multi-entry-70,
+// multi-entry-month-close-70, multi-entry-saldo-equality-70. The day lookup `findEntriesOfDay` is
 // mocked for the constructed days only and delegates to the real implementation for every other
 // date (same harness as `day-breaks.test.ts`). Everything else is real: employees, salons, role
 // assignments, the month lock, DayBreakAck rows and the audit log.

@@ -34,7 +34,7 @@ Eine Pause ist die Summe aus:
    - Gap **> 0 und ≤ 2h** → zählt als Pause
    - Gap **> 2h** → gilt als separate Schicht, NICHT als Pause
 3. **Abschnittsregel (§ 4 Satz 2, seit Phase 511):** Für die Lage-Prüfung zählt ein Pausenabschnitt nur, wenn er mindestens **15 Min** lang ist, im Arbeitszeitraum des Tages liegt und weder den ersten Beginn noch das letzte Ende berührt (Jugendliche: zusätzlich nicht in der ersten oder letzten Stunde). Aneinandergrenzende Abschnitte gelten als eine Ruhepause. Ein nicht zählender Abschnitt bleibt Arbeitszeit für die Compliance-Zahl; der Saldo ändert sich nicht.
-4. **Lücken zwischen Einträgen:** Im selben Salon zählt eine Lücke immer, gleich wie lang (Issue #523: die frühere Grenze von 120 Min ist entfallen, eine Ruhepause hat nach § 4 ArbZG keine Höchstdauer). Zwischen **verschiedenen Salons** zählt eine Lücke nie als Pause (Fahrzeit ist Arbeitszeit), es sei denn, die freie Zeit ist als Tagespause erfasst. Weil das System die Aufteilung in Fahrzeit und freie Zeit nicht kennt, rechnet es zwei Grenzfälle: ganze Lücke Arbeitszeit, freier Anteil am Anfang und am Ende der Lücke. Beide regelkonform → konform; beide verletzt → Verstoß; sonst Befund mit Sicherheit `UNCLEAR` („Klärung nötig: Fahrzeit oder Pause?“). Aufgelöst wird durch eine erfasste Tagespause oder eine Quittung der Führungskraft.
+4. **Lücken zwischen Einträgen:** Im selben Salon zählt eine Lücke immer, gleich wie lang (Issue #523: die frühere Grenze von 120 Min ist entfallen, eine Ruhepause hat nach § 4 ArbZG keine Höchstdauer). Zwischen **verschiedenen Salons** zählt eine Lücke nie als Pause (Fahrzeit ist Arbeitszeit), es sei denn, die freie Zeit ist als Tagespause erfasst. Weil das System die Aufteilung in Fahrzeit und freie Zeit nicht kennt, rechnet es zwei Grenzfälle: ganze Lücke Arbeitszeit, freier Anteil am Anfang und am Ende der Lücke. Beide regelkonform → konform; beide verletzt → Verstoß; sonst Befund mit Sicherheit `UNCLEAR` („Klärung nötig: Fahrzeit oder Pause?“). Aufgelöst wird durch eine erfasste Tagespause, eine erfasste Fahrzeit oder eine Quittung der Führungskraft. Ist die Fahrt zwischen den beiden Salons als eigener Eintrag erfasst (Issue #92, Abschnitt „Fahrzeit zwischen Salons“), ist die Lücke Arbeitszeit und kein Grenzfall mehr: es gibt dann keine Lücke zu beurteilen, die Frage „Fahrzeit oder Pause?“ entfällt für diese Lücke, und die Tagessumme enthält die Fahrt.
 
 ### Auto-Break (opt-in pro Tenant)
 
@@ -56,10 +56,10 @@ Sobald MA bereits eine Pause eingegeben hat (z.B. nur 15min), greift Auto-Break 
 
 - **„Im Voraus feststehend“ (§ 4 Satz 1):** Die Pausen müssen im Voraus feststehen. Das lässt sich aus Zeitstempeln nicht prüfen; ein erfasstes, abgeschlossenes Pausensegment gilt als Ruhepause.
 - **Ältere Einträge ohne Pausenlage:** Nur als Summe gespeicherte Pausen erzeugen den Hinweis `BREAK_POSITION_UNKNOWN`, nie einen Verstoß. Vor dem Einschalten von `blockMonthCloseOnUnconfirmedBreak` den Probelauf `audit-511-break-placement.ts` lesen.
-- **Fahrzeit zwischen Salons:** wird nicht erfasst (Issue #92); die Prüfung rechnet deshalb die beiden Grenzfälle (`UNCLEAR`).
+- **Fahrzeit zwischen Salons:** wird seit Issue #92 als eigener Eintrag erfasst (Abschnitt „Fahrzeit zwischen Salons“). Eine Lücke zwischen zwei Salons, für die keine Fahrzeit erfasst ist, bleibt die Grenzfall-Rechnung (`UNCLEAR`); das System erkennt eine Fahrt nicht selbst.
 - **Jugendliche:** § 8 JArbSchG (Tages- und Wochenhöchstzeit) wird nicht geprüft (Issue #524). Fehlt das Geburtsdatum, gilt § 4 ArbZG; bei Auszubildenden weist der Befund darauf hin.
 - **Geschlossene Monate** werden nie neu bewertet.
-- **Tätigkeitsart (#81):** Die Tätigkeitsart ändert keine Arbeitszeit-, Pausen- oder Ruhezeitprüfung.
+- **Tätigkeitsart (#81):** Die Tätigkeitsart ändert keine Arbeitszeit-, Pausen- oder Ruhezeitprüfung. Ein Fahrzeiteintrag (#92) zählt wie jeder Eintrag voll als Arbeitszeit; die Art „Fahrzeit“ selbst verändert auch hier keine Prüfung.
 - **Rechtsgrund im Befund:** Der Verweis auf § 11 JArbSchG im Befundtext lässt auf Minderjährigkeit schließen; Geburtsdatum und Alter werden nie ausgegeben.
 
 ---
@@ -90,7 +90,36 @@ Ein Zeiteintrag trägt eine Tätigkeitsart (`nicht angegeben`, `Produktive Zeit 
 
 ### Mandantenschalter
 
-Diese Version hat keine Oberfläche für die Tätigkeitsart. Erfassung und Auswertung in der Oberfläche kommen mit einem Schalter je Mandant, Vorgabe **aus**, samt Hinweis auf Betriebsrat und Art. 13 DSGVO: Issue #529.
+Diese Version hat keine Oberfläche für die Tätigkeitsart. Erfassung und Auswertung in der Oberfläche kommen mit einem Schalter je Mandant, Vorgabe **aus**, samt Hinweis auf Betriebsrat und Art. 13 DSGVO: Issue #529. Die einzige Oberfläche in dieser Version ist die Erfassung einer Fahrzeit zwischen zwei Salons (nächster Abschnitt); sie ist vom Schalter ausgenommen.
+
+---
+
+## Fahrzeit zwischen Salons (Issue #92)
+
+### Rechtsgrund
+
+- Die Fahrt zwischen zwei Arbeitsstätten während des Arbeitstags, auf Weisung des Arbeitgebers, ist **Arbeitszeit** nach § 2 Abs. 1 ArbZG; sie zählt für die Tageshöchstgrenze (§ 3) und für die Pausenschwellen (§ 4). BAG 12.12.2012 – 5 AZR 355/12, Rn. 16: Wegezeiten für die Fahrt vom Betriebssitz zu einer auswärtigen Arbeitsstätte werden – anders als der Weg von der Wohnung zum Betrieb – arbeitszeitschutzrechtlich der Arbeitszeit zugerechnet. Eine Ruhepause ist die Fahrt nicht (BAG 25.02.2015 – 5 AZR 886/12).
+- EuGH 09.10.2025 – C-110/24 bestätigt die Richtung (vom Arbeitgeber vorgegebene gemeinsame Fahrt zum Einsatzort ist Arbeitszeit, auch für Mitfahrer).
+- EuGH 10.09.2015 – C-266/14 (Tyco) wertet für Beschäftigte **ohne festen oder gewöhnlichen Arbeitsort** auch die erste und die letzte Fahrt des Tages als Arbeitszeit. Das wird hier **nicht angewandt**, weil jede Person einen Stammsalon hat. Restrisiko: ein Mandant mit echten Springern ohne gewöhnlichen Arbeitsort muss die Wege von und zu Hause selbst bewerten; Clokr erfasst sie nicht.
+
+### Regel
+
+- Erfasst wird eine Fahrzeit **nur zwischen zwei Einträgen desselben Tages**: nach einem Eintrag im Abfahrtssalon und vor einem Eintrag im Zielsalon. Der Weg von zu Hause zum ersten Salon und vom letzten Salon nach Hause ist keine Arbeitszeit und lässt sich nicht erfassen (die Eingabe wird mit einer Fehlermeldung abgelehnt).
+- Die Fahrzeit ist ein gewöhnlicher abgeschlossener Arbeitseintrag mit Abfahrts- und Zielsalon, ohne Pause. Saldo, Monatsabschluss, Berichte, DATEV sowie die Prüfungen nach § 3 / § 4 / § 5 ArbZG rechnen sie wie jeden Eintrag mit, ohne zweite Berechnung; ein Gleichheitstest belegt das (`travel-saldo-equality-92.test.ts`), ein Quelltext-Wächter hält die Fahrzeit-Felder aus Saldo und Kernen heraus (`travel-saldo-isolation-92.test.ts`).
+- Revisionssicherheit, Monatssperre, Aufbewahrung und Anonymisierung gelten wie für jeden Zeiteintrag: Erfassen, Ändern und Löschen sind protokolliert; ein gesperrter Eintrag bleibt unveränderbar. Eine Fahrzeit lässt sich nicht als Zeitnachtrag beantragen (der Antrag würde einen gewöhnlichen Eintrag anlegen); außerhalb der Erfassungsfrist ist sie nur mit einer erteilten Freigabe der Führungskraft erfassbar.
+- Wer den Eintrag vor oder nach der Fahrzeit löscht oder verschiebt, so dass die Fahrzeit nicht mehr zwischen zwei Salon-Einträgen liegt, wird mit 409 abgewiesen; erst die Fahrzeit löschen, dann den Eintrag.
+- Erfassen, Ändern oder Löschen einer Fahrzeit ändert den Tagesstand der Pausenprüfung. Eine schon erteilte Quittung für diesen Tag wird dadurch veraltet und muss neu erteilt werden (bestehender Mechanismus der Quittung, keine neue Regel).
+
+### Auswertung und Mitbestimmung
+
+- Die Fahrzeit ist getrennt von produktiver Zeit und Rüstzeit auswertbar: `GET /time-entries/summary` liefert `activityMinutes.TRAVEL`, dem Abfahrtssalon zugerechnet; nur Minuten, keine Beträge, Quoten oder Ranglisten. Die Auswertung gehört zum Modul „Auswertungen“ (`ANALYTICS`); ohne gebuchtes Modul liefert sie `null`.
+- **Hinweis Betriebsrat:** Minuten je Person und Art sind – wie die übrigen Werte der Tätigkeitsart (siehe Abschnitt oben) – objektiv geeignet, Verhalten zu überwachen (§ 87 Abs. 1 Nr. 6 BetrVG; BAG 08.03.2022 – 1 ABR 20/21). Ein Mandant mit Betriebsrat beteiligt diesen, **bevor** die Auswertung der Fahrzeit genutzt wird. Die **Erfassung** der Fahrzeit ist dagegen Teil der gesetzlichen Pflicht, die Arbeitszeit zu erfassen (BAG 13.09.2022 – 1 ABR 22/21); sie ist deshalb nicht vom Mandantenschalter aus Issue #529 abhängig und wird nie durch ein Modul gesperrt.
+- Der Name des Zielsalons ist für jeden sichtbar, der die Zeile lesen darf (Stammdaten des Mandanten, keine personenbezogene Angabe).
+- Berichte, PDFs und DATEV zeigen die Fahrzeit als gewöhnliche Arbeitszeitzeile; es gibt keine Kilometer-, Reisekosten- oder Spesenabrechnung und keine Standorterkennung.
+
+### Oberfläche
+
+Die Erfassung steht nur Mandanten mit Salonauswahl zur Verfügung (Zeiterfassung und Team-Zeiterfassung: „Weiteren Eintrag an diesem Tag“, Schalter „Fahrzeit zwischen Salons“, „Von Salon“ und „Nach Salon“). Mandanten mit einem Salon sehen keine Änderung.
 
 ---
 

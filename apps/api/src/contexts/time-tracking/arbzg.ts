@@ -387,9 +387,10 @@ export async function checkArbZG(
   ).filter((e) => e.endTime !== null && e.type === "WORK");
 
   if (daySlots.length > 0) {
-    // MULTI-ENTRY: the gap rule (a gap between salons is travel, never a break) and the waiver rule
-    // (entry-level WAIVED never waives a cross-salon day) for several entries per day live in
-    // day-break-rule.ts (D-01/D-16); this branch only feeds it the closed WORK rows.
+    // Decision (Issue #70, D-04): several entries per day are the normal case here. The gap rule (a
+    // gap between salons is travel, never a break) and the waiver rule (entry-level WAIVED never
+    // waives a cross-salon day) live in day-break-rule.ts (D-01/D-16); this branch only feeds it
+    // every closed WORK row of the day, whatever the salon.
     // Issue #511 (D-15): the Break rows of the day's entries come from the store's one loader, so
     // the kernel can place the breaks (Satz 2/3); the day lookup itself stays untouched.
     const breaksByEntry = await loadBreaksOfEntries(prisma, {
@@ -447,8 +448,9 @@ export async function checkArbZG(
     prevDate.setDate(prevDate.getDate() - 1);
     const prevDateStr = dateStrInTz(prevDate, tz);
 
-    // MULTI-ENTRY: rest period is measured from the LATEST end of the previous day — correct for
-    // several entries as long as "latest endTime" stays the selection rule.
+    // Decision (Issue #70, D-04): the rest period is measured from the LATEST end of the previous
+    // day, which is right for several entries per day because the selection rule is "latest
+    // endTime" over every row of that day (`latestEnding`), not "the" entry.
     const prevLastSlot = latestEnding(
       await findEntriesOfDay(prisma, {
         tenantId: employee.tenantId,
@@ -474,7 +476,9 @@ export async function checkArbZG(
     nextDate.setDate(nextDate.getDate() + 1);
     const nextDateStr = dateStrInTz(nextDate, tz);
 
-    // MULTI-ENTRY: rest period is measured to the EARLIEST start of the next day.
+    // Decision (Issue #70, D-04): the rest period is measured to the EARLIEST start of the next
+    // day, over every row of that day (`earliestStarting`) — several entries per day need no special
+    // case.
     const nextFirstSlot = earliestStarting(
       await findEntriesOfDay(prisma, {
         tenantId: employee.tenantId,
@@ -509,7 +513,8 @@ export async function checkArbZG(
     nextDate.setDate(nextDate.getDate() + 1);
     const nextDateStr = dateStrInTz(nextDate, tz);
 
-    // MULTI-ENTRY: BS-day rest period, measured to the EARLIEST start of the next day.
+    // Decision (Issue #70, D-04): the Berufsschultag rest period, like the one above, is measured to
+    // the EARLIEST start of the next day over every row of that day.
     const nextFirstSlot = earliestStarting(
       await findEntriesOfDay(prisma, {
         tenantId: employee.tenantId,

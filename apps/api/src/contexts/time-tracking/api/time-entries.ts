@@ -65,7 +65,7 @@ import {
   computeOvertimeBalanceHours, // Phase 101B (Issue #101, wave 9) — merged in, closing the loop wave 05 deliberately left open
   type OvertimeBalanceBreakdown,
 } from "../../working-time-account"; // Phase 101B
-// Phase 101B (Issue #101, D-11 Welle time-tracking): checkOverlap/checkOneEntryPerDay/
+// Phase 101B (Issue #101, D-11 Welle time-tracking): checkOverlap/
 // validateTimeEntryInvariants/getEffectiveSchedule lifted out of this file into
 // ../entry-invariants.ts; the overtime pair lifted into working-time-account/overtime-balance.ts.
 // Re-exported below (unchanged) so external deep-import call sites across other contexts and
@@ -73,10 +73,43 @@ import {
 // later wave converts them to import from the owning context's index.ts.
 import {
   checkOverlap,
-  checkOneEntryPerDay,
+  recheckOverlapInTx,
   validateTimeEntryInvariants,
   getEffectiveSchedule,
 } from "../entry-invariants";
+import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
+import {
+  checkTravelNeighbours,
+  classifyTravelWrite,
+  classifyTravelUpdate,
+  TravelRefusalError,
+  validateTravelEntry,
+  TRAVEL_NOT_AS_RETRO_REQUEST_CODE,
+  TRAVEL_NOT_AS_RETRO_REQUEST_MESSAGE,
+  TRAVEL_SHAPE_CODE,
+  TRAVEL_SHAPE_MESSAGE,
+} from "../travel-entry"; // Issue #92 (Phase 92b, D-05/D-06) — the ONE travel write rule
+import { otherWorkingMinutesOfDay } from "../day-entries"; // Issue #70 (D-04)
+import {
+  CLOCK_ENTRY_OVERLAP_MESSAGE,
+  EntryConflictError,
+  isEntryOverlapViolation,
+  isOpenEntryPerDayViolation,
+  overlapMessageForCaller,
+  OVERLAP_MESSAGE_NEUTRAL,
+  OPEN_ENTRY_PER_DAY_MESSAGE,
+} from "../entry-overlap-error"; // Issue #70 (D-10, D-13)
+
+/**
+ * Thrown inside a grant-consuming transaction when the single-use grant was already flipped by a
+ * concurrent writer; the route answers 403. Typed, so no catch classifies by `err.message`.
+ */
+class GrantAlreadyUsedError extends Error {
+  constructor() {
+    super("GRANT_ALREADY_USED");
+    this.name = "GrantAlreadyUsedError";
+  }
+}
 
 export { validateTimeEntryInvariants, getEffectiveSchedule };
 export { updateOvertimeAccount, computeOvertimeBalanceBreakdown, computeOvertimeBalanceHours };
@@ -160,6 +193,10 @@ const manualEntrySchema = z.object({
   // full replacement; `null` is not accepted.
   activityKind: activityKindSchema.optional(),
   activityShares: activitySharesSchema.optional(),
+  // Issue #92 (D-05/D-06): the ARRIVAL salon of a travel entry between two salons (`salonId` is the
+  // departure salon). `null` is not accepted — same convention as `salonId`. The kind TRAVEL is
+  // never sent by a client; `classifyTravelWrite` derives it from this field.
+  travelToSalonId: z.string().uuid().optional(),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -225,6 +262,9 @@ const updateEntrySchema = z.object({
   // Issue #81 (D-06): omitted = unchanged, [] = clear, list = full replacement; `null` is not accepted.
   activityKind: activityKindSchema.optional(),
   activityShares: activitySharesSchema.optional(),
+  // Issue #92 (D-06): the arrival salon of an EXISTING travel entry may be corrected; on any other
+  // entry the field is refused (`classifyTravelUpdate`). `null` is not accepted.
+  travelToSalonId: z.string().uuid().optional(),
 });
 
 // ── Pausen-Minuten aus Break-Slots berechnen ──────────────────────────────────
@@ -468,6 +508,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             resolution,
           });
         }
+        // Issue #70 (D-10): the punch would overlap a recorded entry (a closed neighbour, or a
+        // re-open that would run over later time); nothing was written.
+        if (resolution.reason === "ENTRY_OVERLAP") {
+          return reply.code(409).send({
+            error: CLOCK_ENTRY_OVERLAP_MESSAGE,
+            code: "ENTRY_OVERLAP",
+            resolution,
+          });
+        }
         return reply.code(409).send({ error: "Konflikt", resolution });
       }
 
@@ -699,12 +748,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (resolution.reason === "SALON_INACTIVE") {
           return reply.code(400).send(SALON_INACTIVE_BODY);
         }
-        // Issue #87 (D-04): a reopened entry never changes its salon.
-        if (resolution.reason === "SALON_DIFFERS_FROM_DAY_ENTRY") {
+        // Issue #70 (D-10/D-11): the START or the re-open would overlap a recorded entry — a
+        // closed neighbour, or time that is already booked later today. Nothing was written. (The
+        // former differing-salon 409 is gone: a different explicit salon starts a new entry.)
+        if (resolution.reason === "ENTRY_OVERLAP") {
           return reply.code(409).send({
-            error:
-              "Für heute ist bereits ein Eintrag in einem anderen Salon erfasst. Ein zweiter Salon am selben Tag ist noch nicht möglich.",
-            code: "SALON_DIFFERS_FROM_DAY_ENTRY",
+            error: CLOCK_ENTRY_OVERLAP_MESSAGE,
+            code: "ENTRY_OVERLAP",
             resolution,
           });
         }
@@ -820,6 +870,16 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (resolution.reason === "RETRO_PENDING") {
           return reply.code(409).send({
             error: "Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.",
+            resolution,
+          });
+        }
+        // Issue #70 (D-10): closing the entry now would overlap a recorded entry of the day (the
+        // database exclusion constraint refused it); the entry stays open and can be corrected
+        // through the form.
+        if (resolution.reason === "ENTRY_OVERLAP") {
+          return reply.code(409).send({
+            error: CLOCK_ENTRY_OVERLAP_MESSAGE,
+            code: "ENTRY_OVERLAP",
             resolution,
           });
         }
@@ -1020,6 +1080,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
       }
 
+      // Issue #92 (D-06): a travel entry has no break.
+      if (entry.activityKind === "TRAVEL") {
+        return reply.code(400).send({ error: TRAVEL_SHAPE_MESSAGE, code: TRAVEL_SHAPE_CODE });
+      }
+
       // Phase 380 (issue #380), owner decision Variante (b), 2026-09-28: an entry that already
       // carries a positive breakMinutes SUM but has no individual Break rows (legacy data or a
       // manual breakMinutes-only entry) must not have that sum silently discarded by the
@@ -1133,7 +1198,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     schema: {
       tags: ["Zeiterfassung"],
       description:
-        "presenceMinutes/workingMinutes are per-entry display values (rounded, null for open entries; invalid and non-WORK rows included). Do not sum them: period totals come from GET /time-entries/summary. With salonId (time-entry:read:ZUGEWIESEN, from and to required, at most 31 days) the list is the salon view: every in-scope entry recorded in that active salon in the caller's reach, for all persons.",
+        "presenceMinutes/workingMinutes are per-entry display values (rounded, null for open entries; invalid and non-WORK rows included). Do not sum them: period totals come from GET /time-entries/summary. salonName is the display name of the entry's own salon (also when it was deactivated); the control value stays salonId. Travel entries (activityKind TRAVEL, Fahrzeit between two salons) carry salonId = the departure salon, travelToSalonId = the arrival salon (control value) and travelToSalonName = its display name (also when it was deactivated); both are null on every other row. With salonId (time-entry:read:ZUGEWIESEN, from and to required, at most 31 days) the list is the salon view: every in-scope entry recorded in that active salon in the caller's reach, for all persons.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requireAuth,
@@ -1288,6 +1353,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           // Issue #81 (D-11): the wire shape equals the write shape — a later UI can send the list
           // back unchanged.
           activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+          // Issue #70 (D-07): the entry's own salon, for display only — flattened to `salonName`
+          // below so no nested object and no additional id reaches the wire.
+          salon: { select: { name: true } },
+          // Issue #92 (AC-92-7, D-04): the arrival salon of a travel entry, same mechanism — `null`
+          // on every ordinary row, flattened to `travelToSalonName` below.
+          travelToSalon: { select: { name: true } },
         },
         take: TIME_ENTRIES_MAX,
         orderBy:
@@ -1317,13 +1388,25 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Phase 79 (Issue #79), D-06/D-14: every item additionally states its presence and working
       // time as integer minutes (Math.round here at the API edge only; the kernel stays exact).
       // An open entry has no duration yet, which is not the same as zero, hence null.
-      return entries.map((entry) => {
+      return entries.map(({ salon, travelToSalon, ...entry }) => {
+        const salonName = salon.name;
+        // Issue #92: display value of `travelToSalonId` (the control value); a deactivated arrival
+        // salon is still named, like `salonName`.
+        const travelToSalonName = travelToSalon?.name ?? null;
         if (!entry.endTime) {
-          return { ...entry, presenceMinutes: null, workingMinutes: null };
+          return {
+            ...entry,
+            salonName,
+            travelToSalonName,
+            presenceMinutes: null,
+            workingMinutes: null,
+          };
         }
         const { presenceMinutes, workingMinutes } = entryDurations(entry);
         return {
           ...entry,
+          salonName,
+          travelToSalonName,
           presenceMinutes: Math.round(presenceMinutes),
           workingMinutes: Math.round(workingMinutes),
         };
@@ -1337,6 +1420,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const body = manualEntrySchema.parse(req.body);
+      // Issue #92 (D-06): classify the write BEFORE any read — a client kind TRAVEL or a malformed
+      // travel shape is a German 400 here, never a database CHECK violation.
+      const travelClass = classifyTravelWrite(body);
+      if (!travelClass.ok) return reply.code(travelClass.status).send(travelClass.body);
+      const travelToSalonId = travelClass.travel ? travelClass.travelToSalonId : undefined;
       const user = req.user;
       // Feeds both the employeeId selection below and postIsCorrectionByManager (issue #75, D-13)
       const postCreateReach = await permissionReach(req, "time-entry:create");
@@ -1477,9 +1565,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         newEnd,
         tz,
         tenantId: user.tenantId,
+        access: accessContextFromRequest(req), // Issue #70, D-13 — the overlap text follows the reach
+        callerEmployeeId: user.employeeId ?? null,
         isCorrectionByManager: postIsCorrectionByManager,
         grantId: resolvedGrantId,
-        // Grant race fix: defer the one-per-day + overlap checks to the $transaction
+        // Grant race fix: defer the overlap check to the $transaction
         // below so the single-use grant flip (checked first, before create) is the sole
         // discriminator for concurrent same-grant writes — see param doc on
         // validateTimeEntryInvariants. Re-run against `tx` after a successful flip.
@@ -1500,6 +1590,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (invariantError.error === "RETRO_WINDOW_EXCEEDED") {
           const retroReason = body.reason?.trim();
           if (retroReason && !resolvedGrantId) {
+            // Issue #92: one Zeitnachtrag per day (70b D-13) and a day with travel already holds
+            // two entries, so travel is never filed as a request — a manager books it as a
+            // correction, which the retro window exempts.
+            if (travelToSalonId !== undefined) {
+              return reply.code(409).send({
+                error: TRAVEL_NOT_AS_RETRO_REQUEST_MESSAGE,
+                code: TRAVEL_NOT_AS_RETRO_REQUEST_CODE,
+              });
+            }
             pendingRetroCreate = true;
           } else {
             return reply.code(403).send({
@@ -1557,10 +1656,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 (finalBreakMinutes ?? 0),
             )
           : 0;
+      // Issue #70 (70b-04, D-04): § 9 Abs. 1 Nr. 2 JArbSchG is a day rule, so the value compared
+      // with the limit is this entry's planned minutes PLUS the working minutes of the day's other
+      // closed WORK entries — a Berufsschultag split into two entries cannot bypass it. One entry
+      // on the day: the other minutes are 0 and the value is the old one.
       const jarbSchgPost = await checkJArbSchG(app.prisma, {
         employeeId,
         date: new Date(body.date),
-        plannedNetWorkMin: plannedNetMinPost,
+        plannedNetWorkMin:
+          plannedNetMinPost +
+          (await otherWorkingMinutesOfDay(app.prisma, {
+            tenantId: user.tenantId,
+            employeeId,
+            date: new Date(body.date),
+          })),
       });
       if (jarbSchgPost.blocked) {
         return reply
@@ -1574,8 +1683,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // call). `new Date(body.date)` is the same UTC-midnight instant the create stores as
       // `entry.date`.
       let autoBreakPlanOnCreate: AutoBreakPlan | null = null;
+      // Issue #92 (D-06): a travel entry has no break — no automatic break is planned for it; the
+      // day-level § 4 duty stays the kernel's finding.
       if (
         newEnd &&
+        travelToSalonId === undefined &&
         autoBreakAppliesOnCreate({ slotCount: breakSlots.length, breakMinutes: finalBreakMinutes })
       ) {
         // Auto-break: check tenant config
@@ -1622,6 +1734,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // plain); the shares are a nested write, so they exist with the entry or not at all.
       const activityCreateData = {
         ...(body.activityKind !== undefined ? { activityKind: body.activityKind } : {}),
+        // Issue #92 (D-05/D-06): the kind is derived from the destination, never taken from the client.
+        ...(travelToSalonId !== undefined
+          ? { activityKind: "TRAVEL" as const, travelToSalonId }
+          : {}),
         ...(body.activityShares && body.activityShares.length > 0
           ? { activityShares: activitySharesCreate(body.activityShares) }
           : {}),
@@ -1633,55 +1749,89 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // updateMany (WHERE status=APPROVED) ensures exactly one concurrent write wins —
       // if count !== 1 the tx rolls back before the create is ever attempted, so the
       // loser is rejected with GRANT_ALREADY_USED (403) instead of racing into the
-      // (employeeId,date) unique index and getting a P2002 (409) (fixed 2026-07: see
+      // database's overlap guarantee and getting a 409 (fixed 2026-07: see
       // .planning/debug/resolved/retro-grant-race-403-vs-409.md).
       let entry: Awaited<ReturnType<typeof app.prisma.timeEntry.create>>;
+      // Issue #92 (D-06): the travel write rule runs inside the writer transaction, after the Employee
+      // row lock and the overlap re-check, so the neighbour entries it reads cannot change under it.
+      // A travel entry is judged by `validateTravelEntry` (salons, reach over the whole day, anchors,
+      // recorded day breaks); every OTHER entry by `checkTravelNeighbours` (T6): it may not leave a
+      // travel entry of the day without the entries it lies between. A refusal throws and rolls the
+      // transaction back; the catch below answers it.
+      const assertTravelEntry = async (
+        tx: Prisma.TransactionClient,
+        invalidReasonCode: "RETRO_APPROVAL_PENDING" | "LEAVE_CANCELLATION_PENDING" | null,
+      ) => {
+        if (travelToSalonId === undefined) {
+          await checkTravelNeighbours(tx, {
+            tenantId: user.tenantId,
+            employeeId,
+            date: new Date(body.date),
+            with: {
+              startTime: newStart,
+              endTime: newEnd,
+              salonId: salonResolution.salonId,
+              type: "WORK",
+              invalidReasonCode,
+            },
+          });
+          return;
+        }
+        if (newEnd === null) return;
+        const verdict = await validateTravelEntry(tx, {
+          tenantId: user.tenantId,
+          employeeId,
+          date: new Date(body.date),
+          startTime: newStart,
+          endTime: newEnd,
+          salonId: salonResolution.salonId,
+          travelToSalonId,
+          validateArrivalSalon: true,
+          access: accessContextFromRequest(req),
+          callerEmployeeId: user.employeeId ?? null,
+          permission: "time-entry:create:ZUGEWIESEN",
+          outOfReachMessage: "Mitarbeiter nicht gefunden",
+        });
+        if (!verdict.ok) throw new TravelRefusalError(verdict);
+      };
       try {
         if (resolvedGrantId) {
           // Atomic: create entry + flip grant APPROVED → USED in one transaction.
           const grantIdForTx = resolvedGrantId;
           const result = await app.prisma.$transaction(async (tx) => {
-            // Conditional flip FIRST: only succeeds if still APPROVED (single-use guard).
-            // This must run before the TimeEntry create so the grant is the authoritative
-            // discriminator for concurrent same-day writes — otherwise the loser can fail
-            // on the (employeeId,date) unique index (P2002 -> 409) before the grant guard
-            // ever gets a chance to reject it with 403.
+            // Issue #70 (D-10): the Employee row lock comes FIRST — uniform lock order for every
+            // interval writer. A losing request waits here, then still meets the already-flipped
+            // grant below and gets its 403 (the grant stays the authoritative discriminator).
+            await lockEmployeeForEntryWrite(tx, user.tenantId, employeeId);
+
+            // Conditional flip: only succeeds if still APPROVED (single-use guard). It runs before
+            // the TimeEntry create so the grant is the authoritative discriminator for concurrent
+            // same-grant writes — otherwise the loser could fail on the overlap check (409) before
+            // the grant guard ever gets a chance to reject it with 403.
             const consumed = await tx.retroEntryRequest.updateMany({
               where: { id: grantIdForTx, status: "APPROVED" },
               data: { status: "USED" },
             });
             if (consumed.count !== 1) {
-              throw new Error("GRANT_ALREADY_USED");
+              throw new GrantAlreadyUsedError();
             }
 
-            // Re-run the one-per-day + overlap conflict checks against `tx` now that
-            // this request has exclusively won the grant (deferConflictChecksToTx above
-            // skipped these pre-tx). Only the winner ever reaches this point, so these
-            // catch genuinely unrelated conflicts (e.g. a different, non-grant write to
-            // the same day) rather than the grant race itself — the (employeeId,date)
-            // partial unique index remains the final backstop for the one-per-day case.
-            const conflictDate = new Date(body.date);
-            const oneDayErrorTx = await checkOneEntryPerDay(
-              tx,
-              user.tenantId,
-              employeeId,
-              conflictDate,
-            );
-            if (oneDayErrorTx) {
-              throw new Error(`ENTRY_CONFLICT:${oneDayErrorTx}`);
-            }
-            const overlapTx = await checkOverlap(
-              tx,
+            // Re-run the overlap check against `tx` now that this request has exclusively won
+            // the grant (deferConflictChecksToTx above skipped it pre-tx). Only the winner ever
+            // reaches this point, so this catches genuinely unrelated conflicts (e.g. a
+            // different, non-grant write to the same interval) rather than the grant race
+            // itself — the database exclusion constraint remains the final backstop.
+            await recheckOverlapInTx(tx, {
+              tenantId: user.tenantId,
               employeeId,
               newStart,
               newEnd,
-              undefined,
-              conflictDate,
+              date: new Date(body.date),
               tz,
-            );
-            if (overlapTx) {
-              throw new Error(`ENTRY_CONFLICT:${overlapTx}`);
-            }
+              callerEmployeeId: user.employeeId ?? null,
+              access: accessContextFromRequest(req),
+            });
+            await assertTravelEntry(tx, manualLeave ? "LEAVE_CANCELLATION_PENDING" : null);
 
             const created = await tx.timeEntry.create({
               data: {
@@ -1723,9 +1873,25 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           // second CREATE audit here — the shared post-create tail below (unchanged)
           // already writes the generic TimeEntry CREATE audit for every create path,
           // including this one; this branch only owns the RETRO_ENTRY_REQUESTED audit
-          // for the request. Reuses the SAME try/catch as the plain path — a P2002 on
-          // the (employeeId,date) unique index maps to the existing 409 below.
+          // for the request. Reuses the SAME try/catch as the plain path — a database refusal
+          // (open-entry P2002 or overlap 23P01) maps to the existing 409 below.
           const result = await app.prisma.$transaction(async (tx) => {
+            // Issue #70 (D-10): lock first, then re-check overlap BEFORE the request and the coupled
+            // entry exist — the pre-tx invariant returns early on RETRO_WINDOW_EXCEEDED and never
+            // reached its own overlap step for this path, so this is the only application check.
+            // A conflict rolls the transaction back: no RetroEntryRequest row, no entry.
+            await lockEmployeeForEntryWrite(tx, user.tenantId, employeeId);
+            await recheckOverlapInTx(tx, {
+              tenantId: user.tenantId,
+              employeeId,
+              newStart,
+              newEnd,
+              date: new Date(body.date),
+              tz,
+              callerEmployeeId: user.employeeId ?? null,
+              access: accessContextFromRequest(req),
+            });
+            await assertTravelEntry(tx, "RETRO_APPROVAL_PENDING");
             const request = await tx.retroEntryRequest.create({
               data: {
                 employeeId,
@@ -1768,48 +1934,66 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           });
           entry = result;
         } else {
-          entry = await app.prisma.timeEntry.create({
-            data: {
+          // Issue #70 (D-10): lock the employee row, re-check overlap against the committed rows
+          // of the winner of any race, then create — all in ONE transaction. The pre-tx
+          // `validateTimeEntryInvariants` above stays the cheap early answer; this is the
+          // authoritative one, and the exclusion constraint is the backstop behind it.
+          entry = await app.prisma.$transaction(async (tx) => {
+            await lockEmployeeForEntryWrite(tx, user.tenantId, employeeId);
+            await recheckOverlapInTx(tx, {
+              tenantId: user.tenantId,
               employeeId,
+              newStart,
+              newEnd,
               date: new Date(body.date),
-              startTime: newStart,
-              endTime: newEnd,
-              breakMinutes: finalBreakMinutes,
-              note: body.note,
-              source: "MANUAL",
-              createdBy: user.sub,
-              isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
-              salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
-              ...activityCreateData, // Issue #81 (D-06)
-              ...(manualLeave
-                ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
-                : CLEARED_INVALID_REASON),
-            },
+              tz,
+              callerEmployeeId: user.employeeId ?? null,
+              access: accessContextFromRequest(req),
+            });
+            await assertTravelEntry(tx, manualLeave ? "LEAVE_CANCELLATION_PENDING" : null);
+            return tx.timeEntry.create({
+              data: {
+                employeeId,
+                date: new Date(body.date),
+                startTime: newStart,
+                endTime: newEnd,
+                breakMinutes: finalBreakMinutes,
+                note: body.note,
+                source: "MANUAL",
+                createdBy: user.sub,
+                isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
+                salonId: salonResolution.salonId, // Phase 68b (issue #68), D-08/D-10
+                ...activityCreateData, // Issue #81 (D-06)
+                ...(manualLeave
+                  ? invalidReasonFields("LEAVE_CANCELLATION_PENDING")
+                  : CLEARED_INVALID_REASON),
+              },
+            });
           });
         }
       } catch (err: unknown) {
         // Grant already consumed (concurrent race) → 403
-        if (err instanceof Error && err.message === "GRANT_ALREADY_USED") {
+        if (err instanceof GrantAlreadyUsedError) {
           return reply.code(403).send({ error: "Antrag bereits verwendet oder ungültig" });
         }
-        // Genuinely unrelated conflict (one-per-day/overlap), re-checked inside the tx
-        // after the grant flip succeeded (deferConflictChecksToTx) → 409.
-        if (err instanceof Error && err.message.startsWith("ENTRY_CONFLICT:")) {
-          return reply.code(409).send({ error: err.message.slice("ENTRY_CONFLICT:".length) });
+        // Issue #92: the travel write rule refused inside the transaction (404/400 salon, 409 anchors).
+        if (err instanceof TravelRefusalError) {
+          return reply.code(err.refusal.status).send(err.refusal.body);
         }
-        // MULTI-ENTRY: this P2002 → 409 mapping only exists because of the one-per-day unique index;
-        // it disappears (or changes meaning) when the index is dropped (#70).
-        // DATA-V1814-04: the partial-unique index catches a concurrent same-day create
-        // that raced past the app-level one-per-day check → P2002 → 409 (not a 500).
-        if (
-          typeof err === "object" &&
-          err !== null &&
-          "code" in err &&
-          (err as { code: unknown }).code === "P2002"
-        ) {
-          return reply
-            .code(409)
-            .send({ error: "Es existiert bereits ein Eintrag für diesen Tag." });
+        // Overlap re-checked inside the transaction (grant branch after the flip, Nachtrag and
+        // plain branch under the Employee row lock), worded by the caller's reach → 409.
+        if (err instanceof EntryConflictError) {
+          return reply.code(409).send({ error: err.userMessage });
+        }
+        // Issue #70 (D-10): the database refused a write the application checks did not catch
+        // (a writer that raced past them, or a path outside the Employee row lock). Both are a
+        // clean 409, never a 500; the overlap text is the neutral one because a database error
+        // carries no caller reach to word it by.
+        if (isEntryOverlapViolation(err)) {
+          return reply.code(409).send({ error: OVERLAP_MESSAGE_NEUTRAL });
+        }
+        if (isOpenEntryPerDayViolation(err)) {
+          return reply.code(409).send({ error: OPEN_ENTRY_PER_DAY_MESSAGE });
         }
         throw err;
       }
@@ -2010,6 +2194,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
       }
 
+      // Issue #92 (D-06): a travel entry is immutable in kind, and no other entry becomes travel.
+      // Runs right after the 404/403/scope/entry-lock guards (an entry-level lock wins) and BEFORE the
+      // shared invariants, so a forbidden conversion — also one that would otherwise surface as an
+      // overlap, like clearing the end time of a travel entry — is a German 400 here, never a
+      // database CHECK violation. It reads nothing and writes nothing.
+      const travelUpdate = classifyTravelUpdate(body, existing);
+      if (!travelUpdate.ok) return reply.code(travelUpdate.status).send(travelUpdate.body);
+      const putIsTravelRow = travelUpdate.travel;
+
       // Prüfen ob das neue Datum vor dem Eintrittsdatum liegt
       if (body.date) {
         const targetEmployee = await app.prisma.employee.findUnique({
@@ -2151,6 +2344,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         newEnd: updatedEnd,
         tz: overlapTz,
         tenantId: existing.employee.tenantId,
+        access: accessContextFromRequest(req), // Issue #70, D-13 — the overlap text follows the reach
+        callerEmployeeId: user.employeeId ?? null,
         excludeEntryId: id,
         isCorrectionByManager: putIsCorrectionByManager,
         grantId: putResolvedGrantId,
@@ -2191,10 +2386,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 Number(editBreakMinutes ?? 0),
             )
           : 0;
+      // Issue #70 (70b-04, D-04): the day sum, with the edited entry excluded (see the POST above).
       const jarbSchgPut = await checkJArbSchG(app.prisma, {
         employeeId: existing.employeeId,
         date: editDate,
-        plannedNetWorkMin: plannedNetMinPut,
+        plannedNetWorkMin:
+          plannedNetMinPut +
+          (await otherWorkingMinutesOfDay(app.prisma, {
+            tenantId: existing.employee.tenantId,
+            employeeId: existing.employeeId,
+            date: editDate,
+            excludeEntryId: id,
+          })),
       });
       if (jarbSchgPut.blocked) {
         return reply
@@ -2264,6 +2467,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const patch: Record<string, unknown> =
         putIsTimeCorrection || putResolvedGrantId ? { source: "CORRECTION" } : {};
       if (resolvedSalonId !== undefined) patch.salonId = resolvedSalonId; // Phase 68b (issue #68), D-12
+      // Issue #92 (D-06): only a travel row reaches here with a destination (classifyTravelUpdate);
+      // an unchanged value is a no-op write of the same id.
+      if (putIsTravelRow && body.travelToSalonId !== undefined) {
+        patch.travelToSalonId = body.travelToSalonId;
+      }
       if (body.date) patch.date = new Date(body.date);
       if (body.startTime) patch.startTime = new Date(body.startTime);
       if ("endTime" in body) patch.endTime = body.endTime ? new Date(body.endTime as string) : null;
@@ -2299,8 +2507,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         activityPatch.activityShares = activitySharesReplace(body.activityShares);
       }
 
-      // Handle break slots update (non-grant path: runs before the update, as before)
-      // For the grant path, break-slots are handled inside the $transaction below.
+      // Handle break slots update. Issue #70 (D-10): BOTH paths now replace the Break rows inside
+      // the same transaction as the entry update (below), after the Employee row lock and the
+      // overlap re-check — a request that loses a race on the interval must not leave rewritten
+      // breaks behind on an entry that kept its old times.
       let newBreakSlotsForTx: { timeEntryId: string; startTime: Date; endTime: Date }[] | undefined;
       if (body.breaks) {
         const newBreakSlots = body.breaks.map((b) => ({
@@ -2321,16 +2531,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             newBreakSlots.map((b) => ({ startTime: b.startTime, endTime: b.endTime })),
           ),
         );
-        if (putResolvedGrantId) {
-          // Defer to the tx below so the whole correction is atomic
-          newBreakSlotsForTx = newBreakSlots;
-        } else {
-          // Non-grant path: delete existing breaks and create new ones outside tx (as before)
-          await app.prisma.break.deleteMany({ where: { timeEntryId: id } });
-          if (newBreakSlots.length > 0) {
-            await app.prisma.break.createMany({ data: newBreakSlots });
-          }
-        }
+        newBreakSlotsForTx = newBreakSlots;
       }
 
       // Built AFTER the break-slot block above, which still writes `patch.breakMinutes`.
@@ -2338,63 +2539,115 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // Phase 76.29.1 Plan 02 — race-safe single-use grant consumption on PUT.
       // When a putResolvedGrantId is present, the TimeEntry update + grant flip + audit run
-      // inside one $transaction, mirroring the POST grant path (~:1095–1134).
+      // inside one $transaction, mirroring the POST grant path.
       // The conditional updateMany (WHERE status=APPROVED) ensures exactly one concurrent PUT
-      // wins — if count !== 1 the tx rolls back (GRANT_ALREADY_USED → 403).
-      // Break-slot mutations are also pulled into the tx so the entire correction is atomic.
-      // When no grant: keep the existing non-transactional update path byte-identical.
+      // wins — if count !== 1 the tx rolls back (GrantAlreadyUsedError → 403).
+      // Issue #70 (D-10): EVERY PUT now writes inside a transaction whose FIRST statement is the
+      // Employee row lock; it then re-checks overlap (excluding this entry, at the new date and
+      // times) and only then replaces the breaks and updates the entry. The pre-tx
+      // `validateTimeEntryInvariants` above stays the cheap early answer.
+      const putEffectiveDate = overlapDate;
       let updated: Awaited<ReturnType<typeof app.prisma.timeEntry.update>>;
       try {
-        if (putResolvedGrantId) {
-          const grantIdForTx = putResolvedGrantId;
-          const effectiveDateStr = dateStrInTz(overlapDate, overlapTz);
-          const result = await app.prisma.$transaction(async (tx) => {
-            // Break-slot replacement inside the tx (atomic with the update)
-            if (newBreakSlotsForTx !== undefined) {
-              await tx.break.deleteMany({ where: { timeEntryId: id } });
-              if (newBreakSlotsForTx.length > 0) {
-                await tx.break.createMany({ data: newBreakSlotsForTx });
-              }
-            }
+        updated = await app.prisma.$transaction(async (tx) => {
+          await lockEmployeeForEntryWrite(tx, user.tenantId, existing.employeeId);
 
-            const txUpdated = await tx.timeEntry.update({
-              where: { id },
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              data: putData as any,
-              include: {
-                breaks: { orderBy: { startTime: "asc" } },
-                activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
-              },
-            });
-
-            // Conditional flip: only succeeds if still APPROVED (single-use guard).
+          if (putResolvedGrantId) {
+            // Conditional flip FIRST after the lock: only succeeds if still APPROVED (single-use
+            // guard), so a losing same-grant request is rejected with 403 before any conflict check.
             const consumed = await tx.retroEntryRequest.updateMany({
-              where: { id: grantIdForTx, status: "APPROVED" },
+              where: { id: putResolvedGrantId, status: "APPROVED" },
               data: { status: "USED" },
             });
             if (consumed.count !== 1) {
-              throw new Error("GRANT_ALREADY_USED");
+              throw new GrantAlreadyUsedError();
             }
+          }
 
-            await app.audit({
-              userId: user.sub,
-              action: "RETRO_ENTRY_APPROVED_USED",
-              entity: "RetroEntryRequest",
-              entityId: grantIdForTx,
-              oldValue: { status: "APPROVED" },
-              newValue: {
-                timeEntryId: id,
-                employeeId: existing.employeeId,
-                date: effectiveDateStr,
-              },
-              tx,
-            });
-
-            return txUpdated;
+          await recheckOverlapInTx(tx, {
+            tenantId: user.tenantId,
+            employeeId: existing.employeeId,
+            newStart: updatedStart,
+            newEnd: updatedEnd,
+            date: putEffectiveDate,
+            tz: overlapTz,
+            excludeEntryId: id,
+            callerEmployeeId: user.employeeId ?? null,
+            access: accessContextFromRequest(req),
           });
-          updated = result;
-        } else {
-          updated = await app.prisma.timeEntry.update({
+
+          // Issue #92 (D-06, T3/T4/T6): next to the overlap re-check, under the same Employee row lock.
+          if (putIsTravelRow) {
+            // A travel entry is judged by the travel write rule. Salons: the departure salon was
+            // validated above ONLY when it changed (the #68 rule); the arrival salon is validated
+            // ONLY when it changed, so a salon deactivated after the trip never blocks a time or
+            // note correction of an old travel entry (W2).
+            const verdict = await validateTravelEntry(tx, {
+              tenantId: user.tenantId,
+              employeeId: existing.employeeId,
+              date: putEffectiveDate,
+              startTime: updatedStart,
+              endTime: updatedEnd as Date,
+              salonId: resolvedSalonId ?? existing.salonId,
+              travelToSalonId: body.travelToSalonId ?? (existing.travelToSalonId as string),
+              excludeEntryId: id,
+              validateArrivalSalon:
+                body.travelToSalonId !== undefined &&
+                body.travelToSalonId !== existing.travelToSalonId,
+              access: accessContextFromRequest(req),
+              callerEmployeeId: user.employeeId ?? null,
+              permission: "time-entry:update:ZUGEWIESEN",
+              outOfReachMessage: "Eintrag nicht gefunden",
+            });
+            if (!verdict.ok) throw new TravelRefusalError(verdict);
+          } else {
+            // Any other entry may not leave a travel entry of the day without its anchors. A write
+            // that stays on its date is ONE evaluation with both the stored and the resulting row;
+            // only a changed date makes two (the old date loses the row, the new date gains it).
+            const resulting = {
+              id,
+              startTime: updatedStart,
+              endTime: updatedEnd,
+              salonId: resolvedSalonId ?? existing.salonId,
+              type: existing.type,
+              invalidReasonCode:
+                updatedEnd && existing.invalidReasonCode === "MISSING_CLOCK_OUT"
+                  ? null
+                  : existing.invalidReasonCode,
+            };
+            if (putEffectiveDate.getTime() === existing.date.getTime()) {
+              await checkTravelNeighbours(tx, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                date: existing.date,
+                without: id,
+                with: resulting,
+              });
+            } else {
+              await checkTravelNeighbours(tx, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                date: existing.date,
+                without: id,
+              });
+              await checkTravelNeighbours(tx, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                date: putEffectiveDate,
+                with: resulting,
+              });
+            }
+          }
+
+          // Break-slot replacement inside the tx (atomic with the update)
+          if (newBreakSlotsForTx !== undefined) {
+            await tx.break.deleteMany({ where: { timeEntryId: id } });
+            if (newBreakSlotsForTx.length > 0) {
+              await tx.break.createMany({ data: newBreakSlotsForTx });
+            }
+          }
+
+          const txUpdated = await tx.timeEntry.update({
             where: { id },
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             data: putData as any,
@@ -2403,10 +2656,42 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
             },
           });
-        }
+
+          if (putResolvedGrantId) {
+            await app.audit({
+              userId: user.sub,
+              action: "RETRO_ENTRY_APPROVED_USED",
+              entity: "RetroEntryRequest",
+              entityId: putResolvedGrantId,
+              oldValue: { status: "APPROVED" },
+              newValue: {
+                timeEntryId: id,
+                employeeId: existing.employeeId,
+                date: dateStrInTz(putEffectiveDate, overlapTz),
+              },
+              tx,
+            });
+          }
+
+          return txUpdated;
+        });
       } catch (err) {
-        if (err instanceof Error && err.message === "GRANT_ALREADY_USED") {
+        if (err instanceof GrantAlreadyUsedError) {
           return reply.code(403).send({ error: "Antrag bereits verwendet oder ungültig" });
+        }
+        // Issue #92: the travel write rule or the neighbour check refused inside the transaction.
+        if (err instanceof TravelRefusalError) {
+          return reply.code(err.refusal.status).send(err.refusal.body);
+        }
+        if (err instanceof EntryConflictError) {
+          return reply.code(409).send({ error: err.userMessage });
+        }
+        // Issue #70 (D-10): the database refused what the application checks did not catch.
+        if (isEntryOverlapViolation(err)) {
+          return reply.code(409).send({ error: OVERLAP_MESSAGE_NEUTRAL });
+        }
+        if (isOpenEntryPerDayViolation(err)) {
+          return reply.code(409).send({ error: OPEN_ENTRY_PER_DAY_MESSAGE });
         }
         throw err;
       }
@@ -2609,6 +2894,16 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
         }
 
+        // Issue #92 (D-06): a corrected travel entry stays closed and carries no break.
+        const travelShape = classifyTravelUpdate(
+          {
+            ...(body.endTime !== undefined ? { endTime: body.endTime } : {}),
+            ...(body.breakMinutes !== undefined ? { breakMinutes: body.breakMinutes } : {}),
+          },
+          existing,
+        );
+        if (!travelShape.ok) return reply.code(travelShape.status).send(travelShape.body);
+
         // Overlap check — scope open-entry conflicts to this entry's day (v1.8.13).
         const revalidateTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
         const overlap = await checkOverlap(
@@ -2618,9 +2913,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           newEnd,
           id,
           existing.date,
-          revalidateTz,
         );
-        if (overlap) return reply.code(409).send({ error: overlap });
+        if (overlap) {
+          // Issue #70 (D-13): the text is worded by the caller's reach, never by the legacy string.
+          return reply.code(409).send({
+            error: await overlapMessageForCaller(app.prisma, {
+              conflict: overlap,
+              tz: revalidateTz,
+              tenantId: user.tenantId,
+              employeeId: existing.employeeId,
+              callerEmployeeId: user.employeeId ?? null,
+              access: accessContextFromRequest(req),
+            }),
+          });
+        }
 
         // Issue #81 (D-05): a correction that shrinks the working time (or reopens the entry) may
         // not leave the shares above it; checked on the resulting state before anything is written.
@@ -2642,14 +2948,98 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
       if ("note" in body) updateData.note = body.note ?? null;
 
-      const updated = await app.prisma.timeEntry.update({
-        where: { id },
-        data: updateData,
-        include: {
-          breaks: { orderBy: { startTime: "asc" } },
-          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
-        },
-      });
+      // Issue #70 (D-10): a correction MOVES the interval, so it is written under the Employee row
+      // lock with the overlap re-checked inside the transaction (the pre-check above is the early
+      // answer); a plain revalidation moves nothing and needs neither. A database refusal that
+      // slipped past is a clean 409, never a 500.
+      const revalidateWriteTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
+      let updated: Awaited<ReturnType<typeof app.prisma.timeEntry.update>>;
+      try {
+        updated = await app.prisma.$transaction(async (tx) => {
+          if (hasCorrection) {
+            await lockEmployeeForEntryWrite(tx, user.tenantId, existing.employeeId);
+            await recheckOverlapInTx(tx, {
+              tenantId: user.tenantId,
+              employeeId: existing.employeeId,
+              newStart: updateData.startTime ? (updateData.startTime as Date) : existing.startTime,
+              newEnd:
+                updateData.endTime !== undefined
+                  ? (updateData.endTime as Date | null)
+                  : existing.endTime,
+              date: existing.date,
+              tz: revalidateWriteTz,
+              excludeEntryId: id,
+              callerEmployeeId: user.employeeId ?? null,
+              access: accessContextFromRequest(req),
+            });
+            // Issue #92: a correction MOVES the interval, so it is judged like a PUT that stays on
+            // its date — a travel entry by the travel write rule (its salons are history, never
+            // re-validated), any other entry by the neighbour check (T6).
+            const revalidatedStart = updateData.startTime
+              ? (updateData.startTime as Date)
+              : existing.startTime;
+            const revalidatedEnd =
+              updateData.endTime !== undefined
+                ? (updateData.endTime as Date | null)
+                : existing.endTime;
+            if (existing.activityKind === "TRAVEL") {
+              const verdict = await validateTravelEntry(tx, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                date: existing.date,
+                startTime: revalidatedStart,
+                endTime: revalidatedEnd as Date,
+                salonId: existing.salonId,
+                travelToSalonId: existing.travelToSalonId as string,
+                excludeEntryId: id,
+                validateArrivalSalon: false,
+                access: accessContextFromRequest(req),
+                callerEmployeeId: user.employeeId ?? null,
+                permission: "time-entry:revalidate:ZUGEWIESEN",
+                outOfReachMessage: "Eintrag nicht gefunden",
+              });
+              if (!verdict.ok) throw new TravelRefusalError(verdict);
+            } else {
+              await checkTravelNeighbours(tx, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                date: existing.date,
+                without: id,
+                with: {
+                  id,
+                  startTime: revalidatedStart,
+                  endTime: revalidatedEnd,
+                  salonId: existing.salonId,
+                  type: existing.type,
+                  invalidReasonCode: null,
+                },
+              });
+            }
+          }
+          return tx.timeEntry.update({
+            where: { id },
+            data: updateData,
+            include: {
+              breaks: { orderBy: { startTime: "asc" } },
+              activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+            },
+          });
+        });
+      } catch (err) {
+        if (err instanceof TravelRefusalError) {
+          return reply.code(err.refusal.status).send(err.refusal.body);
+        }
+        if (err instanceof EntryConflictError) {
+          return reply.code(409).send({ error: err.userMessage });
+        }
+        if (isEntryOverlapViolation(err)) {
+          return reply.code(409).send({ error: OVERLAP_MESSAGE_NEUTRAL });
+        }
+        if (isOpenEntryPerDayViolation(err)) {
+          return reply.code(409).send({ error: OPEN_ENTRY_PER_DAY_MESSAGE });
+        }
+        throw err;
+      }
 
       await updateOvertimeAccount(app, existing.employeeId);
 
@@ -2756,11 +3146,30 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // reason 400 never leaks the existence of a foreign/locked/out-of-window entry.
       const { reason } = z.object({ reason: auditReasonSchema }).parse(req.body);
 
-      // Soft delete instead of hard delete
-      await app.prisma.timeEntry.update({
-        where: { id },
-        data: { deletedAt: new Date() },
-      });
+      // Soft delete instead of hard delete. Issue #92 (T6): inside a transaction whose first
+      // statement is the Employee row lock, the neighbour check runs BEFORE the delete — the entry
+      // may not be the departure or arrival entry of a travel entry (a travel entry itself can
+      // always be deleted).
+      try {
+        await app.prisma.$transaction(async (tx) => {
+          await lockEmployeeForEntryWrite(tx, user.tenantId, existing.employeeId);
+          await checkTravelNeighbours(tx, {
+            tenantId: user.tenantId,
+            employeeId: existing.employeeId,
+            date: existing.date,
+            without: id,
+          });
+          await tx.timeEntry.update({
+            where: { id },
+            data: { deletedAt: new Date() },
+          });
+        });
+      } catch (err) {
+        if (err instanceof TravelRefusalError) {
+          return reply.code(err.refusal.status).send(err.refusal.body);
+        }
+        throw err;
+      }
       await updateOvertimeAccount(app, existing.employeeId);
 
       await app.audit({
@@ -2841,6 +3250,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply
           .code(409)
           .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
+      // Issue #92 (D-06): a travel entry has no break to confirm or waive.
+      if (entry.activityKind === "TRAVEL") {
+        return reply.code(400).send({ error: TRAVEL_SHAPE_MESSAGE, code: TRAVEL_SHAPE_CODE });
       }
 
       const oldStatus = entry.breakStatus;
@@ -2977,10 +3391,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         "Open, invalid, deleted and non-WORK entries are excluded. A SALONS/PERSONS-scoped manager receives the sum " +
         "over the entries GET /time-entries would list for them (a partial sum by design). Minutes are exact sums, " +
         "rounded once at the end. At most 366 days per request. " +
-        "activityMinutes: working minutes per activity kind (PRODUCTIVE, SETUP_CLEANING, UNSPECIFIED) over the " +
-        "same entries — minutes only, never amounts, rates or ratios; the three values sum to workingMinutes " +
-        "before rounding, each is rounded once. Optional salonId (a salon of the caller's tenant; a foreign or " +
-        "unknown id answers 404) narrows every figure of the body to that salon's entries. " +
+        "activityMinutes: working minutes per activity kind (PRODUCTIVE, SETUP_CLEANING, TRAVEL, UNSPECIFIED) " +
+        "over the same entries — minutes only, never amounts, rates or ratios; the four values sum to " +
+        "workingMinutes before rounding, each is rounded once. TRAVEL is the working time of travel entries " +
+        "between two salons (a whole entry, never a share); entryCount includes travel entries. " +
+        "Optional salonId (a salon of the caller's tenant; a foreign or unknown id answers 404) narrows " +
+        "every figure of the body to that salon's entries; a travel entry counts to its departure salon. " +
         "When the tenant has not booked the Auswertungen module, activityMinutes is null and " +
         "activityMinutesUnavailableReason is MODULE_NOT_BOOKED; every other figure is unchanged.",
       security: [{ bearerAuth: [] }],
@@ -3062,6 +3478,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       );
       entries = entries.filter((e) => activityRows.has(e.id));
       // Issue #81 (D-17): the salon filter narrows the whole body, so Σ activityMinutes = working.
+      // Issue #92 (D-07): a travel entry's own salonId is its departure salon, so it counts there.
       if (q.salonId) {
         entries = entries.filter((e) => activityRows.get(e.id)?.salonId === q.salonId);
       }
@@ -3072,7 +3489,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       let presence = 0;
       let working = 0;
       let breaks = 0;
-      const perKind = { PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 0 };
+      const perKind = { PRODUCTIVE: 0, SETUP_CLEANING: 0, TRAVEL: 0, UNSPECIFIED: 0 };
       for (const e of entries) {
         const d = entryDurations(e);
         presence += d.presenceMinutes;
@@ -3082,6 +3499,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         const m = activityMinutes({ ...e, activityKind: row.activityKind }, row.shares);
         perKind.PRODUCTIVE += m.PRODUCTIVE;
         perKind.SETUP_CLEANING += m.SETUP_CLEANING;
+        perKind.TRAVEL += m.TRAVEL;
         perKind.UNSPECIFIED += m.UNSPECIFIED;
       }
 
@@ -3101,6 +3519,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               activityMinutes: {
                 PRODUCTIVE: Math.round(perKind.PRODUCTIVE),
                 SETUP_CLEANING: Math.round(perKind.SETUP_CLEANING),
+                TRAVEL: Math.round(perKind.TRAVEL),
                 UNSPECIFIED: Math.round(perKind.UNSPECIFIED),
               },
             }
@@ -3120,8 +3539,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       description:
         "Answers for the calling employee only (no employee parameter): the pattern salon of today as a " +
         "preselection, whether a salon choice is offered at all, the active salons (ids and names) when it " +
-        "is, or the salon today's existing entry is fixed to. Any active salon may be chosen at clock-in; a " +
-        "deviation from the pattern is not an error.",
+        "is, or the salon today's entry is fixed to. A running day names the salon of the open entry and " +
+        "offers nothing; a finished day names the salon a plain re-clock continues (fixedSalon) and offers " +
+        "the other active salons — choosing one starts a new entry. Any active salon may be chosen at " +
+        "clock-in; a deviation from the pattern is not an error.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requireAnyPermission("time-entry:create:EIGENE", "time-entry:create:ZUGEWIESEN"),

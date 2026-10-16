@@ -21,6 +21,11 @@
  * A RED failure (wrong status code / unchanged isInvalid / missing audit row) is
  * the SUCCESS criteria here, until Task 1 + Task 2 land. Do NOT skip, stub, or
  * .only these tests.
+ *
+ * Amendment 2026-10-16 (Issue #70, Phase 70b-02): an employee may now hold several entries per
+ * day, so the RETRO-14 duplicate is no longer refused as "a day already has an entry" but because
+ * the identical second request OVERLAPS the first one. Still a 409 and still exactly one row; only
+ * the text changed (the person themself gets the detailed overlap message). Case count unchanged.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
@@ -453,7 +458,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
         });
         expect(secondRes.statusCode, "duplicate day must be rejected with 409").toBe(409);
         const body = JSON.parse(secondRes.body);
-        expect(body.error).toContain("Es existiert bereits ein Eintrag für diesen Tag.");
+        expect(body.error).toContain("Überschneidung mit bestehendem Eintrag vom");
 
         const rows = await app.prisma.timeEntry.findMany({
           where: { employeeId, date: new Date(targetDate), deletedAt: null },

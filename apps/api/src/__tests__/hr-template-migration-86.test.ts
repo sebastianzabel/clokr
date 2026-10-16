@@ -67,11 +67,18 @@ describe("Phase 86b — HR template migration, static shape (#86)", () => {
   const sql = readMigrationSql();
   const body = nonCommentText(sql);
 
-  it("sorts after every other migration directory (input proof)", () => {
+  // Amendment 2026-10-16 (Issue #70, Phase 70b-02): the case used to assert that this migration is the
+  // LAST directory, which holds only until the next migration of any phase lands (70b adds two,
+  // dated later the same day) — a time bomb on main, not an ordering requirement. What the proof
+  // is for is that the migration runs AFTER the 76b migration that creates the global HR row it
+  // updates; that is asserted now, against the 76b directory located by its suffix (exactly one
+  // match, same input discipline as `locateMigrationDir`). Case count unchanged.
+  it("sorts after the 76b system-role-templates migration that creates the HR row (input proof)", () => {
     const dirs = readdirSync(MIGRATIONS_ROOT).filter((n) => n !== "migration_lock.toml");
     expect(dirs.length).toBeGreaterThan(1);
-    const last = [...dirs].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).pop();
-    expect(last).toBe(MIGRATION_DIR);
+    const templates = dirs.filter((n) => n.endsWith("_system_role_templates"));
+    expect(templates, "exactly one 76b migration directory").toHaveLength(1);
+    expect(MIGRATION_DIR > templates[0]).toBe(true);
   });
 
   it("has exactly one UPDATE of AccessRole, aimed at the global HR row only", () => {

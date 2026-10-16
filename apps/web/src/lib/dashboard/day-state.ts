@@ -4,6 +4,10 @@
  * Phase 115 (GitHub issue #118) — the ONE derivation that answers "what is today's clock
  * state" for the dashboard, in THREE values instead of a boolean.
  *
+ * Since Issue #70 (Phase 70b) a day may hold SEVERAL entries (one per stretch, possibly in different
+ * salons). The three-state answer is unchanged — it names the entry a clock event acts on — and
+ * `dayTotals()` below sums the whole day for the "Heutiger Eintrag" card.
+ *
  * WHY THIS MODULE EXISTS: `dashboard/+page.svelte:159` held `let clockedIn = $state(false)`,
  * assigned only from `entries.find(e => !e.endTime)`. That predicate means "there is an entry
  * without endTime" — so "day finished" and "day not started" collapsed onto the same value,
@@ -26,10 +30,11 @@
  * the phase plan: sourcing the hero card from /dashboard/my-week while the entry card keeps
  * reading /time-entries would re-create the very two-source split this phase removes.
  *
- * ENTRY SELECTION — a deliberate mirror of `apps/api/src/services/clock/resolver.ts`
- * (state lookup: open entry first, otherwise the closed one with the latest `endTime`):
- * the open entry wins if there is one; otherwise the closed entry with the LATEST `endTime`
- * (the resolver uses `orderBy: { endTime: "desc" }`). That is what makes the entry this
+ * ENTRY SELECTION — a deliberate mirror of `openEntryOf` / `latestEndingClosed`
+ * (`apps/api/src/contexts/time-tracking/day-entries.ts`, Issue #70), the two selectors every
+ * clock path uses: the open entry wins if there is one; otherwise the closed entry with the LATEST
+ * `endTime`, ties going to the later start and then the larger id, and a trip between two salons
+ * (Issue #92, kind TRAVEL) is never chosen. That is what makes the entry this
  * module names provably the entry the resolver would REOPEN — and therefore what makes
  * `reopenGapStartLabel()` able to state the gap-break start as fact.
  *
@@ -41,10 +46,9 @@
  *     default 14 h, i.e. on the same calendar day; the resolver's START branch creates one
  *     directly when leave is CANCELLATION_REQUESTED).
  *   - WITH the filter such a day would resolve to "idle" → the card offers Einstempeln →
- *     the resolver's START branch calls `timeEntry.create` → the partial unique index
- *     `TimeEntry_employeeId_date_unique_not_deleted` rejects it → P2002. Phase 118 does catch
- *     that P2002 as a 409, but the user would still get a conflict instead of the action they
- *     need.
+ *     the resolver's START branch refuses a second open entry of the day (the partial unique
+ *     index `TimeEntry_employeeId_date_open_unique`, 409), and the user would get a conflict
+ *     instead of the action they need.
  *   - WITHOUT the filter the day resolves to "running" → the card offers Ausstempeln → the
  *     resolver finds the open entry and closes it. Since Phase 118 that is the success case;
  *     before it, this ended in CONFLICT NOT_CLOCKED_IN → HTTP 409 (exactly the finding from
@@ -62,16 +66,24 @@
  * here may be mistaken for a security boundary.
  */
 
+import { isTravelRow, type TravelRowFields } from "$lib/time-entries/travel-entry-form";
+
 export type DayStateKind = "running" | "finished" | "idle";
 
 /** The subset of a GET /api/v1/time-entries row this module needs. */
-export interface ClockDayEntry {
+export interface ClockDayEntry extends TravelRowFields {
   id: string;
   startTime: string; // full ISO instant
   endTime: string | null; // full ISO instant or null
   breakMinutes?: number | null;
   isLocked?: boolean | null;
   isInvalid?: boolean | null;
+  /** Issue #70 — the entry's own salon; only multi-salon tenants ever see it rendered. */
+  salonId?: string;
+  /** Issue #70 — display name of `salonId` (GET /time-entries `salonName`). */
+  salonName?: string;
+  /** Server-computed per-entry working minutes (closed rows); `null` for an open row. */
+  workingMinutes?: number | null;
 }
 
 export interface DayState {
@@ -85,30 +97,43 @@ export interface DayState {
 export const IDLE_DAY_STATE: DayState = { kind: "idle", entry: null, isLocked: false };
 
 /**
- * Turns today's rows into the three-state answer. In practice the array holds 0 or 1 rows —
- * `TimeEntry_employeeId_date_unique_not_deleted` is a real database constraint, not a
- * convention — but n>1 is handled defensively because an array is the shape the page has.
+ * Turns today's rows into the three-state answer. Since Issue #70 the array may hold several rows:
+ * the open row wins, else the closed row ending last — the mirror of the server's selectors.
  */
 export function resolveDayState(entries: ClockDayEntry[] | null | undefined): DayState {
   const rows = entries ?? [];
 
-  // Open entry wins — mirrors resolver.ts's state lookup, which checks for `endTime: null` FIRST.
+  // Open entry wins — mirrors `openEntryOf`, which looks for `endTime === null` FIRST.
   const open = rows.find((e) => e.endTime === null || e.endTime === undefined);
   if (open) {
     return { kind: "running", entry: open, isLocked: open.isLocked === true };
   }
 
-  // Otherwise the closed entry with the LATEST endTime — mirrors the resolver's closed-entry
-  // lookup, which orders by `orderBy: { endTime: "desc" }`, so we name the row it would REOPEN.
-  const closed = rows
-    .filter((e) => !!e.endTime)
-    .sort((a, b) => new Date(b.endTime!).getTime() - new Date(a.endTime!).getTime())[0];
+  // Otherwise the closed entry with the LATEST endTime — mirrors `latestEndingClosed`: a tie goes to
+  // the later start, then to the larger id, so the same row wins whatever order the list arrives in.
+  let closed: ClockDayEntry | null = null;
+  // Issue #92 (D-06): a trip between two salons is skipped, exactly like the server's
+  // `latestEndingClosed` — a re-clock never acts on a trip, so the entry named here stays the one
+  // the resolver would reopen.
+  for (const e of rows) {
+    if (!e.endTime) continue;
+    if (isTravelRow(e)) continue;
+    if (closed === null) {
+      closed = e;
+      continue;
+    }
+    const diff = new Date(e.endTime).getTime() - new Date(closed.endTime!).getTime();
+    if (diff > 0) closed = e;
+    else if (diff === 0) {
+      const startDiff = new Date(e.startTime).getTime() - new Date(closed.startTime).getTime();
+      if (startDiff > 0 || (startDiff === 0 && e.id > closed.id)) closed = e;
+    }
+  }
   if (closed) {
     return { kind: "finished", entry: closed, isLocked: closed.isLocked === true };
   }
 
-  // Defensive: an idle day may still carry a row to display. Practically unreachable given
-  // the partial unique index above, but the array shape allows it.
+  // Defensive: an idle day may still carry a row to display (a row without a usable endTime shape).
   return { ...IDLE_DAY_STATE, entry: rows[0] ?? null };
 }
 
@@ -161,4 +186,91 @@ export function upsertDayEntry(entries: ClockDayEntry[], entry: ClockDayEntry): 
   const next = [...entries];
   next[i] = entry;
   return next;
+}
+
+/**
+ * The worked minutes of ONE entry as the card shows them live: an open row counts up to `now`, a
+ * closed row to its own end, minus its break minutes. Moved unchanged from the dashboard page
+ * (Issue #70); it stays a DISPLAY value of the open entry only — closed rows of a multi-row day use
+ * the server's per-entry `workingMinutes` (CLAUDE.md #79, the one working-time formula).
+ */
+export function entryWorkedMinutes(entry: ClockDayEntry, now: Date): number {
+  const start = new Date(entry.startTime).getTime();
+  const end = entry.endTime ? new Date(entry.endTime).getTime() : now.getTime();
+  const gross = Math.max(0, (end - start) / 60000);
+  return Math.max(0, gross - (entry.breakMinutes ?? 0));
+}
+
+/** The sums of a day's rows for the "Heutiger Eintrag" card (Issue #70, D-07). */
+export interface DayTotals {
+  /** Earliest start of the day (ISO instant), `null` without rows. */
+  startTime: string | null;
+  /** Latest end (ISO instant); `null` while a row is running, and without rows. */
+  endTime: string | null;
+  /** Σ break minutes of every row. */
+  breakMinutes: number;
+  /** Σ working minutes: the server's `workingMinutes` of closed rows plus the running row's live value. */
+  workingMinutes: number;
+  rowCount: number;
+}
+
+/**
+ * Σ over today's rows. A closed row contributes the server-computed `workingMinutes` (its own
+ * fallback — the page's display formula — only when a row arrives without one, e.g. an optimistic
+ * row adopted from a clock-in response); the open row contributes its live minutes at `now`.
+ */
+export function dayTotals(rows: readonly ClockDayEntry[], now: Date): DayTotals {
+  let startMs: number | null = null;
+  let endMs: number | null = null;
+  let running = false;
+  let breakMinutes = 0;
+  let workingMinutes = 0;
+  for (const row of rows) {
+    const start = new Date(row.startTime).getTime();
+    if (startMs === null || start < startMs) startMs = start;
+    breakMinutes += row.breakMinutes ?? 0;
+    if (!row.endTime) {
+      running = true;
+      workingMinutes += entryWorkedMinutes(row, now);
+      continue;
+    }
+    const end = new Date(row.endTime).getTime();
+    if (endMs === null || end > endMs) endMs = end;
+    workingMinutes +=
+      typeof row.workingMinutes === "number" && Number.isFinite(row.workingMinutes)
+        ? row.workingMinutes
+        : entryWorkedMinutes(row, now);
+  }
+  return {
+    startTime: startMs === null ? null : new Date(startMs).toISOString(),
+    endTime: running || endMs === null ? null : new Date(endMs).toISOString(),
+    breakMinutes,
+    workingMinutes,
+    rowCount: rows.length,
+  };
+}
+
+/** „2 Einträge heute“ for two or more rows, `null` otherwise (a one-entry day shows no count). */
+export function entryCountLabel(count: number): string | null {
+  return count >= 2 ? `${count} Einträge heute` : null;
+}
+
+function hhmm(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/** „07:00–11:00“ for a closed row, „seit 11:30“ for the running one. */
+export function entryRangeLabel(entry: ClockDayEntry): string {
+  return entry.endTime
+    ? `${hhmm(entry.startTime)}–${hhmm(entry.endTime)}`
+    : `seit ${hhmm(entry.startTime)}`;
+}
+
+/** Today's rows in start order (then id), the order the compact list shows them in. */
+export function entriesInStartOrder(rows: readonly ClockDayEntry[]): ClockDayEntry[] {
+  return [...rows].sort(
+    (a, b) =>
+      new Date(a.startTime).getTime() - new Date(b.startTime).getTime() || (a.id < b.id ? -1 : 1),
+  );
 }

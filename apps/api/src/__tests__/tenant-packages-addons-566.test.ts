@@ -5,6 +5,9 @@
  *
  * Tenants come from `seedGrundversionTenant` (no module booked); the shared `seedTestData` fixture
  * books everything and would make every gate case vacuous.
+ *
+ * Amended 2026-10-16 for #92 (Phase 92b-04, D-07): the exact `activityMinutes` pin of the analytics
+ * summary case names the new key TRAVEL (0). Case count unchanged.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -904,7 +907,12 @@ describe("analytics — summary (D-05): only activityMinutes is package-bound", 
     const res = await summary();
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body) as Record<string, unknown>;
-    expect(body.activityMinutes).toEqual({ PRODUCTIVE: 420, SETUP_CLEANING: 60, UNSPECIFIED: 480 });
+    expect(body.activityMinutes).toEqual({
+      PRODUCTIVE: 420,
+      SETUP_CLEANING: 60,
+      TRAVEL: 0,
+      UNSPECIFIED: 480,
+    });
     expect(Object.keys(body)).not.toContain("activityMinutesUnavailableReason");
   });
 

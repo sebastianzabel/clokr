@@ -32,6 +32,8 @@
   import MyShiftsWeek from "$lib/components/dashboard/MyShiftsWeek.svelte";
   import MyWeekView from "$lib/components/dashboard/MyWeekView.svelte";
   import ClockSalonSelect from "$lib/components/dashboard/ClockSalonSelect.svelte"; // Issue #87
+  import ClockOtherSalon from "$lib/components/dashboard/ClockOtherSalon.svelte"; // Issue #70
+  import TodayEntriesList from "$lib/components/dashboard/TodayEntriesList.svelte"; // Issue #70
   import Icon from "$lib/components/Icon.svelte";
   import {
     summarizeKarenzOverrun,
@@ -49,6 +51,9 @@
     primaryClockLabel,
     canReopenFinishedDay,
     reopenGapStartLabel,
+    dayTotals,
+    entryCountLabel,
+    entryWorkedMinutes,
     type ClockDayEntry,
   } from "$lib/dashboard/day-state";
   import { interpretClockOut, type ClockOutResponse } from "$lib/dashboard/clock-out-result"; // Phase 307 Plan 02 (D-04)
@@ -58,10 +63,15 @@
     clockInBlocked,
     clockInBody,
     clockSalonView,
+    fixedSalonNoteLabel,
     initialClockSalonSelection,
     loadClockSalonChoice,
+    otherSalonBlocked,
+    otherSalonName,
+    otherSalonOptions,
+    type ClockInAction,
     type ClockSalonChoice,
-  } from "$lib/dashboard/clock-salon"; // Issue #87
+  } from "$lib/dashboard/clock-salon"; // Issue #87, #70
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
   import { salonContext } from "$stores/salon-context"; // Issue #84 (D-01)
@@ -347,6 +357,10 @@
   // The "Heutiger Eintrag" card reads the SAME entry the hero card describes
   // (Phase 115, issue #118 — the two used to be derived independently and disagreed).
   let todayEntry = $derived(day.entry);
+  // Issue #70 (D-07, D-12): the entry count and the compact list exist only for a multi-salon tenant
+  // (the clock-salon answer names a salon only there) with two or more entries today.
+  let showEntryList = $derived(clockSalon?.fixedSalon != null && todayEntries.length >= 2);
+  let entryCount = $derived(showEntryList ? entryCountLabel(todayEntries.length) : null);
 
   // ── Aktivität (row 2 col-5) ───────────────────────────────────────────────
   interface ActivityItem {
@@ -898,11 +912,13 @@
   // action on a finished day. The server decides which of the two it is — START or
   // REOPEN (services/clock/state-machine.ts:18-22) — and we simply adopt the entry it
   // returns, which is what makes the timer correct in both cases.
-  async function performClockIn(): Promise<void> {
-    const res = await api.post<ClockInResponse>(
-      "/time-entries/clock-in",
-      clockInBody(clockSalonViewState, clockSalonId),
-    );
+  // Issue #70: `action` decides whether a salon may travel with the request — only the idle select
+  // ("start", the default) and the finished-day other-salon action send one. The REOPEN of a finished
+  // day goes through the default too: its view is `fixed`, never `select`, so no salon is attached
+  // (#87 D-13).
+  async function performClockIn(action: ClockInAction = "start"): Promise<void> {
+    const body = clockInBody(clockSalonViewState, clockSalonId, action);
+    const res = await api.post<ClockInResponse>("/time-entries/clock-in", body);
     // Phase 76.2 D-03 unified shape — reads from res.resolution.entry
     // (the legacy `res.entry` shape is gone, see Plan 2 SUMMARY).
     // CONFLICT branches reach us as thrown ApiError (HTTP 409) — defensive
@@ -914,7 +930,13 @@
     // Optimistic: adopt the SERVER's row so `day`, `activeEntryId` and `clockStart`
     // all follow from it before loadData() returns. upsertDayEntry replaces by id,
     // so a REOPEN updates the same row instead of appending a phantom second one.
-    todayEntries = upsertDayEntry(todayEntries, entry);
+    // A new second-salon entry is adopted with the display name of the salon it was started in; the
+    // reload that follows replaces it with the list row (which carries `salonName` itself).
+    const startedIn = body.salonId ? otherSalonName(clockSalonViewState, body.salonId) : undefined;
+    todayEntries = upsertDayEntry(
+      todayEntries,
+      startedIn ? { ...entry, salonName: startedIn } : entry,
+    );
     // A REOPEN arrives with breakMinutes already recomputed from ALL Break rows
     // (resolver.ts:130-136). Adopting it keeps the local *display* in sync with the
     // value the server recomputed — the client never sends it back (Phase 129).
@@ -1009,6 +1031,29 @@
     clockLoading = true;
     try {
       await performClockIn();
+      await loadData();
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : "Fehler beim Stempeln");
+      try {
+        await loadData();
+      } catch {
+        /* ignore reload error */
+      }
+    } finally {
+      clockLoading = false;
+    }
+  }
+
+  // ── Second salon on a finished day (Issue #70, D-02/D-11) ─────────────────
+  // „In anderem Salon einstempeln“ starts a NEW entry in the chosen salon and leaves the finished
+  // one untouched; no Rückfrage, because nothing is reopened. The server refuses an instant inside
+  // an existing entry (409 ENTRY_OVERLAP) and a locked month (409); its German text is toasted.
+  async function handleOtherSalonClockIn(): Promise<void> {
+    if (clockLoading || !canReopenFinishedDay(day)) return;
+    if (otherSalonBlocked(clockSalonViewState, clockSalonId)) return;
+    clockLoading = true;
+    try {
+      await performClockIn("otherSalon");
       await loadData();
     } catch (err) {
       toasts.error(err instanceof Error ? err.message : "Fehler beim Stempeln");
@@ -1200,25 +1245,32 @@
   // Compute Start/End/Pause/Net from todayEntry.
   // - If clocked in (no endTime): "Ende" shows "—", break minutes are 0 (breaks only counted after clock-out)
   // - If clocked out: use entry.endTime; breakMinutes from entry
-  let entryStartHHMM = $derived.by(() => {
-    if (!todayEntry) return "—";
-    const d = new Date(todayEntry.startTime);
+  // Issue #70 (D-07): with two or more entries the card describes the DAY — earliest start, latest end
+  // ("—" while one runs), Σ breaks, Σ working minutes (server value of closed rows + the running row's
+  // live value). A one-entry day keeps the exact per-entry values it always had.
+  let multiRowDay = $derived(todayEntries.length >= 2);
+  let totals = $derived(dayTotals(todayEntries, currentTime));
+  function hhmmOf(iso: string): string {
+    const d = new Date(iso);
     return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  }
+  let entryStartHHMM = $derived.by(() => {
+    if (multiRowDay) return totals.startTime ? hhmmOf(totals.startTime) : "—";
+    if (!todayEntry) return "—";
+    return hhmmOf(todayEntry.startTime);
   });
   let entryEndHHMM = $derived.by(() => {
+    if (multiRowDay) return totals.endTime ? hhmmOf(totals.endTime) : "—";
     if (!todayEntry || !todayEntry.endTime) return "—";
-    const d = new Date(todayEntry.endTime);
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    return hhmmOf(todayEntry.endTime);
   });
   // Live-updating worked minutes: open entry => up to currentTime, closed => endTime - startTime
   let entryWorkedMin = $derived.by(() => {
+    if (multiRowDay) return totals.workingMinutes;
     if (!todayEntry) return 0;
-    const start = new Date(todayEntry.startTime).getTime();
-    const end = todayEntry.endTime ? new Date(todayEntry.endTime).getTime() : currentTime.getTime();
-    const gross = Math.max(0, (end - start) / 60000);
-    return Math.max(0, gross - (todayEntry.breakMinutes ?? 0));
+    return entryWorkedMinutes(todayEntry, currentTime);
   });
-  let entryBreakMin = $derived(todayEntry?.breakMinutes ?? 0);
+  let entryBreakMin = $derived(multiRowDay ? totals.breakMinutes : (todayEntry?.breakMinutes ?? 0));
 
   function fmtHm(min: number): string {
     const h = Math.floor(min / 60);
@@ -1251,8 +1303,10 @@
   // Timeline progress: % of 12h window from 07:00 start anchor
   let entryProgressPct = $derived.by(() => {
     if (!todayEntry) return 0;
-    const start = new Date(todayEntry.startTime).getTime();
-    const end = todayEntry.endTime ? new Date(todayEntry.endTime).getTime() : currentTime.getTime();
+    const startIso = multiRowDay && totals.startTime ? totals.startTime : todayEntry.startTime;
+    const endIso = multiRowDay ? totals.endTime : todayEntry.endTime;
+    const start = new Date(startIso).getTime();
+    const end = endIso ? new Date(endIso).getTime() : currentTime.getTime();
     const dur = Math.max(0, end - start);
     return Math.min(100, (dur / (12 * 3_600_000)) * 100);
   });
@@ -1263,6 +1317,15 @@
       return {
         title: "Noch nicht eingestempelt heute.",
         body: "Sobald du startest, wird die Pausenpflicht hier angezeigt.",
+      };
+    }
+    // Issue #70: with several entries the § 4 verdict belongs to the whole day (breaks between
+    // entries in the same salon count, gaps between salons do not) and is decided by the server —
+    // a verdict computed here from the day sums would be wrong in both directions.
+    if (multiRowDay) {
+      return {
+        title: "Mehrere Einträge heute.",
+        body: "Die Pausenprüfung nach § 4 ArbZG bewertet den ganzen Tag; Hinweise erscheinen beim Ausstempeln.",
       };
     }
     const workedHours = entryWorkedMin / 60;
@@ -1423,6 +1486,7 @@
               value={clockSalonId}
               disabled={clockLoading}
               onselect={(id) => (clockSalonId = id)}
+              noteLabel={fixedSalonNoteLabel(day.kind, todayEntries.length)}
             />
             {#if primaryLabel}
               <button
@@ -1462,6 +1526,17 @@
                   {#if clockLoading}<span class="btn-spinner"></span>{/if}
                   Erneut einstempeln
                 </button>
+                <!-- Issue #70 (D-02/D-11): the finished-day action „In anderem Salon einstempeln“ starts a
+                     NEW entry in another salon; the component renders it only when the server offers one. -->
+                <ClockOtherSalon
+                  salons={otherSalonOptions(clockSalonViewState)}
+                  value={clockSalonId}
+                  disabled={clockLoading}
+                  loading={clockLoading}
+                  blocked={otherSalonBlocked(clockSalonViewState, clockSalonId)}
+                  onselect={(id) => (clockSalonId = id)}
+                  onstart={handleOtherSalonClockIn}
+                />
               {:else}
                 <span class="timer-status-idle">
                   Monat abgeschlossen — der Eintrag kann nicht mehr geändert werden.
@@ -1496,7 +1571,9 @@
       <Card animate class="today-entry-card" style="--card-idx: 3;">
         <CardHeader
           title="Heutiger Eintrag"
-          sub={format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })}
+          sub={entryCount
+            ? `${format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })} · ${entryCount.replaceAll(" ", "\u00A0")}`
+            : format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })}
         >
           {#snippet actions()}
             <a
@@ -1527,6 +1604,10 @@
             <div class="today-stat-value today-stat-accent">{entryNetLabel}</div>
           </div>
         </div>
+
+        {#if showEntryList}
+          <TodayEntriesList entries={todayEntries} />
+        {/if}
 
         <div class="today-timeline">
           <div class="today-timeline-track"></div>

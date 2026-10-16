@@ -1,7 +1,8 @@
 // Issue #80 (D-09, D-11, D-13, D-20, D-22) — GET /api/v1/day-breaks/checks.
 //
-// A multi-entry day cannot exist in the database while the partial unique index
-// `TimeEntry_employeeId_date_unique_not_deleted` holds, so the range read of closed WORK entries
+// Since #70 (Phase 70b) such days exist in the database; the mocks here stay pure-kernel
+// proofs. Real-database proofs of several entries per day: time-entry-multi-entry-70,
+// multi-entry-month-close-70, multi-entry-saldo-equality-70. The range read of closed WORK entries
 // (`getWorkedEntriesInRange`, the facade the day check reads through) is wrapped for the
 // constructed days only and delegates to the real implementation for everything else. Everything
 // downstream is real: employees, salons, role assignments, the month lock, DayBreak and

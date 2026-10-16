@@ -144,6 +144,14 @@ PGPASSWORD=<int-pg-password> pg_restore \
 
 Expect a stream of `CREATE` + `ALTER` + `COPY` lines. Warnings about `permission denied for extension` are normal (we ran `--no-acl`).
 
+Since Issue #70 the dump carries `CREATE EXTENSION btree_gist` (the `TimeEntry` exclusion constraint needs it, see
+`docs/migrations.md`, "Phase 70b"). The restoring role must be allowed to create it: `btree_gist` is a _trusted_
+extension, so the database owner is enough, and on int the role is owner/superuser (probe of 2026-10-16). If the restore
+reports `permission denied to create extension "btree_gist"`, create it once as a superuser in `clokr_staging`
+(`CREATE EXTENSION IF NOT EXISTS btree_gist;`) and restore again; without it the `TimeEntry` constraint is missing from
+the restored database. A dump taken _before_ the 70b migrations needs nothing extra: step 5 (`migrate deploy`) creates
+the extension and the constraint.
+
 ### 5. Apply pending migrations to `clokr_staging`
 
 ```bash

@@ -20,6 +20,15 @@ import { validateActivityState } from "../activity-shares"; // Issue #81
 import { getTenantTimezone, dateStrInTz, todayInTz } from "../../working-time-account"; // Phase 101B
 import { computeEntryAgeInDays } from "../retro-config";
 import { CLEARED_INVALID_REASON } from "../invalid-reason"; // Phase 96 (T1)
+import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
+import { otherWorkingMinutesOfDay } from "../day-entries"; // Issue #70 (D-04)
+import { recheckOverlapInTx } from "../entry-invariants"; // Issue #70 (D-10)
+import { checkTravelNeighbours, TravelRefusalError } from "../travel-entry"; // Issue #92 (T6)
+import {
+  EntryConflictError,
+  isEntryOverlapViolation,
+  OVERLAP_MESSAGE_NEUTRAL,
+} from "../entry-overlap-error"; // Issue #70 (D-06/D-13)
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -160,6 +169,10 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
 
       // Duplicate-grant guard: reject if PENDING or APPROVED grant already exists
       // for the same (employeeId, targetDate).
+      // Issue #70 (D-13), decision: with several entries per day a day could carry more than one
+      // Nachtrag, but the request model is one per (employee, day) and stays so for now — a second
+      // Nachtrag of the same day waits for the follow-up issue that 70b-08 creates. Entries
+      // themselves are never limited per day any more; only the request is.
       const existing = await app.prisma.retroEntryRequest.findFirst({
         where: {
           employeeId,
@@ -460,10 +473,20 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
                   (correctedFields.breakMinutes ?? 0),
               )
             : 0;
+          // Issue #70 (70b-04, D-04): the day sum of § 9 JArbSchG, like POST and PUT — the
+          // corrected minutes plus the day's other closed WORK entries (the coupled entry itself
+          // excluded), so splitting a Berufsschultag over entries cannot bypass the limit.
           const jarbSchgApprove = await checkJArbSchG(app.prisma, {
             employeeId: existing.employeeId,
             date: existing.targetDate,
-            plannedNetWorkMin: correctedNetWorkMin,
+            plannedNetWorkMin:
+              correctedNetWorkMin +
+              (await otherWorkingMinutesOfDay(app.prisma, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                date: existing.targetDate,
+                excludeEntryId: coupledEntry.id,
+              })),
           });
           if (jarbSchgApprove.blocked) {
             return reply
@@ -497,6 +520,12 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         const entryIdToRelease = coupledEntry.id;
         try {
           updated = await app.prisma.$transaction(async (tx) => {
+            // Issue #70 (D-10, I-19): the Employee row lock comes FIRST — the uniform lock order of
+            // every interval writer (Employee row, then everything else). The corrected times below
+            // may land on another entry of the day; the re-check after the status flip runs under
+            // this lock, so it sees every committed row of a racing writer.
+            await lockEmployeeForEntryWrite(tx, user.tenantId, existing.employeeId);
+
             // Phase 96-review (WR-01) — race-safe status guard (mirrors the
             // grant-consumption pattern at time-entries.ts:1197-1203): updateMany
             // with status="PENDING" AND deletedAt=null in the WHERE ensures only
@@ -517,6 +546,51 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
             if (decided.count !== 1) {
               throw new Error("RETRO_REQUEST_ALREADY_DECIDED");
             }
+            // Issue #70 (D-06, I-19): with corrected times the coupled entry moves, so it may not
+            // overlap another entry of the day (itself excluded). A conflict throws
+            // `EntryConflictError` — the whole transaction rolls back (the request stays PENDING,
+            // nothing is written, no approval audit row) and the catch below answers 409 with the
+            // text worded by the approving manager's reach (D-13). Without corrected times the entry
+            // keeps the interval it already holds, which was checked when it was created.
+            if (hasManagerCorrection) {
+              await recheckOverlapInTx(tx, {
+                tenantId: user.tenantId,
+                employeeId: existing.employeeId,
+                newStart: correctedFields.startTime ?? coupledEntry.startTime,
+                newEnd:
+                  correctedFields.endTime !== undefined
+                    ? correctedFields.endTime
+                    : coupledEntry.endTime,
+                date: existing.targetDate,
+                tz,
+                excludeEntryId: entryIdToRelease,
+                callerEmployeeId: user.employeeId ?? null,
+                access: accessContextFromRequest(req),
+              });
+            }
+            // Issue #92 (T6): the release turns a pending row, which never anchors a travel entry,
+            // into a recorded one, possibly with corrected times — it may not land between a travel
+            // entry and its arrival entry in another salon. ONE evaluation: the approval keeps the
+            // date, so the stored state (`without`) and the released, possibly corrected state
+            // (`with`) go into the same call. A refusal rolls everything back (the request stays
+            // PENDING) and is answered below.
+            await checkTravelNeighbours(tx, {
+              tenantId: user.tenantId,
+              employeeId: existing.employeeId,
+              date: coupledEntry.date,
+              without: entryIdToRelease,
+              with: {
+                id: entryIdToRelease,
+                startTime: correctedFields.startTime ?? coupledEntry.startTime,
+                endTime:
+                  correctedFields.endTime !== undefined
+                    ? correctedFields.endTime
+                    : coupledEntry.endTime,
+                salonId: coupledEntry.salonId,
+                type: coupledEntry.type,
+                invalidReasonCode: null,
+              },
+            });
             const reqAfter = await tx.retroEntryRequest.findUniqueOrThrow({ where: { id } });
             const entryAfter = await tx.timeEntry.update({
               where: { id: entryIdToRelease },
@@ -558,6 +632,19 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         } catch (err) {
           if (err instanceof Error && err.message === "RETRO_REQUEST_ALREADY_DECIDED") {
             return reply.code(409).send({ error: "Antrag kann nicht mehr geändert werden" });
+          }
+          // Issue #70 (D-06, I-19): the in-transaction re-check found an overlap (worded by reach),
+          // or the database exclusion constraint refused the update after all (neutral text — a
+          // database refusal carries no conflicting row to judge the reach with).
+          if (err instanceof EntryConflictError) {
+            return reply.code(409).send({ error: err.userMessage });
+          }
+          // Issue #92 (T6): the release would orphan a travel entry of the day.
+          if (err instanceof TravelRefusalError) {
+            return reply.code(err.refusal.status).send(err.refusal.body);
+          }
+          if (isEntryOverlapViolation(err)) {
+            return reply.code(409).send({ error: OVERLAP_MESSAGE_NEUTRAL });
           }
           throw err;
         }
@@ -610,9 +697,11 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         // prisma.delete(), Revisionssicherheit) + REJECTED + audit, in one
         // transaction. retroRequestId stays set (the audit link is preserved);
         // deletedAt alone drops the row out of every deletedAt:null query
-        // (checkArbZG, saldo, the partial unique index), freeing the day for a
+        // (checkArbZG, saldo, the no-overlap guarantee), freeing the interval for a
         // corrected resubmission. No new enum value — reuses the existing
         // deletedAt soft-delete convention (D-11).
+        // Issue #92: no travel-neighbour hook here — a pending row never anchored a travel entry, so
+        // removing it cannot orphan one (see the `checkTravelNeighbours` docblock in ../travel-entry).
         const entryIdToReject = coupledEntry.id;
         try {
           updated = await app.prisma.$transaction(async (tx) => {
@@ -840,6 +929,8 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           });
 
           if (coupledEntry) {
+            // Issue #92: no travel-neighbour hook on a withdrawal either — a pending row never
+            // anchored a travel entry (see the `checkTravelNeighbours` docblock in ../travel-entry).
             // Phase 96-review (WR-01) — defense-in-depth: only re-soft-delete the
             // coupled TimeEntry if it is STILL the pre-decision pending row
             // (isInvalid=true, deletedAt=null). The request-status guard above

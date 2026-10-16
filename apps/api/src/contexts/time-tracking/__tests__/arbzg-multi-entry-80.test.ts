@@ -1,8 +1,9 @@
 // Issue #80 (80-AC2, 80-AC3, 80-AC4, 80-AC7; D-01, D-16, D-18) — checkArbZG over a day with several
 // entries in several salons.
 //
-// A multi-entry day cannot exist in the database while the partial unique index
-// `TimeEntry_employeeId_date_unique_not_deleted` holds, so the day lookup (`findEntriesOfDay`) is
+// Since #70 (Phase 70b) such days exist in the database; the mocks here stay pure-kernel
+// proofs. Real-database proofs of several entries per day: time-entry-multi-entry-70,
+// multi-entry-month-close-70, multi-entry-saldo-equality-70. The day lookup (`findEntriesOfDay`) is
 // mocked and returns constructed rows. The employee, tenant config and Berufsschule reads stay
 // real; the other days the function looks up (§ 5 neighbours) return no rows.
 

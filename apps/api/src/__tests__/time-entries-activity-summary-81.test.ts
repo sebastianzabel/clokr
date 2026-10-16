@@ -6,6 +6,11 @@
  *
  * Harness copied from `time-entries-summary-79.test.ts`: fake clock 2026-06-15T10:00Z installed
  * BEFORE the app boots. No person names in fixtures.
+ *
+ * Amended 2026-10-16 for #92 (Phase 92b-04, D-07): the `activityMinutes` object of the body gains
+ * the key TRAVEL (value 0 for every entry that is not a travel entry), so `KINDS` and the one exact
+ * body assertion name it. Case count unchanged; nothing else is loosened. Travel itself is proven
+ * in `time-entries-travel-summary-92.test.ts`.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -16,7 +21,7 @@ import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons"
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
 const PASSWORD = "test1234";
-const KINDS = ["PRODUCTIVE", "SETUP_CLEANING", "UNSPECIFIED"];
+const KINDS = ["PRODUCTIVE", "SETUP_CLEANING", "TRAVEL", "UNSPECIFIED"];
 const BODY_KEYS = [
   "activityMinutes",
   "breakMinutes",
@@ -220,7 +225,12 @@ describe("Issue #81 — GET /api/v1/time-entries/summary per activity kind", () 
         `employeeId=${employee.id}&from=2026-06-01&to=2026-06-30`,
       );
       expect(body.workingMinutes).toBe(495);
-      expect(body.activityMinutes).toEqual({ PRODUCTIVE: 435, SETUP_CLEANING: 60, UNSPECIFIED: 0 });
+      expect(body.activityMinutes).toEqual({
+        PRODUCTIVE: 435,
+        SETUP_CLEANING: 60,
+        TRAVEL: 0,
+        UNSPECIFIED: 0,
+      });
     });
 
     it("an unclassified period is entirely UNSPECIFIED", async () => {
@@ -233,6 +243,7 @@ describe("Issue #81 — GET /api/v1/time-entries/summary per activity kind", () 
       expect(body.activityMinutes).toEqual({
         PRODUCTIVE: 0,
         SETUP_CLEANING: 0,
+        TRAVEL: 0,
         UNSPECIFIED: body.workingMinutes,
       });
     });
@@ -254,7 +265,12 @@ describe("Issue #81 — GET /api/v1/time-entries/summary per activity kind", () 
         `employeeId=${employee.id}&from=2026-06-01&to=2026-06-30`,
       );
       expect(body.entryCount).toBe(1);
-      expect(body.activityMinutes).toEqual({ PRODUCTIVE: 480, SETUP_CLEANING: 0, UNSPECIFIED: 0 });
+      expect(body.activityMinutes).toEqual({
+        PRODUCTIVE: 480,
+        SETUP_CLEANING: 0,
+        TRAVEL: 0,
+        UNSPECIFIED: 0,
+      });
     });
   });
 
@@ -286,12 +302,22 @@ describe("Issue #81 — GET /api/v1/time-entries/summary per activity kind", () 
       expect(a.presenceMinutes).toBe(960);
       expect(a.workingMinutes).toBe(930);
       expect(a.breakMinutes).toBe(30);
-      expect(a.activityMinutes).toEqual({ PRODUCTIVE: 480, SETUP_CLEANING: 450, UNSPECIFIED: 0 });
+      expect(a.activityMinutes).toEqual({
+        PRODUCTIVE: 480,
+        SETUP_CLEANING: 450,
+        TRAVEL: 0,
+        UNSPECIFIED: 0,
+      });
       expect(kindSum(a)).toBe(a.workingMinutes);
 
       const all = await summaryBody(data.adminToken, `employeeId=${emp.id}&${range}`);
       expect(all.entryCount).toBe(3);
-      expect(all.activityMinutes).toEqual({ PRODUCTIVE: 860, SETUP_CLEANING: 550, UNSPECIFIED: 0 });
+      expect(all.activityMinutes).toEqual({
+        PRODUCTIVE: 860,
+        SETUP_CLEANING: 550,
+        TRAVEL: 0,
+        UNSPECIFIED: 0,
+      });
       expect(kindSum(all)).toBe(all.workingMinutes);
     });
 
@@ -321,7 +347,12 @@ describe("Issue #81 — GET /api/v1/time-entries/summary per activity kind", () 
           `employeeId=${emp.id}&${range}&salonId=${salonB.id}`,
         );
         expect(b.entryCount).toBe(1);
-        expect(b.activityMinutes).toEqual({ PRODUCTIVE: 380, SETUP_CLEANING: 100, UNSPECIFIED: 0 });
+        expect(b.activityMinutes).toEqual({
+          PRODUCTIVE: 380,
+          SETUP_CLEANING: 100,
+          TRAVEL: 0,
+          UNSPECIFIED: 0,
+        });
       } finally {
         await app.prisma.salon.update({ where: { id: salonB.id }, data: { isActive: true } });
       }
@@ -344,7 +375,12 @@ describe("Issue #81 — GET /api/v1/time-entries/summary per activity kind", () 
       );
       expect(scoped.entryCount).toBe(0);
       expect(scoped.workingMinutes).toBe(0);
-      expect(scoped.activityMinutes).toEqual({ PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 0 });
+      expect(scoped.activityMinutes).toEqual({
+        PRODUCTIVE: 0,
+        SETUP_CLEANING: 0,
+        TRAVEL: 0,
+        UNSPECIFIED: 0,
+      });
     });
   });
 
@@ -386,7 +422,7 @@ describe("Issue #81 — GET /api/v1/time-entries/summary per activity kind", () 
         workingMinutes: 495,
         breakMinutes: 45,
         entryCount: 1,
-        activityMinutes: { PRODUCTIVE: 435, SETUP_CLEANING: 60, UNSPECIFIED: 0 },
+        activityMinutes: { PRODUCTIVE: 435, SETUP_CLEANING: 60, TRAVEL: 0, UNSPECIFIED: 0 },
       });
       expect(Object.keys(body).sort()).toEqual(BODY_KEYS);
       expect(Object.keys(body.activityMinutes).sort()).toEqual([...KINDS].sort());
@@ -421,6 +457,7 @@ describe("Issue #81 — GET /api/v1/time-entries/summary per activity kind", () 
       expect(body.activityMinutes).toEqual({
         PRODUCTIVE: -20,
         SETUP_CLEANING: 500,
+        TRAVEL: 0,
         UNSPECIFIED: 0,
       });
       expect(kindSum(body)).toBe(body.workingMinutes);

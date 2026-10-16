@@ -33,6 +33,16 @@ const SHARE_OWN_KIND_BODY = {
   error: "Ein Anteil darf nicht die Tätigkeitsart des Eintrags selbst haben.",
 } as const;
 
+/**
+ * Issue #92 (D-05/D-06): TRAVEL is the kind of a whole travel entry between two salons, never a
+ * part of another entry — so a share of that kind is refused here, in the one place of the share
+ * rules, with a text that points to the right way to record travel time.
+ */
+export const TRAVEL_SHARE_BODY = {
+  error:
+    "Fahrzeit ist kein Tätigkeitsanteil. Sie wird als eigener Eintrag zwischen zwei Salons erfasst.",
+} as const;
+
 // ── 409: the share list does not fit the entry ────────────────────────────────────────────────
 const SHARE_OPEN_ENTRY_BODY = {
   error: "Tätigkeitsanteile sind nur an einem abgeschlossenen Eintrag möglich.",
@@ -78,6 +88,9 @@ export function validateActivityState(
   for (const share of state.shares) {
     if (share.kind === "UNSPECIFIED") {
       return { ok: false, status: 400, body: SHARE_UNSPECIFIED_BODY };
+    }
+    if (share.kind === "TRAVEL") {
+      return { ok: false, status: 400, body: TRAVEL_SHARE_BODY };
     }
     if (!Number.isInteger(share.minutes) || share.minutes < 1) {
       return { ok: false, status: 400, body: SHARE_MINUTES_BODY };
@@ -159,6 +172,8 @@ export type ActivityPutBody = {
   note?: string | null;
   type?: string;
   salonId?: string;
+  /** Issue #92: the arrival salon of a travel entry; a change is a correction, never a classification. */
+  travelToSalonId?: string;
 };
 
 /** The stored entry fields the predicate compares the body against. */
@@ -169,6 +184,7 @@ export type ActivityPutExisting = {
   note: string | null;
   type: string;
   salonId: string;
+  travelToSalonId: string | null;
 };
 
 /**
@@ -182,7 +198,7 @@ export type ActivityPutExisting = {
  * Decided per field:
  * - `breakMinutes`, `breaks` and `grantId` present => never activity-only (they confirm the
  *   break or consume a retro grant, even when the value equals the stored one);
- * - `date`, `startTime`, `endTime`, `note`, `type` and `salonId` count only when their value
+ * - `date`, `startTime`, `endTime`, `note`, `type`, `salonId` and `travelToSalonId` count only when their value
  *   differs from the stored one, so a form that re-sends the unchanged values stays
  *   activity-only. `"endTime" in body` / `"note" in body` decide presence exactly like the route.
  */
@@ -210,6 +226,11 @@ export function isActivityOnlyPut(body: ActivityPutBody, existing: ActivityPutEx
   if ("note" in body && (body.note ?? null) !== existing.note) return false;
   if (body.type !== undefined && body.type !== existing.type) return false;
   if (body.salonId !== undefined && body.salonId !== existing.salonId) return false;
+  // Issue #92: a changed or newly added destination moves a travel entry between salons — that is a
+  // correction of recorded time, not a classification (research pitfall 5).
+  if (body.travelToSalonId !== undefined && body.travelToSalonId !== existing.travelToSalonId) {
+    return false;
+  }
 
   return true;
 }

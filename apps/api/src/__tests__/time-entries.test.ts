@@ -269,44 +269,136 @@ describe("Time Entries API", () => {
       expect(body.entry.employeeId).toBe(data.employee.id);
     });
 
-    // ── Plan 76.19-06 Task 2: DB partial-unique index → P2002 → 409 ────────────
-    // The partial-unique index (WHERE deletedAt IS NULL) catches a concurrent
-    // same-day create that raced past the app-level one-per-day check. The DB
-    // constraint cannot be reproduced against the `db push` test database (Prisma
-    // cannot express partial unique indexes), so we simulate the driver-level
-    // P2002 the index raises and assert the handler maps it to 409, not 500.
-    it("DATA-V1814-04: a P2002 unique-violation on create → 409 (not 500)", async () => {
-      const d = pastDateStr(40);
-      const createSpy = vi
-        .spyOn(app.prisma.timeEntry, "create")
-        .mockRejectedValueOnce(
-          Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
-        );
-
-      try {
-        const res = await app.inject({
-          method: "POST",
-          url: "/api/v1/time-entries",
-          headers: { authorization: `Bearer ${data.adminToken}` },
-          payload: {
-            employeeId: data.employee.id,
-            date: d,
-            startTime: `${d}T08:00:00.000Z`,
-            endTime: `${d}T16:00:00.000Z`,
-            breakMinutes: 30,
+    // ── Plan 76.19-06 Task 2 (amended 2026-10-16 for Issue #70, Phase 70b-02): database refusal → 409
+    // The write path re-checks overlap in its own transaction under the Employee row lock, so a
+    // violation of the database guarantees can only reach the handler when a write slips past those
+    // checks. The test forces exactly that: the transaction handle is wrapped so that a conflicting
+    // row is written on the SAME transaction just before the route's own create — the route's create
+    // then meets the REAL guarantee of the migrated test database (exclusion constraint
+    // `TimeEntry_no_overlap_closed` / partial unique index `TimeEntry_employeeId_date_open_unique`)
+    // and the REAL driver error, not a hand-built one. Strictly stronger than the former spy on
+    // `timeEntry.create` (which only simulated a P2002 against a `db push` database and, once the
+    // create runs on a transaction handle, no longer intercepts anything). The handler must answer
+    // 409 (never 500) with the German text, and nothing of the request may be left behind.
+    async function withConflictBeforeCreate<T>(
+      conflict: Record<string, unknown>,
+      run: () => Promise<T>,
+    ): Promise<T> {
+      const original = app.prisma.$transaction.bind(app.prisma) as (
+        ...args: unknown[]
+      ) => Promise<unknown>;
+      let fired = false;
+      const bound = <V>(target: object, prop: string | symbol, value: V): V =>
+        typeof value === "function" ? (value.bind(target) as V) : value;
+      const spy = vi.spyOn(app.prisma, "$transaction").mockImplementation(((
+        callback: unknown,
+        ...rest: unknown[]
+      ) => {
+        if (typeof callback !== "function") return original(callback, ...rest);
+        return original(
+          async (tx: Record<string, unknown>) => {
+            const timeEntry = new Proxy(tx.timeEntry as Record<string, unknown>, {
+              get(target, prop) {
+                if (prop === "create") {
+                  return async (args: unknown) => {
+                    if (!fired) {
+                      fired = true;
+                      await (target.create as (a: unknown) => Promise<unknown>)({ data: conflict });
+                    }
+                    return (target.create as (a: unknown) => Promise<unknown>)(args);
+                  };
+                }
+                return bound(target, prop, Reflect.get(target, prop));
+              },
+            });
+            return (callback as (t: unknown) => Promise<unknown>)(
+              new Proxy(tx, {
+                get(target, prop) {
+                  if (prop === "timeEntry") return timeEntry;
+                  return bound(target, prop, Reflect.get(target, prop));
+                },
+              }),
+            );
           },
-        });
-
-        expect(createSpy).toHaveBeenCalledTimes(1);
-        expect(res.statusCode).toBe(409);
-        expect(JSON.parse(res.body).error).toBe("Es existiert bereits ein Eintrag für diesen Tag.");
+          ...rest,
+        );
+      }) as never);
+      try {
+        return await run();
       } finally {
-        createSpy.mockRestore();
+        spy.mockRestore();
       }
+    }
 
-      // No row leaked for that day (create was rejected).
+    it("DATA-V1814-04: an overlap the database refuses (exclusion constraint) → 409, not 500, nothing left behind", async () => {
+      const d = pastDateStr(40);
+      const res = await withConflictBeforeCreate(
+        {
+          employeeId: data.employee.id,
+          date: new Date(d),
+          startTime: new Date(`${d}T10:00:00.000Z`),
+          endTime: new Date(`${d}T12:00:00.000Z`),
+          source: "MANUAL",
+          salonId: data.salonId,
+        },
+        () =>
+          app.inject({
+            method: "POST",
+            url: "/api/v1/time-entries",
+            headers: { authorization: `Bearer ${data.adminToken}` },
+            payload: {
+              employeeId: data.employee.id,
+              date: d,
+              startTime: `${d}T08:00:00.000Z`,
+              endTime: `${d}T16:00:00.000Z`,
+              breakMinutes: 30,
+            },
+          }),
+      );
+
+      expect(res.statusCode, res.body).toBe(409);
+      expect(JSON.parse(res.body).error).toBe(
+        "Überschneidung mit einem bestehenden Eintrag dieses Tages.",
+      );
+      // The whole transaction rolled back: neither the injected conflict nor the request's row exists.
       const count = await app.prisma.timeEntry.count({
         where: { employeeId: data.employee.id, date: new Date(d), deletedAt: null },
+      });
+      expect(count).toBe(0);
+    });
+
+    it("DATA-V1814-04: a second open entry of the day the database refuses (partial unique index) → 409, not 500", async () => {
+      // The admin's own employee: an OPEN new entry conflicts with every closed entry that ends after
+      // its start (the pre-tx rule since v1.8.13), and `data.employee` carries entries of other
+      // cases of this file, so this case uses the person no other case writes for. Inside the retro
+      // window, because a self-write is not exempt from it.
+      const d = pastDateStr(2);
+      const res = await withConflictBeforeCreate(
+        {
+          employeeId: data.adminEmployee.id,
+          date: new Date(d),
+          startTime: new Date(`${d}T07:00:00.000Z`),
+          endTime: null,
+          source: "MANUAL",
+          salonId: data.salonId,
+        },
+        () =>
+          app.inject({
+            method: "POST",
+            url: "/api/v1/time-entries",
+            headers: { authorization: `Bearer ${data.adminToken}` },
+            payload: {
+              employeeId: data.adminEmployee.id,
+              date: d,
+              startTime: `${d}T08:00:00.000Z`,
+            },
+          }),
+      );
+
+      expect(res.statusCode, res.body).toBe(409);
+      expect(JSON.parse(res.body).error).toBe("Es läuft bereits ein Eintrag an diesem Tag.");
+      const count = await app.prisma.timeEntry.count({
+        where: { employeeId: data.adminEmployee.id, date: new Date(d), deletedAt: null },
       });
       expect(count).toBe(0);
     });
@@ -314,14 +406,19 @@ describe("Time Entries API", () => {
 
   describe("POST /api/v1/time-entries/clock-in + clock-out", () => {
     it("clock-in and clock-out flow works", async () => {
-      // Clean up any open entries from previous tests
+      // Clean up any open entries from previous tests.
+      // Amended 2026-10-16 for #70: the stale open entries of the earlier tests lie weeks in the past, and
+      // closing them at `now` made each one a months-long interval that overlaps every other closed entry
+      // of this employee — physically impossible data, which the no-overlap constraint now refuses. They
+      // are closed at their own start instant instead (a zero-length row never conflicts); no expected
+      // value of this test changes.
       const openEntries = await app.prisma.timeEntry.findMany({
         where: { employeeId: data.employee.id, endTime: null },
       });
       for (const e of openEntries) {
         await app.prisma.timeEntry.update({
           where: { id: e.id },
-          data: { endTime: new Date() },
+          data: { endTime: e.startTime },
         });
       }
 

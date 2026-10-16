@@ -1,11 +1,12 @@
 // Issue #80 (D-02, D-05, D-06, D-19, D-21) — POST / DELETE /api/v1/day-breaks.
 //
-// A multi-entry day cannot exist in the database while the partial unique index
-// `TimeEntry_employeeId_date_unique_not_deleted` holds, so the day lookup `findEntriesOfDay` is
+// Since #70 (Phase 70b) such days exist in the database; the mocks here stay pure-kernel
+// proofs. Real-database proofs of several entries per day: time-entry-multi-entry-70,
+// multi-entry-month-close-70, multi-entry-saldo-equality-70. The day lookup `findEntriesOfDay` is
 // mocked for the constructed days only and delegates to the real implementation for every other
 // date. Everything else is real: employees, salons, role assignments, the month lock, DayBreak
-// rows and the audit log. Against real data (one entry per day) every create is a 409 — that is the
-// production reality today and is asserted too.
+// rows and the audit log. Against a real day with a single entry every create is a 409 (no gap between
+// two entries) and is asserted too.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import bcrypt from "bcryptjs";
@@ -270,7 +271,12 @@ describe("Issue #80 — /api/v1/day-breaks", () => {
       expect(after.some((w) => w.code === "BREAK_TOO_SHORT")).toBe(false);
     });
 
-    it("production reality (P-8): against the real database one entry per day leaves no gap, so every request is 409", async () => {
+    // Amendment 2026-10-16 (Issue #70, Phase 70b-02): several entries per day are possible now, so the
+    // title no longer claims a rule about the database. The assertion is unchanged and still holds
+    // because REAL_DAY carries exactly one entry: a day with a single entry has no gap between two
+    // closed entries, so a day break on it is refused. (The two-entry reality is proven end to end
+    // in `time-entry-multi-entry-70.test.ts`.)
+    it("production reality (P-8): a real day with a single entry leaves no gap, so every request is 409", async () => {
       const res = await post(data.empToken, gapBreak(data.employee.id, REAL_DAY, "12:00", "12:30"));
       expect(res.statusCode).toBe(409);
       expect((JSON.parse(res.body) as { error: string }).error).toBe(

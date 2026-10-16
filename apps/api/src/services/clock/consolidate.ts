@@ -8,7 +8,7 @@
 import type { Prisma, TimeEntry } from "@clokr/db";
 import type { FastifyBaseLogger } from "fastify";
 import { MIN_MERGE_PREDECESSOR_DURATION_MS } from "./thresholds";
-import { findEntriesOfDay } from "../../contexts/time-tracking/day-entries"; // Phase 69b
+import { findEntriesOfDay, latestEndingClosed } from "../../contexts/time-tracking/day-entries"; // Phase 69b, Issue #70 (selector)
 import type { ActivityShareInput } from "../../contexts/time-tracking/activity-minutes"; // Issue #81
 import {
   materializeRemainder,
@@ -55,24 +55,75 @@ export async function consolidateSameDayEntries(
   //   corrupted one. `isInvalid` is deliberately NOT filtered here (consistent with D-01: an
   //   invalidated row is a real attendance row).
   // - The latest-ending candidate wins.
-  // MULTI-ENTRY: consolidation merges two same-day rows into one — its whole premise is one entry
-  // per day; #70 must decide whether it still merges, and with which predecessor. An entry that
-  // carries a recorded activity allocation is never merged away (Issue #81).
+  // - Issue #70 (D-03): with several entries per day the predecessor is the closed candidate with
+  //   the latest end (`latestEndingClosed`, the one place of that choice), and consolidation never
+  //   merges across salons — see the salon guard below — nor across a travel entry (Issue #92,
+  //   `travel_row` guard below). An entry that carries a recorded activity
+  //   allocation is never merged away (Issue #81).
   const dayEntries = await findEntriesOfDay(tx, {
     tenantId,
     employeeId: openEntry.employeeId,
     date: openEntry.date,
   });
-  let previousEntry: TimeEntry | null = null;
-  for (const e of dayEntries) {
-    if (e.id === openEntry.id || e.endTime === null || e.retroRequestId !== null) continue;
-    if (e.endTime > openEntry.startTime) continue;
-    if (previousEntry === null || e.endTime > previousEntry.endTime!) previousEntry = e;
-  }
+  const previousEntry = latestEndingClosed(
+    dayEntries.filter(
+      (e) =>
+        e.id !== openEntry.id &&
+        e.endTime !== null &&
+        e.retroRequestId === null &&
+        e.endTime <= openEntry.startTime,
+    ),
+  );
 
   if (!previousEntry || !previousEntry.endTime) {
     log.info(
       { employeeId: openEntry.employeeId, date: openEntry.date, reason: "no_predecessor" },
+      "merge_skipped",
+    );
+    return { merged: false };
+  }
+
+  // Issue #92 (D-06): never merge into or across a trip. The selector above skips TRAVEL rows, so
+  // when a trip lies between the chosen predecessor and the row just closed, extending the
+  // predecessor over the successor would cover the trip — the database refuses that overlap and the
+  // clock-out would fail. The rows stay as they are, the clock-out itself is kept. A trip is anchored
+  // between two salon rows of different salons, so the salon guard below would end an ordinary
+  // merge anyway; this guard is checked BEFORE it so the reason is the trip, and it still holds for
+  // data that bypassed `validateTravelEntry` (same salon on both sides of the trip).
+  const tripBetween = dayEntries.some(
+    (e) =>
+      e.activityKind === "TRAVEL" &&
+      e.endTime !== null &&
+      e.endTime > previousEntry.endTime! &&
+      e.endTime <= openEntry.startTime,
+  );
+  if (tripBetween) {
+    log.info(
+      {
+        employeeId: openEntry.employeeId,
+        date: openEntry.date,
+        previousEntryId: previousEntry.id,
+        openEntryId: openEntry.id,
+        reason: "travel_row",
+      },
+      "merge_skipped",
+    );
+    return { merged: false };
+  }
+
+  // Issue #70 (D-03): a merge extends the predecessor over the successor's time and soft-deletes the
+  // successor, so the merged time would be booked to the PREDECESSOR's salon. When the two rows
+  // belong to different salons that would book salon-B time to salon A (holiday basis § 2 EFZG,
+  // salon views, activity evaluation) — the rows stay as they are, the clock-out itself is kept.
+  if (previousEntry.salonId !== openEntry.salonId) {
+    log.info(
+      {
+        employeeId: openEntry.employeeId,
+        date: openEntry.date,
+        previousEntryId: previousEntry.id,
+        openEntryId: openEntry.id,
+        reason: "different_salon",
+      },
       "merge_skipped",
     );
     return { merged: false };
@@ -150,7 +201,19 @@ export async function consolidateSameDayEntries(
   });
 
   try {
-    // 1. Create Break row for the gap
+    // Issue #70: the database refuses an overlap of two non-deleted closed entries after EVERY
+    // statement (exclusion constraint `TimeEntry_no_overlap_closed`, not deferrable). Extending the
+    // predecessor over the successor's interval while the successor is still live would overlap it,
+    // so the successor is soft-deleted FIRST (CLAUDE.md audit-proof: NEVER hard-delete) and only
+    // then is the predecessor extended into the freed interval. The Break row of the gap lies
+    // inside the predecessor's extended range and never touches another entry.
+    // 1. Soft-delete the just-closed short entry
+    await tx.timeEntry.update({
+      where: { id: openEntry.id },
+      data: { deletedAt: new Date() },
+    });
+
+    // 2. Create Break row for the gap
     const breakRow = await tx.break.create({
       data: {
         timeEntryId: previousEntry.id,
@@ -159,13 +222,13 @@ export async function consolidateSameDayEntries(
       },
     });
 
-    // 2. Recompute total breakMinutes from Break rows (single source of truth)
+    // 3. Recompute total breakMinutes from Break rows (single source of truth)
     const allBreaks = await tx.break.findMany({
       where: { timeEntryId: previousEntry.id },
     });
     const totalBreakMins = Math.round(calcBreakMinutesLocal(allBreaks));
 
-    // 3. Extend previous entry's endTime to current entry's endTime
+    // 4. Extend previous entry's endTime to current entry's endTime
     const after = await tx.timeEntry.update({
       where: { id: previousEntry.id },
       data: {
@@ -179,12 +242,6 @@ export async function consolidateSameDayEntries(
       include: {
         activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
       },
-    });
-
-    // 4. Soft-delete the just-closed short entry (CLAUDE.md audit-proof: NEVER hard-delete)
-    await tx.timeEntry.update({
-      where: { id: openEntry.id },
-      data: { deletedAt: new Date() },
     });
 
     return {

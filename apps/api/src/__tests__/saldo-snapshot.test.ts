@@ -322,6 +322,9 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
     });
   });
 
+  // Amendment 2026-10-16 (Issue #70, Phase 70b-02, D-01): several entries per day are allowed, so
+  // the former "second entry for the same day is rejected" case now proves the replacement rule:
+  // a second entry that OVERLAPS the first is refused (409), a non-overlapping one is created.
   describe("One entry per day", () => {
     it("rejects creating a second entry for the same day", async () => {
       // First entry via API
@@ -339,8 +342,24 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
       });
       expect(res1.statusCode).toBe(201);
 
-      // Second entry for same day should be rejected
+      // A second entry that overlaps the first is rejected (Issue #70: overlap, not "one per day")
       const res2 = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: "2025-04-14",
+          startTime: new Date("2025-04-14T15:00:00Z").toISOString(),
+          endTime: new Date("2025-04-14T19:00:00Z").toISOString(),
+          breakMinutes: 0,
+        },
+      });
+      expect(res2.statusCode).toBe(409);
+      expect(JSON.parse(res2.body).error).toContain("Überschneidung mit bestehendem Eintrag");
+
+      // A second entry that does not overlap is created (several entries per day, Issue #70)
+      const res3 = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries",
         headers: { authorization: `Bearer ${data.adminToken}` },
@@ -352,8 +371,7 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
           breakMinutes: 0,
         },
       });
-      expect(res2.statusCode).toBe(409);
-      expect(JSON.parse(res2.body).error).toContain("bereits ein Eintrag");
+      expect(res3.statusCode, res3.body).toBe(201);
     });
   });
 

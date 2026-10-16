@@ -5,6 +5,11 @@ import {
   canReopenFinishedDay,
   reopenGapStartLabel,
   upsertDayEntry,
+  dayTotals,
+  entryCountLabel,
+  entryRangeLabel,
+  entryWorkedMinutes,
+  entriesInStartOrder,
   type ClockDayEntry,
 } from "../day-state";
 
@@ -121,10 +126,10 @@ describe("resolveDayState — selects the entry the server resolver would act on
   it("an isInvalid open entry is deliberately NOT filtered out", () => {
     // Since Phase 118 the resolver's READ lookup no longer filters isInvalid either, so this
     // module now mirrors it exactly. Filtering it here would resolve this day to "idle" →
-    // Einstempeln → START → timeEntry.create → the partial unique index
-    // TimeEntry_employeeId_date_unique_not_deleted rejects it (P2002, mapped to 409 since
-    // Phase 118) instead of the action the user needs. Not filtering means: "running" →
-    // Ausstempeln → the resolver closes the open entry.
+    // Einstempeln → START → the resolver refuses a second open entry of the day (the partial
+    // unique index TimeEntry_employeeId_date_open_unique, 409 — amended Issue #70: the former
+    // one-entry-per-day index is gone) instead of the action the user needs. Not filtering means:
+    // "running" → Ausstempeln → the resolver closes the open entry.
     expect(resolveDayState([{ ...RUNNING, isInvalid: true }]).kind).toBe("running");
   });
 });
@@ -187,5 +192,201 @@ describe("upsertDayEntry — the optimistic update must not drop rows", () => {
     upsertDayEntry(original, RUNNING);
     expect(original).toHaveLength(1);
     expect(original[0]).toBe(FINISHED);
+  });
+});
+
+// Issue #70 (Phase 70b-06, D-07): a day may hold several entries. The three-state answer mirrors the
+// server's selectors, and the day sums feed the "Heutiger Eintrag" card.
+const A_MORNING: ClockDayEntry = {
+  id: "e-a",
+  startTime: "2026-08-28T05:00:00.000Z",
+  endTime: "2026-08-28T09:00:00.000Z",
+  breakMinutes: 15,
+  workingMinutes: 225,
+  salonId: "salon-a",
+  salonName: "Salon A",
+};
+const B_AFTERNOON: ClockDayEntry = {
+  id: "e-b",
+  startTime: "2026-08-28T09:30:00.000Z",
+  endTime: "2026-08-28T13:00:00.000Z",
+  breakMinutes: 0,
+  workingMinutes: 210,
+  salonId: "salon-b",
+  salonName: "Salon B",
+};
+const B_RUNNING: ClockDayEntry = {
+  ...B_AFTERNOON,
+  id: "e-b-run",
+  endTime: null,
+  workingMinutes: null,
+};
+
+describe("resolveDayState — several entries a day (Issue #70)", () => {
+  it("two closed rows: the day is finished and names the row ending last, whatever the order", () => {
+    for (const rows of [
+      [A_MORNING, B_AFTERNOON],
+      [B_AFTERNOON, A_MORNING],
+    ]) {
+      const day = resolveDayState(rows);
+      expect(day.kind).toBe("finished");
+      expect(day.entry?.id).toBe("e-b");
+    }
+  });
+
+  it("an open row next to a closed one: the day is running and names the open row", () => {
+    const day = resolveDayState([A_MORNING, B_RUNNING]);
+    expect(day.kind).toBe("running");
+    expect(day.entry?.id).toBe("e-b-run");
+  });
+
+  it("a tie on the end instant goes to the later start, then to the larger id (the server's tie-break)", () => {
+    const end = "2026-08-28T13:00:00.000Z";
+    const early = { ...A_MORNING, id: "e-1", startTime: "2026-08-28T12:00:00.000Z", endTime: end };
+    const late = { ...A_MORNING, id: "e-2", startTime: "2026-08-28T12:30:00.000Z", endTime: end };
+    expect(resolveDayState([early, late]).entry?.id).toBe("e-2");
+    expect(resolveDayState([late, early]).entry?.id).toBe("e-2");
+    const sameStart = { ...late, id: "e-3" };
+    expect(resolveDayState([late, sameStart]).entry?.id).toBe("e-3");
+    expect(resolveDayState([sameStart, late]).entry?.id).toBe("e-3");
+  });
+});
+
+describe("dayTotals — the sums of today's entries (Issue #70, D-07)", () => {
+  const NOW = new Date("2026-08-28T14:00:00.000Z");
+
+  it("two closed rows: earliest start, latest end, Σ breaks, Σ server working minutes", () => {
+    expect(dayTotals([B_AFTERNOON, A_MORNING], NOW)).toEqual({
+      startTime: new Date(A_MORNING.startTime).toISOString(),
+      endTime: new Date(B_AFTERNOON.endTime!).toISOString(),
+      breakMinutes: 15,
+      workingMinutes: 435,
+      rowCount: 2,
+    });
+  });
+
+  it("a running row has no end yet and contributes its live minutes at `now`", () => {
+    // Running since 09:30 UTC, now 11:00 UTC → 90 min gross, no break → 90; plus the closed 225.
+    const running = { ...B_RUNNING, breakMinutes: 0 };
+    const totals = dayTotals([A_MORNING, running], new Date("2026-08-28T11:00:00.000Z"));
+    expect(totals.endTime).toBeNull();
+    expect(totals.workingMinutes).toBe(225 + 90);
+    expect(totals.startTime).toBe(new Date(A_MORNING.startTime).toISOString());
+    expect(totals.breakMinutes).toBe(15);
+  });
+
+  it("a closed row without a server value falls back to the display formula (end − start − break)", () => {
+    const optimistic = { ...A_MORNING, workingMinutes: undefined };
+    // 4 h presence − 15 min break.
+    expect(dayTotals([optimistic], NOW).workingMinutes).toBe(225);
+  });
+
+  it("the server's per-row value wins over the display formula for a closed row", () => {
+    const rounded = { ...A_MORNING, workingMinutes: 200 };
+    expect(dayTotals([rounded], NOW).workingMinutes).toBe(200);
+  });
+
+  it("no rows: nothing to sum", () => {
+    expect(dayTotals([], NOW)).toEqual({
+      startTime: null,
+      endTime: null,
+      breakMinutes: 0,
+      workingMinutes: 0,
+      rowCount: 0,
+    });
+  });
+
+  it("entryWorkedMinutes is the live display value: open row up to now, closed row to its end, minus breaks", () => {
+    expect(entryWorkedMinutes(A_MORNING, NOW)).toBe(225);
+    expect(
+      entryWorkedMinutes({ ...B_RUNNING, breakMinutes: 10 }, new Date("2026-08-28T10:30:00.000Z")),
+    ).toBe(50);
+    expect(
+      entryWorkedMinutes({ ...B_RUNNING, breakMinutes: 999 }, new Date("2026-08-28T10:30:00.000Z")),
+    ).toBe(0);
+  });
+});
+
+describe("the count label and the list lines (Issue #70, D-07)", () => {
+  it("entryCountLabel is „2 Einträge heute“ from two rows on and null below", () => {
+    expect(entryCountLabel(0)).toBeNull();
+    expect(entryCountLabel(1)).toBeNull();
+    expect(entryCountLabel(2)).toBe("2 Einträge heute");
+    expect(entryCountLabel(3)).toBe("3 Einträge heute");
+  });
+
+  it("entryRangeLabel: HH:MM–HH:MM for a closed row, „seit HH:MM“ for the running one (local time)", () => {
+    expect(entryRangeLabel(A_MORNING)).toBe(
+      `${localHhmm(A_MORNING.startTime)}–${localHhmm(A_MORNING.endTime!)}`,
+    );
+    expect(entryRangeLabel(B_RUNNING)).toBe(`seit ${localHhmm(B_RUNNING.startTime)}`);
+  });
+
+  it("entriesInStartOrder sorts by start, then id, without touching its input", () => {
+    const input = [B_AFTERNOON, A_MORNING];
+    expect(entriesInStartOrder(input).map((e) => e.id)).toEqual(["e-a", "e-b"]);
+    expect(input.map((e) => e.id)).toEqual(["e-b", "e-a"]);
+  });
+});
+
+// Issue #92 (Phase 92b-05, D-06) - deliberate amendment, dated 2026-10-16: a trip between two salons is
+// never the entry a clock event acts on. The server's `latestEndingClosed` skips rows of the kind
+// TRAVEL; this module mirrors the selector, so the entry it names stays the one a re-clock reopens.
+describe("resolveDayState - a travel entry is never the entry a clock event acts on (Issue #92, D-06)", () => {
+  const SALON_ROW_A: ClockDayEntry = {
+    id: "e-a",
+    startTime: "2026-08-28T06:00:00.000Z",
+    endTime: "2026-08-28T10:00:00.000Z",
+    activityKind: "UNSPECIFIED",
+  };
+  const TRIP: ClockDayEntry = {
+    id: "e-t",
+    startTime: "2026-08-28T10:00:00.000Z",
+    endTime: "2026-08-28T10:30:00.000Z",
+    activityKind: "TRAVEL",
+  };
+  const SALON_ROW_B_OPEN: ClockDayEntry = {
+    id: "e-b",
+    startTime: "2026-08-28T10:30:00.000Z",
+    endTime: null,
+    activityKind: "UNSPECIFIED",
+  };
+
+  it("[A closed, trip closed, B open] is running with entry B", () => {
+    const day = resolveDayState([SALON_ROW_A, TRIP, SALON_ROW_B_OPEN]);
+    expect(day.kind).toBe("running");
+    expect(day.entry?.id).toBe("e-b");
+  });
+
+  it("[A closed, trip closed] is finished with entry A - the trip ends later but is skipped", () => {
+    for (const order of [
+      [SALON_ROW_A, TRIP],
+      [TRIP, SALON_ROW_A],
+    ]) {
+      const day = resolveDayState(order);
+      expect(day.kind).toBe("finished");
+      expect(day.entry?.id).toBe("e-a");
+    }
+  });
+
+  it("the tie-break among salon rows is unchanged next to a trip (later start, then larger id)", () => {
+    const sameEndEarlierStart: ClockDayEntry = {
+      ...SALON_ROW_A,
+      id: "e-x",
+      startTime: "2026-08-28T05:00:00.000Z",
+    };
+    expect(resolveDayState([TRIP, sameEndEarlierStart, SALON_ROW_A]).entry?.id).toBe("e-a");
+  });
+
+  it("a day of one trip alone is not finished (the server never meets this shape)", () => {
+    expect(resolveDayState([TRIP]).kind).toBe("idle");
+  });
+
+  it("a trip's working minutes still count in the day sum (a trip is working time)", () => {
+    const rows = [
+      { ...SALON_ROW_A, workingMinutes: 240 },
+      { ...TRIP, workingMinutes: 30 },
+    ];
+    expect(dayTotals(rows, new Date("2026-08-28T18:00:00.000Z")).workingMinutes).toBe(270);
   });
 });

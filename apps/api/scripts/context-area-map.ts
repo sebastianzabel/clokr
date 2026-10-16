@@ -85,6 +85,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
+  "src/__tests__/entry-lock-race-helpers.ts": "rahmen", // Issue #70 (Phase 70b-04) — test infra: holds the Employee writer lock while a request under test queues on it; no model of its own
   "src/__tests__/bulk-apply-helpers.ts": "rahmen", // Issue #568 — shared two-step bulk-apply test helper, no model
   "src/__tests__/legacy-role-migration-sql.ts": "rahmen", // Phase 75b (Issue #75) — test infra that runs the checked-in legacy-role data migration verbatim; no model of its own
   "src/__tests__/tenant-packages-migration-566-fixtures.ts": "rahmen", // Phase 566 (Issue #566) — test infra: fixture catalogue and verbatim reader of the checked-in packages backfill SQL, shared by the migration test and the dry-run parity test; no model of its own
@@ -228,8 +229,11 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/activity-shares.ts": "zeiterfassung", // Issue #81 (D-05) — the one share validator and nested-write builders; pure, no model access
   "src/contexts/time-tracking/activity-store.ts": "zeiterfassung", // Issue #81 (D-09) — reads TimeEntry activity fields and TimeEntryActivityShare, tenant-bound, for the evaluation
   "src/contexts/time-tracking/entry-durations.ts": "zeiterfassung", // Phase 79 (Issue #79), D-03 — pure presence/working-time kernel, no model access; TimeEntry vocabulary
-  "src/contexts/time-tracking/entry-invariants.ts": "zeiterfassung", // Phase 101B (Issue #101) — lifted out of api/time-entries.ts; one-per-day/overlap/month-lock/retro-window invariants + effective-schedule resolution over TimeEntry
+  "src/contexts/time-tracking/entry-invariants.ts": "zeiterfassung", // Phase 101B (Issue #101) — lifted out of api/time-entries.ts; overlap/month-lock/retro-window invariants + effective-schedule resolution over TimeEntry (one-per-day rule removed by Issue #70)
+  "src/contexts/time-tracking/entry-write-lock.ts": "zeiterfassung", // Issue #70 (Phase 70b-02), D-10 — the one Employee row lock of every writer that creates or moves a TimeEntry interval
+  "src/contexts/time-tracking/entry-overlap-error.ts": "zeiterfassung", // Issue #70 (Phase 70b-02), D-10/D-13 — recognises the database overlap/open-per-day refusals and words the overlap 409
   "src/contexts/time-tracking/entry-salon.ts": "zeiterfassung", // Phase 68b (issue #68) — resolveEntrySalon, the entry-salon rule; reads the Unterbau only through the platform index
+  "src/contexts/time-tracking/travel-entry.ts": "zeiterfassung", // Issue #92 (Phase 92b-01), D-05/D-06 — the one travel-entry write rule (classify, neighbour anchors, arrival salon through resolveEntrySalon); reads only findEntriesOfDay and the entry-salon rule
   "src/contexts/time-tracking/clock-salon-choice.ts": "zeiterfassung", // Issue #87 (Phase 87b) — clockSalonChoice, the one clock-salon decision; reads the Unterbau only through the platform index
   "src/contexts/time-tracking/break-finding-days.ts": "zeiterfassung", // Issue #511 (D-12) — month-close / cron / dry-run detector over TimeEntry, Break, DayBreak and DayBreakAck
   "src/contexts/time-tracking/break-finding-notice.ts": "zeiterfassung", // Issue #80 (D-11) / #511 (D-13) — pure notification texts for break findings

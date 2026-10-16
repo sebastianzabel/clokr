@@ -1,4 +1,4 @@
-// Time-entry invariant checks (one-per-day, overlap, month-lock, retro-window) and effective
+// Time-entry invariant checks (overlap, month-lock, retro-window) and effective
 // schedule resolution — lifted out of ./api/time-entries.ts in Phase 101B (Issue #101). Consumed
 // across contexts (working-time-account, platform, scheduling); under ADR 0001 they must reach
 // those consumers through time-tracking/index.ts, and an index.ts that re-exports a ROUTE module
@@ -17,104 +17,63 @@ import {
   computeRetroLimitStr,
   computeEntryAgeInDays,
 } from "./retro-config"; // Phase 76.29 — RETRO-01 window guard
-import { findEntriesOfDay } from "./day-entries"; // Phase 69b — the single day lookup
+import {
+  checkOverlap,
+  EntryConflictError,
+  overlapMessageForCaller,
+  type OverlapConflict,
+} from "./entry-overlap-error"; // Issue #70, D-13
+import type { AccessContext } from "../platform"; // Issue #70, D-13 — the caller of the write
 
-// ── Überlappungsprüfung ────────────────────────────────────────────────────────
-// entryDate (optional): the calendar date of the entry being created/updated.
-// An open entry (endTime = null) has no natural upper bound, so it must only be
-// treated as "still running" for conflict purposes ON ITS OWN DAY. Without this
-// scoping a single stale open entry (e.g. a forgotten clock-out) would be treated
-// as running until year 9999 and would block creating OR editing entries on any
-// later day — even in a following month (v1.8.13 cross-day/cross-month fix).
-// Closed entries that legitimately span midnight are still caught by the
-// { endTime: { gt: startTime } } branch, which is not date-scoped.
-//
-// tz (optional): tenant timezone used to format the conflict message. The server
-// container runs in UTC, so without it the message printed times in UTC with no
-// date — making a cross-month conflict impossible for the user to identify.
-// Prisma client shape shared by `app.prisma` (top-level) and the `tx` handle inside
-// `$transaction(async (tx) => ...)` — lets checkOverlap / checkEntryConflicts run
-// against either, which the grant-consumption race fix (retro-grant-race-403-vs-409)
-// relies on to re-run conflict checks INSIDE the tx after the single-use grant flip.
-type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
+// `checkOverlap` lives in ./entry-overlap-error.ts (a leaf): the facade needs it too, and importing it
+// from here would route the facade through working-time-account and back (import cycle, Issue #92).
+export { checkOverlap };
 
-export async function checkOverlap(
-  db: DbClient,
-  employeeId: string,
-  startTime: Date,
-  endTime: Date | null,
-  excludeId?: string,
-  entryDate?: Date,
-  tz?: string,
-): Promise<string | null> {
-  // Kein endTime = offener Eintrag → als "läuft noch" behandeln
-  const effectiveEnd = endTime ?? new Date("9999-12-31");
-
-  // When the entry date is known, only open entries on the SAME calendar date
-  // count as an active conflict. Fall back to the original broad match otherwise.
-  const openEntryCondition: Prisma.TimeEntryWhereInput = entryDate
-    ? { endTime: null, date: entryDate }
-    : { endTime: null };
-
-  const overlapping = await db.timeEntry.findFirst({
-    where: {
-      employeeId,
-      deletedAt: null,
-      id: excludeId ? { not: excludeId } : undefined,
-      startTime: { lt: effectiveEnd },
-      OR: [
-        openEntryCondition, // offener Eintrag am selben Tag läuft noch
-        { endTime: { gt: startTime } }, // abgeschlossener Eintrag endet nach neuem Start
-      ],
-    },
-  });
-
-  if (!overlapping) return null;
-
-  // Include the date (and format in the tenant tz) so the user can identify the
-  // conflicting entry — critical when it is a stale open entry from another day.
-  const dateOpts: Intl.DateTimeFormatOptions = {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    ...(tz ? { timeZone: tz } : {}),
-  };
-  const timeOpts: Intl.DateTimeFormatOptions = {
-    hour: "2-digit",
-    minute: "2-digit",
-    ...(tz ? { timeZone: tz } : {}),
-  };
-  const dateLabel = overlapping.startTime.toLocaleDateString("de-DE", dateOpts);
-  const fmt = (d: Date | null) => (d ? d.toLocaleTimeString("de-DE", timeOpts) : "läuft");
-  return `Überschneidung mit bestehendem Eintrag vom ${dateLabel} (${fmt(overlapping.startTime)} – ${fmt(overlapping.endTime)})`;
-}
-
-// One-per-day existence check (step 1 of validateTimeEntryInvariants), extracted so it
-// can be re-run against a `tx` handle from inside the grant-consumption $transaction
-// (retro-grant-race-403-vs-409 fix) — see param doc on deferConflictChecksToTx below.
-// Phase 69b (Issue #69): the only place that ENFORCES "at most one entry per day" in code (the
-// partial unique index is the database backstop); it reads the day through findEntriesOfDay.
-export async function checkOneEntryPerDay(
-  db: DbClient,
-  tenantId: string,
-  employeeId: string,
-  date: Date,
-  excludeEntryId?: string,
-): Promise<string | null> {
-  // MULTI-ENTRY: this is the rule itself — allowing several entries per day (#70) means relaxing
-  // or removing this check together with the unique index.
-  const dayEntries = await findEntriesOfDay(db, { tenantId, employeeId, date });
-  const existingEntry = dayEntries.find((e) => e.id !== excludeEntryId);
-  if (existingEntry) {
-    return "Es existiert bereits ein Eintrag für diesen Tag. Bitte den bestehenden Eintrag bearbeiten.";
-  }
-  return null;
+// The in-transaction overlap re-check of every manual writer (Issue #70, D-10). Runs AFTER
+// `lockEmployeeForEntryWrite(tx, …)`, so it sees every committed row of a racing writer of the
+// same employee; throws `EntryConflictError` (the route answers 409) carrying the text worded by
+// the caller's reach (D-13). The date scoping of open entries is `checkOverlap`'s own.
+export async function recheckOverlapInTx(
+  tx: Prisma.TransactionClient,
+  params: {
+    tenantId: string;
+    employeeId: string;
+    newStart: Date;
+    newEnd: Date | null;
+    date: Date;
+    tz: string;
+    excludeEntryId?: string;
+    callerEmployeeId: string | null;
+    access: AccessContext;
+  },
+): Promise<void> {
+  const conflict = await checkOverlap(
+    tx,
+    params.employeeId,
+    params.newStart,
+    params.newEnd,
+    params.excludeEntryId,
+    params.date,
+  );
+  if (!conflict) return;
+  throw new EntryConflictError(
+    await overlapMessageForCaller(tx, {
+      conflict,
+      tz: params.tz,
+      tenantId: params.tenantId,
+      employeeId: params.employeeId,
+      callerEmployeeId: params.callerEmployeeId,
+      access: params.access,
+    }),
+  );
 }
 
 // Shared time-entry invariants enforced by POST /time-entries, PUT /time-entries/:id
 // and the CSV import (POST /imports/time-entries). Extracting them here (D-01/D-03)
-// guarantees the three write paths cannot drift: one-entry-per-day, month-lock via
-// SaldoSnapshot, retro-window guard (RETRO-01), and overlap — all with self-exclusion for edits.
+// guarantees the three write paths cannot drift: month-lock via SaldoSnapshot, retro-window
+// guard (RETRO-01), and overlap — all with self-exclusion for edits. Since Issue #70 an employee
+// may hold several entries per day, so there is no one-per-day step any more: the interval
+// overlap (and, in the database, the exclusion constraint) is the only day-level rule.
 // Returns { error, windowDays?, entryAgeInDays? } or null.
 // Callers map "abgeschlossen" (month-lock) and "RETRO_WINDOW_EXCEEDED" errors to HTTP 403
 // and everything else to 409.
@@ -128,12 +87,17 @@ export async function validateTimeEntryInvariants(
   app: FastifyInstance,
   params: {
     employeeId: string;
-    date: Date; // calendar date (midnight) used for one-per-day + month key
+    date: Date; // calendar date (midnight) used for the month key and open-entry scoping
     dateStr: string; // YYYY-MM-DD in tenant TZ, used for logging/consistency
     newStart: Date;
     newEnd: Date | null;
     tz: string;
     tenantId: string;
+    // Issue #70, D-13: who is writing — the overlap text is worded by the caller's reach
+    // (`overlapMessageForCaller`). Required so no caller can forget it.
+    access: AccessContext;
+    /** The caller's own employee id; `null` for an actor without one (API key). */
+    callerEmployeeId: string | null;
     excludeEntryId?: string;
     isCorrectionByManager?: boolean; // skip retro-window guard for manager-on-behalf edits
     grantId?: string; // approved RetroEntryRequest id — Plan 03 wires consumption
@@ -143,21 +107,24 @@ export async function validateTimeEntryInvariants(
     // PUT-only; POST never has an `existing` row to compute this from.
     isOwnPendingEdit?: boolean;
     // Race fix (retro-grant-race-403-vs-409, 2026-07): the POST grant-consumption path
-    // passes true here. Both the one-per-day check (step 1) AND the overlap check
-    // (step 3) below are advisory pre-tx queries against the TimeEntry table — under
-    // concurrent same-grant writes, the loser can observe the winner's already-committed
-    // entry in EITHER check and get a generic 409 ("day already taken" / "overlaps with
-    // existing entry") instead of the single-use grant being the authoritative
-    // discriminator (403, "Antrag bereits verwendet"). When true, both checks are
-    // skipped here; the caller's own $transaction re-runs them (via checkOneEntryPerDay
-    // / checkOverlap against `tx`) AFTER the grant-flip succeeds, so only the winner
-    // ever reaches them, and the loser is rejected by the grant-flip itself before any
-    // conflict check runs. Never set for PUT: PUT updates an existing row by id
-    // (excludeEntryId), which does not race the same way and whose catch block does
-    // not re-run these checks.
+    // passes true here. The overlap check (step 2 below) is an advisory pre-tx query against
+    // the TimeEntry table — under concurrent same-grant writes, the loser can observe the
+    // winner's already-committed entry and get a generic 409 ("overlaps with existing entry")
+    // instead of the single-use grant being the authoritative discriminator (403, "Antrag
+    // bereits verwendet"). When true, the check is skipped here; the caller's own $transaction
+    // re-runs it (via checkOverlap against `tx`, under the Employee row lock of Issue #70) AFTER
+    // the grant-flip succeeds, so only the winner ever reaches it, and the loser is rejected by
+    // the grant-flip itself before any conflict check runs. Never set for PUT: PUT updates an
+    // existing row by id (excludeEntryId) and re-checks overlap inside its own transaction.
     deferConflictChecksToTx?: boolean;
   },
-): Promise<{ error: string; windowDays?: number; entryAgeInDays?: number } | null> {
+): Promise<{
+  error: string;
+  windowDays?: number;
+  entryAgeInDays?: number;
+  /** Set when `error` is an overlap: the conflicting entry (the text is already worded by reach). */
+  overlap?: OverlapConflict;
+} | null> {
   const {
     employeeId,
     date,
@@ -170,25 +137,11 @@ export async function validateTimeEntryInvariants(
     grantId,
     isOwnPendingEdit,
     deferConflictChecksToTx,
+    access,
+    callerEmployeeId,
   } = params;
 
-  // 1. one-per-day (mirror POST) — exclude self when editing.
-  // Skipped when deferConflictChecksToTx is set (see param doc above) — the caller's own
-  // $transaction is the authoritative source of truth in that case.
-  if (!deferConflictChecksToTx) {
-    const oneDayError = await checkOneEntryPerDay(
-      app.prisma,
-      tenantId,
-      employeeId,
-      date,
-      excludeEntryId,
-    );
-    if (oneDayError) {
-      return { error: oneDayError };
-    }
-  }
-
-  // 2. month-lock via SaldoSnapshot (mirror POST) — authoritative even with no entries.
+  // 1. month-lock via SaldoSnapshot (mirror POST) — authoritative even with no entries.
   // Phase 100B Plan 07 (W1, isMonthClosed) — THE canonical Monatsabschluss signal.
   // RETRO-01 C2: lock-check runs FIRST — a locked month returns the lock message, never RETRO_WINDOW_EXCEEDED.
   const { start: lockedMonthStart } = monthRangeUtc(date.getFullYear(), date.getMonth() + 1, tz);
@@ -197,7 +150,7 @@ export async function validateTimeEntryInvariants(
     return { error: "Monat ist abgeschlossen und kann nicht bearbeitet werden" };
   }
 
-  // 2.5. Retro-window guard (RETRO-01) — AFTER month-lock (C2), BEFORE overlap.
+  // 1.5. Retro-window guard (RETRO-01) — AFTER month-lock (C2), BEFORE overlap.
   // Fires when the entry date is older than the tenant's configured window AND neither
   // an approved manager correction nor a pre-validated retro grant is present.
   // Uses tenant-TZ date strings — never raw UTC arithmetic (C1 / DST-safety).
@@ -211,7 +164,7 @@ export async function validateTimeEntryInvariants(
     }
   }
 
-  // 3. overlap (mirror POST) — preserve v1.8.13 same-day open-entry scoping + tz message.
+  // 2. overlap (mirror POST) — preserve v1.8.13 same-day open-entry scoping + tz message.
   // Skipped when deferConflictChecksToTx is set — see param doc above.
   if (!deferConflictChecksToTx) {
     const overlap = await checkOverlap(
@@ -221,10 +174,19 @@ export async function validateTimeEntryInvariants(
       newEnd,
       excludeEntryId,
       date,
-      tz,
     );
     if (overlap) {
-      return { error: overlap };
+      return {
+        error: await overlapMessageForCaller(app.prisma, {
+          conflict: overlap,
+          tz,
+          tenantId,
+          employeeId,
+          callerEmployeeId,
+          access,
+        }),
+        overlap,
+      };
     }
   }
 

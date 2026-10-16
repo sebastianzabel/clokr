@@ -537,6 +537,8 @@ describe("Phase 68b — consolidation never changes an existing entry's salon (D
   let salonB: { id: string };
   const day = addDaysStr(mondayOfWeekStr(), -56);
   const otherDay = addDaysStr(day, 1);
+  const sameDay = addDaysStr(day, 3);
+  const sameOtherDay = addDaysStr(day, 4);
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -553,7 +555,12 @@ describe("Phase 68b — consolidation never changes an existing entry's salon (D
     }
   });
 
-  it("merging a real predecessor (A) with a real second row (B) leaves both rows on their original salon", async () => {
+  // Amendment 2026-10-16 (Issue #70, Phase 70b-03, D-03): consolidation never merges rows of
+  // different salons. This case used to MERGE predecessor A with second row B and assert that both
+  // kept their salon; the merge now does not happen at all (the salon guard), which keeps the D-09
+  // promise in a stronger form — no row is re-homed and no time is booked to another salon. The
+  // same-salon merge keeps its own case right below (salon of the target unchanged).
+  it("a real predecessor (A) and a real second row (B) of another salon are NOT merged: both rows stay live on their original salon", async () => {
     const predecessor = await app.prisma.timeEntry.create({
       data: {
         employeeId: seed.employee.id,
@@ -591,18 +598,72 @@ describe("Phase 68b — consolidation never changes an existing entry's salon (D
       ),
     );
 
+    expect(result.merged).toBe(false);
+
+    const predecessorAfter = await app.prisma.timeEntry.findUniqueOrThrow({
+      where: { id: predecessor.id },
+    });
+    expect(predecessorAfter.salonId).toBe(salonA.id);
+    expect(predecessorAfter.endTime?.getTime()).toBe(instant(day, "12:00").getTime());
+
+    const secondRowAfter = await app.prisma.timeEntry.findUniqueOrThrow({
+      where: { id: secondRow.id },
+    });
+    expect(secondRowAfter.salonId).toBe(salonB.id);
+    expect(secondRowAfter.deletedAt).toBeNull();
+    expect(await app.prisma.break.count({ where: { timeEntryId: predecessor.id } })).toBe(0);
+  });
+
+  it("merging a real predecessor (A) with a real second row (also A) keeps salon A on the merged entry (Issue #70)", async () => {
+    const predecessor = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: seed.employee.id,
+        salonId: salonA.id,
+        date: new Date(`${sameDay}T00:00:00Z`),
+        startTime: instant(sameDay, "08:00"),
+        endTime: instant(sameDay, "12:00"),
+      },
+    });
+    // A REAL second row, but on ANOTHER date (the partial unique index forbids two live rows on
+    // one day) — passed to consolidateSameDayEntries with an overridden date/startTime/endTime so
+    // the soft-delete `update` inside it finds a real id (68b-03-PLAN.md context technique).
+    const secondRow = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: seed.employee.id,
+        salonId: salonA.id,
+        date: new Date(`${sameOtherDay}T00:00:00Z`),
+        startTime: instant(sameOtherDay, "08:00"),
+        endTime: instant(sameOtherDay, "17:00"),
+      },
+    });
+
+    const result = await app.prisma.$transaction((tx) =>
+      consolidateSameDayEntries(
+        tx,
+        seed.tenant.id,
+        {
+          ...secondRow,
+          date: new Date(`${sameDay}T00:00:00Z`),
+          startTime: instant(sameDay, "13:00"),
+          endTime: instant(sameDay, "17:00"),
+        } as never,
+        4,
+        app.log,
+      ),
+    );
+
     expect(result.merged).toBe(true);
 
     const predecessorAfter = await app.prisma.timeEntry.findUniqueOrThrow({
       where: { id: predecessor.id },
     });
     expect(predecessorAfter.salonId).toBe(salonA.id);
-    expect(predecessorAfter.endTime?.getTime()).toBe(instant(day, "17:00").getTime());
+    expect(predecessorAfter.endTime?.getTime()).toBe(instant(sameDay, "17:00").getTime());
 
     const secondRowAfter = await app.prisma.timeEntry.findUniqueOrThrow({
       where: { id: secondRow.id },
     });
-    expect(secondRowAfter.salonId).toBe(salonB.id);
+    expect(secondRowAfter.salonId).toBe(salonA.id);
     expect(secondRowAfter.deletedAt).not.toBeNull();
   });
 });

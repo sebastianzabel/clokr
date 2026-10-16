@@ -1,6 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  auditRowsFor,
+} from "../../../__tests__/setup";
 import { resolveClockEvent } from "../resolver";
 import type { ClockEvent, ClockIntent } from "../types";
 
@@ -12,6 +19,11 @@ import type { ClockEvent, ClockIntent } from "../types";
 // Block B: D-01 REOPEN with large gap (>consolidationGapHours) → still exactly 1 entry + gap Break.
 // Block C: 2026-06-04 prod incident regression — NFC×3 + MOBILE×1 → exactly 1 active TimeEntry
 //          (D-01: every subsequent IN REOPENs the same entry; pre-resolver left 3+ rows).
+//
+// Amendment 2026-10-16 (Issue #70, Phase 70b-03, D-03): Block D is NEW — consolidation never merges
+// across salons, and a merge inside one salon soft-deletes the successor BEFORE it extends the
+// predecessor (the database overlap rule is checked after every statement). Blocks A-C are
+// untouched: since D-01 their sequences never reach a merge.
 
 describe("services/clock/consolidate — cross-source same-day consolidation", () => {
   let app: FastifyInstance;
@@ -171,5 +183,100 @@ describe("services/clock/consolidate — cross-source same-day consolidation", (
       where: { timeEntryId: { in: active.map((e) => e.id) } },
     });
     expect(breaks.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Block D — Issue #70 (D-03): consolidation across and within salons ────────────────────────
+  // Fixture rows (consolidation is reachable through the resolver only when a START is followed by
+  // a closed predecessor, which a same-salon IN no longer produces — it re-opens): a closed
+  // predecessor 08:00-09:00Z and an OPEN entry from 09:30Z; the OUT at 10:30Z closes the open
+  // entry and consolidation looks for a predecessor within the gap window (30 min < 4 h).
+  describe("Block D — salons (Issue #70, D-03)", () => {
+    let salonA: { id: string };
+    let salonB: { id: string };
+
+    beforeAll(async () => {
+      salonA = await createTestSalon(app.prisma, data.tenant.id, { name: "Salon A (D)" });
+      salonB = await createTestSalon(app.prisma, data.tenant.id, { name: "Salon B (D)" });
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: data.tenant.id },
+        data: { consolidationGapHours: 4 },
+      });
+    });
+
+    async function seedPair(openSalonId: string) {
+      const ev = (hoursAgo: number) => buildEvent({ source: "MOBILE", intent: "OUT", hoursAgo });
+      const predecessor = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: ev(4).date,
+          startTime: ev(4).timestamp,
+          endTime: ev(3).timestamp,
+          source: "MOBILE",
+          salonId: salonA.id,
+          breakMinutes: 0,
+        },
+      });
+      const open = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: ev(2.5).date,
+          startTime: ev(2.5).timestamp,
+          endTime: null,
+          source: "MOBILE",
+          salonId: openSalonId,
+          breakMinutes: 0,
+        },
+      });
+      return { predecessor, open, out: ev(1.5) };
+    }
+
+    it("a predecessor of ANOTHER salon is never merged: both rows stay live, salons intact, reason different_salon", async () => {
+      const { predecessor, open, out } = await seedPair(salonB.id);
+      const infoSpy = vi.spyOn(app.log, "info");
+      let result;
+      try {
+        result = await resolveClockEvent(app, out);
+        const skipped = infoSpy.mock.calls.filter(
+          (c) =>
+            (c[1] as unknown) === "merge_skipped" &&
+            (c[0] as { reason?: string }).reason === "different_salon",
+        );
+        expect(skipped).toHaveLength(1);
+      } finally {
+        infoSpy.mockRestore();
+      }
+      expect(result.kind).toBe("CLOCKED_OUT");
+      const rows = await app.prisma.timeEntry.findMany({
+        where: { employeeId: data.employee.id, deletedAt: null },
+        orderBy: [{ startTime: "asc" }, { id: "asc" }],
+      });
+      expect(rows.map((r) => r.id)).toEqual([predecessor.id, open.id]);
+      expect(rows[0].salonId).toBe(salonA.id);
+      expect(rows[0].endTime?.toISOString()).toBe(predecessor.endTime?.toISOString());
+      expect(rows[1].salonId).toBe(salonB.id);
+      expect(rows[1].endTime?.toISOString()).toBe(out.timestamp.toISOString());
+      expect(await app.prisma.break.count({ where: { timeEntryId: predecessor.id } })).toBe(0);
+    });
+
+    it("a predecessor of the SAME salon is merged: successor soft-deleted first, predecessor extended with a gap Break", async () => {
+      const { predecessor, open, out } = await seedPair(salonA.id);
+      const result = await resolveClockEvent(app, out);
+      expect(result.kind).toBe("CONSOLIDATED");
+      const live = await app.prisma.timeEntry.findMany({
+        where: { employeeId: data.employee.id, deletedAt: null },
+      });
+      expect(live.map((r) => r.id)).toEqual([predecessor.id]);
+      expect(live[0].salonId).toBe(salonA.id);
+      expect(live[0].endTime?.toISOString()).toBe(out.timestamp.toISOString());
+      expect(live[0].breakMinutes).toBe(30);
+      const breaks = await app.prisma.break.findMany({ where: { timeEntryId: predecessor.id } });
+      expect(breaks).toHaveLength(1);
+      expect(breaks[0].startTime.toISOString()).toBe(predecessor.endTime?.toISOString());
+      expect(breaks[0].endTime?.toISOString()).toBe(open.startTime.toISOString());
+      const successor = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: open.id } });
+      expect(successor.deletedAt).not.toBeNull();
+      expect(await auditRowsFor(app, "TimeEntry", predecessor.id, "CLOCK_OUT")).toHaveLength(1);
+      expect(await auditRowsFor(app, "TimeEntry", open.id, "DELETE")).toHaveLength(1);
+    });
   });
 });

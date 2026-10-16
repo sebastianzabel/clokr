@@ -1,5 +1,6 @@
 // Phase 76.2 (ARCH-V19-01) — Source-agnostic clock-event resolver.
-// Single $transaction boundary. First statement: FOR UPDATE row lock on Employee.
+// Single $transaction boundary. First statement: FOR UPDATE row lock on Employee
+// (`lockEmployeeForEntryWrite`, the lock every writer of a TimeEntry interval shares — Issue #70).
 // Generalizes 76.1's NFC-only lock to all sources (sub-requirement C).
 // Calls state-machine to decide, audit-actor to emit AuditLog (closes #215 / sub-req A),
 // consolidate to merge cross-source same-day entries (sub-req B / TIME-V19-04).
@@ -14,7 +15,22 @@ import {
   invalidReasonFields,
   CLEARED_INVALID_REASON,
 } from "../../contexts/time-tracking/invalid-reason";
-import { findEntriesOfDay } from "../../contexts/time-tracking/day-entries"; // Phase 69b
+import {
+  findEntriesOfDay,
+  openEntryOf,
+  latestEndingClosed,
+} from "../../contexts/time-tracking/day-entries"; // Phase 69b, Issue #70 (selectors)
+import { lockEmployeeForEntryWrite } from "../../contexts/time-tracking/entry-write-lock"; // Issue #70
+import { checkOverlap } from "../../contexts/time-tracking/entry-invariants"; // Issue #70
+import {
+  isEntryOverlapViolation,
+  isOpenEntryPerDayViolation,
+} from "../../contexts/time-tracking/entry-overlap-error"; // Issue #70
+import {
+  getTenantTimezone,
+  isMonthClosed,
+  monthRangeUtc,
+} from "../../contexts/working-time-account"; // Issue #70 (W8) — public surface only
 import { resolveEntrySalon } from "../../contexts/time-tracking/entry-salon"; // Phase 68b
 import {
   materializeRemainder,
@@ -47,8 +63,10 @@ export async function resolveClockEvent(
   try {
     return await app.prisma.$transaction(async (tx) => {
       // FIRST statement: pessimistic per-employee row lock (sub-req C — generalizes 76.1's
-      // pattern to all 4 routes). Lock released at commit/rollback.
-      await tx.$queryRaw`SELECT id FROM "Employee" WHERE id = ${event.employeeId} FOR UPDATE`;
+      // pattern to all 4 routes). Lock released at commit/rollback. Since Issue #70 it is the lock
+      // shared with every manual writer (tenant clause included), so a clock event and a manual
+      // write of the same employee queue on one row.
+      await lockEmployeeForEntryWrite(tx, event.tenantId, event.employeeId);
 
       // § 8 BUrlG leave check (single call site replacing 2 per-route copies)
       const leaveCheck = await hasApprovedLeaveOnDate(tx, event.employeeId, event.dateStr);
@@ -64,15 +82,14 @@ export async function resolveClockEvent(
       // soft-delete-capable models) and `endTime` — deliberately NOT `isInvalid`.
       //
       // Phase 118 (D-01): `isInvalid` is a business-domain flag on the row, not a
-      // clock state. The write path creates `isInvalid` rows itself (:82-91 for
-      // CANCELLATION_REQUESTED, § 8 BUrlG; `attendance-checker.ts:296-303` after
-      // `autoDeleteOpenHours`). The day-uniqueness index
-      // `TimeEntry_employeeId_date_unique_not_deleted` is partial on `deletedAt IS NULL`
-      // and does NOT know about `isInvalid` — there can be at most ONE non-deleted row
-      // per employee per day. Hiding that row from the resolver produced both halves
-      // of issue #124 at once: the permanently open entry (OUT → NOT_CLOCKED_IN →
-      // 409 "already clocked out") and the P2002 on the next IN (→ 500).
-      // Do not reintroduce this filter.
+      // clock state. The write path creates `isInvalid` rows itself (the START branch below for
+      // CANCELLATION_REQUESTED, § 8 BUrlG; `attendance-checker.ts` after `autoDeleteOpenHours`).
+      // The open-per-day index `TimeEntry_employeeId_date_open_unique` (Issue #70; it replaced the
+      // one-row-per-day index of Phase 118) is partial on `deletedAt IS NULL` and does NOT know
+      // about `isInvalid` — an invalid open row still occupies the day's single open slot.
+      // Hiding that row from the resolver produced both halves of issue #124 at once: the
+      // permanently open entry (OUT → NOT_CLOCKED_IN → 409 "already clocked out") and the P2002 on
+      // the next IN (→ 500). Do not reintroduce this filter.
       // Phase 69b (Issue #69): the day is read once through findEntriesOfDay; open/closed are
       // picked from that list with the same rules the two former queries used.
       const dayEntries = await findEntriesOfDay(tx, {
@@ -80,18 +97,18 @@ export async function resolveClockEvent(
         employeeId: event.employeeId,
         date: event.date,
       });
-      // MULTI-ENTRY: the clock state is "the open row of the day" — with several entries there can
-      // be several open rows, and STOP must know which one it closes.
-      const sameDayOpenEntry = dayEntries.find((e) => e.endTime === null) ?? null;
+      // Issue #70 (D-11): the clock state is "the open row of the day" — the open-per-day index
+      // guarantees there is at most one, so STOP always knows which entry it closes. The choice
+      // lives in `openEntryOf` (the one place Phase 92b adds its TRAVEL skip).
+      const sameDayOpenEntry = openEntryOf(dayEntries);
 
       // Phase 376 (Issue #376, D-01/D-02): a shift crossing local midnight (23:30 clock-in,
       // 00:30 clock-out tap) computes `event.date` as the NEW day — the same-day lookup above
       // finds nothing even though the previous day's entry is still open. Only checked when
       // today has no open entry; calls the SAME findEntriesOfDay() wrapper a second time (never
       // a new raw day-predicate query — time-entry-day-lookup-guard.test.ts stays compliant).
-      // MULTI-ENTRY: the cross-day candidate is "the open row of the PREVIOUS day" — with
-      // several entries per day this would need to pick among them the same way sameDayOpenEntry
-      // does today.
+      // Issue #70: the cross-day candidate is "the open row of the PREVIOUS day", picked with the
+      // same `openEntryOf` as the same-day one.
       let crossDayOpenEntry: (typeof dayEntries)[number] | null = null;
       if (!sameDayOpenEntry) {
         const previousDate = new Date(event.date);
@@ -101,7 +118,7 @@ export async function resolveClockEvent(
           employeeId: event.employeeId,
           date: previousDate,
         });
-        const candidate = previousDayEntries.find((e) => e.endTime === null) ?? null;
+        const candidate = openEntryOf(previousDayEntries);
         if (candidate) {
           // D-02: bound the lookback by elapsed time so an unrelated tap days after a genuinely
           // forgotten clock-out can never silently close it with a wrong endTime. Reuses the
@@ -126,15 +143,10 @@ export async function resolveClockEvent(
 
       // D-01: when no open entry, look for a closed non-deleted same-day entry to potentially reopen.
       // Selected WITHOUT isLocked filter so the REOPEN branch can return explicit MONTH_LOCKED CONFLICT.
-      // MULTI-ENTRY: REOPEN extends the latest-ending row of the day; with several entries a new IN
-      // could instead start a new entry — that choice belongs to #70.
-      const closedEntry = !openEntry
-        ? dayEntries.reduce<(typeof dayEntries)[number] | null>(
-            (best, e) =>
-              e.endTime !== null && (best === null || e.endTime > best.endTime!) ? e : best,
-            null,
-          )
-        : null;
+      // Issue #70 (D-02/D-11): REOPEN extends the latest-ending closed row of the day (`L`);
+      // whether a new IN re-opens it or starts a new entry in another salon is decided below,
+      // after the Nachtrag guard. The choice of `L` lives in `latestEndingClosed`.
+      const closedEntry = !openEntry ? latestEndingClosed(dayEntries) : null;
 
       // Phase 118 (D-02/D-03): a row coupled to a still-PENDING Zeitnachtrag
       // (Phase 96, `TimeEntry.retroRequestId @unique`) is a REQUEST, not a punch.
@@ -171,9 +183,41 @@ export async function resolveClockEvent(
         }
       }
 
+      // Issue #70 (D-02/D-11): with no open entry, a finished day and an explicitly chosen salon,
+      // the salon is validated FIRST — a foreign and an unknown id answer the identical 404 and an
+      // inactive one 400 (T-100-09), before any state decision and before the locked guard — and a
+      // validated salon that differs from `L`'s starts a NEW entry in that salon instead of
+      // re-opening `L` (the former differing-salon 409 no longer exists). Without a salon (NFC,
+      // WIFI, web without a choice) or with `L`'s own salon the latest entry is re-opened as
+      // before. The state machine stays pure: "start in another salon" is simply presented to
+      // `decide()` as a day without a re-openable entry. With an OPEN entry the answer stays
+      // ALREADY_CLOCKED_IN whatever salon is named (identical for foreign and unknown ids).
+      let startInOtherSalon = false;
+      if (!openEntry && closedEntry && event.salonId !== undefined) {
+        const chosen = await resolveEntrySalon(tx, {
+          tenantId: event.tenantId,
+          employeeId: event.employeeId,
+          startTime: event.timestamp,
+          explicitSalonId: event.salonId,
+        });
+        if (!chosen.ok) {
+          app.log.warn(
+            {
+              employeeId: event.employeeId,
+              source: event.source,
+              entryId: closedEntry.id,
+              reason: salonConflictReason(chosen.status),
+            },
+            "clock_event_conflict",
+          );
+          return { kind: "CONFLICT", reason: salonConflictReason(chosen.status) } as const;
+        }
+        startInOtherSalon = chosen.salonId !== closedEntry.salonId;
+      }
+
       const state: ClockState = openEntry
         ? { kind: "OPEN_ENTRY", entryId: openEntry.id, source: openEntry.source }
-        : closedEntry
+        : closedEntry && !startInOtherSalon
           ? {
               kind: "CLOSED_SAME_DAY_ENTRY",
               entryId: closedEntry.id,
@@ -208,6 +252,55 @@ export async function resolveClockEvent(
               "clock_event_conflict",
             );
             return { kind: "CONFLICT", reason: salonConflictReason(salon.status) } as const;
+          }
+          // Issue #70 (D-06, W8, Revisionssicherheit): with several entries per day an existing
+          // entry no longer implies the day is settled, so a START refuses on its own account when
+          // the day holds a locked entry or its month has a closed SaldoSnapshot — before the
+          // overlap check and before any write. `isMonthClosed` is the canonical Monatsabschluss
+          // signal and the month is the tenant-local month of `event.date` (the same computation as
+          // the manual writers' month-lock step in entry-invariants.ts).
+          const tz = await getTenantTimezone(app.prisma, event.tenantId);
+          const { start: monthStart } = monthRangeUtc(
+            event.date.getUTCFullYear(),
+            event.date.getUTCMonth() + 1,
+            tz,
+          );
+          if (
+            dayEntries.some((e) => e.isLocked) ||
+            (await isMonthClosed(tx, event.employeeId, event.tenantId, monthStart))
+          ) {
+            app.log.warn(
+              { employeeId: event.employeeId, date: event.dateStr, reason: "MONTH_LOCKED" },
+              "clock_event_conflict",
+            );
+            return { kind: "CONFLICT", reason: "MONTH_LOCKED" } as const;
+          }
+          // Issue #70 (D-10, T-70b-11): a new entry is open, i.e. it runs to the end of its day
+          // (`checkOverlap` semantics since v1.8.13), so its instant must lie after every closed
+          // entry of the employee — also a LATER closed entry of the same day. The exclusion
+          // constraint cannot see an open entry; this check, under the Employee lock taken above,
+          // is what closes that gap. The work between two closed entries is recorded through the
+          // manual form, never by a clock-in.
+          const conflict = await checkOverlap(
+            tx,
+            event.employeeId,
+            event.timestamp,
+            null,
+            undefined,
+            event.date,
+          );
+          if (conflict) {
+            app.log.warn(
+              {
+                employeeId: event.employeeId,
+                source: event.source,
+                intent: event.intent,
+                conflictEntryId: conflict.id,
+                reason: "ENTRY_OVERLAP",
+              },
+              "clock_event_conflict",
+            );
+            return { kind: "CONFLICT", reason: "ENTRY_OVERLAP" } as const;
           }
           const entry = await tx.timeEntry.create({
             data: {
@@ -244,45 +337,10 @@ export async function resolveClockEvent(
         }
 
         case "REOPEN": {
-          // Issue #87 (D-04/D-12): one entry per day — a re-clock-in reopens the day's entry and
-          // never changes its salon (Phase 68b D-09). A differing explicit salon is refused instead
-          // of silently booking time to the wrong work location (§ 2 EFZG holiday basis, salon
-          // views). The salon is validated FIRST, before this comparison and before the locked
-          // guard below, so a foreign and an unknown id answer the identical 404 (and an inactive
-          // one 400) whatever state the day is in (T-100-09). Nothing is written before this point.
-          // MULTI-ENTRY: with several entries per day (#70) a different salon would start a new entry instead of this 409.
-          if (event.salonId !== undefined) {
-            const chosen = await resolveEntrySalon(tx, {
-              tenantId: event.tenantId,
-              employeeId: event.employeeId,
-              startTime: event.timestamp,
-              explicitSalonId: event.salonId,
-            });
-            if (!chosen.ok) {
-              app.log.warn(
-                {
-                  employeeId: event.employeeId,
-                  source: event.source,
-                  entryId: closedEntry!.id,
-                  reason: salonConflictReason(chosen.status),
-                },
-                "clock_event_conflict",
-              );
-              return { kind: "CONFLICT", reason: salonConflictReason(chosen.status) } as const;
-            }
-            if (chosen.salonId !== closedEntry!.salonId) {
-              app.log.warn(
-                {
-                  employeeId: event.employeeId,
-                  source: event.source,
-                  entryId: closedEntry!.id,
-                  reason: "SALON_DIFFERS_FROM_DAY_ENTRY",
-                },
-                "clock_event_conflict",
-              );
-              return { kind: "CONFLICT", reason: "SALON_DIFFERS_FROM_DAY_ENTRY" } as const;
-            }
-          }
+          // Issue #70 (D-02/D-11): a re-clock-in without a salon, or with the salon of the latest
+          // entry, re-opens that entry and never changes its salon (Phase 68b D-09); a differing
+          // explicit salon was already turned into a START above, after its validation. Nothing is
+          // written before this point.
           // D-01b: locked-month guard (mirrors STOP branch — never mutate a locked entry)
           if (closedEntry!.isLocked) {
             app.log.warn(
@@ -290,6 +348,21 @@ export async function resolveClockEvent(
               "clock_event_conflict",
             );
             return { kind: "CONFLICT", reason: "MONTH_LOCKED" } as const;
+          }
+          // Issue #70 (T-70b-14): `L` ends after the event instant — a re-open would write a
+          // NEGATIVE gap break (end before start) and let the entry run over time that is already
+          // recorded. Refused before any write; the missing time is recorded through the form.
+          if (closedEntry!.endTime! > event.timestamp) {
+            app.log.warn(
+              {
+                employeeId: event.employeeId,
+                source: event.source,
+                entryId: closedEntry!.id,
+                reason: "ENTRY_OVERLAP",
+              },
+              "clock_event_conflict",
+            );
+            return { kind: "CONFLICT", reason: "ENTRY_OVERLAP" } as const;
           }
           const gapBreakStart = closedEntry!.endTime!; // old endTime = start of gap break
           // Issue #81 (D-07): the classified remainder of the CLOSED entry (values before the gap
@@ -508,23 +581,18 @@ export async function resolveClockEvent(
       }
     });
   } catch (err: unknown) {
-    // MULTI-ENTRY: this P2002 → ALREADY_CLOCKED_IN mapping is the concurrency backstop of the
-    // one-per-day unique index; without the index (#70) the race needs another guard.
-    // Phase 118 (D-06): the partial day-uniqueness index
-    // `TimeEntry_employeeId_date_unique_not_deleted` catches a concurrent same-day
-    // create that slipped past the resolver's FOR-UPDATE lock (e.g.
-    // POST /api/v1/time-entries). A business conflict, not a server error.
-    // Pattern mirrored from time-entries.ts:1336-1347.
+    // Phase 118 (D-06) / Issue #70: the partial open-per-day index
+    // `TimeEntry_employeeId_date_open_unique` catches a concurrent same-day open entry that slipped
+    // past the resolver's FOR-UPDATE lock (e.g. a manual open entry via POST /api/v1/time-entries).
+    // It is the race backstop and stays a business conflict, not a server error (P2002 →
+    // ALREADY_CLOCKED_IN). The exclusion constraint `TimeEntry_no_overlap_closed` is the backstop
+    // for closed intervals (a clock-out or an extension that would overlap a neighbour): its
+    // refusal is ENTRY_OVERLAP. Both recognitions read structured error fields, never the message.
     //
     // The catch deliberately sits OUTSIDE the transaction callback: once a
     // statement inside a Postgres transaction fails, the transaction is aborted;
     // any further query on the same `tx` (e.g. emitClockAudit) would also fail.
-    if (
-      typeof err === "object" &&
-      err !== null &&
-      "code" in err &&
-      (err as { code: unknown }).code === "P2002"
-    ) {
+    if (isOpenEntryPerDayViolation(err)) {
       app.log.warn(
         {
           employeeId: event.employeeId,
@@ -536,6 +604,19 @@ export async function resolveClockEvent(
         "clock_event_conflict",
       );
       return { kind: "CONFLICT", reason: "ALREADY_CLOCKED_IN" } as const;
+    }
+    if (isEntryOverlapViolation(err)) {
+      app.log.warn(
+        {
+          employeeId: event.employeeId,
+          source: event.source,
+          intent: event.intent,
+          reason: "ENTRY_OVERLAP",
+          cause: "P2039",
+        },
+        "clock_event_conflict",
+      );
+      return { kind: "CONFLICT", reason: "ENTRY_OVERLAP" } as const;
     }
     throw err;
   }

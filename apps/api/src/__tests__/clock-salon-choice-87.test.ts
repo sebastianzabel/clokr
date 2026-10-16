@@ -9,11 +9,17 @@
  *
  * Mutation proofs (recorded here, not re-run by CI), all on contexts/time-tracking/clock-salon-choice.ts:
  * - M1, disabling the day-entry branch (rule step 1), turns red: the D-04 running/finished/
- *   deactivated case;
+ *   deactivated case (still true after Amendment 2026-10-16 below);
  * - M2, dropping the active-id filter on the assignment salons, turns red: "AC-6: HOME A + a running
  *   DEPLOYMENT on a deactivated salon -> no choice";
  * - M3, forcing the multi-salon rule to true, turns red: the single-salon AC-6 case, the single-salon
  *   D-04 case and the final key/foreign-salon sweep.
+ *
+ * Amendment 2026-10-16 (Issue #70, Phase 70b-06, D-02/D-11): a FINISHED day no longer answers "no
+ * choice". It names the salon a plain re-clock continues (`fixedSalon`) and, in a multi-salon tenant,
+ * offers the other active salons (a second-salon entry); only a RUNNING day still offers nothing. The
+ * D-04 case below is amended for exactly that; the running expectation is unchanged. The full
+ * booked-day matrix lives in `clock-salon-choice-70.test.ts`.
  *
  * No person names in fixtures. Every fixture id is a UUID.
  */
@@ -355,7 +361,7 @@ describe("Issue #87 — GET /time-entries/clock-salon (read path)", () => {
 
   // ── D-04: a booked day names its fixed salon ──
 
-  it("D-04: a running entry fixes the salon; the pattern and the list disappear; finished and deactivated keep it", async () => {
+  it("D-04: a running entry fixes the salon; the pattern and the list disappear; finished and deactivated keep it and (#70) offer the others", async () => {
     const c = await createTestSalon(app.prisma, seed.tenant.id, { name: "Salon West" });
     const p = await createPerson(seed.tenant.id, "dayfixed");
     await assign(seed.tenant.id, p.employee.id, salonA.id, "HOME", "2020-01-01", null);
@@ -378,7 +384,7 @@ describe("Issue #87 — GET /time-entries/clock-salon (read path)", () => {
     // Running (open) entry.
     expect(await answer(thursday, "09:30", p.token)).toEqual(fixed);
 
-    // Finished entry: the same answer.
+    // Finished entry (Amendment #70): the same fixed salon, plus the other active salons offered.
     const outRes = await post(
       `/api/v1/time-entries/${entryId}/clock-out`,
       thursday,
@@ -387,11 +393,20 @@ describe("Issue #87 — GET /time-entries/clock-salon (read path)", () => {
       {},
     );
     expect(outRes.statusCode).toBe(200);
-    expect(await answer(thursday, "12:30", p.token)).toEqual(fixed);
+    const finished = (salons: SalonItem[]) => ({
+      offerChoice: true,
+      preselectedSalonId: salonB.id, // the Thursday DEPLOYMENT salon, which is among the offered
+      salons,
+      fixedSalon: { id: c.id, name: c.name },
+    });
+    const others = (await expectedActiveSalons(seed.tenant.id)).filter((s) => s.id !== c.id);
+    expect(await answer(thursday, "12:30", p.token)).toEqual(finished(others));
 
     // The salon is deactivated afterwards: the entry's history still names it.
     await app.prisma.salon.update({ where: { id: c.id }, data: { isActive: false } });
-    expect(await answer(thursday, "13:00", p.token)).toEqual(fixed);
+    expect(await answer(thursday, "13:00", p.token)).toEqual(
+      finished(await expectedActiveSalons(seed.tenant.id)),
+    );
   });
 
   it("D-04: in a single-salon tenant an existing entry names no salon (#64)", async () => {

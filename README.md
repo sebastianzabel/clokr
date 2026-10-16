@@ -82,7 +82,7 @@ no leading `v`; `.env.example` ships `latest`).
 
 ## Features
 
-- **Time Tracking** — Clock in/out, manual entries, monthly calendar view, one entry per day with multiple breaks, ArbZG compliance checks (§ 3, § 4, § 5)
+- **Time Tracking** — Clock in/out, manual entries, monthly calendar view, one or more non-overlapping entries per day (each in its own salon) with multiple breaks, ArbZG compliance checks (§ 3, § 4, § 5)
 - **Leave Management** — Vacation, sick leave, maternity/parental leave, overtime compensation; approval workflow with cancellation flow; BUrlG carry-over rules
 - **Overtime Account** — Balance tracking with monthly closing (Monatsabschluss), yearly carry-over (FULL/CAPPED/RESET), payout support
 - **Monatsabschluss** — Automatic monthly closing, completeness check, manager notifications for missing entries

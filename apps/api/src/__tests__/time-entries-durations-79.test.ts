@@ -121,9 +121,20 @@ describe("Issue #79 — per-entry presence and working time on GET /time-entries
   it("every pre-existing key of an item is unchanged", async () => {
     const items = await list(data.adminToken, true);
     const a = byId(items, ids.a)!;
-    const { presenceMinutes: _p, workingMinutes: _w, ...rest } = a;
+    // Issue #70 (70b-06): the list row also carries the display field `salonName`; it is taken out
+    // here and proven against the salon's own name below, every other key stays pinned to the row.
+    // Amendment 2026-10-16 (Issue #92, Phase 92b-03): the row also carries `travelToSalonName`
+    // (null on an ordinary entry); taken out and proven null, nothing re-captured.
+    const {
+      presenceMinutes: _p,
+      workingMinutes: _w,
+      salonName,
+      travelToSalonName,
+      ...rest
+    } = a as typeof a & { travelToSalonName?: unknown };
     void _p;
     void _w;
+    expect(travelToSalonName).toBeNull();
     const row = await app.prisma.timeEntry.findUnique({
       where: { id: ids.a },
       include: {
@@ -134,5 +145,7 @@ describe("Issue #79 — per-entry presence and working time on GET /time-entries
       },
     });
     expect(rest).toEqual(JSON.parse(JSON.stringify(row)));
+    const salon = await app.prisma.salon.findUniqueOrThrow({ where: { id: row!.salonId } });
+    expect(salonName).toBe(salon.name);
   });
 });

@@ -18,6 +18,9 @@
  * (4) replaying the migration on the legacy shape leaves every saldo input and every snapshot
  * byte-identical (AK-4), (5) the tracer: a stored share reads back through the tenant-bound store
  * and `activityMinutes()`.
+ *
+ * Amended 2026-10-16 for #92 (Phase 92b, D-05): the full `activityMinutes()` result objects gain the
+ * fourth kind TRAVEL (0 for these ordinary entries). Case count unchanged.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -331,10 +334,10 @@ describe("Issue #81 — activity kind: catalog, legacy default, replay and trace
     });
     expect(
       activityMinutes({ ...tracerEntry, activityKind: tracerRow.activityKind }, tracerRow.shares),
-    ).toEqual({ PRODUCTIVE: 435, SETUP_CLEANING: 60, UNSPECIFIED: 0 });
+    ).toEqual({ PRODUCTIVE: 435, SETUP_CLEANING: 60, UNSPECIFIED: 0, TRAVEL: 0 });
     expect(
       activityMinutes({ ...legacyEntry, activityKind: legacyRow.activityKind }, legacyRow.shares),
-    ).toEqual({ PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 495 });
+    ).toEqual({ PRODUCTIVE: 0, SETUP_CLEANING: 0, UNSPECIFIED: 495, TRAVEL: 0 });
   });
 
   it("store: a foreign tenant's entry is absent, a soft-deleted one too, an empty list is an empty map", async () => {

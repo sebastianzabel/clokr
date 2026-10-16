@@ -654,23 +654,54 @@ describe("Phase 68b — Restrict FK proof (AC-1/AC-5)", () => {
   });
 });
 
-describe("Phase 68b — partial unique index untouched (AC-5)", () => {
-  it("TimeEntry_employeeId_date_unique_not_deleted is still a UNIQUE index with WHERE (deletedAt IS NULL); TimeEntry_salonId_idx exists", async () => {
+// Amended 2026-10-16 for #70 (Phase 70b-01, D-01/D-10): this case used to pin the one-per-day partial
+// unique index "TimeEntry_employeeId_date_unique_not_deleted" ("untouched" by Phase 68b, AC-5). #70
+// replaces it deliberately, so the case now pins the objects that took its place. The salon index
+// assertion stays; the case count is unchanged.
+describe("Phase 68b / #70 — day index replaced by the no-overlap guarantee (AC-5, amended)", () => {
+  it("the one-per-day index is gone; the plain (employeeId, date) index, the open-per-day partial unique index and the no-overlap exclusion constraint exist; TimeEntry_salonId_idx exists", async () => {
     const app = await getTestApp();
     const indexes = await app.prisma.$queryRaw<{ indexname: string; indexdef: string }[]>`
       SELECT indexname, indexdef FROM pg_indexes
       WHERE tablename = 'TimeEntry'
-        AND indexname IN ('TimeEntry_employeeId_date_unique_not_deleted', 'TimeEntry_salonId_idx')
+        AND indexname IN (
+          'TimeEntry_employeeId_date_unique_not_deleted',
+          'TimeEntry_employeeId_date_idx',
+          'TimeEntry_employeeId_date_open_unique',
+          'TimeEntry_salonId_idx'
+        )
       ORDER BY indexname
     `;
-    expect(indexes).toHaveLength(2);
-    const uniqueIdx = indexes.find(
-      (i) => i.indexname === "TimeEntry_employeeId_date_unique_not_deleted",
-    )!;
-    expect(uniqueIdx.indexdef).toContain("UNIQUE INDEX");
-    expect(uniqueIdx.indexdef).toContain('WHERE ("deletedAt" IS NULL)');
+    expect(indexes.map((i) => i.indexname)).toEqual([
+      "TimeEntry_employeeId_date_idx",
+      "TimeEntry_employeeId_date_open_unique",
+      "TimeEntry_salonId_idx",
+    ]);
+
+    const plain = indexes.find((i) => i.indexname === "TimeEntry_employeeId_date_idx")!;
+    expect(plain.indexdef).not.toContain("UNIQUE");
+    expect(plain.indexdef).not.toContain("WHERE");
+    expect(plain.indexdef).toContain('("employeeId", date)');
+
+    const open = indexes.find((i) => i.indexname === "TimeEntry_employeeId_date_open_unique")!;
+    expect(open.indexdef).toContain("UNIQUE INDEX");
+    expect(open.indexdef).toContain('("employeeId", date)');
+    expect(open.indexdef).toContain('"deletedAt" IS NULL');
+    expect(open.indexdef).toContain('"endTime" IS NULL');
+
     const salonIdx = indexes.find((i) => i.indexname === "TimeEntry_salonId_idx")!;
     expect(salonIdx.indexdef).toContain('"salonId"');
+
+    const constraints = await app.prisma.$queryRaw<{ contype: string; def: string }[]>`
+      SELECT contype::text AS contype, pg_get_constraintdef(oid) AS def FROM pg_constraint
+      WHERE conname = 'TimeEntry_no_overlap_closed'
+    `;
+    expect(constraints).toHaveLength(1);
+    expect(constraints[0].contype).toBe("x");
+    expect(constraints[0].def).toContain("EXCLUDE USING gist");
+    expect(constraints[0].def).toContain("tstzrange");
+    expect(constraints[0].def).toContain('"deletedAt" IS NULL');
+    expect(constraints[0].def).toContain('"endTime" IS NOT NULL');
   });
 });
 

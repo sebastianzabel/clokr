@@ -2,8 +2,9 @@
  * Issue #80 (D-09b, D-15, D-17, D-18) — the Monatsabschluss refuses to lock a month that still
  * contains an unacknowledged cross-salon § 4 ArbZG violation.
  *
- * A multi-entry day cannot exist in the database while the partial unique index
- * `TimeEntry_employeeId_date_unique_not_deleted` holds, so the closed-WORK-entry read of the
+ * Since #70 (Phase 70b) such days exist in the database; the mocks here stay pure-kernel
+ * proofs. Real-database proofs of several entries per day: time-entry-multi-entry-70,
+ * multi-entry-month-close-70, multi-entry-saldo-equality-70. The closed-WORK-entry read of the
  * facade (`getWorkedEntriesInRange`, T2 — the read every month-close consumer uses) is mocked for
  * the constructed days only: for the test employee and day the constructed two-salon rows replace
  * the real row; every other employee and day delegates to the real implementation. Everything else

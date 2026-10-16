@@ -70,9 +70,10 @@ export type ConflictReason =
   | "SALON_NOT_FOUND"
   // Issue #87 (D-12): the explicit salon exists but is deactivated. Resolver-produced.
   | "SALON_INACTIVE"
-  // Issue #87 (D-04): re-clocking a finished day names a salon that differs from the day entry's
-  // salon. A reopened entry never changes its salon, so this is refused. Resolver-produced.
-  | "SALON_DIFFERS_FROM_DAY_ENTRY";
+  // Issue #70 (D-10/D-11): the instant of a START lies inside or before a closed entry of the
+  // employee, a re-open would end after the event instant, or the database refused an overlap
+  // (exclusion constraint). Nothing is written. Resolver-produced, never by `decide()`.
+  | "ENTRY_OVERLAP";
 
 export type ClockState =
   | { kind: "NO_OPEN_ENTRY" }

@@ -1,7 +1,8 @@
 // Issue #80 (80-AC3, 80-AC6; D-04, D-06, D-17) — checkArbZG reads REAL DayBreak / DayBreakAck rows.
 //
-// A multi-entry day cannot exist in the database while the partial unique index
-// `TimeEntry_employeeId_date_unique_not_deleted` holds, so `findEntriesOfDay` is mocked and returns
+// Since #70 (Phase 70b) such days exist in the database; the mocks here stay pure-kernel
+// proofs. Real-database proofs of several entries per day: time-entry-multi-entry-70,
+// multi-entry-month-close-70, multi-entry-saldo-equality-70. `findEntriesOfDay` is mocked and returns
 // constructed rows; the DayBreak / DayBreakAck rows are real. The two store list functions are
 // wrapped in delegating spies so the query discipline (80-AC6) can be counted.
 
