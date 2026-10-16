@@ -79,7 +79,9 @@ import {
 } from "../entry-invariants";
 import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
 import {
+  checkTravelNeighbours,
   classifyTravelWrite,
+  classifyTravelUpdate,
   TravelRefusalError,
   validateTravelEntry,
   TRAVEL_NOT_AS_RETRO_REQUEST_CODE,
@@ -1658,9 +1660,30 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       let entry: Awaited<ReturnType<typeof app.prisma.timeEntry.create>>;
       // Issue #92 (D-06): the travel write rule runs inside the writer transaction, after the Employee
       // row lock and the overlap re-check, so the neighbour entries it reads cannot change under it.
-      // A refusal throws and rolls the transaction back; the catch below answers it.
-      const assertTravelEntry = async (tx: Prisma.TransactionClient) => {
-        if (travelToSalonId === undefined || newEnd === null) return;
+      // A travel entry is judged by `validateTravelEntry` (salons, reach over the whole day, anchors,
+      // recorded day breaks); every OTHER entry by `checkTravelNeighbours` (T6): it may not leave a
+      // travel entry of the day without the entries it lies between. A refusal throws and rolls the
+      // transaction back; the catch below answers it.
+      const assertTravelEntry = async (
+        tx: Prisma.TransactionClient,
+        invalidReasonCode: "RETRO_APPROVAL_PENDING" | "LEAVE_CANCELLATION_PENDING" | null,
+      ) => {
+        if (travelToSalonId === undefined) {
+          await checkTravelNeighbours(tx, {
+            tenantId: user.tenantId,
+            employeeId,
+            date: new Date(body.date),
+            with: {
+              startTime: newStart,
+              endTime: newEnd,
+              salonId: salonResolution.salonId,
+              type: "WORK",
+              invalidReasonCode,
+            },
+          });
+          return;
+        }
+        if (newEnd === null) return;
         const verdict = await validateTravelEntry(tx, {
           tenantId: user.tenantId,
           employeeId,
@@ -1670,6 +1693,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           salonId: salonResolution.salonId,
           travelToSalonId,
           validateArrivalSalon: true,
+          access: accessContextFromRequest(req),
+          callerEmployeeId: user.employeeId ?? null,
+          permission: "time-entry:create:ZUGEWIESEN",
+          outOfReachMessage: "Mitarbeiter nicht gefunden",
         });
         if (!verdict.ok) throw new TravelRefusalError(verdict);
       };
@@ -1710,7 +1737,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               callerEmployeeId: user.employeeId ?? null,
               access: accessContextFromRequest(req),
             });
-            await assertTravelEntry(tx);
+            await assertTravelEntry(tx, manualLeave ? "LEAVE_CANCELLATION_PENDING" : null);
 
             const created = await tx.timeEntry.create({
               data: {
@@ -1770,6 +1797,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               callerEmployeeId: user.employeeId ?? null,
               access: accessContextFromRequest(req),
             });
+            await assertTravelEntry(tx, "RETRO_APPROVAL_PENDING");
             const request = await tx.retroEntryRequest.create({
               data: {
                 employeeId,
@@ -1828,7 +1856,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               callerEmployeeId: user.employeeId ?? null,
               access: accessContextFromRequest(req),
             });
-            await assertTravelEntry(tx);
+            await assertTravelEntry(tx, manualLeave ? "LEAVE_CANCELLATION_PENDING" : null);
             return tx.timeEntry.create({
               data: {
                 employeeId,
