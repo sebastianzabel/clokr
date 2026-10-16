@@ -7,6 +7,15 @@
  * evidence that the refactor changed no behaviour (Issue #69: saldo and ArbZG findings identical
  * before and after the change).
  *
+ * Amendment 2026-10-16 (Issue #70, Phase 70b-02, D-01): the "test code must stay unchanged" line
+ * referred to #69, which was a pure refactor. #70 changes exactly one of the pinned behaviours — an
+ * employee may now hold several entries per day — so the two "one-per-day" 409 cases (POST, and
+ * POST inside the grant transaction) now send a second entry that OVERLAPS the live one and expect
+ * the overlap 409 (same status, same "grant stays APPROVED", the person themself/an admin gets the
+ * detailed overlap text). The soft-deleted-row POST and the PUT-excludes-itself cases are
+ * unchanged; the same-day non-overlapping POST that used to be refused is proven in
+ * `time-entry-multi-entry-70.test.ts`. Case count unchanged.
+ *
  * It deliberately enters only through signatures the refactor does NOT change — `checkArbZG`,
  * `resolveClockEvent`, and the HTTP routes (`/time-entries`, `/presence/events`,
  * `/overtime/:employeeId`) — never `checkOneEntryPerDay` or `consolidateSameDayEntries` directly,
@@ -51,8 +60,8 @@ async function checkArbZG(...args: Parameters<typeof checkArbZGWithPlacement>) {
 import { resolveClockEvent } from "../services/clock/resolver";
 import type { ClockEvent, ClockIntent } from "../services/clock/types";
 
-const ONE_PER_DAY_MSG =
-  "Es existiert bereits ein Eintrag für diesen Tag. Bitte den bestehenden Eintrag bearbeiten.";
+// Issue #70: the one-per-day text is gone; a second entry is refused only when it overlaps.
+const OVERLAP_MSG_PREFIX = "Überschneidung mit bestehendem Eintrag vom ";
 
 /** Tenant-local wall-clock time on `day` as a UTC instant. */
 function at(day: string, hhmm: string): Date {
@@ -517,7 +526,7 @@ describe("Phase 69b — day-lookup characterization (pinned before the refactor)
   });
 
   // ── One entry per day: POST / PUT / grant transaction ──────────────────────
-  it("one-per-day: POST on a day with a live row → 409", async () => {
+  it("one-per-day (amended #70): POST overlapping a live row of the day → 409", async () => {
     await entry(P, M[0], "08:00", "12:00");
     const res = await app.inject({
       method: "POST",
@@ -526,12 +535,12 @@ describe("Phase 69b — day-lookup characterization (pinned before the refactor)
       payload: {
         employeeId: P,
         date: M[0],
-        startTime: at(M[0], "13:00").toISOString(),
-        endTime: at(M[0], "15:00").toISOString(),
+        startTime: at(M[0], "11:00").toISOString(),
+        endTime: at(M[0], "13:00").toISOString(),
       },
     });
     expect(res.statusCode).toBe(409);
-    expect(JSON.parse(res.body).error).toBe(ONE_PER_DAY_MSG);
+    expect(JSON.parse(res.body).error).toContain(OVERLAP_MSG_PREFIX);
   });
 
   it("one-per-day: POST on a day with only a soft-deleted row → 201", async () => {
@@ -566,7 +575,7 @@ describe("Phase 69b — day-lookup characterization (pinned before the refactor)
     expect(res.statusCode).toBe(200);
   });
 
-  it("one-per-day inside the grant transaction → 409, grant stays APPROVED", async () => {
+  it("one-per-day inside the grant transaction (amended #70: overlap) → 409, grant stays APPROVED", async () => {
     const grant = await app.prisma.retroEntryRequest.create({
       data: { employeeId: P, targetDate: utcMidnight(M[0]), reason: "dlc", status: "APPROVED" },
     });
@@ -577,13 +586,13 @@ describe("Phase 69b — day-lookup characterization (pinned before the refactor)
       payload: {
         employeeId: P,
         date: M[0],
-        startTime: at(M[0], "13:00").toISOString(),
-        endTime: at(M[0], "15:00").toISOString(),
+        startTime: at(M[0], "11:00").toISOString(),
+        endTime: at(M[0], "13:00").toISOString(),
         grantId: grant.id,
       },
     });
     expect(res.statusCode).toBe(409);
-    expect(JSON.parse(res.body).error).toBe(ONE_PER_DAY_MSG);
+    expect(JSON.parse(res.body).error).toContain(OVERLAP_MSG_PREFIX);
     const after = await app.prisma.retroEntryRequest.findUnique({ where: { id: grant.id } });
     expect(after?.status).toBe("APPROVED");
   });

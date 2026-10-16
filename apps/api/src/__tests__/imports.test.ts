@@ -290,7 +290,11 @@ ${empNo};03.06.2026;08:00;16:30;30;TZ-Test`;
       expect(entry!.endTime!.toISOString()).toBe("2026-06-03T14:30:00.000Z");
     });
 
-    it("D-01: rejects a duplicate same-day row (one-per-day)", async () => {
+    // Amendment 2026-10-16 (Issue #70, Phase 70b-02, D-01): an employee may hold several entries per
+    // day, so two NON-overlapping rows of one day both import (the former case expected the second
+    // to be refused as a duplicate day). The refusal that remains is the overlap: the added case
+    // below proves it. The import's own transaction and Employee lock follow in 70b-04.
+    it("D-01: imports two non-overlapping rows of the same day (amended #70)", async () => {
       const empNo = data.employee.employeeNumber;
       const csv = `nr;datum;von;bis;pause
 ${empNo};04.06.2026;08:00;12:00;0
@@ -305,11 +309,33 @@ ${empNo};04.06.2026;13:00;17:00;0`;
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body);
-      expect(body.imported).toBe(1);
-      expect(body.errors).toBe(1);
-      // one non-deleted entry for that day
+      expect(body.imported).toBe(2);
+      expect(body.errors).toBe(0);
       const count = await app.prisma.timeEntry.count({
         where: { employeeId: data.employee.id, date: new Date("2026-06-04"), deletedAt: null },
+      });
+      expect(count).toBe(2);
+    });
+
+    it("D-01: rejects an overlapping row of the same day (#70)", async () => {
+      const empNo = data.employee.employeeNumber;
+      const csv = `nr;datum;von;bis;pause
+${empNo};05.06.2026;08:00;12:00;0
+${empNo};05.06.2026;11:00;15:00;0`;
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/imports/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { csv },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.imported).toBe(1);
+      expect(body.errors).toBe(1);
+      const count = await app.prisma.timeEntry.count({
+        where: { employeeId: data.employee.id, date: new Date("2026-06-05"), deletedAt: null },
       });
       expect(count).toBe(1);
     });
