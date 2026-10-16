@@ -833,10 +833,15 @@ import { readFileSync } from "node:fs";
 // skipped or weakened. MIN_FILES 592 -> 602, MIN_TESTS 9530 -> 9649. Never lowered.
 // Issue #644 (2026-10-16): new file `section9-reach-644.test.ts` with 3 cases, counted from the source:
 // MIN_FILES 602 -> 603, MIN_TESTS 9650 -> 9653.
-const MIN_FILES = 603;
+// Issue #558 (2026-10-16): measured on `feat/558-salonauswahl` after 558-07, full run (`pnpm --filter @clokr/api test`) - 607
+// test files, 9716 tests (9713 passed, 3 skipped). New files: employees-list-salon-filter-558, leave-salon-filter-558,
+// shifts-week-salon-filter-558 and contexts/absence/__tests__/salon-leave-attribution-558; amended: access-context
+// (salonOnlyReach), salon-context-manipulation-82 and shifts-planning-overview (planning-overview now answers 404 for an
+// unreachable salon, stricter than before). Both floors are set to exactly these numbers; MIN_FILES 603 -> 607, MIN_TESTS 9653 -> 9716. Never lowered.
+const MIN_FILES = 607;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
-const MIN_TESTS = 9653;
+const MIN_TESTS = 9716;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
