@@ -4,9 +4,9 @@ import { LeaveRequestStatus, Prisma } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { generateICal, addOneDay, type ICalEvent } from "../ical";
 import {
-  shiftBasedLeaveMinutesForRequest, // Issue #429, D-13 — receipt shares the saldo's per-week formula
   mondayOfWeekUtc, // Phase 430 Plan 04 (D-15) — the one shared Monday derivation
 } from "../vacation-calc"; // Phase 107 (D-04/D-09)
+import { scheduledLeaveMinutes, overtimeCompReversalMinutes } from "../overtime-comp-minutes"; // Issue #614 — moved out of this route (Issue #468 D-01/D-02)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
 import { computeAffectedMonths, closedMonthLeaveMessage, monthsInRange } from "../correction-lock"; // Issue #446 (D-07/D-08); monthsInRange also WR-03 (Issue #468 review)
 import { findClosedMonthsInRange } from "../closed-month-guard"; // Issue #446 (D-07)
@@ -24,13 +24,10 @@ import {
   deductVacationDays,
   reverseVacationDays,
   recalculateCarryOver,
-  contractWorkDaysPerWeekFrom, // Issue #429, D-13 — the scheduledLeaveMinutes SHIFT_BASED branch below
-  usualWorkDaysFrom, // Issue #436, D-03 — the same branch, threading the Angabe into the receipt
   type LeaveDaysPricing, // Issue #436, D-04/D-09
 } from "../leave-days";
 import { BS_ONLY_LEAVE_ERROR, BS_ONLY_LEAVE_ERROR_CODE } from "../bs-leave-days"; // Issue #448 (D-02)
 import { vocationalSchoolDatesForLeaveRequests } from "../bs-leave-days"; // Issue #448 (D-05, plan 03)
-import { vocationalSchoolDateSet } from "../bs-leave-days"; // Issue #468 (D-01) — same BS exclusion the saldo uses
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import {
   flagShiftsConflictingWithLeave,
@@ -48,7 +45,6 @@ import {
   recalculateSnapshots,
   getConfirmedCarryOver,
   loadNegativeBalanceTolerance,
-  calcLeaveAbsenceMinutesTz, // Issue #468 (D-01) — the saldo's own per-row credit/withdrawal
   computeOvertimeBalanceBreakdown,
   computeOvertimeBalanceHours, // Issue #294 — pure read, run BEFORE the booking+persist transaction
   persistOvertimeBalance, // Issue #294 — booking + recompute in one $transaction
@@ -1455,31 +1451,26 @@ export async function leaveRoutes(app: FastifyInstance) {
             // amount for a still-pending-cancellation request) must not change what gets
             // reversed. Only a legacy row with no stored value falls back to today's
             // recomputation, logged so the fallback stays visible.
-            let reversalMinutes: number;
-            let reversalSource: "stored" | "recomputed";
-            if (existing.overtimeCompMinutes != null) {
-              reversalMinutes = existing.overtimeCompMinutes;
-              reversalSource = "stored";
-            } else {
-              const hMap = await getHolidayMap(
+            const { minutes: reversalMinutes, source: reversalSource } =
+              await overtimeCompReversalMinutes(
                 app.prisma,
                 tenantIdForReversal,
-                existing.employeeId,
-                existing.startDate,
-                existing.endDate,
+                existing,
+                async () => {
+                  const hMap = await getHolidayMap(
+                    app.prisma,
+                    tenantIdForReversal,
+                    existing.employeeId,
+                    existing.startDate,
+                    existing.endDate,
+                  );
+                  return {
+                    holidays: new Set(hMap.keys()),
+                    tz: await getTenantTimezone(app.prisma, tenantIdForReversal),
+                  };
+                },
               );
-              const tzForReversal = await getTenantTimezone(app.prisma, tenantIdForReversal);
-              reversalMinutes = await scheduledLeaveMinutes(
-                app.prisma,
-                existing.employeeId,
-                tenantIdForReversal,
-                existing.startDate,
-                existing.endDate,
-                existing.halfDay,
-                new Set(hMap.keys()),
-                tzForReversal,
-              );
-              reversalSource = "recomputed";
+            if (reversalSource === "recomputed") {
               app.log.warn(
                 { leaveRequestId: existing.id, employeeId: existing.employeeId },
                 "OVERTIME_COMP reversal without a stored booking — recomputed (Issue #468 A-4 legacy fallback)",
@@ -2539,21 +2530,15 @@ export async function leaveRoutes(app: FastifyInstance) {
       let oldOtMinutes: number | null = null;
       let oldOtSource: "stored" | "recomputed" | null = null;
       if (oldTypeCode === "OVERTIME_COMP") {
-        if (existing.overtimeCompMinutes != null) {
-          oldOtMinutes = existing.overtimeCompMinutes;
-          oldOtSource = "stored";
-        } else {
-          oldOtMinutes = await scheduledLeaveMinutes(
-            app.prisma,
-            existing.employeeId,
-            tenantId,
-            existing.startDate,
-            existing.endDate,
-            existing.halfDay,
-            holidays,
-            tzForCorrection,
-          );
-          oldOtSource = "recomputed";
+        const reversal = await overtimeCompReversalMinutes(
+          app.prisma,
+          tenantId,
+          existing,
+          async () => ({ holidays, tz: tzForCorrection }),
+        );
+        oldOtMinutes = reversal.minutes;
+        oldOtSource = reversal.source;
+        if (reversal.source === "recomputed") {
           app.log.warn(
             { leaveRequestId: existing.id, employeeId: existing.employeeId },
             "OVERTIME_COMP correction without a stored booking — recomputed (Issue #468 A-4 legacy fallback)",
@@ -5133,101 +5118,6 @@ class Section9ConcurrentCorrectionError extends Error {
 }
 
 // calculateWorkDays moved to ../utils/calculate-work-days (Phase 61).
-
-/**
- * Issue #468 (D-01) — the ONE function behind every Überstundenausgleich amount: the POST/PATCH
- * negative-balance gate, the approval booking, the cancellation-reversal legacy fallback, the
- * `/correct` reverse/apply pair, and GET /hours-preview all call this, never a second formula.
- *
- * SHIFT_BASED keeps the #293/#429 "receipt follows the account" branch verbatim — do not route
- * it through `calcLeaveAbsenceMinutesTz` (that function's own SHIFT_BASED branch is a DIFFERENT,
- * already-correct formula per #429, see its own docblock).
- *
- * Every other schedule type calls `calcLeaveAbsenceMinutesTz` below — the Arbeitszeitkonto's own
- * per-row credit/withdrawal function (`close-employee-month.ts` uses the SAME call for the
- * saldo's non-SHIFT leave credit, #220 model B) — reached through the
- * `contexts/working-time-account` facade, never a local `{day}Hours` placeholder read. This is
- * what makes a FLEXTIME day cost the real Ø-Methode average (480 min, not the measured
- * placeholder's 60) and keeps MONTHLY_HOURS following whatever the Arbeitszeitkonto returns
- * (hard 0 until Phase 433 merges, a real rate afterward) rather than a number hardcoded here.
- *
- * Holidays AND Berufsschultage are excluded exactly like the saldo's own `excludeHolidays` set
- * (#448 D-03) — an Azubi's Ausgleichstag on a school day costs nothing, mirroring the saldo,
- * which never withdraws for that day either.
- */
-async function scheduledLeaveMinutes(
-  db: DbClient,
-  employeeId: string,
-  tenantId: string,
-  start: Date,
-  end: Date,
-  halfDay: boolean,
-  holidays: Set<string>,
-  tz: string,
-): Promise<number> {
-  const employee = await db.employee.findUnique({
-    where: { id: employeeId },
-    include: {
-      workSchedules: {
-        where: { validFrom: { lte: start } },
-        orderBy: { validFrom: "desc" },
-        take: 1,
-      },
-    },
-  });
-  const ws = employee?.workSchedules[0] ?? null;
-  const cfg = await db.tenantConfig.findUnique({ where: { tenantId } });
-
-  // SHIFT_BASED (issue #293/#429): the receipt follows the account — see the docblock above.
-  // Returns BEFORE the saldo-facade path below, which stays untouched for every other type.
-  if (ws?.type === "SHIFT_BASED") {
-    // Issue #429, D-13: `c` via the SAME fallback chain the saldo uses (Phase 107, D-04) —
-    // `contractWorkDaysPerWeek` -> `workDays.length` -> tenant `defaultWorkDays.length` -> 5.
-    const c = contractWorkDaysPerWeekFrom(ws, cfg?.defaultWorkDays);
-
-    // `shiftBasedLeaveMinutesForRequest` is timezone-free (it operates on calendar `Date`
-    // boundaries via `leaveDaysPerWeek`, like the saldo's `shiftBasedLeaveCreditByDate`) and,
-    // mirroring `close-employee-month.ts`'s D-05 decision, is never given a holiday set — a
-    // holiday inside a leave range keeps being a Soll-free day via the leave itself. Phase 436
-    // (D-03): the Angabe follows the receipt through the same `usualWorkDaysFrom()` reader.
-    return shiftBasedLeaveMinutesForRequest(ws, start, end, halfDay, c, usualWorkDaysFrom(ws));
-  }
-
-  // Issue #468 (D-01): the WorkSchedule row when present, else the tenant-default
-  // FIXED_SCHEDULE shape — mirrors `getEffectiveSchedule()`'s shape (entry-invariants.ts), not
-  // imported (that helper takes `app`, a time-tracking module this file does not reach into).
-  const schedule =
-    ws ??
-    ({
-      type: "FIXED_SCHEDULE" as const,
-      weeklyHours: cfg?.defaultWeeklyHours ?? 40,
-      monthlyHours: null,
-      mondayHours: cfg?.defaultMondayHours ?? 8,
-      tuesdayHours: cfg?.defaultTuesdayHours ?? 8,
-      wednesdayHours: cfg?.defaultWednesdayHours ?? 8,
-      thursdayHours: cfg?.defaultThursdayHours ?? 8,
-      fridayHours: cfg?.defaultFridayHours ?? 8,
-      saturdayHours: cfg?.defaultSaturdayHours ?? 0,
-      sundayHours: cfg?.defaultSundayHours ?? 0,
-    } as const);
-
-  // Issue #468 (D-01, mirrors #448 D-03): a Berufsschultag is excluded exactly like a holiday —
-  // the saldo never withdraws Soll for either inside a leave range, so the booking must not
-  // either.
-  const excluded = new Set<string>([
-    ...holidays,
-    ...(await vocationalSchoolDateSet(db, employeeId, tenantId, start, end)), // Issue #468 (D-01)
-  ]);
-
-  return calcLeaveAbsenceMinutesTz(schedule, start, end, tz, {
-    halfDay,
-    excludeHolidays: excluded,
-    // Phase 433 (D-05) — the MONTHLY_HOURS workday tier, same as the saldo: a WorkSchedule
-    // with no explicit workDays falls through to the tenant's defaultWorkDays before Mo-Fr.
-    // Every other schedule type ignores this opt.
-    defaultWorkDays: cfg?.defaultWorkDays ?? null,
-  });
-}
 
 /**
  * Issue #468 (D-01) — the shared Überstundenausgleich negative-balance gate, lifted out of
