@@ -41,7 +41,7 @@ declare module "fastify" {
 
 export const employmentExitDecoratePlugin = fp(async (app) => {
   app.decorate("absenceExit", {
-    plan: (input: EmploymentExitInput) => planEmploymentExit(app.prisma, input),
+    plan: (input: EmploymentExitInput) => planEmploymentExit(app.prisma, input, app.log),
     apply: (
       tx: Prisma.TransactionClient,
       plan: EmploymentExitPlan,

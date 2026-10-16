@@ -13,8 +13,10 @@
  *   - imposed absences after the exit day are soft-deleted (later plans);
  *   - a row whose changed days touch a CLOSED month is never touched, only reported (`skipped`).
  *
- * This file currently covers the tracer scope: an APPROVED VACATION request lying wholly after the
- * exit day. Plans 02-04 extend it with the other statuses and types and the shortening.
+ * This file covers every absence lying wholly after the exit day: PENDING, APPROVED and
+ * CANCELLATION_REQUESTED requests of every leave type (an approved or cancellation-requested one is
+ * booked back exactly as an approved cancellation books it) and the imposed Berufsschule rows.
+ * Plans 03-04 add the shortening of a request that spans the exit day.
  *
  * Contract — three phases, so the Unterbau route can run them around its own transaction:
  *   1. {@link planEmploymentExit}   pure reads, BEFORE the transaction opens;
@@ -33,15 +35,20 @@
  * Audit values carry NO free text: only ids, status, dates (`YYYY-MM-DD`), the day count and the
  * leave type CODE. `auditReason` is the human-readable German reason, `trigger` the machine marker.
  */
-import type { FastifyInstance } from "fastify";
+import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
 import {
   computeOvertimeBalanceHours,
+  getTenantTimezone,
   persistOvertimeBalance,
   recalculateSnapshots,
+  reverseOvertimeCompensation,
 } from "../working-time-account";
+import { revalidateLeaveCancellationEntries } from "../time-tracking";
 import { findClosedMonthsInRange } from "./closed-month-guard";
 import { getHolidayMap, reverseVacationDays } from "./leave-days";
+import { overtimeCompReversalMinutes } from "./overtime-comp-minutes";
+import { activeParentalReductions } from "./parental-leave-reduction";
 
 export interface EmploymentExitInput {
   tenantId: string;
@@ -58,7 +65,9 @@ export interface EmploymentExitSkipped {
   reason: string;
 }
 
-/** An APPROVED VACATION request lying wholly after the exit day: cancel and book back. */
+type OpenLeaveStatus = "PENDING" | "APPROVED" | "CANCELLATION_REQUESTED";
+
+/** A leave request lying wholly after the exit day: cancel it and book back what it booked. */
 interface CancelLeaveAction {
   kind: "cancelLeave";
   requestId: string;
@@ -66,12 +75,24 @@ interface CancelLeaveAction {
   leaveTypeCode: string;
   days: number;
   /** Optimistic guard: the row must still look like this inside the transaction. */
-  guard: { status: "APPROVED"; startDate: Date; endDate: Date; updatedAt: Date };
-  /** Holiday dates of the request range, read before the transaction (as the cancellation does). */
+  guard: { status: OpenLeaveStatus; startDate: Date; endDate: Date; updatedAt: Date };
+  /** Holiday dates of the request range (VACATION only), read before the transaction. */
   holidayDates: string[];
+  /** The amount to give back for an OVERTIME_COMP booking (stored, else recomputed); else null. */
+  overtimeReversal: { minutes: number; source: "stored" | "recomputed" } | null;
 }
 
-export type EmploymentExitAction = CancelLeaveAction;
+/** An imposed absence (Berufsschule) lying wholly after the exit day: soft-delete it. */
+interface DeleteAbsenceAction {
+  kind: "deleteAbsence";
+  absenceId: string;
+  type: string;
+  source: string;
+  days: number;
+  guard: { startDate: Date; endDate: Date };
+}
+
+export type EmploymentExitAction = CancelLeaveAction | DeleteAbsenceAction;
 
 export interface EmploymentExitPlan {
   input: EmploymentExitInput;
@@ -104,8 +125,8 @@ export type EmploymentExitAuditPort = (entry: {
 /** Thrown inside the transaction when a planned row changed meanwhile; the route answers 409. */
 export class EmploymentExitConflictError extends Error {
   readonly code = "EMPLOYMENT_EXIT_CONFLICT";
-  constructor(requestId: string) {
-    super(`employment exit: leave request ${requestId} changed concurrently`);
+  constructor(entity: string, id: string) {
+    super(`employment exit: ${entity} ${id} changed concurrently`);
   }
 }
 
@@ -115,24 +136,28 @@ const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
 export async function planEmploymentExit(
   prisma: FastifyInstance["prisma"],
   input: EmploymentExitInput,
+  log?: Pick<FastifyBaseLogger, "warn">,
 ): Promise<EmploymentExitPlan> {
   const { tenantId, employeeId, exitDay } = input;
   const actions: EmploymentExitAction[] = [];
   const skipped: EmploymentExitSkipped[] = [];
 
-  const approvedVacation = await prisma.leaveRequest.findMany({
+  // ── Leave requests wholly after the exit day (all open statuses, every leave type) ──────────
+  const requests = await prisma.leaveRequest.findMany({
     where: {
       employeeId,
       employee: { tenantId },
       deletedAt: null,
-      status: "APPROVED",
+      status: { in: ["PENDING", "APPROVED", "CANCELLATION_REQUESTED"] },
       startDate: { gt: exitDay },
-      leaveType: { code: "VACATION" },
     },
     select: {
       id: true,
       leaveTypeId: true,
+      status: true,
       days: true,
+      halfDay: true,
+      overtimeCompMinutes: true,
       startDate: true,
       endDate: true,
       updatedAt: true,
@@ -141,8 +166,10 @@ export async function planEmploymentExit(
     orderBy: [{ startDate: "asc" }, { id: "asc" }],
   });
 
-  for (const row of approvedVacation) {
-    // D-05: a closed month is immutable. The row stays as it is and is reported instead.
+  const tz = requests.length > 0 ? await getTenantTimezone(prisma, tenantId) : "UTC";
+  for (const row of requests) {
+    // Skip precedence (one reason per row): D-05 closed month, then the § 17 BEEG reduction, then
+    // a live § 9 credit. The row stays as it is and is reported instead.
     const closed = await findClosedMonthsInRange(
       prisma,
       employeeId,
@@ -154,20 +181,125 @@ export async function planEmploymentExit(
       skipped.push({ entity: "LeaveRequest", id: row.id, reason: "CLOSED_MONTH" });
       continue;
     }
-    const holidays = await getHolidayMap(prisma, tenantId, employeeId, row.startDate, row.endDate);
+    if (row.leaveType.code === "PARENTAL") {
+      const reductions = await activeParentalReductions(prisma, row.id, tenantId);
+      if (reductions.length > 0) {
+        skipped.push({ entity: "LeaveRequest", id: row.id, reason: "PARENTAL_REDUCTION_ACTIVE" });
+        continue;
+      }
+    }
+    const credit = await prisma.section9Credit.findFirst({
+      where: {
+        employeeId,
+        employee: { tenantId },
+        status: { not: "SUPERSEDED" },
+        OR: [{ vacationRequestId: row.id }, { sickRequestId: row.id }],
+      },
+      select: { id: true },
+    });
+    if (credit) {
+      skipped.push({ entity: "LeaveRequest", id: row.id, reason: "SECTION9_CREDIT_ACTIVE" });
+      continue;
+    }
+
+    // A PENDING request booked nothing; every other status reverses what its approval booked.
+    const booked = row.status !== "PENDING";
+    const code = row.leaveType.code;
+    let holidayDates: string[] = [];
+    if (booked && code === "VACATION") {
+      const holidays = await getHolidayMap(
+        prisma,
+        tenantId,
+        employeeId,
+        row.startDate,
+        row.endDate,
+      );
+      holidayDates = [...holidays.keys()];
+    }
+    let overtimeReversal: CancelLeaveAction["overtimeReversal"] = null;
+    if (booked && code === "OVERTIME_COMP") {
+      // Issue #468 (A-4/D-02): the STORED booking is reversed; only a legacy row is recomputed.
+      overtimeReversal = await overtimeCompReversalMinutes(
+        prisma,
+        tenantId,
+        { ...row, employeeId },
+        async () => {
+          const holidays = await getHolidayMap(
+            prisma,
+            tenantId,
+            employeeId,
+            row.startDate,
+            row.endDate,
+          );
+          return { holidays: new Set(holidays.keys()), tz };
+        },
+      );
+      if (overtimeReversal.source === "recomputed") {
+        log?.warn(
+          { leaveRequestId: row.id, employeeId },
+          "OVERTIME_COMP reversal without a stored booking — recomputed (Issue #468 A-4 legacy fallback)",
+        );
+      }
+    }
     actions.push({
       kind: "cancelLeave",
       requestId: row.id,
       leaveTypeId: row.leaveTypeId,
-      leaveTypeCode: row.leaveType.code,
+      leaveTypeCode: code,
       days: Number(row.days),
       guard: {
-        status: "APPROVED",
+        status: row.status as OpenLeaveStatus,
         startDate: row.startDate,
         endDate: row.endDate,
         updatedAt: row.updatedAt,
       },
-      holidayDates: [...holidays.keys()],
+      holidayDates,
+      overtimeReversal,
+    });
+  }
+
+  // ── Imposed absences (Berufsschule) ──────────────────────────────────────────────────────────
+  const absences = await prisma.absence.findMany({
+    where: {
+      employeeId,
+      employee: { tenantId },
+      deletedAt: null,
+      endDate: { gt: exitDay },
+    },
+    select: {
+      id: true,
+      type: true,
+      source: true,
+      days: true,
+      startDate: true,
+      endDate: true,
+    },
+    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+  });
+  for (const row of absences) {
+    if (row.startDate <= exitDay) {
+      // No correction mechanism exists for a multi-day Absence; none exists today either.
+      skipped.push({ entity: "Absence", id: row.id, reason: "SPANNING_ABSENCE" });
+      continue;
+    }
+    const closed = await findClosedMonthsInRange(
+      prisma,
+      employeeId,
+      tenantId,
+      row.startDate,
+      row.endDate,
+    );
+    if (closed.length > 0) {
+      skipped.push({ entity: "Absence", id: row.id, reason: "CLOSED_MONTH" });
+      continue;
+    }
+    actions.push({
+      kind: "deleteAbsence",
+      absenceId: row.id,
+      type: row.type,
+      source: row.source,
+      days: Number(row.days),
+      guard: { startDate: row.startDate, endDate: row.endDate },
     });
   }
 
@@ -180,7 +312,6 @@ export async function applyEmploymentExit(
   plan: EmploymentExitPlan,
   audit: EmploymentExitAuditPort,
 ): Promise<EmploymentExitResult> {
-  const { tenantId, employeeId, exitDay } = plan.input;
   const result: EmploymentExitResult = {
     input: plan.input,
     cancelled: [],
@@ -194,58 +325,152 @@ export async function applyEmploymentExit(
   };
 
   for (const action of plan.actions) {
-    // The anonymization is not a review: no reviewedBy / reviewNote change. The guard makes the
-    // update an optimistic lock — 0 rows means the request changed between plan and apply.
-    const { count } = await tx.leaveRequest.updateMany({
-      where: {
-        id: action.requestId,
-        employeeId,
-        employee: { tenantId },
-        deletedAt: null,
-        status: action.guard.status,
-        startDate: action.guard.startDate,
-        endDate: action.guard.endDate,
-        updatedAt: action.guard.updatedAt,
-      },
-      data: { status: "CANCELLED" },
-    });
-    if (count !== 1) throw new EmploymentExitConflictError(action.requestId);
-
-    // The booking an approved cancellation reverses (leave.ts, cancellation approval).
-    await reverseVacationDays(
-      tx,
-      employeeId,
-      action.leaveTypeId,
-      action.guard.startDate,
-      action.guard.endDate,
-      action.days,
-      new Set(action.holidayDates),
-      tenantId,
-    );
-
-    await audit({
-      action: "CANCEL",
-      entity: "LeaveRequest",
-      entityId: action.requestId,
-      oldValue: {
-        status: action.guard.status,
-        startDate: isoDay(action.guard.startDate),
-        endDate: isoDay(action.guard.endDate),
-        days: action.days,
-        leaveTypeCode: action.leaveTypeCode,
-      },
-      newValue: {
-        status: "CANCELLED",
-        auditReason: "Anonymisierung",
-        trigger: "ANONYMIZATION",
-        exitDate: isoDay(exitDay),
-      },
-    });
+    if (action.kind === "deleteAbsence") {
+      await deleteAbsence(tx, plan.input, action, audit);
+      result.deleted.push(action.absenceId);
+      touch(action.guard.startDate);
+      continue;
+    }
+    await cancelLeave(tx, plan.input, action, audit);
     result.cancelled.push(action.requestId);
     touch(action.guard.startDate);
   }
 
   return result;
+}
+
+/** Cancels one request and books back exactly what an approved cancellation books back. */
+async function cancelLeave(
+  tx: Prisma.TransactionClient,
+  input: EmploymentExitInput,
+  action: CancelLeaveAction,
+  audit: EmploymentExitAuditPort,
+): Promise<void> {
+  const { tenantId, employeeId, exitDay } = input;
+  const marker = { auditReason: "Anonymisierung", trigger: "ANONYMIZATION" } as const;
+
+  // The anonymization is not a review: no reviewedBy / reviewNote change. The guard makes the
+  // update an optimistic lock — 0 rows means the request changed between plan and apply.
+  const { count } = await tx.leaveRequest.updateMany({
+    where: {
+      id: action.requestId,
+      employeeId,
+      employee: { tenantId },
+      deletedAt: null,
+      status: action.guard.status,
+      startDate: action.guard.startDate,
+      endDate: action.guard.endDate,
+      updatedAt: action.guard.updatedAt,
+    },
+    data: { status: "CANCELLED" },
+  });
+  if (count !== 1) throw new EmploymentExitConflictError("LeaveRequest", action.requestId);
+
+  if (action.guard.status !== "PENDING") {
+    // Time entries created while a cancellation was pending become valid again (as the approval
+    // does), one UPDATE audit per revalidated row (Issue #370, D-04).
+    const revalidated = await revalidateLeaveCancellationEntries(
+      tx,
+      employeeId,
+      tenantId,
+      action.guard.startDate,
+      action.guard.endDate,
+    );
+    for (const row of revalidated) {
+      await audit({
+        action: "UPDATE",
+        entity: "TimeEntry",
+        entityId: row.id,
+        oldValue: row.oldValue,
+        newValue: { ...row.newValue, ...marker },
+      });
+    }
+
+    if (action.leaveTypeCode === "VACATION") {
+      await reverseVacationDays(
+        tx,
+        employeeId,
+        action.leaveTypeId,
+        action.guard.startDate,
+        action.guard.endDate,
+        action.days,
+        new Set(action.holidayDates),
+        tenantId,
+      );
+    }
+  }
+
+  await audit({
+    action: "CANCEL",
+    entity: "LeaveRequest",
+    entityId: action.requestId,
+    oldValue: {
+      status: action.guard.status,
+      startDate: isoDay(action.guard.startDate),
+      endDate: isoDay(action.guard.endDate),
+      days: action.days,
+      leaveTypeCode: action.leaveTypeCode,
+    },
+    newValue: { status: "CANCELLED", ...marker, exitDate: isoDay(exitDay) },
+  });
+
+  if (action.overtimeReversal) {
+    const { minutes, source } = action.overtimeReversal;
+    await reverseOvertimeCompensation(
+      tx,
+      employeeId,
+      tenantId,
+      minutes / 60,
+      `Stornierung Überstundenausgleich ${isoDay(action.guard.startDate)} (Anonymisierung)`,
+    );
+    await audit({
+      action: "OVERTIME_COMP_REVERSED",
+      entity: "LeaveRequest",
+      entityId: action.requestId,
+      newValue: { overtimeCompMinutes: minutes, hours: minutes / 60, source },
+    });
+  }
+}
+
+/** Soft-deletes one imposed absence (the row stays; same end state as the BS generator's sweep). */
+async function deleteAbsence(
+  tx: Prisma.TransactionClient,
+  input: EmploymentExitInput,
+  action: DeleteAbsenceAction,
+  audit: EmploymentExitAuditPort,
+): Promise<void> {
+  const { tenantId, employeeId, exitDay } = input;
+  const { count } = await tx.absence.updateMany({
+    where: {
+      id: action.absenceId,
+      employeeId,
+      employee: { tenantId },
+      deletedAt: null,
+      startDate: action.guard.startDate,
+      endDate: action.guard.endDate,
+    },
+    data: { deletedAt: new Date() },
+  });
+  if (count !== 1) throw new EmploymentExitConflictError("Absence", action.absenceId);
+
+  await audit({
+    action: "DELETE",
+    entity: "Absence",
+    entityId: action.absenceId,
+    oldValue: {
+      type: action.type,
+      startDate: isoDay(action.guard.startDate),
+      endDate: isoDay(action.guard.endDate),
+      days: action.days,
+      source: action.source,
+    },
+    newValue: {
+      deleted: true,
+      auditReason: "Anonymisierung",
+      trigger: "ANONYMIZATION",
+      exitDate: isoDay(exitDay),
+    },
+  });
 }
 
 /**
