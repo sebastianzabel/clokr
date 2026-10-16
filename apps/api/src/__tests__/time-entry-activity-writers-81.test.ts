@@ -6,6 +6,9 @@
  *
  * Harness copied from `services/clock/__tests__/resolver-reopen.integration.test.ts`: one ANCHOR
  * (today 12:00Z) for every event, because `resolveClockEvent` reads no clock of its own.
+ *
+ * Amended 2026-10-16 for #92 (Phase 92b, D-05): the full `activityMinutes()` result objects gain
+ * the fourth kind TRAVEL (0 for these ordinary entries). Case count unchanged.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -112,6 +115,7 @@ describe("Issue #81 (D-07) — clock re-open of a classified entry", () => {
       UNSPECIFIED: 0,
       PRODUCTIVE: 0,
       SETUP_CLEANING: 0,
+      TRAVEL: 0,
     });
 
     const audit = await lastReopenAudit(entry.id);
@@ -132,7 +136,7 @@ describe("Issue #81 (D-07) — clock re-open of a classified entry", () => {
     expect(closedAgain.endTime).not.toBeNull();
     const finalShares = await sharesOf(entry.id);
     const minutes = activityMinutes(closedAgain, finalShares);
-    expect(minutes).toEqual({ PRODUCTIVE: 40, SETUP_CLEANING: 20, UNSPECIFIED: 120 });
+    expect(minutes).toEqual({ PRODUCTIVE: 40, SETUP_CLEANING: 20, UNSPECIFIED: 120, TRAVEL: 0 });
     const sum = finalShares.reduce((acc, s) => acc + s.minutes, 0);
     expect(sum).toBeLessThanOrEqual(entryDurations(closedAgain).workingMinutes);
   });
@@ -313,6 +317,7 @@ describe("Issue #81 (D-07) — consolidation never drops nor stretches an alloca
       PRODUCTIVE: 240,
       SETUP_CLEANING: 0,
       UNSPECIFIED: 240,
+      TRAVEL: 0,
     });
     if (result.merged) {
       expect(result.after.activityShares).toEqual([{ kind: "PRODUCTIVE", minutes: 240 }]);

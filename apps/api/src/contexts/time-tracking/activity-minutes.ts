@@ -13,6 +13,9 @@
  * is never clamped: a value below zero can only come from inconsistent stored break data and is
  * reported as-is, never repaired silently (D-05).
  *
+ * A travel entry's working time (Issue #92, D-05) lands in TRAVEL through its own kind
+ * (`result[entry.activityKind]`), never through a share: TRAVEL is not a share kind.
+ *
  * The working-time account never calls this (D-12): the activity kind is an evaluation dimension.
  */
 import { entryDurations, type EntryDurationInput } from "./entry-durations";
@@ -28,7 +31,7 @@ export function activityMinutes(
   entry: EntryDurationInput & { activityKind: ActivityKind },
   shares: readonly ActivityShareInput[],
 ): ActivityMinutes {
-  const result: ActivityMinutes = { UNSPECIFIED: 0, PRODUCTIVE: 0, SETUP_CLEANING: 0 };
+  const result: ActivityMinutes = { UNSPECIFIED: 0, PRODUCTIVE: 0, SETUP_CLEANING: 0, TRAVEL: 0 };
   if (!entry.endTime) return result;
   let allocated = 0;
   for (const share of shares) {

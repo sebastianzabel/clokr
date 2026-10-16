@@ -33,6 +33,16 @@ const SHARE_OWN_KIND_BODY = {
   error: "Ein Anteil darf nicht die Tätigkeitsart des Eintrags selbst haben.",
 } as const;
 
+/**
+ * Issue #92 (D-05/D-06): TRAVEL is the kind of a whole travel entry between two salons, never a
+ * part of another entry — so a share of that kind is refused here, in the one place of the share
+ * rules, with a text that points to the right way to record travel time.
+ */
+export const TRAVEL_SHARE_BODY = {
+  error:
+    "Fahrzeit ist kein Tätigkeitsanteil. Sie wird als eigener Eintrag zwischen zwei Salons erfasst.",
+} as const;
+
 // ── 409: the share list does not fit the entry ────────────────────────────────────────────────
 const SHARE_OPEN_ENTRY_BODY = {
   error: "Tätigkeitsanteile sind nur an einem abgeschlossenen Eintrag möglich.",
@@ -78,6 +88,9 @@ export function validateActivityState(
   for (const share of state.shares) {
     if (share.kind === "UNSPECIFIED") {
       return { ok: false, status: 400, body: SHARE_UNSPECIFIED_BODY };
+    }
+    if (share.kind === "TRAVEL") {
+      return { ok: false, status: 400, body: TRAVEL_SHARE_BODY };
     }
     if (!Number.isInteger(share.minutes) || share.minutes < 1) {
       return { ok: false, status: 400, body: SHARE_MINUTES_BODY };

@@ -6,6 +6,9 @@
  *
  * Fake clock 2026-06-15T10:00:00Z, installed BEFORE the app boots so every token's iat/exp and the
  * retro window agree. No person names in fixtures (CLAUDE.md PII rule).
+ *
+ * Amended 2026-10-16 for #92 (Phase 92b, D-05): the full `activityMinutes()` result object gains
+ * the fourth kind TRAVEL (0 for this ordinary entry). Case count unchanged.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -152,6 +155,7 @@ describe("Issue #81 (Phase 81 Plan 02) — activity kind and shares on the entry
         UNSPECIFIED: 0,
         PRODUCTIVE: 435,
         SETUP_CLEANING: 60,
+        TRAVEL: 0,
       });
 
       const audit = await newestAudit(entry.id);

@@ -109,7 +109,10 @@ model Salon {
   shifts              Shift[]
   phorestAppointments PhorestAppointment[]
   // Phase 68b (issue #68): Prisma-only back-relation, no column on Salon (no Unterbau column change).
-  timeEntries         TimeEntry[]
+  timeEntries         TimeEntry[]          @relation("TimeEntrySalon")
+  // Issue #92 (Phase 92b): Prisma-only back-relation, no column on Salon (Unterbau Erweiterung,
+  // approved by #92 reaching Ready) — the travel entries that ARRIVE in this salon.
+  travelEntriesTo     TimeEntry[]          @relation("TimeEntryTravelToSalon")
   // Phase 65b (issue #65): Prisma-only back-relations, no column on Salon.
   coupling            SalonCoupling?
   phorestSyncRuns     PhorestSyncRun[]
@@ -613,7 +616,8 @@ model TimeEntry {
 
   retroRequestId String? @unique // Phase 96 (RETRO-18) — 1:1 coupling to the Nachtrag request
 
-  salonId String // Phase 68b (issue #68) — see the `salon` relation below
+  salonId         String // Phase 68b (issue #68) — see the `salon` relation below
+  travelToSalonId String? // Issue #92 (D-05) — arrival salon of a travel entry; see the `travelToSalon` relation below
 
   employee       Employee                 @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   breaks         Break[]
@@ -626,11 +630,20 @@ model TimeEntry {
   // Declared AFTER `employee` on purpose: lint-tenant-scoping-model-graph classifies a model by its
   // first tenant-bearing relation in declaration order, and TimeEntry/Break must keep resolving
   // through `employee`.
-  salon          Salon                    @relation(fields: [salonId], references: [id], onDelete: Restrict)
+  salon          Salon                    @relation("TimeEntrySalon", fields: [salonId], references: [id], onDelete: Restrict)
+  // Issue #92 (Phase 92b, D-05): the ARRIVAL salon of a travel entry; `salonId` is the departure
+  // salon. Set only through validateTravelEntry (contexts/time-tracking/travel-entry.ts), never
+  // for an ordinary entry; the database CHECK TimeEntry_travel_shape_check pairs it with
+  // activityKind TRAVEL. Same tenant as the employee — enforced by the application like `salonId`.
+  // Restrict because a salon is never hard-deleted. A new Shared-Kernel dependency onto the
+  // Unterbau, named on issue #92. Declared AFTER `employee` so that `employee` stays the first
+  // tenant-bearing relation for lint-tenant-scoping-model-graph.
+  travelToSalon  Salon?                   @relation("TimeEntryTravelToSalon", fields: [travelToSalonId], references: [id], onDelete: Restrict)
 
   @@index([employeeId, date])
   @@index([date])
   @@index([salonId])
+  @@index([travelToSalonId])
 }
 
 model Break {
@@ -1543,6 +1556,9 @@ enum ActivityKind {
   UNSPECIFIED
   PRODUCTIVE
   SETUP_CLEANING
+  // Issue #92 (Phase 92b, D-05): the kind of a whole travel entry between two salons. Never a share
+  // (TimeEntryActivityShare) and never sent by a client — the API derives it from `travelToSalonId`.
+  TRAVEL
 }
 
 // Phase 96 (AC-1) — the stable, untranslated meaning of TimeEntry.isInvalid. The German text in
