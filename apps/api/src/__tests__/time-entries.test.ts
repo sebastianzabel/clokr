@@ -314,14 +314,19 @@ describe("Time Entries API", () => {
 
   describe("POST /api/v1/time-entries/clock-in + clock-out", () => {
     it("clock-in and clock-out flow works", async () => {
-      // Clean up any open entries from previous tests
+      // Clean up any open entries from previous tests.
+      // Amended 2026-10-16 for #70: the stale open entries of the earlier tests lie weeks in the past, and
+      // closing them at `now` made each one a months-long interval that overlaps every other closed entry
+      // of this employee — physically impossible data, which the no-overlap constraint now refuses. They
+      // are closed at their own start instant instead (a zero-length row never conflicts); no expected
+      // value of this test changes.
       const openEntries = await app.prisma.timeEntry.findMany({
         where: { employeeId: data.employee.id, endTime: null },
       });
       for (const e of openEntries) {
         await app.prisma.timeEntry.update({
           where: { id: e.id },
-          data: { endTime: new Date() },
+          data: { endTime: e.startTime },
         });
       }
 
