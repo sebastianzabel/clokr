@@ -46,6 +46,19 @@ DATABASE_URL="postgresql://clokr:<password>@localhost:5432/clokr" \
 DATABASE_URL="postgresql://clokr:<password>@localhost:5432/clokr" \
   pnpm --filter @clokr/db exec tsx src/seed-demo.ts
 
+# 1b. Close the demo's previous month with Clokr's real closer (Issue #595). The seed no longer
+#     invents a closed month: it writes the previous month's entries unlocked and only a zero
+#     "pre-tracking" snapshot for the month before. This dev wrapper hands the demo tenant's
+#     chain-head employees to the exported core of scripts/backfill-month-snapshots.ts and proves
+#     per employee that the stored figures equal the kernel's (exit 3 on any mismatch, exit 2 when
+#     nothing is left to close). Dry run first, then write; the database name must be spelled out
+#     and must equal the connected one. Without this step the running API's 06:00 auto-close
+#     closes the same month the next morning.
+DATABASE_URL="postgresql://clokr:<password>@localhost:5432/clokr" \
+  pnpm --filter @clokr/api exec tsx scripts/demo-close-previous-month.ts --confirm-database clokr
+DATABASE_URL="postgresql://clokr:<password>@localhost:5432/clokr" \
+  pnpm --filter @clokr/api exec tsx scripts/demo-close-previous-month.ts --apply --confirm-database clokr
+
 # 2. Reset it back to the smaller reset-demo employee set — safe to re-run.
 DATABASE_URL="postgresql://clokr:<password>@localhost:5432/clokr" \
   CONFIRM_RESET_DEMO=yes \

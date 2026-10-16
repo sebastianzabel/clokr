@@ -36,6 +36,7 @@
     vacationCardLabel,
   } from "$lib/leave/vacation-summary";
   import { resolveChipVisual, isDrawnInCalendar } from "$lib/leave/team-calendar-visibility"; // Phase 262 / 303, Issue #446 (D-04)
+  import { leaveDaysLabel, calendarDaysUnit } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -422,6 +423,7 @@
         `/leave/requests?year=${calYear}${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`,
       );
       myRequests = mine;
+      void loadSickDaysYear(calYear);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -584,11 +586,6 @@
             : "Zurückgezogen";
   }
 
-  function daysLabel(days: number, halfDay: boolean): string {
-    if (halfDay) return "½ Tag";
-    return days === 1 ? "1 Tag" : `${days} Tage`;
-  }
-
   // ── Lane assignment: stable gantt-style rows across calendar days ────────
   // Returns a Map<absenceId, laneIndex> so that a multi-day absence always
   // occupies the same vertical row in every day cell it spans.
@@ -666,17 +663,21 @@
       .filter((r) => r.typeCode === "VACATION" && r.status === "PENDING")
       .reduce((sum, r) => sum + Number(r.days), 0),
   );
-  // Sick days (approved SICK + SICK_CHILD) for the currently viewed calendar year
-  let sickDaysYear = $derived(
-    myRequests
-      .filter(
-        (r) =>
-          SICK_CODES.includes(r.typeCode) &&
-          r.status === "APPROVED" &&
-          new Date(r.startDate + "T00:00:00").getFullYear() === calYear,
-      )
-      .reduce((sum, r) => sum + Number(r.days), 0),
-  );
+  // Issue #595 (D-04): the sick days of the viewed year in CALENDAR days, counted by the server's
+  // sick-day kernel (the same one the monthly report and both PDFs use) - the page counts nothing
+  // itself. `null` while unknown or when the read failed (the KPI then shows a dash).
+  let sickDaysYear: number | null = $state(null);
+
+  async function loadSickDaysYear(year: number) {
+    try {
+      const res = await api.get<{ year: number; sickDays: number }>(
+        `/leave/sick-days?year=${year}`,
+      );
+      if (year === calYear) sickDaysYear = res.sickDays;
+    } catch {
+      if (year === calYear) sickDaysYear = null;
+    }
+  }
   // Phase 114 — every Urlaubs-Größe on this page comes from ONE pinned pure function
   // (apps/web/src/lib/leave/vacation-summary.ts). The formulas are a verbatim copy of the
   // inline $derived expressions that used to live here; a legacy-oracle test asserts they
@@ -844,8 +845,8 @@
     <Card animate class="kpi-card">
       <KPIStat
         label="Krankheitstage"
-        value={String(sickDaysYear)}
-        unit={sickDaysYear === 1 ? "Tag" : "Tage"}
+        value={sickDaysYear === null ? "–" : String(sickDaysYear)}
+        unit={calendarDaysUnit(sickDaysYear ?? 0)}
         delta={`in ${calYear}`}
       />
     </Card>
@@ -1364,7 +1365,9 @@
                   <td>{typeName(req.typeCode)}</td>
                   <td class="font-mono">{fmtDate(req.startDate)}</td>
                   <td class="font-mono">{fmtDate(req.endDate)}</td>
-                  <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
+                  <td class="text-center"
+                    >{leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}</td
+                  >
                   <td>
                     <span
                       class="badge {statusClass(req.status)}"

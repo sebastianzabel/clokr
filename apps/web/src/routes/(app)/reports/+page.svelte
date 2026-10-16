@@ -11,6 +11,11 @@
   import KPIStat from "$components/ui/KPIStat.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import {
+    buildEmployeeMonthRows,
+    type EmployeeMonthRow,
+    type SnapshotAnswerRow,
+  } from "$lib/reports/employee-months";
+  import {
     Chart,
     LineController,
     LineElement,
@@ -61,7 +66,8 @@
     employeeNumber: string;
     balanceHours: number;
     status: "NORMAL" | "ELEVATED" | "CRITICAL";
-    snapshots: Array<{ periodStart: string; balanceMinutes: number; carryOver: number }>;
+    // `month` is named by the server ("YYYY-MM", null when unnameable) - Issue #595 (D-03).
+    snapshots: Array<{ month: string | null; balanceMinutes: number; carryOver: number }>;
     // Phase 97-04 — additive split fields from GET /dashboard/overtime-overview. Optional:
     // an older cached response may omit them, in which case the row falls back to a
     // single-value SaldoAnzeige derived from balanceHours (Phase 97-07).
@@ -110,26 +116,6 @@
     missingEntitlement: true;
   };
   type LeaveOverviewRow = LeaveOverviewRealRow | LeaveOverviewMissingRow;
-
-  // EMP-06: Employee monthly closes view
-  type EmpMonthlyClose = {
-    year: number;
-    month: number; // 1-12
-    label: string; // "April 2026"
-    workedMinutes: number;
-    expectedMinutes: number;
-    balanceMinutes: number;
-    isLocked: boolean;
-  };
-
-  type SnapshotRow = {
-    periodType: "MONTHLY" | "YEARLY";
-    periodStart: string;
-    workedMinutes: number;
-    expectedMinutes: number;
-    balanceMinutes: number;
-    isLocked: boolean;
-  };
 
   // ── State ──────────────────────────────────────────────────────────────────
 
@@ -351,24 +337,9 @@
   let empDownloadErrors = $state<Record<string, string>>({});
 
   // ── EMP-06: Employee monthly closes view ─────────────────────────────────
-  let empMonthlyCloses: EmpMonthlyClose[] = $state([]);
+  let empMonthlyCloses: EmployeeMonthRow[] = $state([]);
   let empClosesLoading = $state(false);
   let empClosesError = $state("");
-
-  const EMP_MONTH_NAMES = [
-    "Januar",
-    "Februar",
-    "März",
-    "April",
-    "Mai",
-    "Juni",
-    "Juli",
-    "August",
-    "September",
-    "Oktober",
-    "November",
-    "Dezember",
-  ];
 
   async function loadEmployeeMonthlyCloses() {
     const auth = getStore(authStore);
@@ -380,24 +351,13 @@
     empClosesLoading = true;
     empClosesError = "";
     try {
-      const rows = await api.get<SnapshotRow[]>(`/overtime/snapshots/${myEmployeeId}`);
-      empMonthlyCloses = rows
-        .filter((r) => r.periodType === "MONTHLY")
-        .slice(0, 12)
-        .map((r) => {
-          const d = new Date(r.periodStart);
-          const y = d.getFullYear();
-          const m = d.getMonth() + 1;
-          return {
-            year: y,
-            month: m,
-            label: `${EMP_MONTH_NAMES[m - 1]} ${y}`,
-            workedMinutes: r.workedMinutes,
-            expectedMinutes: r.expectedMinutes,
-            balanceMinutes: r.balanceMinutes,
-            isLocked: r.isLocked,
-          };
-        });
+      const rows = await api.get<SnapshotAnswerRow[]>(`/overtime/snapshots/${myEmployeeId}`);
+      // Issue #595 (D-02/D-03): the months and the closed state come from the server answer
+      // (snapshotMonthOf). Only "now" is the browser's clock - it is no stored date.
+      empMonthlyCloses = buildEmployeeMonthRows(rows, {
+        year: currentYear,
+        month: currentMonth,
+      });
     } catch (e: unknown) {
       empClosesError =
         e instanceof Error ? e.message : "Monatsabschlüsse konnten nicht geladen werden";
@@ -503,7 +463,7 @@
           sparklineCharts.delete(row.id);
         }
 
-        const labels = row.snapshots.map((s) => s.periodStart.slice(0, 7));
+        const labels = row.snapshots.map((s) => s.month ?? "—");
         const data = row.snapshots.map((s) => s.carryOver / 60);
 
         const brandColor =
@@ -859,13 +819,12 @@
   );
   let kpiUsedDays = $derived((leaveOverview ?? []).reduce((acc, r) => acc + r.usedDays, 0));
 
-  // Employee KPIs — derived from monthly closes
-  let kpiClosedMonths = $derived(empMonthlyCloses.length);
-  let kpiTotalWorkedMin = $derived(empMonthlyCloses.reduce((acc, r) => acc + r.workedMinutes, 0));
-  let kpiTotalExpectedMin = $derived(
-    empMonthlyCloses.reduce((acc, r) => acc + r.expectedMinutes, 0),
-  );
-  let kpiTotalBalanceMin = $derived(empMonthlyCloses.reduce((acc, r) => acc + r.balanceMinutes, 0));
+  // Employee KPIs - derived from the CLOSED months only (open months carry no figures)
+  let empClosedRows = $derived(empMonthlyCloses.flatMap((r) => (r.status === "closed" ? [r] : [])));
+  let kpiClosedMonths = $derived(empClosedRows.length);
+  let kpiTotalWorkedMin = $derived(empClosedRows.reduce((acc, r) => acc + r.workedMinutes, 0));
+  let kpiTotalExpectedMin = $derived(empClosedRows.reduce((acc, r) => acc + r.expectedMinutes, 0));
+  let kpiTotalBalanceMin = $derived(empClosedRows.reduce((acc, r) => acc + r.balanceMinutes, 0));
 
   function fmtHoursFromMin(min: number): string {
     const sign = min < 0 ? "−" : "";
@@ -1144,22 +1103,28 @@
               {#each empMonthlyCloses as row (`${row.year}-${row.month}`)}
                 <tr>
                   <td><b class="emp-month-label">{row.label}</b></td>
-                  <td class="num">{fmtMinutesAsHrs(row.expectedMinutes)}</td>
-                  <td class="num">{fmtMinutesAsHrs(row.workedMinutes)}</td>
-                  <td class="num">
-                    <!-- Phase 97-07 — every row here is a non-superseded MONTHLY snapshot
-                         (a closed month by definition), so this figure is final, never a
-                         forecast: label it Bestätigt (header) and render it through the
-                         shared primitive in single-value mode so the U+2212 minus and the
-                         sign colouring match every other saldo on the page. -->
-                    <SaldoAnzeige
-                      variant="compact"
-                      saldoMinutes={row.balanceMinutes}
-                      isLocked={row.isLocked}
-                    />
-                  </td>
+                  {#if row.status === "closed"}
+                    <td class="num">{fmtMinutesAsHrs(row.expectedMinutes)}</td>
+                    <td class="num">{fmtMinutesAsHrs(row.workedMinutes)}</td>
+                    <td class="num">
+                      <!-- Every closed row is a non-superseded MONTHLY snapshot the server
+                           listed (the record the PDF prints), so this figure is final, never a
+                           forecast: the column header says confirmed, and it renders through the
+                           shared primitive in single-value mode so the U+2212 minus and the
+                           sign colouring match every other saldo on the page. -->
+                      <SaldoAnzeige
+                        variant="compact"
+                        saldoMinutes={row.balanceMinutes}
+                        isLocked={row.status === "closed"}
+                      />
+                    </td>
+                  {:else}
+                    <td class="num" title="Prognose im PDF">—</td>
+                    <td class="num" title="Prognose im PDF">—</td>
+                    <td class="num" title="Prognose im PDF">—</td>
+                  {/if}
                   <td>
-                    {#if row.isLocked}
+                    {#if row.status === "closed"}
                       <span class="chip chip-good">
                         <svg
                           width="11"
@@ -1173,7 +1138,7 @@
                           <rect x="3" y="11" width="18" height="11" rx="2" />
                           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                         </svg>
-                        Gesperrt
+                        Abgeschlossen
                       </span>
                     {:else}
                       <span class="chip chip-warn"><span class="dot"></span> Offen</span>

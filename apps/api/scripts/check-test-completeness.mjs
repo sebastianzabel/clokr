@@ -857,7 +857,13 @@ import { readFileSync } from "node:fs";
 // Phase 92b-05 (2026-10-16): measured with a full run (`pnpm --filter @clokr/api test`) after the merge of origin/main
 // @ 7e9a2f8f - 642 test files, 10087 tests (10084 passed, 3 skipped); this includes the Phase 92b test files (travel entries).
 // MIN_FILES 630 -> 642, never lowered.
-const MIN_FILES = 642;
+// Phase 595-06 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on `feat/595-monatsbericht` -
+// 651 test files, 10152 tests (10149 passed, 3 skipped). Nine new test files: report-page-pdf-parity-595,
+// closed-month-never-recalculated-595, snapshot-period-595, snapshot-month-labels-595, snapshot-month-naming-guard-595,
+// leave-sick-days-595, scripts/__tests__/audit-595-legacy-period-start, scripts/__tests__/demo-close-previous-month-595,
+// scripts/__tests__/demo-month-bounds-595. Two facade tests were removed together with the dead W4 reader in 595-01
+// (a deliberate removal of a function without a caller, not a loosened assertion). MIN_FILES 642 -> 651, never lowered.
+const MIN_FILES = 651;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -865,7 +871,9 @@ const MIN_FILES = 642;
 // Issue #658: +5 cases in time-entry-create-reach-658.test.ts (source-counted); extension: +6 cases (clock-in on behalf,
 // retro create on behalf): 9918 + 11 = 9929 (source-counted).
 // Phase 92b-05 (2026-10-16): MIN_TESTS 9929 -> 10087, the measured total of the full run named at MIN_FILES. Never lowered.
-const MIN_TESTS = 10087;
+// Phase 595-06 (2026-10-17): MIN_TESTS 10087 -> 10152, the measured total of the full run named at MIN_FILES
+// (net +65: the nine new files minus the two W4 facade tests). Never lowered.
+const MIN_TESTS = 10152;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

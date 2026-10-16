@@ -71,6 +71,9 @@ export default [
       // Issue #539 (D-09): the seeds' role-assignment helper, same shape as default-salon.ts —
       // only tsconfig.seed.json includes it.
       "packages/db/src/seed-role-assignments.ts",
+      // Issue #595 (D-05): the demo seed's pinned copy of monthRangeUtc, imported only by
+      // seed-demo.ts — same standalone shape as default-salon.ts; no tsconfig.json covers it.
+      "packages/db/src/demo-month-bounds.ts",
       "apps/api/vitest.*.ts",
       // packages/types has no tsconfig.json of its own and isn't `include`d by any other
       // package's tsconfig either — genuinely pre-existing, this file was touched only twice in

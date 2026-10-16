@@ -13,6 +13,7 @@
   import Modal from "$components/ui/Modal.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import { LEAVE_TYPE_OPTIONS, type CalendarTypeCode } from "$lib/leave/team-calendar-visibility"; // Phase 262, Phase 255
+  import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
   import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
 
   // ── Types ────────────────────────────────────────────────────────────────
@@ -155,11 +156,6 @@
     if (!iso) return "";
     const [y, m, d] = iso.split("-");
     return `${d}.${m}.${y}`;
-  }
-
-  function daysLabel(days: number, halfDay: boolean): string {
-    if (halfDay) return "½ Tag";
-    return days === 1 ? "1 Tag" : `${days} Tage`;
   }
 
   function initials(first: string, last: string): string {
@@ -437,7 +433,7 @@
       <ApprovalRow
         avatar={initials(req.employee.firstName, req.employee.lastName)}
         name={`${req.employee.firstName} ${req.employee.lastName}`}
-        dates={`${fmtDate(req.startDate)} – ${fmtDate(req.endDate)} · ${daysLabel(Number(req.days), req.halfDay)}`}
+        dates={`${fmtDate(req.startDate)} – ${fmtDate(req.endDate)} · ${leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}`}
         onclick={() => openDetail(req)}
       >
         {#snippet metaContent()}

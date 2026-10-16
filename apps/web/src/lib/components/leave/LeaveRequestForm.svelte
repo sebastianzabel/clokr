@@ -50,6 +50,7 @@
     NEUTRAL_CHIP_LABEL,
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility";
+  import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
   import type { EditableLeaveRequest } from "$lib/leave/leave-request-form";
 
   // ── Types ────────────────────────────────────────────────────────────────
@@ -192,11 +193,6 @@
     if (!iso) return "";
     const [y, m, d] = iso.split("-");
     return `${d}.${m}.${y}`;
-  }
-
-  function daysLabel(days: number, halfDay: boolean): string {
-    if (halfDay) return "½ Tag";
-    return days === 1 ? "1 Tag" : `${days} Tage`;
   }
 
   function calcDays(start: string, end: string, halfDay: boolean): number {
@@ -754,7 +750,7 @@
             {#if effectiveDays > 0 || formHalfDay}
               <div class="balance-row">
                 <span class="balance-label"
-                  >Wird genutzt ({daysLabel(effectiveDays, formHalfDay)})</span
+                  >Wird genutzt ({leaveDaysLabel(effectiveDays, formHalfDay, formType)})</span
                 >
                 <span class="balance-value balance-deduct">
                   {#if hoursPreviewLoading}<span class="text-muted">…</span>{:else}− {fmtH(
@@ -789,7 +785,7 @@
           <div class="days-info-bar">
             <span class="days-info-icon">📅</span>
             <span class="days-info-text">
-              <strong>{daysLabel(effectiveDays, formHalfDay)}</strong>
+              <strong>{leaveDaysLabel(effectiveDays, formHalfDay, formType)}</strong>
               {#if hoursPreviewLoading}
                 <span class="days-info-note">(Feiertage werden geprüft…)</span>
               {:else if serverDays !== null && serverDays !== formDays}
@@ -865,9 +861,10 @@
                     {#if hoursPreviewLoading}
                       <span class="text-muted">…</span>
                     {:else}
-                      ({daysLabel(
+                      ({leaveDaysLabel(
                         effectiveDays,
                         formHalfDay,
+                        formType,
                       )}{#if serverDays !== null && serverDays !== formDays}, Feiertage abgezogen{/if})
                     {/if}
                   </span>

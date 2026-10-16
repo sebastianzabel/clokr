@@ -38,6 +38,7 @@
     SICK_CODES,
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility";
+  import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
   import {
     showsBurlgSection7Notice,
     type LeaveReviewRequest,
@@ -114,11 +115,6 @@
     if (!iso) return "";
     const [y, m, d] = iso.split("-");
     return `${d}.${m}.${y}`;
-  }
-
-  function daysLabel(days: number, halfDay: boolean): string {
-    if (halfDay) return "½ Tag";
-    return days === 1 ? "1 Tag" : `${days} Tage`;
   }
 
   let approvedOverlap = $derived(overlap.filter((o) => o.status === "APPROVED"));
@@ -249,7 +245,9 @@
         </div>
         <div class="review-field">
           <span class="review-label">Umfang</span>
-          <span class="review-value">{daysLabel(Number(request.days), request.halfDay)}</span>
+          <span class="review-value"
+            >{leaveDaysLabel(Number(request.days), request.halfDay, request.typeCode)}</span
+          >
         </div>
         {#if request.note}
           <div class="review-field review-field--full">
