@@ -831,10 +831,12 @@ import { readFileSync } from "node:fs";
 // context-salon-ids-82, user-ids-holding-permission, employee-role-bridge, the `compatRoleForUser` describe removed with the
 // function) now assert the fail-closed reality, plus the independent empty-role oracle in the permission matrix; nothing was
 // skipped or weakened. MIN_FILES 592 -> 602, MIN_TESTS 9530 -> 9649. Never lowered.
-const MIN_FILES = 602;
+// Issue #644 (2026-10-16): new file `section9-reach-644.test.ts` with 3 cases, counted from the source:
+// MIN_FILES 602 -> 603, MIN_TESTS 9650 -> 9653.
+const MIN_FILES = 603;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
-const MIN_TESTS = 9650;
+const MIN_TESTS = 9653;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
