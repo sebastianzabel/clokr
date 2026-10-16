@@ -1560,6 +1560,21 @@ export async function employeeRoutes(app: FastifyInstance) {
       // Issue #614 (D-01): an anonymized person is no longer employed. Without an exit date the
       // exit day is the tenant-local today, stored as UTC midnight like a web-entered exit date.
       const exitDayIfUnset = todayInTz(await getTenantTimezone(app.prisma, req.user.tenantId));
+      // A STORED exit date is read with the convention that wrote it - its UTC calendar day (exit
+      // dates are written as UTC midnight, see the #447 WR-01 comment in PATCH /:id); only an
+      // empty one falls back to the tenant-local today the helper stores below.
+      const exitDay = employee.exitDate
+        ? new Date(`${employee.exitDate.toISOString().slice(0, 10)}T00:00:00Z`)
+        : exitDayIfUnset;
+      // Issue #614 (D-02): the Abwesenheiten rule decides what the exit ends. Pure reads, BEFORE
+      // the transaction opens; reached through the app.absenceExit decoration (no import: the
+      // Unterbau never imports a business context and an index re-export would grow the cycle).
+      const exitPlan = await app.absenceExit.plan({
+        tenantId: req.user.tenantId,
+        employeeId: id,
+        exitDay,
+      });
+      let exitResult: Awaited<ReturnType<FastifyInstance["absenceExit"]["apply"]>> | undefined;
 
       // Phase 74b (D-19/D-20/D-22): the anonymization, the per-assignment DELETE audits and the
       // ANONYMIZE audit run under the lockout guard. Anonymizing the tenant's last active
@@ -1569,6 +1584,19 @@ export async function employeeRoutes(app: FastifyInstance) {
       try {
         await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
           await withRoleLockoutGuard(tx, req.user.tenantId, async () => {
+            // Issue #614 (D-02): every absence change and its audit row come FIRST, so the PII
+            // sweep inside anonymizeEmployeeData also nulls the notes / document paths / § 9
+            // reasons of every row the exit wrote. One audit row per changed row, no free text.
+            exitResult = await app.absenceExit.apply(tx, exitPlan, (entry) =>
+              app.audit({
+                tx,
+                action: entry.action,
+                entity: entry.entity,
+                entityId: entry.entityId,
+                oldValue: entry.oldValue,
+                ...requestAuditFields(req, entry.newValue),
+              }),
+            );
             const { removedRoleAssignments, exitDate } = await anonymizeEmployeeData({
               tx,
               employeeId: id,
@@ -1610,6 +1638,13 @@ export async function employeeRoutes(app: FastifyInstance) {
               ...requestAuditFields(req, {
                 exitDate: exitDate.after.toISOString().slice(0, 10),
                 exitDateSet,
+                // Counts per bucket and the rows left alone (ids and UPPER_SNAKE codes only).
+                absencesEnded: {
+                  cancelled: exitResult.cancelled.length,
+                  shortened: exitResult.shortened.length,
+                  deleted: exitResult.deleted.length,
+                },
+                skipped: exitResult.skipped,
               }),
               tx,
             });
@@ -1619,8 +1654,19 @@ export async function employeeRoutes(app: FastifyInstance) {
         if (err instanceof RoleLockoutError) {
           return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
         }
+        // Issue #614: a planned absence changed between plan and apply; nothing was written.
+        if ((err as { code?: unknown }).code === "EMPLOYMENT_EXIT_CONFLICT") {
+          return reply.code(409).send({
+            error: "Abwesenheiten wurden gleichzeitig geändert – bitte erneut versuchen.",
+            code: "EMPLOYMENT_EXIT_CONFLICT",
+          });
+        }
         throw err;
       }
+
+      // Issue #614: reactive follow-up after the commit (snapshots, overtime balance, notices).
+      // Logs its own failures and never throws; runs before the MinIO deletes.
+      if (exitResult) await app.absenceExit.afterCommit(exitResult);
 
       // Delete MinIO objects after the Postgres tx has committed successfully.
       // Failures are non-fatal — legal anonymization is already committed.
