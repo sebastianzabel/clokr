@@ -5,6 +5,9 @@ import crypto from "crypto";
 import { Prisma } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
 import { hasPermission, requirePermission } from "../request-permissions";
+import { accessContextFromRequest } from "../access-context"; // Issue #654 — import reach
+import { resolveAccessReach } from "../facade/role-assignments"; // Issue #654 — import reach
+import { isStammsalonScopeMatch } from "../scope-filter"; // Issue #654 — import reach
 // eslint-disable-next-line no-restricted-imports -- E-2: the importer writes directly into time-tracking and working-time-account. Disappears in Block 2 (#102-#104). ADR 0001 Eintrag H.
 import {
   updateOvertimeAccount,
@@ -356,6 +359,14 @@ export async function importRoutes(app: FastifyInstance) {
       });
       const empMap = new Map(employees.map((e) => [e.employeeNumber, e.id]));
 
+      // Issue #654: the caller's `time-entry:import` reach, resolved ONCE per import. A row for a
+      // person outside it is answered like an unknown employee number (no membership oracle).
+      const importReach = await resolveAccessReach(
+        app.prisma,
+        accessContextFromRequest(req),
+        "time-entry:import:ZUGEWIESEN",
+      );
+
       // Wall-clock times in the CSV are in the tenant timezone, not UTC. Resolve once.
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
 
@@ -376,7 +387,22 @@ export async function importRoutes(app: FastifyInstance) {
             salonId: pickColumn(row, TIME_ENTRY_COLUMN_ALIASES.salonId),
           });
 
-          const employeeId = empMap.get(data.employeeNumber);
+          let employeeId = empMap.get(data.employeeNumber);
+          if (employeeId && importReach.kind !== "wholeTenant") {
+            // Same person rule as the entry scope (D-10): own person id, or the Stammsalon on the
+            // row's day. An unparsable day falls back to today so its own error still surfaces
+            // later for in-reach persons and never distinguishes in- from out-of-reach ones.
+            const rowDay = new Date(data.date);
+            const stichtag = Number.isNaN(rowDay.getTime()) ? new Date() : rowDay;
+            const inReach = await isStammsalonScopeMatch(
+              app.prisma,
+              req.user.tenantId,
+              importReach,
+              employeeId,
+              stichtag,
+            );
+            if (!inReach) employeeId = undefined;
+          }
           if (!employeeId)
             throw new Error(`Mitarbeiter-Nr. "${data.employeeNumber}" nicht gefunden`);
 
