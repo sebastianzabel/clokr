@@ -3,7 +3,10 @@
 import { describe, expect, it } from "vitest";
 import {
   assignmentRows,
+  deploymentBody,
+  endBody,
   formatCalendarDay,
+  homeBody,
   type SalonAssignment,
   type SalonRef,
 } from "$lib/employees/salon-assignments";
@@ -113,5 +116,47 @@ describe("assignmentRows (Issue #86, AC-86-5)", () => {
     assignmentRows(input, SALONS, today);
     expect(input).toEqual(copy);
     expect(assignmentRows([], [], today)).toEqual([]);
+  });
+});
+
+describe("request body builders (Issue #86, AC-86-5)", () => {
+  it("deploymentBody omits validUntil and weekdays when they are empty", () => {
+    const body = deploymentBody({
+      salonId: "s1",
+      validFrom: "2026-11-01",
+      validUntil: "",
+      weekdays: [],
+    });
+    expect(body).toEqual({ salonId: "s1", validFrom: "2026-11-01" });
+    expect(Object.keys(body)).toEqual(["salonId", "validFrom"]);
+  });
+
+  it("deploymentBody sends validUntil and the weekdays sorted ascending, input untouched", () => {
+    const weekdays = [5, 0, 3, 1];
+    const body = deploymentBody({
+      salonId: "s1",
+      validFrom: "2026-11-01",
+      validUntil: "2026-12-31",
+      weekdays,
+    });
+    expect(body).toEqual({
+      salonId: "s1",
+      validFrom: "2026-11-01",
+      validUntil: "2026-12-31",
+      weekdays: [0, 1, 3, 5],
+    });
+    expect(weekdays).toEqual([5, 0, 3, 1]);
+  });
+
+  it("homeBody sends exactly salonId and validFrom", () => {
+    const body = homeBody({ salonId: "s2", validFrom: "2026-11-01", ...{ extra: 1 } } as {
+      salonId: string;
+      validFrom: string;
+    });
+    expect(Object.keys(body).sort()).toEqual(["salonId", "validFrom"]);
+  });
+
+  it("endBody sends exactly validUntil", () => {
+    expect(endBody("2026-11-30")).toEqual({ validUntil: "2026-11-30" });
   });
 });

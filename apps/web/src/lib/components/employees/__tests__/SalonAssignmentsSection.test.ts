@@ -3,6 +3,7 @@
 // answers (`$api/client`) are mocked.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
+import { fireEvent } from "@testing-library/svelte";
 
 const apiGet = vi.fn();
 const apiPost = vi.fn();
@@ -152,5 +153,177 @@ describe("SalonAssignmentsSection - read (Issue #86, AC-86-5)", () => {
     renderWithTheme(SalonAssignmentsSection, { employeeId: E, canEdit: false });
     await settle();
     expect(document.body.textContent).toContain("Keine Salonzuordnung vorhanden.");
+  });
+});
+
+function byId<T extends HTMLElement = HTMLElement>(id: string): T {
+  const found = document.querySelector<T>(`[data-testid="${id}"]`);
+  if (!found) throw new Error(`missing test id ${id}`);
+  return found;
+}
+
+async function pickSalon(id: string) {
+  const select = document.querySelector<HTMLSelectElement>("#sa-salon");
+  if (!select) throw new Error("salon select missing");
+  select.value = id;
+  await fireEvent.change(select);
+}
+
+async function typeDate(inputId: string, value: string) {
+  const input = document.querySelector<HTMLInputElement>(`#${inputId}`);
+  if (!input) throw new Error(`input ${inputId} missing`);
+  input.value = value;
+  await fireEvent.input(input);
+}
+
+async function mountEditable() {
+  answer();
+  renderWithTheme(SalonAssignmentsSection, { employeeId: E, canEdit: true });
+  await settle();
+}
+
+describe("SalonAssignmentsSection - maintain (Issue #86, AC-86-5)", () => {
+  it("offers only ACTIVE salons in the select and no delete control anywhere", async () => {
+    await mountEditable();
+    await fireEvent.click(byId("salon-assignment-add"));
+    await settle();
+    const options = [...document.querySelectorAll<HTMLOptionElement>("#sa-salon option")].map((o) =>
+      o.textContent?.trim(),
+    );
+    expect(options).toEqual(["Bitte wählen", "Salon Nord", "Salon Süd"]);
+    for (const el of document.querySelectorAll("button")) {
+      expect(el.textContent).not.toMatch(/Löschen|Entfernen/);
+    }
+  });
+
+  it("posts the Einsatzsalon body exactly and reloads the list", async () => {
+    await mountEditable();
+    apiPost.mockResolvedValueOnce({ id: "new" });
+    await fireEvent.click(byId("salon-assignment-add"));
+    await settle();
+    expect(byId<HTMLButtonElement>("salon-assignment-submit").disabled).toBe(true);
+    await pickSalon("s-nord");
+    await typeDate("sa-from", "2026-11-02");
+    await typeDate("sa-until", "2026-12-31");
+    await fireEvent.click(byId("salon-assignment-weekday-5"));
+    await fireEvent.click(byId("salon-assignment-weekday-1"));
+    expect(byId<HTMLButtonElement>("salon-assignment-submit").disabled).toBe(false);
+    const getsBefore = apiGet.mock.calls.length;
+    await fireEvent.click(byId("salon-assignment-submit"));
+    await settle();
+    expect(apiPost).toHaveBeenCalledTimes(1);
+    expect(apiPost).toHaveBeenCalledWith(`/employees/${E}/salon-assignments`, {
+      salonId: "s-nord",
+      validFrom: "2026-11-02",
+      validUntil: "2026-12-31",
+      weekdays: [1, 5],
+    });
+    expect(apiGet.mock.calls.length).toBeGreaterThan(getsBefore);
+    expect(document.querySelector('[data-testid="salon-assignment-form"]')).toBeNull();
+  });
+
+  it("omits validUntil and weekdays when they are left empty", async () => {
+    await mountEditable();
+    apiPost.mockResolvedValueOnce({ id: "new" });
+    await fireEvent.click(byId("salon-assignment-add"));
+    await settle();
+    await pickSalon("s-sued");
+    await typeDate("sa-from", "2026-11-02");
+    await fireEvent.click(byId("salon-assignment-submit"));
+    await settle();
+    expect(apiPost).toHaveBeenCalledWith(`/employees/${E}/salon-assignments`, {
+      salonId: "s-sued",
+      validFrom: "2026-11-02",
+    });
+  });
+
+  it("posts the Stammsalon change to /home with exactly salonId and validFrom", async () => {
+    await mountEditable();
+    apiPost.mockResolvedValueOnce({ id: "new" });
+    await fireEvent.click(byId("salon-assignment-home"));
+    await settle();
+    expect(document.querySelector("#sa-until")).toBeNull();
+    await pickSalon("s-sued");
+    await typeDate("sa-from", "2026-12-01");
+    await fireEvent.click(byId("salon-assignment-submit"));
+    await settle();
+    expect(apiPost).toHaveBeenCalledWith(`/employees/${E}/salon-assignments/home`, {
+      salonId: "s-sued",
+      validFrom: "2026-12-01",
+    });
+  });
+
+  it("ends an open Einsatzsalon through /:id/end; the Stammsalon row has no Beenden", async () => {
+    await mountEditable();
+    expect(document.querySelector('[data-testid="salon-assignment-end-a1"]')).toBeNull();
+    expect(document.querySelector('[data-testid="salon-assignment-end-a3"]')).toBeNull();
+    apiPost.mockResolvedValueOnce({ id: "a2" });
+    await fireEvent.click(byId("salon-assignment-end-a2"));
+    await settle();
+    expect(byId<HTMLButtonElement>("salon-assignment-submit").disabled).toBe(true);
+    await typeDate("sa-end", "2026-11-30");
+    await fireEvent.click(byId("salon-assignment-submit"));
+    await settle();
+    expect(apiPost).toHaveBeenCalledWith(`/employees/${E}/salon-assignments/a2/end`, {
+      validUntil: "2026-11-30",
+    });
+  });
+
+  it("shows a 409 verbatim, keeps the form open with its values and removes no row", async () => {
+    await mountEditable();
+    const text =
+      "Der Mitarbeiter ist an diesen Wochentagen bereits einem anderen Salon zugeordnet.";
+    apiPost.mockRejectedValueOnce(new ApiError(409, text));
+    await fireEvent.click(byId("salon-assignment-add"));
+    await settle();
+    await pickSalon("s-nord");
+    await typeDate("sa-from", "2026-11-02");
+    await fireEvent.click(byId("salon-assignment-submit"));
+    await settle();
+    expect(byId("salon-assignment-error").textContent?.trim()).toBe(text);
+    expect(document.querySelector('[data-testid="salon-assignment-form"]')).not.toBeNull();
+    expect(document.querySelector<HTMLSelectElement>("#sa-salon")?.value).toBe("s-nord");
+    expect(document.querySelector<HTMLInputElement>("#sa-from")?.value).toBe("2026-11-02");
+    expect(rowTexts().length).toBe(4);
+    expect(byId<HTMLButtonElement>("salon-assignment-submit").disabled).toBe(false);
+  });
+
+  it("shows a 400 verbatim as well", async () => {
+    await mountEditable();
+    const text = "Der Salon ist deaktiviert.";
+    apiPost.mockRejectedValueOnce(new ApiError(400, text));
+    await fireEvent.click(byId("salon-assignment-home"));
+    await settle();
+    await pickSalon("s-nord");
+    await typeDate("sa-from", "2026-11-02");
+    await fireEvent.click(byId("salon-assignment-submit"));
+    await settle();
+    expect(byId("salon-assignment-error").textContent?.trim()).toBe(text);
+  });
+
+  it("disables the submit button while the request runs", async () => {
+    await mountEditable();
+    let release: (v: unknown) => void = () => {};
+    apiPost.mockReturnValueOnce(new Promise((r) => (release = r)));
+    await fireEvent.click(byId("salon-assignment-home"));
+    await settle();
+    await pickSalon("s-nord");
+    await typeDate("sa-from", "2026-11-02");
+    await fireEvent.click(byId("salon-assignment-submit"));
+    await settle();
+    expect(byId<HTMLButtonElement>("salon-assignment-submit").disabled).toBe(true);
+    expect(byId<HTMLButtonElement>("salon-assignment-add").disabled).toBe(true);
+    release({});
+    await settle();
+  });
+
+  it("offers no add button when the caller cannot list salons", async () => {
+    answer({ salons: new ApiError(403, "Keine Berechtigung") });
+    renderWithTheme(SalonAssignmentsSection, { employeeId: E, canEdit: true });
+    await settle();
+    expect(document.querySelector('[data-testid="salon-assignment-add"]')).toBeNull();
+    expect(document.querySelector('[data-testid="salon-assignment-home"]')).toBeNull();
+    // ending a row needs no salon list
+    expect(document.querySelector('[data-testid="salon-assignment-end-a2"]')).not.toBeNull();
   });
 });

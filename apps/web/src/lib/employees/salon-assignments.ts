@@ -116,3 +116,43 @@ export function assignmentRows(
     };
   });
 }
+
+// ── Request bodies ───────────────────────────────────────────────────────────
+// The API schemas are `.strict()`: a key the route does not know is a 400, and an optional key is
+// OMITTED, never sent as `null` by these builders.
+
+export interface DeploymentDraft {
+  salonId: string;
+  validFrom: string;
+  validUntil: string;
+  weekdays: number[];
+}
+
+/** Body of `POST /employees/:id/salon-assignments` (a new Einsatzsalon). */
+export function deploymentBody(draft: DeploymentDraft): {
+  salonId: string;
+  validFrom: string;
+  validUntil?: string;
+  weekdays?: number[];
+} {
+  const body: { salonId: string; validFrom: string; validUntil?: string; weekdays?: number[] } = {
+    salonId: draft.salonId,
+    validFrom: draft.validFrom,
+  };
+  if (draft.validUntil) body.validUntil = draft.validUntil;
+  if (draft.weekdays.length > 0) body.weekdays = [...draft.weekdays].sort((a, b) => a - b);
+  return body;
+}
+
+/** Body of `POST /employees/:id/salon-assignments/home` (exactly these two keys). */
+export function homeBody(draft: { salonId: string; validFrom: string }): {
+  salonId: string;
+  validFrom: string;
+} {
+  return { salonId: draft.salonId, validFrom: draft.validFrom };
+}
+
+/** Body of `POST /employees/:id/salon-assignments/:assignmentId/end`. */
+export function endBody(validUntil: string): { validUntil: string } {
+  return { validUntil };
+}
