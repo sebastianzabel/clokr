@@ -2723,6 +2723,115 @@ pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-mat
 pnpm --filter @clokr/web exec vitest run src/lib/dashboard src/lib/leave src/__tests__/team-week-cell-links-587.test.ts
 ```
 
+### Nachtrag 2026-10-17 (Phase 542, Issue #542) — Berichte folgen der Salonauswahl: Monatsbericht, Anwesenheit heute, Saldenübersicht, Monatsexport
+
+**Schwere:** Erweiterung; keine Unterbau-, Schema-, Migrations-, Routen- oder Permission-Änderung. Ein neues reines
+Kompositionsmodul (`composition/salon-view.ts`, keine Imports, keine Geschäftsregel außer der Zugehörigkeitsregel einer
+Salonansicht, die nur die beiden Zuordnungen aus #84 zusammenfügt). Zusätzliche Felder in den Antworten nur unter einem
+Filter; ohne `salonId` ist jede Antwort Schlüssel für Schlüssel und Zahl für Zahl gleich (eingefrorene Pins unverändert).
+
+**Was sich geändert hat:**
+
+Vier Stellen nehmen eine optionale `salonId`; der Salon wird in jedem Fall von `resolveSalonInReach()` gegen die Reichweite
+der **eigenen** Berechtigung(en) der Route geprüft, **vor jedem Lesen**: Monatsbericht `report:read`, Anwesenheit heute
+`team-overview:read`, Saldenübersicht beide (`team-overview:read` und `overtime:read`), Monatsexport `report:export`.
+Fremder, unbekannter, deaktivierter und nicht erreichbarer Salon antworten mit derselben 404
+(`SALON_VIEW_NOT_FOUND`, `{"error":"Salon nicht gefunden"}`, byte-gleich an allen vier Stellen und am Team-Verlauf des
+Dashboards); eine ungültige Kennung antwortet 400. Der Filter schneidet nur ein, er erweitert die Reichweite nie.
+
+- **Monatsbericht** (`GET /reports/monthly`): Zugehörigkeit über `salonViewMemberIds()` (`composition/salon-view.ts`),
+  die EINE Regel einer Salonansicht: die Person hat im Zeitraum einen Eintrag im Salon **oder** ihr Stammsalon ist an
+  mindestens einem Tag des Zeitraums der Salon. Ist (`workedHours`) nur aus geschlossenen, gültigen Arbeitseinträgen des
+  Salons bis zum mandantenlokalen Gestern (`addWorkingMinutes`; heute zählt nie, #438; eine Dienstreise zählt für den
+  Abfahrtssalon, #92; die Berufsschul-Gutschrift gehört keinem Salon); Krankheitstage und § 9-Tage an den Tagen, an denen
+  der Stammsalon der Salon ist (`sickLeaveDayCounts(..., { countsDay })` mit `homeSalonsForDays`, #84). Soll, Saldo,
+  Überstunden, Saldokorrektur und die acht bewerteten Urlaubszahlen sind `null`; zusätzlich stehen `salonId`,
+  `workedBasis: "SALON_ENTRIES"`, `sollUnavailableReason: "SALON_FILTER"` und `leaveDaysUnavailableReason: "SALON_FILTER"`
+  in der Antwort, nur unter einem Filter.
+- **Anwesenheit heute** (`GET /dashboard/today-attendance`): Zugehörigkeit über dieselbe Funktion wie die Team-Woche
+  (Eintrag heute im Salon oder Stammsalon heute); der Status jeder Zeile bleibt der der ungefilterten Liste (gebildet aus
+  allen Einträgen der Person); neu ist `workedElsewhere` je Zeile (gültige Arbeitszeit in einem anderen Salon, nur ein
+  Wahrheitswert); die fünf Summen zählen die angezeigten Zeilen; die Antwort trägt `salonId`. `/team-week` entscheidet
+  die Zugehörigkeit seit dieser Phase über dieselbe Funktion, unverändert in den Bytes (`dashboard-team-week-frozen-84`).
+- **Saldenübersicht** (`GET /dashboard/overtime-overview`) und **Monatsexport** (`GET /reports/monthly-export/pdf`):
+  die Filter wählen nur aus, WELCHE Personen erscheinen, nach dem Stammsalon am **eigenen Stichtag des Endpunkts**, den
+  die Auflösung als **Kalendertag** (UTC-Mitternacht, nie als Zeitpunkt, #493) bekommt — in der Saldenübersicht der
+  mandantenlokale heutige Tag, für ausgetretene Personen ihr Austrittstag; im Monatsexport der letzte Kalendertag des
+  Monats, für im Monat Ausgetretene ihr Austrittstag. Jede Person erscheint mit ihrem vollständigen Personensaldo,
+  nie mit einem Salonanteil; der Monatsexport druckt unter einem Filter eine Kopfzeile „Salon: <Name> · Personen nach
+  Stammsalon am Monatsende · Personensaldo, nicht nach Salon aufgeteilt“ und trägt die Salon-Kennung (nur die Kennung)
+  im Exportprotokoll. Personen, die am Stichtag keinen Stammsalon haben (kein Rückgriff auf den „letzten Stammsalon“;
+  das wäre eine zweite Zugehörigkeitsregel), erscheinen nur im Export ohne Salonauswahl; die Seite sagt es in einem Satz.
+- **Seite „Berichte“**: folgt der Kopfleistenauswahl über `salonPageFilter()` und beschriftet über `SalonScopeLabel`
+  (`$lib/salons/page-scope.ts`), ohne neue Entscheidungsfunktion. Gefiltert werden Heutige Anwesenheit (Badge „anderer
+  Salon“), Überstunden-Übersicht und Monatsexport. Ungefiltert und mit dem Hinweis „Gilt für alle Salons Ihrer
+  Reichweite“ bzw. „DATEV gilt für alle Salons Ihrer Reichweite“ bleiben die DATEV-Karte, die Dokumente einzelner
+  Personen, die Urlaubsübersicht und die Verfall-Warnungen (Blocktabelle in `salon-filter-exempt-pages-558.test.ts`).
+- **Die Reichweite der Aufrufer in der Saldenübersicht** (beide Reichweiten) wird jetzt am mandantenlokalen Kalendertag
+  statt am Zeitpunkt `new Date()` ausgewertet: eine `@db.Date`-Spalte kürzt einen Zeitpunkt auf das UTC-Datum, das
+  zwischen 22:00 und 24:00 UTC der Vortag ist. Ohne Filter ändert sich die Antwort nur in diesen zwei Stunden und nur für
+  Aufrufer mit Salon-Reichweite, deren Zuordnung um Mitternacht wechselt.
+
+**Auswirkung auf die Kontexte:**
+
+- Zeiterfassung: keine.
+- Abwesenheiten: keine; `sickLeaveDayCounts(..., { countsDay })` kannte den Tagesfilter bereits (#84).
+- Schichtplanung: keine.
+- Arbeitszeitkonto: keine; das Konto wird unter einem Filter nicht gefragt (Soll und Saldo erscheinen dort nicht).
+- Unterbau: keine Änderung; `resolveSalonInReach`, `homeSalonsForDays` und `salonOnlyReach` bekommen neue Leser in der
+  Kompositionsschicht.
+- Kompositionsschicht: `salon-view.ts` und vier Handler (`reports.ts`: Monatsbericht und Monatsexport;
+  `dashboard.ts`: Anwesenheit und Saldenübersicht); die Kompositionsschicht trägt weiter keine Geschäftsregel außer
+  der Zusammenfügung der zwei Zuordnungen.
+
+**Was bewusst NICHT geschah:**
+
+- Keine Aufteilung von Soll oder Saldo auf Salons (Vertragsgrößen, #84). Keine bewerteten Urlaubstage je Salon: sie
+  folgen einer Vorab-Reihenfolge je Zeitraum und lassen sich nicht je Tag einem Salon zuordnen; eine Tagesvariante wäre
+  eine zweite Zählregel (#451).
+- DATEV bleibt vollständig und nimmt nie einen Salon (§ 41 EStG); die Dokumente einzelner Personen ebenso. Die Quelltext-
+  Wächter `report-salon-filter-source-542` und die Blocktabelle halten das fest.
+- Die Urlaubsübersicht und die Verfall-Warnungen folgen dem Salon erst mit #612.
+- Der Rest aus #85 bleibt: für Aufrufer mit Salon-Reichweite ist die Personenmenge des Monatsberichts nach Stammsalon am
+  Monatsende der Rahmen; der Filter schneidet nur weiter ein.
+- Der Stichtag der Reichweite des Aufrufers in Monatsbericht und Monatsexport ist weiter das Monatsende als Zeitpunkt.
+  Gemessen (542-03, Reichweitensonde): Für einen Berliner Mandanten fällt eine am Monatsletzten endende Zuordnung nicht
+  heraus (Prisma kürzt auf das UTC-Datum, das mit dem lokalen Tag zusammenfällt). Bestätigt ist nur der Fall einer im
+  Monat ausgeschiedenen Person, deren Zuordnung nach dem Austrittstag wechselte: Ein Aufrufer mit Salon-Reichweite des
+  alten Salons sieht sie nicht, die Gesamtmandanten-Administration schon. Das ist älter als #542 und steht mit allen
+  Stellen (Datei:Zeile) im Folge-Issue #679.
+- Der § 9-Hinweis der Karte „Monatsexport“ bleibt ungefiltert (eine Obermenge: er kann warnen, obwohl keine Person
+  des gefilterten Exports § 9-Tage hat, und verdeckt nie etwas). Eine Berechnung aus der Personenmenge des Exports
+  bräuchte ein neues API-Feld; das gehört nicht in diese Phase.
+- Kein Eingriff am MCP-Werkzeug; kein neuer Endpunkt; keine neue Berechtigung.
+- Einzelne frühere Sätze gelten damit nicht mehr (die Einträge bleiben stehen): im Nachtrag Phase 85b „Kein Salonfilter
+  in `/reports` (#542)“; im Nachtrag Phase 558 „Berichte (#542) bekommen keinen Salonfilter.“; im Nachtrag Phase 587
+  „Die Anwesenheitsliste hat noch keinen Salonfilter (#542).“; im Nachtrag #617 (Eintrag Q) „Kein Salonfilter. #542
+  verengt `selectMonthlyExportPersons` nach Stammsalon“ — der Monatsexport grenzt jetzt dort ein, DATEV weiterhin nie.
+
+**Gemessen** (Quellen: `542-01` … `542-05-SUMMARY.md`):
+
+- Neue API-Testdateien (75 Fälle): `salon-view` 8, `reports-salon-filter-542` 15, `report-salon-filter-source-542` 15,
+  `dashboard-salon-filter-542` 23, `monthly-export-salon-filter-542` 9, `monthly-export-salon-label-542` 5. Web: neu
+  `reports-salon-filter-542`; erweitert `page-scope` und `salon-filter-exempt-pages-558`.
+- Mutationsbeweise (je zurückgespielt und byte-verglichen): Monatsbericht M1–M5, Anwesenheit M1–M4, Saldenübersicht
+  M1–M6 (M6: Reichweite des Aufrufers am Zeitpunkt, rot um 23:30 UTC), Monatsexport M1–M6, Seite M1–M4.
+- Neutralität: 3 Dateien, 1720 Fälle, 0 geänderte Zellen (542-01, 542-03, 542-05); `neutrality/recorded/` und die
+  eingefrorenen Pins `reports-monthly-frozen-84`, `reports-hr-86`, `dashboard-team-week-frozen-84`,
+  `whole-tenant-frozen-85` sind byte-gleich zum Merge-Base.
+- Gesamtläufe (Stand Abschluss Phase 542): API 691 Dateien / 10496 Tests (10493 grün, 3 übersprungen); Web 231 Dateien /
+  3488 Tests grün; Boden `check-test-completeness.mjs` 685 → 691 Dateien, 10420 → 10496 Tests.
+
+### Nachrechnen (Nachtrag Phase 542)
+
+```bash
+pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest run src/composition/__tests__/salon-view.test.ts src/__tests__/reports-salon-filter-542.test.ts src/__tests__/report-salon-filter-source-542.test.ts src/composition/__tests__/dashboard-salon-filter-542.test.ts src/__tests__/monthly-export-salon-filter-542.test.ts src/composition/__tests__/monthly-export-salon-label-542.test.ts
+pnpm --filter @clokr/api exec vitest run src/composition/__tests__/reports-monthly-frozen-84.test.ts src/__tests__/reports-hr-86.test.ts src/composition/__tests__/dashboard-team-week-frozen-84.test.ts src/__tests__/whole-tenant-frozen-85.test.ts src/__tests__/salon-context-manipulation-82.test.ts   # eingefrorene Pins, unverändert grün
+pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts src/__tests__/notification-recipients-neutrality.test.ts src/__tests__/activity-auth-neutrality.test.ts   # unverändert grün, ohne Nachtrag
+pnpm --filter @clokr/web exec vitest run src/__tests__/reports-salon-filter-542.test.ts src/__tests__/salon-filter-exempt-pages-558.test.ts src/lib/salons
+grep -c 'salonViewMemberIds(' apps/api/src/composition/*.ts   # eine Definition, je ein Aufruf im Monatsbericht, zwei im Dashboard (Anwesenheit, Team-Woche)
+```
+
 ## Q — Systemrollen-Templates und zwei Saldo-Gates (Phase 76b, Issue #76)
 
 **Schwere: informativ. Unterbau-Erweiterung nach ADR 0002, Entscheidung 7 (additiv, kein

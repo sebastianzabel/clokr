@@ -267,8 +267,9 @@ Current: recalculated from hire date on every request (does not scale). Target a
 - **Two report documents; the Monatsexport is the human-readable twin of DATEV (Issue #617).** `GET
   /reports/monthly-export/pdf` (`report:export:ZUGEWIESEN`, one PDF for all persons of a month): its
   persons come only through `selectMonthlyExportPersons` (`composition/reports.ts`) on the shared DATEV
-  loader (`loadDatevMonth`, the employment core `employedInPeriodWhere`, § 41 EStG) — the ONE place #542
-  narrows by Stammsalon, DATEV itself is never narrowed; absence counts and „DATEV-Std.“ come only from
+  loader (`loadDatevMonth`, the employment core `employedInPeriodWhere`, § 41 EStG) — the ONE place the
+  optional `salonId` of #542 narrows the persons (by Stammsalon on each person's own Stichtag, see the #542 bullet
+  below); DATEV itself is never narrowed; absence counts and „DATEV-Std.“ come only from
   `datevPersonFigures` (Arbeitstage and Normalstunden, the DATEV values); Soll, Ist, Saldo, Status and the
   Gesamtsaldo (`closingBalanceMinutes`) come only from `computeMonthReportFigures`; the section
   „Urlaubsjahr“ comes only from the vacation facade at the Stichtag (`asOf` = last day of the exported
@@ -1119,7 +1120,8 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   `/reports/monthly` (`computeMonthReportFigures`, including the snapshot and the Berufsschule
   credit, which no salon receives). Presence status and holidays use ALL of a person's entries, so a
   day worked in another salon is never a false „Fehlt“ (D-15); `workedElsewhere` and `salonId` appear
-  in the team-week response only under a filter. `/reports` has no salon filter yet (follow-up issue).
+  in the team-week response only under a filter. The reports follow the salon context since #542 (see the
+  bullet below).
   **Scoped callers follow the per-entry rule (Issue #85, D-04/D-06),** which replaces the Phase 84
   "the filter only removes rows" reading for them: on `/team-week`, `/today-attendance` and
   `/team-trend` the population is the Stammsalon persons UNION the persons with an in-scope entry
@@ -1170,9 +1172,29 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   new shift in the selected salon while generate/copy-week act on the whole reach (the dialogs say so).
   Not filtered, each pinned with its reason in `salon-filter-exempt-pages-558.test.ts`: `/inbox`,
   `/shifts/conflicts` (#645 — the filter is not its fix), month close, audit log, configuration pages
-  and their pickers, `/admin/salons`, personal pages; reports are #542. `GET /leave/section9` has been
+  and their pickers, `/admin/salons`, personal pages; on `/reports` the DATEV card, the per-person documents,
+  the Urlaubsübersicht and the Verfall-Warnungen (block table in the same test). `GET /leave/section9` has been
   reach-scoped since #644 (PR #646) and the salon filter intersects with that reach; per-salon
   minimum staffing is #647.
+- **The reports follow the salon context (Issue #542).** `GET /reports/monthly`,
+  `GET /dashboard/today-attendance`, `GET /dashboard/overtime-overview` and
+  `GET /reports/monthly-export/pdf` take an optional `salonId`, validated by `resolveSalonInReach()` against the reach of
+  the route's OWN permission(s) (the overview: both `team-overview:read` and `overtime:read`) before any read; every
+  rejection is the one 404 body `SALON_VIEW_NOT_FOUND` (`composition/salon-view.ts`), a malformed id is 400. The filter
+  only narrows, never widens. `salonViewMemberIds()` (`composition/salon-view.ts`) is the ONE membership rule of a salon
+  view (an entry in the salon, or the Stammsalon on a day of the window) for the monthly report, the attendance list
+  and the team week; no second one may be added. The monthly report under a filter shows Ist from closed valid WORK
+  entries of the salon through tenant-local yesterday and sick/§ 9 days by Stammsalon per day, and withholds Soll,
+  saldo, Überstunden, balance adjustment and the priced leave counts (`null`, with `workedBasis`,
+  `sollUnavailableReason`, `leaveDaysUnavailableReason`; the keys exist only under a filter). The Saldenübersicht and the
+  Monatsexport only narrow WHICH persons appear, by Stammsalon on the endpoint's own Stichtag passed as a CALENDAR day
+  (#493; the Monatsexport judges a leaver on the exit day), each person with the whole saldo („Personensaldo, nicht nach
+  Salon aufgeteilt“); a person without a Stammsalon on that day appears only unfiltered (no "last Stammsalon"
+  fallback). Soll and saldo are NEVER split by salon and DATEV is NEVER filtered (§ 41 EStG). Tests:
+  `reports-salon-filter-542`, `dashboard-salon-filter-542`, `monthly-export-salon-filter-542`,
+  `report-salon-filter-source-542` (AST: validation before any read, one membership rule, DATEV unfiltered) and the
+  exempt-block table in `salon-filter-exempt-pages-558.test.ts`. Known limit: a scoped caller's own reach in the monthly
+  report and export is still judged at the month end instant (leaver case, #679).
 
 ### Operator principal and tenant deactivation (Phase 88, Issue #88)
 
