@@ -6,6 +6,7 @@ import {
   holidaysAtWorkLocation,
   accessContextFromRequest,
   employeeScopeFor,
+  reportPopulationWhere, // Issue #613 — the one period-population rule
   isEmployedInPeriod, // Issue #613 — the one period-population rule (in-memory twin)
   type WorkLocationEntry,
   type HolidaysByEmployee,
@@ -924,13 +925,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
           ? "all"
           : [...attendanceScopedIds, ...distinctEmployeeIds(inScopeRows ?? [])];
 
-      // Bulk fetch 1 — active employees for this tenant
+      // Bulk fetch 1 — the persons employed today. Issue #613 (P-02): the Stichtag form of the
+      // period population (the tenant-local day as period); a notice exit date no longer hides a
+      // person before the exit day, a login state never decides, an anonymised person never shows.
+      const attendanceDay = dayRangeUtc(todayStr, tz);
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
-          exitDate: null,
-          user: { isActive: true },
-          ...(attendancePopulationIds !== "all" ? { id: { in: attendancePopulationIds } } : {}),
+          AND: [
+            reportPopulationWhere(attendanceDay.start, attendanceDay.end),
+            ...(attendancePopulationIds !== "all" ? [{ id: { in: attendancePopulationIds } }] : []),
+          ],
         },
         select: { id: true, firstName: true, lastName: true, employeeNumber: true },
         orderBy: { lastName: "asc" },
@@ -1885,11 +1890,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
       sixMonthsAgo.setUTCDate(0);
       sixMonthsAgo.setUTCHours(0, 0, 0, 0);
 
-      // First fetch active employee IDs for this tenant.
+      // First fetch the employee IDs of the trend window's population.
       // Prisma groupBy does not support relation filters in `where`, so we resolve
-      // tenant scoping via a separate employee query.
+      // tenant scoping via a separate employee query. Issue #613: the population is the persons
+      // employed at some point in the window and never anonymised (`reportPopulationWhere`), so a
+      // person who left inside the window still counts in the months they were employed; a login
+      // state never decides.
       const employees = await app.prisma.employee.findMany({
-        where: { tenantId, user: { isActive: true } },
+        where: { tenantId, ...reportPopulationWhere(sixMonthsAgo, new Date()) },
         select: { id: true },
       });
 
@@ -2020,7 +2028,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
         string,
         Awaited<ReturnType<typeof getRecordedWorkEntriesByIds>>
       >();
-      const scopedActiveIds = new Set<string>();
+      // Issue #613: the persons listed by an in-scope entry, with their employment, so each month
+      // can ask `isEmployedInPeriod` for that month (the same population as /reports/monthly).
+      const scopedActivePersons = new Map<string, { hireDate: Date; exitDate: Date | null }>();
       if (reach.kind === "scoped") {
         const first = new Date(
           Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - (months - 1), 1),
@@ -2054,16 +2064,26 @@ export async function dashboardRoutes(app: FastifyInstance) {
           if (list) list.push(row);
           else scopedRowsByMonth.set(monthKey, [row]);
         }
+        const windowStartInstant = monthRangeUtc(
+          first.getUTCFullYear(),
+          first.getUTCMonth() + 1,
+          tz,
+        ).start;
+        const windowEndInstant = monthRangeUtc(
+          today.getUTCFullYear(),
+          today.getUTCMonth() + 1,
+          tz,
+        ).end;
         const active = await app.prisma.employee.findMany({
           where: {
             tenantId,
-            exitDate: null,
-            user: { isActive: true },
+            ...reportPopulationWhere(windowStartInstant, windowEndInstant),
             id: { in: distinctEmployeeIds(rows) },
           },
-          select: { id: true },
+          select: { id: true, hireDate: true, exitDate: true },
         });
-        for (const p of active) scopedActiveIds.add(p.id);
+        for (const p of active)
+          scopedActivePersons.set(p.id, { hireDate: p.hireDate, exitDate: p.exitDate });
       }
 
       const window: Array<{
@@ -2080,8 +2100,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - back, 1));
         const year = d.getUTCFullYear();
         const month = d.getUTCMonth() + 1;
-        // Same population and Stichtag as GET /reports/monthly (month end).
-        const { end } = monthRangeUtc(year, month, tz);
+        // Same population as GET /reports/monthly for this month (Issue #613) and the same Stichtag
+        // (month end) for the reach.
+        const { start, end } = monthRangeUtc(year, month, tz);
         const { firstDay, lastDay } = monthDateRange(year, month, tz);
         const scopedIds =
           reach.kind === "wholeTenant"
@@ -2090,18 +2111,22 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const people = await app.prisma.employee.findMany({
           where: {
             tenantId,
-            exitDate: null,
-            user: { isActive: true },
-            ...(scopedIds === "all" ? {} : { id: { in: scopedIds } }),
+            AND: [
+              reportPopulationWhere(start, end),
+              ...(scopedIds === "all" ? [] : [{ id: { in: scopedIds } }]),
+            ],
           },
           select: { id: true },
         });
         const ids = people.map((p) => p.id).sort((a, b) => a.localeCompare(b));
         const key = `${year}-${String(month).padStart(2, "0")}`;
         const stammIds = new Set(ids);
-        const entryOnlyIds = distinctEmployeeIds(scopedRowsByMonth.get(key) ?? []).filter(
-          (id) => scopedActiveIds.has(id) && !stammIds.has(id),
-        );
+        const entryOnlyIds = distinctEmployeeIds(scopedRowsByMonth.get(key) ?? []).filter((id) => {
+          const person = scopedActivePersons.get(id);
+          return (
+            person !== undefined && isEmployedInPeriod(person, start, end) && !stammIds.has(id)
+          );
+        });
 
         if (overtimeReach && overtimeReach.kind === "scoped") {
           const covered = await resolveStammsalonScopedEmployeeIds(
