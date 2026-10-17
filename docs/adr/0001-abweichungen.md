@@ -2819,8 +2819,9 @@ Dashboards); eine ungültige Kennung antwortet 400. Der Filter schneidet nur ein
 - Neutralität: 3 Dateien, 1720 Fälle, 0 geänderte Zellen (542-01, 542-03, 542-05); `neutrality/recorded/` und die
   eingefrorenen Pins `reports-monthly-frozen-84`, `reports-hr-86`, `dashboard-team-week-frozen-84`,
   `whole-tenant-frozen-85` sind byte-gleich zum Merge-Base.
-- Gesamtläufe (Stand Abschluss Phase 542): API 691 Dateien / 10496 Tests (10493 grün, 3 übersprungen); Web 231 Dateien /
-  3488 Tests grün; Boden `check-test-completeness.mjs` 685 → 691 Dateien, 10420 → 10496 Tests.
+- Gesamtläufe (Stand Abschluss Phase 542): API 692 Dateien / 10513 Tests (10510 grün, 3 übersprungen, nach dem Merge von
+  origin/main @ 8835ef5e); Web 231 Dateien / 3488 Tests grün; Boden `check-test-completeness.mjs` 686 → 692 Dateien,
+  10437 → 10513 Tests.
 
 ### Nachrechnen (Nachtrag Phase 542)
 
