@@ -42,17 +42,17 @@ const { values } = parseArgs({
   },
 });
 
-const employeeId = values["employee-id"];
+const employeeIdArg = values["employee-id"];
 const balanceArg = values["balance"];
-const actorId = values["actor-id"];
+const actorIdArg = values["actor-id"];
 const cutoffArg = values["cutoff"];
 const APPLY = values["apply"] ?? false;
 
 const balanceHours = balanceArg !== undefined ? Number(balanceArg) : NaN;
 
 if (
-  !employeeId ||
-  !actorId ||
+  !employeeIdArg ||
+  !actorIdArg ||
   !cutoffArg ||
   !/^\d{4}-\d{2}-\d{2}$/.test(cutoffArg) ||
   Number.isNaN(balanceHours)
@@ -64,6 +64,10 @@ if (
   );
   process.exit(1);
 }
+
+// Narrowed by the usage guard above; a module-level alias keeps the type inside function bodies.
+const employeeId: string = employeeIdArg;
+const actorId: string = actorIdArg;
 
 const CUTOFF = new Date(cutoffArg + "T00:00:00Z");
 const balanceMinutes = Math.round(balanceHours * 60);

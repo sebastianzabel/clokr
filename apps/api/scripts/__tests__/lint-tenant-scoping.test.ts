@@ -35,6 +35,10 @@ function call(overrides: Partial<PrismaCall> = {}): PrismaCall {
   };
 }
 
+// `findMany` is not one of the eight client-id-relevant methods, only the nullish-tenant scan reports
+// it — the tests below deliberately feed it to the exception matcher anyway.
+const NULLISH_ONLY_METHOD = "findMany" as PrismaCall["method"];
+
 const REASON = "This model has no tenant relevance at all, confirmed against the DMMF graph.";
 
 // ── Task 1: exception mechanism (handler-grouped entries, coordinator decision on 204-04) ──────
@@ -791,7 +795,7 @@ describe("exception rule discriminator (nullish-tenant)", () => {
   it("an entry without a rule never silences a nullish finding", () => {
     const validated = validateExceptions(
       [entry()],
-      [call({ file: nullishFinding.file, line: 12, model: "salon", method: "findMany" })],
+      [call({ file: nullishFinding.file, line: 12, model: "salon", method: NULLISH_ONLY_METHOD })],
       [nullishFinding],
     );
     expect(validated.ok).toBe(true);
@@ -815,7 +819,7 @@ describe("exception rule discriminator (nullish-tenant)", () => {
       file: nullishFinding.file,
       line: 12,
       model: "salon",
-      method: "findMany",
+      method: NULLISH_ONLY_METHOD,
     });
     expect(matchException(clientSupplied, validated.entries)).toBeNull();
   });

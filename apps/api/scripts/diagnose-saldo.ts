@@ -213,11 +213,11 @@ async function main() {
     );
     const wd = effectiveSchedule.workDays as number[];
     const allZero =
-      effectiveSchedule.mondayHours === 0 &&
-      effectiveSchedule.tuesdayHours === 0 &&
-      effectiveSchedule.wednesdayHours === 0 &&
-      effectiveSchedule.thursdayHours === 0 &&
-      effectiveSchedule.fridayHours === 0;
+      Number(effectiveSchedule.mondayHours) === 0 &&
+      Number(effectiveSchedule.tuesdayHours) === 0 &&
+      Number(effectiveSchedule.wednesdayHours) === 0 &&
+      Number(effectiveSchedule.thursdayHours) === 0 &&
+      Number(effectiveSchedule.fridayHours) === 0;
     if (allZero) {
       console.log(
         "WARNING: All weekday hours = 0 → expected = 0 → jede gearbeitete Minute wird zu Überstunden",

@@ -889,6 +889,11 @@ import { readFileSync } from "node:fs";
 // leave-cancellation-section9-662 and scripts/__tests__/audit-662-cancelled-leave-section9; anonymization-absence-kinds-614
 // swaps the SECTION9_CREDIT_ACTIVE skip case for two cases of the new behaviour. MIN_FILES 672 -> 674, never lowered.
 // Merge #662 onto #664 (2026-10-17): both additions summed (672 + 1 + 2 = 675), no file removed.
+// Issue #663 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on `fix/663-backfill-leave-fields`
+// (origin/main @ c6f29716) - 674 test files, 10354 tests (10351 passed, 3 skipped). New files (+2):
+// scripts/__tests__/backfill-month-snapshots-leave-fields-663 and scripts/__tests__/audit-663-backfilled-snapshots;
+// nothing removed, skipped or loosened. MIN_FILES 672 -> 674, never lowered.
+// Merge #663 onto main (2026-10-17): main 675 + 2 = 677. Never lowered.
 // Phase 617 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on `fix/617-monatsexport`
 // (origin/main @ c6f29716, phase 587 merged in, after 617-03) - 677 test files, 10400 tests (10397 passed, 3 skipped).
 // New files since 672: pdf-format-617, monthly-export-render-617, monthly-export-617, vacation-balance-split-617 and
@@ -900,7 +905,8 @@ import { readFileSync } from "node:fs";
 // stundennachweis-day-rows-617 and pdf-output-guard-617 (+3); nothing removed, skipped or loosened in this step.
 // MIN_FILES 677 -> 681, never lowered.
 // Merge #617 onto main (2026-10-17): main 675 + 8 = 683. Never lowered.
-const MIN_FILES = 683;
+// Merge #617 onto main (2026-10-17): main 677 + 8 = 685. Never lowered.
+const MIN_FILES = 685;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -916,6 +922,8 @@ const MIN_FILES = 683;
 // Issue #664 (2026-10-17): MIN_TESTS 10346 -> 10350 (+4), the measured total of the full run named at MIN_FILES. Never lowered.
 // Issue #662 (2026-10-17): MIN_TESTS 10346 -> 10359 (+13), the measured total of the full run named at MIN_FILES. Never lowered.
 // Merge #662 onto #664 (2026-10-17): both additions summed (10346 + 4 + 13 = 10363). Never lowered.
+// Issue #663 (2026-10-17): MIN_TESTS 10346 -> 10354 (+8), the measured total of the full run named at MIN_FILES. Never lowered.
+// Merge #663 onto main (2026-10-17): main 10363 + 8 = 10371. Never lowered.
 // Phase 617 (2026-10-17): MIN_TESTS 10346 -> 10400 (+54), the measured total of the full run named at MIN_FILES. Never lowered.
 // Plan 617-04 (2026-10-17): MIN_TESTS 10400 -> 10364 (-36), the ONE deliberate lowering of this phase: the three vacation
 // PDFs were removed, which takes their per-route cases with them (permission-neutrality-matrix -24 = 3 routes x 8 actors,
@@ -928,7 +936,8 @@ const MIN_FILES = 683;
 // (a holiday outside the employment span is no row of the Stundennachweis). Never lowered below the measured total;
 // the one deliberate lowering of this phase is the 617-04 entry above.
 // Merge #617 onto main (2026-10-17): main 10363 + 49 = 10412. Never lowered.
-const MIN_TESTS = 10412;
+// Merge #617 onto main (2026-10-17): main 10371 + 49 = 10420. Never lowered.
+const MIN_TESTS = 10420;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

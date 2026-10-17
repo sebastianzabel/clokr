@@ -320,10 +320,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       );
       const nonExempt = new Set(employees.map((e) => e.id));
       const birthDates = new Map(employees.map((e) => [e.id, e.birthDate]));
-      const scope = employeeScopeFor(
-        accessContextForJob(tenant.id, "audit-511-break-placement"),
-        {},
-      );
+      const scope = employeeScopeFor(accessContextForJob(tenant.id, "audit-511-break-placement"));
       const closedMemo = new Map<string, boolean>();
       const total = emptyStale();
       staleTotals.set(tenant.id, total);

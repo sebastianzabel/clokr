@@ -265,8 +265,8 @@ export async function main(
               segments,
               baseDays,
               REPAIR_REASON,
-              (entry) =>
-                tx.auditLog.create({
+              async (entry) => {
+                await tx.auditLog.create({
                   data: {
                     userId: null, // system-initiated (no human actor)
                     action: entry.action,
@@ -277,7 +277,8 @@ export async function main(
                       : undefined,
                     userAgent: "script:backfill-missing-vacation-entitlements",
                   },
-                }),
+                });
+              },
             ),
           );
 

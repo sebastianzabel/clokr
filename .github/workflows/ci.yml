@@ -417,6 +417,11 @@ jobs:
         id: typecheck
         run: pnpm --filter @clokr/api typecheck
 
+      - name: Type check API scripts
+        # Issue #663: apps/api/scripts/ sits outside the src-only tsc project above, so a type error
+        # in an operator script (a missing field handed to closeEmployeeMonth) was invisible.
+        run: pnpm --filter @clokr/api typecheck:scripts
+
       - name: Type check Web
         run: pnpm --filter @clokr/web typecheck
 

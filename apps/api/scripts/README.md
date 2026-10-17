@@ -31,6 +31,7 @@ classified by lifecycle.
 | audit-551-users-without-employee.ts            | 2026-10-13 | List every User without an Employee (they have no tenant and cannot sign in since Issue #551) — id, role, isActive, open refresh tokens, role assignments, plus a totals line; read-only, ids only, exits 2 on findings                                                                                                                                                                                                                                                                                                                                             | Audit tool                                   |
 | audit-568-bulk-apply-history.ts                | 2026-10-13 | List, per past tenant-wide bulk apply of the default working time (AuditLog `UPDATE TenantConfig` with `applyToExisting`), every paired `CREATE WorkSchedule` row — ids, validFrom, old -> new weekly/day-hours, pairing source and flags HOURS_CHANGED / NO_PREVIOUS_CONTRACT / RETROACTIVE, plus a totals line (Issue #568; read-only, no write flag, ids only, exits 2 on findings)                                                                                                                                                                              | Audit tool                                   |
 | audit-566-package-backfill.ts                  | 2026-10-14 | Preview, per tenant id, the `salonQuota` and `bookedModules` the Phase 566 migration grants existing tenants (Bestandsschutz) and the signals that fired, plus a totals line (Issue #566, D-09; read-only, no write flag, ids only; run on int and prod BEFORE the v1.16.0 deploy; probes read-only whether the activity-kind schema exists and reports ANALYTICS as not evaluable if not)                                                                                                                                                                          | Audit tool                                   |
+| audit-663-backfilled-snapshots.ts              | 2026-10-17 | List, per tenant id, employee id and month, every MONTHLY snapshot written by `backfill-month-snapshots.ts` (AuditLog `CREATE SaldoSnapshot`, `newValue.origin = BACKFILL`) in a month that holds an Überstundenausgleich (`OVERTIME_COMP`), a roster-credit leave (`ROSTER_CREDIT`: SICK, SICK_CHILD, SPECIAL) or a `CANCELLATION_REQUESTED` leave — the leave the pre-#663 backfill read differently from the regular close (Issue #663; read-only, no write flag, ids only; run on int and prod; optional `--tenant <uuid>`)                                     | Audit tool                                   |
 | audit-614-anonymized-employment.ts             | 2026-10-17 | List, per tenant id and employee id, every DSGVO-anonymized person whose employment the pre-614 anonymization did not end — `NO_EXIT_DATE`, `LEAVE_AFTER_EXIT`, `ABSENCE_AFTER_EXIT`, `NUMBER_OVERWRITTEN` — plus a totals line (Issue #614, D-04; read-only, no opt-in write flag, ids only, exits 2 on findings; run on int and prod BEFORE the #614 deploy; optional `--tenant <id>`)                                                                                                                                                                            | Audit tool                                   |
 | audit-662-cancelled-leave-section9.ts          | 2026-10-17 | List, per tenant id and credit id, every § 9 credit that is not `SUPERSEDED` although one of its two leave requests is `CANCELLED` (Issue #662; the pre-fix state; read-only, no write flag, ids only, exits 2 on findings; run on int and prod before and after the #662 deploy; optional `--tenant <id>`)                                                                                                                                                                                                                                                         | Audit tool                                   |
 | audit-613-month-close-population.ts            | 2026-10-17 | List, per active tenant and month, every person the auto-close cron / deferred close (active login) and the report population rule (employed in the month, never anonymised) select differently — `EMPLOYED_LOGIN_INACTIVE`, `NOT_EMPLOYED_LOGIN_ACTIVE`, `ANONYMIZED_LOGIN_ACTIVE` with a `monthClosed` flag — plus a per-tenant `exitedOpenFinalSaldo` count (Issue #613, D-03; read-only, no opt-in write flag, ids only, exits 2 on findings; run on int and prod before decision #668; optional `--tenant-id <uuid>`, `--year <YYYY> --month <M>`)             | Audit tool                                   |
@@ -369,6 +370,18 @@ no write flag — mechanically checked by its own test), prints ids, numbers, mo
 (never a name, slug or credential, DSGVO), and its `main()` is behind an entrypoint guard. Operator step:
 run it once on int and once on prod BEFORE deploying the release that carries the migration, keep the
 output, and compare it with the stored values after the deploy (equal for every tenant not edited since).
+
+`audit-663-backfilled-snapshots.ts` (Issue #663) lists the snapshots `backfill-month-snapshots.ts` wrote
+while it still read leave with its own query. A backfilled snapshot is recognised by its AuditLog row
+(`action = CREATE`, `entity = SaldoSnapshot`, `entityId` = the EMPLOYEE id, `newValue.origin = "BACKFILL"` with
+`year`, `month` and the stored `workedMinutes` / `expectedMinutes` / `balanceMinutes`); the snapshot has no marker of
+its own, so the script matches the employee's MONTHLY snapshot of that month on those three figures and prints
+`snapshotId=none` when none matches any more. Per affected month it prints one line
+`tenantId=<id> employeeId=<id> month=<YYYY-MM> snapshotId=<id|none> superseded=<bool|n/a> auditLogId=<id> reasons: <REASON>[<leaveIds>] …`
+with the reasons `OVERTIME_COMP`, `ROSTER_CREDIT` and `CANCELLATION_REQUESTED`. The leave rows are read as they are
+today, so the listing is a pointer for a human look, not proof of a wrong figure. It performs ZERO writes (no write
+call, no write flag - mechanically checked by its own test), prints ids and calendar months only, and its `main()` is
+behind an entrypoint guard. Exit codes: `0` printed, `1` usage error, DATABASE_URL missing or a DB failure.
 
 `audit-614-anonymized-employment.ts` (Issue #614, D-04, AC-614-5) lists the DSGVO-anonymized persons whose
 employment the pre-614 anonymization did not end, so an operator sees the Bestand BEFORE the release that
@@ -1003,3 +1016,15 @@ The audit-trail-of-record for what these scripts did is the `AuditLog` table (re
 on the Phase 98 deliberate-reason allowlist, `src/utils/saldo-chain-classification.ts`) plus git
 history — not the script files. `isSnapshotLocked()` was rescued into
 `src/utils/snapshot-lock.ts` before the removal.
+
+## Typecheck of `scripts/` (Issue #663)
+
+`apps/api/tsconfig.json` is `src`-only (`rootDir: ./src`), so a type error in an operator script was invisible to
+CI: `backfill-month-snapshots.ts` handed `closeEmployeeMonth` leave rows without the fields the core requires and
+nobody noticed. `apps/api/tsconfig.scripts.json` covers `scripts/**` (tests included, the deliberately broken
+`scripts/__tests__/fixtures/` excluded) and pulls in what the scripts import. Run it with
+`pnpm --filter @clokr/api run typecheck:scripts`; CI runs it as the step "Type check API scripts" next to the API
+typecheck. The baseline is ZERO errors - the step fails on any new one, so there is no counter to maintain. It uses
+`module: esnext` / `moduleResolution: bundler` (the scripts are ESM under `tsx` and use `import.meta`), which the
+src project does not. Fix a hit in the script; do not cast it away. Run `prisma generate` first in a fresh checkout,
+as for the API typecheck.

@@ -28,6 +28,7 @@
  * No PII — synthetic ids and initials only in tests.
  */
 import type { FastifyInstance } from "fastify";
+import type { Prisma } from "@clokr/db";
 import {
   monthRangeUtc,
   monthDayBounds,
@@ -36,7 +37,11 @@ import {
 import { getEffectiveSchedule } from "../src/contexts/time-tracking/api/time-entries";
 import { getHolidays, STATE_MAP } from "../src/contexts/platform/holidays";
 import { periodStartWindow } from "../src/contexts/working-time-account/snapshot-period";
-import { closeEmployeeMonth } from "../src/contexts/working-time-account/close-employee-month";
+import {
+  closeEmployeeMonth,
+  toCloseMonthApprovedLeave,
+} from "../src/contexts/working-time-account/close-employee-month";
+import { getActiveLeaveOverlapping } from "../src/contexts/absence";
 import { loadBsSlotOverrides } from "../src/contexts/absence/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 
 // ── Exported pure helpers ────────────────────────────────────────────────────
@@ -247,7 +252,7 @@ export async function main(app: FastifyInstance, opts: BackfillOptions): Promise
       const stateCode = STATE_MAP[tenant.federalState] ?? "NI";
 
       // ── Resolve employees ────────────────────────────────────────────────
-      const employeeWhere: Parameters<typeof app.prisma.employee.findMany>[0]["where"] = {
+      const employeeWhere: Prisma.EmployeeWhereInput = {
         tenantId: tenant.id,
         user: { isActive: true },
         isTimeTrackingExempt: false,
@@ -388,16 +393,15 @@ export async function main(app: FastifyInstance, opts: BackfillOptions): Promise
                 },
                 select: { date: true, startTime: true, endTime: true },
               }),
-              app.prisma.leaveRequest.findMany({
-                where: {
-                  employeeId: emp.id,
-                  deletedAt: null,
-                  status: "APPROVED",
-                  startDate: { lte: monthEnd },
-                  endDate: { gte: monthStart },
-                },
-                select: { startDate: true, endDate: true, halfDay: true },
-              }),
+              // Issue #663: the SAME read the regular close uses (auto-close-month.ts) — effective
+              // leave (APPROVED + CANCELLATION_REQUESTED, Issue #446) with the leave type code that
+              // the shared mapper turns into `isOvertimeCompensation` / `creditBasis`. No own query.
+              getActiveLeaveOverlapping(
+                app.prisma,
+                { kind: "employee", employeeId: emp.id, tenantId: tenant.id },
+                monthStart,
+                monthEnd,
+              ),
               app.prisma.absence.findMany({
                 where: {
                   employeeId: emp.id,
@@ -442,11 +446,7 @@ export async function main(app: FastifyInstance, opts: BackfillOptions): Promise
                 startTime: sh.startTime,
                 endTime: sh.endTime,
               })),
-              approvedLeave: approvedLeave.map((lr) => ({
-                startDate: lr.startDate,
-                endDate: lr.endDate,
-                halfDay: Boolean(lr.halfDay),
-              })),
+              approvedLeave: toCloseMonthApprovedLeave(approvedLeave),
               absences: absences.map((ab) => ({
                 startDate: ab.startDate,
                 endDate: ab.endDate,
@@ -543,11 +543,7 @@ export async function main(app: FastifyInstance, opts: BackfillOptions): Promise
                   startTime: sh.startTime,
                   endTime: sh.endTime,
                 })),
-                approvedLeave: approvedLeave.map((lr) => ({
-                  startDate: lr.startDate,
-                  endDate: lr.endDate,
-                  halfDay: Boolean(lr.halfDay),
-                })),
+                approvedLeave: toCloseMonthApprovedLeave(approvedLeave),
                 absences: absences.map((ab) => ({
                   startDate: ab.startDate,
                   endDate: ab.endDate,
