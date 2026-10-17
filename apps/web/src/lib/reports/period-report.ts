@@ -35,6 +35,13 @@ export interface PeriodRow {
   openingBalanceMinutes: number | null;
   /** Gesamtsaldo of the person's last listed month. */
   closingBalanceMinutes: number | null;
+  /**
+   * Split of the closing saldo for the drill-down: the confirmed part (a closed month's stored
+   * carry-over) and the open forecast on top. All three are `null` where the split is not exact.
+   */
+  closingConfirmedMinutes: number | null;
+  closingOpenMinutes: number | null;
+  unconfirmedMonths: number | null;
   monthCount: number;
   confirmedMonthCount: number;
   labelled: boolean;

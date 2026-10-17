@@ -331,6 +331,11 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
         "$.rows[].balanceMinutes",
         "$.rows[].openingBalanceMinutes",
         "$.rows[].closingBalanceMinutes",
+        // closing figures: the exact confirmed/open split of the closing saldo (minutes) and the
+        // count of unclosed months behind it - sums, never a day
+        "$.rows[].closingConfirmedMinutes",
+        "$.rows[].closingOpenMinutes",
+        "$.rows[].unconfirmedMonths",
         "$.rows[].monthCount",
         "$.rows[].confirmedMonthCount",
         "$.rows[].labelled",

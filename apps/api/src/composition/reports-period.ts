@@ -117,6 +117,54 @@ type PersonAccumulator = {
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+type MonthReportFigures = Awaited<ReturnType<typeof computeMonthReportFigures>>;
+
+/**
+ * P-13: the drill-down split of the closing saldo into the confirmed part (a closed month's stored
+ * carry-over) and the open forecast on top of it — sent only where it is exact, otherwise all three
+ * values are `null` and the page shows the single value as a forecast:
+ *   - the last listed month is closed: everything is confirmed (open 0, 0 unconfirmed months);
+ *   - the last listed month is open directly after a closed month (inside the month before `from`
+ *     and `to`): confirmed = that month's stored carry-over, open = closing − confirmed, 1 month.
+ * Anything else (several unclosed months, a gap, an unlabelled month) has no exact split.
+ */
+function closingSplit(
+  months: readonly PeriodMonthEntry[],
+  beforeFigures: MonthReportFigures | null,
+  before: YearMonth,
+): {
+  closingConfirmedMinutes: number | null;
+  closingOpenMinutes: number | null;
+  unconfirmedMonths: number | null;
+} {
+  const none = { closingConfirmedMinutes: null, closingOpenMinutes: null, unconfirmedMonths: null };
+  const last = months[months.length - 1];
+  if (last.closingBalanceMinutes === null) return none;
+  if (last.confirmed) {
+    return {
+      closingConfirmedMinutes: last.closingBalanceMinutes,
+      closingOpenMinutes: 0,
+      unconfirmedMonths: 0,
+    };
+  }
+  const wanted = monthBefore(last);
+  let predecessor: { confirmed: boolean; closingBalanceMinutes: number | null } | null = null;
+  if (months.length > 1) {
+    const prev = months[months.length - 2];
+    if (prev.year === wanted.year && prev.month === wanted.month) predecessor = prev;
+  } else if (before.year === wanted.year && before.month === wanted.month) {
+    predecessor = beforeFigures;
+  }
+  if (!predecessor || !predecessor.confirmed || predecessor.closingBalanceMinutes === null) {
+    return none;
+  }
+  return {
+    closingConfirmedMinutes: predecessor.closingBalanceMinutes,
+    closingOpenMinutes: last.closingBalanceMinutes - predecessor.closingBalanceMinutes,
+    unconfirmedMonths: 1,
+  };
+}
+
 export class PeriodRangeError extends Error {}
 
 /** The range rules of P-09, answered before anything is read. */
@@ -256,11 +304,20 @@ async function assemblePeriodReport(
   for (const person of ordered) {
     const covered = person.covered;
     let opening: number | null = null;
+    let beforeFigures: MonthReportFigures | null = null;
     if (covered && isEmployedInPeriod(person, beforeRange.start, beforeRange.end)) {
-      opening = (await computeMonthReportFigures(app, person.employeeId, before.year, before.month))
-        .closingBalanceMinutes;
+      beforeFigures = await computeMonthReportFigures(
+        app,
+        person.employeeId,
+        before.year,
+        before.month,
+      );
+      opening = beforeFigures.closingBalanceMinutes;
     }
     const last = person.months[person.months.length - 1];
+    const split = covered
+      ? closingSplit(person.months, beforeFigures, before)
+      : { closingConfirmedMinutes: null, closingOpenMinutes: null, unconfirmedMonths: null };
     const sum = (pick: (m: PeriodMonthEntry) => number | null): number =>
       person.months.reduce((s, m) => s + (pick(m) ?? 0), 0);
     rows.push({
@@ -272,6 +329,7 @@ async function assemblePeriodReport(
       balanceMinutes: covered ? sum((m) => m.balanceMinutes) : null,
       openingBalanceMinutes: opening,
       closingBalanceMinutes: covered ? last.closingBalanceMinutes : null,
+      ...split,
       monthCount: person.months.length,
       confirmedMonthCount: person.months.filter((m) => m.confirmed).length,
       labelled: person.months.some((m) => m.labelled),

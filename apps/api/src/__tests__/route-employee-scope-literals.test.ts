@@ -40,6 +40,7 @@ const CONTEXTS_ROOT = "apps/api/src/contexts";
 const COMPOSITION_FILES = [
   "apps/api/src/composition/dashboard.ts",
   "apps/api/src/composition/reports.ts",
+  "apps/api/src/composition/reports-period.ts", // Issue #612 — the period report is a report figure surface
 ];
 const ANCHOR_FILES = [
   "apps/api/src/composition/dashboard.ts",
