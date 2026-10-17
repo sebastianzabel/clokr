@@ -60,6 +60,13 @@
   import { breakFindingSaveNotice } from "$lib/breaks/day-break-violation"; // Issue #80 (D-09a), #511 (D-10)
   import { weekProgressDelta } from "$lib/dashboard/week-progress"; // Issue #451 (D-06)
   import {
+    DAY_STATUS_LABEL,
+    attendanceStatusText,
+    teamMissingTitle,
+  } from "$lib/dashboard/day-status-label"; // Issue #587 (P-06)
+  import { teamDayHref, teamCellAriaLabel } from "$lib/dashboard/team-day-links"; // Issue #587 (D-587-4)
+  import { mayOpenTeamPage } from "$lib/nav/team-nav";
+  import {
     clockInBlocked,
     clockInBody,
     clockSalonView,
@@ -1210,6 +1217,15 @@
     return format(d, "EEE", { locale: de });
   }
 
+  // Issue #587 (D-587-4, P-07): a cell links to the person-day on Team-Zeiten only for a caller who
+  // may open that page; every other caller sees the cell exactly as before, never a dead link.
+  let canOpenTeamDay = $derived(mayOpenTeamPage("/team/time-entries", $authStore.user));
+
+  /** The status wording of a cell for its accessible name; same vocabulary as the attendance list. */
+  function teamCellStatusText(day: TeamDay): string {
+    return day.status === "none" ? "Frei" : attendanceStatusText(day);
+  }
+
   function dayNum(dateStr: string): string {
     return dateStr.slice(8, 10);
   }
@@ -1385,6 +1401,83 @@
 <svelte:head>
   <title>Dashboard – Clokr</title>
 </svelte:head>
+
+{#snippet teamCellContent(day: TeamDay)}
+  {#if day.status === "present"}
+    {#if day.workedElsewhere && day.workedHours === 0}
+      <span class="cell-badge cell-badge--elsewhere" title="In einem anderen Salon gearbeitet"
+        >anderer Salon</span
+      >
+    {:else}
+      <span
+        class="cell-badge cell-badge--present"
+        title="{fmtHours(day.workedHours)} gearbeitet{day.workedElsewhere
+          ? ', außerdem in einem anderen Salon gearbeitet'
+          : ''}"
+      >
+        {fmtHours(day.workedHours)}
+      </span>
+    {/if}
+    {#if day.shift}
+      <span class="shift-label" style={day.shift.color ? `color: ${day.shift.color}` : ""}>
+        {day.shift.startTime}–{day.shift.endTime}
+      </span>
+    {/if}
+  {:else if day.status === "clocked_in"}
+    <span
+      class="cell-badge cell-badge--active"
+      title={day.workedElsewhere ? "Eingestempelt (anderer Salon)" : "Eingestempelt"}
+    >
+      <Icon name="circle-fill" size={14} />
+    </span>
+  {:else if day.status === "absent"}
+    <span
+      class="cell-badge cell-badge--absent"
+      class:cell-badge--bs={day.absenceType === "VOCATIONAL_SCHOOL"}
+      title={day.reason ?? "Abwesend"}
+    >
+      {#if day.leaveTypeCode === "SICK" || day.absenceType === "SICK" || day.leaveTypeCode === "SICK_CHILD" || day.absenceType === "SICK_CHILD"}
+        <Icon name="medical" size={14} title={day.reason ?? "Krank"} />
+      {:else if day.leaveTypeCode === "MATERNITY" || day.absenceType === "MATERNITY"}
+        <Icon name="heart" size={14} title="Mutterschutz" />
+      {:else if day.leaveTypeCode === "PARENTAL" || day.absenceType === "PARENTAL"}
+        <Icon name="users" size={14} title="Elternzeit" />
+      {:else if day.absenceType === "VOCATIONAL_SCHOOL"}
+        <Icon name="graduation-cap" size={14} title="Berufsschule" />
+      {:else}
+        <Icon name="umbrella" size={14} title={day.reason ?? "Urlaub"} />
+      {/if}
+    </span>
+  {:else if day.status === "holiday"}
+    <span class="cell-badge cell-badge--holiday" title={day.reason ?? "Feiertag"}>
+      <Icon name="sun" size={14} title={day.reason ?? "Feiertag"} />
+    </span>
+  {:else if day.status === "missing"}
+    <span class="cell-badge cell-badge--missing" title={teamMissingTitle(day)}>
+      <Icon name="alert" size={14} title="Fehlt" />
+    </span>
+  {:else if day.status === "scheduled"}
+    <span
+      class="cell-badge cell-badge--scheduled"
+      title={day.shift
+        ? (day.shift.label ?? day.shift.startTime + "–" + day.shift.endTime)
+        : "Arbeitstag"}
+      style={day.shift?.color ? `border-color: ${day.shift.color}` : ""}
+    >
+      {#if day.shift}
+        <span class="shift-time">{day.shift.startTime}–{day.shift.endTime}</span>
+      {:else}
+        <span class="shift-time">{fmtHours(day.expectedHours)}</span>
+      {/if}
+    </span>
+  {:else if day.status === "requested"}
+    <span class="cell-badge cell-badge--requested" title={day.reason ?? "Antrag offen"}>
+      <Icon name="clock" size={14} title="beantragt" />
+    </span>
+  {:else}
+    <span class="cell-badge cell-badge--none" title="Frei">–</span>
+  {/if}
+{/snippet}
 
 <!-- Phase 75-02 (D-01): data-testid surface for the Dashboard visual baseline.
      Matches the Phase 73-04/-05 convention (`<surface>-page`). -->
@@ -2011,99 +2104,22 @@
                       <span class="member-name">{member.name}</span>
                     </td>
                     {#each member.days as day (day.date)}
+                      {@const href = teamDayHref(member.id, day.date)}
                       <td class="team-grid__cell" class:team-grid__day--today={isToday(day.date)}>
-                        {#if day.status === "present"}
-                          {#if day.workedElsewhere && day.workedHours === 0}
-                            <span
-                              class="cell-badge cell-badge--elsewhere"
-                              title="In einem anderen Salon gearbeitet">anderer Salon</span
-                            >
-                          {:else}
-                            <span
-                              class="cell-badge cell-badge--present"
-                              title="{fmtHours(day.workedHours)} gearbeitet{day.workedElsewhere
-                                ? ', außerdem in einem anderen Salon gearbeitet'
-                                : ''}"
-                            >
-                              {fmtHours(day.workedHours)}
-                            </span>
-                          {/if}
-                          {#if day.shift}
-                            <span
-                              class="shift-label"
-                              style={day.shift.color ? `color: ${day.shift.color}` : ""}
-                            >
-                              {day.shift.startTime}–{day.shift.endTime}
-                            </span>
-                          {/if}
-                        {:else if day.status === "clocked_in"}
-                          <span
-                            class="cell-badge cell-badge--active"
-                            title={day.workedElsewhere
-                              ? "Eingestempelt (anderer Salon)"
-                              : "Eingestempelt"}
+                        {#if canOpenTeamDay && href !== null}
+                          <a
+                            class="team-grid__link"
+                            {href}
+                            aria-label={teamCellAriaLabel(
+                              member.name,
+                              day.date,
+                              teamCellStatusText(day),
+                            )}
                           >
-                            <Icon name="circle-fill" size={14} />
-                          </span>
-                        {:else if day.status === "absent"}
-                          <span
-                            class="cell-badge cell-badge--absent"
-                            class:cell-badge--bs={day.absenceType === "VOCATIONAL_SCHOOL"}
-                            title={day.reason ?? "Abwesend"}
-                          >
-                            {#if day.leaveTypeCode === "SICK" || day.absenceType === "SICK" || day.leaveTypeCode === "SICK_CHILD" || day.absenceType === "SICK_CHILD"}
-                              <Icon name="medical" size={14} title={day.reason ?? "Krank"} />
-                            {:else if day.leaveTypeCode === "MATERNITY" || day.absenceType === "MATERNITY"}
-                              <Icon name="heart" size={14} title="Mutterschutz" />
-                            {:else if day.leaveTypeCode === "PARENTAL" || day.absenceType === "PARENTAL"}
-                              <Icon name="users" size={14} title="Elternzeit" />
-                            {:else if day.absenceType === "VOCATIONAL_SCHOOL"}
-                              <Icon name="graduation-cap" size={14} title="Berufsschule" />
-                            {:else}
-                              <Icon name="umbrella" size={14} title={day.reason ?? "Urlaub"} />
-                            {/if}
-                          </span>
-                        {:else if day.status === "holiday"}
-                          <span
-                            class="cell-badge cell-badge--holiday"
-                            title={day.reason ?? "Feiertag"}
-                          >
-                            <Icon name="sun" size={14} title={day.reason ?? "Feiertag"} />
-                          </span>
-                        {:else if day.status === "missing"}
-                          <span
-                            class="cell-badge cell-badge--missing"
-                            title="Fehlt! {day.shift
-                              ? day.shift.startTime + '–' + day.shift.endTime
-                              : 'Arbeitstag'}"
-                          >
-                            <Icon name="alert" size={14} title="Fehlt" />
-                          </span>
-                        {:else if day.status === "scheduled"}
-                          <span
-                            class="cell-badge cell-badge--scheduled"
-                            title={day.shift
-                              ? (day.shift.label ?? day.shift.startTime + "–" + day.shift.endTime)
-                              : "Arbeitstag"}
-                            style={day.shift?.color ? `border-color: ${day.shift.color}` : ""}
-                          >
-                            {#if day.shift}
-                              <span class="shift-time"
-                                >{day.shift.startTime}–{day.shift.endTime}</span
-                              >
-                            {:else}
-                              <span class="shift-time">{fmtHours(day.expectedHours)}</span>
-                            {/if}
-                          </span>
-                        {:else if day.status === "requested"}
-                          <span
-                            class="cell-badge cell-badge--requested"
-                            title={day.reason ?? "Antrag offen"}
-                          >
-                            <Icon name="clock" size={14} title="beantragt" />
-                          </span>
+                            {@render teamCellContent(day)}
+                          </a>
                         {:else}
-                          <span class="cell-badge cell-badge--none" title="Frei">–</span>
+                          {@render teamCellContent(day)}
                         {/if}
                       </td>
                     {/each}
@@ -2120,7 +2136,8 @@
 
           <div class="legend">
             <span class="legend-item">
-              <span class="cell-badge cell-badge--present">5.0</span> Anwesend
+              <span class="cell-badge cell-badge--present">5.0</span>
+              {DAY_STATUS_LABEL.present}
             </span>
             <span class="legend-item">
               <span class="cell-badge cell-badge--active"
@@ -2144,18 +2161,19 @@
             </span>
             <span class="legend-item">
               <span class="cell-badge cell-badge--missing"><Icon name="alert" size={12} /></span>
-              Fehlt
+              {DAY_STATUS_LABEL.missing}
             </span>
             <span class="legend-item">
               <span class="cell-badge cell-badge--holiday"><Icon name="sun" size={12} /></span>
               Feiertag
             </span>
             <span class="legend-item">
-              <span class="cell-badge cell-badge--scheduled">9–17</span> Geplant
+              <span class="cell-badge cell-badge--scheduled">9–17</span>
+              {DAY_STATUS_LABEL.scheduled}
             </span>
             <span class="legend-item">
               <span class="cell-badge cell-badge--requested"><Icon name="clock" size={12} /></span>
-              Beantragt
+              {DAY_STATUS_LABEL.requested}
             </span>
             <span class="legend-item">
               <span class="cell-badge cell-badge--none">–</span> Keine Daten
@@ -3045,6 +3063,19 @@
     min-width: 3rem;
     text-align: center;
     vertical-align: middle;
+  }
+
+  /* Issue #587: the cell link is a transparent block wrapper — same look as the unlinked cell. */
+  .team-grid__link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+    border-radius: 999px;
+  }
+
+  .team-grid__link:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
   }
 
   /* Cell badges */

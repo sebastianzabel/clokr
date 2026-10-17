@@ -12,6 +12,8 @@
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
+  import { DAY_STATUS_LABEL, attendanceStatusText } from "$lib/dashboard/day-status-label"; // Issue #587
+  import { teamDayHref, teamLeaveCreateHref } from "$lib/dashboard/team-day-links"; // Issue #587
   import {
     buildEmployeeMonthRows,
     type EmployeeMonthRow,
@@ -46,8 +48,20 @@
     id: string;
     name: string;
     employeeNumber: string;
-    status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none" | "holiday";
+    status:
+      | "present"
+      | "absent"
+      | "clocked_in"
+      | "missing"
+      | "scheduled"
+      | "requested"
+      | "none"
+      | "holiday";
     reason: string | null;
+    // Issue #587 (D-587-3): the planned start of today's first shift and the minutes since it
+    // (only for a missing row); finished values from the API, nothing is computed here.
+    expectedStart?: string | null;
+    lateMinutes?: number | null;
   };
 
   type TodayAttendance = {
@@ -187,6 +201,11 @@
   let canReportRead = $derived(rights.canReportRead);
   let canReportExport = $derived(rights.canReportExport);
   let canReportNotify = $derived(rights.canReportNotify);
+  // Issue #587 (D-587-4): the two action links of a „Fehlt“ row; the target pages and the API
+  // enforce their own rules, these only decide whether the link is offered.
+  let canAddTeamEntry = $derived(rights.canAddTeamEntry);
+  let canRecordTeamAbsence = $derived(rights.canRecordTeamAbsence);
+  let showAttendanceActions = $derived(canAddTeamEntry || canRecordTeamAbsence);
   let showTeamArea = $derived(rights.showTeamArea);
 
   // ── Heutige Anwesenheit state (RPT-03) ─────────────────────────────────────
@@ -778,25 +797,6 @@
     return n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  function statusLabel(row: TodayEmployee): string {
-    switch (row.status) {
-      case "present":
-        return "Anwesend";
-      case "clocked_in":
-        return "Eingestempelt";
-      case "absent":
-        return row.reason ?? "Abwesend";
-      case "missing":
-        return "Fehlend";
-      case "scheduled":
-        return "Geplant";
-      case "holiday":
-        return row.reason ?? "Feiertag";
-      default:
-        return "—";
-    }
-  }
-
   function statusClass(status: TodayEmployee["status"]): string {
     return `status-badge status-${status.replace("_", "-")}`;
   }
@@ -1239,7 +1239,7 @@
               <span class="value">{todayAttendance.summary.absent}</span>
             </div>
             <div class="summary-chip">
-              <span class="label">Fehlend</span>
+              <span class="label">{DAY_STATUS_LABEL.missing}</span>
               <span class="value">{todayAttendance.summary.missing}</span>
             </div>
             {#if todayAttendance.summary.holiday > 0}
@@ -1257,6 +1257,9 @@
                   <th>Mitarbeiter</th>
                   <th>Nr.</th>
                   <th>Status</th>
+                  {#if showAttendanceActions}
+                    <th>Aktionen</th>
+                  {/if}
                 </tr>
               </thead>
               <tbody>
@@ -1264,7 +1267,25 @@
                   <tr>
                     <td>{row.name}</td>
                     <td>{row.employeeNumber}</td>
-                    <td><span class={statusClass(row.status)}>{statusLabel(row)}</span></td>
+                    <td><span class={statusClass(row.status)}>{attendanceStatusText(row)}</span></td
+                    >
+                    {#if showAttendanceActions}
+                      <td class="attendance-actions">
+                        <div class="row-actions__group">
+                          {#if row.status === "missing"}
+                            {@const entryHref = teamDayHref(row.id, todayAttendance.date)}
+                            {@const absenceHref = teamLeaveCreateHref(row.id, todayAttendance.date)}
+                            {#if canAddTeamEntry && entryHref !== null}
+                              <a class="btn btn-ghost xs" href={entryHref}>Eintrag nachtragen</a>
+                            {/if}
+                            {#if canRecordTeamAbsence && absenceHref !== null}
+                              <a class="btn btn-ghost xs" href={absenceHref}>Abwesenheit erfassen</a
+                              >
+                            {/if}
+                          {/if}
+                        </div>
+                      </td>
+                    {/if}
                   </tr>
                 {/each}
               </tbody>
@@ -1824,6 +1845,11 @@
     color: var(--text-muted);
   }
 
+  .status-requested {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+
   /* Verfall-Warnungen (Phase 44 — BUrlG § 7 Hinweispflicht) */
 
   .carryover-summary {
@@ -1977,6 +2003,12 @@
   }
 
   .row-actions {
+    text-align: right;
+    white-space: nowrap;
+  }
+  /* Issue #587: the action cell of the attendance list; the flex layout lives on the inner
+     .row-actions__group wrapper (Issue #442), never on the td itself. */
+  .attendance-actions {
     text-align: right;
     white-space: nowrap;
   }
