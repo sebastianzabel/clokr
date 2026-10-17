@@ -88,12 +88,12 @@ intentionally the smaller, secondary one.
 
 ## PDF export and Berichte
 
-The exported Stundennachweis (single-employee and company-wide monthly PDF, `apps/api/src/composition/reports.ts`
+The exported Stundennachweis (single-employee) and Monatsexport (all persons of a month; Issue #617, it replaced the former company-wide PDF), `apps/api/src/composition/reports.ts`
 
 - `apps/api/src/composition/pdf.ts`) and the Kalender-Header/Berichte screens do **not** show the lifetime
   split described above — they show a single, MONTH-scoped Monats-Saldo. Since Issue #451 (D-03),
   `reports.ts` computes NO Soll/Ist/Überstunden of its own any more: the JSON row, the single-employee
-  PDF and the company-wide PDF all read the same result from
+  PDF and the Monatsexport all read the same result from
   **`computeMonthReportFigures(app, employeeId, year, month)`**
   (`contexts/working-time-account/month-saldo.ts`, exported via that context's `index.ts`) —
   a CLOSED month returns the stored `SaldoSnapshot` verbatim (`basis: "snapshot"`), an OPEN,
@@ -108,12 +108,12 @@ The exported Stundennachweis (single-employee and company-wide monthly PDF, `app
   was never there. Instead, the figure is **relabelled** using the same two words: a CLOSED month is
   labelled with `OVERTIME_LABEL_CONFIRMED` ("Überstunden (Bestätigt)"), an OPEN month with
   `OVERTIME_LABEL_FORECAST` ("Überstunden (Prognose)") — both exported from `pdf.ts` so the wording
-  cannot drift between the single-employee and the company generator; `figures.labelled`/
+  cannot drift between the single-employee generator and the Monatsexport renderer; `figures.labelled`/
   `figures.basis === "snapshot"` from `computeMonthReportFigures` decides which applies.
 - **Verrechnung (D-03 page identity, Issue #451)**: whenever the working-time-account's own
   reconciliation item is non-zero — an approved Überstundenausgleich withdrawal, or a SHIFT_BASED
   § 615 BGB under-/overtime adjustment — both PDFs additionally print a `Verrechnung: <+/-x.xx> h`
-  line (single-employee summary box) or a `Verr. (h)` column (company table), fed by
+  line (single-employee summary box) or a `Verr.` column (Monatsexport table, only when some row has a value), fed by
   `figures.balanceAdjustmentMinutes` from the SAME `computeMonthReportFigures` call, with an
   explaining legend (`BALANCE_ADJUSTMENT_LABEL`/`BALANCE_ADJUSTMENT_LEGEND` in `pdf.ts`). The
   printed arithmetic always closes: **Ist − Soll + Verrechnung = Überstunden**; when there is no
@@ -125,13 +125,13 @@ budget (`monthlyHours` null/0) has no Soll target at all — the screen already 
 „Keine Soll-Vorgabe" state for it, and its exported figure never moves. Labelling it "Prognose"
 would be a fabrication (there is nothing being forecast) and a screen-vs-export contradiction, so
 `computeMonthReportFigures` resolves `labelled: false` for this population and the PDF renderer
-omits the label — and, on the company table, the asterisk — entirely for it.
+omits the label — and, on the Monatsexport table, shows the status „ohne Soll“ with dashes for Soll, Saldo and Gesamtsaldo — for it.
 
-Because the company-wide PDF lists many employees at once and month-close happens **per employee**,
+Because the Monatsexport lists many employees at once and month-close happens **per employee**,
 one export can legitimately mix confirmed and provisional rows. A document-level label would be
-wrong, so each provisional row's Saldo cell carries a trailing ` *`, and a single legend line
-(`COMPANY_PROVISIONAL_LEGEND`) is printed once at the end of the table, only when at least one row
-is provisional.
+wrong, so each row carries its own Status cell („Bestätigt“, „Prognose“ or „ohne Soll“), and a single
+legend line (`MONTHLY_EXPORT_FORECAST_LEGEND`) is printed once at the end of the table, only when at
+least one row is a forecast.
 
 ## SALDO-DISP-08 Decision: no suppression code
 

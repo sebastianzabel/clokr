@@ -10,16 +10,14 @@ const BRAND_TINT = "#ecd9ea";
 const HEADER_H = 44;
 
 // ── Saldo labels (SALDO-DISP-05) ─────────────────────────
-// Shared between generateMonthlyReportPdf (single-employee) and streamCompanyMonthlyReportPdf
-// (company-wide) so the exported wording cannot drift between the two generators. Mirrors the
+// Used by generateMonthlyReportPdf (single-employee) and the Monatsexport (Issue #617) so the
+// exported wording cannot drift between the two documents. Mirrors the
 // screen's vocabulary (apps/web/src/lib/components/saldo/SaldoAnzeige.svelte: confirmedLabel /
 // forecastLabel) — see docs/saldo-anzeige.md.
 export const OVERTIME_LABEL_CONFIRMED = "Überstunden (Bestätigt)";
 export const OVERTIME_LABEL_FORECAST = "Überstunden (Prognose)";
 export const OVERTIME_FORECAST_FOOTNOTE =
   "Der Monat ist noch nicht abgeschlossen — dieser Wert ist eine Prognose und kann sich bis zum Monatsabschluss noch ändern.";
-export const COMPANY_PROVISIONAL_LEGEND =
-  "* Monat noch nicht abgeschlossen — Saldo ist eine Prognose und kann sich bis zum Monatsabschluss noch ändern.";
 
 // Issue #451 (D-03): the working-time-account's own reconciliation item (Überstundenausgleich
 // withdrawal; for SHIFT_BASED the § 615 BGB two-clause evaluation) can make Ist - Soll differ from
@@ -35,7 +33,7 @@ export const BALANCE_ADJUSTMENT_LEGEND =
 
 // ── § 9 BUrlG legend (Phase 104, D-30) ───────────────────────────────────────
 // Single source of the wording, shared by the JSON Monatsbericht (routes/reports.ts), the
-// single-employee PDF and the company PDF — the same drift argument as the OVERTIME_* labels
+// single-employee PDF and the Monatsexport — the same drift argument as the OVERTIME_* labels
 // above. The string is asserted character-for-character by reports-sick-days.test.ts; changing
 // it is a deliberate act, not a refactor.
 export const SECTION9_LEGEND =
@@ -69,39 +67,6 @@ interface MonthlyReportData {
     breakMin: number;
     netHours: number;
     note?: string;
-  }>;
-}
-
-export interface CompanyMonthlyReportData {
-  tenantName: string;
-  month: string; // "März 2026"
-  year: number;
-  monthNumber: number;
-  roleFilter: "all" | "EMPLOYEE" | "MANAGER";
-  rows: Array<{
-    employeeName: string;
-    employeeNumber: string;
-    workedHours: number;
-    targetHours: number;
-    overtimeHours: number;
-    /** Same tri-state meaning as MonthlyReportData.overtimeConfirmed above. */
-    overtimeConfirmed: boolean | null;
-    /** Issue #451 (D-03): same reconciliation item as MonthlyReportData.balanceAdjustmentHours. */
-    balanceAdjustmentHours: number;
-    sickDaysWithAttest: number;
-    sickDaysWithoutAttest: number;
-    vacationDays: number;
-    totalAbsenceDays: number;
-    /** Phase 104 (D-30): credited § 9 BUrlG days for this employee in this month. */
-    section9DaysThisMonth: number;
-    entries: Array<{
-      date: string;
-      start: string;
-      end: string;
-      breakMin: number;
-      netHours: number;
-      note?: string;
-    }>;
   }>;
 }
 
@@ -363,171 +328,6 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
 
     doc.end();
   });
-}
-
-// ── streamCompanyMonthlyReportPdf (PDF-01/PDF-03/PDF-05) ─────────────────────
-// Synchronous void — caller owns PDFDocument lifecycle (create → call → end → send).
-// Does NOT use bufferPages (incompatible with streaming).
-// Footer is written BEFORE each page break (explicit control, no pageAdded event).
-export function streamCompanyMonthlyReportPdf(
-  doc: PDFKit.PDFDocument,
-  data: CompanyMonthlyReportData,
-): void {
-  const roleLabel =
-    data.roleFilter === "EMPLOYEE"
-      ? "Nur Mitarbeiter"
-      : data.roleFilter === "MANAGER"
-        ? "Nur Manager"
-        : "Alle Mitarbeiter";
-
-  // Helper: write footer on current page, then add a fresh page, return startY for content
-  function nextPage(): number {
-    drawSmallFooter(doc);
-    doc.addPage();
-    return doc.page.margins.top;
-  }
-
-  // ── Cover page ────────────────────────────────────────
-  drawColoredHeader(doc, data.tenantName, `Monatsbericht \u2014 ${data.month} \u2014 ${roleLabel}`);
-
-  // Summary table header
-  doc.fontSize(11).font("Helvetica-Bold").fillColor("#111827").text("Übersicht");
-  doc.moveDown(0.5);
-
-  // Issue #451 (D-03): "Verr. (h)" inserted between "Ist (h)" and "Saldo (h)" — widths rebalanced
-  // to the same total of 490 as before.
-  const summaryHeaders = [
-    "Mitarbeiter",
-    "Nr.",
-    "Soll (h)",
-    "Ist (h)",
-    "Verr. (h)",
-    "Saldo (h)",
-    "Urlaub",
-    "Krank",
-  ];
-  const summaryWidths = [130, 50, 55, 55, 50, 55, 50, 45];
-  const tableMargin = 50;
-  const ROW_H = 16;
-  const FOOTER_MARGIN = 60; // reserved space for footer at bottom
-
-  let tx = tableMargin;
-  const tableTop = doc.y;
-  doc.fontSize(8).font("Helvetica-Bold");
-  summaryHeaders.forEach((h, i) => {
-    doc.text(h, tx, tableTop, { width: summaryWidths[i] });
-    tx += summaryWidths[i];
-  });
-  doc
-    .moveTo(tableMargin, tableTop + 14)
-    .lineTo(doc.page.width - tableMargin, tableTop + 14)
-    .stroke("#e5e7eb");
-
-  doc.fontSize(8).font("Helvetica").fillColor("#111827");
-  let rowY = tableTop + 18;
-  let anyProvisional = false; // set when any row's overtimeConfirmed === false (Task 2, SALDO-DISP-05)
-  let anyBalanceAdjustment = false; // set when any row's balanceAdjustmentHours !== 0 (Issue #451, D-03)
-
-  for (const row of data.rows) {
-    if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
-      rowY = nextPage();
-      // Repeat column headers on continuation pages
-      let hx = tableMargin;
-      doc.fontSize(8).font("Helvetica-Bold");
-      summaryHeaders.forEach((h, i) => {
-        doc.text(h, hx, rowY, { width: summaryWidths[i] });
-        hx += summaryWidths[i];
-      });
-      doc
-        .moveTo(tableMargin, rowY + 14)
-        .lineTo(doc.page.width - tableMargin, rowY + 14)
-        .stroke("#e5e7eb");
-      doc.fontSize(8).font("Helvetica").fillColor("#111827");
-      rowY += 18;
-    }
-
-    let rx = tableMargin;
-    // Saldo cell sources the already §615-resolved row.overtimeHours (Task 1 fix, T-97-02-02) —
-    // NOT a locally recomputed workedHours - targetHours, which silently diverges for SHIFT_BASED.
-    let saldoText = `${row.overtimeHours >= 0 ? "+" : ""}${row.overtimeHours.toFixed(2)}`;
-    if (row.overtimeConfirmed === false) {
-      saldoText += " *";
-      anyProvisional = true;
-    }
-    doc.text(row.employeeName, rx, rowY, { width: summaryWidths[0] });
-    rx += summaryWidths[0];
-    doc.text(row.employeeNumber, rx, rowY, { width: summaryWidths[1] });
-    rx += summaryWidths[1];
-    doc.text(row.targetHours.toFixed(2), rx, rowY, { width: summaryWidths[2] });
-    rx += summaryWidths[2];
-    doc.text(row.workedHours.toFixed(2), rx, rowY, { width: summaryWidths[3] });
-    rx += summaryWidths[3];
-    // Issue #451 (D-03): empty cell when the WTA reports no reconciliation item — only a non-zero
-    // value is printed, mirroring the single-PDF Verrechnung line's "printed only when non-zero".
-    if (row.balanceAdjustmentHours !== 0) {
-      doc.text(
-        `${row.balanceAdjustmentHours >= 0 ? "+" : ""}${row.balanceAdjustmentHours.toFixed(2)}`,
-        rx,
-        rowY,
-        { width: summaryWidths[4] },
-      );
-      anyBalanceAdjustment = true;
-    }
-    rx += summaryWidths[4];
-    doc.text(saldoText, rx, rowY, { width: summaryWidths[5] });
-    rx += summaryWidths[5];
-    doc.text(String(row.vacationDays), rx, rowY, { width: summaryWidths[6] });
-    rx += summaryWidths[6];
-    doc.text(String(row.sickDaysWithAttest + row.sickDaysWithoutAttest), rx, rowY, {
-      width: summaryWidths[7],
-    });
-    rowY += ROW_H;
-  }
-
-  // Provisional-rows legend (Task 2, SALDO-DISP-05) — only when at least one row's month is not
-  // yet closed. Reuses the same pagination discipline as the row loop above.
-  if (anyProvisional) {
-    if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
-      rowY = nextPage();
-    }
-    doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
-    doc.text(COMPANY_PROVISIONAL_LEGEND, tableMargin, rowY, {
-      width: doc.page.width - 2 * tableMargin,
-    });
-    rowY += ROW_H;
-    doc.fillColor("#111827");
-  }
-
-  // Issue #451 (D-03): explains the "Verr. (h)" column above — only when at least one row
-  // actually carries a non-zero reconciliation item. Same pagination guard as the other legends.
-  if (anyBalanceAdjustment) {
-    if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
-      rowY = nextPage();
-    }
-    doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
-    doc.text(BALANCE_ADJUSTMENT_LEGEND, tableMargin, rowY, {
-      width: doc.page.width - 2 * tableMargin,
-    });
-    rowY += ROW_H;
-    doc.fillColor("#111827");
-  }
-
-  // § 9-Legende (D-30) — nur wenn mindestens eine Zeile tatsächlich § 9-Tage trägt.
-  const anySection9 = data.rows.some((r) => (r.section9DaysThisMonth ?? 0) > 0);
-  if (anySection9) {
-    if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
-      rowY = nextPage();
-    }
-    doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
-    doc.text(SECTION9_LEGEND, tableMargin, rowY, {
-      width: doc.page.width - 2 * tableMargin,
-    });
-    rowY += ROW_H;
-    doc.fillColor("#111827");
-  }
-
-  // Footer on last page
-  drawSmallFooter(doc);
 }
 
 // ── streamLeaveListPdf (PDF-02/PDF-05) ────────────────────────────────────────

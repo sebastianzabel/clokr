@@ -56,4 +56,31 @@ describe("Issue #617 - /reports offers the Monatsexport to export holders only",
     expect(PAGE).toContain("ohne Tagesliste");
     expect(PAGE).toContain("Lesbare Fassung des DATEV-Exports");
   });
+
+  // Issue #617 (OD-617-4): the company card, its role select and its download are gone; the § 9 note
+  // moved onto the Monatsexport card.
+  it("no longer references the removed company PDF route, its card or its role select", () => {
+    expect(PAGE.length).toBeGreaterThan(1000);
+    expect(PAGE).not.toContain("/reports/monthly/pdf/all");
+    expect(PAGE).not.toContain("companyPdf");
+    expect(PAGE).not.toContain("company-pdf");
+    expect(PAGE).not.toContain("Firmenweiter Monatsbericht");
+    expect(PAGE).not.toContain("Nur Manager");
+    expect(PAGE).not.toContain("&role=");
+  });
+
+  it("the § 9 note sits inside the Monatsexport card and follows its own month and year", () => {
+    const cardStart = PAGE.indexOf("<!-- Monatsexport Card (Issue #617) -->");
+    const cardEnd = PAGE.indexOf("<!-- Urlaubsbericht PDF Card", cardStart);
+    expect(cardStart).toBeGreaterThan(-1);
+    expect(cardEnd).toBeGreaterThan(cardStart);
+    const card = PAGE.slice(cardStart, cardEnd);
+    expect(card).toContain('data-testid="report-section9-note"');
+    expect(card).toContain("{exportSection9Note}");
+    // exactly one place renders the note
+    expect(PAGE.split('data-testid="report-section9-note"').length - 1).toBe(1);
+    // the loader reads the Monatsexport card's own period, and runs only for report readers
+    expect(PAGE).toContain("`/reports/monthly?year=${exportYear}&month=${exportMonth}`");
+    expect(PAGE).toMatch(/const _m = exportMonth;\s+const _y = exportYear;\s+if \(canReportRead\)/);
+  });
 });

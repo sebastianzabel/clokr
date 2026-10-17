@@ -171,23 +171,16 @@
   let exportYear = $state(currentYear);
   let exportLoading = $state(false);
   let exportError = $state("");
+  // § 9-Hinweis (Phase 104, D-30) — erklärt, warum im gewählten Monat Tage von Urlaub nach
+  // Krankheit gewandert sind. Kommt vom Server (GET /reports/monthly's section9Note field),
+  // wird NICHT clientseitig hergeleitet, und ist nur gesetzt, wenn der Monat tatsächlich
+  // bestätigte § 9-Tage trägt. Issue #617: sits on the Monatsexport card, driven by its own period.
+  let exportSection9Note = $state<string | null>(null);
 
   // Urlaubsbericht PDF (kombiniert: Urlaubsliste + Urlaubsübersicht)
   let leaveYear = $state(currentYear);
   let leaveLoading = $state(false);
   let leaveError = $state("");
-
-  // Company monthly PDF (Firmenweiter Monatsbericht) — PDF-01 / PDF-03
-  let companyPdfMonth = $state(currentMonth);
-  let companyPdfYear = $state(currentYear);
-  let companyPdfRole = $state<"all" | "EMPLOYEE" | "MANAGER">("all");
-  let companyPdfLoading = $state(false);
-  let companyPdfError = $state("");
-  // § 9-Hinweis (Phase 104, D-30) — erklärt, warum im gewählten Monat Tage von Urlaub nach
-  // Krankheit gewandert sind. Kommt vom Server (GET /reports/monthly's section9Note field),
-  // wird NICHT clientseitig hergeleitet, und ist nur gesetzt, wenn der Monat tatsächlich
-  // bestätigte § 9-Tage trägt.
-  let companyPdfSection9Note = $state<string | null>(null);
 
   const months = [
     "Januar",
@@ -456,12 +449,12 @@
     if (canReportRead) void loadCarryoverAtRisk();
   });
 
-  // Der Monatsbericht-Hinweis hängt an der EIGENEN Periodenauswahl der Karte,
-  // nicht an selectedMonth/selectedYear der Team-Übersicht.
+  // The § 9 note follows the Monatsexport card's OWN period selection, not the team overview's
+  // selectedMonth/selectedYear.
   $effect(() => {
-    const _m = companyPdfMonth;
-    const _y = companyPdfYear;
-    if (canReportRead) void loadCompanyMonthlySection9Note();
+    const _m = exportMonth;
+    const _y = exportYear;
+    if (canReportRead) void loadExportSection9Note();
   });
 
   // ── onMount ────────────────────────────────────────────────────────────────
@@ -736,31 +729,16 @@
     }
   }
 
-  async function loadCompanyMonthlySection9Note() {
+  async function loadExportSection9Note() {
     try {
       const res = await api.get<{ section9Note?: string }>(
-        `/reports/monthly?year=${companyPdfYear}&month=${companyPdfMonth}`,
+        `/reports/monthly?year=${exportYear}&month=${exportMonth}`,
       );
-      companyPdfSection9Note = res.section9Note ?? null;
+      exportSection9Note = res.section9Note ?? null;
     } catch {
-      // Fail-safe: der Hinweis ist erklärend, nie blockierend — bei einem Fehler zeigen wir
-      // nichts an, statt eine Fehlermeldung in eine reine Downloadkarte zu schreiben.
-      companyPdfSection9Note = null;
-    }
-  }
-
-  async function downloadCompanyMonthlyPdf() {
-    companyPdfLoading = true;
-    companyPdfError = "";
-    try {
-      await downloadPdf(
-        `/reports/monthly/pdf/all?month=${companyPdfMonth}&year=${companyPdfYear}&role=${companyPdfRole}`,
-        `Monatsbericht_Alle_${companyPdfYear}_${String(companyPdfMonth).padStart(2, "0")}.pdf`,
-      );
-    } catch (e: unknown) {
-      companyPdfError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
-    } finally {
-      companyPdfLoading = false;
+      // Fail-safe: the note explains, it never blocks — on an error we show nothing instead of
+      // writing an error message into a plain download card.
+      exportSection9Note = null;
     }
   }
 
@@ -1043,6 +1021,13 @@
           {/if}
         </button>
 
+        {#if exportSection9Note}
+          <div class="alert alert-info" data-testid="report-section9-note">
+            <span aria-hidden="true">§</span>
+            <span>{exportSection9Note}</span>
+          </div>
+        {/if}
+
         {#if exportError}
           <div class="alert alert-error" role="alert">
             <span>⚠</span>
@@ -1091,78 +1076,6 @@
           <div class="alert alert-error" role="alert">
             <span>⚠</span>
             <span>{leaveError}</span>
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    <!-- Company Monthly PDF Card (PDF-01 / PDF-03) -->
-    {#if canReportExport}
-      <div class="card card-body card-animate report-card">
-        <div class="report-card-icon-section report-card-icon-section--purple">
-          <span class="report-icon-lg">📑</span>
-        </div>
-        <div class="report-card-header">
-          <div>
-            <h2 class="report-card-heading">Firmenweiter Monatsbericht</h2>
-            <p class="report-card-desc text-muted">
-              Alle Mitarbeiter in einer PDF — optional nach Rolle gefiltert
-            </p>
-          </div>
-        </div>
-
-        <div class="report-controls">
-          <div class="form-group">
-            <label class="form-label" for="company-pdf-month">Monat</label>
-            <select id="company-pdf-month" bind:value={companyPdfMonth} class="form-input">
-              {#each months as name, i (i)}
-                <option value={i + 1}>{name}</option>
-              {/each}
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="company-pdf-year">Jahr</label>
-            <select id="company-pdf-year" bind:value={companyPdfYear} class="form-input">
-              {#each years as y (y)}
-                <option value={y}>{y}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="company-pdf-role">Rolle</label>
-          <select id="company-pdf-role" bind:value={companyPdfRole} class="form-input">
-            <option value="all">Alle Mitarbeiter</option>
-            <option value="EMPLOYEE">Nur Mitarbeiter</option>
-            <option value="MANAGER">Nur Manager</option>
-          </select>
-        </div>
-
-        <button
-          class="btn btn-primary"
-          onclick={downloadCompanyMonthlyPdf}
-          disabled={companyPdfLoading}
-        >
-          {#if companyPdfLoading}
-            <span class="btn-spinner"></span>
-            Vorbereiten…
-          {:else}
-            PDF herunterladen
-          {/if}
-        </button>
-
-        {#if companyPdfSection9Note}
-          <div class="alert alert-info" data-testid="report-section9-note">
-            <span aria-hidden="true">§</span>
-            <span>{companyPdfSection9Note}</span>
-          </div>
-        {/if}
-
-        {#if companyPdfError}
-          <div class="alert alert-error" role="alert">
-            <span>⚠</span>
-            <span>{companyPdfError}</span>
           </div>
         {/if}
       </div>

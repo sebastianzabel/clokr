@@ -9,7 +9,7 @@
  * stored `days` is priced by the absence context exactly as production traffic prices it — this
  * file never hand-writes a `days` value.
  *
- * `generateMonthlyReportPdf`, `streamCompanyMonthlyReportPdf` and `streamLeaveListPdf` are spied
+ * `generateMonthlyReportPdf`, `generateMonthlyExportPdf` and `streamLeaveListPdf` are spied
  * the same way `reports-bs-leave-448.test.ts` / `reports.test.ts` already spy their own PDF
  * generators — PDFKit Flate-compresses its content streams, so the only way to assert on the data
  * a route built is to capture the argument before it reaches PDFKit.
@@ -34,7 +34,6 @@ vi.mock("../pdf", async (importOriginal) => {
   return {
     ...actual,
     generateMonthlyReportPdf: vi.fn(actual.generateMonthlyReportPdf),
-    streamCompanyMonthlyReportPdf: vi.fn(actual.streamCompanyMonthlyReportPdf),
     generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
     streamLeaveListPdf: vi.fn(actual.streamLeaveListPdf),
   };

@@ -274,7 +274,6 @@ const route = (
 const READERS: readonly ReaderEntry[] = [
   route(REPORTS, "/monthly", ["reportPopulationWhere"]),
   route(REPORTS, "/monthly/pdf", ["reportPopulationWhere"]),
-  route(REPORTS, "/monthly/pdf/all", ["reportPopulationWhere"]),
   route(REPORTS, "/leave-list/pdf", ["reportPopulationWhere"]),
   route(REPORTS, "/vacation/pdf", ["reportPopulationWhere", "listEntitlementsForYear"]),
   route(REPORTS, "/leave-overview", ["reportPopulationWhere", "listEntitlementsForYear"]),

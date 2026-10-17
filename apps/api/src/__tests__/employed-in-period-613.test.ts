@@ -27,13 +27,12 @@ import {
 import { createPopulationPerson, type PopulationPerson } from "./population-fixtures-613";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
-// Spy that still calls through: the company PDF only exposes its rows by feeding them into pdfkit,
+// Spy that still calls through: the Monatsexport only exposes its rows by feeding them into pdfkit,
 // which compresses its content streams, so the test reads the payload the route built.
 vi.mock("../composition/pdf", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../composition/pdf")>();
   return {
     ...actual,
-    streamCompanyMonthlyReportPdf: vi.fn(actual.streamCompanyMonthlyReportPdf),
     generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
@@ -217,21 +216,6 @@ describe("Issue #613 — the period population", () => {
     });
   });
   describe("monthly PDFs", () => {
-    async function companyPdfNumbers(year: number, month: number, extra = ""): Promise<string[]> {
-      const spy = vi.mocked(pdfModule.streamCompanyMonthlyReportPdf);
-      spy.mockClear();
-      const res = await withClock(d.adminToken, (t) =>
-        app.inject({
-          method: "GET",
-          url: `/api/v1/reports/monthly/pdf/all?year=${year}&month=${month}${extra}`,
-          headers: { authorization: `Bearer ${t}` },
-        }),
-      );
-      expect(res.statusCode).toBe(200);
-      expect(spy).toHaveBeenCalledTimes(1);
-      return spy.mock.calls[0][1].rows.map((r) => r.employeeNumber);
-    }
-
     async function singlePdf(employeeId: string, month: number, token = d.adminToken) {
       return withClock(token, (t) =>
         app.inject({
@@ -319,20 +303,6 @@ describe("Issue #613 — the period population", () => {
       expect(numbers.includes(p.A.employeeNumber)).toBe(datev.includes(p.A.employeeNumber));
     });
 
-    it("the compat role filter of the company PDF still narrows", async () => {
-      const manager = await createPopulationPerson(app, {
-        tenantId: d.tenant.id,
-        salonId: d.salonId,
-        tag: "pdfmgr",
-        hireDate: new Date("2025-01-01T00:00:00.000Z"),
-        userRole: "MANAGER",
-      });
-      const numbers = await companyPdfNumbers(2026, 9, "&role=MANAGER");
-      expect(numbers).toContain(manager.employeeNumber);
-      expect(numbers).not.toContain(p.E1.employeeNumber);
-      expect(numbers).not.toContain(p.D.employeeNumber);
-    });
-
     it("the single PDF answers for a person in the month and 404s outside it", async () => {
       const september = await singlePdf(p.E1.employeeId, 9);
       expect(september.statusCode).toBe(200);
@@ -369,7 +339,7 @@ describe("Issue #613 — the period population", () => {
     });
   });
   describe("DATEV keeps the employment core", () => {
-    /** Personalnummern (column 1 of the Bewegungsdaten rows) of the company export. */
+    /** Personalnummern (column 1 of the Bewegungsdaten rows) of the DATEV export. */
     async function datevPnrs(month: number): Promise<string[]> {
       const res = await withClock(d.adminToken, (t) =>
         app.inject({

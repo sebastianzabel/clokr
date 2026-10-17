@@ -6,9 +6,6 @@ import { requireAuth } from "../middleware/auth";
 import {
   requirePermission,
   permissionReach,
-  parseCompatRoleFilter,
-  compatRoleUserWhere,
-  type CompatRoleFilter,
   accessContextFromRequest, // Phase 91b Plan 07 (#91), D-10/D-14
   resolveAccessReach, // Phase 91b Plan 07 (#91), D-10/D-14
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 07 (#91), D-10
@@ -24,7 +21,6 @@ import {
   generateMonthlyExportPdf,
   type MonthlyExportRow,
   generateVacationOverviewPdf,
-  streamCompanyMonthlyReportPdf,
   streamLeaveListPdf,
   streamVacationOverviewPdf,
   type VacationOverviewPdfRow,
@@ -163,7 +159,7 @@ type EmployeeWithIncludes = {
 
 // ── computeEmployeeSummary ────────────────────────────────────────────────────
 // Pure helper — single source of truth for the monthly report's sick/leave/§9 fields.
-// Called by GET /monthly (JSON), GET /monthly/pdf (single-emp), GET /monthly/pdf/all (company).
+// Called by GET /monthly (JSON), GET /monthly/pdf (single-emp).
 //
 // Issue #451 (D-03): this function computes NO Soll/Ist/Überstunden any more — all three GET
 // handlers below call `computeMonthReportFigures` (the working-time-account's own month result)
@@ -849,7 +845,7 @@ async function selectMonthlyExportPersons(
 
 // Issue #451 (D-02): one leaveDaysByCodeWithin call per employee with at least one leave request
 // in the report month — feeds computeEmployeeSummary's required leaveDaysByCode parameter for
-// the three Monatsbericht handlers (JSON, single PDF, company PDF). Same UTC-midnight
+// the two Monatsbericht handlers (JSON, single PDF). Same UTC-midnight
 // calendar-month bounds as fetchLeaveDaysByEmployeeForDatev above (not monthRangeUtc's tenant-tz
 // instants), for the identical reason: leaveDaysByCodeWithin/countedLeaveDaysWithin normalise
 // with utcDay(), so a tenant-tz instant would silently shift the window by one day. Sequential
@@ -2084,7 +2080,7 @@ export async function reportRoutes(app: FastifyInstance) {
           id: employeeId,
           tenantId: req.user.tenantId,
           // Issue #613 (P-05): the single Stundennachweis follows the same population as the
-          // company PDF; outside it the answer below cannot be told apart from an unknown id.
+          // monthly report JSON; outside it the answer below cannot be told apart from an unknown id.
           AND: [reportPopulationWhere(start, end)],
         },
         include: buildEmployeeInclude(firstDay, lastDay),
@@ -2197,174 +2193,6 @@ export async function reportRoutes(app: FastifyInstance) {
         `attachment; filename="monatsbericht-${y}-${String(m).padStart(2, "0")}-${emp.employeeNumber}.pdf"`,
       );
       return reply.send(pdfBuffer);
-    },
-  });
-
-  // GET /api/v1/reports/monthly/pdf/all?year=&month=&role=  — PDF-01/PDF-03/PDF-05
-  app.get("/monthly/pdf/all", {
-    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requirePermission("report:export:ZUGEWIESEN"),
-    handler: async (req, reply) => {
-      const { year, month, role } = req.query as {
-        year: string;
-        month: string;
-        role?: string;
-      };
-      const y = parseInt(year);
-      const m = parseInt(month);
-      if (isNaN(y) || isNaN(m) || m < 1 || m > 12) {
-        return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
-      }
-
-      // ALLOWLIST validation — never pass untrusted string to Prisma enum. The parse and the
-      // where-fragment live in contexts/platform/compat-role.ts, the one module that compares role
-      // values (Phase 75b, Issue #75, D-19): this filters the LISTED employees, it decides nothing
-      // about the caller.
-      // #539 D-12: the single remaining reader of the compat column for a business purpose, kept
-      // until Release B (follow-up issue) because the column is still written from the stored
-      // assignments. The per-row role of the report data is gone; only this filter reads it.
-      const roleFilter: CompatRoleFilter | undefined = parseCompatRoleFilter(role);
-
-      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { start, end } = monthRangeUtc(y, m, tz);
-      // Issue #493 (D-10): @db.Date columns and the day clip take calendar-day bounds; the
-      // instant `end` above stays for the Stichtag lookup only.
-      const { firstDay, lastDay } = monthDateRange(y, m, tz);
-
-      const tenant = await app.prisma.tenant.findUnique({
-        where: { id: req.user.tenantId },
-        select: { name: true },
-      });
-
-      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
-      // building the company-wide PDF. Stichtag = the report period's own last day (`end`).
-      const pdfAllAccess = accessContextFromRequest(req);
-      const pdfAllScopeReach = await resolveAccessReach(
-        app.prisma,
-        pdfAllAccess,
-        "report:export:ZUGEWIESEN",
-      );
-      const pdfAllScopedIds =
-        pdfAllScopeReach.kind === "wholeTenant"
-          ? "all"
-          : await resolveStammsalonScopedEmployeeIds(
-              app.prisma,
-              req.user.tenantId,
-              pdfAllScopeReach,
-              end,
-            );
-
-      const employees = (await app.prisma.employee.findMany({
-        where: {
-          tenantId: req.user.tenantId,
-          // Issue #613 (D-01): the period population; the compat role filter (#539 D-12) is the
-          // only login-side condition left and filters the LISTED persons, never the population.
-          ...(roleFilter ? { user: compatRoleUserWhere(roleFilter) } : {}),
-          AND: [
-            reportPopulationWhere(start, end),
-            ...(pdfAllScopedIds !== "all" ? [{ id: { in: pdfAllScopedIds } }] : []),
-          ],
-        },
-        include: buildEmployeeInclude(firstDay, lastDay),
-        orderBy: { lastName: "asc" },
-      })) as unknown as EmployeeWithIncludes[];
-
-      if (employees.length === 0) {
-        reply.code(404);
-        return { error: "Keine Mitarbeiter gefunden" };
-      }
-
-      // Phase 104 (D-30): one bulk fetch for the whole company PDF, not per employee.
-      const section9ByEmpAll = await fetchConfirmedSection9CreditsByEmp(
-        app,
-        req.user.tenantId,
-        firstDay,
-        lastDay,
-      );
-
-      // Issue #451 (D-02): the absence context's own priced leave-day map, prefetched
-      // SEQUENTIALLY for the whole company PDF (never inside the per-employee Promise.all
-      // below) — same helper, same bounds as GET /monthly above.
-      const leaveDaysByCodeAll = await fetchLeaveDaysByCodeForMonthlyReport(
-        app,
-        req.user.tenantId,
-        employees,
-        y,
-        m,
-      );
-
-      // Issue #451 (D-03): sequential — one computeMonthReportFigures call per employee, never
-      // inside a Promise.all (the plan's own requirement for the company PDF).
-      const rows: Array<{
-        employeeName: string;
-        employeeNumber: string;
-        workedHours: number;
-        targetHours: number;
-        overtimeHours: number;
-        overtimeConfirmed: boolean | null;
-        balanceAdjustmentHours: number;
-        sickDaysWithAttest: number;
-        sickDaysWithoutAttest: number;
-        vacationDays: number;
-        totalAbsenceDays: number;
-        section9DaysThisMonth: number;
-        entries: ReturnType<typeof computeEmployeeSummary>["entries"];
-      }> = [];
-      for (const emp of employees) {
-        const summary = computeEmployeeSummary(
-          emp,
-          firstDay,
-          lastDay,
-          tz,
-          leaveDaysByCodeAll.get(emp.id) ?? new Map(),
-          section9ByEmpAll.get(emp.id) ?? [],
-        );
-        const figures = await computeMonthReportFigures(app, emp.id, y, m);
-        rows.push({
-          employeeName: `${emp.firstName} ${emp.lastName}`,
-          employeeNumber: emp.employeeNumber,
-          workedHours: Math.round((figures.workedMinutes / 60) * 100) / 100,
-          targetHours: Math.round((figures.expectedMinutes / 60) * 100) / 100,
-          overtimeHours: Math.round((figures.balanceMinutes / 60) * 100) / 100,
-          overtimeConfirmed: figures.labelled ? figures.confirmed : null,
-          // Issue #451 (D-03): same WTA reconciliation item as GET /monthly's balanceAdjustmentHours.
-          balanceAdjustmentHours: figures.labelled
-            ? Math.round((figures.balanceAdjustmentMinutes / 60) * 100) / 100
-            : 0,
-          sickDaysWithAttest: summary.sickDaysWithAttest,
-          sickDaysWithoutAttest: summary.sickDaysWithoutAttest,
-          vacationDays: summary.vacationDays,
-          totalAbsenceDays: summary.totalAbsenceDays,
-          section9DaysThisMonth: summary.section9DaysThisMonth,
-          entries: summary.entries,
-        });
-      }
-
-      const doc = new PDFDocument({ size: "A4", margin: 50 });
-      reply.header("Content-Type", "application/pdf");
-      reply.header(
-        "Content-Disposition",
-        `attachment; filename="monatsbericht-alle-${y}-${String(m).padStart(2, "0")}.pdf"`,
-      );
-
-      streamCompanyMonthlyReportPdf(doc, {
-        tenantName: tenant?.name ?? "",
-        month: `${MONTH_NAMES[m - 1]} ${y}`,
-        year: y,
-        monthNumber: m,
-        roleFilter: roleFilter ?? "all",
-        rows,
-      });
-      doc.end(); // CRITICAL: end() BEFORE reply.send() per RESEARCH.md Pitfall 1
-
-      await app.audit({
-        userId: req.user.sub,
-        action: "EXPORT",
-        entity: "Report",
-        newValue: { type: "COMPANY_MONTHLY_PDF", year, month, role: roleFilter ?? "all" },
-      });
-
-      return reply.send(doc);
     },
   });
 

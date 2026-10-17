@@ -369,7 +369,8 @@ function makePopulations(
   exports: ExportRecord[],
 ): Populations {
   // Source: `git show 7c6018e9:apps/api/src/composition/reports.ts`, GET /monthly (lines 912-917)
-  // and GET /monthly/pdf/all (lines 1909-1913): `exitDate: null, user: { isActive: true }`.
+  // and the company-wide PDF route of that commit (lines 1909-1913, removed by Issue #617 - the
+  // GET /monthly-export/pdf Monatsexport replaces it): `exitDate: null, user: { isActive: true }`.
   const reportBase = new Set(
     employees.filter((e) => e.exitDate === null && e.user?.isActive === true).map((e) => e.id),
   );

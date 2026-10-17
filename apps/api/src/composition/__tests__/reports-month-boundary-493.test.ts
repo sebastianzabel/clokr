@@ -35,7 +35,6 @@ vi.mock("../pdf", async (importOriginal) => {
   return {
     ...actual,
     generateMonthlyReportPdf: vi.fn(actual.generateMonthlyReportPdf),
-    streamCompanyMonthlyReportPdf: vi.fn(actual.streamCompanyMonthlyReportPdf),
     generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });

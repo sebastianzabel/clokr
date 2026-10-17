@@ -761,7 +761,6 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
     variants: personQuery("employeeId", JUNE, { withNone: false }),
     handlerCheck: true,
   },
-  "GET /api/v1/reports/monthly/pdf/all": { phase: "read", variants: none(JUNE) },
   "GET /api/v1/reports/vacation/pdf": { phase: "read", variants: none(YEAR) },
   "GET /api/v1/retro-entry-requests": { phase: "read" },
   "GET /api/v1/role-assignments": { phase: "read" },
