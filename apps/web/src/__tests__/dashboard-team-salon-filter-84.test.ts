@@ -82,7 +82,13 @@ describe("Issue #84 — the Team block follows the salon context through team-vi
   it("D-01: a reload invalidates every loader still in flight", () => {
     const reload = functionBody("reloadTeam");
     expect(reload).toContain("teamGeneration++;");
-    for (const loader of ["loadTeamWeek", "loadTeamCharts", "loadUpcomingLeaves"]) {
+    // Issue #588: the saldo card's loader follows the same generation idiom.
+    for (const loader of [
+      "loadTeamWeek",
+      "loadTeamCharts",
+      "loadUpcomingLeaves",
+      "loadTeamSaldo",
+    ]) {
       const body = functionBody(loader);
       expect(body, `${loader} captures the generation`).toContain(
         "const generation = teamGeneration;",

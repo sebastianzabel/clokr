@@ -85,6 +85,8 @@ export default defineConfig({
       // Phase 412 (#412): narrow single-specifier shim — see the stub file's own doc
       // comment (src/__tests__/stubs/app-environment.ts) for the full rationale.
       "$app/environment": path.resolve(__dirname, "./src/__tests__/stubs/app-environment.ts"),
+      // Issue #588: the same kind of narrow shim for `goto`, so the dashboard page can be mounted.
+      "$app/navigation": path.resolve(__dirname, "./src/__tests__/stubs/app-navigation.ts"),
     },
   },
 });
