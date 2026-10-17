@@ -5,7 +5,7 @@
 
 This directory is the **enforceable contract** for Clokr UI. If a page builds a raw card / modal / KPI / month-bar / approval-row by hand, it bypasses this spec and lint rules will block the PR.
 
-Read [`/docs/design/README.md`](../../../../docs/design/README.md) for the visual language. This README documents the *components* — what to import, how to call them, what props they accept.
+Read [`/docs/design/README.md`](../../../../docs/design/README.md) for the visual language. This README documents the _components_ — what to import, how to call them, what props they accept.
 
 ## Rules
 
@@ -42,13 +42,13 @@ interface Props {
 
 **`autoAccent` behavior (D-01):** When no explicit `accent` prop is passed, `PageHead` automatically italicizes the LAST word of `title`, where words are split on whitespace or `-`. Single-word titles render WITHOUT an `<em>` wrapper. Explicit `accent="X"` always wins.
 
-| `title`                  | `accent` | Rendered                  |
-| ------------------------ | -------- | ------------------------- |
-| `Team-Zeiten`            | (none)   | `Team-` + *`Zeiten`*      |
-| `Mein Profil`            | (none)   | `Mein ` + *`Profil`*      |
-| `Urlaub & Abwesenheit`   | (none)   | `Urlaub & ` + *`Abwesenheit`* |
-| `Zeiterfassung`          | (none)   | `Zeiterfassung` (plain)   |
-| `Mein Profil`            | `Mein`   | *`Mein`* + ` Profil`      |
+| `title`                | `accent` | Rendered                      |
+| ---------------------- | -------- | ----------------------------- |
+| `Team-Zeiten`          | (none)   | `Team-` + _`Zeiten`_          |
+| `Mein Profil`          | (none)   | `Mein ` + _`Profil`_          |
+| `Urlaub & Abwesenheit` | (none)   | `Urlaub & ` + _`Abwesenheit`_ |
+| `Zeiterfassung`        | (none)   | `Zeiterfassung` (plain)       |
+| `Mein Profil`          | `Mein`   | _`Mein`_ + ` Profil`          |
 
 Usage:
 
@@ -152,6 +152,8 @@ interface Props {
   children: Snippet;
   /** Optional footer with action buttons (right-aligned). */
   footer?: Snippet;
+  /** Issue #612 — additive. "md" (default) keeps the global `.modal` width; "wide" adds `modal--wide` (`min(880px, calc(100vw - 32px))`). */
+  size?: "md" | "wide";
 }
 ```
 
@@ -161,6 +163,7 @@ Modal owns:
 - **Backdrop click** → sets `open=false`
 - **Focus trap** on `.modal-card` while open (via `use:focusTrap` from `$lib/utils/focus-trap.ts`)
 - **Body scroll lock** while open (toggles `document.body.style.overflow`)
+- **Initial focus** (Issue #612, additive): `focusTrap` focuses the first element inside the dialog that carries `data-autofocus` (and is not disabled); a modal without the attribute focuses its first focusable element as before.
 
 Parent surface area is intentionally minimal: bind a boolean + write the body content. Use Svelte 5 `$state(false)` in the caller.
 
@@ -211,6 +214,14 @@ interface Props {
   onToday?: () => void;
   /** Optional extra actions snippet in the nav row (e.g. PDF export). */
   extraActions?: Snippet;
+  /** Issue #612 — additive. Text shown instead of the month derived from `date` (e.g. "Jul – Sep 2026"). */
+  label?: string;
+  /** Issue #612 — additive. aria-label AND title of the previous arrow (default "Vorheriger Monat"). */
+  prevLabel?: string;
+  /** Issue #612 — additive. aria-label AND title of the next arrow (default "Nächster Monat"). */
+  nextLabel?: string;
+  /** Issue #612 — additive. Real `disabled` next arrow; its title is `NEXT_PERIOD_DISABLED_TITLE` (exported from the component's module script). */
+  nextDisabled?: boolean;
 }
 ```
 
@@ -304,6 +315,12 @@ interface Props {
   dates: string;
   /** Whole-row click handler — typically opens a detail modal. */
   onclick?: () => void;
+  /** Issue #612 — additive. Primary-action mode: the name becomes the row's one link (stretched over the row). Wins over `onclick`. */
+  primaryHref?: string;
+  /** Issue #612 — additive. Accessible name of the primary link (default: `name`). */
+  primaryLabel?: string;
+  /** Issue #612 — additive. Click handler of the primary link; see the interception contract below. */
+  onPrimaryClick?: (e: MouseEvent) => void;
   /** Right-aligned action buttons. */
   actions?: Snippet;
   /** Optional richer meta content (chip + text) when a plain string isn't enough. */
@@ -314,7 +331,7 @@ interface Props {
 Rendered DOM (matches design handoff §4 approval row, 4-col grid 44px 1fr auto auto):
 
 ```html
-<div class="approval-row" role="button" tabindex="0" onclick=…>
+<div class="approval-row" role="button" tabindex="0" onclick="…">
   <div class="approval-avatar">{avatar}</div>
   <div class="approval-name-meta">
     <div class="approval-name">{name}</div>
@@ -372,6 +389,42 @@ Usage:
 </ApprovalRow>
 ```
 
+#### Primary-action mode (`primaryHref`, Issue #612 — additive)
+
+With `onclick` the row is a `<button>` and `actions` end up INSIDE it — a button in a button, which is
+invalid HTML and breaks keyboard and assistive technology. A row that carries `actions` therefore uses
+`primaryHref` instead:
+
+- the root is a `div` (never a button); the name is the only link (`a.approval-name.approval-primary`,
+  `data-sveltekit-noscroll`), stretched over the whole row with `::after`; focus is drawn on the whole row;
+- `actions` render as a SIBLING of the link, above the stretched area (`z-index: 1`), so they stay
+  separately clickable, come right after the link in tab order and need no `stopPropagation`;
+- `primaryLabel` is the link's accessible name (e.g. „Anna Muster – Personenansicht öffnen“),
+  default `name`; when `primaryHref` and `onclick` are both passed, `primaryHref` wins;
+- **Interception contract:** the link is a real `href`, so a middle click or ctrl/cmd-click opens a new tab.
+  A caller that wants an in-page navigation (history push, modal) passes `onPrimaryClick`, checks
+  `isPlainLeftClick(e)` (`$lib/reports/period-state.ts`), calls `e.preventDefault()` only for the plain
+  click, and leaves modified clicks alone.
+
+```svelte
+<ApprovalRow
+  avatar="AM"
+  name="Anna Muster"
+  dates="Rest 13 T."
+  primaryHref="/reports?from=2026-10&to=2026-10&person=…"
+  primaryLabel="Anna Muster – Personenansicht öffnen"
+  onPrimaryClick={(e) => {
+    if (!isPlainLeftClick(e)) return;
+    e.preventDefault();
+    openDrilldown(id);
+  }}
+>
+  {#snippet actions()}
+    <button type="button" class="btn btn-ghost xs">Hinweis senden</button>
+  {/snippet}
+</ApprovalRow>
+```
+
 ### `<ConfirmDialog>`
 
 Source: `$components/ui/ConfirmDialog.svelte`
@@ -414,7 +467,10 @@ Usage:
   }
 </script>
 
-<button class="btn btn-ghost btn-sm btn-danger" onclick={() => (confirmState = { open: true, id: row.id })}>
+<button
+  class="btn btn-ghost btn-sm btn-danger"
+  onclick={() => (confirmState = { open: true, id: row.id })}
+>
   Löschen
 </button>
 

@@ -1,3 +1,8 @@
+<script module lang="ts">
+  /** Title of the disabled next arrow (Issue #612): the period may not move past the current month. */
+  export const NEXT_PERIOD_DISABLED_TITLE = "Spätere Zeiträume liegen in der Zukunft.";
+</script>
+
 <script lang="ts">
   import type { Snippet } from "svelte";
 
@@ -47,6 +52,20 @@
      * `statRenders` and stay byte-identical).
      */
     statRenders?: Record<string, Snippet>;
+    /**
+     * Issue #612 — additive; consumers that pass none of the four props below render as before.
+     * Text shown instead of the month derived from `date`, e.g. "Jul – Sep 2026" for a period.
+     */
+    label?: string;
+    /** Issue #612 — aria-label AND title of the previous arrow. Default "Vorheriger Monat". */
+    prevLabel?: string;
+    /** Issue #612 — aria-label AND title of the next arrow. Default "Nächster Monat". */
+    nextLabel?: string;
+    /**
+     * Issue #612 — renders the next arrow as a real disabled button whose title is
+     * {@link NEXT_PERIOD_DISABLED_TITLE}.
+     */
+    nextDisabled?: boolean;
   }
 
   let {
@@ -60,11 +79,17 @@
     extraActions,
     testIdPrefix = "month-bar",
     statRenders,
+    label,
+    prevLabel,
+    nextLabel,
+    nextDisabled = false,
   }: Props = $props();
 
   const monthLabel = $derived(
-    new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric" }).format(date),
+    label ?? new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric" }).format(date),
   );
+  const prevText = $derived(prevLabel ?? "Vorheriger Monat");
+  const nextText = $derived(nextLabel ?? "Nächster Monat");
 
   // ── Optional month-picker dropdown (matches .cal-monthbar pattern) ──
   const MONTH_NAMES_SHORT = [
@@ -108,8 +133,8 @@
     <button
       class="nav-btn"
       onclick={onPrev}
-      title="Vorheriger Monat"
-      aria-label="Vorheriger Monat"
+      title={prevText}
+      aria-label={prevText}
       data-testid={`${testIdPrefix}-prev`}
     >
       <svg
@@ -175,8 +200,9 @@
     <button
       class="nav-btn"
       onclick={onNext}
-      title="Nächster Monat"
-      aria-label="Nächster Monat"
+      disabled={nextDisabled}
+      title={nextDisabled ? NEXT_PERIOD_DISABLED_TITLE : nextText}
+      aria-label={nextText}
       data-testid={`${testIdPrefix}-next`}
     >
       <svg
