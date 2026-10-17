@@ -487,6 +487,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         confirmedMinutes: number;
         openMonthMinutes: number | null;
         hasClosedMonth: boolean;
+        unconfirmedMonths: number | null;
         rosterIncomplete?: boolean;
       } | null = null;
 
@@ -495,6 +496,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         let confirmedMinutes: number;
         let openMonthMinutes: number | null;
         let hasClosedMonth: boolean;
+        let unconfirmedMonths: number | null;
         let rosterIncomplete: boolean | undefined;
 
         let breakdown: OvertimeBalanceBreakdown | null = null;
@@ -510,6 +512,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           confirmedMinutes = breakdown.confirmedMinutes;
           openMonthMinutes = breakdown.openMonthMinutes;
           hasClosedMonth = breakdown.hasClosedMonth;
+          unconfirmedMonths = breakdown.unconfirmedMonths;
           rosterIncomplete = breakdown.rosterIncomplete;
         } else {
           const acct = await getOvertimeAccount(app.prisma, employeeId, tenantId);
@@ -527,6 +530,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
             hasClosedMonth = false;
           }
           openMonthMinutes = null;
+          unconfirmedMonths = null;
           rosterIncomplete = undefined;
         }
 
@@ -537,6 +541,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
           confirmedMinutes,
           openMonthMinutes,
           hasClosedMonth,
+          // Issue #588 (P-14): additive; the web words the forecast from it
+          // ("Laufender Monat" only for exactly one unclosed month).
+          unconfirmedMonths,
           ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
         };
       }
