@@ -909,7 +909,12 @@ import { readFileSync } from "node:fs";
 // Issue #666 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on `feat/666-anonymized-backfill`
 // (origin/main @ 5b73e04e) - 686 test files, 10437 tests (10434 passed, 3 skipped). New file:
 // backfill-666-anonymized-employment (+17 cases); nothing removed, skipped or loosened. MIN_FILES 685 -> 686, never lowered.
-const MIN_FILES = 686;
+// Phase 542, plan 05 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on
+// `feat/542-salonfilter-berichte` after merging origin/main @ 8835ef5e (#666/#678) - 692 test files, 10513 tests
+// (10510 passed, 3 skipped). Six new files, all from this phase: salon-view (542-01), reports-salon-filter-542 (542-01),
+// report-salon-filter-source-542 (542-01), dashboard-salon-filter-542 (542-02), monthly-export-salon-filter-542 and
+// monthly-export-salon-label-542 (542-03); nothing removed, skipped or loosened. MIN_FILES 686 -> 692, never lowered.
+const MIN_FILES = 692;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -941,7 +946,12 @@ const MIN_FILES = 686;
 // Merge #617 onto main (2026-10-17): main 10363 + 49 = 10412. Never lowered.
 // Merge #617 onto main (2026-10-17): main 10371 + 49 = 10420. Never lowered.
 // Issue #666 (2026-10-17): MIN_TESTS 10420 -> 10437 (+17), the measured total of the full run named at MIN_FILES. Never lowered.
-const MIN_TESTS = 10437;
+// Phase 542, plan 05 (2026-10-17): MIN_TESTS 10437 -> 10513 (+76), the measured total of the full run named at
+// MIN_FILES. The six new files add 75 cases (dashboard-salon-filter-542 23, reports-salon-filter-542 15,
+// report-salon-filter-source-542 15, monthly-export-salon-filter-542 9, salon-view 8, monthly-export-salon-label-542 5);
+// the 76th is one further case in a data-driven existing file that was not attributed to a single file (no existing
+// API test file was edited by this phase; main alone measures 10437, so the phase delta is the measured 76). Never lowered.
+const MIN_TESTS = 10513;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

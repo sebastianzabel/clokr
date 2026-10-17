@@ -52,3 +52,38 @@ export function salonScopeLabel(state: PageScopeState): string | null {
   if (salonPageFilter(state) === null) return "Alle Salons";
   return salonNameLabel(name);
 }
+
+/**
+ * Issue #542 (OD-1, 16.10.2026) — what the Überstunden-Übersicht says under a salon filter: the
+ * list holds the persons whose Stammsalon is the chosen salon, each with the whole personal saldo.
+ */
+export const SALON_HOME_PERSONS_NOTE = "Personen nach Stammsalon";
+
+/**
+ * Issue #542 (OD-2, 17.10.2026) — the Monatsexport counterpart. Mirrors
+ * `EXPORT_SALON_PERSONS_LABEL` of `apps/api/src/composition/pdf.ts` (pinned equal by a text test).
+ */
+export const SALON_EXPORT_PERSONS_NOTE = "Personen nach Stammsalon am Monatsende";
+
+/**
+ * Issue #542 (OD-1/OD-2) — a saldo is a person's, never a salon's share. Mirrors
+ * `PERSON_SALDO_NOT_SPLIT_LABEL` of `apps/api/src/composition/pdf.ts` (pinned equal by a text test).
+ */
+export const PERSON_SALDO_NOT_SPLIT_LABEL = "Personensaldo, nicht nach Salon aufgeteilt";
+
+/**
+ * Issue #542 (P-08) — shown on a block that deliberately ignores the header salon (the vacation
+ * overview and the carry-over warnings), so a chosen salon is never read as their filter.
+ */
+export const ALL_SALONS_BLOCK_NOTE = "Gilt für alle Salons Ihrer Reichweite";
+
+/** Issue #542 (OD-2, P-08) — the DATEV card under a salon filter: the payroll file stays complete. */
+export const DATEV_ALL_SALONS_NOTE = "DATEV gilt für alle Salons Ihrer Reichweite";
+
+/**
+ * Issue #542 (orchestrator amendment 5) — a person without a Stammsalon on their Stichtag belongs
+ * to no salon's Monatsexport; there is no second membership rule, so the unfiltered export is the
+ * only one that lists them.
+ */
+export const EXPORT_NO_STAMMSALON_NOTE =
+  "Personen ohne Stammsalon am Stichtag erscheinen nur im Export ohne Salonauswahl.";

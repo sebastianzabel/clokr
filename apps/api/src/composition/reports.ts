@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
+import { z } from "zod";
 import { requireAuth } from "../middleware/auth";
 import {
   requirePermission,
@@ -8,6 +9,11 @@ import {
   accessContextFromRequest, // Phase 91b Plan 07 (#91), D-10/D-14
   resolveAccessReach, // Phase 91b Plan 07 (#91), D-10/D-14
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 07 (#91), D-10
+  resolveSalonInReach, // Issue #542 (P-04) — the one validator of a chosen salon, against the endpoint's own reach
+  salonOnlyReach, // Issue #542 (OD-2) — the one constructor of a salon-only reach (the export's person narrowing)
+  findSalon, // Issue #542 (OD-2) — the chosen salon's name for the export's label line
+  type AccessReach,
+  homeSalonsForDays, // Issue #542 (P-02) — the Stammsalon per calendar day
   isStammsalonScopeMatch, // Phase 91b Plan 07 (#91), D-10/D-14
   reportPopulationWhere, // Issue #613 (D-01) — the one period population
   employedInPeriodWhere, // Issue #613 — its employment core, which DATEV reads alone (P-01)
@@ -23,12 +29,14 @@ import {
   type MonthlyExportRow,
   type MonthlyReportDayRow,
 } from "./pdf";
+import { salonViewMemberIds, SALON_VIEW_NOT_FOUND } from "./salon-view"; // Issue #542 (P-01)
 import {
   getTenantTimezone,
   monthRangeUtc,
   monthDateRange, // Issue #493 (D-10)
   dateStrInTz, // Issue #617 (P-03) — the tenant-local Stichtag
   dayRangeUtc, // Issue #617 (P-03) — end of the Stichtag as the facade's `now`
+  todayInTz, // Issue #542 (P-02) — tenant-local today, so a salon Ist stops at yesterday (#438)
   computeMonthReportFigures, // Issue #451 (D-03)
 } from "../contexts/working-time-account"; // Phase 101B
 import {
@@ -56,6 +64,13 @@ import {
   DISPLAY_NAME, // Issue #617 (P-06) — display text of a day row; the identity is the code
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveEntitlement, LeaveRequestStatus, LeaveTypeCode } from "@clokr/db";
+
+// Issue #542 (P-04): the optional salon filter of the report views. Unknown query keys are
+// stripped by zod, a malformed id answers 400 through the global handler (like the dashboard's
+// team views).
+const reportSalonQuerySchema = z.object({
+  salonId: z.string().uuid().optional(),
+});
 
 // ── Month name lookup ─────────────────────────────────────────────────────────
 const MONTH_NAMES = [
@@ -231,6 +246,9 @@ function computeEmployeeSummary(
   // ONCE by the caller (no per-employee query — T-104-09-N1) and pre-filtered to
   // pre-filtered to CONFIRMED-only (T-104-09-PENDING: an AU_PENDING credit changes nothing).
   section9Credits: Array<{ creditedStart: Date; creditedEnd: Date }> = [],
+  // Issue #542 (P-02): under a salon filter only the days whose Stammsalon is that salon count
+  // (#84 D-04/D-13). Absent for every unfiltered caller - the result is then unchanged.
+  countsDay?: (day: string) => boolean,
 ): {
   sickDays: number;
   sickDaysWithAttest: number;
@@ -258,7 +276,10 @@ function computeEmployeeSummary(
   // shift). Absence rows (the AU document path) deliberately never contribute — see the kernel's
   // own docblock.
   const { sickDays, sickDaysWithAttest, sickDaysWithoutAttest, section9DaysThisMonth } =
-    sickLeaveDayCounts(emp.leaveRequests, firstDay, lastDay, { section9Credits });
+    sickLeaveDayCounts(emp.leaveRequests, firstDay, lastDay, {
+      section9Credits,
+      ...(countsDay ? { countsDay } : {}),
+    });
 
   // ── Absence breakdown (Issue #451, D-02) ─────────────────────────────────
   // Every per-type leave count, and totalAbsenceDays, comes from the absence context's own
@@ -802,13 +823,20 @@ async function fetchLeaveDaysByEmployeeForDatev(
 // entries and leave requests of the month, the confirmed § 9 credits and the priced leave days.
 // `GET /datev` and the Monatsexport both read it, so the human-readable document names exactly the
 // persons the payroll file transmits. `opts.orderBy` is passed only by the export: DATEV keeps its
-// query without an `orderBy`, so the order of its lines stays byte-identical.
+// query without an `orderBy`, so the order of its lines stays byte-identical. Issue #542: `opts.reach`
+// (the already resolved `report:export` reach) and `opts.onlyEmployeeIds` (the export's salon
+// narrowing) are passed only by `selectMonthlyExportPersons`; `GET /datev` passes neither and is
+// therefore never narrowed - the narrowing is an intersection with the real reach, never a widening.
 async function loadDatevMonth(
   app: FastifyInstance,
   req: FastifyRequest,
   y: number,
   m: number,
-  opts: { orderBy?: typeof REPORT_PERSON_ORDER } = {},
+  opts: {
+    orderBy?: typeof REPORT_PERSON_ORDER;
+    reach?: AccessReach;
+    onlyEmployeeIds?: readonly string[];
+  } = {},
 ) {
   const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
   const { start, end } = monthRangeUtc(y, m, tz);
@@ -820,11 +848,8 @@ async function loadDatevMonth(
   // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
   // building the export. Stichtag = the payroll period's own last day (`end`).
   const datevAccess = accessContextFromRequest(req);
-  const datevScopeReach = await resolveAccessReach(
-    app.prisma,
-    datevAccess,
-    "report:export:ZUGEWIESEN",
-  );
+  const datevScopeReach =
+    opts.reach ?? (await resolveAccessReach(app.prisma, datevAccess, "report:export:ZUGEWIESEN"));
   const datevScopedIds =
     datevScopeReach.kind === "wholeTenant"
       ? "all"
@@ -835,6 +860,15 @@ async function loadDatevMonth(
           end,
         );
 
+  // Issue #542: the export's salon narrowing only ever intersects the caller's reach.
+  const onlyIds = opts.onlyEmployeeIds;
+  const idFilter: readonly string[] | null =
+    datevScopedIds === "all"
+      ? (onlyIds ?? null)
+      : onlyIds === undefined
+        ? datevScopedIds
+        : datevScopedIds.filter((id) => onlyIds.includes(id));
+
   // Issue #256 (Befund 2): employed DURING the Abrechnungszeitraum, not employed today.
   // Issue #613: the one employment rule, from the Unterbau. DATEV deliberately reads the core
   // WITHOUT the anonymisation clause (§ 41 EStG: the Lohnkonto of a month of employment stays
@@ -844,7 +878,7 @@ async function loadDatevMonth(
     where: {
       tenantId: req.user.tenantId,
       ...employedInPeriodWhere(start, end),
-      ...(datevScopedIds !== "all" ? { id: { in: datevScopedIds } } : {}),
+      ...(idFilter !== null ? { id: { in: [...idFilter] } } : {}),
     },
     include: {
       workSchedules: { orderBy: { validFrom: "asc" } },
@@ -888,18 +922,98 @@ async function loadDatevMonth(
 }
 
 /**
- * Issue #617 (owner addendum 17.10.2026) - the Monatsexport's ONE person selection. Today it is the
- * DATEV population in last name / first name / id order; Issue #542 will narrow it HERE by Stammsalon
- * (each remaining person keeps full figures). `GET /datev` calls `loadDatevMonth` directly and is
- * never narrowed. No salon parameter exists yet.
+ * Issue #617 (owner addendum 17.10.2026) - the Monatsexport's ONE person selection: the DATEV
+ * population in last name / first name / id order. Issue #542 (OD-2, owner decision 17.10.2026): an
+ * optional chosen salon narrows WHICH persons are listed - those whose Stammsalon is the salon on the
+ * person's Stichtag - and never a figure: every remaining person keeps the full row. The salon is
+ * validated against the `report:export` reach before any person is read (`{ ok: false }` = the one
+ * 404 of the caller); the narrowing is an intersection with that reach inside `loadDatevMonth`, so a
+ * salon filter can only narrow. Stichtag (P-05): the person's exit day when it lies inside the
+ * exported month, else the last calendar day of the month, always passed as a calendar day (HOME
+ * validity is `@db.Date`, never compared with an instant, #493) - a salon change at the month boundary
+ * keeps the person in the old salon's export, a leaver stays where it left. A person without a
+ * Stammsalon on that day appears only in the unfiltered export. `GET /datev` calls `loadDatevMonth`
+ * directly, without a salon, and is never narrowed.
  */
 async function selectMonthlyExportPersons(
   app: FastifyInstance,
   req: FastifyRequest,
   y: number,
   m: number,
+  salonId?: string,
 ) {
-  return loadDatevMonth(app, req, y, m, { orderBy: REPORT_PERSON_ORDER });
+  const tenantId = req.user.tenantId;
+  const reach = await resolveAccessReach(
+    app.prisma,
+    accessContextFromRequest(req),
+    "report:export:ZUGEWIESEN",
+  );
+  const filter = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
+  if (!filter.ok) return { ok: false as const };
+
+  let salon: { id: string; name: string } | null = null;
+  let onlyEmployeeIds: string[] | undefined;
+  if (filter.salonId !== null) {
+    const chosen = await findSalon(app.prisma, tenantId, filter.salonId);
+    if (!chosen) return { ok: false as const };
+    salon = { id: chosen.id, name: chosen.name };
+    onlyEmployeeIds = await salonPersonsAtStichtag(app, tenantId, chosen.id, y, m);
+  }
+
+  const loaded = await loadDatevMonth(app, req, y, m, {
+    orderBy: REPORT_PERSON_ORDER,
+    reach,
+    ...(onlyEmployeeIds ? { onlyEmployeeIds } : {}),
+  });
+  return { ok: true as const, salon, ...loaded };
+}
+
+/**
+ * Issue #542 (OD-2, P-05) - the ids whose Stammsalon is `salonId` on their own Stichtag for the
+ * export of month `y`/`m`: the person's tenant-local exit day when it lies inside the month, else the
+ * month's last calendar day. One Stammsalon resolution (the endpoint's own scope resolver evaluated
+ * for a salon-only reach, #558) per distinct Stichtag, each as a UTC-midnight calendar day.
+ */
+async function salonPersonsAtStichtag(
+  app: FastifyInstance,
+  tenantId: string,
+  salonId: string,
+  y: number,
+  m: number,
+): Promise<string[]> {
+  const tz = await getTenantTimezone(app.prisma, tenantId);
+  const { start, end } = monthRangeUtc(y, m, tz);
+  const { lastDay } = monthDateRange(y, m, tz);
+  const homeOn = async (calendarDay: Date): Promise<Set<string>> => {
+    const ids = await resolveStammsalonScopedEmployeeIds(
+      app.prisma,
+      tenantId,
+      salonOnlyReach(salonId),
+      calendarDay,
+    );
+    // A salon-only reach never resolves to "all"; the empty set is the fail-closed reading.
+    return new Set(ids === "all" ? [] : ids);
+  };
+
+  const leavers = await app.prisma.employee.findMany({
+    where: { tenantId, exitDate: { gte: start, lte: end } },
+    select: { id: true, exitDate: true },
+  });
+  const leaverIds = new Set(leavers.map((l) => l.id));
+  const members = new Set<string>();
+  for (const id of await homeOn(lastDay)) {
+    if (!leaverIds.has(id)) members.add(id);
+  }
+  const byExitDay = new Map<string, string[]>();
+  for (const leaver of leavers) {
+    const exitDay = dateStrInTz(leaver.exitDate as Date, tz);
+    byExitDay.set(exitDay, [...(byExitDay.get(exitDay) ?? []), leaver.id]);
+  }
+  for (const [exitDay, ids] of byExitDay) {
+    const home = await homeOn(new Date(`${exitDay}T00:00:00Z`));
+    for (const id of ids) if (home.has(id)) members.add(id);
+  }
+  return [...members];
 }
 
 // Issue #451 (D-02): one leaveDaysByCodeWithin call per employee with at least one leave request
@@ -1047,6 +1161,15 @@ async function vacationYearFigures(
   return byEntitlement;
 }
 
+/** Every calendar day (`YYYY-MM-DD`) from `first` to `last`, both UTC-midnight dates. */
+function calendarDaysBetween(first: Date, last: Date): string[] {
+  const days: string[] = [];
+  for (let t = first.getTime(); t <= last.getTime(); t += 86_400_000) {
+    days.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return days;
+}
+
 /** `YYYY-MM-DD` of the day before `day` (calendar arithmetic on the string). */
 function dayBeforeStr(day: string): string {
   const [y, m, d] = day.split("-").map(Number);
@@ -1054,9 +1177,14 @@ function dayBeforeStr(day: string): string {
 }
 
 export async function reportRoutes(app: FastifyInstance) {
-  // GET /api/v1/reports/monthly?employeeId=&year=&month=
+  // GET /api/v1/reports/monthly?employeeId=&year=&month=&salonId=
   app.get("/monthly", {
-    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    schema: {
+      tags: ["Reporting"],
+      security: [{ bearerAuth: [] }],
+      description:
+        "Monthly report per person. The optional salonId (Issue #542) narrows the list to the persons who recorded time in that salon or are homed there on at least one day of the month; working time then counts the salon's entries only and sick days follow the Stammsalon per day, while Soll, saldo and the priced leave counts are withheld (null) with a reason.",
+    },
     preHandler: requirePermission("report:read:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { employeeId, year, month } = req.query as {
@@ -1064,6 +1192,8 @@ export async function reportRoutes(app: FastifyInstance) {
         year: string;
         month: string;
       };
+      // Issue #542 (P-04): parsed first - a malformed id answers 400 before anything is read.
+      const { salonId } = reportSalonQuerySchema.parse(req.query);
 
       const y = parseInt(year);
       const m = parseInt(month);
@@ -1081,6 +1211,19 @@ export async function reportRoutes(app: FastifyInstance) {
       // computed above). This is the template every other list route in this file follows.
       const access = accessContextFromRequest(req);
       const scopeReach = await resolveAccessReach(app.prisma, access, "report:read:ZUGEWIESEN");
+
+      // Issue #542 (CTX-1, P-04): the chosen salon is validated against the reach of THIS
+      // endpoint's permission BEFORE any person or figure is read; every rejection is the one
+      // 404 body (#85 D-13). The filter is presentation: it only intersects the reach below.
+      const salonFilter = await resolveSalonInReach(
+        app.prisma,
+        req.user.tenantId,
+        scopeReach,
+        salonId,
+      );
+      if (!salonFilter.ok) return reply.code(404).send(SALON_VIEW_NOT_FOUND);
+      const filterSalonId = salonFilter.salonId;
+
       const scopedEmployeeIds =
         scopeReach.kind === "wholeTenant"
           ? "all"
@@ -1092,7 +1235,7 @@ export async function reportRoutes(app: FastifyInstance) {
             );
 
       // Alle Mitarbeiter des Tenants (oder nur einen)
-      const employees = (await app.prisma.employee.findMany({
+      const populationEmployees = (await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
           // Issue #613 (D-01): the period population (employed in the month, never anonymised)
@@ -1110,6 +1253,34 @@ export async function reportRoutes(app: FastifyInstance) {
         orderBy: { lastName: "asc" },
       })) as unknown as EmployeeWithIncludes[];
 
+      // Issue #542 (P-01, P-02, P-10): under a filter the population above (period population,
+      // Stammsalon scope at month end, optional employeeId) is intersected with the one membership
+      // rule - an entry in the salon this month OR the Stammsalon on at least one calendar day of
+      // it. The filter can only narrow. `homeByPerson` doubles as the per-day attribution of the
+      // sick days below (#84 D-04/D-13).
+      let employees = populationEmployees;
+      let homeByPerson: Map<string, Map<string, string | null>> | null = null;
+      if (filterSalonId !== null) {
+        const monthDays = calendarDaysBetween(firstDay, lastDay);
+        homeByPerson = await homeSalonsForDays(
+          app.prisma,
+          req.user.tenantId,
+          populationEmployees.map((e) => e.id),
+          monthDays[0],
+          monthDays[monthDays.length - 1],
+        );
+        const members = salonViewMemberIds({
+          salonId: filterSalonId,
+          candidateIds: populationEmployees.map((e) => e.id),
+          entries: populationEmployees.flatMap((e) =>
+            e.timeEntries.map((t) => ({ employeeId: e.id, salonId: t.salonId })),
+          ),
+          homeByPerson,
+          days: monthDays,
+        });
+        employees = populationEmployees.filter((e) => members.has(e.id));
+      }
+
       // Phase 104 (D-30): bulk-fetched once, keyed by employeeId — see the function's
       // own doc block above for the tenant/status/N1 rationale.
       const section9ByEmp = await fetchConfirmedSection9CreditsByEmp(
@@ -1122,40 +1293,46 @@ export async function reportRoutes(app: FastifyInstance) {
       // Issue #451 (D-02): the absence context's own priced leave-day map, one
       // leaveDaysByCodeWithin call per employee with at least one leave request this month —
       // see the helper's own doc block for the UTC-midnight bounds rationale.
-      const leaveDaysByCodeByEmp = await fetchLeaveDaysByCodeForMonthlyReport(
-        app,
-        req.user.tenantId,
-        employees,
-        y,
-        m,
-      );
+      // Issue #542 (D-542-1): not fetched under a filter - the priced counts follow a
+      // chronological prefix rule per period and are withheld (a per-day variant would be a second
+      // counting rule, #451).
+      const leaveDaysByCodeByEmp =
+        filterSalonId === null
+          ? await fetchLeaveDaysByCodeForMonthlyReport(app, req.user.tenantId, employees, y, m)
+          : new Map<string, Map<LeaveTypeCode, LeaveDaysForCode>>();
+
+      // Issue #542 (P-02): tenant-local yesterday as a calendar-day date - today never counts (#438).
+      const yesterday = new Date(todayInTz(tz).getTime() - 86_400_000);
 
       // Issue #451 (D-03): one Soll/Ist/Überstunden result per employee, sequentially — the
       // working-time-account's own month result (snapshot / fullMonth / to-date header), never a
       // composition-layer Soll. See computeMonthReportFigures's own doc block for the basis rules.
+      // Issue #542 (P-03): the figures that are contract figures of the person are `null` under a
+      // salon filter; the row keys stay the same.
       const rows: Array<{
         employeeId: string;
         employeeName: string;
         employeeNumber: string;
         workedHours: number;
-        shouldHours: number;
-        overtimeHours: number;
+        shouldHours: number | null;
+        overtimeHours: number | null;
         overtimeConfirmed: boolean | null;
-        balanceAdjustmentHours: number;
+        balanceAdjustmentHours: number | null;
         sickDays: number;
         sickDaysWithAttest: number;
         sickDaysWithoutAttest: number;
-        vacationDays: number;
-        overtimeCompDays: number;
-        specialLeaveDays: number;
-        educationDays: number;
-        unpaidDays: number;
-        maternityDays: number;
-        parentalDays: number;
-        totalAbsenceDays: number;
+        vacationDays: number | null;
+        overtimeCompDays: number | null;
+        specialLeaveDays: number | null;
+        educationDays: number | null;
+        unpaidDays: number | null;
+        maternityDays: number | null;
+        parentalDays: number | null;
+        totalAbsenceDays: number | null;
         section9DaysThisMonth: number;
       }> = [];
       for (const emp of employees) {
+        const personHome = homeByPerson?.get(emp.id);
         const summary = computeEmployeeSummary(
           emp,
           firstDay,
@@ -1163,7 +1340,40 @@ export async function reportRoutes(app: FastifyInstance) {
           tz,
           leaveDaysByCodeByEmp.get(emp.id) ?? new Map(),
           section9ByEmp.get(emp.id) ?? [],
+          filterSalonId === null ? undefined : (day) => personHome?.get(day) === filterSalonId,
         );
+        if (filterSalonId !== null) {
+          // Issue #542 (P-02): Ist = the closed, valid WORK entries recorded in this salon through
+          // tenant-local yesterday (a travel row counts for its departure salon, #92); the
+          // Berufsschule credit belongs to no salon. Soll, saldo and the priced leave counts are
+          // contract figures of the person and are withheld (#84).
+          const salonMinutes = emp.timeEntries
+            .filter((t) => t.salonId === filterSalonId && t.date <= yesterday)
+            .reduce((sum, t) => addWorkingMinutes(sum, t), 0);
+          rows.push({
+            employeeId: emp.id,
+            employeeName: `${emp.firstName} ${emp.lastName}`,
+            employeeNumber: emp.employeeNumber,
+            workedHours: Math.round((salonMinutes / 60) * 100) / 100,
+            shouldHours: null,
+            overtimeHours: null,
+            overtimeConfirmed: null,
+            balanceAdjustmentHours: null,
+            sickDays: summary.sickDays,
+            sickDaysWithAttest: summary.sickDaysWithAttest,
+            sickDaysWithoutAttest: summary.sickDaysWithoutAttest,
+            vacationDays: null,
+            overtimeCompDays: null,
+            specialLeaveDays: null,
+            educationDays: null,
+            unpaidDays: null,
+            maternityDays: null,
+            parentalDays: null,
+            totalAbsenceDays: null,
+            section9DaysThisMonth: summary.section9DaysThisMonth,
+          });
+          continue;
+        }
         const figures = await computeMonthReportFigures(app, emp.id, y, m);
         rows.push({
           employeeId: emp.id,
@@ -1198,7 +1408,21 @@ export async function reportRoutes(app: FastifyInstance) {
         ? SECTION9_LEGEND
         : undefined;
 
-      return { month: parseInt(month), year: y, rows, ...(section9Note ? { section9Note } : {}) };
+      return {
+        month: parseInt(month),
+        year: y,
+        rows,
+        ...(section9Note ? { section9Note } : {}),
+        // Issue #542 (P-03): additive keys, ONLY under a filter - the unfiltered shape is frozen.
+        ...(filterSalonId !== null
+          ? {
+              salonId: filterSalonId,
+              workedBasis: "SALON_ENTRIES" as const,
+              sollUnavailableReason: "SALON_FILTER" as const,
+              leaveDaysUnavailableReason: "SALON_FILTER" as const,
+            }
+          : {}),
+      };
     },
   });
 
@@ -1800,16 +2024,22 @@ export async function reportRoutes(app: FastifyInstance) {
     },
   });
 
-  // GET /api/v1/reports/monthly-export/pdf?year=&month=  - Monatsexport (Issue #617)
+  // GET /api/v1/reports/monthly-export/pdf?year=&month=&salonId=  - Monatsexport (Issue #617, #542)
   // The human-readable twin of the DATEV export: one row per person of the DATEV population, no day
-  // rows (the § 16 Abs. 2 ArbZG records stay in the Stundennachweis), not salon-filtered (an export
-  // is a payroll artefact). Every figure is READ, never computed here: time figures from
-  // `computeMonthReportFigures` (#451 D-03), absence counts from `datevPersonFigures` (the function
-  // that also builds the DATEV lines). Purpose and audience are those of the DATEV file - payroll
-  // preparation, `report:export` - which is what makes the health-related day counts lawful here
-  // (Art. 9 Abs. 2 lit. b DSGVO).
+  // rows (the § 16 Abs. 2 ArbZG records stay in the Stundennachweis). Issue #542 (OD-2): an optional
+  // `salonId` narrows WHICH persons are listed (Stammsalon on the person's Stichtag, see
+  // `selectMonthlyExportPersons`), never a figure, and the document says so; DATEV is never narrowed.
+  // Every figure is READ, never computed here: time figures from `computeMonthReportFigures` (#451
+  // D-03), absence counts from `datevPersonFigures` (the function that also builds the DATEV lines).
+  // Purpose and audience are those of the DATEV file - payroll preparation, `report:export` - which
+  // is what makes the health-related day counts lawful here (Art. 9 Abs. 2 lit. b DSGVO).
   app.get("/monthly-export/pdf", {
-    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    schema: {
+      tags: ["Reporting"],
+      security: [{ bearerAuth: [] }],
+      description:
+        "Monatsexport PDF. The optional salonId (Issue #542) narrows the export to the persons whose Stammsalon is that salon on the person's Stichtag (exit day inside the month, else the last day of the month); every listed row is the person's whole row. A salon outside the caller's report:export reach answers 404.",
+    },
     preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { year, month } = req.query as { year: string; month: string };
@@ -1818,9 +2048,12 @@ export async function reportRoutes(app: FastifyInstance) {
       if (isNaN(y) || isNaN(m) || m < 1 || m > 12) {
         return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
       }
+      const { salonId } = reportSalonQuerySchema.parse(req.query);
 
-      const { tz, firstDay, lastDay, employees, section9ByEmp, leaveDaysByEmployee } =
-        await selectMonthlyExportPersons(app, req, y, m);
+      const selection = await selectMonthlyExportPersons(app, req, y, m, salonId);
+      if (!selection.ok) return reply.code(404).send(SALON_VIEW_NOT_FOUND);
+      const { tz, firstDay, lastDay, employees, section9ByEmp, leaveDaysByEmployee, salon } =
+        selection;
       const tenant = await app.prisma.tenant.findUnique({
         where: { id: req.user.tenantId },
         select: { name: true },
@@ -1913,13 +2146,21 @@ export async function reportRoutes(app: FastifyInstance) {
         generatedAt: formatInTimeZone(new Date(), tz, "dd.MM.yyyy, HH:mm"),
         vacationYear: { year: y, asOf: `${stichtagDay}.${stichtagMonth}.${stichtagYear}` },
         rows,
+        ...(salon ? { salonScope: { salonName: salon.name } } : {}),
       });
 
       await app.audit({
         userId: req.user.sub,
         action: "EXPORT",
         entity: "Report",
-        newValue: { type: "MONTHLY_EXPORT_PDF", year: y, month: m, employeesIncluded: rows.length },
+        newValue: {
+          type: "MONTHLY_EXPORT_PDF",
+          year: y,
+          month: m,
+          employeesIncluded: rows.length,
+          // Issue #542 (P-07): the salon id (never a name) only under a filter.
+          ...(salon ? { salonId: salon.id } : {}),
+        },
       });
 
       reply.header("Content-Type", "application/pdf");

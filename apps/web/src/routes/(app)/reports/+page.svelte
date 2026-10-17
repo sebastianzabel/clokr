@@ -1,11 +1,25 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from "svelte";
-  import { api } from "$api/client";
+  import { onMount, onDestroy, tick, untrack } from "svelte";
+  import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { salonContext } from "$stores/salon-context"; // Issue #542
   import { get as getStore } from "svelte/store";
   import { reportRights } from "$lib/page-rights";
   import Pagination from "$components/ui/Pagination.svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte"; // Issue #542
+  import {
+    ALL_SALONS_BLOCK_NOTE,
+    DATEV_ALL_SALONS_NOTE,
+    EXPORT_NO_STAMMSALON_NOTE,
+    PERSON_SALDO_NOT_SPLIT_LABEL,
+    SALON_EXPORT_PERSONS_NOTE,
+    SALON_HOME_PERSONS_NOTE,
+    isSalonFilterRejected,
+    salonPageFilter,
+    salonScopeLabel,
+    withSalonId,
+  } from "$lib/salons/page-scope"; // Issue #542
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
@@ -59,6 +73,9 @@
       | "none"
       | "holiday";
     reason: string | null;
+    // Issue #542 (AC-542-7): set by the server under a salon filter when the person worked in
+    // another salon today; a boolean, never a salon or a time.
+    workedElsewhere?: boolean;
     // Issue #587 (D-587-3): the planned start of today's first shift and the minutes since it
     // (only for a missing row); finished values from the API, nothing is computed here.
     expectedStart?: string | null;
@@ -67,6 +84,8 @@
 
   type TodayAttendance = {
     date: string;
+    // Issue #542: present only under a salon filter.
+    salonId?: string;
     employees: TodayEmployee[];
     summary: {
       present: number;
@@ -99,6 +118,8 @@
 
   type OvertimeOverview = {
     employees: OvertimeEmployee[];
+    // Issue #542: present only under a salon filter.
+    salonId?: string;
     // Issue #613 - all exited persons with an open final saldo in the caller's reach (the list holds
     // only the newest ones).
     exitedOpenFinalSaldoCount?: number;
@@ -210,6 +231,26 @@
   let canRecordTeamAbsence = $derived(rights.canRecordTeamAbsence);
   let showAttendanceActions = $derived(canAddTeamEntry || canRecordTeamAbsence);
   let showTeamArea = $derived(rights.showTeamArea);
+
+  // ── Salon filter (Issue #542, CTX-5) ───────────────────────────────────────
+
+  // The header salon narrows three places: today's attendance, the Saldenübersicht and the
+  // Monatsexport download. The page decides only through `salonPageFilter` (never the store's raw
+  // selection); the loaders read `pageSalonId` when they are called and one effect below reruns
+  // the two list loads on a change. Presentation only: the API validates every `salonId` and
+  // answers one 404 for every rejection cause. The DATEV file, the per-person documents, the
+  // vacation overview and the carry-over warnings never send a salon (pinned with their reasons
+  // in `salon-filter-exempt-pages-558.test.ts`), and neither does the § 9 hint of the Monatsexport
+  // card: it comes from `/reports/monthly`, whose person rule is not the export's.
+  const contextLoaded = $derived($salonContext.loaded);
+  const pageSalonId = $derived(salonPageFilter($salonContext));
+  const scopeLabel = $derived(salonScopeLabel($salonContext));
+  let attendanceSalonRejected = $state(false);
+  let overviewSalonRejected = $state(false);
+  let exportSalonRejected = $state(false);
+  // Plain lets: an older response never overwrites a newer one (not reactive on purpose).
+  let attendanceGeneration = 0;
+  let overviewGeneration = 0;
 
   // ── Heutige Anwesenheit state (RPT-03) ─────────────────────────────────────
 
@@ -430,12 +471,26 @@
   $effect(() => {
     const _m = selectedMonth;
     const _y = selectedYear;
-    if (canTeamAttendance) void loadTodayAttendance();
-    if (canTeamOvertime) void loadOvertimeOverview();
     if (canReportRead) {
       void loadLeaveOverview();
       void loadCarryoverAtRisk();
     }
+  });
+
+  // Issue #542: this effect owns the two salon-filtered list loads. It waits for the salon context
+  // so the first request is already filtered, and reruns when the header salon (or the period)
+  // changes. The leave overview and the carry-over warnings above ignore the header salon.
+  $effect(() => {
+    if (!contextLoaded) return;
+    void pageSalonId;
+    void selectedMonth;
+    void selectedYear;
+    const attendance = canTeamAttendance;
+    const overview = canTeamOvertime;
+    untrack(() => {
+      if (attendance) void loadTodayAttendance();
+      if (overview) void loadOvertimeOverview();
+    });
   });
 
   // Refresh when horizon changes (independent of selectedMonth/selectedYear)
@@ -537,27 +592,54 @@
   // ── Loaders ────────────────────────────────────────────────────────────────
 
   async function loadTodayAttendance() {
+    const generation = ++attendanceGeneration;
     todayLoading = true;
     todayError = "";
     try {
-      todayAttendance = await api.get<TodayAttendance>("/dashboard/today-attendance");
+      const answer = await api.get<TodayAttendance>(
+        withSalonId("/dashboard/today-attendance", pageSalonId),
+      );
+      if (generation !== attendanceGeneration) return;
+      todayAttendance = answer;
+      attendanceSalonRejected = false;
     } catch (e: unknown) {
-      todayError = e instanceof Error ? e.message : "Fehler beim Laden der Anwesenheit";
+      if (generation !== attendanceGeneration) return;
+      if (pageSalonId !== null && isSalonFilterRejected(e)) {
+        // The one 404: a calm state instead of the data, never the server's text (T-542-18).
+        todayAttendance = null;
+        attendanceSalonRejected = true;
+      } else {
+        attendanceSalonRejected = false;
+        todayError = e instanceof Error ? e.message : "Fehler beim Laden der Anwesenheit";
+      }
     } finally {
-      todayLoading = false;
+      if (generation === attendanceGeneration) todayLoading = false;
     }
   }
 
   async function loadOvertimeOverview() {
+    const generation = ++overviewGeneration;
     overtimeLoading = true;
     overtimeError = "";
     try {
-      overtimeOverview = await api.get<OvertimeOverview>("/dashboard/overtime-overview");
+      const answer = await api.get<OvertimeOverview>(
+        withSalonId("/dashboard/overtime-overview", pageSalonId),
+      );
+      if (generation !== overviewGeneration) return;
+      overtimeOverview = answer;
+      overviewSalonRejected = false;
     } catch (e: unknown) {
-      overtimeError =
-        e instanceof Error ? e.message : "Fehler beim Laden der Überstunden-Übersicht";
+      if (generation !== overviewGeneration) return;
+      if (pageSalonId !== null && isSalonFilterRejected(e)) {
+        overtimeOverview = null;
+        overviewSalonRejected = true;
+      } else {
+        overviewSalonRejected = false;
+        overtimeError =
+          e instanceof Error ? e.message : "Fehler beim Laden der Überstunden-Übersicht";
+      }
     } finally {
-      overtimeLoading = false;
+      if (generation === overviewGeneration) overtimeLoading = false;
     }
   }
 
@@ -679,7 +761,11 @@
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error((data as { error?: string }).error ?? "Download fehlgeschlagen");
+      // An ApiError so a caller can tell the one salon 404 apart (Issue #542); the message is unchanged.
+      throw new ApiError(
+        res.status,
+        (data as { error?: string }).error ?? "Download fehlgeschlagen",
+      );
     }
 
     const blob = await res.blob();
@@ -697,13 +783,21 @@
   async function downloadMonthlyExport() {
     exportLoading = true;
     exportError = "";
+    exportSalonRejected = false;
     try {
       await downloadPdf(
-        `/reports/monthly-export/pdf?year=${exportYear}&month=${exportMonth}`,
+        withSalonId(
+          `/reports/monthly-export/pdf?year=${exportYear}&month=${exportMonth}`,
+          pageSalonId,
+        ),
         `Monatsexport_${exportYear}_${String(exportMonth).padStart(2, "0")}.pdf`,
       );
     } catch (e: unknown) {
-      exportError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
+      if (pageSalonId !== null && isSalonFilterRejected(e)) {
+        exportSalonRejected = true;
+      } else {
+        exportError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
+      }
     } finally {
       exportLoading = false;
     }
@@ -904,6 +998,7 @@
 {/if}
 
 {#if showTeamArea}
+  <SalonScopeLabel label={scopeLabel} />
   <div class="reports-grid">
     <!-- DATEV Export Card -->
     {#if canReportExport}
@@ -938,6 +1033,10 @@
             </select>
           </div>
         </div>
+
+        {#if pageSalonId !== null}
+          <p class="form-hint" data-testid="datev-all-salons-note">{DATEV_ALL_SALONS_NOTE}</p>
+        {/if}
 
         <button class="btn btn-primary" onclick={downloadDatev} disabled={datevLoading}>
           {#if datevLoading}
@@ -992,6 +1091,12 @@
           </div>
         </div>
 
+        {#if pageSalonId !== null}
+          <p class="form-hint" data-testid="export-salon-persons-note">
+            {SALON_EXPORT_PERSONS_NOTE} · {PERSON_SALDO_NOT_SPLIT_LABEL}. {EXPORT_NO_STAMMSALON_NOTE}
+          </p>
+        {/if}
+
         <button class="btn btn-primary" onclick={downloadMonthlyExport} disabled={exportLoading}>
           {#if exportLoading}
             <span class="btn-spinner"></span>
@@ -1008,7 +1113,9 @@
           </div>
         {/if}
 
-        {#if exportError}
+        {#if exportSalonRejected}
+          <SalonScopeLabel label={null} rejected={true} />
+        {:else if exportError}
           <div class="alert alert-error" role="alert">
             <span>⚠</span>
             <span>{exportError}</span>
@@ -1154,6 +1261,8 @@
 
         {#if todayLoading}
           <p class="section-placeholder">Lade Anwesenheit…</p>
+        {:else if attendanceSalonRejected}
+          <SalonScopeLabel label={null} rejected={true} />
         {:else if todayError}
           <p class="section-error">{todayError}</p>
         {:else if todayAttendance}
@@ -1199,7 +1308,13 @@
                   <tr>
                     <td>{row.name}</td>
                     <td>{row.employeeNumber}</td>
-                    <td><span class={statusClass(row.status)}>{attendanceStatusText(row)}</span></td
+                    <td
+                      ><span class={statusClass(row.status)}>{attendanceStatusText(row)}</span>
+                      {#if row.workedElsewhere}
+                        <span class="badge badge-gray" title="In einem anderen Salon gearbeitet"
+                          >anderer Salon</span
+                        >
+                      {/if}</td
                     >
                     {#if showAttendanceActions}
                       <td class="attendance-actions">
@@ -1248,6 +1363,10 @@
             </label>
           {/snippet}
         </CardHeader>
+
+        {#if pageSalonId !== null}
+          <p class="form-hint" data-testid="carryover-all-salons-note">{ALL_SALONS_BLOCK_NOTE}</p>
+        {/if}
 
         {#if carryoverLoading}
           <p class="section-placeholder">Lade Verfall-Warnungen…</p>
@@ -1344,8 +1463,16 @@
       <Card animate class="widget-card" style="--card-idx: 3;">
         <CardHeader title="Überstunden-Übersicht" sub="Saldo & Verlauf je Mitarbeiter" />
 
+        {#if pageSalonId !== null}
+          <p class="form-hint" data-testid="overtime-salon-persons-note">
+            {SALON_HOME_PERSONS_NOTE} · {PERSON_SALDO_NOT_SPLIT_LABEL}
+          </p>
+        {/if}
+
         {#if overtimeLoading}
           <p class="section-placeholder">Lade Überstunden-Saldo…</p>
+        {:else if overviewSalonRejected}
+          <SalonScopeLabel label={null} rejected={true} />
         {:else if overtimeError}
           <p class="section-error">{overtimeError}</p>
         {:else if overtimeOverview}
@@ -1449,6 +1576,12 @@
       <!-- Urlaubsübersicht (RPT-02) -->
       <Card animate class="widget-card" style="--card-idx: 4;">
         <CardHeader title="Urlaubsübersicht" sub="Anspruch, genommen, genehmigt und Resturlaub" />
+
+        {#if pageSalonId !== null}
+          <p class="form-hint" data-testid="leave-overview-all-salons-note">
+            {ALL_SALONS_BLOCK_NOTE}
+          </p>
+        {/if}
 
         {#if leaveOverviewLoading}
           <p class="section-placeholder">Lade Urlaubsübersicht…</p>
