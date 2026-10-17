@@ -15,7 +15,7 @@
  *   pE MONTHLY_HOURS  closed April, May TRACK_ONLY (#494: resets the chain), June + July accumulate
  *   pF FIXED          hired 2026-05-18 (mid-chain), never closed
  *   pG FIXED          hired 2026-05-01, never closed, OpeningBalance +600 (chain head, Phase 99;
- *                     the live saldo ignores it without a closed month - Issue #682, measured only)
+ *                     since Issue #682 the live saldo starts with it too)
  *
  * No PII - synthetic names only.
  */
@@ -375,17 +375,22 @@ describe("Issue #681 — open-month chain: Gesamtsaldo == live saldo at the same
     expect(await openMonthCarryInMinutes(app, people.pF!, 2026, 6)).toBe(may.balanceMinutes);
   });
 
-  it("OpeningBalance at the chain head (pG): carried into every open month; live omits it (Issue #682, measured)", async () => {
+  it("OpeningBalance at the chain head (pG): carried into every open month; live starts with it (Issue #682)", async () => {
     const may = await computeMonthSaldo(app, people.pG!, 2026, 5);
     const june = await computeMonthSaldo(app, people.pG!, 2026, 6);
     expect(await openMonthCarryInMinutes(app, people.pG!, 2026, 5)).toBe(600);
     expect(await openMonthCarryInMinutes(app, people.pG!, 2026, 7)).toBe(
       600 + may.balanceMinutes + june.balanceMinutes,
     );
-    // Without any closed month the live saldo starts at 0 and does not read the OpeningBalance -
-    // the difference is exactly its minutes. Not changed by #681; tracked as Issue #682 - when #682
-    // lands, this measurement becomes an equality.
-    expect((await closing(people.pG!, 7))! - (await live(people.pG!, FAKE_NOW))).toBe(600);
+    // Issue #682: without any closed month the live saldo starts with the OpeningBalance as well
+    // (the measured difference before #682 was exactly its 600 minutes) - the two are now equal.
+    expect(await live(people.pG!, FAKE_NOW)).toBe(await closing(people.pG!, 7));
+    expect(await live(people.pG!, FAKE_NOW)).toBe(
+      600 +
+        may.balanceMinutes +
+        june.balanceMinutes +
+        (await computeMonthSaldo(app, people.pG!, 2026, 7)).balanceMinutes,
+    );
   });
 
   it("GET /overtime/month-saldo serves the same chain as the Monatsexport figure", async () => {

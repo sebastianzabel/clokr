@@ -918,7 +918,12 @@ import { readFileSync } from "node:fs";
 // `fix/681-gesamtsaldo-offene-monate` (origin/main @ 59ef142e) - 693 test files, 10541 tests (10538 passed, 3 skipped).
 // New file: open-month-chain-681 (+26 cases); saldo-boundary-neutrality-493 gains its amendment-register cases (+2);
 // nothing removed, skipped or loosened. MIN_FILES 692 -> 693, never lowered.
-const MIN_FILES = 693;
+// Issue #682 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on
+// `fix/682-live-saldo-opening-balance` (origin/main @ 7b66d4a3) - 695 test files, 10570 tests (15 skipped). New files:
+// live-saldo-opening-balance-682 (+25 cases), scripts audit-682-opening-balance-live-gap (+4). The run's 15 failures were
+// "too many clients" from a parallel suite in another worktree; the 7 affected files passed on a targeted rerun
+// (87/87). MIN_FILES 693 -> 695, never lowered.
+const MIN_FILES = 695;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -957,7 +962,9 @@ const MIN_FILES = 693;
 // API test file was edited by this phase; main alone measures 10437, so the phase delta is the measured 76). Never lowered.
 // Issue #681 (2026-10-17): MIN_TESTS 10513 -> 10541 (+28: open-month-chain-681 26, saldo-boundary-neutrality-493 2),
 // the measured total of the full run named at MIN_FILES. Never lowered.
-const MIN_TESTS = 10541;
+// Issue #682 (2026-10-17): MIN_TESTS 10541 -> 10570 (+29: live-saldo-opening-balance-682 25, audit-682 script 4), the
+// measured total of the full run named at MIN_FILES. Never lowered.
+const MIN_TESTS = 10570;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
