@@ -46,7 +46,15 @@
     id: string;
     name: string;
     employeeNumber: string;
-    status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none" | "holiday";
+    status:
+      | "present"
+      | "absent"
+      | "clocked_in"
+      | "missing"
+      | "scheduled"
+      | "requested"
+      | "none"
+      | "holiday";
     reason: string | null;
   };
 
@@ -790,6 +798,8 @@
         return "Fehlend";
       case "scheduled":
         return "Geplant";
+      case "requested":
+        return "Beantragt";
       case "holiday":
         return row.reason ?? "Feiertag";
       default:
@@ -1819,6 +1829,7 @@
   }
 
   .status-scheduled,
+  .status-requested,
   .status-none {
     background: var(--bg-subtle);
     color: var(--text-muted);

@@ -78,8 +78,8 @@ export function isObligatedWorkday(params: {
  *         time, so "today" is never yet "Fehlt"; only past days are.
  *
  * A day is eligible for "missing" only when it is BOTH an obligated workday AND
- * due. Callers pass `isFuture: !(isObligatedWorkday && isDayDue)` into
- * `resolvePresenceState`, whose scheduled/missing branches key off `isFuture`.
+ * due. Issue #587: `resolveDayStatus()` (`day-status.ts`) is the one place that combines
+ * the obligation, this due time and the presence state; callers do not combine them again.
  */
 export function isDayDue(params: {
   dayStr: string;
