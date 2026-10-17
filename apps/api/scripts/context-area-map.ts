@@ -275,6 +275,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/leave-correction.ts": "abwesenheiten", // Issue #614 — correction core extracted from the /correct route (plan/apply/finish behind an audit port); writes LeaveRequest/LeaveEntitlement
   "src/contexts/absence/overtime-comp-minutes.ts": "abwesenheiten", // Issue #614 — the Überstundenausgleich amount rule moved out of the leave route; read-only over the stored minutes and the schedule
   "src/contexts/absence/ensure-leave-type.ts": "abwesenheiten", // Issue #614 — find-or-create of a LeaveType by code for the correction core; LeaveType belongs to Abwesenheiten
+  "src/contexts/absence/section9-supersede.ts": "abwesenheiten", // Issue #662 — the one place a Section9Credit becomes SUPERSEDED (shared by /correct and the cancellation); writes Section9Credit, undoes the LeaveEntitlement ledger
   "src/contexts/absence/bs-leave-days.ts": "abwesenheiten", // Issue #448 — BS-vs-leave rule, reads Absence through the A6 facade (getVocationalSchoolDays)
   "src/contexts/absence/bs-leave-correction.ts": "abwesenheiten", // Issue #448 (D-04) — writes LeaveRequest/LeaveEntitlement primarily; notification.create is a side effect
   "src/contexts/absence/bs-slot-resolver.ts": "abwesenheiten", // Berufsschule (VOCATIONAL_SCHOOL Absence) time-slot resolution

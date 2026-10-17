@@ -72,6 +72,7 @@ import {
 } from "../../platform"; // Quick 260824-cjd
 import { filterLeaveRowsToHomeSalon } from "../salon-leave-attribution"; // Issue #558 (D-02/D-08)
 import { preserveCarryOverDeadline } from "../illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
+import { supersedeSection9CreditsOfCancelledRequest } from "../section9-supersede";
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06, Issue #468 (D-04/A-3)
 import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
 import { activeParentalReductions } from "../parental-leave-reduction"; // Issue #468 plan 07 (D-10) — revoke-before-change guards
@@ -1306,16 +1307,71 @@ export async function leaveRoutes(app: FastifyInstance) {
             }
           }
 
-          // Stornierung genehmigen → CANCELLED + Rückbuchung
-          await app.prisma.leaveRequest.update({
-            where: { id },
-            data: {
-              status: "CANCELLED",
-              reviewedBy: req.user.sub,
-              reviewedAt: new Date(),
-              reviewNote: body.reviewNote,
-            },
-          });
+          // Stornierung genehmigen → CANCELLED + Rückbuchung. Issue #662: status change, the
+          // vacation booking-back and the supersession of the request's § 9 credits are ONE
+          // transaction - a failed supersession rolls the cancellation back instead of leaving
+          // the days credited twice (cancellation + a standing credit).
+          const cancelHolidayMap = await getHolidayMap(
+            app.prisma,
+            existing.employee.tenantId,
+            existing.employeeId,
+            existing.startDate,
+            existing.endDate,
+          );
+          const cancelHolidays = new Set(cancelHolidayMap.keys());
+          try {
+            await app.prisma.$transaction(async (tx) => {
+              await tx.leaveRequest.update({
+                where: { id },
+                data: {
+                  status: "CANCELLED",
+                  reviewedBy: req.user.sub,
+                  reviewedAt: new Date(),
+                  reviewNote: body.reviewNote,
+                },
+              });
+              if (existing.leaveType.code === "VACATION") {
+                // Issue #445 (D-11): reverseVacationDays() splits per year chronologically
+                // (D-08/D-09) and recomputes the next year's carry-over - the symmetric
+                // counterpart of the deduct at booking time.
+                await reverseVacationDays(
+                  tx,
+                  existing.employeeId,
+                  existing.leaveTypeId,
+                  existing.startDate,
+                  existing.endDate,
+                  Number(existing.days),
+                  cancelHolidays,
+                  existing.employee.tenantId,
+                );
+              }
+              await supersedeSection9CreditsOfCancelledRequest(tx, {
+                requestId: existing.id,
+                employeeId: existing.employeeId,
+                tenantId: existing.employee.tenantId,
+                holidays: cancelHolidays,
+                audit: async (entry) => {
+                  await app.audit({
+                    tx,
+                    userId: req.user.sub,
+                    action: entry.action,
+                    entity: entry.entity,
+                    entityId: entry.entityId,
+                    oldValue: entry.oldValue,
+                    newValue: entry.newValue,
+                    request: { ip: req.ip, headers: req.headers as Record<string, string> },
+                  });
+                },
+              });
+            });
+          } catch (err) {
+            if (err instanceof Section9ConcurrentCorrectionError) {
+              return reply.code(409).send({
+                error: "Gleichzeitige Änderung der § 9-Gutschrift — bitte erneut versuchen.",
+              });
+            }
+            throw err;
+          }
 
           // Revalidate time entries that were created during CANCELLATION_REQUESTED
           // Phase 100B Plan 08 — T6, contexts/time-tracking facade (H2 guard unchanged).
@@ -1341,30 +1397,6 @@ export async function leaveRoutes(app: FastifyInstance) {
           }
 
           const typeCode = existing.leaveType.code;
-          if (typeCode === "VACATION") {
-            // Issue #445 (D-11): a single-year decrement on existing.startDate's year used to
-            // silently drop a cross-year request's year-2 portion and never recompute the next
-            // year's carry-over. reverseVacationDays() splits per year chronologically
-            // (D-08/D-09) and recomputes the next year's carry-over — the symmetric
-            // counterpart of the deduct at booking time.
-            const cancelHolidayMap = await getHolidayMap(
-              app.prisma,
-              existing.employee.tenantId,
-              existing.employeeId,
-              existing.startDate,
-              existing.endDate,
-            );
-            await reverseVacationDays(
-              app.prisma,
-              existing.employeeId,
-              existing.leaveTypeId,
-              existing.startDate,
-              existing.endDate,
-              Number(existing.days),
-              new Set(cancelHolidayMap.keys()),
-              existing.employee.tenantId,
-            );
-          }
           if (typeCode === "OVERTIME_COMP") {
             const empT = await app.prisma.employee.findUnique({
               where: { id: existing.employeeId },
