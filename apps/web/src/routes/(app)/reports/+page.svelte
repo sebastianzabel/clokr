@@ -143,6 +143,12 @@
   let datevLoading = $state(false);
   let datevError = $state("");
 
+  // Monatsexport card (Issue #617) — own period selector, same defaults as the DATEV card
+  let exportMonth = $state(currentMonth);
+  let exportYear = $state(currentYear);
+  let exportLoading = $state(false);
+  let exportError = $state("");
+
   // Urlaubsbericht PDF (kombiniert: Urlaubsliste + Urlaubsübersicht)
   let leaveYear = $state(currentYear);
   let leaveLoading = $state(false);
@@ -672,6 +678,21 @@
     setTimeout(() => URL.revokeObjectURL(objectUrl), 100);
   }
 
+  async function downloadMonthlyExport() {
+    exportLoading = true;
+    exportError = "";
+    try {
+      await downloadPdf(
+        `/reports/monthly-export/pdf?year=${exportYear}&month=${exportMonth}`,
+        `Monatsexport_${exportYear}_${String(exportMonth).padStart(2, "0")}.pdf`,
+      );
+    } catch (e: unknown) {
+      exportError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
+    } finally {
+      exportLoading = false;
+    }
+  }
+
   async function downloadVacationPdf() {
     leaveLoading = true;
     leaveError = "";
@@ -964,6 +985,59 @@
           <div class="alert alert-error" role="alert">
             <span>⚠</span>
             <span>{datevError}</span>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Monatsexport Card (Issue #617) -->
+    {#if canReportExport}
+      <div class="card card-body card-animate report-card">
+        <div class="report-card-icon-section report-card-icon-section--green">
+          <span class="report-icon-lg">📄</span>
+        </div>
+        <div class="report-card-header">
+          <div>
+            <h2 class="report-card-heading">Monatsexport</h2>
+            <p class="report-card-desc text-muted">
+              Lesbare Fassung des DATEV-Exports: Soll, Ist, Saldo, Abwesenheiten und Urlaub je
+              Person — ohne Tagesliste
+            </p>
+          </div>
+        </div>
+
+        <div class="report-controls">
+          <div class="form-group">
+            <label class="form-label" for="export-month">Monat</label>
+            <select id="export-month" bind:value={exportMonth} class="form-input">
+              {#each months as name, i (i)}
+                <option value={i + 1}>{name}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="export-year">Jahr</label>
+            <select id="export-year" bind:value={exportYear} class="form-input">
+              {#each years as y (y)}
+                <option value={y}>{y}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" onclick={downloadMonthlyExport} disabled={exportLoading}>
+          {#if exportLoading}
+            <span class="btn-spinner"></span>
+            Vorbereiten…
+          {:else}
+            ↓ PDF herunterladen
+          {/if}
+        </button>
+
+        {#if exportError}
+          <div class="alert alert-error" role="alert">
+            <span>⚠</span>
+            <span>{exportError}</span>
           </div>
         {/if}
       </div>
