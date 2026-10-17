@@ -48,6 +48,11 @@ interface RegionEntry {
   validator: string;
   /** The membership function the region must call. */
   membership: string;
+  /**
+   * How often the validator must be called before the first read (default 1). The Saldenübersicht
+   * lists only persons inside two reaches, so it validates against both (P-04).
+   */
+  validatorCalls?: number;
 }
 
 // 542-02 added the attendance and team-week regions; 542-03 adds the overview and the export.
@@ -72,6 +77,16 @@ export const REGIONS: readonly RegionEntry[] = [
     path: "/team-week",
     validator: "resolveSalonInReach",
     membership: "salonViewMemberIds",
+  },
+  // 542-03: the persons of the Saldenübersicht follow the Stammsalon (salon-only reach), each row
+  // stays whole; the salon is validated against the team-overview AND the overtime reach.
+  {
+    file: `${COMPOSITION}/dashboard.ts`,
+    method: "get",
+    path: "/overtime-overview",
+    validator: "resolveSalonInReach",
+    membership: "salonOnlyReach",
+    validatorCalls: 2,
   },
 ];
 
@@ -119,6 +134,7 @@ export function regionProblems(source: string, entry: RegionEntry): string[] {
   if (!region) return [`${entry.file}: region "${label}" not found - re-register it deliberately`];
 
   let firstValidator = Number.POSITIVE_INFINITY;
+  const validatorPositions: number[] = [];
   let firstRead = Number.POSITIVE_INFINITY;
   let firstReadText = "";
   let callsMembership = false;
@@ -127,6 +143,7 @@ export function regionProblems(source: string, entry: RegionEntry): string[] {
       const text = calleeText(n, sf);
       const last = text.split(".").pop() ?? text;
       const pos = n.getStart(sf);
+      if (last === entry.validator) validatorPositions.push(pos);
       if (last === entry.validator && pos < firstValidator) firstValidator = pos;
       if (last === entry.membership) callsMembership = true;
       if (READ_CALLEES.some((re) => re.test(text)) && pos < firstRead) {
@@ -141,10 +158,21 @@ export function regionProblems(source: string, entry: RegionEntry): string[] {
   const problems: string[] = [];
   if (firstValidator === Number.POSITIVE_INFINITY) {
     problems.push(`${entry.file}: "${label}" never calls ${entry.validator}`);
-  } else if (firstRead < firstValidator) {
-    problems.push(
-      `${entry.file}: "${label}" reads (${firstReadText}) before ${entry.validator} validates the salon`,
-    );
+  } else {
+    // The N-th validator call is the one that completes the validation.
+    const needed = entry.validatorCalls ?? 1;
+    if (validatorPositions.length < needed) {
+      problems.push(
+        `${entry.file}: "${label}" calls ${entry.validator} ${validatorPositions.length} time(s), needs ${needed}`,
+      );
+    } else {
+      const validated = [...validatorPositions].sort((x, y) => x - y)[needed - 1];
+      if (firstRead < validated) {
+        problems.push(
+          `${entry.file}: "${label}" reads (${firstReadText}) before ${entry.validator} validates the salon`,
+        );
+      }
+    }
   }
   if (!callsMembership)
     problems.push(`${entry.file}: "${label}" does not call ${entry.membership}`);
@@ -210,6 +238,21 @@ describe("Issue #542 - the pure cores (inline fixtures)", () => {
       expect.stringContaining("does not call salonViewMemberIds"),
     ]);
     expect(regionProblems("const a = 1;", entry)).toEqual([expect.stringContaining("not found")]);
+  });
+
+  it("with validatorCalls 2 a read between the first and the second validation is reported", () => {
+    const two: RegionEntry = { ...entry, validatorCalls: 2 };
+    const ok =
+      'app.get("/x", { handler: async () => { await resolveSalonInReach(a); await resolveSalonInReach(b); await app.prisma.employee.findMany(); salonViewMemberIds({}); } });';
+    expect(regionProblems(ok, two)).toEqual([]);
+    const between =
+      'app.get("/x", { handler: async () => { await resolveSalonInReach(a); await app.prisma.employee.findMany(); await resolveSalonInReach(b); salonViewMemberIds({}); } });';
+    expect(regionProblems(between, two)).toEqual([
+      expect.stringContaining("reads (app.prisma.employee.findMany) before resolveSalonInReach"),
+    ]);
+    const once =
+      'app.get("/x", { handler: async () => { await resolveSalonInReach(a); salonViewMemberIds({}); } });';
+    expect(regionProblems(once, two)).toEqual([expect.stringContaining("needs 2")]);
   });
 
   it("counts the 404 literal in code but not in a comment", () => {

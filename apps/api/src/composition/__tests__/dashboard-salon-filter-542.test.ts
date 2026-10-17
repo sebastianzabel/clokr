@@ -28,6 +28,25 @@
  *      parity cases red.
  *   M4 attendance validates the salon after the population read -> report-salon-filter-source-542
  *      "get /today-attendance: validates before any read ..." red.
+ *
+ * "Saldenübersicht" (GET /dashboard/overtime-overview?salonId=, 542-03; own tenant, same clock).
+ * Persons: OA homed A; OB homed B; OM B until 2026-06-16 then A; OZ A until 2026-06-17 (today) then
+ * B; OX left 2026-05-31 (HOME A until the exit day, May not closed); OY left 2026-05-31 homed B;
+ * C1 / C2 carry the two-reach roles (homed A). Mutation proofs (reverted with `cp`, byte-compared):
+ *   M1 the salon is validated against the team-overview reach only -> "validates against both
+ *      reaches ..." red (1 failed).
+ *   M2 the active rows are narrowed at the month start instead of today -> "salon A lists ...",
+ *      "salon B lists ...", "decides the Stammsalon by the tenant-local day ..." and "validates
+ *      against both reaches ..." red (4 failed; OM would still be in B).
+ *   M3 the exited rows are narrowed at today instead of the exit day -> "salon A lists ...",
+ *      "partitions ..." and "decides the Stammsalon by the tenant-local day ..." red (3 failed; OX).
+ *   M4 an account read placed before the validation -> report-salon-filter-source-542 "get
+ *      /overtime-overview: validates before any read ..." red.
+ *   M5 the narrowing Stichtag passed as the instant `new Date()` instead of the calendar day ->
+ *      "salon A lists ...", "partitions ..." and "decides the Stammsalon by the tenant-local day
+ *      ..." red (3 failed). Note: Prisma truncates a Date given to a @db.Date filter to its UTC
+ *      date, so an instant is wrong only where the tenant-local day differs from the UTC day
+ *      (the 00:30 local case) and for the exit-day rows; the calendar-day form is exact everywhere.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -42,7 +61,7 @@ import {
   reissueTokenNow,
 } from "../../__tests__/setup";
 import { createPopulationPerson } from "../../__tests__/population-fixtures-613";
-import { SYSTEM_ROLE_IDS } from "../../contexts/platform";
+import { SYSTEM_ROLE_IDS, normalizeRolePermissions, roleNameKey } from "../../contexts/platform";
 
 const WED = "2026-06-17";
 const PASSWORD = "test1234";
@@ -416,6 +435,298 @@ describe("Issue #542 — today's attendance follows a chosen salon", () => {
       for (const status of ["scheduled", "present", "clocked_in", "missing", "requested"]) {
         expect(observed.has(status), `status ${status} observed`).toBe(true);
       }
+    });
+  });
+  // ── Saldenübersicht (Issue #542, AC-542-6, OD-1, CTX-3, D-542-2, P-04, P-05) ──────────────────
+  describe("Saldenübersicht", () => {
+    const OV_URL = "/api/v1/dashboard/overtime-overview";
+    const TODAY = "2026-06-17";
+    const EXIT_DAY = "2026-05-31";
+    type OvRow = Record<string, unknown> & {
+      id: string;
+      exitedWithOpenFinalSaldo: boolean;
+      balanceHours: number;
+    };
+    type Ov = { salonId?: string; employees: OvRow[]; exitedOpenFinalSaldoCount: number };
+
+    let o: Awaited<ReturnType<typeof seedTestData>>;
+    let oForeign: Awaited<ReturnType<typeof seedTestData>>;
+    let oA = "";
+    let oB = "";
+    let oInactive = "";
+    let c1Token = "";
+    let c2Token = "";
+    const op = {} as Record<"OA" | "OB" | "OM" | "OZ" | "OX" | "OY" | "C1" | "C2", string>;
+
+    async function ov(query: string, token = o.adminToken): Promise<Ov> {
+      const res = await getRaw(`${OV_URL}${query}`, token);
+      expect(res.statusCode, res.body).toBe(200);
+      return JSON.parse(res.body) as Ov;
+    }
+    const ovIds = (r: Ov) => sorted(r.employees.map((e) => e.id));
+    const ovRow = (r: Ov, id: string): OvRow => {
+      const row = r.employees.find((e) => e.id === id);
+      if (!row) throw new Error(`overview row ${id} missing`);
+      return row;
+    };
+    const want = (...keys: Array<keyof typeof op>) => sorted(keys.map((k) => op[k]));
+
+    function ovPerson(tag: string, salonId: string, extra: { exitDate?: Date } = {}) {
+      return createPopulationPerson(app, {
+        tenantId: o.tenant.id,
+        salonId,
+        tag,
+        hireDate: HIRE,
+        ...extra,
+      });
+    }
+    function closedEntry(employeeId: string, salonId: string, date: string) {
+      return app.prisma.timeEntry.create({
+        data: {
+          employeeId,
+          salonId,
+          date: day(date),
+          startTime: new Date(`${date}T06:00:00Z`),
+          endTime: new Date(`${date}T14:00:00Z`),
+          breakMinutes: 30,
+          type: "WORK",
+          source: "MANUAL",
+        },
+      });
+    }
+    function setHome(
+      employeeId: string,
+      salonId: string,
+      from: string | null,
+      until: string | null,
+    ) {
+      return app.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: o.tenant.id,
+          employeeId,
+          salonId,
+          kind: "HOME",
+          validFrom: day(from ?? "2025-01-01"),
+          validUntil: until === null ? null : day(until),
+          weekdays: [],
+        },
+      });
+    }
+    function endHome(employeeId: string, until: string) {
+      return app.prisma.employeeSalonAssignment.updateMany({
+        where: { employeeId, kind: "HOME" },
+        data: { validUntil: day(until) },
+      });
+    }
+    async function customCaller(
+      tag: string,
+      grants: Array<{
+        permission: string;
+        scopeType: "TENANT" | "SALONS";
+        salonIds?: string[];
+      }>,
+    ): Promise<{ employeeId: string; token: string }> {
+      const p = await ovPerson(tag, oA);
+      // The person is only a carrier of the login; a login needs a real password hash.
+      await app.prisma.user.update({
+        where: { id: p.userId },
+        data: { passwordHash: await bcrypt.hash(PASSWORD, 4) },
+      });
+      for (const g of grants) {
+        const name = `Sf542 ${tag} ${randomUUID().slice(0, 8)}`;
+        const role = await app.prisma.accessRole.create({
+          data: {
+            tenantId: o.tenant.id,
+            name,
+            nameKey: roleNameKey(name),
+            permissions: normalizeRolePermissions([g.permission]),
+          },
+        });
+        await app.prisma.roleAssignment.create({
+          data: {
+            tenantId: o.tenant.id,
+            userId: p.userId,
+            accessRoleId: role.id,
+            scopeType: g.scopeType,
+            salonIds: g.salonIds ?? [],
+            employeeIds: [],
+          },
+        });
+      }
+      const login = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: p.email, password: PASSWORD },
+      });
+      expect(login.statusCode, login.body).toBe(200);
+      return {
+        employeeId: p.employeeId,
+        token: (JSON.parse(login.body) as { accessToken: string }).accessToken,
+      };
+    }
+
+    beforeAll(async () => {
+      o = await seedTestData(app, "sf542o");
+      oForeign = await seedTestData(app, "sf542of");
+      oA = o.salonId;
+      oB = (await createTestSalon(app.prisma, o.tenant.id, { name: "Sf542o B" })).id;
+      oInactive = (
+        await createTestSalon(app.prisma, o.tenant.id, { name: "Sf542o off", isActive: false })
+      ).id;
+
+      op.OA = (await ovPerson("oa", oA)).employeeId;
+      op.OB = (await ovPerson("ob", oB)).employeeId;
+      // OM: homed B until the day before, A from today.
+      op.OM = (await ovPerson("om", oB)).employeeId;
+      await endHome(op.OM, "2026-06-16");
+      await setHome(op.OM, oA, TODAY, null);
+      // OZ: homed A until today (validUntil = today), B from tomorrow — the calendar-day Stichtag (P-05).
+      op.OZ = (await ovPerson("oz", oA)).employeeId;
+      await endHome(op.OZ, TODAY);
+      await setHome(op.OZ, oB, "2026-06-18", null);
+      // OX / OY: left on 2026-05-31, May never closed, so the final saldo is still open.
+      op.OX = (await ovPerson("ox", oA, { exitDate: day(EXIT_DAY) })).employeeId;
+      await endHome(op.OX, EXIT_DAY);
+      op.OY = (await ovPerson("oy", oB, { exitDate: day(EXIT_DAY) })).employeeId;
+      for (const key of ["OA", "OB", "OM", "OZ"] as const) {
+        await closedEntry(op[key], key === "OB" ? oB : oA, "2026-06-16");
+      }
+      await closedEntry(op.OX, oA, "2026-05-29");
+      await closedEntry(op.OY, oB, "2026-05-29");
+
+      // C1: whole-tenant team-overview reach, overtime reach narrowed to [A].
+      const c1 = await customCaller("c1", [
+        { permission: "team-overview:read:ZUGEWIESEN", scopeType: "TENANT" },
+        { permission: "overtime:read:ZUGEWIESEN", scopeType: "SALONS", salonIds: [oA] },
+      ]);
+      op.C1 = c1.employeeId;
+      c1Token = c1.token;
+      // C2: team-overview reach [A, B], overtime reach [A].
+      const c2 = await customCaller("c2", [
+        { permission: "team-overview:read:ZUGEWIESEN", scopeType: "SALONS", salonIds: [oA, oB] },
+        { permission: "overtime:read:ZUGEWIESEN", scopeType: "SALONS", salonIds: [oA] },
+      ]);
+      op.C2 = c2.employeeId;
+      c2Token = c2.token;
+    });
+
+    afterAll(async () => {
+      vi.useRealTimers();
+      for (const tenantId of [o?.tenant.id, oForeign?.tenant.id]) {
+        if (!tenantId) continue;
+        try {
+          await app.prisma.roleAssignment.deleteMany({ where: { tenantId } });
+          await app.prisma.accessRole.deleteMany({ where: { tenantId } });
+          await cleanupTestData(app, tenantId);
+        } catch (err) {
+          console.error("dashboard-salon-filter-542 overview cleanup failed:", err);
+        }
+      }
+    });
+
+    it("salon A lists the persons homed in A today (OZ on its last A day) and the exited person homed in A at its exit day", async () => {
+      const unfiltered = await ov("");
+      const a = await ov(`?salonId=${oA}`);
+      expect(a.salonId).toBe(oA);
+      expect(ovIds(a)).toEqual(want("OA", "OM", "OZ", "OX", "C1", "C2"));
+      expect(ovRow(a, op.OX).exitedWithOpenFinalSaldo).toBe(true);
+      for (const key of ["OA", "OM", "OZ", "C1", "C2"] as const) {
+        expect(ovRow(a, op[key]).exitedWithOpenFinalSaldo, key).toBe(false);
+      }
+      expect(a.exitedOpenFinalSaldoCount).toBe(1);
+      for (const row of a.employees) {
+        expect(row, row.id).toEqual(ovRow(unfiltered, row.id));
+      }
+    });
+
+    it("salon B lists OB and the exited OY; OM and OZ are not in B today", async () => {
+      const unfiltered = await ov("");
+      const b = await ov(`?salonId=${oB}`);
+      expect(b.salonId).toBe(oB);
+      expect(ovIds(b)).toEqual(want("OB", "OY"));
+      expect(ovRow(b, op.OY).exitedWithOpenFinalSaldo).toBe(true);
+      expect(b.exitedOpenFinalSaldoCount).toBe(1);
+      for (const row of b.employees) {
+        expect(row, row.id).toEqual(ovRow(unfiltered, row.id));
+      }
+    });
+
+    it("partitions the persons with a Stammsalon: A and B are disjoint, the persons without one appear in neither", async () => {
+      const unfiltered = await ov("");
+      const a = new Set(ovIds(await ov(`?salonId=${oA}`)));
+      const b = new Set(ovIds(await ov(`?salonId=${oB}`)));
+      for (const id of a) expect(b.has(id), id).toBe(false);
+      const seedIds = [o.adminEmployee.id, o.employee.id];
+      // The seeded admin and employee have no HOME row at all.
+      for (const id of seedIds) {
+        expect(ovIds(unfiltered)).toContain(id);
+        expect(a.has(id), id).toBe(false);
+        expect(b.has(id), id).toBe(false);
+      }
+      const union = sorted([...a, ...b]);
+      const homed = ovIds(unfiltered).filter((id) => !seedIds.includes(id));
+      expect(union).toEqual(homed);
+    });
+
+    it("decides the Stammsalon by the tenant-local day: at 00:30 local on 18 June OZ has moved to B and OM stays in A", async () => {
+      // 2026-06-17T22:30Z is 00:30 CEST on 18 June: the UTC date is still the 17th, the tenant-local
+      // day is the 18th. An instant passed as the Stichtag would truncate to the 17th and keep OZ in A.
+      const late = "2026-06-17T22:30:00Z";
+      const asOv = async (query: string): Promise<Ov> => {
+        const res = await getRaw(`${OV_URL}${query}`, o.adminToken, late);
+        expect(res.statusCode, res.body).toBe(200);
+        return JSON.parse(res.body) as Ov;
+      };
+      const a = await asOv(`?salonId=${oA}`);
+      const b = await asOv(`?salonId=${oB}`);
+      expect(ovIds(a)).toEqual(want("OA", "OM", "OX", "C1", "C2"));
+      expect(ovIds(b)).toEqual(want("OB", "OZ", "OY"));
+    });
+
+    it("without a filter no salonId key appears and the body keys are the pre-542 keys", async () => {
+      const u = await ov("");
+      expect(Object.keys(u).sort((x, y) => x.localeCompare(y))).toEqual([
+        "employees",
+        "exitedOpenFinalSaldoCount",
+      ]);
+      expect(u.exitedOpenFinalSaldoCount).toBe(2);
+    });
+
+    it("validates against both reaches: a salon outside the narrower overtime reach answers 404", async () => {
+      // C1: team-overview TENANT, overtime [A] — B is inside the first reach, outside the second.
+      const c1B = await getRaw(`${OV_URL}?salonId=${oB}`, c1Token);
+      expect(c1B.statusCode, c1B.body).toBe(404);
+      // C2: team-overview [A, B], overtime [A].
+      const c2B = await getRaw(`${OV_URL}?salonId=${oB}`, c2Token);
+      expect(c2B.statusCode, c2B.body).toBe(404);
+      expect(c2B.body).toBe(c1B.body);
+
+      for (const token of [c1Token, c2Token]) {
+        const unfiltered = await ov("", token);
+        const a = await ov(`?salonId=${oA}`, token);
+        const unfilteredIds = new Set(ovIds(unfiltered));
+        expect(a.employees.length).toBeGreaterThan(0);
+        for (const row of a.employees) {
+          expect(unfilteredIds.has(row.id), row.id).toBe(true);
+          expect(row, row.id).toEqual(ovRow(unfiltered, row.id));
+        }
+        for (const key of ["OA", "OM", "OZ"] as const) {
+          expect(ovIds(a), key).toContain(op[key]);
+        }
+        expect(ovIds(a)).not.toContain(op.OB);
+      }
+    });
+
+    it("answers the one 404 for a foreign, unknown and inactive salon, byte-identical to the other places", async () => {
+      const bodies: string[] = [];
+      for (const salonId of [oForeign.salonId, randomUUID(), oInactive]) {
+        const res = await getRaw(`${OV_URL}?salonId=${salonId}`, o.adminToken);
+        expect(res.statusCode, salonId).toBe(404);
+        bodies.push(res.body);
+      }
+      for (const body of bodies) expect(body).toBe('{"error":"Salon nicht gefunden"}');
+      const bad = await getRaw(`${OV_URL}?salonId=not-a-uuid`, o.adminToken);
+      expect(bad.statusCode).toBe(400);
     });
   });
 });

@@ -14,6 +14,7 @@ import {
   resolveAccessReach, // Phase 91b Plan 06 (#91), D-09/D-10/D-13
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 06 (#91), D-10/D-13
   resolveSalonInReach, // Issue #84 (D-16), Issue #85 (D-13) — salon filter validation
+  salonOnlyReach, // Issue #558 — the one constructor of a salon-only reach (Issue #542: person narrowing)
   homeSalonsForDays, // Issue #84 (D-13) — batched Stammsalon per day
   scopedTimeEntryIds, // Issue #85 (D-04) — the one per-entry scope resolver
   isShiftInScope, // Issue #548 — Phase 91b D-11, the one per-shift scope predicate
@@ -1270,7 +1271,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
   // selects by active login - the exit month is therefore never closed automatically. That cause is
   // tracked in its own follow-up issue (Phase 613 plan 06); this view only makes the open saldo visible.
   app.get("/overtime-overview", {
-    schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
+    schema: {
+      tags: ["Dashboard"],
+      security: [{ bearerAuth: [] }],
+      description:
+        "Overtime overview. The optional salonId (Issue #542) narrows WHICH persons are listed to those whose Stammsalon is that salon today (exited persons: on their exit day); every listed row is the person's whole saldo, never a salon share. A salon outside the caller's team-overview or overtime reach answers 404.",
+    },
     preHandler: [
       requirePermission("team-overview:read:ZUGEWIESEN"),
       // Phase 76b (Issue #76), D-06: saldo IS the overtime resource — a team-overview:read
@@ -1282,8 +1288,51 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // (reply.sent) return;` idiom).
       requirePermission("overtime:read:ZUGEWIESEN"),
     ],
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
+      const { salonId } = teamSalonQuerySchema.parse(req.query);
+
+      // Phase 91b Plan 06 (Issue #91), D-13: both reaches are resolved BEFORE the account read (the
+      // team-overview reach and the independent overtime reach below), so the salon filter can be
+      // validated against them before any person or figure is read.
+      const overviewAccess = accessContextFromRequest(req);
+      const overviewScopeReach = await resolveAccessReach(
+        app.prisma,
+        overviewAccess,
+        "team-overview:read:ZUGEWIESEN",
+      );
+      // Phase 76b (Issue #76), D-06/P-04 — a SECOND, INDEPENDENT reach for the overtime:read
+      // permission this route now also requires. An account is kept only if it passes BOTH the
+      // team-overview reach AND this overtime reach (intersection), so a caller whose
+      // team-overview:read scope is WIDER than their overtime:read scope (e.g. TENANT
+      // team-overview:read + SALONS-only overtime:read) can never see more saldo than their
+      // overtime:read grants — a narrower scope on either permission can only ever narrow the
+      // result, never widen it through the other.
+      const overtimeScopeReach = await resolveAccessReach(
+        app.prisma,
+        overviewAccess,
+        "overtime:read:ZUGEWIESEN",
+      );
+
+      // Issue #542 (CTX-1, P-04): the list only shows persons inside BOTH reaches, so a salon outside
+      // either reach can show no saldo the caller may see - it is validated against both, before any
+      // account read, and every rejection is the one 404 body of the composition's salon views.
+      const overviewSalonFilter = await resolveSalonInReach(
+        app.prisma,
+        tenantId,
+        overviewScopeReach,
+        salonId,
+      );
+      const overtimeSalonFilter = await resolveSalonInReach(
+        app.prisma,
+        tenantId,
+        overtimeScopeReach,
+        salonId,
+      );
+      if (!overviewSalonFilter.ok || !overtimeSalonFilter.ok) {
+        return reply.code(404).send(SALON_VIEW_NOT_FOUND);
+      }
+      const filterSalonId = overviewSalonFilter.salonId;
 
       // Query 1: the OvertimeAccount rows of every person employed at some point up to today
       // (tenant-scoped, never anonymised, login state irrelevant - Issue #613), joined with the
@@ -1298,6 +1347,26 @@ export async function dashboardRoutes(app: FastifyInstance) {
         isEmployedInPeriod(a.employee, today.start, today.end),
       );
 
+      // Issue #542 (OD-1, P-05): under a filter the persons are narrowed by their Stammsalon on the
+      // endpoint's own Stichtag - the tenant-local today for the active rows, the exit day for the
+      // exited rows below - passed as a CALENDAR DAY (UTC-midnight Date, HOME validity is @db.Date,
+      // #493), never as an instant. The rows themselves are not touched: every listed person keeps
+      // the whole personal saldo, never a salon share (#84).
+      const stammsalonOfFilter = async (
+        calendarDay: string,
+      ): Promise<ReadonlySet<string> | null> => {
+        if (filterSalonId === null) return null;
+        const ids = await resolveStammsalonScopedEmployeeIds(
+          app.prisma,
+          tenantId,
+          salonOnlyReach(filterSalonId),
+          new Date(`${calendarDay}T00:00:00Z`),
+        );
+        // A salon-only reach never resolves to "all"; the empty set is the fail-closed reading.
+        return new Set(ids === "all" ? [] : ids);
+      };
+      const filterHomeToday = await stammsalonOfFilter(dateStrInTz(new Date(), snapshotTz));
+
       // Phase 91b Plan 06 (Issue #91), D-10/D-13 — a NEW finding: this route had ZERO scope
       // narrowing of any kind before this plan (confirmed: no `employeeScopeFor` call anywhere in
       // this handler). `listOvertimeAccountsForTenant` does not accept an employeeIds filter (its
@@ -1306,12 +1375,6 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // `computeOvertimeBalanceBreakdown` fan-out below ever runs for an out-of-scope employee —
       // the property D-13 actually cares about (cost, not just the response shape). Stichtag =
       // today (tenant-local): a live saldo overview, same precedent as GET /overtime/:employeeId.
-      const overviewAccess = accessContextFromRequest(req);
-      const overviewScopeReach = await resolveAccessReach(
-        app.prisma,
-        overviewAccess,
-        "team-overview:read:ZUGEWIESEN",
-      );
       const overviewScopedIds =
         overviewScopeReach.kind === "wholeTenant"
           ? "all"
@@ -1321,19 +1384,6 @@ export async function dashboardRoutes(app: FastifyInstance) {
               overviewScopeReach,
               new Date(),
             );
-
-      // Phase 76b (Issue #76), D-06/P-04 — a SECOND, INDEPENDENT reach for the overtime:read
-      // permission this route now also requires. An account is kept only if it passes BOTH the
-      // team-overview reach above AND this overtime reach (intersection), so a caller whose
-      // team-overview:read scope is WIDER than their overtime:read scope (e.g. TENANT
-      // team-overview:read + SALONS-only overtime:read) can never see more saldo than their
-      // overtime:read grants — a narrower scope on either permission can only ever narrow the
-      // result, never widen it through the other.
-      const overtimeScopeReach = await resolveAccessReach(
-        app.prisma,
-        overviewAccess,
-        "overtime:read:ZUGEWIESEN",
-      );
       const overtimeScopedIds =
         overtimeScopeReach.kind === "wholeTenant"
           ? "all"
@@ -1349,7 +1399,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
           overviewScopedIds === "all" || overviewScopedIds.includes(a.employeeId);
         const inOvertimeScope =
           overtimeScopedIds === "all" || overtimeScopedIds.includes(a.employeeId);
-        return inOverviewScope && inOvertimeScope;
+        const inFilterSalon = filterHomeToday === null || filterHomeToday.has(a.employeeId);
+        return inOverviewScope && inOvertimeScope && inFilterSalon;
       });
 
       // Issue #613 (AC-613-5), D-01/P-03/W4 - the final saldo of a person who has left stays in
@@ -1384,7 +1435,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // whole-tenant reach.
       const exitDayScopes = new Map<
         string,
-        { overview: "all" | string[]; overtime: "all" | string[] }
+        {
+          overview: "all" | string[];
+          overtime: "all" | string[];
+          // Issue #542 (P-05): the chosen salon's Stammsalon persons on this exit day, null = no filter.
+          salon: ReadonlySet<string> | null;
+        }
       >();
       for (const a of exitedOpenCandidates) {
         const day = dateStrInTz(a.employee.exitDate as Date, snapshotTz);
@@ -1409,6 +1465,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
                   overtimeScopeReach,
                   stichtag,
                 ),
+          salon: await stammsalonOfFilter(day),
         });
       }
       const exitedOpenInReach = exitedOpenCandidates.filter((a) => {
@@ -1416,7 +1473,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
         if (scopes === undefined) return false;
         return (
           (scopes.overview === "all" || scopes.overview.includes(a.employeeId)) &&
-          (scopes.overtime === "all" || scopes.overtime.includes(a.employeeId))
+          (scopes.overtime === "all" || scopes.overtime.includes(a.employeeId)) &&
+          (scopes.salon === null || scopes.salon.has(a.employeeId))
         );
       });
 
@@ -1556,7 +1614,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
         }),
       );
 
-      return { employees, exitedOpenFinalSaldoCount };
+      // Issue #542: `salonId` appears only under a filter (the unfiltered body is pinned).
+      return {
+        employees,
+        exitedOpenFinalSaldoCount,
+        ...(filterSalonId !== null ? { salonId: filterSalonId } : {}),
+      };
     },
   });
 
