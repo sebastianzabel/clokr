@@ -218,5 +218,40 @@ describe("Stundennachweis day list (Issue #617)", () => {
       const elsewhere = await payloadFor(d.adminEmployee.id, d.adminToken, 2026, 6);
       expect(elsewhere.dayRows).toEqual([]);
     });
+
+    it("a holiday before the hire day or after the exit day is no row of that person (Issue #617, 617-05 decision)", async () => {
+      // May 2026 in the default salon (Niedersachsen): 01.05. Tag der Arbeit, 14.05. Christi Himmelfahrt,
+      // 25.05. Pfingstmontag. A control person employed the whole month sees all three.
+      const emp = d.adminEmployee.id;
+      const original = { hireDate: d.adminEmployee.hireDate, exitDate: d.adminEmployee.exitDate };
+      try {
+        const control = await payloadFor(emp, d.adminToken, 2026, 5);
+        expect(control.dayRows.map((r) => r.from)).toEqual([
+          "2026-05-01",
+          "2026-05-14",
+          "2026-05-25",
+        ]);
+
+        // Hired on the 12th: the holiday of the 1st lies before the hire day.
+        await app.prisma.employee.update({
+          where: { id: emp },
+          data: { hireDate: new Date("2026-05-12T10:00:00Z") },
+        });
+        const hired = await payloadFor(emp, d.adminToken, 2026, 5);
+        expect(hired.dayRows.map((r) => r.from)).toEqual(["2026-05-14", "2026-05-25"]);
+
+        // Leaving on the 20th: the holiday of the 25th lies after the exit day.
+        await app.prisma.employee.update({
+          where: { id: emp },
+          data: { exitDate: new Date("2026-05-20T10:00:00Z") },
+        });
+        const leaving = await payloadFor(emp, d.adminToken, 2026, 5);
+        expect(leaving.dayRows).toEqual([
+          { from: "2026-05-14", to: "2026-05-14", label: "Feiertag: Christi Himmelfahrt" },
+        ]);
+      } finally {
+        await app.prisma.employee.update({ where: { id: emp }, data: original });
+      }
+    });
   });
 });
