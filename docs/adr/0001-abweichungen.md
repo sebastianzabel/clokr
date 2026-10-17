@@ -3091,9 +3091,9 @@ Positivliste im Code auf Urlaub beschränkt. Eine künftige Abwesenheitsart gela
 - **Anonymisierte Personen.** Der Monatsexport folgt der DATEV-Population: Eine anonymisierte Person erscheint für ihre
   Beschäftigungsmonate (bis #666 auch ohne Austrittsdatum), ihr Anspruch wird nie geschrieben (kein Heilen, im Speicher
   ausgerichtet).
-- Die Kompatibilitätsfunktionen `parseCompatRoleFilter`/`compatRoleUserWhere` bleiben bis Release B (#641). Absence-Exporte
-  ohne Produktivaufrufer (`BS_NO_LEAVE_LABEL`, `leaveRequestDaysWithin`, `vocationalSchoolDatesForLeaveRequests` außerhalb
-  der Abwesenheiten) bleiben und stehen in einem Chore-Issue.
+- Die Kompatibilitätsfunktionen `parseCompatRoleFilter`/`compatRoleUserWhere` bleiben bis Release B (#641). Die Absence-Exporte
+  ohne Produktivaufrufer sind mit #674 entfernt (`BS_NO_LEAVE_LABEL`, `leaveRequestDaysWithin`) bzw. nicht mehr aus
+  `index.ts` exportiert (`vocationalSchoolDatesForLeaveRequests`, bleibt im Kontext).
 - Die Kachel „PDF-Bericht“ der Admin-Exportseite → #593; die Neugestaltung der Berichtsseite → #612.
 
 #### Auswirkung auf die Kontexte
