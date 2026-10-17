@@ -10,7 +10,8 @@
 //   R1  a file other than team-saldo.ts declares a function or arrow constant named like /median/i
 //   R2  a file other than team-saldo.ts reduces over rows reading balanceHours, confirmedMinutes or
 //       openMonthMinutes (register `R2_REGISTER` below: file + reason + owning issue, must resolve)
-//   R3  the reports page or ExitedFinalSaldoSection.svelte does not import $lib/reports/team-saldo
+//   R3  the reports page, ExitedFinalSaldoSection.svelte or the dashboard card TeamSaldoCard.svelte
+//       does not import $lib/reports/team-saldo
 //   R4  the running-month wording ("Laufender Monat (Prognose)" and the caption "inkl. laufendem
 //       Monat") appears in ANY non-test web file outside lib/saldo/forecast-label.ts, comments
 //       included (Issue #588, orchestrator decision 17.10.2026: AC-588-4 on every surface - the
@@ -32,6 +33,7 @@ import { describe, it, expect } from "vitest";
 const MODULE_FILE = "lib/reports/team-saldo.ts";
 const PAGE_FILE = "routes/(app)/reports/+page.svelte";
 const EXITED_FILE = "lib/components/reports/ExitedFinalSaldoSection.svelte";
+const CARD_FILE = "lib/components/dashboard/TeamSaldoCard.svelte";
 const HELPER_FILE = "lib/saldo/forecast-label.ts";
 const SALDO_ANZEIGE_FILE = "lib/components/saldo/SaldoAnzeige.svelte";
 const KONTO_CARD_FILE = "lib/components/saldo/KontoSaldoCard.svelte";
@@ -143,6 +145,7 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
     expect(rels).toContain(MODULE_FILE);
     expect(rels).toContain(PAGE_FILE);
     expect(rels).toContain(EXITED_FILE);
+    expect(rels).toContain(CARD_FILE);
     expect(rels).toContain(HELPER_FILE);
     expect(rels).toContain(SALDO_ANZEIGE_FILE);
     expect(rels).toContain(KONTO_CARD_FILE);
@@ -183,8 +186,8 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
     }
   });
 
-  it("R3: the reports page and the exited section read the module", () => {
-    for (const rel of [PAGE_FILE, EXITED_FILE]) {
+  it("R3: the reports page, the exited section and the dashboard card read the module", () => {
+    for (const rel of [PAGE_FILE, EXITED_FILE, CARD_FILE]) {
       expect(fileText(rel), rel).toMatch(/from "\$lib\/reports\/team-saldo"/);
     }
   });

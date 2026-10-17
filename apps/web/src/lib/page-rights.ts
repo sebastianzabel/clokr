@@ -37,9 +37,21 @@ export interface ReportRights {
   canRecordTeamAbsence: boolean;
 }
 
+/**
+ * Issue #588 (P-10): the team saldo overview - the `/reports` block and the dashboard card "Salden".
+ * `GET /dashboard/overtime-overview` is guarded by team-overview:read AND overtime:read; this mirrors
+ * both so a caller who would get a 403 never requests it. Not a boundary: the API refuses anyway.
+ */
+export function mayReadTeamSaldo(user: Caller): boolean {
+  return (
+    hasPermission(user, "team-overview:read:ZUGEWIESEN") &&
+    hasPermission(user, "overtime:read:ZUGEWIESEN")
+  );
+}
+
 export function reportRights(user: Caller): ReportRights {
   const canTeamAttendance = hasPermission(user, "team-overview:read:ZUGEWIESEN");
-  const canTeamOvertime = canTeamAttendance && hasPermission(user, "overtime:read:ZUGEWIESEN");
+  const canTeamOvertime = mayReadTeamSaldo(user);
   const canReportRead = hasPermission(user, "report:read:ZUGEWIESEN");
   const canReportExport = hasPermission(user, "report:export:ZUGEWIESEN");
   return {
