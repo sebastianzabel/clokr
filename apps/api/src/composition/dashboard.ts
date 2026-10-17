@@ -63,6 +63,7 @@ import {
   timeStrInTz,
   getConfirmedCarryOver,
   getConfirmedCarryOverBulk,
+  finalSaldoOpen, // Issue #613 (AC-613-5) — is an exited person's exit month still open
   findMissingWorkdays,
   resolveMissingEntriesDays,
   computeOvertimeBalanceBreakdown,
@@ -94,6 +95,13 @@ const teamTrendQuerySchema = z.object({
 const teamSalonQuerySchema = z.object({
   salonId: z.string().uuid().optional(),
 });
+
+/**
+ * Issue #613 (AC-613-5, W4): the most exited persons the Überstunden-Übersicht lists with an open
+ * final saldo; the total is reported separately as `exitedOpenFinalSaldoCount`. The per-person saldo
+ * computation (a fan-out) runs for the listed persons only.
+ */
+export const EXITED_OPEN_SECTION_LIMIT = 50;
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -1130,6 +1138,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
   });
 
   // GET /api/v1/dashboard/overtime-overview — Überstunden-Übersicht (RPT-01 + SALDO-03)
+  // Issue #613 (AC-613-5): besides the persons employed today the answer lists the persons who have
+  // left and whose exit month is not closed yet. Most of them are the result of
+  // `PATCH /employees/:id/deactivate` (exit date AND login off) meeting the auto-close cron, which
+  // selects by active login - the exit month is therefore never closed automatically. That cause is
+  // tracked in its own follow-up issue (Phase 613 plan 06); this view only makes the open saldo visible.
   app.get("/overtime-overview", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
     preHandler: [
@@ -1205,7 +1218,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
               new Date(),
             );
 
-      const accounts = allAccounts.filter((a) => {
+      const activeAccounts = allAccounts.filter((a) => {
         const inOverviewScope =
           overviewScopedIds === "all" || overviewScopedIds.includes(a.employeeId);
         const inOvertimeScope =
@@ -1213,6 +1226,88 @@ export async function dashboardRoutes(app: FastifyInstance) {
         return inOverviewScope && inOvertimeScope;
       });
 
+      // Issue #613 (AC-613-5), D-01/P-03/W4 - the final saldo of a person who has left stays in
+      // this overview until the month of the exit is closed. Order of the steps matters for cost:
+      // every step before the per-person fan-out is a cheap read or an in-memory decision.
+      //
+      // (d) ONE bulk read of the latest closed month for the in-scope active persons AND the exited
+      // candidates (the same `getConfirmedCarryOverBulk` the page always used, so no additional
+      // saldoSnapshot read). It is the only read that touches an exited person outside the caller's
+      // reach: two numbers per person (carry-over, period end) are consulted to decide "exit month
+      // still open"; nothing of it leaves the handler for a person outside the reach.
+      const exitedCandidates = candidateAccounts.filter(
+        (a) => !isEmployedInPeriod(a.employee, today.start, today.end),
+      );
+      const confirmedByEmp = await getConfirmedCarryOverBulk(
+        app.prisma,
+        [...activeAccounts, ...exitedCandidates].map((a) => a.employeeId),
+        tenantId,
+      );
+      const exitedOpenCandidates = exitedCandidates.filter(
+        (a) =>
+          a.employee.exitDate !== null &&
+          finalSaldoOpen({
+            exitDate: a.employee.exitDate,
+            latestClosedPeriodEnd: confirmedByEmp.get(a.employeeId)?.periodEnd ?? null,
+            tz: snapshotTz,
+          }),
+      );
+
+      // (e) Reach of an exited person is judged at the EXIT DAY (the last day they belonged to a
+      // salon), not today: both reaches, one resolution per distinct exit day and reach, none for a
+      // whole-tenant reach.
+      const exitDayScopes = new Map<
+        string,
+        { overview: "all" | string[]; overtime: "all" | string[] }
+      >();
+      for (const a of exitedOpenCandidates) {
+        const day = dateStrInTz(a.employee.exitDate as Date, snapshotTz);
+        if (exitDayScopes.has(day)) continue;
+        const stichtag = dayRangeUtc(day, snapshotTz).end;
+        exitDayScopes.set(day, {
+          overview:
+            overviewScopeReach.kind === "wholeTenant"
+              ? "all"
+              : await resolveStammsalonScopedEmployeeIds(
+                  app.prisma,
+                  tenantId,
+                  overviewScopeReach,
+                  stichtag,
+                ),
+          overtime:
+            overtimeScopeReach.kind === "wholeTenant"
+              ? "all"
+              : await resolveStammsalonScopedEmployeeIds(
+                  app.prisma,
+                  tenantId,
+                  overtimeScopeReach,
+                  stichtag,
+                ),
+        });
+      }
+      const exitedOpenInReach = exitedOpenCandidates.filter((a) => {
+        const scopes = exitDayScopes.get(dateStrInTz(a.employee.exitDate as Date, snapshotTz));
+        if (scopes === undefined) return false;
+        return (
+          (scopes.overview === "all" || scopes.overview.includes(a.employeeId)) &&
+          (scopes.overtime === "all" || scopes.overtime.includes(a.employeeId))
+        );
+      });
+
+      // (f) The section is bounded: the total is reported, only the newest exits are listed (exit
+      // date descending, then id) and only they get the per-person saldo computation below.
+      const exitedOpenFinalSaldoCount = exitedOpenInReach.length;
+      const exitedAccounts = [...exitedOpenInReach]
+        .sort((x, y) => {
+          const byExit =
+            (y.employee.exitDate as Date).getTime() - (x.employee.exitDate as Date).getTime();
+          if (byExit !== 0) return byExit;
+          return x.employeeId < y.employeeId ? -1 : x.employeeId > y.employeeId ? 1 : 0;
+        })
+        .slice(0, EXITED_OPEN_SECTION_LIMIT);
+      const exitedOpenIds = new Set(exitedAccounts.map((a) => a.employeeId));
+
+      const accounts = [...activeAccounts, ...exitedAccounts];
       const employeeIds = accounts.map((a) => a.employeeId);
 
       // Query 2: last 6 months of MONTHLY SaldoSnapshots for these employees
@@ -1239,13 +1334,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
         snapshotsByEmp.set(snap.employeeId, list);
       }
 
-      // Phase 97-04 (SALDO-DISP-01/02) — ONE bulk lookup for the "Bestätigt" carry-over,
-      // placed BEFORE the per-employee Promise.all below (never a per-employee query inside
-      // it — the whole point of getConfirmedCarryOverBulk, see confirmed-saldo.ts and
-      // 97-CONTEXT's "Known N+1 risk" note). Deliberately NOT the six-month-bounded
-      // `snapshots` query above: an employee whose last close predates that window would
-      // falsely read as having no closed month at all if reused for this purpose.
-      const confirmedByEmp = await getConfirmedCarryOverBulk(app.prisma, employeeIds, tenantId);
+      // Phase 97-04 (SALDO-DISP-01/02) - the "Bestätigt" carry-over comes from the ONE bulk lookup
+      // `confirmedByEmp` above (never a per-employee query inside the Promise.all below, see
+      // confirmed-saldo.ts and 97-CONTEXT's "Known N+1 risk" note). Deliberately NOT the
+      // six-month-bounded `snapshots` query: an employee whose last close predates that window
+      // would falsely read as having no closed month at all.
 
       // Per-employee LIVE lifetime saldo through windowEnd (today only if today has completed
       // entries, else yesterday) — SAME source of truth as the dashboard KPI + calendar header
@@ -1304,6 +1397,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
             id: a.employeeId,
             name: `${a.employee.firstName} ${a.employee.lastName}`,
             employeeNumber: a.employee.employeeNumber,
+            // Issue #613 (AC-613-5): the exit day (tenant-local) and whether this row is an exited
+            // person whose final saldo is still open. Additive; the web only displays them.
+            exitDate:
+              a.employee.exitDate === null ? null : dateStrInTz(a.employee.exitDate, snapshotTz),
+            exitedWithOpenFinalSaldo: exitedOpenIds.has(a.employeeId),
             balanceHours,
             status: classifyOvertimeBalance(balanceHours),
             // Phase 97-04 (SALDO-DISP-01/02/04) — additive split fields, same shape as
@@ -1332,7 +1430,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         }),
       );
 
-      return { employees };
+      return { employees, exitedOpenFinalSaldoCount };
     },
   });
 
