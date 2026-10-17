@@ -17,8 +17,8 @@
  *      `resolveDayStatus` and none of the three primitives.
  *
  * The register is not a list of accepted debt to be extended: its entries are the copies D-587-5
- * names as a follow-up. The follow-up issue number is filled in by 587-04 (`followUp: null` until
- * then); once set it must be a positive integer.
+ * names as a follow-up. Every entry carries the number of the follow-up issue that removes it
+ * (#670) as a positive integer.
  *
  * Stated blind spot: a primitive imported under another name, or called through a variable, is not
  * seen. Review has to catch a creative workaround.
@@ -50,14 +50,17 @@ interface KnownCopy {
   region: string;
   callee: Primitive;
   reason: string;
-  /** The follow-up issue (D-587-5); null only while 587-04 has not filed it. */
-  followUp: number | null;
+  /** The follow-up issue (D-587-5) that removes this entry. */
+  followUp: number;
 }
 
+// The follow-up issue that removes every register entry (D-587-5): #670.
+const FOLLOW_UP_ISSUE = 670;
+
 const MY_WEEK_REASON =
-  "known copy - /my-week keeps its own status chain (own week, own wording); follow-up issue (D-587-5), number filled in by 587-04";
+  "known copy - /my-week keeps its own status chain (own week, own wording); removed by the follow-up issue (D-587-5)";
 const GAP_FINDER_REASON =
-  "known copy - the missing-workday finder asks only whether a day is an obligated workday; follow-up issue (D-587-5), number filled in by 587-04";
+  "known copy - the missing-workday finder asks only whether a day is an obligated workday; removed by the follow-up issue (D-587-5)";
 
 const KNOWN_COPIES: readonly KnownCopy[] = [
   {
@@ -65,21 +68,21 @@ const KNOWN_COPIES: readonly KnownCopy[] = [
     region: "get /my-week",
     callee: "isDayDue",
     reason: MY_WEEK_REASON,
-    followUp: null,
+    followUp: FOLLOW_UP_ISSUE,
   },
   {
     file: DASHBOARD,
     region: "get /my-week",
     callee: "isObligatedWorkday",
     reason: MY_WEEK_REASON,
-    followUp: null,
+    followUp: FOLLOW_UP_ISSUE,
   },
   {
     file: "contexts/working-time-account/find-missing-workdays.ts",
     region: "function findMissingWorkdays",
     callee: "isObligatedWorkday",
     reason: GAP_FINDER_REASON,
-    followUp: null,
+    followUp: FOLLOW_UP_ISSUE,
   },
 ];
 
@@ -178,11 +181,7 @@ describe("Issue #587 - the day status is resolved by one function", () => {
     expect(KNOWN_COPIES.length).toBeGreaterThan(0);
     for (const c of KNOWN_COPIES) {
       expect(c.reason.length, key(c)).toBeGreaterThan(20);
-      if (c.followUp === null) {
-        expect(c.reason, key(c)).toContain("filled in by 587-04");
-      } else {
-        expect(Number.isInteger(c.followUp) && c.followUp > 0, key(c)).toBe(true);
-      }
+      expect(Number.isInteger(c.followUp) && c.followUp > 0, key(c)).toBe(true);
     }
   });
 
