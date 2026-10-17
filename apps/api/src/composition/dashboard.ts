@@ -6,6 +6,8 @@ import {
   holidaysAtWorkLocation,
   accessContextFromRequest,
   employeeScopeFor,
+  reportPopulationWhere, // Issue #613 — the one period-population rule
+  isEmployedInPeriod, // Issue #613 — the one period-population rule (in-memory twin)
   type WorkLocationEntry,
   type HolidaysByEmployee,
   hasPermission,
@@ -53,6 +55,7 @@ import {
   dateStrInTz,
   weekRangeUtc,
   monthRangeUtc,
+  dayRangeUtc, // Issue #613 — tenant-local day as UTC instants
   monthDayBounds,
   weekDateRange, // Issue #493 (D-10)
   monthDateRange, // Issue #493 (D-10)
@@ -61,6 +64,7 @@ import {
   timeStrInTz,
   getConfirmedCarryOver,
   getConfirmedCarryOverBulk,
+  finalSaldoOpen, // Issue #613 (AC-613-5) — is an exited person's exit month still open
   findMissingWorkdays,
   resolveMissingEntriesDays,
   computeOvertimeBalanceBreakdown,
@@ -92,6 +96,13 @@ const teamTrendQuerySchema = z.object({
 const teamSalonQuerySchema = z.object({
   salonId: z.string().uuid().optional(),
 });
+
+/**
+ * Issue #613 (AC-613-5, W4): the most exited persons the Überstunden-Übersicht lists with an open
+ * final saldo; the total is reported separately as `exitedOpenFinalSaldoCount`. The per-person saldo
+ * computation (a fan-out) runs for the listed persons only.
+ */
+export const EXITED_OPEN_SECTION_LIMIT = 50;
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -466,7 +477,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       // Stichtag + `validFrom` (Timestamptz) keep the instant `weekEnd`; the `@db.Date` facade
       // reads below take calendar-day bounds (Issue #493).
-      const { end: weekEnd, days: weekDays } = weekRangeUtc(refDate, tz);
+      const { start: weekStart, end: weekEnd, days: weekDays } = weekRangeUtc(refDate, tz);
       const { firstDay: weekFirstDay, lastDay: weekLastDay } = weekDateRange(refDate, tz);
 
       // Phase 91b Plan 06 (Issue #91), D-09/D-10/D-13 — narrow to in-scope employees BEFORE any of
@@ -519,15 +530,24 @@ export async function dashboardRoutes(app: FastifyInstance) {
           ? "all"
           : [...teamWeekScopedIds, ...distinctEmployeeIds(inScopeRows ?? [])];
 
-      // Alle aktiven, nicht-anonymisierten Mitarbeiter
+      // The persons employed at some point during the week (Issue #613, D-613-1): never anonymised,
+      // a login state never decides, a notice exit date keeps the person listed until the exit day.
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
-          exitDate: null,
-          user: { isActive: true },
-          ...(populationIds !== "all" ? { id: { in: populationIds } } : {}),
+          AND: [
+            reportPopulationWhere(weekStart, weekEnd),
+            ...(populationIds !== "all" ? [{ id: { in: populationIds } }] : []),
+          ],
         },
-        select: { id: true, firstName: true, lastName: true, employeeNumber: true },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          employeeNumber: true,
+          hireDate: true,
+          exitDate: true,
+        },
         orderBy: { lastName: "asc" },
       });
       // Contracts, holidays, leave and absences belong to the Stammsalon persons only: a person
@@ -760,13 +780,21 @@ export async function dashboardRoutes(app: FastifyInstance) {
           // makes the day a workday; FLEXTIME/MONTHLY_HOURS → never per-day
           // (free daily distribution → no "Fehlt"); FIXED/unknown → workDays
           // array or expectedHours fallback.
-          const isWorkday = isObligatedWorkday({
-            scheduleType: schedType,
-            workDays: scheduleWorkDays,
-            dow,
-            expectedHours,
-            hasShift: shift !== null,
-          });
+          //
+          // Issue #613 (P-02): a day outside the person's employment (after the exit day, before
+          // the hire day) is not a day the person owes, so it is never a workday and can never be
+          // "Fehlt". Nothing else in the status chain changes here.
+          const dayRange = dayRangeUtc(dayStr, tz);
+          const employedThisDay = isEmployedInPeriod(emp, dayRange.start, dayRange.end);
+          const isWorkday =
+            employedThisDay &&
+            isObligatedWorkday({
+              scheduleType: schedType,
+              workDays: scheduleWorkDays,
+              dow,
+              expectedHours,
+              hasShift: shift !== null,
+            });
 
           const todayStr = dateStrInTz(new Date(), tz);
           const nowHHMM = timeStrInTz(new Date(), tz);
@@ -914,13 +942,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
           ? "all"
           : [...attendanceScopedIds, ...distinctEmployeeIds(inScopeRows ?? [])];
 
-      // Bulk fetch 1 — active employees for this tenant
+      // Bulk fetch 1 — the persons employed today. Issue #613 (P-02): the Stichtag form of the
+      // period population (the tenant-local day as period); a notice exit date no longer hides a
+      // person before the exit day, a login state never decides, an anonymised person never shows.
+      const attendanceDay = dayRangeUtc(todayStr, tz);
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
-          exitDate: null,
-          user: { isActive: true },
-          ...(attendancePopulationIds !== "all" ? { id: { in: attendancePopulationIds } } : {}),
+          AND: [
+            reportPopulationWhere(attendanceDay.start, attendanceDay.end),
+            ...(attendancePopulationIds !== "all" ? [{ id: { in: attendancePopulationIds } }] : []),
+          ],
         },
         select: { id: true, firstName: true, lastName: true, employeeNumber: true },
         orderBy: { lastName: "asc" },
@@ -1128,6 +1160,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
   });
 
   // GET /api/v1/dashboard/overtime-overview — Überstunden-Übersicht (RPT-01 + SALDO-03)
+  // Issue #613 (AC-613-5): besides the persons employed today the answer lists the persons who have
+  // left and whose exit month is not closed yet. Most of them are the result of
+  // `PATCH /employees/:id/deactivate` (exit date AND login off) meeting the auto-close cron, which
+  // selects by active login - the exit month is therefore never closed automatically. That cause is
+  // tracked in its own follow-up issue (Phase 613 plan 06); this view only makes the open saldo visible.
   app.get("/overtime-overview", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
     preHandler: [
@@ -1144,8 +1181,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
     handler: async (req) => {
       const tenantId = req.user.tenantId;
 
-      // Query 1: all OvertimeAccount rows joined with employee (tenant-scoped, active only)
-      const allAccounts = await listOvertimeAccountsForTenant(app.prisma, tenantId);
+      // Query 1: the OvertimeAccount rows of every person employed at some point up to today
+      // (tenant-scoped, never anonymised, login state irrelevant - Issue #613), joined with the
+      // employee. The rows shown as the team are the ones employed TODAY.
+      const snapshotTz = await getTenantTimezone(app.prisma, tenantId);
+      const today = dayRangeUtc(dateStrInTz(new Date(), snapshotTz), snapshotTz);
+      const candidateAccounts = await listOvertimeAccountsForTenant(app.prisma, tenantId, {
+        start: new Date(0),
+        end: today.end,
+      });
+      const allAccounts = candidateAccounts.filter((a) =>
+        isEmployedInPeriod(a.employee, today.start, today.end),
+      );
 
       // Phase 91b Plan 06 (Issue #91), D-10/D-13 — a NEW finding: this route had ZERO scope
       // narrowing of any kind before this plan (confirmed: no `employeeScopeFor` call anywhere in
@@ -1193,7 +1240,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
               new Date(),
             );
 
-      const accounts = allAccounts.filter((a) => {
+      const activeAccounts = allAccounts.filter((a) => {
         const inOverviewScope =
           overviewScopedIds === "all" || overviewScopedIds.includes(a.employeeId);
         const inOvertimeScope =
@@ -1201,6 +1248,88 @@ export async function dashboardRoutes(app: FastifyInstance) {
         return inOverviewScope && inOvertimeScope;
       });
 
+      // Issue #613 (AC-613-5), D-01/P-03/W4 - the final saldo of a person who has left stays in
+      // this overview until the month of the exit is closed. Order of the steps matters for cost:
+      // every step before the per-person fan-out is a cheap read or an in-memory decision.
+      //
+      // (d) ONE bulk read of the latest closed month for the in-scope active persons AND the exited
+      // candidates (the same `getConfirmedCarryOverBulk` the page always used, so no additional
+      // saldoSnapshot read). It is the only read that touches an exited person outside the caller's
+      // reach: two numbers per person (carry-over, period end) are consulted to decide "exit month
+      // still open"; nothing of it leaves the handler for a person outside the reach.
+      const exitedCandidates = candidateAccounts.filter(
+        (a) => !isEmployedInPeriod(a.employee, today.start, today.end),
+      );
+      const confirmedByEmp = await getConfirmedCarryOverBulk(
+        app.prisma,
+        [...activeAccounts, ...exitedCandidates].map((a) => a.employeeId),
+        tenantId,
+      );
+      const exitedOpenCandidates = exitedCandidates.filter(
+        (a) =>
+          a.employee.exitDate !== null &&
+          finalSaldoOpen({
+            exitDate: a.employee.exitDate,
+            latestClosedPeriodEnd: confirmedByEmp.get(a.employeeId)?.periodEnd ?? null,
+            tz: snapshotTz,
+          }),
+      );
+
+      // (e) Reach of an exited person is judged at the EXIT DAY (the last day they belonged to a
+      // salon), not today: both reaches, one resolution per distinct exit day and reach, none for a
+      // whole-tenant reach.
+      const exitDayScopes = new Map<
+        string,
+        { overview: "all" | string[]; overtime: "all" | string[] }
+      >();
+      for (const a of exitedOpenCandidates) {
+        const day = dateStrInTz(a.employee.exitDate as Date, snapshotTz);
+        if (exitDayScopes.has(day)) continue;
+        const stichtag = dayRangeUtc(day, snapshotTz).end;
+        exitDayScopes.set(day, {
+          overview:
+            overviewScopeReach.kind === "wholeTenant"
+              ? "all"
+              : await resolveStammsalonScopedEmployeeIds(
+                  app.prisma,
+                  tenantId,
+                  overviewScopeReach,
+                  stichtag,
+                ),
+          overtime:
+            overtimeScopeReach.kind === "wholeTenant"
+              ? "all"
+              : await resolveStammsalonScopedEmployeeIds(
+                  app.prisma,
+                  tenantId,
+                  overtimeScopeReach,
+                  stichtag,
+                ),
+        });
+      }
+      const exitedOpenInReach = exitedOpenCandidates.filter((a) => {
+        const scopes = exitDayScopes.get(dateStrInTz(a.employee.exitDate as Date, snapshotTz));
+        if (scopes === undefined) return false;
+        return (
+          (scopes.overview === "all" || scopes.overview.includes(a.employeeId)) &&
+          (scopes.overtime === "all" || scopes.overtime.includes(a.employeeId))
+        );
+      });
+
+      // (f) The section is bounded: the total is reported, only the newest exits are listed (exit
+      // date descending, then id) and only they get the per-person saldo computation below.
+      const exitedOpenFinalSaldoCount = exitedOpenInReach.length;
+      const exitedAccounts = [...exitedOpenInReach]
+        .sort((x, y) => {
+          const byExit =
+            (y.employee.exitDate as Date).getTime() - (x.employee.exitDate as Date).getTime();
+          if (byExit !== 0) return byExit;
+          return x.employeeId < y.employeeId ? -1 : x.employeeId > y.employeeId ? 1 : 0;
+        })
+        .slice(0, EXITED_OPEN_SECTION_LIMIT);
+      const exitedOpenIds = new Set(exitedAccounts.map((a) => a.employeeId));
+
+      const accounts = [...activeAccounts, ...exitedAccounts];
       const employeeIds = accounts.map((a) => a.employeeId);
 
       // Query 2: last 6 months of MONTHLY SaldoSnapshots for these employees
@@ -1218,7 +1347,6 @@ export async function dashboardRoutes(app: FastifyInstance) {
         tenantId,
         sixMonthsAgo,
       );
-      const snapshotTz = await getTenantTimezone(app.prisma, tenantId);
 
       // Group snapshots by employeeId
       const snapshotsByEmp = new Map<string, typeof snapshots>();
@@ -1228,13 +1356,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
         snapshotsByEmp.set(snap.employeeId, list);
       }
 
-      // Phase 97-04 (SALDO-DISP-01/02) — ONE bulk lookup for the "Bestätigt" carry-over,
-      // placed BEFORE the per-employee Promise.all below (never a per-employee query inside
-      // it — the whole point of getConfirmedCarryOverBulk, see confirmed-saldo.ts and
-      // 97-CONTEXT's "Known N+1 risk" note). Deliberately NOT the six-month-bounded
-      // `snapshots` query above: an employee whose last close predates that window would
-      // falsely read as having no closed month at all if reused for this purpose.
-      const confirmedByEmp = await getConfirmedCarryOverBulk(app.prisma, employeeIds, tenantId);
+      // Phase 97-04 (SALDO-DISP-01/02) - the "Bestätigt" carry-over comes from the ONE bulk lookup
+      // `confirmedByEmp` above (never a per-employee query inside the Promise.all below, see
+      // confirmed-saldo.ts and 97-CONTEXT's "Known N+1 risk" note). Deliberately NOT the
+      // six-month-bounded `snapshots` query: an employee whose last close predates that window
+      // would falsely read as having no closed month at all.
 
       // Per-employee LIVE lifetime saldo through windowEnd (today only if today has completed
       // entries, else yesterday) — SAME source of truth as the dashboard KPI + calendar header
@@ -1293,6 +1419,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
             id: a.employeeId,
             name: `${a.employee.firstName} ${a.employee.lastName}`,
             employeeNumber: a.employee.employeeNumber,
+            // Issue #613 (AC-613-5): the exit day (tenant-local) and whether this row is an exited
+            // person whose final saldo is still open. Additive; the web only displays them.
+            exitDate:
+              a.employee.exitDate === null ? null : dateStrInTz(a.employee.exitDate, snapshotTz),
+            exitedWithOpenFinalSaldo: exitedOpenIds.has(a.employeeId),
             balanceHours,
             status: classifyOvertimeBalance(balanceHours),
             // Phase 97-04 (SALDO-DISP-01/02/04) — additive split fields, same shape as
@@ -1321,7 +1452,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         }),
       );
 
-      return { employees };
+      return { employees, exitedOpenFinalSaldoCount };
     },
   });
 
@@ -1776,11 +1907,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
       sixMonthsAgo.setUTCDate(0);
       sixMonthsAgo.setUTCHours(0, 0, 0, 0);
 
-      // First fetch active employee IDs for this tenant.
+      // First fetch the employee IDs of the trend window's population.
       // Prisma groupBy does not support relation filters in `where`, so we resolve
-      // tenant scoping via a separate employee query.
+      // tenant scoping via a separate employee query. Issue #613: the population is the persons
+      // employed at some point in the window and never anonymised (`reportPopulationWhere`), so a
+      // person who left inside the window still counts in the months they were employed; a login
+      // state never decides.
       const employees = await app.prisma.employee.findMany({
-        where: { tenantId, user: { isActive: true } },
+        where: { tenantId, ...reportPopulationWhere(sixMonthsAgo, new Date()) },
         select: { id: true },
       });
 
@@ -1911,7 +2045,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
         string,
         Awaited<ReturnType<typeof getRecordedWorkEntriesByIds>>
       >();
-      const scopedActiveIds = new Set<string>();
+      // Issue #613: the persons listed by an in-scope entry, with their employment, so each month
+      // can ask `isEmployedInPeriod` for that month (the same population as /reports/monthly).
+      const scopedActivePersons = new Map<string, { hireDate: Date; exitDate: Date | null }>();
       if (reach.kind === "scoped") {
         const first = new Date(
           Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - (months - 1), 1),
@@ -1945,16 +2081,26 @@ export async function dashboardRoutes(app: FastifyInstance) {
           if (list) list.push(row);
           else scopedRowsByMonth.set(monthKey, [row]);
         }
+        const windowStartInstant = monthRangeUtc(
+          first.getUTCFullYear(),
+          first.getUTCMonth() + 1,
+          tz,
+        ).start;
+        const windowEndInstant = monthRangeUtc(
+          today.getUTCFullYear(),
+          today.getUTCMonth() + 1,
+          tz,
+        ).end;
         const active = await app.prisma.employee.findMany({
           where: {
             tenantId,
-            exitDate: null,
-            user: { isActive: true },
+            ...reportPopulationWhere(windowStartInstant, windowEndInstant),
             id: { in: distinctEmployeeIds(rows) },
           },
-          select: { id: true },
+          select: { id: true, hireDate: true, exitDate: true },
         });
-        for (const p of active) scopedActiveIds.add(p.id);
+        for (const p of active)
+          scopedActivePersons.set(p.id, { hireDate: p.hireDate, exitDate: p.exitDate });
       }
 
       const window: Array<{
@@ -1971,8 +2117,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - back, 1));
         const year = d.getUTCFullYear();
         const month = d.getUTCMonth() + 1;
-        // Same population and Stichtag as GET /reports/monthly (month end).
-        const { end } = monthRangeUtc(year, month, tz);
+        // Same population as GET /reports/monthly for this month (Issue #613) and the same Stichtag
+        // (month end) for the reach.
+        const { start, end } = monthRangeUtc(year, month, tz);
         const { firstDay, lastDay } = monthDateRange(year, month, tz);
         const scopedIds =
           reach.kind === "wholeTenant"
@@ -1981,18 +2128,22 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const people = await app.prisma.employee.findMany({
           where: {
             tenantId,
-            exitDate: null,
-            user: { isActive: true },
-            ...(scopedIds === "all" ? {} : { id: { in: scopedIds } }),
+            AND: [
+              reportPopulationWhere(start, end),
+              ...(scopedIds === "all" ? [] : [{ id: { in: scopedIds } }]),
+            ],
           },
           select: { id: true },
         });
         const ids = people.map((p) => p.id).sort((a, b) => a.localeCompare(b));
         const key = `${year}-${String(month).padStart(2, "0")}`;
         const stammIds = new Set(ids);
-        const entryOnlyIds = distinctEmployeeIds(scopedRowsByMonth.get(key) ?? []).filter(
-          (id) => scopedActiveIds.has(id) && !stammIds.has(id),
-        );
+        const entryOnlyIds = distinctEmployeeIds(scopedRowsByMonth.get(key) ?? []).filter((id) => {
+          const person = scopedActivePersons.get(id);
+          return (
+            person !== undefined && isEmployedInPeriod(person, start, end) && !stammIds.has(id)
+          );
+        });
 
         if (overtimeReach && overtimeReach.kind === "scoped") {
           const covered = await resolveStammsalonScopedEmployeeIds(

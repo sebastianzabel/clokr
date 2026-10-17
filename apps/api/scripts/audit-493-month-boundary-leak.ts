@@ -23,8 +23,8 @@
  * Each row is listed only when the OUTPUT it names would really have contained the employee at
  * the old code (7c6018e9): the Monatsbericht JSON and the company PDF select `exitDate: null` and
  * an active user; the single-employee PDF selects nobody (it is listed only when the audit log
- * names that employee for that month); DATEV selects `datevPayrollPeriodEmployeeFilter` (the real
- * predicate, imported). A row no delivered file contained is not a correction target. Both
+ * names that employee for that month); DATEV selects `employedInPeriodWhere` (the real
+ * predicate, imported from the Unterbau). A row no delivered file contained is not a correction target. Both
  * filters read the CURRENT employee state — an employee who exited or was deactivated AFTER a
  * file was delivered was in that file but is not listed for the Monatsbericht; the stored history
  * cannot reconstruct the state at delivery time.
@@ -69,9 +69,9 @@ import {
 } from "../src/contexts/working-time-account";
 import { entryDurations } from "../src/contexts/time-tracking";
 import { EFFECTIVE_LEAVE_STATUSES, isSickLeaveTypeCode } from "../src/contexts/absence";
-// The real DATEV payroll-period predicate — reused, never copied, so the audit cannot drift from
-// the export. `composition/` is not a context, so this import needs no boundary exception.
-import { datevPayrollPeriodEmployeeFilter } from "../src/composition/reports";
+// The real DATEV payroll-period predicate (Issue #613: lives in the Unterbau) — reused, never copied,
+// so the audit cannot drift from the export.
+import { employedInPeriodWhere } from "../src/contexts/platform";
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
 export const EXIT_OK = 0;
@@ -391,7 +391,7 @@ function makePopulations(
           key,
           prisma.employee
             .findMany({
-              where: { tenantId, ...datevPayrollPeriodEmployeeFilter(start, end) },
+              where: { tenantId, ...employedInPeriodWhere(start, end) },
               select: { id: true },
             })
             .then((rows) => new Set(rows.map((r) => r.id))),

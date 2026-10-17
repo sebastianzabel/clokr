@@ -12263,6 +12263,138 @@
         "error": "Kein Zugriff",
         "ids": []
       }
+    },
+    {
+      "date": "2026-10-17",
+      "from": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "anonymized.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      },
+      "issue": 613,
+      "key": "ADMIN | GET /api/v1/reports/leave-overview | none",
+      "reason": "Issue #613: GET /api/v1/reports/leave-overview waehlt seine Personen jetzt ueber die gemeinsame Personenkreis-Regel des Berichtszeitraums (im Jahr beschaeftigt, nie anonymisiert, Login-Status ohne Einfluss). Die Platzhalter-Zeile des anonymisierten Fixtur-Mitarbeitenden (anonymized.employee, Issue #416) entfaellt, weil eine anonymisierte Person nie in einem Bericht erscheint. Die Aenderung ist nicht rollenspezifisch: alle vier Akteure mit Zugriff verlieren dieselbe ID identisch; Route und Permission-Check sind unveraendert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-17",
+      "from": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "anonymized.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      },
+      "issue": 613,
+      "key": "APIKEY_ADMIN | GET /api/v1/reports/leave-overview | none",
+      "reason": "Issue #613: GET /api/v1/reports/leave-overview waehlt seine Personen jetzt ueber die gemeinsame Personenkreis-Regel des Berichtszeitraums (im Jahr beschaeftigt, nie anonymisiert, Login-Status ohne Einfluss). Die Platzhalter-Zeile des anonymisierten Fixtur-Mitarbeitenden (anonymized.employee, Issue #416) entfaellt, weil eine anonymisierte Person nie in einem Bericht erscheint. Die Aenderung ist nicht rollenspezifisch: alle vier Akteure mit Zugriff verlieren dieselbe ID identisch; Route und Permission-Check sind unveraendert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-17",
+      "from": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "anonymized.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      },
+      "issue": 613,
+      "key": "APIKEY_PLAIN | GET /api/v1/reports/leave-overview | none",
+      "reason": "Issue #613: GET /api/v1/reports/leave-overview waehlt seine Personen jetzt ueber die gemeinsame Personenkreis-Regel des Berichtszeitraums (im Jahr beschaeftigt, nie anonymisiert, Login-Status ohne Einfluss). Die Platzhalter-Zeile des anonymisierten Fixtur-Mitarbeitenden (anonymized.employee, Issue #416) entfaellt, weil eine anonymisierte Person nie in einem Bericht erscheint. Die Aenderung ist nicht rollenspezifisch: alle vier Akteure mit Zugriff verlieren dieselbe ID identisch; Route und Permission-Check sind unveraendert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-17",
+      "from": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "anonymized.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      },
+      "issue": 613,
+      "key": "MANAGER | GET /api/v1/reports/leave-overview | none",
+      "reason": "Issue #613: GET /api/v1/reports/leave-overview waehlt seine Personen jetzt ueber die gemeinsame Personenkreis-Regel des Berichtszeitraums (im Jahr beschaeftigt, nie anonymisiert, Login-Status ohne Einfluss). Die Platzhalter-Zeile des anonymisierten Fixtur-Mitarbeitenden (anonymized.employee, Issue #416) entfaellt, weil eine anonymisierte Person nie in einem Bericht erscheint. Die Aenderung ist nicht rollenspezifisch: alle vier Akteure mit Zugriff verlieren dieselbe ID identisch; Route und Permission-Check sind unveraendert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      }
     }
   ]
 }

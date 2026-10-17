@@ -35,6 +35,7 @@ import {
   ensureVacationEntitlementForYear,
 } from "../index";
 import { statutoryMinimumVacationDays } from "../vacation-calc";
+import { createPopulationPerson } from "../../../__tests__/population-fixtures-613";
 import type { FastifyInstance } from "fastify";
 
 describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 10)", () => {
@@ -201,10 +202,90 @@ describe("Abwesenheiten facade — LeaveType/LeaveEntitlement (Phase 100B Plan 1
   });
 
   describe("listEntitlementsForYear (A12) / getEntitlementsForEmployee (A13)", () => {
+    // Issue #613 — the required period argument: the calendar year as UTC instants is enough here,
+    // the tenant-local instants are the route's business.
+    const yearPeriod = {
+      start: new Date(Date.UTC(year, 0, 1)),
+      end: new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999)),
+    };
+
     it("listEntitlementsForYear is tenant-wide", async () => {
-      const rows = await listEntitlementsForYear(app.prisma, data.tenant.id, year);
+      const rows = await listEntitlementsForYear(app.prisma, data.tenant.id, year, yearPeriod);
       expect(rows.map((r) => r.employeeId)).toContain(data.employee.id);
       expect(rows.map((r) => r.employeeId)).not.toContain(otherData.employee.id);
+    });
+
+    it("listEntitlementsForYear returns only the period population (Issue #613)", async () => {
+      const base = { tenantId: data.tenant.id, salonId: data.salonId };
+      const hire = new Date(Date.UTC(year - 1, 0, 1));
+      const people = {
+        inYear: await createPopulationPerson(app, {
+          ...base,
+          tag: "f1",
+          hireDate: hire,
+          exitDate: new Date(Date.UTC(year, 5, 30)),
+        }),
+        firstDay: await createPopulationPerson(app, {
+          ...base,
+          tag: "f2",
+          hireDate: hire,
+          exitDate: new Date(Date.UTC(year, 0, 1)),
+        }),
+        before: await createPopulationPerson(app, {
+          ...base,
+          tag: "f3",
+          hireDate: hire,
+          exitDate: new Date(Date.UTC(year - 1, 11, 31)),
+        }),
+        anonNoExit: await createPopulationPerson(app, {
+          ...base,
+          tag: "f4",
+          hireDate: hire,
+          anonymized: true,
+        }),
+        anonExit: await createPopulationPerson(app, {
+          ...base,
+          tag: "f5",
+          hireDate: hire,
+          exitDate: new Date(Date.UTC(year, 5, 30)),
+          anonymized: true,
+        }),
+        noLogin: await createPopulationPerson(app, {
+          ...base,
+          tag: "f6",
+          hireDate: hire,
+          loginActive: false,
+        }),
+        late: await createPopulationPerson(app, {
+          ...base,
+          tag: "f7",
+          hireDate: new Date(Date.UTC(year + 1, 0, 1)),
+        }),
+      };
+      for (const person of Object.values(people)) {
+        await app.prisma.leaveEntitlement.create({
+          data: {
+            employeeId: person.employeeId,
+            leaveTypeId: data.vacationType.id,
+            year,
+            totalDays: 20,
+            usedDays: 0,
+          },
+        });
+      }
+      const ids = (await listEntitlementsForYear(app.prisma, data.tenant.id, year, yearPeriod)).map(
+        (r) => r.employeeId,
+      );
+      expect(ids).toEqual(
+        expect.arrayContaining([
+          people.inYear.employeeId,
+          people.firstDay.employeeId,
+          people.noLogin.employeeId,
+        ]),
+      );
+      for (const gone of [people.before, people.anonNoExit, people.anonExit, people.late]) {
+        expect(ids).not.toContain(gone.employeeId);
+      }
     });
 
     it("getEntitlementsForEmployee is per-employee AND tenant-constrained even when the tenant is wrong", async () => {

@@ -235,6 +235,29 @@ Current: recalculated from hire date on every request (does not scale). Target a
   The `/leave` KPI reads `GET /leave/sick-days` (own data, calendar days from this same kernel, Issue
   #595); a request's stored `days` is a workday price and is shown as „Arbeitstage“ for sick types through
   `leaveDaysLabel()` (`apps/web/src/lib/leave/leave-days-label.ts`). DATEV Lohnart counts stay workdays.
+- **Who appears in a period report, a status or an overview comes from one rule (Issue #613).**
+  `reportPopulationWhere(start, end)` (`contexts/platform/employed-in-period.ts`, exported via
+  `contexts/platform/index.ts`) is the ONLY place the population is spelled: employed in the period
+  (`hireDate <= end` and `exitDate` null or `>= start`, both bounds inclusive) and never anonymised.
+  The bounds are INSTANTS (`Employee.hireDate`/`exitDate` are `@db.Timestamptz`) - pass
+  `monthRangeUtc` / `weekRangeUtc` / `dayRangeUtc`, never `monthDateRange`; `isEmployedInPeriod()` is
+  its in-memory twin (a team-week day, an overview row). It is read by `/reports/monthly` and both
+  monthly PDFs, the leave overview (JSON and PDF), the leave-list and vacation PDFs (one population,
+  one order: last name, first name, id), the Monatsabschluss status and year status, the
+  Saldo-Übersicht (facade W9 with a required period), today's attendance, the team week, the team
+  trend and the overtime trend. DATEV reads the employment core `employedInPeriodWhere` WITHOUT the
+  anonymisation clause (§ 41 EStG: the Lohnkonto of a month of employment stays complete). The
+  carry-over warning list and its cron keep their BUrlG `exitDate: null` rule and only exclude
+  anonymised persons. `user.isActive` is a LOGIN state and never selects persons:
+  `apps/api/src/__tests__/report-population-guard-613.test.ts` fails on it in `composition/` and
+  `contexts/working-time-account/` and on a registered reader that stops calling the rule; its only
+  exceptions are the auto-close cron and the deferred close (owner decision 16.10.2026, follow-up
+  #668, measured read-only by `scripts/audit-613-month-close-population.ts`) and two
+  notification-recipient lookups. The Saldo-Übersicht keeps an exited person (section „Ausgetreten,
+  offener Endsaldo“, newest 50 exits plus a total count) until the exit month is closed - decided
+  once by `finalSaldoOpen()` in Arbeitszeitkonto from the latest closed snapshot, with the person's
+  reach judged at the exit day. The Monatsabschluss status computes missing days only inside the
+  employment window the close writer uses (`statusEmploymentWindow()`, bound by parity tests).
 - **`@db.Date` columns get calendar-day bounds, never a month/week instant (Issue #493).**
   `monthRangeUtc()` / `weekRangeUtc()` return tenant-local boundaries as UTC instants (local 1 Oct
   00:00 = `2026-09-30T22:00Z`); a Prisma filter or a JS clip on a `@db.Date` column

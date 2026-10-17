@@ -15,6 +15,7 @@
     karenzOverrunTitle,
     missingDaysText,
   } from "$lib/month-close/day-lists";
+  import { exitLabel } from "$lib/month-close/exit-label";
 
   interface MissingEmployee {
     employeeName: string;
@@ -46,6 +47,8 @@
     employeeName: string;
     employeeNumber: string;
     status: "ready" | "missing" | "closed";
+    /** Issue #613 (P-03): the tenant-local exit day (`YYYY-MM-DD`) of a person who leaves or left. */
+    exitDate?: string | null;
     missingDates?: string[];
     /** Issue #86 (D-02): the server's counts and the flag. A reader without time-entry:read reach
      *  over the person gets the four day lists emptied and `dayDetailsWithheld: true`; the counts
@@ -876,7 +879,14 @@
                                 <tbody>
                                   {#each detailEmployees as emp (emp.employeeId)}
                                     <tr class:detail-row-closed={emp.status === "closed"}>
-                                      <td class="employee-name">{emp.employeeName}</td>
+                                      <td class="employee-name">
+                                        {emp.employeeName}
+                                        {#if exitLabel(emp.exitDate)}
+                                          <span class="badge badge-gray"
+                                            >{exitLabel(emp.exitDate)}</span
+                                          >
+                                        {/if}
+                                      </td>
                                       <td class="font-mono">{emp.employeeNumber}</td>
                                       <td>
                                         {#if emp.status === "closed"}

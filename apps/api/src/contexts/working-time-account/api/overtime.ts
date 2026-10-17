@@ -1,7 +1,12 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
-import { permissionReach, requirePermission } from "../../platform";
+import {
+  permissionReach,
+  requirePermission,
+  reportPopulationWhere, // Issue #613 — the one period population rule
+  isEmployedInPeriod, // Issue #613 — its in-memory twin
+} from "../../platform";
 import {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
@@ -89,6 +94,41 @@ const openingBalanceSchema = z.object({
 // Phase 76.7 (D-07) — § 18 ArbZG exempt employees never appear in close-month*
 // status responses or snapshot creation. Single source of truth for the filter.
 const EXCLUDE_EXEMPT_EMPLOYEE_FILTER = { isTimeTrackingExempt: false } as const;
+
+/**
+ * The span of a month in which a person can have a missing record, derived READ-SIDE for the
+ * Monatsabschluss status and the year status (Issue #613).
+ *
+ * It mirrors Step 1 of `closeEmployeeMonth` (`close-employee-month.ts`, "Compute effectiveStart and
+ * effectiveEnd"), which stays untouched: hire and exit are normalised to their tenant-local calendar
+ * day (`dateStrInTz(...) + "T00:00:00Z"`), the window starts at the later of the hire day and the
+ * month's first day, it ends on the exit day when that lies before the month's last day (the exit
+ * day is INCLUSIVE, the last working day), and it is `null` when the exit lies before the month.
+ * Once an exited person appears in the status of their exit month, running the gap check to the
+ * month end would claim missing records after the exit — which the writer would never demand.
+ *
+ * Nothing but the parity cases in `month-close-status-population-613.test.ts` binds the two
+ * spellings (status `missingDates` equal the writer's `gapDates`), so a change on either side turns
+ * that describe red.
+ */
+function statusEmploymentWindow(args: {
+  hireDate: Date;
+  exitDate: Date | null;
+  monthFirstDay: Date;
+  monthLastDay: Date;
+  tz: string;
+}): { effectiveStart: Date; effectiveEnd: Date } | null {
+  const { hireDate, exitDate, monthFirstDay, monthLastDay, tz } = args;
+  const hireDateNorm = new Date(dateStrInTz(hireDate, tz) + "T00:00:00Z");
+  const effectiveStart = hireDateNorm > monthFirstDay ? hireDateNorm : monthFirstDay;
+  let effectiveEnd = monthLastDay;
+  if (exitDate !== null) {
+    const exitDateNorm = new Date(dateStrInTz(exitDate, tz) + "T00:00:00Z");
+    if (exitDateNorm < monthFirstDay) return null;
+    if (exitDateNorm < monthLastDay) effectiveEnd = exitDateNorm;
+  }
+  return { effectiveStart, effectiveEnd };
+}
 
 /**
  * The employee's schedule type as a plain string, or "" when the employee has no
@@ -620,15 +660,19 @@ export async function overtimeRoutes(app: FastifyInstance) {
             );
 
       // PERF-V1814-01: Get employees with tenant JOIN (folds tenant.findUnique, no extra query)
+      // Issue #613: the month's population is the one period rule (employed in the month, never
+      // anonymised); the login state (`user.isActive`) never decides it, so a person who left in
+      // this month is listed for it and a deactivated login without an exit date stays.
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
-          user: { isActive: true },
           ...EXCLUDE_EXEMPT_EMPLOYEE_FILTER, // Phase 76.7 (D-07, SALDO-V19-04a)
-          ...(statusScopedEmployeeIds !== "all" ? { id: { in: statusScopedEmployeeIds } } : {}),
+          AND: [
+            reportPopulationWhere(monthStart, monthEnd),
+            ...(statusScopedEmployeeIds !== "all" ? [{ id: { in: statusScopedEmployeeIds } }] : []),
+          ],
         },
         include: {
-          user: { select: { isActive: true } },
           workSchedules: { orderBy: { validFrom: "desc" } },
         },
         orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
@@ -668,11 +712,17 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const breakFindingDaysOf = (employeeId: string): string[] =>
         (breakFindingsByEmp.get(employeeId) ?? []).map((d) => d.date);
 
+      // Issue #613 (P-03): the exit day as the tenant-local calendar day, so the web formats a string
+      // and never parses an instant.
+      const statusExitDate = (exit: Date | null): string | null =>
+        exit ? dateStrInTz(exit, tz) : null;
+
       const result: {
         employeeId: string;
         employeeName: string;
         employeeNumber: string;
         status: "ready" | "missing" | "closed";
+        exitDate: string | null; // Issue #613 (P-03) — tenant-local exit day, additive
         missingDates?: string[];
         snapshot?: Record<string, unknown>;
         unconfirmedBreakDays?: string[]; // Phase 92 (BREAK-05)
@@ -681,11 +731,6 @@ export async function overtimeRoutes(app: FastifyInstance) {
       }[] = [];
 
       for (const emp of employees) {
-        // Skip employees hired after this month
-        if (emp.hireDate > monthEnd) {
-          continue;
-        }
-
         // Check if snapshot already exists (= closed) — PERF-V1814-01: Map lookup, no DB call
         // isPeriodStartInMonth is REQUIRED here, not optional: fetchCloseMonthData's Q1 range
         // pre-fetch (periodStart gte start / lte end) is one day too wide at the upper bound
@@ -705,6 +750,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeId: emp.id,
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
+            exitDate: statusExitDate(emp.exitDate),
             status: "closed",
             snapshot: {
               id: existingSnapshot.id,
@@ -731,6 +777,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeId: emp.id,
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
+            exitDate: statusExitDate(emp.exitDate),
             status: "ready",
             unconfirmedBreakDays: [], // RESOLVED Q1 — no daily gate for flexible schedules
             breakFindingDays: breakFindingDaysOf(emp.id), // Issue #511 (D-12) — every schedule type
@@ -764,30 +811,37 @@ export async function overtimeRoutes(app: FastifyInstance) {
           statusRosterDates = new Set(empShifts.map((sh) => dateStrInTz(sh.date, tz)));
         }
 
-        const effectiveStartSt = emp.hireDate > monthFirstDay ? emp.hireDate : monthFirstDay;
-
-        const gapResultSt = findMissingWorkdays({
-          schedule: schedule as Record<string, unknown>,
-          effectiveStart: effectiveStartSt,
-          effectiveEnd: monthLastDay,
+        // Issue #613: the employment window of the close writer (null = left before the month).
+        const windowSt = statusEmploymentWindow({
+          hireDate: emp.hireDate,
+          exitDate: emp.exitDate,
+          monthFirstDay,
+          monthLastDay,
           tz,
-          entryDates,
-          approvedLeave: approvedLeave.map((lr) => ({
-            startDate: lr.startDate,
-            endDate: lr.endDate,
-            halfDay: Boolean(lr.halfDay),
-          })),
-          absences: absences.map((ab) => ({
-            startDate: ab.startDate,
-            endDate: ab.endDate,
-            halfDay: ab.halfDay,
-          })),
-          holidayDateStrings: holidaysByEmp.get(emp.id) ?? new Set(),
-          rosterDates: statusRosterDates,
         });
 
         // Build missingDates from gaps (partial:true gaps also surfaced — 76.28 will style them)
-        const missingDates = gapResultSt.gaps.map((g) => g.date);
+        const missingDates = windowSt
+          ? findMissingWorkdays({
+              schedule: schedule as Record<string, unknown>,
+              effectiveStart: windowSt.effectiveStart,
+              effectiveEnd: windowSt.effectiveEnd,
+              tz,
+              entryDates,
+              approvedLeave: approvedLeave.map((lr) => ({
+                startDate: lr.startDate,
+                endDate: lr.endDate,
+                halfDay: Boolean(lr.halfDay),
+              })),
+              absences: absences.map((ab) => ({
+                startDate: ab.startDate,
+                endDate: ab.endDate,
+                halfDay: ab.halfDay,
+              })),
+              holidayDateStrings: holidaysByEmp.get(emp.id) ?? new Set(),
+              rosterDates: statusRosterDates,
+            }).gaps.map((g) => g.date)
+          : [];
 
         // Phase 92 (BREAK-05): derive unconfirmedBreakDays from the SAME bulk-fetched
         // `entries` (now carrying breakStatus+isLocked, close-month-data.ts Q2) — no
@@ -820,6 +874,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeId: emp.id,
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
+            exitDate: statusExitDate(emp.exitDate),
             status: "missing",
             missingDates,
             unconfirmedBreakDays,
@@ -831,6 +886,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeId: emp.id,
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
+            exitDate: statusExitDate(emp.exitDate),
             status: "ready",
             unconfirmedBreakDays,
             breakFindingDays: breakFindingDaysOf(emp.id),
@@ -920,18 +976,25 @@ export async function overtimeRoutes(app: FastifyInstance) {
               yearStatusStichtag,
             );
 
+      // Issue #613: the year's population is selected once by the one period rule over the whole
+      // year; each month then counts a person only while they are employed in it
+      // (`isEmployedInPeriod`, the in-memory twin of the same rule).
+      const { start: yearStart } = monthRangeUtc(year, 1, tz);
+      const { end: yearEnd } = monthRangeUtc(year, 12, tz);
+
       // PERF-V1814-01: Get employees with tenant JOIN (folds tenant.findUnique, no extra query)
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
-          user: { isActive: true },
           ...EXCLUDE_EXEMPT_EMPLOYEE_FILTER, // Phase 76.7 (D-07, SALDO-V19-04a)
-          ...(yearStatusScopedEmployeeIds !== "all"
-            ? { id: { in: yearStatusScopedEmployeeIds } }
-            : {}),
+          AND: [
+            reportPopulationWhere(yearStart, yearEnd),
+            ...(yearStatusScopedEmployeeIds !== "all"
+              ? [{ id: { in: yearStatusScopedEmployeeIds } }]
+              : []),
+          ],
         },
         include: {
-          user: { select: { isActive: true } },
           workSchedules: { orderBy: { validFrom: "desc" } },
         },
         orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
@@ -939,8 +1002,6 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       // PERF-V1814-01: bulk-fetch full-year data (4 queries + 1 batched work-location
       // holiday resolution, Phase 71b issue #71)
-      const { start: yearStart } = monthRangeUtc(year, 1, tz);
-      const { end: yearEnd } = monthRangeUtc(year, 12, tz);
       const yearEmployeeIds = employees.map((e) => e.id);
       const { snapshotsByEmp, entriesByEmp, leaveByEmp, absencesByEmp, holidaysByEmp } =
         await fetchCloseMonthData(app.prisma, tenantId, yearEmployeeIds, yearStart, yearEnd, tz);
@@ -966,8 +1027,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
       for (let m = 1; m <= 12; m++) {
         const { start: monthStart, end: monthEnd } = monthRangeUtc(year, m, tz);
 
-        // Determine which employees are relevant for this month (hired before month end)
-        const relevantEmployees = employees.filter((emp) => emp.hireDate <= monthEnd);
+        // Issue #613: a person counts in the months of their employment only (hired by the month
+        // end, not yet exited before the month start).
+        const relevantEmployees = employees.filter((emp) =>
+          isEmployedInPeriod(emp, monthStart, monthEnd),
+        );
         const totalCount = relevantEmployees.length;
 
         // No relevant employees for this month (no one hired yet)
@@ -1106,30 +1170,37 @@ export async function overtimeRoutes(app: FastifyInstance) {
             ysRosterDates = new Set(empShiftsYs.map((sh) => dateStrInTz(sh.date, tz)));
           }
 
-          const ysEffectiveStart = emp.hireDate > ysMonthFirstDay ? emp.hireDate : ysMonthFirstDay;
-
-          const ysGapResult = findMissingWorkdays({
-            schedule: schedule as Record<string, unknown>,
-            effectiveStart: ysEffectiveStart,
-            effectiveEnd: ysMonthLastDay,
+          // Issue #613: the employment window of the close writer (null = left before the month).
+          const ysWindow = statusEmploymentWindow({
+            hireDate: emp.hireDate,
+            exitDate: emp.exitDate,
+            monthFirstDay: ysMonthFirstDay,
+            monthLastDay: ysMonthLastDay,
             tz,
-            entryDates,
-            approvedLeave: approvedLeave.map((lr) => ({
-              startDate: lr.startDate,
-              endDate: lr.endDate,
-              halfDay: Boolean(lr.halfDay),
-            })),
-            absences: absences.map((ab) => ({
-              startDate: ab.startDate,
-              endDate: ab.endDate,
-              halfDay: ab.halfDay,
-            })),
-            holidayDateStrings: ysMonthHolidayDateStrings,
-            rosterDates: ysRosterDates,
           });
 
           // Build empMissingDates from gaps (partial:true gaps also surfaced — 76.28 will style them)
-          const empMissingDates = ysGapResult.gaps.map((g) => g.date);
+          const empMissingDates = ysWindow
+            ? findMissingWorkdays({
+                schedule: schedule as Record<string, unknown>,
+                effectiveStart: ysWindow.effectiveStart,
+                effectiveEnd: ysWindow.effectiveEnd,
+                tz,
+                entryDates,
+                approvedLeave: approvedLeave.map((lr) => ({
+                  startDate: lr.startDate,
+                  endDate: lr.endDate,
+                  halfDay: Boolean(lr.halfDay),
+                })),
+                absences: absences.map((ab) => ({
+                  startDate: ab.startDate,
+                  endDate: ab.endDate,
+                  halfDay: ab.halfDay,
+                })),
+                holidayDateStrings: ysMonthHolidayDateStrings,
+                rosterDates: ysRosterDates,
+              }).gaps.map((g) => g.date)
+            : [];
 
           if (empMissingDates.length > 0) {
             anyMissing = true;

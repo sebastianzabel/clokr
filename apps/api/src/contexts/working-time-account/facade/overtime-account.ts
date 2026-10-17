@@ -92,6 +92,7 @@
  * reason points at exactly that validating line.
  */
 import type { Prisma } from "@clokr/db";
+import { reportPopulationWhere } from "../../platform"; // Issue #613 — the one period-population rule
 
 // ── W8 — the one account read, used by both the real callers and the fail-safe branches ───────
 
@@ -117,18 +118,33 @@ export async function getOvertimeAccount(
 // ── W9/W10 — tenant-wide / bulk reads ────────────────────────────────────────────────────────
 
 /**
- * W9 — every active employee's `OvertimeAccount` for `tenantId`, joined with the fields
- * `dashboard.ts:762`'s "Überstunden-Übersicht" (RPT-01/SALDO-03) renders, ordered by last name.
- * Exit-date / active-user filtering matches the original call exactly.
+ * W9 — the `OvertimeAccount` of every person of `tenantId` who was employed at some point in
+ * `period` and is not anonymised (Issue #613, `reportPopulationWhere`), joined with the fields
+ * `dashboard.ts`'s "Überstunden-Übersicht" (RPT-01/SALDO-03) renders, ordered by last name.
+ *
+ * Issue #613: W9 no longer filters by login state. The overview passes `[new Date(0), end of
+ * today]` ("employed at any time up to today"), so it also receives the persons who have left —
+ * the caller decides which of them are still shown (AC-613-5). `hireDate` and `exitDate` are
+ * selected for that decision.
  */
 export async function listOvertimeAccountsForTenant(
   db: Prisma.TransactionClient,
   tenantId: string,
+  period: { start: Date; end: Date },
 ) {
   return db.overtimeAccount.findMany({
-    where: { employee: { tenantId, exitDate: null, user: { isActive: true } } },
+    where: { employee: { tenantId, ...reportPopulationWhere(period.start, period.end) } },
     include: {
-      employee: { select: { id: true, firstName: true, lastName: true, employeeNumber: true } },
+      employee: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          employeeNumber: true,
+          hireDate: true,
+          exitDate: true,
+        },
+      },
     },
     orderBy: { employee: { lastName: "asc" } },
   });

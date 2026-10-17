@@ -43,10 +43,12 @@
  * ── H2 — {@link getExpiringCarryOver}'s `where` is BUrlG law, not a filter to simplify ─────────
  * `docs/burlg-carryover.md` is the rule (EuGH C-684/16 Hinweispflicht, the carry-over deadline
  * window). The `where` below is copied verbatim from `composition/reports.ts`'s pre-facade query,
- * not re-derived.
+ * not re-derived. The `exitDate: null` rule is unchanged BUrlG law; Issue #613 adds only the DSGVO
+ * anonymisation sentinel (an anonymised person is never named in a warning list).
  */
 import type { LeaveEntitlement, Prisma } from "@clokr/db";
 import { getLeaveTypeByCode } from "./leave-types";
+import { NOT_ANONYMIZED_EMPLOYEE_WHERE, reportPopulationWhere } from "../../platform";
 import {
   computeRegularVacationDays, // Issue #445 (D-01) — the one regular-entitlement computation
   computeRegularVacationDaysBySegments, // Issue #450 (D-09) — the segment-aware form
@@ -82,19 +84,27 @@ export async function getVacationEntitlement(
 // ── A12 — tenant-wide, by year ───────────────────────────────────────────────────────────────
 
 /**
- * A12 — every `LeaveEntitlement` for `tenantId` in `year`, with `employee`/`leaveType` included.
+ * A12 — every `LeaveEntitlement` for `tenantId` in `year` whose person belongs to the year's
+ * report population, with `employee`/`leaveType` included.
  * Sites: `reports.ts`'s `GET /leave-overview`, `GET /vacation/pdf` and `GET /leave-overview/pdf` —
  * all three share the identical `where`; only their `employee` `select` width differs (some omit
  * `id`), which is a projection difference, not a row-set divergence, so one function serves all
  * three (R-C: read the real `where`, not just the shape of the call).
+ *
+ * Issue #613 (D-01) — the persons come from the Unterbau rule `reportPopulationWhere`: employed
+ * at some point in `period`, never anonymised, the login state never decides. `period` is the
+ * year's tenant-local INSTANTS (the caller builds them with `monthRangeUtc(year, 1, tz).start` /
+ * `monthRangeUtc(year, 12, tz).end`) and is required, so no caller can forget the population.
+ * The `employee` select is unchanged: the JSON shape is pinned by `reports-hr-86`.
  */
 export async function listEntitlementsForYear(
   db: Prisma.TransactionClient,
   tenantId: string,
   year: number,
+  period: { start: Date; end: Date },
 ) {
   return db.leaveEntitlement.findMany({
-    where: { year, employee: { tenantId } },
+    where: { year, employee: { tenantId, ...reportPopulationWhere(period.start, period.end) } },
     include: {
       employee: { select: { id: true, firstName: true, lastName: true, employeeNumber: true } },
       leaveType: true,
@@ -148,7 +158,8 @@ export async function getEntitlementById(
  * entitlement only — `recalculateCarryOver`/`autoCarryOver` and PUT /settings/vacation write
  * carry-over on VACATION rows only, same rule the carry-over warning cron's own `where` already
  * applies (`plugins/carryover-warning.ts`) — so a different leave type's row is never scanned
- * here either.
+ * here either. The `exitDate: null` rule is unchanged BUrlG law; Issue #613 adds only the DSGVO
+ * anonymisation sentinel (`NOT_ANONYMIZED_EMPLOYEE_WHERE`), the same one the cron applies.
  */
 export async function getExpiringCarryOver(
   db: Prisma.TransactionClient,
@@ -158,7 +169,7 @@ export async function getExpiringCarryOver(
 ) {
   return db.leaveEntitlement.findMany({
     where: {
-      employee: { tenantId, exitDate: null },
+      employee: { tenantId, exitDate: null, ...NOT_ANONYMIZED_EMPLOYEE_WHERE },
       carriedOverDays: { gt: 0 },
       carryOverDeadline: { gt: now, lte: cutoff },
       leaveType: { code: "VACATION" },

@@ -87,6 +87,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
   "src/__tests__/entry-lock-race-helpers.ts": "rahmen", // Issue #70 (Phase 70b-04) — test infra: holds the Employee writer lock while a request under test queues on it; no model of its own
   "src/__tests__/bulk-apply-helpers.ts": "rahmen", // Issue #568 — shared two-step bulk-apply test helper, no model
+  "src/__tests__/population-fixtures-613.ts": "rahmen", // Issue #613 — shared fixture of the population tests (exited / login-deactivated / anonymised / late-hired persons); test infra, no model of its own
   "src/__tests__/legacy-role-migration-sql.ts": "rahmen", // Phase 75b (Issue #75) — test infra that runs the checked-in legacy-role data migration verbatim; no model of its own
   "src/__tests__/tenant-packages-migration-566-fixtures.ts": "rahmen", // Phase 566 (Issue #566) — test infra: fixture catalogue and verbatim reader of the checked-in packages backfill SQL, shared by the migration test and the dry-run parity test; no model of its own
   "src/__tests__/neutrality/route-derivation.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: parses the route set from source; test infra, no model
@@ -152,6 +153,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/audit-reason.ts": "unterbau", // shared "Begründung ist erforderlich" validation reused across every correction/storno field app-wide; audit-trail vocabulary, no model
   "src/contexts/platform/calculate-work-days.ts": "unterbau", // normalizes WorkSchedule.workDays — Unterbau's own model
   "src/contexts/platform/employee-anonymization-filter.ts": "unterbau", // Phase 101B (Issue #101) — lifted out of anonymize.ts; Employee is Unterbau's own model, same as anonymize.ts above
+  "src/contexts/platform/employed-in-period.ts": "unterbau", // Issue #613 — the one period population rule (Employee.hireDate/exitDate + the anonymisation sentinel); Employee is Unterbau's own model, same as employee-anonymization-filter.ts above
   "src/contexts/platform/federal-state-iso.ts": "unterbau", // FederalState enum <-> ISO-3166-2, feeds PublicHoliday lookups (Unterbau model)
   "src/contexts/platform/four-eyes.ts": "unterbau", // Phase 78b (Issue #78) — the ONE definition of the four-eyes combination (FOUR_EYES_COMBINATION/holdsFourEyesCombination); type-only import of PermissionKey from permission-catalog.ts, no model, no Prisma call; the role-mutation routes (api/roles.ts, an Unterbau route) are its sole caller
   "src/contexts/platform/holidays.ts": "unterbau", // German public-holiday calculation — PublicHoliday is Unterbau's own model
@@ -340,6 +342,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/working-time-account/close-employee-month.ts": "arbeitszeitkonto", // pure Monatsabschluss saldo core (CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split")
   "src/contexts/working-time-account/close-month-data.ts": "arbeitszeitkonto", // data-gathering companion to close-employee-month.ts
   "src/contexts/working-time-account/confirmed-saldo.ts": "arbeitszeitkonto", // SaldoSnapshot confirmed-vs-forecast split (Phase 97)
+  "src/contexts/working-time-account/final-saldo.ts": "arbeitszeitkonto", // Issue #613 — is the exit month of a person still open (decided from the latest closed snapshot)
   "src/contexts/working-time-account/facade/overtime-account.ts": "arbeitszeitkonto", // Phase 100B Plan 06 — W8-W15, OvertimeAccount/OvertimeTransaction's only external access path
   "src/contexts/working-time-account/facade/saldo-snapshot.ts": "arbeitszeitkonto", // Phase 100B Plan 07 — W1-W7, SaldoSnapshot's only external access path
   "src/contexts/working-time-account/find-missing-workdays.ts": "arbeitszeitkonto", // Soll-vs-Ist gap detector; 3 of 5 importers (auto-close-month/close-employee-month/overtime) are Arbeitszeitkonto's own saldo paths

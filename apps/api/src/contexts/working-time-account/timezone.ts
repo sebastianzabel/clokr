@@ -121,6 +121,20 @@ export function monthRangeUtc(year: number, month: number, tz: string): { start:
 }
 
 /**
+ * Issue #613: the tenant-local calendar day `dayStr` ("YYYY-MM-DD") as UTC INSTANTS — local
+ * 00:00:00.000 to local 23:59:59.999. This is the Stichtag form of a period population
+ * (`employedInPeriodWhere`) for `@db.Timestamptz` comparisons such as `Employee.hireDate` /
+ * `exitDate`. `@db.Date` columns keep `dateStrInTz` day strings (CLAUDE.md, Issue #493).
+ * Same `fromZonedTime` idiom as {@link monthRangeUtc}; DST days span exactly their local day.
+ */
+export function dayRangeUtc(dayStr: string, tz: string): { start: Date; end: Date } {
+  const [y, m, d] = dayStr.split("-").map(Number);
+  const start = fromZonedTime(new Date(y, m - 1, d, 0, 0, 0, 0), tz);
+  const end = fromZonedTime(new Date(y, m - 1, d, 23, 59, 59, 999), tz);
+  return { start, end };
+}
+
+/**
  * Compute the ISO week (Monday–Sunday) containing `refDate` in the given timezone.
  *
  * @returns { start, end, days[] } where days is an array of "YYYY-MM-DD" strings

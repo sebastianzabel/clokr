@@ -10,6 +10,8 @@
   import CardHeader from "$components/ui/CardHeader.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
+  import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
+  import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
   import {
     buildEmployeeMonthRows,
     type EmployeeMonthRow,
@@ -75,9 +77,17 @@
     openMonthMinutes?: number | null;
     hasClosedMonth?: boolean;
     rosterIncomplete?: boolean;
+    // Issue #613 (AC-613-5) - additive; an older cached response has neither field.
+    exitDate?: string | null;
+    exitedWithOpenFinalSaldo?: boolean;
   };
 
-  type OvertimeOverview = { employees: OvertimeEmployee[] };
+  type OvertimeOverview = {
+    employees: OvertimeEmployee[];
+    // Issue #613 - all exited persons with an open final saldo in the caller's reach (the list holds
+    // only the newest ones).
+    exitedOpenFinalSaldoCount?: number;
+  };
 
   // Issue #416: a discriminated union — `missingEntitlement: true` marks a placeholder row (an
   // active employee with no VACATION LeaveEntitlement row for this year yet), whose
@@ -217,8 +227,12 @@
     return r.confirmedMinutes !== undefined ? r.confirmedMinutes : r.balanceHours * 60;
   }
 
+  // Issue #613: the server flags the exited persons with an open final saldo; the team table, its
+  // sorting, paging, sparklines and the KPIs below read the active rows only.
+  let overtimeSections = $derived(partitionOvertimeOverview(overtimeOverview?.employees ?? []));
+
   let sortedOvertime = $derived.by(() => {
-    const rows = overtimeOverview?.employees ?? [];
+    const rows = overtimeSections.active;
     const copy = rows.slice();
     copy.sort((a, b) => {
       const cmp =
@@ -807,15 +821,15 @@
   // ── KPI summaries (v1.5) ───────────────────────────────────────────────────
 
   // Manager KPIs — derived from overtime + leave overview
-  let kpiTeamSize = $derived(overtimeOverview?.employees?.length ?? 0);
+  let kpiTeamSize = $derived(overtimeSections.active.length);
   let kpiAvgBalance = $derived.by(() => {
-    const rows = overtimeOverview?.employees ?? [];
+    const rows = overtimeSections.active;
     if (rows.length === 0) return 0;
     const sum = rows.reduce((acc, r) => acc + r.balanceHours, 0);
     return sum / rows.length;
   });
   let kpiCriticalCount = $derived(
-    (overtimeOverview?.employees ?? []).filter((r) => r.status === "CRITICAL").length,
+    overtimeSections.active.filter((r) => r.status === "CRITICAL").length,
   );
   let kpiUsedDays = $derived((leaveOverview ?? []).reduce((acc, r) => acc + r.usedDays, 0));
 
@@ -1469,6 +1483,10 @@
             total={sortedOvertime.length}
             bind:page={overtimePage}
             bind:pageSize={overtimePageSize}
+          />
+          <ExitedFinalSaldoSection
+            rows={overtimeSections.exitedOpen}
+            total={overtimeOverview.exitedOpenFinalSaldoCount ?? overtimeSections.exitedOpen.length}
           />
         {/if}
       </Card>

@@ -218,6 +218,10 @@ segment, not from whichever contract happened to be current when the row was las
 - **The carry-over expiry warning cron** (`runCarryoverWarningOnce`) scans VACATION entitlements
   only (not every leave type) and warns with the FIFO-adjusted `atRiskDays` — never the raw stored
   `carriedOverDays` — and skips an entitlement whose carry-over is already fully consumed (D-08).
+- **Anonymised persons are excluded from the warning list and the cron** (Issue #613): the DSGVO
+  Art. 17 sentinel (`NOT_ANONYMIZED_EMPLOYEE_WHERE`) is applied to both `GET /reports/carryover-at-risk`
+  and `runCarryoverWarningOnce`, so they select the same persons; the `exitDate: null` rule above is
+  unchanged.
 
 ## 6-Tage-Vertrag (Issue #468, D-06/D-07)
 

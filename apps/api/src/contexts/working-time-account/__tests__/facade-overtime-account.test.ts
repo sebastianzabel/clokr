@@ -22,6 +22,7 @@ import {
   hardDeleteOvertimeDataForEmployee,
 } from "../index";
 import type { FastifyInstance } from "fastify";
+import { createPopulationPerson } from "../../../__tests__/population-fixtures-613";
 
 describe("Arbeitszeitkonto facade — OvertimeAccount/OvertimeTransaction (Phase 100B Plan 06)", () => {
   let app: FastifyInstance;
@@ -173,12 +174,65 @@ describe("Arbeitszeitkonto facade — OvertimeAccount/OvertimeTransaction (Phase
 
   describe("listOvertimeAccountsForTenant / getBalances", () => {
     it("listOvertimeAccountsForTenant returns every active employee's account for the tenant, never another tenant's", async () => {
-      const accounts = await listOvertimeAccountsForTenant(app.prisma, data.tenant.id);
+      const accounts = await listOvertimeAccountsForTenant(app.prisma, data.tenant.id, {
+        start: new Date(0),
+        end: new Date(),
+      });
       const employeeIds = new Set(accounts.map((a) => a.employeeId));
       expect(employeeIds.has(data.employee.id)).toBe(true);
       expect(employeeIds.has(data.adminEmployee.id)).toBe(true);
       expect(employeeIds.has(otherTenantData.employee.id)).toBe(false);
       expect(accounts[0].employee.firstName).toBeTruthy();
+    });
+
+    it("listOvertimeAccountsForTenant selects the period population (Issue #613): exited and login-deactivated persons in, anonymised and later hires out", async () => {
+      const base = { tenantId: data.tenant.id, salonId: data.salonId };
+      const hire = new Date("2025-01-01T00:00:00.000Z");
+      const left = await createPopulationPerson(app, {
+        ...base,
+        tag: "w9l",
+        hireDate: hire,
+        exitDate: new Date("2026-10-15T00:00:00.000Z"),
+      });
+      const deactivated = await createPopulationPerson(app, {
+        ...base,
+        tag: "w9d",
+        hireDate: hire,
+        loginActive: false,
+      });
+      const anonymised = await createPopulationPerson(app, {
+        ...base,
+        tag: "w9a",
+        hireDate: hire,
+        anonymized: true,
+      });
+      const anonymisedExited = await createPopulationPerson(app, {
+        ...base,
+        tag: "w9b",
+        hireDate: hire,
+        anonymized: true,
+        exitDate: new Date("2026-10-15T00:00:00.000Z"),
+      });
+      const later = await createPopulationPerson(app, {
+        ...base,
+        tag: "w9h",
+        hireDate: new Date("2026-12-01T00:00:00.000Z"),
+      });
+
+      const accounts = await listOvertimeAccountsForTenant(app.prisma, data.tenant.id, {
+        start: new Date(0),
+        end: new Date("2026-11-18T22:59:59.999Z"),
+      });
+      const ids = new Set(accounts.map((a) => a.employeeId));
+      expect(ids.has(left.employeeId)).toBe(true);
+      expect(ids.has(deactivated.employeeId)).toBe(true);
+      expect(ids.has(anonymised.employeeId)).toBe(false);
+      expect(ids.has(anonymisedExited.employeeId)).toBe(false);
+      expect(ids.has(later.employeeId)).toBe(false);
+
+      const row = accounts.find((a) => a.employeeId === left.employeeId);
+      expect(row?.employee.hireDate).toEqual(hire);
+      expect(row?.employee.exitDate).toEqual(new Date("2026-10-15T00:00:00.000Z"));
     });
 
     it("getBalances bulk-reads balanceHours for exactly the given employeeIds", async () => {

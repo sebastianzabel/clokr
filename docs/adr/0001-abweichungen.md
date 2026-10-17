@@ -144,6 +144,84 @@ Das ist **kein Versäumnis, das nachzuholen wäre** — es ist bekannt und im Ke
 adressiert. Für dieses ADR relevant, weil „Beschäftigung" im Zielbild zum **Unterbau** gehört: Sie
 darf nicht dem Kontext Abwesenheiten gehören, obwohl das Kontingent dort hängt.
 
+### Nachtrag (Phase 613, Issue #613, 2026-10-17): Personenkreis „beschäftigt im Zeitraum“ als Unterbau-Regel
+
+**Warum hier.** Es gibt weiter kein Beschäftigungsobjekt (#66, Backlog). Der Personenkreis eines Zeitraums wird deshalb
+aus `Employee.hireDate` und `Employee.exitDate` abgeleitet und zieht mit einem künftigen Beschäftigungsobjekt um. Die Regel
+liegt einmal im Unterbau (`contexts/platform/employed-in-period.ts`, über `contexts/platform/index.ts`): eine additive
+**Erweiterung** im Sinn von ADR 0002, Entscheidung 7 (kein bestehender Leser musste sich ändern; Owner-Entscheidung vom
+16.10.2026, am Issue #613 dokumentiert). Davor hatte jeder Bericht seine eigene Regel (`exitDate` leer plus aktiver Login,
+gar kein Filter, oder das Prädikat aus #256 nur in DATEV).
+
+**Was sich geändert hat.**
+
+- **Das Modul, zwei Schichten.** `employedInPeriodWhere(start, end)` ist der Beschäftigungskern (hireDate ≤ Ende, exitDate leer
+  oder ≥ Beginn, beide Grenzen einschließlich, Zeitpunkte statt Kalendertage; das #256-Prädikat unverändert).
+  `reportPopulationWhere(start, end)` ist Kern und „nie anonymisiert“ (die Klausel `NOT_ANONYMIZED_EMPLOYEE_WHERE`);
+  `isEmployedInPeriod()` ist der Zwilling im Speicher. `user.isActive` liest keine der drei Funktionen. DATEV liest nur den
+  Kern (§ 41 EStG: das Lohnkonto eines Beschäftigungsmonats bleibt vollständig); Berichte, Status und Übersichten lesen die
+  Berichtsregel. Dazu `dayRangeUtc()` (Arbeitszeitkonto) als Tagesform der Zeitgrenzen.
+- **Umgestellte Leser.** Monatsbericht (JSON, Firmen-PDF, Einzel-PDF; eine Person außerhalb der Monatsmenge bekommt das 404 einer
+  unbekannten Id), Urlaubsübersicht (JSON und PDF über die Fassade `listEntitlementsForYear` mit Pflichtzeitraum), Urlaubsliste und
+  Urlaubs-PDF (eine Menge, eine Reihenfolge: Nachname, Vorname, Id; „kein Anspruch hinterlegt“ für eine Person ohne
+  Anspruchszeile), Monatsabschluss-Status und Jahresstatus (zusätzlich `exitDate` je Zeile), Saldo-Übersicht (Fassade W9 mit
+  Pflichtzeitraum), Anwesenheit heute, Team-Woche, Team-Trend und Überstunden-Trend (Stichtagsansichten mit Tag, Woche oder
+  Monat als Zeitraum; ein Tag außerhalb der Beschäftigung ist in der Team-Woche kein Arbeitstag und nie „Fehlt“), DATEV.
+- **Saldo-Übersicht und offener Endsaldo.** Eine ausgetretene Person bleibt in der Übersicht, bis ihr Austrittsmonat
+  abgeschlossen ist. Ob er abgeschlossen ist, entscheidet einmal `finalSaldoOpen()` (Arbeitszeitkonto) aus dem jüngsten
+  geschlossenen Snapshot, den die bestehende Sammelabfrage ohnehin liefert, richtig für beide Speicherformen von `periodEnd`. Der
+  Abschnitt „Ausgetreten, offener Endsaldo“ ist begrenzt (die 50 jüngsten Austritte, dazu `exitedOpenFinalSaldoCount`); die
+  Reichweite einer ausgetretenen Person wird am Austrittstag beurteilt, nicht heute.
+- **Monatsabschluss-Status.** Fehlende Tage werden nur im Beschäftigungsfenster berechnet, das auch `closeEmployeeMonth`
+  benutzt (`statusEmploymentWindow()`, lesende Spiegelung; der Schreiber bleibt unverändert, die Übereinstimmung binden
+  Paritätstests).
+- **Warnliste Urlaubsverfall.** Liste und Cron behalten die BUrlG-Regel `exitDate` leer und schließen zusätzlich anonymisierte
+  Personen aus.
+- **Guard.** `report-population-guard-613.test.ts` (AST) schlägt fehl, wenn `isActive` unter `user` in einem `where` von
+  `composition/` oder `contexts/working-time-account/` steht, wenn ein registrierter Leser die Regel nicht mehr aufruft oder
+  selbst `exitDate: null` filtert, oder wenn eine Ausnahme nicht mehr auf genau einen Fund zeigt.
+
+**Was bewusst NICHT geschah.**
+
+- **Monatsabschluss-Lauf und zurückgestellter Abschluss** wählen weiter nach Login-Zustand (Owner-Entscheidung, D-03: eine andere
+  Auswahl ändert, für wen Lohnmonate geschlossen werden). Gemessen wird der Unterschied vom lesenden Skript
+  `scripts/audit-613-month-close-population.ts`; die Entscheidung trägt das Folge-Issue #668.
+- **Die Anonymisierungsklausel bleibt**, solange anonymisierte Zeilen ohne Austrittsdatum existieren (D-02; #614 setzt das
+  Austrittsdatum von da an und listet die Bestandszeilen nur). DATEV liest den Kern ohne diese Klausel: Bis #614 greift, erscheint
+  eine anonymisierte Person OHNE Austrittsdatum in jedem späteren DATEV-Monat weiter. Das ist Gegenstand von #614 und hier nicht
+  geändert.
+- **Keine Kennzeichnung in den eingefrorenen Antworten** von `/reports/monthly` und `/reports/leave-overview` (die Pin-Tests
+  entscheiden die Antwortform); die Kennzeichnung Ausgetretener kommt mit dem Zeitraum-Endpunkt aus #612. Gekennzeichnet wird dort, wo
+  die Form frei ist: Saldo-Übersicht und „Austritt am …“ im Monatsabschluss.
+- **Die Warnliste zum Urlaubsverfall** behält `exitDate` leer. Ob eine Warnung noch geschuldet ist, wenn der Austritt vor der
+  Übertragsfrist liegt (oder der Rest über die Urlaubsabgeltung, § 7 Abs. 4 BUrlG, erledigt wird), steht im Folge-Issue #668.
+
+**Ursache offener Endsalden.** `PATCH /employees/:id/deactivate` setzt das Austrittsdatum UND schaltet den Login ab; der Lauf
+wählt nach Login. Der Austrittsmonat jeder ordnungsgemäß deaktivierten Person wird deshalb nie automatisch abgeschlossen. Die
+Saldo-Übersicht zeigt diese Personen, die Ursache gehört in #668.
+
+**Auswirkung auf die Kontexte.**
+
+- Zeiterfassung: keine.
+- Abwesenheiten: Urlaubsübersicht, Urlaubsliste und Urlaubs-PDF lesen die Regel über die Fassade; Verfall-Warnliste und Cron schließen
+  Anonymisierte aus.
+- Schichtplanung: keine.
+- Arbeitszeitkonto: Saldo-Übersicht (W9, `finalSaldoOpen`), Monatsabschluss-Status (lesendes Beschäftigungsfenster), Schreiber unverändert.
+- Kompositionsschicht: Berichte und Dashboard rufen die Regel auf und tragen selbst keine Personenregel mehr.
+
+**Gemessen.** Neutralitätsaufzeichnungen (`matrix.json`, `recipients.json`, `activity-auth.json`) unverändert; die eine Zelle, die sich durch die
+Regel ändert (`GET /reports/leave-overview` für vier Akteure: der Platzhalter der anonymisierten Fixture-Person entfällt), steht als
+Nachtragsregister-Kette (Plan 613-02, Eintrag N), nicht als Neuaufnahme. Die eingefrorenen Pins (`reports-monthly-frozen-84`,
+`reports-hr-86`, `dashboard-team-week-frozen-84`, `whole-tenant-frozen-85`) sind byte-gleich zum Merge-Base. Guard: 42 durchsuchte
+Dateien, 4 Funde mit 4 Ausnahmen (zwei D-03 mit #668, zwei Empfängerabfragen), 19 registrierte Leser. Saldo-Übersicht: 52 Ausgetretene
+mit offenem Monat ergeben 50 Zeilen, `exitedOpenFinalSaldoCount` 52, die Saldoberechnung läuft genau 50-mal, die Abfragezahlen bleiben
+(2 Snapshot-Listen, 1 Konto-Liste). Reichweite am Austrittstag: 6 Bereichsauflösungen im Fall eines Salon-Managers. Die Summen der
+Gesamtläufe stehen im PR.
+
+**Nachrechnen.** `pnpm --filter @clokr/api exec vitest run src/__tests__/report-population-guard-613.test.ts` (Guard), die
+`*-613.test.ts`-Dateien (Population je Leser) und `DATABASE_URL=… pnpm --filter @clokr/api exec tsx
+scripts/audit-613-month-close-population.ts` (lesend, nur IDs; Exit 2 bei Abweichungen).
+
 ---
 
 ## D — Ungenutzte `TimeEntryType`-Werte
