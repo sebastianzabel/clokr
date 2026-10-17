@@ -148,7 +148,8 @@ async function readSurfaces() {
     pdfMonthly: await getPdf(
       `/api/v1/reports/monthly/pdf?employeeId=${closedEmployeeId}&year=2026&month=6`,
     ),
-    pdfAll: await getPdf("/api/v1/reports/monthly/pdf/all?year=2026&month=6"),
+    // Issue #617: the Monatsexport replaces the company PDF as the multi-person export.
+    pdfExport: await getPdf("/api/v1/reports/monthly-export/pdf?year=2026&month=6"),
   };
 }
 
@@ -388,7 +389,7 @@ describe("Phase 566 AC-3 — cancelling every module and lowering the quota deac
     });
     expect(surfacesBefore.datevMovements.length).toBeGreaterThan(0);
     expect(surfacesBefore.pdfMonthly.bytes).toBeGreaterThan(0);
-    expect(surfacesBefore.pdfAll.bytes).toBeGreaterThan(0);
+    expect(surfacesBefore.pdfExport.bytes).toBeGreaterThan(0);
     const closed = await app.prisma.saldoSnapshot.count({
       where: { employeeId: closedEmployeeId },
     });
@@ -415,7 +416,7 @@ describe("Phase 566 AC-3 — cancelling every module and lowering the quota deac
     const { summary: summaryAfter, ...restAfter } = after;
     expect(restAfter).toEqual(restBefore);
     expect(after.pdfMonthly.status).toBe(200);
-    expect(after.pdfAll.status).toBe(200);
+    expect(after.pdfExport.status).toBe(200);
 
     // The summary withholds only activityMinutes (and says why).
     expect(summaryAfter.activityMinutes).toBeNull();

@@ -26,6 +26,7 @@ vi.mock("../pdf", async (importOriginal) => {
     ...actual,
     generateVacationOverviewPdf: vi.fn(actual.generateVacationOverviewPdf),
     streamVacationOverviewPdf: vi.fn(actual.streamVacationOverviewPdf),
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
 import {
@@ -1161,8 +1162,10 @@ describe("Reports API", () => {
     });
   });
 
-  // ── Tenant isolation for company PDF ──────────────────────────────────────
-  describe("Tenant isolation — /monthly/pdf/all", () => {
+  // ── Tenant isolation for the multi-person monthly PDF ─────────────────────
+  // Issue #617: the company PDF was replaced by the Monatsexport; same property, now pinned on the
+  // payload the route built (each tenant's export lists only its own employee numbers).
+  describe("Tenant isolation - /monthly-export/pdf", () => {
     let secondTenant: Awaited<ReturnType<typeof seedTestData>>;
 
     beforeAll(async () => {
@@ -1173,28 +1176,70 @@ describe("Reports API", () => {
       await cleanupTestData(app, secondTenant.tenant.id);
     });
 
-    it("each tenant only sees its own employees in the PDF", async () => {
-      // Tenant A request with admin A token — should succeed
-      const resA = await app.inject({
+    async function exportRowNumbers(token: string): Promise<{ status: number; numbers: string[] }> {
+      const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
+      spy.mockClear();
+      const res = await app.inject({
         method: "GET",
-        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1",
+        url: "/api/v1/reports/monthly-export/pdf?year=2025&month=1",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
+      expect(spy).toHaveBeenCalledTimes(1);
+      return {
+        status: res.statusCode,
+        numbers: spy.mock.calls[0][0].rows.map((r) => r.employeeNumber),
+      };
+    }
+
+    it("each tenant only sees its own employees in the export", async () => {
+      const a = await exportRowNumbers(data.adminToken);
+      const b = await exportRowNumbers(secondTenant.adminToken);
+      expect(a.status).toBe(200);
+      expect(b.status).toBe(200);
+
+      const ownA = [data.employee.employeeNumber, data.adminEmployee.employeeNumber];
+      const ownB = [
+        secondTenant.employee.employeeNumber,
+        secondTenant.adminEmployee.employeeNumber,
+      ];
+      expect(a.numbers).toEqual(expect.arrayContaining(ownA));
+      expect(b.numbers).toEqual(expect.arrayContaining(ownB));
+      for (const foreign of ownB) expect(a.numbers).not.toContain(foreign);
+      for (const foreign of ownA) expect(b.numbers).not.toContain(foreign);
+    });
+  });
+
+  // ── GET /api/v1/reports/monthly-export/pdf ────────────────────────────────
+  // Issue #617: replaces the access cases of the company PDF (200 / 401 / 403).
+  describe("GET /api/v1/reports/monthly-export/pdf", () => {
+    it("returns 200 with application/pdf for ADMIN token", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly-export/pdf?year=2025&month=1",
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
-      expect(resA.statusCode).toBe(200);
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/pdf");
+      // Smoke check: actual PDF magic bytes
+      expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
+    });
 
-      // Tenant B request with admin B token — should also succeed
-      const resB = await app.inject({
+    it("returns 401 without auth", async () => {
+      const res = await app.inject({
         method: "GET",
-        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1",
-        headers: { authorization: `Bearer ${secondTenant.adminToken}` },
+        url: "/api/v1/reports/monthly-export/pdf?year=2025&month=1",
       });
-      expect(resB.statusCode).toBe(200);
+      expect(res.statusCode).toBe(401);
+    });
 
-      // Both PDFs are valid and non-empty
-      expect(resA.rawPayload.length).toBeGreaterThan(0);
-      expect(resB.rawPayload.length).toBeGreaterThan(0);
-      expect(resA.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
-      expect(resB.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
+    it("returns 403 for EMPLOYEE token", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly-export/pdf?year=2025&month=1",
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+      expect(res.statusCode).toBe(403);
     });
   });
 

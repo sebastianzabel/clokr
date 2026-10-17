@@ -167,7 +167,7 @@ describe("Issue #595 - readers never write a closed month", () => {
         `/api/v1/overtime/month-saldo/${employeeId}?year=2026&month=${month}`,
         `/api/v1/reports/monthly?employeeId=${employeeId}&year=2026&month=${month}`,
         `/api/v1/reports/monthly/pdf?employeeId=${employeeId}&year=2026&month=${month}`,
-        `/api/v1/reports/monthly/pdf/all?year=2026&month=${month}`,
+        `/api/v1/reports/monthly-export/pdf?year=2026&month=${month}`, // Issue #617: replaces the company PDF
       ]) {
         const res = await app.inject({ method: "GET", url, headers });
         expect(res.statusCode, url).toBe(200);

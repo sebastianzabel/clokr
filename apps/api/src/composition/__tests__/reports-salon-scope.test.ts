@@ -6,7 +6,7 @@
  *
  * No person names in fixtures (CLAUDE.md PII rule).
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
@@ -19,6 +19,17 @@ import {
   soleAuditRowOrNull,
 } from "../../__tests__/setup";
 import { normalizeRolePermissions, roleNameKey } from "../../contexts/platform";
+import * as pdfUtils from "../pdf";
+
+// Issue #617: a call-through spy, because PDFKit compresses its content streams and a byte search
+// on a PDF is vacuous; the Monatsexport payload (its rows) is what the route built.
+vi.mock("../pdf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../pdf")>();
+  return {
+    ...actual,
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
+  };
+});
 
 const PASSWORD = "test1234";
 
@@ -407,7 +418,7 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
     expect(audit).not.toBeNull();
   });
 
-  // The 4 PDF-only routes below (monthly/pdf/all, leave-list/pdf, vacation/pdf,
+  // The PDF-only routes below (leave-list/pdf, vacation/pdf,
   // leave-overview/pdf) reuse the EXACT SAME employee/entitlement query-narrowing code already
   // proven correct end to end by the JSON-returning tests above (GET /monthly, /leave-overview,
   // /datev) — same resolveStammsalonScopedEmployeeIds call, same `where` fold. A byte-content
@@ -418,7 +429,10 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
   // matches this codebase's own existing convention for these routes
   // (`reports-sick-days.test.ts` Tests 4-6): only the `%PDF` header and content-type are ever
   // asserted for a PDF response, never its compressed byte content.
-  it("GET /monthly/pdf/all: renders successfully for a SALONS-scoped manager with a mixed in/out-of-scope tenant", async () => {
+  // Issue #617: the company PDF was replaced by the Monatsexport. Stronger than "renders": the
+  // payload the route built contains the in-scope person and not the out-of-scope one (the
+  // Stammsalon scope of report:export folded into the DATEV population).
+  it("GET /monthly-export/pdf: lists the in-scope person and not the out-of-scope one for a SALONS-scoped manager", async () => {
     const inScope = await createEmployee("inscope-pdfall");
     await createHome(inScope.employee.id, salonA.id);
     const outOfScope = await createEmployee("outscope-pdfall");
@@ -430,13 +444,19 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
     });
     const token = await login(manager.user.email);
 
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
+    spy.mockClear();
     const res = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/monthly/pdf/all?year=2026&month=6",
+      url: "/api/v1/reports/monthly-export/pdf?year=2026&month=6",
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(200);
     expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const numbers = spy.mock.calls[0][0].rows.map((r) => r.employeeNumber);
+    expect(numbers).toContain(inScope.employee.employeeNumber);
+    expect(numbers).not.toContain(outOfScope.employee.employeeNumber);
   });
 
   it("GET /leave-list/pdf: renders successfully for a SALONS-scoped manager with a mixed in/out-of-scope tenant", async () => {

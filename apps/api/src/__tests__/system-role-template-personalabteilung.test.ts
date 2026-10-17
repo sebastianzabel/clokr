@@ -245,10 +245,12 @@ describe("Issue #76 (Phase 76b Plan 04), AK-76b-4 — Personalabteilung behaviou
       expect(res.statusCode).toBe(403);
     });
 
-    it("GET /reports/monthly/pdf/all?year&month → 403", async () => {
+    // Issue #617: the company PDF was replaced by the Monatsexport; same property (report:read is not
+    // report:export), same principal.
+    it("GET /reports/monthly-export/pdf?year&month → 403", async () => {
       const res = await app.inject({
         method: "GET",
-        url: `/api/v1/reports/monthly/pdf/all?year=${year}&month=${month}`,
+        url: `/api/v1/reports/monthly-export/pdf?year=${year}&month=${month}`,
         headers: { authorization: `Bearer ${hrToken}` },
       });
       expect(res.statusCode).toBe(403);

@@ -1,55 +1,66 @@
 /**
- * Phase 97 Plan 02 (SALDO-DISP-05) — DB-free regression cover for the exported monthly PDF's
+ * Phase 97 Plan 02 (SALDO-DISP-05) - DB-free regression cover for the exported monthly PDF's
  * Saldo column and Bestätigt/Prognose labelling. Extended by Phase 104 Plan 12 (D-30) to also
  * cover the § 9 BUrlG legend.
  *
- * No Fastify app, no Prisma, no fixtures — immune to the documented pre-existing
- * UTC-vs-tenant-timezone fixture window (00:00–02:00 CEST, see
+ * Issue #617: the subject is now the renderer of the Monatsexport, `drawMonthlyExport`, because the
+ * company PDF these cases drove was replaced by it (same property, same oracle; figures are minutes
+ * and print as H:MM through `composition/pdf-format.ts`). The single Stundennachweis keeps its label
+ * constants (`OVERTIME_LABEL_*`, `BALANCE_ADJUSTMENT_*`, `SECTION9_LEGEND`), pinned in the cases below.
+ *
+ * No Fastify app, no Prisma, no fixtures - immune to the documented pre-existing
+ * UTC-vs-tenant-timezone fixture window (00:00-02:00 CEST, see
  * .planning/phases/98-saldo-ketten-integritaetspruefung/deferred-items.md).
  *
- * streamCompanyMonthlyReportPdf is a synchronous void function that RECEIVES its PDFDocument
- * (caller owns the lifecycle), which is the seam this test uses: drive it with a hand-rolled
- * recording stub instead of a real PDFKit document. The stub implements the small slice of the
- * PDFKit surface the function (and the drawColoredHeader/drawSmallFooter helpers it calls)
- * touches explicitly — `text`, plus the `y` / `page.width` / `page.height` / `page.margins.top`
- * state. Every OTHER method (fontSize, font, fillColor, moveTo, lineTo, stroke, addPage, rect,
- * fill, ...) falls through the Proxy's generic handler and is a no-op that returns the stub for
- * chaining, matching PDFKit's fluent API without having to hand-list every method it happens to
- * call. Only `text` is observed — every string written to the page is pushed into `texts`, in
- * draw order.
+ * `drawMonthlyExport` is a synchronous void function that RECEIVES its PDFDocument (the caller owns
+ * the lifecycle), which is the seam this test uses: drive it with a hand-rolled recording stub
+ * instead of a real PDFKit document. The stub implements the small slice of the PDFKit surface the
+ * function (and the helpers it calls) touches explicitly - `text`, `heightOfString`, `widthOfString`
+ * plus the `y` / `page` state. Every OTHER method (fontSize, font, fillColor, moveTo, lineTo, stroke,
+ * addPage, rect, fill, ...) falls through the Proxy's generic handler and is a no-op that returns the
+ * stub for chaining, matching PDFKit's fluent API without having to hand-list every method it happens
+ * to call. Only `text` is observed - every string written to the page is pushed into `texts`, in draw
+ * order.
  *
- * generateMonthlyReportPdf (single-employee) is NOT driven here — it constructs its own
+ * generateMonthlyReportPdf (single-employee) is NOT driven here - it constructs its own
  * PDFDocument internally and returns a compressed Buffer, so its wording is pinned via the
- * shared exported label constants instead of by parsing rendered output (see the last `it` below).
+ * shared exported label constants instead of by parsing rendered output (see the label `it` blocks).
  */
 import { describe, it, expect } from "vitest";
 import {
-  streamCompanyMonthlyReportPdf,
+  drawMonthlyExport,
   drawSection9Legend,
   OVERTIME_LABEL_CONFIRMED,
   OVERTIME_LABEL_FORECAST,
-  COMPANY_PROVISIONAL_LEGEND,
+  MONTHLY_EXPORT_FORECAST_LEGEND,
+  MONTHLY_EXPORT_UNLABELLED_LEGEND,
+  MONTHLY_EXPORT_STATUS_LABEL,
   SECTION9_LEGEND,
   BALANCE_ADJUSTMENT_LABEL,
   BALANCE_ADJUSTMENT_LEGEND,
-  type CompanyMonthlyReportData,
+  type MonthlyExportData,
+  type MonthlyExportRow,
 } from "../composition/pdf";
-
-type CompanyRow = CompanyMonthlyReportData["rows"][number];
+import { fmtSignedHM } from "../composition/pdf-format";
 
 interface RecordingDoc {
   texts: string[];
   y: number;
-  page: { width: number; height: number; margins: { top: number } };
+  page: {
+    width: number;
+    height: number;
+    margins: { top: number; bottom: number; left: number; right: number };
+  };
 }
 
-/** Hand-rolled DB-free / PDFKit-free recording stub — see file header for the exact contract. */
+/** Hand-rolled DB-free / PDFKit-free recording stub - see file header for the exact contract. */
 function createRecordingDoc(): PDFKit.PDFDocument & RecordingDoc {
   const texts: string[] = [];
   const target: Record<string, unknown> = {
     texts,
     y: 100,
-    page: { width: 595, height: 842, margins: { top: 50 } },
+    x: 36,
+    page: { width: 842, height: 595, margins: { top: 36, bottom: 36, left: 36, right: 36 } },
   };
 
   const proxy: PDFKit.PDFDocument & RecordingDoc = new Proxy(target, {
@@ -60,14 +71,13 @@ function createRecordingDoc(): PDFKit.PDFDocument & RecordingDoc {
           return proxy;
         };
       }
-      // Phase 104 (D-30): drawSection9Legend calls heightOfString(...) and adds the result to
-      // doc.y, so unlike the other no-ops this one must return a number, not the chainable proxy.
-      if (prop === "heightOfString") {
-        return () => 12;
-      }
+      // The renderer measures text, so these two must return numbers, not the chainable proxy.
+      if (prop === "heightOfString") return () => 12;
+      // Width model of the stub: 3.6 pt per character, enough for the layout arithmetic.
+      if (prop === "widthOfString") return (str: string) => String(str).length * 3.6;
       if (prop in obj) return obj[prop];
       // Any other PDFKit method (fontSize, font, fillColor, moveTo, lineTo, stroke, addPage,
-      // rect, fill, ...) — a chainable no-op, matching PDFKit's fluent API.
+      // rect, fill, ...) - a chainable no-op, matching PDFKit's fluent API.
       return () => proxy;
     },
     set(obj, prop: string, value) {
@@ -79,113 +89,146 @@ function createRecordingDoc(): PDFKit.PDFDocument & RecordingDoc {
   return proxy;
 }
 
-function makeRow(overrides: Partial<CompanyRow>): CompanyRow {
+const NO_ABSENCE = {
+  vacation: 0,
+  sick: 0,
+  sickChild: 0,
+  overtimeComp: 0,
+  special: 0,
+  education: 0,
+  unpaid: 0,
+  maternity: 0,
+  parental: 0,
+};
+
+let rowCounter = 0;
+
+function makeRow(overrides: Partial<MonthlyExportRow>): MonthlyExportRow {
+  rowCounter += 1;
   return {
-    employeeName: "Test Employee",
-    employeeNumber: "T-001",
-    workedHours: 0,
-    targetHours: 0,
-    overtimeHours: 0,
-    overtimeConfirmed: true,
-    // Issue #451 (D-03): default 0 — the vast majority of rows carry no reconciliation item.
-    balanceAdjustmentHours: 0,
-    sickDaysWithAttest: 0,
-    sickDaysWithoutAttest: 0,
-    vacationDays: 0,
-    totalAbsenceDays: 0,
-    section9DaysThisMonth: 0,
-    entries: [],
+    employeeName: `Test Employee ${rowCounter}`,
+    employeeNumber: `T-${String(rowCounter).padStart(3, "0")}`,
+    status: "CONFIRMED",
+    workedMinutes: 0,
+    expectedMinutes: 0,
+    balanceMinutes: 0,
+    // Issue #451 (D-03): default 0 - the vast majority of rows carry no reconciliation item.
+    balanceAdjustmentMinutes: 0,
+    closingBalanceMinutes: 0,
+    datevWorkedMinutes: 0,
+    absenceDays: { ...NO_ABSENCE },
+    section9: false,
+    vacation: null,
     ...overrides,
   };
 }
 
-function makeData(rows: CompanyRow[]): CompanyMonthlyReportData {
+function makeData(rows: MonthlyExportRow[]): MonthlyExportData {
   return {
     tenantName: "Testfirma GmbH",
-    month: "Januar 2026",
+    monthLabel: "Januar 2026",
     year: 2026,
-    monthNumber: 1,
-    roleFilter: "all",
+    month: 1,
+    generatedAt: "15.02.2026, 12:00",
+    vacationYear: { year: 2026, asOf: "31.01.2026" },
     rows,
   };
 }
 
-describe("streamCompanyMonthlyReportPdf — Saldo column + Bestätigt/Prognose labelling (DB-free, SALDO-DISP-05)", () => {
-  it("Saldo cell reads row.overtimeHours (not a locally recomputed workedHours-targetHours), marks provisional rows with an asterisk, and leaves unlabelled rows unmarked", () => {
-    const doc = createRecordingDoc();
+function render(rows: MonthlyExportRow[]): string[] {
+  const doc = createRecordingDoc();
+  drawMonthlyExport(doc, makeData(rows));
+  return doc.texts;
+}
 
-    streamCompanyMonthlyReportPdf(
-      doc,
-      makeData([
-        // Ist − Soll would naively be +20.00 h — deliberately differs in both magnitude AND sign
-        // from overtimeHours, so the pre-fix "local recomputation" bug cannot pass this assertion.
-        makeRow({
-          employeeName: "Alpha Confirmed",
-          workedHours: 180,
-          targetHours: 160,
-          overtimeHours: -7.5,
-          overtimeConfirmed: true,
-        }),
-        makeRow({
-          employeeName: "Beta Forecast",
-          workedHours: 50,
-          targetHours: 40,
-          overtimeHours: 3.25,
-          overtimeConfirmed: false,
-        }),
-        makeRow({
-          employeeName: "Gamma NoTarget",
-          workedHours: 20,
-          targetHours: 0,
-          overtimeHours: 0,
-          overtimeConfirmed: null,
-        }),
-      ]),
-    );
+describe("drawMonthlyExport - Saldo column + Bestätigt/Prognose labelling (DB-free, SALDO-DISP-05)", () => {
+  it("Saldo cell reads row.balanceMinutes (not a locally recomputed worked-expected), labels the status of each row and leaves unlabelled rows without Soll, Saldo and Gesamtsaldo", () => {
+    const texts = render([
+      // Ist - Soll would naively be +20:00 h - deliberately differs in both magnitude AND sign
+      // from balanceMinutes, so a "local recomputation" bug cannot pass this assertion.
+      makeRow({
+        employeeName: "Alpha Confirmed",
+        status: "CONFIRMED",
+        workedMinutes: 10800,
+        expectedMinutes: 9600,
+        balanceMinutes: -450,
+        closingBalanceMinutes: 5000,
+      }),
+      makeRow({
+        employeeName: "Beta Forecast",
+        status: "FORECAST",
+        workedMinutes: 3000,
+        expectedMinutes: 2400,
+        balanceMinutes: 195,
+        closingBalanceMinutes: 7000,
+      }),
+      makeRow({
+        employeeName: "Gamma NoTarget",
+        status: "UNLABELLED",
+        workedMinutes: 1200,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        closingBalanceMinutes: null,
+      }),
+    ]);
 
-    // Confirmed row: exact Saldo text sourced from row.overtimeHours, no asterisk.
-    expect(doc.texts).toContain("-7.50");
-    expect(doc.texts).not.toContain("-7.50 *");
-    // Provisional row: Saldo text carries the asterisk marker.
-    expect(doc.texts).toContain("+3.25 *");
-    expect(doc.texts).not.toContain("+3.25");
-    // Unlabelled row (MONTHLY_HOURS / no budget, overtimeConfirmed: null): no marker either way.
-    expect(doc.texts).toContain("+0.00");
-    expect(doc.texts).not.toContain("+0.00 *");
-    // Legend appears exactly once — only "Beta Forecast" is provisional.
-    expect(doc.texts.filter((t) => t === COMPANY_PROVISIONAL_LEGEND)).toHaveLength(1);
+    // Exact Saldo text sourced from row.balanceMinutes, signed H:MM with an ASCII hyphen.
+    expect(texts).toContain(fmtSignedHM(-450));
+    expect(texts).toContain("-7:30 h");
+    expect(texts).toContain("+3:15 h");
+    // The naive recomputations (+20:00 h and +10:00 h) are not printed anywhere.
+    expect(texts).not.toContain(fmtSignedHM(10800 - 9600));
+    expect(texts).not.toContain(fmtSignedHM(3000 - 2400));
+    // Gesamtsaldo is read from closingBalanceMinutes.
+    expect(texts).toContain(fmtSignedHM(5000));
+    expect(texts).toContain(fmtSignedHM(7000));
+
+    // Status labels, one per row; the old asterisk marker is gone with the decimal point.
+    expect(texts.filter((t) => t === "Bestätigt")).toHaveLength(1);
+    expect(texts.filter((t) => t === "Prognose")).toHaveLength(1);
+    expect(texts.filter((t) => t === "ohne Soll")).toHaveLength(1);
+    expect(texts.some((t) => t.includes("*"))).toBe(false);
+
+    // Unlabelled row: a dash instead of Soll, Saldo and Gesamtsaldo (never "-20:00 h").
+    expect(texts.filter((t) => t === "—")).toHaveLength(3);
+    // Legend appears exactly once - only "Beta Forecast" is a forecast.
+    expect(texts.filter((t) => t === MONTHLY_EXPORT_FORECAST_LEGEND)).toHaveLength(1);
   });
 
-  it("omits the legend entirely when every row is confirmed", () => {
-    const doc = createRecordingDoc();
+  it("omits the status legend entirely when every row is confirmed", () => {
+    const texts = render([
+      makeRow({ employeeName: "Alpha", balanceMinutes: 60, status: "CONFIRMED" }),
+      makeRow({ employeeName: "Beta", balanceMinutes: -120, status: "CONFIRMED" }),
+    ]);
 
-    streamCompanyMonthlyReportPdf(
-      doc,
-      makeData([
-        makeRow({ employeeName: "Alpha", overtimeHours: 1, overtimeConfirmed: true }),
-        makeRow({ employeeName: "Beta", overtimeHours: -2, overtimeConfirmed: true }),
-      ]),
-    );
-
-    expect(doc.texts).not.toContain(COMPANY_PROVISIONAL_LEGEND);
+    expect(texts).not.toContain(MONTHLY_EXPORT_FORECAST_LEGEND);
+    expect(texts).not.toContain(MONTHLY_EXPORT_UNLABELLED_LEGEND);
+    expect(texts).not.toContain("Prognose");
   });
 
-  it("omits the legend AND the asterisk when every row is unlabelled (null) — a MONTHLY_HOURS/no-budget population is never treated as 'provisional'", () => {
-    const doc = createRecordingDoc();
+  it("omits the forecast legend AND any marker when every row is unlabelled - a MONTHLY_HOURS/no-budget population is never treated as 'provisional'", () => {
+    const texts = render([
+      makeRow({ employeeName: "Alpha", status: "UNLABELLED", closingBalanceMinutes: null }),
+      makeRow({ employeeName: "Beta", status: "UNLABELLED", closingBalanceMinutes: null }),
+    ]);
 
-    streamCompanyMonthlyReportPdf(
-      doc,
-      makeData([
-        makeRow({ employeeName: "Alpha", overtimeHours: 0, overtimeConfirmed: null }),
-        makeRow({ employeeName: "Beta", overtimeHours: 0, overtimeConfirmed: null }),
-      ]),
-    );
-
-    expect(doc.texts).not.toContain(COMPANY_PROVISIONAL_LEGEND);
-    expect(doc.texts.some((t) => t.includes("*"))).toBe(false);
+    expect(texts).not.toContain(MONTHLY_EXPORT_FORECAST_LEGEND);
+    expect(texts).not.toContain("Prognose");
+    expect(texts.some((t) => t.includes("*"))).toBe(false);
+    // What an unlabelled row does carry: its own explanation, once, and three dashes per row.
+    expect(texts.filter((t) => t === MONTHLY_EXPORT_UNLABELLED_LEGEND)).toHaveLength(1);
+    expect(texts.filter((t) => t === "—")).toHaveLength(6);
   });
 
-  it("OVERTIME_LABEL_CONFIRMED and OVERTIME_LABEL_FORECAST share the word Überstunden and differ from each other", () => {
+  it("the status labels are the three words the page and the legends use", () => {
+    expect(MONTHLY_EXPORT_STATUS_LABEL).toEqual({
+      CONFIRMED: "Bestätigt",
+      FORECAST: "Prognose",
+      UNLABELLED: "ohne Soll",
+    });
+  });
+
+  it("OVERTIME_LABEL_CONFIRMED and OVERTIME_LABEL_FORECAST (single Stundennachweis) share the word Überstunden and differ from each other", () => {
     expect(OVERTIME_LABEL_CONFIRMED).toContain("Überstunden");
     expect(OVERTIME_LABEL_FORECAST).toContain("Überstunden");
     expect(OVERTIME_LABEL_CONFIRMED).not.toBe(OVERTIME_LABEL_FORECAST);
@@ -193,58 +236,36 @@ describe("streamCompanyMonthlyReportPdf — Saldo column + Bestätigt/Prognose l
 });
 
 describe("§ 9 BUrlG legend (Phase 104, D-30)", () => {
-  it("Test 1: streamCompanyMonthlyReportPdf writes SECTION9_LEGEND exactly once when at least one row has section9DaysThisMonth > 0", () => {
-    const doc = createRecordingDoc();
+  it("Test 1: drawMonthlyExport writes SECTION9_LEGEND exactly once when at least one row has a § 9 credit", () => {
+    const texts = render([
+      makeRow({ employeeName: "Alpha", section9: false }),
+      makeRow({ employeeName: "Beta", section9: true }),
+      makeRow({ employeeName: "Gamma", section9: true }),
+    ]);
 
-    streamCompanyMonthlyReportPdf(
-      doc,
-      makeData([
-        makeRow({ employeeName: "Alpha", section9DaysThisMonth: 0 }),
-        makeRow({ employeeName: "Beta", section9DaysThisMonth: 2 }),
-      ]),
-    );
-
-    expect(doc.texts.filter((t) => t === SECTION9_LEGEND)).toHaveLength(1);
+    expect(texts.filter((t) => t === SECTION9_LEGEND)).toHaveLength(1);
   });
 
-  it("Test 2: with every row at section9DaysThisMonth 0, SECTION9_LEGEND is never written", () => {
-    const doc = createRecordingDoc();
+  it("Test 2: with every row without a § 9 credit, SECTION9_LEGEND is never written", () => {
+    const texts = render([
+      makeRow({ employeeName: "Alpha", section9: false }),
+      makeRow({ employeeName: "Beta", section9: false }),
+    ]);
 
-    streamCompanyMonthlyReportPdf(
-      doc,
-      makeData([
-        makeRow({ employeeName: "Alpha", section9DaysThisMonth: 0 }),
-        makeRow({ employeeName: "Beta", section9DaysThisMonth: 0 }),
-      ]),
-    );
-
-    expect(doc.texts).not.toContain(SECTION9_LEGEND);
+    expect(texts).not.toContain(SECTION9_LEGEND);
   });
 
-  it("Test 3: the § 9 legend and the pre-existing COMPANY_PROVISIONAL_LEGEND can appear together, each exactly once, provisional legend first", () => {
-    const doc = createRecordingDoc();
+  it("Test 3: the § 9 legend and the status legend can appear together, each exactly once, status legend first", () => {
+    const texts = render([
+      makeRow({ employeeName: "Alpha Forecast", status: "FORECAST", section9: false }),
+      makeRow({ employeeName: "Beta Section9", status: "CONFIRMED", section9: true }),
+    ]);
 
-    streamCompanyMonthlyReportPdf(
-      doc,
-      makeData([
-        makeRow({
-          employeeName: "Alpha Forecast",
-          overtimeConfirmed: false,
-          section9DaysThisMonth: 0,
-        }),
-        makeRow({
-          employeeName: "Beta Section9",
-          overtimeConfirmed: true,
-          section9DaysThisMonth: 3,
-        }),
-      ]),
-    );
-
-    expect(doc.texts.filter((t) => t === COMPANY_PROVISIONAL_LEGEND)).toHaveLength(1);
-    expect(doc.texts.filter((t) => t === SECTION9_LEGEND)).toHaveLength(1);
-    const provisionalIdx = doc.texts.indexOf(COMPANY_PROVISIONAL_LEGEND);
-    const section9Idx = doc.texts.indexOf(SECTION9_LEGEND);
-    expect(provisionalIdx).toBeLessThan(section9Idx);
+    expect(texts.filter((t) => t === MONTHLY_EXPORT_FORECAST_LEGEND)).toHaveLength(1);
+    expect(texts.filter((t) => t === SECTION9_LEGEND)).toHaveLength(1);
+    const statusIdx = texts.indexOf(MONTHLY_EXPORT_FORECAST_LEGEND);
+    const section9Idx = texts.indexOf(SECTION9_LEGEND);
+    expect(statusIdx).toBeLessThan(section9Idx);
   });
 
   it("Test 4: drawSection9Legend(doc, 0) writes nothing; drawSection9Legend(doc, 2) writes exactly SECTION9_LEGEND", () => {
@@ -265,75 +286,68 @@ describe("§ 9 BUrlG legend (Phase 104, D-30)", () => {
 });
 
 describe("Verrechnung column + legend (Issue #451, D-03)", () => {
-  it("writes a 'Verr. (h)' header between 'Ist (h)' and 'Saldo (h)', '-8.00' for the non-zero row, an empty cell for the zero row, and the legend exactly once after the table", () => {
-    const doc = createRecordingDoc();
+  it("writes a 'Verr.' header between 'Ist' and 'Saldo', '-8:00 h' for the non-zero row, and the legend exactly once after the table", () => {
+    const texts = render([
+      // Worked/expected deliberately non-trivial so the Verrechnung value cannot be confused with
+      // another column; Ist - Soll + Verr. = Saldo: 5520 - 6000 - 480 = -960.
+      makeRow({
+        employeeName: "Alpha NonZero",
+        workedMinutes: 5520,
+        expectedMinutes: 6000,
+        balanceAdjustmentMinutes: -480,
+        balanceMinutes: -960,
+        closingBalanceMinutes: 3000,
+      }),
+      makeRow({
+        employeeName: "Beta Zero",
+        workedMinutes: 6060,
+        expectedMinutes: 6000,
+        balanceAdjustmentMinutes: 0,
+        balanceMinutes: 60,
+        closingBalanceMinutes: 4000,
+      }),
+    ]);
 
-    streamCompanyMonthlyReportPdf(
-      doc,
-      makeData([
-        // targetHours/workedHours deliberately non-zero so "0.00" cannot leak from those columns
-        // and mask an incorrectly-printed empty-cell assertion below.
-        makeRow({
-          employeeName: "Alpha NonZero",
-          targetHours: 100,
-          workedHours: 92,
-          balanceAdjustmentHours: -8,
-        }),
-        makeRow({
-          employeeName: "Beta Zero",
-          targetHours: 100,
-          workedHours: 100,
-          balanceAdjustmentHours: 0,
-        }),
-      ]),
-    );
-
-    const istIdx = doc.texts.indexOf("Ist (h)");
-    const verrIdx = doc.texts.indexOf("Verr. (h)");
-    const saldoIdx = doc.texts.indexOf("Saldo (h)");
+    const istIdx = texts.indexOf("Ist");
+    const verrIdx = texts.indexOf("Verr.");
+    const saldoIdx = texts.indexOf("Saldo");
     expect(istIdx).toBeGreaterThanOrEqual(0);
     expect(verrIdx).toBeGreaterThan(istIdx);
     expect(saldoIdx).toBeGreaterThan(verrIdx);
 
-    expect(doc.texts).toContain("-8.00");
-    // Zero row must not print a Verr. cell — only the non-zero row's "-8.00" exists.
-    expect(doc.texts.filter((t) => t === "-8.00")).toHaveLength(1);
-    expect(doc.texts.filter((t) => t === "0.00")).toHaveLength(0);
+    // The non-zero Verrechnung is printed once, signed, in minutes-based H:MM.
+    expect(texts.filter((t) => t === "-8:00 h")).toHaveLength(1);
+    // Issue #617: the column is hidden when every row is zero; in a visible column a zero row prints
+    // the unit zero ("0:00 h"), once - no other cell of this fixture is zero.
+    expect(texts.filter((t) => t === "0:00 h")).toHaveLength(1);
 
-    expect(doc.texts.filter((t) => t === BALANCE_ADJUSTMENT_LEGEND)).toHaveLength(1);
+    expect(texts.filter((t) => t === BALANCE_ADJUSTMENT_LEGEND)).toHaveLength(1);
   });
 
-  it("never writes the legend when every row's balanceAdjustmentHours is 0", () => {
-    const doc = createRecordingDoc();
+  it("never writes the column or the legend when every row's balanceAdjustmentMinutes is 0", () => {
+    const texts = render([
+      makeRow({ employeeName: "Alpha", balanceAdjustmentMinutes: 0 }),
+      makeRow({ employeeName: "Beta", balanceAdjustmentMinutes: 0 }),
+    ]);
 
-    streamCompanyMonthlyReportPdf(
-      doc,
-      makeData([
-        makeRow({ employeeName: "Alpha", balanceAdjustmentHours: 0 }),
-        makeRow({ employeeName: "Beta", balanceAdjustmentHours: 0 }),
-      ]),
-    );
-
-    expect(doc.texts).not.toContain(BALANCE_ADJUSTMENT_LEGEND);
+    expect(texts).not.toContain("Verr.");
+    expect(texts).not.toContain(BALANCE_ADJUSTMENT_LEGEND);
   });
 
-  it("an unlabelled row (overtimeConfirmed null) with balanceAdjustmentHours 0 prints no Verr. value and no asterisk — existing contract kept", () => {
-    const doc = createRecordingDoc();
+  it("an unlabelled row with balanceAdjustmentMinutes 0 prints no Verr. column and no asterisk - existing contract kept", () => {
+    const texts = render([
+      makeRow({
+        employeeName: "Gamma Unlabelled",
+        status: "UNLABELLED",
+        balanceMinutes: 0,
+        closingBalanceMinutes: null,
+        balanceAdjustmentMinutes: 0,
+      }),
+    ]);
 
-    streamCompanyMonthlyReportPdf(
-      doc,
-      makeData([
-        makeRow({
-          employeeName: "Gamma Unlabelled",
-          overtimeHours: 0,
-          overtimeConfirmed: null,
-          balanceAdjustmentHours: 0,
-        }),
-      ]),
-    );
-
-    expect(doc.texts.some((t) => t.includes("*"))).toBe(false);
-    expect(doc.texts).not.toContain(BALANCE_ADJUSTMENT_LEGEND);
+    expect(texts.some((t) => t.includes("*"))).toBe(false);
+    expect(texts).not.toContain("Verr.");
+    expect(texts).not.toContain(BALANCE_ADJUSTMENT_LEGEND);
   });
 
   it("BALANCE_ADJUSTMENT_LABEL equals 'Verrechnung'; the legend states the closing identity with an ASCII hyphen (WinAnsi has no U+2212)", () => {

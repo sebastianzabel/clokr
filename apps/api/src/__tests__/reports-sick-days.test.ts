@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
   getTestApp,
   closeTestApp,
@@ -7,6 +7,17 @@ import {
   seedEntitlementYears,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
+import * as pdfUtils from "../composition/pdf";
+
+// Issue #617: a call-through spy, because PDFKit compresses its content streams and the test reads
+// the payload the Monatsexport route built.
+vi.mock("../composition/pdf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../composition/pdf")>();
+  return {
+    ...actual,
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
+  };
+});
 
 /**
  * Regression test for WR-05: sick day double-counting fix.
@@ -625,15 +636,25 @@ describe("Reports: § 9 BUrlG attribution in the Monatsbericht (D-30)", () => {
     expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
   });
 
-  it("Test 6 (D-30): the company-wide Monatsbericht PDF renders for a month with an affected employee", async () => {
+  // Issue #617: the company PDF was replaced by the Monatsexport; same property (it renders for a
+  // month with an affected employee), now also pinned on its payload: the person is marked section9.
+  it("Test 6 (D-30): the Monatsexport renders for a month with an affected employee and marks that person section9", async () => {
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
+    spy.mockClear();
     const res = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/monthly/pdf/all?year=2026&month=5",
+      url: "/api/v1/reports/monthly-export/pdf?year=2026&month=5",
       headers: { authorization: `Bearer ${d.adminToken}` },
     });
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toContain("application/pdf");
     expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const row = spy.mock.calls[0][0].rows.find(
+      (r) => r.employeeNumber === d.employee.employeeNumber,
+    );
+    expect(row).toBeDefined();
+    expect(row!.section9).toBe(true);
   });
 });
 
