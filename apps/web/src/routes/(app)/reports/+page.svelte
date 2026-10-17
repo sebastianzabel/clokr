@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
+  import { page } from "$app/stores";
+  import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
-  import { salonContext } from "$stores/salon-context"; // Issue #542
+  import { salonContext, showSalonOptions } from "$stores/salon-context"; // Issues #542, #612
   import { get as getStore } from "svelte/store";
   import { reportRights } from "$lib/page-rights";
   import Pagination from "$components/ui/Pagination.svelte";
@@ -25,6 +27,22 @@
   import KPIStat from "$components/ui/KPIStat.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
+  import PeriodBar from "$lib/components/reports/PeriodBar.svelte"; // Issue #612
+  import PeriodKpis from "$lib/components/reports/PeriodKpis.svelte"; // Issue #612
+  import PeriodRangeDialog from "$lib/components/reports/PeriodRangeDialog.svelte"; // Issue #612
+  import {
+    periodLabel,
+    parsePeriodState,
+    periodSearch,
+    type PeriodState,
+    type PeriodTab,
+  } from "$lib/reports/period-state"; // Issue #612 (D-612-1)
+  import {
+    periodReportPath,
+    ymKey,
+    type PeriodReport,
+    type YearMonth,
+  } from "$lib/reports/period-report"; // Issue #612
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
   import {
     TEAM_SALDO_EXCLUSION_LABEL,
@@ -166,10 +184,6 @@
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth() + 1;
 
-  // Shared period selector — controls Team-Übersicht widgets
-  let selectedMonth = $state(currentMonth);
-  let selectedYear = $state(currentYear);
-
   // DATEV export card — own period selector
   let datevMonth = $state(currentMonth);
   let datevYear = $state(currentYear);
@@ -220,6 +234,92 @@
   let canRecordTeamAbsence = $derived(rights.canRecordTeamAbsence);
   let showAttendanceActions = $derived(canAddTeamEntry || canRecordTeamAbsence);
   let showTeamArea = $derived(rights.showTeamArea);
+
+  // ── The period in the URL (Issue #612, D-612-1) ────────────────────────────
+
+  // The tenant-local current month is the browser's local month here; the API's 400 is the backstop
+  // (P-09). Everything the page shows about the period comes from this one parse of the URL:
+  // `from`, `to`, `tab`, `person` and `salonId` are read ONLY through `parsePeriodState` and
+  // written ONLY through `periodSearch` (replaceState; opening the drill-down is the one push).
+  const today: YearMonth = { year: currentYear, month: currentMonth };
+  const urlState = $derived(parsePeriodState($page.url.searchParams, today, rights.periodTabs));
+  const activeTab = $derived(urlState.tab);
+  const periodTabActive = $derived(activeTab === "zeiten" || activeTab === "urlaub");
+  // A caller who may export but read no report: the bar with the export dialog, no tabs (amendment 5).
+  const exportOnly = $derived(showTeamArea && rights.periodTabs.length === 0);
+  // Primitive keys, so a tab change or a drill-down push never re-triggers the period request.
+  const periodKey = $derived(`${ymKey(urlState.from)}|${ymKey(urlState.to)}`);
+
+  // Bridge until 612-06 replaces the two vacation blocks (carry-over warnings, Urlaubsübersicht):
+  // they read the vacation year of the period's end.
+  const selectedYear = $derived(urlState.to.year);
+  const selectedMonth = $derived(urlState.to.month);
+
+  const TAB_LABEL: Record<PeriodTab, string> = {
+    zeiten: "Zeiten & Konten",
+    urlaub: "Urlaub & Abwesenheit",
+    heute: "Heute",
+  };
+
+  function writeState(next: PeriodState): void {
+    void goto(`${$page.url.pathname}?${periodSearch(next)}`, {
+      replaceState: true,
+      keepFocus: true,
+      noScroll: true,
+    });
+  }
+
+  async function selectTab(tab: PeriodTab, moveFocus = false): Promise<void> {
+    writeState({ ...urlState, tab });
+    if (moveFocus) {
+      await tick();
+      document.getElementById(`reports-tab-${tab}`)?.focus();
+    }
+  }
+
+  // ARIA tabs with one tab stop: ArrowLeft/ArrowRight wrap, Home/End jump, all of them activate.
+  function onTabKeydown(e: KeyboardEvent): void {
+    const tabs = rights.periodTabs;
+    if (tabs.length < 2 || activeTab === null) return;
+    const i = tabs.indexOf(activeTab);
+    let next: PeriodTab | null = null;
+    if (e.key === "ArrowRight") next = tabs[(i + 1) % tabs.length];
+    else if (e.key === "ArrowLeft") next = tabs[(i - 1 + tabs.length) % tabs.length];
+    else if (e.key === "Home") next = tabs[0];
+    else if (e.key === "End") next = tabs[tabs.length - 1];
+    if (next === null) return;
+    e.preventDefault();
+    void selectTab(next, true);
+  }
+
+  function onPeriodChange(from: YearMonth, to: YearMonth): void {
+    writeState({ ...urlState, from, to });
+  }
+
+  // Dialogs (rendered after `.period-content`, never inside an animated Card, Issue #570).
+  let rangeOpen = $state(false);
+  let focusReturnTo: HTMLElement | null = null;
+  let rangeWasOpen = false;
+
+  function openRange(trigger: HTMLElement): void {
+    focusReturnTo = trigger;
+    rangeOpen = true;
+  }
+
+  // The Modal primitive traps focus but does not give it back: the page remembers the trigger.
+  $effect(() => {
+    const open = rangeOpen;
+    untrack(() => {
+      if (rangeWasOpen && !open) {
+        focusReturnTo?.focus();
+        focusReturnTo = null;
+      }
+      rangeWasOpen = open;
+    });
+  });
+
+  // The export dialog arrives with 612-06; until then the cards above the tabs stay the export path.
+  function openExport(): void {}
 
   // ── Salon filter (Issue #542, CTX-5) ───────────────────────────────────────
 
@@ -458,13 +558,101 @@
   $effect(() => {
     if (!contextLoaded) return;
     void pageSalonId;
-    void selectedMonth;
-    void selectedYear;
     const attendance = canTeamAttendance;
     const overview = canTeamOvertime;
     untrack(() => {
       if (attendance) void loadTodayAttendance();
       if (overview) void loadOvertimeOverview();
+    });
+  });
+
+  // ── The period answer (Issue #612, D-612-2, Pattern 3) ──────────────────────
+
+  // ONE request per (from, to, salon) feeds the KPIs, the tables and the drill-down; the page
+  // renders what the server sums and recomputes nothing. A slow read is abandoned when the question
+  // changes (amendment 2): only the latest request may apply its answer.
+  const PERIOD_TIMEOUT_MS = 120_000;
+  let period: PeriodReport | null = $state(null);
+  let periodLoading = $state(false);
+  let periodFailure: "INVALID" | "FAILED" | null = $state(null);
+  let periodSalonRejected = $state(false);
+  // One polite live region: the period after a change, the person count after the answer.
+  let liveText = $state("");
+  let barHeight = $state(0);
+  // Plain lets: an older response never overwrites a newer one (not reactive on purpose).
+  let periodGeneration = 0;
+  let periodAbort: AbortController | null = null;
+
+  async function loadPeriod(from: YearMonth, to: YearMonth, salon: string | null) {
+    const generation = ++periodGeneration;
+    periodAbort?.abort();
+    const controller = new AbortController();
+    periodAbort = controller;
+    const timer = setTimeout(() => controller.abort(), PERIOD_TIMEOUT_MS);
+    periodLoading = true;
+    periodFailure = null;
+    liveText = `Zeitraum: ${periodLabel(from, to, today)}`;
+    try {
+      const answer = await api.get<PeriodReport>(periodReportPath(from, to, salon), {
+        signal: controller.signal,
+      });
+      if (generation !== periodGeneration) return;
+      period = answer;
+      periodSalonRejected = false;
+      const n = answer.rows.length;
+      liveText = `Bericht geladen: ${n} ${n === 1 ? "Person" : "Personen"}`;
+    } catch (e: unknown) {
+      // A superseded request was aborted on purpose: nothing to show for it.
+      if (generation !== periodGeneration) return;
+      period = null;
+      if (salon !== null && isSalonFilterRejected(e)) {
+        // The one 404: a calm state instead of the data, never the server's text (T-542-18).
+        periodSalonRejected = true;
+      } else {
+        periodSalonRejected = false;
+        periodFailure = e instanceof ApiError && e.status === 400 ? "INVALID" : "FAILED";
+      }
+    } finally {
+      clearTimeout(timer);
+      if (generation === periodGeneration) periodLoading = false;
+    }
+  }
+
+  // Waits for the salon context so the first request is already filtered, and reruns when the
+  // period or the header salon changes. Not on the "Heute" tab: it has no period.
+  $effect(() => {
+    if (!contextLoaded) return;
+    void periodKey;
+    const salon = pageSalonId;
+    const wanted = canReportRead && periodTabActive;
+    untrack(() => {
+      if (wanted) void loadPeriod(urlState.from, urlState.to, salon);
+    });
+  });
+
+  // ── The salon in the URL (Issue #612, P-10) ──────────────────────────────────
+
+  // The header context stays the one source of the selection. The URL mirrors it while the page
+  // filter applies; a `salonId` of an OPENED link selects that salon once, but only when it is one
+  // of the caller's own choosable salons - anything else is dropped (T-612-21). The API validates
+  // every salon id again.
+  let salonUrlConsumed = false;
+  $effect(() => {
+    if (!contextLoaded) return;
+    const wanted = urlState.salonId;
+    const current = pageSalonId;
+    untrack(() => {
+      if (!salonUrlConsumed) {
+        salonUrlConsumed = true;
+        const ctx = getStore(salonContext);
+        if (wanted !== null && wanted !== current) {
+          if (showSalonOptions(ctx) && ctx.salons.some((salon) => salon.id === wanted)) {
+            salonContext.setSelection(wanted);
+            return; // the selection changes `pageSalonId`; this effect reruns and mirrors it
+          }
+        }
+      }
+      if (wanted !== current) writeState({ ...urlState, salonId: current });
     });
   });
 
@@ -801,15 +989,10 @@
 
   // ── KPI summaries (v1.5) ───────────────────────────────────────────────────
 
-  // Manager KPIs — derived from overtime + leave overview
-  let kpiTeamSize = $derived(overtimeSections.active.length);
   // Issue #588 (D-588-1): the median and the persons outside it come from the one team saldo
-  // module, over the active rows only (#613).
+  // module, over the active rows only (#613). Until 612-05 Task 2 moves the line into the period
+  // table, the old overview card shows it.
   let teamSaldo = $derived(teamSaldoFigures(overtimeSections.active));
-  let kpiCriticalCount = $derived(
-    overtimeSections.active.filter((r) => r.status === "CRITICAL").length,
-  );
-  let kpiUsedDays = $derived((leaveOverview ?? []).reduce((acc, r) => acc + r.usedDays, 0));
 
   // Employee KPIs - derived from the CLOSED months only (open months carry no figures)
   let empClosedRows = $derived(empMonthlyCloses.flatMap((r) => (r.status === "closed" ? [r] : [])));
@@ -832,66 +1015,17 @@
 </svelte:head>
 
 <PageHead
-  eyebrow="Mein Bereich"
+  eyebrow={showTeamArea ? "Team" : "Mein Bereich"}
   title="Berichte & Auswertungen"
   accent="Auswertungen"
   sub={showTeamArea
-    ? "Monatsexport, Stundennachweise und DATEV-Export erstellen"
+    ? "Zeiten, Konten und Urlaub für einen Zeitraum – bis zu 12 Monate."
     : "Persönliche Monatsabschlüsse — als PDF zum Download."}
 />
 
-<!-- KPI cluster — Card + KPIStat primitives -->
-{#if showTeamArea}
-  <div class="kpi-row">
-    <Card animate>
-      <KPIStat label="Mitarbeiter" value={String(kpiTeamSize)} />
-    </Card>
-    <Card animate>
-      <KPIStat
-        label="Median-Saldo"
-        value={teamSaldo.medianMinutes === null ? "—" : fmtBalance(teamSaldo.medianMinutes)}
-        unit="h"
-        delta={teamSaldo.excluded.length > 0
-          ? `${teamSaldo.excluded.length} nicht in der Kennzahl`
-          : `aus ${teamSaldo.counted} Personen`}
-        deltaTone="neutral"
-      />
-    </Card>
-    <Card animate>
-      <KPIStat
-        label="Kritische Salden"
-        value={String(kpiCriticalCount)}
-        deltaTone={kpiCriticalCount > 0 ? "bad" : "neutral"}
-      />
-    </Card>
-    <Card animate>
-      <KPIStat label="Urlaub genutzt" value={formatDays(kpiUsedDays)} unit="Tage" />
-    </Card>
-  </div>
-{:else}
-  <div class="kpi-row">
-    <Card animate>
-      <KPIStat label="Abgeschlossen" value={String(kpiClosedMonths)} unit="Monate" />
-    </Card>
-    <Card animate>
-      <KPIStat label="Soll" value={fmtHoursFromMin(kpiTotalExpectedMin)} unit="h" />
-    </Card>
-    <Card animate>
-      <KPIStat label="Ist" value={fmtHoursFromMin(kpiTotalWorkedMin)} unit="h" />
-    </Card>
-    <Card animate>
-      <KPIStat
-        label="Saldo"
-        value={fmtBalance(kpiTotalBalanceMin)}
-        unit="h"
-        deltaTone={kpiTotalBalanceMin > 0 ? "good" : kpiTotalBalanceMin < 0 ? "bad" : "neutral"}
-      />
-    </Card>
-  </div>
-{/if}
-
 {#if showTeamArea}
   <SalonScopeLabel label={scopeLabel} />
+  <!-- The export cards keep their place until 612-06 replaces them with the export dialog. -->
   <div class="reports-grid">
     <!-- DATEV Export Card -->
     {#if canReportExport}
@@ -1017,7 +1151,141 @@
       </div>
     {/if}
   </div>
+
+  {#if rights.periodTabs.length > 0}
+    <div
+      class="view-tabs"
+      role="tablist"
+      aria-label="Berichtsbereich"
+      tabindex="-1"
+      onkeydown={onTabKeydown}
+    >
+      {#each rights.periodTabs as tab (tab)}
+        <button
+          type="button"
+          class="view-tab"
+          class:view-tab--active={tab === activeTab}
+          role="tab"
+          id="reports-tab-{tab}"
+          aria-selected={tab === activeTab}
+          aria-controls="reports-panel-{tab}"
+          tabindex={tab === activeTab ? 0 : -1}
+          onclick={() => selectTab(tab)}>{TAB_LABEL[tab]}</button
+        >
+      {/each}
+    </div>
+  {/if}
+
+  {#if periodTabActive || exportOnly}
+    <div
+      class="page period-content"
+      style="--period-bar-h: {barHeight}px"
+      role={periodTabActive ? "tabpanel" : undefined}
+      id={periodTabActive ? `reports-panel-${activeTab}` : undefined}
+      aria-labelledby={periodTabActive ? `reports-tab-${activeTab}` : undefined}
+    >
+      <PeriodBar
+        onHeight={(px) => (barHeight = px)}
+        from={urlState.from}
+        to={urlState.to}
+        {today}
+        loading={periodLoading}
+        canExport={canReportExport}
+        onChange={onPeriodChange}
+        onOpenRange={openRange}
+        onOpenExport={openExport}
+      />
+
+      {#if exportOnly}
+        <p class="period-note" data-testid="period-export-only-note">
+          Keine Auswertung freigegeben – Exporte verfügbar
+        </p>
+      {:else if periodSalonRejected}
+        <SalonScopeLabel label={null} rejected={true} />
+      {:else if periodFailure === "INVALID"}
+        <div class="callout error" role="alert" data-testid="period-invalid">
+          <p>Dieser Zeitraum lässt sich nicht auswerten – höchstens 12 Monate auf einmal.</p>
+          <button
+            type="button"
+            class="btn btn-outline sm"
+            onclick={() => onPeriodChange({ ...today }, { ...today })}>Zum aktuellen Monat</button
+          >
+        </div>
+      {:else if periodFailure === "FAILED"}
+        <div class="callout error" role="alert" data-testid="period-error">
+          <p>
+            Der Bericht konnte nicht geladen werden. Prüfen Sie die Verbindung und versuchen Sie es
+            erneut.
+          </p>
+          <button
+            type="button"
+            class="btn btn-outline sm"
+            onclick={() => void loadPeriod(urlState.from, urlState.to, pageSalonId)}
+            >Erneut versuchen</button
+          >
+        </div>
+      {:else}
+        <div class="period-body" class:period-body--dim={periodLoading && period !== null}>
+          <Card animate>
+            <PeriodKpis
+              kpis={period?.kpis ?? null}
+              filterActive={pageSalonId !== null}
+              loading={periodLoading}
+            />
+          </Card>
+        </div>
+
+        <div
+          class="page period-tab-content"
+          class:period-body--dim={periodLoading && period !== null}
+        >
+          {#if activeTab === "zeiten"}
+            {@render overtimeBlock()}
+          {:else if activeTab === "urlaub"}
+            {@render carryoverBlock()}
+            {@render leaveOverviewBlock()}
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if activeTab === "heute"}
+    <div class="page" role="tabpanel" id="reports-panel-heute" aria-labelledby="reports-tab-heute">
+      {@render attendanceBlock()}
+    </div>
+  {/if}
+
+  <!-- Dialogs sit after the panels, never inside an animated Card (Issue #570). -->
+  <PeriodRangeDialog
+    bind:open={rangeOpen}
+    from={urlState.from}
+    to={urlState.to}
+    {today}
+    onApply={onPeriodChange}
+  />
+  <div class="sr-only" role="status" aria-live="polite" data-testid="period-live">{liveText}</div>
 {:else}
+  <div class="kpi-row">
+    <Card animate>
+      <KPIStat label="Abgeschlossen" value={String(kpiClosedMonths)} unit="Monate" />
+    </Card>
+    <Card animate>
+      <KPIStat label="Soll" value={fmtHoursFromMin(kpiTotalExpectedMin)} unit="h" />
+    </Card>
+    <Card animate>
+      <KPIStat label="Ist" value={fmtHoursFromMin(kpiTotalWorkedMin)} unit="h" />
+    </Card>
+    <Card animate>
+      <KPIStat
+        label="Saldo"
+        value={fmtBalance(kpiTotalBalanceMin)}
+        unit="h"
+        deltaTone={kpiTotalBalanceMin > 0 ? "good" : kpiTotalBalanceMin < 0 ? "bad" : "neutral"}
+      />
+    </Card>
+  </div>
+
   <!-- EMP-06: Employee personal monthly closes -->
   <Card animate class="emp-closes-card" style="--card-idx: 1;">
     <div class="emp-closes-hd">
@@ -1122,334 +1390,199 @@
   </Card>
 {/if}
 
-<!-- Team-Übersicht — only for callers holding a team-report right -->
-{#if showTeamArea}
-  <div class="team-overview-section card-animate">
-    <div class="team-overview-header">
-      <h2>Team-Übersicht</h2>
-      <div class="team-period-controls">
-        <select bind:value={selectedMonth} class="period-select">
-          {#each months as name, i (i)}
-            <option value={i + 1}>{name}</option>
-          {/each}
-        </select>
-        <select bind:value={selectedYear} class="period-select">
-          {#each years as y (y)}
-            <option value={y}>{y}</option>
-          {/each}
-        </select>
-      </div>
-    </div>
+{#snippet attendanceBlock()}
+  {#if canTeamAttendance}
+    <Card animate class="widget-card" style="--card-idx: 1;">
+      <CardHeader title="Heutige Anwesenheit" sub="Status aller Mitarbeiter">
+        {#snippet actions()}
+          {#if todayAttendance}
+            <span class="section-date">{todayAttendance.date}</span>
+          {/if}
+        {/snippet}
+      </CardHeader>
 
-    <!-- Heutige Anwesenheit (RPT-03) -->
-    {#if canTeamAttendance}
-      <Card animate class="widget-card" style="--card-idx: 1;">
-        <CardHeader title="Heutige Anwesenheit" sub="Status aller Mitarbeiter">
-          {#snippet actions()}
-            {#if todayAttendance}
-              <span class="section-date">{todayAttendance.date}</span>
-            {/if}
-          {/snippet}
-        </CardHeader>
-
-        {#if todayLoading}
-          <p class="section-placeholder">Lade Anwesenheit…</p>
-        {:else if attendanceSalonRejected}
-          <SalonScopeLabel label={null} rejected={true} />
-        {:else if todayError}
-          <p class="section-error">{todayError}</p>
-        {:else if todayAttendance}
-          <div class="attendance-summary">
-            <div class="summary-chip">
-              <span class="label">Anwesend</span>
-              <span class="value">{todayAttendance.summary.present}</span>
-            </div>
-            <div class="summary-chip">
-              <span class="label">Eingestempelt</span>
-              <span class="value">{todayAttendance.summary.clockedIn}</span>
-            </div>
-            <div class="summary-chip">
-              <span class="label">Abwesend</span>
-              <span class="value">{todayAttendance.summary.absent}</span>
-            </div>
-            <div class="summary-chip">
-              <span class="label">{DAY_STATUS_LABEL.missing}</span>
-              <span class="value">{todayAttendance.summary.missing}</span>
-            </div>
-            {#if todayAttendance.summary.holiday > 0}
-              <div class="summary-chip">
-                <span class="label">Feiertag</span>
-                <span class="value">{todayAttendance.summary.holiday}</span>
-              </div>
-            {/if}
+      {#if todayLoading}
+        <p class="section-placeholder">Lade Anwesenheit…</p>
+      {:else if attendanceSalonRejected}
+        <SalonScopeLabel label={null} rejected={true} />
+      {:else if todayError}
+        <p class="section-error">{todayError}</p>
+      {:else if todayAttendance}
+        <div class="attendance-summary">
+          <div class="summary-chip">
+            <span class="label">Anwesend</span>
+            <span class="value">{todayAttendance.summary.present}</span>
           </div>
+          <div class="summary-chip">
+            <span class="label">Eingestempelt</span>
+            <span class="value">{todayAttendance.summary.clockedIn}</span>
+          </div>
+          <div class="summary-chip">
+            <span class="label">Abwesend</span>
+            <span class="value">{todayAttendance.summary.absent}</span>
+          </div>
+          <div class="summary-chip">
+            <span class="label">{DAY_STATUS_LABEL.missing}</span>
+            <span class="value">{todayAttendance.summary.missing}</span>
+          </div>
+          {#if todayAttendance.summary.holiday > 0}
+            <div class="summary-chip">
+              <span class="label">Feiertag</span>
+              <span class="value">{todayAttendance.summary.holiday}</span>
+            </div>
+          {/if}
+        </div>
 
+        <div class="table-wrap">
+          <table class="attendance-table">
+            <thead>
+              <tr>
+                <th>Mitarbeiter</th>
+                <th>Nr.</th>
+                <th>Status</th>
+                {#if showAttendanceActions}
+                  <th>Aktionen</th>
+                {/if}
+              </tr>
+            </thead>
+            <tbody>
+              {#each pagedTodayRows as row (row.id)}
+                <tr>
+                  <td>{row.name}</td>
+                  <td>{row.employeeNumber}</td>
+                  <td
+                    ><span class={statusClass(row.status)}>{attendanceStatusText(row)}</span>
+                    {#if row.workedElsewhere}
+                      <span class="badge badge-gray" title="In einem anderen Salon gearbeitet"
+                        >anderer Salon</span
+                      >
+                    {/if}</td
+                  >
+                  {#if showAttendanceActions}
+                    <td class="attendance-actions">
+                      <div class="row-actions__group">
+                        {#if row.status === "missing"}
+                          {@const entryHref = teamDayHref(row.id, todayAttendance.date)}
+                          {@const absenceHref = teamLeaveCreateHref(row.id, todayAttendance.date)}
+                          {#if canAddTeamEntry && entryHref !== null}
+                            <a class="btn btn-ghost xs" href={entryHref}>Eintrag nachtragen</a>
+                          {/if}
+                          {#if canRecordTeamAbsence && absenceHref !== null}
+                            <a class="btn btn-ghost xs" href={absenceHref}>Abwesenheit erfassen</a>
+                          {/if}
+                        {/if}
+                      </div>
+                    </td>
+                  {/if}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          total={todayAttendance.employees.length}
+          bind:page={todayPage}
+          bind:pageSize={todayPageSize}
+        />
+      {/if}
+    </Card>
+  {/if}
+{/snippet}
+
+{#snippet carryoverBlock()}
+  {#if canReportRead}
+    <!-- Verfall-Warnungen (Phase 44 — BUrlG § 7 Hinweispflicht / EuGH C-684/16) -->
+    <Card animate class="widget-card" style="--card-idx: 2;">
+      <CardHeader title="Verfall-Warnungen" sub="Resturlaub mit auslaufender Frist (§ 7 BUrlG)">
+        {#snippet actions()}
+          <label class="carryover-horizon-label" for="carryover-horizon">
+            Horizont
+            <select id="carryover-horizon" class="period-select" bind:value={carryoverHorizon}>
+              <option value={30}>30 Tage</option>
+              <option value={60}>60 Tage</option>
+              <option value={90}>90 Tage</option>
+              <option value={180}>180 Tage</option>
+            </select>
+          </label>
+        {/snippet}
+      </CardHeader>
+
+      {#if pageSalonId !== null}
+        <p class="form-hint" data-testid="carryover-all-salons-note">{ALL_SALONS_BLOCK_NOTE}</p>
+      {/if}
+
+      {#if carryoverLoading}
+        <p class="section-placeholder">Lade Verfall-Warnungen…</p>
+      {:else if carryoverError}
+        <p class="section-error">{carryoverError}</p>
+      {:else if carryover}
+        <div class="carryover-summary">
+          <div class="summary-chip">
+            <span class="label">Betroffene MA</span>
+            <span class="value">{carryover.summary.employeesAtRisk}</span>
+          </div>
+          <div class="summary-chip">
+            <span class="label">Tage im Risiko</span>
+            <span class="value">{formatDays(carryover.summary.totalDaysAtRisk)}</span>
+          </div>
+          <div class="summary-chip">
+            <span class="label">Hinweise (30 T.)</span>
+            <span class="value">{carryover.summary.warnedLast30}</span>
+          </div>
+        </div>
+
+        {#if carryover.rows.length === 0}
+          <p class="section-placeholder">
+            Kein Resturlaub mit Verfall in den nächsten {carryover.horizonDays} Tagen.
+          </p>
+        {:else}
+          <div class="carryover-callout">
+            Hinweispflicht: Mitarbeiter müssen gemäß EuGH C-684/16 ausdrücklich auf verfallenden
+            Urlaub hingewiesen werden. Ohne dokumentierten Hinweis verfällt der Urlaub <strong
+              >nicht</strong
+            >.
+          </div>
           <div class="table-wrap">
-            <table class="attendance-table">
+            <table class="carryover-table">
               <thead>
                 <tr>
                   <th>Mitarbeiter</th>
                   <th>Nr.</th>
-                  <th>Status</th>
-                  {#if showAttendanceActions}
-                    <th>Aktionen</th>
-                  {/if}
+                  <th class="numeric">Gefährdet (T.)</th>
+                  <th>Verfällt am</th>
+                  <th class="numeric">Verbleibend</th>
+                  <th>Letzter Hinweis</th>
+                  <th class="actions-col">Aktion</th>
                 </tr>
               </thead>
               <tbody>
-                {#each pagedTodayRows as row (row.id)}
+                {#each pagedCarryoverRows as row (row.entitlementId)}
                   <tr>
-                    <td>{row.name}</td>
-                    <td>{row.employeeNumber}</td>
-                    <td
-                      ><span class={statusClass(row.status)}>{attendanceStatusText(row)}</span>
-                      {#if row.workedElsewhere}
-                        <span class="badge badge-gray" title="In einem anderen Salon gearbeitet"
-                          >anderer Salon</span
-                        >
-                      {/if}</td
-                    >
-                    {#if showAttendanceActions}
-                      <td class="attendance-actions">
-                        <div class="row-actions__group">
-                          {#if row.status === "missing"}
-                            {@const entryHref = teamDayHref(row.id, todayAttendance.date)}
-                            {@const absenceHref = teamLeaveCreateHref(row.id, todayAttendance.date)}
-                            {#if canAddTeamEntry && entryHref !== null}
-                              <a class="btn btn-ghost xs" href={entryHref}>Eintrag nachtragen</a>
-                            {/if}
-                            {#if canRecordTeamAbsence && absenceHref !== null}
-                              <a class="btn btn-ghost xs" href={absenceHref}>Abwesenheit erfassen</a
-                              >
-                            {/if}
-                          {/if}
-                        </div>
-                      </td>
-                    {/if}
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-          <Pagination
-            total={todayAttendance.employees.length}
-            bind:page={todayPage}
-            bind:pageSize={todayPageSize}
-          />
-        {/if}
-      </Card>
-    {/if}
-
-    {#if canReportRead}
-      <!-- Verfall-Warnungen (Phase 44 — BUrlG § 7 Hinweispflicht / EuGH C-684/16) -->
-      <Card animate class="widget-card" style="--card-idx: 2;">
-        <CardHeader title="Verfall-Warnungen" sub="Resturlaub mit auslaufender Frist (§ 7 BUrlG)">
-          {#snippet actions()}
-            <label class="carryover-horizon-label" for="carryover-horizon">
-              Horizont
-              <select id="carryover-horizon" class="period-select" bind:value={carryoverHorizon}>
-                <option value={30}>30 Tage</option>
-                <option value={60}>60 Tage</option>
-                <option value={90}>90 Tage</option>
-                <option value={180}>180 Tage</option>
-              </select>
-            </label>
-          {/snippet}
-        </CardHeader>
-
-        {#if pageSalonId !== null}
-          <p class="form-hint" data-testid="carryover-all-salons-note">{ALL_SALONS_BLOCK_NOTE}</p>
-        {/if}
-
-        {#if carryoverLoading}
-          <p class="section-placeholder">Lade Verfall-Warnungen…</p>
-        {:else if carryoverError}
-          <p class="section-error">{carryoverError}</p>
-        {:else if carryover}
-          <div class="carryover-summary">
-            <div class="summary-chip">
-              <span class="label">Betroffene MA</span>
-              <span class="value">{carryover.summary.employeesAtRisk}</span>
-            </div>
-            <div class="summary-chip">
-              <span class="label">Tage im Risiko</span>
-              <span class="value">{formatDays(carryover.summary.totalDaysAtRisk)}</span>
-            </div>
-            <div class="summary-chip">
-              <span class="label">Hinweise (30 T.)</span>
-              <span class="value">{carryover.summary.warnedLast30}</span>
-            </div>
-          </div>
-
-          {#if carryover.rows.length === 0}
-            <p class="section-placeholder">
-              Kein Resturlaub mit Verfall in den nächsten {carryover.horizonDays} Tagen.
-            </p>
-          {:else}
-            <div class="carryover-callout">
-              Hinweispflicht: Mitarbeiter müssen gemäß EuGH C-684/16 ausdrücklich auf verfallenden
-              Urlaub hingewiesen werden. Ohne dokumentierten Hinweis verfällt der Urlaub <strong
-                >nicht</strong
-              >.
-            </div>
-            <div class="table-wrap">
-              <table class="carryover-table">
-                <thead>
-                  <tr>
-                    <th>Mitarbeiter</th>
-                    <th>Nr.</th>
-                    <th class="numeric">Gefährdet (T.)</th>
-                    <th>Verfällt am</th>
-                    <th class="numeric">Verbleibend</th>
-                    <th>Letzter Hinweis</th>
-                    <th class="actions-col">Aktion</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each pagedCarryoverRows as row (row.entitlementId)}
-                    <tr>
-                      <td>{row.employee.firstName} {row.employee.lastName}</td>
-                      <td>{row.employee.employeeNumber}</td>
-                      <td class="numeric">{formatDays(row.atRiskDays ?? row.carriedOverDays)}</td>
-                      <td>{formatDeDate(row.deadline)}</td>
-                      <td class="numeric">
-                        <span class={row.daysUntilDeadline <= 14 ? "danger" : ""}>
-                          {row.daysUntilDeadline} T.
-                        </span>
-                      </td>
-                      <td>{formatLastWarning(row.lastWarningSentAt)}</td>
-                      <td class="row-actions">
-                        <div class="row-actions__group">
-                          {#if canReportNotify}
-                            <button
-                              class="btn-ghost btn-warn-now"
-                              disabled={carryoverWarnBusy[row.entitlementId]}
-                              onclick={() => sendCarryoverWarning(row)}
-                            >
-                              {carryoverWarnBusy[row.entitlementId]
-                                ? "Senden…"
-                                : "Hinweis jetzt senden"}
-                            </button>
-                          {/if}
-                          {#if carryoverRowMsg[row.entitlementId]}
-                            <span class="row-msg">{carryoverRowMsg[row.entitlementId]}</span>
-                          {/if}
-                        </div>
-                      </td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-            <Pagination
-              total={carryover.rows.length}
-              bind:page={carryoverPage}
-              bind:pageSize={carryoverPageSize}
-            />
-          {/if}
-        {/if}
-      </Card>
-    {/if}
-
-    {#if canTeamOvertime}
-      <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) -->
-      <Card animate class="widget-card" style="--card-idx: 3;">
-        <CardHeader title="Überstunden-Übersicht" sub="Saldo je Mitarbeiter" />
-
-        {#if pageSalonId !== null}
-          <p class="form-hint" data-testid="overtime-salon-persons-note">
-            {SALON_HOME_PERSONS_NOTE} · {PERSON_SALDO_NOT_SPLIT_LABEL}
-          </p>
-        {/if}
-
-        {#if overtimeLoading}
-          <p class="section-placeholder">Lade Überstunden-Saldo…</p>
-        {:else if overviewSalonRejected}
-          <SalonScopeLabel label={null} rejected={true} />
-        {:else if overtimeError}
-          <p class="section-error">{overtimeError}</p>
-        {:else if overtimeOverview}
-          <div class="table-wrap">
-            <table class="overtime-table">
-              <thead>
-                <tr>
-                  <th class="sortable" onclick={() => toggleSort("name")}>
-                    Mitarbeiter
-                    {#if sortColumn === "name"}<span class="sort-arrow"
-                        >{sortDir === "asc" ? "▲" : "▼"}</span
-                      >{/if}
-                  </th>
-                  <th>Nr.</th>
-                  <th class="sortable numeric" onclick={() => toggleSort("balance")}>
-                    Abgeschlossen
-                    {#if sortColumn === "balance"}<span class="sort-arrow"
-                        >{sortDir === "asc" ? "▲" : "▼"}</span
-                      >{/if}
-                  </th>
-                  <th class="numeric">{forecastColumnLabel(overtimeSections.active)}</th>
-                  <th class="numeric">Gesamt</th>
-                  <th>Status</th>
-                  <th class="actions-col">Aktionen</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each pagedOvertimeRows as row (row.id)}
-                  {@const cells = teamSaldoCells(row)}
-                  {@const exclusion = teamSaldoExclusion(row)}
-                  <tr>
-                    <td>
-                      {row.name}
-                      {#if exclusion !== null}
-                        <span class="badge badge-gray" title="Nicht im Median-Saldo"
-                          >{TEAM_SALDO_EXCLUSION_LABEL[exclusion]}</span
-                        >
-                      {/if}
+                    <td>{row.employee.firstName} {row.employee.lastName}</td>
+                    <td>{row.employee.employeeNumber}</td>
+                    <td class="numeric">{formatDays(row.atRiskDays ?? row.carriedOverDays)}</td>
+                    <td>{formatDeDate(row.deadline)}</td>
+                    <td class="numeric">
+                      <span class={row.daysUntilDeadline <= 14 ? "danger" : ""}>
+                        {row.daysUntilDeadline} T.
+                      </span>
                     </td>
-                    <td>{row.employeeNumber}</td>
-                    <td
-                      class="numeric"
-                      data-testid="saldo-cell-confirmed"
-                      title={cells.confirmed.title}
-                    >
-                      {cells.confirmed.text}
-                    </td>
-                    <td class="numeric" data-testid="saldo-cell-open" title={cells.open.title}>
-                      {cells.open.text}
-                      {#if row.rosterIncomplete}
-                        <span class="roster-dot" data-testid="saldo-roster-badge">
-                          <Icon
-                            name="circle-fill"
-                            size={6}
-                            title="Restmonat noch nicht vollständig verplant"
-                          />
-                        </span>
-                      {/if}
-                    </td>
-                    <td class="numeric" data-testid="saldo-cell-total" title={cells.total.title}>
-                      {cells.total.text}
-                    </td>
-                    <td
-                      ><span class={statusBadgeClass(row.status)}
-                        >{statusBadgeLabel(row.status)}</span
-                      ></td
-                    >
+                    <td>{formatLastWarning(row.lastWarningSentAt)}</td>
                     <td class="row-actions">
                       <div class="row-actions__group">
-                        <button
-                          class="btn-icon btn-icon-pdf"
-                          title="Stundennachweis PDF ({row.name})"
-                          onclick={() => downloadEmployeePdf(row.id, row.name)}>PDF</button
-                        >
-                        <button
-                          class="btn-icon btn-icon-datev"
-                          title="DATEV LODAS ({row.name})"
-                          onclick={() => downloadEmployeeDatev(row.id, row.name)}>TXT</button
-                        >
-                        {#if empDownloadErrors[`pdf-${row.id}`]}
-                          <span class="row-dl-error">{empDownloadErrors[`pdf-${row.id}`]}</span>
+                        {#if canReportNotify}
+                          <button
+                            class="btn-ghost btn-warn-now"
+                            disabled={carryoverWarnBusy[row.entitlementId]}
+                            onclick={() => sendCarryoverWarning(row)}
+                          >
+                            {carryoverWarnBusy[row.entitlementId]
+                              ? "Senden…"
+                              : "Hinweis jetzt senden"}
+                          </button>
                         {/if}
-                        {#if empDownloadErrors[`datev-${row.id}`]}
-                          <span class="row-dl-error">{empDownloadErrors[`datev-${row.id}`]}</span>
+                        {#if carryoverRowMsg[row.entitlementId]}
+                          <span class="row-msg">{carryoverRowMsg[row.entitlementId]}</span>
                         {/if}
                       </div>
                     </td>
@@ -1459,91 +1592,222 @@
             </table>
           </div>
           <Pagination
-            total={sortedOvertime.length}
-            bind:page={overtimePage}
-            bind:pageSize={overtimePageSize}
-          />
-          <ExitedFinalSaldoSection
-            rows={overtimeSections.exitedOpen}
-            total={overtimeOverview.exitedOpenFinalSaldoCount ?? overtimeSections.exitedOpen.length}
+            total={carryover.rows.length}
+            bind:page={carryoverPage}
+            bind:pageSize={carryoverPageSize}
           />
         {/if}
-      </Card>
-    {/if}
+      {/if}
+    </Card>
+  {/if}
+{/snippet}
 
-    {#if canReportRead}
-      <!-- Urlaubsübersicht (RPT-02) -->
-      <Card animate class="widget-card" style="--card-idx: 4;">
-        <CardHeader title="Urlaubsübersicht" sub="Anspruch, genommen, genehmigt und Resturlaub" />
+{#snippet overtimeBlock()}
+  {#if canTeamOvertime}
+    <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) -->
+    <Card animate class="widget-card" style="--card-idx: 3;">
+      <CardHeader title="Überstunden-Übersicht" sub="Saldo je Mitarbeiter" />
 
-        {#if pageSalonId !== null}
-          <p class="form-hint" data-testid="leave-overview-all-salons-note">
-            {ALL_SALONS_BLOCK_NOTE}
-          </p>
-        {/if}
+      {#if overtimeOverview}
+        <!-- Interim until the period table (612-05 Task 2) carries the median line. -->
+        <p class="form-hint" data-testid="team-median-line">
+          Median-Saldo {teamSaldo.medianMinutes === null
+            ? "—"
+            : fmtBalance(teamSaldo.medianMinutes)} h ·
+          {teamSaldo.excluded.length > 0
+            ? `${teamSaldo.excluded.length} nicht in der Kennzahl`
+            : `aus ${teamSaldo.counted} Personen`}
+        </p>
+      {/if}
 
-        {#if leaveOverviewLoading}
-          <p class="section-placeholder">Lade Urlaubsübersicht…</p>
-        {:else if leaveOverviewError}
-          <p class="section-error">{leaveOverviewError}</p>
-        {:else if leaveOverviewRows.length === 0}
-          <p class="section-placeholder">Keine Einträge für dieses Jahr</p>
-        {:else}
-          <div class="table-wrap">
-            <table class="leave-overview-table">
-              <thead>
+      {#if pageSalonId !== null}
+        <p class="form-hint" data-testid="overtime-salon-persons-note">
+          {SALON_HOME_PERSONS_NOTE} · {PERSON_SALDO_NOT_SPLIT_LABEL}
+        </p>
+      {/if}
+
+      {#if overtimeLoading}
+        <p class="section-placeholder">Lade Überstunden-Saldo…</p>
+      {:else if overviewSalonRejected}
+        <SalonScopeLabel label={null} rejected={true} />
+      {:else if overtimeError}
+        <p class="section-error">{overtimeError}</p>
+      {:else if overtimeOverview}
+        <div class="table-wrap">
+          <table class="overtime-table">
+            <thead>
+              <tr>
+                <th class="sortable" onclick={() => toggleSort("name")}>
+                  Mitarbeiter
+                  {#if sortColumn === "name"}<span class="sort-arrow"
+                      >{sortDir === "asc" ? "▲" : "▼"}</span
+                    >{/if}
+                </th>
+                <th>Nr.</th>
+                <th class="sortable numeric" onclick={() => toggleSort("balance")}>
+                  Abgeschlossen
+                  {#if sortColumn === "balance"}<span class="sort-arrow"
+                      >{sortDir === "asc" ? "▲" : "▼"}</span
+                    >{/if}
+                </th>
+                <th class="numeric">{forecastColumnLabel(overtimeSections.active)}</th>
+                <th class="numeric">Gesamt</th>
+                <th>Status</th>
+                <th class="actions-col">Aktionen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each pagedOvertimeRows as row (row.id)}
+                {@const cells = teamSaldoCells(row)}
+                {@const exclusion = teamSaldoExclusion(row)}
                 <tr>
-                  <th>Mitarbeiter</th>
-                  <th>Nr.</th>
-                  {#each VACATION_YEAR_COLUMNS as label (label)}
-                    <th class="numeric">{label}</th>
-                  {/each}
-                </tr>
-              </thead>
-              <tbody>
-                {#each pagedLeaveOverviewRows as row (row.employee.employeeNumber + ":" + (row.leaveType?.id ?? "missing"))}
-                  <tr>
-                    <td>{row.employee.firstName} {row.employee.lastName}</td>
-                    <td>{row.employee.employeeNumber}</td>
-                    {#if row.missingEntitlement}
-                      <td colspan="7">
-                        <span class="badge badge-yellow">kein Anspruch hinterlegt</span>
-                      </td>
-                    {:else}
-                      <td class="numeric">{formatDays(row.totalDays)}</td>
-                      <td class="numeric"
-                        >{formatDays(row.carriedOverEffectiveDays ?? row.carriedOverDays)}</td
+                  <td>
+                    {row.name}
+                    {#if exclusion !== null}
+                      <span class="badge badge-gray" title="Nicht im Median-Saldo"
+                        >{TEAM_SALDO_EXCLUSION_LABEL[exclusion]}</span
                       >
-                      <td class="numeric"
-                        >{formatDays(
-                          row.availableDays ??
-                            row.totalDays + (row.carriedOverEffectiveDays ?? row.carriedOverDays),
-                        )}</td
-                      >
-                      <td class="numeric">{formatDays(row.takenDays ?? row.usedDays)}</td>
-                      <td class="numeric">{formatDays(row.approvedUpcomingDays ?? 0)}</td>
-                      <td class="numeric">{formatDays(row.pendingDays)}</td>
-                      <td class="numeric strong">{formatDays(row.remainingDays)}</td>
                     {/if}
-                  </tr>
+                  </td>
+                  <td>{row.employeeNumber}</td>
+                  <td
+                    class="numeric"
+                    data-testid="saldo-cell-confirmed"
+                    title={cells.confirmed.title}
+                  >
+                    {cells.confirmed.text}
+                  </td>
+                  <td class="numeric" data-testid="saldo-cell-open" title={cells.open.title}>
+                    {cells.open.text}
+                    {#if row.rosterIncomplete}
+                      <span class="roster-dot" data-testid="saldo-roster-badge">
+                        <Icon
+                          name="circle-fill"
+                          size={6}
+                          title="Restmonat noch nicht vollständig verplant"
+                        />
+                      </span>
+                    {/if}
+                  </td>
+                  <td class="numeric" data-testid="saldo-cell-total" title={cells.total.title}>
+                    {cells.total.text}
+                  </td>
+                  <td
+                    ><span class={statusBadgeClass(row.status)}>{statusBadgeLabel(row.status)}</span
+                    ></td
+                  >
+                  <td class="row-actions">
+                    <div class="row-actions__group">
+                      <button
+                        class="btn-icon btn-icon-pdf"
+                        title="Stundennachweis PDF ({row.name})"
+                        onclick={() => downloadEmployeePdf(row.id, row.name)}>PDF</button
+                      >
+                      <button
+                        class="btn-icon btn-icon-datev"
+                        title="DATEV LODAS ({row.name})"
+                        onclick={() => downloadEmployeeDatev(row.id, row.name)}>TXT</button
+                      >
+                      {#if empDownloadErrors[`pdf-${row.id}`]}
+                        <span class="row-dl-error">{empDownloadErrors[`pdf-${row.id}`]}</span>
+                      {/if}
+                      {#if empDownloadErrors[`datev-${row.id}`]}
+                        <span class="row-dl-error">{empDownloadErrors[`datev-${row.id}`]}</span>
+                      {/if}
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          total={sortedOvertime.length}
+          bind:page={overtimePage}
+          bind:pageSize={overtimePageSize}
+        />
+        <ExitedFinalSaldoSection
+          rows={overtimeSections.exitedOpen}
+          total={overtimeOverview.exitedOpenFinalSaldoCount ?? overtimeSections.exitedOpen.length}
+        />
+      {/if}
+    </Card>
+  {/if}
+{/snippet}
+
+{#snippet leaveOverviewBlock()}
+  {#if canReportRead}
+    <!-- Urlaubsübersicht (RPT-02) -->
+    <Card animate class="widget-card" style="--card-idx: 4;">
+      <CardHeader title="Urlaubsübersicht" sub="Anspruch, genommen, genehmigt und Resturlaub" />
+
+      {#if pageSalonId !== null}
+        <p class="form-hint" data-testid="leave-overview-all-salons-note">
+          {ALL_SALONS_BLOCK_NOTE}
+        </p>
+      {/if}
+
+      {#if leaveOverviewLoading}
+        <p class="section-placeholder">Lade Urlaubsübersicht…</p>
+      {:else if leaveOverviewError}
+        <p class="section-error">{leaveOverviewError}</p>
+      {:else if leaveOverviewRows.length === 0}
+        <p class="section-placeholder">Keine Einträge für dieses Jahr</p>
+      {:else}
+        <div class="table-wrap">
+          <table class="leave-overview-table">
+            <thead>
+              <tr>
+                <th>Mitarbeiter</th>
+                <th>Nr.</th>
+                {#each VACATION_YEAR_COLUMNS as label (label)}
+                  <th class="numeric">{label}</th>
                 {/each}
-              </tbody>
-            </table>
-          </div>
-          <p class="form-hint leave-overview-hint">
-            Verfügbar = Anspruch + wirksamer Übertrag. Resturlaub = Verfügbar - Genommen -
-            Genehmigt. Beantragte Tage werden nicht abgezogen.
-          </p>
-          <Pagination
-            total={leaveOverviewRows.length}
-            bind:page={leaveOverviewPage}
-            bind:pageSize={leaveOverviewPageSize}
-          />
-        {/if}
-      </Card>
-    {/if}
-  </div>
-{/if}
+              </tr>
+            </thead>
+            <tbody>
+              {#each pagedLeaveOverviewRows as row (row.employee.employeeNumber + ":" + (row.leaveType?.id ?? "missing"))}
+                <tr>
+                  <td>{row.employee.firstName} {row.employee.lastName}</td>
+                  <td>{row.employee.employeeNumber}</td>
+                  {#if row.missingEntitlement}
+                    <td colspan="7">
+                      <span class="badge badge-yellow">kein Anspruch hinterlegt</span>
+                    </td>
+                  {:else}
+                    <td class="numeric">{formatDays(row.totalDays)}</td>
+                    <td class="numeric"
+                      >{formatDays(row.carriedOverEffectiveDays ?? row.carriedOverDays)}</td
+                    >
+                    <td class="numeric"
+                      >{formatDays(
+                        row.availableDays ??
+                          row.totalDays + (row.carriedOverEffectiveDays ?? row.carriedOverDays),
+                      )}</td
+                    >
+                    <td class="numeric">{formatDays(row.takenDays ?? row.usedDays)}</td>
+                    <td class="numeric">{formatDays(row.approvedUpcomingDays ?? 0)}</td>
+                    <td class="numeric">{formatDays(row.pendingDays)}</td>
+                    <td class="numeric strong">{formatDays(row.remainingDays)}</td>
+                  {/if}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <p class="form-hint leave-overview-hint">
+          Verfügbar = Anspruch + wirksamer Übertrag. Resturlaub = Verfügbar - Genommen - Genehmigt.
+          Beantragte Tage werden nicht abgezogen.
+        </p>
+        <Pagination
+          total={leaveOverviewRows.length}
+          bind:page={leaveOverviewPage}
+          bind:pageSize={leaveOverviewPageSize}
+        />
+      {/if}
+    </Card>
+  {/if}
+{/snippet}
 
 <style>
   /* ── KPI cluster (Card + KPIStat grid) ────────────────────────────────── */
@@ -1656,34 +1920,23 @@
     }
   }
 
-  /* ── Team overview section ───────────────────────────────────────────────── */
+  /* ── Period area (Issue #612) ────────────────────────────────────────────── */
 
-  .team-overview-section {
-    margin-top: var(--s-8);
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-6);
+  /* The sticky parent of the period bar: it sticks for the whole panel. */
+  .period-content {
+    min-width: 0;
   }
 
-  .team-overview-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 0.75rem;
+  /* The previous figures stay readable while a new period is being fetched. */
+  .period-body--dim {
+    opacity: 0.6;
+    transition: opacity 0.15s ease;
   }
 
-  .team-overview-header h2 {
-    font-size: 1.125rem;
-    font-weight: 700;
-    color: var(--text);
+  .period-note {
     margin: 0;
-  }
-
-  .team-period-controls {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.9375rem;
   }
 
   .period-select {

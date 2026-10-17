@@ -113,10 +113,12 @@ describe("/reports page wiring (Issue #613)", () => {
     expect(PAGE).toMatch(
       /let sortedOvertime = \$derived\.by\(\(\) => \{\s*const rows = overtimeSections\.active;/,
     );
-    expect(PAGE).toContain("let kpiTeamSize = $derived(overtimeSections.active.length)");
     // Issue #588: the median figure replaces the mean over the active rows.
     expect(PAGE).toContain("let teamSaldo = $derived(teamSaldoFigures(overtimeSections.active))");
-    expect(PAGE).toContain('overtimeSections.active.filter((r) => r.status === "CRITICAL")');
+    // Issue #612: the old team KPI row (Mitarbeiter / Kritische Salden / Urlaub genutzt) is gone,
+    // so its two derived counts are too; no figure of the page is derived from the exited rows.
+    expect(PAGE).not.toContain("kpiTeamSize");
+    expect(PAGE).not.toContain("kpiCriticalCount");
     // The table iterates the paged team rows, which slice sortedOvertime (Issue #588).
     expect(PAGE).toContain("{#each pagedOvertimeRows as row (row.id)}");
     expect(PAGE).toMatch(/let pagedOvertimeRows = \$derived\(\s*sortedOvertime\.slice\(/);

@@ -34,6 +34,9 @@ describe("reportRights (/reports)", () => {
         showTeamArea: true,
         canAddTeamEntry: true,
         canRecordTeamAbsence: true,
+        // Issue #612: the day list right and the tabs of the period area.
+        canTimeEntryRead: true,
+        periodTabs: ["zeiten", "urlaub", "heute"],
       });
     }
   });
@@ -63,6 +66,9 @@ describe("reportRights (/reports)", () => {
       showTeamArea: true,
       canAddTeamEntry: false,
       canRecordTeamAbsence: false,
+      canTimeEntryRead: false,
+      // Issue #612: export is a dialog of the period bar, not a tab - no period tab at all.
+      periodTabs: [],
     });
   });
 
@@ -85,6 +91,65 @@ describe("reportRights (/reports)", () => {
     expect(reportRights(noList).showTeamArea).toBe(false);
     expect(reportRights(null).showTeamArea).toBe(false);
     expect(reportRights(undefined).showTeamArea).toBe(false);
+  });
+});
+
+// Issue #612 (AC-612-6, D-612-7): the tabs of the period area and the day-list right follow the
+// permissions of the endpoints behind them, never the role.
+describe("reportRights - period tabs and day list right (Issue #612)", () => {
+  it("persona table of the tabs and canTimeEntryRead", () => {
+    const table: Record<string, { tabs: string[]; timeEntryRead: boolean }> = {
+      ADMIN: { tabs: ["zeiten", "urlaub", "heute"], timeEntryRead: true },
+      OWNER: { tabs: ["zeiten", "urlaub", "heute"], timeEntryRead: true },
+      MANAGER: { tabs: ["zeiten", "urlaub", "heute"], timeEntryRead: true },
+      // The Salonleitung holds team-overview:read but neither report:read nor overtime:read.
+      SALON_MANAGER: { tabs: ["heute"], timeEntryRead: true },
+      // HR: report:read + overtime:read, no team overview, no time-entry read.
+      HR: { tabs: ["zeiten", "urlaub"], timeEntryRead: false },
+      // The Ausbilder reads time entries of the apprentices but holds no report right.
+      TRAINER: { tabs: [], timeEntryRead: true },
+      EMPLOYEE: { tabs: [], timeEntryRead: false },
+    };
+    for (const [key, expected] of Object.entries(table)) {
+      const r = reportRights({ permissions: p[key] });
+      expect([...r.periodTabs], `${key} periodTabs`).toEqual(expected.tabs);
+      expect(r.canTimeEntryRead, `${key} canTimeEntryRead`).toBe(expected.timeEntryRead);
+    }
+  });
+
+  it("HR keeps both period tabs and issues no time-data request: no day list, no export, no notify", () => {
+    const r = reportRights({ permissions: p.HR });
+    expect(r.canTimeEntryRead).toBe(false);
+    expect(r.canReportExport).toBe(false);
+    expect(r.canReportNotify).toBe(false);
+    expect(r.canTeamAttendance).toBe(false);
+  });
+
+  it("the tab order is zeiten, urlaub, heute and each tab needs its own permission", () => {
+    expect([...reportRights({ permissions: ["report:read:ZUGEWIESEN"] }).periodTabs]).toEqual([
+      "zeiten",
+      "urlaub",
+    ]);
+    expect([
+      ...reportRights({ permissions: ["team-overview:read:ZUGEWIESEN"] }).periodTabs,
+    ]).toEqual(["heute"]);
+    expect([
+      ...reportRights({
+        permissions: ["team-overview:read:ZUGEWIESEN", "report:read:ZUGEWIESEN"],
+      }).periodTabs,
+    ]).toEqual(["zeiten", "urlaub", "heute"]);
+  });
+
+  it("a custom role with only report:export gets no period tab (export is a dialog of the bar)", () => {
+    expect([...reportRights(customExporter).periodTabs]).toEqual([]);
+  });
+
+  it("a compat role without permissions, or no list at all, gets no tab and no day list", () => {
+    for (const user of [adminRoleNoPermissions, noList, null, undefined]) {
+      const r = reportRights(user);
+      expect([...r.periodTabs]).toEqual([]);
+      expect(r.canTimeEntryRead).toBe(false);
+    }
   });
 });
 

@@ -162,7 +162,12 @@ export async function loadPermissionsIfMissing(): Promise<boolean> {
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
+  /**
+   * `options.signal` (Issue #612, orchestrator amendment 2) lets a page abandon a slow read when
+   * its question changes; an aborted request rejects with the browser's `AbortError`.
+   */
+  get: <T>(path: string, options?: { signal?: AbortSignal }) =>
+    request<T>(path, options?.signal ? { signal: options.signal } : {}),
   /** Multipart POST (file upload) with the same 401-refresh-and-retry as every other verb. */
   upload: <T>(path: string, formData: FormData) => upload<T>(path, formData),
   post: <T>(path: string, body: unknown) =>

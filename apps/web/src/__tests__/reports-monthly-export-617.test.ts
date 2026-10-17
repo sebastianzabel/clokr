@@ -100,7 +100,10 @@ describe("Issue #617 - /reports offers the Monatsexport to export holders only",
     expect(PAGE).toContain("/reports/leave-overview?year=");
   });
 
-  it("the team area subtitle names the Monatsexport", () => {
-    expect(PAGE).toContain("Monatsexport, Stundennachweise und DATEV-Export erstellen");
+  // Issue #612 (copy deck): the team subtitle describes the period report; the Monatsexport is
+  // named by its own card (until the export dialog of 612-06) and by "Exportieren" afterwards.
+  it("the team area subtitle names what the page now answers: one period of up to 12 months", () => {
+    expect(PAGE).toContain("Zeiten, Konten und Urlaub für einen Zeitraum – bis zu 12 Monate.");
+    expect(PAGE).not.toContain("Monatsexport, Stundennachweise und DATEV-Export erstellen");
   });
 });

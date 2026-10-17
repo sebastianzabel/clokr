@@ -32,10 +32,38 @@
     onOpenRange: (trigger: HTMLElement) => void;
     /** "Exportieren" was pressed; the trigger is handed over so focus can return to it. */
     onOpenExport: (trigger: HTMLElement) => void;
+    /**
+     * Reports the bar's rendered height in px (border included): the sticky header of the person
+     * table sits below the topbar AND this bar, so the page hands it down as `--period-bar-h`.
+     */
+    onHeight?: (px: number) => void;
   }
 
-  let { from, to, today, loading, canExport, onChange, onOpenRange, onOpenExport }: Props =
-    $props();
+  let {
+    from,
+    to,
+    today,
+    loading,
+    canExport,
+    onChange,
+    onOpenRange,
+    onOpenExport,
+    onHeight,
+  }: Props = $props();
+
+  let barEl: HTMLDivElement | undefined = $state();
+
+  // Hands the rendered height (border included) to the page. A guarded ResizeObserver instead of
+  // `bind:clientHeight`: the binding needs the API unconditionally and jsdom has none.
+  $effect(() => {
+    const el = barEl;
+    if (!el) return;
+    onHeight?.(el.offsetHeight);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => onHeight?.(el.offsetHeight));
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
 
   const kind = $derived(periodKind(from, to, today));
   const arrows = $derived(arrowLabels(kind));
@@ -59,7 +87,7 @@
   }
 </script>
 
-<div class="period-sticky" data-testid="reports-period-bar">
+<div class="period-sticky card-animate" data-testid="reports-period-bar" bind:this={barEl}>
   <MonthBar
     testIdPrefix="reports-period"
     date={cursor}

@@ -144,7 +144,8 @@ describe("Issue #542 — Berichte follow the header salon", () => {
     expect(PAGE).toContain("attendanceSalonRejected");
     expect(PAGE).toContain("overviewSalonRejected");
     expect(PAGE).toContain("exportSalonRejected");
-    expect(PAGE.match(/<SalonScopeLabel label=\{null\} rejected=\{true\} \/>/g)?.length).toBe(3);
+    // Issue #612: the period answer is a fourth place that turns the one 404 into the calm state.
+    expect(PAGE.match(/<SalonScopeLabel label=\{null\} rejected=\{true\} \/>/g)?.length).toBe(4);
   });
 
   it("[rejection] downloadPdf throws an ApiError carrying the response status", () => {
@@ -198,5 +199,52 @@ describe("Issue #542 — the page labels equal the PDF labels", () => {
   it("[mirror] the labels equal the constants of the PDF", () => {
     expect(SALON_EXPORT_PERSONS_NOTE).toBe(quoted("EXPORT_SALON_PERSONS_LABEL"));
     expect(PERSON_SALDO_NOT_SPLIT_LABEL).toBe(quoted("PERSON_SALDO_NOT_SPLIT_LABEL"));
+  });
+});
+
+// ── Issue #612: the period answer follows the header salon the same way (pin ledger row 2) ────────
+
+describe("Issue #612 - the period request follows the header salon", () => {
+  it("[filter] loadPeriod sends the salon through periodReportPath and nothing else", () => {
+    const body = functionBody("loadPeriod");
+    expect(body).toContain("periodReportPath(from, to, salon)");
+    expect(PAGE).toContain("void loadPeriod(urlState.from, urlState.to, salon)");
+    // The salon argument is the page filter, read inside the effect.
+    expect(PAGE).toMatch(
+      /const salon = pageSalonId;\s+const wanted = canReportRead && periodTabActive;/,
+    );
+  });
+
+  it("[effect] the period load waits for the salon context and reruns on a change of period or salon", () => {
+    const at = PAGE.indexOf("void loadPeriod(urlState.from, urlState.to, salon)");
+    const head = PAGE.lastIndexOf("$effect(() => {", at);
+    const body = PAGE.slice(head, at);
+    expect(body).toContain("if (!contextLoaded) return;");
+    expect(body).toContain("void periodKey;");
+    expect(body).toContain("const salon = pageSalonId;");
+    expect(body).toContain("untrack(");
+  });
+
+  it("[rejection] the period 404 is the calm state, never the server text", () => {
+    const body = functionBody("loadPeriod");
+    expect(body).toContain("isSalonFilterRejected(e)");
+    expect(body).toContain("periodSalonRejected = true;");
+    expect(PAGE).toContain("{:else if periodSalonRejected}");
+  });
+
+  it("[mirror] the URL carries the salon only while the page filter applies (P-10)", () => {
+    // The mirror writes `current`, which is `pageSalonId` (null without a page filter).
+    expect(PAGE).toContain("const current = pageSalonId;");
+    expect(PAGE).toContain(
+      "if (wanted !== current) writeState({ ...urlState, salonId: current });",
+    );
+    // An opened link may select only a salon of the caller's own context list (T-612-21).
+    expect(PAGE).toContain("ctx.salons.some((salon) => salon.id === wanted)");
+    expect(PAGE).toContain("showSalonOptions(ctx)");
+    expect(PAGE).toContain("salonContext.setSelection(wanted);");
+  });
+
+  it("[notes] the person-saldo note and the page filter still decide the KPI callout", () => {
+    expect(PAGE).toContain("filterActive={pageSalonId !== null}");
   });
 });

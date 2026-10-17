@@ -52,12 +52,17 @@ describe("/reports team area (Issue #588)", () => {
     expect(PAGE).toContain("let teamSaldo = $derived(teamSaldoFigures(overtimeSections.active))");
   });
 
-  it("the team KPI is the median with the persons outside the figure named next to it", () => {
-    expect(PAGE).toContain('label="Median-Saldo"');
-    expect(PAGE).toMatch(
-      /value=\{teamSaldo\.medianMinutes === null \? "—" : fmtBalance\(teamSaldo\.medianMinutes\)\}/,
+  // Issue #612 (pin ledger row 4): the team KPI tile is gone with the old KPI row; the median and
+  // the persons outside it are shown in a line of the overview card (until 612-05 Task 2 moves
+  // the line into the period table). Same module, same wording.
+  it("the team median is shown with the persons outside the figure named next to it", () => {
+    expect(CARD).toContain('data-testid="team-median-line"');
+    expect(CARD).toContain("Median-Saldo");
+    expect(CARD).toMatch(
+      /teamSaldo\.medianMinutes === null\s*\?\s*"—"\s*:\s*fmtBalance\(teamSaldo\.medianMinutes\)/,
     );
-    expect(PAGE).toContain("nicht in der Kennzahl");
+    expect(CARD).toContain("nicht in der Kennzahl");
+    expect(PAGE).not.toContain('label="Median-Saldo"');
     expect(PAGE).not.toContain("kpiAvgBalance");
     expect(PAGE).not.toContain('label="Ø Saldo"');
   });

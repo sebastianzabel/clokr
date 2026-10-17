@@ -229,3 +229,43 @@ describe("PeriodBar — responsive rules (measured on the component's own CSS)",
     expect(at(1280).styles("period-presets period-presets--idle").display).not.toBe("none");
   });
 });
+
+// Issue #612 (612-05): the page needs the bar's height for the sticky table header.
+describe("PeriodBar - reports its height (onHeight)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (HTMLElement.prototype as unknown as { offsetHeight?: number }).offsetHeight;
+  });
+
+  it("reports the rendered height once and again when the observer fires; disconnects on unmount", async () => {
+    let height = 96;
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get: () => height,
+    });
+    const observers: Array<{ cb: () => void; disconnect: ReturnType<typeof vi.fn> }> = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        disconnect = vi.fn();
+        constructor(public cb: () => void) {
+          observers.push(this);
+        }
+        observe() {}
+      },
+    );
+    const onHeight = vi.fn();
+    const { unmount } = renderWithTheme(PeriodBar, props({ onHeight }));
+    await Promise.resolve();
+    expect(onHeight).toHaveBeenLastCalledWith(96);
+    height = 140;
+    observers[0].cb();
+    expect(onHeight).toHaveBeenLastCalledWith(140);
+    unmount();
+    expect(observers[0].disconnect).toHaveBeenCalled();
+  });
+
+  it("works without a ResizeObserver and without a listener", () => {
+    expect(() => renderWithTheme(PeriodBar, props())).not.toThrow();
+  });
+});
