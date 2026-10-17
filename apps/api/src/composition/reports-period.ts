@@ -39,6 +39,7 @@ import {
   type EmployeeWithIncludes,
 } from "./reports";
 import { salonViewMemberIds, SALON_VIEW_NOT_FOUND } from "./salon-view";
+import { periodCsvFilename, periodTableCsv } from "./period-csv";
 
 /**
  * Issue #612 — `GET /api/v1/reports/period`: the period report of the reports page.
@@ -869,6 +870,56 @@ export async function reportsPeriodRoutes(app: FastifyInstance) {
         }
         throw err;
       }
+    },
+  });
+
+  // GET /api/v1/reports/period/csv?from=YYYY-MM&to=YYYY-MM&salonId=&employeeId=
+  // The "Zeiten & Konten" table of the same assembly as the JSON, as a spreadsheet file (P-11). It is
+  // an export of personal data: the reach is the one of `report:export`, and every successful
+  // download is audited BEFORE the bytes leave. A refusal (400/404) throws out of the assembly and
+  // writes nothing.
+  app.get("/period/csv", {
+    schema: {
+      tags: ["Reporting"],
+      security: [{ bearerAuth: [] }],
+      description:
+        "CSV export of the period table (Zeiten & Konten): one line per person with Soll, Ist, saldo at the start, over the period and at the end in hours with a decimal comma, UTF-8 with BOM, semicolon separated. Same assembly and rules as GET /reports/period, with the reach of report:export. Audited as EXPORT.",
+    },
+    preHandler: requirePermission("report:export:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const query = periodQuerySchema.parse(req.query);
+      let report: Awaited<ReturnType<typeof assemblePeriodReport>>;
+      try {
+        report = await assemblePeriodReport(app, req, query, "report:export:ZUGEWIESEN", {
+          sections: "times",
+        });
+      } catch (err) {
+        if (err instanceof PeriodRangeError) return reply.code(400).send({ error: err.message });
+        if (err instanceof PeriodSalonNotFoundError) {
+          return reply.code(404).send(SALON_VIEW_NOT_FOUND);
+        }
+        throw err;
+      }
+      const file = periodTableCsv(report.rows);
+      await app.audit({
+        userId: req.user.sub,
+        action: "EXPORT",
+        entity: "Report",
+        newValue: {
+          type: "PERIOD_CSV",
+          from: report.from,
+          to: report.to,
+          // The validated salon id (never a name) - only present under a filter.
+          salonId: "salonId" in report ? report.salonId : null,
+          personCount: report.rows.length,
+        },
+      });
+      reply.header("Content-Type", "text/csv; charset=utf-8");
+      reply.header(
+        "Content-Disposition",
+        `attachment; filename="${periodCsvFilename(report.from, report.to)}"`,
+      );
+      return reply.send(file);
     },
   });
 }

@@ -298,6 +298,8 @@ const READERS: readonly ReaderEntry[] = [
   // Issue #612: the period report reads the population of EVERY month it lists through its one
   // module-private assembly, which spells the rule once.
   route(REPORTS_PERIOD, "/period", ["assemblePeriodReport"]),
+  // The CSV of the period table calls the same assembly (Issue #612, P-11).
+  route(REPORTS_PERIOD, "/period/csv", ["assemblePeriodReport"]),
   {
     file: REPORTS_PERIOD,
     kind: "function",

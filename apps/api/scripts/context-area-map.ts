@@ -106,6 +106,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/composition/dashboard.ts": "komposition", // 11 models read across contexts by design (D-17)
   "src/composition/reports.ts": "komposition", // 7 models read across contexts by design (D-17)
   "src/composition/reports-period.ts": "komposition", // Issue #612 — sums the account's and the absence kernels' month answers for a period (GET /reports/period); owns no model, carries no rule
+  "src/composition/period-csv.ts": "komposition", // Issue #612 (P-11) — pure CSV formatting of the period rows computed by reports-period.ts; no Prisma, no model, no rule
   "src/composition/team-entry-scope.ts": "komposition", // Issue #85 (D-04/D-05) — partitions entry rows by the Unterbau's in-scope id set; owns no model, carries no rule
   "src/composition/salon-view.ts": "komposition", // Issue #542 (P-01) — the one membership rule of a salon view (entry salon or Stammsalon on a day) and the one 404 body of the composition's salon views; pure, owns no model, carries no rule of its own
   "src/composition/pdf.ts": "komposition", // pure PDF-layout rendering of pre-computed data; sole caller is reports.ts; no Prisma access, no Fachregel

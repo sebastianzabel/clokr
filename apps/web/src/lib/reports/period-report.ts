@@ -162,3 +162,13 @@ export function periodReportPath(from: YearMonth, to: YearMonth, salonId: string
   const base = `/reports/period?from=${ymKey(from)}&to=${ymKey(to)}`;
   return salonId === null ? base : `${base}&salonId=${encodeURIComponent(salonId)}`;
 }
+
+/**
+ * The request path of the CSV download of the "Zeiten & Konten" table (P-11): the same query as the
+ * JSON answer, so the file shows what the page shows. The file is fetched with the session's token
+ * (a plain link carries none) and saved under the name the response proposes.
+ */
+export function periodCsvPath(from: YearMonth, to: YearMonth, salonId: string | null): string {
+  const base = `/reports/period/csv?from=${ymKey(from)}&to=${ymKey(to)}`;
+  return salonId === null ? base : `${base}&salonId=${encodeURIComponent(salonId)}`;
+}

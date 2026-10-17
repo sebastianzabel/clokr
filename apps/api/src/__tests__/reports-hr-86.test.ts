@@ -506,6 +506,8 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
       "GET /api/v1/reports/leave-overview": 200,
       "GET /api/v1/reports/carryover-at-risk": 200,
       "GET /api/v1/reports/period": 200,
+      // Issue #612: the period table as a file is an export - report:read alone is refused.
+      "GET /api/v1/reports/period/csv": 403,
       "POST /api/v1/reports/carryover-warn": 403,
       "GET /api/v1/reports/datev": 403,
       "GET /api/v1/reports/datev/employee": 403,
@@ -521,7 +523,7 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
       if (route.endsWith("/leave-overview")) {
         return `?year=${year}`;
       }
-      if (route.endsWith("/period")) {
+      if (route.endsWith("/period") || route.endsWith("/period/csv")) {
         return `?from=${prevYear}-${pad2(prevMonth)}&to=${prevYear}-${pad2(prevMonth)}`;
       }
       if (route.endsWith("/datev/employee")) return `?employeeId=${employeeX.id}&${q}`;

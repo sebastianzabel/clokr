@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { periodReportPath, ymKey, type PeriodAbsence } from "../period-report";
+import { periodCsvPath, periodReportPath, ymKey, type PeriodAbsence } from "../period-report";
 
 describe("period-report contract (Issue #612)", () => {
   it("builds the request path with zero-padded months", () => {
@@ -17,6 +17,19 @@ describe("period-report contract (Issue #612)", () => {
   it("appends an encoded salon id", () => {
     expect(periodReportPath({ year: 2026, month: 1 }, { year: 2026, month: 1 }, "a b&c")).toBe(
       "/reports/period?from=2026-01&to=2026-01&salonId=a%20b%26c",
+    );
+  });
+
+  it("builds the CSV download path with the same query as the JSON answer", () => {
+    const from = { year: 2026, month: 7 };
+    const to = { year: 2026, month: 10 };
+    expect(periodCsvPath(from, to, null)).toBe("/reports/period/csv?from=2026-07&to=2026-10");
+    expect(periodCsvPath(from, to, "a b&c")).toBe(
+      "/reports/period/csv?from=2026-07&to=2026-10&salonId=a%20b%26c",
+    );
+    // the file and the page ask the same question: only the route differs
+    expect(periodCsvPath(from, to, "s1").replace("/period/csv", "/period")).toBe(
+      periodReportPath(from, to, "s1"),
     );
   });
 
