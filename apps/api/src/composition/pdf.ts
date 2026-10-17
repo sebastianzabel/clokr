@@ -1,7 +1,12 @@
 import PDFDocument from "pdfkit";
+import { fmtHM, fmtSignedHM, fmtDecimalDe } from "./pdf-format";
 
 // ── Brand constants ──────────────────────────────────────
-const BRAND_COLOR = "#4f46e5";
+// Issue #617 (D-617-5): the app's default brand colour (`--brand` of the pflaume theme in
+// apps/web/src/tokens.css) - no PDF carries the former indigo any more.
+const BRAND_COLOR = "#80377b";
+// Light tint of BRAND_COLOR for the subtitle on the brand band (readable on it).
+const BRAND_TINT = "#ecd9ea";
 const HEADER_H = 44;
 
 // ── Saldo labels (SALDO-DISP-05) ─────────────────────────
@@ -132,7 +137,7 @@ function drawColoredHeader(doc: PDFKit.PDFDocument, title: string, subtitle: str
       width: doc.page.width - 100,
     });
   doc
-    .fillColor("#d4d4f7")
+    .fillColor(BRAND_TINT)
     .fontSize(9)
     .font("Helvetica")
     .text(subtitle, 50, 28, {
@@ -157,6 +162,31 @@ function drawSmallFooter(doc: PDFKit.PDFDocument): void {
     );
   doc.fillColor("#111827");
   // Restore y so footer drawing doesn't advance the content cursor
+  doc.y = savedY;
+}
+
+/**
+ * Issue #617 (D-617-4) - writes a centred footer line at `page.height - 40` WITHOUT adding a page.
+ *
+ * PDFKit starts a new page when a text call ends below `page.height - margins.bottom`, even with
+ * `lineBreak: false`; a footer inside the bottom margin therefore produced a blank trailing page.
+ * The helper zeroes the page's bottom margin while it writes, then restores the margin and the
+ * cursor, so the footer never moves the content flow. Every PDF footer goes through here.
+ */
+export function writeFooter(doc: PDFKit.PDFDocument, text: string): void {
+  const savedBottom = doc.page.margins.bottom;
+  const savedX = doc.x;
+  const savedY = doc.y;
+  const left = doc.page.margins.left;
+  const width = doc.page.width - left - doc.page.margins.right;
+  doc.page.margins.bottom = 0;
+  doc.fontSize(7).font("Helvetica").fillColor("#6b7280");
+  // Centred by hand: with `lineBreak: false` PDFKit does not apply `align`.
+  const x = left + Math.max(0, (width - doc.widthOfString(text)) / 2);
+  doc.text(text, x, doc.page.height - 40, { lineBreak: false });
+  doc.page.margins.bottom = savedBottom;
+  doc.fillColor("#111827");
+  doc.x = savedX;
   doc.y = savedY;
 }
 
@@ -765,5 +795,352 @@ export function generateVacationOverviewPdf(data: {
       );
 
     doc.end();
+  });
+}
+
+// ── Monatsexport (Issue #617) ─────────────────────────────────────────────────
+// The human-readable twin of the DATEV export: one row per person of the month, no day rows
+// (the § 16 Abs. 2 ArbZG day records stay in the Stundennachweis). Every figure arrives
+// pre-computed - the renderer formats, it computes nothing.
+
+export const MONTHLY_EXPORT_STATUS_LABEL = {
+  CONFIRMED: "Bestätigt",
+  FORECAST: "Prognose",
+  UNLABELLED: "ohne Soll",
+} as const;
+
+export interface MonthlyExportAbsenceDays {
+  vacation: number;
+  sick: number;
+  sickChild: number;
+  overtimeComp: number;
+  special: number;
+  education: number;
+  unpaid: number;
+  maternity: number;
+  parental: number;
+}
+
+export interface MonthlyExportRow {
+  employeeName: string;
+  employeeNumber: string;
+  status: keyof typeof MONTHLY_EXPORT_STATUS_LABEL;
+  workedMinutes: number;
+  expectedMinutes: number;
+  balanceMinutes: number;
+  balanceAdjustmentMinutes: number;
+  /** Arbeitstage of the month, exactly the DATEV Lohnart values. */
+  absenceDays: MonthlyExportAbsenceDays;
+  /** A confirmed § 9 BUrlG credit lies in the month (prints the § 9 legend). */
+  section9: boolean;
+}
+
+export interface MonthlyExportData {
+  tenantName: string;
+  /** "September 2026" */
+  monthLabel: string;
+  year: number;
+  month: number;
+  /** "dd.MM.yyyy, HH:mm" in the tenant time zone. */
+  generatedAt: string;
+  rows: MonthlyExportRow[];
+}
+
+type ExportColumn = {
+  key: string;
+  /** Header lines (an explicit break keeps long German words inside their column). */
+  header: string[];
+  /** Preferred width in points. */
+  pref: number;
+  align: "left" | "right";
+  cell: (row: MonthlyExportRow) => string;
+  /** Hidden when false (data-dependent columns). */
+  visible: (rows: MonthlyExportRow[]) => boolean;
+  /** Dash instead of the cell text for an unlabelled row (no Soll to compare against). */
+  dashWhenUnlabelled?: boolean;
+};
+
+const EXPORT_FONT_SIZE = 7;
+const EXPORT_ROW_H = 14;
+const EXPORT_HEADER_H = 22;
+const EXPORT_MARGIN = 36;
+// Content must end above the footer line at `page.height - 40`.
+const EXPORT_BOTTOM_LIMIT = 56;
+const ALWAYS = (): boolean => true;
+
+function dayCell(value: number): string {
+  return value === 0 ? "" : fmtDecimalDe(value, 1);
+}
+
+/** The columns of section "Monat". */
+function monthColumns(): ExportColumn[] {
+  return [
+    {
+      key: "name",
+      header: ["Mitarbeiter"],
+      pref: 140,
+      align: "left",
+      cell: (r) => r.employeeName,
+      visible: ALWAYS,
+    },
+    {
+      key: "number",
+      header: ["Nr."],
+      pref: 56,
+      align: "left",
+      cell: (r) => r.employeeNumber,
+      visible: ALWAYS,
+    },
+    {
+      key: "status",
+      header: ["Status"],
+      pref: 50,
+      align: "left",
+      cell: (r) => MONTHLY_EXPORT_STATUS_LABEL[r.status],
+      visible: ALWAYS,
+    },
+    {
+      key: "soll",
+      header: ["Soll"],
+      pref: 52,
+      align: "right",
+      cell: (r) => fmtHM(r.expectedMinutes),
+      visible: ALWAYS,
+      dashWhenUnlabelled: true,
+    },
+    {
+      key: "ist",
+      header: ["Ist"],
+      pref: 52,
+      align: "right",
+      cell: (r) => fmtHM(r.workedMinutes),
+      visible: ALWAYS,
+    },
+    {
+      key: "saldo",
+      header: ["Saldo"],
+      pref: 52,
+      align: "right",
+      cell: (r) => fmtSignedHM(r.balanceMinutes),
+      visible: ALWAYS,
+      dashWhenUnlabelled: true,
+    },
+    {
+      key: "vacation",
+      header: ["Urlaub"],
+      pref: 38,
+      align: "right",
+      cell: (r) => dayCell(r.absenceDays.vacation),
+      visible: ALWAYS,
+    },
+    {
+      key: "sick",
+      header: ["Krank"],
+      pref: 38,
+      align: "right",
+      cell: (r) => dayCell(r.absenceDays.sick),
+      visible: ALWAYS,
+    },
+  ];
+}
+
+/**
+ * Column widths for the visible columns: every column keeps at least the width of its longest
+ * header line; when the preferred widths do not fit, the name column gives way first, then the rest
+ * shrinks towards its minimum. Widths are never below the text, so a header word never overflows.
+ */
+function exportColumnWidths(
+  doc: PDFKit.PDFDocument,
+  columns: ExportColumn[],
+  available: number,
+): number[] {
+  doc.font("Helvetica-Bold").fontSize(EXPORT_FONT_SIZE);
+  const mins = columns.map((c) => {
+    const widest = Math.max(...c.header.map((line) => doc.widthOfString(line)));
+    return Math.ceil(widest) + 6;
+  });
+  const prefs = columns.map((c, i) => Math.max(c.pref, mins[i]));
+  const total = prefs.reduce((a, b) => a + b, 0);
+  if (total <= available) {
+    // Spare width goes to the name column.
+    const widths = [...prefs];
+    widths[0] += available - total;
+    return widths;
+  }
+  // Shrink: the name column first (down to 90 pt), the others proportionally to their slack.
+  const widths = [...prefs];
+  let excess = total - available;
+  const nameSlack = Math.max(0, widths[0] - Math.max(mins[0], 90));
+  const nameCut = Math.min(excess, nameSlack);
+  widths[0] -= nameCut;
+  excess -= nameCut;
+  if (excess > 0) {
+    const slack = widths.map((w, i) => (i === 0 ? 0 : Math.max(0, w - mins[i])));
+    const slackTotal = slack.reduce((a, b) => a + b, 0);
+    const factor = slackTotal > 0 ? Math.min(1, excess / slackTotal) : 0;
+    for (let i = 1; i < widths.length; i++) widths[i] -= slack[i] * factor;
+  }
+  return widths;
+}
+
+/** Truncates `text` with an ellipsis so it fits `width` at the current font. */
+function fitText(doc: PDFKit.PDFDocument, text: string, width: number): string {
+  if (doc.widthOfString(text) <= width) return text;
+  let cut = text;
+  while (cut.length > 1 && doc.widthOfString(`${cut}…`) > width) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
+/**
+ * Writes one single-line table cell. Alignment is done by hand (x from the measured text width):
+ * with `lineBreak: false` PDFKit ignores `width`/`align`, and a wrapping call could add a page.
+ */
+function drawCell(
+  doc: PDFKit.PDFDocument,
+  text: string,
+  x: number,
+  y: number,
+  width: number,
+  align: "left" | "right",
+): void {
+  const textWidth = doc.widthOfString(text);
+  const left = align === "right" ? x + width - 2 - textWidth : x + 2;
+  doc.text(text, left, y, { lineBreak: false });
+}
+
+function drawExportTableHeader(
+  doc: PDFKit.PDFDocument,
+  columns: ExportColumn[],
+  widths: number[],
+  y: number,
+): number {
+  doc.font("Helvetica-Bold").fontSize(EXPORT_FONT_SIZE).fillColor("#374151");
+  let x = EXPORT_MARGIN;
+  columns.forEach((col, i) => {
+    col.header.forEach((line, lineIndex) => {
+      drawCell(doc, line, x, y + lineIndex * 9, widths[i], col.align);
+    });
+    x += widths[i];
+  });
+  const lineY = y + EXPORT_HEADER_H - 2;
+  const totalWidth = widths.reduce((a, b) => a + b, 0);
+  doc
+    .moveTo(EXPORT_MARGIN, lineY)
+    .lineTo(EXPORT_MARGIN + totalWidth, lineY)
+    .lineWidth(0.5)
+    .stroke("#9ca3af");
+  doc.fillColor("#111827");
+  return y + EXPORT_HEADER_H;
+}
+
+function drawLegend(doc: PDFKit.PDFDocument, text: string, y: number): number {
+  doc.font("Helvetica").fontSize(7).fillColor("#6b7280");
+  const width = doc.page.width - 2 * EXPORT_MARGIN;
+  const height = doc.heightOfString(text, { width });
+  if (y + height > doc.page.height - EXPORT_BOTTOM_LIMIT) {
+    doc.addPage();
+    y = EXPORT_MARGIN;
+  }
+  doc.text(text, EXPORT_MARGIN, y, { width });
+  doc.fillColor("#111827");
+  return y + height + 3;
+}
+
+/**
+ * Draws the Monatsexport body on `doc` (header band, section "Monat", legends). Separate from
+ * `generateMonthlyExportPdf` so tests can drive it with a recording stub; the footer is added by
+ * the generator in a second pass because "Seite X von Y" needs the final page count.
+ */
+export function drawMonthlyExport(doc: PDFKit.PDFDocument, data: MonthlyExportData): void {
+  drawColoredHeader(doc, data.tenantName, `Monatsexport · ${data.monthLabel}`);
+  const available = doc.page.width - 2 * EXPORT_MARGIN;
+
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827");
+  doc.text(`Monat: ${data.monthLabel}`, EXPORT_MARGIN, doc.y);
+  let y = doc.y + 6;
+
+  if (data.rows.length === 0) {
+    doc.font("Helvetica").fontSize(9).fillColor("#374151");
+    doc.text("Keine Personen in diesem Monat.", EXPORT_MARGIN, y);
+    return;
+  }
+
+  const columns = monthColumns().filter((c) => c.visible(data.rows));
+  const widths = exportColumnWidths(doc, columns, available);
+  y = drawExportTableHeader(doc, columns, widths, y);
+
+  for (const row of data.rows) {
+    if (y + EXPORT_ROW_H > doc.page.height - EXPORT_BOTTOM_LIMIT) {
+      doc.addPage();
+      y = drawExportTableHeader(doc, columns, widths, EXPORT_MARGIN);
+    }
+    doc.font("Helvetica").fontSize(EXPORT_FONT_SIZE).fillColor("#111827");
+    let x = EXPORT_MARGIN;
+    columns.forEach((col, i) => {
+      const unlabelledDash = col.dashWhenUnlabelled && row.status === "UNLABELLED";
+      const raw = unlabelledDash ? "—" : col.cell(row);
+      if (raw !== "") {
+        drawCell(doc, fitText(doc, raw, widths[i] - 4), x, y + 3, widths[i], col.align);
+      }
+      x += widths[i];
+    });
+    const lineY = y + EXPORT_ROW_H - 1;
+    doc
+      .moveTo(EXPORT_MARGIN, lineY)
+      .lineTo(EXPORT_MARGIN + widths.reduce((a, b) => a + b, 0), lineY)
+      .lineWidth(0.25)
+      .stroke("#e5e7eb");
+    y += EXPORT_ROW_H;
+  }
+
+  // ── Legends: only what the table actually prints ─────────────────────────────
+  y += 6;
+  if (data.rows.some((r) => r.status === "FORECAST")) {
+    y = drawLegend(
+      doc,
+      "Prognose: Der Monat ist noch nicht abgeschlossen — die Werte können sich bis zum Monatsabschluss noch ändern.",
+      y,
+    );
+  }
+  if (data.rows.some((r) => r.section9)) {
+    y = drawLegend(doc, SECTION9_LEGEND, y);
+  }
+  y = drawLegend(
+    doc,
+    "Zeiten in Stunden:Minuten. Abwesenheiten in Arbeitstagen wie im DATEV-Export (leer = keine).",
+    y,
+  );
+}
+
+/** Renders the Monatsexport as an A4 landscape PDF (header, table, "Seite X von Y" footer). */
+export function generateMonthlyExportPdf(data: MonthlyExportData): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({
+      size: "A4",
+      layout: "landscape",
+      margin: EXPORT_MARGIN,
+      bufferPages: true,
+    });
+    const chunks: Buffer[] = [];
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    try {
+      drawMonthlyExport(doc, data);
+
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        writeFooter(
+          doc,
+          `Erstellt am ${data.generatedAt}  ·  Seite ${i + 1} von ${range.count}  ·  Clokr`,
+        );
+      }
+      doc.flushPages();
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
   });
 }

@@ -393,6 +393,7 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
       "POST /api/v1/reports/carryover-warn": 403,
       "GET /api/v1/reports/datev": 403,
       "GET /api/v1/reports/datev/employee": 403,
+      "GET /api/v1/reports/monthly-export/pdf": 403,
       "GET /api/v1/reports/monthly/pdf": 403,
       "GET /api/v1/reports/monthly/pdf/all": 403,
       "GET /api/v1/reports/leave-list/pdf": 403,

@@ -280,7 +280,23 @@ const READERS: readonly ReaderEntry[] = [
   route(REPORTS, "/leave-overview", ["reportPopulationWhere", "listEntitlementsForYear"]),
   route(REPORTS, "/leave-overview/pdf", ["reportPopulationWhere", "listEntitlementsForYear"]),
   route(REPORTS, "/carryover-at-risk", ["getExpiringCarryOver"]),
-  route(REPORTS, "/datev", ["employedInPeriodWhere"]),
+  // Issue #617: DATEV and the Monatsexport read their persons through ONE module-private loader
+  // (`loadDatevMonth`); the export reaches it only through its one selection function, so the
+  // employment core is spelled once and the registered readers follow the call chain.
+  route(REPORTS, "/datev", ["loadDatevMonth"]),
+  route(REPORTS, "/monthly-export/pdf", ["selectMonthlyExportPersons"]),
+  {
+    file: REPORTS,
+    kind: "function",
+    name: "loadDatevMonth",
+    calls: ["employedInPeriodWhere"],
+  },
+  {
+    file: REPORTS,
+    kind: "function",
+    name: "selectMonthlyExportPersons",
+    calls: ["loadDatevMonth"],
+  },
   route(REPORTS, "/datev/employee", ["employedInPeriodWhere"]),
   route(OVERTIME, "/close-month/status", ["reportPopulationWhere"]),
   route(OVERTIME, "/close-month/year-status", ["reportPopulationWhere"]),

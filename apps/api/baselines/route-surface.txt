@@ -88,6 +88,7 @@
 │   └── /yaml (GET, HEAD)
 │   └── /year-status (GET, HEAD)
 │   ├── * (HEAD, GET)
+│   ├── -export/pdf (GET, HEAD)
 │   ├── /acks (POST)
 │   ├── /allowed-cards (GET, HEAD)
 │   ├── /apply-defaults/preview (POST)

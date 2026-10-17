@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import PDFDocument from "pdfkit";
 import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
@@ -20,6 +20,8 @@ import {
 import {
   SECTION9_LEGEND,
   generateMonthlyReportPdf,
+  generateMonthlyExportPdf,
+  type MonthlyExportRow,
   generateVacationOverviewPdf,
   streamCompanyMonthlyReportPdf,
   streamLeaveListPdf,
@@ -322,6 +324,180 @@ type DatevEmployee = {
   }>;
 };
 
+// Issue #210: same UTC walk and clipping workDaysInMonthRange() always did, now also
+// exposed as day keys — internal identity only, never rendered — so the sickness /
+// § 9 / non-sick set operations below all derive from the ONE day rule this export
+// has always used. workDaysInMonthRange() is unchanged in behaviour, only in
+// implementation (its length). Issue #617: module-level so `datevPersonFigures` can use it.
+function workdayKeysInMonthRange(from: Date, to: Date, firstDay: Date, lastDay: Date): string[] {
+  const s = from < firstDay ? firstDay : from;
+  const e2 = to > lastDay ? lastDay : to;
+  const keys: string[] = [];
+  const cur = new Date(s);
+  while (cur <= e2) {
+    const dow = cur.getUTCDay();
+    if (dow !== 0 && dow !== 6) keys.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return keys;
+}
+
+// Issue #451 (D-01): the ONE accessor for a priced, § 9-netted leave-day count — no counting
+// happens here, it reads what leaveDaysByEmployee (fetchLeaveDaysByEmployeeForDatev,
+// leaveDaysByCodeWithin) already computed. A code absent from the employee's map (no counted
+// request that month) reads as 0.
+function priceDaysFor(
+  leaveDaysByEmployee: Map<string, Map<LeaveTypeCode, LeaveDaysForCode>>,
+  emp: { id: string },
+  code: LeaveTypeCode,
+): number {
+  return leaveDaysByEmployee.get(emp.id)?.get(code)?.netDays ?? 0;
+}
+
+/**
+ * Issue #617 - the per-person figures of the DATEV export: the worked minutes the Normalstunden line
+ * is built from and the nine absence day counts (Arbeitstage) of the Lohnart lines. It is the ONLY
+ * place those numbers are derived: `buildDatevLodas` maps the result to LODAS lines and the
+ * Monatsexport PDF prints the very same object, so the human-readable document cannot differ from the
+ * payroll file (no second computation). Behaviour-preserving extraction of the former loop body.
+ */
+type DatevPersonFigures = {
+  /** Sum of the person's closed, valid entries of the month (every entry type, as DATEV has always summed). */
+  workedMinutes: number;
+  /** Krank (Lohnart `lna.krank`): sick days incl. the § 9 union and the orphan § 9 days. */
+  sickDays: number;
+  sickChildDays: number;
+  vacationDays: number;
+  overtimeCompDays: number;
+  specialDays: number;
+  educationDays: number;
+  unpaidDays: number;
+  maternityDays: number;
+  parentalDays: number;
+};
+
+function datevPersonFigures(
+  emp: DatevEmployee,
+  ctx: {
+    firstDay: Date;
+    lastDay: Date;
+    section9ByEmp?: Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>;
+    leaveDaysByEmployee: Map<string, Map<LeaveTypeCode, LeaveDaysForCode>>;
+  },
+): DatevPersonFigures {
+  // Working hours
+  const workedMinutes = emp.timeEntries.reduce((sum, e) => addWorkingMinutes(sum, e), 0);
+
+  // ── Krankheit aus LeaveRequest (Issue #210) ────────────────────────────
+  // Sickness lives in LeaveRequest; Absence.SICK/SICK_CHILD has no production writer
+  // (measured zero rows on the pseudonymised production copy, 2026-08-30) and no
+  // longer contributes here. A § 9-credited day is UNIONED into the sick day set
+  // rather than added on top of it: Section9Credit.sickRequestId is a non-null FK to
+  // the sickness LeaveRequest that produced the credit, so once the base is sourced
+  // from that same LeaveRequest, the credited day is already inside it — adding
+  // section9WorkDays again would double-count it, the exact T-104-09-PAYROLL class
+  // of defect this time on the Krank side of the ledger. An un-credited sick day that
+  // overlaps a non-sick Lohnart day (e.g. planned vacation) stays on the non-sick
+  // line: § 9 BUrlG returns the vacation day only on presentation of an ärztliches
+  // Zeugnis, so without a CONFIRMED credit the day is legally still Urlaub and must
+  // not be reported twice (would inflate total Ausfalltage beyond the workdays in
+  // the period).
+  const nonSickClaimed = new Set<string>();
+  for (const lr of emp.leaveRequests) {
+    if (lr.leaveType.code === null || isSickLeaveTypeCode(lr.leaveType.code)) continue;
+    for (const key of workdayKeysInMonthRange(
+      lr.startDate,
+      lr.endDate,
+      ctx.firstDay,
+      ctx.lastDay,
+    )) {
+      nonSickClaimed.add(key);
+    }
+  }
+  const section9Keys = new Set<string>();
+  for (const c of ctx.section9ByEmp?.get(emp.id) ?? []) {
+    for (const key of workdayKeysInMonthRange(
+      c.creditedStart,
+      c.creditedEnd,
+      ctx.firstDay,
+      ctx.lastDay,
+    )) {
+      section9Keys.add(key);
+    }
+  }
+  // A day already booked on a non-sick line blocks a sick claim — UNLESS § 9 already
+  // took it off that line, in which case the credit is the authority that moved it.
+  const blockedForSick = new Set([...nonSickClaimed].filter((key) => !section9Keys.has(key)));
+
+  // One Set shared by both sickness lines, so a day claimed by both a SICK and a
+  // contradictory SICK_CHILD row lands on exactly one line (SICK is evaluated first).
+  const sickClaimed = new Set<string>();
+  function sickDaysForCode(code: LeaveTypeCode): number {
+    let total = 0;
+    for (const lr of sortLeaveForDedup(
+      emp.leaveRequests.filter((r) => r.leaveType.code === code),
+    )) {
+      let n = 0;
+      for (const key of workdayKeysInMonthRange(
+        lr.startDate,
+        lr.endDate,
+        ctx.firstDay,
+        ctx.lastDay,
+      )) {
+        if (blockedForSick.has(key) || sickClaimed.has(key)) continue;
+        sickClaimed.add(key);
+        n++;
+      }
+      total += lr.halfDay ? n / 2 : n;
+    }
+    return total;
+  }
+  const sickDaysBase = sickDaysForCode("SICK");
+  const sickChildDays = sickDaysForCode("SICK_CHILD");
+  // A CONFIRMED § 9 day whose sickness request could not be read as a typed sickness
+  // row (soft-deleted, moved off APPROVED, or a pre-Phase-97 row whose code is still
+  // null) has nevertheless already been subtracted from the Urlaub line — add it back
+  // here so a day that left Urlaub can never vanish from the file. Deliberately
+  // attributed to Krank (200), not Kinderkrank (201): the sub-type is unresolvable
+  // once the sickness request itself is unreadable, and § 9 BUrlG concerns the
+  // employee's own illness, which makes Krank the correct default.
+  const section9OrphanDays = [...section9Keys].filter((key) => !sickClaimed.has(key)).length;
+
+  // Abwesenheiten aus LeaveRequest (nur Arbeitstage)
+  //
+  // Issue #451 (D-01): the Urlaub line now reads leaveDaysByEmployee's own § 9-netted
+  // `netDays` — the absence context's priced VACATION count for this month, already clipped,
+  // workDay-aware (incl. SHIFT_BASED contract days and Tue-Sat-style contracts), holiday-aware
+  // and Berufsschultag-excluded (#448), and already net of the SAME confirmed § 9 credit the
+  // old `section9WorkDays` subtraction below used to compute by hand. No local counting left.
+  const vacationDaysDatev = priceDaysFor(ctx.leaveDaysByEmployee, emp, "VACATION");
+  const overtimeCompDays = priceDaysFor(ctx.leaveDaysByEmployee, emp, "OVERTIME_COMP");
+  const specialDays = priceDaysFor(ctx.leaveDaysByEmployee, emp, "SPECIAL");
+  const educationDays = priceDaysFor(ctx.leaveDaysByEmployee, emp, "EDUCATION");
+  const unpaidDays = priceDaysFor(ctx.leaveDaysByEmployee, emp, "UNPAID");
+  const maternityDays = priceDaysFor(ctx.leaveDaysByEmployee, emp, "MATERNITY");
+  const parentalDays = priceDaysFor(ctx.leaveDaysByEmployee, emp, "PARENTAL");
+
+  // Issue #210: the Krank side is no longer `+ section9WorkDays` — that was only
+  // correct while the base was the always-empty Absence source. sickDaysBase already
+  // includes every § 9-credited day whose sickness request is readable (the union
+  // above), so only the unreadable ("orphan") § 9 days are added on top.
+  const sickDaysDatev = sickDaysBase + section9OrphanDays;
+
+  return {
+    workedMinutes,
+    sickDays: sickDaysDatev,
+    sickChildDays,
+    vacationDays: vacationDaysDatev,
+    overtimeCompDays,
+    specialDays,
+    educationDays,
+    unpaidDays,
+    maternityDays,
+    parentalDays,
+  };
+}
+
 // Issue #493 (F-04): `firstDay`/`lastDay` are UTC-midnight calendar days (monthDateRange) because the
 // walk below keys days by UTC date and weekday — an instant start shifted every key of a leave that
 // began before the month by one day.
@@ -368,32 +544,6 @@ function buildDatevLodas(params: {
     return n.toFixed(digits).replace(".", ",");
   }
 
-  // Issue #210: same UTC walk and clipping workDaysInMonthRange() always did, now also
-  // exposed as day keys — internal identity only, never rendered — so the sickness /
-  // § 9 / non-sick set operations below all derive from the ONE day rule this export
-  // has always used. workDaysInMonthRange() is unchanged in behaviour, only in
-  // implementation (its length).
-  function workdayKeysInMonthRange(from: Date, to: Date): string[] {
-    const s = from < firstDay ? firstDay : from;
-    const e2 = to > lastDay ? lastDay : to;
-    const keys: string[] = [];
-    const cur = new Date(s);
-    while (cur <= e2) {
-      const dow = cur.getUTCDay();
-      if (dow !== 0 && dow !== 6) keys.push(cur.toISOString().slice(0, 10));
-      cur.setUTCDate(cur.getUTCDate() + 1);
-    }
-    return keys;
-  }
-
-  // Issue #451 (D-01): the ONE accessor for a priced, § 9-netted leave-day count — no counting
-  // happens here, it reads what leaveDaysByEmployee (fetchLeaveDaysByEmployeeForDatev,
-  // leaveDaysByCodeWithin) already computed. A code absent from the employee's map (no counted
-  // request that month) reads as 0.
-  function priceDaysFor(emp: DatevEmployee, code: LeaveTypeCode): number {
-    return leaveDaysByEmployee.get(emp.id)?.get(code)?.netDays ?? 0;
-  }
-
   /**
    * DATEV-Zeile: Satz-ID + 12 Werte, leere Felder = Semikolon.
    *
@@ -424,90 +574,23 @@ function buildDatevLodas(params: {
     const lastDayOfMonth = new Date(y, m, 0).getDate();
     const datum = `${String(lastDayOfMonth).padStart(2, "0")}${String(m).padStart(2, "0")}${y}`;
 
-    // Working hours
-    const workedMinutes = emp.timeEntries.reduce((sum, e) => addWorkingMinutes(sum, e), 0);
-    const workedHours = workedMinutes / 60;
-
-    // ── Krankheit aus LeaveRequest (Issue #210) ────────────────────────────
-    // Sickness lives in LeaveRequest; Absence.SICK/SICK_CHILD has no production writer
-    // (measured zero rows on the pseudonymised production copy, 2026-08-30) and no
-    // longer contributes here. A § 9-credited day is UNIONED into the sick day set
-    // rather than added on top of it: Section9Credit.sickRequestId is a non-null FK to
-    // the sickness LeaveRequest that produced the credit, so once the base is sourced
-    // from that same LeaveRequest, the credited day is already inside it — adding
-    // section9WorkDays again would double-count it, the exact T-104-09-PAYROLL class
-    // of defect this time on the Krank side of the ledger. An un-credited sick day that
-    // overlaps a non-sick Lohnart day (e.g. planned vacation) stays on the non-sick
-    // line: § 9 BUrlG returns the vacation day only on presentation of an ärztliches
-    // Zeugnis, so without a CONFIRMED credit the day is legally still Urlaub and must
-    // not be reported twice (would inflate total Ausfalltage beyond the workdays in
-    // the period).
-    const nonSickClaimed = new Set<string>();
-    for (const lr of emp.leaveRequests) {
-      if (lr.leaveType.code === null || isSickLeaveTypeCode(lr.leaveType.code)) continue;
-      for (const key of workdayKeysInMonthRange(lr.startDate, lr.endDate)) {
-        nonSickClaimed.add(key);
-      }
-    }
-    const section9Keys = new Set<string>();
-    for (const c of section9ByEmp?.get(emp.id) ?? []) {
-      for (const key of workdayKeysInMonthRange(c.creditedStart, c.creditedEnd)) {
-        section9Keys.add(key);
-      }
-    }
-    // A day already booked on a non-sick line blocks a sick claim — UNLESS § 9 already
-    // took it off that line, in which case the credit is the authority that moved it.
-    const blockedForSick = new Set([...nonSickClaimed].filter((key) => !section9Keys.has(key)));
-
-    // One Set shared by both sickness lines, so a day claimed by both a SICK and a
-    // contradictory SICK_CHILD row lands on exactly one line (SICK is evaluated first).
-    const sickClaimed = new Set<string>();
-    function sickDaysForCode(code: LeaveTypeCode): number {
-      let total = 0;
-      for (const lr of sortLeaveForDedup(
-        emp.leaveRequests.filter((r) => r.leaveType.code === code),
-      )) {
-        let n = 0;
-        for (const key of workdayKeysInMonthRange(lr.startDate, lr.endDate)) {
-          if (blockedForSick.has(key) || sickClaimed.has(key)) continue;
-          sickClaimed.add(key);
-          n++;
-        }
-        total += lr.halfDay ? n / 2 : n;
-      }
-      return total;
-    }
-    const sickDaysBase = sickDaysForCode("SICK");
-    const sickChildDays = sickDaysForCode("SICK_CHILD");
-    // A CONFIRMED § 9 day whose sickness request could not be read as a typed sickness
-    // row (soft-deleted, moved off APPROVED, or a pre-Phase-97 row whose code is still
-    // null) has nevertheless already been subtracted from the Urlaub line — add it back
-    // here so a day that left Urlaub can never vanish from the file. Deliberately
-    // attributed to Krank (200), not Kinderkrank (201): the sub-type is unresolvable
-    // once the sickness request itself is unreadable, and § 9 BUrlG concerns the
-    // employee's own illness, which makes Krank the correct default.
-    const section9OrphanDays = [...section9Keys].filter((key) => !sickClaimed.has(key)).length;
-
-    // Abwesenheiten aus LeaveRequest (nur Arbeitstage)
-    //
-    // Issue #451 (D-01): the Urlaub line now reads leaveDaysByEmployee's own § 9-netted
-    // `netDays` — the absence context's priced VACATION count for this month, already clipped,
-    // workDay-aware (incl. SHIFT_BASED contract days and Tue-Sat-style contracts), holiday-aware
-    // and Berufsschultag-excluded (#448), and already net of the SAME confirmed § 9 credit the
-    // old `section9WorkDays` subtraction below used to compute by hand. No local counting left.
-    const vacationDaysDatev = priceDaysFor(emp, "VACATION");
-    const overtimeCompDays = priceDaysFor(emp, "OVERTIME_COMP");
-    const specialDays = priceDaysFor(emp, "SPECIAL");
-    const educationDays = priceDaysFor(emp, "EDUCATION");
-    const unpaidDays = priceDaysFor(emp, "UNPAID");
-    const maternityDays = priceDaysFor(emp, "MATERNITY");
-    const parentalDays = priceDaysFor(emp, "PARENTAL");
-
-    // Issue #210: the Krank side is no longer `+ section9WorkDays` — that was only
-    // correct while the base was the always-empty Absence source. sickDaysBase already
-    // includes every § 9-credited day whose sickness request is readable (the union
-    // above), so only the unreadable ("orphan") § 9 days are added on top.
-    const sickDaysDatev = sickDaysBase + section9OrphanDays;
+    // Issue #617: the per-person numbers come from the one shared function.
+    const figures = datevPersonFigures(emp, {
+      firstDay,
+      lastDay,
+      section9ByEmp,
+      leaveDaysByEmployee,
+    });
+    const workedHours = figures.workedMinutes / 60;
+    const sickDaysDatev = figures.sickDays;
+    const sickChildDays = figures.sickChildDays;
+    const vacationDaysDatev = figures.vacationDays;
+    const overtimeCompDays = figures.overtimeCompDays;
+    const specialDays = figures.specialDays;
+    const educationDays = figures.educationDays;
+    const unpaidDays = figures.unpaidDays;
+    const maternityDays = figures.maternityDays;
+    const parentalDays = figures.parentalDays;
 
     // DATEV-Zeilen (Format: Satz-ID + 12 Werte, Semikolon-getrennt) — datevLine()'s own body is
     // untouched by Phase 104; only the values fed into the Urlaub/Krank calls changed.
@@ -651,6 +734,113 @@ async function fetchLeaveDaysByEmployeeForDatev(
     );
   }
   return result;
+}
+
+// ── loadDatevMonth / selectMonthlyExportPersons (Issue #617) ──────────────────
+// The ONE spelling of the DATEV population and of the inputs of the per-person figures: who counts
+// (`employedInPeriodWhere`, the employment core WITHOUT the anonymisation clause - § 41 EStG keeps the
+// Lohnkonto of a month of employment complete - plus the Stammsalon scope of `report:export`), their
+// entries and leave requests of the month, the confirmed § 9 credits and the priced leave days.
+// `GET /datev` and the Monatsexport both read it, so the human-readable document names exactly the
+// persons the payroll file transmits. `opts.orderBy` is passed only by the export: DATEV keeps its
+// query without an `orderBy`, so the order of its lines stays byte-identical.
+async function loadDatevMonth(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  y: number,
+  m: number,
+  opts: { orderBy?: typeof REPORT_PERSON_ORDER } = {},
+) {
+  const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+  const { start, end } = monthRangeUtc(y, m, tz);
+  // Issue #493 (D-01/D-10): @db.Date columns (time-entry date, leave dates, § 9 credits) get
+  // calendar-day bounds; the instants above stay for the Timestamptz payroll predicate
+  // (Employee.hireDate/exitDate), the skipped counts and the Stichtag.
+  const { firstDay, lastDay } = monthDateRange(y, m, tz);
+
+  // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
+  // building the export. Stichtag = the payroll period's own last day (`end`).
+  const datevAccess = accessContextFromRequest(req);
+  const datevScopeReach = await resolveAccessReach(
+    app.prisma,
+    datevAccess,
+    "report:export:ZUGEWIESEN",
+  );
+  const datevScopedIds =
+    datevScopeReach.kind === "wholeTenant"
+      ? "all"
+      : await resolveStammsalonScopedEmployeeIds(
+          app.prisma,
+          req.user.tenantId,
+          datevScopeReach,
+          end,
+        );
+
+  // Issue #256 (Befund 2): employed DURING the Abrechnungszeitraum, not employed today.
+  // Issue #613: the one employment rule, from the Unterbau. DATEV deliberately reads the core
+  // WITHOUT the anonymisation clause (§ 41 EStG: the Lohnkonto of a month of employment stays
+  // complete).
+  const employees = await app.prisma.employee.findMany({
+    ...(opts.orderBy ? { orderBy: opts.orderBy } : {}),
+    where: {
+      tenantId: req.user.tenantId,
+      ...employedInPeriodWhere(start, end),
+      ...(datevScopedIds !== "all" ? { id: { in: datevScopedIds } } : {}),
+    },
+    include: {
+      workSchedules: { orderBy: { validFrom: "asc" } },
+      timeEntries: {
+        where: {
+          deletedAt: null,
+          date: { gte: firstDay, lte: lastDay },
+          endTime: { not: null },
+          isInvalid: false,
+        },
+      },
+      leaveRequests: {
+        where: {
+          deletedAt: null,
+          status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
+          startDate: { lte: lastDay },
+          endDate: { gte: firstDay },
+        },
+        include: { leaveType: true },
+      },
+    },
+  });
+
+  const section9ByEmp = await fetchConfirmedSection9CreditsByEmp(
+    app,
+    req.user.tenantId,
+    firstDay,
+    lastDay,
+  );
+  // Issue #451 (D-01): UTC-midnight calendar-day bounds for the facade call - NOT `start`/`end`
+  // above, which are monthRangeUtc()'s tenant-tz instants (see fetchLeaveDaysByEmployeeForDatev's
+  // own docblock).
+  const leaveDaysByEmployee = await fetchLeaveDaysByEmployeeForDatev(
+    app,
+    req.user.tenantId,
+    employees,
+    y,
+    m,
+  );
+  return { tz, start, end, firstDay, lastDay, employees, section9ByEmp, leaveDaysByEmployee };
+}
+
+/**
+ * Issue #617 (owner addendum 17.10.2026) - the Monatsexport's ONE person selection. Today it is the
+ * DATEV population in last name / first name / id order; Issue #542 will narrow it HERE by Stammsalon
+ * (each remaining person keeps full figures). `GET /datev` calls `loadDatevMonth` directly and is
+ * never narrowed. No salon parameter exists yet.
+ */
+async function selectMonthlyExportPersons(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  y: number,
+  m: number,
+) {
+  return loadDatevMonth(app, req, y, m, { orderBy: REPORT_PERSON_ORDER });
 }
 
 // Issue #451 (D-02): one leaveDaysByCodeWithin call per employee with at least one leave request
@@ -1409,62 +1599,17 @@ export async function reportRoutes(app: FastifyInstance) {
       if (isNaN(y) || isNaN(m) || m < 1 || m > 12) {
         return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
       }
-      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { start, end } = monthRangeUtc(y, m, tz);
-      // Issue #493 (D-01/D-10): @db.Date columns (time-entry date, leave dates, § 9 credits) get
-      // calendar-day bounds; the instants above stay for the Timestamptz payroll predicate
-      // (Employee.hireDate/exitDate), the skipped counts and the Stichtag.
-      const { firstDay, lastDay } = monthDateRange(y, m, tz);
-
-      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
-      // building the export. Stichtag = the payroll period's own last day (`end`).
-      const datevAccess = accessContextFromRequest(req);
-      const datevScopeReach = await resolveAccessReach(
-        app.prisma,
-        datevAccess,
-        "report:export:ZUGEWIESEN",
-      );
-      const datevScopedIds =
-        datevScopeReach.kind === "wholeTenant"
-          ? "all"
-          : await resolveStammsalonScopedEmployeeIds(
-              app.prisma,
-              req.user.tenantId,
-              datevScopeReach,
-              end,
-            );
-
-      // Issue #256 (Befund 2): employed DURING the Abrechnungszeitraum, not employed today.
-      // Issue #613: the one employment rule, from the Unterbau. DATEV deliberately reads the core
-      // WITHOUT the anonymisation clause (§ 41 EStG: the Lohnkonto of a month of employment stays
-      // complete).
-      const employees = await app.prisma.employee.findMany({
-        where: {
-          tenantId: req.user.tenantId,
-          ...employedInPeriodWhere(start, end),
-          ...(datevScopedIds !== "all" ? { id: { in: datevScopedIds } } : {}),
-        },
-        include: {
-          workSchedules: { orderBy: { validFrom: "asc" } },
-          timeEntries: {
-            where: {
-              deletedAt: null,
-              date: { gte: firstDay, lte: lastDay },
-              endTime: { not: null },
-              isInvalid: false,
-            },
-          },
-          leaveRequests: {
-            where: {
-              deletedAt: null,
-              status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
-              startDate: { lte: lastDay },
-              endDate: { gte: firstDay },
-            },
-            include: { leaveType: true },
-          },
-        },
-      });
+      // Issue #617: the population, its figures' inputs and the § 9 / leave-day prefetch come from the
+      // ONE loader the Monatsexport reads too, so the two documents cannot select different persons.
+      const {
+        start,
+        end,
+        firstDay,
+        lastDay,
+        employees,
+        section9ByEmp: section9ByEmpDatev,
+        leaveDaysByEmployee: leaveDaysByEmployeeDatev,
+      } = await loadDatevMonth(app, req, y, m);
 
       // Read configurable Lohnartennummern from TenantConfig
       // Lohnarten (4 konfigurierbar via TenantConfig, 6 hardcoded):
@@ -1503,23 +1648,6 @@ export async function reportRoutes(app: FastifyInstance) {
       if (!kanzlei) {
         return reply.code(409).send({ error: DATEV_KANZLEI_MISSING_ERROR });
       }
-
-      const section9ByEmpDatev = await fetchConfirmedSection9CreditsByEmp(
-        app,
-        req.user.tenantId,
-        firstDay,
-        lastDay,
-      );
-      // Issue #451 (D-01): UTC-midnight calendar-day bounds for the facade call — NOT `start`/
-      // `end` above, which are monthRangeUtc()'s tenant-tz instants (see
-      // fetchLeaveDaysByEmployeeForDatev's own docblock).
-      const leaveDaysByEmployeeDatev = await fetchLeaveDaysByEmployeeForDatev(
-        app,
-        req.user.tenantId,
-        employees,
-        y,
-        m,
-      );
 
       const buf = buildDatevLodas({
         employees,
@@ -1722,6 +1850,90 @@ export async function reportRoutes(app: FastifyInstance) {
         `attachment; filename="datev-${y}-${String(m).padStart(2, "0")}-${emp.employeeNumber}.txt"`,
       );
       return reply.send(buf);
+    },
+  });
+
+  // GET /api/v1/reports/monthly-export/pdf?year=&month=  - Monatsexport (Issue #617)
+  // The human-readable twin of the DATEV export: one row per person of the DATEV population, no day
+  // rows (the § 16 Abs. 2 ArbZG records stay in the Stundennachweis), not salon-filtered (an export
+  // is a payroll artefact). Every figure is READ, never computed here: time figures from
+  // `computeMonthReportFigures` (#451 D-03), absence counts from `datevPersonFigures` (the function
+  // that also builds the DATEV lines). Purpose and audience are those of the DATEV file - payroll
+  // preparation, `report:export` - which is what makes the health-related day counts lawful here
+  // (Art. 9 Abs. 2 lit. b DSGVO).
+  app.get("/monthly-export/pdf", {
+    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    preHandler: requirePermission("report:export:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const { year, month } = req.query as { year: string; month: string };
+      const y = parseInt(year);
+      const m = parseInt(month);
+      if (isNaN(y) || isNaN(m) || m < 1 || m > 12) {
+        return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
+      }
+
+      const { tz, firstDay, lastDay, employees, section9ByEmp, leaveDaysByEmployee } =
+        await selectMonthlyExportPersons(app, req, y, m);
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: req.user.tenantId },
+        select: { name: true },
+      });
+
+      const rows: MonthlyExportRow[] = [];
+      // Sequential, never Promise.all: one account computation per person.
+      for (const emp of employees) {
+        const figures = await computeMonthReportFigures(app, emp.id, y, m);
+        const datev = datevPersonFigures(emp, {
+          firstDay,
+          lastDay,
+          section9ByEmp,
+          leaveDaysByEmployee,
+        });
+        rows.push({
+          employeeName: `${emp.lastName}, ${emp.firstName}`,
+          employeeNumber: emp.employeeNumber,
+          status: !figures.labelled ? "UNLABELLED" : figures.confirmed ? "CONFIRMED" : "FORECAST",
+          workedMinutes: figures.workedMinutes,
+          expectedMinutes: figures.expectedMinutes,
+          balanceMinutes: figures.balanceMinutes,
+          balanceAdjustmentMinutes: figures.balanceAdjustmentMinutes,
+          absenceDays: {
+            vacation: datev.vacationDays,
+            sick: datev.sickDays,
+            sickChild: datev.sickChildDays,
+            overtimeComp: datev.overtimeCompDays,
+            special: datev.specialDays,
+            education: datev.educationDays,
+            unpaid: datev.unpaidDays,
+            maternity: datev.maternityDays,
+            parental: datev.parentalDays,
+          },
+          section9: (section9ByEmp.get(emp.id)?.length ?? 0) > 0,
+        });
+      }
+
+      const pdfBuffer = await generateMonthlyExportPdf({
+        tenantName: tenant?.name ?? "",
+        monthLabel: `${MONTH_NAMES[m - 1]} ${y}`,
+        year: y,
+        month: m,
+        generatedAt: formatInTimeZone(new Date(), tz, "dd.MM.yyyy, HH:mm"),
+        rows,
+      });
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "EXPORT",
+        entity: "Report",
+        newValue: { type: "MONTHLY_EXPORT_PDF", year: y, month: m, employeesIncluded: rows.length },
+      });
+
+      reply.header("Content-Type", "application/pdf");
+      reply.header(
+        "Content-Disposition",
+        `attachment; filename="monatsexport-${y}-${String(m).padStart(2, "0")}.pdf"`,
+      );
+      return reply.send(pdfBuffer);
     },
   });
 
