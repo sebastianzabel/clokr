@@ -15,13 +15,23 @@
  *   PX homed B until 15.6., A from 16.6.: approved sick leave 10.-20.6. without attest (11 days:
  *               6 in B, 5 in A), B entries on 1.6./2.6. (8 h each), A entries on 22.6./23.6. (8 h each)
  *   PN homed B: entries only in B (8 h on 5.6.)
+ * The mutation proofs M1..M5 (validation after the read, no `countsDay`, Ist over every salon,
+ * membership without the caller's scope, today counted) are recorded in the docblock of
+ * report-salon-filter-source-542.test.ts with the red tests of each.
+ *
+ * PX additionally has an approved vacation on 18.-19.6. and a CONFIRMED section 9 credit for 18.6.
+ * (a day homed in A); PA has closed A entries on 14.7. and 15.7. for the running-month case.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { randomUUID } from "crypto";
+import bcrypt from "bcryptjs";
+import { randomBytes, randomUUID } from "crypto";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
 import { createPopulationPerson } from "./population-fixtures-613";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
+import { normalizeRolePermissions, roleNameKey, SYSTEM_ROLE_IDS } from "../contexts/platform";
+
+const PASSWORD = "test1234";
 
 type Row = Record<string, unknown> & {
   employeeId: string;
@@ -60,6 +70,9 @@ describe("Issue #542 — monthly report salon filter", () => {
   let salonB: string;
   let inactiveSalon: string;
   const ids = {} as Record<"PA" | "PB" | "PX" | "PN", string>;
+  let scopedToken: string;
+  let personsToken: string;
+  let hrToken: string;
 
   function entry(employeeId: string, salonId: string, date: string, start: string, end: string) {
     return app.prisma.timeEntry.create({
@@ -170,6 +183,38 @@ describe("Issue #542 — monthly report salon filter", () => {
         attestPresent: false,
       },
     });
+    const sickRequest = await app.prisma.leaveRequest.findFirstOrThrow({
+      where: { employeeId: ids.PX, leaveTypeId: sick.id },
+    });
+    const vacationPx = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: ids.PX,
+        leaveTypeId: data.vacationType.id,
+        startDate: new Date("2026-06-18T00:00:00Z"),
+        endDate: new Date("2026-06-19T00:00:00Z"),
+        days: 2,
+        status: "APPROVED",
+      },
+    });
+    await app.prisma.section9Credit.create({
+      data: {
+        employeeId: ids.PX,
+        sickRequestId: sickRequest.id,
+        vacationRequestId: vacationPx.id,
+        overlapStart: new Date("2026-06-18T00:00:00Z"),
+        overlapEnd: new Date("2026-06-19T00:00:00Z"),
+        status: "CONFIRMED",
+        creditedStart: new Date("2026-06-18T00:00:00Z"),
+        creditedEnd: new Date("2026-06-18T00:00:00Z"),
+        creditedDays: 1,
+        attestSource: "EAU",
+        attestValidFrom: new Date("2026-06-18T00:00:00Z"),
+        attestValidTo: new Date("2026-06-18T00:00:00Z"),
+        reason: "fixture",
+      },
+    });
+    await entry(ids.PA, salonA, "2026-07-14", "08:00", "16:00");
+    await entry(ids.PA, salonA, "2026-07-15", "08:00", "16:00");
     await app.prisma.leaveRequest.create({
       data: {
         employeeId: ids.PA,
@@ -180,6 +225,83 @@ describe("Issue #542 — monthly report salon filter", () => {
         status: "APPROVED",
       },
     });
+
+    // Callers. Each is an employee of its own without a Stammsalon (in nobody's reach).
+    const passwordHash = await bcrypt.hash(PASSWORD, 4);
+    const caller = async (
+      tag: string,
+      assignment:
+        | { accessRoleId: string; scopeType: "TENANT" }
+        | {
+            permissions: string[];
+            scopeType: "SALONS" | "PERSONS";
+            salonIds?: string[];
+            employeeIds?: string[];
+          },
+    ): Promise<string> => {
+      const suffix = `${tag}-${randomBytes(3).toString("hex")}`;
+      const user = await app.prisma.user.create({
+        data: {
+          email: `rsf542-${suffix}@example.invalid`,
+          passwordHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          employeeNumber: `RSF${suffix}`.toUpperCase().slice(0, 20),
+          firstName: "Fixture",
+          lastName: "ReportsSalonFilter542",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      let accessRoleId: string;
+      if ("accessRoleId" in assignment) {
+        accessRoleId = assignment.accessRoleId;
+      } else {
+        const name = `Filter542 ${suffix}`;
+        const role = await app.prisma.accessRole.create({
+          data: {
+            tenantId: data.tenant.id,
+            name,
+            nameKey: roleNameKey(name),
+            permissions: normalizeRolePermissions(assignment.permissions),
+          },
+        });
+        accessRoleId = role.id;
+      }
+      await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          accessRoleId,
+          scopeType: assignment.scopeType,
+          salonIds: "salonIds" in assignment ? (assignment.salonIds ?? []) : [],
+          employeeIds: "employeeIds" in assignment ? (assignment.employeeIds ?? []) : [],
+        },
+      });
+      const login = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: user.email, password: PASSWORD },
+      });
+      expect(login.statusCode, login.body).toBe(200);
+      return (JSON.parse(login.body) as { accessToken: string }).accessToken;
+    };
+    scopedToken = await caller("scoped", {
+      permissions: ["report:read:ZUGEWIESEN"],
+      scopeType: "SALONS",
+      salonIds: [salonA],
+    });
+    personsToken = await caller("persons", {
+      permissions: ["report:read:ZUGEWIESEN"],
+      scopeType: "PERSONS",
+      employeeIds: [ids.PA],
+    });
+    hrToken = await caller("hr", { accessRoleId: SYSTEM_ROLE_IDS.HR, scopeType: "TENANT" });
   });
 
   afterAll(async () => {
@@ -262,4 +384,117 @@ describe("Issue #542 — monthly report salon filter", () => {
       expect(res.statusCode, res.body).toBe(400);
     });
   });
+
+  describe("never widens", () => {
+    it("a SALONS-scoped caller's filtered rows are a subset of its unfiltered rows", async () => {
+      const plain = await report(`year=2026&month=6`, scopedToken);
+      const filtered = await report(`year=2026&month=6&salonId=${salonA}`, scopedToken);
+      expect(idSet(plain)).toEqual(sorted([ids.PA, ids.PX]));
+      expect(idSet(filtered)).toEqual(sorted([ids.PA, ids.PX]));
+      for (const id of idSet(filtered)) expect(idSet(plain)).toContain(id);
+      // PB is homed in B with an entry in A: reachable through neither the scope nor the filter.
+      expect(idSet(filtered)).not.toContain(ids.PB);
+      expect(idSet(plain)).not.toContain(ids.PB);
+    });
+
+    it("a salon outside the caller's reach answers the one 404", async () => {
+      const outside = await get(
+        `/api/v1/reports/monthly?year=2026&month=6&salonId=${salonB}`,
+        scopedToken,
+      );
+      const foreignRes = await get(
+        `/api/v1/reports/monthly?year=2026&month=6&salonId=${foreign.salonId}`,
+        scopedToken,
+      );
+      expect(outside.statusCode).toBe(404);
+      expect(outside.body).toBe(foreignRes.body);
+      expect(outside.body).toBe('{"error":"Salon nicht gefunden"}');
+    });
+
+    it("a PERSONS-only reach is refused with the same 404 for every salon, and still lists its person unfiltered", async () => {
+      const a = await get(
+        `/api/v1/reports/monthly?year=2026&month=6&salonId=${salonA}`,
+        personsToken,
+      );
+      const b = await get(
+        `/api/v1/reports/monthly?year=2026&month=6&salonId=${salonB}`,
+        personsToken,
+      );
+      expect(a.statusCode).toBe(404);
+      expect(b.statusCode).toBe(404);
+      expect(a.body).toBe(b.body);
+      expect(a.body).toBe('{"error":"Salon nicht gefunden"}');
+      const plain = await report(`year=2026&month=6`, personsToken);
+      expect(idSet(plain)).toEqual([ids.PA]);
+    });
+  });
+
+  describe("sums", () => {
+    it("Ist and sick days of salon A plus salon B equal the unfiltered figures per person", async () => {
+      const plain = await report(`year=2026&month=6`);
+      const a = await report(`year=2026&month=6&salonId=${salonA}`);
+      const b = await report(`year=2026&month=6&salonId=${salonB}`);
+      const figure = (r: Report, id: string, key: "workedHours" | "sickDays") =>
+        r.rows.find((x) => x.employeeId === id)?.[key] ?? 0;
+      for (const id of [ids.PA, ids.PB, ids.PX, ids.PN]) {
+        expect(figure(a, id, "workedHours") + figure(b, id, "workedHours"), `Ist ${id}`).toBe(
+          figure(plain, id, "workedHours"),
+        );
+        expect(figure(a, id, "sickDays") + figure(b, id, "sickDays"), `sick ${id}`).toBe(
+          figure(plain, id, "sickDays"),
+        );
+      }
+    });
+  });
+
+  describe("running month", () => {
+    it("today never counts toward the salon Ist", async () => {
+      const r = await report(`year=2026&month=7&salonId=${salonA}`);
+      expect(rowOf(r, ids.PA).workedHours).toBe(8);
+    });
+  });
+
+  describe("section 9", () => {
+    it("a credited day counts for the salon the Stammsalon names on that day", async () => {
+      const a = await report(`year=2026&month=6&salonId=${salonA}`);
+      expect(rowOf(a, ids.PX).section9DaysThisMonth).toBe(1);
+      expect(typeof a.section9Note).toBe("string");
+      const b = await report(`year=2026&month=6&salonId=${salonB}`);
+      expect(rowOf(b, ids.PX).section9DaysThisMonth).toBe(0);
+      expect(b.section9Note).toBeUndefined();
+    });
+  });
+
+  describe("aggregates only", () => {
+    it("the HR answer under a filter has the unfiltered key paths plus exactly the four additive keys", async () => {
+      const plainRes = await get(`/api/v1/reports/monthly?year=2026&month=6`, hrToken);
+      const filteredRes = await get(
+        `/api/v1/reports/monthly?year=2026&month=6&salonId=${salonA}`,
+        hrToken,
+      );
+      expect(plainRes.statusCode, plainRes.body).toBe(200);
+      expect(filteredRes.statusCode, filteredRes.body).toBe(200);
+      const plainPaths = keyPaths(JSON.parse(plainRes.body));
+      const filteredPaths = keyPaths(JSON.parse(filteredRes.body));
+      const added = [...filteredPaths].filter((p) => !plainPaths.has(p));
+      expect(added.sort((x, y) => x.localeCompare(y))).toEqual(
+        ADDITIVE_KEYS.map((k) => `$.${k}`).sort((x, y) => x.localeCompare(y)),
+      );
+      expect([...plainPaths].filter((p) => !filteredPaths.has(p))).toEqual([]);
+    });
+  });
 });
+
+/** The JSON key paths of a body, array indices collapsed to `[]` (idiom of reports-hr-86). */
+function keyPaths(value: unknown, prefix = "$", out = new Set<string>()): Set<string> {
+  if (Array.isArray(value)) {
+    out.add(`${prefix}[]`);
+    for (const el of value) keyPaths(el, `${prefix}[]`, out);
+  } else if (value !== null && typeof value === "object") {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out.add(`${prefix}.${k}`);
+      keyPaths(v, `${prefix}.${k}`, out);
+    }
+  }
+  return out;
+}
