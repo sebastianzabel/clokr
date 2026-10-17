@@ -27,11 +27,33 @@
 import type { LeaveEntitlement, LeaveTypeCode, Prisma } from "@clokr/db";
 import {
   carryOverAtRiskDays,
+  countedLeaveDaysWithin,
   effectiveCarryOverDays,
   exitVacationOverUseWarning,
   exitYearReductionDays,
 } from "../leave-days";
 import { getVacationEntitlement } from "./entitlements";
+import { dateStrInTz, dayRangeUtc } from "../../working-time-account"; // Issue #617 — tenant-local split day
+
+const DEFAULT_TZ = "Europe/Berlin"; // same fallback getTenantTimezone() itself uses
+
+/** `YYYY-MM-DD` of the calendar day before `day` (pure calendar arithmetic on the string). */
+function dayBefore(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
+}
+
+/** `YYYY-MM-DD` of the calendar day after `day`. */
+function dayAfter(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+}
+
+/** UTC-midnight `Date` of a `YYYY-MM-DD` string — the calendar-day bound the kernel takes. */
+function utcDayOf(day: string): Date {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
 
 /** Rounds to 2 decimals — the storage precision of `LeaveEntitlement.*Days` (`Decimal(5,2)`). */
 function round2(n: number): number {
@@ -46,7 +68,25 @@ export interface VacationBalance {
   carriedOverExpiredDays: number; // carriedOverDays − carriedOverEffectiveDays
   exitReductionDays: number; // exitYearReductionDays
   usedDays: number; // stored usedDays
+  /** Issue #617 — entitlementDays + carriedOverEffectiveDays ("Verfügbar"); remainingDays = this − taken − approved. */
+  availableDays: number;
+  /** Issue #617 — the tenant-local day (YYYY-MM-DD) the taken/upcoming split uses (opts.asOf, else yesterday). */
+  splitAsOf: string;
+  /**
+   * Issue #617 — counted VACATION days of the year from 1 January up to and including
+   * `splitAsOf`, net of confirmed § 9 credits, read from the absence kernel
+   * (`countedLeaveDaysWithin`, the one the `usedDays` heal runs). After the heal
+   * `usedDays === takenDays + approvedUpcomingDays`.
+   */
+  takenDays: number;
+  /** Issue #617 — counted VACATION days after `splitAsOf` through 31 December ("Genehmigt"), same kernel and netting. */
+  approvedUpcomingDays: number;
   pendingDays: number; // Σ days of PENDING requests of the row's type starting in the row's year
+  /**
+   * Issue #617 — the PENDING days of the year whose request was created on or before the end of
+   * `splitAsOf` (tenant time zone). "Beantragt" of the Monatsexport; never deducted anywhere.
+   */
+  pendingCreatedByAsOfDays: number;
   remainingDays: number; // entitlementDays + carriedOverEffectiveDays − usedDays (not clamped)
   atRiskDays: number; // carryOverAtRiskDays
   carryOverDeadline: Date | null;
@@ -70,6 +110,12 @@ export async function vacationBalanceForRow(
   opts: {
     hinweisIssued?: boolean;
     employee?: { firstName: string; lastName: string; exitDate: Date | null };
+    /**
+     * Issue #617 (P-03) — tenant-local day (YYYY-MM-DD) the taken/upcoming split and
+     * `pendingCreatedByAsOfDays` use. Absent: the tenant-local day before `now`, which is the
+     * in-app meaning ("up to yesterday"). The Monatsexport passes its Stichtag.
+     */
+    asOf?: string;
   } = {},
 ): Promise<VacationBalance> {
   const hinweisIssued =
@@ -110,6 +156,55 @@ export async function vacationBalanceForRow(
   const pendingDays = round2(Number(pendingAgg._sum.days ?? 0));
 
   const remainingDays = round2(entitlementDays + carriedOverEffectiveDays - usedDays);
+  const availableDays = round2(entitlementDays + carriedOverEffectiveDays);
+
+  // ── Issue #617: the taken / approved-upcoming split, from the kernel ────────────────────────
+  const tenantConfigRow = await db.tenantConfig.findUnique({
+    where: { tenantId },
+    select: { timezone: true },
+  });
+  const tz = tenantConfigRow?.timezone ?? DEFAULT_TZ;
+  const splitAsOf = opts.asOf ?? dayBefore(dateStrInTz(now, tz));
+  const vacationTypes = await db.leaveType.findMany({
+    where: { tenantId, code: "VACATION" },
+    select: { id: true },
+  });
+  const vacationTypeIds = vacationTypes.map((t) => t.id);
+  const yearStart = `${row.year}-01-01`;
+  const yearEnd = `${row.year}-12-31`;
+  // Window [from, to] clamped to the row's year; an empty window counts nothing.
+  const countedWithin = async (from: string, to: string): Promise<number> => {
+    const f = from < yearStart ? yearStart : from;
+    const t = to > yearEnd ? yearEnd : to;
+    if (f > t || vacationTypeIds.length === 0) return 0;
+    const { requestDays, section9CreditDays } = await countedLeaveDaysWithin(db, {
+      employeeId: row.employeeId,
+      tenantId,
+      leaveTypeIds: vacationTypeIds,
+      from: utcDayOf(f),
+      to: utcDayOf(t),
+    });
+    return Math.max(0, round2(requestDays - section9CreditDays));
+  };
+  const takenDays = await countedWithin(yearStart, splitAsOf);
+  const approvedUpcomingDays = await countedWithin(dayAfter(splitAsOf), yearEnd);
+
+  const pendingByAsOfAgg = await db.leaveRequest.aggregate({
+    where: {
+      employeeId: row.employeeId,
+      employee: { tenantId },
+      leaveTypeId: row.leaveTypeId,
+      deletedAt: null,
+      status: "PENDING",
+      startDate: {
+        gte: new Date(Date.UTC(row.year, 0, 1)),
+        lt: new Date(Date.UTC(row.year + 1, 0, 1)),
+      },
+      createdAt: { lte: dayRangeUtc(splitAsOf, tz).end },
+    },
+    _sum: { days: true },
+  });
+  const pendingCreatedByAsOfDays = round2(Number(pendingByAsOfAgg._sum.days ?? 0));
 
   const employee = opts.employee ??
     (await db.employee.findFirst({
@@ -131,7 +226,12 @@ export async function vacationBalanceForRow(
     carriedOverExpiredDays,
     exitReductionDays,
     usedDays,
+    availableDays,
+    splitAsOf,
+    takenDays,
+    approvedUpcomingDays,
     pendingDays,
+    pendingCreatedByAsOfDays,
     remainingDays,
     atRiskDays,
     carryOverDeadline: row.carryOverDeadline,
