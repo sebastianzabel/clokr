@@ -475,6 +475,13 @@ export interface MonthlyExportRow {
   vacation: MonthlyExportVacation | null;
 }
 
+/**
+ * Issue #542 (OD-2, P-07) - the two parts of the line the Monatsexport prints under a salon filter.
+ * Plain string constants (never inside an array literal); the web mirrors them by a text test.
+ */
+export const EXPORT_SALON_PERSONS_LABEL = "Personen nach Stammsalon am Monatsende";
+export const PERSON_SALDO_NOT_SPLIT_LABEL = "Personensaldo, nicht nach Salon aufgeteilt";
+
 export interface MonthlyExportData {
   tenantName: string;
   /** "September 2026" */
@@ -486,6 +493,11 @@ export interface MonthlyExportData {
   /** The vacation year of section "Urlaubsjahr" and its Stichtag ("dd.MM.yyyy"). */
   vacationYear: { year: number; asOf: string };
   rows: MonthlyExportRow[];
+  /**
+   * Issue #542 (OD-2): set only when the export was narrowed to the persons of one salon; the
+   * document then says so and that every saldo is the person's own.
+   */
+  salonScope?: { salonName: string };
 }
 
 type ExportColumn = {
@@ -808,6 +820,15 @@ export function drawMonthlyExport(doc: PDFKit.PDFDocument, data: MonthlyExportDa
 
   doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827");
   doc.text(`Monat: ${data.monthLabel}`, EXPORT_MARGIN, doc.y);
+  if (data.salonScope) {
+    // Issue #542 (OD-2, P-07): a narrowed list says so, and that no saldo is a salon share.
+    doc.font("Helvetica").fontSize(9).fillColor("#374151");
+    doc.text(
+      `Salon: ${data.salonScope.salonName} · ${EXPORT_SALON_PERSONS_LABEL} · ${PERSON_SALDO_NOT_SPLIT_LABEL}`,
+      EXPORT_MARGIN,
+      doc.y,
+    );
+  }
   let y = doc.y + 6;
 
   if (data.rows.length === 0) {

@@ -9,7 +9,10 @@ import {
   accessContextFromRequest, // Phase 91b Plan 07 (#91), D-10/D-14
   resolveAccessReach, // Phase 91b Plan 07 (#91), D-10/D-14
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 07 (#91), D-10
-  resolveSalonInReach, // Issue #542 (P-04) — the one validator of a chosen salon, against the report:read reach
+  resolveSalonInReach, // Issue #542 (P-04) — the one validator of a chosen salon, against the endpoint's own reach
+  salonOnlyReach, // Issue #542 (OD-2) — the one constructor of a salon-only reach (the export's person narrowing)
+  findSalon, // Issue #542 (OD-2) — the chosen salon's name for the export's label line
+  type AccessReach,
   homeSalonsForDays, // Issue #542 (P-02) — the Stammsalon per calendar day
   isStammsalonScopeMatch, // Phase 91b Plan 07 (#91), D-10/D-14
   reportPopulationWhere, // Issue #613 (D-01) — the one period population
@@ -820,13 +823,20 @@ async function fetchLeaveDaysByEmployeeForDatev(
 // entries and leave requests of the month, the confirmed § 9 credits and the priced leave days.
 // `GET /datev` and the Monatsexport both read it, so the human-readable document names exactly the
 // persons the payroll file transmits. `opts.orderBy` is passed only by the export: DATEV keeps its
-// query without an `orderBy`, so the order of its lines stays byte-identical.
+// query without an `orderBy`, so the order of its lines stays byte-identical. Issue #542: `opts.reach`
+// (the already resolved `report:export` reach) and `opts.onlyEmployeeIds` (the export's salon
+// narrowing) are passed only by `selectMonthlyExportPersons`; `GET /datev` passes neither and is
+// therefore never narrowed - the narrowing is an intersection with the real reach, never a widening.
 async function loadDatevMonth(
   app: FastifyInstance,
   req: FastifyRequest,
   y: number,
   m: number,
-  opts: { orderBy?: typeof REPORT_PERSON_ORDER } = {},
+  opts: {
+    orderBy?: typeof REPORT_PERSON_ORDER;
+    reach?: AccessReach;
+    onlyEmployeeIds?: readonly string[];
+  } = {},
 ) {
   const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
   const { start, end } = monthRangeUtc(y, m, tz);
@@ -838,11 +848,8 @@ async function loadDatevMonth(
   // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
   // building the export. Stichtag = the payroll period's own last day (`end`).
   const datevAccess = accessContextFromRequest(req);
-  const datevScopeReach = await resolveAccessReach(
-    app.prisma,
-    datevAccess,
-    "report:export:ZUGEWIESEN",
-  );
+  const datevScopeReach =
+    opts.reach ?? (await resolveAccessReach(app.prisma, datevAccess, "report:export:ZUGEWIESEN"));
   const datevScopedIds =
     datevScopeReach.kind === "wholeTenant"
       ? "all"
@@ -853,6 +860,15 @@ async function loadDatevMonth(
           end,
         );
 
+  // Issue #542: the export's salon narrowing only ever intersects the caller's reach.
+  const onlyIds = opts.onlyEmployeeIds;
+  const idFilter: readonly string[] | null =
+    datevScopedIds === "all"
+      ? (onlyIds ?? null)
+      : onlyIds === undefined
+        ? datevScopedIds
+        : datevScopedIds.filter((id) => onlyIds.includes(id));
+
   // Issue #256 (Befund 2): employed DURING the Abrechnungszeitraum, not employed today.
   // Issue #613: the one employment rule, from the Unterbau. DATEV deliberately reads the core
   // WITHOUT the anonymisation clause (§ 41 EStG: the Lohnkonto of a month of employment stays
@@ -862,7 +878,7 @@ async function loadDatevMonth(
     where: {
       tenantId: req.user.tenantId,
       ...employedInPeriodWhere(start, end),
-      ...(datevScopedIds !== "all" ? { id: { in: datevScopedIds } } : {}),
+      ...(idFilter !== null ? { id: { in: [...idFilter] } } : {}),
     },
     include: {
       workSchedules: { orderBy: { validFrom: "asc" } },
@@ -906,18 +922,98 @@ async function loadDatevMonth(
 }
 
 /**
- * Issue #617 (owner addendum 17.10.2026) - the Monatsexport's ONE person selection. Today it is the
- * DATEV population in last name / first name / id order; Issue #542 will narrow it HERE by Stammsalon
- * (each remaining person keeps full figures). `GET /datev` calls `loadDatevMonth` directly and is
- * never narrowed. No salon parameter exists yet.
+ * Issue #617 (owner addendum 17.10.2026) - the Monatsexport's ONE person selection: the DATEV
+ * population in last name / first name / id order. Issue #542 (OD-2, owner decision 17.10.2026): an
+ * optional chosen salon narrows WHICH persons are listed - those whose Stammsalon is the salon on the
+ * person's Stichtag - and never a figure: every remaining person keeps the full row. The salon is
+ * validated against the `report:export` reach before any person is read (`{ ok: false }` = the one
+ * 404 of the caller); the narrowing is an intersection with that reach inside `loadDatevMonth`, so a
+ * salon filter can only narrow. Stichtag (P-05): the person's exit day when it lies inside the
+ * exported month, else the last calendar day of the month, always passed as a calendar day (HOME
+ * validity is `@db.Date`, never compared with an instant, #493) - a salon change at the month boundary
+ * keeps the person in the old salon's export, a leaver stays where it left. A person without a
+ * Stammsalon on that day appears only in the unfiltered export. `GET /datev` calls `loadDatevMonth`
+ * directly, without a salon, and is never narrowed.
  */
 async function selectMonthlyExportPersons(
   app: FastifyInstance,
   req: FastifyRequest,
   y: number,
   m: number,
+  salonId?: string,
 ) {
-  return loadDatevMonth(app, req, y, m, { orderBy: REPORT_PERSON_ORDER });
+  const tenantId = req.user.tenantId;
+  const reach = await resolveAccessReach(
+    app.prisma,
+    accessContextFromRequest(req),
+    "report:export:ZUGEWIESEN",
+  );
+  const filter = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
+  if (!filter.ok) return { ok: false as const };
+
+  let salon: { id: string; name: string } | null = null;
+  let onlyEmployeeIds: string[] | undefined;
+  if (filter.salonId !== null) {
+    const chosen = await findSalon(app.prisma, tenantId, filter.salonId);
+    if (!chosen) return { ok: false as const };
+    salon = { id: chosen.id, name: chosen.name };
+    onlyEmployeeIds = await salonPersonsAtStichtag(app, tenantId, chosen.id, y, m);
+  }
+
+  const loaded = await loadDatevMonth(app, req, y, m, {
+    orderBy: REPORT_PERSON_ORDER,
+    reach,
+    ...(onlyEmployeeIds ? { onlyEmployeeIds } : {}),
+  });
+  return { ok: true as const, salon, ...loaded };
+}
+
+/**
+ * Issue #542 (OD-2, P-05) - the ids whose Stammsalon is `salonId` on their own Stichtag for the
+ * export of month `y`/`m`: the person's tenant-local exit day when it lies inside the month, else the
+ * month's last calendar day. One Stammsalon resolution (the endpoint's own scope resolver evaluated
+ * for a salon-only reach, #558) per distinct Stichtag, each as a UTC-midnight calendar day.
+ */
+async function salonPersonsAtStichtag(
+  app: FastifyInstance,
+  tenantId: string,
+  salonId: string,
+  y: number,
+  m: number,
+): Promise<string[]> {
+  const tz = await getTenantTimezone(app.prisma, tenantId);
+  const { start, end } = monthRangeUtc(y, m, tz);
+  const { lastDay } = monthDateRange(y, m, tz);
+  const homeOn = async (calendarDay: Date): Promise<Set<string>> => {
+    const ids = await resolveStammsalonScopedEmployeeIds(
+      app.prisma,
+      tenantId,
+      salonOnlyReach(salonId),
+      calendarDay,
+    );
+    // A salon-only reach never resolves to "all"; the empty set is the fail-closed reading.
+    return new Set(ids === "all" ? [] : ids);
+  };
+
+  const leavers = await app.prisma.employee.findMany({
+    where: { tenantId, exitDate: { gte: start, lte: end } },
+    select: { id: true, exitDate: true },
+  });
+  const leaverIds = new Set(leavers.map((l) => l.id));
+  const members = new Set<string>();
+  for (const id of await homeOn(lastDay)) {
+    if (!leaverIds.has(id)) members.add(id);
+  }
+  const byExitDay = new Map<string, string[]>();
+  for (const leaver of leavers) {
+    const exitDay = dateStrInTz(leaver.exitDate as Date, tz);
+    byExitDay.set(exitDay, [...(byExitDay.get(exitDay) ?? []), leaver.id]);
+  }
+  for (const [exitDay, ids] of byExitDay) {
+    const home = await homeOn(new Date(`${exitDay}T00:00:00Z`));
+    for (const id of ids) if (home.has(id)) members.add(id);
+  }
+  return [...members];
 }
 
 // Issue #451 (D-02): one leaveDaysByCodeWithin call per employee with at least one leave request
@@ -1928,16 +2024,22 @@ export async function reportRoutes(app: FastifyInstance) {
     },
   });
 
-  // GET /api/v1/reports/monthly-export/pdf?year=&month=  - Monatsexport (Issue #617)
+  // GET /api/v1/reports/monthly-export/pdf?year=&month=&salonId=  - Monatsexport (Issue #617, #542)
   // The human-readable twin of the DATEV export: one row per person of the DATEV population, no day
-  // rows (the § 16 Abs. 2 ArbZG records stay in the Stundennachweis), not salon-filtered (an export
-  // is a payroll artefact). Every figure is READ, never computed here: time figures from
-  // `computeMonthReportFigures` (#451 D-03), absence counts from `datevPersonFigures` (the function
-  // that also builds the DATEV lines). Purpose and audience are those of the DATEV file - payroll
-  // preparation, `report:export` - which is what makes the health-related day counts lawful here
-  // (Art. 9 Abs. 2 lit. b DSGVO).
+  // rows (the § 16 Abs. 2 ArbZG records stay in the Stundennachweis). Issue #542 (OD-2): an optional
+  // `salonId` narrows WHICH persons are listed (Stammsalon on the person's Stichtag, see
+  // `selectMonthlyExportPersons`), never a figure, and the document says so; DATEV is never narrowed.
+  // Every figure is READ, never computed here: time figures from `computeMonthReportFigures` (#451
+  // D-03), absence counts from `datevPersonFigures` (the function that also builds the DATEV lines).
+  // Purpose and audience are those of the DATEV file - payroll preparation, `report:export` - which
+  // is what makes the health-related day counts lawful here (Art. 9 Abs. 2 lit. b DSGVO).
   app.get("/monthly-export/pdf", {
-    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    schema: {
+      tags: ["Reporting"],
+      security: [{ bearerAuth: [] }],
+      description:
+        "Monatsexport PDF. The optional salonId (Issue #542) narrows the export to the persons whose Stammsalon is that salon on the person's Stichtag (exit day inside the month, else the last day of the month); every listed row is the person's whole row. A salon outside the caller's report:export reach answers 404.",
+    },
     preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { year, month } = req.query as { year: string; month: string };
@@ -1946,9 +2048,12 @@ export async function reportRoutes(app: FastifyInstance) {
       if (isNaN(y) || isNaN(m) || m < 1 || m > 12) {
         return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
       }
+      const { salonId } = reportSalonQuerySchema.parse(req.query);
 
-      const { tz, firstDay, lastDay, employees, section9ByEmp, leaveDaysByEmployee } =
-        await selectMonthlyExportPersons(app, req, y, m);
+      const selection = await selectMonthlyExportPersons(app, req, y, m, salonId);
+      if (!selection.ok) return reply.code(404).send(SALON_VIEW_NOT_FOUND);
+      const { tz, firstDay, lastDay, employees, section9ByEmp, leaveDaysByEmployee, salon } =
+        selection;
       const tenant = await app.prisma.tenant.findUnique({
         where: { id: req.user.tenantId },
         select: { name: true },
@@ -2041,13 +2146,21 @@ export async function reportRoutes(app: FastifyInstance) {
         generatedAt: formatInTimeZone(new Date(), tz, "dd.MM.yyyy, HH:mm"),
         vacationYear: { year: y, asOf: `${stichtagDay}.${stichtagMonth}.${stichtagYear}` },
         rows,
+        ...(salon ? { salonScope: { salonName: salon.name } } : {}),
       });
 
       await app.audit({
         userId: req.user.sub,
         action: "EXPORT",
         entity: "Report",
-        newValue: { type: "MONTHLY_EXPORT_PDF", year: y, month: m, employeesIncluded: rows.length },
+        newValue: {
+          type: "MONTHLY_EXPORT_PDF",
+          year: y,
+          month: m,
+          employeesIncluded: rows.length,
+          // Issue #542 (P-07): the salon id (never a name) only under a filter.
+          ...(salon ? { salonId: salon.id } : {}),
+        },
       });
 
       reply.header("Content-Type", "application/pdf");
