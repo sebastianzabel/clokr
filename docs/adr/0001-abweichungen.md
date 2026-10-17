@@ -1914,6 +1914,15 @@ weiter, und die überschriebene Personalnummer ließ spätere Lohnkorrekturen al
 409), dazu `leave-correction-core-614.test.ts`, `dashboard-upcoming-leave-anonymized-614.test.ts` und
 `scripts/__tests__/audit-614-anonymized-employment.test.ts`.
 
+### Nachtrag 2026-10-17 (Issue #617) — Der D-12-Leser entfällt
+
+Der firmenweite Monatsbericht (`GET /reports/monthly/pdf/all`) ist mit #617 entfernt, und mit ihm der Rollenfilter, der als
+D-12 der dritte dokumentierte Leser der Kompatibilitätsspalte `User.role` war. Es bleiben zwei Leser: der Vergleich beim
+Zurückschreiben (D-06) und das Übernahme-Skript (D-01). `legacy-role-reads-539.test.ts` zählte D-12 nie als Fund
+(`compatRoleUserWhere()` liefert `{ role }` außerhalb eines `where`-Literals), seine Allowlist braucht deshalb keine
+Änderung. `parseCompatRoleFilter` und `compatRoleUserWhere` bleiben ohne Aufrufer exportiert, bis Release B (#641) die
+Spalte und das Enum entfernt; ein Hinweis steht am Issue #641.
+
 ---
 
 ## O — Bundesland und manuelle Feiertage wandern an den Salon (Phase 71b, Issue #71)
@@ -3008,6 +3017,131 @@ pnpm --filter @clokr/api exec vitest run src/__tests__/hr-view-86.test.ts src/__
   src/__tests__/reports-hr-86.test.ts src/__tests__/hr-template-migration-86.test.ts \
   src/__tests__/system-role-template-personalabteilung.test.ts src/contexts/platform/__tests__/system-roles.test.ts
 pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts   # danach die drei Generator-Probeläufe ohne --write
+git diff --quiet "$(git merge-base HEAD origin/main)" -- apps/api/src/__tests__/neutrality/recorded
+```
+
+### Nachtrag 2026-10-17 (Issue #617) — Ein Monatsexport statt vieler PDFs; Urlaubsübersicht nur mit Urlaub
+
+**Schwere: informativ. Keine Unterbau-Änderung, keine Migration.** Stand der Messungen: Branch `fix/617-monatsexport`,
+Basis `83114c35` (Phase 587 eingemergt, `c6f29716`).
+
+#### Warum
+
+Owner-Entscheidung vom 17.10.2026 (Kommentare am Issue #617). Es gab fünf PDFs, die sich überlappten: den
+Stundennachweis je Person, den firmenweiten Monatsbericht, die Urlaubsliste, den Urlaubsbericht und die
+Urlaubsübersicht. Die Urlaubsliste führte Krankheitszeilen in einem Dokument, das für ein anderes Publikum gedacht war
+(wer Urlaub plant, braucht keine Krankheitsdaten), „Resturlaub“ hieß auf Seite und Dokument nicht dasselbe, die Zahlen
+standen mit Dezimalpunkt und „1 Tage“ da, und ein Stundennachweis mit 19 Einträgen erzeugte eine Leerseite.
+
+#### Was sich geändert hat
+
+- **Monatsexport.** `GET /api/v1/reports/monthly-export/pdf` (`report:export:ZUGEWIESEN`, eine Zeile je Person, keine
+  Tageszeilen) ist die lesbare Fassung des DATEV-Exports. Die Personen kommen über den gemeinsamen DATEV-Lader
+  (`loadDatevMonth`, kein zweiter Auswahlweg) und genau eine Auswahlfunktion (`selectMonthlyExportPersons`); die
+  Abwesenheitstage und die Spalte „DATEV-Std.“ stammen aus den Personenwerten von DATEV (`datevPersonFigures`), Soll, Ist,
+  Saldo, Status und Gesamtsaldo aus dem Ergebnis des Arbeitszeitkontos (`computeMonthReportFigures`, dazu das additive Feld
+  `closingBalanceMinutes`). Der Abschnitt „Urlaubsjahr“ kommt aus der Urlaubsfassade mit der neuen Aufteilung in
+  verfügbare, genommene und genehmigte künftige Tage und wird zu einem **Stichtag** ausgewertet: letzter Tag des
+  exportierten Monats, im laufenden Monat der gestrige Tag in der Mandanten-Zeitzone. Ein erneuter Export desselben Monats
+  druckt dieselben Zahlen.
+- **Stundennachweis** (`GET /reports/monthly/pdf`, bleibt) mit deutschem Format (H:MM, Dezimalkomma, Tag/Tage), benannten
+  Einheiten, Markenfarbe, Fußzeile ohne Leerseite, Einträgen in Startzeit-Reihenfolge und eigenen Zeilen für Urlaub,
+  Krankmeldung, Berufsschule und Feiertage (ein Feiertag vor dem Eintritts- oder nach dem Austrittstag der Person erscheint
+  nicht). Er ist das einzige Dokument mit einer Tagesliste.
+- **Entfernt:** der firmenweite Monatsbericht (`GET /reports/monthly/pdf/all`), die Urlaubsliste, der Urlaubsbericht und
+  die Urlaubsübersicht als PDF samt Renderern, Zeilentypen, Kompositionshelfern und Schaltflächen. Die
+  Urlaubsübersicht der App (`GET /reports/leave-overview`) listet **nur Urlaub** — eine Positivliste nach Abwesenheitsart
+  im Code, keine Ausschlussliste — mit den sieben Spalten Anspruch, Übertrag (wirksam), Verfügbar, Genommen, Genehmigt,
+  Beantragt, Resturlaub; die Seite und der Abschnitt „Urlaubsjahr“ im Monatsexport tragen dieselben Beschriftungen
+  (Spiegeltest) und Resturlaub = Verfügbar − Genommen − Genehmigt.
+- **Ein Ort für PDF-Zahlen.** `composition/pdf-format.ts` ist der einzige Ort, der PDF-Zahlen schreibt; der Wächtertest
+  `pdf-output-guard-617.test.ts` verbietet `.toFixed`, Locale-Formatierer und die Altfarbe in `pdf.ts` und
+  `pdf-format.ts`.
+
+#### Datenschutz
+
+Der Monatsexport enthält Krankheitstage. Das ist zulässig, weil sein Zweck die Vorbereitung der Lohnabrechnung ist:
+Entgeltfortzahlung im Krankheitsfall (EFZG) und das Lohnkonto (§ 41 EStG). Rechtsgrundlage ist Art. 9 Abs. 2 lit. b DSGVO
+(Erfüllung arbeits- und sozialrechtlicher Pflichten) zusammen mit Art. 6 Abs. 1 lit. c DSGVO. Die Zweckbindung
+(Art. 5 Abs. 1 lit. b DSGVO) bleibt gewahrt, weil Publikum und Berechtigung dieselben sind wie beim DATEV-Export
+(`report:export`, die Personalabteilung hält sie nicht). Die Begründung stützt sich nicht auf § 26 BDSG, dessen
+Generalklausel seit EuGH 30.03.2023, C-34/21, zweifelhaft ist. Das Problem von #617 war Krankheit in einer
+**Urlaubs**liste für ein anderes Publikum; diese Liste gibt es nicht mehr, und die Urlaubsübersicht ist durch die
+Positivliste im Code auf Urlaub beschränkt. Eine künftige Abwesenheitsart gelangt dadurch nie von selbst hinein.
+
+#### Was bewusst NICHT geschah
+
+- **Kein Salonfilter.** #542 verengt `selectMonthlyExportPersons` nach Stammsalon; DATEV bleibt ungefiltert (§ 41 EStG).
+- **Ist und „DATEV-Std.“ werden nebeneinander gedruckt, nicht vereinheitlicht.** Gemessene Ursachen eines Unterschieds
+  (617-01) stehen in der Legende des Dokuments: Beschäftigungszeitraum (das Konto kappt, DATEV summiert alle Einträge des
+  Monats), Berufsschul-Anrechnung, nur Einträge der Art Arbeit (DATEV summiert jede Art), gespeicherter Stand eines
+  abgeschlossenen Monats.
+- **Stichtag, aber keine Statushistorie.** Der Abschnitt „Urlaubsjahr“ liest die heutigen Status der Anträge. Eine
+  Genehmigung oder Ablehnung nach dem Stichtag verschiebt Tage daher auch bei einem erneuten Export; es wird keine
+  frühere Statuslage rekonstruiert. Reproduzierbar sind der Stichtag, der wirksame Übertrag und „Beantragt“ nach Anlagedatum
+  (`pendingCreatedByAsOfDays`).
+- **Die Selbstheilung der Urlaubsübersicht fasst nur noch Urlaubszeilen an.** Zeilen anderer Anspruchsarten gehören nicht
+  mehr zur Antwort und werden dort nicht mehr geheilt. Geprüft, ob ein Leser davon abhing: `GET
+/leave/entitlements/:employeeId` heilt beim Laden alle Zeilen der Person selbst (`selfHealUsedDays`); die übrigen
+  Leser von `usedDays` (16 Nicht-Testdateien) betreffen Urlaubszeilen. Kein Leser der übrigen Zeilen hing an der Heilung der
+  Übersicht.
+- **Anonymisierte Personen.** Der Monatsexport folgt der DATEV-Population: Eine anonymisierte Person erscheint für ihre
+  Beschäftigungsmonate (bis #666 auch ohne Austrittsdatum), ihr Anspruch wird nie geschrieben (kein Heilen, im Speicher
+  ausgerichtet).
+- Die Kompatibilitätsfunktionen `parseCompatRoleFilter`/`compatRoleUserWhere` bleiben bis Release B (#641). Absence-Exporte
+  ohne Produktivaufrufer (`BS_NO_LEAVE_LABEL`, `leaveRequestDaysWithin`, `vocationalSchoolDatesForLeaveRequests` außerhalb
+  der Abwesenheiten) bleiben und stehen in einem Chore-Issue.
+- Die Kachel „PDF-Bericht“ der Admin-Exportseite → #593; die Neugestaltung der Berichtsseite → #612.
+
+#### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** additive Felder der Urlaubsfassade (`availableDays`, `takenDays`, `approvedUpcomingDays`,
+  `pendingCreatedByAsOfDays`, `splitAsOf`) und das optionale `asOf`; die Urlaubsübersicht ist eine Positivliste.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** additives `closingBalanceMinutes` an `computeMonthReportFigures`.
+- **Unterbau:** keine — kein Export einer Unterbau-Datei und keine Unterbau-Semantik hat sich geändert.
+- **Kompositionsschicht:** Monatsexport, Entfernungen, `pdf-format.ts`; keine Geschäftsregel hierher verschoben (die
+  Personenauswahl bleibt in einer Funktion, die Urlaubszahlen kommen aus der Fassade).
+
+#### Gemessen
+
+Alle Zahlen stehen in den Zusammenfassungen der Pläne 617-01 bis 617-05 (Stand 617-04/05, danach nur Dokumentation).
+
+- **DATEV byte-gleich:** Mit einem Neun-Personen-Fixture (u. a. Krankheit mit Attest, § 9, Austritt, Berufsschule,
+  Waisen-Gutschrift) war die DATEV-Datei vor und nach dem Herauslösen von `loadDatevMonth` und `datevPersonFigures`
+  identisch (1574 Byte, 24 Zeilen; 617-01).
+- **Paritätstabelle:** Der Monatsexport druckt je Person genau die Minuten von `computeMonthReportFigures`, die
+  Abwesenheitstage der DATEV-Zeilen und die Normalstunden der DATEV-Datei; die Personenmenge ist gleich der der
+  DATEV-Datei (12 Zeilen, 12 `pnr`; 617-01).
+- **Seiten:** Monatsexport 3 Zeilen = 1 Seite, 60 Zeilen = 2 Seiten (4 mit dem Abschnitt „Urlaubsjahr“, 617-02);
+  Stundennachweis mit 19 Einträgen = 1 Seite (vorher 2), 45 Einträge = 2 Seiten (vorher 4); Mutationsnachweis mit dem
+  alten Fußzeilentext (617-01, 617-05).
+- **Wächter:** `pdf-output-guard-617.test.ts` geht `pdf.ts` und `pdf-format.ts` ab (mindestens zwei Dateien, beide
+  benannt); zwei Mutationen (ein `.toFixed`, eine falsche Markenfarbe) färben ihn rot (617-05).
+- **Neutralität:** 1752 → 1720 Fälle (drei Dateien) = vier entfernte Routen × 8 Akteure (eine in 617-03, drei in 617-04);
+  die Orakelzellen je Akteur 299 → 298 → 295 (Untergrenze 290, unverändert); `matrix.json`, `recipients.json`, `activity-auth.json` und
+  `matrix-amendments.json` sind byte-gleich zum Merge-Basisstand, es wurde kein Amendment erzeugt (617-03/04).
+- **Entfernte Testfälle ohne Gegenstand:** zwölf, je mit deutscher Begründung in 617-03 (vier Rollenfilter-Fälle der
+  Firmen-PDF-Route) und 617-04 (acht Fälle der Urlaubsliste, der Urlaubs-PDFs und ihrer Zugriffsfälle); alle übrigen
+  Fälle dieser Dokumente wurden auf den Monatsexport oder die Urlaubsübersicht der App umgestellt. Die Untergrenze der
+  Testzahl sinkt deshalb einmalig um 36 (10400 → 10364 zwischen den vollen Läufen von 617-03 und 617-04:
+  Neutralitätsmatrix −24, `reports-hr-86` −3, `reports.test` −3, `reports-vacation-population-613` −2,
+  `reports-salon-scope` −2, `reports-priced-leave-days-451` −1, `reports-bs-leave-448` −1) und die des Fremdmandanten-Durchlaufs um drei (209 → 206), jeweils nur wegen
+  entfernter Routen, nicht wegen gelockerter Prüfungen.
+- **Eingefrorene Stände:** `reports-monthly-frozen-84`, `dashboard-team-week-frozen-84`, `whole-tenant-frozen-85` sind
+  byte-gleich zum Merge-Basisstand.
+
+#### Nachrechnen
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/__tests__/monthly-export-617.test.ts \
+  src/composition/__tests__/monthly-export-render-617.test.ts src/composition/__tests__/pdf-format-617.test.ts \
+  src/contexts/absence/__tests__/vacation-balance-split-617.test.ts src/__tests__/leave-overview-vacation-617.test.ts \
+  src/composition/__tests__/stundennachweis-render-617.test.ts src/__tests__/stundennachweis-day-rows-617.test.ts \
+  src/__tests__/pdf-output-guard-617.test.ts src/__tests__/reports-hr-86.test.ts
+pnpm --filter @clokr/web exec vitest run src/__tests__/reports-monthly-export-617.test.ts src/lib/reports
 git diff --quiet "$(git merge-base HEAD origin/main)" -- apps/api/src/__tests__/neutrality/recorded
 ```
 

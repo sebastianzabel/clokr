@@ -59,9 +59,12 @@ Ausgeschiedene Mitarbeiter werden **nicht hard-gelöscht**, sondern anonymisiert
   dieses Abschnitts über den **Speichern**-Button des Tabs übernommen, nicht sofort beim Auswählen.
 - Der im Admin angezeigte **Resturlaub** (verbleibend, verfallen, gefährdet) kommt aus derselben
   einen Funktion wie die Berichte und das Dashboard (Issue #451, siehe unten). In den Berichten
-  (**Admin → Berichte**) zeigt die Spalte „Übertrag" den **wirksamen** (FIFO-bereinigten, nicht
-  verfallenen) Übertrag, und die Verfall-Warnung zeigt die **gefährdeten** Tage — den Teil des
-  Übertrags, der ohne weitere Buchung bis zum Verfallsdatum verfällt.
+  (**Admin → Berichte**) zeigt die Urlaubsübersicht nur den **Urlaub** (keine Krankheit und keine
+  Sonderurlaubsarten) mit den Spalten Anspruch, Übertrag (wirksam), Verfügbar, Genommen, Genehmigt,
+  Beantragt und Resturlaub. „Übertrag (wirksam)" ist der **wirksame** (FIFO-bereinigte, nicht verfallene)
+  Übertrag; **Verfügbar** ist Anspruch plus wirksamer Übertrag; **Resturlaub** ist Verfügbar abzüglich
+  Genommen und Genehmigt — beantragte Tage werden nicht abgezogen. Die Verfall-Warnung zeigt die
+  **gefährdeten** Tage — den Teil des Übertrags, der ohne weitere Buchung bis zum Verfallsdatum verfällt.
 
 ### Genehmigungen
 
@@ -118,6 +121,24 @@ Der Monatsabschluss friert den Überstunden-Saldo eines Monats ein:
 - **Zeiteintrags-Import**: Mitarbeiternummer, Datum, Beginn, Ende, Pausen
 
 CSV-Vorlagen stehen zum Download bereit.
+
+---
+
+## Berichte und Monatsexport
+
+**Admin → Berichte** bietet zwei PDF-Dokumente und die Datei für DATEV (Issue #617):
+
+- **Monatsexport** — ein PDF für alle Mitarbeitenden eines Monats, die lesbare Fassung des DATEV-Exports:
+  dieselben Personen und dieselben Abwesenheitstage wie in der DATEV-Datei, dazu Soll, Ist, Saldo, Status und
+  Gesamtsaldo aus dem Arbeitszeitkonto und ein Abschnitt „Urlaubsjahr" mit dem Stand zum Monatsende (im
+  laufenden Monat bis gestern). „DATEV-Std." sind die Normalstunden der DATEV-Datei; sie können vom Ist
+  abweichen (Beschäftigungszeitraum, Berufsschul-Anrechnung, nur Einträge der Art Arbeit, gespeicherter
+  Stand abgeschlossener Monate) — die Legende im Dokument nennt die Gründe. Das Dokument enthält Krankheitstage,
+  weil es der Vorbereitung der Lohnabrechnung dient; es setzt wie DATEV die Berechtigung „Berichte exportieren" voraus.
+- **Stundennachweis** — das PDF einer Person mit allen Einträgen des Monats sowie Abwesenheits- und Feiertagszeilen.
+  Er ist das einzige Dokument mit einer Tagesliste.
+- Die früheren PDFs Firmenweiter Monatsbericht, Urlaubsliste, Urlaubsbericht und Urlaubsübersicht gibt es nicht mehr;
+  die Urlaubsübersicht steht in der App, der Abschnitt „Urlaubsjahr" im Monatsexport.
 
 ---
 

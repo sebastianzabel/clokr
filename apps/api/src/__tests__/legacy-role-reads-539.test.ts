@@ -22,9 +22,10 @@
  * Exactly the readers in `ALLOWED_READERS` stay: the write-back comparison in `compat-role.ts` (D-06,
  * kind 2) and the takeover script `backfill-539-role-assignments.ts` (D-01, kind 2: it reads the legacy
  * role once to store the assignment the old fallback used to grant). Each entry must match at least one
- * occurrence — a stale entry turns the guard red, like an unlisted finding does. The company-PDF role
- * filter (D-12) is NOT a finding: `compatRoleUserWhere()` returns `{ role }` outside any `where`
- * literal, and the route spreads that return value; a case below pins this.
+ * occurrence — a stale entry turns the guard red, like an unlisted finding does. The former company-PDF
+ * role filter (D-12, route removed by #617) was never a finding: `compatRoleUserWhere()` returns `{ role }`
+ * outside any `where` literal, and a caller spreads that return value; a case below pins this for the
+ * function, which stays exported until Release B (#641).
  *
  * Non-vacuity: the scan asserts it walked more than 270 files (an inline literal, 318 measured) and found each allowlisted
  * reader (the floor is an inline literal, measured when the guard was written).
