@@ -50,7 +50,7 @@ interface RegionEntry {
   membership: string;
 }
 
-// 542-02 adds the attendance and team-week regions, 542-03 the overview and the export.
+// 542-02 added the attendance and team-week regions; 542-03 adds the overview and the export.
 export const REGIONS: readonly RegionEntry[] = [
   {
     file: `${COMPOSITION}/reports.ts`,
@@ -63,6 +63,13 @@ export const REGIONS: readonly RegionEntry[] = [
     file: `${COMPOSITION}/dashboard.ts`,
     method: "get",
     path: "/today-attendance",
+    validator: "resolveSalonInReach",
+    membership: "salonViewMemberIds",
+  },
+  {
+    file: `${COMPOSITION}/dashboard.ts`,
+    method: "get",
+    path: "/team-week",
     validator: "resolveSalonInReach",
     membership: "salonViewMemberIds",
   },

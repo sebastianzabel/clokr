@@ -17,13 +17,17 @@
  * The "attendance equals the team week" describe adds SB1 (SHIFT_BASED homed A, shift 09:00-17:00)
  * and TP (homed A, PENDING vacation today).
  *
- * Mutation proofs (each reverted with `cp`, `git diff --quiet` exit 0; red tests measured and
- * recorded in the 542-02 SUMMARY):
- *   M1 attendance passes an empty `homeByPerson` to `salonViewMemberIds` -> "attendance" membership
- *      cases for TA/TE red.
- *   M2 attendance omits `workedElsewhere` -> the TC case and the parity cases red.
- *   M3 the team week passes `days: []` to `salonViewMemberIds` -> parity (and the 84 filter cases) red.
- *   M4 attendance validates the salon after the population read -> report-salon-filter-source-542 red.
+ * Mutation proofs (each reverted with `cp`, byte-compared; red tests measured):
+ *   M1 attendance passes an empty `homeByPerson` to `salonViewMemberIds` -> "salon A lists ...",
+ *      "marks valid time in another salon ...", "counts only the shown rows ..." and "salon B
+ *      lists ..." red (5 failed, the fifth is the derived observed-statuses case).
+ *   M2 attendance omits `workedElsewhere` -> "marks valid time in another salon ...", "salon B
+ *      lists ...", "lists the entry-only person TB ..." and all four parity cases red.
+ *   M3 the team week passes `days: []` to `salonViewMemberIds` -> dashboard-team-salon-filter-84
+ *      ("salon A: rows by entry or Stammsalon ...", "salon B: the same person ...") and all four
+ *      parity cases red.
+ *   M4 attendance validates the salon after the population read -> report-salon-filter-source-542
+ *      "get /today-attendance: validates before any read ..." red.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";

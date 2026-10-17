@@ -787,6 +787,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // filter only removes rows. For a SCOPED caller the entries come from the Unterbau's
       // in-scope set only (the entry-based population is already part of `employees`), so the
       // filter narrows that population further and never reveals an entry outside the reach.
+      // Issue #542 (P-01): the membership rule lives in composition/salon-view.ts and is shared
+      // with /today-attendance and the report views.
       let shownEmployees = employees;
       if (filterSalonId !== null) {
         const homeByPerson = await homeSalonsForDays(
@@ -796,16 +798,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
           weekDays[0],
           weekDays[6],
         );
-        const enteredInSalon = new Set(
-          (inScopeRows ?? timeEntries)
-            .filter((e) => e.salonId === filterSalonId)
-            .map((e) => e.employeeId),
-        );
-        shownEmployees = employees.filter((emp) => {
-          if (enteredInSalon.has(emp.id)) return true;
-          const dayMap = homeByPerson.get(emp.id);
-          return dayMap ? weekDays.some((d) => dayMap.get(d) === filterSalonId) : false;
+        const members = salonViewMemberIds({
+          salonId: filterSalonId,
+          candidateIds: employees.map((emp) => emp.id),
+          entries: inScopeRows ?? timeEntries,
+          homeByPerson,
+          days: weekDays,
         });
+        shownEmployees = employees.filter((emp) => members.has(emp.id));
       }
 
       // Scoped callers: the in-scope rows by person-day (Issue #85, D-04).
