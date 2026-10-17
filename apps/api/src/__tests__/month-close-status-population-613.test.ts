@@ -52,8 +52,8 @@ describe("Issue #613 — Monatsabschluss status population", () => {
     }
   }
 
-  async function getJson<T>(url: string) {
-    return withClock(d.adminToken, async (t) => {
+  async function getJson<T>(url: string, token = d.adminToken) {
+    return withClock(token, async (t) => {
       const res = await app.inject({
         method: "GET",
         url,
@@ -176,6 +176,158 @@ describe("Issue #613 — Monatsabschluss status population", () => {
       });
       const row = (await statusRows(2026, 9)).find((r) => r.employeeId === p.E1.employeeId);
       expect(row?.status).toBe("closed");
+    });
+  });
+  describe("employment window parity", () => {
+    let pd: Awaited<ReturnType<typeof seedTestData>>;
+    let w: Record<"M" | "M2" | "N" | "N2", PopulationPerson>;
+
+    /** Mon–Fri days of an inclusive range of `YYYY-MM-DD` strings. */
+    function workdays(fromStr: string, toStr: string): string[] {
+      const out: string[] = [];
+      const cur = new Date(fromStr + "T00:00:00Z");
+      const end = new Date(toStr + "T00:00:00Z");
+      while (cur <= end) {
+        const dow = cur.getUTCDay();
+        if (dow >= 1 && dow <= 5) out.push(cur.toISOString().slice(0, 10));
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+      return out;
+    }
+
+    /** The `gapDates` of the close writer for a person without `confirmGaps` (409). */
+    async function writerGapDates(employeeId: string): Promise<string[]> {
+      return withClock(pd.adminToken, async (t) => {
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/overtime/close-month",
+          headers: { authorization: `Bearer ${t}` },
+          payload: { employeeId, year: 2026, month: 9 },
+        });
+        expect(res.statusCode, res.body).toBe(409);
+        return (JSON.parse(res.body) as { gapDates: string[] }).gapDates;
+      });
+    }
+
+    async function statusMissing(employeeId: string): Promise<string[]> {
+      const res = await getJson<{ employees: StatusRow[] }>(
+        "/api/v1/overtime/close-month/status?year=2026&month=9",
+        pd.adminToken,
+      );
+      expect(res.status).toBe(200);
+      const row = res.body.employees.find((r) => r.employeeId === employeeId);
+      expect(row?.status).toBe("missing");
+      return row?.missingDates ?? [];
+    }
+
+    beforeAll(async () => {
+      pd = await seedTestData(app, "pw613");
+      // Only the fixture persons form this tenant's population: the seeded accounts stay able to
+      // sign in but are exempt, so no earlier month is open for them in the year status.
+      await app.prisma.employee.updateMany({
+        where: { tenantId: pd.tenant.id },
+        data: { isTimeTrackingExempt: true },
+      });
+      const base = { tenantId: pd.tenant.id, salonId: pd.salonId };
+      const hire = new Date("2025-01-01T00:00:00.000Z");
+      w = {
+        M: await createPopulationPerson(app, {
+          ...base,
+          tag: "m",
+          hireDate: hire,
+          exitDate: new Date("2026-09-15T00:00:00.000Z"),
+        }),
+        M2: await createPopulationPerson(app, {
+          ...base,
+          tag: "m2",
+          hireDate: hire,
+          exitDate: new Date("2026-09-14T22:00:00.000Z"),
+        }),
+        N: await createPopulationPerson(app, {
+          ...base,
+          tag: "n",
+          hireDate: new Date("2026-09-14T22:00:00.000Z"),
+        }),
+        N2: await createPopulationPerson(app, {
+          ...base,
+          tag: "n2",
+          hireDate: new Date("2026-09-15T00:00:00.000Z"),
+        }),
+      };
+      // The writer closes month by month: January to August 2026 are closed for the two persons
+      // employed before the year, so the writer reaches the September gap check.
+      for (const person of [w.M, w.M2]) {
+        for (let m = 1; m <= 8; m++) {
+          const range = monthRangeUtc(2026, m, TZ);
+          await app.prisma.saldoSnapshot.create({
+            data: {
+              employeeId: person.employeeId,
+              periodType: "MONTHLY",
+              periodStart: range.start,
+              periodEnd: range.end,
+              workedMinutes: 0,
+              expectedMinutes: 0,
+              balanceMinutes: 0,
+              carryOver: 0,
+              closedAt: new Date(),
+              closedBy: null,
+            },
+          });
+        }
+      }
+    }, 120_000);
+
+    afterAll(async () => {
+      try {
+        await cleanupTestData(app, pd.tenant.id);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    });
+
+    it("M (exit 15.09. as stored by PATCH): status gaps end on the exit day and equal the writer's", async () => {
+      const expected = workdays("2026-09-01", "2026-09-15");
+      const status = await statusMissing(w.M.employeeId);
+      expect([...status].sort()).toEqual(expected);
+      expect([...(await writerGapDates(w.M.employeeId))].sort()).toEqual(expected);
+    });
+
+    it("M2 (exit as tenant-local midnight): same set as M and as the writer", async () => {
+      const expected = workdays("2026-09-01", "2026-09-15");
+      expect([...(await statusMissing(w.M2.employeeId))].sort()).toEqual(expected);
+      expect([...(await writerGapDates(w.M2.employeeId))].sort()).toEqual(expected);
+    });
+
+    it("N (hired as tenant-local midnight of 15.09.): first missing day 2026-09-15, equal to the writer's", async () => {
+      const expected = workdays("2026-09-15", "2026-09-30");
+      const status = [...(await statusMissing(w.N.employeeId))].sort();
+      expect(status[0]).toBe("2026-09-15");
+      expect(status).toEqual(expected);
+      expect([...(await writerGapDates(w.N.employeeId))].sort()).toEqual(expected);
+    });
+
+    it("N2 (hired 2026-09-15T00:00Z): same set as N and as the writer", async () => {
+      const expected = workdays("2026-09-15", "2026-09-30");
+      expect([...(await statusMissing(w.N2.employeeId))].sort()).toEqual(expected);
+      expect([...(await writerGapDates(w.N2.employeeId))].sort()).toEqual(expected);
+    });
+
+    it("the year status September counts the same missing days per person", async () => {
+      const res = await getJson<{ months: YearMonth[] }>(
+        "/api/v1/overtime/close-month/year-status?year=2026",
+        pd.adminToken,
+      );
+      expect(res.status).toBe(200);
+      const sep = res.body.months.find((m) => m.month === 9)!;
+      expect(sep.status).toBe("open");
+      const sizeOf = (person: PopulationPerson) =>
+        sep.missing?.find((x) => x.employeeNumber === person.employeeNumber)?.missingDateCount;
+      const early = workdays("2026-09-01", "2026-09-15").length;
+      const late = workdays("2026-09-15", "2026-09-30").length;
+      expect(sizeOf(w.M)).toBe(early);
+      expect(sizeOf(w.M2)).toBe(early);
+      expect(sizeOf(w.N)).toBe(late);
+      expect(sizeOf(w.N2)).toBe(late);
     });
   });
 });

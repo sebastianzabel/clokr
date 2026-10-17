@@ -96,6 +96,41 @@ const openingBalanceSchema = z.object({
 const EXCLUDE_EXEMPT_EMPLOYEE_FILTER = { isTimeTrackingExempt: false } as const;
 
 /**
+ * The span of a month in which a person can have a missing record, derived READ-SIDE for the
+ * Monatsabschluss status and the year status (Issue #613).
+ *
+ * It mirrors Step 1 of `closeEmployeeMonth` (`close-employee-month.ts`, "Compute effectiveStart and
+ * effectiveEnd"), which stays untouched: hire and exit are normalised to their tenant-local calendar
+ * day (`dateStrInTz(...) + "T00:00:00Z"`), the window starts at the later of the hire day and the
+ * month's first day, it ends on the exit day when that lies before the month's last day (the exit
+ * day is INCLUSIVE, the last working day), and it is `null` when the exit lies before the month.
+ * Once an exited person appears in the status of their exit month, running the gap check to the
+ * month end would claim missing records after the exit — which the writer would never demand.
+ *
+ * Nothing but the parity cases in `month-close-status-population-613.test.ts` binds the two
+ * spellings (status `missingDates` equal the writer's `gapDates`), so a change on either side turns
+ * that describe red.
+ */
+function statusEmploymentWindow(args: {
+  hireDate: Date;
+  exitDate: Date | null;
+  monthFirstDay: Date;
+  monthLastDay: Date;
+  tz: string;
+}): { effectiveStart: Date; effectiveEnd: Date } | null {
+  const { hireDate, exitDate, monthFirstDay, monthLastDay, tz } = args;
+  const hireDateNorm = new Date(dateStrInTz(hireDate, tz) + "T00:00:00Z");
+  const effectiveStart = hireDateNorm > monthFirstDay ? hireDateNorm : monthFirstDay;
+  let effectiveEnd = monthLastDay;
+  if (exitDate !== null) {
+    const exitDateNorm = new Date(dateStrInTz(exitDate, tz) + "T00:00:00Z");
+    if (exitDateNorm < monthFirstDay) return null;
+    if (exitDateNorm < monthLastDay) effectiveEnd = exitDateNorm;
+  }
+  return { effectiveStart, effectiveEnd };
+}
+
+/**
  * The employee's schedule type as a plain string, or "" when the employee has no
  * WorkSchedule row at all (`workSchedules[0]` is `undefined` — TS's index access does
  * not model that). `String()` is a runtime no-op for a present row, since
@@ -776,30 +811,37 @@ export async function overtimeRoutes(app: FastifyInstance) {
           statusRosterDates = new Set(empShifts.map((sh) => dateStrInTz(sh.date, tz)));
         }
 
-        const effectiveStartSt = emp.hireDate > monthFirstDay ? emp.hireDate : monthFirstDay;
-
-        const gapResultSt = findMissingWorkdays({
-          schedule: schedule as Record<string, unknown>,
-          effectiveStart: effectiveStartSt,
-          effectiveEnd: monthLastDay,
+        // Issue #613: the employment window of the close writer (null = left before the month).
+        const windowSt = statusEmploymentWindow({
+          hireDate: emp.hireDate,
+          exitDate: emp.exitDate,
+          monthFirstDay,
+          monthLastDay,
           tz,
-          entryDates,
-          approvedLeave: approvedLeave.map((lr) => ({
-            startDate: lr.startDate,
-            endDate: lr.endDate,
-            halfDay: Boolean(lr.halfDay),
-          })),
-          absences: absences.map((ab) => ({
-            startDate: ab.startDate,
-            endDate: ab.endDate,
-            halfDay: ab.halfDay,
-          })),
-          holidayDateStrings: holidaysByEmp.get(emp.id) ?? new Set(),
-          rosterDates: statusRosterDates,
         });
 
         // Build missingDates from gaps (partial:true gaps also surfaced — 76.28 will style them)
-        const missingDates = gapResultSt.gaps.map((g) => g.date);
+        const missingDates = windowSt
+          ? findMissingWorkdays({
+              schedule: schedule as Record<string, unknown>,
+              effectiveStart: windowSt.effectiveStart,
+              effectiveEnd: windowSt.effectiveEnd,
+              tz,
+              entryDates,
+              approvedLeave: approvedLeave.map((lr) => ({
+                startDate: lr.startDate,
+                endDate: lr.endDate,
+                halfDay: Boolean(lr.halfDay),
+              })),
+              absences: absences.map((ab) => ({
+                startDate: ab.startDate,
+                endDate: ab.endDate,
+                halfDay: ab.halfDay,
+              })),
+              holidayDateStrings: holidaysByEmp.get(emp.id) ?? new Set(),
+              rosterDates: statusRosterDates,
+            }).gaps.map((g) => g.date)
+          : [];
 
         // Phase 92 (BREAK-05): derive unconfirmedBreakDays from the SAME bulk-fetched
         // `entries` (now carrying breakStatus+isLocked, close-month-data.ts Q2) — no
@@ -1128,30 +1170,37 @@ export async function overtimeRoutes(app: FastifyInstance) {
             ysRosterDates = new Set(empShiftsYs.map((sh) => dateStrInTz(sh.date, tz)));
           }
 
-          const ysEffectiveStart = emp.hireDate > ysMonthFirstDay ? emp.hireDate : ysMonthFirstDay;
-
-          const ysGapResult = findMissingWorkdays({
-            schedule: schedule as Record<string, unknown>,
-            effectiveStart: ysEffectiveStart,
-            effectiveEnd: ysMonthLastDay,
+          // Issue #613: the employment window of the close writer (null = left before the month).
+          const ysWindow = statusEmploymentWindow({
+            hireDate: emp.hireDate,
+            exitDate: emp.exitDate,
+            monthFirstDay: ysMonthFirstDay,
+            monthLastDay: ysMonthLastDay,
             tz,
-            entryDates,
-            approvedLeave: approvedLeave.map((lr) => ({
-              startDate: lr.startDate,
-              endDate: lr.endDate,
-              halfDay: Boolean(lr.halfDay),
-            })),
-            absences: absences.map((ab) => ({
-              startDate: ab.startDate,
-              endDate: ab.endDate,
-              halfDay: ab.halfDay,
-            })),
-            holidayDateStrings: ysMonthHolidayDateStrings,
-            rosterDates: ysRosterDates,
           });
 
           // Build empMissingDates from gaps (partial:true gaps also surfaced — 76.28 will style them)
-          const empMissingDates = ysGapResult.gaps.map((g) => g.date);
+          const empMissingDates = ysWindow
+            ? findMissingWorkdays({
+                schedule: schedule as Record<string, unknown>,
+                effectiveStart: ysWindow.effectiveStart,
+                effectiveEnd: ysWindow.effectiveEnd,
+                tz,
+                entryDates,
+                approvedLeave: approvedLeave.map((lr) => ({
+                  startDate: lr.startDate,
+                  endDate: lr.endDate,
+                  halfDay: Boolean(lr.halfDay),
+                })),
+                absences: absences.map((ab) => ({
+                  startDate: ab.startDate,
+                  endDate: ab.endDate,
+                  halfDay: ab.halfDay,
+                })),
+                holidayDateStrings: ysMonthHolidayDateStrings,
+                rosterDates: ysRosterDates,
+              }).gaps.map((g) => g.date)
+            : [];
 
           if (empMissingDates.length > 0) {
             anyMissing = true;
