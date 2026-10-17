@@ -56,7 +56,14 @@
  * MONTHLY read here uses `periodStartWindow` (W1) or a range.
  */
 import type { Prisma } from "@clokr/db";
-import { periodStartWindow } from "../snapshot-period";
+import type { FastifyInstance } from "fastify";
+import {
+  isPeriodStartInMonth,
+  periodStartWindow,
+  selectMonthlySnapshotPerMonth,
+  snapshotMonthOf,
+} from "../snapshot-period";
+import { getTenantTimezone, monthRangeUtc } from "../timezone";
 
 // ── Local helpers (module-private) ───────────────────────────────────────────────────────────
 
@@ -126,18 +133,27 @@ export async function getClosedMonthsForDates(
   tenantId: string,
   monthStarts: Date[],
 ): Promise<Set<string>> {
-  if (employeeIds.length === 0) return new Set();
+  if (employeeIds.length === 0 || monthStarts.length === 0) return new Set();
   const rows = await db.saldoSnapshot.findMany({
     where: {
       employeeId: { in: employeeIds },
       employee: { tenantId },
       periodType: "MONTHLY",
-      periodStart: { in: monthStarts },
+      // Issue #664: one window per requested month (both storage conventions), never an exact
+      // match on the converted date - a legacy UTC-naive closed month would read as open.
+      OR: monthStarts.map((m) => ({ periodStart: periodStartWindow(m) })),
       superseded: false,
     },
     select: { employeeId: true, periodStart: true },
   });
-  return new Set(rows.map((r) => `${r.employeeId}::${toIsoDate(r.periodStart)}`));
+  // The key names the REQUESTED month (the caller's own `monthLockBoundUtc` date), whichever
+  // convention the row was stored with, so a legacy row answers exactly like a converted one.
+  const keys = new Set<string>();
+  for (const r of rows) {
+    const asked = monthStarts.find((m) => isPeriodStartInMonth(r.periodStart, m));
+    if (asked !== undefined) keys.add(`${r.employeeId}::${toIsoDate(asked)}`);
+  }
+  return keys;
 }
 
 /**
@@ -159,12 +175,23 @@ export async function getClosedMonthsInRange(
       employeeId: { in: employeeIds },
       employee: { tenantId },
       periodType: "MONTHLY",
-      periodStart: { gte: from, lte: to },
+      // Issue #664: `from`/`to` are the converted month starts of the window's first and last
+      // month; the window form of the last month also takes its legacy UTC-naive row.
+      periodStart: { gte: from, lt: periodStartWindow(to).lt },
       superseded: false,
     },
     select: { employeeId: true, periodStart: true },
   });
-  return new Set(rows.map((r) => `${r.employeeId}::${toIsoDate(r.periodStart)}`));
+  // Keys are the converted month start of the month each row belongs to (`snapshotMonthOf`),
+  // the same value a caller derives with `monthRangeUtc`, whichever convention the row carries.
+  const tz = await getTenantTimezone(db as unknown as FastifyInstance["prisma"], tenantId);
+  const keys = new Set<string>();
+  for (const r of rows) {
+    const named = snapshotMonthOf(r.periodStart, tz);
+    const key = named === null ? r.periodStart : monthRangeUtc(named.year, named.month, tz).start;
+    keys.add(`${r.employeeId}::${toIsoDate(key)}`);
+  }
+  return keys;
 }
 
 // ── W5 — snapshots in a range, for many employees ────────────────────────────────────────────
@@ -229,7 +256,7 @@ export async function getMonthlySnapshotsInRange(
 export type CarryOverByMonth = { periodStart: Date; carryOver: number };
 
 /**
- * W6 — `SUM(carryOver)` grouped by `periodStart`, MONTHLY only, for `employeeIds` from `from`
+ * W6 — `SUM(carryOver)` grouped by `periodStart`, MONTHLY only, one row per person and month (Issue #664), for `employeeIds` from `from`
  * onward. Sole caller: `dashboard.ts`'s `GET /overtime-trend`.
  *
  * D2 (this plan's checkpoint, RESOLVED — do not reopen): the pre-facade `groupBy` at
@@ -242,13 +269,8 @@ export type CarryOverByMonth = { periodStart: Date; carryOver: number };
  * site was never a considered choice, and inert-on-today's-data is not the same as "safe to leave
  * out going forward" once a re-closed month starts producing a genuine superseded row.
  *
- * `tenantId` is declared (D-10/G4) but NOT used in the `where` — Prisma's `groupBy` does not
- * support relation filters (the ORIGINAL `dashboard.ts` code's own comment: "Prisma groupBy does
- * not support relation filters in `where`, so we resolve tenant scoping via a separate employee
- * query"), and that is exactly what the caller still does immediately before calling this function
- * — `employeeIds` is already tenant-scoped by the time it arrives here. Same shape as
- * `overtime-account.ts`'s `createOvertimeAccount` (plan 06): a declared-but-unused parameter,
- * reasoned, not silent.
+ * Since Issue #664 the read is a `findMany` (the one-row-per-person-and-month choice cannot be made
+ * inside a `groupBy`), so `tenantId` is now applied as an `employee: { tenantId }` relation filter.
  */
 export async function sumCarryOverByMonth(
   db: Prisma.TransactionClient,
@@ -256,20 +278,37 @@ export async function sumCarryOverByMonth(
   tenantId: string,
   from: Date,
 ): Promise<CarryOverByMonth[]> {
-  void tenantId; // see docblock — groupBy cannot filter by the `employee` relation
   if (employeeIds.length === 0) return [];
-  const grouped = await db.saldoSnapshot.groupBy({
-    by: ["periodStart"],
+  // Issue #664: a person with a legacy AND a converted row of one month counts once. Rows are
+  // fetched whole (not grouped in SQL) so the one-row-per-month choice of #595 is made per
+  // person; the sum is then grouped by the kept row's stored `periodStart`.
+  const tz = await getTenantTimezone(db as unknown as FastifyInstance["prisma"], tenantId);
+  const rows = await db.saldoSnapshot.findMany({
     where: {
       employeeId: { in: employeeIds },
+      employee: { tenantId },
       periodType: "MONTHLY",
       periodStart: { gte: from },
-      superseded: false, // D2 — deliberate, see docblock; not present at the old call site
+      superseded: false, // D2 - deliberate, see docblock; not present at the old call site
     },
-    _sum: { carryOver: true },
-    orderBy: { periodStart: "asc" },
+    select: { id: true, employeeId: true, periodStart: true, carryOver: true, closedAt: true },
   });
-  return grouped.map((g) => ({ periodStart: g.periodStart, carryOver: g._sum.carryOver ?? 0 }));
+  const byEmployee = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const list = byEmployee.get(r.employeeId);
+    if (list) list.push(r);
+    else byEmployee.set(r.employeeId, [r]);
+  }
+  const sums = new Map<number, CarryOverByMonth>();
+  for (const personRows of byEmployee.values()) {
+    for (const r of selectMonthlySnapshotPerMonth(personRows, tz)) {
+      const entry = sums.get(r.periodStart.getTime());
+      if (entry) entry.carryOver += r.carryOver;
+      else
+        sums.set(r.periodStart.getTime(), { periodStart: r.periodStart, carryOver: r.carryOver });
+    }
+  }
+  return [...sums.values()].sort((a, b) => a.periodStart.getTime() - b.periodStart.getTime());
 }
 
 // ── W7 — retention count ─────────────────────────────────────────────────────────────────────
