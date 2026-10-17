@@ -93,7 +93,10 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       const firstFigure = card
         .getByTestId("team-saldo-median")
         .or(card.getByText("Keine Salden in Ihrer Reichweite"));
-      await expect(firstFigure).toBeInViewport();
+      // The figure arrives with the overview request, which starts after the team block loaded; the
+      // wait is for that load under a busy full run (a single run needs about 3 s), the assertion
+      // itself - the figure lies inside the viewport - is unchanged.
+      await expect(firstFigure).toBeInViewport({ timeout: 20_000 });
     });
   });
 
