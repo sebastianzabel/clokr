@@ -883,12 +883,14 @@ import { readFileSync } from "node:fs";
 // contexts/time-tracking/__tests__/day-status, composition/__tests__/day-status-parity-587 and
 // __tests__/day-status-one-function-587; nothing removed, skipped or loosened (two assertions of the old status chain
 // were converted with a written reason, see the 587-01 summary). MIN_FILES 669 -> 672, never lowered.
+// Issue #664 (2026-10-17): full run measured 673 files, 10350 tests; the one new file (closed-month-legacy-lock-664, +4 tests) is the only addition, nothing removed. MIN_FILES 672 -> 673, never lowered.
 // Phase 617 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on `fix/617-monatsexport`
 // (origin/main @ c6f29716, phase 587 merged in, after 617-03) - 677 test files, 10400 tests (10397 passed, 3 skipped).
 // New files since 672: pdf-format-617, monthly-export-render-617, monthly-export-617, vacation-balance-split-617 and
 // leave-overview-vacation-617; nothing removed, skipped or loosened (the removed company-PDF cases were migrated onto
 // the Monatsexport or deleted with their subject, see the 617-03 summary). MIN_FILES 672 -> 677, never lowered.
-const MIN_FILES = 677;
+// Merged (617 + #664): 677 + 1 = 678 files; re-measured with a full run of the merged branch in 617-06.
+const MIN_FILES = 678;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -901,6 +903,7 @@ const MIN_FILES = 677;
 // (net +65: the nine new files minus the two W4 facade tests). Never lowered.
 // Phase 613 (2026-10-17): MIN_TESTS 10207 -> 10289, the measured total of the full run named at MIN_FILES. Never lowered.
 // Phase 587 (2026-10-17): MIN_TESTS 10289 -> 10346 (+57), the measured total of the full run named at MIN_FILES. Never lowered.
+// Issue #664 (2026-10-17): MIN_TESTS 10346 -> 10350 (+4), the measured total of the full run named at MIN_FILES. Never lowered.
 // Phase 617 (2026-10-17): MIN_TESTS 10346 -> 10400 (+54), the measured total of the full run named at MIN_FILES. Never lowered.
 // Plan 617-04 (2026-10-17): MIN_TESTS 10400 -> 10364 (-36), the ONE deliberate lowering of this phase: the three vacation
 // PDFs were removed, which takes their per-route cases with them (permission-neutrality-matrix -24 = 3 routes x 8 actors,
@@ -908,7 +911,8 @@ const MIN_FILES = 677;
 // Monatsexport or were deleted with their subject (reports-vacation-population-613 -2, reports-priced-leave-days-451 -1,
 // reports-bs-leave-448 -1, reports-salon-scope -2, reports.test -3; each case listed in 617-04-SUMMARY.md). Measured with a
 // full API run: 677 files, 10364 tests (10361 passed, 3 skipped); MIN_FILES stays 677 (no file removed).
-const MIN_TESTS = 10364;
+// Merged (617 + #664): 10364 + 4 = 10368; re-measured with a full run of the merged branch in 617-06.
+const MIN_TESTS = 10368;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
