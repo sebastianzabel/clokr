@@ -1615,6 +1615,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
             // Issue #588 (D-588-2, P-06): additive; the web's team figures exclude a person without
             // recorded time.
             hasRecordedTime: withRecordedTime.has(a.employeeId),
+            // Issue #588 (D-588-2 a, D-588-4): additive; null when the live saldo is unavailable.
+            trackOnly: breakdown === null ? null : breakdown.trackOnly,
+            unconfirmedMonths: breakdown === null ? null : breakdown.unconfirmedMonths,
             // Issue #595 (D-03/P-01): one item per month (the record the account reads), each
             // named by the server - `month` ("YYYY-MM", null when unnameable) is what the page
             // labels the sparkline with; `periodStart` stays for existing readers.
