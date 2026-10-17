@@ -59,6 +59,13 @@ export const REGIONS: readonly RegionEntry[] = [
     validator: "resolveSalonInReach",
     membership: "salonViewMemberIds",
   },
+  {
+    file: `${COMPOSITION}/dashboard.ts`,
+    method: "get",
+    path: "/today-attendance",
+    validator: "resolveSalonInReach",
+    membership: "salonViewMemberIds",
+  },
 ];
 
 /** Reads that must not happen before the validation. */

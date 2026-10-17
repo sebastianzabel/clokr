@@ -84,7 +84,7 @@ import {
   getApprovedLeaveEndingOnOrAfter, // Issue #84 (D-08) — the team card's upcoming leave
   filterLeaveRowsToHomeSalon, // Issue #558 (D-02/D-08) — the one Stammsalon-per-day attribution of absences
 } from "../contexts/absence";
-import { SALON_VIEW_NOT_FOUND } from "./salon-view"; // Issue #542 (P-01) — the one 404 body of the composition's salon views
+import { SALON_VIEW_NOT_FOUND, salonViewMemberIds } from "./salon-view"; // Issue #542 (P-01) — the one 404 body of the composition's salon views
 
 // Issue #84 (D-07): 1..12 months, default 6 — the bound keeps the per-person saldo fan-out finite.
 const teamTrendQuerySchema = z.object({
@@ -951,12 +951,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
   });
   // GET /api/v1/dashboard/today-attendance — Tages-Anwesenheitsübersicht (RPT-03)
   app.get("/today-attendance", {
-    schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
+    schema: {
+      tags: ["Dashboard"],
+      security: [{ bearerAuth: [] }],
+      description:
+        "Attendance of today. The optional salonId (Issue #542) narrows the list to the persons who recorded an entry today in that salon or are homed there today; every row keeps the status the unfiltered list gives the person, workedElsewhere marks valid time in another salon, the summary counts the shown rows only. A salon outside the caller's reach answers 404.",
+    },
     preHandler: requirePermission("team-overview:read:ZUGEWIESEN"),
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const access = accessContextFromRequest(req);
       const tenantId = req.user.tenantId;
       const tz = await getTenantTimezone(app.prisma, tenantId);
+      const { salonId } = teamSalonQuerySchema.parse(req.query);
       // Issue #587 (P-08): the clock is read ONCE per request; "today" is the tenant-local date of
       // that instant and `today` is its UTC-midnight form for the `@db.Date` reads.
       const now = new Date();
@@ -974,6 +980,16 @@ export async function dashboardRoutes(app: FastifyInstance) {
         access,
         "team-overview:read:ZUGEWIESEN",
       );
+      // Issue #542 (CTX-1, P-04): validated before any person read; one body for every rejection
+      // cause (byte-identical to the monthly report's and the team week's).
+      const attendanceSalonFilter = await resolveSalonInReach(
+        app.prisma,
+        tenantId,
+        attendanceScopeReach,
+        salonId,
+      );
+      if (!attendanceSalonFilter.ok) return reply.code(404).send(SALON_VIEW_NOT_FOUND);
+      const attendanceFilterSalonId = attendanceSalonFilter.salonId;
       const attendanceScopedAccess = { ...access, reach: attendanceScopeReach };
       const attendanceScopedIds =
         attendanceScopeReach.kind === "wholeTenant"
@@ -1134,14 +1150,39 @@ export async function dashboardRoutes(app: FastifyInstance) {
           ? outOfScopeValidCounts(timeEntries, inScopeRows, () => todayStr)
           : new Map<string, number>();
 
-      // Summary counters
+      // Issue #542 (CTX-4, P-06): under a salon filter the list follows the team-week rule. A
+      // person is listed when they recorded an entry in the salon today (the rows this list reads;
+      // for a scoped caller the in-scope rows only) or are homed there today, through the one
+      // membership function. The STATUS of a listed row still comes from ALL of the person's
+      // entries (#84 D-15), so a Springer working in another salon is never shown as absent, and
+      // the filter only removes rows, it never widens the already-scoped population.
+      let shownEmployees = employees;
+      if (attendanceFilterSalonId !== null) {
+        const homeByPerson = await homeSalonsForDays(
+          app.prisma,
+          tenantId,
+          employeeIds,
+          todayStr,
+          todayStr,
+        );
+        const members = salonViewMemberIds({
+          salonId: attendanceFilterSalonId,
+          candidateIds: employees.map((e) => e.id),
+          entries: inScopeRows ?? timeEntries,
+          homeByPerson,
+          days: [todayStr],
+        });
+        shownEmployees = employees.filter((e) => members.has(e.id));
+      }
+
+      // Summary counters (over the shown rows)
       let present = 0;
       let absent = 0;
       let clockedIn = 0;
       let missing = 0;
       let holiday = 0;
 
-      const employeeRows = employees.map((emp) => {
+      const employeeRows = shownEmployees.map((emp) => {
         const leave = leaveOfDay(leaveRequests, emp.id, todayStr, tz);
         const absence = absenceOfDay(absences, emp.id, todayStr, tz);
         const shift = firstShiftOfDay(shifts, emp.id, todayStr, tz);
@@ -1201,11 +1242,21 @@ export async function dashboardRoutes(app: FastifyInstance) {
           // Issue #587 (D-587-3): attendance row only; the team week's shape is frozen.
           expectedStart,
           lateMinutes,
+          // Issue #542 (P-06): under a filter, valid time today in another salon (or hidden time
+          // of a scoped caller) as a boolean only - the same cell rule as the team week.
+          ...(attendanceFilterSalonId !== null
+            ? {
+                workedElsewhere:
+                  rawEntries.some((e) => !e.isInvalid && e.salonId !== attendanceFilterSalonId) ||
+                  (attendanceHiddenCounts.get(personDayKey(emp.id, todayStr)) ?? 0) > 0,
+              }
+            : {}),
         };
       });
 
       return {
         date: todayStr,
+        ...(attendanceFilterSalonId !== null ? { salonId: attendanceFilterSalonId } : {}),
         employees: employeeRows,
         summary: { present, absent, clockedIn, missing, holiday },
       };
