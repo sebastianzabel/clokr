@@ -914,7 +914,13 @@ import { readFileSync } from "node:fs";
 // (10510 passed, 3 skipped). Six new files, all from this phase: salon-view (542-01), reports-salon-filter-542 (542-01),
 // report-salon-filter-source-542 (542-01), dashboard-salon-filter-542 (542-02), monthly-export-salon-filter-542 and
 // monthly-export-salon-label-542 (542-03); nothing removed, skipped or loosened. MIN_FILES 686 -> 692, never lowered.
-const MIN_FILES = 692;
+// Phase 588, plan 05 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on `feat/588-team-salden`
+// (base origin/main @ 59ef142e, which already contains #542) - 694 test files, 10539 tests (10536 passed, 3 skipped). Two new
+// files, both from this phase: overtime-overview-588 (588-01, 10 cases) and personal-saldo-label-588 (588-03, 8 cases); the
+// facade test of the time-tracking context gained the describe block of `employeesWithValidWorkSince` (588-01, 7 cases);
+// lint-facade-signatures changed a pin value only, not a case count. The measured delta over main is +26 cases (10513 ->
+// 10539), 25 of them attributed above; nothing removed, skipped or loosened. MIN_FILES 692 -> 694, never lowered.
+const MIN_FILES = 694;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -951,7 +957,7 @@ const MIN_FILES = 692;
 // report-salon-filter-source-542 15, monthly-export-salon-filter-542 9, salon-view 8, monthly-export-salon-label-542 5);
 // the 76th is one further case in a data-driven existing file that was not attributed to a single file (no existing
 // API test file was edited by this phase; main alone measures 10437, so the phase delta is the measured 76). Never lowered.
-const MIN_TESTS = 10513;
+const MIN_TESTS = 10539;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
