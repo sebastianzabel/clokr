@@ -600,12 +600,18 @@ describe("Issue #614 — anonymization ends every absence after the exit", () =>
           entityId: credit.id,
         },
       });
+      // Both requests of the pair lie after the exit and are cancelled; the exit path walks them by
+      // (startDate, id), and both start on the same day, so which cancellation supersedes the credit
+      // depends on the random ids. Either is correct - the credit is superseded exactly once.
+      expect(await status(sick.id)).toBe("CANCELLED");
       expect(audit.newValue).toMatchObject({
         status: "SUPERSEDED",
-        cancelledLeaveRequestId: row.id,
         auditReason: "Anonymisierung",
         trigger: "ANONYMIZATION",
       });
+      expect([row.id, sick.id]).toContain(
+        (audit.newValue as { cancelledLeaveRequestId?: string }).cancelledLeaveRequestId,
+      );
       expect((await anonymizeAudit(worker.employee.id)).skipped).not.toContainEqual(
         expect.objectContaining({ id: row.id }),
       );
