@@ -31,6 +31,7 @@ import {
   getWorkedEntriesInRange,
   getRecordedWorkEntriesInRange,
   getRecordedWorkEntriesByIds, // Issue #85 (D-04) — the in-scope rows by id
+  employeesWithValidWorkSince, // Issue #588 (P-06) — recorded time since hire, one bulk read
   getInvalidEntries,
   getEffectiveSchedule,
   resolveDayStatus, // Issue #587 (D-587-1) — the one day-status function
@@ -1500,6 +1501,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const accounts = [...activeAccounts, ...exitedAccounts];
       const employeeIds = accounts.map((a) => a.employeeId);
 
+      // Issue #588 (D-588-2, P-06): ONE bulk read (never inside the per-person fan-out below) of who
+      // has recorded time since the tenant-local hire day.
+      const withRecordedTime = await employeesWithValidWorkSince(
+        app.prisma,
+        tenantId,
+        accounts.map((a) => ({
+          employeeId: a.employeeId,
+          fromDay: new Date(`${dateStrInTz(a.employee.hireDate, snapshotTz)}T00:00:00Z`),
+        })),
+      );
+
       // Query 2: last 6 months of MONTHLY SaldoSnapshots for these employees
       const sixMonthsAgo = new Date();
       sixMonthsAgo.setUTCMonth(sixMonthsAgo.getUTCMonth() - 6);
@@ -1600,6 +1612,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
             openMonthMinutes,
             hasClosedMonth,
             ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
+            // Issue #588 (D-588-2, P-06): additive; the web's team figures exclude a person without
+            // recorded time.
+            hasRecordedTime: withRecordedTime.has(a.employeeId),
             // Issue #595 (D-03/P-01): one item per month (the record the account reads), each
             // named by the server - `month` ("YYYY-MM", null when unnameable) is what the page
             // labels the sparkline with; `periodStart` stays for existing readers.

@@ -258,6 +258,51 @@ export async function getRecordedWorkEntriesByIds(
 /** Issue #85 (D-04): ids per query, well below Postgres' 32767 bind-parameter limit. */
 const ENTRY_ID_CHUNK_SIZE = 5000;
 
+/**
+ * Issue #588 (P-06) - "has this person recorded working time since hire?" for the team saldo
+ * figures. The answer is the set of `employeeId`s from `persons` that own at least one closed
+ * (`endTime` set), valid (`isInvalid` false), non-deleted `WORK` entry dated on or after that
+ * person's own `fromDay` (the tenant-local hire day as a UTC-midnight calendar day, `@db.Date`, #493).
+ *
+ * Same membership as T1 ({@link getValidWorkedEntriesInRange}) - only the question differs
+ * (existence per person, not rows): one `groupBy` per chunk of at most {@link ENTRY_ID_CHUNK_SIZE}
+ * persons, whatever the headcount. The tenant binds through the employee, so a person of another
+ * tenant is never in the set. Reads no field beyond `employeeId` and `date`; an empty list issues
+ * no query.
+ */
+export async function employeesWithValidWorkSince(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  persons: readonly { employeeId: string; fromDay: Date }[],
+): Promise<Set<string>> {
+  const result = new Set<string>();
+  if (persons.length === 0) return result;
+  for (let i = 0; i < persons.length; i += ENTRY_ID_CHUNK_SIZE) {
+    const chunk = persons.slice(i, i + ENTRY_ID_CHUNK_SIZE);
+    const fromByEmployee = new Map(chunk.map((p) => [p.employeeId, toIsoDate(p.fromDay)]));
+    const latest = await db.timeEntry.groupBy({
+      by: ["employeeId"],
+      where: {
+        employeeId: { in: [...fromByEmployee.keys()] },
+        employee: { tenantId },
+        deletedAt: null,
+        endTime: { not: null },
+        type: "WORK",
+        isInvalid: false,
+      },
+      _max: { date: true },
+    });
+    for (const row of latest) {
+      const lastDay = row._max.date;
+      const fromDay = fromByEmployee.get(row.employeeId);
+      if (lastDay !== null && fromDay !== undefined && toIsoDate(lastDay) >= fromDay) {
+        result.add(row.employeeId);
+      }
+    }
+  }
+  return result;
+}
+
 // ── T2-regrouped — any claimed entry-date, any TimeEntryType ─────────────────────────────────
 
 /**
