@@ -327,6 +327,20 @@
     color: var(--text-muted);
   }
 
+  /* Issue #612: a disabled arrow (the period may not pass the current month) must not look
+     usable — the global .nav-btn hover tint is suppressed for it. No existing consumer disables
+     an arrow, so nothing else changes. */
+  .nav-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .nav-btn:disabled:hover {
+    background: var(--bg-card);
+    border-color: var(--border);
+    color: var(--text);
+  }
+
   .month-bar-today {
     margin-left: 4px;
   }

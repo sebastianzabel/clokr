@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from "vitest";
 import { screen, fireEvent } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import MonthBar from "../MonthBar.svelte";
+import monthBarSource from "../MonthBar.svelte?raw";
 import * as monthBarModule from "../MonthBar.svelte";
 
 // The `*.svelte` type shim knows the default export only; the module-script constant is read
@@ -87,5 +88,11 @@ describe("MonthBar — #612 props", () => {
   it("an enabled next arrow keeps its own title when `nextDisabled` is false", () => {
     renderWithTheme(MonthBar, props({ nextDisabled: false, nextLabel: "Nächstes Jahr" }));
     expect(screen.getByTestId("month-bar-next")).toHaveAttribute("title", "Nächstes Jahr");
+  });
+
+  it("styles a disabled arrow so it does not look usable (no hover tint)", () => {
+    const style = monthBarSource.slice(monthBarSource.lastIndexOf("<style>"));
+    expect(style).toMatch(/\.nav-btn:disabled\s*\{[^}]*opacity:\s*0\.5/);
+    expect(style).toMatch(/\.nav-btn:disabled:hover\s*\{/);
   });
 });
