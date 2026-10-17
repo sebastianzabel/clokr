@@ -12,6 +12,7 @@
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
+  import { VACATION_YEAR_COLUMNS } from "$lib/reports/vacation-columns"; // Issue #617
   import {
     buildEmployeeMonthRows,
     type EmployeeMonthRow,
@@ -112,6 +113,11 @@
     // Issue #451 (D-07) — additive; an older cached response has neither field, hence `??`
     // fallback to the pre-#451 raw carriedOverDays at every call site below.
     carriedOverEffectiveDays?: number;
+    // Issue #617 (D-617-2) - additive; an older cached response has none of the three, hence the
+    // `??` fallback in the cells below.
+    availableDays?: number;
+    takenDays?: number;
+    approvedUpcomingDays?: number;
     missingEntitlement?: false;
   };
   type LeaveOverviewMissingRow = {
@@ -123,6 +129,9 @@
     usedDays: null;
     remainingDays: null;
     pendingDays: null;
+    availableDays: null;
+    takenDays: null;
+    approvedUpcomingDays: null;
     missingEntitlement: true;
   };
   type LeaveOverviewRow = LeaveOverviewRealRow | LeaveOverviewMissingRow;
@@ -1569,7 +1578,7 @@
     {#if canReportRead}
       <!-- Urlaubsübersicht (RPT-02) -->
       <Card animate class="widget-card" style="--card-idx: 4;">
-        <CardHeader title="Urlaubsübersicht" sub="Ansprüche, Genommen, Rest" />
+        <CardHeader title="Urlaubsübersicht" sub="Anspruch, genommen, genehmigt und Resturlaub" />
 
         {#if leaveOverviewLoading}
           <p class="section-placeholder">Lade Urlaubsübersicht…</p>
@@ -1584,12 +1593,9 @@
                 <tr>
                   <th>Mitarbeiter</th>
                   <th>Nr.</th>
-                  <th>Urlaubsart</th>
-                  <th class="numeric">Gesamt</th>
-                  <th class="numeric">Übertrag</th>
-                  <th class="numeric">Genommen</th>
-                  <th class="numeric">Geplant</th>
-                  <th class="numeric">Rest</th>
+                  {#each VACATION_YEAR_COLUMNS as label (label)}
+                    <th class="numeric">{label}</th>
+                  {/each}
                 </tr>
               </thead>
               <tbody>
@@ -1598,16 +1604,22 @@
                     <td>{row.employee.firstName} {row.employee.lastName}</td>
                     <td>{row.employee.employeeNumber}</td>
                     {#if row.missingEntitlement}
-                      <td colspan="6">
+                      <td colspan="7">
                         <span class="badge badge-yellow">kein Anspruch hinterlegt</span>
                       </td>
                     {:else}
-                      <td>{row.leaveType?.name}</td>
                       <td class="numeric">{formatDays(row.totalDays)}</td>
                       <td class="numeric"
                         >{formatDays(row.carriedOverEffectiveDays ?? row.carriedOverDays)}</td
                       >
-                      <td class="numeric">{formatDays(row.usedDays)}</td>
+                      <td class="numeric"
+                        >{formatDays(
+                          row.availableDays ??
+                            row.totalDays + (row.carriedOverEffectiveDays ?? row.carriedOverDays),
+                        )}</td
+                      >
+                      <td class="numeric">{formatDays(row.takenDays ?? row.usedDays)}</td>
+                      <td class="numeric">{formatDays(row.approvedUpcomingDays ?? 0)}</td>
                       <td class="numeric">{formatDays(row.pendingDays)}</td>
                       <td class="numeric strong">{formatDays(row.remainingDays)}</td>
                     {/if}
@@ -1616,6 +1628,10 @@
               </tbody>
             </table>
           </div>
+          <p class="form-hint leave-overview-hint">
+            Verfügbar = Anspruch + wirksamer Übertrag. Resturlaub = Verfügbar - Genommen -
+            Genehmigt. Beantragte Tage werden nicht abgezogen.
+          </p>
           <Pagination
             total={leaveOverviewRows.length}
             bind:page={leaveOverviewPage}
@@ -2135,6 +2151,10 @@
   .leave-overview-table .numeric.strong {
     font-weight: 700;
     color: var(--text);
+  }
+
+  .leave-overview-hint {
+    margin: 0.75rem 0 0;
   }
 
   /* ── Responsive ───────────────────────────────────────────────────────────── */
