@@ -11,10 +11,18 @@
 //   R2  a file other than team-saldo.ts reduces over rows reading balanceHours, confirmedMinutes or
 //       openMonthMinutes (register `R2_REGISTER` below: file + reason + owning issue, must resolve)
 //   R3  the reports page or ExitedFinalSaldoSection.svelte does not import $lib/reports/team-saldo
-//   R4  the fixed forecast literal appears in the reports page or ExitedFinalSaldoSection.svelte
-//       (588-03 widens this to every web file outside lib/saldo/forecast-label.ts)
+//   R4  the running-month wording ("Laufender Monat (Prognose)" and the caption "inkl. laufendem
+//       Monat") appears in ANY non-test web file outside lib/saldo/forecast-label.ts, comments
+//       included (Issue #588, orchestrator decision 17.10.2026: AC-588-4 on every surface - the
+//       ONE place of the wording is the helper; the API's PDF wording constants are a month-scoped
+//       rule of their own and outside this walk by construction)
 //   R5  the overview card region of the reports page contains a <SaldoAnzeige
 //   R6  the average-saldo label of the former KPI appears in any walked file
+//   R7  SaldoAnzeige.svelte declares a string default for its forecastLabel prop, or
+//       KontoSaldoCard.svelte carries a caption literal instead of the forecastCaption() call
+//   R8  a <SaldoAnzeige call site in split mode (it passes confirmedMinutes) or a <KontoSaldoCard
+//       call site passes neither unconfirmedMonths= (or its {shorthand}) nor forecastLabel=, i.e.
+//       would show a forecast without the data that words it
 // The walked set is asserted non-empty and to contain both anchor files (anti-vacuity).
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -24,7 +32,11 @@ import { describe, it, expect } from "vitest";
 const MODULE_FILE = "lib/reports/team-saldo.ts";
 const PAGE_FILE = "routes/(app)/reports/+page.svelte";
 const EXITED_FILE = "lib/components/reports/ExitedFinalSaldoSection.svelte";
+const HELPER_FILE = "lib/saldo/forecast-label.ts";
+const SALDO_ANZEIGE_FILE = "lib/components/saldo/SaldoAnzeige.svelte";
+const KONTO_CARD_FILE = "lib/components/saldo/KontoSaldoCard.svelte";
 const FORECAST_LITERAL = "Laufender Monat (Prognose)";
+const CAPTION_LITERAL = "inkl. laufendem Monat";
 // Built from code points so this file does not itself contain the label it forbids.
 const AVERAGE_LABEL = `${String.fromCharCode(0xd8)} Saldo`;
 
@@ -90,6 +102,33 @@ function reducesOverSaldoFields(source: string): boolean {
   }
 }
 
+/** R8: the opening tags (up to the self-closing `/>`) of every `<component` call site in a source. */
+function callSites(source: string, component: string): string[] {
+  const out: string[] = [];
+  let from = 0;
+  for (;;) {
+    const at = source.indexOf(`<${component}`, from);
+    if (at === -1) return out;
+    const lineStart = source.lastIndexOf("\n", at) + 1;
+    const before = source.slice(lineStart, at);
+    const end = source.indexOf("/>", at);
+    if (end === -1) return out;
+    // A mention inside a comment or a template string is not a call site.
+    if (!/\/\/|\*|`|<!--/.test(before)) out.push(source.slice(at, end));
+    from = at + component.length + 1;
+  }
+}
+
+/** R8: true when a call site hands the forecast its data (or names the wording explicitly). */
+function passesForecastData(tag: string): boolean {
+  return /\bunconfirmedMonths\b/.test(tag) || /\bforecastLabel=/.test(tag);
+}
+
+/** R7: a string default for the forecastLabel prop of SaldoAnzeige. */
+function hasForecastLabelStringDefault(source: string): boolean {
+  return /\bforecastLabel\s*=\s*["'`]/.test(source);
+}
+
 function fileText(rel: string): string {
   const hit = FILES.find((f) => f.rel === rel);
   expect(hit, `walked set does not contain ${rel}`).toBeDefined();
@@ -104,6 +143,9 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
     expect(rels).toContain(MODULE_FILE);
     expect(rels).toContain(PAGE_FILE);
     expect(rels).toContain(EXITED_FILE);
+    expect(rels).toContain(HELPER_FILE);
+    expect(rels).toContain(SALDO_ANZEIGE_FILE);
+    expect(rels).toContain(KONTO_CARD_FILE);
     expect(rels.some((r) => r.includes("__tests__"))).toBe(false);
   });
 
@@ -147,10 +189,71 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
     }
   });
 
-  it("R4: the fixed forecast literal is in neither the reports page nor the exited section", () => {
-    for (const rel of [PAGE_FILE, EXITED_FILE]) {
-      expect(fileText(rel).includes(FORECAST_LITERAL), rel).toBe(false);
+  it("R4: the running-month wording lives only in lib/saldo/forecast-label.ts", () => {
+    const offenders = FILES.filter(
+      (f) =>
+        f.rel !== HELPER_FILE &&
+        (f.text.includes(FORECAST_LITERAL) || f.text.includes(CAPTION_LITERAL)),
+    );
+    expect(offenders.map((f) => f.rel)).toEqual([]);
+    // The helper is where the wording is: the walk would otherwise pass over a vanished literal.
+    expect(fileText(HELPER_FILE)).toContain(FORECAST_LITERAL);
+    expect(fileText(HELPER_FILE)).toContain(CAPTION_LITERAL);
+  });
+
+  it("R7: the two saldo primitives hold no forecast wording of their own", () => {
+    const anzeige = fileText(SALDO_ANZEIGE_FILE);
+    expect(hasForecastLabelStringDefault(anzeige)).toBe(false);
+    expect(anzeige).toMatch(/from "\$lib\/saldo\/forecast-label"/);
+    const card = fileText(KONTO_CARD_FILE);
+    expect(card).toMatch(/from "\$lib\/saldo\/forecast-label"/);
+    expect(card).toContain("forecastCaption(");
+    expect(card.includes("inkl.")).toBe(false);
+  });
+
+  it("R7/R8 scanners see what they must (self-test on synthetic sources)", () => {
+    expect(hasForecastLabelStringDefault('forecastLabel = "Laufender Monat (Prognose)",')).toBe(
+      true,
+    );
+    expect(hasForecastLabelStringDefault("forecastLabel = undefined,")).toBe(false);
+    expect(hasForecastLabelStringDefault("const effectiveForecastLabel = $derived(x)")).toBe(false);
+    const sites = callSites(
+      '<SaldoAnzeige a="1" confirmedMinutes={1} />\n<SaldoAnzeige b />',
+      "SaldoAnzeige",
+    );
+    expect(sites).toHaveLength(2);
+    expect(passesForecastData(sites[0])).toBe(false);
+    expect(passesForecastData("<SaldoAnzeige confirmedMinutes={1} {unconfirmedMonths} ")).toBe(
+      true,
+    );
+    expect(passesForecastData('<SaldoAnzeige confirmedMinutes={1} forecastLabel="x" ')).toBe(true);
+    expect(passesForecastData("<KontoSaldoCard unconfirmedMonths={n} ")).toBe(true);
+    expect(
+      callSites("  // wraps `<SaldoAnzeige variant=x>` once\n  <SaldoAnzeige a />", "SaldoAnzeige"),
+    ).toHaveLength(1);
+  });
+
+  it("R8: every forecast-showing call site passes the data that words it", () => {
+    let splitSites = 0;
+    let cardSites = 0;
+    const offenders: string[] = [];
+    for (const f of FILES) {
+      if (!f.rel.endsWith(".svelte")) continue;
+      for (const tag of callSites(f.text, "SaldoAnzeige")) {
+        if (!/\bconfirmedMinutes\b/.test(tag)) continue; // single-value mode shows no forecast
+        splitSites++;
+        if (!passesForecastData(tag)) offenders.push(`${f.rel}: <SaldoAnzeige`);
+      }
+      for (const tag of callSites(f.text, "KontoSaldoCard")) {
+        cardSites++;
+        if (!passesForecastData(tag)) offenders.push(`${f.rel}: <KontoSaldoCard`);
+      }
     }
+    expect(offenders).toEqual([]);
+    // Non-vacuity: dashboard tile, /leave KPI and the leave form's box (split SaldoAnzeige);
+    // /time-entries and /team/time-entries (KontoSaldoCard), as found by Plan 588-03.
+    expect(splitSites).toBeGreaterThanOrEqual(3);
+    expect(cardSites).toBeGreaterThanOrEqual(2);
   });
 
   it("R5: the overview card of the reports page renders no SaldoAnzeige", () => {
