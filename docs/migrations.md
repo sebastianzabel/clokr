@@ -1117,3 +1117,27 @@ Art. 17 requires it after the longest applicable retention period. Hard-delete i
    `"4-Augen-Prinzip"` message if no valid token is found.
 
 Only after both guards pass does the `$transaction` delete cascade proceed.
+
+## Phase 662 — Stornierung hebt § 9-Gutschriften auf (Issue #662)
+
+**Hinweis für die Release Notes.** Es gibt **keine Migration und keinen Schemawechsel.** Ab diesem Release setzt die
+Genehmigung einer Urlaubsstornierung (und die Stornierung durch die Anonymisierung, #614) die § 9-Gutschriften des Antrags auf
+`SUPERSEDED`, auditiert und in derselben Transaktion; nichts wird gelöscht, abgeschlossene Monate bleiben unverändert. Zuvor
+blieb die Gutschrift stehen, die Tage wurden doppelt gutgeschrieben, und nur `selfHealUsedDays` verdeckte es in der Anzeige.
+
+**Lesende Prüfung (auf int UND prod, vor und nach dem Deploy).** `apps/api/scripts/audit-662-cancelled-leave-section9.ts`
+schreibt nichts (kein Schreib-Schalter, `--apply` und `--confirm` werden abgelehnt) und gibt je nicht ersetzter Gutschrift eines
+stornierten Antrags nur Mandanten-Id, Gutschrift-Id, Personen-Id, den Status und die Id des stornierten Antrags (mit Seite
+`vacation` oder `sick`) aus. Das Skript liegt erst im Image des neuen Release; der Standard-Einstiegspunkt führt
+`prisma migrate deploy` aus und darf nicht gegen int oder prod gestartet werden, deshalb wird er überschrieben:
+
+```bash
+docker run --rm -e DATABASE_URL --entrypoint sh <neues-api-image> \
+  -lc 'cd /app/apps/api && pnpm tsx scripts/audit-662-cancelled-leave-section9.ts' \
+  | tee "662-bestand-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+Exit-Code `0`: kein Befund; `2`: mindestens ein Befund (Liste in der Ausgabe); `1`: Aufruf- oder Verbindungsfehler. **Dieses
+Release korrigiert keine Bestandszeile:** Die Befunde vor dem Deploy sind das Bestandsbild, nach dem Deploy darf die Liste nur
+noch um nichts wachsen. Eine bestätigte Gutschrift hat eine Kontowirkung, deren Rücknahme eine eigene, auditierte Korrekturbuchung
+wäre — Entscheidung beim Betreiber, nichts still korrigieren.

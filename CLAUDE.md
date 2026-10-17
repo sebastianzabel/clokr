@@ -162,7 +162,12 @@ Clokr MUST be audit-proof (revisionssicher). All data relevant to working time, 
   recomputation (a legacy row with no stored value falls back to a logged recomputation).
 - **§ 9-Korrektur** (Issue #468, A-3): a `/correct` never deletes a `Section9Credit` — a credit
   that no longer applies is marked `SUPERSEDED` and, if it partially survives, replaced by a new
-  correction credit (`supersedesId`), both audited.
+  correction credit (`supersedesId`), both audited. The approval of a leave cancellation (`CANCELLATION_REQUESTED` → `CANCELLED`) and the #614
+  employment-exit cancellation supersede every remaining credit of the cancelled request the same way, in the
+  cancellation's own transaction (`supersedeSection9CreditsOfCancelledRequest()`, `contexts/absence/section9-supersede.ts`
+  — the one place a credit becomes `SUPERSEDED`, shared with `/correct`; a `CONFIRMED` credit's ledger give-back is
+  taken out again), so no day is credited twice (Issue #662; `scripts/audit-662-cancelled-leave-section9.ts` lists
+  Bestand, read-only).
 
 - **Operator audit is append-only (Phase 88, Issue #88, D-07a).** Every action of the operator
   principal is written to `OperatorAuditLog` through `recordOperatorAudit()`

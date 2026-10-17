@@ -1,7 +1,7 @@
 /**
  * Issue #614 (D-02, AC-614-2) — the anonymization ends EVERY absence that starts after the exit
  * day: all three open statuses, every leave type, the imposed Berufsschule rows; rows the law or
- * the revision rules protect (closed month, § 17 BEEG reduction, live § 9 credit) are left alone
+ * the revision rules protect (closed month, § 17 BEEG reduction) are left alone
  * and reported; a row changed between plan and apply aborts the anonymization with 409.
  *
  * One describe per row of the classification table in employment-exit.ts. Every date is relative
@@ -557,7 +557,9 @@ describe("Issue #614 — anonymization ends every absence after the exit", () =>
       });
     });
 
-    it("SECTION9_CREDIT_ACTIVE: a vacation referenced by a non-superseded § 9 credit stays APPROVED, reported", async () => {
+    // Issue #662: a standing § 9 credit no longer protects the row - the cancellation supersedes it
+    // through the same shared function the cancellation approval runs.
+    it("a vacation with an AU_PENDING § 9 credit is cancelled and the credit SUPERSEDED, audited with the anonymization marker (Issue #662)", async () => {
       const worker = await createWorker("sec9");
       const start = nextMonday();
       const row = await vacation(worker, start, addDays(start, 2), true);
@@ -572,7 +574,7 @@ describe("Issue #614 — anonymization ends every absence after the exit", () =>
         },
       });
       // Written directly: a future sick/vacation pair cannot be produced through the API.
-      await app.prisma.section9Credit.create({
+      const credit = await app.prisma.section9Credit.create({
         data: {
           employeeId: worker.employee.id,
           sickRequestId: sick.id,
@@ -586,14 +588,76 @@ describe("Issue #614 — anonymization ends every absence after the exit", () =>
 
       expect((await anonymize(worker.employee.id)).statusCode).toBe(204);
 
-      expect(await status(row.id)).toBe("APPROVED");
-      expect(await usedDays(worker.employee.id, year)).toBe(usedBefore);
-      expect(await auditRowsFor(app, "LeaveRequest", row.id, "CANCEL")).toHaveLength(0);
-      expect((await anonymizeAudit(worker.employee.id)).skipped).toContainEqual({
-        entity: "LeaveRequest",
-        id: row.id,
-        reason: "SECTION9_CREDIT_ACTIVE",
+      expect(await status(row.id)).toBe("CANCELLED");
+      expect(await usedDays(worker.employee.id, year)).toBe(usedBefore - 3);
+      expect(
+        (await app.prisma.section9Credit.findUniqueOrThrow({ where: { id: credit.id } })).status,
+      ).toBe("SUPERSEDED");
+      const audit = await soleAuditRow(app.prisma, {
+        where: {
+          action: "SECTION9_CREDIT_SUPERSEDED",
+          entity: "Section9Credit",
+          entityId: credit.id,
+        },
       });
+      expect(audit.newValue).toMatchObject({
+        status: "SUPERSEDED",
+        cancelledLeaveRequestId: row.id,
+        auditReason: "Anonymisierung",
+        trigger: "ANONYMIZATION",
+      });
+      expect((await anonymizeAudit(worker.employee.id)).skipped).not.toContainEqual(
+        expect.objectContaining({ id: row.id }),
+      );
+    });
+
+    it("a CONFIRMED § 9 credit is undone on the ledger together with the cancellation: no day is credited twice (Issue #662)", async () => {
+      const worker = await createWorker("sec9c");
+      const start = nextMonday();
+      const row = await vacation(worker, start, addDays(start, 2), true);
+      const sick = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: worker.employee.id,
+          leaveTypeId: types.SICK,
+          startDate: start,
+          endDate: addDays(start, 1),
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+      const credit = await app.prisma.section9Credit.create({
+        data: {
+          employeeId: worker.employee.id,
+          sickRequestId: sick.id,
+          vacationRequestId: row.id,
+          overlapStart: start,
+          overlapEnd: addDays(start, 1),
+        },
+      });
+      const year = start.getUTCFullYear();
+      const usedBefore = await usedDays(worker.employee.id, year);
+      const confirm = await app.inject({
+        method: "POST",
+        url: `/api/v1/leave/section9/${credit.id}/confirm`,
+        headers: auth(),
+        payload: {
+          attestSource: "EAU",
+          attestValidFrom: isoDay(start),
+          attestValidTo: isoDay(addDays(start, 1)),
+          reason: "AU eingereicht",
+        },
+      });
+      expect(confirm.statusCode, confirm.body).toBe(200);
+      expect(await usedDays(worker.employee.id, year)).toBe(usedBefore - 2);
+
+      expect((await anonymize(worker.employee.id)).statusCode).toBe(204);
+
+      expect(await status(row.id)).toBe("CANCELLED");
+      // The vacation's 3 days are back and the credit's 2 days are taken out again.
+      expect(await usedDays(worker.employee.id, year)).toBe(usedBefore - 3);
+      expect(
+        (await app.prisma.section9Credit.findUniqueOrThrow({ where: { id: credit.id } })).status,
+      ).toBe("SUPERSEDED");
     });
   });
 

@@ -50,19 +50,9 @@ import {
   persistOvertimeBalance,
 } from "../working-time-account";
 import { revalidateLeaveCancellationEntries } from "../time-tracking";
+import { Section9ConcurrentCorrectionError, supersedeSection9Credit } from "./section9-supersede";
 
-/**
- * WR-02 (Issue #468 review): thrown inside the `/correct` transaction (Step 8b) when the
- * optimistic-lock `updateMany` on a § 9 credit's status affected 0 rows — a concurrent or
- * replayed correction already superseded it first. Never escapes the handler — translated
- * into a 409 asking the caller to retry, same pattern as Section9MissingEntitlementError.
- */
-export class Section9ConcurrentCorrectionError extends Error {
-  constructor() {
-    super("SECTION9_CONCURRENT_CORRECTION");
-    this.name = "Section9ConcurrentCorrectionError";
-  }
-}
+export { Section9ConcurrentCorrectionError };
 
 /** The request being corrected, as the route reads it (tenant already checked by the caller). */
 export type CorrectableLeaveRequest = Prisma.LeaveRequestGetPayload<{
@@ -623,53 +613,17 @@ export async function applyLeaveCorrection(
   //    apply 7 → 7.
   for (const sup of section9CorrectionPlan.supersede) {
     const credit = touchingSection9Credits.find((c) => c.id === sup.id)!;
-    // WR-02 (Issue #468 review): `touchingSection9Credits` was read on app.prisma BEFORE
-    // this transaction opened (by design — see that read site's own comment), so a
-    // concurrent/replayed /correct touching the SAME credit could otherwise both plan
-    // against the identical pre-transaction snapshot and both execute the ledger undo
-    // below for the same creditedDays (double deduction). Guard the status transition
-    // itself with updateMany + count check — mirroring the optimistic-lock pattern
-    // parental-leave-reductions.ts uses for exactly this class of race — so only the
-    // FIRST writer's ledger undo ever runs; the second throws and the whole correction
-    // aborts (409), never partially applying.
-    const { count: supersedeCount } = await tx.section9Credit.updateMany({
-      where: { id: sup.id, status: { not: "SUPERSEDED" } },
-      data: { status: "SUPERSEDED" },
-    });
-    if (supersedeCount !== 1) {
-      throw new Section9ConcurrentCorrectionError();
-    }
-    // CR-01 (Issue #468 review): undo the ledger entry for WHATEVER type the confirm
-    // path booked for (leave.ts's SECTION9_CREDIT_CONFIRMED handler calls
-    // reverseVacationDays() unconditionally — SPECIAL/UNPAID/EDUCATION/MATERNITY/PARENTAL
-    // all legally receive a § 9 credit, not just VACATION). A type-only gate here left
-    // every non-VACATION credit's reversal un-clawed-back — a permanent silent
-    // over-credit. `sup.ledgerUndo` already IS the correct gate (true only when the
-    // credit was CONFIRMED and therefore actually booked something at confirm time).
-    if (sup.ledgerUndo) {
-      await deductVacationDays(
-        tx,
-        existing.employeeId,
-        credit.vacationRequest.leaveTypeId,
-        credit.creditedStart!,
-        credit.creditedEnd!,
-        Number(credit.creditedDays),
-        holidays,
-        tenantId,
-      );
-    }
-    await port.audit({
-      action: "SECTION9_CREDIT_SUPERSEDED",
-      entity: "Section9Credit",
-      entityId: sup.id,
-      oldValue: {
-        status: credit.status,
-        creditedStart: credit.creditedStart?.toISOString().split("T")[0] ?? null,
-        creditedEnd: credit.creditedEnd?.toISOString().split("T")[0] ?? null,
-        creditedDays: credit.creditedDays !== null ? Number(credit.creditedDays) : null,
-      },
-      newValue: {
-        status: "SUPERSEDED",
+    // WR-02 (Issue #468 review): `touchingSection9Credits` was read BEFORE this transaction
+    // opened, so the shared supersession guards the status transition itself (optimistic lock,
+    // 409 on a concurrent writer) - see section9-supersede.ts, the one place the rule lives.
+    await supersedeSection9Credit(tx, {
+      credit,
+      ledgerUndo: sup.ledgerUndo,
+      employeeId: existing.employeeId,
+      tenantId,
+      holidays,
+      audit: port.audit,
+      auditNewValue: {
         correctedLeaveRequestId: existing.id,
         newStartDate: start.toISOString().split("T")[0],
         newEndDate: end.toISOString().split("T")[0],
