@@ -54,9 +54,12 @@ import { revalidateLeaveCancellationEntries } from "../time-tracking";
 import { findClosedMonthsInRange } from "./closed-month-guard";
 import { getHolidayMap, resolveLeaveDays, reverseVacationDays } from "./leave-days";
 import {
+  Section9ConcurrentCorrectionError,
+  supersedeSection9CreditsOfCancelledRequest,
+} from "./section9-supersede";
+import {
   applyLeaveCorrection,
   prepareLeaveCorrection,
-  Section9ConcurrentCorrectionError,
   type LeaveCorrectionPlan,
 } from "./leave-correction";
 import { overtimeCompReversalMinutes } from "./overtime-comp-minutes";
@@ -224,7 +227,8 @@ export async function planEmploymentExit(
   /**
    * Cancels `row` as a whole (and books back what its approval booked) unless a protection rule
    * applies. Skip precedence (one reason per row): D-05 closed month anywhere in the row's range,
-   * then the § 17 BEEG reduction, then a live § 9 credit. The row stays as it is and is reported.
+   * then the § 17 BEEG reduction. The row stays as it is and is reported. A live § 9 credit is not
+   * a protection (Issue #662): the cancellation supersedes it.
    */
   const cancelOrSkip = async (row: CancelableRow): Promise<void> => {
     const closed = await findClosedMonthsInRange(
@@ -245,25 +249,24 @@ export async function planEmploymentExit(
         return;
       }
     }
-    const credit = await prisma.section9Credit.findFirst({
-      where: {
-        employeeId,
-        employee: { tenantId },
-        status: { not: "SUPERSEDED" },
-        OR: [{ vacationRequestId: row.id }, { sickRequestId: row.id }],
-      },
-      select: { id: true },
-    });
-    if (credit) {
-      skipped.push({ entity: "LeaveRequest", id: row.id, reason: "SECTION9_CREDIT_ACTIVE" });
-      return;
-    }
+    // Issue #662: a live § 9 credit no longer protects the row - the cancellation supersedes it
+    // (section9-supersede.ts, the rule the cancellation approval runs). The holiday set is then
+    // needed for the ledger undo of a CONFIRMED credit even on a non-vacation (sick) row.
+    const hasSection9Credit =
+      (await prisma.section9Credit.count({
+        where: {
+          employeeId,
+          employee: { tenantId },
+          status: { not: "SUPERSEDED" },
+          OR: [{ vacationRequestId: row.id }, { sickRequestId: row.id }],
+        },
+      })) > 0;
 
     // A PENDING request booked nothing; every other status reverses what its approval booked.
     const booked = row.status !== "PENDING";
     const code = row.leaveType.code;
     let holidayDates: string[] = [];
-    if (booked && code === "VACATION") {
+    if (booked && (code === "VACATION" || hasSection9Credit)) {
       const holidays = await getHolidayMap(
         prisma,
         tenantId,
@@ -726,6 +729,23 @@ async function cancelLeave(
         tenantId,
       );
     }
+  }
+
+  // Issue #662: a cancelled request leaves no § 9 credit standing - the same shared supersession
+  // the cancellation approval runs (section9-supersede.ts), audited with the anonymization marker.
+  try {
+    await supersedeSection9CreditsOfCancelledRequest(tx, {
+      requestId: action.requestId,
+      employeeId,
+      tenantId,
+      holidays: new Set(action.holidayDates),
+      audit: (entry) => audit({ ...entry, newValue: { ...(entry.newValue ?? {}), ...marker } }),
+    });
+  } catch (err) {
+    if (err instanceof Section9ConcurrentCorrectionError) {
+      throw new EmploymentExitConflictError("LeaveRequest", action.requestId);
+    }
+    throw err;
   }
 
   await audit({

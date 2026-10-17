@@ -1868,8 +1868,7 @@ weiter, und die überschriebene Personalnummer ließ spätere Lohnkorrekturen al
   storniert; ein offener Antrag wird wie bei der Bearbeitung neu bepreist.
 - **Übersprungene Fälle.** Nie angefasst, sondern im ANONYMIZE-Audit unter `skipped` mit ID und Code gelistet: `CLOSED_MONTH`
   (ein betroffener Tag liegt in einem abgeschlossenen Monat, Zeilen und Salden bleiben unverändert), `PARENTAL_REDUCTION_ACTIVE`
-  (aktive § 17-BEEG-Kürzung; nur ihr eigener Widerruf ändert die Zeile), `SECTION9_CREDIT_ACTIVE` (eine Stornierung hebt keine
-  § 9-Gutschrift auf, es würde doppelt gutgeschrieben) und `CORRECTION_REFUSED` (der Korrekturkern lehnt aus eigenem Grund ab).
+  (aktive § 17-BEEG-Kürzung; nur ihr eigener Widerruf ändert die Zeile) und `CORRECTION_REFUSED` (der Korrekturkern lehnt aus eigenem Grund ab).
   Die Anonymisierung wird dadurch nie blockiert (Art. 17 DSGVO). Ändert sich ein geplanter Antrag zwischen Plan und Anwendung,
   antwortet die Route **409** `EMPLOYMENT_EXIT_CONFLICT` und schreibt nichts.
 - **Audit ohne Freitext.** Jede geänderte Zeile bekommt ihren eigenen Audit-Eintrag mit `auditReason` „Anonymisierung“ und
@@ -1898,9 +1897,13 @@ weiter, und die überschriebene Personalnummer ließ spätere Lohnkorrekturen al
   liegt bei #666; das lesende Skript `scripts/audit-614-anonymized-employment.ts` listet die Fälle (nur IDs).
 - _`anonymize-dump.ts`._ Das Batch-Skript der Kopie-Löschung setzt das Austrittsdatum, behält die Personalnummer, beendet aber
   keine Abwesenheiten: Die Kopie hat keine Lohnfolgen, und eine Abwesenheitsregel gehört nicht in ein Skript.
-- _Übersprungene Zeilen bleiben_ bis zur fachlichen Klärung (Urlaub, der vollständig nach dem Austritt liegt und eine
-  § 9-Gutschrift mit einem überspannenden Krankheitsantrag teilt, wird übersprungen und gemeldet). Der Genehmigungsweg der
-  Stornierung hebt eine § 9-Gutschrift weiterhin nicht auf — das ist ein eigener Fehler (#662), der hier nicht mitbehoben wird.
+- _Übersprungene Zeilen bleiben_ bis zur fachlichen Klärung. Nachtrag Issue #662: Der Fall „Urlaub nach dem Austritt teilt eine
+  § 9-Gutschrift mit einem Krankheitsantrag“ wird nicht mehr übersprungen (`SECTION9_CREDIT_ACTIVE` entfällt): Die
+  Stornierung — im Genehmigungsweg wie beim Austritt — setzt die Gutschriften des Antrags über
+  `supersedeSection9CreditsOfCancelledRequest()` (`contexts/absence/section9-supersede.ts`) auf `SUPERSEDED`, auditiert, in
+  der Transaktion der Stornierung; eine bestätigte Gutschrift wird dabei im Konto zurückgenommen (wie bei `/correct`, #468).
+  Abgeschlossene Monate bleiben unberührt (die Stornierung wird dort weiter verweigert bzw. übersprungen). Bestand listet
+  `scripts/audit-662-cancelled-leave-section9.ts` (nur lesend, nur IDs).
 - _Aufbewahrung._ Die Frist des endgültigen Löschens beginnt bei neuen Anonymisierungen am Austrittstag statt am Anlagedatum der
   Person.
 
