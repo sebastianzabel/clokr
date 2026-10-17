@@ -477,10 +477,25 @@ describe("Issue #451 (D-03) — page identity Ist - Soll + Verrechnung = Ueberst
     expectIdentity(row);
 
     const pdfPayload = await singlePdfPayload(app, adminToken, fixedCompEmpId, 2026, 5);
-    expect(pdfPayload.balanceAdjustmentHours).toBe(-8);
-    expect(pdfPayload.workedHours).toBe(row.workedHours);
-    expect(pdfPayload.targetHours).toBe(row.shouldHours);
-    expect(pdfPayload.overtimeHours).toBe(row.overtimeHours);
+    // Issue #617 (D-617-3): the Stundennachweis payload carries MINUTES of the account (exact), and
+    // the 2-decimal hour identity with the JSON row still holds.
+    const oracleFigures = await computeMonthReportFigures(app, fixedCompEmpId, 2026, 5);
+    expect(pdfPayload.balanceAdjustmentMinutes).toBe(-480);
+    expect(pdfPayload.workedMinutes).toBe(oracleFigures.workedMinutes);
+    expect(pdfPayload.targetMinutes).toBe(oracleFigures.expectedMinutes);
+    expect(pdfPayload.overtimeMinutes).toBe(oracleFigures.balanceMinutes);
+    expect(hundredths(pdfPayload.balanceAdjustmentMinutes)).toBe(row.balanceAdjustmentHours);
+    expect(hundredths(pdfPayload.workedMinutes)).toBe(row.workedHours);
+    expect(hundredths(pdfPayload.targetMinutes)).toBe(row.shouldHours);
+    expect(hundredths(pdfPayload.overtimeMinutes)).toBe(row.overtimeHours);
+    for (const retired of [
+      "workedHours",
+      "targetHours",
+      "overtimeHours",
+      "balanceAdjustmentHours",
+    ]) {
+      expect(pdfPayload).not.toHaveProperty(retired);
+    }
 
     // Issue #617: the company PDF was replaced by the Monatsexport; same property, same oracle
     // (minutes now, plus the rounding identity with the JSON hours).

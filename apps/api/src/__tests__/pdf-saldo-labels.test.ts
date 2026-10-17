@@ -317,9 +317,10 @@ describe("Verrechnung column + legend (Issue #451, D-03)", () => {
 
     // The non-zero Verrechnung is printed once, signed, in minutes-based H:MM.
     expect(texts.filter((t) => t === "-8:00 h")).toHaveLength(1);
-    // Issue #617: the column is hidden when every row is zero; in a visible column a zero row prints
-    // the unit zero ("0:00 h"), once - no other cell of this fixture is zero.
-    expect(texts.filter((t) => t === "0:00 h")).toHaveLength(1);
+    // Issue #617 (orchestrator amendment 10): the column is hidden when every row is zero; in a
+    // visible column a zero row prints an EMPTY cell, never "0:00 h" (no other cell of this fixture
+    // is zero, so the unit zero appears nowhere).
+    expect(texts.filter((t) => t === "0:00 h")).toHaveLength(0);
 
     expect(texts.filter((t) => t === BALANCE_ADJUSTMENT_LEGEND)).toHaveLength(1);
   });

@@ -542,7 +542,7 @@ describe("Phase 79 D-10 — saldo-neutrality characterisation (frozen on the unt
       });
     });
 
-    it("A: monthly-report PDF netHours per entry in date order (hand, S8; invalid and open rows are not in the report set)", async () => {
+    it("A: monthly-report PDF netMinutes per entry in date order (as hundredths of an hour) (hand, S8; invalid and open rows are not in the report set)", async () => {
       const spy = vi.mocked(pdfUtils.generateMonthlyReportPdf);
       spy.mockClear();
       const res = await app.inject({
@@ -553,7 +553,11 @@ describe("Phase 79 D-10 — saldo-neutrality characterisation (frozen on the unt
       expect(res.statusCode).toBe(200);
       expect(spy).toHaveBeenCalledTimes(1);
       const payload = spy.mock.calls[0][0];
-      expect(payload.entries.map((e) => e.netHours)).toEqual([8, 8.25, 6.5, 8.56, 7.5, 6.75]);
+      // Issue #617 (D-617-3): the payload carries exact minutes; the hand values below are the
+      // former 2-decimal hour figures, so the minutes are read back through the same rounding.
+      expect(payload.entries.map((e) => Math.round((e.netMinutes / 60) * 100) / 100)).toEqual([
+        8, 8.25, 6.5, 8.56, 7.5, 6.75,
+      ]);
     });
 
     it("A and B: DATEV worked-hours line (Normalstunden) in [Bewegungsdaten] (hand 45,56 for 2733.4644 min, S9)", async () => {

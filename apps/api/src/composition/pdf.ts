@@ -44,16 +44,17 @@ interface MonthlyReportData {
   employeeName: string;
   employeeNumber: string;
   month: string; // "März 2026"
-  workedHours: number;
-  targetHours: number;
-  overtimeHours: number;
+  /** Issue #617 (D-617-3): minutes of the working-time account; the renderer formats them. */
+  workedMinutes: number;
+  targetMinutes: number;
+  overtimeMinutes: number;
   /** Phase 97-02 (SALDO-DISP-05): true = confirmed (closed month), false = forecast (open month),
    *  null = intentionally unlabelled (MONTHLY_HOURS with no budget — mirrors
    *  resolveReportOvertimeHours's `labelled` flag in reports.ts; renderer omits the label). */
   overtimeConfirmed: boolean | null;
   /** Issue #451 (D-03): the WTA's own reconciliation item — see BALANCE_ADJUSTMENT_LEGEND above.
    *  0 for the vast majority of months; printed only when non-zero. */
-  balanceAdjustmentHours: number;
+  balanceAdjustmentMinutes: number;
   sickDays: number;
   sickDaysWithAttest: number;
   vacationDays: number;
@@ -65,7 +66,7 @@ interface MonthlyReportData {
     start: string;
     end: string;
     breakMin: number;
-    netHours: number;
+    netMinutes: number;
     note?: string;
   }>;
 }
@@ -167,19 +168,15 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
     const col3 = 340;
     let sy = summaryY + 10;
 
-    doc.text(`Soll-Stunden: ${data.targetHours.toFixed(2)} h`, col1, sy);
-    doc.text(`Ist-Stunden: ${data.workedHours.toFixed(2)} h`, col2, sy);
+    doc.text(`Soll: ${fmtHM(data.targetMinutes)}`, col1, sy);
+    doc.text(`Ist: ${fmtHM(data.workedMinutes)}`, col2, sy);
     const overtimeLabel =
       data.overtimeConfirmed === null
         ? "Überstunden"
         : data.overtimeConfirmed
           ? OVERTIME_LABEL_CONFIRMED
           : OVERTIME_LABEL_FORECAST;
-    doc.text(
-      `${overtimeLabel}: ${data.overtimeHours >= 0 ? "+" : ""}${data.overtimeHours.toFixed(2)} h`,
-      col3,
-      sy,
-    );
+    doc.text(`${overtimeLabel}: ${fmtSignedHM(data.overtimeMinutes)}`, col3, sy);
     sy += 18;
     doc.text(`Krankheitstage: ${data.sickDays}`, col1, sy);
     doc.text(`davon mit Attest: ${data.sickDaysWithAttest}`, col2, sy);
@@ -188,9 +185,9 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
     doc.text(`Sonstige Abwesenheit: ${data.otherAbsenceDays}`, col1, sy);
     // Issue #451 (D-03): printed only when the WTA reports a non-zero reconciliation item — same
     // ASCII sign style as the Überstunden line above.
-    if (data.balanceAdjustmentHours !== 0) {
+    if (data.balanceAdjustmentMinutes !== 0) {
       doc.text(
-        `${BALANCE_ADJUSTMENT_LABEL}: ${data.balanceAdjustmentHours >= 0 ? "+" : ""}${data.balanceAdjustmentHours.toFixed(2)} h`,
+        `${BALANCE_ADJUSTMENT_LABEL}: ${fmtSignedHM(data.balanceAdjustmentMinutes)}`,
         col2,
         sy,
       );
@@ -212,7 +209,7 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
     }
     // Issue #451 (D-03): explains the Verrechnung line above — same grey 8pt style as the
     // forecast footnote, printed only when the item is actually non-zero.
-    if (data.balanceAdjustmentHours !== 0) {
+    if (data.balanceAdjustmentMinutes !== 0) {
       doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
       const legendWidth = doc.page.width - 100;
       const legendHeight = doc.heightOfString(BALANCE_ADJUSTMENT_LEGEND, { width: legendWidth });
@@ -263,7 +260,7 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
         x += colWidths[2];
         doc.text(`${entry.breakMin} min`, x, rowY, { width: colWidths[3] });
         x += colWidths[3];
-        doc.text(`${entry.netHours.toFixed(2)} h`, x, rowY, { width: colWidths[4] });
+        doc.text(fmtHM(entry.netMinutes), x, rowY, { width: colWidths[4] });
         x += colWidths[4];
         doc.text(entry.note || "", x, rowY, { width: colWidths[5] });
 
@@ -509,7 +506,10 @@ function monthColumns(): ExportColumn[] {
       header: ["Verr."],
       pref: 44,
       align: "right",
-      cell: (r) => fmtSignedHM(r.balanceAdjustmentMinutes),
+      // A zero cell stays empty: the column is shown for the rows that have a value, and a "0:00 h"
+      // would read as a statement about the person who has none.
+      cell: (r) =>
+        r.balanceAdjustmentMinutes === 0 ? "" : fmtSignedHM(r.balanceAdjustmentMinutes),
       visible: anyRow((r) => r.balanceAdjustmentMinutes !== 0),
     },
     {

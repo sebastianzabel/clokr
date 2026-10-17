@@ -298,11 +298,11 @@ describe("Issue #92 (AC-92-2) — a travel entry equals an ordinary entry of the
    * The PDF payload lists one row per entry — the rows differ by design (a trip row carries its
    * kind), so the row list is not compared; what the rows add up to is.
    */
-  function withoutEntryRows(payload: { entries?: Array<{ netHours: number }> }): unknown {
+  function withoutEntryRows(payload: { entries?: Array<{ netMinutes: number }> }): unknown {
     const { entries, ...rest } = payload;
     expect(Array.isArray(entries), "the PDF payload lists the entries").toBe(true);
-    const netHours = entries!.reduce((sum, e) => sum + e.netHours, 0);
-    return { ...rest, entryNetHoursTotal: Math.round(netHours * 100) / 100 };
+    const netMinutes = entries!.reduce((sum, e) => sum + e.netMinutes, 0);
+    return { ...rest, entryNetMinutesTotal: netMinutes };
   }
 
   /**

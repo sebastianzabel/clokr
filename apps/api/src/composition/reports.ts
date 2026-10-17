@@ -190,7 +190,7 @@ function computeEmployeeSummary(
     start: string;
     end: string;
     breakMin: number;
-    netHours: number;
+    netMinutes: number;
     note?: string;
   }>;
 } {
@@ -243,7 +243,9 @@ function computeEmployeeSummary(
     start: formatInTimeZone(e.startTime, tz, "HH:mm"),
     end: e.endTime ? formatInTimeZone(e.endTime, tz, "HH:mm") : "",
     breakMin: Number(e.breakMinutes ?? 0),
-    netHours: e.endTime ? Math.round((entryDurations(e).workingMinutes / 60) * 100) / 100 : 0,
+    // Issue #617 (D-617-3): exact working minutes of the one shared kernel; the PDF formatter
+    // rounds, nothing is rounded to hours here.
+    netMinutes: e.endTime ? entryDurations(e).workingMinutes : 0,
     note: (e as Record<string, unknown>).note as string | undefined,
   }));
 
@@ -1978,24 +1980,18 @@ export async function reportRoutes(app: FastifyInstance) {
       // (not a boolean) when unlabelled, so the PDF renderer can omit the Bestätigt/Prognose label
       // entirely instead of mislabelling it (SALDO-DISP-05).
       const figures = await computeMonthReportFigures(app, emp.id, y, m);
-      const workedHours = Math.round((figures.workedMinutes / 60) * 100) / 100;
-      const targetHours = Math.round((figures.expectedMinutes / 60) * 100) / 100;
-      const overtimeHours = Math.round((figures.balanceMinutes / 60) * 100) / 100;
-      // Issue #451 (D-03): same WTA reconciliation item as GET /monthly's balanceAdjustmentHours.
-      const balanceAdjustmentHours = figures.labelled
-        ? Math.round((figures.balanceAdjustmentMinutes / 60) * 100) / 100
-        : 0;
-
       const pdfBuffer = await generateMonthlyReportPdf({
         tenantName: tenant?.name ?? "",
         employeeName: `${emp.firstName} ${emp.lastName}`,
         employeeNumber: emp.employeeNumber,
         month: `${MONTH_NAMES[m - 1]} ${y}`,
-        workedHours,
-        targetHours,
-        overtimeHours,
+        // Issue #617 (D-617-3): minutes straight from the account's month figures; the renderer
+        // formats them. Issue #451 (D-03): the reconciliation item is 0 when the row is unlabelled.
+        workedMinutes: figures.workedMinutes,
+        targetMinutes: figures.expectedMinutes,
+        overtimeMinutes: figures.balanceMinutes,
         overtimeConfirmed: figures.labelled ? figures.confirmed : null,
-        balanceAdjustmentHours,
+        balanceAdjustmentMinutes: figures.labelled ? figures.balanceAdjustmentMinutes : 0,
         sickDays: summary.sickDays,
         sickDaysWithAttest: summary.sickDaysWithAttest,
         vacationDays: summary.vacationDays,

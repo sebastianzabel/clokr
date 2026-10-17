@@ -50,6 +50,11 @@ vi.mock("../composition/pdf", async (importOriginal) => {
   };
 });
 
+/** Minutes as hours rounded to hundredths, the JSON report's rounding. */
+function hundredths(minutes: number): number {
+  return Math.round((minutes / 60) * 100) / 100;
+}
+
 async function loginAs(app: FastifyInstance, email: string, password = "test1234") {
   const res = await app.inject({
     method: "POST",
@@ -601,7 +606,7 @@ describe("Issue #451 (D-03) — report == Monatsabschluss, Task 2 (both monthly 
     return row;
   }
 
-  it("FIXED_SCHEDULE: GET /reports/monthly/pdf payload targetHours == 144, not 168; workedHours/overtimeHours equal the JSON row; overtimeConfirmed false", async () => {
+  it("FIXED_SCHEDULE: GET /reports/monthly/pdf payload targetMinutes == 144 h (8640), not 168 h; worked/overtime minutes equal the JSON row in hundredths; overtimeConfirmed false", async () => {
     const spy = vi.mocked(pdfUtils.generateMonthlyReportPdf);
     spy.mockClear();
 
@@ -615,9 +620,10 @@ describe("Issue #451 (D-03) — report == Monatsabschluss, Task 2 (both monthly 
     expect(res.statusCode).toBe(200);
     expect(spy).toHaveBeenCalledTimes(1);
     const payload = spy.mock.calls[0][0];
-    expect(payload.targetHours).toBe(144);
-    expect(payload.workedHours).toBe(jsonRow.workedHours);
-    expect(payload.overtimeHours).toBe(jsonRow.overtimeHours);
+    expect(payload.targetMinutes).toBe(144 * 60);
+    expect(hundredths(payload.workedMinutes)).toBe(jsonRow.workedHours);
+    expect(hundredths(payload.overtimeMinutes)).toBe(jsonRow.overtimeHours);
+    expect(payload).not.toHaveProperty("targetHours");
     expect(payload.overtimeConfirmed).toBe(false);
   });
 
@@ -865,9 +871,12 @@ describe("Issue #451 (D-03) — report == Monatsabschluss, Task 3 (closed / open
       expectConsistent(row);
 
       const payload = await pdfPayloadFor(empId, 2026, 4);
-      expect(payload.workedHours).toBe(row.workedHours);
-      expect(payload.targetHours).toBe(row.shouldHours);
-      expect(payload.overtimeHours).toBe(row.overtimeHours);
+      expect(payload.workedMinutes).toBe(oracle.workedMinutes);
+      expect(payload.targetMinutes).toBe(oracle.expectedMinutes);
+      expect(payload.overtimeMinutes).toBe(oracle.balanceMinutes);
+      expect(hundredths(payload.workedMinutes)).toBe(row.workedHours);
+      expect(hundredths(payload.targetMinutes)).toBe(row.shouldHours);
+      expect(hundredths(payload.overtimeMinutes)).toBe(row.overtimeHours);
       expect(payload.overtimeConfirmed).toBe(true);
     });
 
@@ -904,9 +913,12 @@ describe("Issue #451 (D-03) — report == Monatsabschluss, Task 3 (closed / open
       expectConsistent(row);
 
       const payload = await pdfPayloadFor(mhEmpId, 2026, 4);
-      expect(payload.workedHours).toBe(row.workedHours);
-      expect(payload.targetHours).toBe(row.shouldHours);
-      expect(payload.overtimeHours).toBe(row.overtimeHours);
+      expect(payload.workedMinutes).toBe(oracle.workedMinutes);
+      expect(payload.targetMinutes).toBe(oracle.expectedMinutes);
+      expect(payload.overtimeMinutes).toBe(oracle.balanceMinutes);
+      expect(hundredths(payload.workedMinutes)).toBe(row.workedHours);
+      expect(hundredths(payload.targetMinutes)).toBe(row.shouldHours);
+      expect(hundredths(payload.overtimeMinutes)).toBe(row.overtimeHours);
       expect(payload.overtimeConfirmed).toBe(true);
     });
 
@@ -943,9 +955,12 @@ describe("Issue #451 (D-03) — report == Monatsabschluss, Task 3 (closed / open
       expectConsistent(row);
 
       const payload = await pdfPayloadFor(shiftEmpId, 2026, 4);
-      expect(payload.workedHours).toBe(row.workedHours);
-      expect(payload.targetHours).toBe(row.shouldHours);
-      expect(payload.overtimeHours).toBe(row.overtimeHours);
+      expect(payload.workedMinutes).toBe(oracle.workedMinutes);
+      expect(payload.targetMinutes).toBe(oracle.expectedMinutes);
+      expect(payload.overtimeMinutes).toBe(oracle.balanceMinutes);
+      expect(hundredths(payload.workedMinutes)).toBe(row.workedHours);
+      expect(hundredths(payload.targetMinutes)).toBe(row.shouldHours);
+      expect(hundredths(payload.overtimeMinutes)).toBe(row.overtimeHours);
       expect(payload.overtimeConfirmed).toBe(true);
     });
 

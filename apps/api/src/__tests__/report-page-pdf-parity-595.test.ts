@@ -30,6 +30,7 @@ import {
 } from "./setup";
 import { legacySaldoSnapshotPeriodBounds, saldoSnapshotPeriodBounds } from "./test-dates";
 import { computeMonthSaldo } from "../contexts/working-time-account/month-saldo";
+import { computeMonthReportFigures } from "../contexts/working-time-account";
 import * as pdfUtils from "../composition/pdf";
 
 vi.mock("../composition/pdf", async (importOriginal) => {
@@ -399,9 +400,14 @@ describe("Issue #595 (D-01) - page, JSON and PDFs agree on a closed month stored
 
     const payload = await singlePdf(employee.id, year, month);
     expect(payload.overtimeConfirmed).toBe(true);
-    expect(payload.workedHours).toBe(expected.worked);
-    expect(payload.targetHours).toBe(expected.should);
-    expect(payload.overtimeHours).toBe(expected.overtime);
+    // Issue #617 (D-617-3): the payload carries the stored minutes themselves; the hundredths
+    // identity with the JSON row stays.
+    expect(payload.workedMinutes).toBe(stored.workedMinutes);
+    expect(payload.targetMinutes).toBe(stored.expectedMinutes);
+    expect(payload.overtimeMinutes).toBe(stored.balanceMinutes);
+    expect(hours(payload.workedMinutes)).toBe(expected.worked);
+    expect(hours(payload.targetMinutes)).toBe(expected.should);
+    expect(hours(payload.overtimeMinutes)).toBe(expected.overtime);
 
     // The Monatsexport carries the stored minutes themselves (formerly rounded hours) and the stored
     // carry-over as the Gesamtsaldo of a closed month.
@@ -444,9 +450,13 @@ describe("Issue #595 (D-01) - page, JSON and PDFs agree on a closed month stored
 
     const payload = await singlePdf(empA.id, 2026, 10);
     expect(payload.overtimeConfirmed).toBe(false);
-    expect(payload.workedHours).toBe(row.workedHours);
-    expect(payload.targetHours).toBe(row.shouldHours);
-    expect(payload.overtimeHours).toBe(row.overtimeHours);
+    expect(hours(payload.workedMinutes)).toBe(row.workedHours);
+    expect(hours(payload.targetMinutes)).toBe(row.shouldHours);
+    expect(hours(payload.overtimeMinutes)).toBe(row.overtimeHours);
+    const figures = await computeMonthReportFigures(app, empA.id, 2026, 10);
+    expect(payload.workedMinutes).toBe(figures.workedMinutes);
+    expect(payload.targetMinutes).toBe(figures.expectedMinutes);
+    expect(payload.overtimeMinutes).toBe(figures.balanceMinutes);
 
     const exported = await exportPdfRow(empA.employeeNumber, 2026, 10);
     expect(exported.status).toBe("FORECAST");
@@ -498,9 +508,9 @@ describe("Issue #595 (D-01) - page, JSON and PDFs agree on a closed month stored
       expect(monthly[0].month).toBe(9);
       const payload = await singlePdf(empB.id, 2026, 9);
       expect(payload.overtimeConfirmed).toBe(true);
-      expect(payload.workedHours).toBe(hours(monthly[0].workedMinutes));
-      expect(payload.targetHours).toBe(hours(monthly[0].expectedMinutes));
-      expect(payload.overtimeHours).toBe(hours(monthly[0].balanceMinutes));
+      expect(payload.workedMinutes).toBe(monthly[0].workedMinutes);
+      expect(payload.targetMinutes).toBe(monthly[0].expectedMinutes);
+      expect(payload.overtimeMinutes).toBe(monthly[0].balanceMinutes);
     });
 
     it("the answer stays an array and the status codes for foreign and unknown employees are unchanged", async () => {

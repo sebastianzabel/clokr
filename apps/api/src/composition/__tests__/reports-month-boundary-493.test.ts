@@ -274,9 +274,9 @@ describe("Issue #493 — Monatsbericht month boundaries", () => {
       expect(row.workedHours).toBe(expected);
     });
 
-    it("single PDF payload.workedHours of U in October = 2", async () => {
+    it("single PDF payload.workedMinutes of U in October = 120 (2 h)", async () => {
       const payload = await singlePdf(U, 2026, 10);
-      expect(payload.workedHours).toBe(2);
+      expect(payload.workedMinutes).toBe(120);
     });
   });
 
