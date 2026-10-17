@@ -220,9 +220,7 @@ Current: recalculated from hire date on every request (does not scale). Target a
   (`contexts/working-time-account/month-saldo.ts`) exclusively — the composition layer computes no
   Soll of its own. Leave-day counts printed in reports/DATEV go only through `leaveDaysByCodeWithin`
   (`contexts/absence/leave-days.ts`) — the same priced, §9-netted day-counting kernel the absence
-  context's own vacation calculation uses, never a separate calendar walk. (`leaveRequestDaysWithin`,
-  the per-request twin, has had no production caller since #617 removed the Urlaubsliste; it stays
-  exported until a chore removes it.)
+  context's own vacation calculation uses, never a separate calendar walk.
 - **A closed month is found and named by one rule (Issue #595).** Every MONTHLY `SaldoSnapshot` read
   for a month uses `periodStartWindow()` (two storage conventions exist on production — TZ-converted and
   legacy UTC-naive); several active rows of one month resolve through `monthlySnapshotOrder()`. The month a

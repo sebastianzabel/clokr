@@ -37,10 +37,6 @@ export const BS_ONLY_LEAVE_ERROR =
  * German text above (CLAUDE.md). */
 export const BS_ONLY_LEAVE_ERROR_CODE = "VOCATIONAL_SCHOOL_DAY";
 
-/** Display-only label for a BS date inside an otherwise-priced leave range (D-05, consumed by
- * plan 03's request dialog preview and Beleg list) — never compared against, only rendered. */
-export const BS_NO_LEAVE_LABEL = "Berufsschule – kein Urlaub";
-
 /**
  * D-02: a Berufsschultag displaces a leave day only for `VACATION` (request mode) — SICK,
  * SPECIAL, OVERTIME_COMP and every other leave type price exactly as before. An Azubi who
