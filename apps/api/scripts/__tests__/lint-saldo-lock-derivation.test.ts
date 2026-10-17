@@ -687,9 +687,8 @@ describe("live tree — real scan, real exceptions file", () => {
     const files = discoverSourceFiles(REPO_ROOT);
     const resolver = buildFacadeParamResolver(REPO_ROOT, files);
     const facadeCandidates = analyzeFile(join(REPO_ROOT, facadeFile), facadeFile, resolver);
-    const getClosedMonthsForDatesCandidate = facadeCandidates.find((c) =>
-      c.snippet.includes("{ in: monthStarts }"),
-    );
-    expect(getClosedMonthsForDatesCandidate?.verdict).toBe("safe");
+    // Issue #664: the exact `{ in: monthStarts }` match is gone - W2a reads one
+    // `periodStartWindow` per month - so no exact-match candidate on `monthStarts` may remain.
+    expect(facadeCandidates.find((c) => c.snippet.includes("monthStarts"))).toBeUndefined();
   });
 });
