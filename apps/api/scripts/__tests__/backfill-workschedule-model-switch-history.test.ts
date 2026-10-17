@@ -291,7 +291,7 @@ describe("backfill-workschedule-model-switch-history (Phase 76.24 Plan 03)", () 
 
     // AuditLog entityId points to the NEW corrective row
     const newRow = await app.prisma.workSchedule.findUnique({
-      where: { id: auditRow.entityId },
+      where: { id: auditRow.entityId! },
     });
     expect(newRow).not.toBeNull();
     expect(newRow!.type).toBe("FIXED_SCHEDULE");

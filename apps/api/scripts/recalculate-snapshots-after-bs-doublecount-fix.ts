@@ -59,7 +59,11 @@ import {
   monthDayBounds,
 } from "../src/contexts/working-time-account/timezone";
 import { getHolidays, STATE_MAP } from "../src/contexts/platform/holidays";
-import { closeEmployeeMonth } from "../src/contexts/working-time-account/close-employee-month";
+import {
+  closeEmployeeMonth,
+  toCloseMonthApprovedLeave,
+} from "../src/contexts/working-time-account/close-employee-month";
+import { getActiveLeaveOverlapping } from "../src/contexts/absence";
 import { loadBsSlotOverrides } from "../src/contexts/absence/load-bs-slot-overrides";
 
 // ── Audit constants ─────────────────────────────────────────────────────────
@@ -410,16 +414,13 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
                   },
                   select: { date: true, startTime: true, endTime: true },
                 }),
-                prisma.leaveRequest.findMany({
-                  where: {
-                    employeeId: emp.id,
-                    deletedAt: null,
-                    status: "APPROVED",
-                    startDate: { lte: monthEnd },
-                    endDate: { gte: monthStart },
-                  },
-                  select: { startDate: true, endDate: true, halfDay: true },
-                }),
+                // Issue #663: the regular close's own read (effective leave incl. leave type code).
+                getActiveLeaveOverlapping(
+                  prisma,
+                  { kind: "employee", employeeId: emp.id, tenantId: t.id },
+                  monthStart,
+                  monthEnd,
+                ),
                 // ALL absences (incl. VOCATIONAL_SCHOOL — BS single-count handled inside the core).
                 prisma.absence.findMany({
                   where: {
@@ -467,11 +468,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
                 startTime: sh.startTime,
                 endTime: sh.endTime,
               })),
-              approvedLeave: closeApprovedLeave.map((lr) => ({
-                startDate: lr.startDate,
-                endDate: lr.endDate,
-                halfDay: Boolean(lr.halfDay),
-              })),
+              approvedLeave: toCloseMonthApprovedLeave(closeApprovedLeave),
               absences: closeAbsences.map((ab) => ({
                 startDate: ab.startDate,
                 endDate: ab.endDate,

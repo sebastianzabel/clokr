@@ -45,18 +45,22 @@ const { values } = parseArgs({
   },
 });
 
-const employeeId = values["employee-id"];
-const actorId = values["actor-id"];
+const employeeIdArg = values["employee-id"];
+const actorIdArg = values["actor-id"];
 const specPath = values["spec"];
 const APPLY = values["apply"] ?? false;
 
-if (!employeeId || !actorId || !specPath) {
+if (!employeeIdArg || !actorIdArg || !specPath) {
   console.error(
     "Usage: tsx scripts/backfill-mai-shifts.ts " +
       "--employee-id <uuid> --actor-id <uuid> --spec <path-to-json> [--apply]",
   );
   process.exit(1);
 }
+
+// Narrowed by the usage guard above; a module-level alias keeps the type inside function bodies.
+const employeeId: string = employeeIdArg;
+const actorId: string = actorIdArg;
 
 type ShiftSpec = {
   date: string; // YYYY-MM-DD

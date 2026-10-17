@@ -19,6 +19,7 @@ import {
 } from "../audit-511-break-placement";
 import { evaluateDayBreaks } from "../../src/contexts/time-tracking/day-break-rule";
 import type { FastifyInstance } from "fastify";
+import type { Prisma } from "@clokr/db";
 
 async function capture(fn: () => Promise<number>): Promise<{ code: number; lines: string[] }> {
   const lines: string[] = [];
@@ -369,7 +370,7 @@ describe("audit-511-break-placement — report on the worker database", () => {
       data: {
         employeeId: emp.keyCurrent,
         date: new Date("2026-03-18T00:00:00Z"),
-        snapshot: currentSnapshot(keyCurrentEntry),
+        snapshot: currentSnapshot(keyCurrentEntry) as unknown as Prisma.InputJsonValue,
         ...ackBase,
       },
     });

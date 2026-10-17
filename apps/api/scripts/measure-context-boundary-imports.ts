@@ -200,7 +200,7 @@ export function emptyScanAbortMessage(apiRoot: string): string {
 
 /** `propertyName ?? name`, prefixed `"type "` when the element or the whole clause is type-only. */
 function bindingLabel(
-  element: { propertyName?: ts.Identifier; name: ts.Identifier; isTypeOnly?: boolean },
+  element: { propertyName?: ts.ModuleExportName; name: ts.ModuleExportName; isTypeOnly?: boolean },
   clauseIsTypeOnly: boolean,
 ): string {
   const base = (element.propertyName ?? element.name).text;

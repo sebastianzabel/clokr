@@ -1085,6 +1085,40 @@ Abwesenheiten; das gilt für Anonymisierungen, die **nach** dem Rollback laufen.
 zurückzunehmen. Beim erneuten Vorwärts-Deploy die Vorschau aus Schritt 1 wiederholen, weil zwischenzeitlich nach dem alten
 Muster anonymisiert worden sein kann.
 
+## Phase 663 — Nachtragsskript liest Urlaub wie der reguläre Abschluss (Issue #663)
+
+**Was sich ändert.** Es gibt **keine Migration und keinen Schemawechsel**. `apps/api/scripts/backfill-month-snapshots.ts`
+(und `recalculate-snapshots-after-bs-doublecount-fix.ts`) lasen Urlaubszeilen bisher mit einer eigenen Abfrage (nur
+`APPROVED`) und übergaben `closeEmployeeMonth` keine Felder `isOvertimeCompensation` / `creditBasis`. Seit diesem Release
+lesen beide mit `getActiveLeaveOverlapping()` und `toCloseMonthApprovedLeave()` — derselben Lesefunktion und derselben
+Abbildung wie Monatsabschluss, Cron und Neuberechnung. Ein Nachtrag speichert damit denselben Snapshot wie der reguläre
+Abschluss (Test `backfill-month-snapshots-leave-fields-663.test.ts`). **Bereits geschriebene Snapshots werden nicht
+verändert**; ein abgeschlossener Monat bleibt abgeschlossen (Revisionssicherheit).
+
+**1. Bestand prüfen (lesend, auf int UND prod).** `apps/api/scripts/audit-663-backfilled-snapshots.ts` schreibt nichts
+(kein Schreib-Schalter; `--apply` und `--confirm` werden abgelehnt) und gibt je betroffenem Monat nur Mandanten-Id,
+Personen-Id, Monat, Snapshot-Id, Audit-Id und die Ids der betroffenen Anträge aus — keine Namen, keine Personalnummern.
+Erkannt wird ein Nachtrag am AuditLog (`CREATE SaldoSnapshot`, `newValue.origin = BACKFILL`, `entityId` = Personen-Id); der
+Snapshot selbst trägt keine Markierung und wird über Monat und die drei gespeicherten Zahlen zugeordnet (`snapshotId=none`:
+Zeile wurde seither neu berechnet). Gelistet werden nur Monate mit `OVERTIME_COMP` (Überstundenausgleich), `ROSTER_CREDIT`
+(SICK, SICK_CHILD, SPECIAL) oder `CANCELLATION_REQUESTED`. Die Anträge werden im heutigen Stand gelesen; die Liste ist ein
+Hinweis zur fachlichen Prüfung, kein Beweis einer falschen Zahl.
+
+```bash
+# Aus einem Checkout des Release-Stands gegen eine wiederhergestellte Kopie bzw. lesende Rolle:
+DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx scripts/audit-663-backfilled-snapshots.ts | tee "663-bestand-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+Gleichwertig im Image (Einstiegspunkt überschreiben, damit **kein** `prisma migrate deploy` läuft):
+`docker run --rm -e DATABASE_URL --entrypoint sh <api-image> -lc 'cd /app/apps/api && pnpm tsx scripts/audit-663-backfilled-snapshots.ts'`.
+`--tenant <uuid>` begrenzt auf einen Mandanten. Exit-Code `0`: Liste gedruckt (auch leer); `1`: Aufruf- oder Verbindungsfehler.
+
+**2. Auswerten.** Eine leere Liste ist der erwartete Normalfall (der Demo-Mandant hat nur Urlaub und Krankheit). Jede Zeile
+ist ein Monat, den der Betreiber fachlich ansieht; **nichts wird still korrigiert** — eine Korrektur eines abgeschlossenen
+Monats ist eine bewusste Korrekturbuchung.
+
+**3. Rollback.** Es gibt nichts zurückzunehmen; das vorige Image enthält nur das alte Skript.
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:
