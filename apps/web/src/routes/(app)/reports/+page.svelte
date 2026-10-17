@@ -13,6 +13,7 @@
   import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
   import { DAY_STATUS_LABEL, attendanceStatusText } from "$lib/dashboard/day-status-label"; // Issue #587
+  import { teamDayHref, teamLeaveCreateHref } from "$lib/dashboard/team-day-links"; // Issue #587
   import {
     buildEmployeeMonthRows,
     type EmployeeMonthRow,
@@ -200,6 +201,11 @@
   let canReportRead = $derived(rights.canReportRead);
   let canReportExport = $derived(rights.canReportExport);
   let canReportNotify = $derived(rights.canReportNotify);
+  // Issue #587 (D-587-4): the two action links of a „Fehlt“ row; the target pages and the API
+  // enforce their own rules, these only decide whether the link is offered.
+  let canAddTeamEntry = $derived(rights.canAddTeamEntry);
+  let canRecordTeamAbsence = $derived(rights.canRecordTeamAbsence);
+  let showAttendanceActions = $derived(canAddTeamEntry || canRecordTeamAbsence);
   let showTeamArea = $derived(rights.showTeamArea);
 
   // ── Heutige Anwesenheit state (RPT-03) ─────────────────────────────────────
@@ -1251,6 +1257,9 @@
                   <th>Mitarbeiter</th>
                   <th>Nr.</th>
                   <th>Status</th>
+                  {#if showAttendanceActions}
+                    <th>Aktionen</th>
+                  {/if}
                 </tr>
               </thead>
               <tbody>
@@ -1260,6 +1269,23 @@
                     <td>{row.employeeNumber}</td>
                     <td><span class={statusClass(row.status)}>{attendanceStatusText(row)}</span></td
                     >
+                    {#if showAttendanceActions}
+                      <td class="attendance-actions">
+                        <div class="row-actions__group">
+                          {#if row.status === "missing"}
+                            {@const entryHref = teamDayHref(row.id, todayAttendance.date)}
+                            {@const absenceHref = teamLeaveCreateHref(row.id, todayAttendance.date)}
+                            {#if canAddTeamEntry && entryHref !== null}
+                              <a class="btn btn-ghost xs" href={entryHref}>Eintrag nachtragen</a>
+                            {/if}
+                            {#if canRecordTeamAbsence && absenceHref !== null}
+                              <a class="btn btn-ghost xs" href={absenceHref}>Abwesenheit erfassen</a
+                              >
+                            {/if}
+                          {/if}
+                        </div>
+                      </td>
+                    {/if}
                   </tr>
                 {/each}
               </tbody>
@@ -1977,6 +2003,12 @@
   }
 
   .row-actions {
+    text-align: right;
+    white-space: nowrap;
+  }
+  /* Issue #587: the action cell of the attendance list; the flex layout lives on the inner
+     .row-actions__group wrapper (Issue #442), never on the td itself. */
+  .attendance-actions {
     text-align: right;
     white-space: nowrap;
   }

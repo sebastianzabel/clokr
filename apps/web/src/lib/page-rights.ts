@@ -24,6 +24,17 @@ export interface ReportRights {
   canReportNotify: boolean;
   /** The team area replaces the personal monthly closes for anyone holding any of its rights. */
   showTeamArea: boolean;
+  /**
+   * Issue #587 - „Eintrag nachtragen“ on a „Fehlt“ row: links to Team-Zeiten, whose list needs
+   * time-entry:read and whose `POST /time-entries` for a person in scope needs time-entry:create.
+   */
+  canAddTeamEntry: boolean;
+  /**
+   * Issue #587 - „Abwesenheit erfassen“ on a „Fehlt“ row: links to the create dialog of
+   * Team-Abwesenheiten, which lists with leave-request:read and files `POST /leave/requests` on
+   * behalf with leave-request:create.
+   */
+  canRecordTeamAbsence: boolean;
 }
 
 export function reportRights(user: Caller): ReportRights {
@@ -38,6 +49,12 @@ export function reportRights(user: Caller): ReportRights {
     canReportExport,
     canReportNotify: hasPermission(user, "report:notify:ZUGEWIESEN"),
     showTeamArea: canTeamAttendance || canTeamOvertime || canReportRead || canReportExport,
+    canAddTeamEntry:
+      hasPermission(user, "time-entry:read:ZUGEWIESEN") &&
+      hasPermission(user, "time-entry:create:ZUGEWIESEN"),
+    canRecordTeamAbsence:
+      hasPermission(user, "leave-request:read:ZUGEWIESEN") &&
+      hasPermission(user, "leave-request:create:ZUGEWIESEN"),
   };
 }
 
