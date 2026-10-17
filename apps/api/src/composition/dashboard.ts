@@ -19,6 +19,7 @@ import {
   scopedTimeEntryIds, // Issue #85 (D-04) — the one per-entry scope resolver
   isShiftInScope, // Issue #548 — Phase 91b D-11, the one per-shift scope predicate
 } from "../contexts/platform";
+import { resolveMonthReachIds } from "./reach-day"; // Issue #679
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
   distinctEmployeeIds,
@@ -648,7 +649,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const teamWeekScopedIds =
         scopeReach.kind === "wholeTenant"
           ? "all"
-          : await resolveStammsalonScopedEmployeeIds(app.prisma, tenantId, scopeReach, weekEnd);
+          : await resolveStammsalonScopedEmployeeIds(
+              app.prisma,
+              tenantId,
+              scopeReach,
+              weekLastDay, // Issue #679: the week's last calendar day, not the instant `weekEnd`
+            );
 
       // Issue #85 (D-04): for a scoped caller the entry decides. The Unterbau names the in-scope
       // entries of the week; the population is the Stammsalon persons (as before) PLUS every
@@ -2131,7 +2137,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
               app.prisma,
               tenantId,
               trendScopeReach,
-              new Date(),
+              todayInTz(await getTenantTimezone(app.prisma, tenantId)), // Issue #679: tenant-local calendar day, not `new Date()`
             );
       const scopedEmployees =
         trendScopedIds === "all"
@@ -2316,13 +2322,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const year = d.getUTCFullYear();
         const month = d.getUTCMonth() + 1;
         // Same population as GET /reports/monthly for this month (Issue #613) and the same Stichtag
-        // (month end) for the reach.
+        // for the reach (Issue #679: exit day inside the month, else the last calendar day).
         const { start, end } = monthRangeUtc(year, month, tz);
         const { firstDay, lastDay } = monthDateRange(year, month, tz);
         const scopedIds =
           reach.kind === "wholeTenant"
             ? "all"
-            : await resolveStammsalonScopedEmployeeIds(app.prisma, tenantId, reach, end);
+            : await resolveMonthReachIds(app.prisma, tenantId, reach, year, month, tz);
         const people = await app.prisma.employee.findMany({
           where: {
             tenantId,
@@ -2344,11 +2350,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
         });
 
         if (overtimeReach && overtimeReach.kind === "scoped") {
-          const covered = await resolveStammsalonScopedEmployeeIds(
+          const covered = await resolveMonthReachIds(
             app.prisma,
             tenantId,
             overtimeReach,
-            end,
+            year,
+            month,
+            tz,
           );
           if (covered !== "all" && ![...ids, ...entryOnlyIds].every((id) => covered.includes(id))) {
             sollCovered = false;

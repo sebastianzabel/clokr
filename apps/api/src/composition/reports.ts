@@ -29,6 +29,7 @@ import {
   type MonthlyExportRow,
   type MonthlyReportDayRow,
 } from "./pdf";
+import { resolveMonthReachIds, isMonthReachMatch } from "./reach-day"; // Issue #679 — the reach day of a person in a month
 import { salonViewMemberIds, SALON_VIEW_NOT_FOUND } from "./salon-view"; // Issue #542 (P-01)
 import {
   getTenantTimezone,
@@ -846,19 +847,15 @@ async function loadDatevMonth(
   const { firstDay, lastDay } = monthDateRange(y, m, tz);
 
   // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
-  // building the export. Stichtag = the payroll period's own last day (`end`).
+  // building the export. Stichtag (Issue #679): the person's exit day when it lies in the month, else the
+  // month's last calendar day, always a calendar day (`resolveMonthReachIds`).
   const datevAccess = accessContextFromRequest(req);
   const datevScopeReach =
     opts.reach ?? (await resolveAccessReach(app.prisma, datevAccess, "report:export:ZUGEWIESEN"));
   const datevScopedIds =
     datevScopeReach.kind === "wholeTenant"
       ? "all"
-      : await resolveStammsalonScopedEmployeeIds(
-          app.prisma,
-          req.user.tenantId,
-          datevScopeReach,
-          end,
-        );
+      : await resolveMonthReachIds(app.prisma, req.user.tenantId, datevScopeReach, y, m, tz);
 
   // Issue #542: the export's salon narrowing only ever intersects the caller's reach.
   const onlyIds = opts.onlyEmployeeIds;
@@ -982,38 +979,9 @@ export async function salonPersonsAtStichtag(
   m: number,
 ): Promise<string[]> {
   const tz = await getTenantTimezone(app.prisma, tenantId);
-  const { start, end } = monthRangeUtc(y, m, tz);
-  const { lastDay } = monthDateRange(y, m, tz);
-  const homeOn = async (calendarDay: Date): Promise<Set<string>> => {
-    const ids = await resolveStammsalonScopedEmployeeIds(
-      app.prisma,
-      tenantId,
-      salonOnlyReach(salonId),
-      calendarDay,
-    );
-    // A salon-only reach never resolves to "all"; the empty set is the fail-closed reading.
-    return new Set(ids === "all" ? [] : ids);
-  };
-
-  const leavers = await app.prisma.employee.findMany({
-    where: { tenantId, exitDate: { gte: start, lte: end } },
-    select: { id: true, exitDate: true },
-  });
-  const leaverIds = new Set(leavers.map((l) => l.id));
-  const members = new Set<string>();
-  for (const id of await homeOn(lastDay)) {
-    if (!leaverIds.has(id)) members.add(id);
-  }
-  const byExitDay = new Map<string, string[]>();
-  for (const leaver of leavers) {
-    const exitDay = dateStrInTz(leaver.exitDate as Date, tz);
-    byExitDay.set(exitDay, [...(byExitDay.get(exitDay) ?? []), leaver.id]);
-  }
-  for (const [exitDay, ids] of byExitDay) {
-    const home = await homeOn(new Date(`${exitDay}T00:00:00Z`));
-    for (const id of ids) if (home.has(id)) members.add(id);
-  }
-  return [...members];
+  const ids = await resolveMonthReachIds(app.prisma, tenantId, salonOnlyReach(salonId), y, m, tz);
+  // A salon-only reach never resolves to "all"; the empty set is the fail-closed reading.
+  return ids === "all" ? [] : ids;
 }
 
 // Issue #451 (D-02): one leaveDaysByCodeWithin call per employee with at least one leave request
@@ -1207,8 +1175,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const { firstDay, lastDay } = monthDateRange(y, m, tz);
 
       // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
-      // building the report body. Stichtag = the report period's own last day (`end`, already
-      // computed above). This is the template every other list route in this file follows.
+      // building the report body. Stichtag (Issue #679): the person's exit day when it lies in the
+      // month, else the month's last calendar day (`resolveMonthReachIds`). This is the template every other list route in this file follows.
       const access = accessContextFromRequest(req);
       const scopeReach = await resolveAccessReach(app.prisma, access, "report:read:ZUGEWIESEN");
 
@@ -1227,12 +1195,7 @@ export async function reportRoutes(app: FastifyInstance) {
       const scopedEmployeeIds =
         scopeReach.kind === "wholeTenant"
           ? "all"
-          : await resolveStammsalonScopedEmployeeIds(
-              app.prisma,
-              req.user.tenantId,
-              scopeReach,
-              end,
-            );
+          : await resolveMonthReachIds(app.prisma, req.user.tenantId, scopeReach, y, m, tz);
 
       // Alle Mitarbeiter des Tenants (oder nur einen)
       const populationEmployees = (await app.prisma.employee.findMany({
@@ -1464,7 +1427,7 @@ export async function reportRoutes(app: FastifyInstance) {
               app.prisma,
               req.user.tenantId,
               leaveOverviewScopeReach,
-              new Date(`${y}-12-31T23:59:59.999Z`),
+              new Date(`${y}-12-31T00:00:00Z`), // Issue #679: the calendar day, not an instant
             );
       // Issue #617 (D-617-1, T-617-06) - the Urlaubsuebersicht names only Urlaub: an allow-list BY
       // CODE (never by name, never a deny-list), so no other entitlement type - sick-related or not -
@@ -1600,7 +1563,7 @@ export async function reportRoutes(app: FastifyInstance) {
               app.prisma,
               req.user.tenantId,
               carryoverScopeReach,
-              now,
+              todayInTz(await getTenantTimezone(app.prisma, req.user.tenantId)), // Issue #679
             );
       const entitlements =
         carryoverScopedIds === "all"
@@ -1718,7 +1681,7 @@ export async function reportRoutes(app: FastifyInstance) {
             req.user.tenantId,
             carryoverWarnScopeReach,
             ent.employeeId,
-            new Date(),
+            todayInTz(await getTenantTimezone(app.prisma, req.user.tenantId)), // Issue #679
           ))
         ) {
           await app.audit({
@@ -1954,7 +1917,7 @@ export async function reportRoutes(app: FastifyInstance) {
 
       // Phase 91b Plan 07 (Issue #91), D-10/D-14 — a NEW finding: the plan groups this route among
       // "list/bulk" routes, but it acts on ONE named employeeId — a single-target route needing a
-      // boolean scope check. Stichtag = the payroll period's own last day (`end`).
+      // boolean scope check. Stichtag (Issue #679): exit day inside the month, else its last day.
       {
         const datevEmpAccess = accessContextFromRequest(req);
         const datevEmpScopeReach = await resolveAccessReach(
@@ -1963,12 +1926,14 @@ export async function reportRoutes(app: FastifyInstance) {
           "report:export:ZUGEWIESEN",
         );
         if (
-          !(await isStammsalonScopeMatch(
+          !(await isMonthReachMatch(
             app.prisma,
             req.user.tenantId,
             datevEmpScopeReach,
             employeeId,
-            end,
+            y,
+            m,
+            tz,
           ))
         ) {
           await app.audit({
@@ -2228,7 +2193,7 @@ export async function reportRoutes(app: FastifyInstance) {
       // Phase 91b Plan 07 (Issue #91), D-10/D-14 — a ZUGEWIESEN reach may still be scoped to
       // salons/persons (Plan 91b-01's D-05 gate change). Only runs for the "someone else" branch
       // — the EIGENE self-download path above is untouched. Stichtag = the report period's own
-      // last day (`end`). Runs BEFORE the holiday computation below, so an out-of-scope employee's
+      // last day, or the exit day when it lies inside the month (Issue #679). Runs BEFORE the holiday computation below, so an out-of-scope employee's
       // data is never touched at all.
       if (reach === "ZUGEWIESEN" && req.user.employeeId !== employeeId) {
         const monthlyPdfAccess = accessContextFromRequest(req);
@@ -2238,12 +2203,14 @@ export async function reportRoutes(app: FastifyInstance) {
           "report:export:ZUGEWIESEN",
         );
         if (
-          !(await isStammsalonScopeMatch(
+          !(await isMonthReachMatch(
             app.prisma,
             req.user.tenantId,
             monthlyPdfScopeReach,
             employeeId,
-            end,
+            y,
+            m,
+            tz,
           ))
         ) {
           await app.audit({

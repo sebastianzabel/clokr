@@ -1210,7 +1210,11 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   Monatsexport only narrow WHICH persons appear, by Stammsalon on the endpoint's own Stichtag passed as a CALENDAR day
   (#493; the Monatsexport judges a leaver on the exit day), each person with the whole saldo („Personensaldo, nicht nach
   Salon aufgeteilt“); a person without a Stammsalon on that day appears only unfiltered (no "last Stammsalon"
-  fallback). Soll and saldo are NEVER split by salon and DATEV is NEVER filtered (§ 41 EStG). Tests:
+  fallback).
+  Every Stammsalon reach resolution in `composition/` receives a tenant-local CALENDAR day, never an instant (Issue #679):
+  month-bound reads judge a person who left inside the month on the exit day, everyone else on the month's last day, through
+  `composition/reach-day.ts` (`resolveMonthReachIds`/`isMonthReachMatch`); `scope-filter.ts` stays unchanged.
+  Soll and saldo are NEVER split by salon and DATEV is NEVER filtered (§ 41 EStG). Tests:
   `reports-salon-filter-542`, `dashboard-salon-filter-542`, `monthly-export-salon-filter-542`,
   `report-salon-filter-source-542` (AST: validation before any read, one membership rule, DATEV unfiltered) and the
   exempt-block table in `salon-filter-exempt-pages-558.test.ts`. Known limit: a scoped caller's own reach in the monthly

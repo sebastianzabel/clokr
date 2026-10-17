@@ -11,6 +11,7 @@ import {
   getMonthlySnapshotsInRange, // Phase 100B Plan 07 — W5
   snapshotMonthOf, // Issue #595 (D-03) — the one place a stored snapshot gets a calendar month
   getTenantTimezone,
+  todayInTz,
   timeStrInTz,
 } from "../contexts/working-time-account"; // Phase 101B
 import { getEntryActivityFeed } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T5
@@ -264,7 +265,7 @@ export async function activityRoutes(app: FastifyInstance) {
                 app.prisma,
                 tenantId,
                 activityScopeReach,
-                new Date(),
+                todayInTz(await getTenantTimezone(app.prisma, tenantId)), // Issue #679
               );
         const teamLeaves = await getTeamLeaveSubmissions(
           app.prisma,
