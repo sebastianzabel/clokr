@@ -125,12 +125,10 @@ export type {
 export {
   BS_ONLY_LEAVE_ERROR,
   BS_ONLY_LEAVE_ERROR_CODE,
-  BS_NO_LEAVE_LABEL,
   vocationalSchoolDisplacesLeave,
   vocationalSchoolDateSet,
   vocationalSchoolDateSetFromRows, // Issue #448 (D-05, plan 03)
   vocationalSchoolDatesWithin, // Issue #448 (D-05, plan 03)
-  vocationalSchoolDatesForLeaveRequests, // Issue #448 (D-05, plan 03)
 } from "./bs-leave-days";
 
 // ── EmployeeVocationalSchoolPattern (plan 11, A20/A21a/A21b) ─────────────────────────────────
@@ -217,7 +215,6 @@ export {
   recalcVacationEntitlementsForContractChange, // Issue #450 (D-06/D-08) — Erweiterung, additive; consumed by platform/api/settings.ts
   REGULAR_ENTITLEMENT_REASON_CONTRACT_CHANGE, // Issue #450 (D-06/D-08) — Erweiterung, additive; consumed by platform/api/settings.ts
   leaveDaysByCodeWithin, // Issue #451 (D-01) — Erweiterung, additive; consumed by composition/reports.ts (the DATEV export)
-  leaveRequestDaysWithin, // Issue #451 (D-02) — Erweiterung, additive; no production caller since #617 removed the Urlaubsliste PDFs (a chore removes it)
 } from "./leave-days";
 export type { LeaveDaysForCode } from "./leave-days"; // Issue #451 (D-01)
 export { checkJArbSchG } from "./jarbschg";
