@@ -21,6 +21,9 @@ const PAGE = readRouteFile(
   "src/routes/(app)/reports/+page.svelte",
 );
 
+// The Monatsexport card is the last card of the team area; the employee area follows it.
+const EMPLOYEE_AREA_MARKER = "<!-- EMP-06";
+
 describe("Issue #617 - /reports offers the Monatsexport to export holders only", () => {
   it("downloads from the Monatsexport route with year and month", () => {
     expect(PAGE).toContain("/reports/monthly-export/pdf?year=${exportYear}&month=${exportMonth}");
@@ -38,7 +41,7 @@ describe("Issue #617 - /reports offers the Monatsexport to export holders only",
     expect(start).toBeGreaterThan(-1);
     const gate = PAGE.indexOf("{#if canReportExport}", start);
     const button = PAGE.indexOf("onclick={downloadMonthlyExport}", start);
-    const cardEnd = PAGE.indexOf("<!-- Urlaubsbericht PDF Card", start);
+    const cardEnd = PAGE.indexOf(EMPLOYEE_AREA_MARKER, start);
     expect(gate).toBeGreaterThan(start);
     expect(button).toBeGreaterThan(gate);
     expect(cardEnd).toBeGreaterThan(button);
@@ -71,7 +74,7 @@ describe("Issue #617 - /reports offers the Monatsexport to export holders only",
 
   it("the § 9 note sits inside the Monatsexport card and follows its own month and year", () => {
     const cardStart = PAGE.indexOf("<!-- Monatsexport Card (Issue #617) -->");
-    const cardEnd = PAGE.indexOf("<!-- Urlaubsbericht PDF Card", cardStart);
+    const cardEnd = PAGE.indexOf(EMPLOYEE_AREA_MARKER, cardStart);
     expect(cardStart).toBeGreaterThan(-1);
     expect(cardEnd).toBeGreaterThan(cardStart);
     const card = PAGE.slice(cardStart, cardEnd);
@@ -82,5 +85,22 @@ describe("Issue #617 - /reports offers the Monatsexport to export holders only",
     // the loader reads the Monatsexport card's own period, and runs only for report readers
     expect(PAGE).toContain("`/reports/monthly?year=${exportYear}&month=${exportMonth}`");
     expect(PAGE).toMatch(/const _m = exportMonth;\s+const _y = exportYear;\s+if \(canReportRead\)/);
+  });
+
+  // Issue #617 (OD-617-4): the vacation list, vacation and overview PDFs and their card are gone.
+  it("references none of the removed vacation-PDF routes and has no Urlaubsbericht card", () => {
+    expect(PAGE.length).toBeGreaterThan(1000);
+    expect(PAGE).not.toContain("/reports/leave-list/pdf");
+    expect(PAGE).not.toContain("/reports/vacation/pdf");
+    expect(PAGE).not.toContain("/reports/leave-overview/pdf");
+    expect(PAGE).not.toContain("downloadVacationPdf");
+    expect(PAGE).not.toContain("Urlaubsbericht");
+    expect(PAGE).not.toContain("Urlaubslisten");
+    // the in-app overview still reads the JSON route
+    expect(PAGE).toContain("/reports/leave-overview?year=");
+  });
+
+  it("the team area subtitle names the Monatsexport", () => {
+    expect(PAGE).toContain("Monatsexport, Stundennachweise und DATEV-Export erstellen");
   });
 });

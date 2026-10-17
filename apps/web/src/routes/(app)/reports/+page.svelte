@@ -177,11 +177,6 @@
   // bestätigte § 9-Tage trägt. Issue #617: sits on the Monatsexport card, driven by its own period.
   let exportSection9Note = $state<string | null>(null);
 
-  // Urlaubsbericht PDF (kombiniert: Urlaubsliste + Urlaubsübersicht)
-  let leaveYear = $state(currentYear);
-  let leaveLoading = $state(false);
-  let leaveError = $state("");
-
   const months = [
     "Januar",
     "Februar",
@@ -714,21 +709,6 @@
     }
   }
 
-  async function downloadVacationPdf() {
-    leaveLoading = true;
-    leaveError = "";
-    try {
-      await downloadPdf(
-        `/reports/vacation/pdf?year=${leaveYear}`,
-        `Urlaubsbericht_${leaveYear}.pdf`,
-      );
-    } catch (e: unknown) {
-      leaveError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
-    } finally {
-      leaveLoading = false;
-    }
-  }
-
   async function loadExportSection9Note() {
     try {
       const res = await api.get<{ section9Note?: string }>(
@@ -871,7 +851,7 @@
   title="Berichte & Auswertungen"
   accent="Auswertungen"
   sub={showTeamArea
-    ? "Urlaubslisten, Monatsberichte und DATEV-Exporte erstellen"
+    ? "Monatsexport, Stundennachweise und DATEV-Export erstellen"
     : "Persönliche Monatsabschlüsse — als PDF zum Download."}
 />
 
@@ -1032,50 +1012,6 @@
           <div class="alert alert-error" role="alert">
             <span>⚠</span>
             <span>{exportError}</span>
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    <!-- Urlaubsbericht PDF Card (kombiniert: Urlaubsliste + Urlaubsübersicht) -->
-    {#if canReportExport}
-      <div class="card card-body card-animate report-card">
-        <div class="report-card-icon-section report-card-icon-section--blue">
-          <span class="report-icon-lg">🏖</span>
-        </div>
-        <div class="report-card-header">
-          <div>
-            <h2 class="report-card-heading">Urlaubsbericht PDF</h2>
-            <p class="report-card-desc text-muted">
-              Urlaubsliste &amp; Jahresübersicht der Ansprüche in einem PDF
-            </p>
-          </div>
-        </div>
-
-        <div class="report-controls">
-          <div class="form-group">
-            <label class="form-label" for="leave-year">Jahr</label>
-            <select id="leave-year" bind:value={leaveYear} class="form-input">
-              {#each years as y (y)}
-                <option value={y}>{y}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-
-        <button class="btn btn-primary" onclick={downloadVacationPdf} disabled={leaveLoading}>
-          {#if leaveLoading}
-            <span class="btn-spinner"></span>
-            Vorbereiten…
-          {:else}
-            PDF herunterladen
-          {/if}
-        </button>
-
-        {#if leaveError}
-          <div class="alert alert-error" role="alert">
-            <span>⚠</span>
-            <span>{leaveError}</span>
           </div>
         {/if}
       </div>
@@ -1641,10 +1577,6 @@
 
   .report-card-icon-section--green {
     background: var(--good-soft);
-  }
-
-  .report-card-icon-section--blue {
-    background: var(--brand-soft);
   }
 
   .report-icon-lg {

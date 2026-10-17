@@ -495,7 +495,9 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(page.getByText("Urlaubsübersicht", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Lade Urlaubsübersicht…")).toHaveCount(0);
     await expect(page.getByText("DATEV Export", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("Urlaubsbericht PDF", { exact: true })).toHaveCount(0);
+    // Issue #617: the Monatsexport card replaces the removed vacation-PDF card as the export control
+    // the Personalabteilung (report:read, no report:export) must not see.
+    await expect(page.getByText("Monatsexport", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /PDF herunterladen/ })).toHaveCount(0);
 
     // ── 8. the salon admin opens ──────────────────────────────────────────────────────────────

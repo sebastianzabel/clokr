@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import PDFDocument from "pdfkit";
 import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
 import { requireAuth } from "../middleware/auth";
@@ -10,7 +9,6 @@ import {
   resolveAccessReach, // Phase 91b Plan 07 (#91), D-10/D-14
   resolveStammsalonScopedEmployeeIds, // Phase 91b Plan 07 (#91), D-10
   isStammsalonScopeMatch, // Phase 91b Plan 07 (#91), D-10/D-14
-  employeeScopeFor, // Issue #448 (D-05, plan 03) — T-448-12 scoped BS-date reads
   reportPopulationWhere, // Issue #613 (D-01) — the one period population
   employedInPeriodWhere, // Issue #613 — its employment core, which DATEV reads alone (P-01)
   isAnonymizedEmployee, // Issue #617 (T-617-08) — the heal never writes an anonymised person's entitlement
@@ -20,10 +18,6 @@ import {
   generateMonthlyReportPdf,
   generateMonthlyExportPdf,
   type MonthlyExportRow,
-  generateVacationOverviewPdf,
-  streamLeaveListPdf,
-  streamVacationOverviewPdf,
-  type VacationOverviewPdfRow,
 } from "./pdf";
 import {
   getTenantTimezone,
@@ -48,11 +42,8 @@ import {
   vacationEntitlementWarning, // Issue #445 — composition carries no business rule (CLAUDE.md); the warning string is built in the absence context
   healEntitlementUsedDays, // Issue #445 (D-10) — injected into selfHealUsedDays's ctx below
   EFFECTIVE_LEAVE_STATUSES, // Issue #446 (D-01/D-04)
-  vocationalSchoolDatesForLeaveRequests, // Issue #448 (D-05, plan 03)
-  BS_NO_LEAVE_LABEL, // Issue #448 (D-05, plan 03)
   leaveDaysByCodeWithin, // Issue #451 (D-01) — the DATEV export's VACATION Lohnart line
   type LeaveDaysForCode, // Issue #451 (D-01)
-  leaveRequestDaysWithin, // Issue #451 (D-02) — the Urlaubsliste / Urlaubs-PDF list's per-period priced days
   sickLeaveDayCounts, // Issue #84 (D-14) — the one sick-day / § 9 counting rule
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveEntitlement, LeaveRequestStatus, LeaveTypeCode } from "@clokr/db";
@@ -875,110 +866,6 @@ async function fetchLeaveDaysByCodeForMonthlyReport(
   return result;
 }
 
-// Issue #448 (D-05, plan 03)'s DATEV-only BS batch reader (the module-private async helper that
-// used to live here) was removed by Issue #451 (D-01, Task 2): Berufsschultage are already
-// excluded from the priced
-// `days` leaveDaysByEmployee carries (the same #448 exclusion, now reached once, inside the
-// absence context, instead of being re-derived a second time here). The Urlaubsliste PDF's own
-// BS-note reader below (vocationalSchoolDatesForLeaveRequests via buildLeaveListPeriods) is
-// untouched — that is a display-only BS note, not a payroll day count, and out of this plan's
-// scope (451-02).
-
-// Issue #448 (D-05, plan 03): the ONE `periods` builder for both `/leave-list/pdf` and the list
-// part of `/vacation/pdf` — both built this identically before this plan. `bsDatesByRequestId`
-// comes from ONE vocationalSchoolDatesForLeaveRequests call per route (never per period); a BS
-// date outside the year-clamped `[s, e2]` window is neither named in `note` nor affects `days` —
-// it was never counted in the unclamped period either.
-//
-// Issue #451 (D-02): `days` is read from `pricedDaysByRequestId` (the absence context's own
-// year-clipped leaveRequestDaysWithin result, prefetched once per route) — the local
-// calendar-day count this function used to compute itself, and its BS-date subtraction, are
-// gone; the absence context's own pricing already excludes a Berufsschultag from a VACATION
-// request's count (#448). The BS note itself stays exactly as built before — it explains WHY the
-// priced days are lower, independent of how those days were priced.
-//
-// Module-private — the test suite inspects its output the same way reports.test.ts already does
-// for the vacation-overview PDF: a `vi.mock("../pdf")` spy on `streamLeaveListPdf` captures the
-// `LeaveListData` argument before it reaches PDFKit's Flate-compressed streams (see that file's
-// own header comment on why a byte-content substring search on the PDF payload is proven
-// vacuous).
-function buildLeaveListPeriods(
-  leaveRequests: Array<{
-    id: string;
-    startDate: Date;
-    endDate: Date;
-    leaveType: { code: LeaveTypeCode | null; name: string };
-  }>,
-  yearStart: Date,
-  yearEnd: Date,
-  tz: string,
-  bsDatesByRequestId: Map<string, string[]>,
-  pricedDaysByRequestId: Map<string, number>,
-): Array<{
-  startDate: string;
-  endDate: string;
-  leaveTypeName: string;
-  days: number;
-  note?: string;
-}> {
-  return leaveRequests.map((lr) => {
-    const s = lr.startDate < yearStart ? yearStart : lr.startDate;
-    const e2 = lr.endDate > yearEnd ? yearEnd : lr.endDate;
-    const bsDatesInRange = (bsDatesByRequestId.get(lr.id) ?? []).filter((d) => {
-      const dt = new Date(`${d}T00:00:00.000Z`);
-      return dt >= s && dt <= e2;
-    });
-    const days = pricedDaysByRequestId.get(lr.id) ?? 0;
-    const note = bsDatesInRange.length
-      ? `${BS_NO_LEAVE_LABEL}: ${bsDatesInRange
-          .map((d) => formatInTimeZone(new Date(`${d}T00:00:00.000Z`), tz, "dd.MM."))
-          .join(", ")}`
-      : undefined;
-    return {
-      startDate: formatInTimeZone(lr.startDate, tz, "dd.MM.yyyy"),
-      endDate: formatInTimeZone(lr.endDate, tz, "dd.MM.yyyy"),
-      leaveTypeName: lr.leaveType.name,
-      days,
-      ...(note ? { note } : {}),
-    };
-  });
-}
-
-// Issue #451 (D-02): one leaveRequestDaysWithin call per leave request in the year — feeds
-// buildLeaveListPeriods's required pricedDaysByRequestId parameter with the absence context's
-// own priced, year-clipped day count, replacing the unclamped-at-year-boundary calendar-day count
-// buildLeaveListPeriods used to compute itself. `yearFrom`/`yearTo` MUST be UTC-midnight calendar
-// days (not `yearStart`/`yearEnd`'s own `23:59:59.999Z` end-of-day instant) — see
-// leaveRequestDaysWithin's own docblock. Sequential awaits (no unbounded Promise.all), same shape
-// as fetchLeaveDaysByCodeForMonthlyReport above.
-async function fetchPricedDaysByRequestId(
-  app: FastifyInstance,
-  tenantId: string,
-  employees: Array<{
-    id: string;
-    leaveRequests: Array<{ id: string; startDate: Date; endDate: Date; days: unknown }>;
-  }>,
-  yearFrom: Date,
-  yearTo: Date,
-): Promise<Map<string, number>> {
-  const result = new Map<string, number>();
-  for (const emp of employees) {
-    for (const lr of emp.leaveRequests) {
-      result.set(
-        lr.id,
-        await leaveRequestDaysWithin(app.prisma, {
-          employeeId: emp.id,
-          tenantId,
-          request: lr,
-          from: yearFrom,
-          to: yearTo,
-        }),
-      );
-    }
-  }
-  return result;
-}
-
 // Issue #613 — the report year as tenant-local INSTANTS (1 January 00:00 to 31 December 23:59:59.999
 // in the tenant time zone), the bounds `reportPopulationWhere` expects. Deliberately named
 // `population*` at the call sites: the UTC-naive `yearStart`/`yearEnd` of the PDF handlers bound
@@ -999,68 +886,6 @@ const REPORT_PERSON_ORDER = [
   { firstName: "asc" as const },
   { id: "asc" as const },
 ];
-
-// Issue #613 (AC-3, P-04) — the ONE builder of the vacation overview rows for /vacation/pdf and
-// /leave-overview/pdf. It walks the report POPULATION in the order it arrives and yields per person
-// either the aggregated VACATION figures or a placeholder row; it never reads the tenant's entitlements
-// as a person list, so an anonymised or long-departed person cannot appear, and a person without an
-// entitlement row is visible instead of silently missing. Assembly only — every figure comes from
-// `app.vacationBalanceForRow` (the #451 D-07 facade), this layer carries no rule.
-async function buildVacationOverviewRows(
-  app: FastifyInstance,
-  tenantId: string,
-  now: Date,
-  population: Array<{ id: string; firstName: string; lastName: string; employeeNumber: string }>,
-  entitlements: Awaited<ReturnType<typeof listEntitlementsForYear>>,
-): Promise<VacationOverviewPdfRow[]> {
-  // Phase 97 (D-11): the annual-leave overview is the VACATION entitlement, selected by code, never
-  // by a display-name substring.
-  const vacationRows = entitlements.filter((e) => e.leaveType.code === "VACATION");
-  // Issue #451 (D-07) — bulk Hinweis prefetch (the GET /entitlements pattern), no N+1.
-  const warnedIds = new Set(
-    (
-      await app.prisma.auditLog.findMany({
-        where: {
-          action: "CARRYOVER_WARNED",
-          entity: "LeaveEntitlement",
-          entityId: { in: vacationRows.map((e) => e.id) },
-        },
-        select: { entityId: true },
-        distinct: ["entityId"],
-      })
-    ).map((al) => al.entityId!),
-  );
-  const figuresByEmployee = new Map<string, VacationOverviewPdfRow>();
-  for (const e of vacationRows) {
-    const balance = await app.vacationBalanceForRow(e, tenantId, now, {
-      hinweisIssued: warnedIds.has(e.id),
-    });
-    const existing = figuresByEmployee.get(e.employeeId);
-    if (existing) {
-      existing.totalDays = (existing.totalDays ?? 0) + balance.entitlementDays;
-      existing.carriedOver = (existing.carriedOver ?? 0) + balance.carriedOverEffectiveDays;
-      existing.usedDays = (existing.usedDays ?? 0) + balance.usedDays;
-      existing.remainingDays = (existing.remainingDays ?? 0) + balance.remainingDays;
-    } else {
-      figuresByEmployee.set(e.employeeId, {
-        name: `${e.employee.firstName} ${e.employee.lastName}`,
-        employeeNumber: e.employee.employeeNumber,
-        totalDays: balance.entitlementDays,
-        carriedOver: balance.carriedOverEffectiveDays,
-        usedDays: balance.usedDays,
-        remainingDays: balance.remainingDays,
-      });
-    }
-  }
-  return population.map(
-    (emp): VacationOverviewPdfRow =>
-      figuresByEmployee.get(emp.id) ?? {
-        name: `${emp.firstName} ${emp.lastName}`,
-        employeeNumber: emp.employeeNumber,
-        missingEntitlement: true,
-      },
-  );
-}
 
 // ── vacationYearFigures (Issue #617) ──────────────────────────────────────────
 // The ONE assembly of the Resturlaub figures of a set of VACATION entitlement rows, shared by
@@ -1402,11 +1227,11 @@ export async function reportRoutes(app: FastifyInstance) {
 
       // Issue #416 (AC-3/AC-4): active tenant employees (same Stammsalon scope as the
       // entitlements query above) with NO VACATION-coded entitlement row for `y` are surfaced as
-      // placeholder rows — this is the Urlaubsbericht's own contribution to visibility, it must
+      // placeholder rows — this is the overview's own contribution to visibility, it must
       // NOT call ensureVacationEntitlementForYear here (display only, never create — otherwise
       // the gap this AC requires visible would already be gone by the time it's rendered).
-      // Issue #613 — GET /vacation/pdf and /leave-overview/pdf show the same placeholder rows
-      // through `buildVacationOverviewRows`, from the same population.
+      // Issue #613 — the Monatsexport shows the same placeholder note for a person without a
+      // VACATION row, from the same population.
       const vacationEmployeeIds = new Set(
         entitlements.filter((e) => e.leaveType.code === "VACATION").map((e) => e.employeeId),
       );
@@ -2192,365 +2017,6 @@ export async function reportRoutes(app: FastifyInstance) {
         "Content-Disposition",
         `attachment; filename="monatsbericht-${y}-${String(m).padStart(2, "0")}-${emp.employeeNumber}.pdf"`,
       );
-      return reply.send(pdfBuffer);
-    },
-  });
-
-  // GET /api/v1/reports/leave-list/pdf?year=  — PDF-02/PDF-05
-  app.get("/leave-list/pdf", {
-    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requirePermission("report:export:ZUGEWIESEN"),
-    handler: async (req, reply) => {
-      const now = new Date();
-      const { year } = req.query as { year: string };
-      const y = parseInt(year ?? now.getFullYear().toString());
-      const yearStart = new Date(`${y}-01-01T00:00:00.000Z`);
-      const yearEnd = new Date(`${y}-12-31T23:59:59.999Z`);
-      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-
-      const tenant = await app.prisma.tenant.findUnique({
-        where: { id: req.user.tenantId },
-        select: { name: true },
-      });
-
-      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
-      // building the PDF. Stichtag = Dec 31 of the requested year (`yearEnd`).
-      const leaveListPdfAccess = accessContextFromRequest(req);
-      const leaveListPdfScopeReach = await resolveAccessReach(
-        app.prisma,
-        leaveListPdfAccess,
-        "report:export:ZUGEWIESEN",
-      );
-      const leaveListPdfScopedIds =
-        leaveListPdfScopeReach.kind === "wholeTenant"
-          ? "all"
-          : await resolveStammsalonScopedEmployeeIds(
-              app.prisma,
-              req.user.tenantId,
-              leaveListPdfScopeReach,
-              yearEnd,
-            );
-
-      // Issue #613 (AC-3) — the year's population in the one report order, the same persons and
-      // order as the list and overview parts of /vacation/pdf and /leave-overview/pdf.
-      const populationPeriod = await yearPopulationPeriod(app, req.user.tenantId, y);
-      const employees = await app.prisma.employee.findMany({
-        where: {
-          tenantId: req.user.tenantId,
-          AND: [reportPopulationWhere(populationPeriod.start, populationPeriod.end)],
-          ...(leaveListPdfScopedIds !== "all" ? { id: { in: leaveListPdfScopedIds } } : {}),
-        },
-        include: {
-          leaveRequests: {
-            where: {
-              deletedAt: null,
-              status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
-              startDate: { lte: yearEnd },
-              endDate: { gte: yearStart },
-            },
-            include: { leaveType: true },
-            orderBy: { startDate: "asc" },
-          },
-        },
-        orderBy: REPORT_PERSON_ORDER,
-      });
-
-      // Issue #448 (D-05, plan 03): ONE batch BS-date read for every employee's requests in this
-      // PDF, scoped via employeeScopeFor(accessContextFromRequest(req), …) over exactly the
-      // employees already loaded above (T-448-12).
-      const leaveListBsRequests = employees.flatMap((emp) =>
-        emp.leaveRequests.map((lr) => ({
-          id: lr.id,
-          employeeId: emp.id,
-          startDate: lr.startDate,
-          endDate: lr.endDate,
-          leaveTypeCode: lr.leaveType.code,
-        })),
-      );
-      const leaveListBsDates = leaveListBsRequests.length
-        ? await vocationalSchoolDatesForLeaveRequests(
-            app.prisma,
-            employeeScopeFor(accessContextFromRequest(req), {
-              employeeIds: employees.map((e) => e.id),
-            }),
-            leaveListBsRequests,
-          )
-        : new Map<string, string[]>();
-
-      // Issue #451 (D-02): the absence context's own priced, year-clipped day count for every
-      // listed request — UTC-midnight bounds, never yearStart/yearEnd's own end-of-day instant.
-      const leaveListPricedDays = await fetchPricedDaysByRequestId(
-        app,
-        req.user.tenantId,
-        employees,
-        new Date(Date.UTC(y, 0, 1)),
-        new Date(Date.UTC(y, 11, 31)),
-      );
-
-      // Build leave list data (include all employees, even those with no leave — show empty periods)
-      const leaveListData = {
-        tenantName: tenant?.name ?? "",
-        year: y,
-        employees: employees.map((emp) => {
-          const periods = buildLeaveListPeriods(
-            emp.leaveRequests,
-            yearStart,
-            yearEnd,
-            tz,
-            leaveListBsDates,
-            leaveListPricedDays,
-          );
-          return {
-            employeeName: `${emp.firstName} ${emp.lastName}`,
-            employeeNumber: emp.employeeNumber,
-            periods,
-            totalDays: periods.reduce((sum, p) => sum + p.days, 0),
-          };
-        }),
-      };
-
-      const doc = new PDFDocument({ size: "A4", margin: 50 });
-      reply.header("Content-Type", "application/pdf");
-      reply.header("Content-Disposition", `attachment; filename="urlaubsliste-${y}.pdf"`);
-
-      streamLeaveListPdf(doc, leaveListData);
-      doc.end(); // CRITICAL: before reply.send
-
-      await app.audit({
-        userId: req.user.sub,
-        action: "EXPORT",
-        entity: "Report",
-        newValue: { type: "LEAVE_LIST_PDF", year },
-      });
-
-      return reply.send(doc);
-    },
-  });
-
-  // GET /api/v1/reports/vacation/pdf?year=  — combined: leave list + overview
-  app.get("/vacation/pdf", {
-    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requirePermission("report:export:ZUGEWIESEN"),
-    handler: async (req, reply) => {
-      const now = new Date();
-      const { year } = req.query as { year: string };
-      const y = parseInt(year ?? now.getFullYear().toString());
-      const yearStart = new Date(`${y}-01-01T00:00:00.000Z`);
-      const yearEnd = new Date(`${y}-12-31T23:59:59.999Z`);
-      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-
-      const tenant = await app.prisma.tenant.findUnique({
-        where: { id: req.user.tenantId },
-        select: { name: true },
-      });
-
-      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
-      // building the PDF, applied to BOTH datasets below. Stichtag = Dec 31 of the requested year.
-      const vacationPdfAccess = accessContextFromRequest(req);
-      const vacationPdfScopeReach = await resolveAccessReach(
-        app.prisma,
-        vacationPdfAccess,
-        "report:export:ZUGEWIESEN",
-      );
-      const vacationPdfScopedIds =
-        vacationPdfScopeReach.kind === "wholeTenant"
-          ? "all"
-          : await resolveStammsalonScopedEmployeeIds(
-              app.prisma,
-              req.user.tenantId,
-              vacationPdfScopeReach,
-              yearEnd,
-            );
-
-      // Issue #613 (AC-3, D-01) — ONE population for the list part and the overview part, in ONE
-      // order; the overview part below walks this array, it never reads the tenant's entitlements.
-      const populationPeriod = await yearPopulationPeriod(app, req.user.tenantId, y);
-
-      // Fetch both datasets in parallel
-      const [employees, allVacationEntitlements] = await Promise.all([
-        app.prisma.employee.findMany({
-          where: {
-            tenantId: req.user.tenantId,
-            AND: [reportPopulationWhere(populationPeriod.start, populationPeriod.end)],
-            ...(vacationPdfScopedIds !== "all" ? { id: { in: vacationPdfScopedIds } } : {}),
-          },
-          include: {
-            leaveRequests: {
-              where: {
-                deletedAt: null,
-                status: { in: [...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04)
-                startDate: { lte: yearEnd },
-                endDate: { gte: yearStart },
-              },
-              include: { leaveType: true },
-              orderBy: { startDate: "asc" },
-            },
-          },
-          orderBy: REPORT_PERSON_ORDER,
-        }),
-        listEntitlementsForYear(app.prisma, req.user.tenantId, y, populationPeriod),
-      ]);
-      const entitlements =
-        vacationPdfScopedIds === "all"
-          ? allVacationEntitlements
-          : allVacationEntitlements.filter((e) => vacationPdfScopedIds.includes(e.employeeId));
-
-      // Issue #448 (D-05, plan 03): same ONE batch BS-date read as /leave-list/pdf above.
-      const vacationPdfBsRequests = employees.flatMap((emp) =>
-        emp.leaveRequests.map((lr) => ({
-          id: lr.id,
-          employeeId: emp.id,
-          startDate: lr.startDate,
-          endDate: lr.endDate,
-          leaveTypeCode: lr.leaveType.code,
-        })),
-      );
-      const vacationPdfBsDates = vacationPdfBsRequests.length
-        ? await vocationalSchoolDatesForLeaveRequests(
-            app.prisma,
-            employeeScopeFor(accessContextFromRequest(req), {
-              employeeIds: employees.map((e) => e.id),
-            }),
-            vacationPdfBsRequests,
-          )
-        : new Map<string, string[]>();
-
-      // Issue #451 (D-02): same ONE batch priced-days read as /leave-list/pdf above.
-      const vacationPdfPricedDays = await fetchPricedDaysByRequestId(
-        app,
-        req.user.tenantId,
-        employees,
-        new Date(Date.UTC(y, 0, 1)),
-        new Date(Date.UTC(y, 11, 31)),
-      );
-
-      // Build leave list data
-      const leaveListData = {
-        tenantName: tenant?.name ?? "",
-        year: y,
-        employees: employees.map((emp) => {
-          const periods = buildLeaveListPeriods(
-            emp.leaveRequests,
-            yearStart,
-            yearEnd,
-            tz,
-            vacationPdfBsDates,
-            vacationPdfPricedDays,
-          );
-          return {
-            employeeName: `${emp.firstName} ${emp.lastName}`,
-            employeeNumber: emp.employeeNumber,
-            periods,
-            totalDays: periods.reduce((sum, p) => sum + p.days, 0),
-          };
-        }),
-      };
-
-      // Build overview data from the SAME population array as the list part (AC-3).
-      const overviewData = {
-        tenantName: tenant?.name ?? "",
-        year: y,
-        employees: await buildVacationOverviewRows(
-          app,
-          req.user.tenantId,
-          now,
-          employees,
-          entitlements,
-        ),
-      };
-
-      const doc = new PDFDocument({ size: "A4", margin: 50 });
-      reply.header("Content-Type", "application/pdf");
-      reply.header("Content-Disposition", `attachment; filename="urlaubsbericht-${y}.pdf"`);
-
-      streamLeaveListPdf(doc, leaveListData);
-      streamVacationOverviewPdf(doc, overviewData);
-      doc.end();
-
-      await app.audit({
-        userId: req.user.sub,
-        action: "EXPORT",
-        entity: "Report",
-        newValue: { type: "VACATION_PDF", year },
-      });
-
-      return reply.send(doc);
-    },
-  });
-
-  // GET /api/v1/reports/leave-overview/pdf?year=
-  app.get("/leave-overview/pdf", {
-    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requirePermission("report:export:ZUGEWIESEN"),
-    handler: async (req, reply) => {
-      const now = new Date();
-      const { year } = req.query as { year: string };
-      const y = parseInt(year ?? now.getFullYear().toString());
-
-      const tenant = await app.prisma.tenant.findUnique({
-        where: { id: req.user.tenantId },
-        select: { name: true },
-      });
-
-      // Issue #613 (AC-3) — the year's population in the one report order, the same persons and
-      // order as the overview part of /vacation/pdf; entitlements through the absence facade with
-      // the same period.
-      const populationPeriod = await yearPopulationPeriod(app, req.user.tenantId, y);
-      const allLeaveOverviewPdfEntitlements = await listEntitlementsForYear(
-        app.prisma,
-        req.user.tenantId,
-        y,
-        populationPeriod,
-      );
-
-      // Phase 91b Plan 07 (Issue #91), D-10/D-13 — narrow to Stammsalon-scoped employees BEFORE
-      // building the PDF. Stichtag = Dec 31 of the requested year.
-      const leaveOverviewPdfAccess = accessContextFromRequest(req);
-      const leaveOverviewPdfScopeReach = await resolveAccessReach(
-        app.prisma,
-        leaveOverviewPdfAccess,
-        "report:export:ZUGEWIESEN",
-      );
-      const leaveOverviewPdfScopedIds =
-        leaveOverviewPdfScopeReach.kind === "wholeTenant"
-          ? "all"
-          : await resolveStammsalonScopedEmployeeIds(
-              app.prisma,
-              req.user.tenantId,
-              leaveOverviewPdfScopeReach,
-              new Date(`${y}-12-31T23:59:59.999Z`),
-            );
-      const population = await app.prisma.employee.findMany({
-        where: {
-          tenantId: req.user.tenantId,
-          AND: [reportPopulationWhere(populationPeriod.start, populationPeriod.end)],
-          ...(leaveOverviewPdfScopedIds !== "all" ? { id: { in: leaveOverviewPdfScopedIds } } : {}),
-        },
-        select: { id: true, firstName: true, lastName: true, employeeNumber: true },
-        orderBy: REPORT_PERSON_ORDER,
-      });
-
-      const pdfBuffer = await generateVacationOverviewPdf({
-        tenantName: tenant?.name ?? "",
-        year: y,
-        employees: await buildVacationOverviewRows(
-          app,
-          req.user.tenantId,
-          now,
-          population,
-          allLeaveOverviewPdfEntitlements,
-        ),
-      });
-
-      await app.audit({
-        userId: req.user.sub,
-        action: "EXPORT",
-        entity: "Report",
-        newValue: { type: "LEAVE_OVERVIEW_PDF", year },
-      });
-
-      reply.header("Content-Type", "application/pdf");
-      reply.header("Content-Disposition", `attachment; filename="urlaubsuebersicht-${y}.pdf"`);
       return reply.send(pdfBuffer);
     },
   });

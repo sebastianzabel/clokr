@@ -902,7 +902,13 @@ const MIN_FILES = 677;
 // Phase 613 (2026-10-17): MIN_TESTS 10207 -> 10289, the measured total of the full run named at MIN_FILES. Never lowered.
 // Phase 587 (2026-10-17): MIN_TESTS 10289 -> 10346 (+57), the measured total of the full run named at MIN_FILES. Never lowered.
 // Phase 617 (2026-10-17): MIN_TESTS 10346 -> 10400 (+54), the measured total of the full run named at MIN_FILES. Never lowered.
-const MIN_TESTS = 10400;
+// Plan 617-04 (2026-10-17): MIN_TESTS 10400 -> 10364 (-36), the ONE deliberate lowering of this phase: the three vacation
+// PDFs were removed, which takes their per-route cases with them (permission-neutrality-matrix -24 = 3 routes x 8 actors,
+// reports-hr-86 -3 = one status case per classified route) and nets -9 in the files whose vacation-PDF cases moved onto the
+// Monatsexport or were deleted with their subject (reports-vacation-population-613 -2, reports-priced-leave-days-451 -1,
+// reports-bs-leave-448 -1, reports-salon-scope -2, reports.test -3; each case listed in 617-04-SUMMARY.md). Measured with a
+// full API run: 677 files, 10364 tests (10361 passed, 3 skipped); MIN_FILES stays 677 (no file removed).
+const MIN_TESTS = 10364;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

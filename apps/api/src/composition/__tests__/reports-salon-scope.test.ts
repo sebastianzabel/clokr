@@ -418,8 +418,7 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
     expect(audit).not.toBeNull();
   });
 
-  // The PDF-only routes below (leave-list/pdf, vacation/pdf,
-  // leave-overview/pdf) reuse the EXACT SAME employee/entitlement query-narrowing code already
+  // The PDF routes below reuse the EXACT SAME employee/entitlement query-narrowing code already
   // proven correct end to end by the JSON-returning tests above (GET /monthly, /leave-overview,
   // /datev) — same resolveStammsalonScopedEmployeeIds call, same `where` fold. A byte-content
   // substring search on the PDF payload was tried and found VACUOUS: PDFKit's default output
@@ -503,80 +502,6 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
     ).toBeUndefined();
     // No figure of the out-of-scope person's entitlement (27) is in any row of the payload.
     expect(rows.every((r) => r.vacation === null || r.vacation.entitlementDays !== 27)).toBe(true);
-  });
-
-  it("GET /leave-list/pdf: renders successfully for a SALONS-scoped manager with a mixed in/out-of-scope tenant", async () => {
-    const outOfScope = await createEmployee("outscope-llpdf");
-    await createHome(outOfScope.employee.id, salonB.id);
-
-    const manager = await createScopedManager("mgr-leavelistpdf", ["report:export:ZUGEWIESEN"], {
-      scopeType: "SALONS",
-      salonIds: [salonA.id],
-    });
-    const token = await login(manager.user.email);
-
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/reports/leave-list/pdf?year=2026",
-      headers: { authorization: `Bearer ${token}` },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
-  });
-
-  it("GET /vacation/pdf: renders successfully for a SALONS-scoped manager with a mixed in/out-of-scope tenant (both datasets)", async () => {
-    const outOfScope = await createEmployee("outscope-vacpdf");
-    await createHome(outOfScope.employee.id, salonB.id);
-    await app.prisma.leaveEntitlement.create({
-      data: {
-        employeeId: outOfScope.employee.id,
-        leaveTypeId: data.vacationType.id,
-        year: 2026,
-        totalDays: 30,
-      },
-    });
-
-    const manager = await createScopedManager("mgr-vacationpdf", ["report:export:ZUGEWIESEN"], {
-      scopeType: "SALONS",
-      salonIds: [salonA.id],
-    });
-    const token = await login(manager.user.email);
-
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/reports/vacation/pdf?year=2026",
-      headers: { authorization: `Bearer ${token}` },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
-  });
-
-  it("GET /leave-overview/pdf: renders successfully for a SALONS-scoped manager with a mixed in/out-of-scope tenant", async () => {
-    const outOfScope = await createEmployee("outscope-lopdf");
-    await createHome(outOfScope.employee.id, salonB.id);
-    await app.prisma.leaveEntitlement.create({
-      data: {
-        employeeId: outOfScope.employee.id,
-        leaveTypeId: data.vacationType.id,
-        year: 2026,
-        totalDays: 30,
-      },
-    });
-
-    const manager = await createScopedManager(
-      "mgr-leaveoverviewpdf",
-      ["report:export:ZUGEWIESEN"],
-      { scopeType: "SALONS", salonIds: [salonA.id] },
-    );
-    const token = await login(manager.user.email);
-
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/reports/leave-overview/pdf?year=2026",
-      headers: { authorization: `Bearer ${token}` },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
   });
 
   describe("activity feed — narrowing inside the query, before take: fetchLimit (D-13 under-fill proof)", () => {

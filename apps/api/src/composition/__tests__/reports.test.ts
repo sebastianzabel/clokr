@@ -1194,38 +1194,6 @@ describe("Reports API", () => {
     });
   });
 
-  // ── GET /api/v1/reports/leave-list/pdf ────────────────────────────────────
-  describe("GET /api/v1/reports/leave-list/pdf", () => {
-    it("returns 200 with application/pdf for ADMIN token", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/api/v1/reports/leave-list/pdf?year=2025",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      // The seed has no approved leave requests — endpoint returns 200 with an empty/stub PDF
-      expect(res.statusCode).toBe(200);
-      expect(res.headers["content-type"]).toContain("application/pdf");
-      expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
-    });
-
-    it("returns 401 without auth", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/api/v1/reports/leave-list/pdf?year=2025",
-      });
-      expect(res.statusCode).toBe(401);
-    });
-
-    it("returns 403 for EMPLOYEE token", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/api/v1/reports/leave-list/pdf?year=2025",
-        headers: { authorization: `Bearer ${data.empToken}` },
-      });
-      expect(res.statusCode).toBe(403);
-    });
-  });
-
   // ── GET /api/v1/reports/monthly/pdf (PDF-04 backward compat) ───────────────
   describe("GET /api/v1/reports/monthly/pdf (PDF-04 backward compat)", () => {
     it("still returns a Buffer with %PDF magic bytes after layout changes", async () => {

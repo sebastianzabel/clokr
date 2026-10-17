@@ -274,10 +274,7 @@ const route = (
 const READERS: readonly ReaderEntry[] = [
   route(REPORTS, "/monthly", ["reportPopulationWhere"]),
   route(REPORTS, "/monthly/pdf", ["reportPopulationWhere"]),
-  route(REPORTS, "/leave-list/pdf", ["reportPopulationWhere"]),
-  route(REPORTS, "/vacation/pdf", ["reportPopulationWhere", "listEntitlementsForYear"]),
   route(REPORTS, "/leave-overview", ["reportPopulationWhere", "listEntitlementsForYear"]),
-  route(REPORTS, "/leave-overview/pdf", ["reportPopulationWhere", "listEntitlementsForYear"]),
   route(REPORTS, "/carryover-at-risk", ["getExpiringCarryOver"]),
   // Issue #617: DATEV and the Monatsexport read their persons through ONE module-private loader
   // (`loadDatevMonth`); the export reaches it only through its one selection function, so the

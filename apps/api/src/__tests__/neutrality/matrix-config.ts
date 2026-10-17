@@ -749,9 +749,7 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
     phase: "read",
     variants: personQuery("employeeId", MAY, { withNone: false }),
   },
-  "GET /api/v1/reports/leave-list/pdf": { phase: "read", variants: none(YEAR) },
   "GET /api/v1/reports/leave-overview": { phase: "read", variants: none(YEAR) },
-  "GET /api/v1/reports/leave-overview/pdf": { phase: "read", variants: none(YEAR) },
   "GET /api/v1/reports/monthly": {
     phase: "read",
     variants: personQuery("employeeId", JUNE, { withNone: false }),
@@ -761,7 +759,6 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
     variants: personQuery("employeeId", JUNE, { withNone: false }),
     handlerCheck: true,
   },
-  "GET /api/v1/reports/vacation/pdf": { phase: "read", variants: none(YEAR) },
   "GET /api/v1/retro-entry-requests": { phase: "read" },
   "GET /api/v1/role-assignments": { phase: "read" },
   "GET /api/v1/role-assignments/:id": { phase: "read", params: { id: "roleAssignment.customer" } },
