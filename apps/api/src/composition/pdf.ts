@@ -1,20 +1,23 @@
 import PDFDocument from "pdfkit";
+import { fmtHM, fmtSignedHM, fmtDecimalDe, fmtDays } from "./pdf-format";
 
 // ── Brand constants ──────────────────────────────────────
-const BRAND_COLOR = "#4f46e5";
+// Issue #617 (D-617-5): the app's default brand colour (`--brand` of the pflaume theme in
+// apps/web/src/tokens.css) - no PDF carries the former indigo any more.
+const BRAND_COLOR = "#80377b";
+// Light tint of BRAND_COLOR for the subtitle on the brand band (readable on it).
+const BRAND_TINT = "#ecd9ea";
 const HEADER_H = 44;
 
 // ── Saldo labels (SALDO-DISP-05) ─────────────────────────
-// Shared between generateMonthlyReportPdf (single-employee) and streamCompanyMonthlyReportPdf
-// (company-wide) so the exported wording cannot drift between the two generators. Mirrors the
+// Used by generateMonthlyReportPdf (single-employee) and the Monatsexport (Issue #617) so the
+// exported wording cannot drift between the two documents. Mirrors the
 // screen's vocabulary (apps/web/src/lib/components/saldo/SaldoAnzeige.svelte: confirmedLabel /
 // forecastLabel) — see docs/saldo-anzeige.md.
 export const OVERTIME_LABEL_CONFIRMED = "Überstunden (Bestätigt)";
 export const OVERTIME_LABEL_FORECAST = "Überstunden (Prognose)";
 export const OVERTIME_FORECAST_FOOTNOTE =
   "Der Monat ist noch nicht abgeschlossen — dieser Wert ist eine Prognose und kann sich bis zum Monatsabschluss noch ändern.";
-export const COMPANY_PROVISIONAL_LEGEND =
-  "* Monat noch nicht abgeschlossen — Saldo ist eine Prognose und kann sich bis zum Monatsabschluss noch ändern.";
 
 // Issue #451 (D-03): the working-time-account's own reconciliation item (Überstundenausgleich
 // withdrawal; for SHIFT_BASED the § 615 BGB two-clause evaluation) can make Ist - Soll differ from
@@ -30,27 +33,41 @@ export const BALANCE_ADJUSTMENT_LEGEND =
 
 // ── § 9 BUrlG legend (Phase 104, D-30) ───────────────────────────────────────
 // Single source of the wording, shared by the JSON Monatsbericht (routes/reports.ts), the
-// single-employee PDF and the company PDF — the same drift argument as the OVERTIME_* labels
+// single-employee PDF and the Monatsexport — the same drift argument as the OVERTIME_* labels
 // above. The string is asserted character-for-character by reports-sick-days.test.ts; changing
 // it is a deliberate act, not a refactor.
 export const SECTION9_LEGEND =
   "Tage mit bestätigter AU während genehmigten Urlaubs werden als Kranktage geführt und nicht auf den Jahresurlaub angerechnet (§ 9 BUrlG).";
 
-interface MonthlyReportData {
+/**
+ * Issue #617 (D-617-5, P-06) - one row of the Stundennachweis day list that is not a time entry: the
+ * period of an effective leave request or imposed absence, or a holiday at the work location. The
+ * dates are calendar days "yyyy-MM-dd", already clipped to the month; `label` is display text.
+ */
+export interface MonthlyReportDayRow {
+  from: string;
+  to: string;
+  label: string;
+}
+
+export interface MonthlyReportData {
   tenantName: string;
   employeeName: string;
   employeeNumber: string;
   month: string; // "März 2026"
-  workedHours: number;
-  targetHours: number;
-  overtimeHours: number;
+  /** Issue #617 (D-617-4): "dd.MM.yyyy, HH:mm" in the tenant time zone, set by the route. */
+  generatedAt: string;
+  /** Issue #617 (D-617-3): minutes of the working-time account; the renderer formats them. */
+  workedMinutes: number;
+  targetMinutes: number;
+  overtimeMinutes: number;
   /** Phase 97-02 (SALDO-DISP-05): true = confirmed (closed month), false = forecast (open month),
    *  null = intentionally unlabelled (MONTHLY_HOURS with no budget — mirrors
    *  resolveReportOvertimeHours's `labelled` flag in reports.ts; renderer omits the label). */
   overtimeConfirmed: boolean | null;
   /** Issue #451 (D-03): the WTA's own reconciliation item — see BALANCE_ADJUSTMENT_LEGEND above.
    *  0 for the vast majority of months; printed only when non-zero. */
-  balanceAdjustmentHours: number;
+  balanceAdjustmentMinutes: number;
   sickDays: number;
   sickDaysWithAttest: number;
   vacationDays: number;
@@ -62,62 +79,11 @@ interface MonthlyReportData {
     start: string;
     end: string;
     breakMin: number;
-    netHours: number;
+    netMinutes: number;
     note?: string;
   }>;
-}
-
-export interface CompanyMonthlyReportData {
-  tenantName: string;
-  month: string; // "März 2026"
-  year: number;
-  monthNumber: number;
-  roleFilter: "all" | "EMPLOYEE" | "MANAGER";
-  rows: Array<{
-    employeeName: string;
-    employeeNumber: string;
-    workedHours: number;
-    targetHours: number;
-    overtimeHours: number;
-    /** Same tri-state meaning as MonthlyReportData.overtimeConfirmed above. */
-    overtimeConfirmed: boolean | null;
-    /** Issue #451 (D-03): same reconciliation item as MonthlyReportData.balanceAdjustmentHours. */
-    balanceAdjustmentHours: number;
-    sickDaysWithAttest: number;
-    sickDaysWithoutAttest: number;
-    vacationDays: number;
-    totalAbsenceDays: number;
-    /** Phase 104 (D-30): credited § 9 BUrlG days for this employee in this month. */
-    section9DaysThisMonth: number;
-    entries: Array<{
-      date: string;
-      start: string;
-      end: string;
-      breakMin: number;
-      netHours: number;
-      note?: string;
-    }>;
-  }>;
-}
-
-export interface LeaveListData {
-  tenantName: string;
-  year: number;
-  employees: Array<{
-    employeeName: string;
-    employeeNumber: string;
-    periods: Array<{
-      startDate: string; // "dd.MM.yyyy"
-      endDate: string; // "dd.MM.yyyy"
-      leaveTypeName: string;
-      days: number;
-      // Issue #448 (D-05, plan 03): set when this period's day count excludes one or more
-      // Berufsschultage — "Berufsschule – kein Urlaub: dd.MM., dd.MM." — printed as a smaller
-      // second line under the row. Undefined for a period with no BS day.
-      note?: string;
-    }>;
-    totalDays: number;
-  }>;
+  /** Absence periods and holidays, merged chronologically with the entries by the renderer. */
+  dayRows: MonthlyReportDayRow[];
 }
 
 // ── Helpers ───────────────────────────────────────────────
@@ -132,7 +98,7 @@ function drawColoredHeader(doc: PDFKit.PDFDocument, title: string, subtitle: str
       width: doc.page.width - 100,
     });
   doc
-    .fillColor("#d4d4f7")
+    .fillColor(BRAND_TINT)
     .fontSize(9)
     .font("Helvetica")
     .text(subtitle, 50, 28, {
@@ -142,21 +108,28 @@ function drawColoredHeader(doc: PDFKit.PDFDocument, title: string, subtitle: str
   doc.y = HEADER_H + 16;
 }
 
-function drawSmallFooter(doc: PDFKit.PDFDocument): void {
-  // Save current y position — restore after drawing footer to avoid disrupting content flow
+/**
+ * Issue #617 (D-617-4) - writes a centred footer line at `page.height - 40` WITHOUT adding a page.
+ *
+ * PDFKit starts a new page when a text call ends below `page.height - margins.bottom`, even with
+ * `lineBreak: false`; a footer inside the bottom margin therefore produced a blank trailing page.
+ * The helper zeroes the page's bottom margin while it writes, then restores the margin and the
+ * cursor, so the footer never moves the content flow. Every PDF footer goes through here.
+ */
+export function writeFooter(doc: PDFKit.PDFDocument, text: string): void {
+  const savedBottom = doc.page.margins.bottom;
+  const savedX = doc.x;
   const savedY = doc.y;
-  doc
-    .fontSize(7)
-    .font("Helvetica")
-    .fillColor("#6b7280")
-    .text(
-      `Erstellt am ${new Date().toLocaleDateString("de-DE")} \u2014 Clokr`,
-      50,
-      doc.page.height - 40,
-      { align: "center", width: doc.page.width - 100, lineBreak: false },
-    );
+  const left = doc.page.margins.left;
+  const width = doc.page.width - left - doc.page.margins.right;
+  doc.page.margins.bottom = 0;
+  doc.fontSize(7).font("Helvetica").fillColor("#6b7280");
+  // Centred by hand: with `lineBreak: false` PDFKit does not apply `align`.
+  const x = left + Math.max(0, (width - doc.widthOfString(text)) / 2);
+  doc.text(text, x, doc.page.height - 40, { lineBreak: false });
+  doc.page.margins.bottom = savedBottom;
   doc.fillColor("#111827");
-  // Restore y so footer drawing doesn't advance the content cursor
+  doc.x = savedX;
   doc.y = savedY;
 }
 
@@ -175,129 +148,213 @@ export function drawSection9Legend(doc: PDFKit.PDFDocument, section9Days: number
   doc.fillColor("#111827");
 }
 
-// ── generateMonthlyReportPdf (PDF-04: improved layout, same signature) ────────
-export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 50, bufferPages: true });
-    const chunks: Buffer[] = [];
+/**
+ * Issue #617 (D-617-4) - the footer line of every PDF, one wording for both documents. The time is
+ * the payload's (tenant time zone, formatted by the route), never the server's locale.
+ */
+export function pageFooterText(generatedAt: string, page: number, pages: number): string {
+  return `Erstellt am ${generatedAt}  \u00b7  Seite ${page} von ${pages}  \u00b7  Clokr`;
+}
 
-    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
+// ── Stundennachweis (Issue #617: German numbers, units, brand, footer without a blank page) ──
+const REPORT_MARGIN = 50;
+const REPORT_ROW_H = 14;
+// A table row must end above the footer line at `page.height - 40`.
+const REPORT_BOTTOM_LIMIT = 70;
+const REPORT_TABLE_HEADERS = ["Datum", "Start", "Ende", "Pause", "Netto", "Notiz"] as const;
 
-    // ── Colored header band (PDF-04) ──────────────────────
-    drawColoredHeader(doc, data.tenantName, "Monatsbericht");
+function reportColumnWidths(doc: PDFKit.PDFDocument): number[] {
+  return [70, 55, 55, 50, 55, doc.page.width - 2 * REPORT_MARGIN - 285];
+}
 
-    // Employee info
-    doc.fontSize(12).font("Helvetica-Bold").text(data.employeeName);
-    doc
-      .fontSize(9)
-      .font("Helvetica")
-      .text(`Mitarbeiter-Nr.: ${data.employeeNumber}`)
-      .text(`Zeitraum: ${data.month}`);
-    doc.moveDown(1);
+/** Draws the table header at `top` and returns the y of the first row. */
+function drawReportTableHeader(doc: PDFKit.PDFDocument, top: number): number {
+  const colWidths = reportColumnWidths(doc);
+  doc.fontSize(8).font("Helvetica-Bold").fillColor("#111827");
+  let x = REPORT_MARGIN;
+  REPORT_TABLE_HEADERS.forEach((h, i) => {
+    doc.text(h, x, top, { width: colWidths[i] });
+    x += colWidths[i];
+  });
+  doc
+    .moveTo(REPORT_MARGIN, top + 14)
+    .lineTo(doc.page.width - REPORT_MARGIN, top + 14)
+    .stroke("#e5e7eb");
+  doc.fontSize(8).font("Helvetica");
+  return top + 18;
+}
 
-    // Summary box
-    doc.fontSize(11).font("Helvetica-Bold").text("Zusammenfassung");
-    doc.moveDown(0.3);
+/** "2026-09-07" -> "07.09.2026". */
+function isoToDisplayDate(iso: string): string {
+  return `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
+}
 
-    const summaryY = doc.y;
-    doc.rect(50, summaryY, doc.page.width - 100, 80).stroke("#e5e7eb");
+/** "2026-09-07", "2026-09-09" -> "07.09.\u201309.09." (the year is the report month's). */
+function periodLabel(from: string, to: string): string {
+  return `${from.slice(8, 10)}.${from.slice(5, 7)}.\u2013${to.slice(8, 10)}.${to.slice(5, 7)}.`;
+}
 
-    doc.fontSize(9).font("Helvetica");
-    const col1 = 60;
-    const col2 = 200;
-    const col3 = 340;
-    let sy = summaryY + 10;
+type DayListItem =
+  | { kind: "day"; row: MonthlyReportDayRow }
+  | { kind: "entry"; entry: MonthlyReportData["entries"][number] };
 
-    doc.text(`Soll-Stunden: ${data.targetHours.toFixed(2)} h`, col1, sy);
-    doc.text(`Ist-Stunden: ${data.workedHours.toFixed(2)} h`, col2, sy);
-    const overtimeLabel =
-      data.overtimeConfirmed === null
-        ? "Überstunden"
-        : data.overtimeConfirmed
-          ? OVERTIME_LABEL_CONFIRMED
-          : OVERTIME_LABEL_FORECAST;
+/**
+ * The day list in order: by calendar day, a day row before the entries of that day (a holiday or an
+ * absence period starts the day), entries keep their incoming order (the route delivers date, then
+ * start time - #70). The sort is stable.
+ */
+function mergeDayList(data: MonthlyReportData): DayListItem[] {
+  const entryDay = (date: string): string =>
+    `${date.slice(6, 10)}-${date.slice(3, 5)}-${date.slice(0, 2)}`;
+  const keyed: Array<{ day: string; rank: number; item: DayListItem }> = [
+    ...data.dayRows.map((row) => ({
+      day: row.from,
+      rank: 0,
+      item: { kind: "day", row } as DayListItem,
+    })),
+    ...data.entries.map((entry) => ({
+      day: entryDay(entry.date),
+      rank: 1,
+      item: { kind: "entry", entry } as DayListItem,
+    })),
+  ];
+  keyed.sort((a, b) => a.day.localeCompare(b.day) || a.rank - b.rank);
+  return keyed.map((k) => k.item);
+}
+
+/**
+ * Draws the Stundennachweis (the person's § 16 Abs. 2 ArbZG record) onto `doc`. Every figure
+ * arrives pre-computed in minutes or days; the renderer only formats (`pdf-format.ts`). The footer
+ * is NOT drawn here - `generateMonthlyReportPdf` adds it in one pass over the buffered pages - so a
+ * test can drive this function with a recording stub.
+ */
+export function drawMonthlyReport(doc: PDFKit.PDFDocument, data: MonthlyReportData): void {
+  // ── Coloured header band ──────────────────────────────
+  drawColoredHeader(doc, data.tenantName, "Monatsbericht");
+
+  // Employee info
+  doc.fontSize(12).font("Helvetica-Bold").text(data.employeeName);
+  doc
+    .fontSize(9)
+    .font("Helvetica")
+    .text(`Mitarbeiter-Nr.: ${data.employeeNumber}`)
+    .text(`Zeitraum: ${data.month}`);
+  doc.moveDown(1);
+
+  // Summary box: two columns, every count names its unit.
+  doc.fontSize(11).font("Helvetica-Bold").text("Zusammenfassung");
+  doc.moveDown(0.3);
+
+  const summaryY = doc.y;
+  const boxWidth = doc.page.width - 2 * REPORT_MARGIN;
+  doc.rect(REPORT_MARGIN, summaryY, boxWidth, 80).stroke("#e5e7eb");
+
+  doc.fontSize(9).font("Helvetica");
+  const colLeft = REPORT_MARGIN + 10;
+  const colRight = REPORT_MARGIN + Math.floor(boxWidth / 2) + 5;
+  const colWidth = Math.floor(boxWidth / 2) - 20;
+  const lineH = 15;
+  const overtimeLabel =
+    data.overtimeConfirmed === null
+      ? "Überstunden"
+      : data.overtimeConfirmed
+        ? OVERTIME_LABEL_CONFIRMED
+        : OVERTIME_LABEL_FORECAST;
+
+  let ly = summaryY + 10;
+  doc.text(`Soll: ${fmtHM(data.targetMinutes)}`, colLeft, ly, { width: colWidth });
+  ly += lineH;
+  doc.text(`Ist: ${fmtHM(data.workedMinutes)}`, colLeft, ly, { width: colWidth });
+  ly += lineH;
+  doc.text(`${overtimeLabel}: ${fmtSignedHM(data.overtimeMinutes)}`, colLeft, ly, {
+    width: colWidth,
+  });
+  ly += lineH;
+  // Issue #451 (D-03): printed only when the WTA reports a non-zero reconciliation item.
+  if (data.balanceAdjustmentMinutes !== 0) {
     doc.text(
-      `${overtimeLabel}: ${data.overtimeHours >= 0 ? "+" : ""}${data.overtimeHours.toFixed(2)} h`,
-      col3,
-      sy,
+      `${BALANCE_ADJUSTMENT_LABEL}: ${fmtSignedHM(data.balanceAdjustmentMinutes)}`,
+      colLeft,
+      ly,
+      { width: colWidth },
     );
-    sy += 18;
-    doc.text(`Krankheitstage: ${data.sickDays}`, col1, sy);
-    doc.text(`davon mit Attest: ${data.sickDaysWithAttest}`, col2, sy);
-    doc.text(`Urlaubstage: ${data.vacationDays}`, col3, sy);
-    sy += 18;
-    doc.text(`Sonstige Abwesenheit: ${data.otherAbsenceDays}`, col1, sy);
-    // Issue #451 (D-03): printed only when the WTA reports a non-zero reconciliation item — same
-    // ASCII sign style as the Überstunden line above.
-    if (data.balanceAdjustmentHours !== 0) {
-      doc.text(
-        `${BALANCE_ADJUSTMENT_LABEL}: ${data.balanceAdjustmentHours >= 0 ? "+" : ""}${data.balanceAdjustmentHours.toFixed(2)} h`,
-        col2,
-        sy,
-      );
-    }
+  }
 
-    doc.y = summaryY + 90;
-    // Open-month footnote (Task 2, SALDO-DISP-05) — only when the figure is a labelled Prognose;
-    // omitted for overtimeConfirmed === null (see resolveReportOvertimeHours's `labelled` flag) and
-    // for a confirmed/closed month, which needs no caveat.
-    if (data.overtimeConfirmed === false) {
-      doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
-      const footnoteWidth = doc.page.width - 100;
-      const footnoteHeight = doc.heightOfString(OVERTIME_FORECAST_FOOTNOTE, {
-        width: footnoteWidth,
-      });
-      doc.text(OVERTIME_FORECAST_FOOTNOTE, 50, doc.y, { width: footnoteWidth });
-      doc.y += footnoteHeight;
-      doc.fillColor("#111827");
-    }
-    // Issue #451 (D-03): explains the Verrechnung line above — same grey 8pt style as the
-    // forecast footnote, printed only when the item is actually non-zero.
-    if (data.balanceAdjustmentHours !== 0) {
-      doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
-      const legendWidth = doc.page.width - 100;
-      const legendHeight = doc.heightOfString(BALANCE_ADJUSTMENT_LEGEND, { width: legendWidth });
-      doc.text(BALANCE_ADJUSTMENT_LEGEND, 50, doc.y, { width: legendWidth });
-      doc.y += legendHeight;
-      doc.fillColor("#111827");
-    }
-    // § 9-Legende (D-30) — erklärt, warum Tage von Urlaub nach "Krank mit Attest" gewandert sind.
-    drawSection9Legend(doc, data.section9Days);
-    doc.moveDown(1);
+  let ry = summaryY + 10;
+  doc.text(`Krankheitstage (Kalendertage): ${fmtDays(data.sickDays)}`, colRight, ry, {
+    width: colWidth,
+  });
+  ry += lineH;
+  doc.text(`davon mit Attest: ${fmtDays(data.sickDaysWithAttest)}`, colRight, ry, {
+    width: colWidth,
+  });
+  ry += lineH;
+  doc.text(`Urlaub (Arbeitstage): ${fmtDays(data.vacationDays)}`, colRight, ry, {
+    width: colWidth,
+  });
+  ry += lineH;
+  doc.text(`Sonstige Abwesenheit (Arbeitstage): ${fmtDays(data.otherAbsenceDays)}`, colRight, ry, {
+    width: colWidth,
+  });
 
-    // Time entries table
-    if (data.entries.length > 0) {
-      doc.fontSize(11).font("Helvetica-Bold").text("Zeiteinträge");
-      doc.moveDown(0.5);
+  doc.y = summaryY + 90;
+  // Open-month footnote (SALDO-DISP-05) - only when the figure is a labelled Prognose; omitted for
+  // overtimeConfirmed === null (see resolveReportOvertimeHours's `labelled` flag) and for a
+  // confirmed/closed month, which needs no caveat.
+  const noteWidth = boxWidth;
+  if (data.overtimeConfirmed === false) {
+    doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
+    const footnoteHeight = doc.heightOfString(OVERTIME_FORECAST_FOOTNOTE, { width: noteWidth });
+    doc.text(OVERTIME_FORECAST_FOOTNOTE, REPORT_MARGIN, doc.y, { width: noteWidth });
+    doc.y += footnoteHeight;
+    doc.fillColor("#111827");
+  }
+  // Issue #451 (D-03): explains the Verrechnung line - same grey 8pt style as the forecast
+  // footnote, printed only when the item is actually non-zero.
+  if (data.balanceAdjustmentMinutes !== 0) {
+    doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
+    const legendHeight = doc.heightOfString(BALANCE_ADJUSTMENT_LEGEND, { width: noteWidth });
+    doc.text(BALANCE_ADJUSTMENT_LEGEND, REPORT_MARGIN, doc.y, { width: noteWidth });
+    doc.y += legendHeight;
+    doc.fillColor("#111827");
+  }
+  // § 9 legend (D-30) - explains why days moved from vacation to "sick with attest".
+  drawSection9Legend(doc, data.section9Days);
+  doc.moveDown(1);
 
-      const tableTop = doc.y;
-      const colWidths = [70, 55, 55, 50, 55, doc.page.width - 100 - 285];
-      const headers = ["Datum", "Start", "Ende", "Pause", "Netto", "Notiz"];
+  // Day list: the time entries and the day rows (absence periods, holidays), chronologically.
+  if (data.entries.length > 0 || data.dayRows.length > 0) {
+    doc.fontSize(11).font("Helvetica-Bold").fillColor("#111827").text("Zeiteinträge");
+    doc.moveDown(0.5);
 
-      doc.fontSize(8).font("Helvetica-Bold");
-      let x = 50;
-      headers.forEach((h, i) => {
-        doc.text(h, x, tableTop, { width: colWidths[i] });
-        x += colWidths[i];
-      });
+    const colWidths = reportColumnWidths(doc);
+    let rowY = drawReportTableHeader(doc, doc.y);
 
-      doc
-        .moveTo(50, tableTop + 14)
-        .lineTo(doc.page.width - 50, tableTop + 14)
-        .stroke("#e5e7eb");
+    for (const item of mergeDayList(data)) {
+      if (rowY > doc.page.height - REPORT_BOTTOM_LIMIT) {
+        doc.addPage();
+        rowY = drawReportTableHeader(doc, REPORT_MARGIN);
+      }
 
-      doc.fontSize(8).font("Helvetica");
-      let rowY = tableTop + 18;
-
-      for (const entry of data.entries) {
-        if (rowY > doc.page.height - 80) {
-          doc.addPage();
-          rowY = 50;
-        }
-
-        x = 50;
+      let x = REPORT_MARGIN;
+      if (item.kind === "day") {
+        // An absence period or a holiday: the dates in the date column, the label in the note column.
+        const row = item.row;
+        doc.fillColor("#374151");
+        doc.text(
+          row.from === row.to ? isoToDisplayDate(row.from) : periodLabel(row.from, row.to),
+          x,
+          rowY,
+          { width: colWidths[0] + colWidths[1] + colWidths[2], lineBreak: false },
+        );
+        doc.text(row.label, x + colWidths[0] + colWidths[1] + colWidths[2], rowY, {
+          width: colWidths[3] + colWidths[4] + colWidths[5],
+          lineBreak: false,
+          ellipsis: true,
+        });
+        doc.fillColor("#111827");
+      } else {
+        const entry = item.entry;
         doc.text(entry.date, x, rowY, { width: colWidths[0] });
         x += colWidths[0];
         doc.text(entry.start, x, rowY, { width: colWidths[1] });
@@ -306,464 +363,605 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
         x += colWidths[2];
         doc.text(`${entry.breakMin} min`, x, rowY, { width: colWidths[3] });
         x += colWidths[3];
-        doc.text(`${entry.netHours.toFixed(2)} h`, x, rowY, { width: colWidths[4] });
+        doc.text(fmtHM(entry.netMinutes), x, rowY, { width: colWidths[4] });
         x += colWidths[4];
         doc.text(entry.note || "", x, rowY, { width: colWidths[5] });
-
-        rowY += 14;
       }
+
+      rowY += REPORT_ROW_H;
     }
-
-    // ── Page-number footer pass (PDF-04: Seite X von Y) ───
-    const range = doc.bufferedPageRange();
-    for (let i = range.start; i < range.start + range.count; i++) {
-      doc.switchToPage(i);
-      doc
-        .fontSize(7)
-        .font("Helvetica")
-        .fillColor("#6b7280")
-        .text(
-          `Erstellt am ${new Date().toLocaleDateString("de-DE")}  \u00b7  Seite ${i + 1} von ${range.count}  \u00b7  Clokr`,
-          50,
-          doc.page.height - 40,
-          { align: "center", width: doc.page.width - 100 },
-        );
-    }
-    doc.flushPages();
-
-    doc.end();
-  });
-}
-
-// ── streamCompanyMonthlyReportPdf (PDF-01/PDF-03/PDF-05) ─────────────────────
-// Synchronous void — caller owns PDFDocument lifecycle (create → call → end → send).
-// Does NOT use bufferPages (incompatible with streaming).
-// Footer is written BEFORE each page break (explicit control, no pageAdded event).
-export function streamCompanyMonthlyReportPdf(
-  doc: PDFKit.PDFDocument,
-  data: CompanyMonthlyReportData,
-): void {
-  const roleLabel =
-    data.roleFilter === "EMPLOYEE"
-      ? "Nur Mitarbeiter"
-      : data.roleFilter === "MANAGER"
-        ? "Nur Manager"
-        : "Alle Mitarbeiter";
-
-  // Helper: write footer on current page, then add a fresh page, return startY for content
-  function nextPage(): number {
-    drawSmallFooter(doc);
-    doc.addPage();
-    return doc.page.margins.top;
-  }
-
-  // ── Cover page ────────────────────────────────────────
-  drawColoredHeader(doc, data.tenantName, `Monatsbericht \u2014 ${data.month} \u2014 ${roleLabel}`);
-
-  // Summary table header
-  doc.fontSize(11).font("Helvetica-Bold").fillColor("#111827").text("Übersicht");
-  doc.moveDown(0.5);
-
-  // Issue #451 (D-03): "Verr. (h)" inserted between "Ist (h)" and "Saldo (h)" — widths rebalanced
-  // to the same total of 490 as before.
-  const summaryHeaders = [
-    "Mitarbeiter",
-    "Nr.",
-    "Soll (h)",
-    "Ist (h)",
-    "Verr. (h)",
-    "Saldo (h)",
-    "Urlaub",
-    "Krank",
-  ];
-  const summaryWidths = [130, 50, 55, 55, 50, 55, 50, 45];
-  const tableMargin = 50;
-  const ROW_H = 16;
-  const FOOTER_MARGIN = 60; // reserved space for footer at bottom
-
-  let tx = tableMargin;
-  const tableTop = doc.y;
-  doc.fontSize(8).font("Helvetica-Bold");
-  summaryHeaders.forEach((h, i) => {
-    doc.text(h, tx, tableTop, { width: summaryWidths[i] });
-    tx += summaryWidths[i];
-  });
-  doc
-    .moveTo(tableMargin, tableTop + 14)
-    .lineTo(doc.page.width - tableMargin, tableTop + 14)
-    .stroke("#e5e7eb");
-
-  doc.fontSize(8).font("Helvetica").fillColor("#111827");
-  let rowY = tableTop + 18;
-  let anyProvisional = false; // set when any row's overtimeConfirmed === false (Task 2, SALDO-DISP-05)
-  let anyBalanceAdjustment = false; // set when any row's balanceAdjustmentHours !== 0 (Issue #451, D-03)
-
-  for (const row of data.rows) {
-    if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
-      rowY = nextPage();
-      // Repeat column headers on continuation pages
-      let hx = tableMargin;
-      doc.fontSize(8).font("Helvetica-Bold");
-      summaryHeaders.forEach((h, i) => {
-        doc.text(h, hx, rowY, { width: summaryWidths[i] });
-        hx += summaryWidths[i];
-      });
-      doc
-        .moveTo(tableMargin, rowY + 14)
-        .lineTo(doc.page.width - tableMargin, rowY + 14)
-        .stroke("#e5e7eb");
-      doc.fontSize(8).font("Helvetica").fillColor("#111827");
-      rowY += 18;
-    }
-
-    let rx = tableMargin;
-    // Saldo cell sources the already §615-resolved row.overtimeHours (Task 1 fix, T-97-02-02) —
-    // NOT a locally recomputed workedHours - targetHours, which silently diverges for SHIFT_BASED.
-    let saldoText = `${row.overtimeHours >= 0 ? "+" : ""}${row.overtimeHours.toFixed(2)}`;
-    if (row.overtimeConfirmed === false) {
-      saldoText += " *";
-      anyProvisional = true;
-    }
-    doc.text(row.employeeName, rx, rowY, { width: summaryWidths[0] });
-    rx += summaryWidths[0];
-    doc.text(row.employeeNumber, rx, rowY, { width: summaryWidths[1] });
-    rx += summaryWidths[1];
-    doc.text(row.targetHours.toFixed(2), rx, rowY, { width: summaryWidths[2] });
-    rx += summaryWidths[2];
-    doc.text(row.workedHours.toFixed(2), rx, rowY, { width: summaryWidths[3] });
-    rx += summaryWidths[3];
-    // Issue #451 (D-03): empty cell when the WTA reports no reconciliation item — only a non-zero
-    // value is printed, mirroring the single-PDF Verrechnung line's "printed only when non-zero".
-    if (row.balanceAdjustmentHours !== 0) {
-      doc.text(
-        `${row.balanceAdjustmentHours >= 0 ? "+" : ""}${row.balanceAdjustmentHours.toFixed(2)}`,
-        rx,
-        rowY,
-        { width: summaryWidths[4] },
-      );
-      anyBalanceAdjustment = true;
-    }
-    rx += summaryWidths[4];
-    doc.text(saldoText, rx, rowY, { width: summaryWidths[5] });
-    rx += summaryWidths[5];
-    doc.text(String(row.vacationDays), rx, rowY, { width: summaryWidths[6] });
-    rx += summaryWidths[6];
-    doc.text(String(row.sickDaysWithAttest + row.sickDaysWithoutAttest), rx, rowY, {
-      width: summaryWidths[7],
-    });
-    rowY += ROW_H;
-  }
-
-  // Provisional-rows legend (Task 2, SALDO-DISP-05) — only when at least one row's month is not
-  // yet closed. Reuses the same pagination discipline as the row loop above.
-  if (anyProvisional) {
-    if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
-      rowY = nextPage();
-    }
-    doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
-    doc.text(COMPANY_PROVISIONAL_LEGEND, tableMargin, rowY, {
-      width: doc.page.width - 2 * tableMargin,
-    });
-    rowY += ROW_H;
-    doc.fillColor("#111827");
-  }
-
-  // Issue #451 (D-03): explains the "Verr. (h)" column above — only when at least one row
-  // actually carries a non-zero reconciliation item. Same pagination guard as the other legends.
-  if (anyBalanceAdjustment) {
-    if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
-      rowY = nextPage();
-    }
-    doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
-    doc.text(BALANCE_ADJUSTMENT_LEGEND, tableMargin, rowY, {
-      width: doc.page.width - 2 * tableMargin,
-    });
-    rowY += ROW_H;
-    doc.fillColor("#111827");
-  }
-
-  // § 9-Legende (D-30) — nur wenn mindestens eine Zeile tatsächlich § 9-Tage trägt.
-  const anySection9 = data.rows.some((r) => (r.section9DaysThisMonth ?? 0) > 0);
-  if (anySection9) {
-    if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
-      rowY = nextPage();
-    }
-    doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
-    doc.text(SECTION9_LEGEND, tableMargin, rowY, {
-      width: doc.page.width - 2 * tableMargin,
-    });
-    rowY += ROW_H;
-    doc.fillColor("#111827");
-  }
-
-  // Footer on last page
-  drawSmallFooter(doc);
-}
-
-// ── streamLeaveListPdf (PDF-02/PDF-05) ────────────────────────────────────────
-// Synchronous void — caller owns lifecycle. Does NOT call doc.end().
-// Footer written explicitly before page breaks (no pageAdded event).
-export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData): void {
-  function nextPage(): number {
-    drawSmallFooter(doc);
-    doc.addPage();
-    return doc.page.margins.top;
-  }
-
-  // ── Header ───────────────────────────────────────────
-  drawColoredHeader(doc, data.tenantName, `Urlaubsliste \u2014 ${data.year}`);
-
-  if (data.employees.length === 0) {
-    doc.fontSize(9).font("Helvetica").fillColor("#6b7280").text("Keine Urlaubsdaten vorhanden.");
-    doc.fillColor("#111827");
-    drawSmallFooter(doc);
-    return;
-  }
-
-  const colWidths = [130, 100, 150, 60];
-  const colHeaders = ["Von", "Bis", "Typ", "Tage"];
-
-  for (const emp of data.employees) {
-    // Employee heading — ensure enough space for name + at least one row
-    if (doc.y > doc.page.height - 120) {
-      doc.y = nextPage();
-    }
-
-    doc.x = 50; // Reset x cursor after table rows
-    doc
-      .fontSize(10)
-      .font("Helvetica-Bold")
-      .fillColor("#111827")
-      .text(`${emp.employeeName} (${emp.employeeNumber}) \u2014 Gesamt: ${emp.totalDays} Tage`, 50);
-    doc.moveDown(0.3);
-
-    if (emp.periods.length === 0) {
-      doc
-        .fontSize(8)
-        .font("Helvetica")
-        .fillColor("#6b7280")
-        .text("Keine genehmigten Urlaubsanträge.", 50);
-      doc.fillColor("#111827");
-    } else {
-      // Table header
-      const tTop = doc.y;
-      doc.fontSize(8).font("Helvetica-Bold").fillColor("#111827");
-      let hx = 50;
-      colHeaders.forEach((h, i) => {
-        doc.text(h, hx, tTop, { width: colWidths[i] });
-        hx += colWidths[i];
-      });
-      doc
-        .moveTo(50, tTop + 14)
-        .lineTo(50 + colWidths.reduce((a, b) => a + b, 0), tTop + 14)
-        .stroke("#e5e7eb");
-
-      doc.fontSize(8).font("Helvetica").fillColor("#111827");
-      let ry = tTop + 18;
-
-      for (const period of emp.periods) {
-        // Issue #448 (D-05): a period with a BS note needs one extra, smaller line beneath it.
-        const rowHeight = period.note ? 14 + 10 : 14;
-        if (ry + rowHeight > doc.page.height - 60) {
-          ry = nextPage();
-        }
-        let rx = 50;
-        doc.fontSize(8).font("Helvetica").fillColor("#111827");
-        doc.text(period.startDate, rx, ry, { width: colWidths[0] });
-        rx += colWidths[0];
-        doc.text(period.endDate, rx, ry, { width: colWidths[1] });
-        rx += colWidths[1];
-        doc.text(period.leaveTypeName, rx, ry, { width: colWidths[2] });
-        rx += colWidths[2];
-        doc.text(String(period.days), rx, ry, { width: colWidths[3] });
-        ry += 14;
-        if (period.note) {
-          doc.fontSize(6.5).font("Helvetica").fillColor("#6b7280");
-          doc.text(period.note, 50, ry, { width: colWidths.reduce((a, b) => a + b, 0) });
-          doc.fillColor("#111827");
-          ry += 10;
-        }
-      }
-      doc.y = ry;
-    }
-
-    doc.moveDown(0.8); // gap between employees
   }
 }
 
-// ── Vacation overview rows ────────────────────────────────────────────────────
-// Issue #613 (AC-3) — a person of the report population without a VACATION entitlement row is part
-// of the overview as a placeholder row, never silently dropped. The wording is the web overview's.
-export const NO_ENTITLEMENT_LABEL = "kein Anspruch hinterlegt";
-
-// One row type, optional figures: a placeholder row carries `missingEntitlement: true` and no
-// figures. A row without figures is printed as a placeholder whatever its flag says, so the text
-// `undefined` can never reach a document.
-export interface VacationOverviewPdfRow {
-  name: string;
-  employeeNumber: string;
-  totalDays?: number;
-  usedDays?: number;
-  remainingDays?: number;
-  carriedOver?: number;
-  missingEntitlement?: boolean;
-}
-
-// One row of the overview table, shared by the streamed and the standalone renderer so the two
-// documents cannot drift. A placeholder prints the German note across the four figure columns.
-function drawVacationOverviewRow(
-  doc: PDFKit.PDFDocument,
-  emp: VacationOverviewPdfRow,
-  rowY: number,
-  colWidths: number[],
-): void {
-  let x = 50;
-  doc.text(emp.name, x, rowY, { width: colWidths[0] });
-  x += colWidths[0];
-  doc.text(emp.employeeNumber, x, rowY, { width: colWidths[1] });
-  x += colWidths[1];
-  if (
-    emp.missingEntitlement ||
-    emp.totalDays === undefined ||
-    emp.carriedOver === undefined ||
-    emp.usedDays === undefined ||
-    emp.remainingDays === undefined
-  ) {
-    const figureWidth = colWidths.slice(2).reduce((a, b) => a + b, 0);
-    doc.text(NO_ENTITLEMENT_LABEL, x, rowY, { width: figureWidth });
-    return;
-  }
-  doc.text(`${emp.totalDays}`, x, rowY, { width: colWidths[2] });
-  x += colWidths[2];
-  doc.text(`${emp.carriedOver}`, x, rowY, { width: colWidths[3] });
-  x += colWidths[3];
-  doc.text(`${emp.usedDays}`, x, rowY, { width: colWidths[4] });
-  x += colWidths[4];
-  doc.text(`${emp.remainingDays}`, x, rowY, { width: colWidths[5] });
-}
-
-// ── streamVacationOverviewPdf ─────────────────────────────────────────────────
-// Streaming counterpart to generateVacationOverviewPdf.
-// Appends landscape pages to an existing doc. Does NOT call doc.end().
-export function streamVacationOverviewPdf(
-  doc: PDFKit.PDFDocument,
-  data: {
-    tenantName: string;
-    year: number;
-    employees: VacationOverviewPdfRow[];
-  },
-): void {
-  doc.addPage({ size: "A4", layout: "landscape" });
-
-  doc
-    .fontSize(18)
-    .font("Helvetica-Bold")
-    .text(`${data.tenantName} \u2014 Urlaubsübersicht`, { align: "center" });
-  doc
-    .fontSize(10)
-    .font("Helvetica")
-    .text(`${data.tenantName} \u2014 ${data.year}`, { align: "center" });
-  doc.moveDown(1.5);
-
-  const headers = ["Mitarbeiter", "Nr.", "Anspruch", "Übertrag", "Genommen", "Restlich"];
-  const colWidths = [200, 80, 80, 80, 80, 80];
-
-  doc.fontSize(9).font("Helvetica-Bold");
-  let x = 50;
-  const tableTop = doc.y;
-  headers.forEach((h, i) => {
-    doc.text(h, x, tableTop, { width: colWidths[i] });
-    x += colWidths[i];
-  });
-  doc
-    .moveTo(50, tableTop + 14)
-    .lineTo(50 + colWidths.reduce((a, b) => a + b, 0), tableTop + 14)
-    .stroke("#e5e7eb");
-
-  doc.fontSize(9).font("Helvetica");
-  let rowY = tableTop + 20;
-
-  for (const emp of data.employees) {
-    if (rowY > doc.page.height - 60) {
-      doc.addPage({ size: "A4", layout: "landscape" });
-      rowY = 50;
-    }
-    drawVacationOverviewRow(doc, emp, rowY, colWidths);
-    rowY += 16;
-  }
-
-  doc
-    .fontSize(7)
-    .font("Helvetica")
-    .text(
-      `Erstellt am ${new Date().toLocaleDateString("de-DE")} \u2014 Clokr`,
-      50,
-      doc.page.height - 40,
-      { align: "center", width: doc.page.width - 100 },
-    );
-}
-
-export function generateVacationOverviewPdf(data: {
-  tenantName: string;
-  year: number;
-  employees: VacationOverviewPdfRow[];
-}): Promise<Buffer> {
+export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 50 });
+    const doc = new PDFDocument({ size: "A4", margin: REPORT_MARGIN, bufferPages: true });
     const chunks: Buffer[] = [];
 
     doc.on("data", (chunk: Buffer) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    doc
-      .fontSize(18)
-      .font("Helvetica-Bold")
-      .text("Clokr \u2014 Urlaubsübersicht", { align: "center" });
-    doc
-      .fontSize(10)
-      .font("Helvetica")
-      .text(`${data.tenantName} \u2014 ${data.year}`, { align: "center" });
-    doc.moveDown(1.5);
+    try {
+      drawMonthlyReport(doc, data);
 
-    // Table
-    const headers = ["Mitarbeiter", "Nr.", "Anspruch", "Übertrag", "Genommen", "Restlich"];
-    const colWidths = [200, 80, 80, 80, 80, 80];
-
-    doc.fontSize(9).font("Helvetica-Bold");
-    let x = 50;
-    const tableTop = doc.y;
-    headers.forEach((h, i) => {
-      doc.text(h, x, tableTop, { width: colWidths[i] });
-      x += colWidths[i];
-    });
-    doc
-      .moveTo(50, tableTop + 14)
-      .lineTo(50 + colWidths.reduce((a, b) => a + b, 0), tableTop + 14)
-      .stroke("#e5e7eb");
-
-    doc.fontSize(9).font("Helvetica");
-    let rowY = tableTop + 20;
-
-    for (const emp of data.employees) {
-      if (rowY > doc.page.height - 60) {
-        doc.addPage();
-        rowY = 50;
+      // ── Footer pass (Seite X von Y) through the shared helper: no page is added ──
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        writeFooter(doc, pageFooterText(data.generatedAt, i + 1, range.count));
       }
-      drawVacationOverviewRow(doc, emp, rowY, colWidths);
-      rowY += 16;
+      doc.flushPages();
+      doc.end();
+    } catch (err) {
+      reject(err);
     }
+  });
+}
 
+// ── Placeholder of the vacation section ──────────────────────────────────────
+// Issue #613 (AC-3) - a person of the report population without a VACATION entitlement row is part
+// of the Monatsexport's section "Urlaubsjahr" as a placeholder row, never silently dropped. The
+// wording is the web overview's.
+export const NO_ENTITLEMENT_LABEL = "kein Anspruch hinterlegt";
+
+// ── Monatsexport (Issue #617) ─────────────────────────────────────────────────
+// The human-readable twin of the DATEV export: one row per person of the month, no day rows
+// (the § 16 Abs. 2 ArbZG day records stay in the Stundennachweis). Every figure arrives
+// pre-computed - the renderer formats, it computes nothing.
+
+export const MONTHLY_EXPORT_STATUS_LABEL = {
+  CONFIRMED: "Bestätigt",
+  FORECAST: "Prognose",
+  UNLABELLED: "ohne Soll",
+} as const;
+
+export const MONTHLY_EXPORT_FORECAST_LEGEND =
+  "Prognose: Der Monat ist noch nicht abgeschlossen \u2014 die Werte k\u00f6nnen sich bis zum Monatsabschluss noch \u00e4ndern.";
+export const MONTHLY_EXPORT_UNLABELLED_LEGEND =
+  "ohne Soll: Vertrag ohne Sollvorgabe (reine Zeiterfassung) \u2014 dort entfallen Soll, Saldo und Gesamtsaldo.";
+export const MONTHLY_EXPORT_DATEV_LEGEND =
+  "DATEV-Std.: Normalstunden der DATEV-Datei in Dezimalstunden (Summe aller gültigen, abgeschlossenen Zeiteinträge des Monats). Sie können vom Ist abweichen: Das Ist stammt aus dem Arbeitszeitkonto, zählt nur Einträge der Art Arbeit an Tagen im Beschäftigungszeitraum, enthält die Berufsschul-Anrechnung und ist in abgeschlossenen Monaten der gespeicherte Stand.";
+export const MONTHLY_EXPORT_UNITS_LEGEND =
+  "Zeiten in Stunden:Minuten. Abwesenheiten in Arbeitstagen wie im DATEV-Export (leer = keine). Saldo Monat: der ganze Monat, im laufenden Monat als Prognose. Gesamtsaldo: Stand zum Monatsende, im laufenden Monat bis gestern.";
+
+export interface MonthlyExportAbsenceDays {
+  vacation: number;
+  sick: number;
+  sickChild: number;
+  overtimeComp: number;
+  special: number;
+  education: number;
+  unpaid: number;
+  maternity: number;
+  parental: number;
+}
+
+/**
+ * Issue #617 (D-617-2, P-03) - the seven figures of section "Urlaubsjahr", in days. Every value is
+ * read from the Resturlaub facade (`vacationBalanceForRow`) at the Stichtag; nothing is computed
+ * here. `pendingDays` is "Beantragt" (pending requests created by the Stichtag, never deducted).
+ */
+export interface MonthlyExportVacation {
+  entitlementDays: number;
+  carriedOverEffectiveDays: number;
+  availableDays: number;
+  takenDays: number;
+  approvedUpcomingDays: number;
+  pendingDays: number;
+  remainingDays: number;
+}
+
+export interface MonthlyExportRow {
+  employeeName: string;
+  employeeNumber: string;
+  status: keyof typeof MONTHLY_EXPORT_STATUS_LABEL;
+  workedMinutes: number;
+  expectedMinutes: number;
+  balanceMinutes: number;
+  balanceAdjustmentMinutes: number;
+  /**
+   * Gesamtsaldo: the account's cumulative balance at the end of the month (a closed month's stored
+   * carry-over; an open month's value through yesterday). `null` when the row is unlabelled.
+   */
+  closingBalanceMinutes: number | null;
+  /** The worked minutes the person's DATEV Normalstunden line is built from. */
+  datevWorkedMinutes: number;
+  /** Arbeitstage of the month, exactly the DATEV Lohnart values. */
+  absenceDays: MonthlyExportAbsenceDays;
+  /** A confirmed § 9 BUrlG credit lies in the month (prints the § 9 legend). */
+  section9: boolean;
+  /** The year's VACATION figures at the Stichtag; `null` = no VACATION entitlement row. */
+  vacation: MonthlyExportVacation | null;
+}
+
+export interface MonthlyExportData {
+  tenantName: string;
+  /** "September 2026" */
+  monthLabel: string;
+  year: number;
+  month: number;
+  /** "dd.MM.yyyy, HH:mm" in the tenant time zone. */
+  generatedAt: string;
+  /** The vacation year of section "Urlaubsjahr" and its Stichtag ("dd.MM.yyyy"). */
+  vacationYear: { year: number; asOf: string };
+  rows: MonthlyExportRow[];
+}
+
+type ExportColumn = {
+  key: string;
+  /** Header lines (an explicit break keeps long German words inside their column). */
+  header: string[];
+  /** Preferred width in points. */
+  pref: number;
+  align: "left" | "right";
+  cell: (row: MonthlyExportRow) => string;
+  /** Hidden when false (data-dependent columns). */
+  visible: (rows: MonthlyExportRow[]) => boolean;
+  /** Dash instead of the cell text for an unlabelled row (no Soll to compare against). */
+  dashWhenUnlabelled?: boolean;
+};
+
+/**
+ * Issue #617 (D-617-2) - the seven columns of section "Urlaubsjahr", in order. The in-app
+ * Urlaubsuebersicht shows the same labels (`apps/web/src/lib/reports/vacation-columns.ts` mirrors
+ * this constant and is pinned to it by a test).
+ */
+export const VACATION_YEAR_COLUMN_LABELS = [
+  "Anspruch",
+  "Übertrag (wirksam)",
+  "Verfügbar",
+  "Genommen",
+  "Genehmigt",
+  "Beantragt",
+  "Resturlaub",
+] as const;
+export const VACATION_YEAR_LEGEND =
+  "Verfügbar = Anspruch + wirksamer Übertrag. Genommen: genehmigte Tage bis einschließlich Stichtag. Genehmigt: genehmigte Tage nach dem Stichtag. Beantragt: bis zum Stichtag gestellte, noch nicht genehmigte Anträge, werden nicht abgezogen. Resturlaub = Verfügbar - Genommen - Genehmigt.";
+
+const EXPORT_FONT_SIZE = 7;
+const EXPORT_ROW_H = 14;
+const EXPORT_HEADER_H = 22;
+const EXPORT_MARGIN = 36;
+// Content must end above the footer line at `page.height - 40`.
+const EXPORT_BOTTOM_LIMIT = 56;
+const ALWAYS = (): boolean => true;
+
+function dayCell(value: number): string {
+  return value === 0 ? "" : fmtDecimalDe(value, 1);
+}
+
+const anyRow =
+  (pick: (row: MonthlyExportRow) => boolean) =>
+  (rows: MonthlyExportRow[]): boolean =>
+    rows.some(pick);
+
+type AbsenceKind = keyof MonthlyExportAbsenceDays;
+
+/** A day-count column of the absence block; shown always, or only when some row has a value. */
+function absenceColumn(
+  kind: AbsenceKind,
+  header: string,
+  pref: number,
+  always: boolean,
+): ExportColumn {
+  return {
+    key: kind,
+    // "\n" separates the header lines (kept a plain string: the leave-type identity guard reads an
+    // array literal holding a leave-type name as a control value, and this is a column title).
+    header: header.split("\n"),
+    pref,
+    align: "right",
+    cell: (r) => dayCell(r.absenceDays[kind]),
+    visible: always ? ALWAYS : anyRow((r) => r.absenceDays[kind] !== 0),
+  };
+}
+
+/** The columns of section "Monat". */
+function monthColumns(): ExportColumn[] {
+  return [
+    {
+      key: "name",
+      header: ["Mitarbeiter"],
+      pref: 130,
+      align: "left",
+      cell: (r) => r.employeeName,
+      visible: ALWAYS,
+    },
+    {
+      key: "number",
+      header: ["Nr."],
+      pref: 50,
+      align: "left",
+      cell: (r) => r.employeeNumber,
+      visible: ALWAYS,
+    },
+    {
+      key: "status",
+      header: ["Status"],
+      pref: 46,
+      align: "left",
+      cell: (r) => MONTHLY_EXPORT_STATUS_LABEL[r.status],
+      visible: ALWAYS,
+    },
+    {
+      key: "soll",
+      header: ["Soll"],
+      pref: 48,
+      align: "right",
+      cell: (r) => fmtHM(r.expectedMinutes),
+      visible: ALWAYS,
+      dashWhenUnlabelled: true,
+    },
+    {
+      key: "ist",
+      header: ["Ist"],
+      pref: 48,
+      align: "right",
+      cell: (r) => fmtHM(r.workedMinutes),
+      visible: ALWAYS,
+    },
+    {
+      // The unit of the DATEV file (decimal hours with a comma), so the two documents reconcile line
+      // by line.
+      key: "datevHours",
+      header: ["DATEV-Std."],
+      pref: 48,
+      align: "right",
+      cell: (r) => fmtDecimalDe(r.datevWorkedMinutes / 60, 2),
+      visible: ALWAYS,
+    },
+    {
+      key: "adjustment",
+      header: ["Verr."],
+      pref: 44,
+      align: "right",
+      // A zero cell stays empty: the column is shown for the rows that have a value, and a "0:00 h"
+      // would read as a statement about the person who has none.
+      cell: (r) =>
+        r.balanceAdjustmentMinutes === 0 ? "" : fmtSignedHM(r.balanceAdjustmentMinutes),
+      visible: anyRow((r) => r.balanceAdjustmentMinutes !== 0),
+    },
+    {
+      key: "saldo",
+      header: ["Saldo", "Monat"],
+      pref: 48,
+      align: "right",
+      cell: (r) => fmtSignedHM(r.balanceMinutes),
+      visible: ALWAYS,
+      dashWhenUnlabelled: true,
+    },
+    {
+      key: "closing",
+      header: ["Gesamtsaldo"],
+      pref: 54,
+      align: "right",
+      cell: (r) =>
+        r.closingBalanceMinutes === null ? "\u2014" : fmtSignedHM(r.closingBalanceMinutes),
+      visible: ALWAYS,
+      dashWhenUnlabelled: true,
+    },
+    absenceColumn("vacation", "Urlaub", 36, true),
+    absenceColumn("sick", "Krank", 36, true),
+    absenceColumn("sickChild", "Kind\nkrank", 34, false),
+    absenceColumn("overtimeComp", "Überstd.-\nAusgleich", 44, false),
+    absenceColumn("special", "Sonder-\nurlaub", 38, false),
+    absenceColumn("education", "Bildungs-\nurlaub", 42, false),
+    absenceColumn("unpaid", "Unbezahlt", 42, false),
+    absenceColumn("maternity", "Mutter-\nschutz", 38, false),
+    absenceColumn("parental", "Eltern-\nzeit", 34, false),
+  ];
+}
+
+/** The columns of section "Urlaubsjahr": the person, then the seven figures of the facade. */
+function vacationColumns(): ExportColumn[] {
+  const figure = (
+    label: (typeof VACATION_YEAR_COLUMN_LABELS)[number],
+    pref: number,
+    pick: (v: MonthlyExportVacation) => number,
+    key: string,
+  ): ExportColumn => ({
+    key,
+    header: [label],
+    pref,
+    align: "right",
+    cell: (r) => (r.vacation ? fmtDecimalDe(pick(r.vacation)) : ""),
+    visible: ALWAYS,
+  });
+  return [
+    {
+      key: "name",
+      header: ["Mitarbeiter"],
+      pref: 130,
+      align: "left",
+      cell: (r) => r.employeeName,
+      visible: ALWAYS,
+    },
+    {
+      key: "number",
+      header: ["Nr."],
+      pref: 50,
+      align: "left",
+      cell: (r) => r.employeeNumber,
+      visible: ALWAYS,
+    },
+    figure("Anspruch", 56, (v) => v.entitlementDays, "entitlement"),
+    figure("Übertrag (wirksam)", 82, (v) => v.carriedOverEffectiveDays, "carryOver"),
+    figure("Verfügbar", 62, (v) => v.availableDays, "available"),
+    figure("Genommen", 62, (v) => v.takenDays, "taken"),
+    figure("Genehmigt", 62, (v) => v.approvedUpcomingDays, "approved"),
+    figure("Beantragt", 62, (v) => v.pendingDays, "requested"),
+    figure("Resturlaub", 62, (v) => v.remainingDays, "remaining"),
+  ];
+}
+
+/**
+ * Column widths for the visible columns: every column keeps at least the width of its longest
+ * header line; when the preferred widths do not fit, the name column gives way first, then the rest
+ * shrinks towards its minimum. Widths are never below the text, so a header word never overflows.
+ */
+function exportColumnWidths(
+  doc: PDFKit.PDFDocument,
+  columns: ExportColumn[],
+  available: number,
+): number[] {
+  doc.font("Helvetica-Bold").fontSize(EXPORT_FONT_SIZE);
+  const mins = columns.map((c) => {
+    const widest = Math.max(...c.header.map((line) => doc.widthOfString(line)));
+    return Math.ceil(widest) + 6;
+  });
+  const prefs = columns.map((c, i) => Math.max(c.pref, mins[i]));
+  const total = prefs.reduce((a, b) => a + b, 0);
+  if (total <= available) {
+    // Spare width goes to the name column.
+    const widths = [...prefs];
+    widths[0] += available - total;
+    return widths;
+  }
+  // Shrink: the name column first (down to 90 pt), the others proportionally to their slack.
+  const widths = [...prefs];
+  let excess = total - available;
+  const nameSlack = Math.max(0, widths[0] - Math.max(mins[0], 90));
+  const nameCut = Math.min(excess, nameSlack);
+  widths[0] -= nameCut;
+  excess -= nameCut;
+  if (excess > 0) {
+    const slack = widths.map((w, i) => (i === 0 ? 0 : Math.max(0, w - mins[i])));
+    const slackTotal = slack.reduce((a, b) => a + b, 0);
+    const factor = slackTotal > 0 ? Math.min(1, excess / slackTotal) : 0;
+    for (let i = 1; i < widths.length; i++) widths[i] -= slack[i] * factor;
+  }
+  return widths;
+}
+
+/** Truncates `text` with an ellipsis so it fits `width` at the current font. */
+function fitText(doc: PDFKit.PDFDocument, text: string, width: number): string {
+  if (doc.widthOfString(text) <= width) return text;
+  let cut = text;
+  while (cut.length > 1 && doc.widthOfString(`${cut}…`) > width) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
+/**
+ * Writes one single-line table cell. Alignment is done by hand (x from the measured text width):
+ * with `lineBreak: false` PDFKit ignores `width`/`align`, and a wrapping call could add a page.
+ */
+function drawCell(
+  doc: PDFKit.PDFDocument,
+  text: string,
+  x: number,
+  y: number,
+  width: number,
+  align: "left" | "right",
+): void {
+  const textWidth = doc.widthOfString(text);
+  const left = align === "right" ? x + width - 2 - textWidth : x + 2;
+  doc.text(text, left, y, { lineBreak: false });
+}
+
+function drawExportTableHeader(
+  doc: PDFKit.PDFDocument,
+  columns: ExportColumn[],
+  widths: number[],
+  y: number,
+): number {
+  doc.font("Helvetica-Bold").fontSize(EXPORT_FONT_SIZE).fillColor("#374151");
+  let x = EXPORT_MARGIN;
+  columns.forEach((col, i) => {
+    col.header.forEach((line, lineIndex) => {
+      drawCell(doc, line, x, y + lineIndex * 9, widths[i], col.align);
+    });
+    x += widths[i];
+  });
+  const lineY = y + EXPORT_HEADER_H - 2;
+  const totalWidth = widths.reduce((a, b) => a + b, 0);
+  doc
+    .moveTo(EXPORT_MARGIN, lineY)
+    .lineTo(EXPORT_MARGIN + totalWidth, lineY)
+    .lineWidth(0.5)
+    .stroke("#9ca3af");
+  doc.fillColor("#111827");
+  return y + EXPORT_HEADER_H;
+}
+
+function drawLegend(doc: PDFKit.PDFDocument, text: string, y: number): number {
+  doc.font("Helvetica").fontSize(7).fillColor("#6b7280");
+  const width = doc.page.width - 2 * EXPORT_MARGIN;
+  const height = doc.heightOfString(text, { width });
+  if (y + height > doc.page.height - EXPORT_BOTTOM_LIMIT) {
+    doc.addPage();
+    y = EXPORT_MARGIN;
+  }
+  doc.text(text, EXPORT_MARGIN, y, { width });
+  doc.fillColor("#111827");
+  return y + height + 3;
+}
+
+/**
+ * Draws the Monatsexport body on `doc` (header band, section "Monat", legends). Separate from
+ * `generateMonthlyExportPdf` so tests can drive it with a recording stub; the footer is added by
+ * the generator in a second pass because "Seite X von Y" needs the final page count.
+ */
+export function drawMonthlyExport(doc: PDFKit.PDFDocument, data: MonthlyExportData): void {
+  drawColoredHeader(doc, data.tenantName, `Monatsexport · ${data.monthLabel}`);
+  const available = doc.page.width - 2 * EXPORT_MARGIN;
+
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827");
+  doc.text(`Monat: ${data.monthLabel}`, EXPORT_MARGIN, doc.y);
+  let y = doc.y + 6;
+
+  if (data.rows.length === 0) {
+    doc.font("Helvetica").fontSize(9).fillColor("#374151");
+    doc.text("Keine Personen in diesem Monat.", EXPORT_MARGIN, y);
+    return;
+  }
+
+  const columns = monthColumns().filter((c) => c.visible(data.rows));
+  const widths = exportColumnWidths(doc, columns, available);
+  y = drawExportTableHeader(doc, columns, widths, y);
+
+  for (const row of data.rows) {
+    if (y + EXPORT_ROW_H > doc.page.height - EXPORT_BOTTOM_LIMIT) {
+      doc.addPage();
+      y = drawExportTableHeader(doc, columns, widths, EXPORT_MARGIN);
+    }
+    doc.font("Helvetica").fontSize(EXPORT_FONT_SIZE).fillColor("#111827");
+    let x = EXPORT_MARGIN;
+    columns.forEach((col, i) => {
+      const unlabelledDash = col.dashWhenUnlabelled && row.status === "UNLABELLED";
+      const raw = unlabelledDash ? "—" : col.cell(row);
+      if (raw !== "") {
+        drawCell(doc, fitText(doc, raw, widths[i] - 4), x, y + 3, widths[i], col.align);
+      }
+      x += widths[i];
+    });
+    const lineY = y + EXPORT_ROW_H - 1;
     doc
-      .fontSize(7)
-      .font("Helvetica")
-      .text(
-        `Erstellt am ${new Date().toLocaleDateString("de-DE")} \u2014 Clokr`,
-        50,
-        doc.page.height - 40,
-        { align: "center", width: doc.page.width - 100 },
-      );
+      .moveTo(EXPORT_MARGIN, lineY)
+      .lineTo(EXPORT_MARGIN + widths.reduce((a, b) => a + b, 0), lineY)
+      .lineWidth(0.25)
+      .stroke("#e5e7eb");
+    y += EXPORT_ROW_H;
+  }
 
-    doc.end();
+  // ── Legends: only what the table actually prints ─────────────────────────────
+  y += 6;
+  if (data.rows.some((r) => r.status === "FORECAST")) {
+    y = drawLegend(doc, MONTHLY_EXPORT_FORECAST_LEGEND, y);
+  }
+  if (data.rows.some((r) => r.status === "UNLABELLED")) {
+    y = drawLegend(doc, MONTHLY_EXPORT_UNLABELLED_LEGEND, y);
+  }
+  if (data.rows.some((r) => r.balanceAdjustmentMinutes !== 0)) {
+    y = drawLegend(doc, BALANCE_ADJUSTMENT_LEGEND, y);
+  }
+  if (data.rows.some((r) => r.section9)) {
+    y = drawLegend(doc, SECTION9_LEGEND, y);
+  }
+  if (data.rows.some((r) => Math.round(r.workedMinutes) !== Math.round(r.datevWorkedMinutes))) {
+    y = drawLegend(doc, MONTHLY_EXPORT_DATEV_LEGEND, y);
+  }
+  y = drawLegend(doc, MONTHLY_EXPORT_UNITS_LEGEND, y);
+
+  drawVacationYearSection(doc, data, y, available);
+}
+
+/**
+ * Section "Urlaubsjahr <Jahr>, Stand <TT.MM.JJJJ>" (Issue #617, D-617-2, P-03): one row per person in
+ * the order of section "Monat", the seven facade figures, the note `NO_ENTITLEMENT_LABEL` across the
+ * figure columns for a person without a VACATION entitlement, and one legend. It starts on a new
+ * page when the header and two rows no longer fit below the month section.
+ */
+function drawVacationYearSection(
+  doc: PDFKit.PDFDocument,
+  data: MonthlyExportData,
+  startY: number,
+  available: number,
+): void {
+  let y = startY + 6;
+  if (y + 14 + EXPORT_HEADER_H + 2 * EXPORT_ROW_H > doc.page.height - EXPORT_BOTTOM_LIMIT) {
+    doc.addPage();
+    y = EXPORT_MARGIN;
+  }
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827");
+  doc.text(
+    `Urlaubsjahr ${data.vacationYear.year}, Stand ${data.vacationYear.asOf}`,
+    EXPORT_MARGIN,
+    y,
+    { lineBreak: false },
+  );
+  y += 14;
+
+  const columns = vacationColumns();
+  const widths = exportColumnWidths(doc, columns, available);
+  y = drawExportTableHeader(doc, columns, widths, y);
+
+  for (const row of data.rows) {
+    if (y + EXPORT_ROW_H > doc.page.height - EXPORT_BOTTOM_LIMIT) {
+      doc.addPage();
+      y = drawExportTableHeader(doc, columns, widths, EXPORT_MARGIN);
+    }
+    doc.font("Helvetica").fontSize(EXPORT_FONT_SIZE).fillColor("#111827");
+    let x = EXPORT_MARGIN;
+    columns.forEach((col, i) => {
+      if (row.vacation === null && i >= 2) {
+        if (i === 2) {
+          // One note across the seven figure columns instead of seven empty cells.
+          const figureWidth = widths.slice(2).reduce((a, b) => a + b, 0);
+          drawCell(
+            doc,
+            fitText(doc, NO_ENTITLEMENT_LABEL, figureWidth - 4),
+            x,
+            y + 3,
+            figureWidth,
+            "left",
+          );
+        }
+      } else {
+        const raw = col.cell(row);
+        if (raw !== "") {
+          drawCell(doc, fitText(doc, raw, widths[i] - 4), x, y + 3, widths[i], col.align);
+        }
+      }
+      x += widths[i];
+    });
+    const lineY = y + EXPORT_ROW_H - 1;
+    doc
+      .moveTo(EXPORT_MARGIN, lineY)
+      .lineTo(EXPORT_MARGIN + widths.reduce((a, b) => a + b, 0), lineY)
+      .lineWidth(0.25)
+      .stroke("#e5e7eb");
+    y += EXPORT_ROW_H;
+  }
+  drawLegend(doc, VACATION_YEAR_LEGEND, y + 6);
+}
+
+/** Renders the Monatsexport as an A4 landscape PDF (header, table, "Seite X von Y" footer). */
+export function generateMonthlyExportPdf(data: MonthlyExportData): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({
+      size: "A4",
+      layout: "landscape",
+      margin: EXPORT_MARGIN,
+      bufferPages: true,
+    });
+    const chunks: Buffer[] = [];
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    try {
+      drawMonthlyExport(doc, data);
+
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        writeFooter(doc, pageFooterText(data.generatedAt, i + 1, range.count));
+      }
+      doc.flushPages();
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
   });
 }

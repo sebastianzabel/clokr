@@ -30,6 +30,7 @@ import {
   salonIdForEmployee,
 } from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
+import { computeMonthReportFigures } from "../contexts/working-time-account";
 import * as pdfUtils from "../composition/pdf";
 
 vi.mock("../composition/pdf", async (importOriginal) => {
@@ -37,7 +38,7 @@ vi.mock("../composition/pdf", async (importOriginal) => {
   return {
     ...actual,
     generateMonthlyReportPdf: vi.fn(actual.generateMonthlyReportPdf),
-    streamCompanyMonthlyReportPdf: vi.fn(actual.streamCompanyMonthlyReportPdf),
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
 
@@ -336,26 +337,32 @@ async function singlePdfPayload(
   return spy.mock.calls[0][0];
 }
 
-async function companyPdfRow(
+// Issue #617: the company PDF was replaced by the Monatsexport; same property, same oracle.
+async function exportPdfRow(
   app: FastifyInstance,
   adminToken: string,
   employeeNumberNeedle: string,
   year: number,
   month: number,
 ) {
-  const spy = vi.mocked(pdfUtils.streamCompanyMonthlyReportPdf);
+  const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
   spy.mockClear();
   const res = await app.inject({
     method: "GET",
-    url: `/api/v1/reports/monthly/pdf/all?year=${year}&month=${month}`,
+    url: `/api/v1/reports/monthly-export/pdf?year=${year}&month=${month}`,
     headers: { authorization: `Bearer ${adminToken}` },
   });
   expect(res.statusCode).toBe(200);
   expect(spy).toHaveBeenCalledTimes(1);
-  const companyData = spy.mock.calls[0][1];
-  const row = companyData.rows.find((r) => r.employeeNumber.includes(employeeNumberNeedle));
-  if (!row) throw new Error(`no company PDF row matching ${employeeNumberNeedle}`);
+  const exportData = spy.mock.calls[0][0];
+  const row = exportData.rows.find((r) => r.employeeNumber.includes(employeeNumberNeedle));
+  if (!row) throw new Error(`no Monatsexport row matching ${employeeNumberNeedle}`);
   return row;
+}
+
+/** Minutes as hours rounded to hundredths, the JSON report's rounding. */
+function hundredths(minutes: number): number {
+  return Math.round((minutes / 60) * 100) / 100;
 }
 
 // D-03's own consistency identity: Ist − Soll + Verrechnung == Überstunden, in hundredths.
@@ -470,16 +477,40 @@ describe("Issue #451 (D-03) — page identity Ist - Soll + Verrechnung = Ueberst
     expectIdentity(row);
 
     const pdfPayload = await singlePdfPayload(app, adminToken, fixedCompEmpId, 2026, 5);
-    expect(pdfPayload.balanceAdjustmentHours).toBe(-8);
-    expect(pdfPayload.workedHours).toBe(row.workedHours);
-    expect(pdfPayload.targetHours).toBe(row.shouldHours);
-    expect(pdfPayload.overtimeHours).toBe(row.overtimeHours);
+    // Issue #617 (D-617-3): the Stundennachweis payload carries MINUTES of the account (exact), and
+    // the 2-decimal hour identity with the JSON row still holds.
+    const oracleFigures = await computeMonthReportFigures(app, fixedCompEmpId, 2026, 5);
+    expect(pdfPayload.balanceAdjustmentMinutes).toBe(-480);
+    expect(pdfPayload.workedMinutes).toBe(oracleFigures.workedMinutes);
+    expect(pdfPayload.targetMinutes).toBe(oracleFigures.expectedMinutes);
+    expect(pdfPayload.overtimeMinutes).toBe(oracleFigures.balanceMinutes);
+    expect(hundredths(pdfPayload.balanceAdjustmentMinutes)).toBe(row.balanceAdjustmentHours);
+    expect(hundredths(pdfPayload.workedMinutes)).toBe(row.workedHours);
+    expect(hundredths(pdfPayload.targetMinutes)).toBe(row.shouldHours);
+    expect(hundredths(pdfPayload.overtimeMinutes)).toBe(row.overtimeHours);
+    for (const retired of [
+      "workedHours",
+      "targetHours",
+      "overtimeHours",
+      "balanceAdjustmentHours",
+    ]) {
+      expect(pdfPayload).not.toHaveProperty(retired);
+    }
 
-    const companyRow = await companyPdfRow(app, adminToken, "ri451fc", 2026, 5);
-    expect(companyRow.balanceAdjustmentHours).toBe(-8);
-    expect(companyRow.workedHours).toBe(row.workedHours);
-    expect(companyRow.targetHours).toBe(row.shouldHours);
-    expect(companyRow.overtimeHours).toBe(row.overtimeHours);
+    // Issue #617: the company PDF was replaced by the Monatsexport; same property, same oracle
+    // (minutes now, plus the rounding identity with the JSON hours).
+    const exportRow = await exportPdfRow(app, adminToken, "ri451fc", 2026, 5);
+    const figures = await computeMonthReportFigures(app, fixedCompEmpId, 2026, 5);
+    expect(exportRow.balanceAdjustmentMinutes).toBe(-480);
+    expect(exportRow.balanceAdjustmentMinutes).toBe(figures.balanceAdjustmentMinutes);
+    expect(exportRow.workedMinutes).toBe(figures.workedMinutes);
+    expect(exportRow.expectedMinutes).toBe(figures.expectedMinutes);
+    expect(exportRow.balanceMinutes).toBe(figures.balanceMinutes);
+    expect(exportRow.status).toBe("FORECAST");
+    expect(hundredths(exportRow.balanceAdjustmentMinutes)).toBe(row.balanceAdjustmentHours);
+    expect(hundredths(exportRow.workedMinutes)).toBe(row.workedHours);
+    expect(hundredths(exportRow.expectedMinutes)).toBe(row.shouldHours);
+    expect(hundredths(exportRow.balanceMinutes)).toBe(row.overtimeHours);
   });
 
   it("FIXED + approved OVERTIME_COMP day, after POST /overtime/close-month: the closed figures (overtimeConfirmed true) still satisfy the identity", async () => {

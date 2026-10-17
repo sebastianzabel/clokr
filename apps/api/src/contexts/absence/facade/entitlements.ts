@@ -86,10 +86,8 @@ export async function getVacationEntitlement(
 /**
  * A12 — every `LeaveEntitlement` for `tenantId` in `year` whose person belongs to the year's
  * report population, with `employee`/`leaveType` included.
- * Sites: `reports.ts`'s `GET /leave-overview`, `GET /vacation/pdf` and `GET /leave-overview/pdf` —
- * all three share the identical `where`; only their `employee` `select` width differs (some omit
- * `id`), which is a projection difference, not a row-set divergence, so one function serves all
- * three (R-C: read the real `where`, not just the shape of the call).
+ * Site: `reports.ts`'s `GET /leave-overview` (Issue #617: the vacation PDFs that shared this `where`
+ * were removed; the Monatsexport reads its VACATION rows through `getVacationEntitlementsForYearByCode`).
  *
  * Issue #613 (D-01) — the persons come from the Unterbau rule `reportPopulationWhere`: employed
  * at some point in `period`, never anonymised, the login state never decides. `period` is the

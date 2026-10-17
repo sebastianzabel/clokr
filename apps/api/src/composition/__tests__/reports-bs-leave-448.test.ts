@@ -1,12 +1,12 @@
 /**
- * Issue #448 (D-05, plan 03) — the monthly report, the DATEV export and the Urlaubsliste PDF all
- * exclude Berufsschultage from VACATION day counts, with the PDF period naming the excluded dates.
+ * Issue #448 (D-05, plan 03) — the monthly report, the DATEV export and the Monatsexport all
+ * exclude Berufsschultage from VACATION day counts.
  *
- * `streamLeaveListPdf` is spied the same way `reports.test.ts` already spies
- * `streamVacationOverviewPdf` — PDFKit Flate-compresses its content streams, so the only way to
- * assert on the `LeaveListData` the route built is to capture the argument before it reaches
- * PDFKit (see that file's and `reports-salon-scope.test.ts`'s own header comments on why a
- * byte-content substring search on the PDF payload is proven vacuous).
+ * Issue #617: the Urlaubsliste PDF (whose periods named the excluded dates) was removed, and with it
+ * its per-period note and the "a SICK period carries no note" case. `generateMonthlyExportPdf` is
+ * spied — PDFKit Flate-compresses its content streams, so the only way to assert on the payload the
+ * route built is to capture the argument before it reaches PDFKit (see `reports-salon-scope.test.ts`'s
+ * header comment on why a byte-content substring search on the PDF payload is proven vacuous).
  *
  * Every date is a fixed 2027 calendar literal — 2027-03-08..12 is a Monday-Friday week with no
  * German statutory holiday (NIEDERSACHSEN, the seedTestData default federal state).
@@ -29,11 +29,11 @@ vi.mock("../pdf", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../pdf")>();
   return {
     ...actual,
-    streamLeaveListPdf: vi.fn(actual.streamLeaveListPdf),
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
 
-describe("Issue #448 — Berichte, DATEV und Urlaubsliste zählen Berufsschultage nicht als Urlaub", () => {
+describe("Issue #448 — Berichte, DATEV und Monatsexport zählen Berufsschultage nicht als Urlaub", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
   let controlData: Awaited<ReturnType<typeof seedTestData>>;
@@ -82,7 +82,7 @@ describe("Issue #448 — Berichte, DATEV und Urlaubsliste zählen Berufsschultag
     // through leaveDaysByCodeWithin's fully-inside branch instead of re-deriving it from the
     // date range via its own BS-aware subtraction (removed), so a `days: 5` here — correct only
     // for a calendar count that ignores the BS day on 2027-03-09 — would make the DATEV line
-    // disagree with GET /reports/monthly's and the Urlaubsliste PDF's independently-computed 4,
+    // disagree with GET /reports/monthly's independently-computed 4,
     // which both stay unaffected by this field (see their own call sites). `controlData`'s
     // request below has no BS day inside its range, so its calendar count and priced count
     // already agree at 5 — unchanged.
@@ -173,94 +173,35 @@ describe("Issue #448 — Berichte, DATEV und Urlaubsliste zählen Berufsschultag
     expect(controlVacationLine).toContain(";5,0;");
   });
 
-  it("Urlaubsliste PDF: the period's days is one lower and carries the BS note; the control employee's period is byte-identical to its day count with no note", async () => {
-    const spy = vi.mocked(pdfUtils.streamLeaveListPdf);
+  // Issue #617: the Urlaubsliste PDF was replaced by the Monatsexport; the Berufsschule exclusion
+  // is asserted on the export's month Urlaub (the number the DATEV U line carries).
+  it("Monatsexport: the Urlaub count of the month is one lower than the control employee's identical week", async () => {
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
     spy.mockClear();
-
     const res = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/leave-list/pdf?year=2027",
+      url: "/api/v1/reports/monthly-export/pdf?year=2027&month=3",
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
     expect(res.statusCode).toBe(200);
-    expect(spy).toHaveBeenCalledTimes(1);
-    const leaveListData = spy.mock.calls[0][1];
-    const empData = leaveListData.employees.find(
-      (e) => e.employeeNumber === data.employee.employeeNumber,
+    const row = spy.mock.calls[0][0].rows.find(
+      (r) => r.employeeNumber === data.employee.employeeNumber,
     );
-    expect(empData).toBeDefined();
-    expect(empData!.periods).toHaveLength(1);
-    expect(empData!.periods[0].days).toBe(4);
-    expect(empData!.periods[0].note).toBe("Berufsschule – kein Urlaub: 09.03.");
+    expect(row).toBeDefined();
+    expect(row!.absenceDays.vacation).toBe(4);
 
     spy.mockClear();
     const controlRes = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/leave-list/pdf?year=2027",
+      url: "/api/v1/reports/monthly-export/pdf?year=2027&month=3",
       headers: { authorization: `Bearer ${controlData.adminToken}` },
     });
     expect(controlRes.statusCode).toBe(200);
-    const controlLeaveListData = spy.mock.calls[0][1];
-    const controlEmpData = controlLeaveListData.employees.find(
-      (e) => e.employeeNumber === controlData.employee.employeeNumber,
+    const controlRow = spy.mock.calls[0][0].rows.find(
+      (r) => r.employeeNumber === controlData.employee.employeeNumber,
     );
-    expect(controlEmpData).toBeDefined();
-    expect(controlEmpData!.periods[0].days).toBe(5);
-    expect(controlEmpData!.periods[0].note).toBeUndefined();
-  });
-
-  it("a SICK period over a BS day carries no note and the old count", async () => {
-    const sickType = await app.prisma.leaveType.create({
-      data: {
-        tenantId: data.tenant.id,
-        code: "SICK",
-        name: "Krankheit",
-        isPaid: true,
-        requiresApproval: false,
-        color: "#EF4444",
-      },
-    });
-    // A fresh, non-overlapping BS date + SICK request (Issue #436 week-union is irrelevant to
-    // SICK, but keeping the range isolated avoids any interaction with the VACATION fixture above).
-    await app.prisma.absence.create({
-      data: {
-        employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
-        source: "PATTERN",
-        startDate: new Date("2027-03-16T00:00:00.000Z"),
-        endDate: new Date("2027-03-16T00:00:00.000Z"),
-        days: 1,
-        halfDay: false,
-        createdBy: "system",
-      },
-    });
-    await app.prisma.leaveRequest.create({
-      data: {
-        employeeId: data.employee.id,
-        leaveTypeId: sickType.id,
-        startDate: new Date("2027-03-16"),
-        endDate: new Date("2027-03-16"),
-        days: 1,
-        status: "APPROVED",
-      },
-    });
-
-    const spy = vi.mocked(pdfUtils.streamLeaveListPdf);
-    spy.mockClear();
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/reports/leave-list/pdf?year=2027",
-      headers: { authorization: `Bearer ${data.adminToken}` },
-    });
-    expect(res.statusCode).toBe(200);
-    const leaveListData = spy.mock.calls[0][1];
-    const empData = leaveListData.employees.find(
-      (e) => e.employeeNumber === data.employee.employeeNumber,
-    );
-    const sickPeriod = empData!.periods.find((p) => p.leaveTypeName === "Krankheit");
-    expect(sickPeriod).toBeDefined();
-    expect(sickPeriod!.days).toBe(1);
-    expect(sickPeriod!.note).toBeUndefined();
+    expect(controlRow).toBeDefined();
+    expect(controlRow!.absenceDays.vacation).toBe(5);
   });
 
   it("GET /reports/monthly: a soft-deleted BS absence does not reduce vacationDays (WR-02)", async () => {

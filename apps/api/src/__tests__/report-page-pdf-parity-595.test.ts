@@ -13,7 +13,7 @@
  * every other reader of the account uses.
  *
  * Five surfaces are compared on REAL database rows: GET /overtime/month-saldo, the
- * GET /reports/monthly row, the single-PDF payload, the company-PDF row and the
+ * GET /reports/monthly row, the single-PDF payload, the Monatsexport row (Issue #617, replaces the company-PDF row) and the
  * GET /overtime/snapshots row. Both PDF generators are spied the same way
  * report-identity-451.test.ts does (vi.fn(actual.fn): the byte content stays a valid PDF, the
  * test inspects the DATA payload handed to the generator).
@@ -30,6 +30,7 @@ import {
 } from "./setup";
 import { legacySaldoSnapshotPeriodBounds, saldoSnapshotPeriodBounds } from "./test-dates";
 import { computeMonthSaldo } from "../contexts/working-time-account/month-saldo";
+import { computeMonthReportFigures } from "../contexts/working-time-account";
 import * as pdfUtils from "../composition/pdf";
 
 vi.mock("../composition/pdf", async (importOriginal) => {
@@ -37,7 +38,7 @@ vi.mock("../composition/pdf", async (importOriginal) => {
   return {
     ...actual,
     generateMonthlyReportPdf: vi.fn(actual.generateMonthlyReportPdf),
-    streamCompanyMonthlyReportPdf: vi.fn(actual.streamCompanyMonthlyReportPdf),
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
 
@@ -331,18 +332,19 @@ describe("Issue #595 (D-01) - page, JSON and PDFs agree on a closed month stored
     return spy.mock.calls[0][0];
   }
 
-  async function companyPdfRow(employeeNumber: string, year: number, month: number) {
-    const spy = vi.mocked(pdfUtils.streamCompanyMonthlyReportPdf);
+  // Issue #617: the company PDF was replaced by the Monatsexport; same property, same oracle.
+  async function exportPdfRow(employeeNumber: string, year: number, month: number) {
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
     spy.mockClear();
     const res = await app.inject({
       method: "GET",
-      url: `/api/v1/reports/monthly/pdf/all?year=${year}&month=${month}`,
+      url: `/api/v1/reports/monthly-export/pdf?year=${year}&month=${month}`,
       headers: { authorization: `Bearer ${adminToken}` },
     });
     expect(res.statusCode).toBe(200);
     expect(spy).toHaveBeenCalledTimes(1);
-    const row = spy.mock.calls[0][1].rows.find((r) => r.employeeNumber === employeeNumber);
-    if (!row) throw new Error(`no company PDF row for ${employeeNumber}`);
+    const row = spy.mock.calls[0][0].rows.find((r) => r.employeeNumber === employeeNumber);
+    if (!row) throw new Error(`no Monatsexport row for ${employeeNumber}`);
     return row;
   }
 
@@ -398,15 +400,26 @@ describe("Issue #595 (D-01) - page, JSON and PDFs agree on a closed month stored
 
     const payload = await singlePdf(employee.id, year, month);
     expect(payload.overtimeConfirmed).toBe(true);
-    expect(payload.workedHours).toBe(expected.worked);
-    expect(payload.targetHours).toBe(expected.should);
-    expect(payload.overtimeHours).toBe(expected.overtime);
+    // Issue #617 (D-617-3): the payload carries the stored minutes themselves; the hundredths
+    // identity with the JSON row stays.
+    expect(payload.workedMinutes).toBe(stored.workedMinutes);
+    expect(payload.targetMinutes).toBe(stored.expectedMinutes);
+    expect(payload.overtimeMinutes).toBe(stored.balanceMinutes);
+    expect(hours(payload.workedMinutes)).toBe(expected.worked);
+    expect(hours(payload.targetMinutes)).toBe(expected.should);
+    expect(hours(payload.overtimeMinutes)).toBe(expected.overtime);
 
-    const company = await companyPdfRow(employee.employeeNumber, year, month);
-    expect(company.overtimeConfirmed).toBe(true);
-    expect(company.workedHours).toBe(expected.worked);
-    expect(company.targetHours).toBe(expected.should);
-    expect(company.overtimeHours).toBe(expected.overtime);
+    // The Monatsexport carries the stored minutes themselves (formerly rounded hours) and the stored
+    // carry-over as the Gesamtsaldo of a closed month.
+    const exported = await exportPdfRow(employee.employeeNumber, year, month);
+    expect(exported.status).toBe("CONFIRMED");
+    expect(exported.workedMinutes).toBe(stored.workedMinutes);
+    expect(exported.expectedMinutes).toBe(stored.expectedMinutes);
+    expect(exported.balanceMinutes).toBe(stored.balanceMinutes);
+    expect(exported.closingBalanceMinutes).toBe(stored.carryOver);
+    expect(hours(exported.workedMinutes)).toBe(expected.worked);
+    expect(hours(exported.expectedMinutes)).toBe(expected.should);
+    expect(hours(exported.balanceMinutes)).toBe(expected.overtime);
 
     const snaps = await snapshotRows(employee.id);
     const snap = snaps.find((s) => s.periodStart.slice(0, 10) === storedPeriodStartDate);
@@ -437,15 +450,19 @@ describe("Issue #595 (D-01) - page, JSON and PDFs agree on a closed month stored
 
     const payload = await singlePdf(empA.id, 2026, 10);
     expect(payload.overtimeConfirmed).toBe(false);
-    expect(payload.workedHours).toBe(row.workedHours);
-    expect(payload.targetHours).toBe(row.shouldHours);
-    expect(payload.overtimeHours).toBe(row.overtimeHours);
+    expect(hours(payload.workedMinutes)).toBe(row.workedHours);
+    expect(hours(payload.targetMinutes)).toBe(row.shouldHours);
+    expect(hours(payload.overtimeMinutes)).toBe(row.overtimeHours);
+    const figures = await computeMonthReportFigures(app, empA.id, 2026, 10);
+    expect(payload.workedMinutes).toBe(figures.workedMinutes);
+    expect(payload.targetMinutes).toBe(figures.expectedMinutes);
+    expect(payload.overtimeMinutes).toBe(figures.balanceMinutes);
 
-    const company = await companyPdfRow(empA.employeeNumber, 2026, 10);
-    expect(company.overtimeConfirmed).toBe(false);
-    expect(company.workedHours).toBe(row.workedHours);
-    expect(company.targetHours).toBe(row.shouldHours);
-    expect(company.overtimeHours).toBe(row.overtimeHours);
+    const exported = await exportPdfRow(empA.employeeNumber, 2026, 10);
+    expect(exported.status).toBe("FORECAST");
+    expect(hours(exported.workedMinutes)).toBe(row.workedHours);
+    expect(hours(exported.expectedMinutes)).toBe(row.shouldHours);
+    expect(hours(exported.balanceMinutes)).toBe(row.overtimeHours);
 
     const snaps = await snapshotRows(empA.id);
     expect(snaps.filter((s) => s.periodStart.slice(0, 7) === "2026-10")).toHaveLength(0);
@@ -491,9 +508,9 @@ describe("Issue #595 (D-01) - page, JSON and PDFs agree on a closed month stored
       expect(monthly[0].month).toBe(9);
       const payload = await singlePdf(empB.id, 2026, 9);
       expect(payload.overtimeConfirmed).toBe(true);
-      expect(payload.workedHours).toBe(hours(monthly[0].workedMinutes));
-      expect(payload.targetHours).toBe(hours(monthly[0].expectedMinutes));
-      expect(payload.overtimeHours).toBe(hours(monthly[0].balanceMinutes));
+      expect(payload.workedMinutes).toBe(monthly[0].workedMinutes);
+      expect(payload.targetMinutes).toBe(monthly[0].expectedMinutes);
+      expect(payload.overtimeMinutes).toBe(monthly[0].balanceMinutes);
     });
 
     it("the answer stays an array and the status codes for foreign and unknown employees are unchanged", async () => {

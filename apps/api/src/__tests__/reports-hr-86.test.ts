@@ -286,6 +286,11 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
         "$[].carriedOverExpiredDays",
         "$[].atRiskDays",
         "$[].exitReductionDays",
+        // Issue #617: per-person yearly day counts of the Urlaubsuebersicht (verfuegbar, genommen,
+        // genehmigt) - counts of the year from the Resturlaub facade, still no day list.
+        "$[].availableDays",
+        "$[].takenDays",
+        "$[].approvedUpcomingDays",
         "$[].entitlementWarning",
         "$[].missingEntitlement",
       ],
@@ -393,11 +398,8 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
       "POST /api/v1/reports/carryover-warn": 403,
       "GET /api/v1/reports/datev": 403,
       "GET /api/v1/reports/datev/employee": 403,
+      "GET /api/v1/reports/monthly-export/pdf": 403,
       "GET /api/v1/reports/monthly/pdf": 403,
-      "GET /api/v1/reports/monthly/pdf/all": 403,
-      "GET /api/v1/reports/leave-list/pdf": 403,
-      "GET /api/v1/reports/vacation/pdf": 403,
-      "GET /api/v1/reports/leave-overview/pdf": 403,
     };
 
     function queryFor(route: string): string {
@@ -405,11 +407,8 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
       if (route.endsWith("/monthly") || route.endsWith("/monthly/pdf")) {
         return `?employeeId=${employeeX.id}&${q}`;
       }
-      if (route.endsWith("/leave-overview") || route.endsWith("/leave-overview/pdf")) {
+      if (route.endsWith("/leave-overview")) {
         return `?year=${year}`;
-      }
-      if (route.endsWith("/vacation/pdf") || route.endsWith("/leave-list/pdf")) {
-        return `?employeeId=${employeeX.id}&year=${year}`;
       }
       if (route.endsWith("/datev/employee")) return `?employeeId=${employeeX.id}&${q}`;
       return `?${q}`;

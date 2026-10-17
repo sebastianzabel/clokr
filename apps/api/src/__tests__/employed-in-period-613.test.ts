@@ -27,17 +27,20 @@ import {
 import { createPopulationPerson, type PopulationPerson } from "./population-fixtures-613";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
-// Spy that still calls through: the company PDF only exposes its rows by feeding them into pdfkit,
+// Spy that still calls through: the Monatsexport only exposes its rows by feeding them into pdfkit,
 // which compresses its content streams, so the test reads the payload the route built.
 vi.mock("../composition/pdf", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../composition/pdf")>();
   return {
     ...actual,
-    streamCompanyMonthlyReportPdf: vi.fn(actual.streamCompanyMonthlyReportPdf),
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
 
 const FAKE_NOW = new Date("2026-11-18T10:00:00Z");
+// Issue #617: the Monatsexport heals vacation rows (audit rows stamped with the faked clock), so its cases
+// run on a clock in the past of any real run.
+const EXPORT_NOW = new Date("2026-10-05T10:00:00Z");
 
 type Persons = Record<"E1" | "E2" | "D" | "A" | "H" | "C", PopulationPerson>;
 
@@ -47,9 +50,13 @@ describe("Issue #613 — the period population", () => {
   let p: Persons;
 
   /** Runs `fn` with the faked clock and a token valid under it. */
-  async function withClock<T>(token: string, fn: (token: string) => Promise<T>): Promise<T> {
+  async function withClock<T>(
+    token: string,
+    fn: (token: string) => Promise<T>,
+    at: Date = FAKE_NOW,
+  ): Promise<T> {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(FAKE_NOW);
+    vi.setSystemTime(at);
     try {
       return await fn(reissueTokenNow(app, token));
     } finally {
@@ -209,21 +216,6 @@ describe("Issue #613 — the period population", () => {
     });
   });
   describe("monthly PDFs", () => {
-    async function companyPdfNumbers(year: number, month: number, extra = ""): Promise<string[]> {
-      const spy = vi.mocked(pdfModule.streamCompanyMonthlyReportPdf);
-      spy.mockClear();
-      const res = await withClock(d.adminToken, (t) =>
-        app.inject({
-          method: "GET",
-          url: `/api/v1/reports/monthly/pdf/all?year=${year}&month=${month}${extra}`,
-          headers: { authorization: `Bearer ${t}` },
-        }),
-      );
-      expect(res.statusCode).toBe(200);
-      expect(spy).toHaveBeenCalledTimes(1);
-      return spy.mock.calls[0][1].rows.map((r) => r.employeeNumber);
-    }
-
     async function singlePdf(employeeId: string, month: number, token = d.adminToken) {
       return withClock(token, (t) =>
         app.inject({
@@ -234,8 +226,57 @@ describe("Issue #613 — the period population", () => {
       );
     }
 
-    it("the company PDF of September lists E1, E2, D, C and neither A nor H", async () => {
-      const numbers = await companyPdfNumbers(2026, 9);
+    // Issue #617: the company PDF was replaced by the Monatsexport. Its population is the DATEV
+    // population of the same month (P-01, § 41 EStG), so the oracle is the DATEV file of that month and
+    // the concrete persons are pinned on top. The monthly report and the Stundennachweis keep the
+    // report rule (A never there).
+    async function exportNumbers(year: number, month: number): Promise<string[]> {
+      const spy = vi.mocked(pdfModule.generateMonthlyExportPdf);
+      spy.mockClear();
+      const res = await withClock(
+        d.adminToken,
+        (t) =>
+          app.inject({
+            method: "GET",
+            url: `/api/v1/reports/monthly-export/pdf?year=${year}&month=${month}`,
+            headers: { authorization: `Bearer ${t}` },
+          }),
+        EXPORT_NOW,
+      );
+      expect(res.statusCode).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      return spy.mock.calls[0][0].rows.map((r) => r.employeeNumber);
+    }
+
+    async function datevNumbersAtExportClock(month: number): Promise<string[]> {
+      await configureDatevKanzlei(app, d.tenant.id);
+      const res = await withClock(
+        d.adminToken,
+        (t) =>
+          app.inject({
+            method: "GET",
+            url: `/api/v1/reports/datev?year=2026&month=${month}`,
+            headers: { authorization: `Bearer ${t}` },
+          }),
+        EXPORT_NOW,
+      );
+      expect(res.statusCode).toBe(200);
+      const text = iconv.decode(res.rawPayload, "win1252");
+      const numbers = text
+        .split("[Bewegungsdaten]")[1]
+        .split("\r\n")
+        .filter((l) => l.trim().length > 0)
+        .map((l) => l.split(";")[1]);
+      return [...new Set(numbers)];
+    }
+
+    const bySortedNumber = (a: string, b: string) => a.localeCompare(b);
+
+    it("the Monatsexport of September lists exactly the DATEV persons: E1, E2, D, C and A, never H", async () => {
+      const numbers = await exportNumbers(2026, 9);
+      const datev = await datevNumbersAtExportClock(9);
+      expect(datev.length).toBeGreaterThan(0);
+      expect(numbers.slice().sort(bySortedNumber)).toEqual(datev.slice().sort(bySortedNumber));
       expect(numbers).toEqual(
         expect.arrayContaining([
           p.E1.employeeNumber,
@@ -244,30 +285,22 @@ describe("Issue #613 — the period population", () => {
           p.C.employeeNumber,
         ]),
       );
-      expect(numbers).not.toContain(p.A.employeeNumber);
       expect(numbers).not.toContain(p.H.employeeNumber);
+      // A is anonymised and has no exit date: the DATEV employment core keeps it (#666 decides later),
+      // so the export lists it exactly when DATEV does.
+      expect(numbers.includes(p.A.employeeNumber)).toBe(datev.includes(p.A.employeeNumber));
+      expect(datev).toContain(p.A.employeeNumber);
     });
 
-    it("the company PDF of October lists D, H, C and neither E1, E2 nor A", async () => {
-      const numbers = await companyPdfNumbers(2026, 10);
+    it("the Monatsexport of October lists exactly the DATEV persons: D, H, C and A, neither E1 nor E2", async () => {
+      const numbers = await exportNumbers(2026, 10);
+      const datev = await datevNumbersAtExportClock(10);
+      expect(numbers.slice().sort(bySortedNumber)).toEqual(datev.slice().sort(bySortedNumber));
       expect(numbers).toEqual(
         expect.arrayContaining([p.D.employeeNumber, p.H.employeeNumber, p.C.employeeNumber]),
       );
-      for (const gone of [p.E1, p.E2, p.A]) expect(numbers).not.toContain(gone.employeeNumber);
-    });
-
-    it("the compat role filter of the company PDF still narrows", async () => {
-      const manager = await createPopulationPerson(app, {
-        tenantId: d.tenant.id,
-        salonId: d.salonId,
-        tag: "pdfmgr",
-        hireDate: new Date("2025-01-01T00:00:00.000Z"),
-        userRole: "MANAGER",
-      });
-      const numbers = await companyPdfNumbers(2026, 9, "&role=MANAGER");
-      expect(numbers).toContain(manager.employeeNumber);
-      expect(numbers).not.toContain(p.E1.employeeNumber);
-      expect(numbers).not.toContain(p.D.employeeNumber);
+      for (const gone of [p.E1, p.E2]) expect(numbers).not.toContain(gone.employeeNumber);
+      expect(numbers.includes(p.A.employeeNumber)).toBe(datev.includes(p.A.employeeNumber));
     });
 
     it("the single PDF answers for a person in the month and 404s outside it", async () => {
@@ -306,7 +339,7 @@ describe("Issue #613 — the period population", () => {
     });
   });
   describe("DATEV keeps the employment core", () => {
-    /** Personalnummern (column 1 of the Bewegungsdaten rows) of the company export. */
+    /** Personalnummern (column 1 of the Bewegungsdaten rows) of the DATEV export. */
     async function datevPnrs(month: number): Promise<string[]> {
       const res = await withClock(d.adminToken, (t) =>
         app.inject({

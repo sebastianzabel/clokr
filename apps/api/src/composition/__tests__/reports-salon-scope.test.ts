@@ -6,7 +6,7 @@
  *
  * No person names in fixtures (CLAUDE.md PII rule).
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
@@ -19,6 +19,17 @@ import {
   soleAuditRowOrNull,
 } from "../../__tests__/setup";
 import { normalizeRolePermissions, roleNameKey } from "../../contexts/platform";
+import * as pdfUtils from "../pdf";
+
+// Issue #617: a call-through spy, because PDFKit compresses its content streams and a byte search
+// on a PDF is vacuous; the Monatsexport payload (its rows) is what the route built.
+vi.mock("../pdf", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../pdf")>();
+  return {
+    ...actual,
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
+  };
+});
 
 const PASSWORD = "test1234";
 
@@ -407,8 +418,7 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
     expect(audit).not.toBeNull();
   });
 
-  // The 4 PDF-only routes below (monthly/pdf/all, leave-list/pdf, vacation/pdf,
-  // leave-overview/pdf) reuse the EXACT SAME employee/entitlement query-narrowing code already
+  // The PDF routes below reuse the EXACT SAME employee/entitlement query-narrowing code already
   // proven correct end to end by the JSON-returning tests above (GET /monthly, /leave-overview,
   // /datev) — same resolveStammsalonScopedEmployeeIds call, same `where` fold. A byte-content
   // substring search on the PDF payload was tried and found VACUOUS: PDFKit's default output
@@ -418,7 +428,10 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
   // matches this codebase's own existing convention for these routes
   // (`reports-sick-days.test.ts` Tests 4-6): only the `%PDF` header and content-type are ever
   // asserted for a PDF response, never its compressed byte content.
-  it("GET /monthly/pdf/all: renders successfully for a SALONS-scoped manager with a mixed in/out-of-scope tenant", async () => {
+  // Issue #617: the company PDF was replaced by the Monatsexport. Stronger than "renders": the
+  // payload the route built contains the in-scope person and not the out-of-scope one (the
+  // Stammsalon scope of report:export folded into the DATEV population).
+  it("GET /monthly-export/pdf: lists the in-scope person and not the out-of-scope one for a SALONS-scoped manager", async () => {
     const inScope = await createEmployee("inscope-pdfall");
     await createHome(inScope.employee.id, salonA.id);
     const outOfScope = await createEmployee("outscope-pdfall");
@@ -430,87 +443,65 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
     });
     const token = await login(manager.user.email);
 
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
+    spy.mockClear();
     const res = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/monthly/pdf/all?year=2026&month=6",
+      url: "/api/v1/reports/monthly-export/pdf?year=2026&month=6",
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(200);
     expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const numbers = spy.mock.calls[0][0].rows.map((r) => r.employeeNumber);
+    expect(numbers).toContain(inScope.employee.employeeNumber);
+    expect(numbers).not.toContain(outOfScope.employee.employeeNumber);
   });
 
-  it("GET /leave-list/pdf: renders successfully for a SALONS-scoped manager with a mixed in/out-of-scope tenant", async () => {
-    const outOfScope = await createEmployee("outscope-llpdf");
+  // Issue #617: the vacation and overview PDFs were replaced by the Monatsexport's section
+  // "Urlaubsjahr"; the narrowing property is asserted on the payload's vacation figures.
+  it("GET /monthly-export/pdf: the vacation figures of the payload belong to the in-scope person only", async () => {
+    const inScope = await createEmployee("inscope-expvac");
+    await createHome(inScope.employee.id, salonA.id);
+    const outOfScope = await createEmployee("outscope-expvac");
     await createHome(outOfScope.employee.id, salonB.id);
+    for (const [person, totalDays] of [
+      [inScope, 30],
+      [outOfScope, 27],
+    ] as const) {
+      await app.prisma.leaveEntitlement.create({
+        data: {
+          employeeId: person.employee.id,
+          leaveTypeId: data.vacationType.id,
+          year: 2026,
+          totalDays,
+        },
+      });
+    }
 
-    const manager = await createScopedManager("mgr-leavelistpdf", ["report:export:ZUGEWIESEN"], {
+    const manager = await createScopedManager("mgr-expvac", ["report:export:ZUGEWIESEN"], {
       scopeType: "SALONS",
       salonIds: [salonA.id],
     });
     const token = await login(manager.user.email);
 
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
+    spy.mockClear();
     const res = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/leave-list/pdf?year=2026",
+      url: "/api/v1/reports/monthly-export/pdf?year=2026&month=6",
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
-  });
-
-  it("GET /vacation/pdf: renders successfully for a SALONS-scoped manager with a mixed in/out-of-scope tenant (both datasets)", async () => {
-    const outOfScope = await createEmployee("outscope-vacpdf");
-    await createHome(outOfScope.employee.id, salonB.id);
-    await app.prisma.leaveEntitlement.create({
-      data: {
-        employeeId: outOfScope.employee.id,
-        leaveTypeId: data.vacationType.id,
-        year: 2026,
-        totalDays: 30,
-      },
-    });
-
-    const manager = await createScopedManager("mgr-vacationpdf", ["report:export:ZUGEWIESEN"], {
-      scopeType: "SALONS",
-      salonIds: [salonA.id],
-    });
-    const token = await login(manager.user.email);
-
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/reports/vacation/pdf?year=2026",
-      headers: { authorization: `Bearer ${token}` },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
-  });
-
-  it("GET /leave-overview/pdf: renders successfully for a SALONS-scoped manager with a mixed in/out-of-scope tenant", async () => {
-    const outOfScope = await createEmployee("outscope-lopdf");
-    await createHome(outOfScope.employee.id, salonB.id);
-    await app.prisma.leaveEntitlement.create({
-      data: {
-        employeeId: outOfScope.employee.id,
-        leaveTypeId: data.vacationType.id,
-        year: 2026,
-        totalDays: 30,
-      },
-    });
-
-    const manager = await createScopedManager(
-      "mgr-leaveoverviewpdf",
-      ["report:export:ZUGEWIESEN"],
-      { scopeType: "SALONS", salonIds: [salonA.id] },
-    );
-    const token = await login(manager.user.email);
-
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/reports/leave-overview/pdf?year=2026",
-      headers: { authorization: `Bearer ${token}` },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const rows = spy.mock.calls[0][0].rows;
+    const inRow = rows.find((r) => r.employeeNumber === inScope.employee.employeeNumber);
+    expect(inRow?.vacation?.entitlementDays).toBe(30);
+    expect(
+      rows.find((r) => r.employeeNumber === outOfScope.employee.employeeNumber),
+    ).toBeUndefined();
+    // No figure of the out-of-scope person's entitlement (27) is in any row of the payload.
+    expect(rows.every((r) => r.vacation === null || r.vacation.entitlementDays !== 27)).toBe(true);
   });
 
   describe("activity feed — narrowing inside the query, before take: fetchLimit (D-13 under-fill proof)", () => {

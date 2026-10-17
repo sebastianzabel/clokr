@@ -35,7 +35,7 @@ vi.mock("../pdf", async (importOriginal) => {
   return {
     ...actual,
     generateMonthlyReportPdf: vi.fn(actual.generateMonthlyReportPdf),
-    streamCompanyMonthlyReportPdf: vi.fn(actual.streamCompanyMonthlyReportPdf),
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
 
@@ -274,9 +274,9 @@ describe("Issue #493 — Monatsbericht month boundaries", () => {
       expect(row.workedHours).toBe(expected);
     });
 
-    it("single PDF payload.workedHours of U in October = 2", async () => {
+    it("single PDF payload.workedMinutes of U in October = 120 (2 h)", async () => {
       const payload = await singlePdf(U, 2026, 10);
-      expect(payload.workedHours).toBe(2);
+      expect(payload.workedMinutes).toBe(120);
     });
   });
 
@@ -308,35 +308,71 @@ describe("Issue #493 — Monatsbericht month boundaries", () => {
     });
   });
 
-  describe("GET /reports/monthly/pdf/all — company PDF rows", () => {
-    async function companyRows(year: number, month: number) {
-      const spy = vi.mocked(pdfUtils.streamCompanyMonthlyReportPdf);
+  // Issue #617: the company PDF was replaced by the Monatsexport; same property, same oracle (the
+  // month-boundary person rows and figures, now in minutes). The Monatsexport has no day rows, so the
+  // company case "U lists only 01.10.2026" has no subject here - the single PDF describe above keeps it
+  // for every month. The sick figure of the export is the DATEV Krank count in Arbeitstage.
+  describe("GET /reports/monthly-export/pdf - Monatsexport rows", () => {
+    async function exportRows(year: number, month: number) {
+      const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
       spy.mockClear();
       const res = await app.inject({
         method: "GET",
-        url: `/api/v1/reports/monthly/pdf/all?year=${year}&month=${month}`,
+        url: `/api/v1/reports/monthly-export/pdf?year=${year}&month=${month}`,
         headers: { authorization: `Bearer ${d.adminToken}` },
       });
       expect(res.statusCode).toBe(200);
       expect(spy).toHaveBeenCalledTimes(1);
-      return spy.mock.calls[0][1].rows;
+      return spy.mock.calls[0][0].rows;
     }
 
-    it("October: U lists only 01.10.2026 and counts 2 h", async () => {
+    it("October: U counts 120 minutes (2 h), the entry of 30.09. is not in it", async () => {
       const num = (await app.prisma.employee.findUniqueOrThrow({ where: { id: U } }))
         .employeeNumber;
-      const row = (await companyRows(2026, 10)).find((r) => r.employeeNumber === num);
+      const row = (await exportRows(2026, 10)).find((r) => r.employeeNumber === num);
       expect(row).toBeDefined();
-      expect(row!.entries.map((e) => e.date)).toEqual(["01.10.2026"]);
-      expect(row!.workedHours).toBe(2);
+      expect(row!.workedMinutes).toBe(120);
+      expect(Math.round((row!.workedMinutes / 60) * 100) / 100).toBe(
+        (await monthlyRow(U, 2026, 10)).workedHours,
+      );
     });
 
-    it("September: T counts 3 sick days (not 4)", async () => {
-      const row = (await companyRows(2026, 9)).find(
-        (r) => r.employeeNumber === d.employee.employeeNumber,
-      );
+    it("September: U counts the 58 minutes of 30.09. only (0.97 h)", async () => {
+      const num = (await app.prisma.employee.findUniqueOrThrow({ where: { id: U } }))
+        .employeeNumber;
+      const row = (await exportRows(2026, 9)).find((r) => r.employeeNumber === num);
       expect(row).toBeDefined();
-      expect(row!.sickDaysWithAttest + row!.sickDaysWithoutAttest).toBe(3);
+      expect(row!.workedMinutes).toBe(58);
+    });
+
+    it("the DST months: U2 counts one hour in each of February, March (two entries: 120) and April", async () => {
+      const num = (await app.prisma.employee.findUniqueOrThrow({ where: { id: U2 } }))
+        .employeeNumber;
+      const minutes = async (month: number) =>
+        (await exportRows(2026, month)).find((r) => r.employeeNumber === num)?.workedMinutes;
+      expect(await minutes(2)).toBe(60);
+      expect(await minutes(3)).toBe(120);
+      expect(await minutes(4)).toBe(60);
+    });
+
+    it("September: T counts 3 sick Arbeitstage (not 4), October 2", async () => {
+      const find = (rows: Awaited<ReturnType<typeof exportRows>>) =>
+        rows.find((r) => r.employeeNumber === d.employee.employeeNumber);
+      const september = find(await exportRows(2026, 9));
+      const october = find(await exportRows(2026, 10));
+      expect(september).toBeDefined();
+      expect(september!.absenceDays.sick).toBe(3);
+      expect(october!.absenceDays.sick).toBe(2);
+    });
+
+    it("the § 9 credit crossing the month end marks T3 in both months", async () => {
+      const num = (await app.prisma.employee.findUniqueOrThrow({ where: { id: T3 } }))
+        .employeeNumber;
+      for (const month of [9, 10]) {
+        const row = (await exportRows(2026, month)).find((r) => r.employeeNumber === num);
+        expect(row, `month ${month}`).toBeDefined();
+        expect(row!.section9).toBe(true);
+      }
     });
   });
 });

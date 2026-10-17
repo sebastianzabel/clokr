@@ -14,18 +14,17 @@ import * as pdfUtils from "../pdf";
 import { DATEV_BWD_SATZ_ID } from "../reports";
 import { leaveTypeFields } from "../../contexts/absence/leave-type";
 
-// Phase 97 (D-11, Task 3): the two vacation-overview PDF handlers only expose their
-// aggregated { totalDays, ... } data by feeding it into pdfkit, which compresses its
-// content streams — not observable by decoding the response body. These two functions
-// are wrapped with a spy that still calls straight through to the real implementation
-// (so the actual PDF bytes returned to callers are unaffected), purely to let tests
-// inspect the `data` argument the route built.
+// Phase 97 (D-11, Task 3): the PDF handlers only expose their aggregated data by feeding it
+// into pdfkit, which compresses its content streams — not observable by decoding the response
+// body. The generator is wrapped with a spy that still calls straight through to the real
+// implementation (so the actual PDF bytes returned to callers are unaffected), purely to let
+// tests inspect the `data` argument the route built. Issue #617: the two vacation-overview PDF
+// handlers this spy used to cover were removed; it covers the Monatsexport now.
 vi.mock("../pdf", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../pdf")>();
   return {
     ...actual,
-    generateVacationOverviewPdf: vi.fn(actual.generateVacationOverviewPdf),
-    streamVacationOverviewPdf: vi.fn(actual.streamVacationOverviewPdf),
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
 import {
@@ -918,16 +917,19 @@ describe("Reports API", () => {
     });
   });
 
-  // ── Phase 97 (D-11): both vacation-overview PDFs select by LeaveType.code ──────
+  // ── Phase 97 (D-11): the vacation figures select by LeaveType.code ──────────────
   // Before this change, both handlers summed every LeaveEntitlement whose type NAME
   // lower-cased contained the substring "urlaub" — four of the nine canonical names
   // (Urlaub, Sonderurlaub, Unbezahlter Urlaub, Bildungsurlaub) match that substring,
   // so a further-education entitlement was silently added to the annual-leave figure.
   // Deliberate, tested behaviour change: the overview now shows only the real VACATION
   // entitlement.
-  describe("GET /api/v1/reports/vacation/pdf & /leave-overview/pdf — VACATION selected by code (D-11)", () => {
+  // Issue #617: the two vacation PDFs were removed. The same property is asserted on the in-app
+  // overview (JSON) and on the vacation section of the Monatsexport, which replaced them.
+  describe("GET /api/v1/reports/leave-overview & /monthly-export/pdf — VACATION selected by code (D-11, #617)", () => {
     let d11Data: Awaited<ReturnType<typeof seedTestData>>;
     const year = new Date().getFullYear();
+    const month = new Date().getMonth() + 1;
 
     beforeAll(async () => {
       d11Data = await seedTestData(app, "d11");
@@ -981,40 +983,49 @@ describe("Reports API", () => {
       await cleanupTestData(app, d11Data.tenant.id);
     });
 
-    async function overviewRow() {
+    /** The in-app overview rows of the fixture employee (all of them, to prove the filter). */
+    async function overviewRows() {
       const res = await app.inject({
         method: "GET",
-        url: `/api/v1/reports/leave-overview/pdf?year=${year}`,
+        url: `/api/v1/reports/leave-overview?year=${year}`,
         headers: { authorization: `Bearer ${d11Data.adminToken}` },
       });
       expect(res.statusCode).toBe(200);
-      const calls = vi.mocked(pdfUtils.generateVacationOverviewPdf).mock.calls;
-      const data = calls[calls.length - 1][0];
-      return data.employees.find((e) => e.employeeNumber === d11Data.employee.employeeNumber);
+      const rows = JSON.parse(res.body) as Array<{
+        employee: { id: string };
+        leaveType: { code: string } | null;
+        totalDays: number | null;
+      }>;
+      return rows.filter((r) => r.employee.id === d11Data.employee.id);
     }
 
-    async function streamedOverviewRow() {
+    /** The vacation figures of the fixture employee in the Monatsexport payload. */
+    async function exportVacation() {
+      const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
+      spy.mockClear();
       const res = await app.inject({
         method: "GET",
-        url: `/api/v1/reports/vacation/pdf?year=${year}`,
+        url: `/api/v1/reports/monthly-export/pdf?year=${year}&month=${month}`,
         headers: { authorization: `Bearer ${d11Data.adminToken}` },
       });
       expect(res.statusCode).toBe(200);
-      const calls = vi.mocked(pdfUtils.streamVacationOverviewPdf).mock.calls;
-      const data = calls[calls.length - 1][1];
-      return data.employees.find((e) => e.employeeNumber === d11Data.employee.employeeNumber);
+      const payload = spy.mock.calls[spy.mock.calls.length - 1][0];
+      return payload.rows.find((r) => r.employeeNumber === d11Data.employee.employeeNumber)
+        ?.vacation;
     }
 
-    it("D11-1: totalDays is 30 (VACATION only), not 35 (VACATION + EDUCATION) — /leave-overview/pdf", async () => {
-      const row = await overviewRow();
-      expect(row).toBeDefined();
-      expect(row!.totalDays).toBe(30);
+    it("D11-1: totalDays is 30 (VACATION only), not 35 (VACATION + EDUCATION) — in-app overview", async () => {
+      const rows = await overviewRows();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].leaveType?.code).toBe("VACATION");
+      expect(rows[0].totalDays).toBe(30);
     });
 
-    it("D11-1b: the same '30 not 35' holds for /vacation/pdf's streamed overview", async () => {
-      const row = await streamedOverviewRow();
-      expect(row).toBeDefined();
-      expect(row!.totalDays).toBe(30);
+    it("D11-1b: the same '30 not 35' holds for the Monatsexport's vacation section", async () => {
+      const vacation = await exportVacation();
+      expect(vacation).toBeDefined();
+      expect(vacation).not.toBeNull();
+      expect(vacation!.entitlementDays).toBe(30);
     });
 
     it("D11-2: a VACATION-code row renamed to 'Erholungsurlaub' still appears with its correct totalDays", async () => {
@@ -1022,9 +1033,10 @@ describe("Reports API", () => {
         where: { id: d11Data.vacationType.id },
         data: { name: "Erholungsurlaub" },
       });
-      const row = await overviewRow();
-      expect(row).toBeDefined();
-      expect(row!.totalDays).toBe(30);
+      const rows = await overviewRows();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].totalDays).toBe(30);
+      expect((await exportVacation())?.entitlementDays).toBe(30);
     });
 
     it("D11-3: a VACATION-code row renamed to 'Freizeit' (no 'urlaub' substring) now appears too — the old substring check would have dropped it", async () => {
@@ -1032,19 +1044,23 @@ describe("Reports API", () => {
         where: { id: d11Data.vacationType.id },
         data: { name: "Freizeit" },
       });
-      const row = await overviewRow();
-      expect(row).toBeDefined();
+      const rows = await overviewRows();
       // Under the removed substring check, "Freizeit" doesn't match /urlaub/, so this
       // entitlement would have been skipped and only the EDUCATION row ("Bildungsurlaub",
       // which DOES match) would have been summed — totalDays would have read 5, not 30.
-      expect(row!.totalDays).toBe(30);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].totalDays).toBe(30);
+      expect((await exportVacation())?.entitlementDays).toBe(30);
     });
 
     it("D11-4: the OTHER-coded entitlement (999 days) never contributes to totalDays", async () => {
-      const row = await overviewRow();
-      expect(row).toBeDefined();
-      expect(row!.totalDays).not.toBe(999);
-      expect(row!.totalDays).toBe(30);
+      const rows = await overviewRows();
+      expect(rows.some((r) => r.totalDays === 999)).toBe(false);
+      expect(rows.some((r) => r.leaveType?.code !== "VACATION")).toBe(false);
+      const vacation = await exportVacation();
+      expect(vacation).toBeDefined();
+      expect(vacation!.entitlementDays).not.toBe(999);
+      expect(vacation!.entitlementDays).toBe(30);
     });
   });
 
@@ -1097,12 +1113,61 @@ describe("Reports API", () => {
     });
   });
 
-  // ── GET /api/v1/reports/monthly/pdf/all ────────────────────────────────────
-  describe("GET /api/v1/reports/monthly/pdf/all", () => {
+  // ── Tenant isolation for the multi-person monthly PDF ─────────────────────
+  // Issue #617: the company PDF was replaced by the Monatsexport; same property, now pinned on the
+  // payload the route built (each tenant's export lists only its own employee numbers).
+  describe("Tenant isolation - /monthly-export/pdf", () => {
+    let secondTenant: Awaited<ReturnType<typeof seedTestData>>;
+
+    beforeAll(async () => {
+      secondTenant = await seedTestData(app, "rp2");
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, secondTenant.tenant.id);
+    });
+
+    async function exportRowNumbers(token: string): Promise<{ status: number; numbers: string[] }> {
+      const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
+      spy.mockClear();
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/monthly-export/pdf?year=2025&month=1",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
+      expect(spy).toHaveBeenCalledTimes(1);
+      return {
+        status: res.statusCode,
+        numbers: spy.mock.calls[0][0].rows.map((r) => r.employeeNumber),
+      };
+    }
+
+    it("each tenant only sees its own employees in the export", async () => {
+      const a = await exportRowNumbers(data.adminToken);
+      const b = await exportRowNumbers(secondTenant.adminToken);
+      expect(a.status).toBe(200);
+      expect(b.status).toBe(200);
+
+      const ownA = [data.employee.employeeNumber, data.adminEmployee.employeeNumber];
+      const ownB = [
+        secondTenant.employee.employeeNumber,
+        secondTenant.adminEmployee.employeeNumber,
+      ];
+      expect(a.numbers).toEqual(expect.arrayContaining(ownA));
+      expect(b.numbers).toEqual(expect.arrayContaining(ownB));
+      for (const foreign of ownB) expect(a.numbers).not.toContain(foreign);
+      for (const foreign of ownA) expect(b.numbers).not.toContain(foreign);
+    });
+  });
+
+  // ── GET /api/v1/reports/monthly-export/pdf ────────────────────────────────
+  // Issue #617: replaces the access cases of the company PDF (200 / 401 / 403).
+  describe("GET /api/v1/reports/monthly-export/pdf", () => {
     it("returns 200 with application/pdf for ADMIN token", async () => {
       const res = await app.inject({
         method: "GET",
-        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1",
+        url: "/api/v1/reports/monthly-export/pdf?year=2025&month=1",
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       expect(res.statusCode).toBe(200);
@@ -1114,7 +1179,7 @@ describe("Reports API", () => {
     it("returns 401 without auth", async () => {
       const res = await app.inject({
         method: "GET",
-        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1",
+        url: "/api/v1/reports/monthly-export/pdf?year=2025&month=1",
       });
       expect(res.statusCode).toBe(401);
     });
@@ -1122,108 +1187,7 @@ describe("Reports API", () => {
     it("returns 403 for EMPLOYEE token", async () => {
       const res = await app.inject({
         method: "GET",
-        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1",
-        headers: { authorization: `Bearer ${data.empToken}` },
-      });
-      expect(res.statusCode).toBe(403);
-    });
-
-    it("accepts role=MANAGER filter (returns 200 or 404 if no managers)", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1&role=MANAGER",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      // seedTestData creates ADMIN + EMPLOYEE — no MANAGER user.
-      // The handler returns 404 "Keine Mitarbeiter gefunden" when filter yields 0.
-      expect([200, 404]).toContain(res.statusCode);
-    });
-
-    it("accepts role=EMPLOYEE filter and returns PDF with only employees", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1&role=EMPLOYEE",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      expect(res.statusCode).toBe(200);
-      expect(res.headers["content-type"]).toContain("application/pdf");
-      expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
-    });
-
-    it("normalizes invalid role values to 'all' (no enum injection)", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1&role=SUPERADMIN",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      // Should NOT crash with Prisma enum error — should be treated as "all"
-      expect(res.statusCode).toBe(200);
-    });
-  });
-
-  // ── Tenant isolation for company PDF ──────────────────────────────────────
-  describe("Tenant isolation — /monthly/pdf/all", () => {
-    let secondTenant: Awaited<ReturnType<typeof seedTestData>>;
-
-    beforeAll(async () => {
-      secondTenant = await seedTestData(app, "rp2");
-    });
-
-    afterAll(async () => {
-      await cleanupTestData(app, secondTenant.tenant.id);
-    });
-
-    it("each tenant only sees its own employees in the PDF", async () => {
-      // Tenant A request with admin A token — should succeed
-      const resA = await app.inject({
-        method: "GET",
-        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      expect(resA.statusCode).toBe(200);
-
-      // Tenant B request with admin B token — should also succeed
-      const resB = await app.inject({
-        method: "GET",
-        url: "/api/v1/reports/monthly/pdf/all?year=2025&month=1",
-        headers: { authorization: `Bearer ${secondTenant.adminToken}` },
-      });
-      expect(resB.statusCode).toBe(200);
-
-      // Both PDFs are valid and non-empty
-      expect(resA.rawPayload.length).toBeGreaterThan(0);
-      expect(resB.rawPayload.length).toBeGreaterThan(0);
-      expect(resA.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
-      expect(resB.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
-    });
-  });
-
-  // ── GET /api/v1/reports/leave-list/pdf ────────────────────────────────────
-  describe("GET /api/v1/reports/leave-list/pdf", () => {
-    it("returns 200 with application/pdf for ADMIN token", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/api/v1/reports/leave-list/pdf?year=2025",
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      // The seed has no approved leave requests — endpoint returns 200 with an empty/stub PDF
-      expect(res.statusCode).toBe(200);
-      expect(res.headers["content-type"]).toContain("application/pdf");
-      expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
-    });
-
-    it("returns 401 without auth", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/api/v1/reports/leave-list/pdf?year=2025",
-      });
-      expect(res.statusCode).toBe(401);
-    });
-
-    it("returns 403 for EMPLOYEE token", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: "/api/v1/reports/leave-list/pdf?year=2025",
+        url: "/api/v1/reports/monthly-export/pdf?year=2025&month=1",
         headers: { authorization: `Bearer ${data.empToken}` },
       });
       expect(res.statusCode).toBe(403);

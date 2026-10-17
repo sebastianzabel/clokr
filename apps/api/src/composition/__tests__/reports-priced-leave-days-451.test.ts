@@ -1,6 +1,5 @@
 /**
- * Issue #451 (D-02) — the Monatsbericht (JSON + both PDFs), the Urlaubsliste PDF and the list
- * part of the Urlaubs-PDF print the leave days the absence context PRICED (workDays-aware,
+ * Issue #451 (D-02) — the Monatsbericht (JSON + both PDFs) and the Monatsexport print the leave days the absence context PRICED (workDays-aware,
  * holiday-aware, SHIFT_BASED contract days, Berufsschultage #448, §9-netted), never the raw
  * calendar-day span of a request. The issue's own literal example: a VACATION request spanning
  * Mon 03.08.2026 – Sun 16.08.2026 on a Mo–Fr contract is 10 workdays, not 14 calendar days.
@@ -9,13 +8,18 @@
  * stored `days` is priced by the absence context exactly as production traffic prices it — this
  * file never hand-writes a `days` value.
  *
- * `generateMonthlyReportPdf`, `streamCompanyMonthlyReportPdf` and `streamLeaveListPdf` are spied
+ * Issue #617: the Urlaubsliste PDF and the Urlaubs-PDF were removed. Their priced-days cases now read
+ * the Monatsexport's section "Urlaubsjahr" and the in-app Urlaubsübersicht (the facade split of the
+ * year's days into taken and approved).
+ *
+ * `generateMonthlyReportPdf` and `generateMonthlyExportPdf` are spied
  * the same way `reports-bs-leave-448.test.ts` / `reports.test.ts` already spy their own PDF
  * generators — PDFKit Flate-compresses its content streams, so the only way to assert on the data
  * a route built is to capture the argument before it reaches PDFKit.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
+import iconv from "iconv-lite";
 import type { FastifyInstance } from "fastify";
 import {
   getTestApp,
@@ -24,6 +28,7 @@ import {
   seedEntitlementYears,
   cleanupTestData,
   grantSystemRole,
+  configureDatevKanzlei,
 } from "../../__tests__/setup";
 import * as pdfUtils from "../pdf";
 
@@ -32,8 +37,7 @@ vi.mock("../pdf", async (importOriginal) => {
   return {
     ...actual,
     generateMonthlyReportPdf: vi.fn(actual.generateMonthlyReportPdf),
-    streamCompanyMonthlyReportPdf: vi.fn(actual.streamCompanyMonthlyReportPdf),
-    streamLeaveListPdf: vi.fn(actual.streamLeaveListPdf),
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
 
@@ -251,22 +255,41 @@ describe("Issue #451 (D-02) — Monatsbericht leave counts come from the absence
     expect(payload.otherAbsenceDays).toBe(0);
   });
 
-  it("GET /reports/monthly/pdf/all: the company PDF's row for this employee prices the same 10 workdays", async () => {
-    const spy = vi.mocked(pdfUtils.streamCompanyMonthlyReportPdf);
+  // Issue #617: the company PDF was replaced by the Monatsexport; same property, same oracle, plus
+  // the DATEV U line (Lohnart 300) the export's Urlaub count is read from.
+  it("GET /reports/monthly-export/pdf: the Monatsexport row prices the same 10 workdays, equal to the DATEV U line", async () => {
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
     spy.mockClear();
 
     const res = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/monthly/pdf/all?year=2026&month=8",
+      url: "/api/v1/reports/monthly-export/pdf?year=2026&month=8",
       headers: { authorization: `Bearer ${d.adminToken}` },
     });
     expect(res.statusCode).toBe(200);
     expect(spy).toHaveBeenCalledTimes(1);
-    const companyData = spy.mock.calls[0][1];
-    const row = companyData.rows.find((r) => r.employeeNumber === d.employee.employeeNumber);
+    const row = spy.mock.calls[0][0].rows.find(
+      (r) => r.employeeNumber === d.employee.employeeNumber,
+    );
     expect(row).toBeDefined();
-    expect(row!.vacationDays).toBe(10);
-    expect(row!.totalAbsenceDays).toBe(10);
+    expect(row!.absenceDays.vacation).toBe(10);
+    const absenceTotal = Object.values(row!.absenceDays).reduce((sum, days) => sum + days, 0);
+    expect(absenceTotal).toBe(10);
+
+    await configureDatevKanzlei(app, d.tenant.id);
+    const datevRes = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/datev?year=2026&month=8",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(datevRes.statusCode).toBe(200);
+    const datevBody = iconv.decode(datevRes.rawPayload, "win1252").split("[Bewegungsdaten]")[1];
+    const uLine = datevBody
+      .split("\r\n")
+      .map((line) => line.split(";"))
+      .find((f) => f[1] === d.employee.employeeNumber && Number(f[5]) === 300);
+    expect(uLine).toBeDefined();
+    expect(Number(uLine![7].replace(",", "."))).toBe(row!.absenceDays.vacation);
   });
 
   it("GET /reports/monthly: SPECIAL Sat-Mon on a Tue-Sat contract (Monday not a workday) prices as 1 day, not 3", async () => {
@@ -299,48 +322,31 @@ describe("Issue #451 (D-02) — Monatsbericht leave counts come from the absence
     expect(row.sickDaysWithoutAttest).toBe(1);
   });
 
-  it("GET /reports/leave-list/pdf: the 14-day VACATION period prices as 10 days, not 14", async () => {
-    const spy = vi.mocked(pdfUtils.streamLeaveListPdf);
+  // Issue #617: the leave-list and vacation PDFs priced the 14-day request as 10 days per period;
+  // the same request now enters the year's vacation figures of the Monatsexport priced the same.
+  it("GET /reports/monthly-export/pdf: the vacation section counts the 14-day VACATION request as 10 days, not 14", async () => {
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
     spy.mockClear();
 
     const res = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/leave-list/pdf?year=2026",
+      url: "/api/v1/reports/monthly-export/pdf?year=2026&month=8",
       headers: { authorization: `Bearer ${d.adminToken}` },
     });
     expect(res.statusCode).toBe(200);
     expect(spy).toHaveBeenCalledTimes(1);
-    const leaveListData = spy.mock.calls[0][1];
-    const empData = leaveListData.employees.find(
-      (e) => e.employeeNumber === d.employee.employeeNumber,
+    const row = spy.mock.calls[0][0].rows.find(
+      (r) => r.employeeNumber === d.employee.employeeNumber,
     );
-    expect(empData).toBeDefined();
-    expect(empData!.periods).toHaveLength(1);
-    expect(empData!.periods[0].days).toBe(10);
-    expect(empData!.totalDays).toBe(10);
-  });
-
-  it("GET /reports/vacation/pdf: the list part shows the same 14-day period priced at 10 days", async () => {
-    const spy = vi.mocked(pdfUtils.streamLeaveListPdf);
-    spy.mockClear();
-
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/reports/vacation/pdf?year=2026",
-      headers: { authorization: `Bearer ${d.adminToken}` },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(spy).toHaveBeenCalledTimes(1);
-    const leaveListData = spy.mock.calls[0][1];
-    const empData = leaveListData.employees.find(
-      (e) => e.employeeNumber === d.employee.employeeNumber,
-    );
-    expect(empData).toBeDefined();
-    expect(empData!.periods[0].days).toBe(10);
+    expect(row).toBeDefined();
+    expect(row!.vacation).not.toBeNull();
+    // Stichtag 31.08.2026: the whole request lies before it.
+    expect(row!.vacation!.takenDays + row!.vacation!.approvedUpcomingDays).toBe(10);
+    expect(row!.vacation!.takenDays).toBe(10);
   });
 });
 
-describe("Issue #451 (D-02) — Urlaubsliste cross-year clipping", () => {
+describe("Issue #451 (D-02) — cross-year request splits between the yearly vacation rows", () => {
   let app: FastifyInstance;
   let d: Awaited<ReturnType<typeof seedTestData>>;
 
@@ -372,39 +378,34 @@ describe("Issue #451 (D-02) — Urlaubsliste cross-year clipping", () => {
     await closeTestApp();
   });
 
-  it("GET /reports/leave-list/pdf?year=2026: the cross-year period clips to 4 days", async () => {
-    const spy = vi.mocked(pdfUtils.streamLeaveListPdf);
-    spy.mockClear();
-
+  // Issue #617: the Urlaubsliste clipped the request per period (4 / 5 days). The per-request clip is
+  // re-proven on the facade split (vacation-balance-split-617); here the in-app overview rows of the
+  // two years carry the clipped, priced days of that request.
+  async function overviewRow(year: number) {
     const res = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/leave-list/pdf?year=2026",
+      url: `/api/v1/reports/leave-overview?year=${year}`,
       headers: { authorization: `Bearer ${d.adminToken}` },
     });
     expect(res.statusCode).toBe(200);
-    const leaveListData = spy.mock.calls[0][1];
-    const empData = leaveListData.employees.find(
-      (e) => e.employeeNumber === d.employee.employeeNumber,
-    );
-    expect(empData).toBeDefined();
-    expect(empData!.periods[0].days).toBe(4);
+    const rows = JSON.parse(res.body) as Array<{
+      employee: { id: string };
+      takenDays: number | null;
+      approvedUpcomingDays: number | null;
+      missingEntitlement: boolean;
+    }>;
+    return rows.find((r) => r.employee.id === d.employee.id && !r.missingEntitlement);
+  }
+
+  it("GET /reports/leave-overview?year=2026: the cross-year request carries 4 days", async () => {
+    const row = await overviewRow(2026);
+    expect(row).toBeDefined();
+    expect(row!.takenDays! + row!.approvedUpcomingDays!).toBe(4);
   });
 
-  it("GET /reports/leave-list/pdf?year=2027: the same cross-year period clips to 5 days, not 8", async () => {
-    const spy = vi.mocked(pdfUtils.streamLeaveListPdf);
-    spy.mockClear();
-
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/reports/leave-list/pdf?year=2027",
-      headers: { authorization: `Bearer ${d.adminToken}` },
-    });
-    expect(res.statusCode).toBe(200);
-    const leaveListData = spy.mock.calls[0][1];
-    const empData = leaveListData.employees.find(
-      (e) => e.employeeNumber === d.employee.employeeNumber,
-    );
-    expect(empData).toBeDefined();
-    expect(empData!.periods[0].days).toBe(5);
+  it("GET /reports/leave-overview?year=2027: the same request carries 5 days, not 8", async () => {
+    const row = await overviewRow(2027);
+    expect(row).toBeDefined();
+    expect(row!.takenDays! + row!.approvedUpcomingDays!).toBe(5);
   });
 });

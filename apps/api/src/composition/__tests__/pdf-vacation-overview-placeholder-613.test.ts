@@ -1,107 +1,123 @@
 /**
- * Issue #613 (Phase 613, plan 02) — DB-free proof that a placeholder row of the vacation overview
+ * Issue #613 (Phase 613, plan 02) - DB-free proof that a placeholder row of the vacation figures
  * prints „kein Anspruch hinterlegt“ and never `null`, `undefined` or `NaN`.
  *
- * Two renderers share the row drawing: `streamVacationOverviewPdf` receives its document (driven
- * here with a recording stub, the idiom of `pdf-saldo-labels.test.ts`), and
- * `generateVacationOverviewPdf` builds its own PDFKit document, so `pdfkit` is replaced by the same
- * kind of recording stub for that case. Only `text` is observed, in draw order.
+ * Issue #617: the vacation overview PDFs this file used to drive were removed; the same property
+ * now has its subject in section "Urlaubsjahr" of the Monatsexport, drawn by `drawMonthlyExport`.
+ * The renderer receives its document, so the file drives it with a recording stub (the idiom of
+ * `pdf-saldo-labels.test.ts`). Only `text` is observed, in draw order.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-const recorded: { texts: string[] } = vi.hoisted(() => ({ texts: [] }));
-
-vi.mock("pdfkit", () => {
-  class RecordingPdfDocument {
-    y = 100;
-    page = { width: 842, height: 595, margins: { top: 50 } };
-    private handlers: Record<string, Array<(arg?: unknown) => void>> = {};
-    constructor() {
-      const proxy: object = new Proxy(this, {
-        get: (target, prop: string) => {
-          if (prop === "text") {
-            return (str: unknown) => {
-              recorded.texts.push(String(str));
-              return proxy;
-            };
-          }
-          if (prop === "on") {
-            return (event: string, cb: (arg?: unknown) => void) => {
-              (target.handlers[event] ??= []).push(cb);
-              return proxy;
-            };
-          }
-          if (prop === "end") {
-            return () => {
-              for (const cb of target.handlers["data"] ?? []) cb(Buffer.from("pdf"));
-              for (const cb of target.handlers["end"] ?? []) cb();
-            };
-          }
-          if (prop in target) return (target as unknown as Record<string, unknown>)[prop];
-          return () => proxy;
-        },
-      });
-      return proxy as this;
-    }
-  }
-  return { default: RecordingPdfDocument };
-});
-
-import PDFDocument from "pdfkit";
+import { describe, it, expect } from "vitest";
 import {
-  generateVacationOverviewPdf,
-  streamVacationOverviewPdf,
+  drawMonthlyExport,
   NO_ENTITLEMENT_LABEL,
-  type VacationOverviewPdfRow,
+  type MonthlyExportData,
+  type MonthlyExportRow,
 } from "../pdf";
 
-const employees: VacationOverviewPdfRow[] = [
-  {
-    name: "Pop P613real",
-    employeeNumber: "P613-REAL",
-    totalDays: 28,
-    carriedOver: 3,
-    usedDays: 5,
-    remainingDays: 26,
-  },
-  { name: "Pop P613none", employeeNumber: "P613-NONE", missingEntitlement: true },
-];
-
-function expectCleanTexts(texts: string[]) {
-  expect(texts).toContain(NO_ENTITLEMENT_LABEL);
-  expect(texts.filter((t) => t === NO_ENTITLEMENT_LABEL)).toHaveLength(1);
-  for (const t of texts) {
-    expect(t).not.toMatch(/null|undefined|NaN/);
-  }
-  // the real row still prints its figures
-  expect(texts).toEqual(expect.arrayContaining(["28", "3", "5", "26"]));
+function createRecordingDoc(): PDFKit.PDFDocument & { texts: string[] } {
+  const texts: string[] = [];
+  const target: Record<string, unknown> = {
+    texts,
+    y: 100,
+    x: 36,
+    page: { width: 842, height: 595, margins: { top: 36, bottom: 36, left: 36, right: 36 } },
+  };
+  const proxy: PDFKit.PDFDocument & { texts: string[] } = new Proxy(target, {
+    get(obj, prop: string) {
+      if (prop === "text") {
+        return (str: unknown) => {
+          texts.push(String(str));
+          return proxy;
+        };
+      }
+      if (prop === "heightOfString") return () => 12;
+      if (prop === "widthOfString") return (str: string) => String(str).length * 3.6;
+      if (prop in obj) return obj[prop];
+      return () => proxy;
+    },
+    set(obj, prop: string, value) {
+      obj[prop] = value;
+      return true;
+    },
+  }) as unknown as PDFKit.PDFDocument & { texts: string[] };
+  return proxy;
 }
 
-describe("vacation overview placeholder row (Issue #613)", () => {
-  beforeEach(() => {
-    recorded.texts.length = 0;
-  });
+const NO_ABSENCE = {
+  vacation: 0,
+  sick: 0,
+  sickChild: 0,
+  overtimeComp: 0,
+  special: 0,
+  education: 0,
+  unpaid: 0,
+  maternity: 0,
+  parental: 0,
+};
 
+function makeRow(overrides: Partial<MonthlyExportRow>): MonthlyExportRow {
+  return {
+    employeeName: "Pop P613",
+    employeeNumber: "P613",
+    status: "CONFIRMED",
+    workedMinutes: 0,
+    expectedMinutes: 0,
+    balanceMinutes: 0,
+    balanceAdjustmentMinutes: 0,
+    closingBalanceMinutes: 0,
+    datevWorkedMinutes: 0,
+    absenceDays: { ...NO_ABSENCE },
+    section9: false,
+    vacation: null,
+    ...overrides,
+  };
+}
+
+const data: MonthlyExportData = {
+  tenantName: "Testfirma",
+  monthLabel: "September 2026",
+  year: 2026,
+  month: 9,
+  generatedAt: "05.10.2026, 12:00",
+  vacationYear: { year: 2026, asOf: "30.09.2026" },
+  rows: [
+    makeRow({
+      employeeName: "Pop P613real",
+      employeeNumber: "P613-REAL",
+      vacation: {
+        entitlementDays: 28,
+        carriedOverEffectiveDays: 3,
+        availableDays: 31,
+        takenDays: 5,
+        approvedUpcomingDays: 0,
+        pendingDays: 0,
+        remainingDays: 26,
+      },
+    }),
+    makeRow({ employeeName: "Pop P613none", employeeNumber: "P613-NONE", vacation: null }),
+  ],
+};
+
+describe("vacation figures placeholder row (Issue #613, Monatsexport since #617)", () => {
   it("the label is the web overview's wording", () => {
     expect(NO_ENTITLEMENT_LABEL).toBe("kein Anspruch hinterlegt");
   });
 
-  it("streamVacationOverviewPdf prints the label for a placeholder row", () => {
-    streamVacationOverviewPdf(new PDFDocument(), {
-      tenantName: "Testfirma",
-      year: 2026,
-      employees,
-    });
-    expectCleanTexts(recorded.texts);
+  it("drawMonthlyExport prints the label once across the figure columns for a null row", () => {
+    const doc = createRecordingDoc();
+    drawMonthlyExport(doc, data);
+    const texts = doc.texts;
+    expect(texts.filter((t) => t === NO_ENTITLEMENT_LABEL)).toHaveLength(1);
+    // the real row still prints its figures
+    expect(texts).toEqual(expect.arrayContaining(["28", "3", "31", "5", "26"]));
   });
 
-  it("generateVacationOverviewPdf prints the label for a placeholder row", async () => {
-    const buffer = await generateVacationOverviewPdf({
-      tenantName: "Testfirma",
-      year: 2026,
-      employees,
-    });
-    expect(buffer.length).toBeGreaterThan(0);
-    expectCleanTexts(recorded.texts);
+  it("never prints null, undefined or NaN anywhere in the document", () => {
+    const doc = createRecordingDoc();
+    drawMonthlyExport(doc, data);
+    for (const t of doc.texts) {
+      expect(t).not.toMatch(/null|undefined|NaN/);
+    }
   });
 });

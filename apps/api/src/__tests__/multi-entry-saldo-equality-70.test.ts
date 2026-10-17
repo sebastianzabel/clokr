@@ -459,13 +459,13 @@ describe.each(SCHEDULE_TYPES)(
 
     /**
      * The PDF payload lists one row per entry — one row per entry by design, so the row list is
-     * not compared; what the rows add up to is (net hours of the whole list).
+     * not compared; what the rows add up to is (net minutes of the whole list).
      */
-    function withoutEntryRows(payload: { entries?: Array<{ netHours: number }> }): unknown {
+    function withoutEntryRows(payload: { entries?: Array<{ netMinutes: number }> }): unknown {
       const { entries, ...rest } = payload;
       expect(Array.isArray(entries), "the PDF payload lists the entries").toBe(true);
-      const netHours = entries!.reduce((sum, e) => sum + e.netHours, 0);
-      return { ...rest, entryNetHoursTotal: Math.round(netHours * 100) / 100 };
+      const netMinutes = entries!.reduce((sum, e) => sum + e.netMinutes, 0);
+      return { ...rest, entryNetMinutesTotal: netMinutes };
     }
 
     /**

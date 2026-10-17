@@ -215,12 +215,14 @@ Legal retention periods (Germany):
 
 Current: recalculated from hire date on every request (does not scale). Target architecture (SaldoSnapshot per month, Jahresübertrag, correction flow) — see GitHub issue #6.
 
-- **Report Soll/Ist/Überstunden has one source (Issue #451, D-03).** `GET /reports/monthly` (JSON
-  and both PDFs) reads `computeMonthReportFigures()` (`contexts/working-time-account/month-saldo.ts`)
-  exclusively — the composition layer computes no Soll of its own. Leave-day counts printed in
-  reports/DATEV go only through `leaveDaysByCodeWithin`/`leaveRequestDaysWithin`
+- **Report Soll/Ist/Überstunden has one source (Issue #451, D-03).** `GET /reports/monthly` (the JSON,
+  the Stundennachweis PDF and the Monatsexport PDF) reads `computeMonthReportFigures()`
+  (`contexts/working-time-account/month-saldo.ts`) exclusively — the composition layer computes no
+  Soll of its own. Leave-day counts printed in reports/DATEV go only through `leaveDaysByCodeWithin`
   (`contexts/absence/leave-days.ts`) — the same priced, §9-netted day-counting kernel the absence
-  context's own vacation calculation uses, never a separate calendar walk.
+  context's own vacation calculation uses, never a separate calendar walk. (`leaveRequestDaysWithin`,
+  the per-request twin, has had no production caller since #617 removed the Urlaubsliste; it stays
+  exported until a chore removes it.)
 - **A closed month is found and named by one rule (Issue #595).** Every MONTHLY `SaldoSnapshot` read
   for a month uses `periodStartWindow()` (two storage conventions exist on production — TZ-converted and
   legacy UTC-naive); several active rows of one month resolve through `monthlySnapshotOrder()`. The month a
@@ -235,7 +237,7 @@ Current: recalculated from hire date on every request (does not scale). Target a
   place the sick-day figure is derived: calendar days including weekends, clipped to the range, a
   half day counts 0.5, the attest split, the § 9 shift, sick leave type codes and
   `EFFECTIVE_LEAVE_STATUSES` only, with an optional per-day `countsDay` predicate (the dashboard
-  uses it to attribute a day to a salon). `/reports/monthly` (JSON and both PDFs) and the dashboard
+  uses it to attribute a day to a salon). `/reports/monthly` (the JSON, the Stundennachweis and the Monatsexport) and the dashboard
   team trend both call it — it used to live in `composition/reports.ts`, a business rule in the
   composition layer. `Absence` rows (imposed absences) never count as sick days.
   The `/leave` KPI reads `GET /leave/sick-days` (own data, calendar days from this same kernel, Issue
@@ -247,11 +249,11 @@ Current: recalculated from hire date on every request (does not scale). Target a
   (`hireDate <= end` and `exitDate` null or `>= start`, both bounds inclusive) and never anonymised.
   The bounds are INSTANTS (`Employee.hireDate`/`exitDate` are `@db.Timestamptz`) - pass
   `monthRangeUtc` / `weekRangeUtc` / `dayRangeUtc`, never `monthDateRange`; `isEmployedInPeriod()` is
-  its in-memory twin (a team-week day, an overview row). It is read by `/reports/monthly` and both
-  monthly PDFs, the leave overview (JSON and PDF), the leave-list and vacation PDFs (one population,
-  one order: last name, first name, id), the Monatsabschluss status and year status, the
+  its in-memory twin (a team-week day, an overview row). It is read by `/reports/monthly` and the
+  Stundennachweis, the leave overview (JSON; one population, one order: last name, first name,
+  id), the Monatsabschluss status and year status, the
   Saldo-Übersicht (facade W9 with a required period), today's attendance, the team week, the team
-  trend and the overtime trend. DATEV reads the employment core `employedInPeriodWhere` WITHOUT the
+  trend and the overtime trend. DATEV and the Monatsexport read the employment core `employedInPeriodWhere` WITHOUT the
   anonymisation clause (§ 41 EStG: the Lohnkonto of a month of employment stays complete). The
   carry-over warning list and its cron keep their BUrlG `exitDate: null` rule and only exclude
   anonymised persons. `user.isActive` is a LOGIN state and never selects persons:
@@ -264,6 +266,27 @@ Current: recalculated from hire date on every request (does not scale). Target a
   once by `finalSaldoOpen()` in Arbeitszeitkonto from the latest closed snapshot, with the person's
   reach judged at the exit day. The Monatsabschluss status computes missing days only inside the
   employment window the close writer uses (`statusEmploymentWindow()`, bound by parity tests).
+- **Two report documents; the Monatsexport is the human-readable twin of DATEV (Issue #617).** `GET
+  /reports/monthly-export/pdf` (`report:export:ZUGEWIESEN`, one PDF for all persons of a month): its
+  persons come only through `selectMonthlyExportPersons` (`composition/reports.ts`) on the shared DATEV
+  loader (`loadDatevMonth`, the employment core `employedInPeriodWhere`, § 41 EStG) — the ONE place #542
+  narrows by Stammsalon, DATEV itself is never narrowed; absence counts and „DATEV-Std.“ come only from
+  `datevPersonFigures` (Arbeitstage and Normalstunden, the DATEV values); Soll, Ist, Saldo, Status and the
+  Gesamtsaldo (`closingBalanceMinutes`) come only from `computeMonthReportFigures`; the section
+  „Urlaubsjahr“ comes only from the vacation facade at the Stichtag (`asOf` = last day of the exported
+  month, or tenant-local yesterday in the running month, so a re-export prints the same figures;
+  `availableDays`, `takenDays`, `approvedUpcomingDays`, `pendingCreatedByAsOfDays`); the document has no
+  day rows. `GET /reports/monthly/pdf` (the Stundennachweis, one person) is the ONLY document with a day
+  list — entries in start-time order plus absence periods and holidays, labels via `DISPLAY_NAME`, never
+  `leaveType.name`. The Firmen-PDF, the Urlaubsliste, the Urlaubs-PDF and the Urlaubsübersicht-PDF no
+  longer exist and must not come back as a second document. PDF numbers are written only through
+  `composition/pdf-format.ts` (H:MM from minutes, decimal comma, Tag/Tage) and footers only through
+  `writeFooter`; `pdf-output-guard-617.test.ts` (no `.toFixed`, no locale formatter, brand colour) and
+  `monthly-export-617.test.ts` (every figure pinned to DATEV and `/reports/monthly`) name the proofs.
+  The Urlaubsübersicht (`GET /reports/leave-overview`) lists VACATION entitlements only, an allow-list by
+  leave type code in the code, never a deny-list of sick types. Sick days in the Monatsexport are
+  lawful because its purpose is payroll preparation with DATEV's audience and permission (ADR
+  `docs/adr/0001-abweichungen.md`, Eintrag Q, Nachtrag Issue #617).
 - **`@db.Date` columns get calendar-day bounds, never a month/week instant (Issue #493).**
   `monthRangeUtc()` / `weekRangeUtc()` return tenant-local boundaries as UTC instants (local 1 Oct
   00:00 = `2026-09-30T22:00Z`); a Prisma filter or a JS clip on a `@db.Date` column
@@ -570,7 +593,7 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
 
 - **Resturlaub (remaining, expired, at-risk) comes from one function (Issue #451, D-07).**
   `vacationBalanceForRow`/`getVacationBalance` (`contexts/absence/facade/vacation-balance.ts`) is
-  the only place that computes it; every reader (Dashboard, Urlaubsübersicht, Urlaubs-PDFs, the
+  the only place that computes it; every reader (Dashboard, Urlaubsübersicht, the Monatsexport's „Urlaubsjahr“ section, the
   carry-over expiry cron, `GET /leave/entitlements`, the admin Urlaubsverwaltung) reads this
   facade instead of re-deriving the arithmetic.
 - **The regular yearly base value comes from one function (Issue #482).**
@@ -1408,9 +1431,12 @@ carries a `role` claim any more (an old token that still has one is ignored — 
 to new leave audit rows. `User.role` is only a **rollback-safety column derived from the user's role
 assignments** — written back by `deriveCompatRole()` in
 `apps/api/src/contexts/platform/compat-role.ts` after every assignment change (so a rollback to the
-previous image finds consistent values), and read by exactly three documented readers, pinned by
-`legacy-role-reads-539.test.ts`: the company-PDF role filter (D-12), the write-back comparison of
-`syncCompatRoleColumn` (D-06) and the takeover script. The employee form's role is derived from the
+previous image finds consistent values), and read by exactly two documented readers, pinned by
+`legacy-role-reads-539.test.ts`: the write-back comparison of
+`syncCompatRoleColumn` (D-06) and the takeover script. (The third reader, the company-PDF role
+filter D-12, is gone since #617 removed that PDF; `parseCompatRoleFilter` and `compatRoleUserWhere`
+stay exported without a caller until Release B, #641. The guard's `ALLOWED_READERS` never counted D-12, so
+its pin needed no change.) The employee form's role is derived from the
 stored assignments (`null` shows „Keine Rolle zugewiesen“). Before deploying Release A to any
 instance, run `apps/api/scripts/backfill-539-role-assignments.ts` (dry run, then `--confirm` when it
 lists users; runbook: `docs/migrations.md` „Phase 539“). Column and enum go with Release B

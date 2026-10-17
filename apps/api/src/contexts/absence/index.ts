@@ -217,7 +217,7 @@ export {
   recalcVacationEntitlementsForContractChange, // Issue #450 (D-06/D-08) — Erweiterung, additive; consumed by platform/api/settings.ts
   REGULAR_ENTITLEMENT_REASON_CONTRACT_CHANGE, // Issue #450 (D-06/D-08) — Erweiterung, additive; consumed by platform/api/settings.ts
   leaveDaysByCodeWithin, // Issue #451 (D-01) — Erweiterung, additive; consumed by composition/reports.ts (the DATEV export)
-  leaveRequestDaysWithin, // Issue #451 (D-02) — Erweiterung, additive; consumed by composition/reports.ts (Urlaubsliste / Urlaubs-PDF list)
+  leaveRequestDaysWithin, // Issue #451 (D-02) — Erweiterung, additive; no production caller since #617 removed the Urlaubsliste PDFs (a chore removes it)
 } from "./leave-days";
 export type { LeaveDaysForCode } from "./leave-days"; // Issue #451 (D-01)
 export { checkJArbSchG } from "./jarbschg";

@@ -12,6 +12,7 @@
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
+  import { VACATION_YEAR_COLUMNS } from "$lib/reports/vacation-columns"; // Issue #617
   import { DAY_STATUS_LABEL, attendanceStatusText } from "$lib/dashboard/day-status-label"; // Issue #587
   import { teamDayHref, teamLeaveCreateHref } from "$lib/dashboard/team-day-links"; // Issue #587
   import {
@@ -126,6 +127,11 @@
     // Issue #451 (D-07) — additive; an older cached response has neither field, hence `??`
     // fallback to the pre-#451 raw carriedOverDays at every call site below.
     carriedOverEffectiveDays?: number;
+    // Issue #617 (D-617-2) - additive; an older cached response has none of the three, hence the
+    // `??` fallback in the cells below.
+    availableDays?: number;
+    takenDays?: number;
+    approvedUpcomingDays?: number;
     missingEntitlement?: false;
   };
   type LeaveOverviewMissingRow = {
@@ -137,6 +143,9 @@
     usedDays: null;
     remainingDays: null;
     pendingDays: null;
+    availableDays: null;
+    takenDays: null;
+    approvedUpcomingDays: null;
     missingEntitlement: true;
   };
   type LeaveOverviewRow = LeaveOverviewRealRow | LeaveOverviewMissingRow;
@@ -157,22 +166,16 @@
   let datevLoading = $state(false);
   let datevError = $state("");
 
-  // Urlaubsbericht PDF (kombiniert: Urlaubsliste + Urlaubsübersicht)
-  let leaveYear = $state(currentYear);
-  let leaveLoading = $state(false);
-  let leaveError = $state("");
-
-  // Company monthly PDF (Firmenweiter Monatsbericht) — PDF-01 / PDF-03
-  let companyPdfMonth = $state(currentMonth);
-  let companyPdfYear = $state(currentYear);
-  let companyPdfRole = $state<"all" | "EMPLOYEE" | "MANAGER">("all");
-  let companyPdfLoading = $state(false);
-  let companyPdfError = $state("");
+  // Monatsexport card (Issue #617) — own period selector, same defaults as the DATEV card
+  let exportMonth = $state(currentMonth);
+  let exportYear = $state(currentYear);
+  let exportLoading = $state(false);
+  let exportError = $state("");
   // § 9-Hinweis (Phase 104, D-30) — erklärt, warum im gewählten Monat Tage von Urlaub nach
   // Krankheit gewandert sind. Kommt vom Server (GET /reports/monthly's section9Note field),
   // wird NICHT clientseitig hergeleitet, und ist nur gesetzt, wenn der Monat tatsächlich
-  // bestätigte § 9-Tage trägt.
-  let companyPdfSection9Note = $state<string | null>(null);
+  // bestätigte § 9-Tage trägt. Issue #617: sits on the Monatsexport card, driven by its own period.
+  let exportSection9Note = $state<string | null>(null);
 
   const months = [
     "Januar",
@@ -441,12 +444,12 @@
     if (canReportRead) void loadCarryoverAtRisk();
   });
 
-  // Der Monatsbericht-Hinweis hängt an der EIGENEN Periodenauswahl der Karte,
-  // nicht an selectedMonth/selectedYear der Team-Übersicht.
+  // The § 9 note follows the Monatsexport card's OWN period selection, not the team overview's
+  // selectedMonth/selectedYear.
   $effect(() => {
-    const _m = companyPdfMonth;
-    const _y = companyPdfYear;
-    if (canReportRead) void loadCompanyMonthlySection9Note();
+    const _m = exportMonth;
+    const _y = exportYear;
+    if (canReportRead) void loadExportSection9Note();
   });
 
   // ── onMount ────────────────────────────────────────────────────────────────
@@ -691,46 +694,31 @@
     setTimeout(() => URL.revokeObjectURL(objectUrl), 100);
   }
 
-  async function downloadVacationPdf() {
-    leaveLoading = true;
-    leaveError = "";
+  async function downloadMonthlyExport() {
+    exportLoading = true;
+    exportError = "";
     try {
       await downloadPdf(
-        `/reports/vacation/pdf?year=${leaveYear}`,
-        `Urlaubsbericht_${leaveYear}.pdf`,
+        `/reports/monthly-export/pdf?year=${exportYear}&month=${exportMonth}`,
+        `Monatsexport_${exportYear}_${String(exportMonth).padStart(2, "0")}.pdf`,
       );
     } catch (e: unknown) {
-      leaveError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
+      exportError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
     } finally {
-      leaveLoading = false;
+      exportLoading = false;
     }
   }
 
-  async function loadCompanyMonthlySection9Note() {
+  async function loadExportSection9Note() {
     try {
       const res = await api.get<{ section9Note?: string }>(
-        `/reports/monthly?year=${companyPdfYear}&month=${companyPdfMonth}`,
+        `/reports/monthly?year=${exportYear}&month=${exportMonth}`,
       );
-      companyPdfSection9Note = res.section9Note ?? null;
+      exportSection9Note = res.section9Note ?? null;
     } catch {
-      // Fail-safe: der Hinweis ist erklärend, nie blockierend — bei einem Fehler zeigen wir
-      // nichts an, statt eine Fehlermeldung in eine reine Downloadkarte zu schreiben.
-      companyPdfSection9Note = null;
-    }
-  }
-
-  async function downloadCompanyMonthlyPdf() {
-    companyPdfLoading = true;
-    companyPdfError = "";
-    try {
-      await downloadPdf(
-        `/reports/monthly/pdf/all?month=${companyPdfMonth}&year=${companyPdfYear}&role=${companyPdfRole}`,
-        `Monatsbericht_Alle_${companyPdfYear}_${String(companyPdfMonth).padStart(2, "0")}.pdf`,
-      );
-    } catch (e: unknown) {
-      companyPdfError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
-    } finally {
-      companyPdfLoading = false;
+      // Fail-safe: the note explains, it never blocks — on an error we show nothing instead of
+      // writing an error message into a plain download card.
+      exportSection9Note = null;
     }
   }
 
@@ -863,7 +851,7 @@
   title="Berichte & Auswertungen"
   accent="Auswertungen"
   sub={showTeamArea
-    ? "Urlaubslisten, Monatsberichte und DATEV-Exporte erstellen"
+    ? "Monatsexport, Stundennachweise und DATEV-Export erstellen"
     : "Persönliche Monatsabschlüsse — als PDF zum Download."}
 />
 
@@ -969,77 +957,34 @@
       </div>
     {/if}
 
-    <!-- Urlaubsbericht PDF Card (kombiniert: Urlaubsliste + Urlaubsübersicht) -->
+    <!-- Monatsexport Card (Issue #617) -->
     {#if canReportExport}
       <div class="card card-body card-animate report-card">
-        <div class="report-card-icon-section report-card-icon-section--blue">
-          <span class="report-icon-lg">🏖</span>
+        <div class="report-card-icon-section report-card-icon-section--green">
+          <span class="report-icon-lg">📄</span>
         </div>
         <div class="report-card-header">
           <div>
-            <h2 class="report-card-heading">Urlaubsbericht PDF</h2>
+            <h2 class="report-card-heading">Monatsexport</h2>
             <p class="report-card-desc text-muted">
-              Urlaubsliste &amp; Jahresübersicht der Ansprüche in einem PDF
+              Lesbare Fassung des DATEV-Exports: Soll, Ist, Saldo, Abwesenheiten und Urlaub je
+              Person — ohne Tagesliste
             </p>
           </div>
         </div>
 
         <div class="report-controls">
           <div class="form-group">
-            <label class="form-label" for="leave-year">Jahr</label>
-            <select id="leave-year" bind:value={leaveYear} class="form-input">
-              {#each years as y (y)}
-                <option value={y}>{y}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-
-        <button class="btn btn-primary" onclick={downloadVacationPdf} disabled={leaveLoading}>
-          {#if leaveLoading}
-            <span class="btn-spinner"></span>
-            Vorbereiten…
-          {:else}
-            PDF herunterladen
-          {/if}
-        </button>
-
-        {#if leaveError}
-          <div class="alert alert-error" role="alert">
-            <span>⚠</span>
-            <span>{leaveError}</span>
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    <!-- Company Monthly PDF Card (PDF-01 / PDF-03) -->
-    {#if canReportExport}
-      <div class="card card-body card-animate report-card">
-        <div class="report-card-icon-section report-card-icon-section--purple">
-          <span class="report-icon-lg">📑</span>
-        </div>
-        <div class="report-card-header">
-          <div>
-            <h2 class="report-card-heading">Firmenweiter Monatsbericht</h2>
-            <p class="report-card-desc text-muted">
-              Alle Mitarbeiter in einer PDF — optional nach Rolle gefiltert
-            </p>
-          </div>
-        </div>
-
-        <div class="report-controls">
-          <div class="form-group">
-            <label class="form-label" for="company-pdf-month">Monat</label>
-            <select id="company-pdf-month" bind:value={companyPdfMonth} class="form-input">
+            <label class="form-label" for="export-month">Monat</label>
+            <select id="export-month" bind:value={exportMonth} class="form-input">
               {#each months as name, i (i)}
                 <option value={i + 1}>{name}</option>
               {/each}
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label" for="company-pdf-year">Jahr</label>
-            <select id="company-pdf-year" bind:value={companyPdfYear} class="form-input">
+            <label class="form-label" for="export-year">Jahr</label>
+            <select id="export-year" bind:value={exportYear} class="form-input">
               {#each years as y (y)}
                 <option value={y}>{y}</option>
               {/each}
@@ -1047,39 +992,26 @@
           </div>
         </div>
 
-        <div class="form-group">
-          <label class="form-label" for="company-pdf-role">Rolle</label>
-          <select id="company-pdf-role" bind:value={companyPdfRole} class="form-input">
-            <option value="all">Alle Mitarbeiter</option>
-            <option value="EMPLOYEE">Nur Mitarbeiter</option>
-            <option value="MANAGER">Nur Manager</option>
-          </select>
-        </div>
-
-        <button
-          class="btn btn-primary"
-          onclick={downloadCompanyMonthlyPdf}
-          disabled={companyPdfLoading}
-        >
-          {#if companyPdfLoading}
+        <button class="btn btn-primary" onclick={downloadMonthlyExport} disabled={exportLoading}>
+          {#if exportLoading}
             <span class="btn-spinner"></span>
             Vorbereiten…
           {:else}
-            PDF herunterladen
+            ↓ PDF herunterladen
           {/if}
         </button>
 
-        {#if companyPdfSection9Note}
+        {#if exportSection9Note}
           <div class="alert alert-info" data-testid="report-section9-note">
             <span aria-hidden="true">§</span>
-            <span>{companyPdfSection9Note}</span>
+            <span>{exportSection9Note}</span>
           </div>
         {/if}
 
-        {#if companyPdfError}
+        {#if exportError}
           <div class="alert alert-error" role="alert">
             <span>⚠</span>
-            <span>{companyPdfError}</span>
+            <span>{exportError}</span>
           </div>
         {/if}
       </div>
@@ -1516,7 +1448,7 @@
     {#if canReportRead}
       <!-- Urlaubsübersicht (RPT-02) -->
       <Card animate class="widget-card" style="--card-idx: 4;">
-        <CardHeader title="Urlaubsübersicht" sub="Ansprüche, Genommen, Rest" />
+        <CardHeader title="Urlaubsübersicht" sub="Anspruch, genommen, genehmigt und Resturlaub" />
 
         {#if leaveOverviewLoading}
           <p class="section-placeholder">Lade Urlaubsübersicht…</p>
@@ -1531,12 +1463,9 @@
                 <tr>
                   <th>Mitarbeiter</th>
                   <th>Nr.</th>
-                  <th>Urlaubsart</th>
-                  <th class="numeric">Gesamt</th>
-                  <th class="numeric">Übertrag</th>
-                  <th class="numeric">Genommen</th>
-                  <th class="numeric">Geplant</th>
-                  <th class="numeric">Rest</th>
+                  {#each VACATION_YEAR_COLUMNS as label (label)}
+                    <th class="numeric">{label}</th>
+                  {/each}
                 </tr>
               </thead>
               <tbody>
@@ -1545,16 +1474,22 @@
                     <td>{row.employee.firstName} {row.employee.lastName}</td>
                     <td>{row.employee.employeeNumber}</td>
                     {#if row.missingEntitlement}
-                      <td colspan="6">
+                      <td colspan="7">
                         <span class="badge badge-yellow">kein Anspruch hinterlegt</span>
                       </td>
                     {:else}
-                      <td>{row.leaveType?.name}</td>
                       <td class="numeric">{formatDays(row.totalDays)}</td>
                       <td class="numeric"
                         >{formatDays(row.carriedOverEffectiveDays ?? row.carriedOverDays)}</td
                       >
-                      <td class="numeric">{formatDays(row.usedDays)}</td>
+                      <td class="numeric"
+                        >{formatDays(
+                          row.availableDays ??
+                            row.totalDays + (row.carriedOverEffectiveDays ?? row.carriedOverDays),
+                        )}</td
+                      >
+                      <td class="numeric">{formatDays(row.takenDays ?? row.usedDays)}</td>
+                      <td class="numeric">{formatDays(row.approvedUpcomingDays ?? 0)}</td>
                       <td class="numeric">{formatDays(row.pendingDays)}</td>
                       <td class="numeric strong">{formatDays(row.remainingDays)}</td>
                     {/if}
@@ -1563,6 +1498,10 @@
               </tbody>
             </table>
           </div>
+          <p class="form-hint leave-overview-hint">
+            Verfügbar = Anspruch + wirksamer Übertrag. Resturlaub = Verfügbar - Genommen -
+            Genehmigt. Beantragte Tage werden nicht abgezogen.
+          </p>
           <Pagination
             total={leaveOverviewRows.length}
             bind:page={leaveOverviewPage}
@@ -1638,10 +1577,6 @@
 
   .report-card-icon-section--green {
     background: var(--good-soft);
-  }
-
-  .report-card-icon-section--blue {
-    background: var(--brand-soft);
   }
 
   .report-icon-lg {
@@ -2093,6 +2028,10 @@
   .leave-overview-table .numeric.strong {
     font-weight: 700;
     color: var(--text);
+  }
+
+  .leave-overview-hint {
+    margin: 0.75rem 0 0;
   }
 
   /* ── Responsive ───────────────────────────────────────────────────────────── */

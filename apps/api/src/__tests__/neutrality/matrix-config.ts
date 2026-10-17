@@ -284,6 +284,17 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "there is no mechanism left to give these routes a recorded cell.",
   })),
   {
+    route: "GET /api/v1/reports/monthly-export/pdf",
+    reason:
+      "New route added in Issue #617 (OD-617-1), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — built permission-gated " +
+      "(`report:export:ZUGEWIESEN`) from its very first commit and never had role-based access " +
+      "behavior to compare. Same vacuous-satisfaction reasoning as the entries around it: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone. Proven by " +
+      "`monthly-export-617.test.ts` (access, population, audit) and `reports-hr-86.test.ts` " +
+      "(the report:read principal gets 403).",
+  },
+  {
     route: "GET /api/v1/leave/sick-days",
     reason:
       "New route added in Issue #595 (D-04), long after the role guard (`requireRole`) was " +
@@ -738,9 +749,7 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
     phase: "read",
     variants: personQuery("employeeId", MAY, { withNone: false }),
   },
-  "GET /api/v1/reports/leave-list/pdf": { phase: "read", variants: none(YEAR) },
   "GET /api/v1/reports/leave-overview": { phase: "read", variants: none(YEAR) },
-  "GET /api/v1/reports/leave-overview/pdf": { phase: "read", variants: none(YEAR) },
   "GET /api/v1/reports/monthly": {
     phase: "read",
     variants: personQuery("employeeId", JUNE, { withNone: false }),
@@ -750,8 +759,6 @@ export const ROUTE_SPECS: Readonly<Record<string, RouteSpec>> = {
     variants: personQuery("employeeId", JUNE, { withNone: false }),
     handlerCheck: true,
   },
-  "GET /api/v1/reports/monthly/pdf/all": { phase: "read", variants: none(JUNE) },
-  "GET /api/v1/reports/vacation/pdf": { phase: "read", variants: none(YEAR) },
   "GET /api/v1/retro-entry-requests": { phase: "read" },
   "GET /api/v1/role-assignments": { phase: "read" },
   "GET /api/v1/role-assignments/:id": { phase: "read", params: { id: "roleAssignment.customer" } },

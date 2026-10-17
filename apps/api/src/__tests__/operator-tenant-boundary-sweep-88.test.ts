@@ -82,8 +82,13 @@ let actor: Awaited<ReturnType<typeof seedTestData>>;
  * sweep of the tenant-less fallback ADMIN answered {200: 57, 400: 73, 401: 3, 404: 72, 409: 1, 410: 1,
  * 500: 5}, i.e. 209 responses that are neither 401 nor 403. The stored-ADMIN actor must reach at least as
  * many handlers, otherwise the sweep has gone vacuous.
+ *
+ * Issue #617 (2026-10-17): 209 -> 206. The phase removed three report routes (the vacation list, vacation
+ * and overview PDFs) that each answered 200 for the foreign tenant's admin, so the swept set shrank from 211
+ * to 208 and every swept route is still past the guard ({200: 65, 400: 71, 404: 71, 410: 1}, measured in the
+ * full run). The floor falls by exactly the three removed routes; the margin over it stays 2.
  */
-const FOREIGN_SWEEP_HANDLER_FLOOR = 209;
+const FOREIGN_SWEEP_HANDLER_FLOOR = 206;
 let victimIdentifiers: string[] = [];
 
 let addressCounter = 0;
