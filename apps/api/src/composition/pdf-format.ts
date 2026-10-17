@@ -40,7 +40,14 @@ export function fmtDecimalDe(n: number, maxDigits = 2): string {
   const fraction = scaled % scale;
   const sign = n < 0 && scaled !== 0 ? "-" : "";
   if (fraction === 0) return `${sign}${intPart}`;
-  const digits = String(fraction).padStart(maxDigits, "0").replace(/0+$/, "");
+  // Trailing zeros are dropped by integer division, not by a regex (fraction is non-zero here).
+  let trimmed = fraction;
+  let width = maxDigits;
+  while (trimmed % 10 === 0) {
+    trimmed /= 10;
+    width -= 1;
+  }
+  const digits = String(trimmed).padStart(width, "0");
   return `${sign}${intPart},${digits}`;
 }
 
