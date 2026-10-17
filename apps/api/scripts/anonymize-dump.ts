@@ -59,6 +59,7 @@ import pg from "pg";
 import { pathToFileURL } from "node:url";
 
 import { anonymizeEmployeeData } from "../src/contexts/platform/anonymize";
+import { getTenantTimezone, todayInTz } from "../src/contexts/working-time-account";
 
 /** One removed assignment, as `anonymizeEmployeeData` returns it (route audit `oldValue` + id). */
 type RemovedRoleAssignment = Awaited<
@@ -110,8 +111,15 @@ export async function anonymizeEmployeesForRun(
   };
   for (const employeeId of employeeIds) {
     try {
+      // Issue #614 (D-01): the exit day of an employee without one is the tenant-local today,
+      // resolved exactly as the API does (never a re-derived default timezone).
+      const owner = await prisma.employee.findUniqueOrThrow({
+        where: { id: employeeId },
+        select: { tenantId: true },
+      });
+      const exitDayIfUnset = todayInTz(await getTenantTimezone(prisma, owner.tenantId));
       const { removedRoleAssignments } = await prisma.$transaction(async (tx) =>
-        anonymizeEmployeeData({ tx, employeeId }),
+        anonymizeEmployeeData({ tx, employeeId, exitDayIfUnset }),
       );
       result.removedRoleAssignments.push(...removedRoleAssignments);
       result.anonymizedCount++;

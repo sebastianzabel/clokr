@@ -453,6 +453,69 @@ export async function prepareEmployeeCreation(
   };
 }
 
+// ── Reserved employee numbers (Issue #614, D-03) ────────────────────────────
+
+/**
+ * Issue #614 (D-03): the anonymization KEEPS the employee number (§ 41 EStG, § 147 AO), so a number
+ * stays reserved in its tenant for as long as the row exists — for an exited and for an anonymized
+ * person alike. The answer to a reuse is this one German 409 text (create AND change); the
+ * `@@unique([tenantId, employeeNumber])` constraint remains the backstop, never the user-facing answer.
+ */
+export const EMPLOYEE_NUMBER_RESERVED_MESSAGE =
+  "Diese Personalnummer ist bereits vergeben (auch an ausgeschiedene oder anonymisierte Mitarbeitende).";
+
+/** A deliberate 409: the global error handler keeps the German message of a 4xx `statusCode`. */
+export class EmployeeNumberReservedError extends Error {
+  readonly statusCode = 409;
+  constructor() {
+    super(EMPLOYEE_NUMBER_RESERVED_MESSAGE);
+    this.name = "EmployeeNumberReservedError";
+  }
+}
+
+/** True when `employeeNumber` is held by ANY employee of the tenant (any state), except `exceptEmployeeId`. */
+export async function isEmployeeNumberReserved(
+  db: Prisma.TransactionClient | FastifyInstance["prisma"],
+  tenantId: string,
+  employeeNumber: string,
+  exceptEmployeeId?: string,
+): Promise<boolean> {
+  const holder = await db.employee.findFirst({
+    where: {
+      tenantId,
+      employeeNumber,
+      ...(exceptEmployeeId ? { id: { not: exceptEmployeeId } } : {}),
+    },
+    select: { id: true },
+  });
+  return holder !== null;
+}
+
+/** Throws {@link EmployeeNumberReservedError} when the number is already held in the tenant. */
+export async function assertEmployeeNumberFree(
+  db: Prisma.TransactionClient | FastifyInstance["prisma"],
+  tenantId: string,
+  employeeNumber: string,
+  exceptEmployeeId?: string,
+): Promise<void> {
+  if (await isEmployeeNumberReserved(db, tenantId, employeeNumber, exceptEmployeeId)) {
+    throw new EmployeeNumberReservedError();
+  }
+}
+
+/**
+ * True for a Prisma unique violation (P2002) on the tenant-unique employee number — the race the
+ * pre-check cannot exclude. The target is read from `meta` leniently because the driver adapter
+ * reports it as a field list or as a constraint name.
+ */
+export function isEmployeeNumberUniqueViolation(err: unknown): boolean {
+  if (typeof err !== "object" || err === null || !("code" in err) || err.code !== "P2002") {
+    return false;
+  }
+  const meta = (err as { meta?: unknown }).meta;
+  return JSON.stringify(meta ?? {}).includes("employeeNumber");
+}
+
 // ── The transaction body ────────────────────────────────────────────────────
 
 /**
@@ -480,6 +543,11 @@ export async function createEmployeeInTransaction(
   const salonOutcome = await resolveHomeSalonForNewEmployee(tx, tenantId, body.homeSalonId);
   if (salonOutcome.status !== "OK") return salonOutcome;
 
+  // Issue #614 (D-03): a kept number of an exited or anonymized person is reserved. Checked inside
+  // the creation transaction before the first write; the unique-violation translation around the
+  // Employee insert below covers the race between this check and the insert.
+  await assertEmployeeNumberFree(tx, tenantId, body.employeeNumber);
+
   const user = await tx.user.create({
     data: {
       email: body.email,
@@ -489,42 +557,48 @@ export async function createEmployeeInTransaction(
     },
   });
 
-  const emp = await tx.employee.create({
-    data: {
-      tenantId,
-      userId: user.id,
-      firstName: body.firstName,
-      lastName: body.lastName,
-      employeeNumber: body.employeeNumber,
-      hireDate: new Date(body.hireDate),
-      nfcCardId: body.nfcCardId,
-      // Personalstruktur (Phase 41) — schema defaults apply if omitted
-      ...(body.classification !== undefined ? { classification: body.classification } : {}),
-      ...(body.coverageWeight !== undefined ? { coverageWeight: body.coverageWeight } : {}),
-      ...(body.requiresSupervision !== undefined
-        ? { requiresSupervision: body.requiresSupervision }
-        : {}),
-      // Phase 64 (D-08, BREAK-02): per-employee break override on create.
-      // undefined / omitted → null (fall back to tenant default).
-      breakOver6hOverride: body.breakOver6hOverride ?? null,
-      breakOver9hOverride: body.breakOver9hOverride ?? null,
-      // Phase 85.1.1 (D-01, D-04): per-employee Phorest puffer override on
-      // create. undefined / omitted → null (fall back to tenant default).
-      phorestPrepMinutesOverride: body.phorestPrepMinutesOverride ?? null,
-      phorestWrapupMinutesOverride: body.phorestWrapupMinutesOverride ?? null,
-      // Phase 76.31 (D-06): per-employee bsSlot* overrides on create.
-      // undefined / omitted → null (delegate down the slot hierarchy).
-      bsSlotFirstLongDayMinutes: body.bsSlotFirstLongDayMinutes ?? null,
-      bsSlotSecondLongDayMinutes: body.bsSlotSecondLongDayMinutes ?? null,
-      bsSlotShortDayMinutes: body.bsSlotShortDayMinutes ?? null,
-      bsSlotBlockWeekMinutes: body.bsSlotBlockWeekMinutes ?? null,
-      // Issue #482: per-person vacation base value, null = the classification's own
-      // Standard, resolved by resolveVacationBaseDays().
-      annualVacationDays: body.annualVacationDays ?? null,
-      // Issue #435 (D-11 prerequisite): needed at creation for the statutory-minimum floor.
-      birthDate: body.birthDate ? new Date(body.birthDate) : null,
-    },
-  });
+  let emp: Awaited<ReturnType<typeof tx.employee.create>>;
+  try {
+    emp = await tx.employee.create({
+      data: {
+        tenantId,
+        userId: user.id,
+        firstName: body.firstName,
+        lastName: body.lastName,
+        employeeNumber: body.employeeNumber,
+        hireDate: new Date(body.hireDate),
+        nfcCardId: body.nfcCardId,
+        // Personalstruktur (Phase 41) — schema defaults apply if omitted
+        ...(body.classification !== undefined ? { classification: body.classification } : {}),
+        ...(body.coverageWeight !== undefined ? { coverageWeight: body.coverageWeight } : {}),
+        ...(body.requiresSupervision !== undefined
+          ? { requiresSupervision: body.requiresSupervision }
+          : {}),
+        // Phase 64 (D-08, BREAK-02): per-employee break override on create.
+        // undefined / omitted → null (fall back to tenant default).
+        breakOver6hOverride: body.breakOver6hOverride ?? null,
+        breakOver9hOverride: body.breakOver9hOverride ?? null,
+        // Phase 85.1.1 (D-01, D-04): per-employee Phorest puffer override on
+        // create. undefined / omitted → null (fall back to tenant default).
+        phorestPrepMinutesOverride: body.phorestPrepMinutesOverride ?? null,
+        phorestWrapupMinutesOverride: body.phorestWrapupMinutesOverride ?? null,
+        // Phase 76.31 (D-06): per-employee bsSlot* overrides on create.
+        // undefined / omitted → null (delegate down the slot hierarchy).
+        bsSlotFirstLongDayMinutes: body.bsSlotFirstLongDayMinutes ?? null,
+        bsSlotSecondLongDayMinutes: body.bsSlotSecondLongDayMinutes ?? null,
+        bsSlotShortDayMinutes: body.bsSlotShortDayMinutes ?? null,
+        bsSlotBlockWeekMinutes: body.bsSlotBlockWeekMinutes ?? null,
+        // Issue #482: per-person vacation base value, null = the classification's own
+        // Standard, resolved by resolveVacationBaseDays().
+        annualVacationDays: body.annualVacationDays ?? null,
+        // Issue #435 (D-11 prerequisite): needed at creation for the statutory-minimum floor.
+        birthDate: body.birthDate ? new Date(body.birthDate) : null,
+      },
+    });
+  } catch (err) {
+    if (isEmployeeNumberUniqueViolation(err)) throw new EmployeeNumberReservedError();
+    throw err;
+  }
 
   const workSchedule = await tx.workSchedule.create({
     data: {

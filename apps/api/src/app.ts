@@ -39,6 +39,7 @@ import { schedulerPlugin } from "./contexts/scheduling/plugins/scheduler";
 import { attendanceCheckerPlugin } from "./contexts/time-tracking/plugins/attendance-checker";
 import { carryoverWarningPlugin } from "./contexts/absence/plugins/carryover-warning";
 import { vacationBalanceDecoratePlugin } from "./contexts/absence/plugins/vacation-balance-decorate"; // Issue #451 (D-07, 451-08) — composition-root exception; see that file's module header
+import { employmentExitDecoratePlugin } from "./contexts/absence/plugins/employment-exit-decorate"; // Issue #614 (D-02) — composition-root exception; see that file's module header
 import { dataRetentionPlugin } from "./composition/data-retention";
 import { tokenCleanupPlugin } from "./contexts/platform/plugins/token-cleanup";
 import { vocationalSchoolGeneratorPlugin } from "./contexts/absence/plugins/vocational-school-generator";
@@ -331,6 +332,7 @@ export async function buildApp() {
   await app.register(attendanceCheckerPlugin);
   await app.register(carryoverWarningPlugin);
   await app.register(vacationBalanceDecoratePlugin);
+  await app.register(employmentExitDecoratePlugin);
   await app.register(dataRetentionPlugin);
   await app.register(tokenCleanupPlugin);
   await app.register(vocationalSchoolGeneratorPlugin);

@@ -35,7 +35,8 @@ Zwei Modelle stehen zur Verfügung:
 
 Ausgeschiedene Mitarbeiter werden **nicht hard-gelöscht**, sondern anonymisiert (Art. 17 DSGVO):
 
-- Name → „Gelöscht / GELÖSCHT-XXX"
+- Name → „Gelöscht / GELÖSCHT-XXX"; die **Personalnummer bleibt erhalten** und wird nicht neu vergeben
+- Beschäftigung endet: ein leeres Austrittsdatum wird auf heute gesetzt, Urlaube und Berufsschultage danach werden storniert bzw. gekürzt (abgeschlossene Monate bleiben unverändert)
 - E-Mail → anonymisiert, Login deaktiviert
 - NFC-Karte → entfernt
 - Zeiteinträge, Urlaub, Überstunden → **bleiben erhalten** (gesetzliche Aufbewahrungspflicht)
