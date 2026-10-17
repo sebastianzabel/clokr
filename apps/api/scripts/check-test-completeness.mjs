@@ -878,7 +878,12 @@ import { readFileSync } from "node:fs";
 // pdf-vacation-overview-placeholder-613, month-close-status-population-613, final-saldo-613, overtime-overview-exited-613,
 // dashboard-population-613, report-population-guard-613 and scripts/__tests__/audit-613-month-close-population;
 // nothing removed. MIN_FILES 659 -> 669, never lowered.
-const MIN_FILES = 669;
+// Phase 587 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on `fix/587-tagesstatus`
+// (origin/main @ 83114c35, #613 merged in) - 672 test files, 10346 tests (10343 passed, 3 skipped). New files (+3):
+// contexts/time-tracking/__tests__/day-status, composition/__tests__/day-status-parity-587 and
+// __tests__/day-status-one-function-587; nothing removed, skipped or loosened (two assertions of the old status chain
+// were converted with a written reason, see the 587-01 summary). MIN_FILES 669 -> 672, never lowered.
+const MIN_FILES = 672;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -890,7 +895,8 @@ const MIN_FILES = 669;
 // Phase 595-06 (2026-10-17): MIN_TESTS 10087 -> 10152, the measured total of the full run named at MIN_FILES
 // (net +65: the nine new files minus the two W4 facade tests). Never lowered.
 // Phase 613 (2026-10-17): MIN_TESTS 10207 -> 10289, the measured total of the full run named at MIN_FILES. Never lowered.
-const MIN_TESTS = 10289;
+// Phase 587 (2026-10-17): MIN_TESTS 10289 -> 10346 (+57), the measured total of the full run named at MIN_FILES. Never lowered.
+const MIN_TESTS = 10346;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

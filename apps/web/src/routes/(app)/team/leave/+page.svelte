@@ -33,6 +33,7 @@
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility"; // Phase 257, Phase 262, #269, Issue #446 (D-04)
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import { parseLeaveCreateDeepLink, type LeaveCreateDeepLink } from "$lib/leave/create-deep-link"; // Issue #587
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // #265
   import { resolveAdjustmentBadge, type LastDaysAdjustment } from "$lib/leave/vacation-balance"; // Phase 107-07
   import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
@@ -570,6 +571,8 @@
   // first completed (salon-filtered) load, because the rows do not exist before it.
   let deepLinkRequestId: string | null = null;
   let deepLinkSection9Id: string | null = null;
+  // Issue #587 (D-587-4): ?create=1&employeeId&date from the „Abwesenheit erfassen“ action.
+  let deepLinkCreate: LeaveCreateDeepLink | null = null;
   let firstLoadDone = false;
 
   function runDeepLink() {
@@ -599,6 +602,18 @@
         highlightSection9Id = null;
       }, 3000);
     }
+
+    // Deep-link: create=1 (Issue #587) opens the EXISTING „Neue Abwesenheit“ dialog, prefilled.
+    // Only with the create permission; the person is taken over only when it is in this page's own
+    // (salon-filtered) list, else the picker stays empty; nothing is submitted from here.
+    const createLink = deepLinkCreate;
+    deepLinkCreate = null;
+    if (createLink && hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN")) {
+      const person = employees.find((emp) => emp.id.toLowerCase() === createLink.employeeId);
+      createEmployeeId = person ? person.id : "";
+      createInitialDate = createLink.date ?? new Date().toISOString().slice(0, 10);
+      createModalOpen = true;
+    }
   }
 
   onMount(() => {
@@ -616,6 +631,9 @@
     if (deepLinkRequestId) view = "approvals";
     deepLinkSection9Id = $page.url.searchParams.get("section9");
     if (deepLinkSection9Id) view = "approvals";
+
+    // Deep-link: ?create=1 (Issue #587) — validated now, applied after the first load.
+    deepLinkCreate = parseLeaveCreateDeepLink($page.url.searchParams);
   });
 
   // Issue #558: this effect owns the loads of the three lists. It is declared after onMount so

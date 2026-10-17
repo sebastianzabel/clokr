@@ -203,8 +203,7 @@ export interface ActiveLeaveOverlap {
  * now-retired `getApprovedLeaveOverlapping` (A1) used to carry — A1 was deleted by Issue #446, no
  * alias; do not add a new caller expecting an APPROVED-only variant to reappear.
  *
- * Sites: `composition/dashboard.ts`'s today's-presence bulk fetch,
- * `contexts/scheduling/api/shifts.ts`'s `/shifts/week` Soll-Korrelation row, plus — since Issue
+ * Sites: `contexts/scheduling/api/shifts.ts`'s `/shifts/week` Soll-Korrelation row, plus — since Issue
  * #446 — every Arbeitszeitkonto saldo input (`working-time-account/{month-saldo,overtime-balance,
  * close-month-data,recalculate-snapshots,plugins/auto-close-month,month-gap-check,api/overtime}.ts`).
  * Guarded by `apps/api/src/__tests__/shift-week-leave-absence-minutes.test.ts`'s case E (plan 02),
@@ -260,7 +259,8 @@ export interface CalendarLeaveOverlap {
  * time).
  *
  * Sites: `composition/dashboard.ts`'s week-calendar overlay (tenant-wide and own-employee
- * variants) — shared by BOTH `/team-week` and `/my-week`. `leaveType.code` is additive (Issue
+ * variants) — shared by `/team-week` and `/my-week` — and, since Issue #587, the attendance list
+ * `/today-attendance`, which reads what the team week reads. `leaveType.code` is additive (Issue
  * #205, finding 3): `/team-week` uses it for a rename-stable `leaveTypeCode` field alongside the
  * existing display `reason`; `/my-week`'s own response shape is unaffected by this widening.
  */

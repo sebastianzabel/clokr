@@ -31,6 +31,8 @@ describe("reportRights (/reports)", () => {
         canReportExport: true,
         canReportNotify: true,
         showTeamArea: true,
+        canAddTeamEntry: true,
+        canRecordTeamAbsence: true,
       });
     }
   });
@@ -58,6 +60,8 @@ describe("reportRights (/reports)", () => {
       canReportExport: true,
       canReportNotify: false,
       showTeamArea: true,
+      canAddTeamEntry: false,
+      canRecordTeamAbsence: false,
     });
   });
 
@@ -80,6 +84,110 @@ describe("reportRights (/reports)", () => {
     expect(reportRights(noList).showTeamArea).toBe(false);
     expect(reportRights(null).showTeamArea).toBe(false);
     expect(reportRights(undefined).showTeamArea).toBe(false);
+  });
+});
+
+// Issue #587 (D-587-4): the two action links of a „Fehlt“ row of the attendance list. Each flag is
+// the permission pair of the existing flow behind the link (Team-Zeiten „Eintrag nachtragen“ ->
+// POST /time-entries for a person in scope; Team-Abwesenheiten „Abwesenheit erfassen“ ->
+// POST /leave/requests on behalf). The target pages and the API enforce their own rules.
+describe("reportRights - attendance row actions (Issue #587)", () => {
+  it("persona table of the two flags", () => {
+    const table: Record<string, [boolean, boolean]> = {
+      ADMIN: [true, true],
+      OWNER: [true, true],
+      MANAGER: [true, true],
+      SALON_MANAGER: [true, true],
+      HR: [false, false],
+      TRAINER: [false, false],
+      EMPLOYEE: [false, false],
+    };
+    for (const [key, [addEntry, recordAbsence]] of Object.entries(table)) {
+      const r = reportRights({ permissions: p[key] });
+      expect(r.canAddTeamEntry, `${key} canAddTeamEntry`).toBe(addEntry);
+      expect(r.canRecordTeamAbsence, `${key} canRecordTeamAbsence`).toBe(recordAbsence);
+    }
+  });
+
+  it("a holder of only team-overview:read gets neither action", () => {
+    const r = reportRights({ permissions: ["team-overview:read:ZUGEWIESEN"] });
+    expect(r.canTeamAttendance).toBe(true);
+    expect(r.canAddTeamEntry).toBe(false);
+    expect(r.canRecordTeamAbsence).toBe(false);
+  });
+
+  it("each flag needs BOTH permissions of its flow", () => {
+    expect(reportRights({ permissions: ["time-entry:read:ZUGEWIESEN"] }).canAddTeamEntry).toBe(
+      false,
+    );
+    expect(reportRights({ permissions: ["time-entry:create:ZUGEWIESEN"] }).canAddTeamEntry).toBe(
+      false,
+    );
+    expect(
+      reportRights({
+        permissions: ["time-entry:read:ZUGEWIESEN", "time-entry:create:ZUGEWIESEN"],
+      }).canAddTeamEntry,
+    ).toBe(true);
+    expect(
+      reportRights({ permissions: ["leave-request:read:ZUGEWIESEN"] }).canRecordTeamAbsence,
+    ).toBe(false);
+    expect(
+      reportRights({ permissions: ["leave-request:create:ZUGEWIESEN"] }).canRecordTeamAbsence,
+    ).toBe(false);
+    expect(
+      reportRights({
+        permissions: ["leave-request:read:ZUGEWIESEN", "leave-request:create:ZUGEWIESEN"],
+      }).canRecordTeamAbsence,
+    ).toBe(true);
+  });
+
+  it("a compat role without permissions, or no permission list, gets neither action", () => {
+    for (const user of [adminRoleNoPermissions, noList, null, undefined]) {
+      const r = reportRights(user);
+      expect(r.canAddTeamEntry).toBe(false);
+      expect(r.canRecordTeamAbsence).toBe(false);
+    }
+  });
+});
+
+// Source pin of the reports page (it imports `$app/*` and cannot be mounted): only a „Fehlt“ row
+// gets action links, each behind its own flag, built by the shared href builders.
+describe("reports attendance list - action links (Issue #587, source pin)", () => {
+  function readRoute(relativeFromHere: string, relativeFromCwd: string): string {
+    try {
+      return readFileSync(fileURLToPath(new URL(relativeFromHere, import.meta.url)), "utf8");
+    } catch {
+      return readFileSync(resolve(process.cwd(), relativeFromCwd), "utf8");
+    }
+  }
+  const REPORTS = readRoute(
+    "../../routes/(app)/reports/+page.svelte",
+    "src/routes/(app)/reports/+page.svelte",
+  );
+  const tableStart = REPORTS.indexOf('<table class="attendance-table">');
+  const table = REPORTS.slice(tableStart, REPORTS.indexOf("</table>", tableStart));
+
+  it("anchors are present (non-vacuous)", () => {
+    expect(tableStart).toBeGreaterThan(-1);
+    expect(table).toContain("pagedTodayRows");
+  });
+
+  it("offers the two links only on a missing row, each behind its flag", () => {
+    expect(table).toContain('row.status === "missing"');
+    expect(table).toContain("Eintrag nachtragen");
+    expect(table).toContain("Abwesenheit erfassen");
+    expect(table).toContain("teamDayHref(row.id, todayAttendance.date)");
+    expect(table).toContain("teamLeaveCreateHref(row.id, todayAttendance.date)");
+    const missingAt = table.indexOf('row.status === "missing"');
+    expect(table.indexOf("Eintrag nachtragen")).toBeGreaterThan(missingAt);
+    expect(table.indexOf("Abwesenheit erfassen")).toBeGreaterThan(missingAt);
+    expect(table).toMatch(/canAddTeamEntry[\s\S]*Eintrag nachtragen/);
+    expect(table).toMatch(/canRecordTeamAbsence[\s\S]*Abwesenheit erfassen/);
+  });
+
+  it("no other status wording sits in the action cell", () => {
+    expect(table.match(/Eintrag nachtragen/g)).toHaveLength(1);
+    expect(table.match(/Abwesenheit erfassen/g)).toHaveLength(1);
   });
 });
 

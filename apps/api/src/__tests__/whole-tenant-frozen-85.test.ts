@@ -1138,6 +1138,75 @@ function normalize(value: unknown): unknown {
 }
 
 /**
+ * Amendment 2026-10-17 (Issue #587, Phase 587-01): case (c), `GET /dashboard/today-attendance`,
+ * encoded the defect #587 fixes. At the frozen instant (Wed 2026-06-17 12:00 CEST) the list
+ * hard-coded "today is never future" and read no shifts, so a FIXED_SCHEDULE person without a
+ * shift read "missing" — while `dashboard-team-week-frozen-84` pins the SAME admin at the SAME
+ * instant as "scheduled" (a day without a known start time is not yet due). Two frozen pins of
+ * one instant contradicted each other; the list now resolves through the same function as the team
+ * week (`resolveDayStatus`). The literal `EXPECTED_TODAY_ATTENDANCE` is NOT re-captured or edited:
+ * the explicit table `TODAY_ATTENDANCE_AMENDMENTS_587` names every cell whose value differs since
+ * #587 (cell, frozen value, value since #587, reason) and is applied to a deep copy of the literal
+ * before the comparison; `amendedTodayAttendance587()` first asserts that each entry's frozen
+ * value still equals the literal, so the table cannot drift. Any other difference stays a failure.
+ *
+ * Amendment 2026-10-17 (Issue #587, Phase 587-02): the rows additionally carry `expectedStart`
+ * (the start of the person's first in-scope shift today) and `lateMinutes` (minutes since that
+ * start for a "missing" row). Same mechanism as the 70b/92b keys below, nothing re-captured: both
+ * keys are taken out of each row before the comparison and proven `null` on every row (this
+ * fixture plans no shift).
+ */
+const TODAY_ATTENDANCE_AMENDMENTS_587 = {
+  rows: [
+    {
+      name: "Admin Test",
+      cell: "status",
+      frozen: "missing",
+      since587: "scheduled",
+      reason:
+        "FIXED_SCHEDULE workday today without a shift is not yet due at 12:00 (isDayDue); the team week pins the same cell as scheduled",
+    },
+    {
+      name: "Pin PinMissing",
+      cell: "status",
+      frozen: "missing",
+      since587: "scheduled",
+      reason:
+        "FIXED_SCHEDULE workday today without a shift is not yet due at 12:00 (isDayDue); a Fehlt claim needs a due time",
+    },
+  ],
+  summary: [
+    {
+      cell: "missing",
+      frozen: 2,
+      since587: 0,
+      reason:
+        "both rows counted as missing above are scheduled since #587; no other row is missing",
+    },
+  ],
+} as const;
+
+/** The frozen literal with the #587 amendment table applied to a deep copy; never mutates it. */
+function amendedTodayAttendance587(): typeof EXPECTED_TODAY_ATTENDANCE {
+  const copy = structuredClone(EXPECTED_TODAY_ATTENDANCE) as {
+    employees: Array<Record<string, unknown>>;
+    summary: Record<string, number>;
+  } & Record<string, unknown>;
+  expect(TODAY_ATTENDANCE_AMENDMENTS_587.rows.length).toBeGreaterThan(0);
+  for (const a of TODAY_ATTENDANCE_AMENDMENTS_587.rows) {
+    const row = copy.employees.find((r) => r.name === a.name);
+    expect(row, `amended row ${a.name}`).toBeDefined();
+    expect(row?.[a.cell], `frozen value of ${a.name}.${a.cell}`).toBe(a.frozen);
+    (row as Record<string, unknown>)[a.cell] = a.since587;
+  }
+  for (const a of TODAY_ATTENDANCE_AMENDMENTS_587.summary) {
+    expect(copy.summary[a.cell], `frozen summary.${a.cell}`).toBe(a.frozen);
+    copy.summary[a.cell] = a.since587;
+  }
+  return copy as unknown as typeof EXPECTED_TODAY_ATTENDANCE;
+}
+
+/**
  * Amendment 2026-10-16 (Issue #70, Phase 70b-06): GET /time-entries rows additionally carry the
  * display field `salonName` (the name of the entry's own salon). The frozen literals below are NOT
  * re-captured: the field is taken out of the rows before the comparison and proven separately
@@ -1481,8 +1550,17 @@ describe("Issue #85 / #547 — frozen whole-tenant responses (tenant admin)", ()
     expect(body.employees.map((r) => r.id as string).sort((a, b) => a.localeCompare(b))).toEqual(
       allVisibleIds(),
     );
-    const sorted = { ...body, employees: byName(body.employees, (r) => String(r.name)) };
-    expect(normalize(sorted)).toEqual(EXPECTED_TODAY_ATTENDANCE);
+    // Amendment #587-02: the two additive keys are proven null (no shift is planned here) and
+    // taken out, so every other key and value stays pinned against the literal.
+    expect(body.employees.length).toBeGreaterThan(0);
+    const stripped = body.employees.map((r) => {
+      const { expectedStart, lateMinutes, ...rest } = r;
+      expect(expectedStart, `expectedStart of ${String(r.name)}`).toBeNull();
+      expect(lateMinutes, `lateMinutes of ${String(r.name)}`).toBeNull();
+      return rest;
+    });
+    const sorted = { ...body, employees: byName(stripped, (r) => String(r.name)) };
+    expect(normalize(sorted)).toEqual(amendedTodayAttendance587());
   });
 
   it("(d) GET /time-entries (own entries) answers the frozen literal", async () => {
