@@ -1,5 +1,64 @@
 # Changelog
 
+## [1.16.0](https://github.com/sebastianzabel/clokr/compare/v1.15.0...v1.16.0) (2026-10-17)
+
+
+### Features
+
+* **511:** § 4 Satz 2/3 ArbZG und § 11 JArbSchG im Tageskern prüfen ([#527](https://github.com/sebastianzabel/clokr/issues/527)) ([a750044](https://github.com/sebastianzabel/clokr/commit/a750044fd833052d76778298c393dc734fe4fa8b))
+* **538:** UI decides by permissions; role names come from role assignments ([#634](https://github.com/sebastianzabel/clokr/issues/634)) ([18034a3](https://github.com/sebastianzabel/clokr/commit/18034a3bad049b4e4bd033dc5edb64dc18b8e2d4))
+* **539:** Berechtigungen nur aus gespeicherten Rollenzuweisungen — Altrollen-Rückfall entfernt (Release A) ([#642](https://github.com/sebastianzabel/clokr/issues/642)) ([70fe4ed](https://github.com/sebastianzabel/clokr/commit/70fe4edc39f85ba9fa658e46b00f84dd85da4c72))
+* **542:** reports follow the chosen salon; one 404, never wider, DATEV unfiltered ([#680](https://github.com/sebastianzabel/clokr/issues/680)) ([59ef142](https://github.com/sebastianzabel/clokr/commit/59ef142ec62af5f76e1c7f5bef7f012f6cbc1388))
+* **563:** Salonverwaltung für Mandanten-Admins — Öffnungszeiten je Salon, storeHours-Spiegel abgelöst ([#639](https://github.com/sebastianzabel/clokr/issues/639)) ([7a7f2d4](https://github.com/sebastianzabel/clokr/commit/7a7f2d4181aef91c6e664064e3c9610866552041))
+* **566:** Gebuchte Pakete je Mandant – Ketten-Paket mit Salon-Kontingent, Zusatzmodule ([#625](https://github.com/sebastianzabel/clokr/issues/625)) ([8260bcc](https://github.com/sebastianzabel/clokr/commit/8260bccc6a82549b0cd986a88c698e408da667a1))
+* **587:** one day status for dashboard and attendance list ([#671](https://github.com/sebastianzabel/clokr/issues/671)) ([c6f2971](https://github.com/sebastianzabel/clokr/commit/c6f29716e961c63404edc3a98412a37fd849060c))
+* **595:** report page and PDFs read closed months the same way; one meaning of sick days ([#665](https://github.com/sebastianzabel/clokr/issues/665)) ([c87b0eb](https://github.com/sebastianzabel/clokr/commit/c87b0ebe394ab1d4a1d1fd15762ebea2910e8253))
+* **613:** one report population rule — employed in the period, never anonymised ([#669](https://github.com/sebastianzabel/clokr/issues/669)) ([83114c3](https://github.com/sebastianzabel/clokr/commit/83114c35c791075827c32a7df9306418d381d5c7))
+* **614:** anonymisation ends the employment; employee number kept and reserved ([#667](https://github.com/sebastianzabel/clokr/issues/667)) ([47e8fcb](https://github.com/sebastianzabel/clokr/commit/47e8fcb7e054811401113af85c48ed1d613edf1e))
+* **617:** one Monatsexport PDF instead of five; German number format, no blank page ([#676](https://github.com/sebastianzabel/clokr/issues/676)) ([46c6a97](https://github.com/sebastianzabel/clokr/commit/46c6a97940c097a5810499ef05972e098163abf3))
+* **644:** scope GET /leave/section9 by the reach of section9:read:ZUGEWIESEN ([#646](https://github.com/sebastianzabel/clokr/issues/646)) ([5675869](https://github.com/sebastianzabel/clokr/commit/567586944145517847400a68558a9aa54c3b2d6f))
+* **650:** cancelOrphanShifts requires shift:plan over every affected shift ([#653](https://github.com/sebastianzabel/clokr/issues/653)) ([4ff81ff](https://github.com/sebastianzabel/clokr/commit/4ff81ff07b277f9668894937abdc89acc99fabe0))
+* **654:** narrow CSV time-entry import to the caller's import reach ([#656](https://github.com/sebastianzabel/clokr/issues/656)) ([5afdbac](https://github.com/sebastianzabel/clokr/commit/5afdbac9b8352702755a22c0081b50ac3f747120))
+* **658:** narrow POST /time-entries to the caller's create reach ([#659](https://github.com/sebastianzabel/clokr/issues/659)) ([7e9a2f8](https://github.com/sebastianzabel/clokr/commit/7e9a2f8f7d92d441e65a3177a469ba47236ee617))
+* **666:** backfill script corrects persons anonymized before [#614](https://github.com/sebastianzabel/clokr/issues/614) ([#678](https://github.com/sebastianzabel/clokr/issues/678)) ([8835ef5](https://github.com/sebastianzabel/clokr/commit/8835ef5e9d6f93e21b0e8c6c437ce7350825ada4))
+* **70,92:** several time entries per day; travel between salons counts as working time ([#661](https://github.com/sebastianzabel/clokr/issues/661)) ([b83fb1b](https://github.com/sebastianzabel/clokr/commit/b83fb1bf7fcf9767ad7586c0753a1acf05447781))
+* **80:** Tagesbezogene Pausenprüfung über Salongrenzen hinweg ([#519](https://github.com/sebastianzabel/clokr/issues/519)) ([a74c4e1](https://github.com/sebastianzabel/clokr/commit/a74c4e168569b4cfd8f3cd9114f20f4f82520c1a))
+* **81:** Tätigkeitsart am Zeiteintrag als Auswertungsdimension ([#530](https://github.com/sebastianzabel/clokr/issues/530)) ([47cfcfb](https://github.com/sebastianzabel/clokr/commit/47cfcfbf78ba2a723dbca4555cd05664f9f4ae51))
+* **82:** Mandanten- und Salon-Kontext im Frontend ([#532](https://github.com/sebastianzabel/clokr/issues/532)) ([aa6e37d](https://github.com/sebastianzabel/clokr/commit/aa6e37dfbbd5df8d6049fc5bf4d1f32b1124f9e7))
+* **83:** Rollen- und Berechtigungsverwaltung in der Oberfläche ([#540](https://github.com/sebastianzabel/clokr/issues/540)) ([a0258a8](https://github.com/sebastianzabel/clokr/commit/a0258a8d780566a7fd97c766e04c9a317850ab60))
+* **84:** Dashboard mandantenweit mit Salonfilter ([#544](https://github.com/sebastianzabel/clokr/issues/544)) ([8432616](https://github.com/sebastianzabel/clokr/commit/8432616e55460a6da8b6897f3e394489e3af7740))
+* **85:** Salonmanager-Ansicht – nur der eigene Salon, Prüfung je Zeiteintrag ([#552](https://github.com/sebastianzabel/clokr/issues/552)) ([945271e](https://github.com/sebastianzabel/clokr/commit/945271e3bc10242834b2f00ac96ccaae2e702198))
+* **86:** Personalabteilung maintains employees, contracts and salon assignments without daily times ([#652](https://github.com/sebastianzabel/clokr/issues/652)) ([a86378d](https://github.com/sebastianzabel/clokr/commit/a86378d0fec66c93a9ce8d21cdc6aa1f44e6cd87))
+* **87:** Salonwahl beim Stempeln — vorbelegt aus dem Wochenmuster ([#545](https://github.com/sebastianzabel/clokr/issues/545)) ([4e7b131](https://github.com/sebastianzabel/clokr/commit/4e7b1311cba7d956a7737720848c3a831d0a661e))
+* **88:** Betreiberkonto oberhalb des Mandanten und Mandantenverwaltung ([#556](https://github.com/sebastianzabel/clokr/issues/556)) ([0f24868](https://github.com/sebastianzabel/clokr/commit/0f24868257f01a95517d3f4cc38db1eb7eef74f6))
+* **89:** Betreiber-Oberfläche – Mandanten und Salons anlegen und verwalten ([#572](https://github.com/sebastianzabel/clokr/issues/572)) ([68caa38](https://github.com/sebastianzabel/clokr/commit/68caa389e319b56637bbb0693581e2ce02938348))
+* **90:** Betreiber-Dashboard mit aggregierten Kennzahlen je Mandant ([#629](https://github.com/sebastianzabel/clokr/issues/629)) ([33e2e9c](https://github.com/sebastianzabel/clokr/commit/33e2e9ce9f2b8aeead8d6379ada7a4ad5b6cef1a))
+* **93:** Support-Zugriff — befristete, protokollierte, nur lesende Einsicht des Betreibers ([#637](https://github.com/sebastianzabel/clokr/issues/637)) ([002147d](https://github.com/sebastianzabel/clokr/commit/002147d5aa9f417558944cf3d2ec671915771dd2))
+
+
+### Bug Fixes
+
+* **515:** aktueller Ort in der Navigation auf Mobile und Tablet sichtbar und für Screenreader markiert ([#517](https://github.com/sebastianzabel/clokr/issues/517)) ([f58d695](https://github.com/sebastianzabel/clokr/commit/f58d69574ec65c13c3b3211fe080b2b4b08a96a0))
+* **516:** mobile navigation offers the same grouped targets as the desktop sidebar ([#632](https://github.com/sebastianzabel/clokr/issues/632)) ([2b2f918](https://github.com/sebastianzabel/clokr/commit/2b2f9188d6f87f8edf7872f2362001a702064c5d))
+* **523:** a same-salon gap counts as a Ruhepause whatever its length ([#633](https://github.com/sebastianzabel/clokr/issues/633)) ([9636140](https://github.com/sebastianzabel/clokr/commit/9636140e088667bf93fb623aa2a989d8a105531d))
+* **546:** Stempelkarte – Ausstempeln und Einstempeln bleiben beim Überfahren und Fokussieren lesbar ([#549](https://github.com/sebastianzabel/clokr/issues/549)) ([3849ec9](https://github.com/sebastianzabel/clokr/commit/3849ec969a56ca48b054f3ebe9f8630abf00f769))
+* **548:** Wochenübersicht zeigt nur Schichten in der Reichweite des Aufrufers ([#554](https://github.com/sebastianzabel/clokr/issues/554)) ([761d8c4](https://github.com/sebastianzabel/clokr/commit/761d8c414cbfb86a903b278c883dd4c22f283e54))
+* **551:** Token ohne Mandant wird vor jeder Berechtigungsprüfung abgelehnt ([#559](https://github.com/sebastianzabel/clokr/issues/559)) ([3b312fe](https://github.com/sebastianzabel/clokr/commit/3b312fe4996d93c59389d4707558a2fb47b56273))
+* **553:** Monatsleiste passt auf das Handy (390 und 360 px), „Heute“ 44 px hoch ([#565](https://github.com/sebastianzabel/clokr/issues/565)) ([adac8e5](https://github.com/sebastianzabel/clokr/commit/adac8e5945d92308602cea616e0f4b1908f35bb0))
+* **557:** MFA-Reset und Deaktivierung beenden jedes Betreiber-Token sofort ([#560](https://github.com/sebastianzabel/clokr/issues/560)) ([e4e3193](https://github.com/sebastianzabel/clokr/commit/e4e31936b8cc6f752e0e67a840786f5685060bcd))
+* **564:** 320 px phones — iCal buttons wrap, month label clears the arrows ([#631](https://github.com/sebastianzabel/clokr/issues/631)) ([217b2c0](https://github.com/sebastianzabel/clokr/commit/217b2c0cf7651693ea0df4f47d344cbb549dfd5f))
+* **567:** Unique-Kollisionen nur aus strukturierten Metadaten zuordnen ([#623](https://github.com/sebastianzabel/clokr/issues/623)) ([54a8e33](https://github.com/sebastianzabel/clokr/commit/54a8e33a0d6a9ed40fcf0e0a16b678c55a73db44))
+* **568:** Sammelübernahme der Standard-Arbeitszeit nur nach Vorschau und Bestätigung, nie rückwirkend ([#622](https://github.com/sebastianzabel/clokr/issues/622)) ([347fe35](https://github.com/sebastianzabel/clokr/commit/347fe357bb2f271e72e0696f48fbb1e5e17a6cd8))
+* **569:** bulk apply of the default working time reaches only the active workforce ([#618](https://github.com/sebastianzabel/clokr/issues/618)) ([2fff33a](https://github.com/sebastianzabel/clokr/commit/2fff33ae24a96d9bfd3a2abc7c3f091695101127))
+* **570:** entrance animations leave no transform behind, so dialogs in animated cards cover the viewport ([#626](https://github.com/sebastianzabel/clokr/issues/626)) ([190122e](https://github.com/sebastianzabel/clokr/commit/190122e5ab324917cb15a3cf64fbbb4a4fad4501))
+* **621:** Reiterleiste der Admin-Seiten scrollt auf dem Handy für sich, statt die Seite zu verbreitern ([#627](https://github.com/sebastianzabel/clokr/issues/627)) ([346b855](https://github.com/sebastianzabel/clokr/commit/346b8553781d7e1e60a360f91b8ed5eb68f839b0))
+* **662:** Stornierung hebt § 9-Gutschriften auf ([#673](https://github.com/sebastianzabel/clokr/issues/673)) ([7923554](https://github.com/sebastianzabel/clokr/commit/792355439a2a67a0fc0b0a12d4dc4dadbf6a7c17))
+* **663:** backfill reads leave like the regular close; scripts get a typecheck ([#675](https://github.com/sebastianzabel/clokr/issues/675)) ([60d2298](https://github.com/sebastianzabel/clokr/commit/60d2298df7bf6a783a8f2c3b7494329d76ecc044))
+* **664:** bulk closed-month lookups find months closed in the legacy format ([#672](https://github.com/sebastianzabel/clokr/issues/672)) ([8411b33](https://github.com/sebastianzabel/clokr/commit/8411b33cc00d3d13310407a5920dcd3c7cb9a038)), closes [#664](https://github.com/sebastianzabel/clokr/issues/664)
+* **681:** open-month Gesamtsaldo includes every unclosed month since the last close ([#683](https://github.com/sebastianzabel/clokr/issues/683)) ([7b66d4a](https://github.com/sebastianzabel/clokr/commit/7b66d4a37417523f26d84226aa75b9068e3b1dbc)), closes [#681](https://github.com/sebastianzabel/clokr/issues/681)
+* **80:** Kalender bei Deep-Link mit ?date= am Monatsersten verankern ([#520](https://github.com/sebastianzabel/clokr/issues/520)) ([d01fa2c](https://github.com/sebastianzabel/clokr/commit/d01fa2c57d118d3c5abffceac45681b1a91e8ad6))
+* **deps:** raise fast-jwt override to &gt;=6.3.4 (GHSA-ww5h-9m49-7xx4 and three high advisories) ([#521](https://github.com/sebastianzabel/clokr/issues/521)) ([3d213ac](https://github.com/sebastianzabel/clokr/commit/3d213aceaf2eb0d91cb58b83d01eef776db0d175))
+
 ## [1.15.0](https://github.com/sebastianzabel/clokr/compare/v1.14.1...v1.15.0) (2026-10-07)
 
 
