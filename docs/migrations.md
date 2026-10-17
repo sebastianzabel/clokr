@@ -1043,8 +1043,8 @@ Verhaltensänderung für Personalabteilung und Administration: Eine DSGVO-Lösch
 (`DELETE /api/v1/employees/:id`) ein leeres Austrittsdatum auf den Tag der Anonymisierung, behält die Personalnummer (sie
 bleibt im Mandanten reserviert, Wiederverwendung antwortet 409) und storniert bzw. kürzt Urlaube und Berufsschultage nach
 dem Austritt; abgeschlossene Monate bleiben unverändert (ADR 0001-abweichungen, Eintrag N, Nachtrag Issue #614). **Dieses
-Release korrigiert keine Bestandszeile:** Personen, die vorher anonymisiert wurden, behalten ihren Zustand. Ob und wie sie
-nachgezogen werden, entscheidet das Folge-Issue #666.
+Release korrigiert keine Bestandszeile:** Personen, die vorher anonymisiert wurden, behalten ihren Zustand. Sie werden
+durch das Skript aus Phase 666 nachgezogen (Abschnitt „Phase 666“ unten).
 
 **1. Vor dem Deploy — Vorschau (lesend, auf int UND prod).**
 `apps/api/scripts/audit-614-anonymized-employment.ts` schreibt nichts (es gibt keinen Schreib-Schalter, `--apply` und
@@ -1074,8 +1074,9 @@ Befunde mit der Erwartung überein? Weicht sie ab, vor dem Deploy mit dem Betrei
 
 **2. Deploy** wie gewohnt (Einstiegspunkt des neuen Images, vorher `pg_dump`). Es läuft keine Migration.
 
-**3. Nichts still korrigieren.** Bestandsfälle gehören zu #666: weder Austrittsdaten noch Abwesenheiten oder
-Personalnummern der Vorschau werden von Hand oder per Skript geändert, bevor dort entschieden ist. Eine neue
+**3. Nichts still korrigieren.** Bestandsfälle gehören zu #666 (entschieden am 17.10.2026, Skript siehe „Phase 666“):
+weder Austrittsdaten noch Abwesenheiten oder Personalnummern der Vorschau werden von Hand oder mit einem anderen Skript
+geändert. Eine neue
 Anonymisierung nach dem Deploy braucht keinen Eingriff; ihre übersprungenen Zeilen (`skipped` im ANONYMIZE-Audit, IDs und
 Codes) werden fachlich geklärt, nicht still nachgezogen.
 
@@ -1084,6 +1085,70 @@ Abwesenheiten; das gilt für Anonymisierungen, die **nach** dem Rollback laufen.
 (Austrittsdatum, Stornos, Kürzungen), bleibt bestehen und ist auditiert (`auditReason` „Anonymisierung“); es gibt nichts
 zurückzunehmen. Beim erneuten Vorwärts-Deploy die Vorschau aus Schritt 1 wiederholen, weil zwischenzeitlich nach dem alten
 Muster anonymisiert worden sein kann.
+
+## Phase 666 — Bestandskorrektur anonymisierter Personen (Issue #666)
+
+**Hinweis für die Release Notes.** Es gibt **keine Migration und keinen Schemawechsel.** Owner-Entscheidung vom 17.10.2026
+(Optionen 1 und 2): Personen, die **vor** Phase 614 anonymisiert wurden, werden nachgezogen. Das Skript
+`apps/api/scripts/backfill-666-anonymized-employment.ts` macht für jede DSGVO-anonymisierte Person (Mandanten mit Deaktivierung
+eingeschlossen):
+
+1. **Austrittsdatum nachziehen** — nur wenn es leer ist: der Mandanten-Tag der (ersten) ANONYMIZE-Audit-Zeile. Ein vorhandenes
+   Austrittsdatum, ob vergangen oder künftig, bleibt. Ohne Austrittsdatum **und** ohne ANONYMIZE-Audit gibt es keinen
+   bestimmbaren Austrittstag: `exitDate=unknown`, für diese Person wird nichts geschrieben.
+2. **Dieselbe Regel wie bei einer neuen Anonymisierung** (`contexts/absence/employment-exit.ts`, über `app.absenceExit`, keine
+   Kopie): Abwesenheiten nach dem Austritt werden storniert, über den Austrittstag hinweg gekürzt, Berufsschultage danach
+   soft gelöscht; abgeschlossene Monate, aktive § 17 BEEG-Kürzungen und nicht korrigierbare Fälle werden übersprungen und mit
+   Id und Code aufgelistet. Wird das Austrittsdatum gesetzt, läuft auch der Austrittsjahr-Abgleich des Urlaubsanspruchs (#447).
+3. **Personalnummer wiederherstellen** aus `oldValue.employeeNumber` der ANONYMIZE-Audit-Zeile, wenn die Person noch die
+   frühere Überschreibung „GELÖSCHT-…“ trägt (Grund: § 41 EStG / § 147 AO; die Lohnabrechnung ordnet Korrekturen alter Monate
+   über die DATEV-`pnr` zu, Art. 17 Abs. 3 lit. b DSGVO erlaubt das Aufbewahren). Fehlt der Wert (`number=no-oldValue`), bleibt
+   die Nummer überschrieben und die Person wird gemeldet. Gehört die Nummer im Mandanten schon einer anderen Person
+   (`number=collision`), wird sie **nicht** geschrieben, nur gemeldet.
+
+Jede Korrektur ist auditiert (ohne Benutzer = System, vorher/nachher, kein Freitext) mit `trigger: "BACKFILL_666"` und
+`auditReason: "Bestandskorrektur #666"`. Abgeschlossene Monate bleiben summengleich (Test vergleicht die vollständigen
+`SaldoSnapshot`-Zeilen). Eine Transaktion je Person; scheitert eine, wird sie gemeldet (`result=failed:<CODE>`, Exit-Code `1`) und
+die übrigen laufen weiter. Idempotent: ein zweiter Lauf schreibt für korrigierte Personen nichts mehr.
+
+**Ablauf (Owner, auf int UND prod; jeweils nach dem Deploy des Release mit #666 und vorher `pg_dump`).**
+
+```bash
+# 0. Bestandsbild vorher (lesend), Ausgabe aufbewahren
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/audit-614-anonymized-employment.ts" \
+  | tee "666-audit614-vorher-<umgebung>-$(date +%Y%m%d).txt"
+
+# 1. Probelauf (Voreinstellung, schreibt NICHTS) - lesen und mit dem Bestandsbild vergleichen
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/backfill-666-anonymized-employment.ts" \
+  | tee "666-probelauf-<umgebung>-$(date +%Y%m%d).txt"
+
+# 2. Schreiben (optional --tenant <id>)
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/backfill-666-anonymized-employment.ts --confirm" \
+  | tee "666-lauf-<umgebung>-$(date +%Y%m%d).txt"
+
+# 3. Bestandsbild nachher (lesend)
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/audit-614-anonymized-employment.ts" \
+  | tee "666-audit614-nachher-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+(Das Skript baut die API-Anwendung und braucht deshalb die Umgebung des laufenden API-Containers; aus einem Checkout geht
+`DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx scripts/backfill-666-anonymized-employment.ts` mit derselben
+Umgebung wie die API. Der Standard-Einstiegspunkt eines frischen Images führt `prisma migrate deploy` aus und wird nicht
+verwendet.)
+
+Eine Zeile je Person: `tenant=<id> employee=<id> exitDate=<set|keep>:<YYYY-MM-DD>|unknown number=<restore|none|collision|no-oldValue>
+cancelled=<n> shortened=<n> deleted=<n> skipped=<Entität:Id:CODE,…>|none result=<planned|written|unchanged|failed:CODE>`, dann
+eine `Totals:`-Zeile. Es erscheinen nur Ids, Daten, Zahlen und Codes - keine Namen, keine Personalnummern.
+
+**Prüfen.** Der Probelauf nennt dieselben Personen wie die Vorher-Liste von `audit-614`. Nach `--confirm` meldet `audit-614`
+für korrigierte Personen nichts mehr. Es bleiben mit Absicht gemeldet: `number=collision` und `number=no-oldValue`
+(`NUMBER_OVERWRITTEN`), `exitDate=unknown` (`NO_EXIT_DATE`) und übersprungene Zeilen (`CLOSED_MONTH`,
+`PARENTAL_REDUCTION_ACTIVE`, …) - sie sind fachlich zu klären, nicht still zu ändern. Ein zweiter Lauf zeigt für korrigierte
+Personen `result=unchanged`.
+
+**Rollback.** Es gibt keinen Rückbau-Schalter: Jede Änderung steht mit `BACKFILL_666` im AuditLog, mit Werten vorher und
+nachher; bei Bedarf ist das der Weg für eine bewusste Korrekturbuchung. Der sichere Weg zurück ist die Wiederherstellung des
+`pg_dump` vor dem Lauf.
 
 ## Phase 663 — Nachtragsskript liest Urlaub wie der reguläre Abschluss (Issue #663)
 
