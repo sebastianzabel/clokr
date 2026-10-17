@@ -930,7 +930,10 @@ import { readFileSync } from "node:fs";
 // (base 59ef142e): 694 files, 10539 tests, i.e. +2 files and +26 cases over that base (25 attributed above). Nothing removed,
 // skipped or loosened. MIN_FILES = main + the phase's own delta: 693 + 2 = 695 (re-measured with the full run after the merge).
 // Merge #588 onto #682 (2026-10-17): main 695 + 2 = 697, no file removed.
-const MIN_FILES = 697;
+// Issue #679 (2026-10-17): measured with a full run on `fix/679-reach-stichtag` (origin/main @ 7b66d4a3) - 694 test files,
+// 10553 tests. New file: reach-stichtag-679 (+11 cases); nothing removed, skipped or loosened. MIN_FILES 693 -> 694, never lowered.
+// Merge #679 onto main: 697 + 1 = 698, no file removed.
+const MIN_FILES = 698;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -974,7 +977,9 @@ const MIN_FILES = 697;
 // Phase 588 (2026-10-17): MIN_TESTS 10513 -> 10539 (+26) on the phase branch before the merge of #683; after it main 10541 + 26
 // = 10567, re-measured with the full run named at MIN_FILES. Never lowered.
 // Merge #588 onto #682 (2026-10-17): main 10570 + 26 = 10596. Never lowered.
-const MIN_TESTS = 10596;
+// Issue #679 (2026-10-17): MIN_TESTS 10541 -> 10553, the measured total of the full run named at MIN_FILES. Never lowered.
+// Merge #679 onto main: 10596 + 12 = 10608. Never lowered.
+const MIN_TESTS = 10608;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
