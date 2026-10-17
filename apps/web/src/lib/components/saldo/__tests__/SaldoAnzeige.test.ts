@@ -290,6 +290,44 @@ describe("SaldoAnzeige — split mode (Phase 97-01)", () => {
     );
   });
 
+  // Issue #588 (P-15): a caller that relabels the forecast ("Seit Monatsabschluss (Prognose)")
+  // must reach screen readers with its own words, not with the default literals.
+  it("compact split reads the caller's labels to screen readers", () => {
+    renderWithTheme(SaldoAnzeige, {
+      variant: "compact",
+      confirmedMinutes: 135,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+      confirmedLabel: "Abgeschlossen",
+      forecastLabel: "Seit Monatsabschluss (Prognose)",
+    });
+    expect(screen.getByTestId("saldo-confirmed-value")).toHaveTextContent("Abgeschlossen:");
+    expect(screen.getByTestId("saldo-forecast-value")).toHaveTextContent(
+      "Seit Monatsabschluss (Prognose):",
+    );
+    expect(screen.getByTestId("saldo-forecast-value")).not.toHaveTextContent(
+      "Laufender Monat (Prognose)",
+    );
+  });
+
+  // Issue #588 (AC-588-3, orchestrator amendment 3): an exact zero is "±0:00" everywhere, so a
+  // saldo never reads as a bare number without its sign character.
+  it("an exact zero reads ±0:00 in single-value mode", () => {
+    renderWithTheme(SaldoAnzeige, { variant: "compact", saldoMinutes: 0 });
+    expect(screen.getByTestId("saldo-value").textContent?.trim()).toBe("±0:00");
+  });
+
+  it("an exact zero reads ±0:00 in compact split mode", () => {
+    renderWithTheme(SaldoAnzeige, {
+      variant: "compact",
+      confirmedMinutes: 0,
+      openMonthMinutes: 0,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-confirmed-value").textContent).toContain("±0:00");
+    expect(screen.getByTestId("saldo-forecast-value").textContent).toContain("±0:00");
+  });
+
   it("compact A3 ('noch kein Monatsabschluss') is the ONE caption UI-SPEC keeps even in compact", () => {
     renderWithTheme(SaldoAnzeige, {
       variant: "compact",

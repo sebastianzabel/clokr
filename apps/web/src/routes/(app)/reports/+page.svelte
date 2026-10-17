@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick, untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
   import { salonContext } from "$stores/salon-context"; // Issue #542
@@ -43,29 +43,6 @@
     type EmployeeMonthRow,
     type SnapshotAnswerRow,
   } from "$lib/reports/employee-months";
-  import {
-    Chart,
-    LineController,
-    LineElement,
-    PointElement,
-    CategoryScale,
-    LinearScale,
-    Filler,
-    Tooltip,
-    Legend,
-  } from "chart.js";
-
-  Chart.register(
-    LineController,
-    LineElement,
-    PointElement,
-    CategoryScale,
-    LinearScale,
-    Filler,
-    Tooltip,
-    Legend,
-  );
-
   // ── Types ──────────────────────────────────────────────────────────────────
 
   type TodayEmployee = {
@@ -111,8 +88,6 @@
     employeeNumber: string;
     balanceHours: number;
     status: "NORMAL" | "ELEVATED" | "CRITICAL";
-    // `month` is named by the server ("YYYY-MM", null when unnameable) - Issue #595 (D-03).
-    snapshots: Array<{ month: string | null; balanceMinutes: number; carryOver: number }>;
     // Phase 97-04 — additive split fields from GET /dashboard/overtime-overview. Optional:
     // an older cached response may omit them, in which case the row falls back to a
     // single-value SaldoAnzeige derived from balanceHours (Phase 97-07).
@@ -305,7 +280,7 @@
   }
 
   // Issue #613: the server flags the exited persons with an open final saldo; the team table, its
-  // sorting, paging, sparklines and the KPIs below read the active rows only.
+  // sorting, paging and the KPIs below read the active rows only.
   let overtimeSections = $derived(partitionOvertimeOverview(overtimeOverview?.employees ?? []));
 
   let sortedOvertime = $derived.by(() => {
@@ -409,20 +384,6 @@
     const _len = leaveOverviewRows.length;
     leaveOverviewPage = 1;
   });
-
-  // Map<employeeId, Chart> — key is employeeId so re-sort/pagination doesn't break identity
-  const sparklineCharts = new Map<string, Chart>();
-  // Canvas refs captured via use:registerCanvas action in {#each}
-  const sparklineCanvases = new Map<string, HTMLCanvasElement>();
-
-  function registerCanvas(el: HTMLCanvasElement, empId: string) {
-    sparklineCanvases.set(empId, el);
-    return {
-      destroy() {
-        sparklineCanvases.delete(empId);
-      },
-    };
-  }
 
   // Per-employee download error state
   let empDownloadErrors = $state<Record<string, string>>({});
@@ -529,78 +490,6 @@
     if (!showTeamArea) {
       await loadEmployeeMonthlyCloses();
     }
-  });
-
-  onDestroy(() => {
-    for (const chart of sparklineCharts.values()) chart.destroy();
-    sparklineCharts.clear();
-    sparklineCanvases.clear();
-  });
-
-  // ── Sparkline lifecycle ────────────────────────────────────────────────────
-
-  $effect(() => {
-    const rows = pagedOvertimeRows;
-    void tick().then(() => {
-      // Destroy charts for employees not on the current page
-      for (const [empId, chart] of sparklineCharts.entries()) {
-        if (!rows.some((r) => r.id === empId)) {
-          chart.destroy();
-          sparklineCharts.delete(empId);
-        }
-      }
-      // (Re)create chart for every visible row with >=2 snapshots
-      for (const row of rows) {
-        const canvas = sparklineCanvases.get(row.id);
-        if (!canvas) continue;
-        if (row.snapshots.length < 2) {
-          const stale = sparklineCharts.get(row.id);
-          if (stale) {
-            stale.destroy();
-            sparklineCharts.delete(row.id);
-          }
-          continue;
-        }
-        // Always destroy previous Chart before creating a new one
-        const existing = sparklineCharts.get(row.id);
-        if (existing) {
-          existing.destroy();
-          sparklineCharts.delete(row.id);
-        }
-
-        const labels = row.snapshots.map((s) => s.month ?? "—");
-        const data = row.snapshots.map((s) => s.carryOver / 60);
-
-        const brandColor =
-          getComputedStyle(document.documentElement).getPropertyValue("--brand").trim() ||
-          "#80377B";
-
-        const chart = new Chart(canvas, {
-          type: "line",
-          data: {
-            labels,
-            datasets: [
-              {
-                data,
-                borderColor: brandColor,
-                backgroundColor: brandColor + "22",
-                fill: true,
-                tension: 0.3,
-                pointRadius: 0,
-                borderWidth: 1.5,
-              },
-            ],
-          },
-          options: {
-            responsive: false,
-            animation: false,
-            plugins: { legend: { display: false }, tooltip: { enabled: false } },
-            scales: { x: { display: false }, y: { display: false } },
-          },
-        });
-        sparklineCharts.set(row.id, chart);
-      }
-    });
   });
 
   // ── Loaders ────────────────────────────────────────────────────────────────
@@ -1465,7 +1354,7 @@
     {#if canTeamOvertime}
       <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) -->
       <Card animate class="widget-card" style="--card-idx: 3;">
-        <CardHeader title="Überstunden-Übersicht" sub="Saldo & Verlauf je Mitarbeiter" />
+        <CardHeader title="Überstunden-Übersicht" sub="Saldo je Mitarbeiter" />
 
         {#if pageSalonId !== null}
           <p class="form-hint" data-testid="overtime-salon-persons-note">
@@ -1500,7 +1389,6 @@
                   <th class="numeric">{forecastColumnLabel(overtimeSections.active)}</th>
                   <th class="numeric">Gesamt</th>
                   <th>Status</th>
-                  <th>Verlauf (6 Monate)</th>
                   <th class="actions-col">Aktionen</th>
                 </tr>
               </thead>
@@ -1545,13 +1433,6 @@
                         >{statusBadgeLabel(row.status)}</span
                       ></td
                     >
-                    <td class="sparkline-cell">
-                      {#if row.snapshots.length >= 2}
-                        <canvas width="100" height="28" use:registerCanvas={row.id}></canvas>
-                      {:else}
-                        <span class="no-trend">(kein Verlauf)</span>
-                      {/if}
-                    </td>
                     <td class="row-actions">
                       <div class="row-actions__group">
                         <button
@@ -2077,16 +1958,6 @@
     color: var(--warn);
   }
 
-  .sparkline-cell {
-    width: 120px;
-  }
-
-  .no-trend {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-    font-style: italic;
-  }
-
   /* ── Per-employee action buttons ─────────────────────────────────────────── */
 
   .actions-col {
@@ -2196,15 +2067,6 @@
   @media (max-width: 720px) {
     .attendance-summary {
       grid-template-columns: repeat(2, 1fr);
-    }
-
-    .sparkline-cell {
-      display: none;
-    }
-
-    .overtime-table th:nth-last-child(2),
-    .overtime-table td:nth-last-child(2) {
-      display: none;
     }
 
     .actions-col,

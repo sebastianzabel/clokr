@@ -104,4 +104,21 @@ describe("/reports team area (Issue #588)", () => {
     expect(CARD).toContain("PERSON_SALDO_NOT_SPLIT_LABEL");
     expect(CARD).toContain("overtime-salon-persons-note");
   });
+
+  it("the empty Verlauf column and its chart code are gone", () => {
+    expect(PAGE).not.toMatch(/sparkline/i);
+    expect(PAGE).not.toContain("registerCanvas");
+    expect(PAGE).not.toContain("Verlauf (6 Monate)");
+    expect(PAGE).not.toContain("kein Verlauf");
+    expect(PAGE).not.toContain("new Chart(");
+    expect(PAGE).not.toContain('from "chart.js"');
+    expect(PAGE).not.toContain("onDestroy");
+    expect(PAGE).not.toContain("no-trend");
+  });
+
+  it("the overview card sub-title no longer promises a Verlauf", () => {
+    expect(PAGE).toContain(
+      '<CardHeader title="Überstunden-Übersicht" sub="Saldo je Mitarbeiter" />',
+    );
+  });
 });

@@ -37,6 +37,7 @@
   // forecast block ONLY — the confirmed figure is what this component promises
   // is stable, so it never carries either affordance.
   import Icon from "$components/Icon.svelte";
+  import { fmtBalance } from "$lib/utils/format-minutes"; // Issue #588
 
   export interface SaldoAnzeigeProps {
     saldoMinutes?: number | null;
@@ -190,13 +191,10 @@
     return out.join(" ");
   });
 
+  // Issue #588 (AC-588-3, orchestrator amendment 3): every saldo reads as a signed H:MM and an exact
+  // zero as "±0:00", through the one shared formatter (U+2212 minus for negatives, as before).
   function fmt(m: number): string {
-    // U+2212 minus sign for negatives (matches CalendarCell delta + v1.5 type recipe).
-    const prefix = m > 0 ? "+" : m < 0 ? "−" : "";
-    const abs = Math.abs(m);
-    const h = Math.floor(abs / 60);
-    const min = abs % 60;
-    return `${prefix}${h}:${String(min).padStart(2, "0")}`;
+    return fmtBalance(m);
   }
 </script>
 
@@ -275,15 +273,17 @@
              announced "Saldo −15248:00 −96:00" with no way to tell which is which — the
              97-UI-SPEC accessibility rule forbids the meaning resting on a visual
              convention alone. The visible compact layout is unchanged; these sr-only
-             prefixes carry the same vocabulary the expanded variant shows on screen. -->
+             prefixes carry the same vocabulary the expanded variant shows on screen.
+             Issue #588 (P-15): they read the caller's confirmedLabel/forecastLabel (the defaults
+             are the former literals), so a relabelled column reaches screen readers too. -->
         <span
           class="saldo__confirmed-value saldo__confirmed-value--{confirmedTone}"
           data-testid="saldo-confirmed-value"
         >
-          <span class="sr-only">Bestätigt: </span>{fmt(confirmedMinutes ?? 0)}
+          <span class="sr-only">{confirmedLabel}: </span>{fmt(confirmedMinutes ?? 0)}
         </span>
         <span class="saldo__forecast-value" data-testid="saldo-forecast-value">
-          <span class="sr-only">Laufender Monat (Prognose): </span>({forecastAvailable
+          <span class="sr-only">{forecastLabel}: </span>({forecastAvailable
             ? fmt(openMonthMinutes ?? 0)
             : "—"})
         </span>
