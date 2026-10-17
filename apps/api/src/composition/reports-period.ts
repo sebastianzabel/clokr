@@ -38,6 +38,7 @@ import {
   yearPopulationPeriod,
   type EmployeeWithIncludes,
 } from "./reports";
+import { resolveMonthReachIds } from "./reach-day"; // Issue #679: the reach day of a person in a month
 import { salonViewMemberIds, SALON_VIEW_NOT_FOUND } from "./salon-view";
 import { periodCsvFilename, periodTableCsv } from "./period-csv";
 
@@ -264,7 +265,7 @@ async function vacationYearRows(
           app.prisma,
           tenantId,
           reach,
-          new Date(`${year}-12-31T23:59:59.999Z`),
+          new Date(`${year}-12-31T00:00:00Z`), // Issue #679: a calendar day, never an instant
         );
   const entitlements = allEntitlements
     .filter((e) => scopedIds === "all" || scopedIds.includes(e.employeeId))
@@ -488,14 +489,21 @@ async function assemblePeriodReport(
     const scopedIds =
       reach.kind === "wholeTenant"
         ? "all"
-        : await resolveStammsalonScopedEmployeeIds(app.prisma, tenantId, reach, end);
+        : await resolveMonthReachIds(app.prisma, tenantId, reach, ym.year, ym.month, tz);
     const overtimeIds =
       overtimeReach === null
         ? new Set<string>()
         : overtimeReach.kind === "wholeTenant"
           ? "all"
           : new Set(
-              await resolveStammsalonScopedEmployeeIds(app.prisma, tenantId, overtimeReach, end),
+              await resolveMonthReachIds(
+                app.prisma,
+                tenantId,
+                overtimeReach,
+                ym.year,
+                ym.month,
+                tz,
+              ),
             );
 
     const populationEmployees = (await app.prisma.employee.findMany({
