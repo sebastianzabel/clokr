@@ -64,11 +64,22 @@ describe("/reports period area (Issue #612) - the URL is the one state", () => {
     const body = functionBody("writeState");
     expect(body).toContain("periodSearch(next)");
     expect(body).toMatch(/replaceState: true,\s+keepFocus: true,\s+noScroll: true/);
-    // Every goto( of the page passes replaceState: true until the drill-down (Task 3) adds the push.
+    // Every goto( of the page replaces the history entry except the ONE push: opening a person.
     const calls = [...SCRIPT.matchAll(/goto\(/g)].length;
     const replaced = [...SCRIPT.matchAll(/replaceState: true/g)].length;
-    expect(calls).toBeGreaterThanOrEqual(1);
-    expect(replaced).toBeGreaterThanOrEqual(calls);
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(replaced).toBe(calls - 1);
+  });
+
+  it("opening a person is the only history push: it follows the person link, plain left click only", () => {
+    const body = functionBody("openPerson");
+    expect(body).toContain("if (!isPlainLeftClick(event)) return;");
+    expect(body).toContain("event.preventDefault();");
+    expect(body).toMatch(/goto\(personHref\(row\), \{ keepFocus: true, noScroll: true \}\)/);
+    expect(body).not.toContain("replaceState");
+    expect(functionBody("personHref")).toContain(
+      "periodSearch({ ...urlState, person: row.employeeId })",
+    );
   });
 
   it("the tab list is an ARIA tablist named Berichtsbereich with a roving tabindex", () => {
@@ -209,10 +220,24 @@ describe("/reports period area (Issue #612) - dialogs, export-only callers, inte
     expect(TEMPLATE).toContain("{#if rights.periodTabs.length > 0}");
   });
 
-  it("the Überstunden-Übersicht card keeps working until Task 2 replaces it (amendment 3)", () => {
-    expect(PAGE).toContain('<CardHeader title="Überstunden-Übersicht"');
-    expect(SCRIPT).toContain("loadOvertimeOverview()");
-    expect(PAGE).toContain("{#each pagedOvertimeRows as row (row.id)}");
+  it("the Überstunden-Übersicht card is replaced by the period table; the exited section stays under it", () => {
+    expect(TEMPLATE).toContain("<TimesAccountsTable");
+    expect((TEMPLATE.match(/<TimesAccountsTable\b/g) ?? []).length).toBe(1);
+    expect(PAGE).not.toContain('<CardHeader title="Überstunden-Übersicht"');
+    expect(TEMPLATE).toContain("exited={exitedBlock}");
+    // The table gets the server's rows as they are; the page never sums or sorts them.
+    expect(TEMPLATE).toContain("rows={period?.rows ?? null}");
+    expect(TEMPLATE).toContain("{personHref}");
+    expect(TEMPLATE).toContain("onOpenPerson={openPerson}");
+  });
+
+  it("the exited section (and so the saldo overview request) needs team-overview plus overtime rights only", () => {
+    const at = PAGE.indexOf("{#snippet exitedBlock()}");
+    expect(at).toBeGreaterThan(-1);
+    const block = PAGE.slice(at, PAGE.indexOf("{/snippet}", at));
+    expect(block).toContain("{#if canTeamOvertime}");
+    expect(block).toContain("<ExitedFinalSaldoSection");
+    expect(SCRIPT).toContain("const overview = canTeamOvertime;");
   });
 
   it("the attendance card and the vacation cards moved into their tabs without losing their rights", () => {

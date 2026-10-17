@@ -310,6 +310,10 @@ function reportsStyleBlock(): string {
   return styleBlockOf(REPORTS_PAGE);
 }
 
+// Issue #612 (pin ledger row 10): the Überstunden-Übersicht with its per-row PDF/DATEV action
+// column is gone (the person documents moved into the drill-down), so the carry-over warning table
+// is the one action column of the page. The property is unchanged: an action cell stays a table
+// cell, its flex layout lives on the inner wrapper.
 function reportsTableMarkup(): string {
   return `
     <table class="carryover-table">
@@ -323,23 +327,6 @@ function reportsTableMarkup(): string {
           <td class="row-actions">
             <div class="row-actions__group">
               <button class="btn-ghost btn-warn-now">Hinweis jetzt senden</button>
-            </div>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <table class="overtime-table">
-      <thead>
-        <tr>
-          <th class="actions-col">Aktionen</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="row-actions">
-            <div class="row-actions__group">
-              <button class="btn-icon btn-icon-pdf">PDF</button>
-              <button class="btn-icon btn-icon-datev">TXT</button>
             </div>
           </td>
         </tr>
@@ -389,11 +376,14 @@ describe("#442 — /reports action column at 390px (mobile-hide rule survives)",
 });
 
 describe("#442 — /reports source pin", () => {
-  it("exactly two td.row-actions, each wrapping a div.row-actions__group", () => {
+  it("exactly one td.row-actions (the carry-over warning), wrapping a div.row-actions__group", () => {
     const matches = REPORTS_PAGE.match(/<td class="row-actions">/g) ?? [];
-    expect(matches).toHaveLength(2);
+    expect(matches).toHaveLength(1);
+    // The removed Überstunden-Übersicht table (Issue #612) leaves no trace in the markup or the style.
+    expect(REPORTS_PAGE).not.toContain("overtime-table");
+    expect(REPORTS_PAGE).not.toContain("btn-icon");
     let searchFrom = 0;
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 1; i++) {
       const start = REPORTS_PAGE.indexOf('<td class="row-actions">', searchFrom);
       expect(start).toBeGreaterThan(-1);
       const end = REPORTS_PAGE.indexOf("</td>", start);

@@ -159,8 +159,10 @@ describe("Issue #542 — Berichte follow the header salon", () => {
 
   it("[notes] the person-list and all-salons notes render only under a filter", () => {
     expect(PAGE).toContain("{#if pageSalonId !== null}");
+    // Issue #612 (pin ledger row 2): SALON_HOME_PERSONS_NOTE belonged to the removed overview card -
+    // the period table shows no saldo under a filter (the KPI callout says why), so no
+    // "Personen nach Stammsalon" line is left to pin.
     for (const name of [
-      "SALON_HOME_PERSONS_NOTE",
       "SALON_EXPORT_PERSONS_NOTE",
       "PERSON_SALDO_NOT_SPLIT_LABEL",
       "ALL_SALONS_BLOCK_NOTE",

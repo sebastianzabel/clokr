@@ -211,3 +211,71 @@ export function teamSaldoCells(row: TeamSaldoRow): TeamSaldoCells {
   }
   return { confirmed, open, total: { text: fmtBalance(totalMinutesOf(row)) } };
 }
+
+// ── The period table (Issue #612) ────────────────────────────────────────────────────────────
+
+/**
+ * Issue #612 - the table "Zeiten & Konten" reads the SAME rule for a period: the fields of a
+ * `GET /reports/period` row the median needs. Not the overview row: a period row has no live
+ * `openMonthMinutes`, so the facts map as follows (P-12).
+ */
+export interface PeriodSaldoRow {
+  employeeId: string;
+  employeeName: string;
+  /** The Gesamtsaldo of the person's last listed month; null where it is withheld or has none. */
+  closingBalanceMinutes: number | null;
+  /** False when no listed month has a Soll (exempt, no contract, MONTHLY_HOURS without hours). */
+  labelled: boolean;
+  /** Absent in an older cached answer: an absent fact never excludes a person. */
+  hasRecordedTime?: boolean;
+}
+
+export interface PeriodSaldoExcluded {
+  employeeId: string;
+  name: string;
+  reason: TeamSaldoExclusionReason;
+  reasonLabel: string;
+}
+
+export interface PeriodSaldoFigures {
+  /** Persons that count for the median. */
+  counted: number;
+  /** The median of the counted closing saldi in minutes, or null when nobody counts. */
+  medianMinutes: number | null;
+  /** Persons who do not count, each with one reason, ordered by name then id. */
+  excluded: PeriodSaldoExcluded[];
+}
+
+/**
+ * The reason a period row does not count. A person without a Soll in the period is track-only
+ * (TIME_TRACKING_ONLY: the saldo of such a contract says nothing about the team, rule (c) of the
+ * module header); a withheld or missing closing saldo with a Soll is SALDO_UNAVAILABLE; a person
+ * who never recorded time is NO_RECORDED_TIME. The display wording stays in the label table above.
+ */
+export function periodSaldoExclusion(row: PeriodSaldoRow): TeamSaldoExclusionReason | null {
+  if (!row.labelled) return "TIME_TRACKING_ONLY";
+  if (row.closingBalanceMinutes === null) return "SALDO_UNAVAILABLE";
+  if (row.hasRecordedTime === false) return "NO_RECORDED_TIME";
+  return null;
+}
+
+/** The team figure of a period answer: the median of the closing saldi of the persons who count. */
+export function periodSaldoFigures(rows: readonly PeriodSaldoRow[]): PeriodSaldoFigures {
+  const counted: number[] = [];
+  const excluded: PeriodSaldoExcluded[] = [];
+  for (const row of rows) {
+    const reason = periodSaldoExclusion(row);
+    if (reason === null) {
+      counted.push(row.closingBalanceMinutes as number);
+    } else {
+      excluded.push({
+        employeeId: row.employeeId,
+        name: row.employeeName,
+        reason,
+        reasonLabel: TEAM_SALDO_EXCLUSION_LABEL[reason],
+      });
+    }
+  }
+  excluded.sort((x, y) => compareText(x.name, y.name) || compareText(x.employeeId, y.employeeId));
+  return { counted: counted.length, medianMinutes: medianOf(counted), excluded };
+}

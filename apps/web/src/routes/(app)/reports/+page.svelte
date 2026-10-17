@@ -30,7 +30,9 @@
   import PeriodBar from "$lib/components/reports/PeriodBar.svelte"; // Issue #612
   import PeriodKpis from "$lib/components/reports/PeriodKpis.svelte"; // Issue #612
   import PeriodRangeDialog from "$lib/components/reports/PeriodRangeDialog.svelte"; // Issue #612
+  import TimesAccountsTable from "$lib/components/reports/TimesAccountsTable.svelte"; // Issue #612
   import {
+    isPlainLeftClick,
     periodLabel,
     parsePeriodState,
     periodSearch,
@@ -41,18 +43,11 @@
     periodReportPath,
     ymKey,
     type PeriodReport,
+    type PeriodRow,
     type YearMonth,
   } from "$lib/reports/period-report"; // Issue #612
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
-  import {
-    TEAM_SALDO_EXCLUSION_LABEL,
-    forecastColumnLabel,
-    teamSaldoCells,
-    teamSaldoExclusion,
-    teamSaldoFigures,
-  } from "$lib/reports/team-saldo"; // Issue #588
   import { fmtBalance } from "$lib/utils/format-minutes"; // Issue #588
-  import Icon from "$components/Icon.svelte"; // Issue #588
   import { VACATION_YEAR_COLUMNS } from "$lib/reports/vacation-columns"; // Issue #617
   import { DAY_STATUS_LABEL, attendanceStatusText } from "$lib/dashboard/day-status-label"; // Issue #587
   import { teamDayHref, teamLeaveCreateHref } from "$lib/dashboard/team-day-links"; // Issue #587
@@ -296,6 +291,27 @@
     writeState({ ...urlState, from, to });
   }
 
+  // The drill-down link of a person: the current URL plus `person=<id>`. It is a real href, so a
+  // middle click or a modified click opens it in a new tab.
+  function personHref(row: PeriodRow): string {
+    return `${$page.url.pathname}?${periodSearch({ ...urlState, person: row.employeeId })}`;
+  }
+
+  // Opening a person is the ONE history push of the page (Back closes the drill-down). Only a plain
+  // left click is taken over; the trigger is remembered so focus can return to it.
+  function openPerson(event: MouseEvent, row: PeriodRow): void {
+    if (!isPlainLeftClick(event)) return;
+    event.preventDefault();
+    const el = event.currentTarget as HTMLElement | null;
+    focusReturnTo =
+      el === null
+        ? null
+        : el.matches("a, button")
+          ? el
+          : (el.querySelector<HTMLElement>("a, button") ?? el);
+    void goto(personHref(row), { keepFocus: true, noScroll: true });
+  }
+
   // Dialogs (rendered after `.period-content`, never inside an animated Card, Issue #570).
   let rangeOpen = $state(false);
   let focusReturnTo: HTMLElement | null = null;
@@ -361,51 +377,15 @@
     todayPage = 1;
   });
 
-  // ── Überstunden-Übersicht state (RPT-01 + SALDO-03) ───────────────────────
+  // ── Exited persons with an open final saldo (Issue #613, from the saldo overview) ──
 
   let overtimeOverview: OvertimeOverview | null = $state(null);
-  let overtimeLoading = $state(false);
   let overtimeError = $state("");
 
-  let sortColumn: "name" | "balance" = $state("name");
-  let sortDir: "asc" | "desc" = $state("asc");
-
-  // Phase 97-07 — sort by the CONFIRMED figure (the entitlement), not the forecast-inclusive
-  // balanceHours: a team's Saldo ordering should reflect what's actually owed, not a number
-  // that moves during the open month. Falls back to balanceHours (converted to minutes, so
-  // the two branches never mix units within one comparison) for a row lacking the split —
-  // an older cached response, per the same fallback shape as the Saldo cell itself.
-  function overtimeSortBalance(r: OvertimeEmployee): number {
-    return r.confirmedMinutes !== undefined ? r.confirmedMinutes : r.balanceHours * 60;
-  }
-
-  // Issue #613: the server flags the exited persons with an open final saldo; the team table, its
-  // sorting, paging and the KPIs below read the active rows only.
+  // Issue #613: the server flags the exited persons with an open final saldo. Issue #612: the period
+  // table carries the active persons; this answer feeds only the exited section below it, which is
+  // the state of today and independent of the period.
   let overtimeSections = $derived(partitionOvertimeOverview(overtimeOverview?.employees ?? []));
-
-  let sortedOvertime = $derived.by(() => {
-    const rows = overtimeSections.active;
-    const copy = rows.slice();
-    copy.sort((a, b) => {
-      const cmp =
-        sortColumn === "name"
-          ? a.name.localeCompare(b.name, "de")
-          : overtimeSortBalance(a) - overtimeSortBalance(b);
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return copy;
-  });
-
-  let overtimePage = $state(1);
-  let overtimePageSize = $state(10);
-  let pagedOvertimeRows = $derived(
-    sortedOvertime.slice((overtimePage - 1) * overtimePageSize, overtimePage * overtimePageSize),
-  );
-
-  $effect(() => {
-    const _len = sortedOvertime.length;
-    overtimePage = 1;
-  });
 
   // ── Verfall-Warnungen state (Phase 44 — BUrlG § 7 Hinweispflicht) ─────────
 
@@ -710,7 +690,6 @@
 
   async function loadOvertimeOverview() {
     const generation = ++overviewGeneration;
-    overtimeLoading = true;
     overtimeError = "";
     try {
       const answer = await api.get<OvertimeOverview>(
@@ -729,8 +708,6 @@
         overtimeError =
           e instanceof Error ? e.message : "Fehler beim Laden der Überstunden-Übersicht";
       }
-    } finally {
-      if (generation === overviewGeneration) overtimeLoading = false;
     }
   }
 
@@ -970,29 +947,7 @@
     return `status-badge status-${status.replace("_", "-")}`;
   }
 
-  function toggleSort(column: "name" | "balance") {
-    if (sortColumn === column) {
-      sortDir = sortDir === "asc" ? "desc" : "asc";
-    } else {
-      sortColumn = column;
-      sortDir = "asc";
-    }
-  }
-
-  function statusBadgeClass(s: OvertimeEmployee["status"]): string {
-    return `status-badge status-saldo-${s.toLowerCase()}`;
-  }
-
-  function statusBadgeLabel(s: OvertimeEmployee["status"]): string {
-    return s === "NORMAL" ? "Normal" : s === "ELEVATED" ? "Erhöht" : "Kritisch";
-  }
-
   // ── KPI summaries (v1.5) ───────────────────────────────────────────────────
-
-  // Issue #588 (D-588-1): the median and the persons outside it come from the one team saldo
-  // module, over the active rows only (#613). Until 612-05 Task 2 moves the line into the period
-  // table, the old overview card shows it.
-  let teamSaldo = $derived(teamSaldoFigures(overtimeSections.active));
 
   // Employee KPIs - derived from the CLOSED months only (open months carry no figures)
   let empClosedRows = $derived(empMonthlyCloses.flatMap((r) => (r.status === "closed" ? [r] : [])));
@@ -1240,7 +1195,15 @@
           class:period-body--dim={periodLoading && period !== null}
         >
           {#if activeTab === "zeiten"}
-            {@render overtimeBlock()}
+            <TimesAccountsTable
+              rows={period?.rows ?? null}
+              loading={periodLoading}
+              periodLabel={periodLabel(urlState.from, urlState.to, today)}
+              filterActive={pageSalonId !== null}
+              {personHref}
+              onOpenPerson={openPerson}
+              exited={exitedBlock}
+            />
           {:else if activeTab === "urlaub"}
             {@render carryoverBlock()}
             {@render leaveOverviewBlock()}
@@ -1602,136 +1565,20 @@
   {/if}
 {/snippet}
 
-{#snippet overtimeBlock()}
+{#snippet exitedBlock()}
+  <!-- Issue #613 / #612: persons who left with an open final saldo - today's state, not the period. -->
   {#if canTeamOvertime}
-    <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) -->
-    <Card animate class="widget-card" style="--card-idx: 3;">
-      <CardHeader title="Überstunden-Übersicht" sub="Saldo je Mitarbeiter" />
-
-      {#if overtimeOverview}
-        <!-- Interim until the period table (612-05 Task 2) carries the median line. -->
-        <p class="form-hint" data-testid="team-median-line">
-          Median-Saldo {teamSaldo.medianMinutes === null
-            ? "—"
-            : fmtBalance(teamSaldo.medianMinutes)} h ·
-          {teamSaldo.excluded.length > 0
-            ? `${teamSaldo.excluded.length} nicht in der Kennzahl`
-            : `aus ${teamSaldo.counted} Personen`}
-        </p>
-      {/if}
-
-      {#if pageSalonId !== null}
-        <p class="form-hint" data-testid="overtime-salon-persons-note">
-          {SALON_HOME_PERSONS_NOTE} · {PERSON_SALDO_NOT_SPLIT_LABEL}
-        </p>
-      {/if}
-
-      {#if overtimeLoading}
-        <p class="section-placeholder">Lade Überstunden-Saldo…</p>
-      {:else if overviewSalonRejected}
-        <SalonScopeLabel label={null} rejected={true} />
-      {:else if overtimeError}
-        <p class="section-error">{overtimeError}</p>
-      {:else if overtimeOverview}
-        <div class="table-wrap">
-          <table class="overtime-table">
-            <thead>
-              <tr>
-                <th class="sortable" onclick={() => toggleSort("name")}>
-                  Mitarbeiter
-                  {#if sortColumn === "name"}<span class="sort-arrow"
-                      >{sortDir === "asc" ? "▲" : "▼"}</span
-                    >{/if}
-                </th>
-                <th>Nr.</th>
-                <th class="sortable numeric" onclick={() => toggleSort("balance")}>
-                  Abgeschlossen
-                  {#if sortColumn === "balance"}<span class="sort-arrow"
-                      >{sortDir === "asc" ? "▲" : "▼"}</span
-                    >{/if}
-                </th>
-                <th class="numeric">{forecastColumnLabel(overtimeSections.active)}</th>
-                <th class="numeric">Gesamt</th>
-                <th>Status</th>
-                <th class="actions-col">Aktionen</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each pagedOvertimeRows as row (row.id)}
-                {@const cells = teamSaldoCells(row)}
-                {@const exclusion = teamSaldoExclusion(row)}
-                <tr>
-                  <td>
-                    {row.name}
-                    {#if exclusion !== null}
-                      <span class="badge badge-gray" title="Nicht im Median-Saldo"
-                        >{TEAM_SALDO_EXCLUSION_LABEL[exclusion]}</span
-                      >
-                    {/if}
-                  </td>
-                  <td>{row.employeeNumber}</td>
-                  <td
-                    class="numeric"
-                    data-testid="saldo-cell-confirmed"
-                    title={cells.confirmed.title}
-                  >
-                    {cells.confirmed.text}
-                  </td>
-                  <td class="numeric" data-testid="saldo-cell-open" title={cells.open.title}>
-                    {cells.open.text}
-                    {#if row.rosterIncomplete}
-                      <span class="roster-dot" data-testid="saldo-roster-badge">
-                        <Icon
-                          name="circle-fill"
-                          size={6}
-                          title="Restmonat noch nicht vollständig verplant"
-                        />
-                      </span>
-                    {/if}
-                  </td>
-                  <td class="numeric" data-testid="saldo-cell-total" title={cells.total.title}>
-                    {cells.total.text}
-                  </td>
-                  <td
-                    ><span class={statusBadgeClass(row.status)}>{statusBadgeLabel(row.status)}</span
-                    ></td
-                  >
-                  <td class="row-actions">
-                    <div class="row-actions__group">
-                      <button
-                        class="btn-icon btn-icon-pdf"
-                        title="Stundennachweis PDF ({row.name})"
-                        onclick={() => downloadEmployeePdf(row.id, row.name)}>PDF</button
-                      >
-                      <button
-                        class="btn-icon btn-icon-datev"
-                        title="DATEV LODAS ({row.name})"
-                        onclick={() => downloadEmployeeDatev(row.id, row.name)}>TXT</button
-                      >
-                      {#if empDownloadErrors[`pdf-${row.id}`]}
-                        <span class="row-dl-error">{empDownloadErrors[`pdf-${row.id}`]}</span>
-                      {/if}
-                      {#if empDownloadErrors[`datev-${row.id}`]}
-                        <span class="row-dl-error">{empDownloadErrors[`datev-${row.id}`]}</span>
-                      {/if}
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <Pagination
-          total={sortedOvertime.length}
-          bind:page={overtimePage}
-          bind:pageSize={overtimePageSize}
-        />
-        <ExitedFinalSaldoSection
-          rows={overtimeSections.exitedOpen}
-          total={overtimeOverview.exitedOpenFinalSaldoCount ?? overtimeSections.exitedOpen.length}
-        />
-      {/if}
-    </Card>
+    {#if overviewSalonRejected}
+      <SalonScopeLabel label={null} rejected={true} />
+    {:else if overtimeError}
+      <p class="section-error">{overtimeError}</p>
+    {:else if overtimeOverview}
+      <ExitedFinalSaldoSection
+        rows={overtimeSections.exitedOpen}
+        total={overtimeOverview.exitedOpenFinalSaldoCount ?? overtimeSections.exitedOpen.length}
+        asOfNote="Stand heute, unabhängig vom Zeitraum"
+      />
+    {/if}
   {/if}
 {/snippet}
 
@@ -2148,69 +1995,6 @@
     color: var(--text-muted);
   }
 
-  /* Überstunden-Übersicht */
-
-  .overtime-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9375rem;
-  }
-
-  .overtime-table th,
-  .overtime-table td {
-    padding: 0.625rem 0.75rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .overtime-table th {
-    color: var(--text-muted);
-    font-weight: 600;
-    font-size: 0.8125rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .overtime-table th.sortable {
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .overtime-table th.sortable:hover {
-    color: var(--text);
-  }
-
-  .overtime-table .numeric {
-    text-align: right;
-    font-family: var(--font-mono);
-  }
-
-  .sort-arrow {
-    margin-left: 0.25rem;
-    color: var(--brand);
-  }
-
-  .status-saldo-normal {
-    background: var(--good-soft);
-    color: var(--good);
-  }
-
-  .status-saldo-elevated {
-    background: var(--warn-soft);
-    color: var(--warn);
-  }
-
-  .status-saldo-critical {
-    background: var(--bad-soft);
-    color: var(--bad);
-  }
-
-  .roster-dot {
-    display: inline-flex;
-    align-items: center;
-    color: var(--warn);
-  }
-
   /* ── Per-employee action buttons ─────────────────────────────────────────── */
 
   .actions-col {
@@ -2235,47 +2019,6 @@
     align-items: center;
     gap: 0.375rem;
     justify-content: flex-end;
-  }
-
-  .btn-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.25rem 0.5rem;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: var(--bg-subtle);
-    color: var(--text-muted);
-    font-size: 0.75rem;
-    font-weight: 600;
-    font-family: var(--font-mono);
-    cursor: pointer;
-    transition:
-      background 0.15s,
-      color 0.15s,
-      border-color 0.15s;
-    line-height: 1;
-  }
-
-  .btn-icon:hover {
-    background: var(--brand-soft);
-    color: var(--brand);
-    border-color: var(--brand);
-  }
-
-  .btn-icon-pdf {
-    color: var(--text-muted);
-  }
-
-  .btn-icon-datev {
-    color: var(--text-muted);
-  }
-
-  .row-dl-error {
-    font-size: 0.75rem;
-    color: var(--bad);
-    display: block;
-    margin-top: 0.25rem;
   }
 
   /* ── Urlaubsübersicht ─────────────────────────────────────────────────────── */

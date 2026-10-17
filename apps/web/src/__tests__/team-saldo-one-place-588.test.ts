@@ -10,14 +10,16 @@
 //   R1  a file other than team-saldo.ts declares a function or arrow constant named like /median/i
 //   R2  a file other than team-saldo.ts reduces over rows reading balanceHours, confirmedMinutes or
 //       openMonthMinutes (register `R2_REGISTER` below: file + reason + owning issue, must resolve)
-//   R3  the reports page, ExitedFinalSaldoSection.svelte or the dashboard card TeamSaldoCard.svelte
-//       does not import $lib/reports/team-saldo
+//   R3  the reports team table (TimesAccountsTable.svelte, Issue #612: it replaced the overview
+//       card of the reports page), ExitedFinalSaldoSection.svelte or the dashboard card
+//       TeamSaldoCard.svelte does not import $lib/reports/team-saldo
 //   R4  the running-month wording ("Laufender Monat (Prognose)" and the caption "inkl. laufendem
 //       Monat") appears in ANY non-test web file outside lib/saldo/forecast-label.ts, comments
 //       included (Issue #588, orchestrator decision 17.10.2026: AC-588-4 on every surface - the
 //       ONE place of the wording is the helper; the API's PDF wording constants are a month-scoped
 //       rule of their own and outside this walk by construction)
-//   R5  the overview card region of the reports page contains a <SaldoAnzeige
+//   R5  the reports team table (the whole TimesAccountsTable.svelte file, Issue #612) contains a
+//       <SaldoAnzeige
 //   R6  the average-saldo label of the former KPI appears in any walked file
 //   R7  SaldoAnzeige.svelte declares a string default for its forecastLabel prop, or
 //       KontoSaldoCard.svelte carries a caption literal instead of the forecastCaption() call
@@ -32,6 +34,7 @@ import { describe, it, expect } from "vitest";
 
 const MODULE_FILE = "lib/reports/team-saldo.ts";
 const PAGE_FILE = "routes/(app)/reports/+page.svelte";
+const TABLE_FILE = "lib/components/reports/TimesAccountsTable.svelte"; // Issue #612
 const EXITED_FILE = "lib/components/reports/ExitedFinalSaldoSection.svelte";
 const CARD_FILE = "lib/components/dashboard/TeamSaldoCard.svelte";
 const HELPER_FILE = "lib/saldo/forecast-label.ts";
@@ -144,6 +147,7 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
     const rels = FILES.map((f) => f.rel);
     expect(rels).toContain(MODULE_FILE);
     expect(rels).toContain(PAGE_FILE);
+    expect(rels).toContain(TABLE_FILE);
     expect(rels).toContain(EXITED_FILE);
     expect(rels).toContain(CARD_FILE);
     expect(rels).toContain(HELPER_FILE);
@@ -186,8 +190,8 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
     }
   });
 
-  it("R3: the reports page, the exited section and the dashboard card read the module", () => {
-    for (const rel of [PAGE_FILE, EXITED_FILE, CARD_FILE]) {
+  it("R3: the reports team table, the exited section and the dashboard card read the module", () => {
+    for (const rel of [TABLE_FILE, EXITED_FILE, CARD_FILE]) {
       expect(fileText(rel), rel).toMatch(/from "\$lib\/reports\/team-saldo"/);
     }
   });
@@ -259,13 +263,11 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
     expect(cardSites).toBeGreaterThanOrEqual(2);
   });
 
-  it("R5: the overview card of the reports page renders no SaldoAnzeige", () => {
-    const page = fileText(PAGE_FILE);
-    const start = page.indexOf('<CardHeader title="Überstunden-Übersicht"');
-    const end = page.indexOf("<ExitedFinalSaldoSection", start);
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-    expect(page.slice(start, end).includes("<SaldoAnzeige")).toBe(false);
+  it("R5: the reports team table renders no SaldoAnzeige, and the page's overview card is gone", () => {
+    expect(fileText(TABLE_FILE).length).toBeGreaterThan(2000);
+    expect(fileText(TABLE_FILE).includes("<SaldoAnzeige")).toBe(false);
+    // The former overview card region no longer exists on the page (Issue #612).
+    expect(fileText(PAGE_FILE).includes('<CardHeader title="Überstunden-Übersicht"')).toBe(false);
   });
 
   it("R6: the average-saldo label of the former KPI is gone from every walked file", () => {
