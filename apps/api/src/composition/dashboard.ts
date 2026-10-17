@@ -32,9 +32,9 @@ import {
   getRecordedWorkEntriesByIds, // Issue #85 (D-04) — the in-scope rows by id
   getInvalidEntries,
   getEffectiveSchedule,
-  resolvePresenceState,
-  isObligatedWorkday,
-  isDayDue,
+  resolveDayStatus, // Issue #587 (D-587-1) — the one day-status function
+  isObligatedWorkday, // /my-week — a known copy of the status chain (D-587-5, follow-up)
+  isDayDue, // /my-week — a known copy of the status chain (D-587-5, follow-up)
   findUnconfirmedBreakDays, // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
   entryDurations, // Phase 79 (Issue #79), D-03/D-05 — presence/working-time kernel
   addWorkingMinutes, // Phase 79 (Issue #79), D-12 — fold step
@@ -103,6 +103,140 @@ const teamSalonQuerySchema = z.object({
  * computation (a fan-out) runs for the listed persons only.
  */
 export const EXITED_OPEN_SECTION_LIMIT = 50;
+
+// ── Person-day assembly shared by /team-week and /today-attendance (Issue #587, P-01) ─────────────
+// Both handlers derive the inputs of `resolveDayStatus` through these helpers, so a person's day is
+// assembled one way. They only pick rows; the rules themselves stay with their owners (Abwesenheiten
+// for the Berufsschule displacement, the Unterbau for the shift scope, Zeiterfassung for the status).
+
+type CalendarLeaveRow = Awaited<ReturnType<typeof getCalendarLeaveOverlapping>>[number];
+type AbsenceRow = Awaited<ReturnType<typeof getAbsencesOverlapping>>[number];
+type ShiftRow = Awaited<ReturnType<typeof getShiftsInRange>>[number];
+
+/**
+ * The leave of a person-day. Phase 95 SHIFT-01 (Pitfall 2): an employee can have both an APPROVED
+ * and a PENDING leave overlapping one day (rare, via corrections), so the non-PENDING (real) leave
+ * is preferred and APPROVED "Urlaub" wins over "beantragt".
+ */
+function leaveOfDay(
+  rows: CalendarLeaveRow[],
+  employeeId: string,
+  dayStr: string,
+  tz: string,
+): CalendarLeaveRow | undefined {
+  const matches = (lr: CalendarLeaveRow) =>
+    lr.employeeId === employeeId &&
+    dateStrInTz(lr.startDate, tz) <= dayStr &&
+    dateStrInTz(lr.endDate, tz) >= dayStr;
+  return rows.find((lr) => matches(lr) && lr.status !== "PENDING") ?? rows.find(matches);
+}
+
+/** The imposed absence (sickness note, Berufsschule, ...) of a person-day. */
+function absenceOfDay(
+  rows: AbsenceRow[],
+  employeeId: string,
+  dayStr: string,
+  tz: string,
+): AbsenceRow | undefined {
+  return rows.find(
+    (a) =>
+      a.employeeId === employeeId &&
+      dateStrInTz(a.startDate, tz) <= dayStr &&
+      dateStrInTz(a.endDate, tz) >= dayStr,
+  );
+}
+
+/**
+ * Issue #448 (D-05): a Berufsschultag displaces the vacation classification for that day —
+ * composition only APPLIES vocationalSchoolDisplacesLeave(), the rule itself is owned by
+ * Abwesenheiten (contexts/absence/bs-leave-days.ts).
+ */
+function effectiveLeaveOfDay(
+  leave: CalendarLeaveRow | undefined,
+  absence: AbsenceRow | undefined,
+): CalendarLeaveRow | undefined {
+  const bsDisplacesLeave =
+    absence?.type === "VOCATIONAL_SCHOOL" &&
+    vocationalSchoolDisplacesLeave(leave?.leaveType.code ?? null);
+  return bsDisplacesLeave ? undefined : leave;
+}
+
+/**
+ * The first shift of a person-day (rows ordered by the facade's `date, startTime`), already
+ * narrowed to the caller's scope by the handler (Issue #548 / Phase 91b D-11). A person-day
+ * without a surviving shift reads exactly like a day without one.
+ */
+function firstShiftOfDay(
+  shifts: ShiftRow[],
+  employeeId: string,
+  dayStr: string,
+  tz: string,
+): { startTime: string; endTime: string; label: string | null; color: string | null } | null {
+  const first = shifts.find(
+    (s) => s.employeeId === employeeId && dateStrInTz(s.date, tz) === dayStr,
+  );
+  return first
+    ? {
+        startTime: first.startTime,
+        endTime: first.endTime,
+        label: first.label ?? first.template?.name ?? null,
+        color: first.template?.color ?? null,
+      }
+    : null;
+}
+
+/**
+ * Issue #587 (P-02): the contract of a person-day is the latest one whose `validFrom` lies on or
+ * before the end of that tenant-local day (§ 2 NachwG: the agreed working time applies from the
+ * agreed day). `schedules` is ordered by `validFrom` descending. For a day before the first
+ * contract of the read window the previous rule stays: the latest contract of the window.
+ */
+function contractOfDay<T extends { employeeId: string; validFrom: Date }>(
+  schedules: T[],
+  employeeId: string,
+  dayEnd: Date,
+): T | null {
+  return (
+    schedules.find((s) => s.employeeId === employeeId && s.validFrom <= dayEnd) ??
+    schedules.find((s) => s.employeeId === employeeId) ??
+    null
+  );
+}
+
+/**
+ * The schedule facts the status needs. v1.7.3: the source of truth for a workday is
+ * `WorkSchedule.workDays` (Int[] of weekday indices), NOT just `{day}Hours > 0` — legacy rows can
+ * diverge (Phase 61 audit), and SHIFT_BASED employees keep default per-day hours but rely on the
+ * planned shift. The obligation itself is decided in `presence.ts`.
+ */
+function scheduleFactsOfDay(
+  schedule: object | null,
+  dayStr: string,
+  tz: string,
+): { scheduleType: string | null; workDays: number[]; dow: number; expectedHours: number } {
+  const dow = getDayOfWeekInTz(new Date(dayStr + "T12:00:00Z"), tz);
+  const expectedHours = schedule
+    ? getDayHoursFromSchedule(schedule as Record<string, unknown>, dow)
+    : 0;
+  const scheduleType = schedule && "type" in schedule ? (schedule as { type: string }).type : null;
+  const workDays = (
+    schedule && "workDays" in schedule ? ((schedule as { workDays: number[] }).workDays ?? []) : []
+  ) as number[];
+  return { scheduleType, workDays, dow, expectedHours };
+}
+
+function presenceLeaveOf(leave: CalendarLeaveRow | undefined): PresenceLeave | null {
+  return leave
+    ? {
+        status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED" | "PENDING",
+        leaveTypeName: leave.leaveType.name,
+      }
+    : null;
+}
+
+function presenceAbsenceOf(absence: AbsenceRow | undefined): PresenceAbsence | null {
+  return absence ? { type: absence.type } : null;
+}
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -691,6 +825,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
           ? outOfScopeValidCounts(timeEntries, inScopeRows, (e) => dateStrInTz(e.date, tz))
           : new Map<string, number>();
 
+      // Issue #587 (P-08): the clock is read ONCE per request, so every cell of the week and the
+      // attendance list of the same instant agree on what "today" and "now" are.
+      const now = new Date();
+      const todayStr = dateStrInTz(now, tz);
+      const nowHHMM = timeStrInTz(now, tz);
+
       // Pro Mitarbeiter die Woche aufbereiten
       const team = shownEmployees.map((emp) => {
         const days = weekDays.map((dayStr) => {
@@ -716,101 +856,26 @@ export async function dashboardRoutes(app: FastifyInstance) {
             }
           }
 
-          // Phase 95 SHIFT-01 (Pitfall 2): an employee can have both an APPROVED and a
-          // PENDING leave overlapping one day (rare, via corrections). Prefer the
-          // non-PENDING (real) leave so APPROVED "Urlaub" wins over "beantragt".
-          const leaveMatches = (lr: (typeof leaveRequests)[number]) =>
-            lr.employeeId === emp.id &&
-            dateStrInTz(lr.startDate, tz) <= dayStr &&
-            dateStrInTz(lr.endDate, tz) >= dayStr;
-          const leave =
-            leaveRequests.find((lr) => leaveMatches(lr) && lr.status !== "PENDING") ??
-            leaveRequests.find(leaveMatches);
+          const leave = leaveOfDay(leaveRequests, emp.id, dayStr, tz);
+          const absence = absenceOfDay(absences, emp.id, dayStr, tz);
+          const effectiveLeave = effectiveLeaveOfDay(leave, absence);
+          const shift = firstShiftOfDay(shifts, emp.id, dayStr, tz);
 
-          const absence = absences.find(
-            (a) =>
-              a.employeeId === emp.id &&
-              dateStrInTz(a.startDate, tz) <= dayStr &&
-              dateStrInTz(a.endDate, tz) >= dayStr,
+          // Issue #587 (P-02): the contract valid ON this day decides what the day owes, so a
+          // month-first contract change judges the days before it by the old contract.
+          const dayRange = dayRangeUtc(dayStr, tz);
+          const empSchedule = contractOfDay(allSchedules, emp.id, dayRange.end);
+          const { scheduleType, workDays, dow, expectedHours } = scheduleFactsOfDay(
+            empSchedule,
+            dayStr,
+            tz,
           );
 
-          // Issue #448 (D-05): a Berufsschultag displaces the vacation classification for that
-          // day — composition only APPLIES vocationalSchoolDisplacesLeave(), the rule itself is
-          // owned by Abwesenheiten (contexts/absence/bs-leave-days.ts).
-          const bsDisplacesLeave =
-            absence?.type === "VOCATIONAL_SCHOOL" &&
-            vocationalSchoolDisplacesLeave(leave?.leaveType.code ?? null);
-          const effectiveLeave = bsDisplacesLeave ? null : leave;
-
-          // Find shift for this employee + day
-          const dayShifts = shifts.filter(
-            (s) => s.employeeId === emp.id && dateStrInTz(s.date, tz) === dayStr,
-          );
-          const shift =
-            dayShifts.length > 0
-              ? {
-                  startTime: dayShifts[0].startTime,
-                  endTime: dayShifts[0].endTime,
-                  label: dayShifts[0].label ?? dayShifts[0].template?.name ?? null,
-                  color: dayShifts[0].template?.color ?? null,
-                }
-              : null;
-
-          // Check if this is a workday from the schedule.
-          // v1.7.3: source of truth is `WorkSchedule.workDays` (Int[] of weekday indices),
-          // NOT just `{day}Hours > 0`. Legacy rows can diverge (Phase 61 audit), and
-          // SHIFT_BASED employees often keep default per-day hours but rely on the
-          // actual planned shift — for them, "workday" means a shift exists.
-          // Without this, the Wochenübersicht falsely reports "Fehlt" on a Monday
-          // when the employee's contract has Mo off (workDays=[2,3,4,5]).
-          const empSchedule = allSchedules.find((s) => s.employeeId === emp.id);
-          const dayDate = new Date(dayStr + "T12:00:00Z");
-          const dow = getDayOfWeekInTz(dayDate, tz);
-          const expectedHours = empSchedule
-            ? getDayHoursFromSchedule(empSchedule as Record<string, unknown>, dow)
-            : 0;
-          const schedType =
-            empSchedule && "type" in empSchedule ? (empSchedule.type as string) : null;
-          const scheduleWorkDays = (
-            empSchedule && "workDays" in empSchedule
-              ? ((empSchedule as { workDays: number[] }).workDays ?? [])
-              : []
-          ) as number[];
-          // Schedule-type-aware obligation: SHIFT_BASED → only a planned shift
-          // makes the day a workday; FLEXTIME/MONTHLY_HOURS → never per-day
-          // (free daily distribution → no "Fehlt"); FIXED/unknown → workDays
-          // array or expectedHours fallback.
-          //
           // Issue #613 (P-02): a day outside the person's employment (after the exit day, before
           // the hire day) is not a day the person owes, so it is never a workday and can never be
           // "Fehlt". Nothing else in the status chain changes here.
-          const dayRange = dayRangeUtc(dayStr, tz);
           const employedThisDay = isEmployedInPeriod(emp, dayRange.start, dayRange.end);
-          const isWorkday =
-            employedThisDay &&
-            isObligatedWorkday({
-              scheduleType: schedType,
-              workDays: scheduleWorkDays,
-              dow,
-              expectedHours,
-              hasShift: shift !== null,
-            });
 
-          const todayStr = dateStrInTz(new Date(), tz);
-          const nowHHMM = timeStrInTz(new Date(), tz);
-          // "Due" = late enough that an absence counts as "Fehlt": past days
-          // always; today only after the shift start time has passed (or never
-          // for schedules without a known start time). A not-yet-due obligated
-          // day must render "scheduled", not "missing" → pass isFuture: !isDue.
-          const isDue = isDayDue({
-            dayStr,
-            todayStr,
-            nowHHMM,
-            shiftStartTime: shift?.startTime ?? null,
-          });
-          const isFuture = !isDue;
-
-          // Build typed inputs for the presence resolver
           // Scoped callers: hidden valid time enters as CLOSED stand-ins, so an out-of-scope open
           // entry never reads as "clocked_in" (Issue #85, D-05).
           const presenceEntries: PresenceEntry[] = presenceEntriesWithStandIns(
@@ -818,35 +883,32 @@ export async function dashboardRoutes(app: FastifyInstance) {
             hiddenValid,
           );
 
-          const presenceLeave: PresenceLeave | null = effectiveLeave
-            ? {
-                status: effectiveLeave.status as "APPROVED" | "CANCELLATION_REQUESTED" | "PENDING",
-                leaveTypeName: effectiveLeave.leaveType.name,
-              }
-            : null;
-
-          const presenceAbsence: PresenceAbsence | null = absence ? { type: absence.type } : null;
-
-          const empHolidayName = holidaysByEmployee.get(emp.id)?.get(dayStr) ?? null;
-
           // A row listed only by an in-scope entry is never "missing": its absence reasons (leave,
           // sickness, Berufsschule, work in another salon) are held by the Stammsalon and
           // withheld, so "Fehlt" would be a claim the response cannot back (Issue #548). An
           // in-scope shift that is not yet due still reads "scheduled".
           const entryOnlyRow = inScopeRows !== null && !stammSet.has(emp.id);
-          const { status, reason } = resolvePresenceState({
+
+          // Issue #587 (D-587-1): the one day-status function, shared with /today-attendance.
+          const { status, reason, isWorkday } = resolveDayStatus({
+            dayStr,
+            todayStr,
+            nowHHMM,
+            employedOnDay: employedThisDay,
+            scheduleType,
+            workDays,
+            dow,
+            expectedHours,
+            shift,
             entries: presenceEntries,
-            leave: presenceLeave,
-            absence: presenceAbsence,
-            isWorkday,
-            isFuture,
-            hasShift: entryOnlyRow ? shift !== null && !isDue : shift !== null,
-            isHoliday: empHolidayName !== null,
-            holidayName: empHolidayName,
+            leave: presenceLeaveOf(effectiveLeave),
+            absence: presenceAbsenceOf(absence),
+            holidayName: holidaysByEmployee.get(emp.id)?.get(dayStr) ?? null,
+            entryOnlyRow,
           });
 
           // Issue #205 finding 3: `reason` has TWO sources — a tenant-renamable
-          // `LeaveType.name` on the leave path (resolvePresenceState reads
+          // `LeaveType.name` on the leave path (the presence resolver reads
           // `leave.leaveTypeName` above) and the stable `DISPLAY_NAME` table on the absence
           // path — so a single control field can't represent both without lying for one of
           // them. `leaveTypeCode`/`absenceType` are additive, rename-stable companions to
@@ -894,8 +956,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const access = accessContextFromRequest(req);
       const tenantId = req.user.tenantId;
       const tz = await getTenantTimezone(app.prisma, tenantId);
-      const today = todayInTz(tz);
-      const todayStr = dateStrInTz(today, tz);
+      // Issue #587 (P-08): the clock is read ONCE per request; "today" is the tenant-local date of
+      // that instant and `today` is its UTC-midnight form for the `@db.Date` reads.
+      const now = new Date();
+      const todayStr = dateStrInTz(now, tz);
+      const nowHHMM = timeStrInTz(now, tz);
+      const today = new Date(todayStr + "T00:00:00Z");
 
       // Phase 91b Plan 06 (Issue #91), D-09/D-10/D-13, Issue #85 (D-04) — the Stammsalon persons
       // (employee-level `resolveStammsalonScopedEmployeeIds`, Stichtag = today) feed every
@@ -1003,9 +1069,10 @@ export async function dashboardRoutes(app: FastifyInstance) {
         today,
       );
 
-      // Bulk fetch 3 — leave requests covering today (APPROVED + CANCELLATION_REQUESTED)
-      // Phase 100B Plan 13 — A2, contexts/absence facade.
-      const leaveRequests = await getActiveLeaveOverlapping(
+      // Bulk fetch 3 — leave requests covering today, PENDING included, exactly what the team week
+      // reads (Issue #587, D-587-2): an open request reads "Beantragt", not "Fehlt".
+      // Phase 100B Plan 13 — A3, contexts/absence facade.
+      const leaveRequests = await getCalendarLeaveOverlapping(
         app.prisma,
         employeeScopeFor(attendanceScopedAccess, { employeeIds }),
         today,
@@ -1021,16 +1088,34 @@ export async function dashboardRoutes(app: FastifyInstance) {
         today,
       );
 
-      // Bulk fetch 5 — latest work schedule per employee (validFrom <= today, ordered desc)
+      // Bulk fetch 5 — the shifts of today for every listed person (S1, contexts/scheduling
+      // facade), the same read and the same per-shift scope filter as the team week (Issue #587,
+      // D-587-2; Issue #548 / Phase 91b D-11): a shift counts only through its own salon or a
+      // person in the reach, never through the Stammsalon. `employeeScopeFor` does not re-check
+      // its targets, so this per-row filter is the scope proof for the ids of entry-only persons.
+      const shifts = (
+        await getShiftsInRange(
+          app.prisma,
+          employeeScopeFor(attendanceScopedAccess, { employeeIds: employees.map((e) => e.id) }),
+          today,
+          today,
+        )
+      ).filter((s) =>
+        isShiftInScope(attendanceScopeReach, { salonId: s.salonId, employeeId: s.employeeId }),
+      );
+
+      // Bulk fetch 6 — the work schedules valid up to the end of today, ordered desc; the contract
+      // of today is picked per person by `contractOfDay` (Issue #587, P-02).
+      const todayRange = dayRangeUtc(todayStr, tz);
       const allSchedules = await app.prisma.workSchedule.findMany({
         where: {
           employeeId: { in: employeeIds },
-          validFrom: { lte: today },
+          validFrom: { lte: todayRange.end },
         },
         orderBy: { validFrom: "desc" },
       });
 
-      // Build lookup maps (employeeId → first match)
+      // Build the lookup map (employeeId → entries)
       // Scoped callers: the status of every person is built from the in-scope rows (Issue #85).
       const entriesByEmp = new Map<string, typeof timeEntries>();
       for (const e of inScopeRows ?? timeEntries) {
@@ -1038,23 +1123,6 @@ export async function dashboardRoutes(app: FastifyInstance) {
         list.push(e);
         entriesByEmp.set(e.employeeId, list);
       }
-
-      const leaveByEmp = new Map<string, (typeof leaveRequests)[0]>();
-      for (const lr of leaveRequests) {
-        if (!leaveByEmp.has(lr.employeeId)) {
-          leaveByEmp.set(lr.employeeId, lr);
-        }
-      }
-
-      const absenceByEmp = new Map<string, (typeof absences)[0]>();
-      for (const a of absences) {
-        if (!absenceByEmp.has(a.employeeId)) {
-          absenceByEmp.set(a.employeeId, a);
-        }
-      }
-
-      // DOW for today (needed once — all employees share the same day)
-      const dow = getDayOfWeekInTz(today, tz);
 
       // Issue #85 (D-05): valid entries of a Stammsalon person today that lie outside the reach.
       // For today this is empty by construction (the Stichtag is the entry date), but the generic
@@ -1073,29 +1141,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
       let holiday = 0;
 
       const employeeRows = employees.map((emp) => {
-        const empSchedule = allSchedules.find((s) => s.employeeId === emp.id) ?? null;
-        const expectedHours = empSchedule
-          ? getDayHoursFromSchedule(empSchedule as Record<string, unknown>, dow)
-          : 0;
-        // v1.7.3: workDays is the canonical source of truth (see /team-week).
-        const schedType =
-          empSchedule && "type" in empSchedule ? (empSchedule.type as string) : null;
-        const scheduleWorkDays = (
-          empSchedule && "workDays" in empSchedule
-            ? ((empSchedule as { workDays: number[] }).workDays ?? [])
-            : []
-        ) as number[];
-        // No shift data fetched here → hasShift:false, so SHIFT_BASED resolves
-        // to "not a workday" (avoids false "Fehlt"). FLEXTIME/MONTHLY_HOURS also
-        // resolve to false (free daily distribution) so they no longer inflate
-        // the "missing" count. FIXED/unknown → workDays or expectedHours.
-        const isWorkday = isObligatedWorkday({
-          scheduleType: schedType,
-          workDays: scheduleWorkDays,
-          dow,
-          expectedHours,
-          hasShift: false,
-        });
+        const leave = leaveOfDay(leaveRequests, emp.id, todayStr, tz);
+        const absence = absenceOfDay(absences, emp.id, todayStr, tz);
+        const shift = firstShiftOfDay(shifts, emp.id, todayStr, tz);
+        const empSchedule = contractOfDay(allSchedules, emp.id, todayRange.end);
+        const { scheduleType, workDays, dow, expectedHours } = scheduleFactsOfDay(
+          empSchedule,
+          todayStr,
+          tz,
+        );
 
         const rawEntries = entriesByEmp.get(emp.id) ?? [];
         // Hidden valid time of a Stammsalon person enters as a CLOSED stand-in: the day reads as
@@ -1105,30 +1159,25 @@ export async function dashboardRoutes(app: FastifyInstance) {
           attendanceHiddenCounts.get(personDayKey(emp.id, todayStr)) ?? 0,
         );
 
-        const rawLeave = leaveByEmp.get(emp.id) ?? null;
-        const presenceLeave: PresenceLeave | null = rawLeave
-          ? {
-              status: rawLeave.status as "APPROVED" | "CANCELLATION_REQUESTED",
-              leaveTypeName: rawLeave.leaveType.name,
-            }
-          : null;
-
-        const rawAbsence = absenceByEmp.get(emp.id) ?? null;
-        const presenceAbsence: PresenceAbsence | null = rawAbsence
-          ? { type: rawAbsence.type }
-          : null;
-
-        const empHolidayName = holidaysByEmployee.get(emp.id)?.get(todayStr) ?? null;
-
-        const { status, reason } = resolvePresenceState({
+        // Issue #587 (D-587-2): the list reads what the team week reads and resolves every row
+        // through the same function. The population is already the people employed today
+        // (`reportPopulationWhere`), hence `employedOnDay: true`.
+        const { status, reason } = resolveDayStatus({
+          dayStr: todayStr,
+          todayStr,
+          nowHHMM,
+          employedOnDay: true,
+          scheduleType,
+          workDays,
+          dow,
+          expectedHours,
+          shift,
           entries: presenceEntries,
-          leave: presenceLeave,
-          absence: presenceAbsence,
-          isWorkday,
-          isFuture: false, // today is never future
-          hasShift: false,
-          isHoliday: empHolidayName !== null,
-          holidayName: empHolidayName,
+          leave: presenceLeaveOf(effectiveLeaveOfDay(leave, absence)),
+          absence: presenceAbsenceOf(absence),
+          holidayName: holidaysByEmployee.get(emp.id)?.get(todayStr) ?? null,
+          // A row listed only by an in-scope entry is never "missing" (Issue #548).
+          entryOnlyRow: inScopeRows !== null && !attendanceStammSet.has(emp.id),
         });
 
         // Accumulate summary counters

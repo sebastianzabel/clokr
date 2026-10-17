@@ -1584,7 +1584,7 @@ describe("Reports API", () => {
       });
       empAbsentSick = { id: empSRecord.id, employeeNumber: empSRecord.employeeNumber };
 
-      // Case 5: missing — workday, no entries/leave/absence (Mon-Fri schedule)
+      // Case 5: scheduled (#587: not yet due without a shift) — workday, no entries/leave/absence (Mon-Fri schedule)
       const empMUser = await prisma.user.create({
         data: {
           email: `att-ms-${Date.now()}@test.de`,
@@ -1726,7 +1726,9 @@ describe("Reports API", () => {
       expect(emp.reason).toContain("Krankmeldung");
     });
 
-    it("Case 5: employee on workday with no entries or absences has status missing", async () => {
+    it("Case 5: employee on workday without entries, shift or absences is not yet due today: status scheduled", async () => {
+      // Issue #587: the list resolves through the same function as the team week, and a day
+      // without a known start time (no shift) is never due on the day itself - only past days are.
       // Only valid for weekdays — skip on weekend. Weekday read off the tenant-TZ date
       // string (dowOf), not local/UTC getDay(), since the endpoint resolves "today" in
       // tenant TZ (#34).
@@ -1747,8 +1749,8 @@ describe("Reports API", () => {
       );
       expect(emp).toBeDefined();
       // The endpoint resolves the REAL "today": on a statutory holiday the holiday outranks
-      // "missing" (resolvePresenceState), so a weekday holiday must not turn this red.
-      expect(emp.status).toBe((await todayIsStatutoryHoliday()) ? "holiday" : "missing");
+      // "scheduled" (resolvePresenceState), so a weekday holiday must not turn this red.
+      expect(emp.status).toBe((await todayIsStatutoryHoliday()) ? "holiday" : "scheduled");
     });
 
     // Independent of the endpoint under test: today's statutory holidays for the tenant's salon,
