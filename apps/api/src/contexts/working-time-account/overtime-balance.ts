@@ -77,6 +77,21 @@ export type OvertimeBalanceBreakdown = {
   /** SHIFT_BASED only, and only when the current month has an open partial period —
    *  undefined for every other schedule type/state (never a fabricated `false`). */
   rosterIncomplete?: boolean;
+  /**
+   * Issue #588 (P-02): the value of the existing `isTrackOnly` below (a MONTHLY_HOURS contract
+   * that is TRACK_ONLY or has no monthly hours, #494) - today's contract, as the live display
+   * uses it. Reported so the team saldo figures can tell a saldo of 0 by rule from a real one.
+   * Changes no figure.
+   */
+  trackOnly: boolean;
+  /**
+   * Issue #588 (P-05): the number of tenant-local calendar months from the month of the first
+   * open day of the live window (`rangeStart`: the day after the last closed period's end, or
+   * the hire day when nothing is closed) through the current tenant-local month, inclusive,
+   * never below 0. 1 means the forecast is the running month alone. Read from the UTC date part
+   * of the UTC-midnight calendar days, never a browser-local getter. Changes no figure.
+   */
+  unconfirmedMonths: number;
 };
 
 export async function computeOvertimeBalanceBreakdown(
@@ -898,12 +913,23 @@ async function computeAccountChain(
     ? 0
     : Math.round(effectiveBalanceHours * 60) - confirmedMinutes;
 
+  // Issue #588 (P-05): months of the live window, derived from `rangeStart` and `todayDate` (both
+  // UTC-midnight calendar days of the tenant-local day) - a count, no second saldo derivation.
+  const unconfirmedMonths = Math.max(
+    0,
+    (todayDate.getUTCFullYear() - rangeStart.getUTCFullYear()) * 12 +
+      (todayDate.getUTCMonth() - rangeStart.getUTCMonth()) +
+      1,
+  );
+
   return {
     totalHours: effectiveBalanceHours,
     confirmedMinutes,
     openMonthMinutes,
     hasClosedMonth,
     rosterIncomplete,
+    trackOnly: isTrackOnly,
+    unconfirmedMonths,
     chainMinutes: liveBase + openPeriodBalance,
   };
 }

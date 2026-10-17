@@ -264,6 +264,8 @@
   let overtimeConfirmedMinutes: number | undefined = $state(undefined);
   let overtimeOpenMonthMinutes: number | null | undefined = $state(undefined);
   let overtimeHasClosedMonth: boolean | undefined = $state(undefined);
+  // Issue #588 (P-14): how many calendar months the forecast spans; words the card caption.
+  let overtimeUnconfirmedMonths: number | null | undefined = $state(undefined);
   let overtimeRosterIncomplete: boolean | undefined = $state(undefined);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
@@ -553,6 +555,7 @@
       overtimeConfirmedMinutes = undefined;
       overtimeOpenMonthMinutes = undefined;
       overtimeHasClosedMonth = undefined;
+      overtimeUnconfirmedMonths = undefined;
       overtimeRosterIncomplete = undefined;
       hireDate = null;
       shiftMinByDate = new Map();
@@ -598,6 +601,7 @@
             confirmedMinutes?: number;
             openMonthMinutes?: number | null;
             hasClosedMonth?: boolean;
+            unconfirmedMonths?: number | null;
             rosterIncomplete?: boolean;
           }>(`/overtime/${empId}`),
         ),
@@ -639,6 +643,7 @@
       overtimeConfirmedMinutes = overtimeValue?.confirmedMinutes;
       overtimeOpenMonthMinutes = overtimeValue?.openMonthMinutes;
       overtimeHasClosedMonth = overtimeValue?.hasClosedMonth;
+      overtimeUnconfirmedMonths = overtimeValue?.unconfirmedMonths;
       overtimeRosterIncomplete = overtimeValue?.rosterIncomplete;
       // Phase 116 (issue #119) — a 500 here used to become `schedule = null`, which monthMetrics
       // turns into `sollToDateMin: 0`, which SollIstBar prints as "noch keine Sollzeit in diesem
@@ -1857,6 +1862,7 @@
         confirmedMinutes={overtimeConfirmedMinutes}
         openMonthMinutes={overtimeOpenMonthMinutes}
         hasClosedMonth={overtimeHasClosedMonth}
+        unconfirmedMonths={overtimeUnconfirmedMonths}
         rosterIncomplete={overtimeRosterIncomplete}
         {loading}
       />

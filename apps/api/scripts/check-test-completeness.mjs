@@ -923,7 +923,14 @@ import { readFileSync } from "node:fs";
 // live-saldo-opening-balance-682 (+25 cases), scripts audit-682-opening-balance-live-gap (+4). The run's 15 failures were
 // "too many clients" from a parallel suite in another worktree; the 7 affected files passed on a targeted rerun
 // (87/87). MIN_FILES 693 -> 695, never lowered.
-const MIN_FILES = 695;
+// Phase 588, plan 05 (2026-10-17): the files of this phase, merged onto origin/main @ 7b66d4a3 (#683, main 693 files /
+// 10541 tests): two new files, overtime-overview-588 (588-01, 10 cases) and personal-saldo-label-588 (588-03, 8 cases); the
+// facade test of the time-tracking context gained the describe block of `employeesWithValidWorkSince` (588-01, 7 cases);
+// lint-facade-signatures changed a pin value only, not a case count. Measured on the phase branch before the merge
+// (base 59ef142e): 694 files, 10539 tests, i.e. +2 files and +26 cases over that base (25 attributed above). Nothing removed,
+// skipped or loosened. MIN_FILES = main + the phase's own delta: 693 + 2 = 695 (re-measured with the full run after the merge).
+// Merge #588 onto #682 (2026-10-17): main 695 + 2 = 697, no file removed.
+const MIN_FILES = 697;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -964,7 +971,10 @@ const MIN_FILES = 695;
 // the measured total of the full run named at MIN_FILES. Never lowered.
 // Issue #682 (2026-10-17): MIN_TESTS 10541 -> 10570 (+29: live-saldo-opening-balance-682 25, audit-682 script 4), the
 // measured total of the full run named at MIN_FILES. Never lowered.
-const MIN_TESTS = 10570;
+// Phase 588 (2026-10-17): MIN_TESTS 10513 -> 10539 (+26) on the phase branch before the merge of #683; after it main 10541 + 26
+// = 10567, re-measured with the full run named at MIN_FILES. Never lowered.
+// Merge #588 onto #682 (2026-10-17): main 10570 + 26 = 10596. Never lowered.
+const MIN_TESTS = 10596;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

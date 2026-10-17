@@ -3346,6 +3346,115 @@ pnpm --filter @clokr/web exec vitest run src/__tests__/reports-monthly-export-61
 git diff --quiet "$(git merge-base HEAD origin/main)" -- apps/api/src/__tests__/neutrality/recorded
 ```
 
+### Nachtrag 2026-10-17 (Phase 588, Issue #588) — Team-Salden aus einem Modul hinter denselben zwei Saldo-Gates; Prognose-Beschriftung aus den Daten
+
+**Schwere: Anzeige. Keine Schema-, Migrations-, Routen-, Permission- oder Unterbau-Änderung.** Additive Felder an vier
+Leseantworten; eine neue Fassadenfunktion der Zeiterfassung. Kein Saldo wird anders berechnet. Stand der Messungen: Branch
+`feat/588-team-salden`, Basis `59ef142e`.
+
+#### Warum
+
+Das Issue verlangte vier Dinge: Top Plus/Minus im Team-Bereich des Dashboards, den Median statt des Durchschnitts mit einer
+dokumentierten Ausreißerregel, jeden Saldo als ±H:MM und „Laufender Monat“ nur dort, wo der Wert wirklich den laufenden
+Monat betrifft (die Spalte „Verlauf“ zeigt Daten oder entfällt). Der Durchschnitt über `balanceHours` ließ Personen ohne
+jede Erfassung und „Nur erfassen“-Verträge die Teamzahl verzerren; die Beschriftung „Laufender Monat (Prognose)“ stand
+auch dort, wo die Prognose seit mehreren Monaten ohne Abschluss läuft. Owner-Entscheidungen und Grauzonen stehen als
+Kommentar am Issue #588.
+
+#### Was sich geändert hat
+
+- **Ein Modul für Team-Salden.** `apps/web/src/lib/reports/team-saldo.ts` ist der einzige Ort für den Median, die Top 5
+  Plus/Minus und die Ausreißerregel. `/reports` und die Dashboard-Karte „Salden“ lesen es; der Wächtertest
+  `team-saldo-one-place-588.test.ts` verbietet einen zweiten Median, einen Mittelwert über Zeilensalden und eine
+  Teamfläche, die das Modul nicht liest.
+- **Dieselben zwei Gates.** Die Karte liest `GET /dashboard/overtime-overview` und damit dieselben zwei Gates wie bisher,
+  `team-overview:read` UND `overtime:read`; Reichweite und Salonfilter (#542, Personensaldo nicht nach Salon aufgeteilt)
+  gelten unverändert. Ohne beide Rechte wird die Karte ausgeblendet und nichts angefragt; sie lädt nach dem Team-Block und
+  blockiert ihn nie.
+- **Drei Fakten je Zeile** der Saldenübersicht (additiv): `hasRecordedTime` (gültiger, abgeschlossener Arbeitseintrag seit
+  Eintritt, eine Sammelabfrage über die Fassade der Zeiterfassung), `trackOnly` (Regel #494 des heute gültigen Vertrags)
+  und `unconfirmedMonths` (Monate vom ersten offenen Tag bis einschließlich zum laufenden Monat).
+- **Median und Ausreißerregel.** Wert einer Person ist der Gesamtsaldo. Es zählen nur Personen im heutigen Team mit
+  verfügbarem Live-Saldo, ohne „Nur erfassen“-Vertrag und mit Erfassung seit Eintritt. Alle anderen stehen mit genau einem
+  Grund in einer Liste („Saldo nicht verfügbar“, „nur Zeiterfassung“, „ohne Erfassung“), nie stillschweigend weggelassen;
+  ausgeschiedene Personen behalten ihren eigenen Abschnitt (#613).
+- **Drei Spalten, ±H:MM.** Jeder Saldo im Team-Bereich läuft über `fmtBalance` (Vorzeichen immer, auch „±0:00“; das gilt
+  jetzt in jeder Variante von `SaldoAnzeige`), je Wert eine Spalte (Abgeschlossen · Prognose · Gesamt). Die stets leere
+  Spalte „Verlauf“ und ihr Sparkline-Code entfallen.
+- **Prognose-Beschriftung an einer Stelle.** `apps/web/src/lib/saldo/forecast-label.ts` wählt die Beschriftung aus
+  `unconfirmedMonths` und `hasClosedMonth`: genau 1 → „Laufender Monat (Prognose)“; mehr als 1 mit abgeschlossenem Monat →
+  „Seit Monatsabschluss (Prognose)“; sonst „Prognose (seit Eintritt)“; gemischte Spalte „Prognose (offener Zeitraum)“. Das
+  gilt auf jeder Fläche: Dashboard, Zeiterfassung, Team-Zeiten, Abwesenheiten (Kennzahl und Antragsformular), Berichte.
+  `unconfirmedMonths` liefern zusätzlich `GET /dashboard`, `GET /overtime/:employeeId` und die sichtbaren Zweige von
+  `GET /leave/overtime-balance`.
+
+#### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** eine neue lesende Fassadenfunktion `employeesWithValidWorkSince` (Fassadenzählung 146 → 147, ohne
+  Ausnahme durch F1–F3 gelaufen).
+- **Abwesenheiten:** `GET /leave/overtime-balance` trägt ein additives Feld in den sichtbaren Zweigen; der maskierte Zweig
+  (`balanceVisible: false`) ist unverändert und trägt den Schlüssel nicht.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** `computeOvertimeBalanceBreakdown` meldet zwei weitere Werte (`unconfirmedMonths`, `trackOnly`); keine
+  Rechnung ist geändert, die Datei hat nur hinzugefügte Zeilen (26 hinzugefügt, 0 entfernt), und `GET /overtime/:employeeId`
+  trägt ein additives Feld.
+- **Unterbau:** keine.
+- **Kompositionsschicht:** drei additive Zeilenfelder der Saldenübersicht und ein additives Feld an `GET /dashboard`; keine
+  Geschäftsregel dorthin verschoben (die Regel für „Nur erfassen“ bleibt `isTrackOnlySchedule`, die Erfassung kommt aus der
+  Fassade).
+
+#### Was bewusst NICHT geschah
+
+- **Keine Saldo-Rechnung.** Kein Kernel des Arbeitszeitkontos wurde verändert; Zeilen- und Personen-Salden sind vor und nach
+  gleich (Gleichheitstests gegen `GET /overtime/:employeeId`).
+- **Der maskierte Zweig von `GET /leave/overtime-balance` bleibt unverändert.**
+- **`snapshots` bleibt in der API** (P-09); nur die Spalte der Seite entfällt. Die Monatsabschluss-Tabelle der Person behält
+  `SaldoAnzeige` (P-08).
+- **Keine neue Route, keine neue Berechtigung, kein Folge-Issue** (Entscheidung zu P-14).
+- **Die PDF-Beschriftungen sind unverändert** (`OVERTIME_LABEL_CONFIRMED`, `OVERTIME_LABEL_FORECAST`,
+  `MONTHLY_EXPORT_FORECAST_LEGEND`): eine PDF-Zeile ist monatsbezogen.
+- **Die Berichtsseite wird nicht neu gestaltet** (#612); die Tabelle hat jetzt drei Saldo-Spalten und scrollt auf schmalen
+  Bildschirmen waagerecht.
+
+#### Laufzeit
+
+Die Übersicht kostet gemessen etwa 18 ms je Person (Testumgebung: 31 Personen 556–600 ms, 101 Personen 1809–1864 ms; die
+Zeit ist linear in der Personenzahl). Weil die Karte erst startet, nachdem der Team-Block geladen ist, und ihn nie
+blockiert, verzögert das die Team-Woche nicht; eine Reichweite von 300 Personen braucht rund 5–6 s, bis die Karte
+erscheint, und bis dahin zeigt sie ein Platzhalterbild.
+
+#### Gemessen
+
+Alle Zahlen stehen in den Zusammenfassungen der Pläne 588-01 bis 588-05.
+
+- **Neutralität:** 0 abweichende Zellen. Die drei Neutralitätsdateien liefen nach Plan 01 und Plan 03 mit 1720 Fällen grün;
+  `neutrality/recorded` und die vier eingefrorenen Stände (`dashboard-team-week-frozen-84`, `reports-monthly-frozen-84`,
+  `reports-hr-86`, `whole-tenant-frozen-85`) sind byte-gleich zum Merge-Basisstand, `leave-overtime-balance-mask-85b` ist
+  unverändert.
+- **Wächter:** `team-saldo-one-place-588.test.ts` geht 266 Nicht-Test-Dateien unter `apps/web/src` ab (Untergrenze 150), das
+  Register der Mittelwert-Ausnahmen ist leer, die Aufrufstellen der Prognose-Beschriftung sind 3 `SaldoAnzeige` mit
+  Aufteilung und 2 `KontoSaldoCard` (Untergrenzen 3 und 2); zwölf Fälle, acht Mutationsnachweise lassen ihn rot werden.
+- **Fassade:** `lint:facade-signatures` meldet 147 Funktionen, 17 Ausnahmen, 0 Befunde.
+- **Eine Abfrage:** mit mindestens sechs Personen ruft eine Anfrage `timeEntry.groupBy` genau einmal auf.
+- **Testzahlen:** voller API-Lauf nach Plan 01 10 527 bestanden (3 übersprungen, Bestand), voller Web-Lauf nach Plan 04
+  3 603 bestanden; die Endstände des Gesamtlaufs stehen in der Zusammenfassung von 588-05.
+- **Visuelle Baselines:** `01-dashboard` und `10-mobile-dashboard` ändern sich absichtlich (neue Karte, Wert-Bereich
+  maskiert); `04` und `05` (Abwesenheiten) ebenfalls, weil die neue Beschriftung und „±0:00“ die Kennzahl-Box um 15 px
+  verkürzen. Alle in der festgelegten Image-Umgebung neu erzeugt; ein Unterschied in der CI wäre ein Befund.
+
+#### Nachrechnen
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/__tests__/overtime-overview-588.test.ts src/__tests__/personal-saldo-label-588.test.ts \
+  src/contexts/time-tracking/__tests__/facade-time-entries.test.ts
+pnpm --filter @clokr/web exec vitest run src/lib/reports/__tests__/team-saldo-588.test.ts \
+  src/lib/saldo/__tests__/forecast-label-588.test.ts src/__tests__/team-saldo-one-place-588.test.ts \
+  src/__tests__/reports-team-saldo-588.test.ts src/__tests__/personal-saldo-label-588.test.ts \
+  src/__tests__/dashboard-team-saldo-588.test.ts src/__tests__/dashboard-team-saldo-pending-588.test.ts
+git diff --quiet "$(git merge-base HEAD origin/main)" -- apps/api/src/__tests__/neutrality/recorded
+```
+
 ## R — Fehlender Urlaubsanspruch bei Mitarbeiteranlage (Phase 416, Issue #416)
 
 **Schwere: informativ. Keine Berechtigungsänderung — eine reine Response-Body-Erweiterung einer

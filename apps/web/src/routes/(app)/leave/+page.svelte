@@ -122,6 +122,7 @@
   let confirmedMinutes: number | undefined = $state(undefined);
   let openMonthMinutes: number | null | undefined = $state(undefined);
   let hasClosedMonth = $state(false);
+  let unconfirmedMonths: number | null | undefined = $state(undefined);
   let rosterIncomplete: boolean | undefined = $state(undefined);
   // Phase 104-10 (D-31): one movement per CONFIRMED § 9 credit in this entitlement year —
   // rendered verbatim (server-authored label), never re-derived on the client.
@@ -494,6 +495,8 @@
     confirmedMinutes?: number;
     openMonthMinutes?: number | null;
     hasClosedMonth?: boolean;
+    // Issue #588 (P-14): how many calendar months the forecast spans; null = unknown.
+    unconfirmedMonths?: number | null;
     rosterIncomplete?: boolean;
     // Phase 100 (OTC-03/OTC-05) — resolved negative-balance tolerance, alongside
     // the Phase-97 split fields above. Optional so an older cached response
@@ -509,12 +512,14 @@
       confirmedMinutes = r.confirmedMinutes;
       openMonthMinutes = r.openMonthMinutes;
       hasClosedMonth = r.hasClosedMonth ?? false;
+      unconfirmedMonths = r.unconfirmedMonths ?? null;
       rosterIncomplete = r.rosterIncomplete;
     } catch {
       overtimeBalance = null;
       confirmedMinutes = undefined;
       openMonthMinutes = undefined;
       hasClosedMonth = false;
+      unconfirmedMonths = undefined;
       rosterIncomplete = undefined;
     }
   }
@@ -810,7 +815,8 @@
       <!-- Phase 97-06 (SALDO-DISP-02/05) — the split primitive replaces the inline
            KPIStat markup outright (not wrapped), same as the dashboard tile:
            KPIStat's pure-props string contract cannot express a two-figure tile.
-           Leads with "Bestätigt", subordinates "Laufender Monat (Prognose)". -->
+           Leads with "Bestätigt", subordinates the forecast, worded from the data by
+           forecastLabel() (Issue #588). -->
       <!-- IN-01 (code review) — `loading` (declared above) now reaches the primitive. Note:
            this KPI's own data arrives via loadOvertimeBalance(), fired (not awaited) AFTER
            `loading` already flips false in onMount — so this only narrows the "Kein
@@ -827,6 +833,7 @@
           confirmedMinutes={confirmedMinutes ?? 0}
           openMonthMinutes={openMonthMinutes ?? null}
           hasClosedMonth={hasClosedMonth ?? false}
+          {unconfirmedMonths}
           {rosterIncomplete}
           {loading}
         />
@@ -1748,7 +1755,7 @@
     color: var(--warn);
     margin: 0.25rem 0 0;
   }
-  /* Phase 97-06 (SALDO-DISP-04) — the "Laufender Monat (Prognose)" row: muted like
+  /* Phase 97-06 (SALDO-DISP-04) — the forecast row: muted like
      the forecast everywhere else in the app (never --good/--bad/--warn — colour
      must never imply a certainty this figure doesn't have). */
   .balance-value--muted {

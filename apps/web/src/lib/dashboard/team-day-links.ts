@@ -10,6 +10,18 @@ import { normalizeDateParam, normalizeEmployeeIdParam } from "$lib/breaks/deep-l
 /** Short German weekday names, indexed by the UTC weekday (0 = Sunday). */
 const WEEKDAY_SHORT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"] as const;
 
+/**
+ * `/team/time-entries?employeeId=<id>` or `null` when the id is unusable (Issue #588, P-11): the
+ * person link of the dashboard card "Salden". The receiver selects the person and shows their month;
+ * the caller decides with `mayOpenTeamPage` whether the link may exist at all.
+ */
+export function teamPersonHref(employeeId: string): string | null {
+  const id = normalizeEmployeeIdParam(employeeId);
+  if (id === null) return null;
+  const params = new URLSearchParams({ employeeId: id });
+  return `/team/time-entries?${params.toString()}`;
+}
+
 /** `/team/time-entries?employeeId=<id>&date=<day>` or `null` when id or day is unusable. */
 export function teamDayHref(employeeId: string, day: string): string | null {
   const id = normalizeEmployeeIdParam(employeeId);

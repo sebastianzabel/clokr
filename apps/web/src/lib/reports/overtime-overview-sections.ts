@@ -24,6 +24,11 @@ export interface ExitedOverviewRow extends SectionedOverviewRow {
   openMonthMinutes?: number | null;
   hasClosedMonth?: boolean;
   rosterIncomplete?: boolean;
+  // Issue #588 - additive facts of the overview row; the exited section hands the row to the
+  // team saldo module, which reads them for its cells and the forecast label.
+  hasRecordedTime?: boolean;
+  trackOnly?: boolean | null;
+  unconfirmedMonths?: number | null;
 }
 
 /** Splits the answer's rows into the team table and the exited section; each keeps the input order. */

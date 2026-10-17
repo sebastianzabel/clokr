@@ -91,9 +91,12 @@ test.describe("Phase 75 — Visual baselines", () => {
     // across runs/renders (observed as byte-differing screenshots between retries in
     // the same CI run), which would flake the baseline. Masking excludes those regions
     // from the comparison while still validating the surrounding layout.
+    // Issue #588 (P-13): the card "Salden" shows figures the server computes against the real
+    // date (the visual seed freezes only the browser clock), so its names order, values and median
+    // move every day. The mask keeps the card's frame, heading and position in the comparison.
     await expect(page).toHaveScreenshot("01-dashboard.png", {
       fullPage: true,
-      mask: [page.locator("canvas")],
+      mask: [page.locator("canvas"), page.getByTestId("team-saldo-values")],
     });
   });
 
@@ -178,10 +181,11 @@ test.describe("Phase 75 — Visual baselines", () => {
     await page.goto("/dashboard");
     await expect(page.getByTestId("dashboard-page")).toBeVisible();
     await page.waitForLoadState("networkidle");
-    // Mask chart.js <canvas> (non-deterministic rasterization) — see test 01.
+    // Mask chart.js <canvas> (non-deterministic rasterization) — see test 01 — and the figures of
+    // the card "Salden" (Issue #588, P-13: they move with the server's real date).
     await expect(page).toHaveScreenshot("10-mobile-dashboard.png", {
       fullPage: true,
-      mask: [page.locator("canvas")],
+      mask: [page.locator("canvas"), page.getByTestId("team-saldo-values")],
     });
   });
 });

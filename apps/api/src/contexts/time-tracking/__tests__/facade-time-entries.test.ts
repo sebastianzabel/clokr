@@ -21,6 +21,7 @@ import {
   getWorkedEntriesInRange,
   getRecordedWorkEntriesInRange,
   getRecordedWorkEntriesByIds,
+  employeesWithValidWorkSince,
   getClaimedEntryDatesInRange,
   countLockedEntries,
   getInvalidEntries,
@@ -885,6 +886,146 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
       const rows = await getRecordedWorkEntriesByIds(app.prisma, data.tenant.id, many);
       expect(rows.map((r) => r.id).sort((a, b) => a.localeCompare(b))).toEqual(
         [ids.closedA, ids.closedB, ids.open].sort((a, b) => a.localeCompare(b)),
+      );
+    });
+  });
+  describe("employeesWithValidWorkSince (Issue #588)", () => {
+    const hire = new Date("2026-03-02T00:00:00Z");
+    const at = (iso: string) => new Date(`${iso}T00:00:00Z`);
+    const people: Record<string, string> = {};
+
+    async function bareEmployee(tenantId: string, key: string, hireDate: Date): Promise<string> {
+      const s = `ewvw-${key}-${randomUUID().slice(0, 8)}`;
+      const user = await app.prisma.user.create({
+        data: {
+          email: `${s}@example.invalid`,
+          passwordHash: "x",
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const employee = await app.prisma.employee.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          employeeNumber: s.slice(0, 20),
+          firstName: "Person",
+          lastName: key,
+          hireDate,
+        },
+      });
+      return employee.id;
+    }
+
+    async function entry(
+      employeeId: string,
+      salonId: string,
+      date: Date,
+      overrides: Record<string, unknown> = {},
+    ) {
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId,
+          date,
+          startTime: new Date(date.getTime() + 8 * 3_600_000),
+          endTime: new Date(date.getTime() + 16 * 3_600_000),
+          breakMinutes: 30,
+          type: "WORK",
+          salonId,
+          ...overrides,
+        },
+      });
+    }
+
+    beforeAll(async () => {
+      for (const key of [
+        "valid",
+        "open",
+        "invalid",
+        "deleted",
+        "overtime",
+        "holiday",
+        "dayBefore",
+        "none",
+        "late",
+      ]) {
+        people[key] = await bareEmployee(data.tenant.id, key, hire);
+      }
+      people.foreign = await bareEmployee(otherTenantData.tenant.id, "foreign", hire);
+      const s = data.salonId;
+      await entry(people.valid, s, hire); // closed valid WORK on the hire day
+      await entry(people.open, s, hire, { endTime: null });
+      await entry(people.invalid, s, hire, { isInvalid: true });
+      await entry(people.deleted, s, hire, { deletedAt: new Date() });
+      await entry(people.overtime, s, hire, { type: "OVERTIME" });
+      await entry(people.holiday, s, hire, { type: "PUBLIC_HOLIDAY" });
+      await entry(people.dayBefore, s, at("2026-03-01"));
+      // Earlier invalid/open rows must not hide a later valid one: the latest VALID date decides.
+      await entry(people.late, s, at("2026-03-03"), { isInvalid: true });
+      await entry(people.late, s, at("2026-04-06"));
+      await entry(people.foreign, otherTenantData.salonId, hire);
+    });
+
+    const from = (key: string) => ({ employeeId: people[key], fromDay: hire });
+
+    it("contains a person with a closed valid WORK entry on the hire day", async () => {
+      const set = await employeesWithValidWorkSince(app.prisma, data.tenant.id, [from("valid")]);
+      expect([...set]).toEqual([people.valid]);
+    });
+
+    it("contains a person whose latest valid entry is after the hire day even when an invalid one lies between", async () => {
+      const set = await employeesWithValidWorkSince(app.prisma, data.tenant.id, [from("late")]);
+      expect(set.has(people.late)).toBe(true);
+    });
+
+    it("does not contain a person with only an open, invalid, soft-deleted, non-WORK or pre-hire entry, or none", async () => {
+      const keys = ["open", "invalid", "deleted", "overtime", "holiday", "dayBefore", "none"];
+      const set = await employeesWithValidWorkSince(app.prisma, data.tenant.id, keys.map(from));
+      expect(set.size).toBe(0);
+    });
+
+    it("never contains a person of another tenant, whichever tenantId is passed", async () => {
+      const own = await employeesWithValidWorkSince(app.prisma, data.tenant.id, [
+        from("foreign"),
+        from("valid"),
+      ]);
+      expect([...own]).toEqual([people.valid]);
+      const theirs = await employeesWithValidWorkSince(app.prisma, otherTenantData.tenant.id, [
+        from("foreign"),
+        from("valid"),
+      ]);
+      expect([...theirs]).toEqual([people.foreign]);
+    });
+
+    it("compares each person against their own fromDay", async () => {
+      const set = await employeesWithValidWorkSince(app.prisma, data.tenant.id, [
+        { employeeId: people.valid, fromDay: at("2026-03-03") },
+        { employeeId: people.late, fromDay: at("2026-04-06") },
+      ]);
+      expect([...set]).toEqual([people.late]);
+    });
+
+    it("returns an empty set for an empty list without issuing a query", async () => {
+      const failing = {
+        timeEntry: {
+          groupBy: () => {
+            throw new Error("no query expected for an empty list");
+          },
+        },
+      } as never;
+      expect((await employeesWithValidWorkSince(failing, data.tenant.id, [])).size).toBe(0);
+    });
+
+    it("reads more than one chunk of ids into one result", async () => {
+      const filler = Array.from({ length: 5000 }, () => ({
+        employeeId: randomUUID(),
+        fromDay: hire,
+      }));
+      const persons = [...filler, from("valid"), from("late")];
+      expect(persons.length).toBe(5002);
+      const set = await employeesWithValidWorkSince(app.prisma, data.tenant.id, persons);
+      expect([...set].sort((a, b) => a.localeCompare(b))).toEqual(
+        [people.valid, people.late].sort((a, b) => a.localeCompare(b)),
       );
     });
   });

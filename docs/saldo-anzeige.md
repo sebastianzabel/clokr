@@ -16,18 +16,39 @@ Two German UI terms, used identically everywhere they appear:
   (`getConfirmedCarryOver` / `getConfirmedCarryOverBulk` in `apps/api/src/contexts/working-time-account/confirmed-saldo.ts`
   — the same chain Phase 98's audit walks and verifies, so both features share one source of truth).
   Stable, legally defensible as the entitlement figure. It only moves at Monatsabschluss.
-- **„Laufender Monat (Prognose)"** — everything accrued since that last close. It is **derived by
+- **„Laufender Monat (Prognose)"** — everything accrued since that last close (the wording itself follows
+  the data, see the next paragraph). It is **derived by
   subtraction** (`total − confirmed`) at exactly one place
   (`computeOvertimeBalanceBreakdown` in `apps/api/src/contexts/time-tracking/api/time-entries.ts`), never computed
   independently. This guarantees the two figures always sum to exactly the total the app has always
   shown, and avoids creating a second computation path for the same value — the same shape whose
   violation is why Phase 98 (saldo chain integrity audit) exists in the first place.
 
-**Caveat:** "the open month" is a simplification for the common case. The forecast technically
-covers everything **since the last Monatsabschluss** — in normal operation (tenant closes every
-month) that is the current calendar month, but for a tenant that has stopped closing months it can
-span several months. The label still says "Laufender Monat (Prognose)"; the underlying period is
-whatever remains unconfirmed.
+**The forecast is worded from the data (Issue #588).** "The open month" is a simplification: the forecast
+covers everything **since the last Monatsabschluss** — the current calendar month when the tenant closes
+every month, several months when it has stopped closing. Every surface therefore words the forecast from
+`unconfirmedMonths`: the number of months from the first open day through the current month, inclusive. It is
+computed in `computeOvertimeBalanceBreakdown` (the same place that derives the forecast by subtraction; it
+computes no figure differently, the field only reports a count). The rule has three cases:
+
+| `unconfirmedMonths`              | closed month exists | Label                             | Caption under the total               |
+| -------------------------------- | ------------------- | --------------------------------- | ------------------------------------- |
+| exactly 1                        | any                 | „Laufender Monat (Prognose)“      | „inkl. laufendem Monat“               |
+| more than 1                      | yes                 | „Seit Monatsabschluss (Prognose)“ | „inkl. Zeitraum seit Monatsabschluss“ |
+| more than 1, or unknown (`null`) | no                  | „Prognose (seit Eintritt)“        | „inkl. Zeitraum seit Eintritt“        |
+
+An unknown value never claims the running month; it is decided by `hasClosedMonth` alone. A column whose rows
+disagree reads „Prognose (offener Zeitraum)“ (`FORECAST_LABEL_MIXED`). On the first day of a month after a
+month that was not closed yet, the count is 2 (the finished month plus the new one), so the label correctly
+says „Seit Monatsabschluss“.
+
+The wording is chosen in exactly one place, `apps/web/src/lib/saldo/forecast-label.ts` (`forecastLabel`,
+`forecastColumnLabel`, `forecastCaption`); `SaldoAnzeige`, `KontoSaldoCard`, the team table and every page
+call it with both facts (`unconfirmedMonths`, `hasClosedMonth`). The endpoints that carry the value, all
+additive: the rows of `GET /dashboard/overtime-overview`, `GET /dashboard` (own `overtime` block),
+`GET /overtime/:employeeId` and the visible branches of `GET /leave/overtime-balance` (the masked branch,
+`balanceVisible: false`, carries no key). `team-saldo-one-place-588.test.ts` fails when the two literals
+appear anywhere else in the web or when a forecast call site does not pass the value.
 
 **No closed month yet** (new hire): `confirmed = 0`, flagged explicitly as "noch kein
 Monatsabschluss" rather than a genuine 0h entitlement, so it cannot be misread as "you have zero
@@ -86,6 +107,48 @@ carry-over. „Bestätigt" is genuinely safe from open-month fluctuation, which 
 it is the primary, leading figure in every split-saldo display and why the forecast is
 intentionally the smaller, secondary one.
 
+## Team saldo figures (Issue #588)
+
+One web module, `apps/web/src/lib/reports/team-saldo.ts`, is the ONLY place the team median, the Top 5 plus /
+Top 5 minus and the outlier rule live. `/reports` (the „Median-Saldo“ KPI and the Überstunden-Übersicht) and the
+dashboard card „Salden“ both read it; no page computes a median, a mean over row saldi or an exclusion of its own.
+
+- **Source.** The rows of `GET /dashboard/overtime-overview` (the two gates `team-overview:read` AND
+  `overtime:read`, reach and salon filter unchanged). Three additive row fields feed the module:
+  `hasRecordedTime` (a valid, closed, non-deleted WORK entry on or after hire, one bulk read through the
+  time-tracking facade `employeesWithValidWorkSince`), `trackOnly` (the #494 rule of the contract valid today,
+  reported from the breakdown) and `unconfirmedMonths` (see above; `null` when the live saldo is unavailable).
+- **Value.** The total (`balanceHours`, confirmed plus forecast) of a person; Top 5 plus are the five highest
+  positive totals, Top 5 minus the five lowest negative ones. A person with a total of exactly 0 is in neither list; ties are broken by name, then id.
+- **Median.** The team figure is the median of the counted totals (the middle value; for an even count the mean of the two middle
+  values rounded to whole minutes), not the arithmetic mean: one extreme person does not move it. An empty counted set has
+  no median.
+- **Outlier rule (D-588-2, P-03, P-04).** A person counts for the median and the Top lists only if all of these
+  hold: the row belongs to the team employed today (a row of the exited section, `exitedWithOpenFinalSaldo`, is
+  neither counted nor listed; it keeps its own section on `/reports`, #613), the server delivered a live saldo
+  (`openMonthMinutes` is not `null`), the contract in force is not track-only (`trackOnly` is not true, #494) and the
+  person has recorded time since hire (`hasRecordedTime` is not false). A fact the server did not send (an older
+  cached answer) never excludes anyone. The others are not dropped silently; each is listed with exactly one
+  reason, in this precedence: „Saldo nicht verfügbar“ (`SALDO_UNAVAILABLE`), „nur Zeiterfassung“
+  (`TIME_TRACKING_ONLY`), „ohne Erfassung“ (`NO_RECORDED_TIME`). The code is the control value, the German text
+  display only (`TEAM_SALDO_EXCLUSION_LABEL`).
+- **Format.** Every saldo is ±H:MM through `fmtBalance` (`lib/utils/format-minutes.ts`; sign always shown, U+2212
+  for a minus, an exact zero reads „±0:00“, also in every `SaldoAnzeige` variant). The overview table has one
+  column per value: Abgeschlossen · forecast (header from `forecastColumnLabel`) · Gesamt.
+- **Verlauf.** The former „Verlauf“ column (a sparkline over `snapshots`) is gone; it needed two closed months and
+  was empty in practice. The API still sends `snapshots` per row; the period report of #612 shows opening and
+  closing saldo instead.
+- **Dashboard card.** At the top of the team area: diverging horizontal bars (plus right, minus left of a zero line,
+  axis title „Stunden“, no smoothing, colours from `getChartTheme()`), the same persons as a linked list (each links
+  to the person's team time entries when the caller may open that page), the median and the excluded persons.
+  It loads after the team block and never blocks it; a 403 or a missing right hides it without a request.
+- **Guard.** `apps/web/src/__tests__/team-saldo-one-place-588.test.ts` walks the non-test web sources and fails on a
+  second median, a mean over row saldi, the forecast literals outside the helper, a forecast call site without the
+  value, and a team surface that does not read the module.
+
+Nothing in this section changes a saldo: the module only selects, orders and formats figures the API already
+computed.
+
 ## PDF export and Berichte
 
 The exported Stundennachweis (single-employee) and Monatsexport (all persons of a month; Issue #617, it replaced the former company-wide PDF), `apps/api/src/composition/reports.ts`
@@ -132,6 +195,9 @@ one export can legitimately mix confirmed and provisional rows. A document-level
 wrong, so each row carries its own Status cell („Bestätigt“, „Prognose“ or „ohne Soll“), and a single
 legend line (`MONTHLY_EXPORT_FORECAST_LEGEND`) is printed once at the end of the table, only when at
 least one row is a forecast.
+
+The PDF wording constants (`OVERTIME_LABEL_CONFIRMED`, `OVERTIME_LABEL_FORECAST`, `MONTHLY_EXPORT_FORECAST_LEGEND`)
+are unchanged by Issue #588: a PDF row is month-scoped, so „Prognose“ there never claims or denies the running month.
 
 ## SALDO-DISP-08 Decision: no suppression code
 

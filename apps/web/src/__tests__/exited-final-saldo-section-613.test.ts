@@ -21,11 +21,13 @@ function row(n: number, exitDate: string | null): ExitedOverviewRow {
     confirmedMinutes: 120,
     openMonthMinutes: 0,
     hasClosedMonth: true,
+    // Issue #588: three unclosed months -> the column is labelled "Seit Monatsabschluss".
+    unconfirmedMonths: 3,
   };
 }
 
 describe("ExitedFinalSaldoSection (Issue #613)", () => {
-  it("shows the heading with the count, the hint, and per row name, number, exit date and the compact saldo", () => {
+  it("shows the heading with the count, the hint, and per row name, number, exit date and one value per saldo column", () => {
     renderWithTheme(ExitedFinalSaldoSection, {
       rows: [row(1, "2026-10-15"), row(2, "2026-09-30")],
       total: 2,
@@ -37,13 +39,31 @@ describe("ExitedFinalSaldoSection (Issue #613)", () => {
       screen.getByText("Der Endsaldo ist bestätigt, sobald der Austrittsmonat abgeschlossen ist."),
     ).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Austritt am" })).toBeInTheDocument();
+    // Issue #588 (D-588-4/D-588-5): one column per value, the forecast label chosen from the data.
+    expect(screen.getByRole("columnheader", { name: "Abgeschlossen" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Seit Monatsabschluss (Prognose)" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Gesamt" })).toBeInTheDocument();
     expect(screen.getByText("Person Nr1")).toBeInTheDocument();
     expect(screen.getByText("N-2")).toBeInTheDocument();
     expect(screen.getAllByTestId("exit-date").map((e) => e.textContent)).toEqual([
       "15.10.2026",
       "30.09.2026",
     ]);
-    expect(screen.getAllByTestId("saldo-confirmed-value")).toHaveLength(2);
+    const confirmed = screen.getAllByTestId("saldo-cell-confirmed");
+    expect(confirmed).toHaveLength(2);
+    expect(confirmed.map((e) => e.textContent?.trim())).toEqual(["+2:00", "+2:00"]);
+    expect(screen.getAllByTestId("saldo-cell-open").map((e) => e.textContent?.trim())).toEqual([
+      "±0:00",
+      "±0:00",
+    ]);
+    expect(screen.getAllByTestId("saldo-cell-total").map((e) => e.textContent?.trim())).toEqual([
+      "+2:00",
+      "+2:00",
+    ]);
+    // No compact SaldoAnzeige any more.
+    expect(screen.queryByTestId("saldo-anzeige")).toBeNull();
     expect(screen.queryByTestId("exited-more")).toBeNull();
   });
 
@@ -56,13 +76,15 @@ describe("ExitedFinalSaldoSection (Issue #613)", () => {
     expect(screen.getByTestId("exited-more")).toHaveTextContent("und 2 weitere");
   });
 
-  it("falls back to the single-value saldo for a row without the split fields", () => {
+  it("shows dashes in the split cells and the total from balanceHours for a row without the split fields", () => {
     renderWithTheme(ExitedFinalSaldoSection, {
-      rows: [{ ...row(3, "2026-10-15"), confirmedMinutes: undefined }],
+      rows: [{ ...row(3, "2026-10-15"), confirmedMinutes: undefined, openMonthMinutes: undefined }],
       total: 1,
     });
     expect(screen.getByText("Person Nr3")).toBeInTheDocument();
-    expect(screen.queryByTestId("saldo-confirmed-value")).toBeNull();
+    expect(screen.getByTestId("saldo-cell-confirmed")).toHaveTextContent("—");
+    expect(screen.getByTestId("saldo-cell-open")).toHaveTextContent("—");
+    expect(screen.getByTestId("saldo-cell-total")).toHaveTextContent("+2:00");
   });
 
   it("renders nothing for an empty list with total 0", () => {
@@ -84,7 +106,7 @@ function readPage(): string {
 describe("/reports page wiring (Issue #613)", () => {
   const PAGE = readPage();
 
-  it("the team table, its sorting, the KPIs and the sparklines are derived from the active rows", () => {
+  it("the team table, its sorting, the KPIs and the team figures are derived from the active rows", () => {
     expect(PAGE).toContain(
       "let overtimeSections = $derived(partitionOvertimeOverview(overtimeOverview?.employees ?? []))",
     );
@@ -92,12 +114,12 @@ describe("/reports page wiring (Issue #613)", () => {
       /let sortedOvertime = \$derived\.by\(\(\) => \{\s*const rows = overtimeSections\.active;/,
     );
     expect(PAGE).toContain("let kpiTeamSize = $derived(overtimeSections.active.length)");
-    expect(PAGE).toMatch(
-      /let kpiAvgBalance = \$derived\.by\(\(\) => \{\s*const rows = overtimeSections\.active;/,
-    );
+    // Issue #588: the median figure replaces the mean over the active rows.
+    expect(PAGE).toContain("let teamSaldo = $derived(teamSaldoFigures(overtimeSections.active))");
     expect(PAGE).toContain('overtimeSections.active.filter((r) => r.status === "CRITICAL")');
-    // The sparklines read the paged team rows, which come from sortedOvertime.
-    expect(PAGE).toContain("const rows = pagedOvertimeRows;");
+    // The table iterates the paged team rows, which slice sortedOvertime (Issue #588).
+    expect(PAGE).toContain("{#each pagedOvertimeRows as row (row.id)}");
+    expect(PAGE).toMatch(/let pagedOvertimeRows = \$derived\(\s*sortedOvertime\.slice\(/);
     expect(PAGE).not.toMatch(/overtimeOverview\?\.employees \?\? \[\]\)\.filter/);
   });
 

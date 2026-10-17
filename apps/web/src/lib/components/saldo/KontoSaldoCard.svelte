@@ -20,8 +20,8 @@
   // (−8:00)" defect CONTEXT names as the reason this task exists.
   //
   // So: this card renders its two figures itself, from the raw minutes already on the page,
-  // using CONTEXT's locked vocabulary ("Gesamt-Saldo" / "Bestätigt" · "inkl. laufendem
-  // Monat"). `SaldoAnzeige.svelte` is NOT imported and NOT modified — no new props, no
+  // using CONTEXT's locked vocabulary ("Gesamt-Saldo" / "Bestätigt" · the caption under the
+  // headline, worded by forecastCaption() from the data, Issue #588). `SaldoAnzeige.svelte` is NOT imported and NOT modified — no new props, no
   // `:global()` overrides, no row-hiding CSS.
   //
   // Issue #291 (2026-09-21) — the two figures and the vocabulary above are unchanged, but their
@@ -30,12 +30,15 @@
   // forced it.
   import Card from "$components/ui/Card.svelte";
   import { fmtBalance, fmtMin } from "$lib/utils/format-minutes";
+  import { forecastCaption } from "$lib/saldo/forecast-label"; // Issue #588
 
   interface Props {
     totalHours: number | null;
     confirmedMinutes?: number;
     openMonthMinutes?: number | null;
     hasClosedMonth?: boolean;
+    /** Issue #588 (P-14) - how many calendar months the forecast spans; words the caption. */
+    unconfirmedMonths?: number | null;
     rosterIncomplete?: boolean;
     loading?: boolean;
     // Phase 100 (OTC-03) — optional tolerance-exceeded badge. Both default to `undefined`
@@ -50,6 +53,7 @@
     confirmedMinutes = undefined,
     openMonthMinutes = undefined,
     hasClosedMonth = false,
+    unconfirmedMonths = undefined,
     rosterIncomplete = false,
     loading = false,
     isNegativeLimitExceeded = undefined,
@@ -153,10 +157,11 @@
       {/if}
       {#if isSplit}
         <!-- Issue #291 — the caption now qualifies the HEADLINE (which is the lifetime
-             total), so it carries the "inkl. laufendem Monat" wording the row below used
-             to carry, including the roster-incomplete qualifier. -->
+             total), so it carries the forecast wording the row below used to carry (now
+             chosen by forecastCaption() from the data, Issue #588), including the
+             roster-incomplete qualifier. -->
         <div class="ksc-caption">
-          inkl. laufendem Monat{#if rosterIncomplete}
+          {forecastCaption(unconfirmedMonths, hasClosedMonth)}{#if rosterIncomplete}
             &nbsp;· Restmonat unverplant{/if}
         </div>
         <!-- Issue #291 — the state the ticket was filed about: nothing confirmed while the
