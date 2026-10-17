@@ -74,11 +74,15 @@ export {
 export { getEffectiveSchedule } from "./entry-invariants";
 export { getEffectiveBreakDuration } from "./break-effective";
 export type { BreakEmployeeShape, BreakTenantConfigShape } from "./break-effective";
-export { resolvePresenceState, isObligatedWorkday, isDayDue } from "./presence";
-export type { PresenceEntry, PresenceLeave, PresenceAbsence } from "./presence";
-// Issue #587 — the one day-status function (obligation + timing + presence state).
-export { resolveDayStatus } from "./day-status";
-export type { DayStatusInput, DayStatus } from "./day-status";
+// Issue #587 — `resolveDayStatus` is the one day-status function (obligation + timing + presence state).
+export { resolvePresenceState, isObligatedWorkday, isDayDue, resolveDayStatus } from "./presence";
+export type {
+  PresenceEntry,
+  PresenceLeave,
+  PresenceAbsence,
+  DayStatusInput,
+  DayStatus,
+} from "./presence";
 export {
   findUnconfirmedBreakDays,
   unconfirmedDaysFromEntries,

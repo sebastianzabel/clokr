@@ -343,14 +343,14 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   JArbSchG pre-write plan values (`plannedNetMin…`, `correctedNetWorkMin`) and shift netto
   (`scheduling/shift-netto.ts`) are deliberately different calculations and stay as they are.
 - **A person's day status comes from one function (Issue #587).** `resolveDayStatus()`
-  (`apps/api/src/contexts/time-tracking/day-status.ts`, exported via `contexts/time-tracking/index.ts`) is the
+  (`apps/api/src/contexts/time-tracking/presence.ts`, exported via `contexts/time-tracking/index.ts`) is the
   ONLY place `isObligatedWorkday`, `isDayDue` and `resolvePresenceState` are combined. `GET
   /dashboard/team-week` and `GET /dashboard/today-attendance` both call it, with inputs built by the same
   module-private person-day helpers of `composition/dashboard.ts`: the leave of the day (PENDING included, a
   non-pending row wins), the Berufsschule displacement (rule owned by Abwesenheiten), the first in-scope shift
   (`isShiftInScope`), the contract valid on that day (not the newest one), the stand-ins for hidden time (#85)
   and the entry-only rule (#548); "today" is read from the clock once per request. The definition of a workday
-  is unchanged and stays in `presence.ts`. `expectedStart` (shift start, tenant-local `HH:MM`) and
+  is unchanged and stays in `presence.ts`, next to the function (a module of its own would join the measured import cycle). `expectedStart` (shift start, tenant-local `HH:MM`) and
   `lateMinutes` (whole minutes since the shift start, only for a "missing" row of today with a shift) exist on
   the attendance row ONLY - the team-week shape is frozen by `dashboard-team-week-frozen-84` - and no start
   time is invented for a day without a shift, so a person with a fixed schedule and no shift reads "scheduled"

@@ -2615,10 +2615,12 @@ Tag als „Fehlt“, während die Team-Woche „Geplant“ zeigte. Die beiden ei
 
 **Was sich geändert hat:**
 
-- `resolveDayStatus()` (`contexts/time-tracking/day-status.ts`, über `index.ts`) ist die einzige Stelle, die
+- `resolveDayStatus()` (`contexts/time-tracking/presence.ts`, über `index.ts`) ist die einzige Stelle, die
   Pflicht, Fälligkeit und Zustand kombiniert. Sie ist rein (kein Prisma, keine Uhr, keine Zeitzonenbibliothek)
   und bekommt mandantenlokale Strings und bereits aufgelöste Tatsachen. Die Definition eines Arbeitstags bleibt
-  in `presence.ts` unverändert; `presence.ts` ändert sich nur in einem Kommentar (kein Verhalten).
+  in `presence.ts` unverändert. Die Funktion steht in `presence.ts` und nicht in einem eigenen Modul, weil ein
+  eigenes Modul über `../absence` in den gemessenen Importzyklus geraten wäre (Schranke 22 von
+  `measure-context-boundary-imports.ts --cycles --check`, die nicht angehoben wird).
 - Beide Handler in `composition/dashboard.ts` bilden die Eingaben über dieselben modulprivaten Hilfsfunktionen
   (P-01): Urlaub des Tages (offene Anträge eingeschlossen, die nicht beantragte Zeile hat Vorrang),
   Berufsschul-Verdrängung (die Regel bleibt bei Abwesenheiten, `vocationalSchoolDisplacesLeave`), erste Schicht
@@ -2652,8 +2654,8 @@ Tag als „Fehlt“, während die Team-Woche „Geplant“ zeigte. Die beiden ei
 
 **Auswirkung auf die Kontexte:**
 
-- Zeiterfassung: neues reines Modul `day-status.ts`; `presence.ts` in der Sache unverändert (Pflicht, Fälligkeit
-  und Zustand bleiben dort definiert).
+- Zeiterfassung: `resolveDayStatus()` kommt als neue Funktion in `presence.ts` hinzu; Pflicht, Fälligkeit und
+  Zustand bleiben dort unverändert definiert.
 - Abwesenheiten: keine; der Kommentar der Facade-Funktion `getCalendarLeaveOverlapping` nennt die
   Anwesenheitsliste als weiteren Leser (A3), die Signatur ist unverändert.
 - Schichtplanung: keine; `getShiftsInRange` bekommt einen weiteren Leser (die Anwesenheitsliste).
@@ -2697,7 +2699,7 @@ Begründung gilt für `reports.test.ts` RPT-03 Fall 5 (alt „missing“, neu �
   mit Urlaub, Feiertag im Stammsalon, geschlossener und offener Eintrag) zu zwei Uhrzeiten (07:00 und 12:00)
   für die Administration und für eine Salonleitung (SALONS [A]), dazu Vertragswechsel und Verspätung; alle
   acht Statuswerte werden erreicht.
-- Wächter: 258 begangene Nicht-Test-Dateien, Register mit 3 Einträgen.
+- Wächter: 257 begangene Nicht-Test-Dateien, Register mit 3 Einträgen.
 - Gesamtläufe (Stand Abschluss Phase 587): API 672 Dateien / 10346 Tests (davon 3 übersprungen, 10343 grün); Web 228 Dateien / 3449 Tests grün.
 
 ### Nachrechnen (Nachtrag Phase 587)

@@ -1,7 +1,7 @@
 /**
  * Issue #587 (D-587-1, D-587-5) - a person's day status is resolved by ONE function.
  *
- * `resolveDayStatus()` (`contexts/time-tracking/day-status.ts`) is the only place the obligation
+ * `resolveDayStatus()` (`contexts/time-tracking/presence.ts`) is the only place the obligation
  * (`isObligatedWorkday`), the due time (`isDayDue`) and the state (`resolvePresenceState`) are
  * combined. Before #587 `GET /dashboard/team-week` and `GET /dashboard/today-attendance` each held
  * their own copy of the chain and contradicted each other for the same person and day. This guard
@@ -9,8 +9,8 @@
  *
  * What it checks (AST, comments and strings excluded; every non-test `.ts` file under
  * `apps/api/src`):
- *   1. `resolvePresenceState` is called in `day-status.ts` and nowhere else.
- *   2. The calls of `isDayDue` / `isObligatedWorkday` outside `day-status.ts` are exactly the
+ *   1. `resolvePresenceState` is called in `presence.ts` (inside `resolveDayStatus`) and nowhere else.
+ *   2. The calls of `isDayDue` / `isObligatedWorkday` outside `presence.ts` are exactly the
  *      register below - the MEASURED known copies (file, route or function, callee), each with a
  *      reason. A new call site, or a register entry that no longer matches one, turns the test red.
  *   3. The `/team-week` and `/today-attendance` handlers of `composition/dashboard.ts` each call
@@ -30,9 +30,11 @@ import { describe, it, expect } from "vitest";
 
 // __dirname is apps/api/src/__tests__.
 const SRC_ROOT = join(__dirname, "..");
-const KERNEL = "contexts/time-tracking/day-status.ts";
+// The kernel lives in the presence module: a module of its own would join the measured import cycle
+// (gate `measure-context-boundary-imports --cycles`, ADR Eintrag P, Nachtrag Phase 587).
+const KERNEL = "contexts/time-tracking/presence.ts";
 const DASHBOARD = "composition/dashboard.ts";
-// Floor for the walked file count (measured 258 non-test files on 2026-10-17).
+// Floor for the walked file count (measured 257 non-test files on 2026-10-17).
 const MIN_WALKED_FILES = 150;
 
 const PRIMITIVES = ["resolvePresenceState", "isDayDue", "isObligatedWorkday"] as const;

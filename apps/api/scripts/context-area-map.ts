@@ -245,7 +245,6 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
   "src/contexts/time-tracking/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization
   "src/contexts/time-tracking/presence.ts": "zeiterfassung", // WiFi-presence detection helper feeding routes/presence.ts and the missing-entries gap detector
-  "src/contexts/time-tracking/day-status.ts": "zeiterfassung", // Issue #587 (D-587-1) — pure day-status kernel over presence facts (obligation, due time, state); no model access
   "src/contexts/time-tracking/retro-config.ts": "zeiterfassung", // RetroEntryRequest tenant-config toggle
 
   // ── abwesenheiten — LeaveRequest/LeaveType/LeaveEntitlement/SpecialLeaveRule/Section9Credit/
