@@ -144,6 +144,109 @@ describe("Issue #613 - dashboard Stichtag views read the period population", () 
     });
   });
 
+  describe("team week", () => {
+    let d: Awaited<ReturnType<typeof seedTestData>>;
+    let p: Record<"E" | "H" | "G" | "D" | "A", PopulationPerson>;
+    const NOW = "2026-09-18T10:00:00Z"; // Fri 18.09., week Mon 14.09. - Sun 20.09.
+
+    type WeekDay = { date: string; status: string; isWorkday: boolean };
+    type Week = { team: Array<{ id: string; days: WeekDay[] }> };
+
+    function daysOf(body: Week, employeeId: string): WeekDay[] {
+      const row = body.team.find((r) => r.id === employeeId);
+      expect(row, `row of ${employeeId}`).toBeDefined();
+      return row?.days ?? [];
+    }
+
+    beforeAll(async () => {
+      d = await seedTestData(app, "pw613");
+      const base = { tenantId: d.tenant.id, salonId: d.salonId, hireDate: HIRE };
+      p = {
+        E: await createPopulationPerson(app, { ...base, tag: "e", exitDate: day("2026-09-15") }),
+        H: await createPopulationPerson(app, { ...base, tag: "h", hireDate: day("2026-09-17") }),
+        // Left before the week started.
+        G: await createPopulationPerson(app, { ...base, tag: "g", exitDate: day("2026-09-11") }),
+        D: await createPopulationPerson(app, { ...base, tag: "d", loginActive: false }),
+        A: await anonymisedWithLogin(d.tenant.id, d.salonId, "a"),
+      };
+    }, 120_000);
+
+    afterAll(async () => {
+      try {
+        await cleanupTestData(app, d.tenant.id);
+      } catch (err) {
+        console.error("Test cleanup failed:", err);
+      }
+    });
+
+    it("lists the week's population: a mid-week leaver, a mid-week hire and a deactivated login; not a leaver of the week before, not an anonymised person", async () => {
+      const body = await getJson<Week>(NOW, d.adminToken, "/api/v1/dashboard/team-week");
+      const ids = new Set(body.team.map((r) => r.id));
+      expect(ids.has(p.E.employeeId)).toBe(true);
+      expect(ids.has(p.H.employeeId)).toBe(true);
+      expect(ids.has(p.D.employeeId)).toBe(true);
+      expect(ids.has(p.G.employeeId)).toBe(false);
+      expect(ids.has(p.A.employeeId)).toBe(false);
+    });
+
+    it("a day after the exit day is no workday and never missing; the exit week's earlier days keep the existing rules", async () => {
+      const body = await getJson<Week>(NOW, d.adminToken, "/api/v1/dashboard/team-week");
+      const days = daysOf(body, p.E.employeeId);
+      expect(days.map((c) => c.date)).toEqual([
+        "2026-09-14",
+        "2026-09-15",
+        "2026-09-16",
+        "2026-09-17",
+        "2026-09-18",
+        "2026-09-19",
+        "2026-09-20",
+      ]);
+      // Mon 14. and Tue 15. (the exit day): employed, past, no entry.
+      expect(days.slice(0, 2).map((c) => [c.isWorkday, c.status])).toEqual([
+        [true, "missing"],
+        [true, "missing"],
+      ]);
+      // Wed 16. - Sun 20.: outside the employment.
+      for (const cell of days.slice(2)) {
+        expect(cell.isWorkday, cell.date).toBe(false);
+        expect(cell.status, cell.date).not.toBe("missing");
+      }
+    });
+
+    it("a day before the hire day is no workday and never missing", async () => {
+      const body = await getJson<Week>(NOW, d.adminToken, "/api/v1/dashboard/team-week");
+      const days = daysOf(body, p.H.employeeId);
+      // Mon 14. - Wed 16.: before the hire.
+      for (const cell of days.slice(0, 3)) {
+        expect(cell.isWorkday, cell.date).toBe(false);
+        expect(cell.status, cell.date).not.toBe("missing");
+      }
+      // Thu 17. (the hire day): employed, past, no entry.
+      expect([days[3].isWorkday, days[3].status]).toEqual([true, "missing"]);
+    });
+
+    it("every day cell has exactly the keys of the frozen shape", async () => {
+      const body = await getJson<Week>(NOW, d.adminToken, "/api/v1/dashboard/team-week");
+      for (const row of body.team) {
+        for (const cell of row.days) {
+          expect(Object.keys(cell).sort((a, b) => a.localeCompare(b))).toEqual(
+            [
+              "absenceType",
+              "date",
+              "expectedHours",
+              "isWorkday",
+              "leaveTypeCode",
+              "reason",
+              "shift",
+              "status",
+              "workedHours",
+            ].sort((a, b) => a.localeCompare(b)),
+          );
+        }
+      }
+    });
+  });
+
   describe("team trend and overtime trend", () => {
     let d: Awaited<ReturnType<typeof seedTestData>>;
     let p: Record<"L" | "E" | "D" | "A", PopulationPerson>;

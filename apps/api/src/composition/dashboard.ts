@@ -477,7 +477,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       // Stichtag + `validFrom` (Timestamptz) keep the instant `weekEnd`; the `@db.Date` facade
       // reads below take calendar-day bounds (Issue #493).
-      const { end: weekEnd, days: weekDays } = weekRangeUtc(refDate, tz);
+      const { start: weekStart, end: weekEnd, days: weekDays } = weekRangeUtc(refDate, tz);
       const { firstDay: weekFirstDay, lastDay: weekLastDay } = weekDateRange(refDate, tz);
 
       // Phase 91b Plan 06 (Issue #91), D-09/D-10/D-13 — narrow to in-scope employees BEFORE any of
@@ -530,15 +530,24 @@ export async function dashboardRoutes(app: FastifyInstance) {
           ? "all"
           : [...teamWeekScopedIds, ...distinctEmployeeIds(inScopeRows ?? [])];
 
-      // Alle aktiven, nicht-anonymisierten Mitarbeiter
+      // The persons employed at some point during the week (Issue #613, D-613-1): never anonymised,
+      // a login state never decides, a notice exit date keeps the person listed until the exit day.
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
-          exitDate: null,
-          user: { isActive: true },
-          ...(populationIds !== "all" ? { id: { in: populationIds } } : {}),
+          AND: [
+            reportPopulationWhere(weekStart, weekEnd),
+            ...(populationIds !== "all" ? [{ id: { in: populationIds } }] : []),
+          ],
         },
-        select: { id: true, firstName: true, lastName: true, employeeNumber: true },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          employeeNumber: true,
+          hireDate: true,
+          exitDate: true,
+        },
         orderBy: { lastName: "asc" },
       });
       // Contracts, holidays, leave and absences belong to the Stammsalon persons only: a person
@@ -771,13 +780,21 @@ export async function dashboardRoutes(app: FastifyInstance) {
           // makes the day a workday; FLEXTIME/MONTHLY_HOURS → never per-day
           // (free daily distribution → no "Fehlt"); FIXED/unknown → workDays
           // array or expectedHours fallback.
-          const isWorkday = isObligatedWorkday({
-            scheduleType: schedType,
-            workDays: scheduleWorkDays,
-            dow,
-            expectedHours,
-            hasShift: shift !== null,
-          });
+          //
+          // Issue #613 (P-02): a day outside the person's employment (after the exit day, before
+          // the hire day) is not a day the person owes, so it is never a workday and can never be
+          // "Fehlt". Nothing else in the status chain changes here.
+          const dayRange = dayRangeUtc(dayStr, tz);
+          const employedThisDay = isEmployedInPeriod(emp, dayRange.start, dayRange.end);
+          const isWorkday =
+            employedThisDay &&
+            isObligatedWorkday({
+              scheduleType: schedType,
+              workDays: scheduleWorkDays,
+              dow,
+              expectedHours,
+              hasShift: shift !== null,
+            });
 
           const todayStr = dateStrInTz(new Date(), tz);
           const nowHHMM = timeStrInTz(new Date(), tz);
