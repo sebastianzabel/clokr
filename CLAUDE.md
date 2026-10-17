@@ -342,6 +342,24 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   `apps/api/src/__tests__/working-time-formula-one-place-79.test.ts` fails on an inline copy. The
   JArbSchG pre-write plan values (`plannedNetMin…`, `correctedNetWorkMin`) and shift netto
   (`scheduling/shift-netto.ts`) are deliberately different calculations and stay as they are.
+- **A person's day status comes from one function (Issue #587).** `resolveDayStatus()`
+  (`apps/api/src/contexts/time-tracking/day-status.ts`, exported via `contexts/time-tracking/index.ts`) is the
+  ONLY place `isObligatedWorkday`, `isDayDue` and `resolvePresenceState` are combined. `GET
+  /dashboard/team-week` and `GET /dashboard/today-attendance` both call it, with inputs built by the same
+  module-private person-day helpers of `composition/dashboard.ts`: the leave of the day (PENDING included, a
+  non-pending row wins), the Berufsschule displacement (rule owned by Abwesenheiten), the first in-scope shift
+  (`isShiftInScope`), the contract valid on that day (not the newest one), the stand-ins for hidden time (#85)
+  and the entry-only rule (#548); "today" is read from the clock once per request. The definition of a workday
+  is unchanged and stays in `presence.ts`. `expectedStart` (shift start, tenant-local `HH:MM`) and
+  `lateMinutes` (whole minutes since the shift start, only for a "missing" row of today with a shift) exist on
+  the attendance row ONLY - the team-week shape is frozen by `dashboard-team-week-frozen-84` - and no start
+  time is invented for a day without a shift, so a person with a fixed schedule and no shift reads "scheduled"
+  today and "missing" only for past days. `day-status-one-function-587.test.ts` fails on any other caller of
+  `resolvePresenceState` and on an unregistered `isDayDue`/`isObligatedWorkday` caller; its register holds the
+  known copies - `/my-week` and the missing-workday finder `find-missing-workdays.ts` - each naming the
+  follow-up issue #670. The web words a status only through `$lib/dashboard/day-status-label.ts`, and a
+  team-week cell links to `/team/time-entries?employeeId&date` for callers who may open that page. Details:
+  `docs/adr/0001-abweichungen.md` Eintrag P, Nachtrag Phase 587.
 - **Activity kind is an evaluation dimension, never working-time arithmetic (Issue #81).**
   `TimeEntry.activityKind` (`UNSPECIFIED` | `PRODUCTIVE` | `SETUP_CLEANING` | `TRAVEL`, default
   `UNSPECIFIED` for existing and new rows — no classification is invented; `TRAVEL` is entry-level only,

@@ -2600,6 +2600,115 @@ grep -c "homeSalon === filterSalonId" apps/api/src/composition/dashboard.ts   # 
 grep -c "employeeSalonAssignment" apps/api/src/contexts/scheduling/api/shifts.ts   # 0: planning-overview liest über den Unterbau
 ```
 
+### Nachtrag 2026-10-17 (Phase 587, Issue #587) — Ein Tagesstatus für Team-Woche und Anwesenheitsliste
+
+**Schwere:** Fehlerbehebung; keine Unterbau-, Schema-, Migrations-, Routen- oder Permission-Änderung. Die
+Antwort der Heutigen Anwesenheit bekommt zwei additive Felder je Zeile (`expectedStart`, `lateMinutes`); die
+Antwort der Team-Woche bleibt Schlüssel für Schlüssel gleich (eingefrorener Pin `dashboard-team-week-frozen-84`).
+
+Vor Phase 587 hielten `GET /dashboard/team-week` und `GET /dashboard/today-attendance` je eine eigene Kopie der
+Statusfolge aus Pflicht (`isObligatedWorkday`), Fälligkeit (`isDayDue`) und Zustand (`resolvePresenceState`).
+Die Anwesenheitsliste fest verdrahtete „heute ist nie in der Zukunft“ und „keine Schicht“, las weder offene
+Urlaubsanträge noch Berufsschule noch Feiertage nach Arbeitsort und meldete deshalb dieselbe Person am selben
+Tag als „Fehlt“, während die Team-Woche „Geplant“ zeigte. Die beiden eingefrorenen Tests desselben Zeitpunkts
+(Mittwoch 17.06.2026, 12:00 Uhr Ortszeit) widersprachen sich entsprechend.
+
+**Was sich geändert hat:**
+
+- `resolveDayStatus()` (`contexts/time-tracking/day-status.ts`, über `index.ts`) ist die einzige Stelle, die
+  Pflicht, Fälligkeit und Zustand kombiniert. Sie ist rein (kein Prisma, keine Uhr, keine Zeitzonenbibliothek)
+  und bekommt mandantenlokale Strings und bereits aufgelöste Tatsachen. Die Definition eines Arbeitstags bleibt
+  in `presence.ts` unverändert; `presence.ts` ändert sich nur in einem Kommentar (kein Verhalten).
+- Beide Handler in `composition/dashboard.ts` bilden die Eingaben über dieselben modulprivaten Hilfsfunktionen
+  (P-01): Urlaub des Tages (offene Anträge eingeschlossen, die nicht beantragte Zeile hat Vorrang),
+  Berufsschul-Verdrängung (die Regel bleibt bei Abwesenheiten, `vocationalSchoolDisplacesLeave`), erste Schicht
+  des Tages innerhalb der Reichweite (`isShiftInScope`), Vertrag des Tages, Platzhalter für verdeckte Zeiten
+  (#85) und die Eintragsregel für nur über einen Eintrag gelistete Personen (#548).
+- Die Anwesenheitsliste liest damit wie die Team-Woche Schichten in der Reichweite, offene Anträge
+  (Status „requested“, in der Oberfläche „Beantragt“), die Berufsschul-Verdrängung und Feiertage am Arbeitsort.
+  Der Satz des Nachtrags zu #548 „today-attendance liest keine Schichten“ gilt damit nicht mehr; die Schichten
+  werden je Schicht nach `isShiftInScope` gefiltert (Phase 91b D-11), eine verdeckte Schicht liest sich wie
+  ein Tag ohne Schicht.
+- **P-02, Vertrag des Tages:** Für einen Tag zählt der jüngste Vertrag, dessen `validFrom` am oder vor dem Ende
+  dieses mandantenlokalen Tags liegt (§ 2 NachwG; Vertragswechsel gelten nur zum Monatsersten). Die Team-Woche
+  beurteilte bisher alle Tage nach dem neuesten Vertrag; die einzige Wirkung auf sie betrifft Wochen mit einem
+  Vertragswechsel zum Monatsersten (die Tage davor werden nach dem alten Vertrag beurteilt).
+- **P-05, `expectedStart` und `lateMinutes`** nur an der Anwesenheitszeile (Schichtbeginn in Ortszeit; ganze
+  Minuten seit Schichtbeginn, nur für „Fehlt“ von heute mit Schicht). Für einen Tag ohne Schicht wird kein
+  Beginn erfunden; ein späteres Einstempeln wird nicht bewertet.
+- **P-06, ein Wortschatz:** `$lib/dashboard/day-status-label.ts` benennt die Statuswerte in der Oberfläche
+  (Berichte-Seite und Dashboard); „Fehlend“ entfällt zugunsten von „Fehlt“. Ein „Fehlt“ der Team-Woche nennt die
+  erwartete Zeit aus vorhandenen Feldern (Schichtzeiten, sonst die Sollstunden des Tages).
+- **P-07, Verlinkung:** Jede Zelle der Team-Woche ist für Aufrufer, die `/team/time-entries` öffnen dürfen, ein
+  Link auf `/team/time-entries?employeeId&date`. „Eintrag nachtragen“ (Lesen und Anlegen von Zeiteinträgen) und
+  „Abwesenheit erfassen“ (Lesen und Anlegen von Abwesenheitsanträgen, `/team/leave?create=1&employeeId&date`)
+  stehen in einer „Fehlt“-Zeile der Anwesenheitsliste; beide öffnen den bestehenden Dialog vorausgefüllt und
+  senden nie automatisch. Kein neuer Endpunkt, keine neue Permission.
+- **Wächter:** `apps/api/src/__tests__/day-status-one-function-587.test.ts` (AST) schlägt fehl, wenn
+  `resolvePresenceState` außerhalb des Kerns aufgerufen wird, wenn `isDayDue`/`isObligatedWorkday` außerhalb des
+  Kerns an einer nicht registrierten Stelle aufgerufen werden und wenn `team-week` oder `today-attendance` eine
+  der drei Funktionen selbst aufrufen. Das Register der bekannten Kopien (`/my-week`, Lückensuche
+  `find-missing-workdays.ts`) nennt je Eintrag das Folge-Issue #670.
+
+**Auswirkung auf die Kontexte:**
+
+- Zeiterfassung: neues reines Modul `day-status.ts`; `presence.ts` in der Sache unverändert (Pflicht, Fälligkeit
+  und Zustand bleiben dort definiert).
+- Abwesenheiten: keine; der Kommentar der Facade-Funktion `getCalendarLeaveOverlapping` nennt die
+  Anwesenheitsliste als weiteren Leser (A3), die Signatur ist unverändert.
+- Schichtplanung: keine; `getShiftsInRange` bekommt einen weiteren Leser (die Anwesenheitsliste).
+- Arbeitszeitkonto: keine; die Lückensuche (`find-missing-workdays.ts`) bleibt, wie sie ist (Folge-Issue #670).
+- Kompositionsschicht: beide Handler bilden die Eingaben über dieselben Hilfsfunktionen; die Kompositionsschicht
+  trägt weiter keine Geschäftsregel, die Statusregel steht in Zeiterfassung.
+
+**Was bewusst NICHT geschah:**
+
+- Kein neuer Schlüssel an einem Tag der Team-Woche (D-587-3); `expectedStart` und `lateMinutes` gibt es nur an
+  der Anwesenheitszeile.
+- Die Definition eines Arbeitstags (`isObligatedWorkday`, `isDayDue`, `workDays`-Vorrang) ist unverändert.
+- Die fünf Zähler der Summenzeile bleiben (P-03): „Geplant“ und „Beantragt“ werden wie „—“ nicht mitgezählt.
+- „Meine Woche“ (`/my-week`) und die Lückensuche der offenen Punkte bleiben eigene Kopien der Statusfolge; sie
+  sind im Folge-Issue #670 mit den gemessenen Abweichungen erfasst (D-587-5).
+- Kein Status „in Pause“ und kein Status „zu spät beim Einstempeln“: Es gibt keine Regel, die beides
+  definiert (§ 4 ArbZG regelt Länge und Lage der Ruhepause, #511; die Pünktlichkeit eines Einstempelns ist
+  gesetzlich nicht definiert). Die offene Owner-Frage steht in #670.
+- Der Stammsalon-Stichtag bleibt für Aufrufer mit Reichweite unterschiedlich (P-09): die Team-Woche entscheidet
+  die Zugehörigkeit zum Wochenende, die Anwesenheitsliste zum heutigen Tag (Entwurf aus #85). Die
+  Anwesenheitsliste hat noch keinen Salonfilter (#542).
+- Neutralitätsaufzeichnungen (`matrix.json`, `recipients.json`, `activity-auth.json`) und
+  `dashboard-team-week-frozen-84` sind unangetastet.
+
+**Eingefrorene Pins:** Der Pin der Team-Woche (`dashboard-team-week-frozen-84`) ist byte-gleich zum Merge-Base.
+`whole-tenant-frozen-85`, Fall (c) (`/today-attendance`), hielt den Fehler fest: dieselbe Administration am
+selben Zeitpunkt las „Fehlt“, während der Pin der Team-Woche „Geplant“ festschreibt. Der Literalwert
+`EXPECTED_TODAY_ATTENDANCE` ist unverändert; die Änderung läuft über die vorhandene Änderungsliste des Tests
+(datierter Absatz im Kopf, Tabelle Zelle / alter Wert / Wert seit #587 / Grund, die vor dem Vergleich auf den
+unberührten Literal angewendet wird; der Test prüft, dass jeder alte Wert im Literal steht). Gelistet sind genau
+die gemessenen Unterschiede: die Zeilen „Admin Test“ und „Pin PinMissing“ (Feld `status`: `missing` →
+`scheduled`; feste Arbeitszeit ohne Schicht ist um 12:00 nicht fällig) und `summary.missing` (2 → 0). Dieselbe
+Begründung gilt für `reports.test.ts` RPT-03 Fall 5 (alt „missing“, neu „scheduled“; der Feiertagszweig bleibt).
+
+**Gemessen:**
+
+- Neutralität: 3 Dateien, 1752 Tests grün, 0 geänderte Zellen, Aufzeichnungen byte-gleich zum Merge-Base
+  (587-01, 587-02).
+- Paritätstest `day-status-parity-587.test.ts`: 12 Fixture-Personen (feste Arbeitszeit mit und ohne Schicht,
+  Schichtdienst mit zwei Schichtzeiten und ohne Schicht, Gleitzeit, Monatsstunden, offener Antrag, Berufsschule
+  mit Urlaub, Feiertag im Stammsalon, geschlossener und offener Eintrag) zu zwei Uhrzeiten (07:00 und 12:00)
+  für die Administration und für eine Salonleitung (SALONS [A]), dazu Vertragswechsel und Verspätung; alle
+  acht Statuswerte werden erreicht.
+- Wächter: 258 begangene Nicht-Test-Dateien, Register mit 3 Einträgen.
+- Gesamtläufe (Stand Abschluss Phase 587): API 672 Dateien / 10346 Tests (davon 3 übersprungen, 10343 grün); Web 228 Dateien / 3449 Tests grün.
+
+### Nachrechnen (Nachtrag Phase 587)
+
+```bash
+pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest run src/contexts/time-tracking/__tests__/day-status.test.ts src/composition/__tests__/day-status-parity-587.test.ts src/__tests__/day-status-one-function-587.test.ts
+pnpm --filter @clokr/api exec vitest run src/composition/__tests__/dashboard-team-week-frozen-84.test.ts src/__tests__/whole-tenant-frozen-85.test.ts   # die zwei eingefrorenen Pins
+pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts src/__tests__/notification-recipients-neutrality.test.ts src/__tests__/activity-auth-neutrality.test.ts   # unverändert grün, ohne Nachtrag
+pnpm --filter @clokr/web exec vitest run src/lib/dashboard src/lib/leave src/__tests__/team-week-cell-links-587.test.ts
+```
+
 ## Q — Systemrollen-Templates und zwei Saldo-Gates (Phase 76b, Issue #76)
 
 **Schwere: informativ. Unterbau-Erweiterung nach ADR 0002, Entscheidung 7 (additiv, kein
