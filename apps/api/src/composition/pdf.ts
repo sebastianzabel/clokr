@@ -39,6 +39,17 @@ export const BALANCE_ADJUSTMENT_LEGEND =
 export const SECTION9_LEGEND =
   "Tage mit bestätigter AU während genehmigten Urlaubs werden als Kranktage geführt und nicht auf den Jahresurlaub angerechnet (§ 9 BUrlG).";
 
+/**
+ * Issue #617 (D-617-5, P-06) - one row of the Stundennachweis day list that is not a time entry: the
+ * period of an effective leave request or imposed absence, or a holiday at the work location. The
+ * dates are calendar days "yyyy-MM-dd", already clipped to the month; `label` is display text.
+ */
+export interface MonthlyReportDayRow {
+  from: string;
+  to: string;
+  label: string;
+}
+
 export interface MonthlyReportData {
   tenantName: string;
   employeeName: string;
@@ -71,6 +82,8 @@ export interface MonthlyReportData {
     netMinutes: number;
     note?: string;
   }>;
+  /** Absence periods and holidays, merged chronologically with the entries by the renderer. */
+  dayRows: MonthlyReportDayRow[];
 }
 
 // ── Helpers ───────────────────────────────────────────────
@@ -169,6 +182,44 @@ function drawReportTableHeader(doc: PDFKit.PDFDocument, top: number): number {
     .stroke("#e5e7eb");
   doc.fontSize(8).font("Helvetica");
   return top + 18;
+}
+
+/** "2026-09-07" -> "07.09.2026". */
+function isoToDisplayDate(iso: string): string {
+  return `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
+}
+
+/** "2026-09-07", "2026-09-09" -> "07.09.\u201309.09." (the year is the report month's). */
+function periodLabel(from: string, to: string): string {
+  return `${from.slice(8, 10)}.${from.slice(5, 7)}.\u2013${to.slice(8, 10)}.${to.slice(5, 7)}.`;
+}
+
+type DayListItem =
+  | { kind: "day"; row: MonthlyReportDayRow }
+  | { kind: "entry"; entry: MonthlyReportData["entries"][number] };
+
+/**
+ * The day list in order: by calendar day, a day row before the entries of that day (a holiday or an
+ * absence period starts the day), entries keep their incoming order (the route delivers date, then
+ * start time - #70). The sort is stable.
+ */
+function mergeDayList(data: MonthlyReportData): DayListItem[] {
+  const entryDay = (date: string): string =>
+    `${date.slice(6, 10)}-${date.slice(3, 5)}-${date.slice(0, 2)}`;
+  const keyed: Array<{ day: string; rank: number; item: DayListItem }> = [
+    ...data.dayRows.map((row) => ({
+      day: row.from,
+      rank: 0,
+      item: { kind: "day", row } as DayListItem,
+    })),
+    ...data.entries.map((entry) => ({
+      day: entryDay(entry.date),
+      rank: 1,
+      item: { kind: "entry", entry } as DayListItem,
+    })),
+  ];
+  keyed.sort((a, b) => a.day.localeCompare(b.day) || a.rank - b.rank);
+  return keyed.map((k) => k.item);
 }
 
 /**
@@ -271,32 +322,51 @@ export function drawMonthlyReport(doc: PDFKit.PDFDocument, data: MonthlyReportDa
   drawSection9Legend(doc, data.section9Days);
   doc.moveDown(1);
 
-  // Time entries table
-  if (data.entries.length > 0) {
+  // Day list: the time entries and the day rows (absence periods, holidays), chronologically.
+  if (data.entries.length > 0 || data.dayRows.length > 0) {
     doc.fontSize(11).font("Helvetica-Bold").fillColor("#111827").text("Zeiteinträge");
     doc.moveDown(0.5);
 
     const colWidths = reportColumnWidths(doc);
     let rowY = drawReportTableHeader(doc, doc.y);
 
-    for (const entry of data.entries) {
+    for (const item of mergeDayList(data)) {
       if (rowY > doc.page.height - REPORT_BOTTOM_LIMIT) {
         doc.addPage();
         rowY = drawReportTableHeader(doc, REPORT_MARGIN);
       }
 
       let x = REPORT_MARGIN;
-      doc.text(entry.date, x, rowY, { width: colWidths[0] });
-      x += colWidths[0];
-      doc.text(entry.start, x, rowY, { width: colWidths[1] });
-      x += colWidths[1];
-      doc.text(entry.end || "\u2014", x, rowY, { width: colWidths[2] });
-      x += colWidths[2];
-      doc.text(`${entry.breakMin} min`, x, rowY, { width: colWidths[3] });
-      x += colWidths[3];
-      doc.text(fmtHM(entry.netMinutes), x, rowY, { width: colWidths[4] });
-      x += colWidths[4];
-      doc.text(entry.note || "", x, rowY, { width: colWidths[5] });
+      if (item.kind === "day") {
+        // An absence period or a holiday: the dates in the date column, the label in the note column.
+        const row = item.row;
+        doc.fillColor("#374151");
+        doc.text(
+          row.from === row.to ? isoToDisplayDate(row.from) : periodLabel(row.from, row.to),
+          x,
+          rowY,
+          { width: colWidths[0] + colWidths[1] + colWidths[2], lineBreak: false },
+        );
+        doc.text(row.label, x + colWidths[0] + colWidths[1] + colWidths[2], rowY, {
+          width: colWidths[3] + colWidths[4] + colWidths[5],
+          lineBreak: false,
+          ellipsis: true,
+        });
+        doc.fillColor("#111827");
+      } else {
+        const entry = item.entry;
+        doc.text(entry.date, x, rowY, { width: colWidths[0] });
+        x += colWidths[0];
+        doc.text(entry.start, x, rowY, { width: colWidths[1] });
+        x += colWidths[1];
+        doc.text(entry.end || "\u2014", x, rowY, { width: colWidths[2] });
+        x += colWidths[2];
+        doc.text(`${entry.breakMin} min`, x, rowY, { width: colWidths[3] });
+        x += colWidths[3];
+        doc.text(fmtHM(entry.netMinutes), x, rowY, { width: colWidths[4] });
+        x += colWidths[4];
+        doc.text(entry.note || "", x, rowY, { width: colWidths[5] });
+      }
 
       rowY += REPORT_ROW_H;
     }

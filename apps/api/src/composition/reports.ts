@@ -12,12 +12,16 @@ import {
   reportPopulationWhere, // Issue #613 (D-01) — the one period population
   employedInPeriodWhere, // Issue #613 — its employment core, which DATEV reads alone (P-01)
   isAnonymizedEmployee, // Issue #617 (T-617-08) — the heal never writes an anonymised person's entitlement
+  employeeScopeFor, // Issue #617 (P-06) — the Stundennachweis day list reads one person's work entries
+  holidaysAtWorkLocation, // Issue #617 (P-06) — the one holiday resolution (work location, § 2 EFZG)
+  type WorkLocationEntry,
 } from "../contexts/platform";
 import {
   SECTION9_LEGEND,
   generateMonthlyReportPdf,
   generateMonthlyExportPdf,
   type MonthlyExportRow,
+  type MonthlyReportDayRow,
 } from "./pdf";
 import {
   getTenantTimezone,
@@ -27,7 +31,11 @@ import {
   dayRangeUtc, // Issue #617 (P-03) — end of the Stichtag as the facade's `now`
   computeMonthReportFigures, // Issue #451 (D-03)
 } from "../contexts/working-time-account"; // Phase 101B
-import { entryDurations, addWorkingMinutes } from "../contexts/time-tracking"; // Phase 79 (Issue #79) — presence/working-time kernel (D-03/D-05)
+import {
+  entryDurations,
+  addWorkingMinutes,
+  getWorkedEntriesInRange, // Issue #617 (P-06) — the closed work entries that decide the work location of a day
+} from "../contexts/time-tracking"; // Phase 79 (Issue #79) — presence/working-time kernel (D-03/D-05)
 import {
   listEntitlementsForYear,
   getVacationEntitlementsForYearByCode, // Issue #617 (P-03) — the export's per-year VACATION rows
@@ -45,6 +53,7 @@ import {
   leaveDaysByCodeWithin, // Issue #451 (D-01) — the DATEV export's VACATION Lohnart line
   type LeaveDaysForCode, // Issue #451 (D-01)
   sickLeaveDayCounts, // Issue #84 (D-14) — the one sick-day / § 9 counting rule
+  DISPLAY_NAME, // Issue #617 (P-06) — display text of a day row; the identity is the code
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveEntitlement, LeaveRequestStatus, LeaveTypeCode } from "@clokr/db";
 
@@ -147,6 +156,56 @@ type EmployeeWithIncludes = {
   absences: AbsenceRecord[];
   leaveRequests: LeaveRequestWithType[];
 };
+
+// ── Stundennachweis day rows (Issue #617, D-617-5 / P-06) ─────────────────────
+// The day list of the person's § 16 Abs. 2 ArbZG record explains the days without an entry: the
+// periods of the month's EFFECTIVE leave requests (the include's own status filter - never a
+// PENDING request) and imposed absences, and the holidays at the work location. Pure assembly of
+// rows other modules already decided: no workday rule, no counting. A row's label is the display
+// text of its CODE (`DISPLAY_NAME`) - never `leaveType.name`, which a tenant can rename. It is not
+// `getCalendarLeaveOverlapping` on purpose: that read is display-only and includes PENDING requests.
+const HALF_DAY_SUFFIX = " (halber Tag)";
+
+function buildStundennachweisDayRows(
+  emp: EmployeeWithIncludes,
+  firstDay: Date,
+  lastDay: Date,
+  tz: string,
+  holidays: Map<string, string>,
+): MonthlyReportDayRow[] {
+  // @db.Date values are UTC-midnight instants, so the ISO date is the calendar day (Issue #493).
+  const dayOf = (d: Date): string => d.toISOString().slice(0, 10);
+  const first = dayOf(firstDay);
+  const last = dayOf(lastDay);
+  const labelOf = (code: string | null, halfDay: boolean): string => {
+    const base = (code ? DISPLAY_NAME[code as LeaveTypeCode] : undefined) ?? DISPLAY_NAME.OTHER;
+    return halfDay ? `${base}${HALF_DAY_SUFFIX}` : base;
+  };
+  const rows: MonthlyReportDayRow[] = [];
+  const addPeriod = (start: Date, end: Date, label: string): void => {
+    // ISO dates compare correctly as strings; the period is clipped to the month.
+    const from = dayOf(start) < first ? first : dayOf(start);
+    const to = dayOf(end) > last ? last : dayOf(end);
+    if (from <= to) rows.push({ from, to, label });
+  };
+  for (const lr of emp.leaveRequests) {
+    addPeriod(lr.startDate, lr.endDate, labelOf(lr.leaveType.code, lr.halfDay));
+  }
+  for (const a of emp.absences) {
+    addPeriod(a.startDate, a.endDate, labelOf(a.type, a.halfDay));
+  }
+  // A holiday before the hire day or after the exit day is no day of this person.
+  const hireDay = dateStrInTz(emp.hireDate, tz);
+  const exitDay = emp.exitDate ? dateStrInTz(emp.exitDate, tz) : null;
+  for (const [day, name] of holidays) {
+    if (day < hireDay || (exitDay !== null && day > exitDay)) continue;
+    rows.push({ from: day, to: day, label: `Feiertag: ${name}` });
+  }
+  return rows.sort(
+    (a, b) =>
+      a.from.localeCompare(b.from) || a.to.localeCompare(b.to) || a.label.localeCompare(b.label),
+  );
+}
 
 // ── computeEmployeeSummary ────────────────────────────────────────────────────
 // Pure helper — single source of truth for the monthly report's sick/leave/§9 fields.
@@ -1987,6 +2046,37 @@ export async function reportRoutes(app: FastifyInstance) {
       // (not a boolean) when unlabelled, so the PDF renderer can omit the Bestätigt/Prognose label
       // entirely instead of mislabelling it (SALDO-DISP-05).
       const figures = await computeMonthReportFigures(app, emp.id, y, m);
+      // Issue #617 (D-617-5, P-06): the day rows - absence periods and the holidays at the work
+      // location of each day, fed with the closed work entries of the month the way the dashboard
+      // feeds the same resolver. Shown to the person themself and to every export holder alike.
+      const monthWorkEntries = await getWorkedEntriesInRange(
+        app.prisma,
+        employeeScopeFor(accessContextFromRequest(req), { employeeId: emp.id }),
+        firstDay,
+        lastDay,
+      );
+      const workLocationEntries: WorkLocationEntry[] = monthWorkEntries.map((e) => ({
+        employeeId: e.employeeId,
+        date: e.date,
+        startTime: e.startTime,
+        salonId: e.salonId,
+      }));
+      const holidaysByEmployee = await holidaysAtWorkLocation(
+        app.prisma,
+        req.user.tenantId,
+        [emp.id],
+        firstDay.toISOString().slice(0, 10),
+        lastDay.toISOString().slice(0, 10),
+        workLocationEntries,
+      );
+      const dayRows = buildStundennachweisDayRows(
+        emp,
+        firstDay,
+        lastDay,
+        tz,
+        holidaysByEmployee.get(emp.id) ?? new Map<string, string>(),
+      );
+
       const pdfBuffer = await generateMonthlyReportPdf({
         tenantName: tenant?.name ?? "",
         employeeName: `${emp.firstName} ${emp.lastName}`,
@@ -2007,6 +2097,7 @@ export async function reportRoutes(app: FastifyInstance) {
         // D-30: drives the § 9 legend in the PDF. Same source as the JSON report's section9Note.
         section9Days: summary.section9DaysThisMonth,
         entries: summary.entries,
+        dayRows,
       });
 
       await app.audit({

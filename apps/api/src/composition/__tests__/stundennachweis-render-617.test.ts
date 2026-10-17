@@ -78,6 +78,7 @@ function makeData(overrides: Partial<MonthlyReportData> = {}): MonthlyReportData
     otherAbsenceDays: 0,
     section9Days: 0,
     entries: makeEntries(2),
+    dayRows: [],
     ...overrides,
   };
 }
@@ -88,9 +89,9 @@ function render(data: MonthlyReportData): string[] {
   return texts;
 }
 
-/** `\d.\d` outside a dd.MM.yyyy date. */
+/** `\d.\d` outside a dd.MM.yyyy date and outside the dd.MM. dates of a period label. */
 function hasDecimalPoint(text: string): boolean {
-  return /\d\.\d/.test(text.replace(/\d{2}\.\d{2}\.\d{4}/g, ""));
+  return /\d\.\d/.test(text.replace(/\d{2}\.\d{2}\.(\d{4})?/g, ""));
 }
 
 /** Number of page dictionaries of a PDF buffer (`/Type /Page`, not `/Type /Pages`). */
@@ -235,6 +236,89 @@ describe("Stundennachweis renderer (Issue #617)", () => {
         }),
       );
       expect(texts).toContain("—");
+    });
+  });
+
+  describe("day rows (D-617-5, P-06)", () => {
+    const DAY_ROWS = [
+      { from: "2026-09-07", to: "2026-09-09", label: "Urlaub" },
+      { from: "2026-09-10", to: "2026-09-10", label: "Berufsschule" },
+      { from: "2026-09-01", to: "2026-09-01", label: "Feiertag: Testtag" },
+    ];
+    const entryAt = (date: string, start: string) => ({
+      date,
+      start,
+      end: "17:00",
+      breakMin: 0,
+      netMinutes: 480,
+    });
+
+    it("merges the rows chronologically with the entries: a day row comes before the entries of its day", () => {
+      const texts = render(
+        makeData({
+          dayRows: DAY_ROWS,
+          entries: [
+            entryAt("01.09.2026", "08:00"),
+            entryAt("02.09.2026", "07:00"),
+            entryAt("02.09.2026", "13:00"),
+            entryAt("10.09.2026", "09:00"),
+          ],
+        }),
+      );
+      const marks = texts.filter((t) =>
+        [
+          "Feiertag: Testtag",
+          "Urlaub",
+          "Berufsschule",
+          "07:00",
+          "13:00",
+          "08:00",
+          "09:00",
+        ].includes(t),
+      );
+      expect(marks).toEqual([
+        "Feiertag: Testtag", // 01.09. holiday, before that day's entry
+        "08:00", // 01.09.
+        "07:00", // 02.09. morning block
+        "13:00", // 02.09. afternoon block
+        "Urlaub", // 07.-09.
+        "Berufsschule", // 10.09., before that day's entry
+        "09:00",
+      ]);
+    });
+
+    it("prints a period as TT.MM.-TT.MM. and a single day as TT.MM.JJJJ", () => {
+      const texts = render(makeData({ dayRows: DAY_ROWS, entries: [] }));
+      expect(texts).toContain("07.09.\u201309.09.");
+      expect(texts).toContain("10.09.2026");
+      expect(texts).toContain("01.09.2026");
+    });
+
+    it("draws the table for day rows alone, and no table for neither entries nor rows", () => {
+      expect(render(makeData({ dayRows: DAY_ROWS, entries: [] }))).toContain("Zeiteinträge");
+      expect(render(makeData({ dayRows: [], entries: [] }))).not.toContain("Zeiteinträge");
+    });
+
+    it("a half-day label is printed as given and the text has no decimal point", () => {
+      const texts = render(
+        makeData({
+          dayRows: [{ from: "2026-09-17", to: "2026-09-17", label: "Urlaub (halber Tag)" }],
+        }),
+      );
+      expect(texts).toContain("Urlaub (halber Tag)");
+      for (const t of texts) expect(hasDecimalPoint(t), t).toBe(false);
+    });
+
+    it("day rows are counted against the page: 19 entries and 6 day rows still make one page", async () => {
+      const rows = Array.from({ length: 6 }, (_, i) => ({
+        from: `2026-09-${String(i + 1).padStart(2, "0")}`,
+        to: `2026-09-${String(i + 1).padStart(2, "0")}`,
+        label: "Feiertag: Testtag",
+      }));
+      const buffer = await generateMonthlyReportPdf(
+        makeData({ entries: makeEntries(19), dayRows: rows, overtimeConfirmed: false }),
+      );
+      expect(pageCount(buffer)).toBe(1);
     });
   });
 

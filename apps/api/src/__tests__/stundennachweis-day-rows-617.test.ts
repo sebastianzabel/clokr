@@ -11,7 +11,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import { leaveTypeFields } from "../contexts/absence/leave-type";
 import * as pdfUtils from "../composition/pdf";
 
 vi.mock("../composition/pdf", async (importOriginal) => {
@@ -82,6 +83,140 @@ describe("Stundennachweis day list (Issue #617)", () => {
         "02.09.2026 08:00",
         "02.09.2026 14:00",
       ]);
+    });
+  });
+
+  describe("absence and holiday rows (D-617-5, P-06)", () => {
+    let sickTypeId = "";
+
+    async function leave(
+      employeeId: string,
+      leaveTypeId: string,
+      from: string,
+      to: string,
+      extra: {
+        status?: "APPROVED" | "PENDING" | "CANCELLATION_REQUESTED";
+        halfDay?: boolean;
+        deletedAt?: Date;
+        days?: number;
+      } = {},
+    ) {
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId,
+          leaveTypeId,
+          startDate: new Date(`${from}T00:00:00Z`),
+          endDate: new Date(`${to}T00:00:00Z`),
+          days: extra.days ?? 1,
+          halfDay: extra.halfDay ?? false,
+          status: extra.status ?? "APPROVED",
+          deletedAt: extra.deletedAt ?? null,
+        },
+      });
+    }
+
+    beforeAll(async () => {
+      // A tenant can rename its vacation type: the row label must still be the display text of the
+      // CODE, never the stored name.
+      await app.prisma.leaveType.update({
+        where: { id: d.vacationType.id },
+        data: { name: "Erholung" },
+      });
+      const sick = await app.prisma.leaveType.create({
+        data: { tenantId: d.tenant.id, ...leaveTypeFields("SICK"), color: "#EF4444" },
+      });
+      sickTypeId = sick.id;
+
+      const emp = d.employee.id;
+      // Mon-Wed, renamed type.
+      await leave(emp, d.vacationType.id, "2026-09-07", "2026-09-09", { days: 3 });
+      // Sick Mon-Tue (rows of sickness stay: payroll relevant, EFZG).
+      await leave(emp, sickTypeId, "2026-09-14", "2026-09-15", { days: 2 });
+      // A half day.
+      await leave(emp, d.vacationType.id, "2026-09-17", "2026-09-17", {
+        halfDay: true,
+        days: 0.5,
+      });
+      // Not effective: PENDING, soft-deleted.
+      await leave(emp, d.vacationType.id, "2026-09-21", "2026-09-22", {
+        status: "PENDING",
+        days: 2,
+      });
+      await leave(emp, d.vacationType.id, "2026-09-28", "2026-09-28", {
+        deletedAt: new Date("2026-09-01T10:00:00Z"),
+      });
+      // Leave stays active while a cancellation is requested.
+      await leave(emp, d.vacationType.id, "2026-09-23", "2026-09-24", {
+        status: "CANCELLATION_REQUESTED",
+        days: 2,
+      });
+      // Crossing both month edges: clipped to the month.
+      await leave(emp, d.vacationType.id, "2026-08-31", "2026-09-01", { days: 2 });
+      await leave(emp, d.vacationType.id, "2026-09-29", "2026-10-02", { days: 4 });
+      // An imposed absence.
+      await app.prisma.absence.create({
+        data: {
+          employeeId: emp,
+          type: "VOCATIONAL_SCHOOL",
+          startDate: new Date("2026-09-10T00:00:00Z"),
+          endDate: new Date("2026-09-10T00:00:00Z"),
+          days: 1,
+          createdBy: d.adminUser.id,
+        },
+      });
+    });
+
+    it("lists the periods of effective leave and imposed absences, clipped to the month, labelled by code", async () => {
+      const payload = await payloadFor(d.employee.id, d.adminToken, 2026, 9);
+      expect(payload.dayRows).toEqual([
+        // 31.08.-01.09. clipped to the 1st
+        { from: "2026-09-01", to: "2026-09-01", label: "Urlaub" },
+        { from: "2026-09-07", to: "2026-09-09", label: "Urlaub" }, // type renamed to "Erholung"
+        { from: "2026-09-10", to: "2026-09-10", label: "Berufsschule" },
+        { from: "2026-09-14", to: "2026-09-15", label: "Krankmeldung" },
+        { from: "2026-09-17", to: "2026-09-17", label: "Urlaub (halber Tag)" },
+        { from: "2026-09-23", to: "2026-09-24", label: "Urlaub" }, // CANCELLATION_REQUESTED stays
+        // 29.09.-02.10. clipped to the 30th
+        { from: "2026-09-29", to: "2026-09-30", label: "Urlaub" },
+      ]);
+      // Neither the PENDING request (21.-22.) nor the soft-deleted one (28.) is a row, and the stored
+      // type name never reaches the label.
+      expect(JSON.stringify(payload.dayRows)).not.toContain("Erholung");
+    });
+
+    it("the person themself gets the same rows (report:export:EIGENE)", async () => {
+      const own = await payloadFor(d.employee.id, d.empToken, 2026, 9);
+      const admin = await payloadFor(d.employee.id, d.adminToken, 2026, 9);
+      expect(own.dayRows).toEqual(admin.dayRows);
+      expect(own.dayRows.length).toBeGreaterThan(0);
+    });
+
+    it("a holiday follows the work location of the day: a Bavarian salon entry gets Fronleichnam, the default salon does not", async () => {
+      // 04.06.2026 is Fronleichnam: a holiday in Bayern, none in the tenant's Niedersachsen default.
+      const bavaria = await createTestSalon(app.prisma, d.tenant.id, {
+        name: "Salon Bayern 617",
+        federalState: "BAYERN",
+      });
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: d.employee.id,
+          date: new Date("2026-06-04T00:00:00Z"),
+          startTime: new Date("2026-06-04T07:00:00Z"),
+          endTime: new Date("2026-06-04T15:00:00Z"),
+          breakMinutes: 30,
+          type: "WORK",
+          source: "MANUAL",
+          salonId: bavaria.id,
+        },
+      });
+      const worked = await payloadFor(d.employee.id, d.adminToken, 2026, 6);
+      expect(worked.dayRows).toEqual([
+        { from: "2026-06-04", to: "2026-06-04", label: "Feiertag: Fronleichnam" },
+      ]);
+
+      // The other person of the tenant has no entry that day: the default salon decides.
+      const elsewhere = await payloadFor(d.adminEmployee.id, d.adminToken, 2026, 6);
+      expect(elsewhere.dayRows).toEqual([]);
     });
   });
 });
