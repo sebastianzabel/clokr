@@ -21,6 +21,12 @@ vi.mock("$lib/utils/logger", () => ({ clientLogger: { warn: vi.fn(), error: vi.f
 import { ApiError } from "$api/client";
 import { teamSalonFilter, withSalonId as teamWithSalonId } from "$lib/dashboard/team-view";
 import {
+  ALL_SALONS_BLOCK_NOTE,
+  DATEV_ALL_SALONS_NOTE,
+  EXPORT_NO_STAMMSALON_NOTE,
+  PERSON_SALDO_NOT_SPLIT_LABEL,
+  SALON_EXPORT_PERSONS_NOTE,
+  SALON_HOME_PERSONS_NOTE,
   SALON_SOLL_NOT_ATTRIBUTABLE_NOTE,
   SALON_VIEW_UNAVAILABLE_TEXT,
   isSalonFilterRejected,
@@ -98,5 +104,21 @@ describe("shared texts", () => {
   it("are German and address the reader with Sie", () => {
     expect(SALON_VIEW_UNAVAILABLE_TEXT).toContain("Wählen Sie");
     expect(SALON_SOLL_NOT_ATTRIBUTABLE_NOTE).toContain("Soll");
+  });
+});
+
+describe("Issue #542 — the reports page texts", () => {
+  it("name the person lists, the whole personal saldo and the unfiltered blocks in German", () => {
+    expect(SALON_HOME_PERSONS_NOTE).toBe("Personen nach Stammsalon");
+    expect(SALON_EXPORT_PERSONS_NOTE).toBe("Personen nach Stammsalon am Monatsende");
+    expect(PERSON_SALDO_NOT_SPLIT_LABEL).toBe("Personensaldo, nicht nach Salon aufgeteilt");
+    expect(ALL_SALONS_BLOCK_NOTE).toBe("Gilt für alle Salons Ihrer Reichweite");
+    expect(DATEV_ALL_SALONS_NOTE).toBe("DATEV gilt für alle Salons Ihrer Reichweite");
+  });
+
+  it("says that persons without a Stammsalon on their Stichtag are only in the unfiltered export", () => {
+    expect(EXPORT_NO_STAMMSALON_NOTE).toBe(
+      "Personen ohne Stammsalon am Stichtag erscheinen nur im Export ohne Salonauswahl.",
+    );
   });
 });
