@@ -1365,7 +1365,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
         // A salon-only reach never resolves to "all"; the empty set is the fail-closed reading.
         return new Set(ids === "all" ? [] : ids);
       };
-      const filterHomeToday = await stammsalonOfFilter(dateStrInTz(new Date(), snapshotTz));
+      const todayLocalStr = dateStrInTz(new Date(), snapshotTz);
+      const filterHomeToday = await stammsalonOfFilter(todayLocalStr);
+      // The callers' own reaches are judged on the same tenant-local calendar day (#493): HOME validity
+      // is a @db.Date, and an instant truncates to its UTC date, which is the previous local day
+      // between 22:00Z and 24:00Z in a tenant east of UTC.
+      const reachStichtag = new Date(`${todayLocalStr}T00:00:00Z`);
 
       // Phase 91b Plan 06 (Issue #91), D-10/D-13 — a NEW finding: this route had ZERO scope
       // narrowing of any kind before this plan (confirmed: no `employeeScopeFor` call anywhere in
@@ -1374,7 +1379,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // list immediately, BEFORE `employeeIds` is computed and BEFORE the expensive per-employee
       // `computeOvertimeBalanceBreakdown` fan-out below ever runs for an out-of-scope employee —
       // the property D-13 actually cares about (cost, not just the response shape). Stichtag =
-      // today (tenant-local): a live saldo overview, same precedent as GET /overtime/:employeeId.
+      // today (tenant-local calendar day): a live saldo overview, same precedent as
+      // GET /overtime/:employeeId.
       const overviewScopedIds =
         overviewScopeReach.kind === "wholeTenant"
           ? "all"
@@ -1382,7 +1388,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
               app.prisma,
               tenantId,
               overviewScopeReach,
-              new Date(),
+              reachStichtag,
             );
       const overtimeScopedIds =
         overtimeScopeReach.kind === "wholeTenant"
@@ -1391,7 +1397,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
               app.prisma,
               tenantId,
               overtimeScopeReach,
-              new Date(),
+              reachStichtag,
             );
 
       const activeAccounts = allAccounts.filter((a) => {

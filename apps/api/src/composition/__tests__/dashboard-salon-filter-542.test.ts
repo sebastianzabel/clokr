@@ -47,6 +47,9 @@
  *      ..." red (3 failed). Note: Prisma truncates a Date given to a @db.Date filter to its UTC
  *      date, so an instant is wrong only where the tenant-local day differs from the UTC day
  *      (the 00:30 local case) and for the exit-day rows; the calendar-day form is exact everywhere.
+ *   M6 (plan 05) the callers' own reaches evaluated at `new Date()` instead of the tenant-local
+ *      calendar day -> "judges a scoped caller's own reach on the tenant-local day ..." red (1
+ *      failed; OZ stays in the reach of C1 at 23:30Z).
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -681,6 +684,27 @@ describe("Issue #542 — today's attendance follows a chosen salon", () => {
       const b = await asOv(`?salonId=${oB}`);
       expect(ovIds(a)).toEqual(want("OA", "OM", "OX", "C1", "C2"));
       expect(ovIds(b)).toEqual(want("OB", "OZ", "OY"));
+    });
+
+    it("judges a scoped caller's own reach on the tenant-local day: at 01:30 local on 18 June the caller of salon A no longer reaches OZ", async () => {
+      // 2026-06-17T23:30Z is 01:30 CEST on 18 June. OZ is homed A until the 17th and B from the 18th,
+      // so on the tenant-local day OZ is outside the SALONS [A] reach of C1 and C2. The caller's reach
+      // used to be evaluated at `new Date()`, which a @db.Date filter truncates to the UTC date (the
+      // 17th) and which kept OZ in the reach for two hours every evening (orchestrator amendment 6a).
+      const late = "2026-06-17T23:30:00Z";
+      for (const token of [c1Token, c2Token]) {
+        const res = await getRaw(OV_URL, token, late);
+        expect(res.statusCode, res.body).toBe(200);
+        const ids = ovIds(JSON.parse(res.body) as Ov);
+        expect(ids).not.toContain(op.OZ);
+        // A person homed in A on both days stays in the reach.
+        expect(ids).toContain(op.OA);
+        expect(ids).toContain(op.OM);
+      }
+      // Control at 10:00Z the same day: OZ is still homed A (its last day), inside the reach.
+      const noon = await getRaw(OV_URL, c1Token, "2026-06-17T10:00:00Z");
+      expect(noon.statusCode, noon.body).toBe(200);
+      expect(ovIds(JSON.parse(noon.body) as Ov)).toContain(op.OZ);
     });
 
     it("without a filter no salonId key appears and the body keys are the pre-542 keys", async () => {
