@@ -1052,7 +1052,7 @@ export async function fetchLeaveDaysByCodeForMonthlyReport(
 // in the tenant time zone), the bounds `reportPopulationWhere` expects. Deliberately named
 // `population*` at the call sites: the UTC-naive `yearStart`/`yearEnd` of the PDF handlers bound
 // `@db.Date` leave columns and are a different thing (CLAUDE.md #493).
-async function yearPopulationPeriod(
+export async function yearPopulationPeriod(
   app: FastifyInstance,
   tenantId: string,
   year: number,
@@ -1078,13 +1078,13 @@ const REPORT_PERSON_ORDER = [
 // employment). For such a row the facade still gets a stored `usedDays` consistent with its own
 // split, so Resturlaub = Verfuegbar - Genommen - Genehmigt holds on the printed row too. Assembly
 // only: every figure comes from `app.vacationBalanceForRow`, this layer carries no rule.
-type VacationYearRow = LeaveEntitlement & {
+export type VacationYearRow = LeaveEntitlement & {
   leaveType: { id: string; code: LeaveTypeCode | null };
   employee: { firstName: string; lastName: string };
   needsReview?: boolean;
 };
 
-async function vacationYearFigures(
+export async function vacationYearFigures(
   app: FastifyInstance,
   tenantId: string,
   rows: VacationYearRow[],

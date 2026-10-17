@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { periodReportPath, ymKey } from "../period-report";
+import { periodReportPath, ymKey, type PeriodAbsence } from "../period-report";
 
 describe("period-report contract (Issue #612)", () => {
   it("builds the request path with zero-padded months", () => {
@@ -22,5 +22,21 @@ describe("period-report contract (Issue #612)", () => {
 
   it("formats a year-month key", () => {
     expect(ymKey({ year: 2026, month: 3 })).toBe("2026-03");
+  });
+
+  it("keys the absence statistics by leave-type code, sickness in calendar days", () => {
+    const sick = {
+      code: "SICK",
+      unit: "CALENDAR_DAYS",
+      personCount: 2,
+      totalDays: 5,
+    } satisfies PeriodAbsence;
+    const vacation = {
+      code: "VACATION",
+      unit: "WORKDAYS",
+      personCount: 1,
+      totalDays: 3,
+    } satisfies PeriodAbsence;
+    expect([sick.code, vacation.code]).toEqual(["SICK", "VACATION"]);
   });
 });

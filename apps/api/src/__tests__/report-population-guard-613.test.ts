@@ -304,6 +304,14 @@ const READERS: readonly ReaderEntry[] = [
     name: "assemblePeriodReport",
     calls: ["reportPopulationWhere"],
   },
+  // The period report's Urlaub table is the /leave-overview assembly (year population + the year's
+  // entitlements), kept in its own module-private function.
+  {
+    file: REPORTS_PERIOD,
+    kind: "function",
+    name: "vacationYearRows",
+    calls: ["reportPopulationWhere", "listEntitlementsForYear"],
+  },
   route(OVERTIME, "/close-month/status", ["reportPopulationWhere"]),
   route(OVERTIME, "/close-month/year-status", ["reportPopulationWhere"]),
   route(DASHBOARD, "/team-week", ["reportPopulationWhere"]),

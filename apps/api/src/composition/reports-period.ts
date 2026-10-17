@@ -6,6 +6,7 @@ import {
   accessContextFromRequest,
   resolveAccessReach,
   resolveStammsalonScopedEmployeeIds,
+  type AccessReach,
   reportPopulationWhere,
   isEmployedInPeriod,
   type PermissionKey,
@@ -14,15 +15,22 @@ import {
   getTenantTimezone,
   monthRangeUtc,
   monthDateRange,
+  dateStrInTz,
+  dayRangeUtc,
   todayInTz,
   computeMonthReportFigures,
 } from "../contexts/working-time-account";
+import { employeesWithValidWorkSince } from "../contexts/time-tracking";
+import { listEntitlementsForYear, vacationEntitlementWarning } from "../contexts/absence";
+import type { LeaveTypeCode } from "@clokr/db";
 import {
   buildEmployeeInclude,
   computeEmployeeSummary,
   fetchConfirmedSection9CreditsByEmp,
   fetchLeaveDaysByCodeForMonthlyReport,
   dayBeforeStr,
+  vacationYearFigures,
+  yearPopulationPeriod,
   type EmployeeWithIncludes,
 } from "./reports";
 
@@ -117,6 +125,247 @@ type PersonAccumulator = {
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+/**
+ * What an evaluation reads: `"all"` is the page's answer; `"times"` (the CSV export of 612-03) needs
+ * neither the vacation tables nor the absence statistics and skips their reads.
+ */
+export type PeriodSections = "all" | "times";
+export type PeriodOptions = { sections?: PeriodSections };
+
+// P-07: the per-kind absence counts of `computeEmployeeSummary`, keyed by CODE — never by a display
+// name (leave-type identity guard). The sick row is separate: it counts calendar days (#84 kernel).
+const ABSENCE_KIND_ORDER = [
+  "VACATION",
+  "OVERTIME_COMP",
+  "SPECIAL",
+  "EDUCATION",
+  "UNPAID",
+  "MATERNITY",
+  "PARENTAL",
+] as const satisfies readonly LeaveTypeCode[];
+type AbsenceKindCode = (typeof ABSENCE_KIND_ORDER)[number];
+
+function absenceKindDays(
+  summary: ReturnType<typeof computeEmployeeSummary>,
+): Record<AbsenceKindCode, number> {
+  return {
+    VACATION: summary.vacationDays,
+    OVERTIME_COMP: summary.overtimeCompDays,
+    SPECIAL: summary.specialLeaveDays,
+    EDUCATION: summary.educationDays,
+    UNPAID: summary.unpaidDays,
+    MATERNITY: summary.maternityDays,
+    PARENTAL: summary.parentalDays,
+  };
+}
+
+type AbsenceTotal = { totalDays: number; persons: Set<string> };
+
+export type PeriodAbsence = {
+  code: AbsenceKindCode | "SICK";
+  /** Arbeitstage (priced, § 9 netted) for the leave kinds, Kalendertage for sickness. */
+  unit: "WORKDAYS" | "CALENDAR_DAYS";
+  personCount: number;
+  totalDays: number;
+};
+
+export type PeriodVacationRow = {
+  employeeId: string;
+  employeeName: string;
+  employeeNumber: string;
+  year: number;
+  entitlementId: string | null;
+  entitlementDays: number | null;
+  carriedOverDays: number | null;
+  carriedOverEffectiveDays: number | null;
+  carriedOverExpiredDays: number | null;
+  exitReductionDays: number | null;
+  availableDays: number | null;
+  takenDays: number | null;
+  approvedUpcomingDays: number | null;
+  pendingDays: number | null;
+  remainingDays: number | null;
+  atRiskDays: number | null;
+  /** `YYYY-MM-DD` (the `@db.Date` value), or `null`. */
+  carryOverDeadline: string | null;
+  /** ISO instant of the newest CARRYOVER_WARNED audit row of the entitlement, or `null`. */
+  lastWarningSentAt: string | null;
+  missingEntitlement: boolean;
+  entitlementWarning: string | null;
+};
+
+export type PeriodVacationYear = { year: number; asOf: string; rows: PeriodVacationRow[] };
+
+/** Stichtag of a vacation year inside the period: its last period day, never later than yesterday. */
+function vacationStichtag(
+  year: number,
+  months: readonly YearMonth[],
+  tz: string,
+  yesterday: string,
+): string {
+  const inYear = months.filter((m) => m.year === year);
+  const last = inYear[inYear.length - 1];
+  const lastDay = monthDateRange(last.year, last.month, tz).lastDay.toISOString().slice(0, 10);
+  return lastDay < yesterday ? lastDay : yesterday;
+}
+
+/**
+ * The Urlaub table of ONE calendar year at its Stichtag. It mirrors `GET /reports/leave-overview`
+ * field by field (one assembly, #617): the year's population (#613), the caller's reach at 31
+ * December, the VACATION allow-list by CODE, `vacationYearFigures` (which runs the audited
+ * `usedDays` self-heal — never for an anonymised person) and the placeholder rows for population
+ * persons without a VACATION entitlement. Two things differ on purpose: the facade is asked for the
+ * Stichtag (`now` = its last instant, `asOf` = the day), so a past period re-reads the same figures
+ * (P-06), and the Verfall facts (deadline, date of the last Hinweis, entitlement id) are added.
+ * It carries no vacation rule of its own.
+ */
+async function vacationYearRows(
+  app: FastifyInstance,
+  params: {
+    tenantId: string;
+    tz: string;
+    reach: AccessReach;
+    year: number;
+    stichtag: string;
+    employeeId?: string;
+  },
+): Promise<PeriodVacationRow[]> {
+  const { tenantId, tz, reach, year, stichtag, employeeId } = params;
+  const populationPeriod = await yearPopulationPeriod(app, tenantId, year);
+  const allEntitlements = await listEntitlementsForYear(
+    app.prisma,
+    tenantId,
+    year,
+    populationPeriod,
+  );
+  // Narrow to the Stammsalon-scoped persons BEFORE the heal: an out-of-scope person's usedDays must
+  // not even be written by this route (as on /leave-overview). Stichtag of the reach: 31 December.
+  const scopedIds =
+    reach.kind === "wholeTenant"
+      ? "all"
+      : await resolveStammsalonScopedEmployeeIds(
+          app.prisma,
+          tenantId,
+          reach,
+          new Date(`${year}-12-31T23:59:59.999Z`),
+        );
+  const entitlements = allEntitlements
+    .filter((e) => scopedIds === "all" || scopedIds.includes(e.employeeId))
+    .filter((e) => employeeId === undefined || e.employeeId === employeeId)
+    // The allow-list is the code, never a name: no other entitlement type can appear in a report:read answer.
+    .filter((e) => e.leaveType.code === "VACATION");
+
+  const balances = await vacationYearFigures(
+    app,
+    tenantId,
+    entitlements,
+    dayRangeUtc(stichtag, tz).end,
+    stichtag,
+  );
+
+  // ONE bulk lookup of the newest Hinweis per entitlement (the /carryover-at-risk idiom, no N+1).
+  const lastWarning = new Map<string, Date>();
+  if (entitlements.length > 0) {
+    const warnings = await app.prisma.auditLog.findMany({
+      where: {
+        action: "CARRYOVER_WARNED",
+        entity: "LeaveEntitlement",
+        entityId: { in: entitlements.map((e) => e.id) },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { entityId: true, createdAt: true },
+    });
+    for (const w of warnings) {
+      if (w.entityId && !lastWarning.has(w.entityId)) lastWarning.set(w.entityId, w.createdAt);
+    }
+  }
+
+  const rows: PeriodVacationRow[] = [];
+  const personOrder = new Map<string, { firstName: string; lastName: string }>();
+  for (const e of entitlements) {
+    const balance = balances.get(e.id)!;
+    personOrder.set(e.employeeId, e.employee);
+    rows.push({
+      employeeId: e.employeeId,
+      employeeName: `${e.employee.firstName} ${e.employee.lastName}`,
+      employeeNumber: e.employee.employeeNumber,
+      year: e.year,
+      entitlementId: e.id,
+      entitlementDays: Number(e.totalDays),
+      carriedOverDays: Number(e.carriedOverDays),
+      carriedOverEffectiveDays: balance.carriedOverEffectiveDays,
+      carriedOverExpiredDays: balance.carriedOverExpiredDays,
+      exitReductionDays: balance.exitReductionDays,
+      availableDays: balance.availableDays,
+      takenDays: balance.takenDays,
+      approvedUpcomingDays: balance.approvedUpcomingDays,
+      pendingDays: balance.pendingDays,
+      remainingDays: balance.remainingDays,
+      atRiskDays: balance.atRiskDays,
+      carryOverDeadline: e.carryOverDeadline
+        ? e.carryOverDeadline.toISOString().slice(0, 10)
+        : null,
+      lastWarningSentAt: lastWarning.get(e.id)?.toISOString() ?? null,
+      missingEntitlement: false,
+      entitlementWarning: vacationEntitlementWarning({
+        leaveTypeCode: e.leaveType.code,
+        year: e.year,
+        needsReview: (e as { needsReview?: boolean }).needsReview,
+      }),
+    });
+  }
+
+  // Population persons without a VACATION row stay visible (Issue #416, #613) — display only, never created here.
+  const withRow = new Set(entitlements.map((e) => e.employeeId));
+  const population = await app.prisma.employee.findMany({
+    where: {
+      tenantId,
+      AND: [
+        reportPopulationWhere(populationPeriod.start, populationPeriod.end),
+        ...(employeeId ? [{ id: employeeId }] : []),
+        ...(scopedIds !== "all" ? [{ id: { in: scopedIds } }] : []),
+      ],
+    },
+    select: { id: true, firstName: true, lastName: true, employeeNumber: true },
+  });
+  for (const emp of population) {
+    if (withRow.has(emp.id)) continue;
+    personOrder.set(emp.id, emp);
+    rows.push({
+      employeeId: emp.id,
+      employeeName: `${emp.firstName} ${emp.lastName}`,
+      employeeNumber: emp.employeeNumber,
+      year,
+      entitlementId: null,
+      entitlementDays: null,
+      carriedOverDays: null,
+      carriedOverEffectiveDays: null,
+      carriedOverExpiredDays: null,
+      exitReductionDays: null,
+      availableDays: null,
+      takenDays: null,
+      approvedUpcomingDays: null,
+      pendingDays: null,
+      remainingDays: null,
+      atRiskDays: null,
+      carryOverDeadline: null,
+      lastWarningSentAt: null,
+      missingEntitlement: true,
+      entitlementWarning: null,
+    });
+  }
+  // The order of the time rows: last name, first name, id.
+  return rows
+    .map((row) => ({ row, order: personOrder.get(row.employeeId)! }))
+    .sort(
+      (a, b) =>
+        a.order.lastName.localeCompare(b.order.lastName, "de") ||
+        a.order.firstName.localeCompare(b.order.firstName, "de") ||
+        a.row.employeeId.localeCompare(b.row.employeeId),
+    )
+    .map((x) => x.row);
+}
+
 type MonthReportFigures = Awaited<ReturnType<typeof computeMonthReportFigures>>;
 
 /**
@@ -185,7 +434,9 @@ async function assemblePeriodReport(
   req: FastifyRequest,
   query: PeriodQuery,
   permission: PermissionKey,
+  options: PeriodOptions = {},
 ) {
+  const sections = options.sections ?? "all";
   const tenantId = req.user.tenantId;
   const tz = await getTenantTimezone(app.prisma, tenantId);
   const today = todayInTz(tz);
@@ -201,6 +452,9 @@ async function assemblePeriodReport(
     : null;
 
   const persons = new Map<string, PersonAccumulator>();
+  // P-07: Σ over months of the per-kind counts of the /monthly assembly, with the persons that have > 0.
+  const absenceTotals = new Map<AbsenceKindCode, AbsenceTotal>();
+  const sickTotal: AbsenceTotal = { totalDays: 0, persons: new Set() };
   for (const ym of months) {
     const { start, end } = monthRangeUtc(ym.year, ym.month, tz);
     const { firstDay, lastDay } = monthDateRange(ym.year, ym.month, tz);
@@ -255,6 +509,20 @@ async function assemblePeriodReport(
         section9ByEmp.get(emp.id) ?? [],
       );
       const figures = await computeMonthReportFigures(app, emp.id, ym.year, ym.month);
+      if (sections === "all") {
+        for (const code of ABSENCE_KIND_ORDER) {
+          const days = absenceKindDays(summary)[code];
+          if (days <= 0) continue;
+          const total = absenceTotals.get(code) ?? { totalDays: 0, persons: new Set<string>() };
+          total.totalDays += days;
+          total.persons.add(emp.id);
+          absenceTotals.set(code, total);
+        }
+        if (summary.sickDays > 0) {
+          sickTotal.totalDays += summary.sickDays;
+          sickTotal.persons.add(emp.id);
+        }
+      }
       const monthCovered = overtimeIds === "all" || overtimeIds.has(emp.id);
 
       let person = persons.get(emp.id);
@@ -300,6 +568,22 @@ async function assemblePeriodReport(
       a.employeeId.localeCompare(b.employeeId),
   );
 
+  // P-12: ONE bulk read of who has recorded time since the tenant-local hire day (#588's facade, the
+  // same call the overtime overview makes).
+  const withRecordedTime = await employeesWithValidWorkSince(
+    app.prisma,
+    tenantId,
+    ordered.map((p) => ({
+      employeeId: p.employeeId,
+      fromDay: new Date(`${dateStrInTz(p.hireDate, tz)}T00:00:00Z`),
+    })),
+  );
+  const periodEnd = monthRangeUtc(
+    months[months.length - 1].year,
+    months[months.length - 1].month,
+    tz,
+  ).end;
+
   const rows = [];
   for (const person of ordered) {
     const covered = person.covered;
@@ -324,6 +608,12 @@ async function assemblePeriodReport(
       employeeId: person.employeeId,
       employeeName: person.employeeName,
       employeeNumber: person.employeeNumber,
+      hasRecordedTime: withRecordedTime.has(person.employeeId),
+      // P-21: the tenant-local exit day when the employment ended on or before the period's last day.
+      exitDay:
+        person.exitDate !== null && person.exitDate.getTime() <= periodEnd.getTime()
+          ? dateStrInTz(person.exitDate, tz)
+          : null,
       workedMinutes: sum((m) => m.workedMinutes),
       expectedMinutes: covered ? sum((m) => m.expectedMinutes) : null,
       balanceMinutes: covered ? sum((m) => m.balanceMinutes) : null,
@@ -356,6 +646,49 @@ async function assemblePeriodReport(
       );
   const labelledMonths = rows.flatMap((r) => r.months.filter((m) => m.labelled));
 
+  // P-05/P-06: one Urlaub table per calendar year the period touches, each at its own Stichtag.
+  const vacationYears: PeriodVacationYear[] = [];
+  if (sections === "all") {
+    const yesterday = dayBeforeStr(dateStrInTz(new Date(), tz));
+    for (const year of [...new Set(months.map((m) => m.year))]) {
+      const stichtag = vacationStichtag(year, months, tz, yesterday);
+      vacationYears.push({
+        year,
+        asOf: stichtag,
+        rows: await vacationYearRows(app, {
+          tenantId,
+          tz,
+          reach,
+          year,
+          stichtag,
+          employeeId: query.employeeId,
+        }),
+      });
+    }
+  }
+  const endYear = vacationYears[vacationYears.length - 1];
+  const sumVacation = (pick: (r: PeriodVacationRow) => number | null): number =>
+    round2(endYear.rows.reduce((s, r) => s + (r.missingEntitlement ? 0 : (pick(r) ?? 0)), 0));
+  const absences: PeriodAbsence[] = [];
+  for (const code of ABSENCE_KIND_ORDER) {
+    const total = absenceTotals.get(code);
+    if (!total) continue;
+    absences.push({
+      code,
+      unit: "WORKDAYS",
+      personCount: total.persons.size,
+      totalDays: round2(total.totalDays),
+    });
+  }
+  if (sickTotal.persons.size > 0) {
+    absences.push({
+      code: "SICK",
+      unit: "CALENDAR_DAYS",
+      personCount: sickTotal.persons.size,
+      totalDays: round2(sickTotal.totalDays),
+    });
+  }
+
   return {
     from: query.from,
     to: query.to,
@@ -381,8 +714,23 @@ async function assemblePeriodReport(
         coveredRows.length > 0 && coveredRows.every((r) => r.months[r.months.length - 1].confirmed),
       allMonthsConfirmed: labelledMonths.length > 0 && labelledMonths.every((m) => m.confirmed),
       sickDays: round2(rows.reduce((s, r) => s + r.sickDays, 0)),
+      ...(sections === "all"
+        ? {
+            vacationYear: endYear.year,
+            vacationAsOf: endYear.asOf,
+            vacationTakenDays: sumVacation((r) => r.takenDays),
+            vacationApprovedDays: sumVacation((r) => r.approvedUpcomingDays),
+            vacationEntitlementDays: sumVacation((r) => r.entitlementDays),
+          }
+        : {}),
     },
     rows,
+    ...(sections === "all"
+      ? {
+          vacation: { year: endYear.year, asOf: endYear.asOf, years: vacationYears },
+          absences,
+        }
+      : {}),
   };
 }
 
