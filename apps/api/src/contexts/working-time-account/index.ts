@@ -38,6 +38,7 @@
  * (`OvertimeAccount`, `OvertimeTransaction`, `SaldoSnapshot`) is reachable directly from outside.
  */
 export { getConfirmedCarryOver, getConfirmedCarryOverBulk } from "./confirmed-saldo";
+export { finalSaldoOpen } from "./final-saldo"; // Issue #613
 export {
   getOvertimeAccount,
   listOvertimeAccountsForTenant,

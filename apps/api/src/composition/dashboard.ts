@@ -6,6 +6,7 @@ import {
   holidaysAtWorkLocation,
   accessContextFromRequest,
   employeeScopeFor,
+  isEmployedInPeriod, // Issue #613 — the one period-population rule (in-memory twin)
   type WorkLocationEntry,
   type HolidaysByEmployee,
   hasPermission,
@@ -53,6 +54,7 @@ import {
   dateStrInTz,
   weekRangeUtc,
   monthRangeUtc,
+  dayRangeUtc, // Issue #613 — tenant-local day as UTC instants
   monthDayBounds,
   weekDateRange, // Issue #493 (D-10)
   monthDateRange, // Issue #493 (D-10)
@@ -1144,8 +1146,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
     handler: async (req) => {
       const tenantId = req.user.tenantId;
 
-      // Query 1: all OvertimeAccount rows joined with employee (tenant-scoped, active only)
-      const allAccounts = await listOvertimeAccountsForTenant(app.prisma, tenantId);
+      // Query 1: the OvertimeAccount rows of every person employed at some point up to today
+      // (tenant-scoped, never anonymised, login state irrelevant - Issue #613), joined with the
+      // employee. The rows shown as the team are the ones employed TODAY.
+      const snapshotTz = await getTenantTimezone(app.prisma, tenantId);
+      const today = dayRangeUtc(dateStrInTz(new Date(), snapshotTz), snapshotTz);
+      const candidateAccounts = await listOvertimeAccountsForTenant(app.prisma, tenantId, {
+        start: new Date(0),
+        end: today.end,
+      });
+      const allAccounts = candidateAccounts.filter((a) =>
+        isEmployedInPeriod(a.employee, today.start, today.end),
+      );
 
       // Phase 91b Plan 06 (Issue #91), D-10/D-13 — a NEW finding: this route had ZERO scope
       // narrowing of any kind before this plan (confirmed: no `employeeScopeFor` call anywhere in
@@ -1218,7 +1230,6 @@ export async function dashboardRoutes(app: FastifyInstance) {
         tenantId,
         sixMonthsAgo,
       );
-      const snapshotTz = await getTenantTimezone(app.prisma, tenantId);
 
       // Group snapshots by employeeId
       const snapshotsByEmp = new Map<string, typeof snapshots>();

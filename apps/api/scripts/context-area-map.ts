@@ -342,6 +342,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/working-time-account/close-employee-month.ts": "arbeitszeitkonto", // pure Monatsabschluss saldo core (CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split")
   "src/contexts/working-time-account/close-month-data.ts": "arbeitszeitkonto", // data-gathering companion to close-employee-month.ts
   "src/contexts/working-time-account/confirmed-saldo.ts": "arbeitszeitkonto", // SaldoSnapshot confirmed-vs-forecast split (Phase 97)
+  "src/contexts/working-time-account/final-saldo.ts": "arbeitszeitkonto", // Issue #613 — is the exit month of a person still open (decided from the latest closed snapshot)
   "src/contexts/working-time-account/facade/overtime-account.ts": "arbeitszeitkonto", // Phase 100B Plan 06 — W8-W15, OvertimeAccount/OvertimeTransaction's only external access path
   "src/contexts/working-time-account/facade/saldo-snapshot.ts": "arbeitszeitkonto", // Phase 100B Plan 07 — W1-W7, SaldoSnapshot's only external access path
   "src/contexts/working-time-account/find-missing-workdays.ts": "arbeitszeitkonto", // Soll-vs-Ist gap detector; 3 of 5 importers (auto-close-month/close-employee-month/overtime) are Arbeitszeitkonto's own saldo paths
