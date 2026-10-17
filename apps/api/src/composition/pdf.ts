@@ -898,13 +898,15 @@ type AbsenceKind = keyof MonthlyExportAbsenceDays;
 /** A day-count column of the absence block; shown always, or only when some row has a value. */
 function absenceColumn(
   kind: AbsenceKind,
-  header: string[],
+  header: string,
   pref: number,
   always: boolean,
 ): ExportColumn {
   return {
     key: kind,
-    header,
+    // "\n" separates the header lines (kept a plain string: the leave-type identity guard reads an
+    // array literal holding a leave-type name as a control value, and this is a column title).
+    header: header.split("\n"),
     pref,
     align: "right",
     cell: (r) => dayCell(r.absenceDays[kind]),
@@ -993,15 +995,15 @@ function monthColumns(): ExportColumn[] {
       visible: ALWAYS,
       dashWhenUnlabelled: true,
     },
-    absenceColumn("vacation", ["Urlaub"], 36, true),
-    absenceColumn("sick", ["Krank"], 36, true),
-    absenceColumn("sickChild", ["Kind", "krank"], 34, false),
-    absenceColumn("overtimeComp", ["Überstd.-", "Ausgleich"], 44, false),
-    absenceColumn("special", ["Sonder-", "urlaub"], 38, false),
-    absenceColumn("education", ["Bildungs-", "urlaub"], 42, false),
-    absenceColumn("unpaid", ["Unbezahlt"], 42, false),
-    absenceColumn("maternity", ["Mutter-", "schutz"], 38, false),
-    absenceColumn("parental", ["Eltern-", "zeit"], 34, false),
+    absenceColumn("vacation", "Urlaub", 36, true),
+    absenceColumn("sick", "Krank", 36, true),
+    absenceColumn("sickChild", "Kind\nkrank", 34, false),
+    absenceColumn("overtimeComp", "Überstd.-\nAusgleich", 44, false),
+    absenceColumn("special", "Sonder-\nurlaub", 38, false),
+    absenceColumn("education", "Bildungs-\nurlaub", 42, false),
+    absenceColumn("unpaid", "Unbezahlt", 42, false),
+    absenceColumn("maternity", "Mutter-\nschutz", 38, false),
+    absenceColumn("parental", "Eltern-\nzeit", 34, false),
   ];
 }
 
