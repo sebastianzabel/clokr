@@ -49,6 +49,7 @@ Flags that older Prisma docs use and that **fail** here: `--to-schema-datamodel`
 `--to-schema`), `--shadow-database-url` (never a CLI flag in Prisma 7 — use `SHADOW_DATABASE_URL`).
 
 Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `docs/migrations.md`.
+
 - `docker compose up --build -d` — rebuild and restart all containers
 
 ## Path Aliases (SvelteKit)
@@ -78,7 +79,7 @@ Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `doc
   relies on. A linked `git worktree` derives an 8-hex namespace and uses `clokr_test_<ns>` /
   `clokr_test_<ns>_<n>`, so two working directories can run the suite at the same time without
   colliding. The namespace is decided by `git rev-parse --path-format=absolute --git-dir
-  --git-common-dir`; `--path-format=absolute` is load-bearing, because from a subdirectory git
+--git-common-dir`; `--path-format=absolute` is load-bearing, because from a subdirectory git
   returns one path absolute and the other relative, and comparing them raw would misread the main
   tree as a worktree and rename CI's databases. `CLOKR_TEST_NAMESPACE` overrides the derivation;
   absent `git`, the namespace falls back to empty, never to a guess. Orphaned namespaces:
@@ -122,7 +123,7 @@ Clokr has **four business contexts**, a shared substrate (**Unterbau**, the Shar
 Rules — these are directives, not preferences:
 
 - **Absence is NEVER a `TimeEntryType`.** A time entry has no "requested" status, and approved leave for next August is not a recorded period. `TimeEntryType` stays free of absence values.
-- **`calcLeaveAbsenceMinutesTz()` (`apps/api/src/contexts/working-time-account/timezone.ts`) belongs to Arbeitszeitkonto and is NOT to be split.** It and the `sbClaimed` dedup set in `close-employee-month.ts` carry the invariant *a day reduces Soll exactly once*. Anyone wanting to split it must first prove the invariant is secured otherwise.
+- **`calcLeaveAbsenceMinutesTz()` (`apps/api/src/contexts/working-time-account/timezone.ts`) belongs to Arbeitszeitkonto and is NOT to be split.** It and the `sbClaimed` dedup set in `close-employee-month.ts` carry the invariant _a day reduces Soll exactly once_. Anyone wanting to split it must first prove the invariant is secured otherwise.
 - **`LeaveRequest` = requested absence** (status, entitlement, approver): Urlaub, Krankheit, Sonderurlaub. **`Absence` = imposed absence** (occurs, is not requested): Berufsschule, Mutterschutz, Elternzeit. `SICK` belongs to `LeaveRequest`.
 - **No foreign keys between peer contexts; foreign keys onto the Unterbau are allowed** (ADR 0002, Entscheidung 4). Existing `onDelete` behaviour is untouched; the `onDelete: Restrict` compliance control on Employee→TimeEntry/LeaveRequest/Absence stays in the database. A new FK onto the Unterbau is named in its issue as a new Shared-Kernel dependency, revision-relevant relations use `onDelete: Restrict`, and the referenced Unterbau row must belong to the same tenant.
 - **No direct table access across contexts.** Go through the owning context's public interface.
@@ -227,7 +228,7 @@ Current: recalculated from hire date on every request (does not scale). Target a
   the web never reads `periodStart` (`snapshot-period-source-595.test.ts`), the API never derives a month from
   it elsewhere (`snapshot-month-naming-guard-595.test.ts`). A legacy row is READ as closed with its stored
   figures, never rewritten; `scripts/audit-595-legacy-period-start.ts` lists such rows per stage (read-only).
-  The demo seed writes only zero pre-tracking snapshots; the previous demo month is closed by
+  The bulk lock reads of the facade (`getClosedMonthsForDates`, `getClosedMonthsInRange`) and `sumCarryOverByMonth` use the same window and one row per person and month (Issue #664). The demo seed writes only zero pre-tracking snapshots; the previous demo month is closed by
   `apps/api/scripts/demo-close-previous-month.ts` (the real closer), see `packages/db/README.md`.
 - **Sick days are counted in one place (Issue #84, D-14).** `sickLeaveDayCounts()`
   (`contexts/absence/sick-leave-days.ts`, exported via `contexts/absence/index.ts`) is the ONLY
@@ -350,7 +351,7 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
 - **A person's day status comes from one function (Issue #587).** `resolveDayStatus()`
   (`apps/api/src/contexts/time-tracking/presence.ts`, exported via `contexts/time-tracking/index.ts`) is the
   ONLY place `isObligatedWorkday`, `isDayDue` and `resolvePresenceState` are combined. `GET
-  /dashboard/team-week` and `GET /dashboard/today-attendance` both call it, with inputs built by the same
+/dashboard/team-week` and `GET /dashboard/today-attendance` both call it, with inputs built by the same
   module-private person-day helpers of `composition/dashboard.ts`: the leave of the day (PENDING included, a
   non-pending row wins), the Berufsschule displacement (rule owned by Abwesenheiten), the first in-scope shift
   (`isShiftInScope`), the contract valid on that day (not the newest one), the stand-ins for hidden time (#85)
@@ -380,8 +381,7 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   no classification; a clock re-open or a consolidation first turns a classified remainder into an
   explicit share (`materializeRemainder()`), so later time stays `UNSPECIFIED`, and a merge that
   would soft-delete an allocated entry is skipped. `GET /time-entries/summary` returns
-  `activityMinutes` (optional `salonId` narrows the whole body; foreign or unknown salon → the same
-  404) — minutes only, never amounts, rates or ratios. The working-time account, reports and the day
+  `activityMinutes` (optional `salonId` narrows the whole body; foreign or unknown salon → the same 404) — minutes only, never amounts, rates or ratios. The working-time account, reports and the day
   kernel never read it (`activity-kind-saldo-isolation-81.test.ts`); saldo equality:
   `activity-kind-saldo-equality-81.test.ts`. UI and tenant switch (default off): #529.
 - **Travel between two salons is a time entry (Issue #92).** Details: `docs/adr/0001-abweichungen.md` entry AB. A
@@ -604,7 +604,7 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   - No daily targets, no daily +/- display in calendar
   - Effective leave (all types incl. SICK), imposed absences, and statutory/manual holidays on a
     contractual workday reduce the owed Soll by `monthlyHours × 60 ÷ (contractual workdays of the
-    FULL calendar month)` (Ø-Methode; a half day reduces by half; one `Math.round()` per computed
+FULL calendar month)` (Ø-Methode; a half day reduces by half; one `Math.round()` per computed
     range; a holiday on a non-workday reduces nothing). The contractual workday set is `workDays` →
     `TenantConfig.defaultWorkDays` → Mo–Fr, read ONLY by the private `monthlyHoursWorkDays()` in
     `apps/api/src/contexts/working-time-account/timezone.ts` — never `{day}Hours`.
@@ -623,12 +623,12 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   `workDays` is what carries the contractual information for those types. Measured against a
   pseudonymized production copy on `main`'s schema (2026-08-30, Phase 95b / GitHub issue #95):
 
-  | Schedule type | rows | `{day}Hours` content | flagged by `audit-workdays-vs-day-hours.ts` |
-  | --- | --- | --- | --- |
-  | `FIXED_SCHEDULE` | 6 | real values (4.00 / 8.00 / 9.50) | 0 |
-  | `FLEXTIME` | 1 | uniformly 1.00 | 1 |
-  | `MONTHLY_HOURS` | 4 | uniformly 0.00 | 0 (by design — see the audit-script bullet) |
-  | `SHIFT_BASED` | 15 | uniformly 8.00 or 1.00 | 4 (expected) |
+  | Schedule type    | rows | `{day}Hours` content             | flagged by `audit-workdays-vs-day-hours.ts` |
+  | ---------------- | ---- | -------------------------------- | ------------------------------------------- |
+  | `FIXED_SCHEDULE` | 6    | real values (4.00 / 8.00 / 9.50) | 0                                           |
+  | `FLEXTIME`       | 1    | uniformly 1.00                   | 1                                           |
+  | `MONTHLY_HOURS`  | 4    | uniformly 0.00                   | 0 (by design — see the audit-script bullet) |
+  | `SHIFT_BASED`    | 15   | uniformly 8.00 or 1.00           | 4 (expected)                                |
 
 - `WorkSchedule.workDays` is normalised **on write** to the set of weekday indices (0=Sun..6=Sat)
   where the corresponding `{day}Hours` value is > 0, on every create/update path (POST
@@ -739,13 +739,13 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
 Read these before modifying any page in `apps/web` — they are checked in, unlike anything under
 `.planning/`, which is gitignored and therefore unreadable for anyone else:
 
-| Source | What it governs |
-| --- | --- |
-| `apps/web/src/tokens.css` | The canonical v1.5 token set — every colour, radius and surface variable |
-| `apps/web/.lintrc-tokens.txt` | The banned legacy patterns (`--color-*` / `--glass-*` / `--radius-*` / `--gray-*`) plus a replacement cheat sheet |
-| `apps/web/src/app.css` | The shared class recipes — card surfaces, `.badge`, `.callout`, calendar cells, page wrapper, section stacking, summary bars, entrance animations |
-| `apps/web/scripts/lint-ui-classes.mjs` | Which class names are allowed in the scoped primitive directories, and where that scope ends |
-| `docs/ADMIN_STRUCTURE.md §3.2.1` | When a control saves instantly and when it waits for the section button (Phase 109, D-01/D-02) |
+| Source                                 | What it governs                                                                                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/tokens.css`              | The canonical v1.5 token set — every colour, radius and surface variable                                                                          |
+| `apps/web/.lintrc-tokens.txt`          | The banned legacy patterns (`--color-*` / `--glass-*` / `--radius-*` / `--gray-*`) plus a replacement cheat sheet                                 |
+| `apps/web/src/app.css`                 | The shared class recipes — card surfaces, `.badge`, `.callout`, calendar cells, page wrapper, section stacking, summary bars, entrance animations |
+| `apps/web/scripts/lint-ui-classes.mjs` | Which class names are allowed in the scoped primitive directories, and where that scope ends                                                      |
+| `docs/ADMIN_STRUCTURE.md §3.2.1`       | When a control saves instantly and when it waits for the section button (Phase 109, D-01/D-02)                                                    |
 
 Reuse an existing recipe from `app.css` before inventing a class or a token.
 
@@ -784,6 +784,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - **Language**: UI in German, code/docs in English
 - **Audit-proof**: No hard deletes, all mutations logged, locked months immutable
 - **Docker**: Development and deployment via docker compose
+
 <!-- GSD:project-end -->
 
 <!-- GSD:stack-start source:codebase/STACK.md -->
@@ -898,6 +899,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - Redis 7-alpine:6379
 - MinIO:9000,9001 (S3 API + console)
 - Optional backup service (pg_dump daily, 7-day retention)
+
 <!-- GSD:stack-end -->
 
 <!-- GSD:conventions-start source:CONVENTIONS.md -->
@@ -1129,7 +1131,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   Salonansicht of the linked month (D-14). A role without saldo rights sees the person view without
   the saldo cards, Ist only (a 403/404 on the saldo reads is a calm state, not an error).
 - **The header salon selection applies to the team and planning pages (Issue #558).** `GET
-  /employees`, `GET /leave/requests`, `/leave/calendar`, `/leave/ical/team`, `/leave/section9` and
+/employees`, `GET /leave/requests`, `/leave/calendar`, `/leave/ical/team`, `/leave/section9` and
   `GET /shifts/week` take an optional `salonId`, checked by `resolveSalonInReach()` against the reach
   of the endpoint's OWN permission before any read (one 404 body for an inactive, foreign, unknown or
   unreachable salon); `GET /shifts/planning-overview` validates it the same way since #558. The
@@ -1330,7 +1332,7 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   (`contexts/platform/tenant-status.ts`, defined in the zero-import leaf `access-context-error.ts`).
   `scripts/audit-551-users-without-employee.ts` lists the affected users (read-only).
   **An account without any permission is refused at sign-in in one place (Issue #539).** `POST
-  /auth/login` (after the password matched, before any OTP row or mail; audited as `LOGIN_REFUSED`
+/auth/login` (after the password matched, before any OTP row or mail; audited as `LOGIN_REFUSED`
   with reason `NO_ROLE_ASSIGNED`), `verify-otp` and `refresh` (before the rotation, the stored token
   stays untouched) answer 403 `NO_ROLE_ASSIGNED_ERROR` (`{ error, code: "NO_ROLE_ASSIGNED" }`,
   defined in `contexts/platform/request-permissions.ts`, applied in `api/auth.ts`) when
@@ -1342,12 +1344,12 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
 A new route or service handler that reads a client-supplied identifier into a tenant-scoped
 Prisma model without constraining it to `req.user.tenantId` fails CI, not just review:
 
-| Source | What it governs |
-| --- | --- |
-| `apps/api/scripts/lint-tenant-scoping.ts` | The gate itself — scope, methods, and the three ways a call counts as scoped |
-| `apps/api/scripts/lint-tenant-scoping-exceptions.json` | Every deliberate exception, each with a mandatory reason |
+| Source                                                   | What it governs                                                                                         |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `apps/api/scripts/lint-tenant-scoping.ts`                | The gate itself — scope, methods, and the three ways a call counts as scoped                            |
+| `apps/api/scripts/lint-tenant-scoping-exceptions.json`   | Every deliberate exception, each with a mandatory reason                                                |
 | `apps/api/scripts/lint-tenant-scoping-nullish-tenant.ts` | The nullish-tenant rule (Phase 88): an optional tenant value reaching a Prisma call fails the same gate |
-| `apps/api/scripts/README.md` § Lint gates | How to add a justified exception, and when NOT to |
+| `apps/api/scripts/README.md` § Lint gates                | How to add a justified exception, and when NOT to                                                       |
 
 Since Phase 89 the gate also accepts two strict inline forms: an `OR` only when every branch is
 itself scoped, and a Json-path stamp `{ path: [..., "tenantId"], equals: <principal tenant> }` with
@@ -1367,12 +1369,12 @@ A file that walks the source tree and asserts on the result without proving the 
 non-empty fails CI and `.husky/pre-commit`, not just review — a moved or emptied directory must
 turn the gate red, never let it report success having checked nothing:
 
-| Source | What it governs |
-| --- | --- |
-| `apps/api/scripts/lint-guard-vacuity.ts` | The gate itself — the AST classifier, `--check`/`--scope`/`--rows` |
-| `apps/api/scripts/lint-guard-vacuity-exceptions.json` | Every deliberate exception, each with a mandatory reason |
-| `apps/api/scripts/README.md` § Lint gates | How to add a justified exception, and when NOT to |
-| `docs/adr/0001-abweichungen.md` Eintrag I | The as-built outcome, the exception register, and what this gate structurally cannot see |
+| Source                                                | What it governs                                                                          |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `apps/api/scripts/lint-guard-vacuity.ts`              | The gate itself — the AST classifier, `--check`/`--scope`/`--rows`                       |
+| `apps/api/scripts/lint-guard-vacuity-exceptions.json` | Every deliberate exception, each with a mandatory reason                                 |
+| `apps/api/scripts/README.md` § Lint gates             | How to add a justified exception, and when NOT to                                        |
+| `docs/adr/0001-abweichungen.md` Eintrag I             | The as-built outcome, the exception register, and what this gate structurally cannot see |
 
 Verify with `pnpm --filter @clokr/api exec tsx scripts/lint-guard-vacuity.ts --check 0`. A hit on a
 clean tree is a finding to report, not an exception to add.
@@ -1384,12 +1386,12 @@ differently from an id that exists nowhere (a distinguishable status or body —
 oracle) fails CI, not just review — the tenant-scoping gate above only checks that the Prisma call
 is scoped, not that the REJECTION is indistinguishable:
 
-| Source | What it governs |
-| --- | --- |
-| `apps/api/scripts/lint-t100-09-routes.ts` | The completeness gate — every path-parameter route must have exactly one register entry |
-| `apps/api/scripts/lint-t100-09-routes.json` | The register: `probe` / `nicht anwendbar` / `bekannt-abweichend`, each with a measured reason |
-| `apps/api/src/__tests__/t100-09-oracle-probe.test.ts` | The behavioral half — every `probe` route hit twice, status+body byte-compared |
-| `apps/api/scripts/README.md` § Lint gates | The three categories, the two named out-of-scope boundaries, and how to add a justified entry |
+| Source                                                | What it governs                                                                               |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `apps/api/scripts/lint-t100-09-routes.ts`             | The completeness gate — every path-parameter route must have exactly one register entry       |
+| `apps/api/scripts/lint-t100-09-routes.json`           | The register: `probe` / `nicht anwendbar` / `bekannt-abweichend`, each with a measured reason |
+| `apps/api/src/__tests__/t100-09-oracle-probe.test.ts` | The behavioral half — every `probe` route hit twice, status+body byte-compared                |
+| `apps/api/scripts/README.md` § Lint gates             | The three categories, the two named out-of-scope boundaries, and how to add a justified entry |
 
 Verify with `pnpm --filter @clokr/api run lint:t100-09-routes --check` (completeness) and
 `pnpm --filter @clokr/api exec vitest run src/__tests__/t100-09-oracle-probe.test.ts` (behavior). A
@@ -1415,13 +1417,13 @@ lists users; runbook: `docs/migrations.md` „Phase 539“). Column and enum go 
 (#641). A role comparison, a `requireRole(` call or a Prisma `where` on a role value in
 non-test `apps/api/src` fails CI and `.husky/pre-commit`:
 
-| Source | What it governs |
-| --- | --- |
-| `apps/api/scripts/lint-role-checks.ts` | The gate itself — AST scan, the single allowlisted file `contexts/platform/compat-role.ts`, no exceptions file |
-| `docs/permissions.md` | Every guard, handler check and recipient lookup with its permission; `permission-site-mapping.test.ts` compares counts and permissions per file |
-| `apps/api/src/__tests__/permission-neutrality-matrix.test.ts` + `neutrality/recorded/matrix.json` | Every route × eight actors, recorded on the code BEFORE the switch |
-| `notification-recipients-neutrality.test.ts` / `activity-auth-neutrality.test.ts` + `recorded/*.json` | The 17 recipient lookups; activity feed and login role, same rule |
-| `docs/adr/0001-abweichungen.md` Eintrag N | What changed, the transition rules, and what was measured |
+| Source                                                                                                | What it governs                                                                                                                                 |
+| ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api/scripts/lint-role-checks.ts`                                                                | The gate itself — AST scan, the single allowlisted file `contexts/platform/compat-role.ts`, no exceptions file                                  |
+| `docs/permissions.md`                                                                                 | Every guard, handler check and recipient lookup with its permission; `permission-site-mapping.test.ts` compares counts and permissions per file |
+| `apps/api/src/__tests__/permission-neutrality-matrix.test.ts` + `neutrality/recorded/matrix.json`     | Every route × eight actors, recorded on the code BEFORE the switch                                                                              |
+| `notification-recipients-neutrality.test.ts` / `activity-auth-neutrality.test.ts` + `recorded/*.json` | The 17 recipient lookups; activity feed and login role, same rule                                                                               |
+| `docs/adr/0001-abweichungen.md` Eintrag N                                                             | What changed, the transition rules, and what was measured                                                                                       |
 
 Verify with `pnpm --filter @clokr/api run lint:role-checks` and (after `test:setup`)
 `pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts`.
@@ -1471,6 +1473,7 @@ a hit is converted, never excepted.
   16.10.2026) and never `report:export`, `employee:manage-access`, `employee:anonymize` or any
   time-entry/shift/team-overview key; the three `report:read` JSON responses are pinned day-free by
   `reports-hr-86.test.ts`, which fails on any per-day key a route grows later.
+
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
@@ -1595,6 +1598,7 @@ a hit is converted, never excepted.
 - `app.audit()` plugin creates `AuditLog` entries with userId, action, entity, entityId, old/new values, IP, user agent
 - Required for all create/update/delete operations on core models
 - SYSTEM user ID used for automated actions (cron jobs)
+
 <!-- GSD:architecture-end -->
 
 <!-- GSD:workflow-start source:GSD defaults -->
@@ -1613,8 +1617,8 @@ piece of work should come from.** Short version:
 - **Max. 5 issues per sprint.** New work in means old work out — back to Backlog, not
   alongside. Chores do not count.
 - **`Ready` is a contract, not a mood:** acceptance criteria complete, Iteration
-  + Milestone set. **Do not start a phase from an issue that is not Ready** — the acceptance
-  criteria are the input to `/gsd-discuss-phase`.
+  - Milestone set. **Do not start a phase from an issue that is not Ready** — the acceptance
+    criteria are the input to `/gsd-discuss-phase`.
 - `main` is the only line. The 1.9.x patch line is retired; there are no release branches.
 
 `.planning/` is gitignored, so an issue can never link to a planning artifact. The commit
