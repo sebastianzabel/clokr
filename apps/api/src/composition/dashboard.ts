@@ -84,6 +84,7 @@ import {
   getApprovedLeaveEndingOnOrAfter, // Issue #84 (D-08) — the team card's upcoming leave
   filterLeaveRowsToHomeSalon, // Issue #558 (D-02/D-08) — the one Stammsalon-per-day attribution of absences
 } from "../contexts/absence";
+import { SALON_VIEW_NOT_FOUND } from "./salon-view"; // Issue #542 (P-01) — the one 404 body of the composition's salon views
 
 // Issue #84 (D-07): 1..12 months, default 6 — the bound keeps the per-person saldo fan-out finite.
 const teamTrendQuerySchema = z.object({
@@ -632,7 +633,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       );
       // D-02/D-16: validated before any data read; one body for every rejection cause.
       const salonFilter = await resolveSalonInReach(app.prisma, tenantId, scopeReach, salonId);
-      if (!salonFilter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
+      if (!salonFilter.ok) return reply.code(404).send(SALON_VIEW_NOT_FOUND);
       const filterSalonId = salonFilter.salonId;
       const scopedAccess = { ...access, reach: scopeReach };
       const teamWeekScopedIds =
@@ -2074,7 +2075,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const reach = await resolveAccessReach(app.prisma, access, "team-overview:read:ZUGEWIESEN");
       // D-02/D-16: validated before any data read; one body for every rejection cause.
       const filter = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
-      if (!filter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
+      if (!filter.ok) return reply.code(404).send(SALON_VIEW_NOT_FOUND);
       const filterSalonId = filter.salonId;
       const scopedAccess = { ...access, reach };
 
@@ -2407,7 +2408,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const reach = await resolveAccessReach(app.prisma, access, "team-overview:read:ZUGEWIESEN");
       // D-02/D-16: validated before any data read; one body for every rejection cause.
       const filter = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
-      if (!filter.ok) return reply.code(404).send(TEAM_SALON_NOT_FOUND);
+      if (!filter.ok) return reply.code(404).send(SALON_VIEW_NOT_FOUND);
       const filterSalonId = filter.salonId;
       const scopedAccess = { ...access, reach };
 
@@ -2456,11 +2457,6 @@ export async function dashboardRoutes(app: FastifyInstance) {
     },
   });
 }
-
-// Issue #84 (D-02/D-16): one body for every rejection cause of a salon filter — a foreign
-// tenant's salon, an unknown id, an inactive salon and a salon outside the caller's reach are
-// indistinguishable (T-100-09).
-const TEAM_SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
 
 function round(n: number): number {
   return Math.round(n * 100) / 100;
