@@ -15,7 +15,9 @@
  *   → Return snapshot values verbatim (Revisionssicherheit).
  *   → days[] is a single terminal entry with cumulativeSaldoMinutes = snapshot.carryOver.
  *
- * Open month: compute via closeEmployeeMonth() with the SAME prefetch pattern
+ * Open month: the cumulative series starts at the carry-in of `openMonthCarryInMinutes` (Issue
+ * #681: the last close plus every unclosed month in between, never only the last close).
+ * Compute via closeEmployeeMonth() with the SAME prefetch pattern
  * as the manual-close path in overtime.ts (lines 908–1075).  For the per-day
  * series, call closeEmployeeMonth() once per day D with monthLastDay = D,
  * reusing the pre-fetched collections.
@@ -28,7 +30,8 @@ import type { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { periodStartWindow, monthlySnapshotOrder } from "./snapshot-period";
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
-import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
+import { openMonthCarryInMinutes } from "./overtime-balance"; // Issue #681 — the open-month chain
+import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import {
   closeEmployeeMonth,
@@ -149,6 +152,12 @@ export type MonthReportFigures = {
    * cumulative value through yesterday (#438), the figure `GET /overtime/month-saldo` shows for the
    * last computed day. `null` when the row is unlabelled or no day was computed. Never a second
    * computation; additive, every existing reader is unchanged.
+   *
+   * Issue #681: the open month's series starts at `openMonthCarryInMinutes` (overtime-balance.ts),
+   * the account chain through the day before the month — every unclosed month since the last close
+   * is included, so this value equals the live saldo at the same Stichtag (the month's last day, or
+   * yesterday in the running month). The Monatsexport, `GET /overtime/month-saldo` and #612 read
+   * exactly this value; none of them adds a carry of its own.
    */
   closingBalanceMinutes: number | null;
   /** true only for the CLOSED-month branch (the one figure that is final). */
@@ -402,19 +411,45 @@ export async function computeMonthSaldo(
     ),
   ]);
 
-  // Previous month carry-over (last non-superseded MONTHLY snapshot before monthStart)
-  const prevSnapshot = await app.prisma.saldoSnapshot.findFirst({
-    where: {
-      employeeId,
-      periodType: "MONTHLY",
-      periodStart: { lt: monthStart },
-      superseded: false,
-    },
-    orderBy: { periodStart: "desc" },
-  });
-  // Phase 99 (OB-02) — chain-head seeds resolve through the one shared helper;
-  // identical to `?? 0` when the employee has no OpeningBalance.
-  const carryOverIn = await getCarryOverBase(app.prisma, employeeId, prevSnapshot);
+  // Days of the cumulative series: from month-start (or hireDate if later) through windowEnd =
+  // yesterday or the month's last day, whichever is earlier (#438, see the series block below).
+  const todayStr = dateStrInTz(new Date(), tz);
+  const yesterdayStr = dateStrInTz(new Date(Date.now() - 86400000), tz);
+  const cutoffStr = yesterdayStr;
+  const windowEnd =
+    cutoffStr < dateStrInTz(monthLastDay, tz) ? cutoffStr : dateStrInTz(monthLastDay, tz);
+  const startStr = dateStrInTz(effectiveStart, tz);
+  const monthLastStr = dateStrInTz(monthLastDay, tz);
+  const dayStrings: string[] = [];
+  {
+    const cur = new Date(startStr + "T00:00:00Z");
+    const endDate = new Date(windowEnd + "T00:00:00Z");
+    const lastDate = new Date(monthLastStr + "T00:00:00Z");
+    const cap = endDate < lastDate ? endDate : lastDate;
+    while (cur <= cap) {
+      dayStrings.push(dateStrInTz(cur, tz));
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+  }
+
+  // Issue #681 — the carry-in of this open month is the account chain through the day before the
+  // month begins: the last closed month before it PLUS every unclosed month in between (and the
+  // OpeningBalance at the chain head), from the ONE function of this context that defines it. The
+  // pre-681 code read only the last closed month's carryOver here, so with two or more unclosed
+  // months the Gesamtsaldo of the later one dropped the earlier ones. The carry-in changes no
+  // balance (`closeEmployeeMonth`'s balance does not read it), only the cumulative series — so it
+  // is resolved only when the series has at least one day; a month without a computed day shows no
+  // Gesamtsaldo at all.
+  //
+  // A track-only month on its OWN contract (Issue #494, `isTrackOnlySchedule`) accumulates nothing:
+  // its close stores carry-over 0 (`effectiveCarryOverOut`) and the live saldo shows 0, so its
+  // cumulative series is 0 on every day and no carry-in is needed. Before #681 it showed the last
+  // close plus the month's balance - a Gesamtsaldo the account never holds.
+  const trackOnlyMonth = isTrackOnlySchedule(schedule);
+  const carryOverIn =
+    dayStrings.length > 0 && !trackOnlyMonth
+      ? await openMonthCarryInMinutes(app, employeeId, year, month)
+      : 0;
 
   // BS slot overrides for this month
   const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } = await loadBsSlotOverrides(
@@ -527,11 +562,7 @@ export async function computeMonthSaldo(
   // against only a partial Ist. A SHIFT_BASED employee with a shift today but no entry yet
   // similarly never has today's shift charged as §615 undertime — it is simply outside the
   // window.
-  const todayStr = dateStrInTz(new Date(), tz);
-  const yesterdayStr = dateStrInTz(new Date(Date.now() - 86400000), tz);
-  const cutoffStr = yesterdayStr;
-  const windowEnd =
-    cutoffStr < dateStrInTz(monthLastDay, tz) ? cutoffStr : dateStrInTz(monthLastDay, tz);
+  // (`todayStr`, `windowEnd` and `dayStrings` are computed above, next to the carry-in.)
 
   // Pre-compute SHIFT_BASED netto helpers (reused per day)
   const employeeBreakShape = {
@@ -546,23 +577,6 @@ export async function computeMonthSaldo(
     const [h, m] = hm.split(":").map(Number);
     return (h ?? 0) * 60 + (m ?? 0);
   };
-
-  // Walk each calendar day D from month-start (or hireDate if later) through windowEnd
-  const startStr = dateStrInTz(effectiveStart, tz);
-  const monthLastStr = dateStrInTz(monthLastDay, tz);
-
-  // Build a list of day strings to iterate
-  const dayStrings: string[] = [];
-  {
-    const cur = new Date(startStr + "T00:00:00Z");
-    const endDate = new Date(windowEnd + "T00:00:00Z");
-    const lastDate = new Date(monthLastStr + "T00:00:00Z");
-    const cap = endDate < lastDate ? endDate : lastDate;
-    while (cur <= cap) {
-      dayStrings.push(dateStrInTz(cur, tz));
-      cur.setUTCDate(cur.getUTCDate() + 1);
-    }
-  }
 
   // Track the LAST included day's partial result — this is the to-date §615 state the header
   // displays (single source of truth with the cells).
@@ -671,7 +685,7 @@ export async function computeMonthSaldo(
 
     days.push({
       date: dayStr,
-      cumulativeSaldoMinutes: carryOverIn + dayResult.balanceMinutes,
+      cumulativeSaldoMinutes: trackOnlyMonth ? 0 : carryOverIn + dayResult.balanceMinutes,
     });
 
     lastDayResult = dayResult;

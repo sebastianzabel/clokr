@@ -230,6 +230,13 @@ Current: recalculated from hire date on every request (does not scale). Target a
   figures, never rewritten; `scripts/audit-595-legacy-period-start.ts` lists such rows per stage (read-only).
   The bulk lock reads of the facade (`getClosedMonthsForDates`, `getClosedMonthsInRange`) and `sumCarryOverByMonth` use the same window and one row per person and month (Issue #664). The demo seed writes only zero pre-tracking snapshots; the previous demo month is closed by
   `apps/api/scripts/demo-close-previous-month.ts` (the real closer), see `packages/db/README.md`.
+- **The open-month chain lives in one function (Issue #681).** The Gesamtsaldo of an open month (the
+  cumulative series of `computeMonthSaldo`, hence `closingBalanceMinutes`, the Monatsexport and
+  `GET /overtime/month-saldo`) starts at `openMonthCarryInMinutes()` (`contexts/working-time-account/overtime-balance.ts`):
+  the last close before the month plus every unclosed month since then (track-only resets, #494), from the
+  same chain the live saldo runs, so both agree at the same Stichtag; a month that is track-only on its own
+  contract shows 0. No reader adds a carry of its own; closed months are only read. Known gap: without any
+  closed month the live saldo ignores the OpeningBalance (#682).
 - **Sick days are counted in one place (Issue #84, D-14).** `sickLeaveDayCounts()`
   (`contexts/absence/sick-leave-days.ts`, exported via `contexts/absence/index.ts`) is the ONLY
   place the sick-day figure is derived: calendar days including weekends, clipped to the range, a
