@@ -830,6 +830,21 @@ export interface MonthlyExportAbsenceDays {
   parental: number;
 }
 
+/**
+ * Issue #617 (D-617-2, P-03) - the seven figures of section "Urlaubsjahr", in days. Every value is
+ * read from the Resturlaub facade (`vacationBalanceForRow`) at the Stichtag; nothing is computed
+ * here. `pendingDays` is "Beantragt" (pending requests created by the Stichtag, never deducted).
+ */
+export interface MonthlyExportVacation {
+  entitlementDays: number;
+  carriedOverEffectiveDays: number;
+  availableDays: number;
+  takenDays: number;
+  approvedUpcomingDays: number;
+  pendingDays: number;
+  remainingDays: number;
+}
+
 export interface MonthlyExportRow {
   employeeName: string;
   employeeNumber: string;
@@ -849,6 +864,8 @@ export interface MonthlyExportRow {
   absenceDays: MonthlyExportAbsenceDays;
   /** A confirmed § 9 BUrlG credit lies in the month (prints the § 9 legend). */
   section9: boolean;
+  /** The year's VACATION figures at the Stichtag; `null` = no VACATION entitlement row. */
+  vacation: MonthlyExportVacation | null;
 }
 
 export interface MonthlyExportData {
@@ -859,6 +876,8 @@ export interface MonthlyExportData {
   month: number;
   /** "dd.MM.yyyy, HH:mm" in the tenant time zone. */
   generatedAt: string;
+  /** The vacation year of section "Urlaubsjahr" and its Stichtag ("dd.MM.yyyy"). */
+  vacationYear: { year: number; asOf: string };
   rows: MonthlyExportRow[];
 }
 
@@ -875,6 +894,23 @@ type ExportColumn = {
   /** Dash instead of the cell text for an unlabelled row (no Soll to compare against). */
   dashWhenUnlabelled?: boolean;
 };
+
+/**
+ * Issue #617 (D-617-2) - the seven columns of section "Urlaubsjahr", in order. The in-app
+ * Urlaubsuebersicht shows the same labels (`apps/web/src/lib/reports/vacation-columns.ts` mirrors
+ * this constant and is pinned to it by a test).
+ */
+export const VACATION_YEAR_COLUMN_LABELS = [
+  "Anspruch",
+  "Übertrag (wirksam)",
+  "Verfügbar",
+  "Genommen",
+  "Genehmigt",
+  "Beantragt",
+  "Resturlaub",
+] as const;
+export const VACATION_YEAR_LEGEND =
+  "Verfügbar = Anspruch + wirksamer Übertrag. Genommen: genehmigte Tage bis einschließlich Stichtag. Genehmigt: genehmigte Tage nach dem Stichtag. Beantragt: bis zum Stichtag gestellte, noch nicht genehmigte Anträge, werden nicht abgezogen. Resturlaub = Verfügbar - Genommen - Genehmigt.";
 
 const EXPORT_FONT_SIZE = 7;
 const EXPORT_ROW_H = 14;
@@ -1004,6 +1040,48 @@ function monthColumns(): ExportColumn[] {
     absenceColumn("unpaid", "Unbezahlt", 42, false),
     absenceColumn("maternity", "Mutter-\nschutz", 38, false),
     absenceColumn("parental", "Eltern-\nzeit", 34, false),
+  ];
+}
+
+/** The columns of section "Urlaubsjahr": the person, then the seven figures of the facade. */
+function vacationColumns(): ExportColumn[] {
+  const figure = (
+    label: (typeof VACATION_YEAR_COLUMN_LABELS)[number],
+    pref: number,
+    pick: (v: MonthlyExportVacation) => number,
+    key: string,
+  ): ExportColumn => ({
+    key,
+    header: [label],
+    pref,
+    align: "right",
+    cell: (r) => (r.vacation ? fmtDecimalDe(pick(r.vacation)) : ""),
+    visible: ALWAYS,
+  });
+  return [
+    {
+      key: "name",
+      header: ["Mitarbeiter"],
+      pref: 130,
+      align: "left",
+      cell: (r) => r.employeeName,
+      visible: ALWAYS,
+    },
+    {
+      key: "number",
+      header: ["Nr."],
+      pref: 50,
+      align: "left",
+      cell: (r) => r.employeeNumber,
+      visible: ALWAYS,
+    },
+    figure("Anspruch", 56, (v) => v.entitlementDays, "entitlement"),
+    figure("Übertrag (wirksam)", 82, (v) => v.carriedOverEffectiveDays, "carryOver"),
+    figure("Verfügbar", 62, (v) => v.availableDays, "available"),
+    figure("Genommen", 62, (v) => v.takenDays, "taken"),
+    figure("Genehmigt", 62, (v) => v.approvedUpcomingDays, "approved"),
+    figure("Beantragt", 62, (v) => v.pendingDays, "requested"),
+    figure("Resturlaub", 62, (v) => v.remainingDays, "remaining"),
   ];
 }
 
@@ -1173,7 +1251,79 @@ export function drawMonthlyExport(doc: PDFKit.PDFDocument, data: MonthlyExportDa
   if (data.rows.some((r) => Math.round(r.workedMinutes) !== Math.round(r.datevWorkedMinutes))) {
     y = drawLegend(doc, MONTHLY_EXPORT_DATEV_LEGEND, y);
   }
-  drawLegend(doc, MONTHLY_EXPORT_UNITS_LEGEND, y);
+  y = drawLegend(doc, MONTHLY_EXPORT_UNITS_LEGEND, y);
+
+  drawVacationYearSection(doc, data, y, available);
+}
+
+/**
+ * Section "Urlaubsjahr <Jahr>, Stand <TT.MM.JJJJ>" (Issue #617, D-617-2, P-03): one row per person in
+ * the order of section "Monat", the seven facade figures, the note `NO_ENTITLEMENT_LABEL` across the
+ * figure columns for a person without a VACATION entitlement, and one legend. It starts on a new
+ * page when the header and two rows no longer fit below the month section.
+ */
+function drawVacationYearSection(
+  doc: PDFKit.PDFDocument,
+  data: MonthlyExportData,
+  startY: number,
+  available: number,
+): void {
+  let y = startY + 6;
+  if (y + 14 + EXPORT_HEADER_H + 2 * EXPORT_ROW_H > doc.page.height - EXPORT_BOTTOM_LIMIT) {
+    doc.addPage();
+    y = EXPORT_MARGIN;
+  }
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827");
+  doc.text(
+    `Urlaubsjahr ${data.vacationYear.year}, Stand ${data.vacationYear.asOf}`,
+    EXPORT_MARGIN,
+    y,
+    { lineBreak: false },
+  );
+  y += 14;
+
+  const columns = vacationColumns();
+  const widths = exportColumnWidths(doc, columns, available);
+  y = drawExportTableHeader(doc, columns, widths, y);
+
+  for (const row of data.rows) {
+    if (y + EXPORT_ROW_H > doc.page.height - EXPORT_BOTTOM_LIMIT) {
+      doc.addPage();
+      y = drawExportTableHeader(doc, columns, widths, EXPORT_MARGIN);
+    }
+    doc.font("Helvetica").fontSize(EXPORT_FONT_SIZE).fillColor("#111827");
+    let x = EXPORT_MARGIN;
+    columns.forEach((col, i) => {
+      if (row.vacation === null && i >= 2) {
+        if (i === 2) {
+          // One note across the seven figure columns instead of seven empty cells.
+          const figureWidth = widths.slice(2).reduce((a, b) => a + b, 0);
+          drawCell(
+            doc,
+            fitText(doc, NO_ENTITLEMENT_LABEL, figureWidth - 4),
+            x,
+            y + 3,
+            figureWidth,
+            "left",
+          );
+        }
+      } else {
+        const raw = col.cell(row);
+        if (raw !== "") {
+          drawCell(doc, fitText(doc, raw, widths[i] - 4), x, y + 3, widths[i], col.align);
+        }
+      }
+      x += widths[i];
+    });
+    const lineY = y + EXPORT_ROW_H - 1;
+    doc
+      .moveTo(EXPORT_MARGIN, lineY)
+      .lineTo(EXPORT_MARGIN + widths.reduce((a, b) => a + b, 0), lineY)
+      .lineWidth(0.25)
+      .stroke("#e5e7eb");
+    y += EXPORT_ROW_H;
+  }
+  drawLegend(doc, VACATION_YEAR_LEGEND, y + 6);
 }
 
 /** Renders the Monatsexport as an A4 landscape PDF (header, table, "Seite X von Y" footer). */

@@ -286,6 +286,11 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
         "$[].carriedOverExpiredDays",
         "$[].atRiskDays",
         "$[].exitReductionDays",
+        // Issue #617: per-person yearly day counts of the Urlaubsuebersicht (verfuegbar, genommen,
+        // genehmigt) - counts of the year from the Resturlaub facade, still no day list.
+        "$[].availableDays",
+        "$[].takenDays",
+        "$[].approvedUpcomingDays",
         "$[].entitlementWarning",
         "$[].missingEntitlement",
       ],

@@ -16,6 +16,7 @@ import {
   employeeScopeFor, // Issue #448 (D-05, plan 03) — T-448-12 scoped BS-date reads
   reportPopulationWhere, // Issue #613 (D-01) — the one period population
   employedInPeriodWhere, // Issue #613 — its employment core, which DATEV reads alone (P-01)
+  isAnonymizedEmployee, // Issue #617 (T-617-08) — the heal never writes an anonymised person's entitlement
 } from "../contexts/platform";
 import {
   SECTION9_LEGEND,
@@ -32,11 +33,14 @@ import {
   getTenantTimezone,
   monthRangeUtc,
   monthDateRange, // Issue #493 (D-10)
+  dateStrInTz, // Issue #617 (P-03) — the tenant-local Stichtag
+  dayRangeUtc, // Issue #617 (P-03) — end of the Stichtag as the facade's `now`
   computeMonthReportFigures, // Issue #451 (D-03)
 } from "../contexts/working-time-account"; // Phase 101B
 import { entryDurations, addWorkingMinutes } from "../contexts/time-tracking"; // Phase 79 (Issue #79) — presence/working-time kernel (D-03/D-05)
 import {
   listEntitlementsForYear,
+  getVacationEntitlementsForYearByCode, // Issue #617 (P-03) — the export's per-year VACATION rows
   getExpiringCarryOver,
   getEntitlementById,
   getConfirmedSection9Credits,
@@ -55,7 +59,7 @@ import {
   leaveRequestDaysWithin, // Issue #451 (D-02) — the Urlaubsliste / Urlaubs-PDF list's per-period priced days
   sickLeaveDayCounts, // Issue #84 (D-14) — the one sick-day / § 9 counting rule
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
-import type { LeaveRequestStatus, LeaveTypeCode } from "@clokr/db";
+import type { LeaveEntitlement, LeaveRequestStatus, LeaveTypeCode } from "@clokr/db";
 
 // ── Month name lookup ─────────────────────────────────────────────────────────
 const MONTH_NAMES = [
@@ -1062,6 +1066,104 @@ async function buildVacationOverviewRows(
   );
 }
 
+// ── vacationYearFigures (Issue #617) ──────────────────────────────────────────
+// The ONE assembly of the Resturlaub figures of a set of VACATION entitlement rows, shared by
+// `GET /leave-overview` (request time, default split day = yesterday) and the Monatsexport (its
+// Stichtag). It heals `usedDays` first - the same audited self-heal the overview has always run, so
+// `usedDays = genommen + genehmigt` holds - but never for an anonymised person (Issue #613: reading a
+// report must not write that person's entitlement; the export lists such a person for months of
+// employment). For such a row the facade still gets a stored `usedDays` consistent with its own
+// split, so Resturlaub = Verfuegbar - Genommen - Genehmigt holds on the printed row too. Assembly
+// only: every figure comes from `app.vacationBalanceForRow`, this layer carries no rule.
+type VacationYearRow = LeaveEntitlement & {
+  leaveType: { id: string; code: LeaveTypeCode | null };
+  employee: { firstName: string; lastName: string };
+  needsReview?: boolean;
+};
+
+async function vacationYearFigures(
+  app: FastifyInstance,
+  tenantId: string,
+  rows: VacationYearRow[],
+  now: Date,
+  asOf?: string,
+) {
+  // healZeroPlaceholder (Issue #445, D-05) and healUsedDays (Issue #445, D-10) are injected rather
+  // than imported statically by leave-self-heal.ts itself - see that file's module docblock.
+  const vacMeta = {
+    ...(await loadVacationTypeMeta(app.prisma, tenantId)),
+    healZeroPlaceholder: (
+      prisma: typeof app.prisma,
+      employeeId: string,
+      empTenantId: string,
+      year: number,
+      leaveTypeId: string,
+    ) =>
+      ensureRegularVacationEntitlement(
+        prisma,
+        employeeId,
+        empTenantId,
+        year,
+        leaveTypeId,
+        REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
+      ),
+    healUsedDays: (
+      prisma: typeof app.prisma,
+      row: {
+        id: string;
+        employeeId: string;
+        leaveTypeId: string;
+        year: number;
+        usedDays: unknown;
+      },
+      leaveTypeIds: string[],
+      empTenantId: string,
+    ) => healEntitlementUsedDays(prisma, row, leaveTypeIds, empTenantId),
+  };
+  const healable = rows.filter((e) => !isAnonymizedEmployee(e.employee));
+  await selfHealUsedDays(app.prisma, healable, vacMeta);
+
+  // Issue #451 (D-07) - ONE bulk AuditLog query for the Hinweis flag, no N+1 inside the loop below.
+  const warnedIds = new Set(
+    (
+      await app.prisma.auditLog.findMany({
+        where: {
+          action: "CARRYOVER_WARNED",
+          entity: "LeaveEntitlement",
+          entityId: { in: rows.map((e) => e.id) },
+        },
+        select: { entityId: true },
+        distinct: ["entityId"],
+      })
+    ).map((al) => al.entityId!),
+  );
+
+  const byEntitlement = new Map<string, Awaited<ReturnType<typeof app.vacationBalanceForRow>>>();
+  const healableIds = new Set(healable.map((e) => e.id));
+  for (const e of rows) {
+    const opts = { hinweisIssued: warnedIds.has(e.id), ...(asOf ? { asOf } : {}) };
+    let balance = await app.vacationBalanceForRow(e, tenantId, now, opts);
+    if (!healableIds.has(e.id)) {
+      // Not healed (anonymised): align the stored figure the facade subtracts with its own split.
+      const aligned = Math.round((balance.takenDays + balance.approvedUpcomingDays) * 100) / 100;
+      balance = await app.vacationBalanceForRow(
+        { ...e, usedDays: aligned as unknown as typeof e.usedDays },
+        tenantId,
+        now,
+        opts,
+      );
+    }
+    byEntitlement.set(e.id, balance);
+  }
+  return byEntitlement;
+}
+
+/** `YYYY-MM-DD` of the day before `day` (calendar arithmetic on the string). */
+function dayBeforeStr(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
+}
+
 export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/monthly?employeeId=&year=&month=
   app.get("/monthly", {
@@ -1251,77 +1353,26 @@ export async function reportRoutes(app: FastifyInstance) {
               leaveOverviewScopeReach,
               new Date(`${y}-12-31T23:59:59.999Z`),
             );
-      const entitlements =
+      // Issue #617 (D-617-1, T-617-06) - the Urlaubsuebersicht names only Urlaub: an allow-list BY
+      // CODE (never by name, never a deny-list), so no other entitlement type - sick-related or not -
+      // can appear in a report:read answer.
+      const entitlements = (
         leaveOverviewScopedIds === "all"
           ? allEntitlements
-          : allEntitlements.filter((e) => leaveOverviewScopedIds.includes(e.employeeId));
+          : allEntitlements.filter((e) => leaveOverviewScopedIds.includes(e.employeeId))
+      ).filter((e) => e.leaveType.code === "VACATION");
 
-      // Self-heal usedDays from Σ approved LeaveRequest.days BEFORE we shape the response.
-      // Issue #613 — `entitlements` holds population rows only, so viewing the report never
+      // Self-heal usedDays from the counted VACATION days BEFORE we shape the response, then read the
+      // Resturlaub facade (Issue #451 D-07) - both inside the one shared helper (Issue #617).
+      // Issue #613 - `entitlements` holds population rows only, so viewing the report never
       // writes the entitlement of an anonymised or long-departed person.
       // Mirrors the heal that GET /entitlements/:employeeId has done since v1.4.
       // Fixes the report-vs-leave-page divergence (a-tenant incident 2026-05-27).
-      // healZeroPlaceholder (Issue #445, D-05) and healUsedDays (Issue #445, D-10) are injected
-      // rather than imported statically by leave-self-heal.ts itself — see that file's module
-      // docblock for why.
-      const vacMeta = {
-        ...(await loadVacationTypeMeta(app.prisma, req.user.tenantId)),
-        healZeroPlaceholder: (
-          prisma: typeof app.prisma,
-          employeeId: string,
-          empTenantId: string,
-          year: number,
-          leaveTypeId: string,
-        ) =>
-          ensureRegularVacationEntitlement(
-            prisma,
-            employeeId,
-            empTenantId,
-            year,
-            leaveTypeId,
-            REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
-          ),
-        healUsedDays: (
-          prisma: typeof app.prisma,
-          row: {
-            id: string;
-            employeeId: string;
-            leaveTypeId: string;
-            year: number;
-            usedDays: unknown;
-          },
-          leaveTypeIds: string[],
-          empTenantId: string,
-        ) => healEntitlementUsedDays(prisma, row, leaveTypeIds, empTenantId),
-      };
-      await selfHealUsedDays(app.prisma, entitlements, vacMeta);
+      const balances = await vacationYearFigures(app, req.user.tenantId, entitlements, now);
 
-      // Issue #451 (D-07) — ONE bulk AuditLog query for the Hinweis flag, the GET /entitlements
-      // pattern (apps/api/src/contexts/absence/api/leave.ts) — no N+1 inside the facade loop
-      // below.
-      const warnedEntitlementIds = new Set(
-        (
-          await app.prisma.auditLog.findMany({
-            where: {
-              action: "CARRYOVER_WARNED",
-              entity: "LeaveEntitlement",
-              entityId: { in: entitlements.map((e) => e.id) },
-            },
-            select: { entityId: true },
-            distinct: ["entityId"],
-          })
-        ).map((al) => al.entityId!),
-      );
-
-      // Issue #451 (D-07) — the ONE Resturlaub facade, sequential (its own `pendingDays`
-      // aggregate replaces the old bulk getPendingLeaveDaysInYear query below); `remainingDays`
-      // and `pendingDays` come from it, plus the additive carriedOverEffectiveDays/
-      // carriedOverExpiredDays/exitReductionDays/atRiskDays fields.
       const realRows = [];
       for (const e of entitlements) {
-        const balance = await app.vacationBalanceForRow(e, req.user.tenantId, now, {
-          hinweisIssued: warnedEntitlementIds.has(e.id),
-        });
+        const balance = balances.get(e.id)!;
         realRows.push({
           employee: e.employee,
           leaveType: e.leaveType,
@@ -1335,12 +1386,16 @@ export async function reportRoutes(app: FastifyInstance) {
           carriedOverExpiredDays: balance.carriedOverExpiredDays,
           exitReductionDays: balance.exitReductionDays,
           atRiskDays: balance.atRiskDays,
+          // Issue #617 (D-617-2) - per-person yearly day counts from the facade, no day list.
+          availableDays: balance.availableDays,
+          takenDays: balance.takenDays,
+          approvedUpcomingDays: balance.approvedUpcomingDays,
           missingEntitlement: false as const,
-          // Issue #445 (coordinator deviation from CONTEXT D-05) — selfHealUsedDays above sets
-          // needsReview on a VACATION row whose zero placeholder was left unhealed because it
-          // was ambiguous (see isAmbiguousRegularEntitlement in contexts/absence/leave-days.ts).
-          // The flag AND the warning string are both computed in the absence context — this
-          // composition layer carries no business rule (CLAUDE.md, ADR 0002 Entscheidung 9).
+          // Issue #445 (coordinator deviation from CONTEXT D-05) - the heal sets needsReview on a
+          // VACATION row whose zero placeholder was left unhealed because it was ambiguous (see
+          // isAmbiguousRegularEntitlement in contexts/absence/leave-days.ts). The flag AND the
+          // warning string are both computed in the absence context - this composition layer
+          // carries no business rule (CLAUDE.md, ADR 0002 Entscheidung 9).
           entitlementWarning: vacationEntitlementWarning({
             leaveTypeCode: e.leaveType.code,
             year: e.year,
@@ -1379,6 +1434,9 @@ export async function reportRoutes(app: FastifyInstance) {
           usedDays: null,
           remainingDays: null,
           pendingDays: null,
+          availableDays: null,
+          takenDays: null,
+          approvedUpcomingDays: null,
           missingEntitlement: true as const,
           entitlementWarning: null,
         }));
@@ -1879,6 +1937,35 @@ export async function reportRoutes(app: FastifyInstance) {
         select: { name: true },
       });
 
+      // Issue #617 (P-03, orchestrator decision 17.10.2026) - the section "Urlaubsjahr" describes a
+      // Stichtag so a re-export of the month prints the same figures: the last day of the exported
+      // month, or the tenant-local yesterday if that is earlier (running month). Statuses are
+      // today's - no status history is reconstructed (stated in the ADR Nachtrag).
+      const lastDayOfMonth = lastDay.toISOString().slice(0, 10);
+      const yesterday = dayBeforeStr(dateStrInTz(new Date(), tz));
+      const stichtag = lastDayOfMonth < yesterday ? lastDayOfMonth : yesterday;
+      const exportedIds = new Set(employees.map((e) => e.id));
+      const vacationRows = (
+        await getVacationEntitlementsForYearByCode(app.prisma, req.user.tenantId, y)
+      )
+        .filter((e) => exportedIds.has(e.employeeId))
+        .map((e) => {
+          const emp = employees.find((p) => p.id === e.employeeId)!;
+          return {
+            ...e,
+            leaveType: { id: e.leaveTypeId, code: "VACATION" as const },
+            employee: { firstName: emp.firstName, lastName: emp.lastName },
+          };
+        });
+      const vacationBalances = await vacationYearFigures(
+        app,
+        req.user.tenantId,
+        vacationRows,
+        dayRangeUtc(stichtag, tz).end,
+        stichtag,
+      );
+      const vacationRowByEmployee = new Map(vacationRows.map((r) => [r.employeeId, r]));
+
       const rows: MonthlyExportRow[] = [];
       // Sequential, never Promise.all: one account computation per person.
       for (const emp of employees) {
@@ -1911,15 +1998,31 @@ export async function reportRoutes(app: FastifyInstance) {
             parental: datev.parentalDays,
           },
           section9: (section9ByEmp.get(emp.id)?.length ?? 0) > 0,
+          vacation: (() => {
+            const entitlement = vacationRowByEmployee.get(emp.id);
+            const balance = entitlement ? vacationBalances.get(entitlement.id) : undefined;
+            if (!balance) return null;
+            return {
+              entitlementDays: balance.entitlementDays,
+              carriedOverEffectiveDays: balance.carriedOverEffectiveDays,
+              availableDays: balance.availableDays,
+              takenDays: balance.takenDays,
+              approvedUpcomingDays: balance.approvedUpcomingDays,
+              pendingDays: balance.pendingCreatedByAsOfDays,
+              remainingDays: balance.remainingDays,
+            };
+          })(),
         });
       }
 
+      const [stichtagYear, stichtagMonth, stichtagDay] = stichtag.split("-");
       const pdfBuffer = await generateMonthlyExportPdf({
         tenantName: tenant?.name ?? "",
         monthLabel: `${MONTH_NAMES[m - 1]} ${y}`,
         year: y,
         month: m,
         generatedAt: formatInTimeZone(new Date(), tz, "dd.MM.yyyy, HH:mm"),
+        vacationYear: { year: y, asOf: `${stichtagDay}.${stichtagMonth}.${stichtagYear}` },
         rows,
       });
 

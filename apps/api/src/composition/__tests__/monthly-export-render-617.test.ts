@@ -15,6 +15,10 @@ import {
   MONTHLY_EXPORT_DATEV_LEGEND,
   MONTHLY_EXPORT_FORECAST_LEGEND,
   MONTHLY_EXPORT_UNLABELLED_LEGEND,
+  VACATION_YEAR_COLUMN_LABELS,
+  VACATION_YEAR_LEGEND,
+  NO_ENTITLEMENT_LABEL,
+  type MonthlyExportVacation,
   type MonthlyExportData,
   type MonthlyExportRow,
 } from "../pdf";
@@ -60,6 +64,16 @@ const NO_ABSENCE = {
   parental: 0,
 };
 
+const VACATION: MonthlyExportVacation = {
+  entitlementDays: 30,
+  carriedOverEffectiveDays: 2,
+  availableDays: 32,
+  takenDays: 10,
+  approvedUpcomingDays: 5,
+  pendingDays: 1,
+  remainingDays: 17,
+};
+
 function makeRow(overrides: Partial<MonthlyExportRow> = {}): MonthlyExportRow {
   return {
     employeeName: "P617x, Vorname",
@@ -73,6 +87,7 @@ function makeRow(overrides: Partial<MonthlyExportRow> = {}): MonthlyExportRow {
     datevWorkedMinutes: 9150,
     absenceDays: { ...NO_ABSENCE },
     section9: false,
+    vacation: { ...VACATION },
     ...overrides,
   };
 }
@@ -84,6 +99,7 @@ function makeData(rows: MonthlyExportRow[]): MonthlyExportData {
     year: 2026,
     month: 9,
     generatedAt: "15.10.2026, 12:00",
+    vacationYear: { year: 2026, asOf: "30.09.2026" },
     rows,
   };
 }
@@ -257,6 +273,85 @@ describe("Monatsexport renderer (Issue #617)", () => {
   });
 });
 
+describe("Monatsexport section Urlaubsjahr (D-617-2, P-03)", () => {
+  it("names the year and the Stichtag in the section header", () => {
+    expect(render([makeRow()])).toContain("Urlaubsjahr 2026, Stand 30.09.2026");
+  });
+
+  it("writes the seven column labels once, in the D-617-2 order", () => {
+    expect([...VACATION_YEAR_COLUMN_LABELS]).toEqual([
+      "Anspruch",
+      "Übertrag (wirksam)",
+      "Verfügbar",
+      "Genommen",
+      "Genehmigt",
+      "Beantragt",
+      "Resturlaub",
+    ]);
+    const texts = render([makeRow()]);
+    let from = texts.indexOf("Urlaubsjahr 2026, Stand 30.09.2026");
+    expect(from).toBeGreaterThanOrEqual(0);
+    for (const label of VACATION_YEAR_COLUMN_LABELS) {
+      expect(texts.filter((t) => t === label).length, label).toBe(1);
+      const at = texts.indexOf(label, from);
+      expect(at, label).toBeGreaterThan(from);
+      from = at;
+    }
+  });
+
+  it("prints the seven figures of a row with the decimal comma", () => {
+    const texts = render([
+      makeRow({
+        vacation: {
+          entitlementDays: 30,
+          carriedOverEffectiveDays: 2.5,
+          availableDays: 32.5,
+          takenDays: 10.5,
+          approvedUpcomingDays: 5,
+          pendingDays: 0,
+          remainingDays: 17,
+        },
+      }),
+    ]);
+    for (const expected of ["2,5", "32,5", "10,5"]) expect(texts, expected).toContain(expected);
+  });
+
+  it("prints the no-entitlement note for a person without a VACATION row, once per such person", () => {
+    const texts = render([
+      makeRow({ vacation: null }),
+      makeRow({ employeeNumber: "N-2" }),
+      makeRow({ employeeNumber: "N-3", vacation: null }),
+    ]);
+    expect(texts.filter((t) => t === NO_ENTITLEMENT_LABEL).length).toBe(2);
+  });
+
+  it("prints the vacation legend once, with the Resturlaub formula in ASCII", () => {
+    const texts = render([makeRow(), makeRow({ employeeNumber: "N-2" })]);
+    expect(texts.filter((t) => t === VACATION_YEAR_LEGEND).length).toBe(1);
+    expect(VACATION_YEAR_LEGEND).toContain("Resturlaub = Verfügbar - Genommen - Genehmigt.");
+    expect(VACATION_YEAR_LEGEND).toContain("Beantragt");
+  });
+
+  it("keeps the section out of an empty document", () => {
+    const texts = render([]);
+    expect(texts.some((t) => t.startsWith("Urlaubsjahr"))).toBe(false);
+  });
+
+  it("starts a new page when the section header and two rows no longer fit", async () => {
+    // measured: 27 rows end section "Monat" close to the page bottom (the 3-row document above keeps
+    // both sections on one page), so section "Urlaubsjahr" starts on page 2 and takes exactly it.
+    const many = Array.from({ length: 27 }, (_, i) =>
+      makeRow({ employeeNumber: `N-${i}`, employeeName: `P617x${i}, V` }),
+    );
+    const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 36, bufferPages: true });
+    drawMonthlyExport(doc, makeData(many));
+    const pages = doc.bufferedPageRange().count;
+    doc.end();
+    expect(pages).toBe(2);
+    expect(pageCount(await generateMonthlyExportPdf(makeData(many)))).toBe(2);
+  });
+});
+
 describe("Monatsexport page count (D-617-4)", () => {
   const rows = (n: number): MonthlyExportRow[] =>
     Array.from({ length: n }, (_, i) =>
@@ -271,9 +366,11 @@ describe("Monatsexport page count (D-617-4)", () => {
     const buffer = await generateMonthlyExportPdf(makeData(rows(60)));
     const pages = pageCount(buffer);
     // measured: 60 rows of 14 pt do not fit the 595 pt landscape page once (about 31 rows on the
-    // first page below the header band), so two pages carry the table and the legends; the footer
-    // adds none.
-    expect(pages).toBe(2);
+    // first page below the header band), so two pages carry section "Monat" and its legends; section
+    // "Urlaubsjahr" (Issue #617, 617-02) repeats the 60 rows and starts on a new page because the
+    // header and two rows no longer fit below the first section, so it takes two more. The footer
+    // adds none. (Before 617-02 this document had 2 pages.)
+    expect(pages).toBe(4);
   });
 
   it("mutation proof: a plain footer text at height-40 adds a page", async () => {
