@@ -106,6 +106,17 @@ export const REGIONS: readonly RegionEntry[] = [
     validator: "resolveSalonInReach",
     membership: "salonPersonsAtStichtag",
   },
+  // Issue #612: the period report's one assembly validates the chosen salon against the reach of the
+  // route's own permission before any person, entry, account or vacation read, and decides the
+  // month membership through the same rule as /monthly.
+  {
+    file: `${COMPOSITION}/reports-period.ts`,
+    method: "get",
+    path: "assemblePeriodReport",
+    kind: "function",
+    validator: "resolveSalonInReach",
+    membership: "salonViewMemberIds",
+  },
 ];
 
 /** Reads that must not happen before the validation. */

@@ -974,7 +974,7 @@ async function selectMonthlyExportPersons(
  * month's last calendar day. One Stammsalon resolution (the endpoint's own scope resolver evaluated
  * for a salon-only reach, #558) per distinct Stichtag, each as a UTC-midnight calendar day.
  */
-async function salonPersonsAtStichtag(
+export async function salonPersonsAtStichtag(
   app: FastifyInstance,
   tenantId: string,
   salonId: string,

@@ -50,8 +50,12 @@ export interface PeriodRow {
   confirmedMonthCount: number;
   labelled: boolean;
   sickDays: number;
-  /** Present only when Soll and saldo are withheld (no overtime:read over the person). */
-  sollUnavailableReason?: "NO_PERMISSION";
+  /**
+   * Present only when Soll and saldo are withheld: no overtime:read over the person
+   * (`NO_PERMISSION`, which wins) or a chosen salon (`SALON_FILTER`, contract figures are never
+   * split by salon).
+   */
+  sollUnavailableReason?: "NO_PERMISSION" | "SALON_FILTER";
   months: PeriodMonth[];
 }
 
@@ -138,6 +142,14 @@ export interface PeriodReport {
   rows: PeriodRow[];
   vacation: { year: number; asOf: string; years: PeriodVacationYear[] };
   absences: PeriodAbsence[];
+  /**
+   * The four envelope keys below are present ONLY under a salon filter (#542 rules): working time
+   * counts the salon's entries, Soll/saldo and the priced leave counts are withheld.
+   */
+  salonId?: string;
+  workedBasis?: "SALON_ENTRIES";
+  sollUnavailableReason?: "SALON_FILTER";
+  leaveDaysUnavailableReason?: "SALON_FILTER";
 }
 
 /** `YYYY-MM` of a year-month, the form the API and the URL use. */
