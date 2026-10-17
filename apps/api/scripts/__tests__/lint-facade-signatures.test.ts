@@ -594,7 +594,10 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // Issue #595 (2026-10-16): -1, the dead W4 closing-balance reader of
     // working-time-account/facade/saldo-snapshot.ts (no caller, exact periodStart match) —
     // 147 -> 146; exceptions unchanged at 17.
-    expect(functions).toHaveLength(146);
+    // Issue #588 (2026-10-17): +1 employeesWithValidWorkSince (time-tracking/facade/time-entries.ts),
+    // the recorded-time fact of the team saldo figures — 146 -> 147; passes F1/F2/F3 directly,
+    // exceptions unchanged at 17.
+    expect(functions).toHaveLength(147);
 
     const rawExceptions = JSON.parse(
       readFileSync(

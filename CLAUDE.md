@@ -230,6 +230,19 @@ Current: recalculated from hire date on every request (does not scale). Target a
   figures, never rewritten; `scripts/audit-595-legacy-period-start.ts` lists such rows per stage (read-only).
   The bulk lock reads of the facade (`getClosedMonthsForDates`, `getClosedMonthsInRange`) and `sumCarryOverByMonth` use the same window and one row per person and month (Issue #664). The demo seed writes only zero pre-tracking snapshots; the previous demo month is closed by
   `apps/api/scripts/demo-close-previous-month.ts` (the real closer), see `packages/db/README.md`.
+- **Team saldo figures and the forecast wording each come from one web module (Issue #588).**
+  `apps/web/src/lib/reports/team-saldo.ts` is the ONLY place the team median, the Top 5 plus/minus and the outlier
+  rule live: a person counts only if employed today with a live saldo, a contract that is not track-only (#494) and
+  recorded time since hire; the others are listed as „ohne Erfassung“ / „nur Zeiterfassung“ / „Saldo nicht
+  verfügbar“, never dropped silently, and exited persons keep their own section (#613). `/reports` and the dashboard
+  card „Salden“ read it behind the same two gates as `GET /dashboard/overtime-overview` (`team-overview:read` AND
+  `overtime:read`). `apps/web/src/lib/saldo/forecast-label.ts` is the ONLY place the forecast wording is chosen, from
+  `unconfirmedMonths` and `hasClosedMonth` (computed in `computeOvertimeBalanceBreakdown`, which computes no figure
+  differently; additive on the `/dashboard/overtime-overview` rows, `GET /dashboard`, `GET /overtime/:employeeId` and
+  the visible branches of `GET /leave/overtime-balance`): „Laufender Monat“ only for exactly one unclosed month. Every
+  team saldo renders ±H:MM through `fmtBalance`, one column per value. `team-saldo-one-place-588.test.ts` fails on a
+  second median, a row-saldo average, the running-month wording outside the helper, or a forecast call site without
+  the value. Details: `docs/saldo-anzeige.md`, `docs/adr/0001-abweichungen.md` Eintrag Q, Nachtrag Phase 588.
 - **The open-month chain lives in one function (Issue #681).** The Gesamtsaldo of an open month (the
   cumulative series of `computeMonthSaldo`, hence `closingBalanceMinutes`, the Monatsexport and
   `GET /overtime/month-saldo`) starts at `openMonthCarryInMinutes()` (`contexts/working-time-account/overtime-balance.ts`):
@@ -612,7 +625,7 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
 
 ## Overtime Saldo Calculation (current)
 
-`Saldo = Worked − Expected` over (hire-date or month-start) → yesterday. The live saldo never includes today, not even a clocked-out today: a clock-out for a lunch break closes the entry exactly like the end of the day, so a closed entry does not mean the day is settled (Issue #438). Leave/holidays/absences reduce expected, clamped to effective range. Recalculated per GET /overtime/:employeeId. Will be replaced by snapshot-based calc (see Saldo Calculation & Monatsabschluss above).
+`Saldo = Worked − Expected` over (hire-date or month-start) → yesterday. The live saldo never includes today, not even a clocked-out today: a clock-out for a lunch break closes the entry exactly like the end of the day, so a closed entry does not mean the day is settled (Issue #438). Leave/holidays/absences reduce expected, clamped to effective range. The chain starts where every close path and the month series start it — `getCarryOverBase()` (`contexts/working-time-account/carry-over-base.ts`): the last closed month's stored carryOver, and only without any closed month the active `OpeningBalance` (Issue #682; before, the live saldo ignored it until the first close). Never re-read the OpeningBalance when a closed month exists — the first close already put it into its carryOver. "Bestätigt" (`confirmedMinutes`) stays the stored closed carry, so an OpeningBalance without a close is part of the forecast. Persons whose live saldo moved: `scripts/audit-682-opening-balance-live-gap.ts` (read-only, ids and minutes). Recalculated per GET /overtime/:employeeId. Will be replaced by snapshot-based calc (see Saldo Calculation & Monatsabschluss above).
 
 ## Schedule Types
 

@@ -918,9 +918,22 @@ import { readFileSync } from "node:fs";
 // `fix/681-gesamtsaldo-offene-monate` (origin/main @ 59ef142e) - 693 test files, 10541 tests (10538 passed, 3 skipped).
 // New file: open-month-chain-681 (+26 cases); saldo-boundary-neutrality-493 gains its amendment-register cases (+2);
 // nothing removed, skipped or loosened. MIN_FILES 692 -> 693, never lowered.
+// Issue #682 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on
+// `fix/682-live-saldo-opening-balance` (origin/main @ 7b66d4a3) - 695 test files, 10570 tests (15 skipped). New files:
+// live-saldo-opening-balance-682 (+25 cases), scripts audit-682-opening-balance-live-gap (+4). The run's 15 failures were
+// "too many clients" from a parallel suite in another worktree; the 7 affected files passed on a targeted rerun
+// (87/87). MIN_FILES 693 -> 695, never lowered.
+// Phase 588, plan 05 (2026-10-17): the files of this phase, merged onto origin/main @ 7b66d4a3 (#683, main 693 files /
+// 10541 tests): two new files, overtime-overview-588 (588-01, 10 cases) and personal-saldo-label-588 (588-03, 8 cases); the
+// facade test of the time-tracking context gained the describe block of `employeesWithValidWorkSince` (588-01, 7 cases);
+// lint-facade-signatures changed a pin value only, not a case count. Measured on the phase branch before the merge
+// (base 59ef142e): 694 files, 10539 tests, i.e. +2 files and +26 cases over that base (25 attributed above). Nothing removed,
+// skipped or loosened. MIN_FILES = main + the phase's own delta: 693 + 2 = 695 (re-measured with the full run after the merge).
+// Merge #588 onto #682 (2026-10-17): main 695 + 2 = 697, no file removed.
 // Issue #679 (2026-10-17): measured with a full run on `fix/679-reach-stichtag` (origin/main @ 7b66d4a3) - 694 test files,
 // 10553 tests. New file: reach-stichtag-679 (+11 cases); nothing removed, skipped or loosened. MIN_FILES 693 -> 694, never lowered.
-const MIN_FILES = 694;
+// Merge #679 onto main: 697 + 1 = 698, no file removed.
+const MIN_FILES = 698;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -959,8 +972,14 @@ const MIN_FILES = 694;
 // API test file was edited by this phase; main alone measures 10437, so the phase delta is the measured 76). Never lowered.
 // Issue #681 (2026-10-17): MIN_TESTS 10513 -> 10541 (+28: open-month-chain-681 26, saldo-boundary-neutrality-493 2),
 // the measured total of the full run named at MIN_FILES. Never lowered.
+// Issue #682 (2026-10-17): MIN_TESTS 10541 -> 10570 (+29: live-saldo-opening-balance-682 25, audit-682 script 4), the
+// measured total of the full run named at MIN_FILES. Never lowered.
+// Phase 588 (2026-10-17): MIN_TESTS 10513 -> 10539 (+26) on the phase branch before the merge of #683; after it main 10541 + 26
+// = 10567, re-measured with the full run named at MIN_FILES. Never lowered.
+// Merge #588 onto #682 (2026-10-17): main 10570 + 26 = 10596. Never lowered.
 // Issue #679 (2026-10-17): MIN_TESTS 10541 -> 10553, the measured total of the full run named at MIN_FILES. Never lowered.
-const MIN_TESTS = 10553;
+// Merge #679 onto main: 10596 + 12 = 10608. Never lowered.
+const MIN_TESTS = 10608;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

@@ -55,8 +55,9 @@ import {
 //   - MONTHLY_HOURS track-only (TRACK_ONLY or no monthly hours, Issue #494) → totalHours 0,
 //     confirmedMinutes/openMonthMinutes both 0.
 //   - SHIFT_BASED / FIXED_* / FLEXTIME / MONTHLY_HOURS(target>0) → live lifetime saldo.
-// Lifetime-correct: totalHours = last-snapshot carryOver (or full history from hireDate when no
-// snapshot) + Σ balances of ALL open months (complete + current partial) up to windowEnd. This is
+// Lifetime-correct: totalHours = last-snapshot carryOver (or, when no snapshot, the OpeningBalance
+// plus the full history from hireDate — Issue #682) + Σ balances of ALL open months (complete +
+// current partial) up to windowEnd. This is
 // the SAME value updateOvertimeAccount persists — it is the single source of truth; the writer
 // wraps this and upserts. Returns null for §18-exempt employees (caller: skip / no value).
 //
@@ -76,6 +77,21 @@ export type OvertimeBalanceBreakdown = {
   /** SHIFT_BASED only, and only when the current month has an open partial period —
    *  undefined for every other schedule type/state (never a fabricated `false`). */
   rosterIncomplete?: boolean;
+  /**
+   * Issue #588 (P-02): the value of the existing `isTrackOnly` below (a MONTHLY_HOURS contract
+   * that is TRACK_ONLY or has no monthly hours, #494) - today's contract, as the live display
+   * uses it. Reported so the team saldo figures can tell a saldo of 0 by rule from a real one.
+   * Changes no figure.
+   */
+  trackOnly: boolean;
+  /**
+   * Issue #588 (P-05): the number of tenant-local calendar months from the month of the first
+   * open day of the live window (`rangeStart`: the day after the last closed period's end, or
+   * the hire day when nothing is closed) through the current tenant-local month, inclusive,
+   * never below 0. 1 means the forecast is the running month alone. Read from the UTC date part
+   * of the UTC-midnight calendar days, never a browser-local getter. Changes no figure.
+   */
+  unconfirmedMonths: number;
 };
 
 export async function computeOvertimeBalanceBreakdown(
@@ -498,11 +514,23 @@ async function computeAccountChain(
   // FIXED/FLEXTIME/MONTHLY_HOURS: also go through closeEmployeeMonth() for uniformity
   // (RESEARCH §2.6 — all models benefit from per-month snapshot guarantee).
 
-  let accumulatedCarryOver = snapshotCarryOver;
+  // Issue #682 — the chain head is seeded exactly like every close path and the month series seed
+  // it: `getCarryOverBase()` (Phase 99 OB-02) returns the last closed month's stored carryOver when
+  // one exists, and only otherwise the active OpeningBalance (else 0). Before #682 the live chain
+  // started at 0 without a closed month and ignored the OpeningBalance, so the live saldo differed
+  // from the Gesamtsaldo of the month series by exactly its minutes. With a closed month the value is
+  // the stored carry, which the first close already seeded with the OpeningBalance — it is never read
+  // a second time (no double count).
+  const chainBase = await getCarryOverBase(
+    app.prisma,
+    employeeId,
+    confirmed.hasClosedMonth ? { carryOver: snapshotCarryOver } : null,
+  );
+  let accumulatedCarryOver = chainBase;
   // The running base of the live TOTAL. It resets to 0 after a track-only month exactly like that
   // month's close resets the chain (`effectiveCarryOverOut = 0`), so live == Σ closes
   // (Issue #494, D-10).
-  let liveBase = snapshotCarryOver;
+  let liveBase = chainBase;
   let openPeriodBalance = 0;
 
   for (let monthIndex = 0; monthIndex < completeOpenMonths.length; monthIndex++) {
@@ -878,10 +906,21 @@ async function computeAccountChain(
   // `confirmedMinutes` deliberately keeps reading the STORED last closed carry (`snapshotCarryOver`),
   // not `liveBase`: "Bestätigt" is the same figure `getConfirmedCarryOver` and the OVERTIME_COMP
   // gate read, so zeroing it for an unclosed track-only month would contradict the stored snapshot.
+  // For the same reason an OpeningBalance without a closed month (Issue #682) is part of the total
+  // and therefore of `openMonthMinutes`, never of `confirmedMinutes` (0 until the first close).
   const confirmedMinutes = isTrackOnly ? 0 : snapshotCarryOver;
   const openMonthMinutes = isTrackOnly
     ? 0
     : Math.round(effectiveBalanceHours * 60) - confirmedMinutes;
+
+  // Issue #588 (P-05): months of the live window, derived from `rangeStart` and `todayDate` (both
+  // UTC-midnight calendar days of the tenant-local day) - a count, no second saldo derivation.
+  const unconfirmedMonths = Math.max(
+    0,
+    (todayDate.getUTCFullYear() - rangeStart.getUTCFullYear()) * 12 +
+      (todayDate.getUTCMonth() - rangeStart.getUTCMonth()) +
+      1,
+  );
 
   return {
     totalHours: effectiveBalanceHours,
@@ -889,6 +928,8 @@ async function computeAccountChain(
     openMonthMinutes,
     hasClosedMonth,
     rosterIncomplete,
+    trackOnly: isTrackOnly,
+    unconfirmedMonths,
     chainMinutes: liveBase + openPeriodBalance,
   };
 }
@@ -906,8 +947,8 @@ async function computeAccountChain(
  * The cumulative series of `computeMonthSaldo` starts at this value, so the Gesamtsaldo at the end
  * of an open month (`computeMonthReportFigures().closingBalanceMinutes`, the Monatsexport, `GET
  * /overtime/month-saldo`, #612) equals the live saldo `computeOvertimeBalanceBreakdown` at the same
- * Stichtag. Known, pre-existing exception (not changed here): without any closed month the live
- * saldo starts at 0 and ignores the OpeningBalance, so the two differ by exactly its minutes.
+ * Stichtag — since Issue #682 also without any closed month, because the chain itself is seeded
+ * with the OpeningBalance (`chainBase` in `computeAccountChain`).
  *
  * Fast path (no query beyond the snapshot/opening-balance lookups the pre-681 code already made):
  * when the chain would contain no unclosed month before M — the same test the chain's own month
@@ -960,7 +1001,9 @@ export async function openMonthCarryInMinutes(
 
   const chain = await computeAccountChain(app, employeeId, { virtualToday });
   if (chain === null) return confirmed.hasClosedMonth ? confirmed.minutes : headSeed;
-  return chain.chainMinutes + headSeed;
+  // Issue #682: the chain already starts at the head seed (`chainBase`); adding `headSeed` here
+  // would count the OpeningBalance twice. A track-only month in the chain drops it, like its close.
+  return chain.chainMinutes;
 }
 
 // Thin, signature-preserving wrapper around computeOvertimeBalanceBreakdown (Phase 97-01) — MUST

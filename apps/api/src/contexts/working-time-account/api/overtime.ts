@@ -257,6 +257,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
       let confirmedMinutes: number;
       let openMonthMinutes: number | null;
       let hasClosedMonth: boolean;
+      let unconfirmedMonths: number | null;
       let rosterIncomplete: boolean | undefined;
 
       let breakdown: OvertimeBalanceBreakdown | null = null;
@@ -272,6 +273,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         confirmedMinutes = breakdown.confirmedMinutes;
         openMonthMinutes = breakdown.openMonthMinutes;
         hasClosedMonth = breakdown.hasClosedMonth;
+        unconfirmedMonths = breakdown.unconfirmedMonths;
         rosterIncomplete = breakdown.rosterIncomplete;
       } else {
         balance = Number(account.balanceHours);
@@ -288,6 +290,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           hasClosedMonth = false;
         }
         openMonthMinutes = null;
+        unconfirmedMonths = null;
         rosterIncomplete = undefined;
       }
       const balanceMinutes = Math.round(balance * 60);
@@ -328,6 +331,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
         confirmedMinutes,
         openMonthMinutes,
         hasClosedMonth,
+        // Issue #588 (P-14): additive; the web words the forecast from it
+        // ("Laufender Monat" only for exactly one unclosed month).
+        unconfirmedMonths,
         ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
       };
     },
@@ -2369,6 +2375,12 @@ export async function overtimeRoutes(app: FastifyInstance) {
         Math.min(effectiveFromDate.getTime(), employee.hireDate.getTime()),
       );
       const { lockedMonthsSkipped } = await recalculateSnapshots(app, employeeId, recalcFrom);
+      // Issue #682: the live saldo starts with the OpeningBalance when no month is closed, so the
+      // stored balance is refreshed from that same computation right away. recalculateSnapshots
+      // writes nothing for a person without a snapshot and stores the last close's carry for a
+      // person with snapshots — both would leave the stored balance off the live value until the
+      // next unrelated mutation. Not caught, for the same reason as the recalc above.
+      await updateOvertimeAccount(app, employeeId);
 
       const warning =
         lockedMonthsSkipped.length > 0

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick, untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
   import { salonContext } from "$stores/salon-context"; // Issue #542
@@ -26,6 +26,15 @@
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
+  import {
+    TEAM_SALDO_EXCLUSION_LABEL,
+    forecastColumnLabel,
+    teamSaldoCells,
+    teamSaldoExclusion,
+    teamSaldoFigures,
+  } from "$lib/reports/team-saldo"; // Issue #588
+  import { fmtBalance } from "$lib/utils/format-minutes"; // Issue #588
+  import Icon from "$components/Icon.svelte"; // Issue #588
   import { VACATION_YEAR_COLUMNS } from "$lib/reports/vacation-columns"; // Issue #617
   import { DAY_STATUS_LABEL, attendanceStatusText } from "$lib/dashboard/day-status-label"; // Issue #587
   import { teamDayHref, teamLeaveCreateHref } from "$lib/dashboard/team-day-links"; // Issue #587
@@ -34,29 +43,6 @@
     type EmployeeMonthRow,
     type SnapshotAnswerRow,
   } from "$lib/reports/employee-months";
-  import {
-    Chart,
-    LineController,
-    LineElement,
-    PointElement,
-    CategoryScale,
-    LinearScale,
-    Filler,
-    Tooltip,
-    Legend,
-  } from "chart.js";
-
-  Chart.register(
-    LineController,
-    LineElement,
-    PointElement,
-    CategoryScale,
-    LinearScale,
-    Filler,
-    Tooltip,
-    Legend,
-  );
-
   // ── Types ──────────────────────────────────────────────────────────────────
 
   type TodayEmployee = {
@@ -102,8 +88,6 @@
     employeeNumber: string;
     balanceHours: number;
     status: "NORMAL" | "ELEVATED" | "CRITICAL";
-    // `month` is named by the server ("YYYY-MM", null when unnameable) - Issue #595 (D-03).
-    snapshots: Array<{ month: string | null; balanceMinutes: number; carryOver: number }>;
     // Phase 97-04 — additive split fields from GET /dashboard/overtime-overview. Optional:
     // an older cached response may omit them, in which case the row falls back to a
     // single-value SaldoAnzeige derived from balanceHours (Phase 97-07).
@@ -114,6 +98,11 @@
     // Issue #613 (AC-613-5) - additive; an older cached response has neither field.
     exitDate?: string | null;
     exitedWithOpenFinalSaldo?: boolean;
+    // Issue #588 - additive facts of the overview row, read by the team saldo module. An older
+    // cached response has none of them; an absent fact never excludes a person.
+    hasRecordedTime?: boolean;
+    trackOnly?: boolean | null;
+    unconfirmedMonths?: number | null;
   };
 
   type OvertimeOverview = {
@@ -291,7 +280,7 @@
   }
 
   // Issue #613: the server flags the exited persons with an open final saldo; the team table, its
-  // sorting, paging, sparklines and the KPIs below read the active rows only.
+  // sorting, paging and the KPIs below read the active rows only.
   let overtimeSections = $derived(partitionOvertimeOverview(overtimeOverview?.employees ?? []));
 
   let sortedOvertime = $derived.by(() => {
@@ -395,20 +384,6 @@
     const _len = leaveOverviewRows.length;
     leaveOverviewPage = 1;
   });
-
-  // Map<employeeId, Chart> — key is employeeId so re-sort/pagination doesn't break identity
-  const sparklineCharts = new Map<string, Chart>();
-  // Canvas refs captured via use:registerCanvas action in {#each}
-  const sparklineCanvases = new Map<string, HTMLCanvasElement>();
-
-  function registerCanvas(el: HTMLCanvasElement, empId: string) {
-    sparklineCanvases.set(empId, el);
-    return {
-      destroy() {
-        sparklineCanvases.delete(empId);
-      },
-    };
-  }
 
   // Per-employee download error state
   let empDownloadErrors = $state<Record<string, string>>({});
@@ -515,78 +490,6 @@
     if (!showTeamArea) {
       await loadEmployeeMonthlyCloses();
     }
-  });
-
-  onDestroy(() => {
-    for (const chart of sparklineCharts.values()) chart.destroy();
-    sparklineCharts.clear();
-    sparklineCanvases.clear();
-  });
-
-  // ── Sparkline lifecycle ────────────────────────────────────────────────────
-
-  $effect(() => {
-    const rows = pagedOvertimeRows;
-    void tick().then(() => {
-      // Destroy charts for employees not on the current page
-      for (const [empId, chart] of sparklineCharts.entries()) {
-        if (!rows.some((r) => r.id === empId)) {
-          chart.destroy();
-          sparklineCharts.delete(empId);
-        }
-      }
-      // (Re)create chart for every visible row with >=2 snapshots
-      for (const row of rows) {
-        const canvas = sparklineCanvases.get(row.id);
-        if (!canvas) continue;
-        if (row.snapshots.length < 2) {
-          const stale = sparklineCharts.get(row.id);
-          if (stale) {
-            stale.destroy();
-            sparklineCharts.delete(row.id);
-          }
-          continue;
-        }
-        // Always destroy previous Chart before creating a new one
-        const existing = sparklineCharts.get(row.id);
-        if (existing) {
-          existing.destroy();
-          sparklineCharts.delete(row.id);
-        }
-
-        const labels = row.snapshots.map((s) => s.month ?? "—");
-        const data = row.snapshots.map((s) => s.carryOver / 60);
-
-        const brandColor =
-          getComputedStyle(document.documentElement).getPropertyValue("--brand").trim() ||
-          "#80377B";
-
-        const chart = new Chart(canvas, {
-          type: "line",
-          data: {
-            labels,
-            datasets: [
-              {
-                data,
-                borderColor: brandColor,
-                backgroundColor: brandColor + "22",
-                fill: true,
-                tension: 0.3,
-                pointRadius: 0,
-                borderWidth: 1.5,
-              },
-            ],
-          },
-          options: {
-            responsive: false,
-            animation: false,
-            plugins: { legend: { display: false }, tooltip: { enabled: false } },
-            scales: { x: { display: false }, y: { display: false } },
-          },
-        });
-        sparklineCharts.set(row.id, chart);
-      }
-    });
   });
 
   // ── Loaders ────────────────────────────────────────────────────────────────
@@ -875,10 +778,6 @@
     });
   }
 
-  function formatBalance(n: number): string {
-    return n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  }
-
   function statusClass(status: TodayEmployee["status"]): string {
     return `status-badge status-${status.replace("_", "-")}`;
   }
@@ -904,12 +803,9 @@
 
   // Manager KPIs — derived from overtime + leave overview
   let kpiTeamSize = $derived(overtimeSections.active.length);
-  let kpiAvgBalance = $derived.by(() => {
-    const rows = overtimeSections.active;
-    if (rows.length === 0) return 0;
-    const sum = rows.reduce((acc, r) => acc + r.balanceHours, 0);
-    return sum / rows.length;
-  });
+  // Issue #588 (D-588-1): the median and the persons outside it come from the one team saldo
+  // module, over the active rows only (#613).
+  let teamSaldo = $derived(teamSaldoFigures(overtimeSections.active));
   let kpiCriticalCount = $derived(
     overtimeSections.active.filter((r) => r.status === "CRITICAL").length,
   );
@@ -928,11 +824,6 @@
     const h = Math.floor(abs / 60);
     const m = abs % 60;
     return `${sign}${h}:${String(m).padStart(2, "0")}`;
-  }
-
-  function fmtHoursSigned(min: number): string {
-    const prefix = min > 0 ? "+" : "";
-    return `${prefix}${fmtHoursFromMin(min)}`;
   }
 </script>
 
@@ -957,11 +848,13 @@
     </Card>
     <Card animate>
       <KPIStat
-        label="Ø Saldo"
-        value={formatBalance(kpiAvgBalance)}
+        label="Median-Saldo"
+        value={teamSaldo.medianMinutes === null ? "—" : fmtBalance(teamSaldo.medianMinutes)}
         unit="h"
-        delta={kpiAvgBalance > 0 ? "positiv" : kpiAvgBalance < 0 ? "negativ" : undefined}
-        deltaTone={kpiAvgBalance > 0 ? "good" : kpiAvgBalance < 0 ? "bad" : "neutral"}
+        delta={teamSaldo.excluded.length > 0
+          ? `${teamSaldo.excluded.length} nicht in der Kennzahl`
+          : `aus ${teamSaldo.counted} Personen`}
+        deltaTone="neutral"
       />
     </Card>
     <Card animate>
@@ -989,7 +882,7 @@
     <Card animate>
       <KPIStat
         label="Saldo"
-        value={fmtHoursSigned(kpiTotalBalanceMin)}
+        value={fmtBalance(kpiTotalBalanceMin)}
         unit="h"
         deltaTone={kpiTotalBalanceMin > 0 ? "good" : kpiTotalBalanceMin < 0 ? "bad" : "neutral"}
       />
@@ -1461,7 +1354,7 @@
     {#if canTeamOvertime}
       <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) -->
       <Card animate class="widget-card" style="--card-idx: 3;">
-        <CardHeader title="Überstunden-Übersicht" sub="Saldo & Verlauf je Mitarbeiter" />
+        <CardHeader title="Überstunden-Übersicht" sub="Saldo je Mitarbeiter" />
 
         {#if pageSalonId !== null}
           <p class="form-hint" data-testid="overtime-salon-persons-note">
@@ -1488,52 +1381,58 @@
                   </th>
                   <th>Nr.</th>
                   <th class="sortable numeric" onclick={() => toggleSort("balance")}>
-                    Saldo (h)
+                    Abgeschlossen
                     {#if sortColumn === "balance"}<span class="sort-arrow"
                         >{sortDir === "asc" ? "▲" : "▼"}</span
                       >{/if}
                   </th>
+                  <th class="numeric">{forecastColumnLabel(overtimeSections.active)}</th>
+                  <th class="numeric">Gesamt</th>
                   <th>Status</th>
-                  <th>Verlauf (6 Monate)</th>
                   <th class="actions-col">Aktionen</th>
                 </tr>
               </thead>
               <tbody>
                 {#each pagedOvertimeRows as row (row.id)}
+                  {@const cells = teamSaldoCells(row)}
+                  {@const exclusion = teamSaldoExclusion(row)}
                   <tr>
-                    <td>{row.name}</td>
-                    <td>{row.employeeNumber}</td>
-                    <td class="numeric">
-                      {#if row.confirmedMinutes !== undefined}
-                        <SaldoAnzeige
-                          variant="compact"
-                          confirmedMinutes={row.confirmedMinutes}
-                          openMonthMinutes={row.openMonthMinutes ?? null}
-                          hasClosedMonth={row.hasClosedMonth ?? false}
-                          rosterIncomplete={row.rosterIncomplete}
-                        />
-                      {:else}
-                        <!-- Fallback: an older cached overview response without the split
-                           fields — degrade to the primitive's single-value rendering
-                           rather than an empty cell (matches the dashboard/97-04 shape). -->
-                        <SaldoAnzeige
-                          variant="compact"
-                          saldoMinutes={Math.round(row.balanceHours * 60)}
-                        />
+                    <td>
+                      {row.name}
+                      {#if exclusion !== null}
+                        <span class="badge badge-gray" title="Nicht im Median-Saldo"
+                          >{TEAM_SALDO_EXCLUSION_LABEL[exclusion]}</span
+                        >
                       {/if}
+                    </td>
+                    <td>{row.employeeNumber}</td>
+                    <td
+                      class="numeric"
+                      data-testid="saldo-cell-confirmed"
+                      title={cells.confirmed.title}
+                    >
+                      {cells.confirmed.text}
+                    </td>
+                    <td class="numeric" data-testid="saldo-cell-open" title={cells.open.title}>
+                      {cells.open.text}
+                      {#if row.rosterIncomplete}
+                        <span class="roster-dot" data-testid="saldo-roster-badge">
+                          <Icon
+                            name="circle-fill"
+                            size={6}
+                            title="Restmonat noch nicht vollständig verplant"
+                          />
+                        </span>
+                      {/if}
+                    </td>
+                    <td class="numeric" data-testid="saldo-cell-total" title={cells.total.title}>
+                      {cells.total.text}
                     </td>
                     <td
                       ><span class={statusBadgeClass(row.status)}
                         >{statusBadgeLabel(row.status)}</span
                       ></td
                     >
-                    <td class="sparkline-cell">
-                      {#if row.snapshots.length >= 2}
-                        <canvas width="100" height="28" use:registerCanvas={row.id}></canvas>
-                      {:else}
-                        <span class="no-trend">(kein Verlauf)</span>
-                      {/if}
-                    </td>
                     <td class="row-actions">
                       <div class="row-actions__group">
                         <button
@@ -2053,14 +1952,10 @@
     color: var(--bad);
   }
 
-  .sparkline-cell {
-    width: 120px;
-  }
-
-  .no-trend {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-    font-style: italic;
+  .roster-dot {
+    display: inline-flex;
+    align-items: center;
+    color: var(--warn);
   }
 
   /* ── Per-employee action buttons ─────────────────────────────────────────── */
@@ -2172,15 +2067,6 @@
   @media (max-width: 720px) {
     .attendance-summary {
       grid-template-columns: repeat(2, 1fr);
-    }
-
-    .sparkline-cell {
-      display: none;
-    }
-
-    .overtime-table th:nth-last-child(2),
-    .overtime-table td:nth-last-child(2) {
-      display: none;
     }
 
     .actions-col,

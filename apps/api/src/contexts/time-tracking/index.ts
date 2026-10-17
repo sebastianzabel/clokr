@@ -30,6 +30,7 @@ export {
   getWorkedEntriesInRange,
   getRecordedWorkEntriesInRange,
   getRecordedWorkEntriesByIds, // Issue #85 (D-04): in-scope rows by id for the per-entry aggregates
+  employeesWithValidWorkSince, // Issue #588 (P-06): recorded-time fact per person for the team saldo figures
   getClaimedEntryDatesInRange,
   countLockedEntries,
   getInvalidEntries,

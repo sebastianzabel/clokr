@@ -159,12 +159,70 @@ describe("KontoSaldoCard — 'Bestätigt' row (deviation #2, re-pointed by issue
     );
   });
 
-  it('captions the headline "inkl. laufendem Monat"', () => {
+  it('captions the headline "inkl. laufendem Monat" for exactly one unconfirmed month', () => {
+    // Issue #588 (P-14): the wording follows the data; the migrated case names one month.
     const { container } = renderWithTheme(
       KontoSaldoCard,
-      baseProps({ confirmedMinutes: -480, openMonthMinutes: 120 }),
+      baseProps({ confirmedMinutes: -480, openMonthMinutes: 120, unconfirmedMonths: 1 }),
     );
     expect(container.querySelector(".ksc-caption")).toHaveTextContent("inkl. laufendem Monat");
+  });
+
+  it("captions the headline as the period since the closing for several unconfirmed months", () => {
+    const { container } = renderWithTheme(
+      KontoSaldoCard,
+      baseProps({
+        confirmedMinutes: -480,
+        openMonthMinutes: 120,
+        hasClosedMonth: true,
+        unconfirmedMonths: 3,
+      }),
+    );
+    const caption = container.querySelector(".ksc-caption");
+    expect(caption).toHaveTextContent("inkl. Zeitraum seit Monatsabschluss");
+    expect(caption).not.toHaveTextContent("laufendem Monat");
+  });
+
+  it("never claims the running month for an unknown count", () => {
+    const { container } = renderWithTheme(
+      KontoSaldoCard,
+      baseProps({ confirmedMinutes: -480, openMonthMinutes: 120, hasClosedMonth: true }),
+    );
+    const caption = container.querySelector(".ksc-caption");
+    expect(caption).toHaveTextContent("inkl. Zeitraum seit Monatsabschluss");
+    expect(caption).not.toHaveTextContent("laufendem Monat");
+  });
+
+  it("captions the period since hire when no month was ever closed", () => {
+    const { container } = renderWithTheme(
+      KontoSaldoCard,
+      baseProps({
+        confirmedMinutes: 0,
+        openMonthMinutes: 120,
+        hasClosedMonth: false,
+        unconfirmedMonths: 5,
+      }),
+    );
+    expect(container.querySelector(".ksc-caption")).toHaveTextContent(
+      "inkl. Zeitraum seit Eintritt",
+    );
+  });
+
+  it("appends the roster qualifier in every wording", () => {
+    for (const unconfirmedMonths of [1, 3, undefined]) {
+      const { container, unmount } = renderWithTheme(
+        KontoSaldoCard,
+        baseProps({
+          confirmedMinutes: -480,
+          openMonthMinutes: 120,
+          hasClosedMonth: true,
+          unconfirmedMonths,
+          rosterIncomplete: true,
+        }),
+      );
+      expect(container.querySelector(".ksc-caption")).toHaveTextContent("· Restmonat unverplant");
+      unmount();
+    }
   });
 
   it("appends the roster qualifier to the headline caption, not to the Bestätigt row", () => {

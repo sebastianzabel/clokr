@@ -51,6 +51,7 @@
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility";
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import { forecastLabel } from "$lib/saldo/forecast-label"; // Issue #588
   import type { EditableLeaveRequest } from "$lib/leave/leave-request-form";
 
   // ── Types ────────────────────────────────────────────────────────────────
@@ -79,6 +80,8 @@
     confirmedMinutes: number | null;
     openMonthMinutes: number | null;
     hasClosedMonth?: boolean | null;
+    /** Issue #588 (P-14): how many calendar months the forecast spans; absent when masked. */
+    unconfirmedMonths?: number | null;
     rosterIncomplete?: boolean;
     maxNegativeBalanceMinutes: number | null;
     isNegativeLimitExceeded: boolean | null;
@@ -144,6 +147,7 @@
   let confirmedMinutes: number | undefined = $state(undefined);
   let openMonthMinutes: number | null | undefined = $state(undefined);
   let hasClosedMonth = $state(false);
+  let unconfirmedMonths: number | null | undefined = $state(undefined);
   let maxNegativeBalanceMinutes: number | null | undefined = $state(undefined);
   let isNegativeLimitExceeded: boolean | undefined = $state(undefined);
   let vacationBalance = $state<VacationBalance | null>(null);
@@ -267,6 +271,7 @@
           confirmedMinutes = undefined;
           openMonthMinutes = undefined;
           hasClosedMonth = false;
+          unconfirmedMonths = undefined;
           maxNegativeBalanceMinutes = undefined;
           isNegativeLimitExceeded = undefined;
         } else {
@@ -275,6 +280,7 @@
           confirmedMinutes = r.confirmedMinutes ?? undefined;
           openMonthMinutes = r.openMonthMinutes;
           hasClosedMonth = r.hasClosedMonth ?? false;
+          unconfirmedMonths = r.unconfirmedMonths;
           maxNegativeBalanceMinutes = r.maxNegativeBalanceMinutes;
           isNegativeLimitExceeded = r.isNegativeLimitExceeded ?? undefined;
         }
@@ -720,6 +726,7 @@
                     variant="compact"
                     confirmedMinutes={confirmedMinutes ?? 0}
                     hasClosedMonth={false}
+                    {unconfirmedMonths}
                   />
                 </span>
               {:else}
@@ -739,7 +746,8 @@
             {/if}
             {#if typeof openMonthMinutes === "number"}
               <div class="balance-row">
-                <span class="balance-label">Laufender Monat (Prognose)</span>
+                <span class="balance-label">{forecastLabel(unconfirmedMonths, hasClosedMonth)}</span
+                >
                 <span class="balance-value balance-value--muted">{fmtH(openMonthMinutes / 60)}</span
                 >
               </div>

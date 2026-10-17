@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   contractShiftRights,
   employeeAdminRights,
+  mayReadTeamSaldo,
   mayFileRetroRequest,
   reportRights,
   salonAdminRights,
@@ -376,5 +377,52 @@ describe("contractShiftRights (/admin/employees/:id, #650)", () => {
     expect(contractShiftRights(null).canDiscardShifts).toBe(false);
     expect(contractShiftRights(adminRoleNoPermissions).canDiscardShifts).toBe(false);
     expect(contractShiftRights(noList).canDiscardShifts).toBe(false);
+  });
+});
+
+// Issue #588 (P-10): the dashboard card "Salden" reads GET /dashboard/overtime-overview, whose two
+// guards are team-overview:read AND overtime:read - the same rule /reports uses for its overview.
+describe("mayReadTeamSaldo (Issue #588)", () => {
+  const BOTH = ["team-overview:read:ZUGEWIESEN", "overtime:read:ZUGEWIESEN"];
+
+  it("needs both permissions", () => {
+    expect(mayReadTeamSaldo({ permissions: BOTH })).toBe(true);
+    expect(mayReadTeamSaldo({ permissions: ["team-overview:read:ZUGEWIESEN"] })).toBe(false);
+    expect(mayReadTeamSaldo({ permissions: ["overtime:read:ZUGEWIESEN"] })).toBe(false);
+    expect(mayReadTeamSaldo({ permissions: [] })).toBe(false);
+  });
+
+  it("is false for no caller, no permission list and a compat role without permissions", () => {
+    expect(mayReadTeamSaldo(null)).toBe(false);
+    expect(mayReadTeamSaldo(undefined)).toBe(false);
+    expect(mayReadTeamSaldo(noList)).toBe(false);
+    expect(mayReadTeamSaldo(adminRoleNoPermissions)).toBe(false);
+  });
+
+  it("equals reportRights().canTeamOvertime for every persona and the custom sets", () => {
+    const sets: Array<{ permissions?: string[] } | null | undefined> = [
+      ...Object.values(p).map((permissions) => ({ permissions })),
+      customExporter,
+      adminRoleNoPermissions,
+      noList,
+      { permissions: BOTH },
+      { permissions: [BOTH[0]] },
+      { permissions: [BOTH[1]] },
+      null,
+      undefined,
+    ];
+    expect(sets.length).toBeGreaterThan(8);
+    for (const set of sets) {
+      expect(mayReadTeamSaldo(set)).toBe(reportRights(set).canTeamOvertime);
+    }
+  });
+
+  it("admin, owner and manager see the card; salon manager and employee do not", () => {
+    for (const key of ["ADMIN", "OWNER", "MANAGER"]) {
+      expect(mayReadTeamSaldo({ permissions: p[key] }), key).toBe(true);
+    }
+    for (const key of ["SALON_MANAGER", "EMPLOYEE", "TRAINER"]) {
+      expect(mayReadTeamSaldo({ permissions: p[key] }), key).toBe(false);
+    }
   });
 });
