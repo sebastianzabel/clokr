@@ -126,6 +126,40 @@ above #120 is collision-free, so this only bites the older backlog.
 Phases 107–118 (milestone v1.10.0) keep their historical numbers; they are not renumbered.
 Their mapping is recorded in the ROADMAP entry of each phase (`**GitHub:** Issue #NNN`).
 
+### Quick task or full phase — decided at triage
+
+Not every issue needs the full phase pipeline (discuss → research → plan → plan check → execute →
+verify). When an issue moves to `Ready`, the triage decides the route and writes it as a short
+comment on the issue („Umsetzung: Quick-Task, weil …“ / „Umsetzung: Phase, weil …“). The decision
+may be made by the AI agent doing the triage; the owner can overrule it in the issue.
+
+**`/gsd-quick --full` is enough when all of these hold:**
+
+- a bug or chore inside one business context (or the Unterbau alone),
+- no new route, no new permission, no schema migration, no UI redesign,
+- the acceptance criteria are clear and fit about three tasks,
+- no legal or business decision is still open.
+
+**A full phase is needed when any of these holds:**
+
+- a new route, a new permission, a schema migration or an Unterbau change (ADR 0002, Entscheidung 7),
+- a UI redesign (it needs a UI-SPEC first),
+- more than one business context, or more than about five tasks,
+- an open decision with a legal reference that must be settled before planning.
+
+**Saldo arithmetic is a quick task with extra care, not automatically a phase.** A change to how
+Soll, Ist or saldo are computed runs as a quick task on the strongest model, with a research note
+(file:line), tests on several schedule types, a full-row comparison proving closed months are never
+recalculated, and a mandatory stop when a frozen saldo test turns red: frozen literals are never
+edited; a deliberate change enters only through that file's amendment register, with the measured
+cells, the reason and the issue. (Issues #681 and #682 ran this way.)
+
+**Why:** a full phase costs one to two hours of planning, checking and verification before and after
+the code. For a contained bug that buys little that the quality gates, the full suites and the
+frozen tests do not already enforce. For new surfaces, cross-context work and redesigns the plan
+check and the verifier regularly found real gaps (two saldo leaks in 85b, a duplicate-issue
+blocker in 612), so there the pipeline pays for itself.
+
 ## One-time manual steps
 
 Projects v2 built-in automations can be **read** through the API but not enabled — there is no
