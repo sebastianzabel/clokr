@@ -75,7 +75,27 @@ export interface EmploymentExitInput {
    * creates); null / absent for an API-key actor, never the raw `apikey:` subject.
    */
   actorUserId?: string | null;
+  /**
+   * Audit marker of the run. Absent = a live anonymization (`Anonymisierung` / `ANONYMIZATION`);
+   * the Bestandskorrektur of Issue #666 passes its own, so a corrected row is told apart from a
+   * row ended at anonymization time. Display reason and machine trigger, never free text.
+   */
+  marker?: EmploymentExitMarker;
 }
+
+/** The `auditReason` (German display) and `trigger` (machine marker) written to every audit row. */
+export interface EmploymentExitMarker {
+  auditReason: string;
+  trigger: string;
+}
+
+const ANONYMIZATION_MARKER: EmploymentExitMarker = {
+  auditReason: "Anonymisierung",
+  trigger: "ANONYMIZATION",
+};
+
+const markerOf = (input: EmploymentExitInput): EmploymentExitMarker =>
+  input.marker ?? ANONYMIZATION_MARKER;
 
 /** One row the exit did not touch, reported in the ANONYMIZE audit (ids and codes only). */
 export interface EmploymentExitSkipped {
@@ -431,7 +451,7 @@ export async function planEmploymentExit(
       end: exitDay,
       halfDay: row.halfDay,
       note: null,
-      reason: "Anonymisierung",
+      reason: markerOf(input).auditReason,
       tenantId,
     });
     if (!prepared.ok) {
@@ -593,7 +613,7 @@ async function shortenLeave(
   audit: EmploymentExitAuditPort,
 ): Promise<void> {
   const { exitDay } = input;
-  const marker = { auditReason: "Anonymisierung", trigger: "ANONYMIZATION" } as const;
+  const marker = markerOf(input);
   const { correction } = action;
   const { existing } = correction;
 
@@ -663,8 +683,7 @@ async function repricePending(
     newValue: {
       endDate: isoDay(input.exitDay),
       days: action.days,
-      auditReason: "Anonymisierung",
-      trigger: "ANONYMIZATION",
+      ...markerOf(input),
       exitDate: isoDay(input.exitDay),
     },
   });
@@ -678,7 +697,7 @@ async function cancelLeave(
   audit: EmploymentExitAuditPort,
 ): Promise<void> {
   const { tenantId, employeeId, exitDay } = input;
-  const marker = { auditReason: "Anonymisierung", trigger: "ANONYMIZATION" } as const;
+  const marker = markerOf(input);
 
   // The anonymization is not a review: no reviewedBy / reviewNote change. The guard makes the
   // update an optimistic lock — 0 rows means the request changed between plan and apply.
@@ -769,7 +788,7 @@ async function cancelLeave(
       employeeId,
       tenantId,
       minutes / 60,
-      `Stornierung Überstundenausgleich ${isoDay(action.guard.startDate)} (Anonymisierung)`,
+      `Stornierung Überstundenausgleich ${isoDay(action.guard.startDate)} (${markerOf(input).auditReason})`,
     );
     await audit({
       action: "OVERTIME_COMP_REVERSED",
@@ -814,8 +833,7 @@ async function deleteAbsence(
     },
     newValue: {
       deleted: true,
-      auditReason: "Anonymisierung",
-      trigger: "ANONYMIZATION",
+      ...markerOf(input),
       exitDate: isoDay(exitDay),
     },
   });

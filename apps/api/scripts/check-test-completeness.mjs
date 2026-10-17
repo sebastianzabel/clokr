@@ -906,7 +906,10 @@ import { readFileSync } from "node:fs";
 // MIN_FILES 677 -> 681, never lowered.
 // Merge #617 onto main (2026-10-17): main 675 + 8 = 683. Never lowered.
 // Merge #617 onto main (2026-10-17): main 677 + 8 = 685. Never lowered.
-const MIN_FILES = 685;
+// Issue #666 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on `feat/666-anonymized-backfill`
+// (origin/main @ 5b73e04e) - 686 test files, 10437 tests (10434 passed, 3 skipped). New file:
+// backfill-666-anonymized-employment (+17 cases); nothing removed, skipped or loosened. MIN_FILES 685 -> 686, never lowered.
+const MIN_FILES = 686;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -937,7 +940,8 @@ const MIN_FILES = 685;
 // the one deliberate lowering of this phase is the 617-04 entry above.
 // Merge #617 onto main (2026-10-17): main 10363 + 49 = 10412. Never lowered.
 // Merge #617 onto main (2026-10-17): main 10371 + 49 = 10420. Never lowered.
-const MIN_TESTS = 10420;
+// Issue #666 (2026-10-17): MIN_TESTS 10420 -> 10437 (+17), the measured total of the full run named at MIN_FILES. Never lowered.
+const MIN_TESTS = 10437;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
