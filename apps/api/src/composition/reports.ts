@@ -1897,6 +1897,8 @@ export async function reportRoutes(app: FastifyInstance) {
           expectedMinutes: figures.expectedMinutes,
           balanceMinutes: figures.balanceMinutes,
           balanceAdjustmentMinutes: figures.balanceAdjustmentMinutes,
+          closingBalanceMinutes: figures.closingBalanceMinutes,
+          datevWorkedMinutes: datev.workedMinutes,
           absenceDays: {
             vacation: datev.vacationDays,
             sick: datev.sickDays,

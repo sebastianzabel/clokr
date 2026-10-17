@@ -142,6 +142,15 @@ export type MonthReportFigures = {
   expectedMinutes: number;
   balanceMinutes: number;
   balanceAdjustmentMinutes: number;
+  /**
+   * Issue #617: the Gesamtsaldo of a report row - the terminal value of the account's own cumulative
+   * series of this month (`computeMonthSaldo(...).days.at(-1).cumulativeSaldoMinutes`). A closed
+   * month returns its stored `carryOver` verbatim (Revisionssicherheit); an open month returns the
+   * cumulative value through yesterday (#438), the figure `GET /overtime/month-saldo` shows for the
+   * last computed day. `null` when the row is unlabelled or no day was computed. Never a second
+   * computation; additive, every existing reader is unchanged.
+   */
+  closingBalanceMinutes: number | null;
   /** true only for the CLOSED-month branch (the one figure that is final). */
   confirmed: boolean;
   /** false only for the three unlabelled populations above. */
@@ -160,6 +169,7 @@ export async function computeMonthReportFigures(
     expectedMinutes: 0,
     balanceMinutes: 0,
     balanceAdjustmentMinutes: 0,
+    closingBalanceMinutes: null,
     confirmed: false,
     labelled: false,
     basis: "untracked",
@@ -220,6 +230,7 @@ export async function computeMonthReportFigures(
     expectedMinutes: source.expectedMinutes,
     balanceMinutes: source.balanceMinutes,
     balanceAdjustmentMinutes,
+    closingBalanceMinutes: ms.days.at(-1)?.cumulativeSaldoMinutes ?? null,
     confirmed: ms.closed,
     labelled: true,
     basis,

@@ -809,6 +809,15 @@ export const MONTHLY_EXPORT_STATUS_LABEL = {
   UNLABELLED: "ohne Soll",
 } as const;
 
+export const MONTHLY_EXPORT_FORECAST_LEGEND =
+  "Prognose: Der Monat ist noch nicht abgeschlossen \u2014 die Werte k\u00f6nnen sich bis zum Monatsabschluss noch \u00e4ndern.";
+export const MONTHLY_EXPORT_UNLABELLED_LEGEND =
+  "ohne Soll: Vertrag ohne Sollvorgabe (reine Zeiterfassung) \u2014 dort entfallen Soll, Saldo und Gesamtsaldo.";
+export const MONTHLY_EXPORT_DATEV_LEGEND =
+  "DATEV-Std.: Normalstunden der DATEV-Datei in Dezimalstunden (Summe aller gültigen, abgeschlossenen Zeiteinträge des Monats). Sie können vom Ist abweichen: Das Ist stammt aus dem Arbeitszeitkonto, zählt nur Einträge der Art Arbeit an Tagen im Beschäftigungszeitraum, enthält die Berufsschul-Anrechnung und ist in abgeschlossenen Monaten der gespeicherte Stand.";
+export const MONTHLY_EXPORT_UNITS_LEGEND =
+  "Zeiten in Stunden:Minuten. Abwesenheiten in Arbeitstagen wie im DATEV-Export (leer = keine). Saldo Monat: der ganze Monat, im laufenden Monat als Prognose. Gesamtsaldo: Stand zum Monatsende, im laufenden Monat bis gestern.";
+
 export interface MonthlyExportAbsenceDays {
   vacation: number;
   sick: number;
@@ -829,6 +838,13 @@ export interface MonthlyExportRow {
   expectedMinutes: number;
   balanceMinutes: number;
   balanceAdjustmentMinutes: number;
+  /**
+   * Gesamtsaldo: the account's cumulative balance at the end of the month (a closed month's stored
+   * carry-over; an open month's value through yesterday). `null` when the row is unlabelled.
+   */
+  closingBalanceMinutes: number | null;
+  /** The worked minutes the person's DATEV Normalstunden line is built from. */
+  datevWorkedMinutes: number;
   /** Arbeitstage of the month, exactly the DATEV Lohnart values. */
   absenceDays: MonthlyExportAbsenceDays;
   /** A confirmed § 9 BUrlG credit lies in the month (prints the § 9 legend). */
@@ -872,13 +888,37 @@ function dayCell(value: number): string {
   return value === 0 ? "" : fmtDecimalDe(value, 1);
 }
 
+const anyRow =
+  (pick: (row: MonthlyExportRow) => boolean) =>
+  (rows: MonthlyExportRow[]): boolean =>
+    rows.some(pick);
+
+type AbsenceKind = keyof MonthlyExportAbsenceDays;
+
+/** A day-count column of the absence block; shown always, or only when some row has a value. */
+function absenceColumn(
+  kind: AbsenceKind,
+  header: string[],
+  pref: number,
+  always: boolean,
+): ExportColumn {
+  return {
+    key: kind,
+    header,
+    pref,
+    align: "right",
+    cell: (r) => dayCell(r.absenceDays[kind]),
+    visible: always ? ALWAYS : anyRow((r) => r.absenceDays[kind] !== 0),
+  };
+}
+
 /** The columns of section "Monat". */
 function monthColumns(): ExportColumn[] {
   return [
     {
       key: "name",
       header: ["Mitarbeiter"],
-      pref: 140,
+      pref: 130,
       align: "left",
       cell: (r) => r.employeeName,
       visible: ALWAYS,
@@ -886,7 +926,7 @@ function monthColumns(): ExportColumn[] {
     {
       key: "number",
       header: ["Nr."],
-      pref: 56,
+      pref: 50,
       align: "left",
       cell: (r) => r.employeeNumber,
       visible: ALWAYS,
@@ -894,7 +934,7 @@ function monthColumns(): ExportColumn[] {
     {
       key: "status",
       header: ["Status"],
-      pref: 50,
+      pref: 46,
       align: "left",
       cell: (r) => MONTHLY_EXPORT_STATUS_LABEL[r.status],
       visible: ALWAYS,
@@ -902,7 +942,7 @@ function monthColumns(): ExportColumn[] {
     {
       key: "soll",
       header: ["Soll"],
-      pref: 52,
+      pref: 48,
       align: "right",
       cell: (r) => fmtHM(r.expectedMinutes),
       visible: ALWAYS,
@@ -911,36 +951,57 @@ function monthColumns(): ExportColumn[] {
     {
       key: "ist",
       header: ["Ist"],
-      pref: 52,
+      pref: 48,
       align: "right",
       cell: (r) => fmtHM(r.workedMinutes),
       visible: ALWAYS,
     },
     {
+      // The unit of the DATEV file (decimal hours with a comma), so the two documents reconcile line
+      // by line.
+      key: "datevHours",
+      header: ["DATEV-Std."],
+      pref: 48,
+      align: "right",
+      cell: (r) => fmtDecimalDe(r.datevWorkedMinutes / 60, 2),
+      visible: ALWAYS,
+    },
+    {
+      key: "adjustment",
+      header: ["Verr."],
+      pref: 44,
+      align: "right",
+      cell: (r) => fmtSignedHM(r.balanceAdjustmentMinutes),
+      visible: anyRow((r) => r.balanceAdjustmentMinutes !== 0),
+    },
+    {
       key: "saldo",
-      header: ["Saldo"],
-      pref: 52,
+      header: ["Saldo", "Monat"],
+      pref: 48,
       align: "right",
       cell: (r) => fmtSignedHM(r.balanceMinutes),
       visible: ALWAYS,
       dashWhenUnlabelled: true,
     },
     {
-      key: "vacation",
-      header: ["Urlaub"],
-      pref: 38,
+      key: "closing",
+      header: ["Gesamtsaldo"],
+      pref: 54,
       align: "right",
-      cell: (r) => dayCell(r.absenceDays.vacation),
+      cell: (r) =>
+        r.closingBalanceMinutes === null ? "\u2014" : fmtSignedHM(r.closingBalanceMinutes),
       visible: ALWAYS,
+      dashWhenUnlabelled: true,
     },
-    {
-      key: "sick",
-      header: ["Krank"],
-      pref: 38,
-      align: "right",
-      cell: (r) => dayCell(r.absenceDays.sick),
-      visible: ALWAYS,
-    },
+    absenceColumn("vacation", ["Urlaub"], 36, true),
+    absenceColumn("sick", ["Krank"], 36, true),
+    absenceColumn("sickChild", ["Kind", "krank"], 34, false),
+    absenceColumn("overtimeComp", ["Überstd.-", "Ausgleich"], 44, false),
+    absenceColumn("special", ["Sonder-", "urlaub"], 38, false),
+    absenceColumn("education", ["Bildungs-", "urlaub"], 42, false),
+    absenceColumn("unpaid", ["Unbezahlt"], 42, false),
+    absenceColumn("maternity", ["Mutter-", "schutz"], 38, false),
+    absenceColumn("parental", ["Eltern-", "zeit"], 34, false),
   ];
 }
 
@@ -1096,20 +1157,21 @@ export function drawMonthlyExport(doc: PDFKit.PDFDocument, data: MonthlyExportDa
   // ── Legends: only what the table actually prints ─────────────────────────────
   y += 6;
   if (data.rows.some((r) => r.status === "FORECAST")) {
-    y = drawLegend(
-      doc,
-      "Prognose: Der Monat ist noch nicht abgeschlossen — die Werte können sich bis zum Monatsabschluss noch ändern.",
-      y,
-    );
+    y = drawLegend(doc, MONTHLY_EXPORT_FORECAST_LEGEND, y);
+  }
+  if (data.rows.some((r) => r.status === "UNLABELLED")) {
+    y = drawLegend(doc, MONTHLY_EXPORT_UNLABELLED_LEGEND, y);
+  }
+  if (data.rows.some((r) => r.balanceAdjustmentMinutes !== 0)) {
+    y = drawLegend(doc, BALANCE_ADJUSTMENT_LEGEND, y);
   }
   if (data.rows.some((r) => r.section9)) {
     y = drawLegend(doc, SECTION9_LEGEND, y);
   }
-  y = drawLegend(
-    doc,
-    "Zeiten in Stunden:Minuten. Abwesenheiten in Arbeitstagen wie im DATEV-Export (leer = keine).",
-    y,
-  );
+  if (data.rows.some((r) => Math.round(r.workedMinutes) !== Math.round(r.datevWorkedMinutes))) {
+    y = drawLegend(doc, MONTHLY_EXPORT_DATEV_LEGEND, y);
+  }
+  drawLegend(doc, MONTHLY_EXPORT_UNITS_LEGEND, y);
 }
 
 /** Renders the Monatsexport as an A4 landscape PDF (header, table, "Seite X von Y" footer). */
