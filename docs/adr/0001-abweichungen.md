@@ -462,6 +462,49 @@ ein Leser — `computeMonthSaldo` — fand den Abschluss nur mit exaktem Verglei
 - `DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx scripts/audit-595-legacy-period-start.ts [--tenant <uuid>]`
   (Abschnitte „Status wechselt zu Bestaetigt“ und „Duplicate months“).
 
+### Nachtrag 2026-10-17 (Issue #681) — Der Gesamtsaldo eines offenen Monats enthält alle offenen Monate seit dem letzten Abschluss
+
+**Schwere: Fehlerbehebung einer Anzeige- und Exportzahl. Keine Unterbau-Änderung, keine Migration, keine gespeicherte Zeile
+geändert.**
+
+Ursache: `computeMonthSaldo` begann die Tagesreihe eines offenen Monats beim Übertrag des letzten Abschlusses (oder dem
+Eröffnungssaldo). Waren zwei oder mehr Monate offen, fehlten die früheren offenen Monate im Gesamtsaldo des späteren —
+im Monatsexport (Spalte „Gesamtsaldo“) und in `GET /overtime/month-saldo`. Der Live-Saldo rechnete richtig.
+
+**Was sich geändert hat**
+
+- Eine Funktion, `openMonthCarryInMinutes()` (`contexts/working-time-account/overtime-balance.ts`), liefert den Übertrag in
+  einen offenen Monat: die Kette des Live-Saldos (`computeAccountChain`, der unveränderte Rumpf von
+  `computeOvertimeBalanceBreakdown`) mit dem Stichtag „Monatserster“ — letzter Abschluss vor dem Monat plus jeder offene
+  Monat dazwischen, ein Nur-erfassen-Monat setzt auf 0 (#494), ohne Abschluss der Eröffnungssaldo am Kettenanfang.
+  Der Gesamtsaldo am Monatsende ist damit gleich dem Live-Saldo zum selben Stichtag (letzter Monatstag, im laufenden
+  Monat gestern, #438).
+- Ein Monat, der nach seinem eigenen Vertrag nur erfasst (#494), zeigt an jedem Tag Gesamtsaldo 0 — wie sein Abschluss
+  (gespeicherter Übertrag 0) und der Live-Saldo.
+- `getConfirmedCarryOver` nimmt optional `periodStartBefore`; ohne die Option ist die Abfrage unverändert.
+
+**Was bewusst NICHT geschah**
+
+- Abgeschlossene Monate werden nur gelesen, nie neu berechnet (Vollzeilenvergleich im Test).
+- Der Live-Saldo ist unverändert. Ohne jeden Abschluss liest er den Eröffnungssaldo nicht; der Gesamtsaldo enthält ihn
+  (wie jeder Abschlusspfad). Diese Differenz ist gemessen und eigenes Issue #682.
+- Die eingefrorenen Literale von `saldo-boundary-neutrality-493.test.ts` sind unverändert. 16 Felder (8 Zellen, je
+  erster und letzter Tageswert) stehen im Änderungsregister
+  `apps/api/src/__tests__/fixtures/saldo-boundary-neutrality-493-amendments.json`; der Test wendet es auf eine Kopie an,
+  prüft jeden alten Wert gegen das Literal und das Register gegen die gemessenen Abweichungen (keine zu viel, keine
+  fehlend). Beleg in derselben Datei: der amendierte Februarwert ist gleich dem dort gepinnten Live-Saldo
+  (F −55862 min, M −12648 min).
+
+**Auswirkung auf die Kontexte**
+
+- Arbeitszeitkonto: Ort der Regel (`openMonthCarryInMinutes`, Tagesreihe in `computeMonthSaldo`).
+- Kompositionsschicht: keine eigene Regel, liest nur `closingBalanceMinutes`.
+- Zeiterfassung, Abwesenheiten, Schichtplanung, Unterbau: keine.
+
+**Nachrechnen**
+
+- `pnpm --filter @clokr/api exec vitest run src/__tests__/open-month-chain-681.test.ts src/__tests__/saldo-boundary-neutrality-493.test.ts`.
+
 ---
 
 ## H — Routen und Querschnittsmodule in den richtigen Kontext (Phase 243, Issue #243), das Ausnahmeregister für #101

@@ -28,6 +28,7 @@ import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) �
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month"; // SNAP-03 — Phase 76.27
 import { getConfirmedCarryOver } from "./confirmed-saldo"; // Phase 97-06
+import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — chain-head seed, Issue #681
 import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
 import {
   getTenantTimezone,
@@ -96,6 +97,37 @@ export async function computeOvertimeBalanceBreakdown(
   app: FastifyInstance,
   employeeId: string,
 ): Promise<OvertimeBalanceBreakdown | null> {
+  // Issue #681: the live saldo is the account chain evaluated at the real today — the core below
+  // is called without a Stichtag, so this function is byte-behaviour-identical to before. The
+  // internal `chainMinutes` is stripped so no response that spreads the breakdown grows a field.
+  const chain = await computeAccountChain(app, employeeId, {});
+  if (chain === null) return null;
+  const { chainMinutes: _chainMinutes, ...breakdown } = chain;
+  void _chainMinutes;
+  return breakdown;
+}
+
+/**
+ * Issue #681 — the Stichtag of an account-chain evaluation. `virtualToday` (tenant-local
+ * YYYY-MM-DD) replaces the real today: the chain then ends the day before it (#438, today never
+ * counts) and starts at the latest closed month whose `periodStart` lies BEFORE the calendar month
+ * of `virtualToday`. Empty (the live saldo), both are the real today and the latest closed month.
+ */
+type AccountChainStichtag = { virtualToday?: string };
+
+/**
+ * The account chain itself (the former body of `computeOvertimeBalanceBreakdown`, unchanged except
+ * for the Stichtag above and the additional `chainMinutes` result): the latest closed carry-over,
+ * then one `closeEmployeeMonth()` per unclosed complete month (a track-only month resets the chain,
+ * #494 D-10), then the current partial month through the day before the Stichtag. `chainMinutes` is
+ * that running value BEFORE the display rule of today's contract (track-only -> 0), so a caller
+ * that wants the value carried INTO a month reads the chain, not the display.
+ */
+async function computeAccountChain(
+  app: FastifyInstance,
+  employeeId: string,
+  stichtag: AccountChainStichtag,
+): Promise<(OvertimeBalanceBreakdown & { chainMinutes: number }) | null> {
   const schedule = await getEffectiveSchedule(app, employeeId);
 
   // Tenant-Timezone laden + hireDate + federalState for holiday computation
@@ -129,10 +161,25 @@ export async function computeOvertimeBalanceBreakdown(
   // it is now the SAME call as getConfirmedCarryOver (the "Bestätigt" figure), widened to
   // also carry periodEnd, so the two can never drift into two independently-computed answers
   // to the same question.
-  const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, employee?.tenantId ?? "");
+  // Issue #681: with a Stichtag the chain starts at the latest closed month BEFORE the Stichtag's
+  // calendar month — never at a later one. Without a Stichtag the call is unchanged.
+  const virtualToday = stichtag.virtualToday;
+  const confirmed = await getConfirmedCarryOver(
+    app.prisma,
+    employeeId,
+    employee?.tenantId ?? "",
+    virtualToday !== undefined
+      ? {
+          periodStartBefore: monthRangeUtc(
+            Number(virtualToday.slice(0, 4)),
+            Number(virtualToday.slice(5, 7)),
+            tz,
+          ).start,
+        }
+      : {},
+  );
 
-  const now = new Date();
-  const todayStr = dateStrInTz(now, tz);
+  const todayStr = virtualToday ?? dateStrInTz(new Date(), tz);
   const todayDate = new Date(todayStr + "T00:00:00Z");
   const yesterdayDate = new Date(todayDate.getTime() - 86400000);
 
@@ -868,7 +915,78 @@ export async function computeOvertimeBalanceBreakdown(
     rosterIncomplete,
     trackOnly: isTrackOnly,
     unconfirmedMonths,
+    chainMinutes: liveBase + openPeriodBalance,
   };
+}
+
+/**
+ * Issue #681 — THE carry-in of an OPEN month M: the account value at the end of the day before M
+ * begins (or through yesterday, if M has not begun yet — #438, today never counts). It is the
+ * account chain of `computeAccountChain` evaluated with the Stichtag "first day of M": the latest
+ * closed month before M, plus every unclosed month between that close and M (one
+ * `closeEmployeeMonth()` per month, contract per month, a track-only month resets the chain to 0,
+ * #494 D-10), plus — only when no closed month precedes M — the OpeningBalance at the chain head
+ * (`getCarryOverBase`, Phase 99 OB-02: the seed every close path uses). Closed months are only READ
+ * (their stored `carryOver`), never recomputed.
+ *
+ * The cumulative series of `computeMonthSaldo` starts at this value, so the Gesamtsaldo at the end
+ * of an open month (`computeMonthReportFigures().closingBalanceMinutes`, the Monatsexport, `GET
+ * /overtime/month-saldo`, #612) equals the live saldo `computeOvertimeBalanceBreakdown` at the same
+ * Stichtag. Known, pre-existing exception (not changed here): without any closed month the live
+ * saldo starts at 0 and ignores the OpeningBalance, so the two differ by exactly its minutes.
+ *
+ * Fast path (no query beyond the snapshot/opening-balance lookups the pre-681 code already made):
+ * when the chain would contain no unclosed month before M — the same test the chain's own month
+ * loop makes (the month of the chain start is M or later) — the value is the stored carryOver of
+ * the last closed month, or the OpeningBalance (else 0) when none exists. Otherwise ONE chain run:
+ * range-wide prefetch, no query per month beyond the existing slot-override lookup of the chain.
+ *
+ * Caller MUST verify tenant isolation (employee.tenantId === req.user.tenantId) before calling.
+ */
+export async function openMonthCarryInMinutes(
+  app: FastifyInstance,
+  employeeId: string,
+  year: number,
+  month: number,
+): Promise<number> {
+  const employee = await app.prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { tenantId: true, hireDate: true },
+  });
+  if (!employee) return 0;
+  const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+  const monthFirstDayStr = `${year}-${String(month).padStart(2, "0")}-01`;
+  const todayStr = dateStrInTz(new Date(), tz);
+  const virtualToday = monthFirstDayStr < todayStr ? monthFirstDayStr : todayStr;
+
+  // The same bound `computeAccountChain` applies for this Stichtag (the start of its month).
+  const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, employee.tenantId, {
+    periodStartBefore: monthRangeUtc(
+      Number(virtualToday.slice(0, 4)),
+      Number(virtualToday.slice(5, 7)),
+      tz,
+    ).start,
+  });
+  // The chain head when no month is closed before M (Phase 99 OB-02) — read once, used by both paths.
+  const headSeed = confirmed.hasClosedMonth
+    ? 0
+    : await getCarryOverBase(app.prisma, employeeId, null);
+
+  // Chain start exactly as `computeAccountChain` derives it: the day after the last close, else the
+  // hire day. Its month at or after M means the chain's month loop has nothing before M.
+  const chainStartStr = confirmed.hasClosedMonth
+    ? dateStrInTz(new Date(confirmed.periodEnd!.getTime() + 86400000), tz)
+    : dateStrInTz(employee.hireDate, tz);
+  if (
+    chainStartStr.slice(0, 7) >= monthFirstDayStr.slice(0, 7) &&
+    virtualToday === monthFirstDayStr
+  ) {
+    return confirmed.hasClosedMonth ? confirmed.minutes : headSeed;
+  }
+
+  const chain = await computeAccountChain(app, employeeId, { virtualToday });
+  if (chain === null) return confirmed.hasClosedMonth ? confirmed.minutes : headSeed;
+  return chain.chainMinutes + headSeed;
 }
 
 // Thin, signature-preserving wrapper around computeOvertimeBalanceBreakdown (Phase 97-01) — MUST

@@ -59,14 +59,25 @@ export type ConfirmedCarryOver = {
  * @param db         - Prisma client or an active `$transaction` client
  * @param employeeId - already tenant-verified by the caller
  * @param tenantId   - already tenant-verified by the caller; applied as `employee: { tenantId }`
+ * @param options    - Issue #681: `periodStartBefore` limits the lookup to snapshots whose
+ *                     `periodStart` lies before that instant (a month start from `monthRangeUtc`),
+ *                     so the chain INTO an open month never starts at a later closed month.
+ *                     Omitted (every pre-681 caller), the query is byte-identical to before.
  */
 export async function getConfirmedCarryOver(
   db: Prisma.TransactionClient,
   employeeId: string,
   tenantId: string,
+  options: { periodStartBefore?: Date } = {},
 ): Promise<ConfirmedCarryOver> {
   const snapshot = await db.saldoSnapshot.findFirst({
-    where: { employeeId, employee: { tenantId }, periodType: "MONTHLY", superseded: false },
+    where: {
+      employeeId,
+      employee: { tenantId },
+      periodType: "MONTHLY",
+      superseded: false,
+      ...(options.periodStartBefore ? { periodStart: { lt: options.periodStartBefore } } : {}),
+    },
     orderBy: { periodStart: "desc" },
     select: { carryOver: true, periodEnd: true },
   });

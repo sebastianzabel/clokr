@@ -243,6 +243,13 @@ Current: recalculated from hire date on every request (does not scale). Target a
   team saldo renders ±H:MM through `fmtBalance`, one column per value. `team-saldo-one-place-588.test.ts` fails on a
   second median, a row-saldo average, the running-month wording outside the helper, or a forecast call site without
   the value. Details: `docs/saldo-anzeige.md`, `docs/adr/0001-abweichungen.md` Eintrag Q, Nachtrag Phase 588.
+- **The open-month chain lives in one function (Issue #681).** The Gesamtsaldo of an open month (the
+  cumulative series of `computeMonthSaldo`, hence `closingBalanceMinutes`, the Monatsexport and
+  `GET /overtime/month-saldo`) starts at `openMonthCarryInMinutes()` (`contexts/working-time-account/overtime-balance.ts`):
+  the last close before the month plus every unclosed month since then (track-only resets, #494), from the
+  same chain the live saldo runs, so both agree at the same Stichtag; a month that is track-only on its own
+  contract shows 0. No reader adds a carry of its own; closed months are only read. Known gap: without any
+  closed month the live saldo ignores the OpeningBalance (#682).
 - **Sick days are counted in one place (Issue #84, D-14).** `sickLeaveDayCounts()`
   (`contexts/absence/sick-leave-days.ts`, exported via `contexts/absence/index.ts`) is the ONLY
   place the sick-day figure is derived: calendar days including weekends, clipped to the range, a
