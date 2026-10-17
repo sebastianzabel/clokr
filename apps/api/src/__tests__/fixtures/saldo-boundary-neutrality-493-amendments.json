@@ -1,0 +1,121 @@
+{
+  "description": "Amendment register of the frozen Phase 493 neutrality pins (saldo-boundary-neutrality-493.test.ts). The frozen literals in that file are never edited; a month-saldo cell whose expected value changed ON PURPOSE is named here, and the test applies the register to a deep copy of the frozen pin. Every other value is still compared strictly against the frozen literal. Same mechanism as contexts/time-tracking/__tests__/fixtures/day-break-equivalence-80-amendments.json.",
+  "issue": 681,
+  "date": "2026-10-17",
+  "rule": "The cumulative series of an open month (GET /overtime/month-saldo days[].cumulativeSaldoMinutes) starts at openMonthCarryInMinutes(): the last closed month plus every unclosed month since then (the fixture has no closed month, so every month since the hire date).",
+  "reason": "Gesamtsaldo eines offenen Monats enthält alle offenen Monate seit dem letzten Abschluss; gleich dem Live-Saldo, der in derselben Datei gepinnt ist (LIVE_BALANCE_HOURS at 2026-03-02: F -931.03 h = -55862 min, M -210.8 h = -12648 min = the amended February lastDayCumulative). The pinned values encoded Issue #681: each open month restarted at 0. Only the two cumulative fields move; worked/expected/balance, report figures, the live balance and stored snapshots are unchanged.",
+  "amendments": [
+    {
+      "employee": "F",
+      "month": "2025-10",
+      "field": "firstDayCumulative",
+      "from": -360,
+      "to": -10382
+    },
+    {
+      "employee": "F",
+      "month": "2025-10",
+      "field": "lastDayCumulative",
+      "from": -8520,
+      "to": -18542
+    },
+    {
+      "employee": "F",
+      "month": "2025-11",
+      "field": "firstDayCumulative",
+      "from": 0,
+      "to": -18542
+    },
+    {
+      "employee": "F",
+      "month": "2025-11",
+      "field": "lastDayCumulative",
+      "from": -9120,
+      "to": -27662
+    },
+    {
+      "employee": "F",
+      "month": "2026-01",
+      "field": "firstDayCumulative",
+      "from": 0,
+      "to": -37262
+    },
+    {
+      "employee": "F",
+      "month": "2026-01",
+      "field": "lastDayCumulative",
+      "from": -9540,
+      "to": -46802
+    },
+    {
+      "employee": "F",
+      "month": "2026-02",
+      "field": "firstDayCumulative",
+      "from": 60,
+      "to": -46742
+    },
+    {
+      "employee": "F",
+      "month": "2026-02",
+      "field": "lastDayCumulative",
+      "from": -9060,
+      "to": -55862
+    },
+    {
+      "employee": "M",
+      "month": "2025-10",
+      "field": "firstDayCumulative",
+      "from": 16,
+      "to": -2326
+    },
+    {
+      "employee": "M",
+      "month": "2025-10",
+      "field": "lastDayCumulative",
+      "from": -2071,
+      "to": -4413
+    },
+    {
+      "employee": "M",
+      "month": "2025-11",
+      "field": "firstDayCumulative",
+      "from": 0,
+      "to": -4413
+    },
+    {
+      "employee": "M",
+      "month": "2025-11",
+      "field": "lastDayCumulative",
+      "from": -2160,
+      "to": -6573
+    },
+    {
+      "employee": "M",
+      "month": "2026-01",
+      "field": "firstDayCumulative",
+      "from": 0,
+      "to": -8764
+    },
+    {
+      "employee": "M",
+      "month": "2026-01",
+      "field": "lastDayCumulative",
+      "from": -1724,
+      "to": -10488
+    },
+    {
+      "employee": "M",
+      "month": "2026-02",
+      "field": "firstDayCumulative",
+      "from": 0,
+      "to": -10488
+    },
+    {
+      "employee": "M",
+      "month": "2026-02",
+      "field": "lastDayCumulative",
+      "from": -2160,
+      "to": -12648
+    }
+  ]
+}

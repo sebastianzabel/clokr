@@ -33,6 +33,34 @@ import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData, reissueTokenNow } from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+// Issue #681 — the amendment register of this file. The frozen literals below are never edited; a
+// month-saldo cell whose expected value changed ON PURPOSE is listed in the register (employee,
+// month, field, old value, new value) and applied to a deep copy of the frozen pin. Every other
+// value is compared strictly against the frozen literal.
+type SaldoAmendment = {
+  employee: "F" | "M";
+  month: string;
+  field: "firstDayCumulative" | "lastDayCumulative";
+  from: number;
+  to: number;
+};
+const AMENDMENT_REGISTER = JSON.parse(
+  readFileSync(
+    join(__dirname, "fixtures", "saldo-boundary-neutrality-493-amendments.json"),
+    "utf8",
+  ),
+) as { issue: number; rule: string; reason: string; amendments: SaldoAmendment[] };
+if (
+  AMENDMENT_REGISTER.issue !== 681 ||
+  AMENDMENT_REGISTER.rule.length < 40 ||
+  AMENDMENT_REGISTER.reason.length < 40 ||
+  AMENDMENT_REGISTER.amendments.length === 0
+) {
+  throw new Error("saldo-boundary-neutrality-493 amendment register: missing or unexplained");
+}
 
 type Emp = "F" | "M";
 type Ym = "2025-09" | "2025-10" | "2025-11" | "2026-01" | "2026-02";
@@ -533,6 +561,21 @@ describe("Phase 493 R5 — month-boundary saldo neutrality (frozen on the unfixe
     await closeTestApp();
   });
 
+  /** Differences between the measured month-saldo and the FROZEN literal, collected per cell. */
+  const measuredDifferences: SaldoAmendment[] = [];
+
+  /** The frozen pin with the register applied — always on a deep copy, never on SALDO itself. */
+  function amendedSaldoPin(emp: Emp, ym: Ym): SaldoPin {
+    const pin = structuredClone(SALDO[emp][ym]);
+    for (const a of AMENDMENT_REGISTER.amendments) {
+      if (a.employee !== emp || a.month !== ym) continue;
+      // The register's old value must still be the frozen literal - a stale entry fails here.
+      expect(SALDO[emp][ym][a.field], `register ${emp} ${ym} ${a.field}: from`).toBe(a.from);
+      pin[a.field] = a.to;
+    }
+    return pin;
+  }
+
   describe("open months — real clock", () => {
     for (const emp of ["F", "M"] as const) {
       describe(`employee ${emp}`, () => {
@@ -541,7 +584,20 @@ describe("Phase 493 R5 — month-boundary saldo neutrality (frozen on the unfixe
             `/api/v1/overtime/month-saldo/${ids[emp]}?year=${year}&month=${month}`,
           );
           expect(status).toBe(200);
-          const expected = SALDO[emp][ym];
+          const expected = amendedSaldoPin(emp, ym);
+          for (const field of ["firstDayCumulative", "lastDayCumulative"] as const) {
+            const measured = body.days[field === "firstDayCumulative" ? 0 : body.days.length - 1]
+              .cumulativeSaldoMinutes as number;
+            if (measured !== SALDO[emp][ym][field]) {
+              measuredDifferences.push({
+                employee: emp,
+                month: ym,
+                field,
+                from: SALDO[emp][ym][field],
+                to: measured,
+              });
+            }
+          }
           expect({
             workedMinutes: body.workedMinutes,
             expectedMinutes: body.expectedMinutes,
@@ -573,6 +629,27 @@ describe("Phase 493 R5 — month-boundary saldo neutrality (frozen on the unfixe
         });
       });
     }
+  });
+
+  describe("amendment register (Issue #681)", () => {
+    it("the register equals the measured differences exactly - no extra, no missing cell", () => {
+      const key = (a: SaldoAmendment) => `${a.employee} ${a.month} ${a.field}`;
+      const sorted = (list: SaldoAmendment[]) =>
+        [...list].sort((a, b) => key(a).localeCompare(key(b)));
+      expect(measuredDifferences.length).toBe(16);
+      expect(sorted(measuredDifferences)).toEqual(sorted(AMENDMENT_REGISTER.amendments));
+    });
+
+    it("internal consistency: the amended February Gesamtsaldo equals this file's own live pin", () => {
+      for (const emp of ["F", "M"] as const) {
+        const feb = AMENDMENT_REGISTER.amendments.find(
+          (a) => a.employee === emp && a.month === "2026-02" && a.field === "lastDayCumulative",
+        );
+        // Live at 2026-03-02 (window ends 2026-02-28), no closed month: total == open minutes.
+        expect(feb?.to).toBe(LIVE_BEFORE[emp].openMonthMinutes);
+        expect(feb?.to).toBe(Math.round(LIVE_BALANCE_HOURS[emp] * 60));
+      }
+    });
   });
 
   async function liveBalance(emp: Emp) {
