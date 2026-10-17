@@ -2,12 +2,13 @@
   // Issue #613 (AC-613-5): persons who have left and whose exit month is not closed yet. Their final
   // saldo stays visible here until a manager closes that month. The server chose the rows, their
   // order and their bound; this component displays them and says how many are not shown.
-  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte";
+  import Icon from "$components/Icon.svelte";
   import {
     exitDateLabel,
     exitedMoreCount,
     type ExitedOverviewRow,
   } from "$lib/reports/overtime-overview-sections";
+  import { forecastColumnLabel, teamSaldoCells } from "$lib/reports/team-saldo"; // Issue #588
 
   interface Props {
     rows: ExitedOverviewRow[];
@@ -18,6 +19,8 @@
   let { rows, total }: Props = $props();
 
   let more = $derived(exitedMoreCount(total, rows.length));
+  // Issue #588 (D-588-4): the forecast header names the window the rows really have.
+  let forecastHeader = $derived(forecastColumnLabel(rows));
 </script>
 
 {#if rows.length > 0 || total > 0}
@@ -33,30 +36,35 @@
             <th>Mitarbeiter</th>
             <th>Nr.</th>
             <th>Austritt am</th>
-            <th class="numeric">Saldo (h)</th>
+            <th class="numeric">Abgeschlossen</th>
+            <th class="numeric">{forecastHeader}</th>
+            <th class="numeric">Gesamt</th>
           </tr>
         </thead>
         <tbody>
           {#each rows as row (row.id)}
+            {@const cells = teamSaldoCells(row)}
             <tr>
               <td>{row.name}</td>
               <td>{row.employeeNumber}</td>
               <td data-testid="exit-date">{exitDateLabel(row.exitDate)}</td>
-              <td class="numeric">
-                {#if row.confirmedMinutes !== undefined}
-                  <SaldoAnzeige
-                    variant="compact"
-                    confirmedMinutes={row.confirmedMinutes}
-                    openMonthMinutes={row.openMonthMinutes ?? null}
-                    hasClosedMonth={row.hasClosedMonth ?? false}
-                    rosterIncomplete={row.rosterIncomplete}
-                  />
-                {:else}
-                  <SaldoAnzeige
-                    variant="compact"
-                    saldoMinutes={Math.round(row.balanceHours * 60)}
-                  />
+              <td class="numeric" data-testid="saldo-cell-confirmed" title={cells.confirmed.title}>
+                {cells.confirmed.text}
+              </td>
+              <td class="numeric" data-testid="saldo-cell-open" title={cells.open.title}>
+                {cells.open.text}
+                {#if row.rosterIncomplete}
+                  <span class="roster-dot" data-testid="saldo-roster-badge">
+                    <Icon
+                      name="circle-fill"
+                      size={6}
+                      title="Restmonat noch nicht vollständig verplant"
+                    />
+                  </span>
                 {/if}
+              </td>
+              <td class="numeric" data-testid="saldo-cell-total" title={cells.total.title}>
+                {cells.total.text}
               </td>
             </tr>
           {/each}
@@ -94,5 +102,11 @@
 
   .numeric {
     text-align: right;
+  }
+
+  .roster-dot {
+    display: inline-flex;
+    align-items: center;
+    color: var(--warn);
   }
 </style>

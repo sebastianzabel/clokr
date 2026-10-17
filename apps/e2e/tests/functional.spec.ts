@@ -76,6 +76,28 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       expect(box).not.toBeNull();
       expect(box!.y).toBeLessThan(800);
     });
+
+    test("team saldo card sits at the top of the team area", async ({ page, tenant }) => {
+      // Issue #588 (AC-588-1): the card "Salden" is the first block under the team divider, so with
+      // the divider scrolled to the top of the viewport its heading and its first figure (the
+      // team median, or the empty text when nobody is in reach) are in view without scrolling on.
+      await loginAsTenantAdmin(page, tenant);
+      await page.goto("/dashboard");
+
+      const card = page.locator(".team-saldo-card");
+      await expect(card).toBeVisible({ timeout: 15_000 });
+      await page.locator(".team-divider").scrollIntoViewIfNeeded();
+      await page.locator(".team-divider").evaluate((el) => el.scrollIntoView({ block: "start" }));
+
+      await expect(card.getByText("Salden", { exact: true })).toBeInViewport();
+      const firstFigure = card
+        .getByTestId("team-saldo-median")
+        .or(card.getByText("Keine Salden in Ihrer Reichweite"));
+      // The figure arrives with the overview request, which starts after the team block loaded; the
+      // wait is for that load under a busy full run (a single run needs about 3 s), the assertion
+      // itself - the figure lies inside the viewport - is unchanged.
+      await expect(firstFigure).toBeInViewport({ timeout: 20_000 });
+    });
   });
 
   test.describe("Sidebar navigation", () => {

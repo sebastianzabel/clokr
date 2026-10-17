@@ -18,6 +18,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick, untrack } from "svelte";
+  import { goto } from "$app/navigation"; // Issue #588 (P-11): a bar of the saldo card opens a person
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
@@ -34,6 +35,7 @@
   import ClockSalonSelect from "$lib/components/dashboard/ClockSalonSelect.svelte"; // Issue #87
   import ClockOtherSalon from "$lib/components/dashboard/ClockOtherSalon.svelte"; // Issue #70
   import TodayEntriesList from "$lib/components/dashboard/TodayEntriesList.svelte"; // Issue #70
+  import TeamSaldoCard from "$lib/components/dashboard/TeamSaldoCard.svelte"; // Issue #588
   import Icon from "$lib/components/Icon.svelte";
   import {
     summarizeKarenzOverrun,
@@ -64,8 +66,11 @@
     attendanceStatusText,
     teamMissingTitle,
   } from "$lib/dashboard/day-status-label"; // Issue #587 (P-06)
-  import { teamDayHref, teamCellAriaLabel } from "$lib/dashboard/team-day-links"; // Issue #587 (D-587-4)
+  import { teamDayHref, teamCellAriaLabel, teamPersonHref } from "$lib/dashboard/team-day-links"; // Issue #587 (D-587-4), #588
   import { mayOpenTeamPage } from "$lib/nav/team-nav";
+  import { mayReadTeamSaldo } from "$lib/page-rights"; // Issue #588 (P-10)
+  import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613, #588
+  import type { TeamSaldoRow } from "$lib/reports/team-saldo"; // Issue #588
   import {
     clockInBlocked,
     clockInBody,
@@ -155,6 +160,8 @@
       confirmedMinutes?: number;
       openMonthMinutes?: number | null;
       hasClosedMonth?: boolean;
+      // Issue #588 (P-14): how many calendar months the forecast spans; null = unknown.
+      unconfirmedMonths?: number | null;
       rosterIncomplete?: boolean;
     } | null;
     vacation: { remaining: number; total: number; used: number } | null;
@@ -411,6 +418,14 @@
   // D-16: the server rejected the selected salon (404); calm empty state, no further polling.
   let teamUnavailable = $state(false);
 
+  // Issue #588 (P-10): the card "Salden" reads GET /dashboard/overtime-overview with the same salon
+  // filter as the rest of the Team block. `teamSaldoFiltered` is the filter of the LOADED request,
+  // not the live selection, so the note always matches the rows shown. A 403 hides the card.
+  let teamSaldoRows = $state<TeamSaldoRow[]>([]);
+  let teamSaldoLoading = $state(false);
+  let teamSaldoFiltered = $state(false);
+  let teamSaldoHidden = $state(false);
+
   interface OvertimeTrendResponse {
     snapshots: { month: string; teamCarryOverMinutes: number }[];
     currentTeamBalanceMinutes: number;
@@ -429,6 +444,8 @@
   const canSeeTeamBereich = $derived(
     hasPermission($authStore.user, "team-overview:read:ZUGEWIESEN"),
   );
+  // Issue #588 (P-10): the saldo card needs the two permissions of its endpoint.
+  const canSeeTeamSaldo = $derived(mayReadTeamSaldo($authStore.user));
 
   // Phase 76.7 (D-15, UI-V19-04) — § 18 ArbZG-exempt: when the current
   // employee's `isTimeTrackingExempt` flag is true, fully HIDE the Timer-Card
@@ -589,7 +606,21 @@
     teamWeek = null;
     teamPage = 1;
     upcomingLeaves = [];
+    teamSaldoRows = [];
+    teamSaldoFiltered = false;
+    teamSaldoHidden = false;
+    teamSaldoLoading = canSeeTeamSaldo;
+    const generation = teamGeneration;
     await Promise.allSettled([loadTeamWeek(), loadTeamCharts(), loadUpcomingLeaves()]);
+    // Issue #588 (orchestrator amendment 2): the saldo overview computes a live saldo per person on
+    // the server, so it starts only after the figures the team block is made of have resolved and is
+    // not awaited here - the card shows its skeleton, the team week never waits for it.
+    if (generation !== teamGeneration) return;
+    if (teamUnavailable) {
+      teamSaldoLoading = false;
+      return;
+    }
+    void loadTeamSaldo();
   }
 
   // The first team load waits until the salon context is known (no unfiltered-then-filtered double
@@ -625,6 +656,42 @@
         return;
       }
       console.error("Failed to load team week:", err);
+    }
+  }
+
+  // Issue #588 (P-10, D-588-3): one read of the overview for the card, in the caller's saldo reach and
+  // the team block's salon selection. Follows the loader idiom of loadTeamWeek (generation, calm 404);
+  // a 403 hides the card silently. The 5 s poll never calls it.
+  async function loadTeamSaldo() {
+    const filter = teamFilter;
+    const generation = teamGeneration;
+    if (!canSeeTeamSaldo) {
+      teamSaldoLoading = false;
+      return;
+    }
+    teamSaldoLoading = true;
+    try {
+      const answer = await api.get<{ employees: TeamSaldoRow[] }>(
+        withSalonId("/dashboard/overtime-overview", filter),
+      );
+      if (generation !== teamGeneration) return;
+      teamSaldoRows = partitionOvertimeOverview(answer.employees ?? []).active;
+      teamSaldoFiltered = filter !== null;
+    } catch (err) {
+      if (isTeamSalonRejected(err)) {
+        if (generation === teamGeneration) {
+          teamUnavailable = true;
+        }
+        return;
+      }
+      if (err instanceof ApiError && err.status === 403) {
+        if (generation === teamGeneration) teamSaldoHidden = true;
+        return;
+      }
+      console.error("Failed to load team saldo:", err);
+      if (generation === teamGeneration) teamSaldoRows = [];
+    } finally {
+      if (generation === teamGeneration) teamSaldoLoading = false;
     }
   }
 
@@ -1789,14 +1856,16 @@
           {:else if stats.overtime.confirmedMinutes !== undefined}
             <!-- Phase 97-04 (SALDO-DISP-02) — the split primitive replaces the inline KPIStat
                  markup outright (not wrapped): KPIStat's pure-props string contract cannot
-                 express a two-figure tile. Leads with "Bestätigt", subordinates "Laufender
-                 Monat (Prognose)" — the deliberate hierarchy flip this phase exists to ship. -->
+                 express a two-figure tile. Leads with "Bestätigt", subordinates the forecast,
+                 worded from the data by forecastLabel() (Issue #588) — the deliberate hierarchy
+                 flip this phase exists to ship. -->
             <SaldoAnzeige
               variant="expanded"
               label="Überstundenkonto"
               confirmedMinutes={stats.overtime.confirmedMinutes}
               openMonthMinutes={stats.overtime.openMonthMinutes ?? null}
               hasClosedMonth={stats.overtime.hasClosedMonth ?? false}
+              unconfirmedMonths={stats.overtime.unconfirmedMonths ?? null}
               rosterIncomplete={stats.overtime.rosterIncomplete}
             />
           {:else}
@@ -1980,9 +2049,23 @@
         <p class="callout brand">{TEAM_SALON_UNAVAILABLE_TEXT}</p>
       </Card>
     {:else}
+      <!-- Salden (Issue #588): the first block of the team area -->
+      {#if canSeeTeamSaldo && !teamSaldoHidden}
+        <div class="team-saldo-slot">
+          <TeamSaldoCard
+            rows={teamSaldoRows}
+            loading={teamSaldoLoading}
+            salonFiltered={teamSaldoFiltered}
+            personHref={(id) => (canOpenTeamDay ? teamPersonHref(id) : null)}
+            onOpenPerson={(href) => goto(href)}
+            cardIdx={7}
+          />
+        </div>
+      {/if}
+
       <!-- Charts (Team-Aggregation) -->
       <div class="charts-grid">
-        <Card animate class="chart-card" style="--card-idx: 7;">
+        <Card animate class="chart-card" style="--card-idx: 8;">
           <CardHeader title="Arbeitsstunden" sub={trendView?.chartSub ?? "Letzte 6 Monate"} />
           <div class="chart-wrap">
             {#if chartsLoading}
@@ -2001,7 +2084,7 @@
         </Card>
 
         {#if chartsLoading || overtimeTrendAvailable || trendView?.trendNote}
-          <Card animate class="chart-card" style="--card-idx: 8;">
+          <Card animate class="chart-card" style="--card-idx: 9;">
             <CardHeader title="Überstunden-Trend" sub="Saldo-Verlauf" />
             <div class="chart-wrap">
               {#if chartsLoading}
@@ -2019,7 +2102,7 @@
           </Card>
         {/if}
 
-        <Card animate class="chart-card" style="--card-idx: 9;">
+        <Card animate class="chart-card" style="--card-idx: 10;">
           <CardHeader title="Krankheitstage" sub="Letzte 6 Monate" />
           <div class="chart-wrap">
             {#if chartsLoading}
@@ -2037,7 +2120,7 @@
 
       <!-- Anstehende Urlaube -->
       {#if upcomingLeaves.length > 0}
-        <Card animate class="upcoming-section card-body" style="--card-idx: 10;">
+        <Card animate class="upcoming-section card-body" style="--card-idx: 11;">
           <div class="widget-header">
             <h3 class="widget-title">Anstehende Urlaube</h3>
             <a href="/leave" class="widget-action">Urlaube →</a>
@@ -2066,7 +2149,7 @@
 
       <!-- Team Wochenübersicht -->
       {#if teamWeek}
-        <Card animate class="team-section" style="--card-idx: 11;">
+        <Card animate class="team-section" style="--card-idx: 12;">
           <CardHeader
             title="Team-Wochenübersicht"
             sub={`KW ${getWeekNumber(teamWeek.weekStart)}: ${formatShortDate(teamWeek.weekStart)} – ${formatShortDate(teamWeek.weekEnd)}`}
@@ -2887,6 +2970,10 @@
   }
 
   /* Charts */
+  .team-saldo-slot {
+    margin-bottom: 1.5rem;
+  }
+
   .charts-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);

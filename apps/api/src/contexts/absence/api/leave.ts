@@ -2927,6 +2927,9 @@ export async function leaveRoutes(app: FastifyInstance) {
           confirmedMinutes: 0,
           openMonthMinutes: null,
           hasClosedMonth: false,
+          // Issue #588 (P-14): additive; the web words the forecast from it
+          // ("Laufender Monat" only for exactly one unclosed month).
+          unconfirmedMonths: null,
           maxNegativeBalanceMinutes: null,
           isNegativeLimitExceeded: false,
         };
@@ -2982,6 +2985,9 @@ export async function leaveRoutes(app: FastifyInstance) {
           confirmedMinutes: breakdown.confirmedMinutes,
           openMonthMinutes: breakdown.openMonthMinutes,
           hasClosedMonth: breakdown.hasClosedMonth,
+          // Issue #588 (P-14): additive; the web words the forecast from it
+          // ("Laufender Monat" only for exactly one unclosed month).
+          unconfirmedMonths: breakdown.unconfirmedMonths,
           maxNegativeBalanceMinutes: configuredMinutes,
           isNegativeLimitExceeded:
             configuredMinutes != null && breakdown.confirmedMinutes < -configuredMinutes,
@@ -3002,6 +3008,9 @@ export async function leaveRoutes(app: FastifyInstance) {
           confirmedMinutes: confirmed.minutes,
           openMonthMinutes: null,
           hasClosedMonth: confirmed.hasClosedMonth,
+          // Issue #588 (P-14): additive; the web words the forecast from it
+          // ("Laufender Monat" only for exactly one unclosed month).
+          unconfirmedMonths: null,
           maxNegativeBalanceMinutes: configuredMinutes,
           isNegativeLimitExceeded:
             configuredMinutes != null && confirmed.minutes < -configuredMinutes,
@@ -3017,6 +3026,9 @@ export async function leaveRoutes(app: FastifyInstance) {
           confirmedMinutes: 0,
           openMonthMinutes: null,
           hasClosedMonth: false,
+          // Issue #588 (P-14): additive; the web words the forecast from it
+          // ("Laufender Monat" only for exactly one unclosed month).
+          unconfirmedMonths: null,
           maxNegativeBalanceMinutes: configuredMinutes,
           // IN-01 (code review) — this was `configuredMinutes != null && 0 < -configuredMinutes`,
           // which reads like a real comparison against the (unknown) balance but is tautologically
