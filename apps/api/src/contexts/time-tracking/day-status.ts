@@ -55,6 +55,22 @@ export interface DayStatus {
   isWorkday: boolean;
   /** Whether the day is late enough that an absence on it counts as "missing". */
   isDue: boolean;
+  /**
+   * The start of the day's first in-scope shift (tenant-local "HH:MM"), or null. No start is
+   * invented for a schedule without a shift (Issue #587, D-587-3).
+   */
+  expectedStart: string | null;
+  /**
+   * Whole minutes between the shift start and now (tenant-local wall clock), only for a "missing"
+   * day that is TODAY and has a shift; null otherwise (a past day is missed, not late).
+   */
+  lateMinutes: number | null;
+}
+
+/** Minutes since midnight of a tenant-local "HH:MM" string. */
+function minutesOfDay(hhmm: string): number {
+  const [h, m] = hhmm.split(":");
+  return Number(h) * 60 + Number(m);
 }
 
 export function resolveDayStatus(input: DayStatusInput): DayStatus {
@@ -93,5 +109,16 @@ export function resolveDayStatus(input: DayStatusInput): DayStatus {
     holidayName: input.holidayName,
   });
 
-  return { status, reason, isWorkday, isDue };
+  // Issue #587 (D-587-3, P-05): the expected start is the shift start and nothing else; lateness
+  // exists only for a "missing" row of TODAY with a shift, where `isDayDue` guarantees now >= start.
+  // The basis is the same wall-clock string comparison as `isDayDue`, so on a DST change night a
+  // shift starting in the skipped or repeated hour is off by that hour (no shift starts then in
+  // practice). A late clock-in is not evaluated (P-05).
+  const expectedStart = input.shift?.startTime ?? null;
+  const lateMinutes =
+    status === "missing" && input.dayStr === input.todayStr && expectedStart !== null
+      ? Math.max(0, minutesOfDay(input.nowHHMM) - minutesOfDay(expectedStart))
+      : null;
+
+  return { status, reason, isWorkday, isDue, expectedStart, lateMinutes };
 }

@@ -190,12 +190,107 @@ describe("resolveDayStatus (Issue #587)", () => {
     it(c.name, () => {
       const result = resolveDayStatus(c.input);
       expect(result).toMatchObject(c.expected);
-      // Table-driven equivalence with the primitives called by the team-week recipe.
-      expect(result).toEqual(recipe(c.input));
+      // Table-driven equivalence with the primitives called by the team-week recipe (the expected
+      // start and lateness are additive values proven in their own table below).
+      const { expectedStart: _start, lateMinutes: _late, ...state } = result;
+      void _start;
+      void _late;
+      expect(state).toEqual(recipe(c.input));
     });
   }
 
   it("covers a non-empty case table", () => {
     expect(CASES.length).toBeGreaterThan(10);
+  });
+});
+
+// ── Expected start and lateness (Issue #587, D-587-3, P-05) ─────────────────────────────────────
+type TimeCase = {
+  name: string;
+  input: DayStatusInput;
+  expected: { status: string; expectedStart: string | null; lateMinutes: number | null };
+};
+
+const TIME_CASES: TimeCase[] = [
+  {
+    name: "missing today with a shift at 09:00, now 12:00: 180 minutes late",
+    input: input({ shift: { startTime: "09:00" } }),
+    expected: { status: "missing", expectedStart: "09:00", lateMinutes: 180 },
+  },
+  {
+    name: "due exactly at the shift start: 0 minutes late",
+    input: input({ shift: { startTime: "09:00" }, nowHHMM: "09:00" }),
+    expected: { status: "missing", expectedStart: "09:00", lateMinutes: 0 },
+  },
+  {
+    name: "minutes are whole minutes on the wall clock",
+    input: input({ shift: { startTime: "08:30" }, nowHHMM: "09:05" }),
+    expected: { status: "missing", expectedStart: "08:30", lateMinutes: 35 },
+  },
+  {
+    name: "scheduled today with a shift at 14:00 names the start and is not late",
+    input: input({ shift: { startTime: "14:00" } }),
+    expected: { status: "scheduled", expectedStart: "14:00", lateMinutes: null },
+  },
+  {
+    name: "missing on a past day with a shift: the start is named, a past day is missed not late",
+    input: input({ dayStr: MON, dow: 1, shift: { startTime: "09:00" } }),
+    expected: { status: "missing", expectedStart: "09:00", lateMinutes: null },
+  },
+  {
+    name: "FIXED_SCHEDULE without a shift: no start invented",
+    input: input(),
+    expected: { status: "scheduled", expectedStart: null, lateMinutes: null },
+  },
+  {
+    name: "FIXED_SCHEDULE without a shift on a past day: missing, no start, no lateness",
+    input: input({ dayStr: MON, dow: 1 }),
+    expected: { status: "missing", expectedStart: null, lateMinutes: null },
+  },
+  {
+    name: "FLEXTIME without a shift: both null",
+    input: input({ scheduleType: "FLEXTIME" }),
+    expected: { status: "none", expectedStart: null, lateMinutes: null },
+  },
+  {
+    name: "MONTHLY_HOURS without a shift: both null",
+    input: input({ scheduleType: "MONTHLY_HOURS" }),
+    expected: { status: "none", expectedStart: null, lateMinutes: null },
+  },
+  {
+    name: "present with a shift: start named, never late",
+    input: input({ shift: { startTime: "09:00" }, entries: [CLOSED] }),
+    expected: { status: "present", expectedStart: "09:00", lateMinutes: null },
+  },
+  {
+    name: "clocked in with a shift: start named, never late",
+    input: input({ shift: { startTime: "09:00" }, entries: [OPEN] }),
+    expected: { status: "clocked_in", expectedStart: "09:00", lateMinutes: null },
+  },
+  {
+    name: "entry-only row with a due shift is never missing, so never late",
+    input: input({
+      entryOnlyRow: true,
+      scheduleType: null,
+      workDays: [],
+      expectedHours: 0,
+      shift: { startTime: "09:00" },
+    }),
+    expected: { status: "none", expectedStart: "09:00", lateMinutes: null },
+  },
+];
+
+describe("resolveDayStatus expected start and lateness (Issue #587)", () => {
+  for (const c of TIME_CASES) {
+    it(c.name, () => {
+      const result = resolveDayStatus(c.input);
+      expect(result.status).toBe(c.expected.status);
+      expect(result.expectedStart).toBe(c.expected.expectedStart);
+      expect(result.lateMinutes).toBe(c.expected.lateMinutes);
+    });
+  }
+
+  it("covers a non-empty case table", () => {
+    expect(TIME_CASES.length).toBeGreaterThan(5);
   });
 });

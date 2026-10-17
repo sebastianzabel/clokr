@@ -1162,7 +1162,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         // Issue #587 (D-587-2): the list reads what the team week reads and resolves every row
         // through the same function. The population is already the people employed today
         // (`reportPopulationWhere`), hence `employedOnDay: true`.
-        const { status, reason } = resolveDayStatus({
+        const { status, reason, expectedStart, lateMinutes } = resolveDayStatus({
           dayStr: todayStr,
           todayStr,
           nowHHMM,
@@ -1197,6 +1197,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
               : null,
           status,
           reason,
+          // Issue #587 (D-587-3): attendance row only; the team week's shape is frozen.
+          expectedStart,
+          lateMinutes,
         };
       });
 

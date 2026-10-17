@@ -1149,6 +1149,12 @@ function normalize(value: unknown): unknown {
  * #587 (cell, frozen value, value since #587, reason) and is applied to a deep copy of the literal
  * before the comparison; `amendedTodayAttendance587()` first asserts that each entry's frozen
  * value still equals the literal, so the table cannot drift. Any other difference stays a failure.
+ *
+ * Amendment 2026-10-17 (Issue #587, Phase 587-02): the rows additionally carry `expectedStart`
+ * (the start of the person's first in-scope shift today) and `lateMinutes` (minutes since that
+ * start for a "missing" row). Same mechanism as the 70b/92b keys below, nothing re-captured: both
+ * keys are taken out of each row before the comparison and proven `null` on every row (this
+ * fixture plans no shift).
  */
 const TODAY_ATTENDANCE_AMENDMENTS_587 = {
   rows: [
@@ -1544,7 +1550,16 @@ describe("Issue #85 / #547 — frozen whole-tenant responses (tenant admin)", ()
     expect(body.employees.map((r) => r.id as string).sort((a, b) => a.localeCompare(b))).toEqual(
       allVisibleIds(),
     );
-    const sorted = { ...body, employees: byName(body.employees, (r) => String(r.name)) };
+    // Amendment #587-02: the two additive keys are proven null (no shift is planned here) and
+    // taken out, so every other key and value stays pinned against the literal.
+    expect(body.employees.length).toBeGreaterThan(0);
+    const stripped = body.employees.map((r) => {
+      const { expectedStart, lateMinutes, ...rest } = r;
+      expect(expectedStart, `expectedStart of ${String(r.name)}`).toBeNull();
+      expect(lateMinutes, `lateMinutes of ${String(r.name)}`).toBeNull();
+      return rest;
+    });
+    const sorted = { ...body, employees: byName(stripped, (r) => String(r.name)) };
     expect(normalize(sorted)).toEqual(amendedTodayAttendance587());
   });
 

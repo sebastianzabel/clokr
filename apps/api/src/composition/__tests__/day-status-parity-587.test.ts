@@ -50,6 +50,8 @@ type Att = {
     employeeNumber: string | null;
     status: string;
     reason: string | null;
+    expectedStart?: string | null;
+    lateMinutes?: number | null;
   }>;
 };
 
@@ -454,6 +456,74 @@ describe("Issue #587 — one day status for the team week and the attendance lis
       const july = cellOf(week, ids.CC, "2026-07-01");
       expect(july).toMatchObject({ status: "scheduled", isWorkday: true, expectedHours: 6 });
       expectParity(week, att);
+    });
+  });
+
+  describe("expected time and lateness (D-587-3)", () => {
+    const timing = (att: Att, id: string) => {
+      const row = rowOf(att, id);
+      return {
+        status: row.status,
+        expectedStart: row.expectedStart,
+        lateMinutes: row.lateMinutes,
+      };
+    };
+
+    it("at 12:00 a missing shift row names its start and the minutes late", async () => {
+      const { att } = await bothAt(d.adminToken, AT_1200);
+      expect(timing(att, ids.SB1)).toEqual({
+        status: "missing",
+        expectedStart: "09:00",
+        lateMinutes: 180,
+      });
+      expect(timing(att, ids.FXS)).toEqual({
+        status: "missing",
+        expectedStart: "08:00",
+        lateMinutes: 240,
+      });
+      expect(timing(att, ids.SB2)).toEqual({
+        status: "scheduled",
+        expectedStart: "14:00",
+        lateMinutes: null,
+      });
+      expect(timing(att, ids.FX)).toEqual({
+        status: "scheduled",
+        expectedStart: null,
+        lateMinutes: null,
+      });
+    });
+
+    it("at 07:00 a shift that has not started reads scheduled with its start and is not late", async () => {
+      const { att } = await bothAt(d.adminToken, AT_0700);
+      expect(timing(att, ids.SB1)).toEqual({
+        status: "scheduled",
+        expectedStart: "09:00",
+        lateMinutes: null,
+      });
+    });
+
+    it("a shift outside the reach is neither named nor counted late for the Salonmanager", async () => {
+      const manager = await bothAt(maToken, AT_1200);
+      expect(timing(manager.att, ids.X)).toEqual({
+        status: "none",
+        expectedStart: null,
+        lateMinutes: null,
+      });
+      const admin = await bothAt(d.adminToken, AT_1200);
+      expect(timing(admin.att, ids.X)).toEqual({
+        status: "missing",
+        expectedStart: "08:00",
+        lateMinutes: 240,
+      });
+    });
+
+    it("the team-week cells keep the frozen key set: neither expectedStart nor lateMinutes", async () => {
+      const { week } = await bothAt(d.adminToken, AT_1200);
+      for (const id of [ids.SB1, ids.FXS, ids.SB2, ids.FX, ids.X]) {
+        const cell = cellOf(week, id, WED) as unknown as Record<string, unknown>;
+        expect(Object.keys(cell), `cell of ${id}`).not.toContain("expectedStart");
+        expect(Object.keys(cell), `cell of ${id}`).not.toContain("lateMinutes");
+      }
     });
   });
 
