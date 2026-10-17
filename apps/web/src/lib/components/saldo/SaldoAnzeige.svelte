@@ -20,8 +20,8 @@
   // routes/(app)/leave/+page.svelte. See 76-02-SUMMARY.md for context.
   //
   // Phase 97-01 (TRACER, SALDO-DISP-01/03/05) — additive split mode:
-  // "Bestätigt" (confirmed carry-over from closed months) vs. "Laufender
-  // Monat (Prognose)" (the open month, forecast). Presence of `confirmedMinutes`
+  // "Bestätigt" (confirmed carry-over from closed months) vs. the forecast
+  // (the unclosed period; its wording comes from forecastLabel(), Issue #588). Presence of `confirmedMinutes`
   // (!== undefined) switches this component into split rendering; omitting it
   // renders EXACTLY what this component rendered before Phase 97 (byte-identical
   // legacy behaviour — the 13 pre-existing tests + the § 18 exempt behaviour stay
@@ -38,6 +38,7 @@
   // is stable, so it never carries either affordance.
   import Icon from "$components/Icon.svelte";
   import { fmtBalance } from "$lib/utils/format-minutes"; // Issue #588
+  import { forecastLabel as forecastLabelFor } from "$lib/saldo/forecast-label"; // Issue #588
 
   export interface SaldoAnzeigeProps {
     saldoMinutes?: number | null;
@@ -56,7 +57,13 @@
      *  ("ausgeglichen" vs. "noch kein Monatsabschluss", UI-SPEC state A2 vs A3). */
     hasClosedMonth?: boolean;
     confirmedLabel?: string;
+    /** Issue #588 (P-14) — an explicit forecast label wins; without one the wording comes from
+     *  `forecastLabel(unconfirmedMonths, hasClosedMonth)` and never claims the running month for
+     *  an unknown count. */
     forecastLabel?: string;
+    /** Issue #588 (P-14) — how many calendar months the forecast spans (`unconfirmedMonths` of
+     *  the saldo endpoints). Exactly 1 words it as the running month. */
+    unconfirmedMonths?: number | null;
     combinedLabel?: string;
     /** Phase 97-03 — SHIFT_BASED only: the remaining month has no roster yet (UI-SPEC
      *  state C, "Restmonat unverplant"). The forecast there isn't merely uncertain, it's
@@ -104,7 +111,8 @@
     openMonthMinutes = undefined,
     hasClosedMonth = false,
     confirmedLabel = "Bestätigt",
-    forecastLabel = "Laufender Monat (Prognose)",
+    forecastLabel = undefined,
+    unconfirmedMonths = undefined,
     combinedLabel = "Voraussichtlich gesamt",
     rosterIncomplete = false,
     loading = false,
@@ -127,6 +135,11 @@
   const TOOLTIP_TEXT = `„Bestätigt" ändert sich nur bei Monatsabschluss – der laufende Monat kann diesen Wert nicht senken. Ist der laufende Monat knapp verplant, sinkt die Prognose an gearbeiteten Tagen und gleicht sich zum Monatsende wieder aus. Ist er noch nicht vollständig verplant, bleibt die Prognose zunächst niedrig und springt, sobald der restliche Plan feststeht.`;
 
   const isSplit = $derived(confirmedMinutes !== undefined);
+
+  // Issue #588 (P-14): the forecast wording follows the data unless a caller names it.
+  const effectiveForecastLabel = $derived(
+    forecastLabel ?? forecastLabelFor(unconfirmedMonths, hasClosedMonth),
+  );
 
   // Root sign class — mirrors the template's precedence chain exactly (97-UI-SPEC →
   // Component Contract): loading/error short-circuit everything, then exempt, then the
@@ -221,7 +234,7 @@
 
   <!-- Code-review fix — the label used to be suppressed entirely in compact mode
        (pre-existing 76-02 behaviour). For split/relabelled callers this label IS the
-       only thing distinguishing "Bestätigt" from "Laufender Monat (Prognose)" (e.g.
+       only thing distinguishing "Bestätigt" from the forecast label (e.g.
        the Monat-Saldo tile's "Monat-Saldo (Bestätigt)"/"Monat-Saldo (Prognose)"
        caption) — SALDO-DISP-03 requires that distinction to survive on dense
        surfaces (calendar headers, Berichte table rows) too, not just expanded tiles.
@@ -274,8 +287,9 @@
              97-UI-SPEC accessibility rule forbids the meaning resting on a visual
              convention alone. The visible compact layout is unchanged; these sr-only
              prefixes carry the same vocabulary the expanded variant shows on screen.
-             Issue #588 (P-15): they read the caller's confirmedLabel/forecastLabel (the defaults
-             are the former literals), so a relabelled column reaches screen readers too. -->
+             Issue #588 (P-15): they read the caller's confirmedLabel and the effective forecast label
+             (explicit prop, else forecastLabel() from the data), so a relabelled column reaches
+             screen readers too. -->
         <span
           class="saldo__confirmed-value saldo__confirmed-value--{confirmedTone}"
           data-testid="saldo-confirmed-value"
@@ -283,7 +297,7 @@
           <span class="sr-only">{confirmedLabel}: </span>{fmt(confirmedMinutes ?? 0)}
         </span>
         <span class="saldo__forecast-value" data-testid="saldo-forecast-value">
-          <span class="sr-only">{forecastLabel}: </span>({forecastAvailable
+          <span class="sr-only">{effectiveForecastLabel}: </span>({forecastAvailable
             ? fmt(openMonthMinutes ?? 0)
             : "—"})
         </span>
@@ -328,7 +342,7 @@
         <div class="saldo__forecast">
           <div class="saldo__forecast-label-row">
             <span class="saldo__forecast-label" data-testid="saldo-forecast-label">
-              {forecastLabel}
+              {effectiveForecastLabel}
             </span>
             {@render infoTrigger(16)}
           </div>

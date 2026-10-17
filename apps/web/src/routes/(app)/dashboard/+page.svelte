@@ -155,6 +155,8 @@
       confirmedMinutes?: number;
       openMonthMinutes?: number | null;
       hasClosedMonth?: boolean;
+      // Issue #588 (P-14): how many calendar months the forecast spans; null = unknown.
+      unconfirmedMonths?: number | null;
       rosterIncomplete?: boolean;
     } | null;
     vacation: { remaining: number; total: number; used: number } | null;
@@ -1789,14 +1791,16 @@
           {:else if stats.overtime.confirmedMinutes !== undefined}
             <!-- Phase 97-04 (SALDO-DISP-02) — the split primitive replaces the inline KPIStat
                  markup outright (not wrapped): KPIStat's pure-props string contract cannot
-                 express a two-figure tile. Leads with "Bestätigt", subordinates "Laufender
-                 Monat (Prognose)" — the deliberate hierarchy flip this phase exists to ship. -->
+                 express a two-figure tile. Leads with "Bestätigt", subordinates the forecast,
+                 worded from the data by forecastLabel() (Issue #588) — the deliberate hierarchy
+                 flip this phase exists to ship. -->
             <SaldoAnzeige
               variant="expanded"
               label="Überstundenkonto"
               confirmedMinutes={stats.overtime.confirmedMinutes}
               openMonthMinutes={stats.overtime.openMonthMinutes ?? null}
               hasClosedMonth={stats.overtime.hasClosedMonth ?? false}
+              unconfirmedMonths={stats.overtime.unconfirmedMonths ?? null}
               rosterIncomplete={stats.overtime.rosterIncomplete}
             />
           {:else}

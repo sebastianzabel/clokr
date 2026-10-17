@@ -278,16 +278,81 @@ describe("SaldoAnzeige — split mode (Phase 97-01)", () => {
   // undifferentiated. 97-UI-SPEC forbids the meaning resting on a visual convention alone.
   // These sr-only prefixes carry the same vocabulary the expanded variant shows on screen.
   it("compact split labels each value for screen readers (not by parentheses alone)", () => {
+    // Issue #588 (P-14): the running-month wording now follows the data, so the migrated case
+    // names exactly one unconfirmed month (same expected text as before).
     renderWithTheme(SaldoAnzeige, {
       variant: "compact",
       confirmedMinutes: 135,
       openMonthMinutes: 40,
       hasClosedMonth: true,
+      unconfirmedMonths: 1,
     });
     expect(screen.getByTestId("saldo-confirmed-value")).toHaveTextContent("Bestätigt:");
     expect(screen.getByTestId("saldo-forecast-value")).toHaveTextContent(
       "Laufender Monat (Prognose):",
     );
+  });
+
+  // Issue #588 (P-14): the forecast wording follows the data; it claims the running month only
+  // for exactly one unconfirmed month, never for several or an unknown count.
+  describe("forecast wording from the data (Issue #588)", () => {
+    const split = {
+      confirmedMinutes: 135,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    };
+
+    it("expanded: one unconfirmed month reads as the running month", () => {
+      renderWithTheme(SaldoAnzeige, { ...split, variant: "expanded", unconfirmedMonths: 1 });
+      expect(screen.getByTestId("saldo-forecast-label")).toHaveTextContent(
+        "Laufender Monat (Prognose)",
+      );
+    });
+
+    it("expanded: three unconfirmed months read as since the closing", () => {
+      renderWithTheme(SaldoAnzeige, { ...split, variant: "expanded", unconfirmedMonths: 3 });
+      expect(screen.getByTestId("saldo-forecast-label")).toHaveTextContent(
+        "Seit Monatsabschluss (Prognose)",
+      );
+      expect(screen.getByTestId("saldo-forecast-label")).not.toHaveTextContent("Laufender Monat");
+    });
+
+    it("compact: three unconfirmed months reach screen readers as since the closing", () => {
+      renderWithTheme(SaldoAnzeige, { ...split, variant: "compact", unconfirmedMonths: 3 });
+      expect(screen.getByTestId("saldo-forecast-value")).toHaveTextContent(
+        "Seit Monatsabschluss (Prognose):",
+      );
+    });
+
+    it("an unknown count never claims the running month", () => {
+      renderWithTheme(SaldoAnzeige, { ...split, variant: "expanded" });
+      expect(screen.getByTestId("saldo-forecast-label")).toHaveTextContent(
+        "Seit Monatsabschluss (Prognose)",
+      );
+      expect(screen.getByTestId("saldo-forecast-label")).not.toHaveTextContent("Laufender Monat");
+    });
+
+    it("no closed month and an unknown count reads as since hire", () => {
+      renderWithTheme(SaldoAnzeige, {
+        ...split,
+        hasClosedMonth: false,
+        variant: "expanded",
+        unconfirmedMonths: null,
+      });
+      expect(screen.getByTestId("saldo-forecast-label")).toHaveTextContent(
+        "Prognose (seit Eintritt)",
+      );
+    });
+
+    it("an explicit forecastLabel wins over the data", () => {
+      renderWithTheme(SaldoAnzeige, {
+        ...split,
+        variant: "expanded",
+        unconfirmedMonths: 1,
+        forecastLabel: "Eigene Beschriftung",
+      });
+      expect(screen.getByTestId("saldo-forecast-label")).toHaveTextContent("Eigene Beschriftung");
+    });
   });
 
   // Issue #588 (P-15): a caller that relabels the forecast ("Seit Monatsabschluss (Prognose)")

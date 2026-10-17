@@ -268,6 +268,8 @@
   let overtimeConfirmedMinutes: number | undefined = $state(undefined);
   let overtimeOpenMonthMinutes: number | null | undefined = $state(undefined);
   let overtimeHasClosedMonth: boolean | undefined = $state(undefined);
+  // Issue #588 (P-14): how many calendar months the forecast spans; words the card caption.
+  let overtimeUnconfirmedMonths: number | null | undefined = $state(undefined);
   let overtimeRosterIncomplete: boolean | undefined = $state(undefined);
   // Phase 100 (OTC-03) — additive tolerance fields from GET /overtime/:id, mirroring the
   // Phase-97-01 split fields above: undefined on fetch failure / older cached response
@@ -504,6 +506,7 @@
                 confirmedMinutes?: number;
                 openMonthMinutes?: number | null;
                 hasClosedMonth?: boolean;
+                unconfirmedMonths?: number | null;
                 rosterIncomplete?: boolean;
                 // Phase 100 (OTC-03) — additive tolerance fields, already returned by the
                 // endpoint (overtime.ts:172-173); only the client-side type was missing them.
@@ -570,6 +573,7 @@
       overtimeConfirmedMinutes = overtimeValue?.confirmedMinutes;
       overtimeOpenMonthMinutes = overtimeValue?.openMonthMinutes;
       overtimeHasClosedMonth = overtimeValue?.hasClosedMonth;
+      overtimeUnconfirmedMonths = overtimeValue?.unconfirmedMonths;
       overtimeRosterIncomplete = overtimeValue?.rosterIncomplete;
       // Phase 100 (OTC-03) — same undefined-on-failure contract as the siblings above.
       overtimeNegativeLimitExceeded = overtimeValue?.isNegativeLimitExceeded;
@@ -1948,6 +1952,7 @@
       confirmedMinutes={overtimeConfirmedMinutes}
       openMonthMinutes={overtimeOpenMonthMinutes}
       hasClosedMonth={overtimeHasClosedMonth}
+      unconfirmedMonths={overtimeUnconfirmedMonths}
       rosterIncomplete={overtimeRosterIncomplete}
       isNegativeLimitExceeded={overtimeNegativeLimitExceeded}
       maxNegativeBalanceMinutes={overtimeMaxNegativeBalanceMinutes}
