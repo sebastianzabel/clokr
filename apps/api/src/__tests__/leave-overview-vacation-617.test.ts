@@ -3,14 +3,16 @@
  * only, selected by `leaveType.code` (never by name), and every real row carries the three new
  * per-person yearly counts `availableDays`, `takenDays`, `approvedUpcomingDays` read from the
  * Resturlaub facade. `Date` is faked to a mid-day instant, so the year and the facade's default
- * split day (tenant-local yesterday = 2026-10-16) are fixed.
+ * split day (tenant-local yesterday = 2026-10-15) are fixed.
  */
 import type { FastifyInstance } from "fastify";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import { leaveTypeFields, type RequestableCode } from "../contexts/absence/leave-type";
 
-const NOW = new Date("2026-10-17T10:00:00.000Z");
+// A mid-day instant in the past of any real run: audit rows the heal writes under the faked clock must
+// never be dated after the real "now" (other tests count audit rows since their own start).
+const NOW = new Date("2026-10-16T10:00:00.000Z");
 const YEAR = 2026;
 
 type OverviewRow = {

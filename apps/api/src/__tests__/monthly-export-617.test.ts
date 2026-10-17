@@ -569,18 +569,18 @@ describe("Issue #617 - Monatsexport", () => {
     const rowOf = (data: ExportPayload, p: { employeeNumber: string }) =>
       data.rows.find((r) => r.employeeNumber === p.employeeNumber)!;
 
+    // Instants stay in the past of any real run: the heal and the export audit rows written under the
+    // faked clock must never be dated after the real "now" (other tests count audit rows since
+    // their own start). RUNNING_MONTH_NOW is inside October 2026, the month after FAKE_NOW's.
+    const RUNNING_MONTH_NOW = new Date("2026-10-16T10:00:00.000Z");
+    const EARLY_NOW = new Date("2026-10-05T10:00:00.000Z"); // before the carry-over deadline of pv1
+
     it("evaluates at the last day of a past month, yesterday in the running month, and in the exported year", async () => {
       const sept = await exportPayload(`year=${EXPORT_YEAR}&month=9`);
       expect(sept.vacationYear).toEqual({ year: 2026, asOf: "30.09.2026" });
-      const running = await exportPayload(
-        `year=${EXPORT_YEAR}&month=10`,
-        new Date("2026-10-17T10:00:00.000Z"),
-      );
-      expect(running.vacationYear).toEqual({ year: 2026, asOf: "16.10.2026" });
-      const december = await exportPayload(
-        `year=2025&month=12`,
-        new Date("2026-10-17T10:00:00.000Z"),
-      );
+      const running = await exportPayload(`year=${EXPORT_YEAR}&month=10`, RUNNING_MONTH_NOW);
+      expect(running.vacationYear).toEqual({ year: 2026, asOf: "15.10.2026" });
+      const december = await exportPayload(`year=2025&month=12`, RUNNING_MONTH_NOW);
       expect(december.vacationYear).toEqual({ year: 2025, asOf: "31.12.2025" });
       // The 2025 row of pv1 is the one printed in the December 2025 export.
       expect(rowOf(december, pv1).vacation).toMatchObject({
@@ -630,7 +630,7 @@ describe("Issue #617 - Monatsexport", () => {
     });
 
     it("for the running month the row equals the in-app overview row of the same person", async () => {
-      const now = new Date("2026-10-17T10:00:00.000Z");
+      const now = RUNNING_MONTH_NOW;
       const data = await exportPayload(`year=${EXPORT_YEAR}&month=10`, now);
       vi.setSystemTime(now);
       const overviewToken = await adminTokenAt();
@@ -691,27 +691,23 @@ describe("Issue #617 - Monatsexport", () => {
     });
 
     it("a re-export of the same month on a later day prints the same vacation figures", async () => {
-      const first = await exportPayload(`year=${EXPORT_YEAR}&month=9`);
-      // Later: a request is created on 20.10. and the approved vacation of 20.10. lies in the past.
-      await request(pv1.id, "2026-12-14", "2026-12-14", 1, "PENDING", "2026-10-20");
-      const second = await exportPayload(
-        `year=${EXPORT_YEAR}&month=9`,
-        new Date("2026-10-25T10:00:00.000Z"),
-      );
+      // First on 05.10. (the carry-over deadline of 10.10. has not passed), then on 15.10. (it has).
+      const first = await exportPayload(`year=${EXPORT_YEAR}&month=9`, EARLY_NOW);
+      // In between a request is created (14.10.) that did not exist at the Stichtag.
+      await request(pv1.id, "2026-12-14", "2026-12-14", 1, "PENDING", "2026-10-14");
+      const second = await exportPayload(`year=${EXPORT_YEAR}&month=9`);
       expect(second.vacationYear).toEqual(first.vacationYear);
       expect(rowOf(second, pv1).vacation).toEqual(rowOf(first, pv1).vacation);
-      // Genehmigt 20./21.10. in both; the request created 20.10. is in neither Beantragt; the
-      // carry-over (deadline 10.10., Hinweis issued) is evaluated at 30.09. in both.
-      expect(rowOf(second, pv1).vacation).toMatchObject({
-        approvedUpcomingDays: 2,
-        pendingDays: 2,
-        carriedOverEffectiveDays: 4,
-      });
-      expect(rowOf(first, pv1).vacation).toMatchObject({
-        approvedUpcomingDays: 2,
-        pendingDays: 2,
-        carriedOverEffectiveDays: 4,
-      });
+      // Genehmigt 20./21.10. in both; neither the request created 05.10. nor the one created 14.10.
+      // is in Beantragt; the carry-over (deadline 10.10., Hinweis issued) is evaluated at 30.09. in
+      // both, so it is effective in both although it has lapsed on the second day.
+      for (const data of [first, second]) {
+        expect(rowOf(data, pv1).vacation).toMatchObject({
+          approvedUpcomingDays: 2,
+          pendingDays: 2,
+          carriedOverEffectiveDays: 4,
+        });
+      }
     });
   });
 });
