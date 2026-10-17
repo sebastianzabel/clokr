@@ -21,15 +21,16 @@ import { getTestApp, closeTestApp, seedTestData, cleanupTestData, grantSystemRol
 import { getVacationBalance } from "../contexts/absence/facade/vacation-balance";
 import type { FastifyInstance } from "fastify";
 
-// Task 2 (D-07, D-08) — the two overview PDF handlers only expose their aggregated data by
-// feeding it into pdfkit, not observable by decoding the response body. Spies that still call
-// straight through to the real implementation, same pattern as composition/__tests__/reports.test.ts.
+// Task 2 (D-07, D-08) — the Monatsexport only exposes its aggregated data by feeding it into
+// pdfkit, not observable by decoding the response body. A spy that still calls straight through to
+// the real implementation, same pattern as composition/__tests__/reports.test.ts. Issue #617: the
+// two vacation overview PDFs this file used to spy on were removed; the Monatsexport carries the
+// same Resturlaub figures in its section "Urlaubsjahr".
 vi.mock("../composition/pdf", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../composition/pdf")>();
   return {
     ...actual,
-    generateVacationOverviewPdf: vi.fn(actual.generateVacationOverviewPdf),
-    streamVacationOverviewPdf: vi.fn(actual.streamVacationOverviewPdf),
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
 import * as pdfUtils from "../composition/pdf";
@@ -160,6 +161,9 @@ describe("Issue #451 Plan 08 (D-07, D-08) — one Resturlaub across dashboard, U
         startDate: new Date(Date.UTC(2026, 8, 1)),
         endDate: new Date(Date.UTC(2026, 8, 2)),
         days: 2,
+        // Created before the Monatsexport's Stichtag (30.06.2026) so "Beantragt" of the export
+        // (pending requests created by the Stichtag, #617 P-03) counts it as the overview does.
+        createdAt: new Date("2026-06-15T08:00:00.000Z"),
       },
     });
 
@@ -264,46 +268,58 @@ describe("Issue #451 Plan 08 (D-07, D-08) — one Resturlaub across dashboard, U
     expect(entRow!.vacationBalance!.pendingDays).toBe(2);
   });
 
-  it("both overview PDFs read the facade: remainingDays 26, carriedOver 3 (D-07)", async () => {
+  it("the Monatsexport reads the facade: Resturlaub 26, Übertrag (wirksam) 3, equal to the in-app overview row (D-07, #617)", async () => {
+    // Running month (July 2026) at 01.07.: the export's Stichtag is yesterday (30.06.), the same
+    // day the in-app overview describes, so both describe one state.
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-07-01T10:00:00.000Z"));
 
-    const pdfRes = await app.inject({
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
+    spy.mockClear();
+    const exportRes = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/vacation/pdf?year=2026",
+      url: "/api/v1/reports/monthly-export/pdf?year=2026&month=7",
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
-    expect(pdfRes.statusCode, `vacation/pdf must succeed: ${pdfRes.statusCode}`).toBe(200);
-    const streamCalls = vi.mocked(pdfUtils.streamVacationOverviewPdf).mock.calls;
-    const streamCall = streamCalls.find((c) =>
-      c[1].employees.some((e: { employeeNumber: string }) =>
-        e.employeeNumber.startsWith("RBP451-"),
-      ),
+    expect(exportRes.statusCode, `monthly-export must succeed: ${exportRes.statusCode}`).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const payload = spy.mock.calls[0][0];
+    expect(payload.vacationYear).toEqual({ year: 2026, asOf: "30.06.2026" });
+    const exportRow = payload.rows.find((r) => r.employeeNumber.startsWith("RBP451-"));
+    expect(exportRow, "the export must include this employee").toBeDefined();
+    expect(exportRow!.vacation, "VACATION figures of the employee must be present").not.toBeNull();
+    expect(exportRow!.vacation!.remainingDays, "export Resturlaub — RED before: 28").toBe(26);
+    expect(exportRow!.vacation!.carriedOverEffectiveDays, "export Übertrag — RED before: 5").toBe(
+      3,
     );
-    expect(streamCall, "overview PDF must include this employee").toBeDefined();
-    const streamEntry = streamCall![1].employees.find((e: { employeeNumber: string }) =>
-      e.employeeNumber.startsWith("RBP451-"),
-    );
-    expect(streamEntry!.remainingDays, "vacation/pdf overview — RED before: 28").toBe(26);
-    expect(streamEntry!.carriedOver, "vacation/pdf overview — RED before: 5").toBe(3);
+    expect(exportRow!.vacation!.availableDays).toBe(33);
+    expect(exportRow!.vacation!.pendingDays).toBe(2);
 
-    const overviewPdfRes = await app.inject({
+    // The in-app overview row of the same person on the same day carries the same figures.
+    const overviewRes = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/leave-overview/pdf?year=2026",
+      url: "/api/v1/reports/leave-overview?year=2026",
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
-    expect(overviewPdfRes.statusCode, `leave-overview/pdf must succeed`).toBe(200);
-    const generateCalls = vi.mocked(pdfUtils.generateVacationOverviewPdf).mock.calls;
-    const generateCall = generateCalls.find((c) =>
-      c[0].employees.some((e: { employeeNumber: string }) =>
-        e.employeeNumber.startsWith("RBP451-"),
-      ),
+    expect(overviewRes.statusCode).toBe(200);
+    const overviewRow = (
+      JSON.parse(overviewRes.body) as Array<{
+        employee: { id: string };
+        leaveType: { code: string } | null;
+        remainingDays: number;
+        carriedOverEffectiveDays: number;
+        availableDays: number;
+        pendingDays: number;
+        missingEntitlement?: boolean;
+      }>
+    ).find((r) => r.employee.id === employeeId && !r.missingEntitlement)!;
+    expect(overviewRow).toBeDefined();
+    expect(exportRow!.vacation!.remainingDays).toBe(overviewRow.remainingDays);
+    expect(exportRow!.vacation!.carriedOverEffectiveDays).toBe(
+      overviewRow.carriedOverEffectiveDays,
     );
-    expect(generateCall, "leave-overview/pdf must include this employee").toBeDefined();
-    const generateEntry = generateCall![0].employees.find((e: { employeeNumber: string }) =>
-      e.employeeNumber.startsWith("RBP451-"),
-    );
-    expect(generateEntry!.remainingDays, "leave-overview/pdf overview — RED before: 28").toBe(26);
+    expect(exportRow!.vacation!.availableDays).toBe(overviewRow.availableDays);
+    expect(exportRow!.vacation!.pendingDays).toBe(overviewRow.pendingDays);
   });
 
   it("carryover-at-risk: FIFO-adjusted atRiskDays, not raw carriedOverDays (D-08)", async () => {

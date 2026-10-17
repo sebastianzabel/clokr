@@ -459,6 +459,52 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
     expect(numbers).not.toContain(outOfScope.employee.employeeNumber);
   });
 
+  // Issue #617: the vacation and overview PDFs were replaced by the Monatsexport's section
+  // "Urlaubsjahr"; the narrowing property is asserted on the payload's vacation figures.
+  it("GET /monthly-export/pdf: the vacation figures of the payload belong to the in-scope person only", async () => {
+    const inScope = await createEmployee("inscope-expvac");
+    await createHome(inScope.employee.id, salonA.id);
+    const outOfScope = await createEmployee("outscope-expvac");
+    await createHome(outOfScope.employee.id, salonB.id);
+    for (const [person, totalDays] of [
+      [inScope, 30],
+      [outOfScope, 27],
+    ] as const) {
+      await app.prisma.leaveEntitlement.create({
+        data: {
+          employeeId: person.employee.id,
+          leaveTypeId: data.vacationType.id,
+          year: 2026,
+          totalDays,
+        },
+      });
+    }
+
+    const manager = await createScopedManager("mgr-expvac", ["report:export:ZUGEWIESEN"], {
+      scopeType: "SALONS",
+      salonIds: [salonA.id],
+    });
+    const token = await login(manager.user.email);
+
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
+    spy.mockClear();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/monthly-export/pdf?year=2026&month=6",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const rows = spy.mock.calls[0][0].rows;
+    const inRow = rows.find((r) => r.employeeNumber === inScope.employee.employeeNumber);
+    expect(inRow?.vacation?.entitlementDays).toBe(30);
+    expect(
+      rows.find((r) => r.employeeNumber === outOfScope.employee.employeeNumber),
+    ).toBeUndefined();
+    // No figure of the out-of-scope person's entitlement (27) is in any row of the payload.
+    expect(rows.every((r) => r.vacation === null || r.vacation.entitlementDays !== 27)).toBe(true);
+  });
+
   it("GET /leave-list/pdf: renders successfully for a SALONS-scoped manager with a mixed in/out-of-scope tenant", async () => {
     const outOfScope = await createEmployee("outscope-llpdf");
     await createHome(outOfScope.employee.id, salonB.id);

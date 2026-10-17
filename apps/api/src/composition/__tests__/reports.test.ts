@@ -14,18 +14,16 @@ import * as pdfUtils from "../pdf";
 import { DATEV_BWD_SATZ_ID } from "../reports";
 import { leaveTypeFields } from "../../contexts/absence/leave-type";
 
-// Phase 97 (D-11, Task 3): the two vacation-overview PDF handlers only expose their
-// aggregated { totalDays, ... } data by feeding it into pdfkit, which compresses its
-// content streams — not observable by decoding the response body. These two functions
-// are wrapped with a spy that still calls straight through to the real implementation
-// (so the actual PDF bytes returned to callers are unaffected), purely to let tests
-// inspect the `data` argument the route built.
+// Phase 97 (D-11, Task 3): the PDF handlers only expose their aggregated data by feeding it
+// into pdfkit, which compresses its content streams — not observable by decoding the response
+// body. The generator is wrapped with a spy that still calls straight through to the real
+// implementation (so the actual PDF bytes returned to callers are unaffected), purely to let
+// tests inspect the `data` argument the route built. Issue #617: the two vacation-overview PDF
+// handlers this spy used to cover were removed; it covers the Monatsexport now.
 vi.mock("../pdf", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../pdf")>();
   return {
     ...actual,
-    generateVacationOverviewPdf: vi.fn(actual.generateVacationOverviewPdf),
-    streamVacationOverviewPdf: vi.fn(actual.streamVacationOverviewPdf),
     generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
@@ -919,16 +917,19 @@ describe("Reports API", () => {
     });
   });
 
-  // ── Phase 97 (D-11): both vacation-overview PDFs select by LeaveType.code ──────
+  // ── Phase 97 (D-11): the vacation figures select by LeaveType.code ──────────────
   // Before this change, both handlers summed every LeaveEntitlement whose type NAME
   // lower-cased contained the substring "urlaub" — four of the nine canonical names
   // (Urlaub, Sonderurlaub, Unbezahlter Urlaub, Bildungsurlaub) match that substring,
   // so a further-education entitlement was silently added to the annual-leave figure.
   // Deliberate, tested behaviour change: the overview now shows only the real VACATION
   // entitlement.
-  describe("GET /api/v1/reports/vacation/pdf & /leave-overview/pdf — VACATION selected by code (D-11)", () => {
+  // Issue #617: the two vacation PDFs were removed. The same property is asserted on the in-app
+  // overview (JSON) and on the vacation section of the Monatsexport, which replaced them.
+  describe("GET /api/v1/reports/leave-overview & /monthly-export/pdf — VACATION selected by code (D-11, #617)", () => {
     let d11Data: Awaited<ReturnType<typeof seedTestData>>;
     const year = new Date().getFullYear();
+    const month = new Date().getMonth() + 1;
 
     beforeAll(async () => {
       d11Data = await seedTestData(app, "d11");
@@ -982,40 +983,49 @@ describe("Reports API", () => {
       await cleanupTestData(app, d11Data.tenant.id);
     });
 
-    async function overviewRow() {
+    /** The in-app overview rows of the fixture employee (all of them, to prove the filter). */
+    async function overviewRows() {
       const res = await app.inject({
         method: "GET",
-        url: `/api/v1/reports/leave-overview/pdf?year=${year}`,
+        url: `/api/v1/reports/leave-overview?year=${year}`,
         headers: { authorization: `Bearer ${d11Data.adminToken}` },
       });
       expect(res.statusCode).toBe(200);
-      const calls = vi.mocked(pdfUtils.generateVacationOverviewPdf).mock.calls;
-      const data = calls[calls.length - 1][0];
-      return data.employees.find((e) => e.employeeNumber === d11Data.employee.employeeNumber);
+      const rows = JSON.parse(res.body) as Array<{
+        employee: { id: string };
+        leaveType: { code: string } | null;
+        totalDays: number | null;
+      }>;
+      return rows.filter((r) => r.employee.id === d11Data.employee.id);
     }
 
-    async function streamedOverviewRow() {
+    /** The vacation figures of the fixture employee in the Monatsexport payload. */
+    async function exportVacation() {
+      const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
+      spy.mockClear();
       const res = await app.inject({
         method: "GET",
-        url: `/api/v1/reports/vacation/pdf?year=${year}`,
+        url: `/api/v1/reports/monthly-export/pdf?year=${year}&month=${month}`,
         headers: { authorization: `Bearer ${d11Data.adminToken}` },
       });
       expect(res.statusCode).toBe(200);
-      const calls = vi.mocked(pdfUtils.streamVacationOverviewPdf).mock.calls;
-      const data = calls[calls.length - 1][1];
-      return data.employees.find((e) => e.employeeNumber === d11Data.employee.employeeNumber);
+      const payload = spy.mock.calls[spy.mock.calls.length - 1][0];
+      return payload.rows.find((r) => r.employeeNumber === d11Data.employee.employeeNumber)
+        ?.vacation;
     }
 
-    it("D11-1: totalDays is 30 (VACATION only), not 35 (VACATION + EDUCATION) — /leave-overview/pdf", async () => {
-      const row = await overviewRow();
-      expect(row).toBeDefined();
-      expect(row!.totalDays).toBe(30);
+    it("D11-1: totalDays is 30 (VACATION only), not 35 (VACATION + EDUCATION) — in-app overview", async () => {
+      const rows = await overviewRows();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].leaveType?.code).toBe("VACATION");
+      expect(rows[0].totalDays).toBe(30);
     });
 
-    it("D11-1b: the same '30 not 35' holds for /vacation/pdf's streamed overview", async () => {
-      const row = await streamedOverviewRow();
-      expect(row).toBeDefined();
-      expect(row!.totalDays).toBe(30);
+    it("D11-1b: the same '30 not 35' holds for the Monatsexport's vacation section", async () => {
+      const vacation = await exportVacation();
+      expect(vacation).toBeDefined();
+      expect(vacation).not.toBeNull();
+      expect(vacation!.entitlementDays).toBe(30);
     });
 
     it("D11-2: a VACATION-code row renamed to 'Erholungsurlaub' still appears with its correct totalDays", async () => {
@@ -1023,9 +1033,10 @@ describe("Reports API", () => {
         where: { id: d11Data.vacationType.id },
         data: { name: "Erholungsurlaub" },
       });
-      const row = await overviewRow();
-      expect(row).toBeDefined();
-      expect(row!.totalDays).toBe(30);
+      const rows = await overviewRows();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].totalDays).toBe(30);
+      expect((await exportVacation())?.entitlementDays).toBe(30);
     });
 
     it("D11-3: a VACATION-code row renamed to 'Freizeit' (no 'urlaub' substring) now appears too — the old substring check would have dropped it", async () => {
@@ -1033,19 +1044,23 @@ describe("Reports API", () => {
         where: { id: d11Data.vacationType.id },
         data: { name: "Freizeit" },
       });
-      const row = await overviewRow();
-      expect(row).toBeDefined();
+      const rows = await overviewRows();
       // Under the removed substring check, "Freizeit" doesn't match /urlaub/, so this
       // entitlement would have been skipped and only the EDUCATION row ("Bildungsurlaub",
       // which DOES match) would have been summed — totalDays would have read 5, not 30.
-      expect(row!.totalDays).toBe(30);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].totalDays).toBe(30);
+      expect((await exportVacation())?.entitlementDays).toBe(30);
     });
 
     it("D11-4: the OTHER-coded entitlement (999 days) never contributes to totalDays", async () => {
-      const row = await overviewRow();
-      expect(row).toBeDefined();
-      expect(row!.totalDays).not.toBe(999);
-      expect(row!.totalDays).toBe(30);
+      const rows = await overviewRows();
+      expect(rows.some((r) => r.totalDays === 999)).toBe(false);
+      expect(rows.some((r) => r.leaveType?.code !== "VACATION")).toBe(false);
+      const vacation = await exportVacation();
+      expect(vacation).toBeDefined();
+      expect(vacation!.entitlementDays).not.toBe(999);
+      expect(vacation!.entitlementDays).toBe(30);
     });
   });
 

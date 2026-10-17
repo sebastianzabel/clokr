@@ -30,6 +30,7 @@ vi.mock("../pdf", async (importOriginal) => {
   return {
     ...actual,
     streamLeaveListPdf: vi.fn(actual.streamLeaveListPdf),
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
 
@@ -171,6 +172,37 @@ describe("Issue #448 — Berichte, DATEV und Urlaubsliste zählen Berufsschultag
     );
     expect(controlVacationLine).toBeDefined();
     expect(controlVacationLine).toContain(";5,0;");
+  });
+
+  // Issue #617: the Urlaubsliste PDF was replaced by the Monatsexport; the Berufsschule exclusion
+  // is asserted on the export's month Urlaub (the number the DATEV U line carries).
+  it("Monatsexport: the Urlaub count of the month is one lower than the control employee's identical week", async () => {
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
+    spy.mockClear();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/monthly-export/pdf?year=2027&month=3",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const row = spy.mock.calls[0][0].rows.find(
+      (r) => r.employeeNumber === data.employee.employeeNumber,
+    );
+    expect(row).toBeDefined();
+    expect(row!.absenceDays.vacation).toBe(4);
+
+    spy.mockClear();
+    const controlRes = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/monthly-export/pdf?year=2027&month=3",
+      headers: { authorization: `Bearer ${controlData.adminToken}` },
+    });
+    expect(controlRes.statusCode).toBe(200);
+    const controlRow = spy.mock.calls[0][0].rows.find(
+      (r) => r.employeeNumber === controlData.employee.employeeNumber,
+    );
+    expect(controlRow).toBeDefined();
+    expect(controlRow!.absenceDays.vacation).toBe(5);
   });
 
   it("Urlaubsliste PDF: the period's days is one lower and carries the BS note; the control employee's period is byte-identical to its day count with no note", async () => {
