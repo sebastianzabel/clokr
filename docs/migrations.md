@@ -1184,6 +1184,36 @@ Monats ist eine bewusste Korrekturbuchung.
 
 **3. Rollback.** Es gibt nichts zurückzunehmen; das vorige Image enthält nur das alte Skript.
 
+## Phase 682 — Live-Saldo mit Eröffnungssaldo ohne abgeschlossenen Monat (Issue #682)
+
+**Was sich ändert.** Es gibt **keine Migration und keinen Schemawechsel**. Der Live-Saldo (Dashboard, `GET /overtime/:id`,
+gespeichertes `OvertimeAccount.balanceHours`) beginnt bei einer Person ohne abgeschlossenen Monat jetzt mit ihrem aktiven
+Eröffnungssaldo — wie jeder Monatsabschluss und die Monatsreihe. Abgeschlossene Monate und Personen mit mindestens einem
+Abschluss ändern sich nicht. Der gespeicherte Wert einer betroffenen Person ändert sich erst bei ihrer nächsten Änderung
+(oder beim nächsten Speichern ihres Eröffnungssaldos) um genau dessen Minuten; angezeigt wird der neue Wert sofort.
+
+**1. Vor dem Deploy prüfen (lesend, auf int UND prod).** `apps/api/scripts/audit-682-opening-balance-live-gap.ts` schreibt
+nichts (kein Schreib-Schalter; `--apply` und `--confirm` werden abgelehnt) und gibt je betroffener Person nur Mandanten-Id,
+Personen-Id und die Änderung in Minuten aus (`gapMinutes`). Die Änderung wird gemessen: dieselbe Live-Berechnung läuft einmal
+normal und einmal ohne Eröffnungssaldo. Deshalb **aus einem Checkout des Release-Stands** ausführen — mit einem älteren Stand
+sind beide Läufe gleich und die Liste ist leer.
+
+```bash
+DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx scripts/audit-682-opening-balance-live-gap.ts --all-tenants | tee "682-bestand-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+Gleichwertig im Image (Einstiegspunkt überschreiben, damit **kein** `prisma migrate deploy` läuft):
+`docker run --rm -e DATABASE_URL --entrypoint sh <api-image> -lc 'cd /app/apps/api && pnpm tsx scripts/audit-682-opening-balance-live-gap.ts --all-tenants'`.
+`--tenant-id <uuid>` begrenzt auf einen Mandanten. Exit-Code `0`: niemand betroffen; `2`: Liste gedruckt; `1`: Aufruf- oder
+Verbindungsfehler.
+
+**2. Auswerten.** Jede Zeile ist eine Person, deren angezeigter Saldo nach dem Deploy um `gapMinutes` abweicht — das ist die
+Korrektur, kein neuer Fehler. Nichts ist zu buchen. Die Zusammenfassung nennt außerdem, wie viele Eröffnungssalden schon in
+einem Abschluss stecken (unverändert).
+
+**3. Rollback.** Das vorige Image zeigt wieder den Saldo ohne Eröffnungssaldo; ein inzwischen gespeicherter Wert wird bei der
+nächsten Änderung der Person wieder ohne ihn geschrieben. Keine Daten zurückzunehmen.
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:

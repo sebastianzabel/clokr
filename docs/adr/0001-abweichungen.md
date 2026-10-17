@@ -505,6 +505,51 @@ im Monatsexport (Spalte „Gesamtsaldo“) und in `GET /overtime/month-saldo`. D
 
 - `pnpm --filter @clokr/api exec vitest run src/__tests__/open-month-chain-681.test.ts src/__tests__/saldo-boundary-neutrality-493.test.ts`.
 
+### Nachtrag 2026-10-17 (Issue #682) — Der Live-Saldo beginnt ohne abgeschlossenen Monat mit dem Eröffnungssaldo
+
+**Schwere: Fehlerbehebung einer Anzeigezahl und des gespeicherten Live-Werts. Keine Unterbau-Änderung, keine Migration, kein
+abgeschlossener Monat geändert.**
+
+Ursache: `computeAccountChain` (`contexts/working-time-account/overtime-balance.ts`, der Rumpf von
+`computeOvertimeBalanceBreakdown`) begann ohne abgeschlossenen Monat bei 0 und las den Eröffnungssaldo nie. Alle
+Abschlusswege (Cron, manueller Abschluss, Neuberechnung) und seit #681 die Monatsreihe beginnen mit `getCarryOverBase()`
+(Phase 99 OB-02). Live-Saldo (Dashboard, `GET /overtime/:id`, gespeichertes `OvertimeAccount.balanceHours`) und Gesamtsaldo
+unterschieden sich bis zum ersten Abschluss um genau die Minuten des Eröffnungssaldos (#681, Fall pG: 600).
+
+**Was sich geändert hat**
+
+- Die Live-Kette beginnt mit `getCarryOverBase(prisma, id, abgeschlossen ? { carryOver } : null)` — derselbe Startwert wie
+  jeder Abschluss, ein Ort. Mit abgeschlossenem Monat ist das der gespeicherte Übertrag des letzten Abschlusses; der
+  Eröffnungssaldo wird dann nicht erneut gelesen (der erste Abschluss hat ihn bereits aufgenommen).
+- `openMonthCarryInMinutes` addiert den Startwert nicht mehr zusätzlich auf die Kette (er steckt jetzt in ihr). Nebenbefund:
+  enthielt die Kette einen offenen Nur-erfassen-Monat (#494), fügte der alte Weg den Eröffnungssaldo nach dem Rücksetzen
+  wieder hinzu; jetzt fällt er wie beim Abschluss dieses Monats weg.
+- `POST /overtime/opening-balance` schreibt nach der Neuberechnung den Live-Wert sofort in `OvertimeAccount.balanceHours`
+  (`updateOvertimeAccount`); vorher blieb der gespeicherte Wert bis zur nächsten fremden Änderung stehen.
+
+**Was bewusst NICHT geschah**
+
+- „Bestätigt“ (`confirmedMinutes`) bleibt der gespeicherte Übertrag des letzten Abschlusses (dieselbe Zahl wie die Sperre des
+  Überstundenausgleichs, `getConfirmedCarryOver`). Ein Eröffnungssaldo ohne Abschluss steht deshalb im Anteil „Laufender
+  Monat (Prognose)“, bis der erste Monat abgeschlossen ist.
+- Abgeschlossene Monate werden nur gelesen (Vollzeilenvergleich im Test). Keine eingefrorene Saldo-Zahl änderte sich
+  (Goldmatrix, 493-Neutralität, 451-Identität, 617-Monatsexport, Parität der vier Saldopfade): keine dieser Fixtures hat einen
+  Eröffnungssaldo ohne Abschluss. Kein Änderungsregister nötig.
+- Gespeicherte Werte werden nicht nachträglich umgeschrieben. Der gespeicherte Live-Saldo einer betroffenen Person ändert sich
+  bei ihrer nächsten Änderung (Zeiteintrag, Antrag, Schicht) um den Eröffnungssaldo — erwartet, offener Stand.
+  `scripts/audit-682-opening-balance-live-gap.ts` listet diese Personen vorab (nur lesend, Ids und Minuten).
+
+**Auswirkung auf die Kontexte**
+
+- Arbeitszeitkonto: Startwert der Live-Kette (Ort der Regel), Eröffnungssaldo-Endpunkt.
+- Kompositionsschicht, Zeiterfassung, Abwesenheiten, Schichtplanung, Unterbau: keine.
+
+**Nachrechnen**
+
+- `pnpm --filter @clokr/api exec vitest run src/__tests__/live-saldo-opening-balance-682.test.ts src/__tests__/open-month-chain-681.test.ts scripts/__tests__/audit-682-opening-balance-live-gap.test.ts`
+  (vor der Korrektur 16 + 2 Fälle rot).
+- `pnpm --filter @clokr/api exec tsx scripts/measure-saldo-path-parity.ts --check`.
+
 ---
 
 ## H — Routen und Querschnittsmodule in den richtigen Kontext (Phase 243, Issue #243), das Ausnahmeregister für #101
