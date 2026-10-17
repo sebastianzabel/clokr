@@ -159,7 +159,7 @@ type TimeEntryRecord = {
 };
 
 // Employee shape returned by findMany with all necessary includes
-type EmployeeWithIncludes = {
+export type EmployeeWithIncludes = {
   id: string;
   firstName: string;
   lastName: string;
@@ -233,7 +233,7 @@ function buildStundennachweisDayRows(
 // day-counting rule of its own any more.
 // Bounds are UTC-midnight calendar days (monthDateRange) because they reach @db.Date columns / date
 // clipping — never a monthRangeUtc instant (Issue #493, D-01).
-function computeEmployeeSummary(
+export function computeEmployeeSummary(
   emp: EmployeeWithIncludes,
   firstDay: Date,
   lastDay: Date,
@@ -713,7 +713,7 @@ function buildDatevLodas(params: {
 // ── Common employee include shape ─────────────────────────────────────────────
 // Bounds are UTC-midnight calendar days (monthDateRange) because they reach @db.Date columns / date
 // clipping — never a monthRangeUtc instant (Issue #493, D-01).
-function buildEmployeeInclude(firstDay: Date, lastDay: Date) {
+export function buildEmployeeInclude(firstDay: Date, lastDay: Date) {
   // Issue #617 (P-06): several entries per day (#70) are listed in start-time order; without the
   // second key the order of one day's rows is whatever the planner returns. A mutable array (not
   // a readonly tuple) because Prisma's orderBy type is mutable.
@@ -763,7 +763,7 @@ function buildEmployeeInclude(firstDay: Date, lastDay: Date) {
 // payroll-relevant filter (status CONFIRMED + tenant scope) can drift, so there is one.
 // Bounds are UTC-midnight calendar days (monthDateRange) because they reach @db.Date columns / date
 // clipping — never a monthRangeUtc instant (Issue #493, D-01).
-async function fetchConfirmedSection9CreditsByEmp(
+export async function fetchConfirmedSection9CreditsByEmp(
   app: FastifyInstance,
   tenantId: string,
   firstDay: Date,
@@ -1028,7 +1028,7 @@ async function salonPersonsAtStichtag(
 // per-type count 0) from one whose only requests are sick leave — an employee with only SICK
 // leave still gets a Map (populated with the SICK code, which computeEmployeeSummary simply
 // never reads a non-sick count from).
-async function fetchLeaveDaysByCodeForMonthlyReport(
+export async function fetchLeaveDaysByCodeForMonthlyReport(
   app: FastifyInstance,
   tenantId: string,
   employees: Array<{ id: string; leaveRequests: Array<unknown> }>,
@@ -1162,7 +1162,7 @@ async function vacationYearFigures(
 }
 
 /** Every calendar day (`YYYY-MM-DD`) from `first` to `last`, both UTC-midnight dates. */
-function calendarDaysBetween(first: Date, last: Date): string[] {
+export function calendarDaysBetween(first: Date, last: Date): string[] {
   const days: string[] = [];
   for (let t = first.getTime(); t <= last.getTime(); t += 86_400_000) {
     days.push(new Date(t).toISOString().slice(0, 10));
@@ -1171,7 +1171,7 @@ function calendarDaysBetween(first: Date, last: Date): string[] {
 }
 
 /** `YYYY-MM-DD` of the day before `day` (calendar arithmetic on the string). */
-function dayBeforeStr(day: string): string {
+export function dayBeforeStr(day: string): string {
   const [y, m, d] = day.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
 }

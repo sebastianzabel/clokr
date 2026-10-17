@@ -261,6 +261,7 @@ function readerProblems(source: string, entry: ReaderEntry): string[] {
 }
 
 const REPORTS = "apps/api/src/composition/reports.ts";
+const REPORTS_PERIOD = "apps/api/src/composition/reports-period.ts"; // Issue #612
 const DASHBOARD = "apps/api/src/composition/dashboard.ts";
 const OVERTIME = "apps/api/src/contexts/working-time-account/api/overtime.ts";
 const route = (
@@ -294,6 +295,15 @@ const READERS: readonly ReaderEntry[] = [
     calls: ["loadDatevMonth"],
   },
   route(REPORTS, "/datev/employee", ["employedInPeriodWhere"]),
+  // Issue #612: the period report reads the population of EVERY month it lists through its one
+  // module-private assembly, which spells the rule once.
+  route(REPORTS_PERIOD, "/period", ["assemblePeriodReport"]),
+  {
+    file: REPORTS_PERIOD,
+    kind: "function",
+    name: "assemblePeriodReport",
+    calls: ["reportPopulationWhere"],
+  },
   route(OVERTIME, "/close-month/status", ["reportPopulationWhere"]),
   route(OVERTIME, "/close-month/year-status", ["reportPopulationWhere"]),
   route(DASHBOARD, "/team-week", ["reportPopulationWhere"]),

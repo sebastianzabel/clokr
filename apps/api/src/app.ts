@@ -27,6 +27,7 @@ import { dayBreakRoutes } from "./contexts/time-tracking/api/day-breaks"; // Iss
 import { leaveRoutes } from "./contexts/absence/api/leave";
 import { overtimeRoutes } from "./contexts/working-time-account/api/overtime";
 import { reportRoutes } from "./composition/reports";
+import { reportsPeriodRoutes } from "./composition/reports-period"; // Issue #612
 import { settingsRoutes } from "./contexts/platform/api/settings";
 import { leaveSettingsRoutes } from "./contexts/absence/api/leave-settings"; // Phase 243 Plan 02 (B1)
 import { holidayRoutes } from "./contexts/platform/api/holidays";
@@ -377,6 +378,7 @@ export async function buildApp() {
   await app.register(retroEntryRequestRoutes, { prefix: "/api/v1/retro-entry-requests" });
   await app.register(overtimeRoutes, { prefix: "/api/v1/overtime" });
   await app.register(reportRoutes, { prefix: "/api/v1/reports" });
+  await app.register(reportsPeriodRoutes, { prefix: "/api/v1/reports" }); // Issue #612
   await app.register(settingsRoutes, { prefix: "/api/v1/settings" });
   await app.register(salonRoutes, { prefix: "/api/v1/salons" }); // Phase 64b (issue #64)
   // Phase 243 Plan 02 (B1) — Abwesenheiten routes kept under the /settings prefix:

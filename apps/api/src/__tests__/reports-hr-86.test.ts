@@ -200,7 +200,7 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
     });
   });
 
-  // ── Task 2 (D-03): the three report:read answers carry no per-day structure ─────────────────
+  // ── Task 2 (D-03): the report:read answers carry no per-day structure ─────────────────
 
   /** `GET`s as the HR principal and as the seed admin; the admin answer is the shape reference. */
   function monthlyUrl() {
@@ -210,6 +210,12 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
     { name: "GET /reports/monthly", url: () => monthlyUrl() },
     { name: "GET /reports/leave-overview", url: () => `/reports/leave-overview?year=${year}` },
     { name: "GET /reports/carryover-at-risk", url: () => "/reports/carryover-at-risk" },
+    // Issue #612: the period report sums the account's month answers; aggregates only.
+    {
+      name: "GET /reports/period",
+      url: () =>
+        `/reports/period?from=${prevYear}-${pad2(prevMonth)}&to=${prevYear}-${pad2(prevMonth)}`,
+    },
   ] as const;
 
   async function adminGet(url: string) {
@@ -220,7 +226,7 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
     });
   }
 
-  describe("the three report:read answers are aggregates only (D-03)", () => {
+  describe("the report:read answers are aggregates only (D-03)", () => {
     // Every key path below is a per-person or per-month aggregate (identity, a sum, a count, an
     // entitlement figure, one deadline). A per-day structure here would be a finding against the
     // owner decision of 16.10.2026, never something to pin.
@@ -294,6 +300,54 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
         "$[].entitlementWarning",
         "$[].missingEntitlement",
       ],
+      "GET /reports/period": [
+        // envelope and months of the period (year-month pairs, never a day)
+        "$.from",
+        "$.to",
+        "$.months",
+        "$.months[]",
+        "$.months[].year",
+        "$.months[].month",
+        // KPI sums over the rows (minutes and counts) and the day the closing figure runs through
+        "$.kpis",
+        "$.kpis.personCount",
+        "$.kpis.saldoPersonCount",
+        "$.kpis.workedMinutes",
+        "$.kpis.expectedMinutes",
+        "$.kpis.balanceMinutes",
+        "$.kpis.closingBalanceMinutes",
+        "$.kpis.closingAsOf",
+        "$.kpis.closingConfirmed",
+        "$.kpis.allMonthsConfirmed",
+        "$.kpis.sickDays",
+        // one row per person: identity and period sums of minutes and day counts
+        "$.rows",
+        "$.rows[]",
+        "$.rows[].employeeId",
+        "$.rows[].employeeName",
+        "$.rows[].employeeNumber",
+        "$.rows[].workedMinutes",
+        "$.rows[].expectedMinutes",
+        "$.rows[].balanceMinutes",
+        "$.rows[].openingBalanceMinutes",
+        "$.rows[].closingBalanceMinutes",
+        "$.rows[].monthCount",
+        "$.rows[].confirmedMonthCount",
+        "$.rows[].labelled",
+        "$.rows[].sickDays",
+        // the per-month series: one entry per month with monthly sums - never a per-day series
+        "$.rows[].months",
+        "$.rows[].months[]",
+        "$.rows[].months[].year",
+        "$.rows[].months[].month",
+        "$.rows[].months[].workedMinutes",
+        "$.rows[].months[].expectedMinutes",
+        "$.rows[].months[].balanceMinutes",
+        "$.rows[].months[].closingBalanceMinutes",
+        "$.rows[].months[].confirmed",
+        "$.rows[].months[].labelled",
+        "$.rows[].months[].sickDays",
+      ],
       "GET /reports/carryover-at-risk": [
         // envelope: the horizon and the three KPI sums
         "$.horizonDays",
@@ -325,7 +379,7 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
 
     /** The row of employee X inside a body, so a vacuous (empty) answer cannot pass. */
     function rowsOfX(name: string, body: unknown): unknown[] {
-      if (name === "GET /reports/monthly") {
+      if (name === "GET /reports/monthly" || name === "GET /reports/period") {
         return (body as { rows: Array<{ employeeId: string }> }).rows.filter(
           (r) => r.employeeId === employeeX.id,
         );
@@ -337,7 +391,7 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
       );
     }
 
-    it("the allow-list covers exactly the three read routes (input proof)", () => {
+    it("the allow-list covers exactly the read routes (input proof)", () => {
       expect(Object.keys(ALLOW_LIST).sort((a, b) => (a < b ? -1 : 1))).toEqual(
         READ_ROUTES.map((r) => r.name).sort((a, b) => (a < b ? -1 : 1)),
       );
@@ -395,6 +449,7 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
       "GET /api/v1/reports/monthly": 200,
       "GET /api/v1/reports/leave-overview": 200,
       "GET /api/v1/reports/carryover-at-risk": 200,
+      "GET /api/v1/reports/period": 200,
       "POST /api/v1/reports/carryover-warn": 403,
       "GET /api/v1/reports/datev": 403,
       "GET /api/v1/reports/datev/employee": 403,
@@ -409,6 +464,9 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
       }
       if (route.endsWith("/leave-overview")) {
         return `?year=${year}`;
+      }
+      if (route.endsWith("/period")) {
+        return `?from=${prevYear}-${pad2(prevMonth)}&to=${prevYear}-${pad2(prevMonth)}`;
       }
       if (route.endsWith("/datev/employee")) return `?employeeId=${employeeX.id}&${q}`;
       return `?${q}`;
@@ -440,6 +498,11 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
     }
   });
 });
+
+/** Zero-padded month for the `YYYY-MM` query of the period report (Issue #612). */
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
 
 /** The JSON key paths of a body, array indices collapsed to `[]`. */
 function keyPaths(value: unknown, prefix = "$", out = new Set<string>()): Set<string> {

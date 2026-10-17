@@ -198,6 +198,7 @@
 ├── /api/v1/reports/datev (GET, HEAD)
 ├── /api/v1/reports/leave-overview (GET, HEAD)
 ├── /api/v1/reports/monthly (GET, HEAD)
+├── /api/v1/reports/period (GET, HEAD)
 ├── /api/v1/retro-entry-requests (POST, GET, HEAD)
 ├── /api/v1/role-assignments (GET, HEAD, POST)
 ├── /api/v1/roles (GET, HEAD, POST)
