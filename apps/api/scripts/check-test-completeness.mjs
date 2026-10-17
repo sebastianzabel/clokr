@@ -918,7 +918,9 @@ import { readFileSync } from "node:fs";
 // `fix/681-gesamtsaldo-offene-monate` (origin/main @ 59ef142e) - 693 test files, 10541 tests (10538 passed, 3 skipped).
 // New file: open-month-chain-681 (+26 cases); saldo-boundary-neutrality-493 gains its amendment-register cases (+2);
 // nothing removed, skipped or loosened. MIN_FILES 692 -> 693, never lowered.
-const MIN_FILES = 693;
+// Issue #679 (2026-10-17): measured with a full run on `fix/679-reach-stichtag` (origin/main @ 7b66d4a3) - 694 test files,
+// 10553 tests. New file: reach-stichtag-679 (+11 cases); nothing removed, skipped or loosened. MIN_FILES 693 -> 694, never lowered.
+const MIN_FILES = 694;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -957,7 +959,8 @@ const MIN_FILES = 693;
 // API test file was edited by this phase; main alone measures 10437, so the phase delta is the measured 76). Never lowered.
 // Issue #681 (2026-10-17): MIN_TESTS 10513 -> 10541 (+28: open-month-chain-681 26, saldo-boundary-neutrality-493 2),
 // the measured total of the full run named at MIN_FILES. Never lowered.
-const MIN_TESTS = 10541;
+// Issue #679 (2026-10-17): MIN_TESTS 10541 -> 10553, the measured total of the full run named at MIN_FILES. Never lowered.
+const MIN_TESTS = 10553;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

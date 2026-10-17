@@ -2876,6 +2876,34 @@ pnpm --filter @clokr/web exec vitest run src/__tests__/reports-salon-filter-542.
 grep -c 'salonViewMemberIds(' apps/api/src/composition/*.ts   # eine Definition, je ein Aufruf im Monatsbericht, zwei im Dashboard (Anwesenheit, Team-Woche)
 ```
 
+### Nachtrag 2026-10-17 (Issue #679) — Reichweite nach Stammsalon wird an einem Kalendertag beurteilt, Ausgeschiedene am Austrittstag
+
+**Schwere:** keine Unterbau-Änderung. `contexts/platform/scope-filter.ts` ist unverändert (Owner-Entscheidung 17.10.2026:
+geändert wird bei den Aufrufern, nicht in der Auflösung). Kein Schema, keine Migration, keine Route, keine Permission.
+
+**Was sich geändert hat:** Die Auflösung der Reichweite über den Stammsalon (`resolveStammsalonScopedEmployeeIds`,
+`isStammsalonScopeMatch`) bekommt in der Kompositionsschicht nie mehr einen Zeitpunkt, sondern den mandantenlokalen
+Kalendertag (`T00:00:00Z`, #493). Für monatsgebundene Lesungen wählt `composition/reach-day.ts` (keine Geschäftsregel, nur
+die Tageswahl) den Tag je Person: der **Austrittstag**, wenn der Austritt im Monat liegt, sonst der **Monatsletzte**
+(dieselbe Regel wie die Saldenübersicht #613 und der Salonfilter des Monatsexports #542; `salonPersonsAtStichtag` ruft jetzt
+denselben Baustein). Stellen: `loadDatevMonth` (DATEV und Monatsexport), `GET /reports/monthly`, `GET /reports/datev/employee`,
+`GET /reports/monthly/pdf`, Team-Verlauf und seine Soll-Abdeckung (`dashboard.ts`). Reine Tagesstellen nutzen den
+mandantenlokalen Kalendertag statt `new Date()`/`now`/`weekEnd`: Urlaubsübersicht (31.12.), Verfall-Warnungen,
+`carryover-warn`, Team-Woche (Wochenletzter), Überstunden-Verlauf und der Aktivitäts-Feed. Eine Person, die mitten im Monat
+wechselt und nicht ausgeschieden ist, bleibt beim Stammsalon des Monatsletzten. Ohne Salon-Einschränkung (Gesamtmandant)
+läuft keine neue Abfrage und jede Antwort bleibt Byte für Byte gleich.
+
+**Bewusst nicht Teil davon:** die Aufrufer in `contexts/absence/` und `contexts/scheduling/` (`new Date()` bzw. Anforderungs-
+daten; nicht in den Akzeptanzkriterien), die Urlaubsübersicht und Verfall-Warnungen als Personenkreis (#612) und die
+personenbezogene Eingrenzung des Monatsberichts (#85).
+
+**Nachrechnen:**
+
+```
+grep -rn "resolveStammsalonScopedEmployeeIds(\|isStammsalonScopeMatch(" apps/api/src/composition   # kein Zeitpunkt als letztes Argument
+pnpm --filter @clokr/api exec vitest run src/composition/__tests__/reach-stichtag-679.test.ts
+```
+
 ## Q — Systemrollen-Templates und zwei Saldo-Gates (Phase 76b, Issue #76)
 
 **Schwere: informativ. Unterbau-Erweiterung nach ADR 0002, Entscheidung 7 (additiv, kein
