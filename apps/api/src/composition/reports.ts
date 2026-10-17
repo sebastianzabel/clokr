@@ -634,6 +634,13 @@ function buildDatevLodas(params: {
 // Bounds are UTC-midnight calendar days (monthDateRange) because they reach @db.Date columns / date
 // clipping — never a monthRangeUtc instant (Issue #493, D-01).
 function buildEmployeeInclude(firstDay: Date, lastDay: Date) {
+  // Issue #617 (P-06): several entries per day (#70) are listed in start-time order; without the
+  // second key the order of one day's rows is whatever the planner returns. A mutable array (not
+  // a readonly tuple) because Prisma's orderBy type is mutable.
+  const timeEntryOrder: Array<{ date: "asc" } | { startTime: "asc" }> = [
+    { date: "asc" },
+    { startTime: "asc" },
+  ];
   return {
     workSchedules: { orderBy: { validFrom: "asc" } },
     timeEntries: {
@@ -644,7 +651,7 @@ function buildEmployeeInclude(firstDay: Date, lastDay: Date) {
         endTime: { not: null },
         isInvalid: false,
       },
-      orderBy: { date: "asc" },
+      orderBy: timeEntryOrder,
     },
     absences: {
       where: { deletedAt: null, startDate: { lte: lastDay }, endDate: { gte: firstDay } },
@@ -1985,6 +1992,7 @@ export async function reportRoutes(app: FastifyInstance) {
         employeeName: `${emp.firstName} ${emp.lastName}`,
         employeeNumber: emp.employeeNumber,
         month: `${MONTH_NAMES[m - 1]} ${y}`,
+        generatedAt: formatInTimeZone(new Date(), tz, "dd.MM.yyyy, HH:mm"),
         // Issue #617 (D-617-3): minutes straight from the account's month figures; the renderer
         // formats them. Issue #451 (D-03): the reconciliation item is 0 when the row is unlabelled.
         workedMinutes: figures.workedMinutes,
