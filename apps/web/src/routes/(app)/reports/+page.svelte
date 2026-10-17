@@ -12,6 +12,7 @@
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
+  import { DAY_STATUS_LABEL, attendanceStatusText } from "$lib/dashboard/day-status-label"; // Issue #587
   import {
     buildEmployeeMonthRows,
     type EmployeeMonthRow,
@@ -56,6 +57,10 @@
       | "none"
       | "holiday";
     reason: string | null;
+    // Issue #587 (D-587-3): the planned start of today's first shift and the minutes since it
+    // (only for a missing row); finished values from the API, nothing is computed here.
+    expectedStart?: string | null;
+    lateMinutes?: number | null;
   };
 
   type TodayAttendance = {
@@ -786,27 +791,6 @@
     return n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  function statusLabel(row: TodayEmployee): string {
-    switch (row.status) {
-      case "present":
-        return "Anwesend";
-      case "clocked_in":
-        return "Eingestempelt";
-      case "absent":
-        return row.reason ?? "Abwesend";
-      case "missing":
-        return "Fehlend";
-      case "scheduled":
-        return "Geplant";
-      case "requested":
-        return "Beantragt";
-      case "holiday":
-        return row.reason ?? "Feiertag";
-      default:
-        return "—";
-    }
-  }
-
   function statusClass(status: TodayEmployee["status"]): string {
     return `status-badge status-${status.replace("_", "-")}`;
   }
@@ -1249,7 +1233,7 @@
               <span class="value">{todayAttendance.summary.absent}</span>
             </div>
             <div class="summary-chip">
-              <span class="label">Fehlend</span>
+              <span class="label">{DAY_STATUS_LABEL.missing}</span>
               <span class="value">{todayAttendance.summary.missing}</span>
             </div>
             {#if todayAttendance.summary.holiday > 0}
@@ -1274,7 +1258,8 @@
                   <tr>
                     <td>{row.name}</td>
                     <td>{row.employeeNumber}</td>
-                    <td><span class={statusClass(row.status)}>{statusLabel(row)}</span></td>
+                    <td><span class={statusClass(row.status)}>{attendanceStatusText(row)}</span></td
+                    >
                   </tr>
                 {/each}
               </tbody>
@@ -1829,10 +1814,14 @@
   }
 
   .status-scheduled,
-  .status-requested,
   .status-none {
     background: var(--bg-subtle);
     color: var(--text-muted);
+  }
+
+  .status-requested {
+    background: var(--warn-soft);
+    color: var(--warn);
   }
 
   /* Verfall-Warnungen (Phase 44 — BUrlG § 7 Hinweispflicht) */

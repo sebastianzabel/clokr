@@ -59,6 +59,7 @@
   import { interpretClockOut, type ClockOutResponse } from "$lib/dashboard/clock-out-result"; // Phase 307 Plan 02 (D-04)
   import { breakFindingSaveNotice } from "$lib/breaks/day-break-violation"; // Issue #80 (D-09a), #511 (D-10)
   import { weekProgressDelta } from "$lib/dashboard/week-progress"; // Issue #451 (D-06)
+  import { DAY_STATUS_LABEL, teamMissingTitle } from "$lib/dashboard/day-status-label"; // Issue #587 (P-06)
   import {
     clockInBlocked,
     clockInBody,
@@ -2073,9 +2074,7 @@
                         {:else if day.status === "missing"}
                           <span
                             class="cell-badge cell-badge--missing"
-                            title="Fehlt! {day.shift
-                              ? day.shift.startTime + '–' + day.shift.endTime
-                              : 'Arbeitstag'}"
+                            title={teamMissingTitle(day)}
                           >
                             <Icon name="alert" size={14} title="Fehlt" />
                           </span>
@@ -2120,7 +2119,8 @@
 
           <div class="legend">
             <span class="legend-item">
-              <span class="cell-badge cell-badge--present">5.0</span> Anwesend
+              <span class="cell-badge cell-badge--present">5.0</span>
+              {DAY_STATUS_LABEL.present}
             </span>
             <span class="legend-item">
               <span class="cell-badge cell-badge--active"
@@ -2144,18 +2144,19 @@
             </span>
             <span class="legend-item">
               <span class="cell-badge cell-badge--missing"><Icon name="alert" size={12} /></span>
-              Fehlt
+              {DAY_STATUS_LABEL.missing}
             </span>
             <span class="legend-item">
               <span class="cell-badge cell-badge--holiday"><Icon name="sun" size={12} /></span>
               Feiertag
             </span>
             <span class="legend-item">
-              <span class="cell-badge cell-badge--scheduled">9–17</span> Geplant
+              <span class="cell-badge cell-badge--scheduled">9–17</span>
+              {DAY_STATUS_LABEL.scheduled}
             </span>
             <span class="legend-item">
               <span class="cell-badge cell-badge--requested"><Icon name="clock" size={12} /></span>
-              Beantragt
+              {DAY_STATUS_LABEL.requested}
             </span>
             <span class="legend-item">
               <span class="cell-badge cell-badge--none">–</span> Keine Daten
