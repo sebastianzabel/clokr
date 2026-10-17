@@ -485,6 +485,145 @@ describe("Issue #542 — monthly report salon filter", () => {
   });
 });
 
+describe("Issue #542 — one 404 for all four places", () => {
+  // The four places of the issue: the monthly JSON, today's attendance, the Saldenübersicht and the
+  // Monatsexport. An inadmissible salon - foreign tenant, unknown id, deactivated, or outside the
+  // caller's reach on the endpoint's own permission - answers one and the same body everywhere, so
+  // no place is a salon-membership oracle (T-100-09, #85 D-13). Clock 2026-07-15T10:00Z (past).
+  const NOW = "2026-07-15T10:00:00.000Z";
+  const PLACES = [
+    "/api/v1/reports/monthly?year=2026&month=6",
+    "/api/v1/dashboard/today-attendance?",
+    "/api/v1/dashboard/overtime-overview?",
+    "/api/v1/reports/monthly-export/pdf?year=2026&month=6",
+  ] as const;
+  const NOT_FOUND = '{"error":"Salon nicht gefunden"}';
+  let app: FastifyInstance;
+  let own: Awaited<ReturnType<typeof seedTestData>>;
+  let other: Awaited<ReturnType<typeof seedTestData>>;
+  let salonB = "";
+  let inactiveSalon = "";
+  let restrictedToken = "";
+
+  const urlWith = (place: string, salonId: string) =>
+    `${place}${place.endsWith("?") ? "" : "&"}salonId=${salonId}`;
+  const get = (url: string, token: string) =>
+    app.inject({ method: "GET", url, headers: { authorization: `Bearer ${token}` } });
+
+  beforeAll(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(NOW));
+    app = await getTestApp();
+    own = await seedTestData(app, "on542");
+    other = await seedTestData(app, "on542f");
+    salonB = (await createTestSalon(app.prisma, own.tenant.id, { name: "On542 B" })).id;
+    inactiveSalon = (
+      await createTestSalon(app.prisma, own.tenant.id, { name: "On542 off", isActive: false })
+    ).id;
+
+    // One caller holding each of the four permissions the places require, every one narrowed to
+    // salon A (the seeded salon): the restricted reach of the endpoint's OWN permission.
+    const passwordHash = await bcrypt.hash(PASSWORD, 4);
+    const suffix = randomBytes(3).toString("hex");
+    const user = await app.prisma.user.create({
+      data: {
+        email: `on542-${suffix}@example.invalid`,
+        passwordHash,
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    await app.prisma.employee.create({
+      data: {
+        tenantId: own.tenant.id,
+        userId: user.id,
+        employeeNumber: `ON${suffix}`.toUpperCase(),
+        firstName: "Fixture",
+        lastName: "OneNotFound542",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    for (const permission of [
+      "report:read:ZUGEWIESEN",
+      "team-overview:read:ZUGEWIESEN",
+      "overtime:read:ZUGEWIESEN",
+      "report:export:ZUGEWIESEN",
+    ]) {
+      const name = `On542 ${permission} ${suffix}`;
+      const role = await app.prisma.accessRole.create({
+        data: {
+          tenantId: own.tenant.id,
+          name,
+          nameKey: roleNameKey(name),
+          permissions: normalizeRolePermissions([permission]),
+        },
+      });
+      await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: own.tenant.id,
+          userId: user.id,
+          accessRoleId: role.id,
+          scopeType: "SALONS",
+          salonIds: [own.salonId],
+          employeeIds: [],
+        },
+      });
+    }
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: user.email, password: PASSWORD },
+    });
+    expect(login.statusCode, login.body).toBe(200);
+    restrictedToken = (JSON.parse(login.body) as { accessToken: string }).accessToken;
+  });
+
+  afterAll(async () => {
+    vi.useRealTimers();
+    for (const tenantId of [own?.tenant.id, other?.tenant.id]) {
+      if (!tenantId) continue;
+      try {
+        await app.prisma.roleAssignment.deleteMany({ where: { tenantId } });
+        await app.prisma.accessRole.deleteMany({ where: { tenantId } });
+        await cleanupTestData(app, tenantId);
+      } catch (err) {
+        console.error("reports-salon-filter-542 (404) cleanup failed:", err);
+      }
+    }
+  });
+
+  it("answers the tenant admin with one byte-identical 404 for a foreign, unknown and inactive salon on all four places", async () => {
+    const bodies: string[] = [];
+    for (const salonId of [other.salonId, randomUUID(), inactiveSalon]) {
+      for (const place of PLACES) {
+        const res = await get(urlWith(place, salonId), own.adminToken);
+        expect(res.statusCode, `${place} ${salonId}`).toBe(404);
+        expect(String(res.headers["content-type"]), `${place} content type`).toContain(
+          "application/json",
+        );
+        bodies.push(res.body);
+      }
+    }
+    expect(bodies).toHaveLength(12);
+    for (const body of bodies) expect(body).toBe(NOT_FOUND);
+  });
+
+  it("answers a caller whose reach on each endpoint's own permission excludes salon B with the same body", async () => {
+    const bodies: string[] = [];
+    for (const place of PLACES) {
+      const res = await get(urlWith(place, salonB), restrictedToken);
+      expect(res.statusCode, place).toBe(404);
+      bodies.push(res.body);
+    }
+    for (const body of bodies) expect(body).toBe(NOT_FOUND);
+    // the same caller is admitted for its own salon on all four places (the 404 is the reach, not a stub)
+    for (const place of PLACES) {
+      const res = await get(urlWith(place, own.salonId), restrictedToken);
+      expect(res.statusCode, `${place} own salon`).toBe(200);
+    }
+  });
+});
+
 /** The JSON key paths of a body, array indices collapsed to `[]` (idiom of reports-hr-86). */
 function keyPaths(value: unknown, prefix = "$", out = new Set<string>()): Set<string> {
   if (Array.isArray(value)) {
