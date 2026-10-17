@@ -889,8 +889,12 @@ import { readFileSync } from "node:fs";
 // New files since 672: pdf-format-617, monthly-export-render-617, monthly-export-617, vacation-balance-split-617 and
 // leave-overview-vacation-617; nothing removed, skipped or loosened (the removed company-PDF cases were migrated onto
 // the Monatsexport or deleted with their subject, see the 617-03 summary). MIN_FILES 672 -> 677, never lowered.
-// Merged (617 + #664): 677 + 1 = 678 files; re-measured with a full run of the merged branch in 617-06.
-const MIN_FILES = 678;
+// Plan 617-06 (2026-10-17): measured with a full run (`pnpm --filter @clokr/api test`) on `fix/617-monatsexport` after
+// merging origin/main @ 8411b33c (#664/#672) - 681 test files, 10399 tests (10396 passed, 3 skipped). New files since the
+// 677 above: closed-month-legacy-lock-664 (#664, +1) and, from plan 617-05, stundennachweis-render-617,
+// stundennachweis-day-rows-617 and pdf-output-guard-617 (+3); nothing removed, skipped or loosened in this step.
+// MIN_FILES 677 -> 681, never lowered.
+const MIN_FILES = 681;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -911,8 +915,11 @@ const MIN_FILES = 678;
 // Monatsexport or were deleted with their subject (reports-vacation-population-613 -2, reports-priced-leave-days-451 -1,
 // reports-bs-leave-448 -1, reports-salon-scope -2, reports.test -3; each case listed in 617-04-SUMMARY.md). Measured with a
 // full API run: 677 files, 10364 tests (10361 passed, 3 skipped); MIN_FILES stays 677 (no file removed).
-// Merged (617 + #664): 10364 + 4 = 10368; re-measured with a full run of the merged branch in 617-06.
-const MIN_TESTS = 10368;
+// Plan 617-06 (2026-10-17): MIN_TESTS 10364 -> 10399 (+35), the measured total of the full run named at MIN_FILES:
+// #664 +4 (closed-month-legacy-lock-664), plan 617-05 +30 (the three new files and the migrated cases) and 617-06 +1
+// (a holiday outside the employment span is no row of the Stundennachweis). Never lowered below the measured total;
+// the one deliberate lowering of this phase is the 617-04 entry above.
+const MIN_TESTS = 10399;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
