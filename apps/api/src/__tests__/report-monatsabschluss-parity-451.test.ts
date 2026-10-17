@@ -47,6 +47,7 @@ vi.mock("../composition/pdf", async (importOriginal) => {
     ...actual,
     generateMonthlyReportPdf: vi.fn(actual.generateMonthlyReportPdf),
     streamCompanyMonthlyReportPdf: vi.fn(actual.streamCompanyMonthlyReportPdf),
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
   };
 });
 
@@ -621,26 +622,32 @@ describe("Issue #451 (D-03) — report == Monatsabschluss, Task 2 (both monthly 
     expect(payload.overtimeConfirmed).toBe(false);
   });
 
-  it("SHIFT_BASED: GET /reports/monthly/pdf/all company PDF row targetHours equals GET /overtime/month-saldo expectedMinutes", async () => {
-    const spy = vi.mocked(pdfUtils.streamCompanyMonthlyReportPdf);
+  // Issue #617: the company PDF was replaced by the Monatsexport; same property, same oracle
+  // (exact minutes now, formerly rounded hours).
+  it("SHIFT_BASED: GET /reports/monthly-export/pdf row expectedMinutes equals GET /overtime/month-saldo expectedMinutes", async () => {
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
     spy.mockClear();
 
     const oracle = await monthSaldoOracle(shiftEmpId);
 
     const res = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/monthly/pdf/all?year=2026&month=5",
+      url: "/api/v1/reports/monthly-export/pdf?year=2026&month=5",
       headers: { authorization: `Bearer ${adminToken}` },
     });
     expect(res.statusCode).toBe(200);
     expect(spy).toHaveBeenCalledTimes(1);
-    const companyData = spy.mock.calls[0][1];
-    const row = companyData.rows.find((r) => {
+    const exportData = spy.mock.calls[0][0];
+    const row = exportData.rows.find((r) => {
       // employeeNumber carries the fixture label — the shift employee's label contains "shift".
       return r.employeeNumber.includes("rmp451t2shift");
     });
     expect(row).toBeDefined();
-    expect(row!.targetHours).toBe(Math.round((oracle.expectedMinutes / 60) * 100) / 100);
+    expect(row!.expectedMinutes).toBe(oracle.expectedMinutes);
+    // Rounding identity with the hours the JSON report and the single PDF print.
+    expect(Math.round((row!.expectedMinutes / 60) * 100) / 100).toBe(
+      (await monthlyReportRow(shiftEmpId)).shouldHours,
+    );
   });
 
   it("MONTHLY_HOURS without budget: JSON overtimeConfirmed null, overtimeHours 0, shouldHours 0, workedHours == recorded hours; PDF payload overtimeConfirmed null", async () => {

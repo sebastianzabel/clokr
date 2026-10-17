@@ -16,6 +16,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
+import iconv from "iconv-lite";
 import type { FastifyInstance } from "fastify";
 import {
   getTestApp,
@@ -24,6 +25,7 @@ import {
   seedEntitlementYears,
   cleanupTestData,
   grantSystemRole,
+  configureDatevKanzlei,
 } from "../../__tests__/setup";
 import * as pdfUtils from "../pdf";
 
@@ -33,6 +35,7 @@ vi.mock("../pdf", async (importOriginal) => {
     ...actual,
     generateMonthlyReportPdf: vi.fn(actual.generateMonthlyReportPdf),
     streamCompanyMonthlyReportPdf: vi.fn(actual.streamCompanyMonthlyReportPdf),
+    generateMonthlyExportPdf: vi.fn(actual.generateMonthlyExportPdf),
     streamLeaveListPdf: vi.fn(actual.streamLeaveListPdf),
   };
 });
@@ -251,22 +254,41 @@ describe("Issue #451 (D-02) — Monatsbericht leave counts come from the absence
     expect(payload.otherAbsenceDays).toBe(0);
   });
 
-  it("GET /reports/monthly/pdf/all: the company PDF's row for this employee prices the same 10 workdays", async () => {
-    const spy = vi.mocked(pdfUtils.streamCompanyMonthlyReportPdf);
+  // Issue #617: the company PDF was replaced by the Monatsexport; same property, same oracle, plus
+  // the DATEV U line (Lohnart 300) the export's Urlaub count is read from.
+  it("GET /reports/monthly-export/pdf: the Monatsexport row prices the same 10 workdays, equal to the DATEV U line", async () => {
+    const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
     spy.mockClear();
 
     const res = await app.inject({
       method: "GET",
-      url: "/api/v1/reports/monthly/pdf/all?year=2026&month=8",
+      url: "/api/v1/reports/monthly-export/pdf?year=2026&month=8",
       headers: { authorization: `Bearer ${d.adminToken}` },
     });
     expect(res.statusCode).toBe(200);
     expect(spy).toHaveBeenCalledTimes(1);
-    const companyData = spy.mock.calls[0][1];
-    const row = companyData.rows.find((r) => r.employeeNumber === d.employee.employeeNumber);
+    const row = spy.mock.calls[0][0].rows.find(
+      (r) => r.employeeNumber === d.employee.employeeNumber,
+    );
     expect(row).toBeDefined();
-    expect(row!.vacationDays).toBe(10);
-    expect(row!.totalAbsenceDays).toBe(10);
+    expect(row!.absenceDays.vacation).toBe(10);
+    const absenceTotal = Object.values(row!.absenceDays).reduce((sum, days) => sum + days, 0);
+    expect(absenceTotal).toBe(10);
+
+    await configureDatevKanzlei(app, d.tenant.id);
+    const datevRes = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/datev?year=2026&month=8",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(datevRes.statusCode).toBe(200);
+    const datevBody = iconv.decode(datevRes.rawPayload, "win1252").split("[Bewegungsdaten]")[1];
+    const uLine = datevBody
+      .split("\r\n")
+      .map((line) => line.split(";"))
+      .find((f) => f[1] === d.employee.employeeNumber && Number(f[5]) === 300);
+    expect(uLine).toBeDefined();
+    expect(Number(uLine![7].replace(",", "."))).toBe(row!.absenceDays.vacation);
   });
 
   it("GET /reports/monthly: SPECIAL Sat-Mon on a Tue-Sat contract (Monday not a workday) prices as 1 day, not 3", async () => {
