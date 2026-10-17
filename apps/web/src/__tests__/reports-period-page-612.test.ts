@@ -250,3 +250,89 @@ describe("/reports period area (Issue #612) - dialogs, export-only callers, inte
     expect(SCRIPT).toContain("const selectedYear = $derived(urlState.to.year);");
   });
 });
+
+describe("/reports period area (Issue #612) - the person drill-down", () => {
+  it("renders one <PersonDrilldown after the period panel and the range dialog, never inside it", () => {
+    expect((TEMPLATE.match(/<PersonDrilldown\b/g) ?? []).length).toBe(1);
+    const panel = TEMPLATE.indexOf('class="page period-content"');
+    const range = TEMPLATE.indexOf("<PeriodRangeDialog");
+    const drill = TEMPLATE.indexOf("<PersonDrilldown");
+    expect(panel).toBeGreaterThan(-1);
+    expect(range).toBeGreaterThan(panel);
+    expect(drill).toBeGreaterThan(range);
+  });
+
+  it("the URL decides what is open: person= must name a row of the answer, on a period tab only", () => {
+    expect(SCRIPT).toContain("periodTabActive && urlState.person !== null");
+    expect(SCRIPT).toContain("period?.rows.find((r) => r.employeeId === urlState.person)");
+    expect(SCRIPT).toContain("let drillOpen = $derived(drillRow !== null);");
+    expect(TEMPLATE).toContain("bind:open={drillOpen}");
+    expect(TEMPLATE).toContain("row={drillRow}");
+  });
+
+  it("opening is the one push and remembers it; closing pops that push or drops person with a replaceState", () => {
+    expect(functionBody("openPerson")).toContain("drillPushed = true;");
+    const body = functionBody("closeDrill");
+    expect(body).toContain("if (drillPushed) {");
+    expect(body).toContain("history.back();");
+    expect(body).toContain("writeState({ ...urlState, person: null });");
+    // A close that finds the URL already without person (Back was pressed) pushes nothing.
+    expect(body).toMatch(/if \(urlState\.person === null\) \{\s+drillPushed = false;\s+return;/);
+    expect(TEMPLATE).toContain("onClose={closeDrill}");
+  });
+
+  it("focus returns to the stored trigger when the range dialog or the drill-down closes", () => {
+    expect(SCRIPT).toContain("const open = rangeOpen || drillOpen;");
+    expect(SCRIPT).toContain("focusReturnTo?.focus();");
+    expect(functionBody("openPerson")).toContain("focusReturnTo =");
+  });
+
+  it("a reloaded person= that names nobody in the answer is dropped quietly (amendment 6)", () => {
+    const at = SCRIPT.indexOf("if (period.rows.some((r) => r.employeeId === person)) return;");
+    expect(at).toBeGreaterThan(-1);
+    const head = SCRIPT.lastIndexOf("$effect(() => {", at);
+    const effect = SCRIPT.slice(head, SCRIPT.indexOf("\n  });", at));
+    // Only a settled, current answer may decide: not while loading, not after a failure, not stale.
+    expect(effect).toContain("periodLoading");
+    expect(effect).toContain("periodFailure !== null");
+    expect(effect).toContain('periodLoadedKey !== `${periodKey}|${pageSalonId ?? ""}`');
+    expect(effect).toContain("writeState({ ...urlState, person: null })");
+    expect(effect).not.toContain("toasts");
+    expect(effect).not.toContain("periodFailure =");
+  });
+
+  it("the day list is requested by exactly one function, which only the drill-down component calls", () => {
+    expect((SCRIPT.match(/\/time-entries/g) ?? []).length).toBe(1);
+    expect(functionBody("loadDayEntries")).toContain("/time-entries?employeeId=");
+    expect(TEMPLATE).toContain("canTimeEntryRead={rights.canTimeEntryRead}");
+    expect(TEMPLATE).toContain("{loadDayEntries}");
+    // No other caller in the page: the only references are the definition and the prop.
+    expect((PAGE.match(/loadDayEntries\(/g) ?? []).length).toBe(1);
+  });
+
+  it("the person documents are the page's blob downloads, for the month the modal names", () => {
+    const pdf = functionBody("downloadEmployeePdf");
+    expect(pdf).toContain(
+      "/reports/monthly/pdf?employeeId=${employeeId}&year=${target.year}&month=${target.month}",
+    );
+    expect(pdf).toContain("toasts.error(");
+    const datev = functionBody("downloadEmployeeDatev");
+    expect(datev).toContain(
+      "/api/v1/reports/datev/employee?employeeId=${employeeId}&year=${target.year}&month=${target.month}",
+    );
+    expect(datev).toContain("toasts.error(");
+    expect(TEMPLATE).toContain("{canReportExport}");
+    expect(TEMPLATE).toContain(
+      "downloadEmployeePdf(drillRow.employeeId, drillRow.employeeName, target)",
+    );
+    expect(TEMPLATE).toContain(
+      "downloadEmployeeDatev(drillRow.employeeId, drillRow.employeeName, target)",
+    );
+    // The old per-row error state is gone with the buttons.
+    expect(PAGE).not.toContain("empDownloadErrors");
+  });
+
+  it("the salon column of the day list follows the #64 rule", () => {
+    expect(TEMPLATE).toContain("showSalonColumn={showSalonOptions($salonContext)}");
+  });
+});

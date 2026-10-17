@@ -16,7 +16,6 @@
     EXPORT_NO_STAMMSALON_NOTE,
     PERSON_SALDO_NOT_SPLIT_LABEL,
     SALON_EXPORT_PERSONS_NOTE,
-    SALON_HOME_PERSONS_NOTE,
     isSalonFilterRejected,
     salonPageFilter,
     salonScopeLabel,
@@ -30,7 +29,9 @@
   import PeriodBar from "$lib/components/reports/PeriodBar.svelte"; // Issue #612
   import PeriodKpis from "$lib/components/reports/PeriodKpis.svelte"; // Issue #612
   import PeriodRangeDialog from "$lib/components/reports/PeriodRangeDialog.svelte"; // Issue #612
+  import PersonDrilldown from "$lib/components/reports/PersonDrilldown.svelte"; // Issue #612
   import TimesAccountsTable from "$lib/components/reports/TimesAccountsTable.svelte"; // Issue #612
+  import { toasts } from "$stores/toast"; // Issue #612
   import {
     isPlainLeftClick,
     periodLabel,
@@ -42,6 +43,7 @@
   import {
     periodReportPath,
     ymKey,
+    type DayEntry,
     type PeriodReport,
     type PeriodRow,
     type YearMonth,
@@ -309,30 +311,9 @@
         : el.matches("a, button")
           ? el
           : (el.querySelector<HTMLElement>("a, button") ?? el);
+    drillPushed = true;
     void goto(personHref(row), { keepFocus: true, noScroll: true });
   }
-
-  // Dialogs (rendered after `.period-content`, never inside an animated Card, Issue #570).
-  let rangeOpen = $state(false);
-  let focusReturnTo: HTMLElement | null = null;
-  let rangeWasOpen = false;
-
-  function openRange(trigger: HTMLElement): void {
-    focusReturnTo = trigger;
-    rangeOpen = true;
-  }
-
-  // The Modal primitive traps focus but does not give it back: the page remembers the trigger.
-  $effect(() => {
-    const open = rangeOpen;
-    untrack(() => {
-      if (rangeWasOpen && !open) {
-        focusReturnTo?.focus();
-        focusReturnTo = null;
-      }
-      rangeWasOpen = open;
-    });
-  });
 
   // The export dialog arrives with 612-06; until then the cards above the tabs stay the export path.
   function openExport(): void {}
@@ -465,9 +446,6 @@
     leaveOverviewPage = 1;
   });
 
-  // Per-employee download error state
-  let empDownloadErrors = $state<Record<string, string>>({});
-
   // ── EMP-06: Employee monthly closes view ─────────────────────────────────
   let empMonthlyCloses: EmployeeMonthRow[] = $state([]);
   let empClosesLoading = $state(false);
@@ -552,10 +530,12 @@
   // renders what the server sums and recomputes nothing. A slow read is abandoned when the question
   // changes (amendment 2): only the latest request may apply its answer.
   const PERIOD_TIMEOUT_MS = 120_000;
-  let period: PeriodReport | null = $state(null);
+  let period = $state<PeriodReport | null>(null);
   let periodLoading = $state(false);
   let periodFailure: "INVALID" | "FAILED" | null = $state(null);
   let periodSalonRejected = $state(false);
+  // Which (from, to, salon) the held answer belongs to; a stale answer never decides about `person`.
+  let periodLoadedKey = $state("");
   // One polite live region: the period after a change, the person count after the answer.
   let liveText = $state("");
   let barHeight = $state(0);
@@ -578,6 +558,7 @@
       });
       if (generation !== periodGeneration) return;
       period = answer;
+      periodLoadedKey = `${ymKey(from)}|${ymKey(to)}|${salon ?? ""}`;
       periodSalonRejected = false;
       const n = answer.rows.length;
       liveText = `Bericht geladen: ${n} ${n === 1 ? "Person" : "Personen"}`;
@@ -608,6 +589,83 @@
     untrack(() => {
       if (wanted) void loadPeriod(urlState.from, urlState.to, salon);
     });
+  });
+
+  // ── The person drill-down (D-612-4, ADD-4) ─────────────────────────────────────
+
+  // The URL decides whether a person is open: `person=<id>` that names a row of the answer. The
+  // modal reads its figures from that same answer; only the day list is a request of its own, and
+  // only the component can make it (with time-entry:read).
+  const drillRow = $derived(
+    periodTabActive && urlState.person !== null
+      ? (period?.rows.find((r) => r.employeeId === urlState.person) ?? null)
+      : null,
+  );
+  const drillVacationRow = $derived.by(() => {
+    const answer = period;
+    if (drillRow === null || answer === null) return null;
+    const year = answer.vacation.years.find((y) => y.year === answer.vacation.year);
+    return year?.rows.find((r) => r.employeeId === drillRow.employeeId) ?? null;
+  });
+  // Writable derived: open exactly while the URL names a row; the modal may close itself (Escape,
+  // backdrop, Schließen) before the navigation it triggers has settled.
+  let drillOpen = $derived(drillRow !== null);
+  // True while the open drill-down was opened by THIS page's own history push.
+  let drillPushed = false;
+
+  // Closing: Back pops the entry this page pushed; a drill-down opened by a reload or a shared link
+  // has no entry of ours to pop, so `person` is dropped with a replaceState instead.
+  function closeDrill(): void {
+    if (urlState.person === null) {
+      drillPushed = false;
+      return;
+    }
+    if (drillPushed) {
+      drillPushed = false;
+      history.back();
+      return;
+    }
+    writeState({ ...urlState, person: null });
+  }
+
+  function loadDayEntries(employeeId: string, fromDay: string, toDay: string) {
+    return api.get<DayEntry[]>(
+      `/time-entries?employeeId=${encodeURIComponent(employeeId)}&from=${fromDay}&to=${toDay}`,
+    );
+  }
+
+  // Dialogs (rendered after `.period-content`, never inside an animated Card, Issue #570).
+  let rangeOpen = $state(false);
+  let focusReturnTo: HTMLElement | null = null;
+  let dialogWasOpen = false;
+
+  function openRange(trigger: HTMLElement): void {
+    focusReturnTo = trigger;
+    rangeOpen = true;
+  }
+
+  // The Modal primitive traps focus but does not give it back: the page remembers the trigger
+  // (the period bar's button, the person's name link) and returns focus to it on close.
+  $effect(() => {
+    const open = rangeOpen || drillOpen;
+    untrack(() => {
+      if (dialogWasOpen && !open) {
+        focusReturnTo?.focus();
+        focusReturnTo = null;
+      }
+      dialogWasOpen = open;
+    });
+  });
+
+  // A reloaded `person=` that names nobody in the answer (left the population, other salon, a
+  // hand-edited link): the modal does not open and `person` is dropped quietly (amendment 6).
+  $effect(() => {
+    const person = urlState.person;
+    if (person === null || !periodTabActive || period === null || periodLoading) return;
+    if (periodFailure !== null) return;
+    if (periodLoadedKey !== `${periodKey}|${pageSalonId ?? ""}`) return;
+    if (period.rows.some((r) => r.employeeId === person)) return;
+    untrack(() => writeState({ ...urlState, person: null }));
   });
 
   // ── The salon in the URL (Issue #612, P-10) ──────────────────────────────────
@@ -884,53 +942,44 @@
     }
   }
 
-  async function downloadEmployeePdf(employeeId: string, name: string) {
-    const key = `pdf-${employeeId}`;
-    empDownloadErrors = { ...empDownloadErrors, [key]: "" };
+  // Issue #612: the person documents of the drill-down (report:export), for the month selected
+  // there. Never the header salon: a document of one named person does not change with it.
+  async function downloadEmployeePdf(employeeId: string, name: string, target: YearMonth) {
     try {
       await downloadPdf(
-        `/reports/monthly/pdf?employeeId=${employeeId}&year=${selectedYear}&month=${selectedMonth}`,
-        `Stundennachweis_${name.replace(/\s+/g, "_")}_${selectedYear}_${String(selectedMonth).padStart(2, "0")}.pdf`,
+        `/reports/monthly/pdf?employeeId=${employeeId}&year=${target.year}&month=${target.month}`,
+        `Stundennachweis_${name.replace(/\s+/g, "_")}_${target.year}_${String(target.month).padStart(2, "0")}.pdf`,
       );
-    } catch (e: unknown) {
-      empDownloadErrors = {
-        ...empDownloadErrors,
-        [key]: e instanceof Error ? e.message : "PDF-Download fehlgeschlagen",
-      };
+    } catch {
+      toasts.error(
+        "Der Stundennachweis konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
+      );
     }
   }
 
-  async function downloadEmployeeDatev(employeeId: string, name: string) {
-    const key = `datev-${employeeId}`;
-    empDownloadErrors = { ...empDownloadErrors, [key]: "" };
+  async function downloadEmployeeDatev(employeeId: string, name: string, target: YearMonth) {
     try {
       const { authStore: authSt } = await import("$stores/auth");
       const { get } = await import("svelte/store");
       const auth = get(authSt);
       const res = await fetch(
-        `/api/v1/reports/datev/employee?employeeId=${employeeId}&year=${selectedYear}&month=${selectedMonth}`,
+        `/api/v1/reports/datev/employee?employeeId=${employeeId}&year=${target.year}&month=${target.month}`,
         {
           headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
         },
       );
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error((data as { error?: string }).error ?? "Download fehlgeschlagen");
-      }
+      if (!res.ok) throw new Error("Download fehlgeschlagen");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `DATEV_${name.replace(/\s+/g, "_")}_${selectedYear}_${String(selectedMonth).padStart(2, "0")}.txt`;
+      a.download = `DATEV_${name.replace(/\s+/g, "_")}_${target.year}_${String(target.month).padStart(2, "0")}.txt`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 100);
-    } catch (e: unknown) {
-      empDownloadErrors = {
-        ...empDownloadErrors,
-        [`datev-${employeeId}`]: e instanceof Error ? e.message : "DATEV-Download fehlgeschlagen",
-      };
+    } catch {
+      toasts.error("Die DATEV-Datei konnte nicht erstellt werden. Bitte versuchen Sie es erneut.");
     }
   }
 
@@ -1226,6 +1275,25 @@
     to={urlState.to}
     {today}
     onApply={onPeriodChange}
+  />
+  <PersonDrilldown
+    bind:open={drillOpen}
+    row={drillRow}
+    vacationRow={drillVacationRow}
+    periodLabel={periodLabel(urlState.from, urlState.to, today)}
+    canTimeEntryRead={rights.canTimeEntryRead}
+    {canReportExport}
+    showSalonColumn={showSalonOptions($salonContext)}
+    {loadDayEntries}
+    onDownloadPdf={(target) =>
+      drillRow
+        ? downloadEmployeePdf(drillRow.employeeId, drillRow.employeeName, target)
+        : undefined}
+    onDownloadDatev={(target) =>
+      drillRow
+        ? downloadEmployeeDatev(drillRow.employeeId, drillRow.employeeName, target)
+        : undefined}
+    onClose={closeDrill}
   />
   <div class="sr-only" role="status" aria-live="polite" data-testid="period-live">{liveText}</div>
 {:else}

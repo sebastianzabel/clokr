@@ -6,6 +6,8 @@
  * may not see arrives as `null` with `sollUnavailableReason` on the row.
  */
 
+import type { TravelRowFields } from "$lib/time-entries/travel-entry-form";
+
 export interface YearMonth {
   year: number;
   month: number;
@@ -171,4 +173,21 @@ export function periodReportPath(from: YearMonth, to: YearMonth, salonId: string
 export function periodCsvPath(from: YearMonth, to: YearMonth, salonId: string | null): string {
   const base = `/reports/period/csv?from=${ymKey(from)}&to=${ymKey(to)}`;
   return salonId === null ? base : `${base}&salonId=${encodeURIComponent(salonId)}`;
+}
+
+/**
+ * The fields of a `GET /time-entries` row the drill-down's day list shows. `workingMinutes` is a
+ * rounded per-entry DISPLAY value (null for an open entry): it is never totalled (CLAUDE.md #79);
+ * the month total is the series row of the period answer.
+ */
+export interface DayEntry extends TravelRowFields {
+  id: string;
+  /** Calendar day, `YYYY-MM-DD`. */
+  date: string;
+  startTime: string;
+  endTime: string | null;
+  breakMinutes: number;
+  isInvalid?: boolean;
+  invalidReason?: string | null;
+  workingMinutes?: number | null;
 }
