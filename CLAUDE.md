@@ -285,7 +285,7 @@ Current: recalculated from hire date on every request (does not scale). Target a
   reach judged at the exit day. The Monatsabschluss status computes missing days only inside the
   employment window the close writer uses (`statusEmploymentWindow()`, bound by parity tests).
 - **Two report documents; the Monatsexport is the human-readable twin of DATEV (Issue #617).** `GET
-  /reports/monthly-export/pdf` (`report:export:ZUGEWIESEN`, one PDF for all persons of a month): its
+/reports/monthly-export/pdf` (`report:export:ZUGEWIESEN`, one PDF for all persons of a month): its
   persons come only through `selectMonthlyExportPersons` (`composition/reports.ts`) on the shared DATEV
   loader (`loadDatevMonth`, the employment core `employedInPeriodWhere`, § 41 EStG) — the ONE place the
   optional `salonId` of #542 narrows the persons (by Stammsalon on each person's own Stichtag, see the #542 bullet
@@ -403,9 +403,11 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   the attendance row ONLY - the team-week shape is frozen by `dashboard-team-week-frozen-84` - and no start
   time is invented for a day without a shift, so a person with a fixed schedule and no shift reads "scheduled"
   today and "missing" only for past days. `day-status-one-function-587.test.ts` fails on any other caller of
-  `resolvePresenceState` and on an unregistered `isDayDue`/`isObligatedWorkday` caller; its register holds the
-  known copies - `/my-week` and the missing-workday finder `find-missing-workdays.ts` - each naming the
-  follow-up issue #670. The web words a status only through `$lib/dashboard/day-status-label.ts`, and a
+  `resolvePresenceState` and on any `isDayDue`/`isObligatedWorkday` caller (its register holds one entry since #670, the frozen Monatsabschluss detector; #670
+  moved `GET /dashboard/my-week` - its values kept through the mapping in `composition/my-week-status.ts` - and the
+  `GET /dashboard/open-items` gap list onto the same function: a past day is named missing iff its status is „Fehlt“,
+  except a day with only invalid entries, which `invalidEntries` already counts; the Monatsabschluss detector
+  `find-missing-workdays.ts` is unchanged). The web words a status only through `$lib/dashboard/day-status-label.ts`, and a
   team-week cell links to `/team/time-entries?employeeId&date` for callers who may open that page. Details:
   `docs/adr/0001-abweichungen.md` Eintrag P, Nachtrag Phase 587.
 - **Activity kind is an evaluation dimension, never working-time arithmetic (Issue #81).**

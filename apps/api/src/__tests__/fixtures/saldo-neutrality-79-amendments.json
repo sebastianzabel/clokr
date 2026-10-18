@@ -1,0 +1,17 @@
+{
+  "description": "Amendment register of the frozen Phase 79 saldo-neutrality characterisation (saldo-neutrality-characterisation-79.test.ts). The frozen literals in that file are never edited; a cell whose expected value changed ON PURPOSE is named here and the test applies the register to a deep copy of the frozen literal, checking that every entry's `from` still equals the frozen value. Same mechanism as saldo-boundary-neutrality-493-amendments.json.",
+  "issue": 670,
+  "date": "2026-10-18",
+  "rule": "GET /dashboard/my-week reads the one day-status function (resolveDayStatus): only VALID entries count as presence and as worked hours, so a day whose only entry is invalid is no longer 'complete' with that entry's hours.",
+  "reason": "Der ungültige Eintrag vom 20.03. (Zeile 5, aus dem Saldo ausgeschlossen) zählte in 'Meine Woche' als Anwesenheit (Issue #670, A2); Team-Woche und Anwesenheitsliste ignorieren ihn seit jeher (hier derselbe Pin 'invalid row excluded'). Der Tag ist heute (Freitag 21:00 Ortszeit, ohne Schicht, nicht fällig) und liest damit wie in der Team-Woche 'scheduled'. Nur diese zwei Zellen der Antwort ändern sich; Saldo, Wochen-Ist des Dashboards und alle anderen Tage bleiben gleich.",
+  "amendments": [
+    { "cell": "my-week", "date": "2026-03-20", "field": "workedHours", "from": 8, "to": 0 },
+    {
+      "cell": "my-week",
+      "date": "2026-03-20",
+      "field": "status",
+      "from": "complete",
+      "to": "scheduled"
+    }
+  ]
+}
