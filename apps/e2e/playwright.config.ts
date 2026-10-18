@@ -211,6 +211,15 @@ export default defineConfig({
       //     with the server's German text, a single-salon tenant offered no switch); tenant fixture
       //     only, no seed, the day computed from the current day
       //
+      // Issue #612 added a tenth file:
+      //   - the period report page (/reports): ◀/▶ and presets with one request each, period/tab/
+      //     salon in the URL surviving a reload and a shared link, the person drill-down with
+      //     person= and Back, a modifier click opening a new tab, the Exportieren dialog; plus a
+      //     route-intercepted 390/360 px light/dark matrix (whole-page geometry, clipped boxes, axe
+      //     nested-interactive with a positive control) and the three layout checks (month picker
+      //     not clipped, KPI values inside their tiles, sticky header below the period bar); tenant
+      //     fixture only, no seed, dates from the current day or the installed browser clock
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -226,6 +235,7 @@ export default defineConfig({
         /hr-view-86\.spec\.ts/,
         /multi-entry-day\.spec\.ts/,
         /travel-between-salons\.spec\.ts/,
+        /reports-period\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],
