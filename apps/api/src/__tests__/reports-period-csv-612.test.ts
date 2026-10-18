@@ -95,7 +95,10 @@ function statusOf(row: JsonRow): string {
   return row.confirmedMonthCount === row.monthCount ? "Bestätigt" : "Prognose";
 }
 
-describe("Issue #612 - GET /reports/period/csv", () => {
+// These fixtures are mostly open months, which still walk the account kernel per person and month
+// (#696); under CI coverage a single case exceeds the global 30 s budget. Back to the default once
+// #696 bundles the open-month carry-in. Assertions are unchanged.
+describe("Issue #612 - GET /reports/period/csv", { timeout: 120_000 }, () => {
   let app: FastifyInstance;
   let fx: MonthlyExportFixture;
   let foreign: Awaited<ReturnType<typeof seedTestData>>;
