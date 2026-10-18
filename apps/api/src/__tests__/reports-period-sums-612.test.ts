@@ -88,7 +88,10 @@ type MonthlyRow = {
 const hours = (minutes: number): number => Math.round((minutes / 60) * 100) / 100;
 const PRINT = process.env.CLOKR_PRINT_PERIOD_TABLE === "1";
 
-describe("Issue #612 — period sums (AC-612-2)", () => {
+// The period route walks the account kernel once per person and month (#688); under CI coverage a
+// single case takes up to ~28 s, so the global 30 s budget flakes. Back to the default once #688
+// reads closed months in one query. Assertions are unchanged.
+describe("Issue #612 — period sums (AC-612-2)", { timeout: 120_000 }, () => {
   let app: FastifyInstance;
   let fx: MonthlyExportFixture;
   let pX: { employeeId: string; employeeNumber: string };
