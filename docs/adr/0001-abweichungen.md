@@ -2816,7 +2816,7 @@ pnpm --filter @clokr/web exec vitest run src/lib/dashboard src/lib/leave src/__t
 **Schwere:** Fehlerbehebung; keine Unterbau-, Schema-, Migrations-, Routen- oder Permission-Änderung. Owner-Entscheidung
 vom 17.10.2026: die Status „in Pause“ und „zu spät“ werden nicht eingeführt (kein gesetzlicher Begriff; eine
 Pünktlichkeitsbewertung wäre Leistungs- und Verhaltenskontrolle, § 87 Abs. 1 Nr. 6 BetrVG). „Fehlt“ nennt weiterhin
-die erwartete Zeit und die Minuten seit Schichtbeginn (#587). Das Register aus Phase 587 ist leer.
+die erwartete Zeit und die Minuten seit Schichtbeginn (#587). Das Register aus Phase 587 behält genau einen Eintrag: den eingefrorenen Detektor des Monatsabschlusses.
 
 **Was sich geändert hat:**
 
@@ -2845,11 +2845,10 @@ die erwartete Zeit und die Minuten seit Schichtbeginn (#587). Das Register aus P
 - Halbtage (B6): ein Halbtag-Urlaub ist im Tagesstatus „Abwesend“, also keine Lücke; die bisher verworfene
   `partial`-Lücke entfällt ohne Wirkung auf die Karte.
 - **Monatsabschluss unverändert.** `find-missing-workdays.ts`, `close-employee-month.ts` und alle Saldo-Zahlen sind
-  semantisch unberührt; die Lückensuche des Abschlusses ruft die Pflichtprüfung nun über `obligationOfDay()`
-  (`presence.ts`), einen Delegaten derselben Funktion `isObligatedWorkday` (Vollvergleich über das gesamte
-  Eingabegitter in `my-week-status-670.test.ts`). Damit bleibt der Wächter
-  `day-status-one-function-587.test.ts` ohne Register-Eintrag; er verlangt zusätzlich, dass `/my-week` und
-  `/open-items` `resolveDayStatus` aufrufen und kein Primitiv.
+  unberührt; die Lückensuche des Abschlusses ruft weiter `isObligatedWorkday` und steht als einziger Eintrag im
+  Register von `day-status-one-function-587.test.ts` („Monatsabschluss braucht nur die Arbeitstagspflicht; Semantik
+  bewusst eingefroren“). Der Wächter verlangt zusätzlich, dass `/my-week` und `/open-items` `resolveDayStatus`
+  aufrufen und kein Primitiv.
 - Eingefrorener Pin: `saldo-neutrality-characterisation-79.test.ts` pinnte „Meine Woche“ vom 20.03. mit dem ungültigen
   Eintrag als Anwesenheit (8 h, `complete`). Die Literale bleiben; die zwei geänderten Zellen (`workedHours` 8 → 0,
   `status` `complete` → `scheduled`) stehen mit Regel, Begründung und Issue #670 im Änderungsregister

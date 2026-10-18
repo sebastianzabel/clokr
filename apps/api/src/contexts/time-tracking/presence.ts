@@ -65,17 +65,6 @@ export function isObligatedWorkday(params: {
 }
 
 /**
- * Issue #670: the obligation ALONE, for a reader that has no status to show - the Monatsabschluss
- * gap detector (`working-time-account/find-missing-workdays.ts`) asks only "is this day owed?".
- * It is the same predicate as `isObligatedWorkday` (a delegate, no second rule), exported so that
- * the day-status guard keeps ONE call site of the primitive outside the kernel's own function:
- * the status chain (obligation + due + state) stays in `resolveDayStatus`.
- */
-export function obligationOfDay(params: Parameters<typeof isObligatedWorkday>[0]): boolean {
-  return isObligatedWorkday(params);
-}
-
-/**
  * Whether a day is "due" — i.e. late enough that an absence on it may count as
  * "Fehlt". Separates the *obligation* (isObligatedWorkday) from the *timing*.
  *

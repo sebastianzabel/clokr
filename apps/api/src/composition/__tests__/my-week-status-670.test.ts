@@ -1,11 +1,8 @@
 /**
- * Issue #670 - DB-free pins: the documented my-week vocabulary mapping, and the proof that the
- * Monatsabschluss gap detector's obligation entry (`obligationOfDay`) answers exactly like the
- * primitive it delegates to, over the whole input grid (full-row comparison).
+ * Issue #670 - DB-free pins: the documented my-week vocabulary mapping.
  */
 import { describe, it, expect } from "vitest";
 import { myWeekStatusOf } from "../my-week-status";
-import { isObligatedWorkday, obligationOfDay } from "../../contexts/time-tracking";
 
 const base = {
   hasLeave: false,
@@ -35,33 +32,5 @@ describe("myWeekStatusOf - the documented mapping", () => {
   it("a weekend day never turns a missing/scheduled status into weekend", () => {
     expect(myWeekStatusOf({ ...base, status: "missing", isWeekend: true })).toBe("missing");
     expect(myWeekStatusOf({ ...base, status: "scheduled", isWeekend: true })).toBe("scheduled");
-  });
-});
-
-describe("obligationOfDay is the same predicate as isObligatedWorkday (month-close detector unchanged)", () => {
-  it("agrees on the whole grid", () => {
-    let rows = 0;
-    for (const scheduleType of [
-      null,
-      "FIXED_SCHEDULE",
-      "FIXED_WEEKLY",
-      "SHIFT_BASED",
-      "FLEXTIME",
-      "MONTHLY_HOURS",
-      "X",
-    ]) {
-      for (const workDays of [[], [1, 2, 3, 4, 5], [3, 4, 5], [1, 6]]) {
-        for (let dow = 0; dow < 7; dow++) {
-          for (const expectedHours of [0, 1, 8]) {
-            for (const hasShift of [false, true]) {
-              const p = { scheduleType, workDays, dow, expectedHours, hasShift };
-              expect(obligationOfDay(p)).toBe(isObligatedWorkday(p));
-              rows++;
-            }
-          }
-        }
-      }
-    }
-    expect(rows).toBe(7 * 4 * 7 * 3 * 2);
   });
 });

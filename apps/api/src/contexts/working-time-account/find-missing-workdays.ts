@@ -33,7 +33,7 @@
 import { getDayHoursFromSchedule, getDayOfWeekInTz, dateStrInTz } from "./timezone";
 // presence.ts (isObligatedWorkday's home) is import-free and pure (no Prisma, no DB, no async) —
 // importing it here does not break this file's own purity contract (Phase 128, D-01).
-import { obligationOfDay } from "../time-tracking"; // Phase 101B (Issue #101, wave 8); #670: same predicate, obligation-only entry
+import { isObligatedWorkday } from "../time-tracking"; // Phase 101B (Issue #101, wave 8)
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -166,7 +166,7 @@ export function findMissingWorkdays(input: MissingWorkdaysInput): MissingWorkday
     // GET /overtime/close-month/status, auto-close-month.ts) and the missing-entry notifications
     // (attendance-checker.ts) all read one rule and cannot drift apart. The adapter was deleted.
     //
-    // obligationOfDay() (Issue #670: a delegate of isObligatedWorkday) is the SAME predicate the three dashboard presence sites already use -
+    // isObligatedWorkday() is the SAME predicate the three dashboard presence sites already use -
     // no new obligation semantics is introduced here, the existing one only moved. Its
     // `workDays.length > 0 ? workDays.includes(dow) : expectedHours > 0` fallback keeps rows with
     // an empty or absent `workDays` (e.g. the getEffectiveSchedule() fallback object in
@@ -180,7 +180,7 @@ export function findMissingWorkdays(input: MissingWorkdaysInput): MissingWorkday
     expectedDates = new Set<string>();
     iterateDateRange(effectiveStart, effectiveEnd, tz, (ds, utcDate) => {
       const dow = getDayOfWeekInTz(utcDate, tz);
-      const obligated = obligationOfDay({
+      const obligated = isObligatedWorkday({
         scheduleType,
         workDays,
         dow,

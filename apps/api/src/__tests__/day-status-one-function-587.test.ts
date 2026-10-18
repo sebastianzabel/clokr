@@ -16,8 +16,8 @@
  *   3. The `/team-week`, `/today-attendance`, `/my-week` and `/open-items` handlers of
  *      `composition/dashboard.ts` each call `resolveDayStatus` and none of the three primitives.
  *
- * The register ended empty with Issue #670 (D-587-5): it is not a list of accepted debt to be
- * extended, a new entry is a finding to report.
+ * The register keeps ONE entry since Issue #670 (D-587-5): the frozen Monatsabschluss detector. It is
+ * not a list of accepted debt to be extended, a new entry is a finding to report.
  *
  * Stated blind spot: a primitive imported under another name, or called through a variable, is not
  * seen. Review has to catch a creative workaround.
@@ -55,10 +55,18 @@ interface KnownCopy {
   followUp: number;
 }
 
-// Issue #670 emptied the register: /my-week and /open-items resolve through `resolveDayStatus`, and
-// the Monatsabschluss gap detector reads the obligation alone through `obligationOfDay` (a
-// delegate in the kernel, not a status chain). A new entry here is a finding to report.
-const KNOWN_COPIES: readonly KnownCopy[] = [];
+// Issue #670 removed the /my-week and /open-items entries. The one that remains is the Monatsabschluss
+// gap detector, whose semantics are frozen on purpose. A new entry here is a finding to report.
+const KNOWN_COPIES: readonly KnownCopy[] = [
+  {
+    file: "contexts/working-time-account/find-missing-workdays.ts",
+    region: "function findMissingWorkdays",
+    callee: "isObligatedWorkday",
+    reason:
+      "Monatsabschluss braucht nur die Arbeitstagspflicht; Semantik bewusst eingefroren (#670 AC 6, D-587-5)",
+    followUp: 670,
+  },
+];
 
 function walk(absDir: string, out: string[]): void {
   for (const entry of readdirSync(absDir)) {
@@ -151,8 +159,10 @@ describe("Issue #587 - the day status is resolved by one function", () => {
     expect(sortedKeys(outside)).toEqual(sortedKeys([...KNOWN_COPIES]));
   });
 
-  it("the register is empty (Issue #670) and every entry, should one return, names a reason and a follow-up", () => {
-    expect(KNOWN_COPIES).toEqual([]);
+  it("the register holds only the frozen Monatsabschluss detector (Issue #670) and names a reason and a follow-up", () => {
+    expect(KNOWN_COPIES.map(key)).toEqual([
+      "contexts/working-time-account/find-missing-workdays.ts | function findMissingWorkdays | isObligatedWorkday",
+    ]);
     for (const c of KNOWN_COPIES) {
       expect(c.reason.length, key(c)).toBeGreaterThan(20);
       expect(Number.isInteger(c.followUp) && c.followUp > 0, key(c)).toBe(true);
