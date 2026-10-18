@@ -175,13 +175,19 @@ test.describe("Functional — happy paths across primary surfaces", () => {
   });
 
   test.describe("Reports surface", () => {
-    test("reports page mounts with at least one report card", async ({ page, tenant }) => {
+    test("reports page mounts with its export surface behind „Exportieren“", async ({
+      page,
+      tenant,
+    }) => {
       await loginAsTenantAdmin(page, tenant);
       await page.goto("/reports");
 
-      // Reports page mounts the DATEV + Lohnabrechnung KPI rows + cards.
-      // We don't assert on specific content (depends on tenant data) — just
-      // that the page mounted with reports visible (covers "no empty pages").
+      // Issue #612 (ADD-5): every export lives behind the period bar's one „Exportieren“ dialog, so
+      // the DATEV block is found after opening it (before, the DATEV card sat on the page). We
+      // don't assert on specific content (depends on tenant data) — just that the page mounted
+      // with its export surface (covers "no empty pages").
+      await page.getByRole("button", { name: "Exportieren" }).click();
+      await expect(page.getByRole("dialog", { name: "Exportieren" })).toBeVisible();
       await expect(page.getByText(/DATEV/i).first()).toBeVisible({ timeout: 10_000 });
     });
   });

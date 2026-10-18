@@ -59,6 +59,8 @@ interface Surface {
   next: string;
   /** Whether the bar offers a "Heute" button. */
   today: boolean;
+  /** The bar's next arrow is a real disabled button (the period may not pass the current month). */
+  nextDisabled?: boolean;
 }
 
 const MONTH = { label: "September 2026", prev: "Vorheriger Monat", next: "Nächster Monat" };
@@ -77,6 +79,9 @@ const SURFACES: Surface[] = [
   },
   { path: "/team/leave", ...MONTH, today: true },
   { path: "/teamcal", ...MONTH, today: true },
+  // Issue #612: the period bar of /reports (MonthBar with the period label); no "Heute" (the preset
+  // "Dieser Monat" covers it) and, in the current month the clock is fixed on, a disabled next arrow.
+  { path: "/reports", ...MONTH, today: false, nextDisabled: true },
 ];
 
 const BAR_SELECTOR = ".month-bar, .cal-monthbar";
@@ -282,6 +287,23 @@ for (const viewport of VIEWPORTS) {
             expect(g.label.height, `${where}: label wraps onto a second line`).toBeLessThan(
               2 * g.labelFontSize,
             );
+          }
+
+          if (surface.nextDisabled) {
+            // Issue #612: a disabled arrow is still a 44 px target inside the viewport - the layout
+            // must not collapse it because it cannot be pressed.
+            const next = bar.getByRole("button", { name: surface.next, exact: true });
+            await expect(next, `${where}: the next arrow is disabled`).toBeDisabled();
+            const nextBox = await next.boundingBox();
+            expect(nextBox, `${where}: the next arrow has no box`).not.toBeNull();
+            expect(
+              Math.round((nextBox?.height ?? 0) * 10) / 10,
+              `${where}: the disabled next arrow is smaller than the 44 px touch target`,
+            ).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+            expect(
+              (nextBox?.x ?? 0) + (nextBox?.width ?? 0),
+              `${where}: the disabled next arrow ends right of the viewport`,
+            ).toBeLessThanOrEqual(viewport.width);
           }
 
           if (surface.today) {
