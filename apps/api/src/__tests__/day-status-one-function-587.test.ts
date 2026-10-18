@@ -13,12 +13,11 @@
  *   2. The calls of `isDayDue` / `isObligatedWorkday` outside `presence.ts` are exactly the
  *      register below - the MEASURED known copies (file, route or function, callee), each with a
  *      reason. A new call site, or a register entry that no longer matches one, turns the test red.
- *   3. The `/team-week` and `/today-attendance` handlers of `composition/dashboard.ts` each call
- *      `resolveDayStatus` and none of the three primitives.
+ *   3. The `/team-week`, `/today-attendance`, `/my-week` and `/open-items` handlers of
+ *      `composition/dashboard.ts` each call `resolveDayStatus` and none of the three primitives.
  *
- * The register is not a list of accepted debt to be extended: its entries are the copies D-587-5
- * names as a follow-up. Every entry carries the number of the follow-up issue that removes it
- * (#670) as a positive integer.
+ * The register ended empty with Issue #670 (D-587-5): it is not a list of accepted debt to be
+ * extended, a new entry is a finding to report.
  *
  * Stated blind spot: a primitive imported under another name, or called through a variable, is not
  * seen. Review has to catch a creative workaround.
@@ -56,37 +55,10 @@ interface KnownCopy {
   followUp: number;
 }
 
-// The follow-up issue that removes every register entry (D-587-5): #670.
-const FOLLOW_UP_ISSUE = 670;
-
-const MY_WEEK_REASON =
-  "known copy - /my-week keeps its own status chain (own week, own wording); removed by the follow-up issue (D-587-5)";
-const GAP_FINDER_REASON =
-  "known copy - the missing-workday finder asks only whether a day is an obligated workday; removed by the follow-up issue (D-587-5)";
-
-const KNOWN_COPIES: readonly KnownCopy[] = [
-  {
-    file: DASHBOARD,
-    region: "get /my-week",
-    callee: "isDayDue",
-    reason: MY_WEEK_REASON,
-    followUp: FOLLOW_UP_ISSUE,
-  },
-  {
-    file: DASHBOARD,
-    region: "get /my-week",
-    callee: "isObligatedWorkday",
-    reason: MY_WEEK_REASON,
-    followUp: FOLLOW_UP_ISSUE,
-  },
-  {
-    file: "contexts/working-time-account/find-missing-workdays.ts",
-    region: "function findMissingWorkdays",
-    callee: "isObligatedWorkday",
-    reason: GAP_FINDER_REASON,
-    followUp: FOLLOW_UP_ISSUE,
-  },
-];
+// Issue #670 emptied the register: /my-week and /open-items resolve through `resolveDayStatus`, and
+// the Monatsabschluss gap detector reads the obligation alone through `obligationOfDay` (a
+// delegate in the kernel, not a status chain). A new entry here is a finding to report.
+const KNOWN_COPIES: readonly KnownCopy[] = [];
 
 function walk(absDir: string, out: string[]): void {
   for (const entry of readdirSync(absDir)) {
@@ -179,16 +151,22 @@ describe("Issue #587 - the day status is resolved by one function", () => {
     expect(sortedKeys(outside)).toEqual(sortedKeys([...KNOWN_COPIES]));
   });
 
-  it("every register entry names a reason and a valid follow-up", () => {
-    expect(KNOWN_COPIES.length).toBeGreaterThan(0);
+  it("the register is empty (Issue #670) and every entry, should one return, names a reason and a follow-up", () => {
+    expect(KNOWN_COPIES).toEqual([]);
     for (const c of KNOWN_COPIES) {
       expect(c.reason.length, key(c)).toBeGreaterThan(20);
       expect(Number.isInteger(c.followUp) && c.followUp > 0, key(c)).toBe(true);
     }
   });
 
-  it("the team week and the attendance list resolve every person-day through resolveDayStatus and call no primitive", () => {
-    for (const region of ["get /team-week", "get /today-attendance"]) {
+  it("every person-day reader resolves through resolveDayStatus and calls no primitive", () => {
+    // Issue #670: /my-week and /open-items joined the team week and the attendance list.
+    for (const region of [
+      "get /team-week",
+      "get /today-attendance",
+      "get /my-week",
+      "get /open-items",
+    ]) {
       const inRegion = sites.filter((s) => s.file === DASHBOARD && s.region === region);
       expect(
         inRegion.filter((s) => s.callee === "resolveDayStatus").length,

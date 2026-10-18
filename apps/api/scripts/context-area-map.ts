@@ -106,6 +106,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/composition/dashboard.ts": "komposition", // 11 models read across contexts by design (D-17)
   "src/composition/reports.ts": "komposition", // 7 models read across contexts by design (D-17)
   "src/composition/team-entry-scope.ts": "komposition", // Issue #85 (D-04/D-05) — partitions entry rows by the Unterbau's in-scope id set; owns no model, carries no rule
+  "src/composition/my-week-status.ts": "komposition", // Issue #670 — the documented mapping from the shared day status to the my-week vocabulary; pure, owns no model, carries no rule of its own
   "src/composition/reach-day.ts": "komposition", // Issue #679 — picks the calendar day (exit day inside the month, else the last day) a person's Stammsalon reach is judged on and delegates to the Unterbau resolution; owns no model, carries no rule of its own
   "src/composition/salon-view.ts": "komposition", // Issue #542 (P-01) — the one membership rule of a salon view (entry salon or Stammsalon on a day) and the one 404 body of the composition's salon views; pure, owns no model, carries no rule of its own
   "src/composition/pdf.ts": "komposition", // pure PDF-layout rendering of pre-computed data; sole caller is reports.ts; no Prisma access, no Fachregel

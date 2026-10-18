@@ -933,7 +933,10 @@ import { readFileSync } from "node:fs";
 // Issue #679 (2026-10-17): measured with a full run on `fix/679-reach-stichtag` (origin/main @ 7b66d4a3) - 694 test files,
 // 10553 tests. New file: reach-stichtag-679 (+11 cases); nothing removed, skipped or loosened. MIN_FILES 693 -> 694, never lowered.
 // Merge #679 onto main: 697 + 1 = 698, no file removed.
-const MIN_FILES = 698;
+// Issue #670 (2026-10-18): full run on `fix/670-one-day-status` (origin/main @ 15dcce49) - 700 test files, 10653 tests (3 skipped).
+// New files: my-week-open-items-parity-670 (+42 cases), my-week-status-670 (+3); nothing removed, skipped or loosened.
+// MIN_FILES 698 -> 700, never lowered.
+const MIN_FILES = 700;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -979,7 +982,8 @@ const MIN_FILES = 698;
 // Merge #588 onto #682 (2026-10-17): main 10570 + 26 = 10596. Never lowered.
 // Issue #679 (2026-10-17): MIN_TESTS 10541 -> 10553, the measured total of the full run named at MIN_FILES. Never lowered.
 // Merge #679 onto main: 10596 + 12 = 10608. Never lowered.
-const MIN_TESTS = 10608;
+// Issue #670 (2026-10-18): MIN_TESTS 10608 -> 10653, the measured total of the full run named at MIN_FILES. Never lowered.
+const MIN_TESTS = 10653;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

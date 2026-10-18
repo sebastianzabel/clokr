@@ -76,7 +76,13 @@ export { getEffectiveSchedule } from "./entry-invariants";
 export { getEffectiveBreakDuration } from "./break-effective";
 export type { BreakEmployeeShape, BreakTenantConfigShape } from "./break-effective";
 // Issue #587 — `resolveDayStatus` is the one day-status function (obligation + timing + presence state).
-export { resolvePresenceState, isObligatedWorkday, isDayDue, resolveDayStatus } from "./presence";
+export {
+  resolvePresenceState,
+  isObligatedWorkday,
+  isDayDue,
+  resolveDayStatus,
+  obligationOfDay, // Issue #670 — the obligation alone, for the Monatsabschluss gap detector
+} from "./presence";
 export type {
   PresenceEntry,
   PresenceLeave,

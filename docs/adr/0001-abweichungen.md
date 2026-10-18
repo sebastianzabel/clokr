@@ -2811,6 +2811,61 @@ pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-mat
 pnpm --filter @clokr/web exec vitest run src/lib/dashboard src/lib/leave src/__tests__/team-week-cell-links-587.test.ts
 ```
 
+### Nachtrag 2026-10-18 (Issue #670) — „Meine Woche“ und die Lückensuche der offenen Punkte lesen denselben Tagesstatus
+
+**Schwere:** Fehlerbehebung; keine Unterbau-, Schema-, Migrations-, Routen- oder Permission-Änderung. Owner-Entscheidung
+vom 17.10.2026: die Status „in Pause“ und „zu spät“ werden nicht eingeführt (kein gesetzlicher Begriff; eine
+Pünktlichkeitsbewertung wäre Leistungs- und Verhaltenskontrolle, § 87 Abs. 1 Nr. 6 BetrVG). „Fehlt“ nennt weiterhin
+die erwartete Zeit und die Minuten seit Schichtbeginn (#587). Das Register aus Phase 587 ist leer.
+
+**Was sich geändert hat:**
+
+- `GET /dashboard/my-week` ruft `resolveDayStatus()` mit denselben Personentag-Eingaben wie Team-Woche und
+  Anwesenheitsliste (Urlaub des Tages inklusive beantragt, Berufsschul-Verdrängung, erste Schicht, Vertrag des
+  Tages, Beschäftigung, nur gültige Einträge). **Vokabular:** die Feldwerte der Antwort bleiben für die Oberfläche
+  stabil; `composition/my-week-status.ts` ist die dokumentierte Abbildung (`present` → `complete`/`partial` nach
+  Ist gegen Soll, `absent` → `leave`/`sick`/`absent` nach Urlaub bzw. Abwesenheit, `none` → `weekend`/`none`). Die
+  Oberfläche und ihre Tests ändern sich nicht.
+- Sichtbare Folgen in „Meine Woche“: ein Tag mit nur ungültigem Eintrag ist „Fehlt“ mit 0 Ist-Stunden (A2); jeder Tag
+  nach dem an ihm gültigen Vertrag (A3); vor Eintritt und nach Austritt „—“ (A4); ein Wochenendtag, den der Vertrag
+  per `workDays` schuldet, ist „Geplant“/„Fehlt“ statt „Wochenende“ (A5); `isWorkday` urteilt am Feiertag nach den
+  Vertragsstunden, das angezeigte Soll bleibt 0 (A7). Ein Beschäftigter ohne Vertragszeile liest weiter den
+  Mandanten-Standardvertrag.
+- `GET /dashboard/open-items` bildet je vergangenem Tag des Fensters (gestern und früher, Obergrenze unverändert)
+  dieselben Eingaben und meldet den Tag genau dann als fehlend, wenn der Tagesstatus „Fehlt“ ist. Ein beantragter
+  Urlaub entschuldigt den Tag damit wie in der Team-Woche („Beantragt“, B1); der Vertrag des Tages (B3) und die
+  Beschäftigung (Eintritt/Austritt) gelten je Tag; Schichten werden für jeden Plantyp gelesen, die Regel, wann ein
+  Tag geschuldet ist, steht nur in `presence.ts` (B4). Das Fenster endet weiter gestern (B5): „heute“ ist noch
+  nicht nachzutragen.
+- **Begründete Abweichung (B2):** ein Tag, dessen einzige Einträge ungültig sind, liest in der Team-Woche „Fehlt“,
+  steht aber nicht in `missingDays`. Der Eintrag zählt bereits in `invalidEntries`, mit eigener Handlung
+  (Neubewertung bzw. Stornierung klären); den Tag zusätzlich als Lücke zu nennen schickte die Person zu einem
+  Nachtrag, der den Grund nicht behebt, und zählte dieselbe Ursache zweimal in `total`. Festgehalten in
+  `my-week-open-items-parity-670.test.ts`.
+- Halbtage (B6): ein Halbtag-Urlaub ist im Tagesstatus „Abwesend“, also keine Lücke; die bisher verworfene
+  `partial`-Lücke entfällt ohne Wirkung auf die Karte.
+- **Monatsabschluss unverändert.** `find-missing-workdays.ts`, `close-employee-month.ts` und alle Saldo-Zahlen sind
+  semantisch unberührt; die Lückensuche des Abschlusses ruft die Pflichtprüfung nun über `obligationOfDay()`
+  (`presence.ts`), einen Delegaten derselben Funktion `isObligatedWorkday` (Vollvergleich über das gesamte
+  Eingabegitter in `my-week-status-670.test.ts`). Damit bleibt der Wächter
+  `day-status-one-function-587.test.ts` ohne Register-Eintrag; er verlangt zusätzlich, dass `/my-week` und
+  `/open-items` `resolveDayStatus` aufrufen und kein Primitiv.
+- Eingefrorener Pin: `saldo-neutrality-characterisation-79.test.ts` pinnte „Meine Woche“ vom 20.03. mit dem ungültigen
+  Eintrag als Anwesenheit (8 h, `complete`). Die Literale bleiben; die zwei geänderten Zellen (`workedHours` 8 → 0,
+  `status` `complete` → `scheduled`) stehen mit Regel, Begründung und Issue #670 im Änderungsregister
+  `fixtures/saldo-neutrality-79-amendments.json` (Mechanismus wie #493/#80, ein veralteter `from`-Wert schlägt fehl).
+  Neutralitätsaufzeichnungen und Matrix-Zellen unverändert.
+- Paritätstest `my-week-open-items-parity-670.test.ts`: 16 Fixture-Personen über eine vergangene Woche und „heute“ (Mi
+  12:00), dazu der Vertragswechsel zum Monatsersten mitten in der Woche; gegenprüfbar gegen die alte Fassung (Kontrolle:
+  8 Fälle werden dort rot).
+
+### Nachrechnen (Nachtrag Issue #670)
+
+```bash
+pnpm --filter @clokr/api run test:setup && pnpm --filter @clokr/api exec vitest run src/composition/__tests__/my-week-open-items-parity-670.test.ts src/composition/__tests__/my-week-status-670.test.ts src/__tests__/day-status-one-function-587.test.ts src/composition/__tests__/day-status-parity-587.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/open-items-close-month-parity.test.ts   # Karte und Monatsabschluss
+```
+
 ### Nachtrag 2026-10-17 (Phase 542, Issue #542) — Berichte folgen der Salonauswahl: Monatsbericht, Anwesenheit heute, Saldenübersicht, Monatsexport
 
 **Schwere:** Erweiterung; keine Unterbau-, Schema-, Migrations-, Routen- oder Permission-Änderung. Ein neues reines

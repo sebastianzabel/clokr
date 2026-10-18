@@ -30,6 +30,8 @@
  * Saldo entry set (closed, valid, WORK, not deleted) = rows 1,2,3,4,7,8:
  * working 2733.4644 (-> 2733), presence 2883.4644 (-> 2883), breaks 150.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
@@ -286,6 +288,41 @@ async function seedCharacterisationEntries(app: FastifyInstance, employeeId: str
   });
 }
 
+// Issue #670: amendment register of this frozen file (same mechanism as the #493 and #80 pins).
+const AMENDMENT_REGISTER = JSON.parse(
+  readFileSync(join(__dirname, "fixtures", "saldo-neutrality-79-amendments.json"), "utf8"),
+) as {
+  issue: number;
+  rule: string;
+  reason: string;
+  amendments: Array<{ cell: string; date: string; field: string; from: unknown; to: unknown }>;
+};
+if (
+  AMENDMENT_REGISTER.issue !== 670 ||
+  AMENDMENT_REGISTER.rule.length < 40 ||
+  AMENDMENT_REGISTER.reason.length < 40 ||
+  AMENDMENT_REGISTER.amendments.length === 0
+) {
+  throw new Error("saldo-neutrality-79 amendment register: missing or unexplained");
+}
+
+/** The frozen per-day literal with the register applied on a deep copy; a stale `from` fails. */
+function amendedMyWeek<T>(
+  days: Array<{ date: string }>,
+  field: "workedHours" | "status",
+  frozen: T[],
+): T[] {
+  const out = structuredClone(frozen);
+  for (const a of AMENDMENT_REGISTER.amendments) {
+    if (a.cell !== "my-week" || a.field !== field) continue;
+    const idx = days.findIndex((d) => d.date === a.date);
+    expect(idx, `register ${a.date} ${a.field}: day present`).toBeGreaterThanOrEqual(0);
+    expect(frozen[idx], `register ${a.date} ${a.field}: from`).toEqual(a.from);
+    out[idx] = a.to as T;
+  }
+  return out;
+}
+
 describe("Phase 79 D-10 — saldo-neutrality characterisation (frozen on the untouched tree)", () => {
   let app: FastifyInstance;
   let tenantId: string;
@@ -460,8 +497,9 @@ describe("Phase 79 D-10 — saldo-neutrality characterisation (frozen on the unt
         "2026-03-21",
         "2026-03-22",
       ]);
-      expect(body.days.map((d) => d.workedHours)).toEqual([8, 8.25, 6.5, 8.56, 8, 0, 0]);
-      expect(body.days.map((d) => d.status)).toEqual([
+      // Issue #670: the frozen literals stay; the register names the two cells that changed on purpose.
+      const frozenWorked = [8, 8.25, 6.5, 8.56, 8, 0, 0];
+      const frozenStatus = [
         "complete",
         "complete",
         "partial",
@@ -469,7 +507,13 @@ describe("Phase 79 D-10 — saldo-neutrality characterisation (frozen on the unt
         "complete",
         "clocked_in",
         "weekend",
-      ]);
+      ];
+      expect(body.days.map((d) => d.workedHours)).toEqual(
+        amendedMyWeek(body.days, "workedHours", frozenWorked),
+      );
+      expect(body.days.map((d) => d.status)).toEqual(
+        amendedMyWeek(body.days, "status", frozenStatus),
+      );
     });
 
     it("A: GET /dashboard/team-week 16.-22.03 — per-day workedHours (hand; invalid row excluded) and statuses (captured, S6)", async () => {
