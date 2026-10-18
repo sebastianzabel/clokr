@@ -941,7 +941,10 @@ import { readFileSync } from "node:fs";
 // Eight new files, all from this phase: reports-period-612 (19 cases), reports-period-sums-612 (17), reports-period-vacation-612
 // (12), reports-period-salon-612 (10), reports-period-reach-612 (5), reports-period-perf-612 (3), reports-period-csv-612 (10)
 // and composition/__tests__/period-csv-612 (18); nothing removed, skipped or loosened. MIN_FILES 700 -> 708, never lowered.
-const MIN_FILES = 708;
+// Issue #688 (2026-10-18): measured with a full run (`pnpm --filter @clokr/api test`) on `perf/688-period-bulk-read`
+// (origin/main @ 62cd922e + #688) - 709 test files, 10757 tests (10754 passed, 3 skipped). One new file:
+// reports-period-bulk-read-688 (5 cases); nothing removed, skipped or loosened. MIN_FILES 708 -> 709, never lowered.
+const MIN_FILES = 709;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -997,7 +1000,9 @@ const MIN_FILES = 708;
 // runs one `describe.each` case per proved guard of the whole tree, and the new web guard `chart-style-591.test.ts` is the 79th
 // proved guard (78 before; `lint-guard-vacuity --check 0` reports 79 guards, 0 vacuous). Nothing removed, skipped or loosened.
 // Never lowered.
-const MIN_TESTS = 10752;
+// Issue #688 (2026-10-18): MIN_TESTS 10752 -> 10757 (+5), the measured total of the full run named at MIN_FILES: the five
+// cases of the new reports-period-bulk-read-688.test.ts. Never lowered.
+const MIN_TESTS = 10757;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
