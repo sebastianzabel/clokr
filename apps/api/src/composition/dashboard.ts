@@ -20,6 +20,7 @@ import {
   isShiftInScope, // Issue #548 — Phase 91b D-11, the one per-shift scope predicate
 } from "../contexts/platform";
 import { resolveMonthReachIds } from "./reach-day"; // Issue #679
+import { myWeekStatusOf } from "./my-week-status"; // Issue #670 — the documented my-week vocabulary
 import { getShiftsInRange } from "../contexts/scheduling"; // Phase 100B Plan 05 — S1
 import {
   distinctEmployeeIds,
@@ -36,8 +37,6 @@ import {
   getInvalidEntries,
   getEffectiveSchedule,
   resolveDayStatus, // Issue #587 (D-587-1) — the one day-status function
-  isObligatedWorkday, // /my-week — a known copy of the status chain (D-587-5, follow-up)
-  isDayDue, // /my-week — a known copy of the status chain (D-587-5, follow-up)
   findUnconfirmedBreakDays, // Phase 126 — canonical unconfirmed-Pflichtpause detector (BREAK-05)
   entryDurations, // Phase 79 (Issue #79), D-03/D-05 — presence/working-time kernel
   addWorkingMinutes, // Phase 79 (Issue #79), D-12 — fold step
@@ -68,7 +67,6 @@ import {
   getConfirmedCarryOver,
   getConfirmedCarryOverBulk,
   finalSaldoOpen, // Issue #613 (AC-613-5) — is an exited person's exit month still open
-  findMissingWorkdays,
   resolveMissingEntriesDays,
   computeOvertimeBalanceBreakdown,
   monthlyHoursMonthSollMinutes, // Issue #433 (D-11)
@@ -205,6 +203,22 @@ function contractOfDay<T extends { employeeId: string; validFrom: Date }>(
     schedules.find((s) => s.employeeId === employeeId) ??
     null
   );
+}
+
+/**
+ * Issue #670: the contracts of ONE person up to `upTo`, newest first - the input of
+ * {@link contractOfDay} for the personal readers (/my-week, /open-items). A person without any
+ * contract row reads the tenant-default FIXED_SCHEDULE of `getEffectiveSchedule`, as before, valid
+ * from the beginning of time so it applies to every day of the read window.
+ */
+async function contractsOfPerson(app: FastifyInstance, employeeId: string, upTo: Date) {
+  const rows = await app.prisma.workSchedule.findMany({
+    where: { employeeId, validFrom: { lte: upTo } },
+    orderBy: { validFrom: "desc" },
+  });
+  if (rows.length > 0) return rows;
+  const fallback = await getEffectiveSchedule(app, employeeId, upTo);
+  return [{ ...fallback, employeeId, validFrom: new Date(0) }];
 }
 
 /**
@@ -1672,10 +1686,27 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const { date } = req.query as { date?: string };
       const refDate = date ? new Date(date) : new Date();
       // Issue #493 (D-10): the five facade reads below hit `@db.Date` columns — calendar-day bounds.
-      const { days: weekDays } = weekRangeUtc(refDate, tz);
+      const { end: weekEnd, days: weekDays } = weekRangeUtc(refDate, tz);
       const { firstDay, lastDay } = weekDateRange(refDate, tz);
 
-      const schedule = await getEffectiveSchedule(app, employeeId);
+      // Issue #670: the same person-day inputs as /team-week and /today-attendance. The clock is
+      // read ONCE per request (Issue #587, P-08), the contracts are read once for the week and
+      // judged per day, and the employment window comes from the person's own row.
+      const now = new Date();
+      const todayStr = dateStrInTz(now, tz);
+      const nowHHMM = timeStrInTz(now, tz);
+      const contracts = await contractsOfPerson(
+        app,
+        employeeId ?? "",
+        now.getTime() > weekEnd.getTime() ? now : weekEnd,
+      );
+      const employmentRow = await app.prisma.employee.findFirst({
+        where: { id: employeeId ?? "", tenantId },
+        select: { hireDate: true, exitDate: true },
+      });
+      // The response's `scheduleType` stays the CURRENT contract's type, as before.
+      const scheduleType =
+        (contractOfDay(contracts, employeeId ?? "", now) as { type?: string } | null)?.type ?? null;
 
       // Holidays by work location, for the week (Phase 71b, issue #71) — a dedicated T2 read
       // feeds the resolver (carries salonId); `entries` below (getRecordedWorkEntriesInRange)
@@ -1742,89 +1773,70 @@ export async function dashboardRoutes(app: FastifyInstance) {
         firstDay,
         lastDay,
       );
-      const scheduleType = (schedule as { type?: string } | null)?.type ?? null;
-
       const days = weekDays.map((dateStr: string) => {
         const dayEntries = entries.filter((e) => dateStrInTz(e.date, tz) === dateStr);
-        const workedMin = dayEntries.reduce((sum: number, e) => addWorkingMinutes(sum, e), 0);
+        // Issue #670 (A2): only VALID entries count - an invalid row (e.g. "Urlaubsstornierung
+        // ausstehend") is no presence, in the saldo as in the team week.
+        let workedMin = 0;
+        for (const e of dayEntries) if (!e.isInvalid) workedMin = addWorkingMinutes(workedMin, e);
 
-        const dow = getDayOfWeekInTz(new Date(dateStr + "T12:00:00Z"), tz);
         const holidayName = myWeekHolidayMap.get(dateStr) ?? null;
-        // Feiertage reduzieren das Soll auf 0
-        const expectedMin =
-          schedule && !holidayName ? getDayHoursFromSchedule(schedule, dow) * 60 : 0;
-        const hasEntry = dayEntries.length > 0;
-        const isClockedIn = dayEntries.some((e) => !e.endTime);
-        const isWeekend = dow === 0 || dow === 6;
+        const leave = leaveOfDay(myWeekLeaves, employeeId, dateStr, tz);
+        const absence = absenceOfDay(myWeekAbsences, employeeId, dateStr, tz);
+        const effectiveLeave = effectiveLeaveOfDay(leave, absence);
+        const shift = firstShiftOfDay(myWeekShifts, employeeId, dateStr, tz);
 
-        // Phase 95 SHIFT-01 (Pitfall 2): prefer a non-PENDING leave so a real
-        // APPROVED "Urlaub" wins over a coincident PENDING "beantragt" on the same day.
-        const myLeaveMatches = (lr: (typeof myWeekLeaves)[number]) =>
-          dateStrInTz(lr.startDate, tz) <= dateStr && dateStrInTz(lr.endDate, tz) >= dateStr;
-        const leave =
-          myWeekLeaves.find((lr) => myLeaveMatches(lr) && lr.status !== "PENDING") ??
-          myWeekLeaves.find(myLeaveMatches);
-        const absence = myWeekAbsences.find(
-          (a) => dateStrInTz(a.startDate, tz) <= dateStr && dateStrInTz(a.endDate, tz) >= dateStr,
-        );
-        // Issue #448 (D-05): same BS-displaces-leave application as /team-week above —
-        // composition applies the absence-context rule, never redefines it.
-        const bsDisplacesLeave =
-          absence?.type === "VOCATIONAL_SCHOOL" &&
-          vocationalSchoolDisplacesLeave(leave?.leaveType.code ?? null);
-        const effectiveLeave = bsDisplacesLeave ? null : leave;
-        const dayShifts = myWeekShifts.filter((s) => dateStrInTz(s.date, tz) === dateStr);
-        const shift =
-          dayShifts.length > 0
-            ? {
-                startTime: dayShifts[0].startTime,
-                endTime: dayShifts[0].endTime,
-                label: dayShifts[0].label ?? dayShifts[0].template?.name ?? null,
-                color: dayShifts[0].template?.color ?? null,
-              }
-            : null;
-        const hasShift = shift !== null;
-
-        // Schedule-type-aware obligation (fixes flexible schedules never being
-        // "Fehlt" and SHIFT_BASED-without-shift no longer being "Fehlt").
-        const isWorkday = isObligatedWorkday({
-          scheduleType,
-          workDays: (schedule as { workDays?: number[] } | null)?.workDays ?? [],
+        // Issue #670 (A3): the contract valid ON this day decides what the day owes.
+        const dayRange = dayRangeUtc(dateStr, tz);
+        const dayContract = contractOfDay(contracts, employeeId ?? "", dayRange.end);
+        const {
+          scheduleType: dayScheduleType,
+          workDays,
           dow,
-          expectedHours: expectedMin / 60,
-          hasShift,
-        });
-        // Due-aware timing: past days always due; today only after the shift
-        // start time has passed (or never for a schedule without a start time).
-        // Replaces the isPast-only branch so a today shift whose start has passed
-        // renders "missing", while flexible/before-shift days render "scheduled".
-        const isDue = isDayDue({
+          expectedHours,
+        } = scheduleFactsOfDay(dayContract, dateStr, tz);
+        // Issue #670 (A4, Issue #613): outside the employment a day is never owed.
+        const employedThisDay = employmentRow
+          ? isEmployedInPeriod(employmentRow, dayRange.start, dayRange.end)
+          : true;
+
+        // Issue #670 (A1): the one day-status function, shared with /team-week.
+        const resolved = resolveDayStatus({
           dayStr: dateStr,
-          todayStr: dateStrInTz(new Date(), tz),
-          nowHHMM: timeStrInTz(new Date(), tz),
-          shiftStartTime: shift?.startTime ?? null,
+          todayStr,
+          nowHHMM,
+          employedOnDay: employedThisDay,
+          scheduleType: dayScheduleType,
+          workDays,
+          dow,
+          expectedHours,
+          shift,
+          entries: dayEntries,
+          leave: presenceLeaveOf(effectiveLeave),
+          absence: presenceAbsenceOf(absence),
+          holidayName,
+          entryOnlyRow: false,
         });
 
-        let status = "none";
-        if (isClockedIn) status = "clocked_in";
-        else if (hasEntry) status = workedMin >= expectedMin ? "complete" : "partial";
-        // Phase 95 SHIFT-01: a PENDING leave surfaces as "requested" ("beantragt"),
-        // an APPROVED/CANCELLATION_REQUESTED one stays green "leave".
-        else if (effectiveLeave)
-          status = effectiveLeave.status === "PENDING" ? "requested" : "leave";
-        else if (absence) {
-          status = absence.type === "SICK" || absence.type === "SICK_CHILD" ? "sick" : "absent";
-        } else if (holidayName) status = "holiday";
-        else if (isWeekend && !hasShift) status = "weekend";
-        else if (isDue && (isWorkday || hasShift)) status = "missing";
-        else if (isWorkday || hasShift) status = "scheduled";
+        // The displayed Soll of the day is reduced to 0 on a holiday; the OBLIGATION above is
+        // judged on the contract hours (Issue #670, A7), exactly like the team week.
+        const expectedMin = holidayName ? 0 : expectedHours * 60;
+        const isWeekend = dow === 0 || dow === 6;
+        const status = myWeekStatusOf({
+          status: resolved.status,
+          hasLeave: effectiveLeave !== undefined,
+          absenceType: absence?.type ?? null,
+          isWeekend,
+          workedMinutes: workedMin,
+          expectedMinutes: expectedMin,
+        });
 
         return {
           date: dateStr,
           workedHours: round(workedMin / 60),
           expectedHours: round(expectedMin / 60),
           status,
-          isWorkday,
+          isWorkday: resolved.isWorkday,
           isWeekend,
           holidayName,
           leaveType: effectiveLeave?.leaveType.name ?? null,
@@ -1867,6 +1879,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // (missingEntriesDays); its bounds (windowStart..yesterday, inclusive) are unchanged.
       const yesterday = new Date(today);
       yesterday.setDate(yesterday.getDate() - 1);
+      // The last instant of yesterday (tenant-local): contracts valid up to then apply to the
+      // window's days.
+      const yesterdayEnd = dayRangeUtc(yesterday.toISOString().slice(0, 10), tz).end;
 
       // Personal open items (only when the user has an employee record)
       const missingDays: string[] = [];
@@ -1890,22 +1905,22 @@ export async function dashboardRoutes(app: FastifyInstance) {
           select: { isTimeTrackingExempt: true, hireDate: true, exitDate: true },
         });
         if (!meEmployee?.isTimeTrackingExempt) {
-          // 1. Missing time entries (workdays without entries in the configured window).
-          // OPEN entries included on purpose (Phase 100B Plan 08 — getRecordedWorkEntriesInRange,
-          // not T2): a day whose entry is still open (unclosed clock-in) already has a claimed
-          // entry and must NOT ALSO be flagged missing — `lt: today` (exclusive) is exactly
-          // `lte: yesterday` (inclusive) for a @db.Date column, so the window is unchanged.
+          // 1. Missing time entries: the past days of the configured window whose day status is
+          // "Fehlt" (Issue #670) - the SAME `resolveDayStatus` and the same person-day inputs as
+          // /team-week, /today-attendance and /my-week, so a day the card names is a day the
+          // team lead reads as "Fehlt". The Monatsabschluss keeps its own detector
+          // (`findMissingWorkdays`, close-employee-month.ts) and is not read here.
+          // Entries are the recorded rows (OPEN and INVALID included): an open entry is
+          // "clocked_in", an invalid one is no presence (the status ignores it).
           const recentEntries = await getRecordedWorkEntriesInRange(
             app.prisma,
             employeeScopeFor(access, { employeeId }),
             windowStart,
             yesterday,
           );
-          const entryDates = new Set(recentEntries.map((e) => dateStrInTz(e.date, tz)));
 
-          // Holidays by work location, for the configured window (Phase 71b, issue #71) — a
-          // dedicated T2 read feeds the resolver (carries salonId); `recentEntries` above
-          // (getRecordedWorkEntriesInRange) stays as-is for the entry-date detection.
+          // Holidays by work location, for the configured window (Phase 71b, issue #71) - a
+          // dedicated T2 read feeds the resolver (carries salonId).
           const openItemsWorkEntries = await getWorkedEntriesInRange(
             app.prisma,
             employeeScopeFor(access, { employeeId }),
@@ -1928,85 +1943,77 @@ export async function dashboardRoutes(app: FastifyInstance) {
             dateStrInTz(today, tz),
             openItemsWorkLocationEntries,
           );
-          const openItemsHolidaySet = new Set(
-            (openItemsHolidaysByEmployee.get(employeeId) ?? new Map<string, string>()).keys(),
-          );
+          const openItemsHolidays =
+            openItemsHolidaysByEmployee.get(employeeId) ?? new Map<string, string>();
 
-          // Effective leave (APPROVED or CANCELLATION_REQUESTED, Issue #446) + Absences in the
-          // configured window cover the day too (mirrors overtime.ts close-month/status logic — a
-          // day is only "missing" if no entry, no holiday, no leave, no absence covers it)
-          // Phase 100B Plan 13 — A2, contexts/absence facade.
-          const approvedLeaveInWindow = await getActiveLeaveOverlapping(
+          // Leave INCLUDING a requested one (the day reads "Beantragt", not "Fehlt", as in the
+          // team week) and imposed absences; shifts of every schedule type (a first shift is a
+          // day's obligation and its due time, Issue #587).
+          const openItemsLeave = await getCalendarLeaveOverlapping(
             app.prisma,
             employeeScopeFor(access, { employeeId }),
             windowStart,
             today,
           );
-          // Phase 100B Plan 12 — A4, contexts/absence facade.
           const absencesInWindow = await getAbsencesOverlapping(
             app.prisma,
             employeeScopeFor(access, { employeeId }),
             windowStart,
             today,
           );
+          const openItemsShifts = await getShiftsInRange(
+            app.prisma,
+            employeeScopeFor(access, { employeeId }),
+            windowStart,
+            yesterday,
+          );
+          const openItemsContracts = await contractsOfPerson(app, employeeId, yesterdayEnd);
+          const openItemsNow = new Date();
+          const openItemsTodayStr = dateStrInTz(openItemsNow, tz);
+          const openItemsNowHHMM = timeStrInTz(openItemsNow, tz);
 
-          // Phase 111 (issue #114) — the inline `{day}Hours > 0` predicate that used to live here
-          // read {day}Hours for EVERY schedule type. For SHIFT_BASED/FLEXTIME/MONTHLY_HOURS those
-          // columns are a legacy 1/0 flag, not hours, so a free day with thursdayHours=1 was
-          // reported as missing forever. Commit 523d7042 (v1.9.5) fixed the three sibling sites in
-          // this file and missed this one. Route through the canonical detector instead — the same
-          // one the Monatsabschluss and GET /overtime/close-month/status use, so card and
-          // Monatsabschluss cannot drift apart.
-          const openItemsScheduleType = String(schedule?.type ?? "");
-
-          // SHIFT_BASED obligation comes from the roster, never from {day}Hours (pitfall A4).
-          // Tenant-scoped via the employee relation + soft-delete filtered (CLAUDE.md).
-          // Phase 100B Plan 05 — S1, contexts/scheduling facade.
-          let openItemsRosterDates: Set<string> | undefined;
-          if (openItemsScheduleType === "SHIFT_BASED") {
-            const openItemsShifts = await getShiftsInRange(
-              app.prisma,
-              employeeScopeFor(access, { employeeId }),
-              windowStart,
-              yesterday,
+          for (
+            let cursor = new Date(windowStart);
+            cursor.getTime() <= yesterday.getTime();
+            cursor.setUTCDate(cursor.getUTCDate() + 1)
+          ) {
+            const dayStr = cursor.toISOString().slice(0, 10);
+            const dayEntries = recentEntries.filter((e) => dateStrInTz(e.date, tz) === dayStr);
+            const leave = leaveOfDay(openItemsLeave, employeeId, dayStr, tz);
+            const absence = absenceOfDay(absencesInWindow, employeeId, dayStr, tz);
+            const dayRange = dayRangeUtc(dayStr, tz);
+            const facts = scheduleFactsOfDay(
+              contractOfDay(openItemsContracts, employeeId, dayRange.end),
+              dayStr,
+              tz,
             );
-            openItemsRosterDates = new Set(openItemsShifts.map((sh) => dateStrInTz(sh.date, tz)));
+            const { status } = resolveDayStatus({
+              dayStr,
+              todayStr: openItemsTodayStr,
+              nowHHMM: openItemsNowHHMM,
+              employedOnDay: meEmployee
+                ? isEmployedInPeriod(meEmployee, dayRange.start, dayRange.end)
+                : true,
+              scheduleType: facts.scheduleType,
+              workDays: facts.workDays,
+              dow: facts.dow,
+              expectedHours: facts.expectedHours,
+              shift: firstShiftOfDay(openItemsShifts, employeeId, dayStr, tz),
+              entries: dayEntries,
+              leave: presenceLeaveOf(effectiveLeaveOfDay(leave, absence)),
+              absence: presenceAbsenceOf(absence),
+              holidayName: openItemsHolidays.get(dayStr) ?? null,
+              entryOnlyRow: false,
+            });
+            if (status !== "missing") continue;
+            // The one justified difference to the day status (Issue #670): a day whose ONLY
+            // entries are invalid reads "Fehlt" in the team week, but the card already counts
+            // those entries under `invalidEntries` with their own action (revalidate or cancel the
+            // leave cancellation) - naming the day a second time would send the person to a
+            // Nachtrag that cannot fix it.
+            if (dayEntries.length > 0 && dayEntries.every((e) => e.isInvalid)) continue;
+            missingDays.push(dayStr);
           }
-
-          // Clamp to the employment span, mirroring GET /overtime/close-month/status — a day
-          // before hire or after exit carries no obligation.
-          const hireDate = meEmployee?.hireDate ?? null;
-          const exitDate = meEmployee?.exitDate ?? null;
-          const openItemsStart = hireDate && hireDate > windowStart ? hireDate : windowStart;
-          const openItemsEnd = exitDate && exitDate < yesterday ? exitDate : yesterday;
-
-          const openItemsGapResult = findMissingWorkdays({
-            // Phase 128 (D-01/D-02): the detector's FIXED branch is workDays-primary itself now, so
-            // the Phase 111 workDaysPrimarySchedule() projection that used to sit here is gone -
-            // this card and the Monatsabschluss read one rule from one place.
-            schedule: (schedule ?? {}) as Record<string, unknown>,
-            effectiveStart: openItemsStart,
-            effectiveEnd: openItemsEnd,
-            tz,
-            entryDates,
-            approvedLeave: approvedLeaveInWindow.map((lr) => ({
-              startDate: lr.startDate,
-              endDate: lr.endDate,
-              halfDay: Boolean(lr.halfDay),
-            })),
-            absences: absencesInWindow.map((ab) => ({
-              startDate: ab.startDate,
-              endDate: ab.endDate,
-              halfDay: Boolean(ab.halfDay),
-            })),
-            holidayDateStrings: openItemsHolidaySet,
-            rosterDates: openItemsRosterDates,
-          });
-
-          // partial:true gaps come from half-day leave/absence days without an entry. This card
-          // renders a nagging "Nachtragen" CTA and has never nagged about a leave-covered day;
-          // surfacing them here would trade one false positive for a new one. Full gaps only.
-          missingDays.push(...openItemsGapResult.gaps.filter((g) => !g.partial).map((g) => g.date));
         }
 
         // 2. Own pending leave requests — BUrlG still applies for exempt employees
