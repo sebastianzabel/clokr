@@ -100,6 +100,95 @@ test.describe("Functional — happy paths across primary surfaces", () => {
     });
   });
 
+  test.describe("Dashboard charts", () => {
+    test("a month of the team charts opens the report of that month", async ({ page, tenant }) => {
+      // Issue #591 (AC-591-3, D-591-3): the header links "Bericht →" and the click on a month
+      // column both lead to the reports page; the URL is written by the reports page's own
+      // serialiser, so the expectations below are the contract /reports?from&to&tab.
+      const MONTH_NAMES = [
+        "Januar",
+        "Februar",
+        "März",
+        "April",
+        "Mai",
+        "Juni",
+        "Juli",
+        "August",
+        "September",
+        "Oktober",
+        "November",
+        "Dezember",
+      ];
+      await loginAsTenantAdmin(page, tenant);
+      await page.goto("/dashboard");
+
+      const hoursCanvas = page.getByRole("img", {
+        name: /^(Gruppiertes )?Säulendiagramm: .*Arbeitsstunden/,
+      });
+      const trendCanvas = page.getByRole("img", { name: /^Liniendiagramm: Überstunden-Saldo/ });
+      const sickCanvas = page.getByRole("img", { name: /^Säulendiagramm: Krankheitstage/ });
+      await expect(hoursCanvas).toBeVisible({ timeout: 15_000 });
+      await expect(trendCanvas).toBeVisible({ timeout: 15_000 });
+      await expect(sickCanvas).toBeVisible({ timeout: 15_000 });
+
+      // The keyboard path: one header link per chart to the chart's six months.
+      const hoursLink = page.getByRole("link", { name: "Arbeitsstunden im Bericht öffnen" });
+      const trendLink = page.getByRole("link", { name: "Überstunden-Trend im Bericht öffnen" });
+      const sickLink = page.getByRole("link", { name: "Krankheitstage im Bericht öffnen" });
+      await expect(hoursLink).toHaveAttribute(
+        "href",
+        /^\/reports\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=zeiten$/,
+      );
+      await expect(trendLink).toHaveAttribute(
+        "href",
+        /^\/reports\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=zeiten$/,
+      );
+      await expect(sickLink).toHaveAttribute(
+        "href",
+        /^\/reports\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub$/,
+      );
+      const hoursHref = (await hoursLink.getAttribute("href")) ?? "";
+      const lastMonth = /to=(\d{4}-\d{2})/.exec(hoursHref)?.[1] ?? "";
+      expect(lastMonth).toMatch(/^\d{4}-\d{2}$/);
+
+      // The mouse path: a click inside the plot area at 90 % of the canvas width and 45 % of its
+      // height. The chart answers by month column (index mode, not by bar), so any height inside
+      // the plot area hits; 90 % of the width lies inside the last of the six columns, right of the
+      // value axis and left of the chart's right padding.
+      await hoursCanvas.scrollIntoViewIfNeeded();
+      await page.waitForLoadState("networkidle");
+      const box = await hoursCanvas.boundingBox();
+      expect(box).not.toBeNull();
+      await hoursCanvas.click({ position: { x: box!.width * 0.9, y: box!.height * 0.45 } });
+
+      await page.waitForURL(/\/reports\?from=(\d{4}-\d{2})&to=\1&tab=zeiten/);
+      expect(new URL(page.url()).searchParams.get("to")).toBe(lastMonth);
+      const [year, month] = lastMonth.split("-").map(Number);
+      await expect(page.getByTestId("reports-period-label")).toContainText(
+        `${MONTH_NAMES[month - 1]} ${year}`,
+      );
+    });
+
+    test("the header link of Krankheitstage opens the urlaub tab over the chart's months", async ({
+      page,
+      tenant,
+    }) => {
+      // Issue #591 (P-591-06): a canvas click is not keyboard-operable, so the same drill-down
+      // exists as a link in the card header.
+      await loginAsTenantAdmin(page, tenant);
+      await page.goto("/dashboard");
+
+      const sickLink = page.getByRole("link", { name: "Krankheitstage im Bericht öffnen" });
+      await expect(sickLink).toBeVisible({ timeout: 15_000 });
+      const href = (await sickLink.getAttribute("href")) ?? "";
+      expect(href).toMatch(/^\/reports\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub$/);
+
+      await sickLink.click();
+      await page.waitForURL(/\/reports\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub/);
+      expect(page.url()).toContain(href);
+    });
+  });
+
   test.describe("Sidebar navigation", () => {
     test("primary nav links route to the expected URLs", async ({ page, tenant }) => {
       await loginAsTenantAdmin(page, tenant);
