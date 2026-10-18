@@ -74,7 +74,11 @@ import { renderWithTheme } from "$tests/test-utils";
 import { authStore } from "$stores/auth";
 import { salonContext } from "$stores/salon-context";
 import { ApiError } from "$api/client";
-import { TEAM_SICK_DAYS_CHART } from "$lib/dashboard/team-charts";
+import {
+  TEAM_SALDO_TREND_CHART,
+  TEAM_SICK_DAYS_CHART,
+  teamHoursChartDescriptor,
+} from "$lib/dashboard/team-charts";
 import { chartAriaLabel } from "$lib/utils/chart-theme";
 import DashboardPage from "../routes/(app)/dashboard/+page.svelte";
 
@@ -168,6 +172,14 @@ function configOf(label: string): any {
 }
 
 const SICK_LABEL = chartAriaLabel(TEAM_SICK_DAYS_CHART);
+const TREND_LABEL = chartAriaLabel(TEAM_SALDO_TREND_CHART);
+// The full-rights caller sees the Soll, so the hours chart is the grouped one.
+const HOURS_LABEL = chartAriaLabel(teamHoursChartDescriptor({ shouldHours: [1] }));
+const LINK_NAMES = {
+  hours: "Arbeitsstunden im Bericht öffnen",
+  trend: "Überstunden-Trend im Bericht öffnen",
+  sick: "Krankheitstage im Bericht öffnen",
+};
 
 beforeEach(async () => {
   apiGet.mockReset();
@@ -218,5 +230,100 @@ describe("dashboard page - a month of a team chart opens its report (Issue #591,
     await waitFor(() => expect(recorded.some((r) => r.label === SICK_LABEL)).toBe(true));
     expect(configOf(SICK_LABEL).options.onClick).toBeUndefined();
     expect(gotoMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("dashboard page - the other two charts, the keyboard links and the permission rule (Issue #591)", () => {
+  it("opens the zeiten tab from the hours chart and the trend chart, the urlaub tab from the sick chart", async () => {
+    asUser(FULL_RIGHTS);
+    apiGet.mockImplementation((path: string) => answerOthers(path));
+    await salonContext.load("u1", { force: true });
+
+    renderWithTheme(DashboardPage, {});
+
+    await waitFor(() => expect(recorded.map((r) => r.label)).toContain(TREND_LABEL));
+    for (const label of [HOURS_LABEL, TREND_LABEL]) {
+      const config = configOf(label);
+      config.options.onClick({}, [{ index: 5 }]);
+      expect(gotoMock).toHaveBeenLastCalledWith("/reports?from=2026-06&to=2026-06&tab=zeiten");
+      config.options.onClick({}, [{ index: 0 }]);
+      expect(gotoMock).toHaveBeenLastCalledWith("/reports?from=2026-01&to=2026-01&tab=zeiten");
+    }
+    expect(configOf(HOURS_LABEL).options.interaction).toEqual({ mode: "index", intersect: false });
+    for (const label of [HOURS_LABEL, TREND_LABEL, SICK_LABEL]) {
+      expect(screen.getByRole("img", { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it("offers a keyboard link per chart to the six months, named after the card", async () => {
+    asUser(FULL_RIGHTS);
+    apiGet.mockImplementation((path: string) => answerOthers(path));
+    await salonContext.load("u1", { force: true });
+
+    renderWithTheme(DashboardPage, {});
+
+    const hours = await screen.findByRole("link", { name: LINK_NAMES.hours });
+    const trend = await screen.findByRole("link", { name: LINK_NAMES.trend });
+    const sick = await screen.findByRole("link", { name: LINK_NAMES.sick });
+    expect(hours).toHaveAttribute("href", "/reports?from=2026-01&to=2026-06&tab=zeiten");
+    expect(trend).toHaveAttribute("href", "/reports?from=2026-01&to=2026-06&tab=zeiten");
+    expect(sick).toHaveAttribute("href", "/reports?from=2026-01&to=2026-06&tab=urlaub");
+    for (const link of [hours, trend, sick]) {
+      expect(link).toHaveTextContent("Bericht →");
+      expect(link).toHaveClass("widget-action");
+    }
+  });
+
+  it("a caller without report:read gets neither a handler nor a link, and the charts still render", async () => {
+    asUser(["team-overview:read:ZUGEWIESEN", "overtime:read:ZUGEWIESEN"]);
+    apiGet.mockImplementation((path: string) => answerOthers(path));
+    await salonContext.load("u1", { force: true });
+
+    renderWithTheme(DashboardPage, {});
+
+    await waitFor(() => expect(recorded.map((r) => r.label)).toContain(TREND_LABEL));
+    for (const label of [HOURS_LABEL, TREND_LABEL, SICK_LABEL]) {
+      expect(configOf(label).options.onClick, label).toBeUndefined();
+      expect(screen.getByRole("img", { name: label })).toBeInTheDocument();
+    }
+    expect(screen.queryByText("Bericht →")).toBeNull();
+    expect(screen.queryByRole("link", { name: /im Bericht öffnen/ })).toBeNull();
+  });
+
+  it("under a salon filter no link or click carries a salonId, and the trend card shows its note instead of a link", async () => {
+    asUser(FULL_RIGHTS);
+    apiGet.mockImplementation((path: string) => answerOthers(path, true));
+    await salonContext.load("u1", { force: true });
+    salonContext.setSelection(SALON_A);
+
+    renderWithTheme(DashboardPage, {});
+
+    await waitFor(() =>
+      expect(
+        apiGet.mock.calls.some((c) => /team-trend\?months=6&salonId=/.test(String(c[0]))),
+      ).toBe(true),
+    );
+    await waitFor(() => expect(recorded.map((r) => r.label)).toContain(SICK_LABEL));
+    // The Soll is withheld under a filter, so the hours chart is the plain-column one.
+    const hoursFiltered = chartAriaLabel(teamHoursChartDescriptor({ shouldHours: null }));
+    configOf(hoursFiltered).options.onClick({}, [{ index: 5 }]);
+    configOf(SICK_LABEL).options.onClick({}, [{ index: 0 }]);
+    expect(gotoMock.mock.calls.map((c) => String(c[0]))).toEqual([
+      "/reports?from=2026-06&to=2026-06&tab=zeiten",
+      "/reports?from=2026-01&to=2026-01&tab=urlaub",
+    ]);
+
+    const links = (await screen.findAllByRole("link", { name: /im Bericht öffnen/ })).map((l) =>
+      l.getAttribute("href"),
+    );
+    expect(links).toEqual([
+      "/reports?from=2026-01&to=2026-06&tab=zeiten",
+      "/reports?from=2026-01&to=2026-06&tab=urlaub",
+    ]);
+    for (const href of [...links, ...gotoMock.mock.calls.map((c) => String(c[0]))]) {
+      expect(href).not.toContain("salonId");
+    }
+    expect(screen.queryByRole("link", { name: LINK_NAMES.trend })).toBeNull();
+    expect(screen.getByText(/Der Saldo ist eine Vertragsgröße/)).toBeInTheDocument();
   });
 });

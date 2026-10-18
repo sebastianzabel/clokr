@@ -18,6 +18,9 @@
 //   G5  every `<canvas` of a walked `.svelte` file carries `role="img"` and an
 //       `aria-label={chartAriaLabel(...)}` - never a literal text
 //   G6  no hex or rgb/hsl colour literal in `lib/utils/chart-theme.ts` or in a builder file
+//   G7  no walked file builds a report URL by hand: a string or template literal that starts with
+//       `/reports?` and contains `from=` is a violation - the query comes from `periodSearch` of
+//       `$lib/reports/period-state` (D-591-3)
 // Named blind spots: a chart built outside chart.js (an SVG sparkline, a hand-drawn canvas) is not
 // seen - none exists; a builder file that forgets the `ChartConfiguration` type import is not in
 // BUILDER_FILES, which G3 catches because its builder name is then not an export of a builder file.
@@ -193,6 +196,15 @@ function hasColourLiteral(text: string): boolean {
   return COLOUR_LITERAL.test(text);
 }
 
+/**
+ * True when the source holds a string or template literal that starts with `/reports?` and spells
+ * `from=` itself, i.e. a report URL assembled by hand instead of through `periodSearch`.
+ */
+const HAND_BUILT_REPORT_URL = /["'`]\/reports\?[^"'`]*\bfrom=/;
+function hasHandBuiltReportUrl(text: string): boolean {
+  return HAND_BUILT_REPORT_URL.test(text);
+}
+
 // ── Runtime table (G4) ─────────────────────────────────────────────────────────────────────────
 
 const STUB_THEME: ChartTheme = {
@@ -343,6 +355,12 @@ describe("Issue #591 - the chart style guard looks at a real source tree", () =>
     expect(hasColourLiteral("// Issue #591 uses tokens only")).toBe(false);
     expect(hasColourLiteral("color: theme.brand")).toBe(false);
 
+    expect(hasHandBuiltReportUrl("`/reports?from=${a}&to=${b}`")).toBe(true);
+    expect(hasHandBuiltReportUrl("'/reports?tab=zeiten&from=2026-01'")).toBe(true);
+    expect(hasHandBuiltReportUrl('"/reports?from=2026-01"')).toBe(true);
+    expect(hasHandBuiltReportUrl("`/reports?${periodSearch(state)}`")).toBe(false);
+    expect(hasHandBuiltReportUrl('href="/reports"')).toBe(false);
+
     expect(isChartFile("const c = new Chart(el, x);")).toBe(true);
     expect(isChartFile('import { Chart } from "chart.js";')).toBe(true);
     expect(isChartFile('import type { ChartConfiguration } from "chart.js";')).toBe(false);
@@ -469,5 +487,12 @@ describe("Issue #591 - one chart style (D-591-5)", () => {
       .filter(({ text }) => hasColourLiteral(text))
       .map(({ rel }) => rel);
     expect(offenders, `colours come from the tokens only: ${offenders}`).toEqual([]);
+  });
+
+  it("G7: no walked file builds a /reports URL by hand", () => {
+    const offenders = FILES.filter((f) => hasHandBuiltReportUrl(f.text)).map((f) => f.rel);
+    expect(offenders, `report URLs come from periodSearch only: ${offenders}`).toEqual([]);
+    // The one writer is real: the builder file calls the serialiser.
+    expect(fileText(BUILDER_FILE)).toMatch(/\/reports\?\$\{periodSearch\(/);
   });
 });

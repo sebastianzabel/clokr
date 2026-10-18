@@ -106,6 +106,7 @@
     TEAM_SALDO_TREND_CHART,
     TEAM_SICK_DAYS_CHART,
     reportMonthHref,
+    reportPeriodHref,
     teamHoursChartConfig,
     teamHoursChartDescriptor,
     teamSaldoTrendChartConfig,
@@ -467,6 +468,27 @@
     };
   }
 
+  /**
+   * The keyboard path of a month chart (P-591-06): a header link to the report of the chart's months
+   * under the same rule as the click, and only while the chart itself is drawn (no skeleton, no
+   * note in its place).
+   */
+  function reportLinkFor(tab: PeriodTab, shown: boolean): string | null {
+    if (!shown || !reportTabs.includes(tab) || trendView === null) return null;
+    return reportPeriodHref(
+      trendView.months.map((m) => m.month),
+      tab,
+    );
+  }
+  const hoursReportHref = $derived(reportLinkFor(TEAM_CHART_REPORT_TAB.hours, !chartsLoading));
+  const trendReportHref = $derived(
+    reportLinkFor(
+      TEAM_CHART_REPORT_TAB.saldoTrend,
+      !chartsLoading && !trendView?.trendNote && overtimeTrendAvailable,
+    ),
+  );
+  const sickReportHref = $derived(reportLinkFor(TEAM_CHART_REPORT_TAB.sickDays, !chartsLoading));
+
   // Phase 76.7 (D-15, UI-V19-04) — § 18 ArbZG-exempt: when the current
   // employee's `isTimeTrackingExempt` flag is true, fully HIDE the Timer-Card
   // (no Stempeluhr CTA) and render the Saldo-KPI value as "—" instead of a
@@ -808,7 +830,10 @@
     // Arbeitsstunden: Soll and Ist as grouped columns, drawn by the one chart builder.
     if (weeklyChartEl) {
       weeklyChart?.destroy();
-      weeklyChart = new Chart(weeklyChartEl, teamHoursChartConfig(drawn, theme, null));
+      weeklyChart = new Chart(
+        weeklyChartEl,
+        teamHoursChartConfig(drawn, theme, monthOpener(TEAM_CHART_REPORT_TAB.hours, drawn)),
+      );
     }
 
     // Overtime trend line chart — absolute team saldo from SaldoSnapshots + live OvertimeAccount
@@ -842,7 +867,12 @@
       overtimeChart?.destroy();
       overtimeChart = new Chart(
         overtimeChartEl,
-        teamSaldoTrendChartConfig(labels, absoluteHours, theme, null),
+        teamSaldoTrendChartConfig(
+          labels,
+          absoluteHours,
+          theme,
+          monthOpener(TEAM_CHART_REPORT_TAB.saldoTrend, drawn),
+        ),
       );
     }
 
@@ -1987,8 +2017,33 @@
 
       <!-- Charts (Team-Aggregation) -->
       <div class="charts-grid">
+        {#snippet hoursLink()}
+          <a
+            class="widget-action"
+            href={hoursReportHref}
+            aria-label="Arbeitsstunden im Bericht öffnen">Bericht →</a
+          >
+        {/snippet}
+        {#snippet trendLink()}
+          <a
+            class="widget-action"
+            href={trendReportHref}
+            aria-label="Überstunden-Trend im Bericht öffnen">Bericht →</a
+          >
+        {/snippet}
+        {#snippet sickLink()}
+          <a
+            class="widget-action"
+            href={sickReportHref}
+            aria-label="Krankheitstage im Bericht öffnen">Bericht →</a
+          >
+        {/snippet}
         <Card animate class="chart-card" style="--card-idx: 8;">
-          <CardHeader title="Arbeitsstunden" sub={trendView?.chartSub ?? "Letzte 6 Monate"} />
+          <CardHeader
+            title="Arbeitsstunden"
+            sub={trendView?.chartSub ?? "Letzte 6 Monate"}
+            actions={hoursReportHref !== null ? hoursLink : undefined}
+          />
           <div class="chart-wrap">
             {#if chartsLoading}
               <div class="chart-skeleton" aria-hidden="true"></div>
@@ -2007,7 +2062,11 @@
 
         {#if chartsLoading || overtimeTrendAvailable || trendView?.trendNote}
           <Card animate class="chart-card" style="--card-idx: 9;">
-            <CardHeader title="Überstunden-Trend" sub="Saldo-Verlauf" />
+            <CardHeader
+              title="Überstunden-Trend"
+              sub="Saldo-Verlauf"
+              actions={trendReportHref !== null ? trendLink : undefined}
+            />
             <div class="chart-wrap">
               {#if chartsLoading}
                 <div class="chart-skeleton" aria-hidden="true"></div>
@@ -2025,7 +2084,11 @@
         {/if}
 
         <Card animate class="chart-card" style="--card-idx: 10;">
-          <CardHeader title="Krankheitstage" sub="Letzte 6 Monate" />
+          <CardHeader
+            title="Krankheitstage"
+            sub="Letzte 6 Monate"
+            actions={sickReportHref !== null ? sickLink : undefined}
+          />
           <div class="chart-wrap">
             {#if chartsLoading}
               <div class="chart-skeleton" aria-hidden="true"></div>
