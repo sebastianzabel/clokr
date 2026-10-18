@@ -4,7 +4,7 @@
   server-driven (D-07). Controls a caller may not use are disabled, never hidden (D-06).
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import { toasts } from "$stores/toast";
@@ -131,10 +131,30 @@
     select();
   }
 
+  let editorEl = $state<HTMLElement | null>(null);
+
+  /**
+   * The editor renders below the role table, outside the viewport on a laptop screen (#692):
+   * once it is in the DOM, scroll it into view and move focus into it — the name field when it is
+   * editable, otherwise the editor wrapper itself (locked roles have no enabled control).
+   */
+  async function revealEditor() {
+    await tick();
+    const el = editorEl;
+    if (!el) return;
+    const reduce =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+    const name = el.querySelector<HTMLInputElement>("#role-editor-name");
+    (name && !name.disabled ? name : el).focus({ preventScroll: true });
+  }
+
   function openRole(role: AccessRole) {
     guardedSelect(() => {
       errorText = null;
       draft = draftFromRole(role);
+      void revealEditor();
     });
   }
 
@@ -142,6 +162,7 @@
     guardedSelect(() => {
       errorText = null;
       draft = newRoleDraft();
+      void revealEditor();
     });
   }
 
@@ -181,7 +202,10 @@
         async (created) => {
           toasts.success("Rolle kopiert");
           await reloadRoles();
-          if (created) draft = draftFromRole(created);
+          if (created) {
+            draft = draftFromRole(created);
+            void revealEditor();
+          }
         },
       );
     });
@@ -283,19 +307,21 @@
   </Section>
 
   {#if draft}
-    <RoleEditor
-      bind:draft
-      {groups}
-      locked={lockReason !== null}
-      {lockReason}
-      {saving}
-      {isSystem}
-      canCopy={canManage}
-      {errorText}
-      onSubmit={save}
-      onDiscard={discard}
-      onCopy={selectedRole ? () => selectedRole && copy(selectedRole) : undefined}
-    />
+    <div class="roles-editor-anchor" bind:this={editorEl} tabindex="-1" aria-label="Rollen-Editor">
+      <RoleEditor
+        bind:draft
+        {groups}
+        locked={lockReason !== null}
+        {lockReason}
+        {saving}
+        {isSystem}
+        canCopy={canManage}
+        {errorText}
+        onSubmit={save}
+        onDiscard={discard}
+        onCopy={selectedRole ? () => selectedRole && copy(selectedRole) : undefined}
+      />
+    </div>
   {/if}
 {/if}
 
@@ -339,6 +365,12 @@
     justify-content: flex-end;
     gap: 6px;
     flex-wrap: wrap;
+  }
+  .roles-editor-anchor {
+    scroll-margin-top: 16px;
+  }
+  .roles-editor-anchor:focus {
+    outline: none;
   }
   .roles-row-active td {
     background: var(--brand-soft);
