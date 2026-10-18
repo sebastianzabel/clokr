@@ -3621,9 +3621,9 @@ prüft einen leeren Unterschied nach dem Entfernen der Schlüsselwörter); `GET 
 
 **Gemessen** (Quellen: `612-01` … `612-08-SUMMARY.md`):
 
-- Neue API-Testdateien (@@API_NEW_FILES@@ Dateien, @@API_NEW_CASES@@ Fälle): `reports-period-612` @@N_PERIOD@@, `reports-period-sums-612` @@N_SUMS@@,
-  `reports-period-vacation-612` @@N_VAC@@, `reports-period-salon-612` @@N_SALON@@, `reports-period-reach-612` @@N_REACH@@, `reports-period-perf-612` @@N_PERF@@,
-  `reports-period-csv-612` @@N_CSVI@@, `period-csv-612` @@N_CSVU@@; erweitert additiv: `reports-hr-86`, `report-population-guard-613`,
+- Neue API-Testdateien (8 Dateien, 94 Fälle): `reports-period-612` 19, `reports-period-sums-612` 17,
+  `reports-period-vacation-612` 12, `reports-period-salon-612` 10, `reports-period-reach-612` 5, `reports-period-perf-612` 3,
+  `reports-period-csv-612` 10, `period-csv-612` 18; erweitert additiv: `reports-hr-86`, `report-population-guard-613`,
   `report-salon-filter-source-542` und die Listen von vier Wächtern (`route-employee-scope-literals`,
   `activity-kind-saldo-isolation-81`, `travel-saldo-isolation-92`, `packages-legal-core-isolation-566`), je ein Eintrag.
 - Mutationsnachweise (je zurückgespielt und byte-verglichen): Summen M1–M3, S1–S2, Salon M1–M3, Urlaub (Stichtag und Hinweisdatum),
@@ -3637,9 +3637,9 @@ prüft einen leeren Unterschied nach dem Entfernen der Schlüsselwörter); `GET 
 - Neutralität: 3 Dateien, 1720 Fälle, 0 geänderte Zellen; `neutrality/recorded/` und die eingefrorenen Stände
   `reports-monthly-frozen-84`, `dashboard-team-week-frozen-84`, `whole-tenant-frozen-85` sind byte-gleich zum Merge-Basisstand.
 - Browser: `reports-period.spec.ts` 24 Tests (fünf funktionale, zwölf Zellen der Matrix 390/360 px hell/dunkel mit Achsenprüfung
-  inklusive Positivkontrolle, 15 Layoutprüfungen); e2e-ci gesamt 259 bestanden, 1 übersprungen (Stand 612-07); zehn visuelle
+  inklusive Positivkontrolle, 15 Layoutprüfungen); e2e-ci gesamt 259 bestanden, 1 übersprungen (erneut nach dem Merge von #670); zehn visuelle
   Baselines unverändert.
-- Gesamtläufe (Stand Abschluss Phase 612): API @@API_RUN@@; Web @@WEB_RUN@@; Boden `check-test-completeness.mjs` @@FLOORS@@.
+- Gesamtläufe (Stand Abschluss Phase 612): API 708 Dateien / 10751 Tests (10748 grün, 3 übersprungen, nach dem Merge von origin/main @ 2541a56b); Web 256 Dateien / 3982 Tests grün, Abdeckung `src/lib` 85,8 % (Boden 5 %); Boden `check-test-completeness.mjs` 700 → 708 Dateien, 10652 → 10751 Tests (main plus die gemessene Phasendifferenz von 8 Dateien und 99 Fällen).
 
 ### Nachrechnen (Nachtrag Phase 612)
 
