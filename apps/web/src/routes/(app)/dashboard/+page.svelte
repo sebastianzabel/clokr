@@ -100,6 +100,8 @@
     type TeamTrendView,
     type TeamUpcomingLeaveResponse,
   } from "$lib/dashboard/team-view"; // Issue #84 (D-07, D-11, D-12), #85 (D-04, D-06)
+  import { TEAM_SICK_DAYS_CHART, teamSickDaysChartConfig } from "$lib/dashboard/team-charts"; // Issue #591
+  import { chartAriaLabel, getChartTheme } from "$lib/utils/chart-theme"; // Issue #591
   import {
     Chart,
     BarController,
@@ -897,40 +899,10 @@
       });
     }
 
-    // Sick days trend line chart
+    // Krankheitstage: columns in calendar days, drawn by the one chart builder (Issue #591).
     if (sickChartEl) {
       sickChart?.destroy();
-      sickChart = new Chart(sickChartEl, {
-        type: "line",
-        data: {
-          labels,
-          datasets: [
-            {
-              label: "Krankheitstage",
-              data: drawn.sickDays,
-              borderColor: "#ef4444",
-              backgroundColor: "rgba(239, 68, 68, 0.1)",
-              fill: true,
-              tension: 0.3,
-              pointRadius: 4,
-              pointBackgroundColor: "#ef4444",
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: {
-            y: {
-              beginAtZero: true,
-              ticks: { stepSize: 1, font: { size: 10 } },
-              grid: { color: "#f3f4f6" },
-            },
-            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
-          },
-        },
-      });
+      sickChart = new Chart(sickChartEl, teamSickDaysChartConfig(drawn, getChartTheme(), null));
     }
   }
 
@@ -2111,7 +2083,7 @@
               <canvas
                 bind:this={sickChartEl}
                 role="img"
-                aria-label="Balkendiagramm: Krankheitstage der letzten 6 Monate"
+                aria-label={chartAriaLabel(TEAM_SICK_DAYS_CHART)}
               ></canvas>
             {/if}
           </div>
