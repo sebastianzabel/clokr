@@ -28,6 +28,7 @@
     periodSaldoExclusion,
     periodSaldoFigures,
   } from "$lib/reports/team-saldo"; // Issue #588 (P-12): the one rule
+  import { SALON_PERIOD_ROWS_NOTE } from "$lib/salons/page-scope"; // Issue #612 (amendment 16)
 
   interface Props {
     /** The `rows` of the period answer; null until the first answer. */
@@ -203,6 +204,10 @@
       <p class="period-median" data-testid="period-median">{medianText}</p>
     {/if}
   </div>
+
+  {#if filterActive}
+    <p class="period-sub" data-testid="times-salon-note">{SALON_PERIOD_ROWS_NOTE}</p>
+  {/if}
 
   {#if rows === null}
     {#if loading}

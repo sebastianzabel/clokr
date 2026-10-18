@@ -23,9 +23,10 @@ const API_SOURCE = readFile(
   "../../../../../api/src/composition/pdf.ts",
   "../api/src/composition/pdf.ts",
 );
+// Issue #612 (pin ledger row 14): the Urlaubsübersicht moved from the page into this component.
 const PAGE = readFile(
-  "../../../routes/(app)/reports/+page.svelte",
-  "src/routes/(app)/reports/+page.svelte",
+  "../../components/reports/VacationAbsenceTab.svelte",
+  "src/lib/components/reports/VacationAbsenceTab.svelte",
 );
 
 function apiLabels(): string[] {
@@ -52,10 +53,10 @@ describe("VACATION_YEAR_COLUMNS mirrors the Monatsexport labels (Issue #617)", (
   });
 });
 
-describe("the Urlaubsuebersicht on /reports uses the shared labels", () => {
+describe("the Urlaubsuebersicht on /reports (VacationAbsenceTab) uses the shared labels", () => {
   it("[vacuity gate] the page source is loaded", () => {
     expect(PAGE.length).toBeGreaterThan(0);
-    expect(PAGE).toContain("leave-overview-table");
+    expect(PAGE).toContain("vac-table");
   });
 
   it("imports VACATION_YEAR_COLUMNS and renders the headers from it", () => {
@@ -67,12 +68,12 @@ describe("the Urlaubsuebersicht on /reports uses the shared labels", () => {
   });
 
   it("no longer has the Rest column, the Geplant column or the Urlaubsart column", () => {
-    expect(PAGE).not.toContain('<th class="numeric">Rest</th>');
-    expect(PAGE).not.toContain('<th class="numeric">Geplant</th>');
-    expect(PAGE).not.toContain("<th>Urlaubsart</th>");
+    expect(PAGE).not.toContain(">Rest</th>");
+    expect(PAGE).not.toContain(">Geplant</th>");
+    expect(PAGE).not.toContain(">Urlaubsart</th>");
   });
 
-  it("keeps the pinned Uebertrag cell expression verbatim", () => {
-    expect(PAGE).toContain("formatDays(row.carriedOverEffectiveDays ?? row.carriedOverDays)");
+  it("keeps the pinned Uebertrag cell expression (effective carry-over, raw fallback)", () => {
+    expect(PAGE).toContain("row.carriedOverEffectiveDays ?? row.carriedOverDays ?? 0");
   });
 });

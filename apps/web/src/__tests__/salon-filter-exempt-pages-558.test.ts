@@ -153,26 +153,15 @@ const EXEMPT_BLOCKS: ReadonlyArray<{
     loads: "/reports/monthly/pdf",
     reason: "a document of one named person; the salon does not change what it contains",
   },
-  {
-    block: "Urlaubsübersicht",
-    fn: "loadLeaveOverview",
-    loads: "/reports/leave-overview",
-    reason:
-      "not one of the four places of #542; it follows the salon with #612, until then the block says it covers every salon of the reach",
-  },
-  {
-    block: "Verfall-Warnungen",
-    fn: "loadCarryoverAtRisk",
-    loads: "/reports/carryover-at-risk",
-    reason:
-      "not one of the four places of #542; it follows the salon with #612, until then the block says it covers every salon of the reach",
-  },
+  // Issue #612 (P-06): the vacation table (Urlaubsübersicht) and the Verfall column follow the
+  // salon now - Stammsalon at the period end, whole personal values. They left this table; the
+  // positive assertions are in "Issue #612 - the vacation tab follows the header salon" below.
 ];
 
 describe("Issue #542 — blocks of Berichte that stay unfiltered", () => {
   it("[vacuity gate] the table names blocks and every function is found", () => {
     expect(REPORTS_PAGE.length).toBeGreaterThan(60_000);
-    expect(EXEMPT_BLOCKS.length).toBeGreaterThanOrEqual(5);
+    expect(EXEMPT_BLOCKS.length).toBeGreaterThanOrEqual(3);
     for (const { fn } of EXEMPT_BLOCKS) {
       expect(reportsFunctionBody(fn).length, `function ${fn} not found`).toBeGreaterThan(100);
     }
@@ -186,4 +175,52 @@ describe("Issue #542 — blocks of Berichte that stay unfiltered", () => {
       expect(body).not.toContain("pageSalonId");
     });
   }
+});
+
+// ── Issue #612 (P-06, orchestrator amendment 8): the vacation block follows the header salon ─────────
+//
+// Issue #612 (P-06): the vacation table follows the salon now - Stammsalon at the period end, whole
+// personal values; resolves the #542 deferral. The two rows "Urlaubsübersicht" and "Verfall-Warnungen"
+// above were REMOVED for that decided behaviour change (not a weakened assertion); the DATEV and
+// person-document rows stay. What replaces them:
+
+const VACATION_TAB = readRouteFile(
+  "../lib/components/reports/VacationAbsenceTab.svelte",
+  "src/lib/components/reports/VacationAbsenceTab.svelte",
+);
+
+describe("Issue #612 - the vacation tab follows the header salon", () => {
+  it("[vacuity gate] the page and the component are loaded", () => {
+    expect(REPORTS_PAGE.length).toBeGreaterThan(1_000);
+    expect(VACATION_TAB.length).toBeGreaterThan(2_000);
+  });
+
+  it("the page asks for no separate vacation or carry-over read: they come with the period answer", () => {
+    expect(REPORTS_PAGE).not.toContain("/reports/leave-overview");
+    expect(REPORTS_PAGE).not.toContain("/reports/carryover-at-risk");
+    expect(REPORTS_PAGE).not.toContain("loadLeaveOverview");
+    expect(REPORTS_PAGE).not.toContain("loadCarryoverAtRisk");
+  });
+
+  it("the period request goes through the page filter (salonPageFilter -> periodReportPath)", () => {
+    expect(REPORTS_PAGE).toContain("const pageSalonId = $derived(salonPageFilter($salonContext));");
+    expect(reportsFunctionBody("loadPeriod")).toContain("periodReportPath(from, to, salon)");
+    expect(REPORTS_PAGE).toMatch(
+      /const salon = pageSalonId;\s+const wanted = canReportRead && periodTabActive;/,
+    );
+  });
+
+  it("the vacation tab gets the filter flag and shows SALON_PERIOD_END_PERSONS_NOTE under it", () => {
+    expect(REPORTS_PAGE).toMatch(/<VacationAbsenceTab[^>]*filterActive=\{pageSalonId !== null\}/s);
+    expect(VACATION_TAB).toContain("{#if filterActive}");
+    expect(VACATION_TAB).toContain("{SALON_PERIOD_END_PERSONS_NOTE}");
+    expect(VACATION_TAB).toContain("{PERSON_VALUES_NOT_SPLIT_LABEL}");
+  });
+
+  it("the carry-over notice never sends the salon: it is a notice to one named person", () => {
+    const body = reportsFunctionBody("sendCarryoverNotice");
+    expect(body).toContain("/reports/carryover-warn");
+    expect(body).not.toContain("withSalonId(");
+    expect(body).not.toContain("pageSalonId");
+  });
 });

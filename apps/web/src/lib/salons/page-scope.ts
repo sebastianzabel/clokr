@@ -87,3 +87,28 @@ export const DATEV_ALL_SALONS_NOTE = "DATEV gilt für alle Salons Ihrer Reichwei
  */
 export const EXPORT_NO_STAMMSALON_NOTE =
   "Personen ohne Stammsalon am Stichtag erscheinen nur im Export ohne Salonauswahl.";
+
+/**
+ * Issue #612 (P-06) - the vacation table of the period report under a salon filter: the persons
+ * whose Stammsalon is the chosen salon on the LAST day of the period (the Monatsexport rule), each
+ * with the whole personal values. Shown next to `PERSON_VALUES_NOT_SPLIT_LABEL`.
+ */
+export const SALON_PERIOD_END_PERSONS_NOTE = "Personen nach Stammsalon am Ende des Zeitraums";
+
+/** Issue #612 (P-06) - a vacation figure is a person's, never a salon's share. */
+export const PERSON_VALUES_NOT_SPLIT_LABEL = "Personenwerte, nicht nach Salon aufgeteilt";
+
+/**
+ * Issue #612 (P-07) - the absence statistics under a salon filter keep only the sick row; priced
+ * leave days belong to a person, not to the salon they happened to work in.
+ */
+export const SALON_LEAVE_DAYS_NOT_ATTRIBUTABLE_NOTE =
+  "Urlaubs- und andere Abwesenheitstage werden je Salon nicht ausgewiesen.";
+
+/**
+ * Issue #612 (orchestrator amendment 16) - who the "Zeiten & Konten" table lists under a salon
+ * filter: the #542 salon-view membership rule (`salonViewMemberIds`, the API's one rule), spelled
+ * as the reader needs it.
+ */
+export const SALON_PERIOD_ROWS_NOTE =
+  "Personen mit Eintrag in diesem Salon oder Stammsalon an mindestens einem Tag des Zeitraums";

@@ -126,15 +126,15 @@ describe("Issue #542 — Berichte follow the header salon", () => {
     expect(body).not.toContain("loadExportSection9Note");
   });
 
-  it("[effect] the leave overview and the carry-over load are not in the salon effect and stay on their trigger", () => {
-    const call = PAGE.indexOf("void loadLeaveOverview();");
-    expect(call).toBeGreaterThan(-1);
-    const effectStart = PAGE.indexOf(EFFECT_HEAD);
-    const effectEnd = effectStart + salonEffectBody().length;
-    expect(call < effectStart || call > effectEnd).toBe(true);
-    // ... and it still sits in an effect of its own that reads the period.
-    const own = PAGE.lastIndexOf("$effect(() => {", call);
-    expect(PAGE.slice(own, call)).toContain("selectedYear");
+  // Issue #612 (pin ledger row 2): the leave overview and the carry-over load are gone. The
+  // vacation table and the Verfall column come with the period answer and follow the salon by its
+  // request (pinned in "Issue #612 - the period request follows the header salon" below and in
+  // salon-filter-exempt-pages-558.test.ts); the notice route never sends a salon.
+  it("[effect] no separate leave-overview or carry-over load is left anywhere in the page", () => {
+    expect(PAGE).not.toContain("loadLeaveOverview");
+    expect(PAGE).not.toContain("loadCarryoverAtRisk");
+    expect(PAGE).not.toContain("/reports/leave-overview");
+    expect(PAGE).not.toContain("/reports/carryover-at-risk");
   });
 
   it("[rejection] attendance, overview and export turn the one 404 into the calm state", () => {
@@ -165,15 +165,16 @@ describe("Issue #542 — Berichte follow the header salon", () => {
     for (const name of [
       "SALON_EXPORT_PERSONS_NOTE",
       "PERSON_SALDO_NOT_SPLIT_LABEL",
-      "ALL_SALONS_BLOCK_NOTE",
       "DATEV_ALL_SALONS_NOTE",
       "EXPORT_NO_STAMMSALON_NOTE",
     ]) {
       expect(PAGE, name).toContain(`{${name}}`);
     }
     // Every use sits under a `pageSalonId !== null` guard: no note renders unconditionally.
+    // Issue #612: ALL_SALONS_BLOCK_NOTE belonged to the removed leave-overview and carry-over cards
+    // (the vacation tab follows the salon now, see VacationAbsenceTab.test.ts), so two guards remain.
     const guards = PAGE.match(/\{#if pageSalonId !== null\}/g)?.length ?? 0;
-    expect(guards).toBeGreaterThanOrEqual(4);
+    expect(guards).toBeGreaterThanOrEqual(2);
   });
 
   it("[elsewhere] an attendance row with workedElsewhere shows the badge", () => {

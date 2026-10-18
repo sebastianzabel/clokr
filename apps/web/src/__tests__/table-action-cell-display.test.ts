@@ -52,6 +52,12 @@ const REPORTS_PAGE = readRepoFile(
   "../routes/(app)/reports/+page.svelte",
   "src/routes/(app)/reports/+page.svelte",
 );
+// Issue #612 (pin ledger row 10): the last action cell of /reports - the Verfall cell with its
+// „Hinweis senden“ button - lives in the vacation tab component now, no longer in the page.
+const VACATION_TAB = readRepoFile(
+  "../lib/components/reports/VacationAbsenceTab.svelte",
+  "src/lib/components/reports/VacationAbsenceTab.svelte",
+);
 const AVAILABILITY_COMPONENT = readRepoFile(
   "../lib/components/availability/AvailabilityOneOffList.svelte",
   "src/lib/components/availability/AvailabilityOneOffList.svelte",
@@ -143,10 +149,16 @@ describe("#442 — instrument controls (anti-vacuity)", () => {
     expect(() => styleBlockOf(synthetic)).toThrow(/ambiguous/);
   });
 
-  it("styleBlockOf(reports) really loaded both tables — anti-vacuity", () => {
+  it("styleBlockOf(reports) really loaded the page rules — anti-vacuity", () => {
     const block = styleBlockOf(REPORTS_PAGE);
-    expect(block).toContain(".carryover-table {");
-    expect(block).toContain(".row-actions {");
+    expect(block).toContain(".attendance-actions {");
+    expect(block).toContain(".row-actions__group {");
+  });
+
+  it("styleBlockOf(vacation tab) really loaded the Verfall cell rules — anti-vacuity", () => {
+    const block = styleBlockOf(VACATION_TAB);
+    expect(block).toContain(".vac-verfall {");
+    expect(block).toContain(".verfall-cell {");
   });
 });
 
@@ -307,26 +319,27 @@ describe("#442 — /leave source pin", () => {
 
 // ── Group C: /reports ────────────────────────────────────────────────────────
 function reportsStyleBlock(): string {
-  return styleBlockOf(REPORTS_PAGE);
+  return styleBlockOf(VACATION_TAB);
 }
 
 // Issue #612 (pin ledger row 10): the Überstunden-Übersicht with its per-row PDF/DATEV action
-// column is gone (the person documents moved into the drill-down), so the carry-over warning table
-// is the one action column of the page. The property is unchanged: an action cell stays a table
-// cell, its flex layout lives on the inner wrapper.
+// column is gone (the person documents moved into the drill-down) and so is the Verfall-Warnungen
+// table (its column and its button are part of the vacation table now). The property is unchanged:
+// an action cell stays a table cell, its flex layout lives on the inner wrapper.
 function reportsTableMarkup(): string {
   return `
-    <table class="carryover-table">
+    <table class="data-table vac-table">
       <thead>
         <tr>
-          <th class="actions-col">Aktion</th>
+          <th scope="col">Verfall</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <td class="row-actions">
-            <div class="row-actions__group">
-              <button class="btn-ghost btn-warn-now">Hinweis jetzt senden</button>
+          <td class="vac-verfall">
+            <div class="verfall-cell">
+              <span class="verfall-line">3 T. bis 31.03.2027</span>
+              <button class="btn btn-ghost xs">Hinweis senden</button>
             </div>
           </td>
         </tr>
@@ -336,61 +349,57 @@ function reportsTableMarkup(): string {
 }
 
 describe("#442 — /reports action cells at 1280px (measured)", () => {
-  it("td.row-actions and th.actions-col stay table-cell", () => {
+  it("td.vac-verfall and its header stay table-cell", () => {
     probeAt(DESKTOP_WIDTH, cssForViewport(reportsStyleBlock(), DESKTOP_WIDTH));
     document.body.innerHTML = reportsTableMarkup();
-    document.querySelectorAll("td.row-actions, th.actions-col").forEach((cell) => {
+    document.querySelectorAll("td.vac-verfall, th").forEach((cell) => {
       expect(getComputedStyle(cell).display).toBe("table-cell");
     });
   });
 
-  it("positive control: td.row-actions still reads white-space nowrap (the page rule really hits it)", () => {
-    // Not text-align: `.carryover-table td` / `.overtime-table td` (specificity 0,2,0) always
-    // wins the cascade over the single-class `.row-actions` rule (0,1,0) for text-align — a
-    // pre-existing, unrelated specificity fact of the real page, measured identically before and
-    // after this fix. white-space is untouched by the table-level rule, so it is the control that
-    // actually proves the injected sheet reached this cell.
+  it("positive control: td.vac-verfall still reads its min-width (the component rule really hits it)", () => {
+    // The injected sheet must reach this cell, otherwise the table-cell assertions above would pass
+    // against a sheet that never applied. min-width is untouched by the table-level rules.
     probeAt(DESKTOP_WIDTH, cssForViewport(reportsStyleBlock(), DESKTOP_WIDTH));
     document.body.innerHTML = reportsTableMarkup();
-    const cell = document.querySelector("td.row-actions")!;
-    expect(getComputedStyle(cell).whiteSpace).toBe("nowrap");
+    const cell = document.querySelector("td.vac-verfall")!;
+    expect(getComputedStyle(cell).minWidth).toBe("170px");
   });
 
-  it("the inner .row-actions__group carries the flex layout", () => {
+  it("the inner .verfall-cell carries the flex layout", () => {
     probeAt(DESKTOP_WIDTH, cssForViewport(reportsStyleBlock(), DESKTOP_WIDTH));
     document.body.innerHTML = reportsTableMarkup();
-    document.querySelectorAll(".row-actions__group").forEach((group) => {
+    document.querySelectorAll(".verfall-cell").forEach((group) => {
       expect(getComputedStyle(group).display).toBe("flex");
     });
   });
 });
 
-describe("#442 — /reports action column at 390px (mobile-hide rule survives)", () => {
-  it("td.row-actions and th.actions-col compute display none below 720px", () => {
+// The former mobile-hide rule (`display: none` below 720px) belonged to the old layout. Below 960px
+// the vacation tab renders an ApprovalRow list instead of this table (ADD-6), so the table cell is
+// never squeezed: at 390px the cell must still be a table cell, never turned into a flex box.
+describe("#442 — /reports action cell at 390px (the cell is never flexed)", () => {
+  it("td.vac-verfall computes table-cell at 390px", () => {
     probeAt(PHONE_WIDTH, cssForViewport(reportsStyleBlock(), PHONE_WIDTH));
     document.body.innerHTML = reportsTableMarkup();
-    document.querySelectorAll("td.row-actions, th.actions-col").forEach((cell) => {
-      expect(getComputedStyle(cell).display).toBe("none");
+    document.querySelectorAll("td.vac-verfall").forEach((cell) => {
+      expect(getComputedStyle(cell).display).toBe("table-cell");
     });
   });
 });
 
 describe("#442 — /reports source pin", () => {
-  it("exactly one td.row-actions (the carry-over warning), wrapping a div.row-actions__group", () => {
-    const matches = REPORTS_PAGE.match(/<td class="row-actions">/g) ?? [];
+  it("exactly one td.vac-verfall (the Verfall cell), wrapping a div.verfall-cell", () => {
+    const matches = VACATION_TAB.match(/<td class="vac-verfall">/g) ?? [];
     expect(matches).toHaveLength(1);
-    // The removed Überstunden-Übersicht table (Issue #612) leaves no trace in the markup or the style.
+    const start = VACATION_TAB.indexOf('<td class="vac-verfall">');
+    const end = VACATION_TAB.indexOf("</td>", start);
+    expect(VACATION_TAB.slice(start, end)).toContain('<div class="verfall-cell">');
+    // No td in the page carries a flex rule, and the removed tables leave no trace.
     expect(REPORTS_PAGE).not.toContain("overtime-table");
+    expect(REPORTS_PAGE).not.toContain("carryover-table");
     expect(REPORTS_PAGE).not.toContain("btn-icon");
-    let searchFrom = 0;
-    for (let i = 0; i < 1; i++) {
-      const start = REPORTS_PAGE.indexOf('<td class="row-actions">', searchFrom);
-      expect(start).toBeGreaterThan(-1);
-      const end = REPORTS_PAGE.indexOf("</td>", start);
-      const cellBody = REPORTS_PAGE.slice(start, end);
-      expect(cellBody).toContain('<div class="row-actions__group">');
-      searchFrom = end;
-    }
+    expect(REPORTS_PAGE).not.toContain('<td class="row-actions">');
   });
 });
 

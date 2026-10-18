@@ -36,6 +36,7 @@ const ISSUE_538 = [
   "apps/web/src/lib/components/reports/PeriodRangeDialog.svelte",
   "apps/web/src/lib/components/reports/PersonDrilldown.svelte",
   "apps/web/src/lib/components/reports/TimesAccountsTable.svelte",
+  "apps/web/src/lib/components/reports/VacationAbsenceTab.svelte",
   "apps/web/src/lib/reports/period-table.ts",
   "apps/web/src/routes/(app)/time-entries/+page.svelte",
   "apps/web/src/routes/(app)/settings/+page.svelte",

@@ -4,8 +4,24 @@
 // proven here. Pattern 3: the component formats the server's rows; no figure is derived.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
+
+// The page-scope module reaches the api client and its auth store (localStorage bootstrap); a
+// stand-in keeps this mounted test free of it (as in page-scope.test.ts).
+vi.mock("$api/client", () => ({
+  api: { get: vi.fn() },
+  ApiError: class ApiError extends Error {
+    constructor(
+      public status: number,
+      message = "err",
+    ) {
+      super(message);
+    }
+  },
+}));
+vi.mock("$lib/utils/logger", () => ({ clientLogger: { warn: vi.fn(), error: vi.fn() } }));
 import { screen, fireEvent, within } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
+import { SALON_PERIOD_ROWS_NOTE } from "$lib/salons/page-scope";
 import { forecastLabel } from "$lib/saldo/forecast-label";
 import type { PeriodRow } from "$lib/reports/period-report";
 import TimesAccountsTable from "../TimesAccountsTable.svelte";
@@ -605,5 +621,27 @@ describe("TimesAccountsTable - source", () => {
     expect(source).toContain("var(--topbar-h) + var(--period-bar-h, 0px)");
     expect(source).toMatch(/\.period-table-wrap\s*\{[^}]*overflow:\s*visible/);
     expect(source).not.toMatch(/td\s*\{[^}]*display:\s*flex/);
+  });
+});
+
+// Issue #612 (orchestrator amendment 16): under a salon filter the table says who it lists - the
+// #542 membership rule - and says nothing without one.
+describe("TimesAccountsTable - salon filter note", () => {
+  it("shows the membership note under a filter", () => {
+    viewport(false);
+    renderWithTheme(TimesAccountsTable, props([row("A")], { filterActive: true }));
+    expect(screen.getByTestId("times-salon-note").textContent).toBe(SALON_PERIOD_ROWS_NOTE);
+  });
+
+  it("shows no note without a filter", () => {
+    viewport(false);
+    renderWithTheme(TimesAccountsTable, props([row("A")]));
+    expect(screen.queryByTestId("times-salon-note")).toBeNull();
+  });
+
+  it("shows the note while the first answer is pending, too", () => {
+    viewport(false);
+    renderWithTheme(TimesAccountsTable, props(null, { filterActive: true, loading: true }));
+    expect(screen.getByTestId("times-salon-note")).toBeTruthy();
   });
 });

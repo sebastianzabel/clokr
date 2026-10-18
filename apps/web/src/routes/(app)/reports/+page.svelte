@@ -11,7 +11,6 @@
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte"; // Issue #542
   import {
-    ALL_SALONS_BLOCK_NOTE,
     DATEV_ALL_SALONS_NOTE,
     EXPORT_NO_STAMMSALON_NOTE,
     PERSON_SALDO_NOT_SPLIT_LABEL,
@@ -31,6 +30,7 @@
   import PeriodRangeDialog from "$lib/components/reports/PeriodRangeDialog.svelte"; // Issue #612
   import PersonDrilldown from "$lib/components/reports/PersonDrilldown.svelte"; // Issue #612
   import TimesAccountsTable from "$lib/components/reports/TimesAccountsTable.svelte"; // Issue #612
+  import VacationAbsenceTab from "$lib/components/reports/VacationAbsenceTab.svelte"; // Issue #612
   import { toasts } from "$stores/toast"; // Issue #612
   import {
     isPlainLeftClick,
@@ -50,7 +50,6 @@
   } from "$lib/reports/period-report"; // Issue #612
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
   import { fmtBalance } from "$lib/utils/format-minutes"; // Issue #588
-  import { VACATION_YEAR_COLUMNS } from "$lib/reports/vacation-columns"; // Issue #617
   import { DAY_STATUS_LABEL, attendanceStatusText } from "$lib/dashboard/day-status-label"; // Issue #587
   import { teamDayHref, teamLeaveCreateHref } from "$lib/dashboard/team-day-links"; // Issue #587
   import {
@@ -129,52 +128,6 @@
     exitedOpenFinalSaldoCount?: number;
   };
 
-  // Issue #416: a discriminated union — `missingEntitlement: true` marks a placeholder row (an
-  // active employee with no VACATION LeaveEntitlement row for this year yet), whose
-  // leaveType/totalDays/… fields are all null. Keeping the two shapes distinct (rather than one
-  // type with every non-employee field `| null`) lets the `{#if row.missingEntitlement}` branch
-  // below narrow without a non-null assertion on the real-row fields.
-  type LeaveOverviewEmployee = {
-    id: string;
-    firstName: string;
-    lastName: string;
-    employeeNumber: string;
-  };
-  type LeaveOverviewRealRow = {
-    employee: LeaveOverviewEmployee;
-    leaveType: { id: string; name: string };
-    year: number;
-    totalDays: number;
-    carriedOverDays: number;
-    usedDays: number;
-    remainingDays: number;
-    pendingDays: number;
-    // Issue #451 (D-07) — additive; an older cached response has neither field, hence `??`
-    // fallback to the pre-#451 raw carriedOverDays at every call site below.
-    carriedOverEffectiveDays?: number;
-    // Issue #617 (D-617-2) - additive; an older cached response has none of the three, hence the
-    // `??` fallback in the cells below.
-    availableDays?: number;
-    takenDays?: number;
-    approvedUpcomingDays?: number;
-    missingEntitlement?: false;
-  };
-  type LeaveOverviewMissingRow = {
-    employee: LeaveOverviewEmployee;
-    leaveType: null;
-    year: number;
-    totalDays: null;
-    carriedOverDays: null;
-    usedDays: null;
-    remainingDays: null;
-    pendingDays: null;
-    availableDays: null;
-    takenDays: null;
-    approvedUpcomingDays: null;
-    missingEntitlement: true;
-  };
-  type LeaveOverviewRow = LeaveOverviewRealRow | LeaveOverviewMissingRow;
-
   // ── State ──────────────────────────────────────────────────────────────────
 
   const currentDate = new Date();
@@ -247,11 +200,6 @@
   // Primitive keys, so a tab change or a drill-down push never re-triggers the period request.
   const periodKey = $derived(`${ymKey(urlState.from)}|${ymKey(urlState.to)}`);
 
-  // Bridge until 612-06 replaces the two vacation blocks (carry-over warnings, Urlaubsübersicht):
-  // they read the vacation year of the period's end.
-  const selectedYear = $derived(urlState.to.year);
-  const selectedMonth = $derived(urlState.to.month);
-
   const TAB_LABEL: Record<PeriodTab, string> = {
     zeiten: "Zeiten & Konten",
     urlaub: "Urlaub & Abwesenheit",
@@ -315,6 +263,30 @@
     void goto(personHref(row), { keepFocus: true, noScroll: true });
   }
 
+  // The vacation table names a person by id. The drill-down shows the period series, so only a person
+  // with a row in the period answer has a link; any other person has a plain name (null).
+  function vacationPersonHref(employeeId: string): string | null {
+    const row = period?.rows.find((r) => r.employeeId === employeeId);
+    return row ? personHref(row) : null;
+  }
+
+  function openVacationPerson(event: MouseEvent, employeeId: string): void {
+    const row = period?.rows.find((r) => r.employeeId === employeeId);
+    if (row) openPerson(event, row);
+  }
+
+  // The browser-local day: the gate of „Hinweis senden“ (a deadline of today or later); the API is the backstop.
+  const todayIso = `${currentYear}-${String(currentMonth).padStart(2, "0")}-${String(currentDate.getDate()).padStart(2, "0")}`;
+
+  // The carry-over notice of one entitlement (BUrlG § 7, EuGH C-684/16); the API dedups per day and
+  // audits it. Never sends the header salon: a notice to one named person does not depend on it.
+  function sendCarryoverNotice(entitlementId: string) {
+    return api.post<{ ok: boolean; warned: number; skippedDedup: number }>(
+      "/reports/carryover-warn",
+      { entitlementId },
+    );
+  }
+
   // The export dialog arrives with 612-06; until then the cards above the tabs stay the export path.
   function openExport(): void {}
 
@@ -367,84 +339,6 @@
   // table carries the active persons; this answer feeds only the exited section below it, which is
   // the state of today and independent of the period.
   let overtimeSections = $derived(partitionOvertimeOverview(overtimeOverview?.employees ?? []));
-
-  // ── Verfall-Warnungen state (Phase 44 — BUrlG § 7 Hinweispflicht) ─────────
-
-  type CarryoverRow = {
-    entitlementId: string;
-    employee: { id: string; firstName: string; lastName: string; employeeNumber: string };
-    leaveType: { id: string; name: string };
-    year: number;
-    carriedOverDays: number;
-    // Issue #451 (D-08) — additive; an older cached response has no field, hence `??` fallback
-    // to the pre-#451 raw carriedOverDays at the call site below.
-    atRiskDays?: number;
-    deadline: string; // ISO
-    daysUntilDeadline: number;
-    lastWarningSentAt: string | null;
-  };
-
-  type CarryoverAtRisk = {
-    horizonDays: number;
-    summary: { employeesAtRisk: number; totalDaysAtRisk: number; warnedLast30: number };
-    rows: CarryoverRow[];
-  };
-
-  let carryover: CarryoverAtRisk | null = $state(null);
-  let carryoverLoading = $state(false);
-  let carryoverError = $state("");
-  let carryoverHorizon = $state(60);
-  let carryoverWarnBusy = $state<Record<string, boolean>>({});
-  let carryoverRowMsg = $state<Record<string, string>>({});
-
-  let carryoverPage = $state(1);
-  let carryoverPageSize = $state(10);
-  let pagedCarryoverRows = $derived(
-    (carryover?.rows ?? []).slice(
-      (carryoverPage - 1) * carryoverPageSize,
-      carryoverPage * carryoverPageSize,
-    ),
-  );
-
-  $effect(() => {
-    const _len = carryover?.rows.length ?? 0;
-    carryoverPage = 1;
-  });
-
-  // ── Urlaubsübersicht state (RPT-02) ──────────────────────────────────────
-
-  let leaveOverview: LeaveOverviewRow[] | null = $state(null);
-  let leaveOverviewLoading = $state(false);
-  let leaveOverviewError = $state("");
-
-  let leaveOverviewRows = $derived.by(() => {
-    const rows = leaveOverview ?? [];
-    return rows.slice().sort((a, b) => {
-      const ln = a.employee.lastName.localeCompare(b.employee.lastName, "de");
-      if (ln !== 0) return ln;
-      const fn = a.employee.firstName.localeCompare(b.employee.firstName, "de");
-      if (fn !== 0) return fn;
-      // Issue #416: a missingEntitlement placeholder row carries leaveType: null — fall back to
-      // an empty string so the comparator never dereferences .name on it (a placeholder sorts
-      // before every real leave-type name for the same employee, which is fine — there's at
-      // most one placeholder row per employee).
-      return (a.leaveType?.name ?? "").localeCompare(b.leaveType?.name ?? "", "de");
-    });
-  });
-
-  let leaveOverviewPage = $state(1);
-  let leaveOverviewPageSize = $state(10);
-  let pagedLeaveOverviewRows = $derived(
-    leaveOverviewRows.slice(
-      (leaveOverviewPage - 1) * leaveOverviewPageSize,
-      leaveOverviewPage * leaveOverviewPageSize,
-    ),
-  );
-
-  $effect(() => {
-    const _len = leaveOverviewRows.length;
-    leaveOverviewPage = 1;
-  });
 
   // ── EMP-06: Employee monthly closes view ─────────────────────────────────
   let empMonthlyCloses: EmployeeMonthRow[] = $state([]);
@@ -499,20 +393,11 @@
     }
   }
 
-  // ── Reactive reload when period changes ────────────────────────────────────
-
-  $effect(() => {
-    const _m = selectedMonth;
-    const _y = selectedYear;
-    if (canReportRead) {
-      void loadLeaveOverview();
-      void loadCarryoverAtRisk();
-    }
-  });
+  // ── The salon-filtered list loads (Issue #542) ─────────────────────────────
 
   // Issue #542: this effect owns the two salon-filtered list loads. It waits for the salon context
   // so the first request is already filtered, and reruns when the header salon (or the period)
-  // changes. The leave overview and the carry-over warnings above ignore the header salon.
+  // changes.
   $effect(() => {
     if (!contextLoaded) return;
     void pageSalonId;
@@ -694,14 +579,7 @@
     });
   });
 
-  // Refresh when horizon changes (independent of selectedMonth/selectedYear)
-  $effect(() => {
-    const _h = carryoverHorizon;
-    if (canReportRead) void loadCarryoverAtRisk();
-  });
-
-  // The § 9 note follows the Monatsexport card's OWN period selection, not the team overview's
-  // selectedMonth/selectedYear.
+  // The § 9 note follows the Monatsexport card's OWN period selection, not the page period.
   $effect(() => {
     const _m = exportMonth;
     const _y = exportYear;
@@ -766,82 +644,6 @@
         overtimeError =
           e instanceof Error ? e.message : "Fehler beim Laden der Überstunden-Übersicht";
       }
-    }
-  }
-
-  async function loadCarryoverAtRisk() {
-    if (!canReportRead) return;
-    carryoverLoading = true;
-    carryoverError = "";
-    try {
-      carryover = await api.get<CarryoverAtRisk>(
-        `/reports/carryover-at-risk?days=${carryoverHorizon}`,
-      );
-    } catch (e: unknown) {
-      carryoverError = e instanceof Error ? e.message : "Fehler beim Laden der Verfall-Warnungen";
-      carryover = null;
-    } finally {
-      carryoverLoading = false;
-    }
-  }
-
-  async function sendCarryoverWarning(row: CarryoverRow) {
-    carryoverWarnBusy = { ...carryoverWarnBusy, [row.entitlementId]: true };
-    carryoverRowMsg = { ...carryoverRowMsg, [row.entitlementId]: "" };
-    try {
-      const res = await api.post<{ ok: boolean; warned: number; skippedDedup: number }>(
-        "/reports/carryover-warn",
-        { entitlementId: row.entitlementId },
-      );
-      if (res.warned > 0) {
-        carryoverRowMsg = {
-          ...carryoverRowMsg,
-          [row.entitlementId]: "Hinweis gesendet",
-        };
-        // Refresh to pick up new lastWarningSentAt
-        void loadCarryoverAtRisk();
-      } else {
-        carryoverRowMsg = {
-          ...carryoverRowMsg,
-          [row.entitlementId]: "Bereits gewarnt (kein neuer Schwellwert erreicht)",
-        };
-      }
-    } catch (e: unknown) {
-      carryoverRowMsg = {
-        ...carryoverRowMsg,
-        [row.entitlementId]: e instanceof Error ? e.message : "Hinweis fehlgeschlagen",
-      };
-    } finally {
-      carryoverWarnBusy = { ...carryoverWarnBusy, [row.entitlementId]: false };
-    }
-  }
-
-  function formatDeDate(iso: string): string {
-    const d = new Date(iso);
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    return `${dd}.${mm}.${d.getFullYear()}`;
-  }
-
-  function formatLastWarning(iso: string | null): string {
-    if (!iso) return "—";
-    return formatDeDate(iso);
-  }
-
-  async function loadLeaveOverview() {
-    if (!canReportRead) return;
-    leaveOverviewLoading = true;
-    leaveOverviewError = "";
-    try {
-      leaveOverview = await api.get<LeaveOverviewRow[]>(
-        `/reports/leave-overview?year=${selectedYear}`,
-      );
-    } catch (e: unknown) {
-      leaveOverviewError =
-        e instanceof Error ? e.message : "Fehler beim Laden der Urlaubsübersicht";
-      leaveOverview = null;
-    } finally {
-      leaveOverviewLoading = false;
     }
   }
 
@@ -984,13 +786,6 @@
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-
-  function formatDays(n: number): string {
-    return n.toLocaleString("de-DE", {
-      minimumFractionDigits: n % 1 === 0 ? 0 : 1,
-      maximumFractionDigits: 1,
-    });
-  }
 
   function statusClass(status: TodayEmployee["status"]): string {
     return `status-badge status-${status.replace("_", "-")}`;
@@ -1254,8 +1049,18 @@
               exited={exitedBlock}
             />
           {:else if activeTab === "urlaub"}
-            {@render carryoverBlock()}
-            {@render leaveOverviewBlock()}
+            <VacationAbsenceTab
+              vacation={period?.vacation ?? null}
+              absences={period?.absences ?? null}
+              filterActive={pageSalonId !== null}
+              loading={periodLoading}
+              today={todayIso}
+              canNotify={canReportNotify}
+              periodLabel={periodLabel(urlState.from, urlState.to, today)}
+              personHref={vacationPersonHref}
+              onOpenPerson={openVacationPerson}
+              onNotify={sendCarryoverNotice}
+            />
           {/if}
         </div>
       {/if}
@@ -1520,119 +1325,6 @@
   {/if}
 {/snippet}
 
-{#snippet carryoverBlock()}
-  {#if canReportRead}
-    <!-- Verfall-Warnungen (Phase 44 — BUrlG § 7 Hinweispflicht / EuGH C-684/16) -->
-    <Card animate class="widget-card" style="--card-idx: 2;">
-      <CardHeader title="Verfall-Warnungen" sub="Resturlaub mit auslaufender Frist (§ 7 BUrlG)">
-        {#snippet actions()}
-          <label class="carryover-horizon-label" for="carryover-horizon">
-            Horizont
-            <select id="carryover-horizon" class="period-select" bind:value={carryoverHorizon}>
-              <option value={30}>30 Tage</option>
-              <option value={60}>60 Tage</option>
-              <option value={90}>90 Tage</option>
-              <option value={180}>180 Tage</option>
-            </select>
-          </label>
-        {/snippet}
-      </CardHeader>
-
-      {#if pageSalonId !== null}
-        <p class="form-hint" data-testid="carryover-all-salons-note">{ALL_SALONS_BLOCK_NOTE}</p>
-      {/if}
-
-      {#if carryoverLoading}
-        <p class="section-placeholder">Lade Verfall-Warnungen…</p>
-      {:else if carryoverError}
-        <p class="section-error">{carryoverError}</p>
-      {:else if carryover}
-        <div class="carryover-summary">
-          <div class="summary-chip">
-            <span class="label">Betroffene MA</span>
-            <span class="value">{carryover.summary.employeesAtRisk}</span>
-          </div>
-          <div class="summary-chip">
-            <span class="label">Tage im Risiko</span>
-            <span class="value">{formatDays(carryover.summary.totalDaysAtRisk)}</span>
-          </div>
-          <div class="summary-chip">
-            <span class="label">Hinweise (30 T.)</span>
-            <span class="value">{carryover.summary.warnedLast30}</span>
-          </div>
-        </div>
-
-        {#if carryover.rows.length === 0}
-          <p class="section-placeholder">
-            Kein Resturlaub mit Verfall in den nächsten {carryover.horizonDays} Tagen.
-          </p>
-        {:else}
-          <div class="carryover-callout">
-            Hinweispflicht: Mitarbeiter müssen gemäß EuGH C-684/16 ausdrücklich auf verfallenden
-            Urlaub hingewiesen werden. Ohne dokumentierten Hinweis verfällt der Urlaub <strong
-              >nicht</strong
-            >.
-          </div>
-          <div class="table-wrap">
-            <table class="carryover-table">
-              <thead>
-                <tr>
-                  <th>Mitarbeiter</th>
-                  <th>Nr.</th>
-                  <th class="numeric">Gefährdet (T.)</th>
-                  <th>Verfällt am</th>
-                  <th class="numeric">Verbleibend</th>
-                  <th>Letzter Hinweis</th>
-                  <th class="actions-col">Aktion</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each pagedCarryoverRows as row (row.entitlementId)}
-                  <tr>
-                    <td>{row.employee.firstName} {row.employee.lastName}</td>
-                    <td>{row.employee.employeeNumber}</td>
-                    <td class="numeric">{formatDays(row.atRiskDays ?? row.carriedOverDays)}</td>
-                    <td>{formatDeDate(row.deadline)}</td>
-                    <td class="numeric">
-                      <span class={row.daysUntilDeadline <= 14 ? "danger" : ""}>
-                        {row.daysUntilDeadline} T.
-                      </span>
-                    </td>
-                    <td>{formatLastWarning(row.lastWarningSentAt)}</td>
-                    <td class="row-actions">
-                      <div class="row-actions__group">
-                        {#if canReportNotify}
-                          <button
-                            class="btn-ghost btn-warn-now"
-                            disabled={carryoverWarnBusy[row.entitlementId]}
-                            onclick={() => sendCarryoverWarning(row)}
-                          >
-                            {carryoverWarnBusy[row.entitlementId]
-                              ? "Senden…"
-                              : "Hinweis jetzt senden"}
-                          </button>
-                        {/if}
-                        {#if carryoverRowMsg[row.entitlementId]}
-                          <span class="row-msg">{carryoverRowMsg[row.entitlementId]}</span>
-                        {/if}
-                      </div>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-          <Pagination
-            total={carryover.rows.length}
-            bind:page={carryoverPage}
-            bind:pageSize={carryoverPageSize}
-          />
-        {/if}
-      {/if}
-    </Card>
-  {/if}
-{/snippet}
-
 {#snippet exitedBlock()}
   <!-- Issue #613 / #612: persons who left with an open final saldo - today's state, not the period. -->
   {#if canTeamOvertime}
@@ -1647,80 +1339,6 @@
         asOfNote="Stand heute, unabhängig vom Zeitraum"
       />
     {/if}
-  {/if}
-{/snippet}
-
-{#snippet leaveOverviewBlock()}
-  {#if canReportRead}
-    <!-- Urlaubsübersicht (RPT-02) -->
-    <Card animate class="widget-card" style="--card-idx: 4;">
-      <CardHeader title="Urlaubsübersicht" sub="Anspruch, genommen, genehmigt und Resturlaub" />
-
-      {#if pageSalonId !== null}
-        <p class="form-hint" data-testid="leave-overview-all-salons-note">
-          {ALL_SALONS_BLOCK_NOTE}
-        </p>
-      {/if}
-
-      {#if leaveOverviewLoading}
-        <p class="section-placeholder">Lade Urlaubsübersicht…</p>
-      {:else if leaveOverviewError}
-        <p class="section-error">{leaveOverviewError}</p>
-      {:else if leaveOverviewRows.length === 0}
-        <p class="section-placeholder">Keine Einträge für dieses Jahr</p>
-      {:else}
-        <div class="table-wrap">
-          <table class="leave-overview-table">
-            <thead>
-              <tr>
-                <th>Mitarbeiter</th>
-                <th>Nr.</th>
-                {#each VACATION_YEAR_COLUMNS as label (label)}
-                  <th class="numeric">{label}</th>
-                {/each}
-              </tr>
-            </thead>
-            <tbody>
-              {#each pagedLeaveOverviewRows as row (row.employee.employeeNumber + ":" + (row.leaveType?.id ?? "missing"))}
-                <tr>
-                  <td>{row.employee.firstName} {row.employee.lastName}</td>
-                  <td>{row.employee.employeeNumber}</td>
-                  {#if row.missingEntitlement}
-                    <td colspan="7">
-                      <span class="badge badge-yellow">kein Anspruch hinterlegt</span>
-                    </td>
-                  {:else}
-                    <td class="numeric">{formatDays(row.totalDays)}</td>
-                    <td class="numeric"
-                      >{formatDays(row.carriedOverEffectiveDays ?? row.carriedOverDays)}</td
-                    >
-                    <td class="numeric"
-                      >{formatDays(
-                        row.availableDays ??
-                          row.totalDays + (row.carriedOverEffectiveDays ?? row.carriedOverDays),
-                      )}</td
-                    >
-                    <td class="numeric">{formatDays(row.takenDays ?? row.usedDays)}</td>
-                    <td class="numeric">{formatDays(row.approvedUpcomingDays ?? 0)}</td>
-                    <td class="numeric">{formatDays(row.pendingDays)}</td>
-                    <td class="numeric strong">{formatDays(row.remainingDays)}</td>
-                  {/if}
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <p class="form-hint leave-overview-hint">
-          Verfügbar = Anspruch + wirksamer Übertrag. Resturlaub = Verfügbar - Genommen - Genehmigt.
-          Beantragte Tage werden nicht abgezogen.
-        </p>
-        <Pagination
-          total={leaveOverviewRows.length}
-          bind:page={leaveOverviewPage}
-          bind:pageSize={leaveOverviewPageSize}
-        />
-      {/if}
-    </Card>
   {/if}
 {/snippet}
 
@@ -1854,22 +1472,6 @@
     font-size: 0.9375rem;
   }
 
-  .period-select {
-    background: var(--bg-subtle);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.375rem 0.625rem;
-    font-size: 0.875rem;
-    font-family: inherit;
-    cursor: pointer;
-  }
-
-  .period-select:focus {
-    outline: 2px solid var(--brand);
-    outline-offset: 1px;
-  }
-
   .section-date {
     font-family: var(--font-mono);
     color: var(--text-muted);
@@ -1985,95 +1587,8 @@
     color: var(--warn);
   }
 
-  /* Verfall-Warnungen (Phase 44 — BUrlG § 7 Hinweispflicht) */
-
-  .carryover-summary {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  @media (max-width: 560px) {
-    .carryover-summary {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .carryover-callout {
-    background: var(--brand-soft);
-    border: 1px solid var(--brand);
-    border-radius: var(--r-md);
-    color: var(--text);
-    padding: 0.75rem 1rem;
-    margin-bottom: 1rem;
-    font-size: 0.875rem;
-    line-height: 1.5;
-  }
-
-  .carryover-horizon-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-  }
-
-  .carryover-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9375rem;
-  }
-
-  .carryover-table th,
-  .carryover-table td {
-    padding: 0.625rem 0.75rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .carryover-table th {
-    color: var(--text-muted);
-    font-weight: 600;
-    font-size: 0.8125rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .carryover-table td.numeric,
-  .carryover-table th.numeric {
-    text-align: right;
-    font-family: var(--font-mono);
-  }
-
-  .carryover-table .danger {
-    color: var(--bad);
-    font-weight: 700;
-  }
-
-  .btn-warn-now {
-    font-size: 0.8125rem;
-    padding: 0.375rem 0.75rem;
-  }
-
-  .row-msg {
-    display: block;
-    margin-top: 0.25rem;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
-
   /* ── Per-employee action buttons ─────────────────────────────────────────── */
 
-  .actions-col {
-    width: 110px;
-    text-align: right;
-  }
-
-  .row-actions {
-    text-align: right;
-    white-space: nowrap;
-  }
   /* Issue #587: the action cell of the attendance list; the flex layout lives on the inner
      .row-actions__group wrapper (Issue #442), never on the td itself. */
   .attendance-actions {
@@ -2089,53 +1604,11 @@
     justify-content: flex-end;
   }
 
-  /* ── Urlaubsübersicht ─────────────────────────────────────────────────────── */
-
-  .leave-overview-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9375rem;
-  }
-
-  .leave-overview-table th,
-  .leave-overview-table td {
-    padding: 0.625rem 0.75rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .leave-overview-table th {
-    color: var(--text-muted);
-    font-weight: 600;
-    font-size: 0.8125rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .leave-overview-table .numeric {
-    text-align: right;
-    font-family: var(--font-mono);
-  }
-
-  .leave-overview-table .numeric.strong {
-    font-weight: 700;
-    color: var(--text);
-  }
-
-  .leave-overview-hint {
-    margin: 0.75rem 0 0;
-  }
-
   /* ── Responsive ───────────────────────────────────────────────────────────── */
 
   @media (max-width: 720px) {
     .attendance-summary {
       grid-template-columns: repeat(2, 1fr);
-    }
-
-    .actions-col,
-    .row-actions {
-      display: none;
     }
   }
 

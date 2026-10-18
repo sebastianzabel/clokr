@@ -96,8 +96,8 @@ describe("Issue #617 - /reports offers the Monatsexport to export holders only",
     expect(PAGE).not.toContain("downloadVacationPdf");
     expect(PAGE).not.toContain("Urlaubsbericht");
     expect(PAGE).not.toContain("Urlaubslisten");
-    // the in-app overview still reads the JSON route
-    expect(PAGE).toContain("/reports/leave-overview?year=");
+    // Issue #612: the in-app overview is part of the period answer; the page names no vacation route.
+    expect(PAGE).not.toContain("/reports/leave-overview");
   });
 
   // Issue #612 (copy deck): the team subtitle describes the period report; the Monatsexport is

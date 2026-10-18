@@ -110,8 +110,8 @@ describe("/reports period area (Issue #612) - one period control, no old selects
     expect(PAGE).not.toContain("team-overview-header");
     expect(PAGE).not.toMatch(/bind:value=\{selectedMonth\}/);
     expect(PAGE).not.toMatch(/bind:value=\{selectedYear\}/);
-    // The old per-card team selectors: the remaining selects belong to the export cards and the
-    // carry-over horizon until 612-06 replaces them.
+    // The old per-card team selectors: the remaining selects belong to the export cards until
+    // 612-06 replaces them (the carry-over horizon select went with the Verfall card).
     expect(PAGE).not.toContain("let selectedMonth = $state");
     expect(PAGE).not.toContain("let selectedYear = $state");
   });
@@ -240,14 +240,38 @@ describe("/reports period area (Issue #612) - dialogs, export-only callers, inte
     expect(SCRIPT).toContain("const overview = canTeamOvertime;");
   });
 
-  it("the attendance card and the vacation cards moved into their tabs without losing their rights", () => {
+  it("the attendance card moved into its tab and the vacation tab renders from the period answer", () => {
     expect(TEMPLATE).toContain("{@render attendanceBlock()}");
-    expect(TEMPLATE).toContain("{@render carryoverBlock()}");
-    expect(TEMPLATE).toContain("{@render leaveOverviewBlock()}");
     expect(PAGE).toContain("{#if canTeamAttendance}");
-    expect(PAGE).toContain("{#if canReportRead}");
-    // The vacation year follows the period's end (bridge until 612-06).
-    expect(SCRIPT).toContain("const selectedYear = $derived(urlState.to.year);");
+    // The vacation tab needs report:read: the tab itself comes from reportRights.periodTabs and the
+    // period request is gated by it.
+    expect(SCRIPT).toContain("const wanted = canReportRead && periodTabActive;");
+    // Issue #612 (612-06): the two vacation cards, their loads and the year bridge are gone; the tab
+    // takes vacation and absences from the one answer.
+    expect((TEMPLATE.match(/<VacationAbsenceTab\b/g) ?? []).length).toBe(1);
+    expect(TEMPLATE).toContain("vacation={period?.vacation ?? null}");
+    expect(TEMPLATE).toContain("absences={period?.absences ?? null}");
+    expect(TEMPLATE).toContain("canNotify={canReportNotify}");
+    expect(PAGE).not.toContain("carryoverBlock");
+    expect(PAGE).not.toContain("leaveOverviewBlock");
+    expect(SCRIPT).not.toContain("selectedYear");
+    expect(SCRIPT).not.toContain("selectedMonth");
+    expect(PAGE).not.toContain("carryoverHorizon");
+  });
+
+  it("the notice is the existing carry-over route with the entitlement id, and re-reads nothing", () => {
+    const body = functionBody("sendCarryoverNotice");
+    expect(body).toContain('"/reports/carryover-warn"');
+    expect(body).toContain("{ entitlementId }");
+    expect(TEMPLATE).toContain("onNotify={sendCarryoverNotice}");
+  });
+
+  it("the vacation table links only persons the drill-down can show (a row of the period answer)", () => {
+    expect(functionBody("vacationPersonHref")).toContain(
+      "period?.rows.find((r) => r.employeeId === employeeId)",
+    );
+    expect(functionBody("vacationPersonHref")).toContain("row ? personHref(row) : null");
+    expect(functionBody("openVacationPerson")).toContain("openPerson(event, row)");
   });
 });
 

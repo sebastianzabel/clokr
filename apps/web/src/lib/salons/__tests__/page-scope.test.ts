@@ -25,8 +25,12 @@ import {
   DATEV_ALL_SALONS_NOTE,
   EXPORT_NO_STAMMSALON_NOTE,
   PERSON_SALDO_NOT_SPLIT_LABEL,
+  PERSON_VALUES_NOT_SPLIT_LABEL,
   SALON_EXPORT_PERSONS_NOTE,
   SALON_HOME_PERSONS_NOTE,
+  SALON_LEAVE_DAYS_NOT_ATTRIBUTABLE_NOTE,
+  SALON_PERIOD_END_PERSONS_NOTE,
+  SALON_PERIOD_ROWS_NOTE,
   SALON_SOLL_NOT_ATTRIBUTABLE_NOTE,
   SALON_VIEW_UNAVAILABLE_TEXT,
   isSalonFilterRejected,
@@ -119,6 +123,27 @@ describe("Issue #542 — the reports page texts", () => {
   it("says that persons without a Stammsalon on their Stichtag are only in the unfiltered export", () => {
     expect(EXPORT_NO_STAMMSALON_NOTE).toBe(
       "Personen ohne Stammsalon am Stichtag erscheinen nur im Export ohne Salonauswahl.",
+    );
+  });
+});
+
+// Issue #612 (P-06, P-07, amendment 16): the period report follows the header salon. The wording
+// of what the shown people and days refer to is pinned here, character for character.
+describe("Issue #612 - the period report's salon notes", () => {
+  it("names who the vacation table lists under a filter: the Stammsalon at the end of the period", () => {
+    expect(SALON_PERIOD_END_PERSONS_NOTE).toBe("Personen nach Stammsalon am Ende des Zeitraums");
+    expect(PERSON_VALUES_NOT_SPLIT_LABEL).toBe("Personenwerte, nicht nach Salon aufgeteilt");
+  });
+
+  it("says that leave and other absence days are not shown per salon", () => {
+    expect(SALON_LEAVE_DAYS_NOT_ATTRIBUTABLE_NOTE).toBe(
+      "Urlaubs- und andere Abwesenheitstage werden je Salon nicht ausgewiesen.",
+    );
+  });
+
+  it("names who the Zeiten table lists under a filter: the #542 membership rule", () => {
+    expect(SALON_PERIOD_ROWS_NOTE).toBe(
+      "Personen mit Eintrag in diesem Salon oder Stammsalon an mindestens einem Tag des Zeitraums",
     );
   });
 });
