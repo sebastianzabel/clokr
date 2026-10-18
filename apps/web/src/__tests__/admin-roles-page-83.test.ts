@@ -66,6 +66,8 @@ function asUser(permissions: string[]) {
 }
 
 beforeEach(() => {
+  // jsdom has no scrollIntoView; opening a role reveals the editor with it (#692).
+  Element.prototype.scrollIntoView = vi.fn();
   apiGet.mockReset();
   markUnsaved("admin-roles", false);
   apiGet.mockImplementation((path: string) => {

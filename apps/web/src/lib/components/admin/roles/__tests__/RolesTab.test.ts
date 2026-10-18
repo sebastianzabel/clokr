@@ -78,6 +78,8 @@ const TEAM = {
 };
 
 let roles: (typeof ADMIN)[] = [];
+// jsdom has no scrollIntoView; the spy also proves the reveal in the #692 block below.
+const scrollSpy = vi.fn();
 
 function fourEyes() {
   return new ApiError(409, FOUR_EYES_MSG, {
@@ -87,6 +89,9 @@ function fourEyes() {
 }
 
 beforeEach(() => {
+  scrollSpy.mockReset();
+  Element.prototype.scrollIntoView =
+    scrollSpy as unknown as typeof Element.prototype.scrollIntoView;
   apiGet.mockReset();
   apiPost.mockReset();
   apiPatch.mockReset();
@@ -323,5 +328,37 @@ describe("RolesTab (Issue #83)", () => {
     await mount();
     await fireEvent.click(screen.getByRole("button", { name: "Neue Rolle" }));
     expect(document.body.textContent ?? "").not.toMatch(/:(EIGENE|ZUGEWIESEN)/);
+  });
+});
+
+// Issue #692 — the editor opens below the table; opening it must scroll it into view and focus it.
+describe("RolesTab reveals the editor (Issue #692)", () => {
+  it("control: without a click nothing is scrolled", async () => {
+    await mount();
+    expect(scrollSpy).not.toHaveBeenCalled();
+  });
+
+  it("Neue Rolle scrolls the editor into view and focuses the name field", async () => {
+    await mount();
+    await fireEvent.click(screen.getByRole("button", { name: "Neue Rolle" }));
+    const name = await screen.findByLabelText("Name der Rolle");
+    await waitFor(() => expect(scrollSpy).toHaveBeenCalledTimes(1));
+    expect(scrollSpy.mock.calls[0][0]).toMatchObject({ block: "start" });
+    expect(document.activeElement).toBe(name);
+  });
+
+  it("Ansehen on a locked system role focuses the editor wrapper instead", async () => {
+    await mount();
+    await fireEvent.click(within(row("Admin")).getByRole("button", { name: "Ansehen" }));
+    await waitFor(() => expect(scrollSpy).toHaveBeenCalledTimes(1));
+    const editor = screen.getByLabelText("Rollen-Editor");
+    expect(document.activeElement).toBe(editor);
+  });
+
+  it("Bearbeiten on an own role focuses the name field", async () => {
+    await mount();
+    await fireEvent.click(within(row("Teamleitung")).getByRole("button", { name: "Bearbeiten" }));
+    await waitFor(() => expect(scrollSpy).toHaveBeenCalledTimes(1));
+    expect(document.activeElement).toBe(screen.getByLabelText("Name der Rolle"));
   });
 });
