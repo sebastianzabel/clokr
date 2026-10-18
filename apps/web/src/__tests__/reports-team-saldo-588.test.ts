@@ -44,7 +44,9 @@ describe("/reports team area (Issue #588, period table of Issue #612)", () => {
   const TABLE_LOGIC = readSource("../lib/reports/period-table.ts");
 
   it("walks a real page and a real table (vacuity)", () => {
-    expect(PAGE.length).toBeGreaterThan(50_000);
+    // Issue #612 (612-06): the attendance list and the export cards moved into components, so the page
+    // shrank to 45 954 characters; the floor keeps the check non-vacuous.
+    expect(PAGE.length).toBeGreaterThan(30_000);
     expect(PAGE).toContain("TimesAccountsTable");
     expect(TABLE.length).toBeGreaterThan(2_000);
     expect(TABLE_LOGIC.length).toBeGreaterThan(1_000);
