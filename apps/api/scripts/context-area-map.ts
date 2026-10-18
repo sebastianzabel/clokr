@@ -105,6 +105,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    own ─────────────────────────────────────────────────────────────────────────────────
   "src/composition/dashboard.ts": "komposition", // 11 models read across contexts by design (D-17)
   "src/composition/reports.ts": "komposition", // 7 models read across contexts by design (D-17)
+  "src/composition/reports-period.ts": "komposition", // Issue #612 — sums the account's and the absence kernels' month answers for a period (GET /reports/period); owns no model, carries no rule
+  "src/composition/period-csv.ts": "komposition", // Issue #612 (P-11) — pure CSV formatting of the period rows computed by reports-period.ts; no Prisma, no model, no rule
   "src/composition/team-entry-scope.ts": "komposition", // Issue #85 (D-04/D-05) — partitions entry rows by the Unterbau's in-scope id set; owns no model, carries no rule
   "src/composition/my-week-status.ts": "komposition", // Issue #670 — the documented mapping from the shared day status to the my-week vocabulary; pure, owns no model, carries no rule of its own
   "src/composition/reach-day.ts": "komposition", // Issue #679 — picks the calendar day (exit day inside the month, else the last day) a person's Stammsalon reach is judged on and delegates to the Unterbau resolution; owns no model, carries no rule of its own

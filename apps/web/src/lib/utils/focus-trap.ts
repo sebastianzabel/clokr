@@ -23,10 +23,15 @@ export function focusTrap(node: HTMLElement) {
   }
 
   node.addEventListener("keydown", handleKeydown);
-  // Auto-focus first focusable element
+  // Initial focus. Issue #612 — additive: an element carrying `data-autofocus` (and matching the
+  // focusable selector, so a disabled one is skipped) wins; every trap without the attribute
+  // focuses the first focusable element exactly as before.
   requestAnimationFrame(() => {
-    const first = node.querySelector(focusable) as HTMLElement;
-    first?.focus();
+    const preferred = Array.from(node.querySelectorAll<HTMLElement>("[data-autofocus]")).find(
+      (el) => el.matches(focusable),
+    );
+    const target = preferred ?? (node.querySelector(focusable) as HTMLElement | null);
+    target?.focus();
   });
 
   return {

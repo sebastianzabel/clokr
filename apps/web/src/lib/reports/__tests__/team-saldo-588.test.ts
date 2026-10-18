@@ -9,6 +9,9 @@ import {
   TEAM_SALDO_EXCLUSION_LABEL,
   forecastLabel,
   forecastColumnLabel,
+  periodSaldoExclusion,
+  periodSaldoFigures,
+  type PeriodSaldoRow,
   type TeamSaldoRow,
 } from "../team-saldo";
 
@@ -214,5 +217,114 @@ describe("re-exports", () => {
     expect(forecastColumnLabel([{ unconfirmedMonths: 1, hasClosedMonth: true }])).toBe(
       "Laufender Monat (Prognose)",
     );
+  });
+});
+
+// ── Issue #612 (P-12): the same rule over the rows of GET /reports/period ──────────────────────
+
+/** A counted period row whose closing saldo is exactly `closing` minutes. */
+function periodRow(id: string, closing: number | null, extra: Partial<PeriodSaldoRow> = {}) {
+  return {
+    employeeId: id,
+    employeeName: `Person ${id}`,
+    closingBalanceMinutes: closing,
+    labelled: true,
+    hasRecordedTime: true,
+    ...extra,
+  } satisfies PeriodSaldoRow;
+}
+
+describe("periodSaldoFigures (Issue #612)", () => {
+  it("is the median of the closing saldi of the persons who count (odd and even)", () => {
+    expect(
+      periodSaldoFigures([periodRow("A", 60), periodRow("B", -120), periodRow("C", 600)]),
+    ).toMatchObject({ counted: 3, medianMinutes: 60, excluded: [] });
+    // Even count: the mean of the two middle values, rounded to whole minutes (module rule).
+    expect(periodSaldoFigures([periodRow("A", 1), periodRow("B", 2)]).medianMinutes).toBe(2);
+    expect(periodSaldoFigures([periodRow("A", -3), periodRow("B", 0)]).medianMinutes).toBe(-1);
+  });
+
+  it("an empty period has no median", () => {
+    expect(periodSaldoFigures([])).toEqual({ counted: 0, medianMinutes: null, excluded: [] });
+  });
+
+  it("a closing saldo of exactly zero counts and a negative zero never leaks", () => {
+    const figures = periodSaldoFigures([periodRow("A", 0), periodRow("B", 0)]);
+    expect(figures.counted).toBe(2);
+    expect(Object.is(figures.medianMinutes, 0)).toBe(true);
+    expect(
+      Object.is(periodSaldoFigures([periodRow("A", 1), periodRow("B", -1)]).medianMinutes, 0),
+    ).toBe(true);
+  });
+
+  it("no closing saldo and no labelled month is „nur Zeiterfassung“ - the module's own label", () => {
+    const figures = periodSaldoFigures([
+      periodRow("A", 100),
+      periodRow("B", null, { labelled: false }),
+    ]);
+    expect(figures.counted).toBe(1);
+    expect(figures.excluded).toEqual([
+      {
+        employeeId: "B",
+        name: "Person B",
+        reason: "TIME_TRACKING_ONLY",
+        reasonLabel: TEAM_SALDO_EXCLUSION_LABEL.TIME_TRACKING_ONLY,
+      },
+    ]);
+    expect(figures.excluded[0].reasonLabel).toBe("nur Zeiterfassung");
+  });
+
+  it("a withheld closing saldo of a person WITH a Soll is „Saldo nicht verfügbar“", () => {
+    const figures = periodSaldoFigures([periodRow("A", null)]);
+    expect(figures.medianMinutes).toBeNull();
+    expect(figures.excluded[0]).toMatchObject({
+      reason: "SALDO_UNAVAILABLE",
+      reasonLabel: "Saldo nicht verfügbar",
+    });
+  });
+
+  it("a person who never recorded time is „ohne Erfassung“; an absent fact never excludes", () => {
+    const figures = periodSaldoFigures([
+      periodRow("A", -2400, { hasRecordedTime: false }),
+      periodRow("B", 60, { hasRecordedTime: undefined }),
+      periodRow("C", 120),
+    ]);
+    expect(figures.counted).toBe(2);
+    expect(figures.medianMinutes).toBe(90);
+    expect(figures.excluded.map((e) => [e.employeeId, e.reasonLabel])).toEqual([
+      ["A", "ohne Erfassung"],
+    ]);
+  });
+
+  it("each excluded person carries exactly one reason, in the module's precedence", () => {
+    // No Soll wins over a withheld saldo, which wins over no recorded time.
+    expect(
+      periodSaldoExclusion(periodRow("A", null, { labelled: false, hasRecordedTime: false })),
+    ).toBe("TIME_TRACKING_ONLY");
+    expect(periodSaldoExclusion(periodRow("A", null, { hasRecordedTime: false }))).toBe(
+      "SALDO_UNAVAILABLE",
+    );
+    expect(periodSaldoExclusion(periodRow("A", 0, { hasRecordedTime: false }))).toBe(
+      "NO_RECORDED_TIME",
+    );
+    // A track-only contract's saldo of 0 does not count either (rule (c) of the module header).
+    expect(periodSaldoExclusion(periodRow("A", 0, { labelled: false }))).toBe("TIME_TRACKING_ONLY");
+    expect(periodSaldoExclusion(periodRow("A", 5))).toBeNull();
+  });
+
+  it("lists the excluded persons ordered by name, then id, with the German collation", () => {
+    const figures = periodSaldoFigures([
+      periodRow("2", null, { employeeName: "Zoe" }),
+      periodRow("1", null, { employeeName: "Äpfel" }),
+      periodRow("3", null, { employeeName: "Anna" }),
+    ]);
+    expect(figures.excluded.map((e) => e.name)).toEqual(["Anna", "Äpfel", "Zoe"]);
+  });
+
+  it("does not mutate its input", () => {
+    const rows = [periodRow("B", 5), periodRow("A", -5)];
+    const copy = JSON.stringify(rows);
+    periodSaldoFigures(rows);
+    expect(JSON.stringify(rows)).toBe(copy);
   });
 });

@@ -2933,7 +2933,8 @@ Dashboards); eine ungültige Kennung antwortet 400. Der Filter schneidet nur ein
   eine zweite Zählregel (#451).
 - DATEV bleibt vollständig und nimmt nie einen Salon (§ 41 EStG); die Dokumente einzelner Personen ebenso. Die Quelltext-
   Wächter `report-salon-filter-source-542` und die Blocktabelle halten das fest.
-- Die Urlaubsübersicht und die Verfall-Warnungen folgen dem Salon erst mit #612.
+- Die Urlaubsübersicht und die Verfall-Warnungen folgen dem Salon erst mit #612. _(Nachtrag Phase 612: erledigt, siehe den
+  Nachtrag Phase 612 weiter unten in diesem Eintrag.)_
 - Der Rest aus #85 bleibt: für Aufrufer mit Salon-Reichweite ist die Personenmenge des Monatsberichts nach Stammsalon am
   Monatsende der Rahmen; der Filter schneidet nur weiter ein.
 - Der Stichtag der Reichweite des Aufrufers in Monatsbericht und Monatsexport ist weiter das Monatsende als Zeitpunkt.
@@ -3535,6 +3536,125 @@ pnpm --filter @clokr/web exec vitest run src/lib/reports/__tests__/team-saldo-58
   src/__tests__/reports-team-saldo-588.test.ts src/__tests__/personal-saldo-label-588.test.ts \
   src/__tests__/dashboard-team-saldo-588.test.ts src/__tests__/dashboard-team-saldo-pending-588.test.ts
 git diff --quiet "$(git merge-base HEAD origin/main)" -- apps/api/src/__tests__/neutrality/recorded
+```
+
+### Nachtrag 2026-10-18 (Phase 612, Issue #612) — Berichtsseite mit einer Periode: `GET /reports/period` summiert, rechnet nie neu
+
+**Schwere:** Erweiterung. Keine Unterbau-, Schema-, Migrations- oder Permission-Änderung (`report:read` und `report:export` mit
+ihren bestehenden Reichweiten). Zwei neue lesende Routen, ein Kompositionsmodul (`composition/reports-period.ts`) und ein reines
+CSV-Modul (`composition/period-csv.ts`, keine Prisma- und keine Uhr-Abhängigkeit, keine Regel). `composition/reports.ts` ist
+gegenüber dem Stand vor der Phase **nur um `export`-Schlüsselwörter** erweitert (elf Deklarationen; `612-reports-export-only.sh`
+prüft einen leeren Unterschied nach dem Entfernen der Schlüsselwörter); `GET /reports/monthly` ist unverändert.
+
+**Was sich geändert hat:**
+
+- **Die Route `GET /api/v1/reports/period?from=YYYY-MM&to=YYYY-MM[&employeeId][&salonId]`** (`report:read:ZUGEWIESEN`) läuft
+  Monat für Monat nacheinander (kein `Promise.all`) durch den Aufbau von `GET /reports/monthly` — Population des Monats (#613),
+  Stammsalon-Reichweite am Kalendertag (`reach-day.ts`, #679), `computeMonthReportFigures`, `computeEmployeeSummary` — und
+  summiert. Zeile und Kennzahlen sind **Summen der Monatswerte**; eine Person erscheint mit den Monaten, in denen sie zur Population
+  gehört. Höchstens 12 Monate, kein Monat nach dem laufenden, `von` ≤ `bis`; sonst 400 mit deutschem Text.
+- **Saldo Beginn und Saldo Ende (P-01/P-02).** Beginn ist das Gesamtsaldo am Ende des Monats vor dem Zeitraum, also die Zahl,
+  die der Monatsexport dieses Monats druckt; Ende ist das Gesamtsaldo des letzten Monats (abgeschlossen: gespeicherter Übertrag,
+  offen: Wert bis gestern). Seit #681/#682 enthält der Wert eines offenen Monats alle nicht abgeschlossenen Monate seit dem
+  letzten Abschluss und beginnt ohne Abschluss mit dem Eröffnungssaldo; das Ende eines Zeitraums ist damit **gleich dem Live-Saldo**
+  derselben Person am selben Stichtag (als Test festgenagelt, nicht nur aufgenommen). Die Aufteilung des Endsaldos in bestätigt
+  und offen gibt die Route nur dort, wo sie exakt ist (letzter Monat abgeschlossen, oder offen unmittelbar nach einem
+  abgeschlossenen), sonst `null` (P-13).
+- **Soll mit dem Saldo-Recht (P-04).** Soll, Saldo, Beginn und Ende erscheinen nur, wenn `overtime:read` die Person in **jedem**
+  gezeigten Monat abdeckt; sonst `null` mit `sollUnavailableReason: "NO_PERMISSION"`, das Ist bleibt. Die Kennzahlen summieren
+  nur über abgedeckte Personen (`saldoPersonCount`).
+- **Urlaubsjahr mit Stichtag (P-05/P-06).** Je berührtem Kalenderjahr entsteht die Tabelle der Urlaubsübersicht
+  (`GET /reports/leave-overview`, Feld für Feld gleich) am Stichtag des Jahres: der letzte Zeitraumtag im Jahr, höchstens
+  mandantenlokal gestern. Dazu die Verfall-Fakten (`carryOverDeadline`, `lastWarningSentAt`, `entitlementId`). Die
+  Urlaubskennzahlen sind Summen der Zeilen des Jahres am Zeitraumende. Der Urlaubsanspruch ist ein Personenwert (§§ 1, 3 BUrlG)
+  und wird nie nach Salon aufgeteilt.
+- **Abwesenheiten nach Art (P-07).** Summe der Monatszahlen der sieben Arten (Arbeitstage, bewertet, § 9 abgezogen) und eine
+  Zeile Krankheit in Kalendertagen aus demselben Kern (`sickLeaveDayCounts`, #84); `Absence` zählt nie als Krankheit.
+- **Salonfilter nach den Regeln aus #542.** `resolveSalonInReach()` prüft den Salon gegen die Reichweite der eigenen Berechtigung
+  vor jedem Lesen; fremd, unbekannt, deaktiviert und nicht erreichbar antworten mit derselben 404 (32 Byte, byte-gleich zur
+  404 von `/reports/monthly`), eine ungültige Kennung mit 400. Das Ist ist die Zeit der Salon-Einträge bis gestern, Soll und
+  Saldo `null` mit `SALON_FILTER`. Die Urlaubstabelle zeigt die Personen mit Stammsalon am **Periodenende**
+  (`salonPersonsAtStichtag`), ihre Zahlen unverändert. Die Seite sagt es in einem Satz neben der Tabelle.
+- **CSV mit Protokoll (P-11).** `GET /reports/period/csv` (`report:export:ZUGEWIESEN`) liefert die Tabelle „Zeiten & Konten“ aus
+  derselben Zusammenstellung: UTF-8 mit BOM, `;`, CRLF, Stunden mit Dezimalkomma aus Minuten, zurückgehaltene Zellen leer,
+  Schutz vor Formeln (Apostroph vor `= + - @`, Tabulator, Zeilenumbruch). Genau eine `EXPORT`-Auditzeile je Download
+  (`PERIOD_CSV`, Zeitraum, Salon, Personenzahl) wird **vor** den Bytes geschrieben; eine Ablehnung (400, 401, 403, 404) schreibt
+  keine. Unter einem Salonfilter sind Status und „Monate bestätigt“ leer, weil kein Monat gegen einen Vertrag beurteilt wird.
+- **Die Seite „Berichte“** hat eine Periodenleiste mit Schnellauswahl und „Zeitraum…“ (bis 12 Monate), drei Tabs („Zeiten &
+  Konten“, „Urlaub & Abwesenheit“, „Heute“), eine Kennzahlenleiste, eine Tabelle (bis 960 px eine Liste), einen
+  Drill-down als breiten Dialog mit `person=` in der Adresse und **einen** Dialog „Exportieren“ (Monatsexport, DATEV, CSV). Zeitraum,
+  Tab, Salon und Person stehen in der Adresse; `apps/web/src/lib/reports/period-state.ts` ist ihr einziger Leser und Schreiber
+  (der Vertrag, auf den #591 verlinkt). Die Seite summiert nichts selbst.
+
+**Auswirkung auf die Kontexte:**
+
+- Zeiterfassung: keine. Die Fassade `employeesWithValidWorkSince` (#588) hat einen weiteren Leser in der Kompositionsschicht.
+- Abwesenheiten: keine Änderung; die Route liest `sickLeaveDayCounts`, die Urlaubskerne und die Fassaden wie `/reports/monthly`
+  und `/reports/leave-overview`.
+- Schichtplanung: keine.
+- Arbeitszeitkonto: keine Änderung; `computeMonthReportFigures` ist die einzige Quelle von Soll, Ist, Saldo und Gesamtsaldo je Monat.
+  Die Kosten der Monat-für-Monat-Lesung sind gemessen (siehe unten); die gebündelte Lesung abgeschlossener Monate ist das
+  Folge-Issue #688 und gehört dorthin.
+- Unterbau: keine. Neue Leser von `resolveSalonInReach` und `homeSalonsForDays`.
+- Kompositionsschicht: `reports-period.ts` und `period-csv.ts` (beide in `context-area-map` unter `komposition`, kein Modul unter
+  `contexts/`, damit der Importzyklus-Wächter bei 22 bleibt). Die Zusammenstellung trägt keine Geschäftsregel außer der Reihenfolge
+  und der Summe der Antworten der Kontexte.
+
+**Was bewusst NICHT geschah:**
+
+- Kein Feld an `GET /reports/monthly` und keine zweite Rechnung: Summen über Monate sind bewiesen gleich den Monatszahlen des
+  Kontos, den Zeilen von `/reports/monthly`, dem Monatsexport (geschlossener und offener Monat) und dem Live-Saldo.
+- Keine Neuaufnahme der Neutralität: `neutrality/recorded/` ist byte-gleich zum Merge-Basisstand; die zwei neuen Routen stehen
+  in `EXCLUDED_ROUTES` der Matrix, ihre Antworten sind durch `reports-hr-86` (Schlüsselpfad-Allowlist, Tages-Detektor) und die
+  eigenen Reichweitentests festgehalten.
+- Kein Pixel-Referenzbild für `/reports` (P-14): die Zahlen kommen aus der Serveruhr. Das Layout ist über Geometrie-,
+  Überlauf- und Barrierefreiheitsprüfungen im Browser (`reports-period.spec.ts`, 390 und 360 px, hell und dunkel) festgehalten.
+- Die Routen `GET /reports/leave-overview` und `GET /reports/carryover-at-risk` bleiben bestehen, obwohl die Seite sie nicht
+  mehr aufruft (P-18); die Entscheidung über ihr Entfernen ist Issue #690.
+- Keine Navigationsänderung (P-19): „Berichte“ bleibt unter `report:read`; der Tab „Heute“ ist für Lesende mit nur
+  `team-overview:read` allein über die Adresse erreichbar.
+- Der Rest aus #85 bleibt unverändert (P-03): für Aufrufer mit Salon-Reichweite ist die Personenmenge nach Stammsalon am
+  Monatsende der Rahmen; der Salonfilter schneidet nur weiter ein.
+- Keine Bündelung abgeschlossener Monate im Arbeitszeitkonto (#688), keine Seitenaufteilung der Personen.
+- Der Satz im Nachtrag Phase 542 „Die Urlaubsübersicht und die Verfall-Warnungen folgen dem Salon erst mit #612.“ ist mit dieser
+  Phase erledigt (die Zeile bleibt stehen): beide folgen dem Salon, die Urlaubstabelle nach Stammsalon am Periodenende.
+
+**Gemessen** (Quellen: `612-01` … `612-08-SUMMARY.md`):
+
+- Neue API-Testdateien (8 Dateien, 94 Fälle): `reports-period-612` 19, `reports-period-sums-612` 17,
+  `reports-period-vacation-612` 12, `reports-period-salon-612` 10, `reports-period-reach-612` 5, `reports-period-perf-612` 3,
+  `reports-period-csv-612` 10, `period-csv-612` 18; erweitert additiv: `reports-hr-86`, `report-population-guard-613`,
+  `report-salon-filter-source-542` und die Listen von vier Wächtern (`route-employee-scope-literals`,
+  `activity-kind-saldo-isolation-81`, `travel-saldo-isolation-92`, `packages-legal-core-isolation-566`), je ein Eintrag.
+- Mutationsnachweise (je zurückgespielt und byte-verglichen): Summen M1–M3, S1–S2, Salon M1–M3, Urlaub (Stichtag und Hinweisdatum),
+  CSV (Protokoll, Berechtigung, Reichweite, Formelschutz).
+- Antwortzeit (Testdatenbank, 25 Personen, drei Läufe): 1 Monat 27 Personenmonate 0,94 s; 3 Monate 81 Personenmonate 1,2–1,4 s; 12 Monate 324
+  Personenmonate 4,3 s. Je Personenmonat 13,4 ms (ein abgeschlossener Monat 12,3 ms); hochgerechnet auf 300 Personen × 12 Monate
+  rund 48 s, über der Schwelle von 30 s der Planprüfung. Entscheidung vom 17.10.2026: die Phase läuft unverändert weiter, die
+  gebündelte Lesung abgeschlossener Monate im Arbeitszeitkonto ist Issue #688; die Seite zeigt Ladezustand, Abbruch beim
+  Zeitraumwechsel und „Erneut versuchen“, der Standardzeitraum ist ein Monat. Die Obergrenze von 60 s im Test ist eine Absicherung
+  gegen Rückschritte; #688 senkt sie.
+- Neutralität: 3 Dateien, 1720 Fälle, 0 geänderte Zellen; `neutrality/recorded/` und die eingefrorenen Stände
+  `reports-monthly-frozen-84`, `dashboard-team-week-frozen-84`, `whole-tenant-frozen-85` sind byte-gleich zum Merge-Basisstand.
+- Browser: `reports-period.spec.ts` 24 Tests (fünf funktionale, zwölf Zellen der Matrix 390/360 px hell/dunkel mit Achsenprüfung
+  inklusive Positivkontrolle, 15 Layoutprüfungen); e2e-ci gesamt 259 bestanden, 1 übersprungen (erneut nach dem Merge von #670); zehn visuelle
+  Baselines unverändert.
+- Gesamtläufe (Stand Abschluss Phase 612): API 708 Dateien / 10751 Tests (10748 grün, 3 übersprungen, nach dem Merge von origin/main @ 2541a56b); Web 256 Dateien / 3982 Tests grün, Abdeckung `src/lib` 85,8 % (Boden 5 %); Boden `check-test-completeness.mjs` 700 → 708 Dateien, 10652 → 10751 Tests (main plus die gemessene Phasendifferenz von 8 Dateien und 99 Fällen).
+
+### Nachrechnen (Nachtrag Phase 612)
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/__tests__/reports-period-612.test.ts src/__tests__/reports-period-sums-612.test.ts \
+  src/__tests__/reports-period-vacation-612.test.ts src/__tests__/reports-period-salon-612.test.ts src/__tests__/reports-period-reach-612.test.ts \
+  src/__tests__/reports-period-csv-612.test.ts src/composition/__tests__/period-csv-612.test.ts src/__tests__/reports-period-perf-612.test.ts
+pnpm --filter @clokr/api exec vitest run src/composition/__tests__/reports-monthly-frozen-84.test.ts src/__tests__/reports-hr-86.test.ts \
+  src/composition/__tests__/dashboard-team-week-frozen-84.test.ts src/__tests__/whole-tenant-frozen-85.test.ts src/__tests__/monthly-export-617.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts src/__tests__/notification-recipients-neutrality.test.ts src/__tests__/activity-auth-neutrality.test.ts   # unverändert grün
+pnpm --filter @clokr/web exec vitest run src/__tests__/reports-period-page-612.test.ts src/lib/reports src/lib/components/reports
+git diff --quiet "$(git merge-base HEAD origin/main)" -- apps/api/src/__tests__/neutrality/recorded
+git diff "$(git merge-base HEAD origin/main)" -- apps/api/src/composition/reports.ts   # elf Zeilen, jede nur um das Schlüsselwort `export` verändert
+pnpm --filter @clokr/e2e exec playwright test reports-period.spec.ts   # gegen den Test-Stack
 ```
 
 ## R — Fehlender Urlaubsanspruch bei Mitarbeiteranlage (Phase 416, Issue #416)

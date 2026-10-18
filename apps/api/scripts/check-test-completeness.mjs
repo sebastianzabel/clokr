@@ -936,7 +936,12 @@ import { readFileSync } from "node:fs";
 // Issue #670 (2026-10-18): full run on `fix/670-one-day-status` (origin/main @ 15dcce49) - 700 test files, 10652 tests (3 skipped).
 // New files: my-week-open-items-parity-670 (+42 cases), my-week-status-670 (+2); nothing removed, skipped or loosened.
 // MIN_FILES 698 -> 700, never lowered.
-const MIN_FILES = 700;
+// Phase 612 (2026-10-18): measured with a full run (`pnpm --filter @clokr/api test`) on `feat/612-berichtsseite` after merging
+// origin/main @ 2541a56b (#670, main 700 files / 10652 tests) - 708 test files, 10751 tests (10748 passed, 3 skipped).
+// Eight new files, all from this phase: reports-period-612 (19 cases), reports-period-sums-612 (17), reports-period-vacation-612
+// (12), reports-period-salon-612 (10), reports-period-reach-612 (5), reports-period-perf-612 (3), reports-period-csv-612 (10)
+// and composition/__tests__/period-csv-612 (18); nothing removed, skipped or loosened. MIN_FILES 700 -> 708, never lowered.
+const MIN_FILES = 708;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -983,7 +988,10 @@ const MIN_FILES = 700;
 // Issue #679 (2026-10-17): MIN_TESTS 10541 -> 10553, the measured total of the full run named at MIN_FILES. Never lowered.
 // Merge #679 onto main: 10596 + 12 = 10608. Never lowered.
 // Issue #670 (2026-10-18): MIN_TESTS 10608 -> 10652, the measured total of the full run named at MIN_FILES. Never lowered.
-const MIN_TESTS = 10652;
+// Phase 612 (2026-10-18): MIN_TESTS 10652 -> 10751 (+99), the measured total of the full run named at MIN_FILES: the eight new
+// files add 94 cases (listed there); the other 5 come from existing files this phase extended additively (data-driven cases,
+// e.g. reports-hr-86 per classified route; not attributed to single files). Main alone measures 10652, so the phase delta is the measured 99. Never lowered.
+const MIN_TESTS = 10751;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

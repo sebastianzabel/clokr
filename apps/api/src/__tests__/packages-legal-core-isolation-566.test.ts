@@ -117,6 +117,7 @@ const SINGLE_FILES = [
   `${SRC}/contexts/platform/api/employees.ts`, // DSGVO delete / anonymise route
   `${SRC}/composition/data-retention.ts`,
   `${SRC}/composition/reports.ts`,
+  `${SRC}/composition/reports-period.ts`, // Issue #612 — the period report is a report figure surface
   `${SRC}/composition/pdf.ts`,
   `${SRC}/composition/dashboard.ts`,
   `${SRC}/contexts/platform/api/audit-logs.ts`,

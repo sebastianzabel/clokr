@@ -15,9 +15,22 @@
     children: Snippet;
     /** Optional footer snippet (e.g. button row). */
     footer?: Snippet;
+    /**
+     * Issue #612 — additive. "md" (default) is the global `.modal` width; "wide" adds
+     * `modal--wide` (880 px, capped to the viewport) for the person drill-down.
+     */
+    size?: "md" | "wide";
   }
 
-  let { open = $bindable(), eyebrow, title, ariaLabel, children, footer }: Props = $props();
+  let {
+    open = $bindable(),
+    eyebrow,
+    title,
+    ariaLabel,
+    children,
+    footer,
+    size = "md",
+  }: Props = $props();
 
   // Bound to the .scrim element so the inert effect can exclude it by reference.
   let scrimEl: HTMLDivElement | undefined = $state();
@@ -65,6 +78,7 @@
   <div class="scrim" role="presentation" onclick={onBackdropClick} bind:this={scrimEl}>
     <div
       class="modal"
+      class:modal--wide={size === "wide"}
       role="dialog"
       aria-modal="true"
       aria-label={ariaLabel ?? title}
@@ -89,6 +103,20 @@
 {/if}
 
 <style>
+  /* Issue #612: the scoped selector (the component hash class makes it 0,2,0) outranks the
+     global `.modal` width recipe. */
+  .modal--wide {
+    width: min(880px, calc(100vw - 32px));
+  }
+
+  /* The wide modal carries the drill-down's footer buttons ("Schliessen", "DATEV (Person)",
+     "Stundennachweis (PDF)"): in one row they end beyond a phone and the modal clips them (found
+     by the 390/360 px matrix of reports-period.spec.ts). They wrap instead; a footer that fits
+     renders exactly as before. */
+  .modal--wide .modal-foot {
+    flex-wrap: wrap;
+  }
+
   .modal-eyebrow {
     font-family: var(--font-serif);
     font-style: italic;

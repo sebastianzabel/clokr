@@ -74,6 +74,7 @@ const PROTECTED_FILES = [
   `${TT_ROOT}/day-break-placement.ts`,
   `${TT_ROOT}/break-finding-days.ts`,
   "apps/api/src/composition/reports.ts",
+  "apps/api/src/composition/reports-period.ts", // Issue #612 — the period report is a report figure surface
   "apps/api/src/composition/dashboard.ts",
   "apps/api/src/composition/pdf.ts",
 ];

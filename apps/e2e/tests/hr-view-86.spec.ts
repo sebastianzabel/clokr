@@ -492,6 +492,13 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
       .getByRole("link", { name: "Berichte" })
       .click();
     await expect(page).toHaveURL(/\/reports/);
+    // Issue #612: the page is the period report - the HR principal gets the two period tabs and
+    // the vacation overview on the second one, and still no export control of any kind.
+    await expect(page.getByRole("tab", { name: "Zeiten & Konten" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await page.getByRole("tab", { name: "Urlaub & Abwesenheit" }).click();
     await expect(page.getByText("Urlaubsübersicht", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Lade Urlaubsübersicht…")).toHaveCount(0);
     await expect(page.getByText("DATEV Export", { exact: true })).toHaveCount(0);
@@ -499,6 +506,10 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     // the Personalabteilung (report:read, no report:export) must not see.
     await expect(page.getByText("Monatsexport", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /PDF herunterladen/ })).toHaveCount(0);
+    // Issue #612: the one export dialog is gone for this principal, and so is today's attendance
+    // (the „Heute“ tab needs the team-overview right).
+    await expect(page.getByRole("button", { name: "Exportieren" })).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "Heute" })).toHaveCount(0);
 
     // ── 8. the salon admin opens ──────────────────────────────────────────────────────────────
     await page.goto(`${tenant.baseUrl}/admin/salons`);

@@ -295,6 +295,27 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "(the report:read principal gets 403).",
   },
   {
+    route: "GET /api/v1/reports/period",
+    reason:
+      "New route added in Issue #612, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) — built permission-gated (`report:read:ZUGEWIESEN`) from its " +
+      "very first commit and never had role-based access behavior to compare. Same " +
+      "vacuous-satisfaction reasoning as the entries around it: RECORD/MERGE mode refuses to run " +
+      "once the role guard is gone. Proven by `reports-period-612.test.ts` (access, scope, saldo " +
+      "gate) and `reports-hr-86.test.ts` (HR 200, aggregates only).",
+  },
+  {
+    route: "GET /api/v1/reports/period/csv",
+    reason:
+      "New export route added in Issue #612, long after the role guard (`requireRole`) was deleted " +
+      "from middleware/auth.ts (#75b/#83) — built permission-gated (`report:export:ZUGEWIESEN`) from " +
+      "its very first commit and never had role-based access behavior to compare. Same " +
+      "vacuous-satisfaction reasoning as the entries around it: RECORD/MERGE mode refuses to run " +
+      "once the role guard is gone. Proven by `reports-period-csv-612.test.ts` (figures, audit, " +
+      "access, salon filter, injection guard) and `reports-hr-86.test.ts` (the report:read " +
+      "principal gets 403).",
+  },
+  {
     route: "GET /api/v1/leave/sick-days",
     reason:
       "New route added in Issue #595 (D-04), long after the role guard (`requireRole`) was " +

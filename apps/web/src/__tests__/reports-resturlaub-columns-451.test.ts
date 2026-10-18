@@ -1,7 +1,12 @@
 // Issue #451 (D-07, D-08), Plan 451-08 Task 3 — source-pin test for the two Resturlaub columns
 // on `/reports` reading the 451-07/451-08 facade fields with a `??` fallback for an older cached
-// response. Same source-read technique as `admin-employee-save-wiring.test.ts` (this page isn't
-// mountable either — no `$app` alias in `apps/web/vitest.config.ts`).
+// response. Same source-read technique as `admin-employee-save-wiring.test.ts`.
+//
+// Issue #612 (pin ledger row 14): the Urlaubsübersicht and the Verfall-Warnungen table moved into
+// one component, `VacationAbsenceTab.svelte` (Verfall is a column of the Urlaub table now). The
+// properties stay: the Übertrag cell is the effective carry-over, the Verfall cell the at-risk days,
+// each with a raw-days fallback for an older answer. The mounted proof of both is
+// `VacationAbsenceTab.test.ts`; this file pins the source expressions.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -18,29 +23,36 @@ function readRouteFile(relativeFromHere: string, relativeFromCwd: string): strin
 }
 
 const PAGE = readRouteFile(
-  "../routes/(app)/reports/+page.svelte",
-  "src/routes/(app)/reports/+page.svelte",
+  "../lib/components/reports/VacationAbsenceTab.svelte",
+  "src/lib/components/reports/VacationAbsenceTab.svelte",
 );
 
 describe("Issue #451 Plan 08 (D-07, D-08) — /reports shows effective carry-over and at-risk days", () => {
-  it("the Urlaubsuebersicht 'Uebertrag' cell renders carriedOverEffectiveDays with a raw-days fallback", () => {
-    expect(PAGE).toContain("formatDays(row.carriedOverEffectiveDays ?? row.carriedOverDays)");
+  it("[vacuity gate] the vacation tab source is loaded", () => {
+    expect(PAGE.length).toBeGreaterThan(2_000);
+    expect(PAGE).toContain("Verfall");
   });
 
-  it("the Verfall-Warnungen table header reads 'Gefährdet (T.)', not 'Anspruch (T.)'", () => {
-    expect(PAGE).toContain('<th class="numeric">Gefährdet (T.)</th>');
-    expect(PAGE).not.toContain('<th class="numeric">Anspruch (T.)</th>');
+  it("the 'Übertrag' cell renders carriedOverEffectiveDays with a raw-days fallback", () => {
+    expect(PAGE).toContain("row.carriedOverEffectiveDays ?? row.carriedOverDays ?? 0");
   });
 
-  it("the Verfall-Warnungen first numeric cell renders atRiskDays with a raw-days fallback", () => {
-    expect(PAGE).toContain("formatDays(row.atRiskDays ?? row.carriedOverDays)");
+  it("the Verfall cell renders the at-risk days with a raw-days fallback", () => {
+    expect(PAGE).toContain("row.atRiskDays ?? row.carriedOverDays ?? 0");
   });
 
-  it("LeaveOverviewRealRow declares an optional carriedOverEffectiveDays field", () => {
-    expect(PAGE).toMatch(/carriedOverEffectiveDays\?:\s*number/);
+  it("the table has a Verfall column and no 'Gefährdet' or 'Anspruch (T.)' header", () => {
+    expect(PAGE).toContain('<th scope="col">Verfall</th>');
+    expect(PAGE).not.toContain("Gefährdet (T.)");
+    expect(PAGE).not.toContain("Anspruch (T.)");
   });
 
-  it("the at-risk row type declares an optional atRiskDays field", () => {
-    expect(PAGE).toMatch(/atRiskDays\?:\s*number/);
+  it("the answer's row type declares the optional effective carry-over and at-risk fields", () => {
+    const types = readRouteFile(
+      "../lib/reports/period-report.ts",
+      "src/lib/reports/period-report.ts",
+    );
+    expect(types).toMatch(/carriedOverEffectiveDays:\s*number \| null/);
+    expect(types).toMatch(/atRiskDays:\s*number \| null/);
   });
 });

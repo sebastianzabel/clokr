@@ -87,6 +87,23 @@ describe("ExitedFinalSaldoSection (Issue #613)", () => {
     expect(screen.getByTestId("saldo-cell-total")).toHaveTextContent("+2:00");
   });
 
+  // Issue #612 (orchestrator amendment 3): the section is not part of the chosen period.
+  it("names its reference day when the page asks for it, and says nothing otherwise", () => {
+    renderWithTheme(ExitedFinalSaldoSection, {
+      rows: [row(1, "2026-10-15")],
+      total: 1,
+      asOfNote: "Stand heute, unabhängig vom Zeitraum",
+    });
+    expect(screen.getByTestId("exited-as-of")).toHaveTextContent(
+      "Stand heute, unabhängig vom Zeitraum",
+    );
+  });
+
+  it("shows no reference line without a note", () => {
+    renderWithTheme(ExitedFinalSaldoSection, { rows: [row(1, "2026-10-15")], total: 1 });
+    expect(screen.queryByTestId("exited-as-of")).toBeNull();
+  });
+
   it("renders nothing for an empty list with total 0", () => {
     renderWithTheme(ExitedFinalSaldoSection, { rows: [], total: 0 });
     expect(screen.queryByRole("heading")).toBeNull();
@@ -106,26 +123,23 @@ function readPage(): string {
 describe("/reports page wiring (Issue #613)", () => {
   const PAGE = readPage();
 
-  it("the team table, its sorting, the KPIs and the team figures are derived from the active rows", () => {
+  it("the exited section is derived from the saldo overview's partition; the period table does not read it", () => {
     expect(PAGE).toContain(
       "let overtimeSections = $derived(partitionOvertimeOverview(overtimeOverview?.employees ?? []))",
     );
-    expect(PAGE).toMatch(
-      /let sortedOvertime = \$derived\.by\(\(\) => \{\s*const rows = overtimeSections\.active;/,
-    );
-    expect(PAGE).toContain("let kpiTeamSize = $derived(overtimeSections.active.length)");
-    // Issue #588: the median figure replaces the mean over the active rows.
-    expect(PAGE).toContain("let teamSaldo = $derived(teamSaldoFigures(overtimeSections.active))");
-    expect(PAGE).toContain('overtimeSections.active.filter((r) => r.status === "CRITICAL")');
-    // The table iterates the paged team rows, which slice sortedOvertime (Issue #588).
-    expect(PAGE).toContain("{#each pagedOvertimeRows as row (row.id)}");
-    expect(PAGE).toMatch(/let pagedOvertimeRows = \$derived\(\s*sortedOvertime\.slice\(/);
+    // Issue #612: the team table, its sorting and paging are the period table's (TimesAccountsTable);
+    // the overview answer feeds only this section, so nothing of the page sorts or pages it.
+    expect(PAGE).not.toContain("sortedOvertime");
+    expect(PAGE).not.toContain("pagedOvertimeRows");
     expect(PAGE).not.toMatch(/overtimeOverview\?\.employees \?\? \[\]\)\.filter/);
   });
 
   it("the section receives the exited rows and the server's total; the types carry the new fields", () => {
     expect(PAGE).toContain("rows={overtimeSections.exitedOpen}");
     expect(PAGE).toContain("overtimeOverview.exitedOpenFinalSaldoCount");
+    // Issue #612 (orchestrator amendment 3): the section is today's state, not the period's.
+    expect(PAGE).toContain('asOfNote="Stand heute, unabhängig vom Zeitraum"');
+    expect(PAGE).toContain("exited={exitedBlock}");
     expect(PAGE).toContain("exitDate?: string | null;");
     expect(PAGE).toContain("exitedWithOpenFinalSaldo?: boolean;");
     expect(PAGE).toContain("exitedOpenFinalSaldoCount?: number;");

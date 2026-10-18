@@ -14,9 +14,14 @@
     rows: ExitedOverviewRow[];
     /** All exited persons with an open final saldo in the caller's reach (may exceed `rows`). */
     total: number;
+    /**
+     * Issue #612 - an optional line naming the section's reference day, for a page whose other
+     * blocks follow a chosen period ("Stand heute, unabhängig vom Zeitraum"). Absent: no line.
+     */
+    asOfNote?: string;
   }
 
-  let { rows, total }: Props = $props();
+  let { rows, total, asOfNote }: Props = $props();
 
   let more = $derived(exitedMoreCount(total, rows.length));
   // Issue #588 (D-588-4): the forecast header names the window the rows really have.
@@ -29,6 +34,9 @@
     <p class="exited-hint">
       Der Endsaldo ist bestätigt, sobald der Austrittsmonat abgeschlossen ist.
     </p>
+    {#if asOfNote}
+      <p class="exited-hint" data-testid="exited-as-of">{asOfNote}</p>
+    {/if}
     <div class="table-wrap">
       <table class="data-table">
         <thead>
