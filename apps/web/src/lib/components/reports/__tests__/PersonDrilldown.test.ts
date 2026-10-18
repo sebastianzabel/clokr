@@ -566,6 +566,24 @@ describe("PersonDrilldown - the closing saldo (P-13, amendment 7)", () => {
   });
 });
 
+describe("PersonDrilldown - the saldo tooltip stays inside the modal on a phone (e2e matrix finding)", () => {
+  it("the saldo block is the anchor of its tooltip panel", () => {
+    viewport(false);
+    renderWithTheme(PersonDrilldown, props());
+    const anzeige = screen.getByTestId("saldo-anzeige");
+    expect(anzeige.closest(".drill-saldo")).not.toBeNull();
+  });
+
+  it("below 641 px the panel hangs from the block and spans its width", () => {
+    const media = source.slice(source.indexOf("@media (max-width: 640px) {\n    .drill-saldo"));
+    expect(media.indexOf(".drill-saldo {")).toBeGreaterThan(-1);
+    const block = media.slice(0, media.indexOf("\n  }\n\n") + 4);
+    expect(block).toMatch(/\.drill-saldo\s*\{\s*position:\s*relative/);
+    expect(block).toMatch(/:global\(\.saldo-info-wrap\)\s*\{\s*position:\s*static/);
+    expect(block).toMatch(/:global\(\.saldo-tooltip\)[^}]*left:\s*0[^}]*right:\s*0/);
+  });
+});
+
 describe("PersonDrilldown - closing", () => {
   it("Schließen takes the initial focus and reports the close once", async () => {
     viewport(false);

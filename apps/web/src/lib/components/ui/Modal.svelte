@@ -109,6 +109,14 @@
     width: min(880px, calc(100vw - 32px));
   }
 
+  /* The wide modal carries the drill-down's footer buttons ("Schliessen", "DATEV (Person)",
+     "Stundennachweis (PDF)"): in one row they end beyond a phone and the modal clips them (found
+     by the 390/360 px matrix of reports-period.spec.ts). They wrap instead; a footer that fits
+     renders exactly as before. */
+  .modal--wide .modal-foot {
+    flex-wrap: wrap;
+  }
+
   .modal-eyebrow {
     font-family: var(--font-serif);
     font-style: italic;

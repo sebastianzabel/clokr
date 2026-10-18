@@ -32,4 +32,11 @@ describe("Modal — size", () => {
     const style = modalSource.slice(modalSource.lastIndexOf("<style>"));
     expect(style).toMatch(/\.modal--wide\s*\{[^}]*width:\s*min\(880px,\s*calc\(100vw - 32px\)\)/);
   });
+
+  it("lets the footer buttons of the wide modal wrap (they end beyond a phone otherwise)", () => {
+    const style = modalSource.slice(modalSource.lastIndexOf("<style>"));
+    expect(style).toMatch(/\.modal--wide\s+\.modal-foot\s*\{[^}]*flex-wrap:\s*wrap/);
+    // The default modal's footer is untouched.
+    expect(style).not.toMatch(/(^|\n)\s*\.modal-foot\s*\{/);
+  });
 });

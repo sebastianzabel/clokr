@@ -284,29 +284,31 @@
       </div>
 
       {#if closing !== null}
-        {#if canSplit}
-          <SaldoAnzeige
-            variant="expanded"
-            label="Saldo am Ende"
-            confirmedMinutes={row.closingConfirmedMinutes ?? 0}
-            openMonthMinutes={row.closingOpenMinutes}
-            hasClosedMonth={true}
-            unconfirmedMonths={row.unconfirmedMonths}
-          />
-        {:else if lastMonthConfirmed}
-          <SaldoAnzeige
-            variant="expanded"
-            label="Saldo am Ende"
-            saldoMinutes={closing}
-            isLocked={true}
-          />
-        {:else}
-          <SaldoAnzeige
-            variant="expanded"
-            label="Saldo am Ende · {singleForecastLabel}"
-            saldoMinutes={closing}
-          />
-        {/if}
+        <div class="drill-saldo">
+          {#if canSplit}
+            <SaldoAnzeige
+              variant="expanded"
+              label="Saldo am Ende"
+              confirmedMinutes={row.closingConfirmedMinutes ?? 0}
+              openMonthMinutes={row.closingOpenMinutes}
+              hasClosedMonth={true}
+              unconfirmedMonths={row.unconfirmedMonths}
+            />
+          {:else if lastMonthConfirmed}
+            <SaldoAnzeige
+              variant="expanded"
+              label="Saldo am Ende"
+              saldoMinutes={closing}
+              isLocked={true}
+            />
+          {:else}
+            <SaldoAnzeige
+              variant="expanded"
+              label="Saldo am Ende · {singleForecastLabel}"
+              saldoMinutes={closing}
+            />
+          {/if}
+        </div>
       {/if}
 
       <section aria-labelledby="drill-months">
@@ -453,6 +455,27 @@
     flex-direction: column;
     gap: var(--s-4);
     font-size: 15px;
+  }
+
+  /* The info tooltip of the saldo is positioned from its trigger, which on a phone sits near the
+     right edge of the modal: its 280 px panel then ends beyond the modal, which clips it. Below
+     641 px the panel hangs from this block instead and spans its width (found by the 390/360 px
+     matrix of reports-period.spec.ts). */
+  @media (max-width: 640px) {
+    .drill-saldo {
+      position: relative;
+    }
+
+    .drill-saldo :global(.saldo-info-wrap) {
+      position: static;
+    }
+
+    .drill-saldo :global(.saldo-tooltip) {
+      left: 0;
+      right: 0;
+      width: auto;
+      max-width: none;
+    }
   }
 
   .drill-sub {
