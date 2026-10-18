@@ -811,6 +811,7 @@ Read these before modifying any page in `apps/web` — they are checked in, unli
 | `apps/web/src/app.css`                 | The shared class recipes — card surfaces, `.badge`, `.callout`, calendar cells, page wrapper, section stacking, summary bars, entrance animations |
 | `apps/web/scripts/lint-ui-classes.mjs` | Which class names are allowed in the scoped primitive directories, and where that scope ends                                                      |
 | `docs/ADMIN_STRUCTURE.md §3.2.1`       | When a control saves instantly and when it waits for the section button (Phase 109, D-01/D-02)                                                    |
+| `apps/web/src/lib/utils/chart-theme.ts` | The one chart style source — colours from tokens, tension 0, unit axis titles, zero line, chart kinds and their aria-labels (Issue #591) |
 
 Reuse an existing recipe from `app.css` before inventing a class or a token.
 
@@ -823,6 +824,17 @@ Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes` + `lint:s
 that `lint:ui-classes` only scans `lib/components/ui/` and `lib/components/layout/` — components
 elsewhere (`lib/components/saldo/`, `calendar/`, `breaks/`, …) are outside that gate and need their
 own mounted test instead.
+
+- **Charts are built in one way (Issue #591).** Every chart.js chart is created as `new Chart(<canvas>,
+  <builder>(…))` with a builder of `apps/web/src/lib/dashboard/team-charts.ts`. A builder draws from a
+  descriptor (kind, unit, subject) that also yields the canvas aria-label through `chartAriaLabel()`, so
+  the label names the drawn type and unit. Counts are columns, a signed series is a line with tension 0
+  and an emphasised zero line, Soll/Ist are grouped columns. Every value axis carries `CHART_UNIT_TITLE`
+  and colours come only from tokens. A month click and the header link „Bericht →“ open `/reports` only
+  through `periodSearch` (#612) and only when `reportRights().periodTabs` holds the tab.
+  `apps/web/src/__tests__/chart-style-591.test.ts` fails on a chart file without the theme import, any
+  tension other than 0, an inline config, a value axis without a unit title, a literal canvas
+  aria-label, a colour literal in the style or builder module, or a hand-built report query.
 
 ## Svelte 5 Gotchas
 

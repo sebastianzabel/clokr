@@ -991,7 +991,13 @@ const MIN_FILES = 708;
 // Phase 612 (2026-10-18): MIN_TESTS 10652 -> 10751 (+99), the measured total of the full run named at MIN_FILES: the eight new
 // files add 94 cases (listed there); the other 5 come from existing files this phase extended additively (data-driven cases,
 // e.g. reports-hr-86 per classified route; not attributed to single files). Main alone measures 10652, so the phase delta is the measured 99. Never lowered.
-const MIN_TESTS = 10751;
+// Phase 591 (2026-10-18): MIN_TESTS 10751 -> 10752 (+1), the measured total of a full run (`pnpm --filter @clokr/api test`) on
+// `feat/591-diagramme` (origin/main @ b6c90858 + 591-01..03): 708 files (MIN_FILES unchanged), 10752 tests (10749 passed, 3 skipped).
+// The phase adds no API test file. The one extra case comes from tooling that enumerates the web guards: `lint-guard-vacuity.test.ts`
+// runs one `describe.each` case per proved guard of the whole tree, and the new web guard `chart-style-591.test.ts` is the 79th
+// proved guard (78 before; `lint-guard-vacuity --check 0` reports 79 guards, 0 vacuous). Nothing removed, skipped or loosened.
+// Never lowered.
+const MIN_TESTS = 10752;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

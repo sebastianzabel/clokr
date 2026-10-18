@@ -11,6 +11,7 @@ Das Dashboard zeigt auf einen Blick:
 - **Resturlaub** — verbleibende Urlaubstage im Jahr
 - **Meine Woche** — Kalenderübersicht der aktuellen Woche
 - **Offene Vorgänge** — fehlende Zeiteinträge, ausstehende Genehmigungen
+- **Team-Bereich** (mit Recht auf die Team-Übersicht) — Salden, Arbeitsstunden (Soll und Ist nebeneinander), Überstunden-Trend und Krankheitstage der letzten sechs Monate. Ein Klick auf einen Monat öffnet den Bericht dieses Monats, „Bericht →“ die sechs Monate (mit Recht auf die Berichte).
 
 ---
 

@@ -28,6 +28,12 @@ const DASHBOARD = readRouteFile(
   "src/routes/(app)/dashboard/+page.svelte",
 );
 
+// Issue #591: the chart series are built here, no longer inline in the page.
+const TEAM_CHARTS = readRouteFile(
+  "../lib/dashboard/team-charts.ts",
+  "src/lib/dashboard/team-charts.ts",
+);
+
 /** The body of `function <name>(` up to the next top-level function or section comment. */
 function functionBody(name: string): string {
   const start = DASHBOARD.indexOf(`function ${name}(`);
@@ -134,8 +140,10 @@ describe("Issue #84 — the Team block follows the salon context through team-vi
   });
 
   it("D-05/D-12: the Soll series is drawn only when the server delivered one, the notes come from the view", () => {
-    expect(DASHBOARD).toContain("drawn.shouldHours !== null");
-    expect(DASHBOARD).toContain("label: drawn.workedSeriesLabel");
+    // Issue #591: the series are built by the chart builder; the page hands it the view as it is.
+    expect(DASHBOARD).toContain("teamHoursChartConfig(drawn");
+    expect(TEAM_CHARTS).toContain("view.shouldHours !== null");
+    expect(TEAM_CHARTS).toContain("label: view.workedSeriesLabel");
     expect(DASHBOARD).toContain("trendView.sollNote");
     expect(DASHBOARD).toContain("trendView.trendNote");
     expect(DASHBOARD).toContain("trendView?.chartSub");
