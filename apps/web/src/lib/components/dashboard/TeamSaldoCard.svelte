@@ -7,7 +7,8 @@
   import { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from "chart.js";
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
-  import { getChartDefaults, getChartTheme } from "$lib/utils/chart-theme";
+  import { chartAriaLabel, getChartTheme } from "$lib/utils/chart-theme";
+  import { TEAM_SALDO_BARS_CHART, teamSaldoBarsChartConfig } from "$lib/dashboard/team-charts";
   import { fmtBalance } from "$lib/utils/format-minutes";
   import { teamSaldoFigures, type TeamSaldoRow } from "$lib/reports/team-saldo";
   import { PERSON_SALDO_NOT_SPLIT_LABEL, SALON_HOME_PERSONS_NOTE } from "$lib/salons/page-scope";
@@ -54,82 +55,22 @@
     const el = canvasEl;
     const bars = figures.diverging;
     if (el === null || bars.length === 0) return;
-    const theme = getChartTheme();
-    const defaults = getChartDefaults();
     // The link of a bar is read at click time, so a changed `personHref` never rebuilds the chart.
     const hrefOfIndex = (index: number): string | null => {
       const bar = bars[index];
       return bar === undefined ? null : personHref(bar.id);
     };
-    const chart = new Chart(el, {
-      type: "bar",
-      data: {
-        labels: bars.map((b) => b.name),
-        datasets: [
-          {
-            data: bars.map((b) => b.totalMinutes / 60),
-            backgroundColor: bars.map((b) => (b.totalMinutes > 0 ? theme.green : theme.red)),
-            borderRadius: 4,
-            maxBarThickness: 18,
-          },
-        ],
-      },
-      options: {
-        indexAxis: "y",
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            ...defaults.plugins.tooltip,
-            callbacks: {
-              label: (ctx: { dataIndex: number }) => bars[ctx.dataIndex]?.label ?? "",
-            },
-          },
-        },
-        scales: {
-          x: {
-            title: {
-              display: true,
-              text: "Stunden",
-              color: theme.textMuted,
-              font: { family: theme.fontFamily, size: 11 },
-            },
-            ticks: { color: theme.textMuted, font: { family: theme.fontFamily, size: 11 } },
-            grid: {
-              // The zero line is the axis the bars diverge from: drawn stronger than the rest.
-              color: (ctx: { tick?: { value: number } }) =>
-                ctx.tick?.value === 0 ? theme.textMuted : theme.gridColor,
-              lineWidth: (ctx: { tick?: { value: number } }) => (ctx.tick?.value === 0 ? 2 : 0.5),
-            },
-            border: { display: false },
-          },
-          y: {
-            ticks: {
-              color: theme.text,
-              font: { family: theme.fontFamily, size: 11 },
-              autoSkip: false,
-            },
-            grid: { display: false },
-            border: { display: false },
-          },
-        },
-        onClick: (_event: unknown, elements: Array<{ index: number }>) => {
-          const first = elements[0];
-          if (first === undefined) return;
-          const href = hrefOfIndex(first.index);
+    // Issue #591: the config comes from the one chart builder; the card only supplies the click.
+    const chart = new Chart(
+      el,
+      teamSaldoBarsChartConfig(bars, getChartTheme(), {
+        onBar: (index) => {
+          const href = hrefOfIndex(index);
           if (href !== null) onOpenPerson(href);
         },
-        onHover: (event: { native?: Event | null }, elements: Array<{ index: number }>) => {
-          const target = event.native?.target as HTMLElement | null | undefined;
-          if (target === undefined || target === null) return;
-          const first = elements[0];
-          target.style.cursor =
-            first !== undefined && hrefOfIndex(first.index) !== null ? "pointer" : "default";
-        },
-      },
-    });
+        isClickable: (index) => hrefOfIndex(index) !== null,
+      }),
+    );
     return () => chart.destroy();
   });
 </script>
@@ -157,7 +98,7 @@
             <canvas
               bind:this={canvasEl}
               role="img"
-              aria-label="Balkendiagramm: höchste Plus- und Minus-Salden im Team"
+              aria-label={chartAriaLabel(TEAM_SALDO_BARS_CHART)}
             ></canvas>
           </div>
           <ol class="saldo-list" aria-label="Höchste Plus- und Minus-Salden im Team">

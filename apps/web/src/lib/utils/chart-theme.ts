@@ -53,7 +53,7 @@ export function getChartDefaults(theme: ChartTheme = getChartTheme()) {
           color: theme.textMuted,
           font: { family: theme.fontFamily, size: 12 },
           usePointStyle: true,
-          pointStyle: "circle",
+          pointStyle: "circle" as const,
           padding: 16,
         },
       },

@@ -100,37 +100,38 @@
     type TeamTrendView,
     type TeamUpcomingLeaveResponse,
   } from "$lib/dashboard/team-view"; // Issue #84 (D-07, D-11, D-12), #85 (D-04, D-06)
-  import { TEAM_SICK_DAYS_CHART, teamSickDaysChartConfig } from "$lib/dashboard/team-charts"; // Issue #591
+  import {
+    TEAM_SALDO_TREND_CHART,
+    TEAM_SICK_DAYS_CHART,
+    teamHoursChartConfig,
+    teamHoursChartDescriptor,
+    teamSaldoTrendChartConfig,
+    teamSickDaysChartConfig,
+  } from "$lib/dashboard/team-charts"; // Issue #591
   import { chartAriaLabel, getChartTheme } from "$lib/utils/chart-theme"; // Issue #591
   import {
     Chart,
     BarController,
     LineController,
-    DoughnutController,
     BarElement,
     LineElement,
     PointElement,
-    ArcElement,
     CategoryScale,
     LinearScale,
     Tooltip,
     Legend,
-    Filler,
   } from "chart.js";
 
   Chart.register(
     BarController,
     LineController,
-    DoughnutController,
     BarElement,
     LineElement,
     PointElement,
-    ArcElement,
     CategoryScale,
     LinearScale,
     Tooltip,
     Legend,
-    Filler,
   );
 
   // ── Types ──────────────────────────────────────────────────────────────────
@@ -717,7 +718,6 @@
     chartsLoading = true;
     let view: TeamTrendView | null = null;
     let labels: string[] = [];
-    let brandColor = "";
     let overtimeTrend: OvertimeTrendResponse = {
       snapshots: [],
       currentTeamBalanceMinutes: 0,
@@ -757,8 +757,6 @@
       if (generation !== teamGeneration) return;
 
       labels = months.map((m) => m.label);
-      brandColor =
-        getComputedStyle(document.documentElement).getPropertyValue("--brand").trim() || "#80377B";
     } catch (err) {
       if (isTeamSalonRejected(err)) {
         if (generation === teamGeneration) {
@@ -787,58 +785,13 @@
 
     // ── Phase 3: instantiate charts ────────────────────────────────────────────
 
-    // Weekly hours bar chart (Soll vs Ist) — matches Wochenbilanz weekly-bar styling
+    // One theme read for the three builds: colours come from the tokens only (Issue #591).
+    const theme = getChartTheme();
+
+    // Arbeitsstunden: Soll and Ist as grouped columns, drawn by the one chart builder.
     if (weeklyChartEl) {
       weeklyChart?.destroy();
-      const rootStyle = getComputedStyle(document.documentElement);
-      const brandLight = rootStyle.getPropertyValue("--brand-light").trim() || brandColor;
-      const bgSubtle = rootStyle.getPropertyValue("--bg-subtle").trim() || "#f5f3ef";
-      weeklyChart = new Chart(weeklyChartEl, {
-        type: "bar",
-        data: {
-          labels,
-          datasets: [
-            // Soll first → renders behind as the "track". D-05: only when the server delivers a
-            // Soll (never under a salon filter).
-            ...(drawn.shouldHours !== null
-              ? [
-                  {
-                    label: "Soll (h)",
-                    data: drawn.shouldHours,
-                    backgroundColor: bgSubtle,
-                    borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 },
-                    borderSkipped: false as const,
-                    order: 2,
-                    stack: "wochenbilanz",
-                    grouped: false,
-                  },
-                ]
-              : []),
-            // Ist on top, overlapping inside Soll → matches Wochenbilanz fill-in-track look
-            {
-              label: drawn.workedSeriesLabel,
-              data: drawn.workedHours,
-              backgroundColor: brandLight,
-              borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 },
-              borderSkipped: false,
-              order: 1,
-              stack: "wochenbilanz",
-              grouped: false,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
-          },
-          scales: {
-            y: { beginAtZero: true, grid: { color: "#f3f4f6" }, ticks: { font: { size: 10 } } },
-            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
-          },
-        },
-      });
+      weeklyChart = new Chart(weeklyChartEl, teamHoursChartConfig(drawn, theme, null));
     }
 
     // Overtime trend line chart — absolute team saldo from SaldoSnapshots + live OvertimeAccount
@@ -870,39 +823,16 @@
       }
 
       overtimeChart?.destroy();
-      overtimeChart = new Chart(overtimeChartEl, {
-        type: "line",
-        data: {
-          labels,
-          datasets: [
-            {
-              label: "Team-Überstunden (h)",
-              data: absoluteHours,
-              borderColor: brandColor,
-              backgroundColor: brandColor + "20",
-              fill: true,
-              tension: 0.3,
-              pointRadius: 4,
-              pointBackgroundColor: brandColor,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: {
-            y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 10 } } },
-            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
-          },
-        },
-      });
+      overtimeChart = new Chart(
+        overtimeChartEl,
+        teamSaldoTrendChartConfig(labels, absoluteHours, theme, null),
+      );
     }
 
     // Krankheitstage: columns in calendar days, drawn by the one chart builder (Issue #591).
     if (sickChartEl) {
       sickChart?.destroy();
-      sickChart = new Chart(sickChartEl, teamSickDaysChartConfig(drawn, getChartTheme(), null));
+      sickChart = new Chart(sickChartEl, teamSickDaysChartConfig(drawn, theme, null));
     }
   }
 
@@ -2046,7 +1976,7 @@
               <canvas
                 bind:this={weeklyChartEl}
                 role="img"
-                aria-label="Balkendiagramm: gearbeitete Stunden der letzten 6 Monate"
+                aria-label={chartAriaLabel(teamHoursChartDescriptor(trendView))}
               ></canvas>
             {/if}
           </div>
@@ -2067,7 +1997,7 @@
                 <canvas
                   bind:this={overtimeChartEl}
                   role="img"
-                  aria-label="Liniendiagramm: Überstunden-Verlauf der letzten 6 Monate"
+                  aria-label={chartAriaLabel(TEAM_SALDO_TREND_CHART)}
                 ></canvas>
               {/if}
             </div>

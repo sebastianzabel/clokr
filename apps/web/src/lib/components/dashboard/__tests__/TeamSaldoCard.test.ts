@@ -42,6 +42,7 @@ import { cleanup, screen } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import TeamSaldoCard from "../TeamSaldoCard.svelte";
 import type { TeamSaldoRow } from "$lib/reports/team-saldo";
+import { CHART_UNIT_TITLE } from "$lib/utils/chart-theme";
 import { PERSON_SALDO_NOT_SPLIT_LABEL, SALON_HOME_PERSONS_NOTE } from "$lib/salons/page-scope";
 
 function row(n: number, totalMinutes: number, extra: Partial<TeamSaldoRow> = {}): TeamSaldoRow {
@@ -138,7 +139,8 @@ describe("TeamSaldoCard (Issue #588)", () => {
       "rgb(0, 128, 0)",
       "rgb(200, 0, 0)",
     ]);
-    expect(config.options.scales.x.title.text).toBe("Stunden");
+    expect(config.options.scales.x.title.text).toBe(CHART_UNIT_TITLE.hours);
+    expect(config.options.scales.x.title.text).toBe("Stunden (h)");
     expect(config.options.plugins.legend.display).toBe(false);
     expect(config.options.maintainAspectRatio).toBe(false);
     expect(config.options.animation).toBe(false);
@@ -148,6 +150,14 @@ describe("TeamSaldoCard (Issue #588)", () => {
     // The zero line is emphasised through the grid colour callback on tick value 0.
     const gridColor = config.options.scales.x.grid.color;
     expect(gridColor({ tick: { value: 0 } })).not.toBe(gridColor({ tick: { value: 1 } }));
+  });
+
+  it("labels the canvas with the chart type and unit it draws", () => {
+    const { container } = mountCard();
+    expect(container.querySelector("canvas")).toHaveAttribute(
+      "aria-label",
+      "Balkendiagramm: höchste Plus- und Minus-Salden im Team, in Stunden",
+    );
   });
 
   it("opens the person of the clicked bar through onOpenPerson", () => {
