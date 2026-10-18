@@ -328,7 +328,9 @@
   // ONE request per (from, to, salon) feeds the KPIs, the tables and the drill-down; the page
   // renders what the server sums and recomputes nothing. A slow read is abandoned when the question
   // changes (amendment 2): only the latest request may apply its answer.
-  const PERIOD_TIMEOUT_MS = 120_000;
+  // Issue #688: below the 30 s abort of the API proxy (hooks.server.ts), so a read that cannot
+  // finish ends here as the calm error state instead of a proxy 503.
+  const PERIOD_TIMEOUT_MS = 28_000;
   let period = $state<PeriodReport | null>(null);
   let periodLoading = $state(false);
   let periodFailure: "INVALID" | "FAILED" | null = $state(null);

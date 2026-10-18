@@ -20,7 +20,10 @@ import {
   dateStrInTz,
   dayRangeUtc,
   todayInTz,
-  computeMonthReportFigures,
+  computeMonthReportFiguresForMany,
+  monthReportFiguresKey,
+  type MonthReportFigures,
+  type MonthReportFiguresRequest,
 } from "../contexts/working-time-account";
 import { employeesWithValidWorkSince, addWorkingMinutes } from "../contexts/time-tracking";
 import { listEntitlementsForYear, vacationEntitlementWarning } from "../contexts/absence";
@@ -63,8 +66,11 @@ import { periodCsvFilename, periodTableCsv } from "./period-csv";
  * `overtime:read` does not cover a person in every listed month, Soll, saldo, opening and closing
  * are `null` (with `sollUnavailableReason: "NO_PERMISSION"`) and only Ist stays.
  *
- * The evaluation is sequential on purpose (P-09): every month of every person is an account read,
- * and the 12-month cap bounds the work. No parallel fan-out over persons or months.
+ * The evaluation is sequential on purpose (P-09), and the 12-month cap bounds the work. No parallel
+ * fan-out over persons or months. Issue #688: the figures of all (person, month) pairs are asked
+ * from the account in one call, `computeMonthReportFiguresForMany`, which reads every closed month
+ * from its stored snapshot in one query and walks the kernel only for the open ones; this module
+ * only sums what it answers.
  */
 
 export const MAX_PERIOD_MONTHS = 12;
@@ -387,8 +393,6 @@ async function vacationYearRows(
     .map((x) => x.row);
 }
 
-type MonthReportFigures = Awaited<ReturnType<typeof computeMonthReportFigures>>;
-
 /**
  * P-13: the drill-down split of the closing saldo into the confirmed part (a closed month's stored
  * carry-over) and the open forecast on top of it — sent only where it is exact, otherwise all three
@@ -479,6 +483,8 @@ async function assemblePeriodReport(
     : null;
 
   const persons = new Map<string, PersonAccumulator>();
+  // Issue #688: the month entries whose account figures are asked for in ONE call after the loop.
+  const figureSlots: Array<{ entry: PeriodMonthEntry; request: MonthReportFiguresRequest }> = [];
   // P-07: Σ over months of the per-kind counts of the /monthly assembly, with the persons that have > 0.
   const absenceTotals = new Map<AbsenceKindCode, AbsenceTotal>();
   const sickTotal: AbsenceTotal = { totalDays: 0, persons: new Set() };
@@ -582,10 +588,6 @@ async function assemblePeriodReport(
           : emp.timeEntries
               .filter((t) => t.salonId === filterSalonId && t.date <= yesterdayDate)
               .reduce((sum, t) => addWorkingMinutes(sum, t), 0);
-      const figures =
-        filterSalonId === null
-          ? await computeMonthReportFigures(app, emp.id, ym.year, ym.month)
-          : null;
       if (sections === "all") {
         for (const code of ABSENCE_KIND_ORDER) {
           const days = absenceKindDays(summary)[code];
@@ -619,32 +621,43 @@ async function assemblePeriodReport(
       }
       // A row is covered only if every listed month is.
       person.covered = person.covered && canSeeSaldo && monthCovered;
-      person.months.push(
-        figures === null
-          ? {
-              year: ym.year,
-              month: ym.month,
-              workedMinutes: filteredMinutes,
-              expectedMinutes: null,
-              balanceMinutes: null,
-              closingBalanceMinutes: null,
-              confirmed: false,
-              labelled: false,
-              sickDays: summary.sickDays,
-            }
-          : {
-              year: ym.year,
-              month: ym.month,
-              workedMinutes: figures.workedMinutes,
-              expectedMinutes: figures.expectedMinutes,
-              balanceMinutes: figures.balanceMinutes,
-              closingBalanceMinutes: figures.closingBalanceMinutes,
-              confirmed: figures.confirmed,
-              labelled: figures.labelled,
-              sickDays: summary.sickDays,
-            },
-      );
+      const entry: PeriodMonthEntry = {
+        year: ym.year,
+        month: ym.month,
+        workedMinutes: filteredMinutes,
+        expectedMinutes: null,
+        balanceMinutes: null,
+        closingBalanceMinutes: null,
+        confirmed: false,
+        labelled: false,
+        sickDays: summary.sickDays,
+      };
+      person.months.push(entry);
+      // Under a filter the account is not read at all (#84, #542).
+      if (filterSalonId === null) {
+        figureSlots.push({
+          entry,
+          request: { employeeId: emp.id, year: ym.year, month: ym.month },
+        });
+      }
     }
+  }
+
+  const monthFigures = await computeMonthReportFiguresForMany(
+    app,
+    tenantId,
+    figureSlots.map((slot) => slot.request),
+  );
+  for (const { entry, request } of figureSlots) {
+    const figures = monthFigures.get(
+      monthReportFiguresKey(request.employeeId, request.year, request.month),
+    )!;
+    entry.workedMinutes = figures.workedMinutes;
+    entry.expectedMinutes = figures.expectedMinutes;
+    entry.balanceMinutes = figures.balanceMinutes;
+    entry.closingBalanceMinutes = figures.closingBalanceMinutes;
+    entry.confirmed = figures.confirmed;
+    entry.labelled = figures.labelled;
   }
 
   // P-01: the opening saldo is the Gesamtsaldo of the month before `from`, for the persons that
@@ -675,6 +688,20 @@ async function assemblePeriodReport(
     tz,
   ).end;
 
+  // P-01 (Issue #688): the month before `from` of every row that shows saldo values, in ONE call; a
+  // closed month answers its stored carry-over.
+  const openingFor = (person: PersonAccumulator): boolean =>
+    person.covered &&
+    filterSalonId === null &&
+    isEmployedInPeriod(person, beforeRange.start, beforeRange.end);
+  const beforeFiguresByKey = await computeMonthReportFiguresForMany(
+    app,
+    tenantId,
+    ordered
+      .filter(openingFor)
+      .map((p) => ({ employeeId: p.employeeId, year: before.year, month: before.month })),
+  );
+
   const rows = [];
   for (const person of ordered) {
     // Soll and saldo are shown only where overtime:read covers the person AND no salon filter is
@@ -687,13 +714,10 @@ async function assemblePeriodReport(
         : undefined;
     let opening: number | null = null;
     let beforeFigures: MonthReportFigures | null = null;
-    if (covered && isEmployedInPeriod(person, beforeRange.start, beforeRange.end)) {
-      beforeFigures = await computeMonthReportFigures(
-        app,
-        person.employeeId,
-        before.year,
-        before.month,
-      );
+    if (openingFor(person)) {
+      beforeFigures = beforeFiguresByKey.get(
+        monthReportFiguresKey(person.employeeId, before.year, before.month),
+      )!;
       opening = beforeFigures.closingBalanceMinutes;
     }
     const last = person.months[person.months.length - 1];

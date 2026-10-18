@@ -184,6 +184,20 @@ describe("/reports period area (Issue #612) - one request, the latest answer, no
     expect(body).toContain("if (generation === periodGeneration) periodLoading = false;");
   });
 
+  it("gives up before the 30 s abort of the API proxy, which stays as it is (Issue #688)", () => {
+    const declared = SCRIPT.match(/const PERIOD_TIMEOUT_MS = ([\d_]+);/);
+    expect(declared).not.toBeNull();
+    expect(Number(declared![1].replace(/_/g, ""))).toBeLessThan(30_000);
+    const hooksRel = "../hooks.server.ts";
+    let hooks: string;
+    try {
+      hooks = readFileSync(fileURLToPath(new URL(hooksRel, import.meta.url)), "utf8");
+    } catch {
+      hooks = readFileSync(resolve(process.cwd(), "src/hooks.server.ts"), "utf8");
+    }
+    expect(hooks).toContain("signal: AbortSignal.timeout(30_000)");
+  });
+
   it("a timeout or a failed read is a calm error with Erneut versuchen, a 400 offers the current month", () => {
     const body = functionBody("loadPeriod");
     expect(body).toContain("PERIOD_TIMEOUT_MS");
