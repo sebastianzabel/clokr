@@ -4,6 +4,12 @@
 // drawn. Data arrays are passed through unchanged - a builder invents no figure. Colours, axis
 // recipes, the unit titles and the no-smoothing rule come from `$lib/utils/chart-theme` and
 // nowhere else; `chart-style-591.test.ts` enforces it.
+//
+// Drill-down (D-591-3): a month of a team chart opens the report of that month. The dashboard
+// writes a report URL ONLY through `periodSearch` of `$lib/reports/period-state` (the serialiser of
+// the reports page; `chart-style-591.test.ts` forbids a hand-built query). It writes no `salonId`
+// and no `person`: the reports page applies the header salon selection itself with the same rule
+// as the dashboard (`salonPageFilter` is `teamSalonFilter`).
 import type { ActiveElement, ChartConfiguration, ChartDataset, ChartEvent } from "chart.js";
 import {
   categoryAxis,
@@ -14,6 +20,7 @@ import {
   type ChartTheme,
 } from "$lib/utils/chart-theme";
 import type { TeamSaldoBar } from "$lib/reports/team-saldo";
+import { periodSearch, type PeriodTab } from "$lib/reports/period-state";
 import type { TeamTrendView } from "./team-view";
 
 /** The click handler of a month chart: receives the index of the clicked month. */
@@ -40,6 +47,40 @@ function monthInteraction(onMonth: MonthHandler | null) {
       target.style.cursor = elements[0] !== undefined ? "pointer" : "default";
     },
   };
+}
+
+// ── Report links ────────────────────────────────────────────────────────────
+
+/** The report tab that explains the figure of each month chart. */
+export const TEAM_CHART_REPORT_TAB: Record<"hours" | "saldoTrend" | "sickDays", PeriodTab> = {
+  hours: "zeiten",
+  saldoTrend: "zeiten",
+  sickDays: "urlaub",
+};
+
+const MONTH_KEY = /^(\d{4})-(0[1-9]|1[0-2])$/;
+
+function parseMonthKey(key: string): { year: number; month: number } | null {
+  const m = MONTH_KEY.exec(key);
+  return m === null ? null : { year: Number(m[1]), month: Number(m[2]) };
+}
+
+function reportHref(fromKey: string, toKey: string, tab: PeriodTab): string | null {
+  const from = parseMonthKey(fromKey);
+  const to = parseMonthKey(toKey);
+  if (from === null || to === null) return null;
+  return `/reports?${periodSearch({ from, to, tab, person: null, salonId: null })}`;
+}
+
+/** The report of one month ("YYYY-MM" as the server names it), or null for any other key. */
+export function reportMonthHref(month: string, tab: PeriodTab): string | null {
+  return reportHref(month, month, tab);
+}
+
+/** The report of a run of months (first to last), or null for no months or an invalid key. */
+export function reportPeriodHref(months: readonly string[], tab: PeriodTab): string | null {
+  if (months.length === 0) return null;
+  return reportHref(months[0], months[months.length - 1], tab);
 }
 
 // ── Krankheitstage ──────────────────────────────────────────────────────────

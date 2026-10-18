@@ -69,6 +69,7 @@
   import { teamDayHref, teamCellAriaLabel, teamPersonHref } from "$lib/dashboard/team-day-links"; // Issue #587 (D-587-4), #588
   import { mayOpenTeamPage } from "$lib/nav/team-nav";
   import { mayReadTeamSaldo } from "$lib/page-rights"; // Issue #588 (P-10)
+  import { reportRights } from "$lib/page-rights"; // Issue #591 (P-591-05)
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613, #588
   import type { TeamSaldoRow } from "$lib/reports/team-saldo"; // Issue #588
   import {
@@ -101,13 +102,16 @@
     type TeamUpcomingLeaveResponse,
   } from "$lib/dashboard/team-view"; // Issue #84 (D-07, D-11, D-12), #85 (D-04, D-06)
   import {
+    TEAM_CHART_REPORT_TAB,
     TEAM_SALDO_TREND_CHART,
     TEAM_SICK_DAYS_CHART,
+    reportMonthHref,
     teamHoursChartConfig,
     teamHoursChartDescriptor,
     teamSaldoTrendChartConfig,
     teamSickDaysChartConfig,
   } from "$lib/dashboard/team-charts"; // Issue #591
+  import type { PeriodTab } from "$lib/reports/period-state"; // Issue #591 (D-591-3)
   import { chartAriaLabel, getChartTheme } from "$lib/utils/chart-theme"; // Issue #591
   import {
     Chart,
@@ -449,6 +453,19 @@
   );
   // Issue #588 (P-10): the saldo card needs the two permissions of its endpoint.
   const canSeeTeamSaldo = $derived(mayReadTeamSaldo($authStore.user));
+  // Issue #591 (P-591-05): a chart month opens a report tab only for a caller who may read it, so
+  // there is never a dead link. The target URL comes from `periodSearch` (team-charts.ts) only.
+  const reportTabs = $derived(reportRights($authStore.user).periodTabs);
+
+  /** The click handler of a month chart for this report tab, or null when the tab is not offered. */
+  function monthOpener(tab: PeriodTab, view: TeamTrendView): ((index: number) => void) | null {
+    if (!reportTabs.includes(tab)) return null;
+    return (index) => {
+      const key = view.months[index]?.month;
+      const href = key ? reportMonthHref(key, tab) : null;
+      if (href !== null) void goto(href);
+    };
+  }
 
   // Phase 76.7 (D-15, UI-V19-04) — § 18 ArbZG-exempt: when the current
   // employee's `isTimeTrackingExempt` flag is true, fully HIDE the Timer-Card
@@ -832,7 +849,10 @@
     // Krankheitstage: columns in calendar days, drawn by the one chart builder (Issue #591).
     if (sickChartEl) {
       sickChart?.destroy();
-      sickChart = new Chart(sickChartEl, teamSickDaysChartConfig(drawn, theme, null));
+      sickChart = new Chart(
+        sickChartEl,
+        teamSickDaysChartConfig(drawn, theme, monthOpener(TEAM_CHART_REPORT_TAB.sickDays, drawn)),
+      );
     }
   }
 

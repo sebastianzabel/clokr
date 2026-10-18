@@ -13,7 +13,11 @@ import {
   teamSaldoBarsChartConfig,
   teamSaldoTrendChartConfig,
   teamSickDaysChartConfig,
+  reportMonthHref,
+  reportPeriodHref,
+  TEAM_CHART_REPORT_TAB,
 } from "../team-charts";
+import { periodSearch } from "$lib/reports/period-state";
 import type { TeamTrendView } from "../team-view";
 import type { TeamSaldoBar } from "$lib/reports/team-saldo";
 
@@ -253,5 +257,61 @@ describe("saldo bars: the Salden card (P-591-08)", () => {
     expect(target.style.cursor).toBe("default");
     options.onHover({ native: { target } }, []);
     expect(target.style.cursor).toBe("default");
+  });
+});
+
+describe("report links (D-591-3, P-591-05)", () => {
+  it("builds the month link only through the serialiser of the reports page", () => {
+    expect(reportMonthHref("2026-05", "urlaub")).toBe(
+      "/reports?from=2026-05&to=2026-05&tab=urlaub",
+    );
+    expect(reportMonthHref("2026-05", "urlaub")).toBe(
+      "/reports?" +
+        periodSearch({
+          from: { year: 2026, month: 5 },
+          to: { year: 2026, month: 5 },
+          tab: "urlaub",
+          person: null,
+          salonId: null,
+        }),
+    );
+  });
+
+  it("refuses a month key that is not YYYY-MM", () => {
+    expect(reportMonthHref("2026-13", "zeiten")).toBeNull();
+    expect(reportMonthHref("2026-00", "zeiten")).toBeNull();
+    expect(reportMonthHref("26-05", "zeiten")).toBeNull();
+    expect(reportMonthHref("2026-5", "zeiten")).toBeNull();
+    expect(reportMonthHref("", "zeiten")).toBeNull();
+    expect(reportMonthHref("2026-05-01", "zeiten")).toBeNull();
+  });
+
+  it("builds the six-month link from the first and the last month", () => {
+    const months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
+    expect(reportPeriodHref(months, "zeiten")).toBe("/reports?from=2026-01&to=2026-06&tab=zeiten");
+    expect(reportPeriodHref(["2026-06"], "urlaub")).toBe(
+      "/reports?from=2026-06&to=2026-06&tab=urlaub",
+    );
+    expect(reportPeriodHref([], "zeiten")).toBeNull();
+    expect(reportPeriodHref(["2026-01", "bad"], "zeiten")).toBeNull();
+    expect(reportPeriodHref(["bad", "2026-01"], "zeiten")).toBeNull();
+  });
+
+  it("names the target tab of each chart", () => {
+    expect(TEAM_CHART_REPORT_TAB).toEqual({
+      hours: "zeiten",
+      saldoTrend: "zeiten",
+      sickDays: "urlaub",
+    });
+  });
+
+  it("the sick chart answers a column click, ignores an empty click and keeps the index interaction", () => {
+    const onMonth = vi.fn();
+    const options = teamSickDaysChartConfig(view(), THEME, onMonth).options as any;
+    options.onClick({}, [{ index: 2 }]);
+    expect(onMonth).toHaveBeenCalledWith(2);
+    options.onClick({}, []);
+    expect(onMonth).toHaveBeenCalledTimes(1);
+    expect(options.interaction).toEqual({ mode: "index", intersect: false });
   });
 });
