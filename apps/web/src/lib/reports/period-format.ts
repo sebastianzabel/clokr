@@ -10,7 +10,12 @@ import { fmtBalance, fmtMin } from "$lib/utils/format-minutes";
 import { MONTH_NAMES_DE } from "./period-state";
 
 function group(digits: string): string {
-  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  // A linear walk instead of a look-ahead regex (Sonar S8786: super-linear backtracking).
+  const parts: string[] = [];
+  for (let end = digits.length; end > 0; end -= 3) {
+    parts.unshift(digits.slice(Math.max(0, end - 3), end));
+  }
+  return parts.join(".");
 }
 
 /**
