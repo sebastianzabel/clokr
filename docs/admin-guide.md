@@ -126,7 +126,50 @@ CSV-Vorlagen stehen zum Download bereit.
 
 ## Berichte und Monatsexport
 
-**Admin → Berichte** bietet zwei PDF-Dokumente und die Datei für DATEV (Issue #617):
+**Berichte** (Issue #612) hat einen einzigen Zeitraum für die ganze Seite. Er steht in der **Periodenleiste** oben und in
+der Adresse (`/reports?from=2026-07&to=2026-09&tab=zeiten`), sodass ein Neuladen oder ein weitergegebener Link genau diese
+Ansicht öffnet.
+
+- **Zeitraum wählen:** die Pfeile ◀ und ▶ springen je nach Art des Zeitraums um einen Monat, ein Quartal, ein Jahr oder
+  um dessen Länge; ein Zukunftsmonat ist gesperrt. Die Schnellauswahl bietet „Dieser Monat“, „Vormonat“, „Quartal“,
+  „Jahr“ und „Letzte 3 Monate“, „Zeitraum…“ öffnet ein Fenster für beliebige Monate von bis. Es sind **höchstens 12
+  Monate** auf einmal; der Standard ist der laufende Monat.
+- **Kennzahlen:** Ist, Soll, Saldo im Zeitraum und Gesamtsaldo am Ende, dazu Urlaub genommen, genehmigt und Anspruch
+  sowie Krankheitstage. Jede Zahl ist die Summe der Monatszahlen des Arbeitszeitkontos; die Seite rechnet nichts neu.
+  Soll und Saldo erscheinen nur für Personen, die die Berechtigung „Salden im zugewiesenen Bereich lesen“ abdeckt;
+  sonst steht dort „Keine Berechtigung“ und das Ist bleibt sichtbar.
+- **Zeiten & Konten:** eine Zeile je Person mit Soll, Ist, Saldo Beginn, Saldo im Zeitraum, Saldo Ende und Status. Der
+  Status ist „Bestätigt“, wenn jeder Monat abgeschlossen ist, sonst „Prognose“ mit „k von m Monaten bestätigt“ (der
+  bestätigte Nachweis bleibt erkennbar). Die Tabelle lässt sich sortieren und durchsuchen; darunter steht der
+  Teammedian der Endsalden, Personen ohne Saldo, nur mit Zeiterfassung oder ohne Erfassung stehen mit Grund daneben.
+  Ausgetretene Personen tragen ihren Austrittstag; ihr Stand von heute steht in einem eigenen Abschnitt „Stand heute,
+  unabhängig vom Zeitraum“.
+- **Person öffnen:** Ein Klick auf den Namen öffnet ein breites Fenster mit der Monatsreihe, dem Urlaub und, mit der
+  Berechtigung „Zeiteinträge im zugewiesenen Bereich lesen“, der Tagesliste. Die Adresse enthält `person=…`; „Zurück“ im Browser schließt das
+  Fenster. Dort stehen auch **DATEV (Person)** und der **Stundennachweis (PDF)**.
+- **Urlaub & Abwesenheit:** die Urlaubsübersicht je Kalenderjahr des Zeitraums (Anspruch, Übertrag, genommen,
+  genehmigt, beantragt, verbleibend, gefährdeter Resturlaub), Stand zum letzten Tag des Zeitraums in diesem Jahr,
+  höchstens bis gestern. Die Spalte **Verfall** zeigt Frist und gefährdete Tage; **Hinweis senden** (Berechtigung „Vor verfallendem
+  Resturlaub warnen“) schreibt die betroffene Person an, solange die Frist heute oder später liegt. Darunter stehen die
+  Abwesenheiten nach Art (Summe der Monate, Arbeitstage; Krankheit in Kalendertagen).
+- **Heute:** die Anwesenheit des laufenden Tages (Berechtigung „Team-Übersichten im zugewiesenen Bereich sehen“), unabhängig vom Zeitraum.
+- **Exportieren:** ein einziges Fenster hinter der Schaltfläche „Exportieren“ (Berechtigung „DATEV- und PDF-Exporte im zugewiesenen Bereich erstellen“)
+  mit drei Blöcken: **Monatsexport** als PDF und **DATEV** für einen wählbaren Monat des Zeitraums und die **Tabelle
+  als CSV** für den ganzen Zeitraum. Die CSV hat die Spalten der Tabelle (Stunden mit Dezimalkomma, UTF-8, Trennzeichen
+  Semikolon) und wird wie jeder Export protokolliert (Zeitraum, Salon, Personenzahl).
+- **Salon:** folgt der Salonauswahl in der Kopfleiste (nur bei Mandanten mit Salonauswahl). Die Tabelle zeigt Personen
+  mit Eintrag im Salon oder Stammsalon an mindestens einem Tag des Zeitraums; das Ist ist die Zeit im Salon. Soll und
+  Saldo sind Vertragsgrößen und werden nie auf Salons aufgeteilt, sie fehlen unter einem Filter. Die Urlaubstabelle zeigt
+  die Personen mit Stammsalon am Ende des Zeitraums, ihre Urlaubszahlen sind unverändert. **DATEV gilt immer für alle
+  Salons** der Reichweite (§ 41 EStG).
+- **Personalabteilung:** sieht die Tabellen und Kennzahlen ohne Tagesliste und ohne Export. **Salonleitungen** sehen
+  nur ihre Reichweite. Wer nur exportieren darf, bekommt die Periodenleiste mit „Exportieren“ und den Hinweis „Keine
+  Auswertung freigegeben – Exporte verfügbar“.
+- **Dauer:** Ein Zeitraum von zwölf Monaten rechnet Monat für Monat und braucht bei 25 Personen gemessen rund 4 Sekunden; die Seite
+  zeigt währenddessen einen Ladezustand mit Abbruch bei Zeitraumwechsel und „Erneut versuchen“ bei einem Fehler. Für
+  sehr große Reichweiten ist die Beschleunigung Issue #688.
+
+Die beiden PDF-Dokumente und die Datei für DATEV (Issue #617):
 
 - **Monatsexport** — ein PDF für alle Mitarbeitenden eines Monats, die lesbare Fassung des DATEV-Exports:
   dieselben Personen und dieselben Abwesenheitstage wie in der DATEV-Datei, dazu Soll, Ist, Saldo, Status und
@@ -138,7 +181,7 @@ CSV-Vorlagen stehen zum Download bereit.
 - **Stundennachweis** — das PDF einer Person mit allen Einträgen des Monats sowie Abwesenheits- und Feiertagszeilen.
   Er ist das einzige Dokument mit einer Tagesliste.
 - Die früheren PDFs Firmenweiter Monatsbericht, Urlaubsliste, Urlaubsbericht und Urlaubsübersicht gibt es nicht mehr;
-  die Urlaubsübersicht steht in der App, der Abschnitt „Urlaubsjahr" im Monatsexport.
+  die Urlaubsübersicht steht in der App (Tab „Urlaub & Abwesenheit“), der Abschnitt „Urlaubsjahr" im Monatsexport.
 
 ---
 

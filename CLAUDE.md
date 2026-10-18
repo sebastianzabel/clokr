@@ -306,6 +306,27 @@ Current: recalculated from hire date on every request (does not scale). Target a
   leave type code in the code, never a deny-list of sick types. Sick days in the Monatsexport are
   lawful because its purpose is payroll preparation with DATEV's audience and permission (ADR
   `docs/adr/0001-abweichungen.md`, Eintrag Q, Nachtrag Issue #617).
+- **The period report sums, never recomputes (Issue #612).** `GET /reports/period`
+  (`composition/reports-period.ts`, `report:read:ZUGEWIESEN`) is the ONE period route of the reports page. Per month it
+  runs the `/reports/monthly` assembly through the exported helpers of `composition/reports.ts` (population #613,
+  Stammsalon reach judged on a calendar day via `reach-day.ts` #679, `computeMonthReportFigures`,
+  `computeEmployeeSummary`); a row and the KPIs are sums of those months, the months run strictly one after the
+  other, at most 12, none in the future (400). Opening = the previous month's `closingBalanceMinutes`, closing = the last
+  month's, which since #681/#682 equals the live saldo at the same Stichtag; the confirmed/open split of the closing is given
+  only where it is exact (last month closed, or open right after a closed one), else `null`. Soll and saldo appear only where `overtime:read` covers the person in every shown month
+  (`NO_PERMISSION` otherwise, Ist stays); under a salon filter they are `null` with `SALON_FILTER` (#542 rules, one 404
+  validated before any read, Ist = the salon's entries). Vacation = the `/leave-overview` assembly at each touched
+  year's Stichtag (the last period day in the year, at most tenant-local yesterday), filtered by Stammsalon at the
+  period end, plus the Verfall facts. `GET /reports/period/csv` (`composition/period-csv.ts`, `report:export`) serves
+  the same assembly as a file and writes one `EXPORT` audit row before the bytes. `/reports/monthly` is not edited
+  (`reports.ts` differs from main by `export` keywords only). The web reads and writes the URL
+  (`/reports?from&to&tab[&salonId][&person]`, the contract #591 links into) only through
+  `$lib/reports/period-state.ts` and sums nothing itself. Never add a second period computation, a period field to
+  `/reports/monthly` or a Soll/saldo the account did not state. Proofs: `reports-period-612`, `-sums-612` (row = Σ months
+  = `/monthly` = Monatsexport = live saldo), `-vacation-612`, `-salon-612`, `-reach-612`, `-csv-612`, `period-csv-612`,
+  `-perf-612` (a 60 s regression ceiling; the measured cost is ~13 ms per person-month, the bulk-read fix is #688),
+  `reports-hr-86` (day-free key paths), the web `reports-period-page-612` and the e2e `reports-period.spec.ts`.
+  `docs/adr/0001-abweichungen.md`, Eintrag Q, Nachtrag Phase 612.
 - **`@db.Date` columns get calendar-day bounds, never a month/week instant (Issue #493).**
   `monthRangeUtc()` / `weekRangeUtc()` return tenant-local boundaries as UTC instants (local 1 Oct
   00:00 = `2026-09-30T22:00Z`); a Prisma filter or a JS clip on a `@db.Date` column
