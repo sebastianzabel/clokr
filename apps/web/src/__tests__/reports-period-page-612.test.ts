@@ -10,10 +10,38 @@
 //   - one request per (from, to, salon), only the latest answer is applied, nothing is summed
 //   - the dialogs sit after the period panel, never inside an animated Card (Issue #570)
 //   - the personal view and the other cards are untouched
+//
+// Issue #612 (612-06, AC-612-1): the closing guard at the end of this file proves that exactly ONE
+// period control is left on the page - one <PeriodBar>, no month or year select in the team area
+// outside the two dialogs - and that every period figure comes from the one period answer. It also
+// holds the states (skeleton, dimmed reload, error, empty) and the staggered reveal of the blocks.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { screen, within } from "@testing-library/svelte";
+import { renderWithTheme } from "$tests/test-utils";
+import { reportRights } from "$lib/page-rights";
+import type { PeriodRow } from "$lib/reports/period-report";
+import TimesAccountsTable from "$lib/components/reports/TimesAccountsTable.svelte";
+import VacationAbsenceTab from "$lib/components/reports/VacationAbsenceTab.svelte";
+import PeriodKpis from "$lib/components/reports/PeriodKpis.svelte";
+import TodayAttendance from "$lib/components/reports/TodayAttendance.svelte";
+
+// The components reach the page-scope module and with it the api client and its auth store
+// (localStorage bootstrap); a stand-in keeps this file free of that (as in page-scope.test.ts).
+vi.mock("$api/client", () => ({
+  api: { get: vi.fn() },
+  ApiError: class ApiError extends Error {
+    constructor(
+      public status: number,
+      message = "err",
+    ) {
+      super(message);
+    }
+  },
+}));
+vi.mock("$lib/utils/logger", () => ({ clientLogger: { warn: vi.fn(), error: vi.fn() } }));
 
 function readPage(): string {
   const rel = "../routes/(app)/reports/+page.svelte";
@@ -435,5 +463,307 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     ]) {
       expect(PAGE, gone).not.toContain(gone);
     }
+  });
+});
+
+// ── 612-06: exactly one period control (AC-612-1), states, staggered reveal ──────────────────────
+
+function readSource(relative: string): string {
+  try {
+    return readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
+  } catch {
+    return readFileSync(resolve(process.cwd(), "src", relative.replace(/^\.\.\//, "")), "utf8");
+  }
+}
+
+const COMPONENT_NAMES = [
+  "PeriodBar",
+  "PeriodKpis",
+  "PeriodRangeDialog",
+  "PersonDrilldown",
+  "TimesAccountsTable",
+  "VacationAbsenceTab",
+  "TodayAttendance",
+  "ExportDialog",
+] as const;
+type ComponentName = (typeof COMPONENT_NAMES)[number];
+
+const COMPONENTS = Object.fromEntries(
+  COMPONENT_NAMES.map((name) => [name, readSource(`../lib/components/reports/${name}.svelte`)]),
+) as Record<ComponentName, string>;
+
+const countOf = (text: string, needle: string | RegExp): number =>
+  typeof needle === "string" ? text.split(needle).length - 1 : (text.match(needle) ?? []).length;
+
+describe("/reports (Issue #612, AC-612-1) - exactly one period control", () => {
+  it("[vacuity gate] the page and the eight components are loaded and non-empty", () => {
+    expect(PAGE.length).toBeGreaterThan(30_000);
+    expect(COMPONENT_NAMES).toHaveLength(8);
+    for (const name of COMPONENT_NAMES) {
+      expect(COMPONENTS[name].length, name).toBeGreaterThan(1_000);
+    }
+  });
+
+  it("the team area of the page has one <PeriodBar and no <select at all", () => {
+    expect(countOf(TEMPLATE, "<PeriodBar")).toBe(1);
+    expect(countOf(TEMPLATE, /<select\b/g)).toBe(0);
+    expect(countOf(SCRIPT, /<select\b/g)).toBe(0);
+  });
+
+  it("the only month or year selects live in the two dialogs; the table holds one narrow sort select", () => {
+    const selects = Object.fromEntries(
+      COMPONENT_NAMES.map((name) => [name, countOf(COMPONENTS[name], /<select\b/g)]),
+    );
+    // PeriodRangeDialog: month and year of „Von“ and „Bis“; ExportDialog: the month of
+    // Monatsexport and DATEV; TimesAccountsTable: the sort select of the narrow list, nothing else.
+    expect(selects).toEqual({
+      PeriodBar: 0,
+      PeriodKpis: 0,
+      PeriodRangeDialog: 4,
+      PersonDrilldown: 0,
+      TimesAccountsTable: 1,
+      VacationAbsenceTab: 0,
+      TodayAttendance: 0,
+      ExportDialog: 1,
+    });
+    expect(COMPONENTS.TimesAccountsTable).toContain('aria-label="Sortieren nach"');
+    expect(COMPONENTS.ExportDialog).toContain("Monat für Monatsexport und DATEV");
+  });
+
+  it("the page asks for no vacation, carry-over or monthly route except the § 9 note", () => {
+    expect(PAGE).not.toContain("/reports/leave-overview");
+    expect(PAGE).not.toContain("/reports/carryover-at-risk");
+    // `/reports/monthly?` is the § 9 note and nothing else (the PDFs are `/reports/monthly/pdf`).
+    expect(countOf(PAGE, "/reports/monthly?")).toBe(1);
+    expect(functionBody("loadExportSection9Note")).toContain("/reports/monthly?");
+    // The components name no export or period route at all.
+    for (const name of COMPONENT_NAMES) {
+      for (const route of [
+        "/reports/leave-overview",
+        "/reports/carryover-at-risk",
+        "/reports/monthly",
+      ]) {
+        expect(COMPONENTS[name], `${name} ${route}`).not.toContain(route);
+      }
+    }
+  });
+
+  it("every period figure is the period answer's: no reduce over period rows in the page or the components", () => {
+    // The page's only reduce calls are the personal view's closed months (the EMP-06 table).
+    const reduces = [...PAGE.matchAll(/(\w+)\.reduce\(/g)].map((m) => m[1]);
+    expect(reduces.length).toBeGreaterThan(0);
+    expect(new Set(reduces)).toEqual(new Set(["empClosedRows"]));
+    for (const name of COMPONENT_NAMES) {
+      expect(COMPONENTS[name], name).not.toContain("reduce(");
+    }
+    // team-saldo.ts is the one aggregator of the saldo figures (the #588 guard names it).
+    expect(COMPONENTS.TimesAccountsTable).toContain('from "$lib/reports/team-saldo"');
+  });
+
+  it("the three dialogs render after .period-content, never inside it or an animated Card (#570)", () => {
+    const panel = TEMPLATE.indexOf('class="page period-content"');
+    expect(panel).toBeGreaterThan(-1);
+    for (const tag of ["<PeriodRangeDialog", "<ExportDialog", "<PersonDrilldown"]) {
+      expect(TEMPLATE.indexOf(tag), tag).toBeGreaterThan(panel);
+    }
+    // Nothing between the panel and the first dialog opens a Modal or a Card.
+    const firstDialog = Math.min(
+      ...["<PeriodRangeDialog", "<ExportDialog", "<PersonDrilldown"].map((t) =>
+        TEMPLATE.indexOf(t),
+      ),
+    );
+    expect(TEMPLATE.slice(panel, firstDialog)).not.toContain("<Modal");
+  });
+});
+
+describe("/reports (Issue #612) - who sees what is decided by permissions", () => {
+  // Every subset of the five team permissions: a caller in the team area with no period tab must be
+  // able to export (the bar with the dialog and the short note), so the „no rights“ EmptyState of the
+  // UI contract is unreachable by construction - showTeamArea needs one of the four rights, and
+  // each of the three others yields a tab.
+  const PERMISSIONS = [
+    "team-overview:read:ZUGEWIESEN",
+    "overtime:read:ZUGEWIESEN",
+    "report:read:ZUGEWIESEN",
+    "report:export:ZUGEWIESEN",
+    "report:notify:ZUGEWIESEN",
+  ];
+
+  it("a team-area caller without a period tab always holds report:export", () => {
+    let combinations = 0;
+    for (let mask = 0; mask < 1 << PERMISSIONS.length; mask++) {
+      const permissions = PERMISSIONS.filter((_, i) => (mask & (1 << i)) !== 0);
+      const rights = reportRights({ permissions });
+      combinations += 1;
+      const exportOnly = rights.showTeamArea && rights.periodTabs.length === 0;
+      if (exportOnly) expect(rights.canReportExport, permissions.join(",")).toBe(true);
+    }
+    expect(combinations).toBe(32);
+  });
+
+  it("a holder of team-overview:read without report:read sees only the Heute tab by default", () => {
+    const rights = reportRights({ permissions: ["team-overview:read:ZUGEWIESEN"] });
+    expect([...rights.periodTabs]).toEqual(["heute"]);
+  });
+});
+
+function person(id: string): PeriodRow {
+  return {
+    employeeId: id,
+    employeeName: `Person ${id}`,
+    employeeNumber: `N-${id}`,
+    hasRecordedTime: true,
+    exitDay: null,
+    workedMinutes: 600,
+    expectedMinutes: 600,
+    balanceMinutes: 0,
+    openingBalanceMinutes: 0,
+    closingBalanceMinutes: 0,
+    closingConfirmedMinutes: null,
+    closingOpenMinutes: null,
+    unconfirmedMonths: null,
+    monthCount: 1,
+    confirmedMonthCount: 1,
+    labelled: true,
+    sickDays: 0,
+    months: [],
+  };
+}
+
+const TABLE_PROPS = {
+  loading: false,
+  periodLabel: "September 2026",
+  filterActive: false,
+  personHref: (r: PeriodRow) => `/reports?person=${r.employeeId}`,
+  onOpenPerson: () => {},
+};
+
+describe("/reports (Issue #612) - states of the period area", () => {
+  it("the first load shows skeletons with aria-busy in the KPI card and in both tabs", () => {
+    const kpis = renderWithTheme(PeriodKpis, { kpis: null, filterActive: false, loading: true });
+    expect(screen.getByTestId("period-kpis").getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByTestId("period-kpis-skeleton")).toBeTruthy();
+    kpis.unmount();
+    const table = renderWithTheme(TimesAccountsTable, {
+      ...TABLE_PROPS,
+      rows: null,
+      loading: true,
+    });
+    expect(screen.getByTestId("period-section").getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByTestId("period-table-skeleton")).toBeTruthy();
+    expect(screen.getByText("Bericht wird geladen…")).toBeTruthy();
+    table.unmount();
+    renderWithTheme(VacationAbsenceTab, {
+      vacation: null,
+      absences: null,
+      filterActive: false,
+      loading: true,
+      today: "2026-10-15",
+      canNotify: false,
+      periodLabel: "September 2026",
+      personHref: () => null,
+      onOpenPerson: () => {},
+      onNotify: async () => ({ warned: 0, skippedDedup: 0 }),
+    });
+    expect(screen.getByTestId("vacation-skeleton").getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByText("Lade Urlaubsübersicht…")).toBeTruthy();
+  });
+
+  it("a later load dims the previous figures instead of replacing them with a skeleton", () => {
+    expect(TEMPLATE).toContain("class:period-body--dim={periodLoading && period !== null}");
+    // The same class on the tab content wrapper: figures stay, opacity drops.
+    expect(countOf(TEMPLATE, "period-body--dim")).toBe(2);
+    expect(PAGE).toMatch(/\.period-body--dim\s*\{\s*opacity: 0\.6;/);
+    // The table shows rows while loading when it already holds them (no skeleton with data).
+    const withRows = renderWithTheme(TimesAccountsTable, {
+      ...TABLE_PROPS,
+      rows: [person("A")],
+      loading: true,
+    });
+    expect(screen.queryByTestId("period-table-skeleton")).toBeNull();
+    expect(within(screen.getByTestId("period-section")).getAllByRole("row").length).toBeGreaterThan(
+      1,
+    );
+    withRows.unmount();
+  });
+
+  it("failure states: error callout with a retry, the invalid period offers the current month", () => {
+    expect(TEMPLATE).toContain('class="callout error" role="alert" data-testid="period-error"');
+    expect(TEMPLATE).toContain('class="callout error" role="alert" data-testid="period-invalid"');
+    expect(TEMPLATE).toContain("Erneut versuchen");
+    expect(TEMPLATE).toContain("Zum aktuellen Monat");
+  });
+
+  it("empty states: no persons, no search hit, no vacation rows, no absences", () => {
+    const none = renderWithTheme(TimesAccountsTable, { ...TABLE_PROPS, rows: [] });
+    expect(screen.getByText("Keine Personen im Zeitraum")).toBeTruthy();
+    none.unmount();
+    const vacation = renderWithTheme(VacationAbsenceTab, {
+      vacation: {
+        year: 2026,
+        asOf: "2026-09-30",
+        years: [{ year: 2026, asOf: "2026-09-30", rows: [] }],
+      },
+      absences: [],
+      filterActive: false,
+      loading: false,
+      today: "2026-10-15",
+      canNotify: false,
+      periodLabel: "September 2026",
+      personHref: () => null,
+      onOpenPerson: () => {},
+      onNotify: async () => ({ warned: 0, skippedDedup: 0 }),
+    });
+    expect(screen.getByText("Keine Personen im Zeitraum")).toBeTruthy();
+    expect(screen.getByText("Keine Abwesenheiten im Zeitraum.")).toBeTruthy();
+    vacation.unmount();
+  });
+
+  it("a caller who may export but read no report sees the bar and the short note (UI-SPEC no-rights case)", () => {
+    expect(TEMPLATE).toContain("Keine Auswertung freigegeben – Exporte verfügbar");
+  });
+});
+
+describe("/reports (Issue #612) - staggered reveal", () => {
+  it("animates the bar wrapper, the KPI card and each section of the tabs, and re-keys none of them", () => {
+    expect(COMPONENTS.PeriodBar).toContain('class="period-sticky card-animate"');
+    expect(TEMPLATE).toMatch(/<Card animate>\s*<PeriodKpis/);
+    expect(COMPONENTS.TimesAccountsTable).toContain('<section class="card-animate period-section"');
+    expect(countOf(COMPONENTS.VacationAbsenceTab, "<Card animate>")).toBe(2);
+    expect(COMPONENTS.TodayAttendance).toContain("<Card animate");
+    // Data changes swap the content inside the blocks: nothing is keyed.
+    expect(countOf(TEMPLATE, "{#key")).toBe(0);
+    for (const name of COMPONENT_NAMES) {
+      expect(COMPONENTS[name], name).not.toContain("{#key");
+    }
+  });
+
+  it("mounted: both tab components emit .card-animate sections", () => {
+    const vacation = renderWithTheme(VacationAbsenceTab, {
+      vacation: null,
+      absences: null,
+      filterActive: false,
+      loading: true,
+      today: "2026-10-15",
+      canNotify: false,
+      periodLabel: "September 2026",
+      personHref: () => null,
+      onOpenPerson: () => {},
+      onNotify: async () => ({ warned: 0, skippedDedup: 0 }),
+    });
+    expect(document.querySelectorAll("section.card.card-animate")).toHaveLength(2);
+    vacation.unmount();
+    const today = renderWithTheme(TodayAttendance, {
+      attendance: null,
+      loading: true,
+      error: "",
+      rejected: false,
+      canAddTeamEntry: false,
+      canRecordTeamAbsence: false,
+    });
+    expect(document.querySelectorAll("section.card.card-animate")).toHaveLength(1);
+    today.unmount();
+    renderWithTheme(TimesAccountsTable, { ...TABLE_PROPS, rows: [person("A")] });
+    expect(screen.getByTestId("period-section").classList.contains("card-animate")).toBe(true);
   });
 });
