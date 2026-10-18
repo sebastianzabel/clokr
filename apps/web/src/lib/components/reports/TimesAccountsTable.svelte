@@ -89,9 +89,6 @@
   const withoutRecording = $derived(
     figures.excluded.filter((e) => e.reason === "NO_RECORDED_TIME"),
   );
-  const exclusionByPerson = $derived(
-    new Map(figures.excluded.map((e) => [e.employeeId, e.reasonLabel])),
-  );
 
   interface Column {
     key: PeriodSortKey;
