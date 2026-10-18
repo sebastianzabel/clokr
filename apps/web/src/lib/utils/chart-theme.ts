@@ -24,8 +24,10 @@ export function getChartTheme() {
     brand: get("--brand"),
     brandLight: get("--brand-light"),
     brandTint: get("--brand-soft"),
-    // Planned values: the faint text token keeps a 3:1 contrast against the card (WCAG 1.4.11).
-    neutral: get("--text-faint"),
+    // Planned values (Soll): the muted text token, because --text-faint falls to about 2.5:1 on the
+    // modern light card and WCAG 1.4.11 asks 3:1 for a graphical object; --text-muted holds it in
+    // every skin and mode.
+    neutral: get("--text-muted"),
     sick: get("--leave-type-sick"),
     green: get("--good"),
     red: get("--bad"),

@@ -46,7 +46,8 @@ describe("getChartTheme (P-591-03)", () => {
     const theme = getChartTheme();
     expect(theme.brand).toBe("rgb(1, 1, 1)");
     expect(theme.brandLight).toBe("rgb(2, 2, 2)");
-    expect(theme.neutral).toBe("rgb(4, 4, 4)");
+    // Soll reads --text-muted, not --text-faint (3:1 in every skin, verification of #591).
+    expect(theme.neutral).toBe("rgb(10, 10, 10)");
     expect(theme.sick).toBe("rgb(5, 5, 5)");
     expect(theme.green).toBe("rgb(6, 6, 6)");
     expect(theme.red).toBe("rgb(7, 7, 7)");
