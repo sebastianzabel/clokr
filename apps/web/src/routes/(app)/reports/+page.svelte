@@ -7,14 +7,9 @@
   import { salonContext, showSalonOptions } from "$stores/salon-context"; // Issues #542, #612
   import { get as getStore } from "svelte/store";
   import { reportRights } from "$lib/page-rights";
-  import Pagination from "$components/ui/Pagination.svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte"; // Issue #542
   import {
-    DATEV_ALL_SALONS_NOTE,
-    EXPORT_NO_STAMMSALON_NOTE,
-    PERSON_SALDO_NOT_SPLIT_LABEL,
-    SALON_EXPORT_PERSONS_NOTE,
     isSalonFilterRejected,
     salonPageFilter,
     salonScopeLabel,
@@ -25,10 +20,12 @@
   import KPIStat from "$components/ui/KPIStat.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
+  import ExportDialog from "$lib/components/reports/ExportDialog.svelte"; // Issue #612
   import PeriodBar from "$lib/components/reports/PeriodBar.svelte"; // Issue #612
   import PeriodKpis from "$lib/components/reports/PeriodKpis.svelte"; // Issue #612
   import PeriodRangeDialog from "$lib/components/reports/PeriodRangeDialog.svelte"; // Issue #612
   import PersonDrilldown from "$lib/components/reports/PersonDrilldown.svelte"; // Issue #612
+  import TodayAttendance from "$lib/components/reports/TodayAttendance.svelte"; // Issue #612
   import TimesAccountsTable from "$lib/components/reports/TimesAccountsTable.svelte"; // Issue #612
   import VacationAbsenceTab from "$lib/components/reports/VacationAbsenceTab.svelte"; // Issue #612
   import { toasts } from "$stores/toast"; // Issue #612
@@ -41,6 +38,7 @@
     type PeriodTab,
   } from "$lib/reports/period-state"; // Issue #612 (D-612-1)
   import {
+    periodCsvPath,
     periodReportPath,
     ymKey,
     type DayEntry,
@@ -48,53 +46,15 @@
     type PeriodRow,
     type YearMonth,
   } from "$lib/reports/period-report"; // Issue #612
+  import type { TodayAttendanceData } from "$lib/reports/today-attendance"; // Issue #612
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
   import { fmtBalance } from "$lib/utils/format-minutes"; // Issue #588
-  import { DAY_STATUS_LABEL, attendanceStatusText } from "$lib/dashboard/day-status-label"; // Issue #587
-  import { teamDayHref, teamLeaveCreateHref } from "$lib/dashboard/team-day-links"; // Issue #587
   import {
     buildEmployeeMonthRows,
     type EmployeeMonthRow,
     type SnapshotAnswerRow,
   } from "$lib/reports/employee-months";
   // ── Types ──────────────────────────────────────────────────────────────────
-
-  type TodayEmployee = {
-    id: string;
-    name: string;
-    employeeNumber: string;
-    status:
-      | "present"
-      | "absent"
-      | "clocked_in"
-      | "missing"
-      | "scheduled"
-      | "requested"
-      | "none"
-      | "holiday";
-    reason: string | null;
-    // Issue #542 (AC-542-7): set by the server under a salon filter when the person worked in
-    // another salon today; a boolean, never a salon or a time.
-    workedElsewhere?: boolean;
-    // Issue #587 (D-587-3): the planned start of today's first shift and the minutes since it
-    // (only for a missing row); finished values from the API, nothing is computed here.
-    expectedStart?: string | null;
-    lateMinutes?: number | null;
-  };
-
-  type TodayAttendance = {
-    date: string;
-    // Issue #542: present only under a salon filter.
-    salonId?: string;
-    employees: TodayEmployee[];
-    summary: {
-      present: number;
-      absent: number;
-      clockedIn: number;
-      missing: number;
-      holiday: number;
-    };
-  };
 
   type OvertimeEmployee = {
     id: string;
@@ -134,40 +94,6 @@
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth() + 1;
 
-  // DATEV export card — own period selector
-  let datevMonth = $state(currentMonth);
-  let datevYear = $state(currentYear);
-  let datevLoading = $state(false);
-  let datevError = $state("");
-
-  // Monatsexport card (Issue #617) — own period selector, same defaults as the DATEV card
-  let exportMonth = $state(currentMonth);
-  let exportYear = $state(currentYear);
-  let exportLoading = $state(false);
-  let exportError = $state("");
-  // § 9-Hinweis (Phase 104, D-30) — erklärt, warum im gewählten Monat Tage von Urlaub nach
-  // Krankheit gewandert sind. Kommt vom Server (GET /reports/monthly's section9Note field),
-  // wird NICHT clientseitig hergeleitet, und ist nur gesetzt, wenn der Monat tatsächlich
-  // bestätigte § 9-Tage trägt. Issue #617: sits on the Monatsexport card, driven by its own period.
-  let exportSection9Note = $state<string | null>(null);
-
-  const months = [
-    "Januar",
-    "Februar",
-    "März",
-    "April",
-    "Mai",
-    "Juni",
-    "Juli",
-    "August",
-    "September",
-    "Oktober",
-    "November",
-    "Dezember",
-  ];
-
-  const years = Array.from({ length: 5 }, (_, i) => currentYear - i);
-
   // ── Role guard ─────────────────────────────────────────────────────────────
 
   // Issue #538: each block follows the permission of the endpoint behind it (docs/permissions.md),
@@ -182,7 +108,6 @@
   // enforce their own rules, these only decide whether the link is offered.
   let canAddTeamEntry = $derived(rights.canAddTeamEntry);
   let canRecordTeamAbsence = $derived(rights.canRecordTeamAbsence);
-  let showAttendanceActions = $derived(canAddTeamEntry || canRecordTeamAbsence);
   let showTeamArea = $derived(rights.showTeamArea);
 
   // ── The period in the URL (Issue #612, D-612-1) ────────────────────────────
@@ -287,19 +212,22 @@
     );
   }
 
-  // The export dialog arrives with 612-06; until then the cards above the tabs stay the export path.
-  function openExport(): void {}
+  // The „Exportieren“ button of the period bar opens the one export dialog (report:export only).
+  function openExport(trigger: HTMLElement): void {
+    focusReturnTo = trigger;
+    exportOpen = true;
+  }
 
   // ── Salon filter (Issue #542, CTX-5) ───────────────────────────────────────
 
-  // The header salon narrows three places: today's attendance, the Saldenübersicht and the
-  // Monatsexport download. The page decides only through `salonPageFilter` (never the store's raw
-  // selection); the loaders read `pageSalonId` when they are called and one effect below reruns
-  // the two list loads on a change. Presentation only: the API validates every `salonId` and
-  // answers one 404 for every rejection cause. The DATEV file, the per-person documents, the
-  // vacation overview and the carry-over warnings never send a salon (pinned with their reasons
-  // in `salon-filter-exempt-pages-558.test.ts`), and neither does the § 9 hint of the Monatsexport
-  // card: it comes from `/reports/monthly`, whose person rule is not the export's.
+  // The header salon narrows today's attendance, the Saldenübersicht (exited section), the period
+  // answer and the Monatsexport and CSV downloads. The page decides only through `salonPageFilter`
+  // (never the store's raw selection); the loaders read `pageSalonId` when they are called and one
+  // effect below reruns the two list loads on a change. Presentation only: the API validates every
+  // `salonId` and answers one 404 for every rejection cause. The DATEV file, the per-person
+  // documents and the carry-over notice never send a salon (pinned with their reasons in
+  // `salon-filter-exempt-pages-558.test.ts`), and neither does the § 9 hint of the Monatsexport:
+  // it comes from `/reports/monthly`, whose person rule is not the export's.
   const contextLoaded = $derived($salonContext.loaded);
   const pageSalonId = $derived(salonPageFilter($salonContext));
   const scopeLabel = $derived(salonScopeLabel($salonContext));
@@ -312,23 +240,9 @@
 
   // ── Heutige Anwesenheit state (RPT-03) ─────────────────────────────────────
 
-  let todayAttendance: TodayAttendance | null = $state(null);
+  let todayAttendance: TodayAttendanceData | null = $state(null);
   let todayLoading = $state(false);
   let todayError = $state("");
-
-  let todayPage = $state(1);
-  let todayPageSize = $state(10);
-  let pagedTodayRows = $derived(
-    (todayAttendance?.employees ?? []).slice(
-      (todayPage - 1) * todayPageSize,
-      todayPage * todayPageSize,
-    ),
-  );
-
-  $effect(() => {
-    const _len = todayAttendance?.employees?.length ?? 0;
-    todayPage = 1;
-  });
 
   // ── Exited persons with an open final saldo (Issue #613, from the saldo overview) ──
 
@@ -521,6 +435,7 @@
 
   // Dialogs (rendered after `.period-content`, never inside an animated Card, Issue #570).
   let rangeOpen = $state(false);
+  let exportOpen = $state(false);
   let focusReturnTo: HTMLElement | null = null;
   let dialogWasOpen = false;
 
@@ -532,7 +447,7 @@
   // The Modal primitive traps focus but does not give it back: the page remembers the trigger
   // (the period bar's button, the person's name link) and returns focus to it on close.
   $effect(() => {
-    const open = rangeOpen || drillOpen;
+    const open = rangeOpen || exportOpen || drillOpen;
     untrack(() => {
       if (dialogWasOpen && !open) {
         focusReturnTo?.focus();
@@ -579,13 +494,6 @@
     });
   });
 
-  // The § 9 note follows the Monatsexport card's OWN period selection, not the page period.
-  $effect(() => {
-    const _m = exportMonth;
-    const _y = exportYear;
-    if (canReportRead) void loadExportSection9Note();
-  });
-
   // ── onMount ────────────────────────────────────────────────────────────────
 
   onMount(async () => {
@@ -603,7 +511,7 @@
     todayLoading = true;
     todayError = "";
     try {
-      const answer = await api.get<TodayAttendance>(
+      const answer = await api.get<TodayAttendanceData>(
         withSalonId("/dashboard/today-attendance", pageSalonId),
       );
       if (generation !== attendanceGeneration) return;
@@ -647,35 +555,29 @@
     }
   }
 
-  async function downloadDatev() {
-    datevLoading = true;
-    datevError = "";
-    try {
-      const { authStore: authSt } = await import("$stores/auth");
-      const { get } = await import("svelte/store");
-      const auth = get(authSt);
+  // The payroll file of ONE month: never narrowed by the header salon (OD-2, § 41 EStG). A failure
+  // is thrown to the export dialog, which reports it.
+  async function downloadDatev(year: number, month: number) {
+    const { authStore: authSt } = await import("$stores/auth");
+    const { get } = await import("svelte/store");
+    const auth = get(authSt);
 
-      const res = await fetch(`/api/v1/reports/datev?month=${datevMonth}&year=${datevYear}`, {
-        headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
-      });
+    const res = await fetch(`/api/v1/reports/datev?month=${month}&year=${year}`, {
+      headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
+    });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error((data as { error?: string }).error ?? "Download fehlgeschlagen");
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `DATEV_${datevYear}_${String(datevMonth).padStart(2, "0")}.txt`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e: unknown) {
-      datevError = e instanceof Error ? e.message : "Download fehlgeschlagen";
-    } finally {
-      datevLoading = false;
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error((data as { error?: string }).error ?? "Download fehlgeschlagen");
     }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `DATEV_${year}_${String(month).padStart(2, "0")}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function downloadPdf(url: string, filename: string) {
@@ -708,39 +610,57 @@
     setTimeout(() => URL.revokeObjectURL(objectUrl), 100);
   }
 
-  async function downloadMonthlyExport() {
-    exportLoading = true;
-    exportError = "";
+  // The one 404 of the chosen salon is a calm state in the dialog, never an error toast; any other
+  // failure is thrown to the export dialog, which reports it.
+  async function downloadMonthlyExport(year: number, month: number) {
     exportSalonRejected = false;
     try {
       await downloadPdf(
-        withSalonId(
-          `/reports/monthly-export/pdf?year=${exportYear}&month=${exportMonth}`,
-          pageSalonId,
-        ),
-        `Monatsexport_${exportYear}_${String(exportMonth).padStart(2, "0")}.pdf`,
+        withSalonId(`/reports/monthly-export/pdf?year=${year}&month=${month}`, pageSalonId),
+        `Monatsexport_${year}_${String(month).padStart(2, "0")}.pdf`,
       );
     } catch (e: unknown) {
       if (pageSalonId !== null && isSalonFilterRejected(e)) {
         exportSalonRejected = true;
       } else {
-        exportError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
+        throw e;
       }
-    } finally {
-      exportLoading = false;
     }
   }
 
-  async function loadExportSection9Note() {
+  // The CSV of the table „Zeiten & Konten“ for the whole period: the same query as the table, so the
+  // header salon narrows it exactly like the page; saved under the name the server proposes.
+  async function downloadPeriodCsv() {
+    exportSalonRejected = false;
+    try {
+      await downloadPdf(
+        periodCsvPath(urlState.from, urlState.to, pageSalonId),
+        `Zeiten-und-Konten_${ymKey(urlState.from)}_${ymKey(urlState.to)}.csv`,
+      );
+    } catch (e: unknown) {
+      if (pageSalonId !== null && isSalonFilterRejected(e)) {
+        exportSalonRejected = true;
+      } else {
+        throw e;
+      }
+    }
+  }
+
+  // § 9-Hinweis (Phase 104, D-30): explains why days of a closed month moved from leave to sickness.
+  // It comes from the server (`GET /reports/monthly`'s section9Note), is NOT derived here, and is
+  // never narrowed by the header salon: that route's person rule is not the export's, and an
+  // unfiltered hint is a superset that may over-warn, the safe direction.
+  async function loadExportSection9Note(year: number, month: number): Promise<string | null> {
+    // The route needs report:read; an exporter without it simply has no note.
+    if (!canReportRead) return null;
     try {
       const res = await api.get<{ section9Note?: string }>(
-        `/reports/monthly?year=${exportYear}&month=${exportMonth}`,
+        `/reports/monthly?year=${year}&month=${month}`,
       );
-      exportSection9Note = res.section9Note ?? null;
+      return res.section9Note ?? null;
     } catch {
-      // Fail-safe: the note explains, it never blocks — on an error we show nothing instead of
-      // writing an error message into a plain download card.
-      exportSection9Note = null;
+      // Fail-safe: the note explains, it never blocks - on an error nothing is shown.
+      return null;
     }
   }
 
@@ -787,10 +707,6 @@
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  function statusClass(status: TodayEmployee["status"]): string {
-    return `status-badge status-${status.replace("_", "-")}`;
-  }
-
   // ── KPI summaries (v1.5) ───────────────────────────────────────────────────
 
   // Employee KPIs - derived from the CLOSED months only (open months carry no figures)
@@ -824,133 +740,6 @@
 
 {#if showTeamArea}
   <SalonScopeLabel label={scopeLabel} />
-  <!-- The export cards keep their place until 612-06 replaces them with the export dialog. -->
-  <div class="reports-grid">
-    <!-- DATEV Export Card -->
-    {#if canReportExport}
-      <div class="card card-body card-animate report-card">
-        <div class="report-card-icon-section report-card-icon-section--green">
-          <span class="report-icon-lg">📁</span>
-        </div>
-        <div class="report-card-header">
-          <div>
-            <h2 class="report-card-heading">DATEV Export</h2>
-            <p class="report-card-desc text-muted">
-              TXT-Datei für DATEV-Lohnabrechnung herunterladen
-            </p>
-          </div>
-        </div>
-
-        <div class="report-controls">
-          <div class="form-group">
-            <label class="form-label" for="datev-month">Monat</label>
-            <select id="datev-month" bind:value={datevMonth} class="form-input">
-              {#each months as name, i (i)}
-                <option value={i + 1}>{name}</option>
-              {/each}
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="datev-year">Jahr</label>
-            <select id="datev-year" bind:value={datevYear} class="form-input">
-              {#each years as y (y)}
-                <option value={y}>{y}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-
-        {#if pageSalonId !== null}
-          <p class="form-hint" data-testid="datev-all-salons-note">{DATEV_ALL_SALONS_NOTE}</p>
-        {/if}
-
-        <button class="btn btn-primary" onclick={downloadDatev} disabled={datevLoading}>
-          {#if datevLoading}
-            <span class="btn-spinner"></span>
-            Vorbereiten…
-          {:else}
-            ↓ TXT herunterladen
-          {/if}
-        </button>
-
-        {#if datevError}
-          <div class="alert alert-error" role="alert">
-            <span>⚠</span>
-            <span>{datevError}</span>
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    <!-- Monatsexport Card (Issue #617) -->
-    {#if canReportExport}
-      <div class="card card-body card-animate report-card">
-        <div class="report-card-icon-section report-card-icon-section--green">
-          <span class="report-icon-lg">📄</span>
-        </div>
-        <div class="report-card-header">
-          <div>
-            <h2 class="report-card-heading">Monatsexport</h2>
-            <p class="report-card-desc text-muted">
-              Lesbare Fassung des DATEV-Exports: Soll, Ist, Saldo, Abwesenheiten und Urlaub je
-              Person — ohne Tagesliste
-            </p>
-          </div>
-        </div>
-
-        <div class="report-controls">
-          <div class="form-group">
-            <label class="form-label" for="export-month">Monat</label>
-            <select id="export-month" bind:value={exportMonth} class="form-input">
-              {#each months as name, i (i)}
-                <option value={i + 1}>{name}</option>
-              {/each}
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="export-year">Jahr</label>
-            <select id="export-year" bind:value={exportYear} class="form-input">
-              {#each years as y (y)}
-                <option value={y}>{y}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-
-        {#if pageSalonId !== null}
-          <p class="form-hint" data-testid="export-salon-persons-note">
-            {SALON_EXPORT_PERSONS_NOTE} · {PERSON_SALDO_NOT_SPLIT_LABEL}. {EXPORT_NO_STAMMSALON_NOTE}
-          </p>
-        {/if}
-
-        <button class="btn btn-primary" onclick={downloadMonthlyExport} disabled={exportLoading}>
-          {#if exportLoading}
-            <span class="btn-spinner"></span>
-            Vorbereiten…
-          {:else}
-            ↓ PDF herunterladen
-          {/if}
-        </button>
-
-        {#if exportSection9Note}
-          <div class="alert alert-info" data-testid="report-section9-note">
-            <span aria-hidden="true">§</span>
-            <span>{exportSection9Note}</span>
-          </div>
-        {/if}
-
-        {#if exportSalonRejected}
-          <SalonScopeLabel label={null} rejected={true} />
-        {:else if exportError}
-          <div class="alert alert-error" role="alert">
-            <span>⚠</span>
-            <span>{exportError}</span>
-          </div>
-        {/if}
-      </div>
-    {/if}
-  </div>
-
   {#if rights.periodTabs.length > 0}
     <div
       class="view-tabs"
@@ -1069,7 +858,16 @@
 
   {#if activeTab === "heute"}
     <div class="page" role="tabpanel" id="reports-panel-heute" aria-labelledby="reports-tab-heute">
-      {@render attendanceBlock()}
+      {#if canTeamAttendance}
+        <TodayAttendance
+          attendance={todayAttendance}
+          loading={todayLoading}
+          error={todayError}
+          rejected={attendanceSalonRejected}
+          {canAddTeamEntry}
+          {canRecordTeamAbsence}
+        />
+      {/if}
     </div>
   {/if}
 
@@ -1081,6 +879,21 @@
     {today}
     onApply={onPeriodChange}
   />
+  {#if canReportExport}
+    <ExportDialog
+      bind:open={exportOpen}
+      from={urlState.from}
+      to={urlState.to}
+      periodLabel={periodLabel(urlState.from, urlState.to, today)}
+      filterActive={pageSalonId !== null}
+      salonRejected={exportSalonRejected}
+      loadSection9Note={loadExportSection9Note}
+      onMonthlyExport={downloadMonthlyExport}
+      onDatev={downloadDatev}
+      onCsv={downloadPeriodCsv}
+      onError={(message) => toasts.error(message)}
+    />
+  {/if}
   <PersonDrilldown
     bind:open={drillOpen}
     row={drillRow}
@@ -1226,105 +1039,6 @@
   </Card>
 {/if}
 
-{#snippet attendanceBlock()}
-  {#if canTeamAttendance}
-    <Card animate class="widget-card" style="--card-idx: 1;">
-      <CardHeader title="Heutige Anwesenheit" sub="Status aller Mitarbeiter">
-        {#snippet actions()}
-          {#if todayAttendance}
-            <span class="section-date">{todayAttendance.date}</span>
-          {/if}
-        {/snippet}
-      </CardHeader>
-
-      {#if todayLoading}
-        <p class="section-placeholder">Lade Anwesenheit…</p>
-      {:else if attendanceSalonRejected}
-        <SalonScopeLabel label={null} rejected={true} />
-      {:else if todayError}
-        <p class="section-error">{todayError}</p>
-      {:else if todayAttendance}
-        <div class="attendance-summary">
-          <div class="summary-chip">
-            <span class="label">Anwesend</span>
-            <span class="value">{todayAttendance.summary.present}</span>
-          </div>
-          <div class="summary-chip">
-            <span class="label">Eingestempelt</span>
-            <span class="value">{todayAttendance.summary.clockedIn}</span>
-          </div>
-          <div class="summary-chip">
-            <span class="label">Abwesend</span>
-            <span class="value">{todayAttendance.summary.absent}</span>
-          </div>
-          <div class="summary-chip">
-            <span class="label">{DAY_STATUS_LABEL.missing}</span>
-            <span class="value">{todayAttendance.summary.missing}</span>
-          </div>
-          {#if todayAttendance.summary.holiday > 0}
-            <div class="summary-chip">
-              <span class="label">Feiertag</span>
-              <span class="value">{todayAttendance.summary.holiday}</span>
-            </div>
-          {/if}
-        </div>
-
-        <div class="table-wrap">
-          <table class="attendance-table">
-            <thead>
-              <tr>
-                <th>Mitarbeiter</th>
-                <th>Nr.</th>
-                <th>Status</th>
-                {#if showAttendanceActions}
-                  <th>Aktionen</th>
-                {/if}
-              </tr>
-            </thead>
-            <tbody>
-              {#each pagedTodayRows as row (row.id)}
-                <tr>
-                  <td>{row.name}</td>
-                  <td>{row.employeeNumber}</td>
-                  <td
-                    ><span class={statusClass(row.status)}>{attendanceStatusText(row)}</span>
-                    {#if row.workedElsewhere}
-                      <span class="badge badge-gray" title="In einem anderen Salon gearbeitet"
-                        >anderer Salon</span
-                      >
-                    {/if}</td
-                  >
-                  {#if showAttendanceActions}
-                    <td class="attendance-actions">
-                      <div class="row-actions__group">
-                        {#if row.status === "missing"}
-                          {@const entryHref = teamDayHref(row.id, todayAttendance.date)}
-                          {@const absenceHref = teamLeaveCreateHref(row.id, todayAttendance.date)}
-                          {#if canAddTeamEntry && entryHref !== null}
-                            <a class="btn btn-ghost xs" href={entryHref}>Eintrag nachtragen</a>
-                          {/if}
-                          {#if canRecordTeamAbsence && absenceHref !== null}
-                            <a class="btn btn-ghost xs" href={absenceHref}>Abwesenheit erfassen</a>
-                          {/if}
-                        {/if}
-                      </div>
-                    </td>
-                  {/if}
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <Pagination
-          total={todayAttendance.employees.length}
-          bind:page={todayPage}
-          bind:pageSize={todayPageSize}
-        />
-      {/if}
-    </Card>
-  {/if}
-{/snippet}
-
 {#snippet exitedBlock()}
   <!-- Issue #613 / #612: persons who left with an open final saldo - today's state, not the period. -->
   {#if canTeamOvertime}
@@ -1363,96 +1077,6 @@
     }
   }
 
-  .reports-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 1.25rem;
-    margin-bottom: 1.75rem;
-  }
-
-  .report-card {
-    display: flex;
-    flex-direction: column;
-    gap: 1.125rem;
-    overflow: hidden;
-    transition:
-      transform 0.2s var(--ease-out, ease),
-      box-shadow 0.2s ease;
-  }
-
-  .report-card:hover {
-    transform: translateY(-3px);
-    box-shadow: var(--shadow-md, 0 8px 20px rgba(0, 0, 0, 0.12));
-  }
-
-  .report-card-icon-section {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 3.25rem;
-    height: 3.25rem;
-    border-radius: var(--r-sm);
-    flex-shrink: 0;
-    transition: transform 0.2s ease;
-  }
-
-  .report-card:hover .report-card-icon-section {
-    transform: scale(1.05);
-  }
-
-  .report-card-icon-section--purple {
-    background: var(--brand-soft);
-  }
-
-  .report-card-icon-section--green {
-    background: var(--good-soft);
-  }
-
-  .report-icon-lg {
-    font-size: 1.5rem;
-    line-height: 1;
-  }
-
-  .report-card-header {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.875rem;
-  }
-
-  .report-card-heading {
-    font-size: 1.0625rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .report-card-desc {
-    font-size: 0.875rem;
-  }
-
-  .report-controls {
-    display: flex;
-    gap: 0.875rem;
-  }
-
-  .report-controls .form-group {
-    flex: 1;
-  }
-
-  .btn-spinner {
-    display: inline-block;
-    width: 1rem;
-    height: 1rem;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top-color: var(--bg-card);
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
   /* ── Period area (Issue #612) ────────────────────────────────────────────── */
 
   /* The sticky parent of the period bar: it sticks for the whole panel. */
@@ -1472,150 +1096,10 @@
     font-size: 0.9375rem;
   }
 
-  .section-date {
-    font-family: var(--font-mono);
-    color: var(--text-muted);
-    font-size: 0.875rem;
-  }
-
-  .section-placeholder,
   .section-error {
-    color: var(--text-muted);
-    font-size: 0.9375rem;
     margin: 0;
-  }
-
-  .section-error {
-    color: var(--bad);
-  }
-
-  /* Heutige Anwesenheit */
-
-  .attendance-summary {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  .summary-chip {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .summary-chip .label {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .summary-chip .value {
-    font-family: var(--font-mono);
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--text);
-  }
-
-  .table-wrap {
-    overflow-x: auto;
-  }
-
-  .attendance-table {
-    width: 100%;
-    border-collapse: collapse;
     font-size: 0.9375rem;
-  }
-
-  .attendance-table th,
-  .attendance-table td {
-    padding: 0.625rem 0.75rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .attendance-table th {
-    color: var(--text-muted);
-    font-weight: 600;
-    font-size: 0.8125rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .status-badge {
-    display: inline-block;
-    padding: 0.25rem 0.625rem;
-    border-radius: 999px;
-    font-size: 0.8125rem;
-    font-weight: 600;
-  }
-
-  .status-present,
-  .status-clocked-in {
-    background: var(--good-soft);
-    color: var(--good);
-  }
-
-  .status-absent {
-    background: var(--warn-soft);
-    color: var(--warn);
-  }
-
-  .status-holiday {
-    background: var(--brand-soft);
-    color: var(--brand);
-  }
-
-  .status-missing {
-    background: var(--bad-soft);
     color: var(--bad);
-  }
-
-  .status-scheduled,
-  .status-none {
-    background: var(--bg-subtle);
-    color: var(--text-muted);
-  }
-
-  .status-requested {
-    background: var(--warn-soft);
-    color: var(--warn);
-  }
-
-  /* ── Per-employee action buttons ─────────────────────────────────────────── */
-
-  /* Issue #587: the action cell of the attendance list; the flex layout lives on the inner
-     .row-actions__group wrapper (Issue #442), never on the td itself. */
-  .attendance-actions {
-    text-align: right;
-    white-space: nowrap;
-  }
-  /* Issue #442 — flex layout lives on the inner wrapper, never on the td itself, so the cell
-     keeps display: table-cell and lines up with the rest of the row. */
-  .row-actions__group {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    justify-content: flex-end;
-  }
-
-  /* ── Responsive ───────────────────────────────────────────────────────────── */
-
-  @media (max-width: 720px) {
-    .attendance-summary {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
-
-  @media (max-width: 700px) {
-    .reports-grid {
-      grid-template-columns: 1fr;
-    }
   }
 
   /* ── EMP-06: Employee monthly closes table ──────────────────────── */

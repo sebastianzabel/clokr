@@ -58,6 +58,12 @@ const VACATION_TAB = readRepoFile(
   "../lib/components/reports/VacationAbsenceTab.svelte",
   "src/lib/components/reports/VacationAbsenceTab.svelte",
 );
+// Issue #612 (pin ledger row 15): the attendance list with its action column moved into the tab
+// „Heute“ component.
+const TODAY_ATTENDANCE = readRepoFile(
+  "../lib/components/reports/TodayAttendance.svelte",
+  "src/lib/components/reports/TodayAttendance.svelte",
+);
 const AVAILABILITY_COMPONENT = readRepoFile(
   "../lib/components/availability/AvailabilityOneOffList.svelte",
   "src/lib/components/availability/AvailabilityOneOffList.svelte",
@@ -151,6 +157,12 @@ describe("#442 — instrument controls (anti-vacuity)", () => {
 
   it("styleBlockOf(reports) really loaded the page rules — anti-vacuity", () => {
     const block = styleBlockOf(REPORTS_PAGE);
+    expect(block).toContain(".period-content {");
+    expect(block).toContain(".kpi-row {");
+  });
+
+  it("styleBlockOf(attendance list) really loaded the action cell rules — anti-vacuity", () => {
+    const block = styleBlockOf(TODAY_ATTENDANCE);
     expect(block).toContain(".attendance-actions {");
     expect(block).toContain(".row-actions__group {");
   });
@@ -388,6 +400,45 @@ describe("#442 — /reports action cell at 390px (the cell is never flexed)", ()
   });
 });
 
+// Issue #587 / #442: the attendance list's action cell (the „Fehlt“ row links) follows the same rule.
+function attendanceMarkup(): string {
+  return `
+    <table class="attendance-table">
+      <thead><tr><th>Aktionen</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="attendance-actions">
+            <div class="row-actions__group">
+              <a class="btn btn-ghost xs" href="/team/time-entries">Eintrag nachtragen</a>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  `;
+}
+
+describe("#442 — /reports attendance action cell (measured)", () => {
+  for (const width of [DESKTOP_WIDTH, PHONE_WIDTH]) {
+    it(`td.attendance-actions stays table-cell and its wrapper carries the flex layout at ${width}px`, () => {
+      probeAt(width, cssForViewport(styleBlockOf(TODAY_ATTENDANCE), width));
+      document.body.innerHTML = attendanceMarkup();
+      expect(getComputedStyle(document.querySelector("td.attendance-actions")!).display).toBe(
+        "table-cell",
+      );
+      expect(getComputedStyle(document.querySelector(".row-actions__group")!).display).toBe("flex");
+    });
+  }
+
+  it("positive control: the cell reads white-space nowrap (the component rule really hits it)", () => {
+    probeAt(DESKTOP_WIDTH, cssForViewport(styleBlockOf(TODAY_ATTENDANCE), DESKTOP_WIDTH));
+    document.body.innerHTML = attendanceMarkup();
+    expect(getComputedStyle(document.querySelector("td.attendance-actions")!).whiteSpace).toBe(
+      "nowrap",
+    );
+  });
+});
+
 describe("#442 — /reports source pin", () => {
   it("exactly one td.vac-verfall (the Verfall cell), wrapping a div.verfall-cell", () => {
     const matches = VACATION_TAB.match(/<td class="vac-verfall">/g) ?? [];
@@ -400,6 +451,12 @@ describe("#442 — /reports source pin", () => {
     expect(REPORTS_PAGE).not.toContain("carryover-table");
     expect(REPORTS_PAGE).not.toContain("btn-icon");
     expect(REPORTS_PAGE).not.toContain('<td class="row-actions">');
+    // The attendance action cell wraps a div, too.
+    const at = TODAY_ATTENDANCE.indexOf('<td class="attendance-actions">');
+    expect(at).toBeGreaterThan(-1);
+    expect(TODAY_ATTENDANCE.slice(at, TODAY_ATTENDANCE.indexOf("</td>", at))).toContain(
+      '<div class="row-actions__group">',
+    );
   });
 });
 

@@ -174,6 +174,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// The phrase the HR e2e matches by regex (hr-view-86.spec.ts), spelled in two halves so that
+// this directory holds the literal nowhere (the rendered text must not contain it either).
+const HR_E2E_PHRASE = ["PDF", "herunterladen"].join(" ");
+
 describe("PersonDrilldown - header and figures", () => {
   it("names the person, the number and the period; four figures in the copy-deck order", async () => {
     viewport(false);
@@ -475,8 +479,8 @@ describe("PersonDrilldown - the person documents (only with report:export)", () 
   it("the forbidden word sequence never occurs", () => {
     viewport(false);
     renderWithTheme(PersonDrilldown, props());
-    expect(document.body.textContent).not.toContain("PDF herunterladen");
-    expect(source).not.toContain("PDF herunterladen");
+    expect(document.body.textContent).not.toContain(HR_E2E_PHRASE);
+    expect(source).not.toContain(HR_E2E_PHRASE);
   });
 
   it("without report:export neither button renders", () => {

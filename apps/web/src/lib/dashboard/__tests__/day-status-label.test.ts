@@ -16,9 +16,15 @@ function readRouteFile(relativeFromHere: string, relativeFromCwd: string): strin
   }
 }
 
-const REPORTS = readRouteFile(
+// Issue #612 (pin ledger row 15): the attendance list moved from the page into the tab „Heute“
+// component; the vocabulary property holds for both files.
+const REPORTS_PAGE = readRouteFile(
   "../../../routes/(app)/reports/+page.svelte",
   "src/routes/(app)/reports/+page.svelte",
+);
+const REPORTS = readRouteFile(
+  "../../components/reports/TodayAttendance.svelte",
+  "src/lib/components/reports/TodayAttendance.svelte",
 );
 const DASHBOARD = readRouteFile(
   "../../../routes/(app)/dashboard/+page.svelte",
@@ -112,6 +118,7 @@ describe("page sources use the one vocabulary", () => {
     expect(REPORTS.length).toBeGreaterThan(0);
     expect(DASHBOARD.length).toBeGreaterThan(0);
     expect(REPORTS).toContain("attendance-table");
+    expect(REPORTS_PAGE.length).toBeGreaterThan(1_000);
     expect(DASHBOARD).toContain("team-grid__cell");
   });
 
@@ -119,6 +126,10 @@ describe("page sources use the one vocabulary", () => {
     expect(REPORTS).toContain("day-status-label");
     expect(REPORTS).not.toContain("function statusLabel(");
     expect(REPORTS).not.toContain("Fehlend");
+    // ... and the page itself holds neither a status vocabulary nor a copy of the list.
+    expect(REPORTS_PAGE).not.toContain("function statusLabel(");
+    expect(REPORTS_PAGE).not.toContain("Fehlend");
+    expect(REPORTS_PAGE).not.toContain("attendance-table");
   });
 
   it("the dashboard „Fehlt“ cell title comes from teamMissingTitle", () => {

@@ -226,7 +226,12 @@ describe("reports attendance list - action links (Issue #587, source pin)", () =
       return readFileSync(resolve(process.cwd(), relativeFromCwd), "utf8");
     }
   }
+  // Issue #612 (pin ledger row 15): the attendance list lives in the tab „Heute“ component now.
   const REPORTS = readRoute(
+    "../components/reports/TodayAttendance.svelte",
+    "src/lib/components/reports/TodayAttendance.svelte",
+  );
+  const PAGE = readRoute(
     "../../routes/(app)/reports/+page.svelte",
     "src/routes/(app)/reports/+page.svelte",
   );
@@ -242,13 +247,20 @@ describe("reports attendance list - action links (Issue #587, source pin)", () =
     expect(table).toContain('row.status === "missing"');
     expect(table).toContain("Eintrag nachtragen");
     expect(table).toContain("Abwesenheit erfassen");
-    expect(table).toContain("teamDayHref(row.id, todayAttendance.date)");
-    expect(table).toContain("teamLeaveCreateHref(row.id, todayAttendance.date)");
+    expect(table).toContain("teamDayHref(row.id, attendance.date)");
+    expect(table).toContain("teamLeaveCreateHref(row.id, attendance.date)");
     const missingAt = table.indexOf('row.status === "missing"');
     expect(table.indexOf("Eintrag nachtragen")).toBeGreaterThan(missingAt);
     expect(table.indexOf("Abwesenheit erfassen")).toBeGreaterThan(missingAt);
     expect(table).toMatch(/canAddTeamEntry[\s\S]*Eintrag nachtragen/);
     expect(table).toMatch(/canRecordTeamAbsence[\s\S]*Abwesenheit erfassen/);
+  });
+
+  it("the page hands the component exactly the two rights, from reportRights", () => {
+    expect(PAGE).toContain("let canAddTeamEntry = $derived(rights.canAddTeamEntry);");
+    expect(PAGE).toContain("let canRecordTeamAbsence = $derived(rights.canRecordTeamAbsence);");
+    expect(PAGE).toMatch(/<TodayAttendance[^>]*\{canAddTeamEntry\}[^>]*\{canRecordTeamAbsence\}/s);
+    expect(REPORTS).not.toContain("reportRights");
   });
 
   it("no other status wording sits in the action cell", () => {

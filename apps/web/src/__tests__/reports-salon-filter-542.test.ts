@@ -54,6 +54,20 @@ const PAGE = readSource(
   "../routes/(app)/reports/+page.svelte",
   "src/routes/(app)/reports/+page.svelte",
 );
+// Issue #612 (pin ledger rows 2 and 13): the attendance list and the exports live in components
+// now; the notes, the badge and the calm states are pinned where their strings are.
+const TODAY = readSource(
+  "../lib/components/reports/TodayAttendance.svelte",
+  "src/lib/components/reports/TodayAttendance.svelte",
+);
+const TODAY_TYPES = readSource(
+  "../lib/reports/today-attendance.ts",
+  "src/lib/reports/today-attendance.ts",
+);
+const EXPORT_DIALOG = readSource(
+  "../lib/components/reports/ExportDialog.svelte",
+  "src/lib/components/reports/ExportDialog.svelte",
+);
 
 /** The body of `[async ]function <name>(` up to its closing brace at the top level of the script. */
 function functionBody(name: string): string {
@@ -75,8 +89,11 @@ function salonEffectBody(): string {
 
 describe("Issue #542 — Berichte follow the header salon", () => {
   it("[vacuity gate] the page source is loaded and still is Berichte", () => {
-    expect(PAGE.length).toBeGreaterThan(60_000);
-    expect(PAGE).toContain("Heutige Anwesenheit");
+    // Issue #612: the page shrank when the list and the export cards moved out (measured 47 618
+    // bytes after 612-06); the floor keeps the check non-vacuous.
+    expect(PAGE.length).toBeGreaterThan(30_000);
+    expect(PAGE).toContain("<TodayAttendance");
+    expect(TODAY).toContain("Heutige Anwesenheit");
   });
 
   it("[decision] the page computes its salon only through salonPageFilter and names no raw selection", () => {
@@ -103,13 +120,19 @@ describe("Issue #542 — Berichte follow the header salon", () => {
   it("[filter] downloadMonthlyExport sends the salon around the Monatsexport path", () => {
     const body = functionBody("downloadMonthlyExport");
     expect(body).toContain("withSalonId(");
-    expect(body).toContain("/reports/monthly-export/pdf?year=${exportYear}&month=${exportMonth}");
+    expect(body).toContain("/reports/monthly-export/pdf?year=${year}&month=${month}");
     expect(body).toContain("pageSalonId");
   });
 
-  it("[hint] the § 9 hint of the Monatsexport card stays unfiltered (amendment 1)", () => {
+  it("[filter] downloadPeriodCsv sends the salon through the CSV path of the period", () => {
+    const body = functionBody("downloadPeriodCsv");
+    expect(body).toContain("periodCsvPath(urlState.from, urlState.to, pageSalonId)");
+    expect(body).toContain("Zeiten-und-Konten_");
+  });
+
+  it("[hint] the § 9 hint of the Monatsexport stays unfiltered (amendment 1)", () => {
     const body = functionBody("loadExportSection9Note");
-    expect(body).toContain("/reports/monthly?year=${exportYear}&month=${exportMonth}");
+    expect(body).toContain("/reports/monthly?year=${year}&month=${month}");
     expect(body).not.toContain("withSalonId(");
     expect(body).not.toContain("pageSalonId");
   });
@@ -138,14 +161,27 @@ describe("Issue #542 — Berichte follow the header salon", () => {
   });
 
   it("[rejection] attendance, overview and export turn the one 404 into the calm state", () => {
-    for (const name of ["loadTodayAttendance", "loadOvertimeOverview", "downloadMonthlyExport"]) {
+    for (const name of [
+      "loadTodayAttendance",
+      "loadOvertimeOverview",
+      "downloadMonthlyExport",
+      "downloadPeriodCsv",
+    ]) {
       expect(functionBody(name), name).toContain("isSalonFilterRejected(");
     }
     expect(PAGE).toContain("attendanceSalonRejected");
     expect(PAGE).toContain("overviewSalonRejected");
     expect(PAGE).toContain("exportSalonRejected");
-    // Issue #612: the period answer is a fourth place that turns the one 404 into the calm state.
-    expect(PAGE.match(/<SalonScopeLabel label=\{null\} rejected=\{true\} \/>/g)?.length).toBe(4);
+    // Four places show the calm state (the period answer is the fourth, Issue #612): the page holds
+    // the exited section and the period answer, the attendance tab and the export dialog one each.
+    const calm = /<SalonScopeLabel label=\{null\} rejected=\{true\} \/>/g;
+    expect(PAGE.match(calm)?.length).toBe(2);
+    expect(TODAY.match(calm)?.length).toBe(1);
+    expect(EXPORT_DIALOG.match(calm)?.length).toBe(1);
+    expect(TODAY).toContain("{:else if rejected}");
+    expect(EXPORT_DIALOG).toContain("{#if salonRejected}");
+    expect(PAGE).toContain("rejected={attendanceSalonRejected}");
+    expect(PAGE).toContain("salonRejected={exportSalonRejected}");
   });
 
   it("[rejection] downloadPdf throws an ApiError carrying the response status", () => {
@@ -157,30 +193,29 @@ describe("Issue #542 — Berichte follow the header salon", () => {
     expect(PAGE.match(/<SalonScopeLabel label=\{scopeLabel\} \/>/g)?.length).toBe(1);
   });
 
-  it("[notes] the person-list and all-salons notes render only under a filter", () => {
-    expect(PAGE).toContain("{#if pageSalonId !== null}");
-    // Issue #612 (pin ledger row 2): SALON_HOME_PERSONS_NOTE belonged to the removed overview card -
-    // the period table shows no saldo under a filter (the KPI callout says why), so no
-    // "Personen nach Stammsalon" line is left to pin.
+  it("[notes] the person-list and DATEV notes render only under a filter", () => {
+    // Issue #612 (pin ledger rows 2 and 13): SALON_HOME_PERSONS_NOTE belonged to the removed overview
+    // card and ALL_SALONS_BLOCK_NOTE to the removed leave-overview and carry-over cards (the vacation
+    // tab follows the salon now, see VacationAbsenceTab.test.ts). The export notes moved into the
+    // dialog and render under its `filterActive` flag, which the page sets from the page filter.
     for (const name of [
       "SALON_EXPORT_PERSONS_NOTE",
       "PERSON_SALDO_NOT_SPLIT_LABEL",
       "DATEV_ALL_SALONS_NOTE",
       "EXPORT_NO_STAMMSALON_NOTE",
     ]) {
-      expect(PAGE, name).toContain(`{${name}}`);
+      expect(EXPORT_DIALOG, name).toContain(`{${name}}`);
     }
-    // Every use sits under a `pageSalonId !== null` guard: no note renders unconditionally.
-    // Issue #612: ALL_SALONS_BLOCK_NOTE belonged to the removed leave-overview and carry-over cards
-    // (the vacation tab follows the salon now, see VacationAbsenceTab.test.ts), so two guards remain.
-    const guards = PAGE.match(/\{#if pageSalonId !== null\}/g)?.length ?? 0;
-    expect(guards).toBeGreaterThanOrEqual(2);
+    expect(PAGE).toMatch(/<ExportDialog[^>]*filterActive=\{pageSalonId !== null\}/s);
+    // Every note sits under a `filterActive` guard: none renders unconditionally.
+    const guards = EXPORT_DIALOG.match(/\{#if filterActive\}/g)?.length ?? 0;
+    expect(guards).toBe(2);
   });
 
   it("[elsewhere] an attendance row with workedElsewhere shows the badge", () => {
-    expect(PAGE).toContain("workedElsewhere?: boolean");
-    expect(PAGE).toContain("{#if row.workedElsewhere}");
-    expect(PAGE).toMatch(/title="In einem anderen Salon gearbeitet"\s*>anderer Salon<\/span\s*>/);
+    expect(TODAY_TYPES).toContain("workedElsewhere?: boolean");
+    expect(TODAY).toContain("{#if row.workedElsewhere}");
+    expect(TODAY).toMatch(/title="In einem anderen Salon gearbeitet"\s*>anderer Salon<\/span\s*>/);
   });
 });
 

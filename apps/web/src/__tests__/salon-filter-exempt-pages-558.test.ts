@@ -160,7 +160,9 @@ const EXEMPT_BLOCKS: ReadonlyArray<{
 
 describe("Issue #542 — blocks of Berichte that stay unfiltered", () => {
   it("[vacuity gate] the table names blocks and every function is found", () => {
-    expect(REPORTS_PAGE.length).toBeGreaterThan(60_000);
+    // Issue #612: the page shrank when the attendance list and the export cards moved out (measured
+    // 47 618 bytes after 612-06); the floor keeps the check non-vacuous.
+    expect(REPORTS_PAGE.length).toBeGreaterThan(30_000);
     expect(EXEMPT_BLOCKS.length).toBeGreaterThanOrEqual(3);
     for (const { fn } of EXEMPT_BLOCKS) {
       expect(reportsFunctionBody(fn).length, `function ${fn} not found`).toBeGreaterThan(100);

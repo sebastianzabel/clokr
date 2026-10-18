@@ -200,7 +200,7 @@ describe("/reports period area (Issue #612) - one request, the latest answer, no
   });
 });
 
-describe("/reports period area (Issue #612) - dialogs, export-only callers, interim card", () => {
+describe("/reports period area (Issue #612) - dialogs, export-only callers, tabs", () => {
   it("the range dialog sits after the period panel, never inside it", () => {
     const panelStart = TEMPLATE.indexOf('class="page period-content"');
     const panelEnd = TEMPLATE.indexOf("<PeriodRangeDialog");
@@ -240,8 +240,9 @@ describe("/reports period area (Issue #612) - dialogs, export-only callers, inte
     expect(SCRIPT).toContain("const overview = canTeamOvertime;");
   });
 
-  it("the attendance card moved into its tab and the vacation tab renders from the period answer", () => {
-    expect(TEMPLATE).toContain("{@render attendanceBlock()}");
+  it("the attendance list is the tab „Heute“ component and the vacation tab renders from the period answer", () => {
+    expect((TEMPLATE.match(/<TodayAttendance\b/g) ?? []).length).toBe(1);
+    expect(PAGE).not.toContain("attendanceBlock");
     expect(PAGE).toContain("{#if canTeamAttendance}");
     // The vacation tab needs report:read: the tab itself comes from reportRights.periodTabs and the
     // period request is gated by it.
@@ -306,7 +307,7 @@ describe("/reports period area (Issue #612) - the person drill-down", () => {
   });
 
   it("focus returns to the stored trigger when the range dialog or the drill-down closes", () => {
-    expect(SCRIPT).toContain("const open = rangeOpen || drillOpen;");
+    expect(SCRIPT).toContain("const open = rangeOpen || exportOpen || drillOpen;");
     expect(SCRIPT).toContain("focusReturnTo?.focus();");
     expect(functionBody("openPerson")).toContain("focusReturnTo =");
   });
@@ -358,5 +359,81 @@ describe("/reports period area (Issue #612) - the person drill-down", () => {
 
   it("the salon column of the day list follows the #64 rule", () => {
     expect(TEMPLATE).toContain("showSalonColumn={showSalonOptions($salonContext)}");
+  });
+});
+
+describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one export dialog", () => {
+  it("the Heute panel has no period bar, no KPIs and renders the list only with team-overview rights", () => {
+    const panel = TEMPLATE.indexOf('id="reports-panel-heute"');
+    expect(panel).toBeGreaterThan(-1);
+    const block = TEMPLATE.slice(panel, TEMPLATE.indexOf("<PeriodRangeDialog", panel));
+    expect(block).toContain("{#if canTeamAttendance}");
+    expect(block).toContain("<TodayAttendance");
+    expect(block).not.toContain("<PeriodBar");
+    expect(block).not.toContain("<PeriodKpis");
+    expect(block).toContain("attendance={todayAttendance}");
+    expect(block).toContain("rejected={attendanceSalonRejected}");
+  });
+
+  it("the bar's Exportieren button opens the dialog and remembers its trigger for the focus return", () => {
+    const body = functionBody("openExport");
+    expect(body).toContain("focusReturnTo = trigger;");
+    expect(body).toContain("exportOpen = true;");
+    expect(TEMPLATE).toContain("onOpenExport={openExport}");
+  });
+
+  it("renders one <ExportDialog after the period panel, only for report:export", () => {
+    expect((TEMPLATE.match(/<ExportDialog\b/g) ?? []).length).toBe(1);
+    const panel = TEMPLATE.indexOf('class="page period-content"');
+    const dialog = TEMPLATE.indexOf("<ExportDialog");
+    expect(dialog).toBeGreaterThan(panel);
+    expect(TEMPLATE.slice(TEMPLATE.lastIndexOf("{#if", dialog), dialog)).toContain(
+      "{#if canReportExport}",
+    );
+    expect(TEMPLATE).toContain("bind:open={exportOpen}");
+  });
+
+  it("wires the three downloads, the § 9 loader and the error toast", () => {
+    for (const wiring of [
+      "loadSection9Note={loadExportSection9Note}",
+      "onMonthlyExport={downloadMonthlyExport}",
+      "onDatev={downloadDatev}",
+      "onCsv={downloadPeriodCsv}",
+      "onError={(message) => toasts.error(message)}",
+    ]) {
+      expect(TEMPLATE, wiring).toContain(wiring);
+    }
+  });
+
+  it("Monatsexport and CSV carry the salon, DATEV never does", () => {
+    expect(functionBody("downloadMonthlyExport")).toContain("withSalonId(");
+    expect(functionBody("downloadPeriodCsv")).toContain("pageSalonId");
+    expect(functionBody("downloadDatev")).not.toContain("pageSalonId");
+    expect(functionBody("downloadDatev")).not.toContain("withSalonId(");
+  });
+
+  it("the CSV is saved as Zeiten-und-Konten_<from>_<to>.csv", () => {
+    expect(functionBody("downloadPeriodCsv")).toContain(
+      "`Zeiten-und-Konten_${ymKey(urlState.from)}_${ymKey(urlState.to)}.csv`",
+    );
+  });
+
+  it("the old DATEV and Monatsexport cards, their selects and state are gone", () => {
+    for (const gone of [
+      "datev-month",
+      "datev-year",
+      "export-month",
+      "export-year",
+      "datevMonth",
+      "datevYear",
+      "exportMonth",
+      "exportYear",
+      "exportSection9Note",
+      "reports-grid",
+      "report-card",
+      "DATEV Export",
+    ]) {
+      expect(PAGE, gone).not.toContain(gone);
+    }
   });
 });
