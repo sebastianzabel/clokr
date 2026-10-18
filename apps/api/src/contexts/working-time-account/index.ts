@@ -110,6 +110,9 @@ export { computeMonthSaldo } from "./month-saldo";
 // PDFs); see month-saldo.ts's own doc block for the snapshot/fullMonth/to-date basis rules.
 export { computeMonthReportFigures } from "./month-saldo";
 export type { MonthReportFigures } from "./month-saldo";
+// Issue #688 — the same figures for many (person, month) pairs: closed months in one snapshot read.
+export { computeMonthReportFiguresForMany, monthReportFiguresKey } from "./month-saldo";
+export type { MonthReportFiguresRequest } from "./month-saldo";
 export { loadNegativeBalanceTolerance } from "./negative-balance-tolerance";
 // Issue #451 (D-06) — the dashboard week block's whole-week Soll and to-date Soll/Ist, both from
 // the saldo core; see close-employee-month.ts's "computeWeekProgress" section for the

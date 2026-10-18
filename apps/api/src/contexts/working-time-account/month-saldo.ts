@@ -28,7 +28,7 @@
 
 import type { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
-import { periodStartWindow, monthlySnapshotOrder } from "./snapshot-period";
+import { periodStartWindow, monthlySnapshotOrder, isPeriodStartInMonth } from "./snapshot-period";
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
 import { openMonthCarryInMinutes } from "./overtime-balance"; // Issue #681 — the open-month chain
 import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
@@ -167,6 +167,20 @@ export type MonthReportFigures = {
   basis: "snapshot" | "fullMonth" | "toDate" | "untracked";
 };
 
+/**
+ * The one eligibility rule of a report row (Issue #451, D-01; shared with the period read of Issue
+ * #688): no `WorkSchedule` valid at the month's end, or MONTHLY_HOURS with `monthlyHours` null/0
+ * (pure tracking), reads as unlabelled — even when a snapshot of that month exists.
+ */
+function isUnlabelledReportSchedule(
+  schedule: { type: unknown; monthlyHours: unknown } | null,
+): boolean {
+  if (!schedule) return true;
+  return (
+    String(schedule.type ?? "") === "MONTHLY_HOURS" && !(Number(schedule.monthlyHours ?? 0) > 0)
+  );
+}
+
 export async function computeMonthReportFigures(
   app: FastifyInstance,
   employeeId: string,
@@ -201,11 +215,7 @@ export async function computeMonthReportFigures(
     where: { employeeId, validFrom: { lte: monthEnd } },
     orderBy: { validFrom: "desc" },
   });
-  const scheduleType = String(schedule?.type ?? "");
-  const isUntrackedMonthlyHours =
-    scheduleType === "MONTHLY_HOURS" && !(Number(schedule?.monthlyHours ?? 0) > 0);
-
-  if (!schedule || isUntrackedMonthlyHours) {
+  if (isUnlabelledReportSchedule(schedule)) {
     // Issue #493: the untracked Ist reads TimeEntry.date, a @db.Date column — the month instants
     // admitted the previous month's last day (prod Ist 5.58 h). Calendar-day bounds instead.
     const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
@@ -244,6 +254,146 @@ export async function computeMonthReportFigures(
     labelled: true,
     basis,
   };
+}
+
+// ── Period read for many persons (Issue #688) ───────────────────────────────────
+
+/** One (person, month) a period read asks for. */
+export type MonthReportFiguresRequest = { employeeId: string; year: number; month: number };
+
+/** The key of `computeMonthReportFiguresForMany`'s answer. */
+export function monthReportFiguresKey(employeeId: string, year: number, month: number): string {
+  return `${employeeId}::${year}-${String(month).padStart(2, "0")}`;
+}
+
+/**
+ * Issue #688 — `computeMonthReportFigures` for many (person, month) pairs of ONE tenant, with every
+ * CLOSED month read in one query instead of one account walk per person and month.
+ *
+ * A pair is answered from its stored MONTHLY snapshot exactly when `computeMonthReportFigures`
+ * would answer it from that snapshot: the person is not time-tracking exempt, the schedule valid at
+ * the month's end is a labelled one (`isUnlabelledReportSchedule`, the same rule), and an active
+ * snapshot lies in the month's `periodStartWindow` (both storage conventions, #595/#664) — with
+ * several, the first of `monthlySnapshotOrder()`. The stored row is returned verbatim
+ * (Revisionssicherheit): worked/expected/balance as stored, the Gesamtsaldo is the stored
+ * `carryOver`. A closed month is never recomputed and no row is written.
+ *
+ * Every other pair (an open month, an unlabelled schedule, an exempt or unknown person, or two
+ * schedules sharing the deciding `validFrom`, where the single read's order is not defined) goes
+ * through `computeMonthReportFigures` itself, one after another — so the answer is that function's
+ * answer for every pair, which the parity test of #688 pins.
+ */
+export async function computeMonthReportFiguresForMany(
+  app: FastifyInstance,
+  tenantId: string,
+  requests: readonly MonthReportFiguresRequest[],
+): Promise<Map<string, MonthReportFigures>> {
+  const result = new Map<string, MonthReportFigures>();
+  if (requests.length === 0) return result;
+
+  const tz = await getTenantTimezone(app.prisma, tenantId);
+  const employeeIds = [...new Set(requests.map((r) => r.employeeId))];
+  const monthKeys = [...new Set(requests.map((r) => `${r.year}-${r.month}`))];
+  const bounds = new Map(
+    monthKeys.map((key) => {
+      const [year, month] = key.split("-").map(Number);
+      return [key, monthRangeUtc(year, month, tz)] as const;
+    }),
+  );
+  const latestMonthEnd = new Date(Math.max(...[...bounds.values()].map((b) => b.end.getTime())));
+
+  const employees = await app.prisma.employee.findMany({
+    where: { id: { in: employeeIds }, tenantId },
+    select: { id: true, isTimeTrackingExempt: true },
+  });
+  const tracked = new Set(employees.filter((e) => !e.isTimeTrackingExempt).map((e) => e.id));
+
+  // Every schedule that can be the one valid at a requested month's end, newest first.
+  const schedules = await app.prisma.workSchedule.findMany({
+    where: {
+      employeeId: { in: [...tracked] },
+      employee: { tenantId },
+      validFrom: { lte: latestMonthEnd },
+    },
+    orderBy: { validFrom: "desc" },
+    select: { employeeId: true, validFrom: true, type: true, monthlyHours: true },
+  });
+  const schedulesByEmp = new Map<string, typeof schedules>();
+  for (const row of schedules) {
+    const list = schedulesByEmp.get(row.employeeId) ?? [];
+    list.push(row);
+    schedulesByEmp.set(row.employeeId, list);
+  }
+
+  // ONE read of the active MONTHLY snapshots of every requested month: one window per month.
+  const monthStarts = [...bounds.values()].map((b) => b.start);
+  const snapshots =
+    tracked.size === 0
+      ? []
+      : await app.prisma.saldoSnapshot.findMany({
+          where: {
+            employeeId: { in: [...tracked] },
+            employee: { tenantId },
+            periodType: "MONTHLY",
+            OR: monthStarts.map((monthStart) => ({ periodStart: periodStartWindow(monthStart) })),
+            superseded: false,
+          },
+          orderBy: monthlySnapshotOrder(),
+          select: {
+            employeeId: true,
+            periodStart: true,
+            workedMinutes: true,
+            expectedMinutes: true,
+            balanceMinutes: true,
+            carryOver: true,
+          },
+        });
+  // Rows arrive in `monthlySnapshotOrder()`: the first row of a person and month is the one the
+  // single read takes.
+  const snapshotFor = new Map<string, (typeof snapshots)[number]>();
+  for (const row of snapshots) {
+    for (const [key, b] of bounds) {
+      if (!isPeriodStartInMonth(row.periodStart, b.start)) continue;
+      const k = `${row.employeeId}::${key}`;
+      if (!snapshotFor.has(k)) snapshotFor.set(k, row);
+    }
+  }
+
+  for (const req of requests) {
+    const key = monthReportFiguresKey(req.employeeId, req.year, req.month);
+    if (result.has(key)) continue;
+    const monthKey = `${req.year}-${req.month}`;
+    const snapshot = tracked.has(req.employeeId)
+      ? snapshotFor.get(`${req.employeeId}::${monthKey}`)
+      : undefined;
+    if (snapshot) {
+      const monthEnd = bounds.get(monthKey)!.end.getTime();
+      const candidates = (schedulesByEmp.get(req.employeeId) ?? []).filter(
+        (s) => s.validFrom.getTime() <= monthEnd,
+      );
+      const schedule = candidates[0] ?? null;
+      const unambiguous =
+        candidates.length < 2 ||
+        candidates[1].validFrom.getTime() !== schedule!.validFrom.getTime();
+      if (unambiguous && !isUnlabelledReportSchedule(schedule)) {
+        result.set(key, {
+          workedMinutes: snapshot.workedMinutes,
+          expectedMinutes: snapshot.expectedMinutes,
+          balanceMinutes: snapshot.balanceMinutes,
+          balanceAdjustmentMinutes:
+            snapshot.balanceMinutes - (snapshot.workedMinutes - snapshot.expectedMinutes),
+          closingBalanceMinutes: snapshot.carryOver,
+          confirmed: true,
+          labelled: true,
+          basis: "snapshot",
+        });
+        continue;
+      }
+    }
+    // Sequential on purpose (Issue #612, P-09): the open months walk the account kernel.
+    result.set(key, await computeMonthReportFigures(app, req.employeeId, req.year, req.month));
+  }
+  return result;
 }
 
 // ── Main function ─────────────────────────────────────────────────────────────

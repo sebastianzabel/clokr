@@ -95,10 +95,7 @@ function statusOf(row: JsonRow): string {
   return row.confirmedMonthCount === row.monthCount ? "Bestätigt" : "Prognose";
 }
 
-// The period route walks the account kernel once per person and month (#688); under CI coverage a
-// single case takes up to ~28 s, so the global 30 s budget flakes. Back to the default once #688
-// reads closed months in one query. Assertions are unchanged.
-describe("Issue #612 - GET /reports/period/csv", { timeout: 120_000 }, () => {
+describe("Issue #612 - GET /reports/period/csv", () => {
   let app: FastifyInstance;
   let fx: MonthlyExportFixture;
   let foreign: Awaited<ReturnType<typeof seedTestData>>;
