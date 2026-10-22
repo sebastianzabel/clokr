@@ -41,6 +41,7 @@ import {
   parseCli,
   findTakeoverCandidates,
   takeOverUser,
+  schemaProblem,
   EXIT_OK,
   EXIT_ERROR,
   EXIT_FINDINGS,
@@ -684,6 +685,32 @@ describe("backfill-539-role-assignments (Issue #539, D-01)", () => {
       await app.prisma.user.update({ where: { id: late.id }, data: { isActive: false } });
       expect(await takeOverUser(app.prisma, candidate!)).toBe("SKIPPED");
       expect(await app.prisma.roleAssignment.count({ where: { userId: late.id } })).toBe(0);
+    });
+  });
+
+  describe("schema pre-check (Issue #707)", () => {
+    it("a database without Tenant.deactivatedAt exits 1 with an operator message and runs no candidate query", async () => {
+      const findMany = vi.fn();
+      const fake = {
+        $queryRaw: vi.fn().mockResolvedValue([]),
+        user: { findMany },
+      } as unknown as typeof app.prisma;
+      const errors: string[] = [];
+      const spy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+        errors.push(a.map(String).join(" "));
+      });
+      try {
+        expect(await main([], fake)).toBe(EXIT_ERROR);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(errors.join("\n")).toMatch(/Tenant"\."deactivatedAt" is missing/);
+      expect(errors.join("\n")).toMatch(/migrate deploy/);
+      expect(findMany).not.toHaveBeenCalled();
+    });
+
+    it("the migrated test database passes the pre-check", async () => {
+      expect(await schemaProblem(app.prisma)).toBeNull();
     });
   });
 
