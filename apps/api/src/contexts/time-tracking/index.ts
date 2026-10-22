@@ -51,6 +51,7 @@ export {
   createPresenceDevice,
   getPresenceDevice,
   deletePresenceDevice,
+  deletePresenceDevicesOfEmployee,
   type CreatePresenceDeviceData,
 } from "./facade/presence-devices";
 

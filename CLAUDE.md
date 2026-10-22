@@ -190,6 +190,8 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **Employee**: firstName → "Gelöscht", lastName → "GELÖSCHT-<employee number or id prefix>", nfcCardId → null. `employeeNumber` is **KEPT** (owner decision 16.10.2026, Issue #614 D-03; § 41 EStG / § 147 AO, Art. 17 Abs. 3 lit. b DSGVO — the payroll office assigns corrections of old months by the DATEV `pnr`); it stays reserved in the tenant, so creating or changing an employee onto it answers 409, never an internal error.
 - **User**: email → anonymized, passwordHash → "ANONYMIZED", isActive → false
 - **Notes**: All notes in TimeEntries, LeaveRequests, Absences are set to null, and the reason of day-break acknowledgements (`DayBreakAck.reason`; rows kept)
+- **Break-waiver text** (Issue #508): `TimeEntry.breakWaivedReason` is set to null (soft-deleted entries too; `breakStatus` and the entry stay)
+- **WLAN identifiers** (Issue #388): `Employee.wifiMacs` → `[]`, `wifiPresenceEnabled` → false, `wifiOptInAt` → null; `PresenceDevice` rows (MAC + label) are hard-deleted. The `ANONYMIZE` audit carries counts only (`clearedDeviceIdentifiers`); Bestand is listed read-only by `scripts/audit-388-anonymized-leftovers.ts` (`docs/migrations.md` „Phase 388“)
 - **Documents**: Absence documentPath → null
 - **§ 9-Vorgänge**: Section9Credit documentPath → null, reason → null (Zeilen bleiben erhalten — Korrektureintrag nach R7)
 - **Auth tokens**: Invitations, OTP, RefreshTokens are hard-deleted (not retention-relevant)
