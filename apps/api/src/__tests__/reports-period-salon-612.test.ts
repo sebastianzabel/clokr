@@ -70,6 +70,7 @@ type Period = Record<string, unknown> & {
   kpis: Record<string, number | string | boolean | null>;
   rows: Row[];
   helpers?: Helper[];
+  withoutHomeSalonCount?: number;
   helpersReach?: string;
   vacation: { years: Array<{ year: number; asOf: string; rows: VacationRow[] }> };
   absences: Array<{ code: string; unit: string; personCount: number; totalDays: number }>;
@@ -638,9 +639,15 @@ describe("Issue #612 — the period report follows the chosen salon (#542 rules)
       const added = Object.keys(filtered).filter((k) => !(k in plain));
       // owner decision #714 (plan 02): the salon viewpoint adds helpers and the reach kind.
       expect(added.sort(byText)).toEqual(
-        ["helpers", "helpersReach", "personBasis", "salonId"].sort(byText),
+        ["helpers", "helpersReach", "personBasis", "salonId", "withoutHomeSalonCount"].sort(byText),
       );
-      for (const k of ["salonId", "personBasis", "helpers", "helpersReach"]) {
+      for (const k of [
+        "salonId",
+        "personBasis",
+        "helpers",
+        "helpersReach",
+        "withoutHomeSalonCount",
+      ]) {
         expect(k in plain, `${k} absent without a filter`).toBe(false);
       }
     });
@@ -711,6 +718,26 @@ describe("Issue #612 — the period report follows the chosen salon (#542 rules)
           a.helpers!.reduce((s, h) => s + h.salonWorkedMinutes, 0);
         expect(a.kpis.salonWorkedMinutes).toBe(sum);
       }
+    });
+
+    it("counts the persons without a Stammsalon at the period end and does not leak the number to a scoped caller", async () => {
+      const plain = await period(`from=2026-06&to=2026-07`);
+      const salonPersons = Object.values(ids);
+      // Measured: the unfiltered rows that are not one of the four fixture persons (the seed's two
+      // employees and the scoped caller's own employee), each without any HOME assignment.
+      const others = rowIds(plain).filter((id) => !salonPersons.includes(id));
+      const homeRows = await app.prisma.employeeSalonAssignment.count({
+        where: { employeeId: { in: others }, kind: "HOME" },
+      });
+      expect(homeRows).toBe(0);
+      expect(others.length).toBe(3);
+      for (const salonId of [salonA, salonB]) {
+        const filtered = await period(`from=2026-06&to=2026-07&salonId=${salonId}`);
+        expect(filtered.withoutHomeSalonCount, `admin under ${salonId}`).toBe(others.length);
+      }
+      // A SALONS[A] caller's population is its reach: the tenant's no-Stammsalon persons are not in it.
+      const scoped = await period(`from=2026-06&to=2026-07&salonId=${salonA}`, scopedToken);
+      expect(scoped.withoutHomeSalonCount).toBe(0);
     });
 
     it("counts every absence kind of the Stammsalon persons and sums their saldo in the KPIs", async () => {
@@ -870,6 +897,7 @@ describe("Issue #612 — the period report follows the chosen salon (#542 rules)
         "personBasis",
         "helpers",
         "helpersReach",
+        "withoutHomeSalonCount",
         "workedBasis",
         "sollUnavailableReason",
         "leaveDaysUnavailableReason",

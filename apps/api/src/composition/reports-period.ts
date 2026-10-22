@@ -8,6 +8,8 @@ import {
   resolveStammsalonScopedEmployeeIds,
   resolveSalonInReach,
   salonOnlyReach,
+  listSalons,
+  homeSalonsForDays,
   type AccessReach,
   reportPopulationWhere,
   isEmployedInPeriod,
@@ -38,7 +40,7 @@ import {
   yearPopulationPeriod,
   type EmployeeWithIncludes,
 } from "./reports";
-import { resolveMonthReachIds, resolvePeriodReachIds } from "./reach-day"; // Issues #679, #714: the reach day of a person
+import { resolveMonthReachIds, resolvePeriodReachIds, periodReachDay } from "./reach-day"; // Issues #679, #714: the reach day of a person
 import { SALON_VIEW_NOT_FOUND, salonHelperIds } from "./salon-view";
 import { periodCsvFilename, periodTableCsv } from "./period-csv";
 
@@ -538,6 +540,10 @@ async function assemblePeriodReport(
     PeriodSalonHelper & { firstName: string; lastName: string }
   >();
 
+  // Issue #714 (D-05): the persons of the caller's period population (reach and employeeId applied,
+  // the salon circle NOT) - what "ohne Stammsalon" is counted over.
+  const populationUnion = new Map<string, Date | null>();
+
   const persons = new Map<string, PersonAccumulator>();
   // Issue #688: the month entries whose account figures are asked for in ONE call after the loop.
   const figureSlots: Array<{ entry: PeriodMonthEntry; request: MonthReportFiguresRequest }> = [];
@@ -580,6 +586,10 @@ async function assemblePeriodReport(
       include: buildEmployeeInclude(firstDay, lastDay),
       orderBy: { lastName: "asc" },
     })) as unknown as EmployeeWithIncludes[];
+
+    if (filterSalonId !== null) {
+      for (const e of populationEmployees) populationUnion.set(e.id, e.exitDate);
+    }
 
     // Issue #714 (D-01, D-10): under a filter the population above (period population, reach of the
     // month, optional employeeId) is intersected with the home set - it can only narrow. From here on
@@ -721,6 +731,32 @@ async function assemblePeriodReport(
     entry.closingBalanceMinutes = figures.closingBalanceMinutes;
     entry.confirmed = figures.confirmed;
     entry.labelled = figures.labelled;
+  }
+
+  // Issue #714 (D-05, G5): the persons of the caller's period population whose Stammsalon at their
+  // Stichtag is none or an inactive salon belong to NO salon's circle - served as a number so the
+  // salon views add up to "Alle Salons" and nobody is dropped silently. Each person is judged on the
+  // same Stichtag as the circle (periodReachDay); the population is already bounded by the caller's
+  // reach, so a scoped caller never gets a number from outside it.
+  let withoutHomeSalonCount = 0;
+  if (filterSalonId !== null) {
+    const activeSalonIds = new Set(
+      (await listSalons(app.prisma, tenantId, { includeInactive: false })).map((sal) => sal.id),
+    );
+    const byDay = new Map<string, string[]>();
+    for (const [id, exitDate] of populationUnion) {
+      const day = periodReachDay(exitDate, months[0], months[months.length - 1], tz)
+        .toISOString()
+        .slice(0, 10);
+      byDay.set(day, [...(byDay.get(day) ?? []), id]);
+    }
+    for (const [day, idsOfDay] of byDay) {
+      const homes = await homeSalonsForDays(app.prisma, tenantId, idsOfDay, day, day);
+      for (const id of idsOfDay) {
+        const home = homes.get(id)?.get(day) ?? null;
+        if (home === null || !activeSalonIds.has(home)) withoutHomeSalonCount += 1;
+      }
+    }
   }
 
   // P-01: the opening saldo is the Gesamtsaldo of the month before `from`, for the persons that
@@ -941,6 +977,7 @@ async function assemblePeriodReport(
           salonId: filterSalonId,
           personBasis: "HOME_SALON_AT_PERIOD_END" as const,
           helpers,
+          withoutHomeSalonCount,
           // The web needs the caller's reach kind for its hint that helpers of salons outside the
           // reach are not visible (G7); a helper is never drawn from outside the reach.
           helpersReach:

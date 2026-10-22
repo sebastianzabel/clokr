@@ -32,10 +32,12 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+import bcrypt from "bcryptjs";
+import { randomBytes } from "crypto";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
 import { createPopulationPerson } from "./population-fixtures-613";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
-import { listSalons } from "../contexts/platform";
+import { listSalons, normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import { computeMonthReportFigures } from "../contexts/working-time-account";
 import { salonPersonsAtStichtag } from "../composition/reports";
 
@@ -69,6 +71,8 @@ type Period = Record<string, unknown> & {
   kpis: Record<string, number | string | boolean | null>;
   rows: Row[];
   helpers?: Helper[];
+  helpersReach?: string;
+  withoutHomeSalonCount?: number;
   vacation: { years: Array<{ year: number; asOf: string; rows: VacationRow[] }> };
   absences: Array<{ code: string; unit: string; personCount: number; totalDays: number }>;
 };
@@ -240,6 +244,8 @@ describe("Issue #714 — the salon views of the period report add up to all salo
     for (const d of ["2026-02-02", "2026-02-03"]) await entry(ids.MV, nord, d);
     for (const d of ["2026-02-12", "2026-02-13"]) await entry(ids.MV, sued, d);
     for (const d of ["2026-01-07", "2026-02-05"]) await entry(ids.OH, nord, d);
+    // OH also worked once in Sued: an Aushilfe there for a caller whose reach holds OH (plan 714-02).
+    await entry(ids.OH, sued, "2026-02-06");
     for (const d of ["2026-01-05", "2026-01-06"]) await entry(ids.LV, west, d);
     await entry(ids.IN, alt, "2026-01-05");
     await entry(ids.EJ, west, "2026-01-05");
@@ -263,6 +269,8 @@ describe("Issue #714 — the salon views of the period report add up to all salo
   afterAll(async () => {
     vi.useRealTimers();
     try {
+      await app.prisma.roleAssignment.deleteMany({ where: { tenantId } });
+      await app.prisma.accessRole.deleteMany({ where: { tenantId } });
       await cleanupTestData(app, tenantId);
       await cleanupTestData(app, foreign.tenant.id);
     } catch (err) {
@@ -472,6 +480,133 @@ describe("Issue #714 — the salon views of the period report add up to all salo
       // Order: last name, first name, id.
       const names = helpers.map((h) => h.employeeName);
       expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, "de")));
+    });
+  });
+
+  describe("the persons without a Stammsalon in an active salon (D-05, AC-714-2)", () => {
+    const PERIOD = "from=2026-01&to=2026-02";
+
+    it("is the same number under every active salon and closes the partition: Σ personCount + the count = the unfiltered personCount", async () => {
+      const plain = await period(PERIOD);
+      const noHome = [ids.OH, ids.IN, data.adminEmployee.id, data.employee.id];
+      const answers = await Promise.all(
+        activeSalonIds.map((salonId) => period(`${PERIOD}&salonId=${salonId}`)),
+      );
+      const counts = answers.map((a) => a.withoutHomeSalonCount);
+      expect(counts).toEqual(activeSalonIds.map(() => noHome.length));
+      const personSum = answers.reduce((s, a) => s + Number(a.kpis.personCount), 0);
+      expect(personSum + Number(counts[0])).toBe(Number(plain.kpis.personCount));
+      console.info(
+        `[714-02] withoutHomeSalonCount per salon ${counts.join(",")}; Σ personCount ${personSum} + ${counts[0]} = ${plain.kpis.personCount}`,
+      );
+    });
+  });
+
+  describe("a scoped caller (SALONS[Sued], and with a second assignment PERSONS[OH])", () => {
+    let scopedToken: string;
+    let scopedPlusPersonToken: string;
+
+    async function scopedUser(
+      assignments: Array<{
+        scope: "SALONS" | "PERSONS";
+        salonIds: string[];
+        employeeIds: string[];
+      }>,
+    ): Promise<string> {
+      const suffix = randomBytes(3).toString("hex");
+      const user = await app.prisma.user.create({
+        data: {
+          email: `rph714-${suffix}@example.invalid`,
+          passwordHash: await bcrypt.hash("test1234", 4),
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      await app.prisma.employee.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          employeeNumber: `RPH${suffix}`.toUpperCase().slice(0, 20),
+          firstName: "Fixture",
+          lastName: "Home714Caller",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const name = `Home714 scoped ${suffix}`;
+      const role = await app.prisma.accessRole.create({
+        data: {
+          tenantId,
+          name,
+          nameKey: roleNameKey(name),
+          permissions: normalizeRolePermissions(["report:read:ZUGEWIESEN"]),
+        },
+      });
+      for (const a of assignments) {
+        await app.prisma.roleAssignment.create({
+          data: {
+            tenantId,
+            userId: user.id,
+            accessRoleId: role.id,
+            scopeType: a.scope,
+            salonIds: a.salonIds,
+            employeeIds: a.employeeIds,
+          },
+        });
+      }
+      const login = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: user.email, password: "test1234" },
+      });
+      expect(login.statusCode, login.body).toBe(200);
+      return (JSON.parse(login.body) as { accessToken: string }).accessToken;
+    }
+    async function periodAs(query: string, token: string): Promise<Period> {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/period?${query}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      return JSON.parse(res.body) as Period;
+    }
+
+    beforeAll(async () => {
+      scopedToken = await scopedUser([{ scope: "SALONS", salonIds: [sued], employeeIds: [] }]);
+      scopedPlusPersonToken = await scopedUser([
+        { scope: "SALONS", salonIds: [sued], employeeIds: [] },
+        { scope: "PERSONS", salonIds: [], employeeIds: [ids.OH] },
+      ]);
+    });
+
+    const FEB = "from=2026-02&to=2026-02";
+
+    it("never gets a number from outside its reach: 0 although the tenant has persons without a Stammsalon", async () => {
+      const own = await periodAs(`${FEB}&salonId=${sued}`, scopedToken);
+      const admin = await period(`${FEB}&salonId=${sued}`);
+      expect(Number(admin.withoutHomeSalonCount)).toBeGreaterThan(0);
+      expect(own.withoutHomeSalonCount).toBe(0);
+      expect(own.helpersReach).toBe("SCOPED");
+      expect(admin.helpersReach).toBe("WHOLE_TENANT");
+    });
+
+    it("counts a no-Stammsalon person that its second assignment brings into the reach, and lists it as an Aushilfe inside the reach", async () => {
+      const plain = await periodAs(FEB, scopedPlusPersonToken);
+      const filtered = await periodAs(`${FEB}&salonId=${sued}`, scopedPlusPersonToken);
+      expect(rowIds(plain)).toContain(ids.OH);
+      expect(filtered.withoutHomeSalonCount).toBe(1);
+      expect(filtered.helpersReach).toBe("SCOPED");
+      // OH is outside the Sued circle but inside the reach and has 8 h recorded in Sued.
+      expect(
+        (filtered.helpers as Helper[]).map((h) => [h.employeeId, h.salonWorkedMinutes]),
+      ).toEqual([[ids.OH, 480]]);
+      // Never wider: every row and helper id lies inside the caller's unfiltered rows.
+      for (const id of [
+        ...rowIds(filtered),
+        ...(filtered.helpers as Helper[]).map((h) => h.employeeId),
+      ]) {
+        expect(rowIds(plain)).toContain(id);
+      }
     });
   });
 
