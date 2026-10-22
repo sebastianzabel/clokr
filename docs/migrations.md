@@ -1214,6 +1214,30 @@ einem Abschluss stecken (unverändert).
 **3. Rollback.** Das vorige Image zeigt wieder den Saldo ohne Eröffnungssaldo; ein inzwischen gespeicherter Wert wird bei der
 nächsten Änderung der Person wieder ohne ihn geschrieben. Keine Daten zurückzunehmen.
 
+## Phase 388 — Anonymisierung löscht WLAN-Kennungen und Pausen-Verzicht-Freitext (Issues #388, #508)
+
+**Was sich ändert.** Es gibt **keine Migration und keinen Schemawechsel**. Die DSGVO-Anonymisierung
+(`DELETE /api/v1/employees/:id`) setzt in derselben Transaktion zusätzlich `Employee.wifiMacs` auf `[]`,
+`wifiPresenceEnabled` auf `false`, `wifiOptInAt` auf `null`, löscht die `PresenceDevice`-Zeilen der Person (MAC + Label)
+und leert `TimeEntry.breakWaivedReason` (auch bei weich gelöschten Einträgen; `breakStatus` und die Einträge bleiben). Die
+`ANONYMIZE`-Audit-Zeile nennt nur Anzahlen (`clearedDeviceIdentifiers`, `clearedFields`), nie die Adressen oder den Text.
+
+**1. Bestand prüfen (lesend, auf int UND prod).** Personen, die vor dieser Änderung anonymisiert wurden, behalten ihre Reste.
+`apps/api/scripts/audit-388-anonymized-leftovers.ts` schreibt nichts (kein Schreib-Schalter; `--apply` und `--confirm` werden
+abgelehnt) und gibt je betroffener Person nur Mandanten-Id, Personen-Id, Kategorie und Anzahl aus.
+
+```bash
+DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx scripts/audit-388-anonymized-leftovers.ts | tee "388-bestand-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+`--tenant <id>` begrenzt auf einen Mandanten. Exit-Code `0`: nichts gefunden; `2`: Liste gedruckt; `1`: Aufruf- oder Verbindungsfehler.
+
+**2. Bereinigung des Bestands ist offen.** Ob die Reste per einmaligem Skript gelöscht werden, ist eine offene Owner-Entscheidung
+(#388); bis dahin gibt es bewusst **kein** Backfill. `validate-anonymization.ts` meldet die Reste zusätzlich als blockierende Funde.
+
+**3. Rollback.** Das vorige Image lässt die Felder bei einer neuen Anonymisierung wieder stehen. Gelöschte MACs sind nicht
+wiederherstellbar und sollen es auch nicht sein.
+
 ## Retention EOL policy (COMP-V1814-07)
 
 Clokr uses a **two-stage retention lifecycle** for employee data:

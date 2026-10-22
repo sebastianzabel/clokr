@@ -121,3 +121,18 @@ export async function deletePresenceDevice(
     where: { id, employeeId },
   });
 }
+
+/**
+ * Issue #388 (DSGVO Art. 17): hard-deletes every enrolled WLAN device of `employeeId` inside the
+ * anonymization transaction. A MAC address is a person-related device identifier and the row
+ * (mac + label) holds nothing retention-relevant, so it is removed, not blanked. Tenant-scoped.
+ * Returns the number of removed rows (the caller audits the count, never the addresses).
+ */
+export async function deletePresenceDevicesOfEmployee(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+  tenantId: string,
+): Promise<number> {
+  const { count } = await db.presenceDevice.deleteMany({ where: { employeeId, tenantId } });
+  return count;
+}
