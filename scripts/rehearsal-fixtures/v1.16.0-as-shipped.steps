@@ -1,0 +1,22 @@
+# Retro proof for Issue #709: the v1.16.0 steps AS THE SHIPPED NOTES NAMED THEM (before #707 was fixed):
+# backfill-539 as a pre-deploy dry run (Notes "Vor dem Deploy" 3) and audit-511 pre-deploy (step 10).
+# Run against a pre-1.16.0 dump with the 1.16.0 image, the rehearsal must report both. Not a release list.
+pre|0|audit-70-entry-overlaps|script|audit-70-entry-overlaps.ts
+pre|0|timeentry-count|sql|select count(*) from "TimeEntry"
+pre|0|role-gap-sql-539|sql|select count(*) from "User" u join "Employee" e on e."userId"=u.id where u."isActive" and not exists (select 1 from "RoleAssignment" ra where ra."userId"=u.id and ra."tenantId"=e."tenantId")
+pre|0|backfill-539-dry-run-pre|script|backfill-539-role-assignments.ts
+pre|0|audit-566-package-backfill|script|audit-566-package-backfill.ts
+pre|0,2|audit-614-anonymized-employment|script|audit-614-anonymized-employment.ts
+pre|0|audit-662-cancelled-leave-section9|script|audit-662-cancelled-leave-section9.ts
+pre|0|audit-682-opening-balance|script|audit-682-opening-balance-live-gap.ts --all-tenants
+pre|0|audit-663-backfilled-snapshots|script|audit-663-backfilled-snapshots.ts
+pre|0|audit-595-legacy-period-start|script|audit-595-legacy-period-start.ts
+pre|0|audit-568-bulk-apply-history|script|audit-568-bulk-apply-history.ts
+pre|0,2|audit-511-break-placement-pre|script|audit-511-break-placement.ts --all-tenants --from 2026-01-01 --to 2026-10-31
+migrate|0|migrate-deploy|migrate|
+post|0|backfill-539-dry-run|script|backfill-539-role-assignments.ts
+post|0|backfill-666-dry-run|script|backfill-666-anonymized-employment.ts
+post|0|backfill-666-confirm|script|backfill-666-anonymized-employment.ts --confirm
+post|0,2|audit-614-after|script|audit-614-anonymized-employment.ts
+post|0|audit-662-after|script|audit-662-cancelled-leave-section9.ts
+post|0,2|audit-511-after|script|audit-511-break-placement.ts --all-tenants --from 2026-01-01 --to 2026-10-31

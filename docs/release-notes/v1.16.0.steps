@@ -1,0 +1,37 @@
+# Machine-readable twin of "Betrieb & Migration" in v1.16.0.md (Issue #709). The release notes and
+# scripts/release-rehearsal.sh walk THIS list, in this order; a change to the steps in the notes
+# changes this file in the same commit. Repo copy only: the notes baked into the shipped 1.16.0
+# image are history, and so is the order they named.
+#
+# Format:  phase | expected exit | id | kind | argument
+#   expected exit: one code or a comma list; audits exit 2 when they list findings, which is information, not a failure
+#   phase   pre = before the deploy (read-only), migrate = prisma migrate deploy, post = after it
+#   kind    sql = psql -c on the throwaway DB, script = `pnpm tsx scripts/<arg>` in the new api image,
+#           migrate = `prisma migrate deploy` as the image entrypoint runs it
+# Operational steps with no exit code to prove (pg_dump, deploy window, OPERATOR_JWT_SECRET, the
+# sample sign-in) stay in the notes only.
+#
+# Notes "Vor dem Deploy" 2: Überschneidungen müssen 0 liefern, sonst bricht der Deploy ab
+pre|0|audit-70-entry-overlaps|script|audit-70-entry-overlaps.ts
+pre|0|timeentry-count|sql|select count(*) from "TimeEntry"
+# Notes "Vor dem Deploy" 3 (#707): the script needs Tenant.deactivatedAt, so before the deploy only the SQL
+pre|0|role-gap-sql-539|sql|select count(*) from "User" u join "Employee" e on e."userId"=u.id where u."isActive" and not exists (select 1 from "RoleAssignment" ra where ra."userId"=u.id and ra."tenantId"=e."tenantId")
+pre|0|audit-566-package-backfill|script|audit-566-package-backfill.ts
+pre|0,2|audit-614-anonymized-employment|script|audit-614-anonymized-employment.ts
+pre|0|audit-662-cancelled-leave-section9|script|audit-662-cancelled-leave-section9.ts
+pre|0|audit-682-opening-balance|script|audit-682-opening-balance-live-gap.ts --all-tenants
+pre|0|audit-663-backfilled-snapshots|script|audit-663-backfilled-snapshots.ts
+pre|0|audit-595-legacy-period-start|script|audit-595-legacy-period-start.ts
+pre|0|audit-568-bulk-apply-history|script|audit-568-bulk-apply-history.ts
+# audit-511 is NOT a pre-deploy step: it reads DayBreak, a table this release creates (found by the rehearsal, #709)
+# Deploy: the 14 migrations
+migrate|0|migrate-deploy|migrate|
+# Notes "Nach dem Deploy" 3: directly after the migration, dry run first (0 = control, 2 = hits to confirm)
+post|0|backfill-539-dry-run|script|backfill-539-role-assignments.ts
+# Notes "Nach dem Deploy" 5: dry run, then --confirm on the copy, then audit-614 again
+post|0|backfill-666-dry-run|script|backfill-666-anonymized-employment.ts
+post|0|backfill-666-confirm|script|backfill-666-anonymized-employment.ts --confirm
+post|0,2|audit-614-after|script|audit-614-anonymized-employment.ts
+# Notes "Nach dem Deploy" 6: audit-662 repeated for the comparison; audit-511 runs for the first time here
+post|0|audit-662-after|script|audit-662-cancelled-leave-section9.ts
+post|0,2|audit-511-after|script|audit-511-break-placement.ts --all-tenants --from 2026-01-01 --to 2026-10-31
