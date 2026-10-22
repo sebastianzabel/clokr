@@ -91,7 +91,8 @@ export async function resolvePeriodReachIds(
   }
   const byExitDay = new Map<string, string[]>();
   for (const leaver of leavers) {
-    const exitDay = dateStrInTz(leaver.exitDate as Date, tz);
+    // The Stichtag rule lives in periodReachDay only; a leaver here lies inside the period.
+    const exitDay = periodReachDay(leaver.exitDate, from, to, tz).toISOString().slice(0, 10);
     byExitDay.set(exitDay, [...(byExitDay.get(exitDay) ?? []), leaver.id]);
   }
   for (const [exitDay, ids] of byExitDay) {
