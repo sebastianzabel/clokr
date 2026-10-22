@@ -3575,6 +3575,7 @@ prüft einen leeren Unterschied nach dem Entfernen der Schlüsselwörter); `GET 
   404 von `/reports/monthly`), eine ungültige Kennung mit 400. Das Ist ist die Zeit der Salon-Einträge bis gestern, Soll und
   Saldo `null` mit `SALON_FILTER`. Die Urlaubstabelle zeigt die Personen mit Stammsalon am **Periodenende**
   (`salonPersonsAtStichtag`), ihre Zahlen unverändert. Die Seite sagt es in einem Satz neben der Tabelle.
+  _(Nachtrag Phase 714: ersetzt, siehe unten.)_
 - **CSV mit Protokoll (P-11).** `GET /reports/period/csv` (`report:export:ZUGEWIESEN`) liefert die Tabelle „Zeiten & Konten“ aus
   derselben Zusammenstellung: UTF-8 mit BOM, `;`, CRLF, Stunden mit Dezimalkomma aus Minuten, zurückgehaltene Zellen leer,
   Schutz vor Formeln (Apostroph vor `= + - @`, Tabulator, Zeilenumbruch). Genau eine `EXPORT`-Auditzeile je Download
@@ -3655,6 +3656,125 @@ pnpm --filter @clokr/web exec vitest run src/__tests__/reports-period-page-612.t
 git diff --quiet "$(git merge-base HEAD origin/main)" -- apps/api/src/__tests__/neutrality/recorded
 git diff "$(git merge-base HEAD origin/main)" -- apps/api/src/composition/reports.ts   # elf Zeilen, jede nur um das Schlüsselwort `export` verändert
 pnpm --filter @clokr/e2e exec playwright test reports-period.spec.ts   # gegen den Test-Stack
+```
+
+### Nachtrag 2026-10-22 (Phase 714, Issue #714) — Berichte unter Salonfilter: ein Personenkreis nach Stammsalon, ganze Personenwerte
+
+**Schwere:** Verhaltensänderung auf Owner-Entscheidung vom 19.10.2026 (Issue #714, Abschnitt „Lösung“). Keine Unterbau-, Schema-,
+Migrations-, Routen- oder Permission-Änderung: dieselben zwei Routen mit denselben Berechtigungen, `neutrality/recorded/` ist
+byte-gleich zum Merge-Basisstand. Der Nachtrag Phase 612 (Salonfilter nach den Regeln aus #542: Ist aus den Salon-Einträgen, Soll
+und Saldo `null` mit `SALON_FILTER`) ist für `GET /reports/period` und die CSV ersetzt.
+
+**Warum:** Unter einem Salon rechnete die Seite „Berichte“ das Ist der Einträge in diesem Salon und ließ Soll und Saldo weg. Wer in
+mehreren Salons arbeitet (Springer), erschien in jedem Salon mit einem Ist unter seinem Soll, und die Salons ergaben zusammen nicht
+„Alle Salons“. Ein Widget zeigte außerdem Zahlen aus zwei verschiedenen Personenkreisen nebeneinander.
+
+**Was sich geändert hat:**
+
+- **Stichtag (P-714-01).** `resolvePeriodReachIds` (`composition/reach-day.ts`) beurteilt die Stammsalon-Zugehörigkeit am letzten
+  Tag des Zeitraums, bei einem Austritt im Zeitraum am Austrittstag (`periodReachDay`, die einzige Stelle der Regel; die
+  Monatsfunktionen `monthReachDay` / `resolveMonthReachIds` delegieren mit von = bis und bleiben byte-gleich).
+- **Ein Kreis (P-714-02).** Unter `salonId` wird die Population einmal auf die Personen mit Stammsalon in diesem Salon eingeengt;
+  für sie läuft der ungefilterte Weg (`computeMonthReportFiguresForMany`, `computeEmployeeSummary`, Urlaubsabruf,
+  Eröffnungssaldo). Die Sonderfälle `filterSalonId === null` sind entfernt; Soll und Saldo fehlen nur noch bei `NO_PERMISSION`.
+  Die Urlaubstabellen führen dieselben Personen wie die Zeilen und zählen alle Abwesenheitsarten. Wer im Zeitraum den Stammsalon
+  gewechselt hat, steht ganz beim Stammsalon am Ende.
+- **Antwortform (P-714-03).** Unter einem Filter ersetzen `personBasis: "HOME_SALON_AT_PERIOD_END"`, `helpers`, `helpersReach`,
+  `withoutHomeSalonCount` und `salonWorkedMinutes` (Monat, Zeile, Kennzahl) die Felder `workedBasis`, `sollUnavailableReason`
+  und `leaveDaysUnavailableReason`. Die ungefilterte Antwort ist unverändert (der Vergleichstest mit dem vor dem Salonfilter
+  aufgenommenen Stand ist nicht angefasst).
+- **Salon-Blickwinkel (P-714-04/05).** „Im Salon gearbeitet“ ist die Arbeitszeit der geschlossenen, gültigen WORK-Einträge im
+  Salon bis mandantenlokal gestern (`addWorkingMinutes`), nie ein Saldo und nie von einem Soll abgezogen; sie ist gleich dem
+  Ist von `GET /reports/monthly?salonId` (Paritätstest). „Aushilfen aus anderen Salons“ sind Personen außerhalb des Kreises mit
+  Einträgen im Salon (`salonHelperIds` in `composition/salon-view.ts`, der Eintragszweig von `salonViewMemberIds`, keine zweite
+  Regel), nur Name und Stunden, ohne Personenansicht; die Menge bleibt in der Berichtsreichweite des Aufrufers (`helpersReach`).
+- **Rest (P-714-06).** `withoutHomeSalonCount` zählt die Personen der Reichweite des Aufrufers, deren Stammsalon am Stichtag
+  leer oder ein inaktiver Salon ist; sie erscheinen nur ohne Salonauswahl. Ein Aufrufer mit Salon-Reichweite bekommt nur die
+  Zahl innerhalb seiner Reichweite.
+- **Anzeige (P-714-07).** Hinweis „Personensaldo nach Stammsalon, nicht nach Salon aufgeteilt“ an Kennzahlen und Tabelle, die
+  Kennzahl „Im Salon gearbeitet“ in einer eigenen Reihe, ein eigener Abschnitt „Im Salon gearbeitet“ mit „Aushilfen aus anderen
+  Salons“ statt einer Tabellenspalte, die Tabelle mit echtem Status. Das Web summiert nichts.
+- **CSV (P-714-08).** Unter einem Filter dieselben neun Spalten für genau die Zeilen der Tabelle (Soll, Saldo, Status, „k von m“
+  gefüllt, keine Zeile für eine Aushilfe); die `EXPORT`-Auditzeile behält `salonId`, die Personenzahl ist die Größe des Kreises.
+
+**Begründete Abweichung: `GET /reports/monthly` bleibt unter dem Filter ein Salon-Blickwinkel.** CLAUDE.md verbietet es, den
+Monatsbericht zu ändern („`/reports/monthly` is not edited“), und die Web-Seite ruft den gefilterten Monatsbericht nicht auf.
+Dort bleibt das Ist die Zeit der Salon-Einträge, Soll und Saldo bleiben zurückgehalten. Der Monatsbericht ist damit die
+Salon-Ansicht (Einträge, Stammsalon je Tag), der Periodenbericht die Personen-Ansicht (Stammsalon am Stichtag); beide sind über
+„Im Salon gearbeitet“ = Ist des gefilterten Monatsberichts verbunden und durch einen Test festgehalten.
+
+**Auswirkung auf die Kontexte:**
+
+- Zeiterfassung: keine. Gelesen werden dieselben Einträge wie bisher.
+- Abwesenheiten: keine. Die Route liest dieselben Kerne (`sickLeaveDayCounts`, die Urlaubstabelle) für eine kleinere Personenmenge.
+- Schichtplanung: keine.
+- Arbeitszeitkonto: keine Änderung; `computeMonthReportFiguresForMany` bleibt die einzige Quelle von Soll, Ist, Saldo und Gesamtsaldo.
+- Unterbau: keine Änderung; neue Leser von `salonOnlyReach`, `resolveStammsalonScopedEmployeeIds`, `homeSalonsForDays` und `listSalons`.
+- Kompositionsschicht: `reach-day.ts`, `reports-period.ts`, `salon-view.ts`, `period-csv.ts`. Die Zusammenstellung trägt keine neue
+  Geschäftsregel außer der Wahl des Personenkreises; Soll, Saldo und Ist je Person kommen unverändert aus den Kontexten.
+
+**Was bewusst NICHT geschah:**
+
+- Keine Aufteilung von Soll oder Saldo auf Salons und kein Saldo aus „Salon-Ist − Soll“.
+- Keine Änderung an `GET /reports/monthly` und an `composition/reports.ts`; `composition/dashboard.ts` und alle Kontexte sind
+  gegenüber dem Merge-Basisstand byte-gleich.
+- Kein Drill-down für Aushilfen: die Personenansicht zeigt das Gesamtsaldo einer Person außerhalb des Kreises.
+- Keine Erweiterung der Reichweite: Aushilfen und die Zahl „ohne Stammsalon“ erscheinen nur innerhalb der Berichtsreichweite.
+- Keine Neuaufnahme der Neutralität: `neutrality/recorded/` ist byte-gleich zum Merge-Basisstand, die Matrix ist unverändert grün.
+- Nichts für #713 (Abwesenheitstabelle je Person): sie braucht nach dieser Phase keinen Salonzweig mehr.
+
+**Grenzen:**
+
+- Die Summenprobe (Σ der Salons + Rest = „Alle Salons“) gilt nur für Aufrufer mit der Reichweite „ganzer Mandant“. Ein
+  Aufrufer mit Salon-Reichweite und einer Person, die im Zeitraum den Stammsalon gewechselt hat, kann abweichen: die Reichweite
+  wird je Person am Stichtag beurteilt.
+- Die ungefilterte Urlaubstabelle behält ihre Jahrespopulation; nur unter einem Salon folgt sie den Zeilen.
+- Eine Person ohne Stammsalon in einem aktiven Salon ist nur ohne Salonauswahl sichtbar (kein „letzter Stammsalon“ als Ersatz).
+
+**Gemessen** (Quellen: `714-01` … `714-05-SUMMARY.md`):
+
+- Paritätswelt `reports-period-home-salon-714` (3 Salons Süd, Nord, West; ein Springer mit 80 h Süd und 80 h Nord bei 160 h Soll;
+  Personen ohne Stammsalon; ein Wechsler; ein Austritt im Zeitraum), Zeitraum 2026-01 bis 2026-02, Aufrufer „ganzer Mandant“:
+
+  | Kennzahl                   | Süd + Nord + West         | Personen ohne Stammsalon | Alle Salons |
+  | -------------------------- | ------------------------- | ------------------------ | ----------- |
+  | Ist (Minuten)              | 11520 + 1920 + 2880       | 1440                     | 17760       |
+  | Soll (Minuten)             | 29280 + 19680 + 27840     | 63840                    | 140640      |
+  | Saldo (Minuten)            | -17760 + -17760 + -24960  | -62400                   | -122880     |
+  | Gesamtsaldo Ende (Minuten) | -88800 + -88800 + -238080 | -687360                  | -1103040    |
+  | Krankheitstage             | 0 + 0 + 2                 | 0                        | 2           |
+  | Personen                   | 2 + 1 + 3                 | 4                        | 10          |
+
+  Der Springer steht im Februar in Süd mit Ist 9600, Soll 9600, Saldo 0; in Nord und West hat er keine Zeile. Sein Salon-Ist
+  erscheint als „Im Salon gearbeitet“ (Süd 4800 Minuten in der Zeile, in Nord 4800 als Aushilfe); die Summe von „Im Salon
+  gearbeitet“ über die drei Salons (17760) ist die Summe aller Fixture-Einträge in aktiven Salons bis gestern.
+
+- Testdateien: neu `reports-period-home-salon-714` (20 Fälle) und im Web `SalonWorkedSection.test` (14 Fälle); erweitert
+  `reports-period-salon-612`, `reports-period-csv-612`, `period-csv-612`, `salon-view`, `report-salon-filter-source-542`,
+  `reports-hr-86` (Salon-Pfad der Antwort, tagesfrei) sowie im Web `PeriodKpis`, `TimesAccountsTable`, `VacationAbsenceTab`,
+  `ExportDialog`, `page-scope`, `period-table-612`, `reports-period-page-612`, `reports-salon-filter-542`. Jede geänderte alte
+  Behauptung ist im Commit-Text mit „Owner-Entscheidung #714“ benannt; keine wurde abgeschwächt.
+- Mutationsnachweise (je zurückgespielt und byte-verglichen): Stichtag, Zeilenmenge, Kennzahlenmenge, Urlaubsmenge, Salon-Ist,
+  Aushilfenmenge, Zähler ohne inaktive Salons, Abschnitt und Summe der Aushilfenansicht. Ein Nachweis blieb zunächst grün und
+  deckte auf, dass der Austrittstag unabhängig vom Stichtag berechnet wurde; behoben.
+- Neutralität: 3 Dateien, 1720 Fälle, 0 geänderte Zellen.
+- Browser: `reports-period.spec.ts` bekommt einen vierten Block „Salonwechsel: Stammsalon-Sicht im Blick“ (6 Tests: 1280, 390 und
+  360 px, je hell und dunkel; jeder mit zwei Kontrollen: ein Element außerhalb des Bildschirms ist nicht im Sichtbereich, und unter
+  „Alle Salons“ existieren Kachel und Abschnitt nicht). e2e-ci gesamt: 267 bestanden, 1 übersprungen (die bekannte bedingte
+  Überspringung in `functional.spec.ts`) in 1,7 min auf einem frischen Test-Stack.
+
+### Nachrechnen (Nachtrag Phase 714)
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/__tests__/reports-period-home-salon-714.test.ts src/__tests__/reports-period-salon-612.test.ts \
+  src/__tests__/reports-period-csv-612.test.ts src/composition/__tests__/period-csv-612.test.ts src/composition/__tests__/salon-view.test.ts \
+  src/__tests__/report-salon-filter-source-542.test.ts src/__tests__/reports-hr-86.test.ts src/__tests__/reach-stichtag-679.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts src/__tests__/notification-recipients-neutrality.test.ts src/__tests__/activity-auth-neutrality.test.ts   # unverändert grün
+pnpm --filter @clokr/web exec vitest run src/lib/components/reports src/lib/reports src/lib/salons src/__tests__/reports-period-page-612.test.ts
+git diff --quiet "$(git merge-base HEAD origin/main)" -- apps/api/src/__tests__/neutrality/recorded
+git diff --quiet "$(git merge-base HEAD origin/main)" -- apps/api/src/composition/reports.ts apps/api/src/composition/dashboard.ts apps/api/src/contexts packages/db
+pnpm --filter @clokr/e2e exec playwright test reports-period.spec.ts --grep "Issue #714"   # gegen den Test-Stack
 ```
 
 ## R — Fehlender Urlaubsanspruch bei Mitarbeiteranlage (Phase 416, Issue #416)

@@ -316,8 +316,16 @@ Current: recalculated from hire date on every request (does not scale). Target a
   other, at most 12, none in the future (400). Opening = the previous month's `closingBalanceMinutes`, closing = the last
   month's, which since #681/#682 equals the live saldo at the same Stichtag; the confirmed/open split of the closing is given
   only where it is exact (last month closed, or open right after a closed one), else `null`. Soll and saldo appear only where `overtime:read` covers the person in every shown month
-  (`NO_PERMISSION` otherwise, Ist stays); under a salon filter they are `null` with `SALON_FILTER` (#542 rules, one 404
-  validated before any read, Ist = the salon's entries). Vacation = the `/leave-overview` assembly at each touched
+  (`NO_PERMISSION` otherwise, Ist stays). **Under a salon filter the answer has ONE circle (Issue #714, owner decision
+  19.10.2026):** the persons homed in the salon at the period Stichtag (`resolvePeriodReachIds` in `reach-day.ts`: the exit
+  day for an exit inside the period, else the period's last day; one 404 validated before any read), each with the whole
+  figures of the unfiltered path (Soll and saldo withheld only for `NO_PERMISSION`, never split by salon; the envelope
+  carries `personBasis: "HOME_SALON_AT_PERIOD_END"`). The salon viewpoint is separate and never a saldo: `salonWorkedMinutes`
+  (closed valid WORK entries of the salon through tenant-local yesterday, month, row and KPI) and `helpers` (persons outside
+  the circle with entries in the salon, found by `salonHelperIds`, names and hours only, no drill-down).
+  `withoutHomeSalonCount` names the remainder (persons of the caller's reach whose Stammsalon at their Stichtag is null or an
+  inactive salon); for whole-tenant callers Σ over the active salons + that remainder = the unfiltered answer (a scoped caller
+  with a mid-period mover can differ). The vacation tables list the same persons as the rows, the CSV lists the rows. Vacation = the `/leave-overview` assembly at each touched
   year's Stichtag (the last period day in the year, at most tenant-local yesterday), filtered by Stammsalon at the
   period end, plus the Verfall facts. `GET /reports/period/csv` (`composition/period-csv.ts`, `report:export`) serves
   the same assembly as a file and writes one `EXPORT` audit row before the bytes. `/reports/monthly` is not edited
@@ -325,10 +333,11 @@ Current: recalculated from hire date on every request (does not scale). Target a
   (`/reports?from&to&tab[&salonId][&person]`, the contract #591 links into) only through
   `$lib/reports/period-state.ts` and sums nothing itself. Never add a second period computation, a period field to
   `/reports/monthly` or a Soll/saldo the account did not state. Proofs: `reports-period-612`, `-sums-612` (row = Σ months
-  = `/monthly` = Monatsexport = live saldo), `-vacation-612`, `-salon-612`, `-reach-612`, `-csv-612`, `period-csv-612`,
+  = `/monthly` = Monatsexport = live saldo), `-vacation-612`, `-salon-612`, `-home-salon-714` (3 salons, a Springer, a person without Stammsalon: Σ parity, no
+  Scheinminus), `-reach-612`, `-csv-612`, `period-csv-612`,
   `-perf-612` (a 60 s regression ceiling; the measured cost is ~13 ms per person-month, the bulk-read fix is #688),
   `reports-hr-86` (day-free key paths), the web `reports-period-page-612` and the e2e `reports-period.spec.ts`.
-  `docs/adr/0001-abweichungen.md`, Eintrag Q, Nachtrag Phase 612.
+  `docs/adr/0001-abweichungen.md`, Eintrag Q, Nachtrag Phase 612 and Nachtrag Phase 714.
 - **`@db.Date` columns get calendar-day bounds, never a month/week instant (Issue #493).**
   `monthRangeUtc()` / `weekRangeUtc()` return tenant-local boundaries as UTC instants (local 1 Oct
   00:00 = `2026-09-30T22:00Z`); a Prisma filter or a JS clip on a `@db.Date` column
@@ -1247,7 +1256,9 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   Monatsexport only narrow WHICH persons appear, by Stammsalon on the endpoint's own Stichtag passed as a CALENDAR day
   (#493; the Monatsexport judges a leaver on the exit day), each person with the whole saldo („Personensaldo, nicht nach
   Salon aufgeteilt“); a person without a Stammsalon on that day appears only unfiltered (no "last Stammsalon"
-  fallback).
+  fallback). `/reports/monthly` keeps this salon viewpoint (an entry in the salon or the Stammsalon on a day, Soll
+  withheld), while the period report lists the Stammsalon persons at the period Stichtag with whole values (owner decision
+  19.10.2026, #714); `salonHelperIds` is the entry branch of `salonViewMemberIds`, not a second rule.
   Every Stammsalon reach resolution in `composition/` receives a tenant-local CALENDAR day, never an instant (Issue #679):
   month-bound reads judge a person who left inside the month on the exit day, everyone else on the month's last day, through
   `composition/reach-day.ts` (`resolveMonthReachIds`/`isMonthReachMatch`); `scope-filter.ts` stays unchanged.

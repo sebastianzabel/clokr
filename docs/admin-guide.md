@@ -157,10 +157,14 @@ Ansicht öffnet.
   mit drei Blöcken: **Monatsexport** als PDF und **DATEV** für einen wählbaren Monat des Zeitraums und die **Tabelle
   als CSV** für den ganzen Zeitraum. Die CSV hat die Spalten der Tabelle (Stunden mit Dezimalkomma, UTF-8, Trennzeichen
   Semikolon) und wird wie jeder Export protokolliert (Zeitraum, Salon, Personenzahl).
-- **Salon:** folgt der Salonauswahl in der Kopfleiste (nur bei Mandanten mit Salonauswahl). Die Tabelle zeigt Personen
-  mit Eintrag im Salon oder Stammsalon an mindestens einem Tag des Zeitraums; das Ist ist die Zeit im Salon. Soll und
-  Saldo sind Vertragsgrößen und werden nie auf Salons aufgeteilt, sie fehlen unter einem Filter. Die Urlaubstabelle zeigt
-  die Personen mit Stammsalon am Ende des Zeitraums, ihre Urlaubszahlen sind unverändert. **DATEV gilt immer für alle
+- **Salon:** folgt der Salonauswahl in der Kopfleiste (nur bei Mandanten mit Salonauswahl). Die Tabelle zeigt die Personen
+  mit Stammsalon in diesem Salon am Ende des Zeitraums (bei einem Austritt im Zeitraum am Austrittstag), jede mit ihren
+  ganzen Werten: Soll, Ist, Saldo, Urlaub und Krankheit sind Personenwerte und werden nie auf Salons aufgeteilt, der
+  Hinweis „Personensaldo nach Stammsalon, nicht nach Salon aufgeteilt“ steht neben Kennzahlen und Tabelle. Wer im Zeitraum
+  den Stammsalon gewechselt hat, zählt ganz zum Stammsalon am Ende. Eine Zahl nennt die Personen ohne Stammsalon in einem
+  aktiven Salon; sie erscheinen nur unter „Alle Salons“. Getrennt davon zeigt **Im Salon gearbeitet** die Stunden, die im
+  Salon gearbeitet wurden, mit dem Abschnitt **Aushilfen aus anderen Salons** (nur Name und Stunden, ohne Saldo und ohne
+  Personenansicht). Die Urlaubstabelle und die CSV listen dieselben Personen wie die Tabelle. **DATEV gilt immer für alle
   Salons** der Reichweite (§ 41 EStG).
 - **Personalabteilung:** sieht die Tabellen und Kennzahlen ohne Tagesliste und ohne Export. **Salonleitungen** sehen
   nur ihre Reichweite. Wer nur exportieren darf, bekommt die Periodenleiste mit „Exportieren“ und den Hinweis „Keine
