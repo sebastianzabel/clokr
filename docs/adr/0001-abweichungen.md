@@ -3780,6 +3780,101 @@ git diff --quiet "$(git merge-base HEAD origin/main)" -- apps/api/src/compositio
 pnpm --filter @clokr/e2e exec playwright test reports-period.spec.ts --grep "Issue #714"   # gegen den Test-Stack
 ```
 
+### Nachtrag 2026-10-22 (Phase 713, Issue #713) — Abwesenheiten je Person, Krank und Kinderkrank getrennt
+
+**Schwere:** Erweiterung. Die Zeile `SICK` von „Abwesenheiten nach Art“ bedeutet jetzt nur eigene Krankheit (bisher Krankheit und
+Kinderkrank zusammen); `kpis.sickDays` und `rows[].sickDays` bleiben die Summe beider und sind unverändert. Keine Unterbau-,
+Schema-, Migrations-, Routen- oder Permission-Änderung: dieselben zwei Routen mit denselben Berechtigungen, `neutrality/recorded/`
+ist byte-gleich zum Merge-Basisstand, `GET /reports/monthly`, Stundennachweis, Monatsexport und DATEV sind unverändert.
+
+**Warum:** Die Seite „Berichte“ führte Krank und Kinderkrank in einer Zahl und zeigte Abwesenheiten nur als Summe je Art. Wer
+wissen will, welche Person wie lange krank, kinderkrank, im Urlaub, in der Berufsschule oder in Elternzeit war, musste in die
+Personenansicht oder in den Monatsbericht gehen. Der Kinderkrankenanspruch (§ 45 SGB V) lässt sich nur mit getrennten Zahlen
+beurteilen.
+
+**Was sich geändert hat:**
+
+- **Kern-Aufteilung (P-713-03).** `sickLeaveDayCounts()` (`contexts/absence/sick-leave-days.ts`) liefert zusätzlich
+  `sickDaysByCode { SICK, SICK_CHILD }`, auf derselben Zeile wie `totalDays` summiert. Beschneiden auf den Zeitraum, halber Tag,
+  Attestaufteilung, Verschiebung nach § 9 BUrlG und `countsDay` gelten damit für beide Codes; je Aufruf gilt
+  `SICK + SICK_CHILD = totalDays`. Es gibt keinen zweiten Kalenderlauf, die Suche erfolgt nach Code und nie nach `leaveType.name`.
+- **Berufsschule (P-713-04).** `vocationalSchoolDayCount()` (`contexts/absence/bs-leave-days.ts`, über `index.ts` exportiert) zählt
+  die Berufsschultage der Definition aus Issue #448 (der `startDate` einer `Absence` vom Typ `VOCATIONAL_SCHOOL`, eine Zeile je Tag)
+  im Zeitraum; sie wird aus den ohnehin geladenen Abwesenheiten gespeist, es entsteht kein neuer Prisma-Aufruf.
+  `computeEmployeeSummary` (`composition/reports.ts`) gibt beide Werte (`sickDaysByCode`, `vocationalSchoolDays`) als zwei
+  zusätzliche Felder zurück; mehr ändert sich in dieser Datei nicht.
+- **Zeile `rows[].absence` (P-713-01, -02).** Jede Zeile von `GET /reports/period` trägt ein Objekt mit genau zehn Schlüsseln in
+  fester Reihenfolge (`SICK`, `SICK_CHILD`, `VACATION`, `OVERTIME_COMP`, `SPECIAL`, `VOCATIONAL_SCHOOL`, `EDUCATION`, `UNPAID`,
+  `MATERNITY`, `PARENTAL`), jeder Wert eine Zahl ≥ 0, mit und ohne Salonfilter; die Schlüssel sind Codes, nie Anzeigenamen, und
+  keiner heißt `days`. Monatseinträge bleiben unverändert.
+- **„Nach Art“ aus den Zeilen (P-713-05).** `absences[]` wird nach der Personenschleife aus den Zeilen gebildet; die Zeile `SICK`
+  und eine eigene Zeile `SICK_CHILD` (beide in Kalendertagen), die anderen Arten wie bisher in Arbeitstagen. Σ Personen = Zeile
+  gilt damit per Konstruktion; eine Berufsschulzeile gibt es dort nicht (die Liste behält ihre Bedeutung).
+- **CSV (P-713-09).** `GET /reports/period/csv?table=absences` (`table=times|absences`, Standard `times`, sonst 400) liefert
+  dieselbe Zusammenstellung als Tabelle „Abwesenheiten je Person“ mit allen zehn Spalten, jede Kopfzeile mit ihrer Einheit; ein
+  `EXPORT`-Auditeintrag des Typs `PERIOD_ABSENCES_CSV` wird vor den Bytes geschrieben. Die Zeiten-CSV ist byte-gleich.
+- **Web (P-713-10 … -14).** Die Karte „Abwesenheiten je Person“ im Tab „Urlaub & Abwesenheit“ (Tabelle, Liste unter 960 px,
+  sortier- und durchsuchbar, Spalten ohne einen Wert in der ganzen Antwort ausgeblendet und im Hinweis genannt), der Abschnitt
+  „Abwesenheiten“ in der Personenansicht (Zahlen mit Einheit, nie ein Datum), der Export-Block „Abwesenheiten als CSV“ und die
+  zwei Zeilen „Krank (Kalendertage)“ / „Kinderkrank (Kalendertage)“ in „Abwesenheiten nach Art“. Das Web summiert nichts.
+
+**Einheiten und begründete Abweichung:** Krank und Kinderkrank werden in **Kalendertagen** ausgewiesen (wie der Kern und
+`kpis.sickDays`, Wochenende eingeschlossen; nur so gilt die Summenprobe gegen die Kennzahl), die Berufsschule in Berufsschultagen,
+alle anderen Arten in Arbeitstagen (bepreist, § 9 abgezogen). § 45 SGB V zählt das Kinderkrankengeld in Arbeitstagen, DATEV und
+der Monatsexport zählen Arbeitstage mit Vorrang `SICK` bei Überlappung. Die Zahl dieser Tabelle und die Zahl im Monatsexport
+weichen deshalb bei Kinderkrank bewusst voneinander ab; die Tabelle trägt dafür einen Einheitenhinweis, jede Kopfzeile ihre
+Einheit. Überlappende Zeilen von `SICK` und `SICK_CHILD` werden, wie bisher, nicht dedupliziert und zweimal gezählt.
+
+**Datenschutz (Art. 9 DSGVO):** Die Aufteilung teilt eine Zahl, die unter derselben Reichweite (`report:read`) seit #612 je Person
+ausgeliefert wird (`sickDays`). Es kommt keine Person, kein Tag und kein Datum hinzu. Eine Person außerhalb der Reichweite
+antwortet wie eine unbekannte Kennung (byte-gleicher Körper, für JSON und CSV gemessen). Die Personalabteilung (#86) sieht nur
+Zahlen; die Allow-List von `reports-hr-86` wurde um die elf Schlüsselpfade `$.rows[].absence` und `$.rows[].absence.<CODE>`
+erweitert, die Tagesfreiheit bleibt (kein Schlüssel `days`).
+
+**Auswirkung auf die Kontexte:**
+
+- Zeiterfassung: keine.
+- Abwesenheiten: `sick-leave-days.ts` (`sickDaysByCode`) und `bs-leave-days.ts` (`vocationalSchoolDayCount`), beide additiv; kein
+  Aufrufer muss sich ändern, die Ergebnisse des Kerns sind für alle bisherigen Aufrufer gleich.
+- Schichtplanung: keine.
+- Arbeitszeitkonto: keine.
+- Unterbau: keine.
+- Kompositionsschicht: `reports.ts` (zwei additive Felder von `computeEmployeeSummary`), `reports-period.ts`, `period-csv.ts`. Die
+  Zusammenstellung trägt keine neue Geschäftsregel; jeder Wert kommt aus den Kernen.
+
+**Was bewusst NICHT geschah:**
+
+- Keine Kinderkrank-Zahl in Arbeitstagen und keine Deduplizierung überlappender `SICK`/`SICK_CHILD`-Zeilen.
+- Keine Berufsschulzeile in „Abwesenheiten nach Art“ und kein Feld in `GET /reports/monthly`.
+- Keine Arten je Monat (die Monatseinträge behalten genau ihre Schlüssel).
+- Keine neue Route, keine neue Berechtigung, kein Salonzweig: unter einem Salon (#714) sind es dieselben Spalten für die Personen
+  des Stammsalons; Aushilfen bekommen keine Abwesenheitswerte.
+- Keine Neuaufnahme der Neutralität: `neutrality/recorded/` ist byte-gleich zum Merge-Basisstand.
+- Kein Eingriff in Monatsexport und DATEV: beide behalten ihre Arbeitstage-Zählung.
+
+**Grenzen:**
+
+- Kalendertage für Krank und Kinderkrank bedeuten, dass die Tabelle für Kinderkrank nicht direkt mit dem Anspruch nach § 45 SGB V
+  (Arbeitstage) verglichen werden kann; der Hinweis in der Tabelle sagt das.
+- `Absence` wird, wie gebaut, nur für die Berufsschule geschrieben; Mutterschutz und Elternzeit sind `LeaveRequest`-Codes
+  (`MATERNITY`, `PARENTAL`, `REQUESTABLE_CODES`) und stehen als eigene Spalten in Arbeitstagen. Das Zielbild in CLAUDE.md
+  („Absence = Berufsschule, Mutterschutz, Elternzeit“) bleibt stehen, der Ist-Stand ist dort vermerkt.
+- Ein Tag mit überlappenden Anträgen derselben Art zählt in der Tabelle so oft, wie der Kern ihn zählt (wie `kpis.sickDays`).
+
+### Nachrechnen (Nachtrag Phase 713)
+
+```bash
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/contexts/absence/__tests__/sick-leave-days.test.ts src/contexts/absence/__tests__/vocational-school-day-count-713.test.ts \
+  src/__tests__/reports-period-absences-713.test.ts src/composition/__tests__/period-absences-csv-713.test.ts src/__tests__/reports-period-vacation-612.test.ts \
+  src/__tests__/reports-period-salon-612.test.ts src/__tests__/reports-period-home-salon-714.test.ts src/__tests__/reports-hr-86.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts src/__tests__/notification-recipients-neutrality.test.ts src/__tests__/activity-auth-neutrality.test.ts   # unverändert grün
+pnpm --filter @clokr/web exec vitest run src/lib/components/reports src/lib/reports src/__tests__/reports-period-page-612.test.ts
+git diff --quiet "$(git merge-base HEAD origin/main)" -- apps/api/src/__tests__/neutrality/recorded
+git diff "$(git merge-base HEAD origin/main)" -- apps/api/src/composition/reports.ts   # Importliste, Rückgabetyp und -objekt von computeEmployeeSummary
+pnpm --filter @clokr/e2e exec playwright test reports-period.spec.ts --grep "Issue #713"   # gegen den Test-Stack
+```
+
 ## R — Fehlender Urlaubsanspruch bei Mitarbeiteranlage (Phase 416, Issue #416)
 
 **Schwere: informativ. Keine Berechtigungsänderung — eine reine Response-Body-Erweiterung einer
