@@ -404,7 +404,7 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
       });
       expect(admin.statusCode).toBe(200);
       const include = { employee: { select: { id: true, firstName: true, lastName: true } } };
-      const ser = (s: { date: Date; deletedAt: Date | null }) => ({
+      const ser = <T extends { id: string; date: Date; deletedAt: Date | null }>(s: T) => ({
         ...s,
         date: s.date.toISOString().slice(0, 10),
         deletedAt: s.deletedAt ? s.deletedAt.toISOString() : null,
