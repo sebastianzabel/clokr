@@ -1,4 +1,6 @@
-# ── Stage 1: Install dependencies ───────────────────────────────────────────
+# ── Stage 1: Install dependencies (target platform) ─────────────────────────
+# Feeds only the prod-deps stage (`pnpm deploy`), which copies platform-specific packages and
+# therefore has to run on the target platform.
 FROM node:24-alpine AS deps
 RUN corepack enable && corepack prepare pnpm@10.34.6 --activate
 WORKDIR /app
@@ -11,9 +13,23 @@ COPY packages/types/package.json ./packages/types/
 
 RUN pnpm install --frozen-lockfile
 
-# ── Stage 2: Build ──────────────────────────────────────────────────────────
-FROM deps AS build
+# ── Stage 2: Build (runner platform) ────────────────────────────────────────
+# Issue #706: Vite/Rolldown hung sporadically at "rendering chunks" when this stage ran for
+# linux/arm64 under QEMU on the amd64 runner. The adapter-node output in apps/web/build is plain,
+# platform-independent JavaScript, so the build runs natively on $BUILDPLATFORM with its own
+# install (native build tooling such as Rolldown must match the build host, not the target) and
+# only the output is copied into the per-platform runtime stage.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS build
+RUN corepack enable && corepack prepare pnpm@10.34.6 --activate
 WORKDIR /app
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+COPY packages/db/package.json ./packages/db/
+COPY packages/types/package.json ./packages/types/
+
+RUN pnpm install --frozen-lockfile
 
 COPY packages/types/ ./packages/types/
 COPY apps/web/ ./apps/web/

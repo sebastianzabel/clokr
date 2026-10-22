@@ -34,6 +34,9 @@ jobs:
   build-push:
     if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Issue #706/#708: a hung arm64 build used to run into GitHub's 6 h limit and end as
+    # `cancelled`. With a limit it ends as `timed_out`, which main-red-alarm treats as red.
+    timeout-minutes: 45
 
     strategy:
       # Do NOT cancel a sibling image build when one fails. The images push
