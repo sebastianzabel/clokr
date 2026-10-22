@@ -100,6 +100,9 @@ export function installExternalStubs(app: FastifyInstance): ExternalStubs {
     delete: async (path) => {
       stored.delete(path);
     },
+    check: async () => true,
+    refresh: () => {},
+    status: () => ({ available: true, unconfigured: false, checkedAt: null }),
   };
 
   vi.stubGlobal("fetch", async (input: string | URL | Request) => {

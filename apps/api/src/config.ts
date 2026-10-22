@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-const envSchema = z
+// Blank (or whitespace-only) env values count as unset.
+function blankToUndefined<T extends z.ZodType>(schema: T) {
+  return z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), schema);
+}
+
+export const envSchema = z
   .object({
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
     API_PORT: z.coerce.number().default(3000),
@@ -49,6 +54,18 @@ const envSchema = z
       (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
       z.string().min(32).optional(),
     ),
+    // Issue #184 — object store (MinIO) for documents and avatars. Outside production the transform at
+    // the end fills the docker-compose / CI values so a dev or test run needs no setup. Blank is
+    // treated as unset (compose renders an unset variable as an empty string).
+    MINIO_ENDPOINT: blankToUndefined(z.string().min(1).optional()),
+    MINIO_PORT: blankToUndefined(z.coerce.number().int().min(1).max(65535).optional()),
+    MINIO_ACCESS_KEY: blankToUndefined(z.string().min(1).optional()),
+    MINIO_SECRET_KEY: blankToUndefined(z.string().min(1).optional()),
+    MINIO_BUCKET: blankToUndefined(z.string().min(1).optional()),
+    MINIO_USE_SSL: z
+      .string()
+      .default("false")
+      .transform((v) => v === "true"),
   })
   .refine((data) => !data.SMTP_HOST || (data.SMTP_PORT && data.SMTP_USER), {
     message: "SMTP_PORT and SMTP_USER required when SMTP_HOST is set",
@@ -67,7 +84,36 @@ const envSchema = z
         "OPERATOR_JWT_SECRET must differ from JWT_SECRET, JWT_REFRESH_SECRET and ENCRYPTION_KEY",
       path: ["OPERATOR_JWT_SECRET"],
     },
-  );
+  )
+  // Non-production defaults mirror docker-compose.yml's dev MinIO and the CI MinIO step. In
+  // production there is NO default (a silent "minio"/"minioadmin" would hit a host that may not
+  // exist): a missing value leaves the store "unconfigured" — the API still starts, logs one error
+  // naming the variables, and uploads answer 503 STORAGE_UNAVAILABLE (Issue #184). Switching this to
+  // refuse-to-start is the planned follow-up once every stage carries the variables.
+  .transform((data) => {
+    const dev = data.NODE_ENV !== "production";
+    const endpoint = data.MINIO_ENDPOINT ?? (dev ? "minio" : undefined);
+    const accessKey = data.MINIO_ACCESS_KEY ?? (dev ? "minioadmin" : undefined);
+    const secretKey = data.MINIO_SECRET_KEY ?? (dev ? "minioadmin" : undefined);
+    const missing = (
+      [
+        ["MINIO_ENDPOINT", endpoint],
+        ["MINIO_ACCESS_KEY", accessKey],
+        ["MINIO_SECRET_KEY", secretKey],
+      ] as const
+    )
+      .filter(([, v]) => v === undefined)
+      .map(([k]) => k);
+    return {
+      ...data,
+      MINIO_ENDPOINT: endpoint,
+      MINIO_PORT: data.MINIO_PORT ?? 9000,
+      MINIO_ACCESS_KEY: accessKey,
+      MINIO_SECRET_KEY: secretKey,
+      MINIO_BUCKET: data.MINIO_BUCKET ?? "clokr",
+      MINIO_MISSING: missing as string[],
+    };
+  });
 
 const parsed = envSchema.safeParse(process.env);
 

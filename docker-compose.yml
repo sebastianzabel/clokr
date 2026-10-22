@@ -75,6 +75,10 @@ services:
       ENCRYPTION_KEY: "${ENCRYPTION_KEY:-clokr-dev-encryption-key-min-32-characters-long!!}"
       SEED_DEMO_DATA: "${SEED_DEMO_DATA:-true}"
       RATE_LIMIT_MAX: "${RATE_LIMIT_MAX:-10000}"
+      # Issue #184: NODE_ENV is production here, so the object store is stated explicitly.
+      MINIO_ENDPOINT: "minio"
+      MINIO_ACCESS_KEY: "minioadmin"
+      MINIO_SECRET_KEY: "minioadmin"
     deploy:
       resources:
         limits:
