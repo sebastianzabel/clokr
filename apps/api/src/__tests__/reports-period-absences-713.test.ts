@@ -17,7 +17,19 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, cleanupTestData, reissueTokenNow } from "./setup";
+import bcrypt from "bcryptjs";
+import { randomBytes, randomUUID } from "crypto";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  createTestSalon,
+  reissueTokenNow,
+} from "./setup";
+import { createPopulationPerson } from "./population-fixtures-613";
+import { leaveTypeFields } from "../contexts/absence/leave-type";
+import { SYSTEM_ROLE_IDS } from "../contexts/platform";
 import {
   seedMonthlyExportFixture,
   FAKE_NOW,
@@ -286,6 +298,176 @@ describe("Issue #713 — the per-person absence counts of the period report", ()
       expect(r.rows.map((x) => x.employeeId)).toEqual([fx.people.p3.id]);
       expect(r.rows[0].absence.SICK_CHILD).toBe(1);
       expect(r.kpis.sickDays).toBe(3);
+    });
+  });
+
+  /*
+   * AC-713-4 (D-06, P-713-07): no new gate - the absence counts are served to exactly the rows
+   * report:read already lists. World (own tenant): RA homed in salon A, RB homed in salon B, each
+   * with an APPROVED SICK request of two calendar days (07.-08.09.2026) and an APPROVED SICK_CHILD
+   * request of one day (09.09.2026); a MANAGER scoped to salon A.
+   */
+  describe("the reach: a salon-scoped manager sees the counts of its persons only", () => {
+    const REACH_QUERY = "from=2026-08&to=2026-09";
+    let world: Awaited<ReturnType<typeof seedTestData>>;
+    let managerToken: string;
+    const person = {} as Record<"RA" | "RB", string>;
+
+    function getAs(url: string, token: string) {
+      return app.inject({ method: "GET", url, headers: { authorization: `Bearer ${token}` } });
+    }
+    async function periodAs(query: string, token: string): Promise<Period> {
+      const res = await getAs(`/api/v1/reports/period?${query}`, token);
+      expect(res.statusCode, res.body).toBe(200);
+      return JSON.parse(res.body) as Period;
+    }
+
+    beforeAll(async () => {
+      world = await seedTestData(app, "rpa713r");
+      const salonA = world.salonId;
+      const salonB = (await createTestSalon(app.prisma, world.tenant.id, { name: "Absence713 B" }))
+        .id;
+      const sick = await app.prisma.leaveType.create({
+        data: { tenantId: world.tenant.id, ...leaveTypeFields("SICK"), color: "#EF4444" },
+      });
+      const child = await app.prisma.leaveType.create({
+        data: { tenantId: world.tenant.id, ...leaveTypeFields("SICK_CHILD"), color: "#F97316" },
+      });
+      const hire = new Date("2025-01-01T00:00:00Z");
+      const mk = async (tag: "RA" | "RB", salonId: string) => {
+        const p = await createPopulationPerson(app, {
+          tenantId: world.tenant.id,
+          salonId,
+          tag,
+          hireDate: hire,
+        });
+        person[tag] = p.employeeId;
+        await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: p.employeeId,
+            leaveTypeId: sick.id,
+            startDate: new Date("2026-09-07T00:00:00Z"),
+            endDate: new Date("2026-09-08T00:00:00Z"),
+            days: 2,
+            status: "APPROVED",
+            attestPresent: false,
+          },
+        });
+        await app.prisma.leaveRequest.create({
+          data: {
+            employeeId: p.employeeId,
+            leaveTypeId: child.id,
+            startDate: new Date("2026-09-09T00:00:00Z"),
+            endDate: new Date("2026-09-09T00:00:00Z"),
+            days: 1,
+            status: "APPROVED",
+            attestPresent: false,
+          },
+        });
+      };
+      await mk("RA", salonA);
+      await mk("RB", salonB);
+
+      // The manager: a user + employee of its own without a Stammsalon, the MANAGER system role scoped to A.
+      const password = "test1234";
+      const suffix = `mgr-${randomBytes(3).toString("hex")}`;
+      const user = await app.prisma.user.create({
+        data: {
+          email: `rpa713-${suffix}@example.invalid`,
+          passwordHash: await bcrypt.hash(password, 4),
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      await app.prisma.employee.create({
+        data: {
+          tenantId: world.tenant.id,
+          userId: user.id,
+          employeeNumber: `RPA${suffix}`.toUpperCase().slice(0, 20),
+          firstName: "Fixture",
+          lastName: "Absence713",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await app.prisma.roleAssignment.create({
+        data: {
+          tenantId: world.tenant.id,
+          userId: user.id,
+          accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
+          scopeType: "SALONS",
+          salonIds: [salonA],
+          employeeIds: [],
+        },
+      });
+      const login = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: user.email, password },
+      });
+      expect(login.statusCode, login.body).toBe(200);
+      managerToken = (JSON.parse(login.body) as { accessToken: string }).accessToken;
+    });
+
+    afterAll(async () => {
+      try {
+        await app.prisma.roleAssignment.deleteMany({ where: { tenantId: world.tenant.id } });
+        await app.prisma.accessRole.deleteMany({ where: { tenantId: world.tenant.id } });
+        await cleanupTestData(app, world.tenant.id);
+      } catch (err) {
+        console.error("reports-period-absences-713 reach cleanup failed:", err);
+      }
+    });
+
+    it("lists exactly RA with its SICK and SICK_CHILD, and the KPI and lines are RA's figures only", async () => {
+      const r = await periodAs(REACH_QUERY, managerToken);
+      expect(r.rows.map((x) => x.employeeId)).toEqual([person.RA]);
+      // Derived from the world: 07.-08.09. = 2 calendar days own illness, 09.09. = 1 child day.
+      expect(r.rows[0].absence.SICK).toBe(2);
+      expect(r.rows[0].absence.SICK_CHILD).toBe(1);
+      expect(r.kpis.sickDays).toBe(3);
+      expect(r.absences.find((a) => a.code === "SICK")).toMatchObject({
+        totalDays: 2,
+        personCount: 1,
+      });
+      expect(r.absences.find((a) => a.code === "SICK_CHILD")).toMatchObject({
+        totalDays: 1,
+        personCount: 1,
+      });
+    });
+
+    it("answers the id of a person homed in B byte-identically to an unknown id", async () => {
+      const outside = await getAs(
+        `/api/v1/reports/period?${REACH_QUERY}&employeeId=${person.RB}`,
+        managerToken,
+      );
+      const unknown = await getAs(
+        `/api/v1/reports/period?${REACH_QUERY}&employeeId=${randomUUID()}`,
+        managerToken,
+      );
+      expect(outside.statusCode).toBe(200);
+      expect(unknown.statusCode).toBe(200);
+      expect(outside.body).toBe(unknown.body);
+      expect(Buffer.byteLength(outside.body)).toBe(Buffer.byteLength(unknown.body));
+      const body = JSON.parse(outside.body) as Period & { kpis: { personCount: number } };
+      expect(body.rows).toEqual([]);
+      expect(body.kpis.personCount).toBe(0);
+      console.info(
+        `REACH manager rows ${JSON.stringify(
+          (await periodAs(REACH_QUERY, managerToken)).rows.map((x) => x.employeeId === person.RA),
+        )}; out-of-reach vs unknown body ${Buffer.byteLength(outside.body)} / ${Buffer.byteLength(unknown.body)} bytes, equal ${outside.body === unknown.body}`,
+      );
+    });
+
+    it("is not vacuous: the admin gets RB's row with its child sickness", async () => {
+      const r = await periodAs(`${REACH_QUERY}&employeeId=${person.RB}`, world.adminToken);
+      expect(r.rows.map((x) => x.employeeId)).toEqual([person.RB]);
+      expect(r.rows[0].absence.SICK_CHILD).toBe(1);
+      expect(r.rows[0].absence.SICK).toBe(2);
+      // The admin sees both persons; the manager sees one of them (the reach narrows, never widens).
+      const both = await periodAs(REACH_QUERY, world.adminToken);
+      const ids = both.rows.map((x) => x.employeeId);
+      expect(ids).toContain(person.RA);
+      expect(ids).toContain(person.RB);
     });
   });
 });
