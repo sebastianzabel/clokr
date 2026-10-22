@@ -15,7 +15,11 @@
  *     whole request,
  *   - the § 9 BUrlG shift: days of a CONFIRMED `Section9Credit` are attested by definition, so
  *     min(without attest, credited days) moves from the without to the with bucket. The two
- *     buckets move as one transfer, their sum (`sickDays`) is invariant.
+ *     buckets move as one transfer, their sum (`sickDays`) is invariant,
+ *   - the split by code (Issue #713): own illness (`SICK`) and child sickness (`SICK_CHILD`) are
+ *     summed separately on the same line as the attest buckets, so every rule above holds for both
+ *     codes and `SICK + SICK_CHILD = sickDays`; the § 9 shift only moves between the attest
+ *     buckets and leaves the split alone.
  *
  * Only `LeaveRequest` rows count. `Absence` rows (SICK / SICK_CHILD, the AU document path) are
  * deliberately never an input: the Absence model tracks the AU-Bescheinigung document, not the
@@ -48,9 +52,21 @@ export interface SickLeaveDayRow {
   leaveType: { code: LeaveTypeCode | null };
 }
 
+/** The two sick codes the kernel counts, as a record of day counts (Issue #713). */
+export interface SickDaysByCode {
+  SICK: number;
+  SICK_CHILD: number;
+}
+
 export interface SickLeaveDayCounts {
   /** Always `sickDaysWithAttest + sickDaysWithoutAttest`. */
   sickDays: number;
+  /**
+   * Issue #713 (D-02): the same counted ranges split by leave-type code - own illness and child
+   * sickness. Always `SICK + SICK_CHILD = sickDays`; the § 9 shift only moves between the attest
+   * buckets and does not touch it.
+   */
+  sickDaysByCode: SickDaysByCode;
   sickDaysWithAttest: number;
   sickDaysWithoutAttest: number;
   /** The clipped days of the supplied § 9 credits (0 when none were supplied). */
@@ -84,13 +100,17 @@ export function sickLeaveDayCounts(
 
   let sickDaysWithAttest = 0;
   let sickDaysWithoutAttest = 0;
+  const sickDaysByCode: SickDaysByCode = { SICK: 0, SICK_CHILD: 0 };
 
   for (const lr of rows) {
     if (!isSickLeaveTypeCode(lr.leaveType.code)) continue;
     if (!(EFFECTIVE_LEAVE_STATUSES as readonly LeaveRequestStatus[]).includes(lr.status)) continue;
 
     const factor = lr.halfDay ? 0.5 : 1;
+    // Issue #713 (D-02): the split sits on the very value below; the guard above leaves two codes.
+    const code: keyof SickDaysByCode = lr.leaveType.code === "SICK_CHILD" ? "SICK_CHILD" : "SICK";
     const totalDays = daysInRange(lr.startDate, lr.endDate) * factor;
+    sickDaysByCode[code] += totalDays;
     if (lr.attestPresent && lr.attestValidFrom && lr.attestValidTo) {
       const attestFrom = lr.attestValidFrom > lr.startDate ? lr.attestValidFrom : lr.startDate;
       const attestTo = lr.attestValidTo < lr.endDate ? lr.attestValidTo : lr.endDate;
@@ -116,6 +136,7 @@ export function sickLeaveDayCounts(
 
   return {
     sickDays: sickDaysWithAttest + sickDaysWithoutAttest,
+    sickDaysByCode,
     sickDaysWithAttest,
     sickDaysWithoutAttest,
     section9DaysThisMonth,

@@ -62,6 +62,7 @@ import {
   leaveDaysByCodeWithin, // Issue #451 (D-01) — the DATEV export's VACATION Lohnart line
   type LeaveDaysForCode, // Issue #451 (D-01)
   sickLeaveDayCounts, // Issue #84 (D-14) — the one sick-day / § 9 counting rule
+  type SickDaysByCode, // Issue #713 (D-02) — the kernel's per-code split
   DISPLAY_NAME, // Issue #617 (P-06) — display text of a day row; the identity is the code
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveEntitlement, LeaveRequestStatus, LeaveTypeCode } from "@clokr/db";
@@ -252,6 +253,7 @@ export function computeEmployeeSummary(
   countsDay?: (day: string) => boolean,
 ): {
   sickDays: number;
+  sickDaysByCode: SickDaysByCode;
   sickDaysWithAttest: number;
   sickDaysWithoutAttest: number;
   vacationDays: number;
@@ -276,11 +278,16 @@ export function computeEmployeeSummary(
   // The absence context's one counting rule (calendar days, half day, clip, attest split, § 9
   // shift). Absence rows (the AU document path) deliberately never contribute — see the kernel's
   // own docblock.
-  const { sickDays, sickDaysWithAttest, sickDaysWithoutAttest, section9DaysThisMonth } =
-    sickLeaveDayCounts(emp.leaveRequests, firstDay, lastDay, {
-      section9Credits,
-      ...(countsDay ? { countsDay } : {}),
-    });
+  const {
+    sickDays,
+    sickDaysByCode,
+    sickDaysWithAttest,
+    sickDaysWithoutAttest,
+    section9DaysThisMonth,
+  } = sickLeaveDayCounts(emp.leaveRequests, firstDay, lastDay, {
+    section9Credits,
+    ...(countsDay ? { countsDay } : {}),
+  });
 
   // ── Absence breakdown (Issue #451, D-02) ─────────────────────────────────
   // Every per-type leave count, and totalAbsenceDays, comes from the absence context's own
@@ -332,6 +339,9 @@ export function computeEmployeeSummary(
 
   return {
     sickDays,
+    // Issue #713 (D-02): the kernel's split, handed on unchanged; the /monthly handler picks its
+    // fields one by one, so its JSON is unchanged.
+    sickDaysByCode,
     sickDaysWithAttest,
     sickDaysWithoutAttest,
     vacationDays,

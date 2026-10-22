@@ -52,7 +52,9 @@ import { periodCsvFilename, periodTableCsv } from "./period-csv";
  * `/reports/monthly` assembly (P-03) — the #613 population of that month, the Stammsalon scope of
  * the caller's reach at that month's end, `computeMonthReportFigures` for Soll/Ist/Saldo/Gesamtsaldo
  * and `computeEmployeeSummary` for the sick days — through the helpers `reports.ts` exports, never
- * by editing the frozen `/monthly` handler. A person is listed with the months whose population
+ * by editing the frozen `/monthly` handler. Issue #713 — „Abwesenheiten nach Art“ lists own illness
+ * (`SICK`) and child sickness (`SICK_CHILD`) as two lines; both are calendar days of the one
+ * sick-day kernel. A person is listed with the months whose population
  * contains them; the row and the KPIs are sums of those months.
  *
  * Opening saldo (P-01) = the Gesamtsaldo at the end of the month BEFORE `from`, the very figure the
@@ -219,7 +221,7 @@ function absenceKindDays(
 type AbsenceTotal = { totalDays: number; persons: Set<string> };
 
 export type PeriodAbsence = {
-  code: AbsenceKindCode | "SICK";
+  code: AbsenceKindCode | "SICK" | "SICK_CHILD";
   /** Arbeitstage (priced, § 9 netted) for the leave kinds, Kalendertage for sickness. */
   unit: "WORKDAYS" | "CALENDAR_DAYS";
   personCount: number;
@@ -549,7 +551,9 @@ async function assemblePeriodReport(
   const figureSlots: Array<{ entry: PeriodMonthEntry; request: MonthReportFiguresRequest }> = [];
   // P-07: Σ over months of the per-kind counts of the /monthly assembly, with the persons that have > 0.
   const absenceTotals = new Map<AbsenceKindCode, AbsenceTotal>();
+  // Issue #713 (D-01): own illness and child sickness are two lines of the one calendar-day kernel.
   const sickTotal: AbsenceTotal = { totalDays: 0, persons: new Set() };
+  const sickChildTotal: AbsenceTotal = { totalDays: 0, persons: new Set() };
   for (const ym of months) {
     const { start, end } = monthRangeUtc(ym.year, ym.month, tz);
     const { firstDay, lastDay } = monthDateRange(ym.year, ym.month, tz);
@@ -663,9 +667,13 @@ async function assemblePeriodReport(
           total.persons.add(emp.id);
           absenceTotals.set(code, total);
         }
-        if (summary.sickDays > 0) {
-          sickTotal.totalDays += summary.sickDays;
+        if (summary.sickDaysByCode.SICK > 0) {
+          sickTotal.totalDays += summary.sickDaysByCode.SICK;
           sickTotal.persons.add(emp.id);
+        }
+        if (summary.sickDaysByCode.SICK_CHILD > 0) {
+          sickChildTotal.totalDays += summary.sickDaysByCode.SICK_CHILD;
+          sickChildTotal.persons.add(emp.id);
         }
       }
       const monthCovered = overtimeIds === "all" || overtimeIds.has(emp.id);
@@ -923,6 +931,14 @@ async function assemblePeriodReport(
       unit: "CALENDAR_DAYS",
       personCount: sickTotal.persons.size,
       totalDays: round2(sickTotal.totalDays),
+    });
+  }
+  if (sickChildTotal.persons.size > 0) {
+    absences.push({
+      code: "SICK_CHILD",
+      unit: "CALENDAR_DAYS",
+      personCount: sickChildTotal.persons.size,
+      totalDays: round2(sickChildTotal.totalDays),
     });
   }
 
