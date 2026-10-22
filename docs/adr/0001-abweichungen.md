@@ -3738,10 +3738,10 @@ Salon-Ansicht (Einträge, Stammsalon je Tag), der Periodenbericht die Personen-A
 
   | Kennzahl                   | Süd + Nord + West         | Personen ohne Stammsalon | Alle Salons |
   | -------------------------- | ------------------------- | ------------------------ | ----------- |
-  | Ist (Minuten)              | 11520 + 1920 + 2880       | 1440                     | 17760       |
+  | Ist (Minuten)              | 11520 + 1920 + 2880       | 1920                     | 18240       |
   | Soll (Minuten)             | 29280 + 19680 + 27840     | 63840                    | 140640      |
-  | Saldo (Minuten)            | -17760 + -17760 + -24960  | -62400                   | -122880     |
-  | Gesamtsaldo Ende (Minuten) | -88800 + -88800 + -238080 | -687360                  | -1103040    |
+  | Saldo (Minuten)            | -17760 + -17760 + -24960  | -61920                   | -122400     |
+  | Gesamtsaldo Ende (Minuten) | -88800 + -88800 + -238080 | -686880                  | -1102560    |
   | Krankheitstage             | 0 + 0 + 2                 | 0                        | 2           |
   | Personen                   | 2 + 1 + 3                 | 4                        | 10          |
 
@@ -3749,7 +3749,7 @@ Salon-Ansicht (Einträge, Stammsalon je Tag), der Periodenbericht die Personen-A
   erscheint als „Im Salon gearbeitet“ (Süd 4800 Minuten in der Zeile, in Nord 4800 als Aushilfe); die Summe von „Im Salon
   gearbeitet“ über die drei Salons (17760) ist die Summe aller Fixture-Einträge in aktiven Salons bis gestern.
 
-- Testdateien: neu `reports-period-home-salon-714` (20 Fälle) und im Web `SalonWorkedSection.test` (14 Fälle); erweitert
+- Testdateien: neu `reports-period-home-salon-714` (21 Fälle) und im Web `SalonWorkedSection.test` (14 Fälle); erweitert
   `reports-period-salon-612`, `reports-period-csv-612`, `period-csv-612`, `salon-view`, `report-salon-filter-source-542`,
   `reports-hr-86` (Salon-Pfad der Antwort, tagesfrei) sowie im Web `PeriodKpis`, `TimesAccountsTable`, `VacationAbsenceTab`,
   `ExportDialog`, `page-scope`, `period-table-612`, `reports-period-page-612`, `reports-salon-filter-542`. Jede geänderte alte
