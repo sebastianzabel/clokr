@@ -20,17 +20,21 @@ The shipping image is bit-identical to the image that passed the Trivy scan on m
    `docs(release): add release notes for vX.Y.Z`. A `docs:` commit does not bump the version, so
    the release PR keeps saying X.Y.Z.
    `.github/workflows/release-notes-guard.yml` fails the release PR while the file is missing.
-3. **Merge the release PR.** That single act:
+3. **Rehearse the steps (mandatory when the release contains migrations).** Before the release PR is
+   merged, `scripts/release-rehearsal.sh` replays the "Betrieb & Migration" steps against a
+   throwaway database restored from a demo dump, in the order the notes name them. See
+   "Release rehearsal" below. A red rehearsal blocks the merge.
+4. **Merge the release PR.** That single act:
    - bumps the version in all three `package.json` files (root, `apps/api`, `apps/web`)
    - commits `CHANGELOG.md`
    - creates tag `vX.Y.Z` and publishes the GitHub Release
-4. **`build-push.yml`** runs on the merge, builds both images, pushes
+5. **`build-push.yml`** runs on the merge, builds both images, pushes
    `ghcr.io/{owner}/clokr-{api,web}:sha-{SHA}`, Trivy scans them. The API image also bakes
    `docs/release-notes/` into itself via `apps/api/Dockerfile` — the notes file from step 2 is
    already on `main` by the time this build runs, so it is inside the image it describes. A
    commit that reaches `main` without a push event (the Dependabot auto-merge) is built by the
    reconcile instead, see "Every commit on main gets a Build & Push run".
-5. **`release.yml` gates, then promotes — but check it actually started.** First the
+6. **`release.yml` gates, then promotes — but check it actually started.** First the
    `build-push-gate` job requires the Build & Push run of the tagged commit to be `success`. It
    waits up to 45 min while that run is queued or running, and aborts with a German annotation
    when the run is red (`Release-Gate: Build & Push rot`), missing (no run after 5 min,
@@ -40,12 +44,48 @@ Zeitüberschreitung`). Only then does `promote` `crane copy` the `:sha-{SHA}` im
    one. Promotion is only automatic once `RELEASE_PLEASE_TOKEN` exists (see "Why release.yml does
    not start by itself" below); until then, verify a `Release — Promote & Publish` run exists for
    the tag and start one by hand if not: `gh workflow run release.yml --ref main -f tag=vX.Y.Z`.
-6. **`release.yml`'s `publish-notes` job sets the GitHub Release title and body** from
+7. **`release.yml`'s `publish-notes` job sets the GitHub Release title and body** from
    `docs/release-notes/vX.Y.Z.md` — the same file baked into the image in step 4. Nothing is
    written by hand at this point; this REPLACES the former manual step, it is not an extra one.
-7. **Verify after the pin.** The deployed version can only be seen once int and prod have been
+8. **Verify after the pin.** The deployed version can only be seen once int and prod have been
    pinned to the new tag — see "Getting the release onto int and prod" below for the manual
    `curl` check after each pin.
+
+### Release rehearsal (Issue #709)
+
+**Why.** v1.16.0 was the first time its pre- and post-deploy steps ran together, and that happened on
+demo during the rollout: `backfill-539` cannot run before the migration (#707), and the rehearsal
+added a second find of the same kind, `audit-511` reads a table the release creates. int and prod would
+have hit both. The rehearsal finds them before the merge.
+
+**One list.** The steps live next to the notes as `docs/release-notes/vX.Y.Z.steps` (format in the file
+header: phase `pre`/`migrate`/`post`, expected exit code(s), kind `sql`/`script`/`migrate`). A change to
+the "Betrieb & Migration" steps in the notes changes that file in the same commit; operational steps
+without an exit code (pg_dump, deploy window, sample sign-in) stay in the notes only. A release with
+migrations without a `.steps` file is not rehearsed and must not be merged.
+
+**Run it** (before merging the release PR, after the notes are on `main`; the image is the one
+Build & Push already built for `main`, `:sha-<7>` or `:main`, which is what the release promotes):
+
+```bash
+scripts/release-rehearsal.sh --host clokr-demo --steps docs/release-notes/vX.Y.Z.steps \
+  --image ghcr.io/<owner>/clokr-api:sha-<7> --dump latest --protocol rehearsal-vX.Y.Z.txt
+```
+
+The script runs ON the demo host: a separate throwaway postgres container (unique name, no published
+port, own network) restores the newest `/opt/clokr/backups/*.dump` (read in place), the new image runs
+each step as a one-shot container with the image's own `prisma migrate deploy` lookup (never its
+migrating entrypoint), and a trap removes the container, volume, network and work directory on every
+exit path. The running demo stack, its database and env file are never touched. Only the script, the
+steps file and the finished protocol cross the wire; **the dump never leaves the host**, and no
+unencrypted copy is made anywhere else. If a dump ever has to travel, encrypt it (age/gpg) and delete
+both copies afterwards: it holds employee data like production does.
+
+**Result.** The protocol records, per step, expected and actual exit code and the output (ids and counts
+only; scripts print no names). Any deviation exits 1 and **blocks the merge**; fix the notes, the steps
+or the script, and rehearse again. After a failed `migrate` the later steps are `SKIPPED`. Attach the
+redacted protocol summary to the release PR. Retro proof: `scripts/rehearsal-fixtures/v1.16.0-as-shipped.steps`
+with the 1.16.0 image against a pre-1.16.0 demo dump reports the #707 error.
 
 ### Why the notes moved in front of the build
 
@@ -61,7 +101,7 @@ and Phase 110). Writing the notes on `main` before the release-please PR merges 
 truth instead of two.
 
 This REPLACES a manual step; it does not add one. The rest of the pipeline is unchanged: the
-version is still bumped before the tag (step 3), and promotion (step 5) is still a
+version is still bumped before the tag (step 4), and promotion (step 6) is still a
 digest-preserving re-tag with no rebuild.
 
 ### Why release.yml waits for a green Build & Push run

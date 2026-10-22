@@ -44,6 +44,7 @@ Verbindliche Vorlage für alle GitHub-Releases von Clokr. **Immer** dieses Forma
 ### Betrieb & Migration
 
 - <Migrationen, Ops-Skripte, Deploy-Reihenfolge, Konfig-Änderungen, Backfills>
+- <Bei Migrationen: dieselben Schritte stehen maschinenlesbar in `docs/release-notes/vX.Y.Z.steps` (Generalprobe, `docs/release-process.md`)>
 
 ### Achtung / Breaking Changes
 
