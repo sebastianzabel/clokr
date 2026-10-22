@@ -1002,7 +1002,9 @@ const MIN_FILES = 709;
 // Never lowered.
 // Issue #688 (2026-10-18): MIN_TESTS 10752 -> 10757 (+5), the measured total of the full run named at MIN_FILES: the five
 // cases of the new reports-period-bulk-read-688.test.ts. Never lowered.
-const MIN_TESTS = 10757;
+// Issue #645: MIN_TESTS 10757 -> 10759, the measured total of the full run (709 files): one new case in
+// shifts-conflicts.test.ts (reach of the softDeleted/flagged buckets) plus drift already absorbed. Never lowered.
+const MIN_TESTS = 10759;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

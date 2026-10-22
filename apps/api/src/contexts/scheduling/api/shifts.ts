@@ -546,10 +546,8 @@ interface WeekOverbookedEntry extends WeekCapacityConflict {
 }
 
 /**
- * Phase 430 (D-10, revised 430-05): the `/conflicts` view's third bucket. Unlike `softDeleted`/
- * `flagged` (which read persisted `Shift` flags, matching `/conflicts`' own pre-existing, tenant-
- * only scoping — NOT touched here, a separate, pre-existing finding), Type-2 overbooking is new
- * code introduced by this phase, so it gets real salon scoping from day one: `inScopeEmployeeIds`
+ * Phase 430 (D-10, revised 430-05): the `/conflicts` view's third bucket (all three buckets are
+ * reach-scoped since Issue #645): `inScopeEmployeeIds`
  * is the caller's already-resolved "plannable staff" set (D-12's own `resolvePersonScopedEmployeeIds`
  * answer against the route's own `shift:read:ZUGEWIESEN` guard permission — same question GET
  * /week already asks for its own employee listing), `"all"` for a wholeTenant reach. Enumerates
@@ -4243,12 +4241,24 @@ export async function shiftRoutes(app: FastifyInstance) {
       const toDate = new Date(`${to}T00:00:00.000Z`);
       const employeeWhere = { tenantId: req.user.tenantId };
 
+      // Issue #645: every bucket is narrowed by the caller's own `shift:read` reach with the same
+      // rule the other shift reads use (`shiftScopeWhere`, the list-mode twin of `isShiftInScope`).
+      // A wholeTenant reach yields `{}`, so a whole-tenant caller's answer is unchanged.
+      const conflictsAccess = accessContextFromRequest(req);
+      const conflictsReach = await resolveAccessReach(
+        app.prisma,
+        conflictsAccess,
+        "shift:read:ZUGEWIESEN",
+      );
+      const conflictsShiftScope = shiftScopeWhere(conflictsReach);
+
       const softDeleted = await app.prisma.shift.findMany({
         where: {
           employee: employeeWhere,
           deletedAt: { not: null },
           deletedReason: "AUTO_BS_DAY_CLEANUP",
           date: { gte: fromDate, lte: toDate },
+          ...conflictsShiftScope,
         },
         include: {
           employee: { select: { id: true, firstName: true, lastName: true } },
@@ -4262,6 +4272,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           deletedAt: null,
           conflictsWithLeave: true,
           date: { gte: fromDate, lte: toDate },
+          ...conflictsShiftScope,
         },
         include: {
           employee: { select: { id: true, firstName: true, lastName: true } },
@@ -4278,16 +4289,7 @@ export async function shiftRoutes(app: FastifyInstance) {
       });
 
       // Phase 430 (D-10, revised 430-05) — third bucket, live-computed Type-2 (week-overbooking)
-      // conflicts. UNLIKE softDeleted/flagged above (pre-existing, tenant-only, not touched here
-      // — a separate finding), this new bucket is salon-scoped: a caller whose own reach for
-      // THIS route's own guard permission (shift:read:ZUGEWIESEN) is salon-limited sees only the
-      // in-scope employees' overbooking, same "plannable staff" question GET /week already asks.
-      const conflictsAccess = accessContextFromRequest(req);
-      const conflictsReach = await resolveAccessReach(
-        app.prisma,
-        conflictsAccess,
-        "shift:read:ZUGEWIESEN",
-      );
+      // conflicts, scoped to the same reach resolved above (the "plannable staff" question).
       const conflictsInScopeIds =
         conflictsReach.kind === "wholeTenant"
           ? "all"
