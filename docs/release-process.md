@@ -104,6 +104,12 @@ behind it instead of racing it.
   run creates it, every further failed run adds a comment (run link and failed jobs), and the next
   green run closes it with a comment. There is never a second issue, and the same run attempt is
   never reported twice.
+- Red means a run that ended `failure`, `timed_out` or `startup_failure`, and (Issue #708) one that
+  ended `cancelled` **unless a newer Build & Push run on `main` exists** (the newer run replaced
+  it, so the cancel is no failure of `main`). Between 13.10. and 19.10.2026 ten hung builds were
+  ended by GitHub after 6 h as `cancelled` and raised no alarm. Every job of `build-push.yml` now
+  has `timeout-minutes: 45`, so a hang ends as `timed_out` (red) after 45 minutes instead.
+  Cancelling a run by hand without a newer run behind it is red too; the next run closes it.
 - The issue mirrors the **newest completed** run, so runs finishing out of order can neither
   close the alarm while `main` is still red nor reopen it for a stale run.
 - Replay or prove it for one specific run:

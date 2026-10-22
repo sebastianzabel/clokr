@@ -30,6 +30,9 @@ export const ALARM_LABEL = "bug";
 export const BUILD_PUSH_WORKFLOW_FILE = "build-push.yml";
 export const BUILD_PUSH_PATH = ".github/workflows/build-push.yml";
 export const RED_CONCLUSIONS = ["failure", "timed_out", "startup_failure"];
+// Issue #708: a hung build ends as `cancelled` after GitHub's 6 h limit (or by hand), so a
+// cancelled run is red too, unless a newer run of the workflow replaced it (see isRedRun).
+export const CANCELLED_CONCLUSION = "cancelled";
 
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const RUN_ID_PATTERN = /^[0-9]+$/;
@@ -57,6 +60,29 @@ export function findOpenAlarmIssue(issues) {
   return matches.reduce((lowest, candidate) =>
     candidate.number < lowest.number ? candidate : lowest,
   );
+}
+
+/**
+ * True when a newer Build & Push run on main (any status, higher run_number) exists. A cancelled
+ * run that a newer push replaced is not a failure of main. `runs` is the list of recent runs.
+ */
+export function isSupersededRun(run, runs) {
+  return (runs ?? []).some(
+    (other) =>
+      other.head_branch === "main" &&
+      other.path === BUILD_PUSH_PATH &&
+      other.run_number > run.run_number,
+  );
+}
+
+/**
+ * Red = a red conclusion, or `cancelled` without a newer run (Issue #708). `timed_out` is always
+ * red. `superseded` is the result of isSupersededRun and only matters for `cancelled`.
+ */
+export function isRedRun(run, { superseded = false } = {}) {
+  if (!run || run.status !== "completed") return false;
+  if (RED_CONCLUSIONS.includes(run.conclusion)) return true;
+  return run.conclusion === CANCELLED_CONCLUSION && !superseded;
 }
 
 /** Newest COMPLETED Build & Push run on main: highest run_number, ties broken by the higher id. */
@@ -106,14 +132,14 @@ export function failedJobsOf(jobs) {
  * Decide what to do. `reportedTexts` are the issue body plus all its comments; a run attempt
  * whose marker is already in there is never reported twice.
  */
-export function decideAlarmAction({ run, openIssue, reportedTexts }) {
+export function decideAlarmAction({ run, openIssue, reportedTexts, superseded = false }) {
   if (!run) {
     return { action: "noop", reason: "kein abgeschlossener Build & Push Lauf auf main gefunden" };
   }
   if (run.status !== "completed") {
     return { action: "noop", reason: "der Lauf ist noch nicht abgeschlossen" };
   }
-  if (RED_CONCLUSIONS.includes(run.conclusion)) {
+  if (isRedRun(run, { superseded })) {
     if (!openIssue) {
       return {
         action: "create",
@@ -143,6 +169,12 @@ export function decideAlarmAction({ run, openIssue, reportedTexts }) {
     return {
       action: "noop",
       reason: "Build & Push auf main ist grün und es gibt kein offenes Alarm-Issue",
+    };
+  }
+  if (run.conclusion === CANCELLED_CONCLUSION) {
+    return {
+      action: "noop",
+      reason: "der Lauf wurde abgebrochen, weil ein neuerer Lauf folgte (kein Fehler von main)",
     };
   }
   return {
@@ -299,7 +331,14 @@ export async function main(argv, env) {
     );
     const openIssue = findOpenAlarmIssue(issues);
 
-    const isRed = run && run.status === "completed" && RED_CONCLUSIONS.includes(run.conclusion);
+    let superseded = false;
+    if (run && run.status === "completed" && run.conclusion === CANCELLED_CONCLUSION) {
+      const recent = ghGet(
+        `repos/${repository}/actions/workflows/${BUILD_PUSH_WORKFLOW_FILE}/runs?branch=main&per_page=20`,
+      );
+      superseded = isSupersededRun(run, recent.workflow_runs ?? []);
+    }
+    const isRed = isRedRun(run, { superseded });
     let reportedTexts = [];
     if (isRed && openIssue) {
       const comments = ghGet(
@@ -311,7 +350,7 @@ export async function main(argv, env) {
       reportedTexts = [openIssue.body ?? "", ...comments.map((comment) => comment.body ?? "")];
     }
 
-    const decision = decideAlarmAction({ run, openIssue, reportedTexts });
+    const decision = decideAlarmAction({ run, openIssue, reportedTexts, superseded });
 
     let text = "";
     if (decision.action === "create" || decision.action === "comment") {

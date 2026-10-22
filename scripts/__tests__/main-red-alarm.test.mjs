@@ -11,11 +11,14 @@ import {
   ALARM_TITLE,
   BUILD_PUSH_PATH,
   BUILD_PUSH_WORKFLOW_FILE,
+  CANCELLED_CONCLUSION,
   RED_CONCLUSIONS,
   assertReplayableRun,
   decideAlarmAction,
   failedJobsOf,
   findOpenAlarmIssue,
+  isRedRun,
+  isSupersededRun,
   parseAlarmArgs,
   renderCloseText,
   renderFailureText,
@@ -157,7 +160,7 @@ describe("decideAlarmAction", () => {
     );
   });
 
-  it.each(["cancelled", "skipped", "neutral", "action_required", "stale"])(
+  it.each(["skipped", "neutral", "action_required", "stale"])(
     "leaves the issue untouched on conclusion %s",
     (conclusion) => {
       const decision = decideAlarmAction({
@@ -342,5 +345,91 @@ describe("parseAlarmArgs", () => {
 
   it("rejects unknown options in German", () => {
     expect(() => parseAlarmArgs(["--bogus"])).toThrow(/Aufruf/);
+  });
+});
+
+// Issue #708: recorded runs of the hang of 13.10.-19.10.2026 (shape of GET .../workflows/
+// build-push.yml/runs). A hung build was ended by GitHub after 6 h as `cancelled`.
+const HUNG_CANCELLED = run({
+  id: 39144617444,
+  run_number: 250,
+  conclusion: "cancelled",
+  head_sha: "dec0112e000000000000000000000000000000aa",
+  html_url: "https://github.com/sebastianzabel/clokr/actions/runs/39144617444",
+});
+const NEWER_RUN = run({
+  id: 39183739566,
+  run_number: 251,
+  status: "in_progress",
+  conclusion: null,
+});
+
+describe("cancelled runs (Issue #708)", () => {
+  it("pins the cancelled conclusion and keeps timed_out red", () => {
+    expect(CANCELLED_CONCLUSION).toBe("cancelled");
+    expect(RED_CONCLUSIONS).toContain("timed_out");
+  });
+
+  it("isSupersededRun: no newer run -> not superseded", () => {
+    expect(isSupersededRun(HUNG_CANCELLED, [HUNG_CANCELLED, RED])).toBe(false);
+  });
+
+  it("isSupersededRun: a newer run of any status supersedes", () => {
+    expect(isSupersededRun(HUNG_CANCELLED, [NEWER_RUN, HUNG_CANCELLED])).toBe(true);
+  });
+
+  it("isSupersededRun ignores newer runs of other branches or workflows", () => {
+    const other = [
+      { ...NEWER_RUN, head_branch: "release/1.8.x" },
+      { ...NEWER_RUN, path: ".github/workflows/ci.yml" },
+    ];
+    expect(isSupersededRun(HUNG_CANCELLED, other)).toBe(false);
+  });
+
+  it("isRedRun: cancelled without successor is red, superseded is not", () => {
+    expect(isRedRun(HUNG_CANCELLED, { superseded: false })).toBe(true);
+    expect(isRedRun(HUNG_CANCELLED, { superseded: true })).toBe(false);
+    expect(isRedRun(HUNG_CANCELLED)).toBe(true);
+  });
+
+  it("isRedRun: timed_out is red regardless of successors", () => {
+    expect(isRedRun({ ...HUNG_CANCELLED, conclusion: "timed_out" }, { superseded: true })).toBe(
+      true,
+    );
+  });
+
+  it("cancelled without successor creates the alarm issue", () => {
+    const decision = decideAlarmAction({
+      run: HUNG_CANCELLED,
+      openIssue: null,
+      reportedTexts: [],
+      superseded: false,
+    });
+    expect(decision.action).toBe("create");
+  });
+
+  it("cancelled without successor comments on an open issue once per run attempt", () => {
+    expect(
+      decideAlarmAction({ run: HUNG_CANCELLED, openIssue: OPEN_ISSUE, reportedTexts: [] }).action,
+    ).toBe("comment");
+    expect(
+      decideAlarmAction({
+        run: HUNG_CANCELLED,
+        openIssue: OPEN_ISSUE,
+        reportedTexts: [runMarker(HUNG_CANCELLED)],
+      }).action,
+    ).toBe("noop");
+  });
+
+  it("cancelled but superseded by a newer run stays neutral", () => {
+    for (const openIssue of [null, OPEN_ISSUE]) {
+      const decision = decideAlarmAction({
+        run: HUNG_CANCELLED,
+        openIssue,
+        reportedTexts: [],
+        superseded: true,
+      });
+      expect(decision.action).toBe("noop");
+    }
   });
 });
