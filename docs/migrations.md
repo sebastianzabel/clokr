@@ -745,22 +745,39 @@ Mandanten-Auffrischung int: siehe `docs/data-refresh-process.md` (`SupportAccess
 
 ## Phase 539 — Altrollen-Rückfall entfernt (Release A, Issue #539)
 
-**Hinweis für die Release Notes.** Dieser Abschnitt ist der Release-Hinweis zu Release A von #539: **Vor dem Deploy**
-gehört der lesende Probelauf (Schritt 1) auf int UND prod in den Ablauf, und bei jedem Treffer das Übernehmen
-(Schritt 2). Ohne diesen Schritt kann sich ein aktiver Nutzer ohne gespeicherte Rollenzuweisung nach dem Deploy nicht mehr
+**Hinweis für die Release Notes.** Dieser Abschnitt ist der Release-Hinweis zu Release A von #539. Das Skript liest
+`Tenant.deactivatedAt`, und diese Spalte legt erst die Migration von #88 im selben Release an. Gegen eine Datenbank im
+Stand vor v1.16.0 läuft das Skript deshalb **nicht**; es meldet das jetzt mit einer klaren Meldung und Exit-Code 1 (Issue #707).
+Die Reihenfolge ist: **vor dem Deploy** die lesende SQL-Prüfung (Schritt 1), **direkt nach der Migration** das Skript
+(Schritt 2). Ohne die Übernahme kann sich ein aktiver Nutzer ohne gespeicherte Rollenzuweisung nach dem Deploy nicht mehr
 anmelden (403 `NO_ROLE_ASSIGNED`), weil Berechtigungen ab Release A nur noch aus gespeicherten Zuweisungen kommen.
 
-**Was sich ändert.** Es gibt **keine Schema-Migration** und keinen Backfill im Entrypoint. Der Altrollen-Rückfall
+**Was sich ändert.** #539 bringt **keine eigene Schema-Migration** und keinen Backfill im Entrypoint. Der Altrollen-Rückfall
 (ein Nutzer ohne Zuweisung galt als Inhaber der Systemrolle seiner Spalte `User.role`) entfällt an allen Auflösungsstellen,
 kein Token trägt mehr einen `role`-Claim, und die Spalte bleibt bis Release B stehen und wird weiter aus den Zuweisungen
 geschrieben (D-06). Beim Weglassen der Übernahme droht genau eine Wirkung: ausgesperrte aktive Nutzer.
 
-**1. Vor dem Deploy — Probelauf (lesend, auf int UND prod).**
+**1. Vor dem Deploy — lesende SQL-Prüfung (auf int UND prod).** Das Skript selbst läuft vor der Migration nicht (siehe
+oben). Dieselbe Frage lässt sich lesend per SQL stellen: aktive Nutzer mit Mitarbeiterdatensatz, die in ihrem Mandanten keine
+Rollenzuweisung haben.
+
+```sql
+select count(*) from "User" u join "Employee" e on e."userId"=u.id
+where u."isActive" and not exists (select 1 from "RoleAssignment" ra where ra."userId"=u.id and ra."tenantId"=e."tenantId");
+```
+
+Bei **0** geht es mit dem Deploy weiter; das Skript läuft danach als Kontrolle (Schritt 2). Bei **> 0** ist
+`--confirm` direkt nach der Migration und vor der Freigabe für Nutzer nötig; bis dahin sind diese Personen ausgesperrt
+(Schritt 2). Die Zahl kann Nutzer enthalten, die das Skript bewusst nicht anfasst (anonymisierte); das Skript nennt die
+genaue Zahl.
+
+**2. Nach der Migration, vor der Freigabe für Nutzer — Skript.**
 `apps/api/scripts/backfill-539-role-assignments.ts` schreibt ohne `--confirm` nichts. Es gibt je Treffer nur Nutzer-Id,
 Mandant und Alt-Rolle aus (keine Namen, keine E-Mail-Adressen) und danach eine Zeile `Totals:` sowie eine Zeile
 `Informational:`. Ein Treffer ist ein **aktiver** Nutzer mit Mitarbeiterdatensatz, der in seinem Mandanten keine
 einzige Rollenzuweisung hat. Inaktive und anonymisierte Nutzer sowie Nutzer ohne Mitarbeiterdatensatz werden nie
-angefasst (Anonymisierung löscht Zuweisungen absichtlich, #74b).
+angefasst (Anonymisierung löscht Zuweisungen absichtlich, #74b). Fehlt die Spalte `Tenant.deactivatedAt`
+(Migration noch nicht angewendet), bricht das Skript vor jeder Abfrage mit Exit-Code 1 und einer klaren Meldung ab.
 
 ```bash
 # DATABASE_URL zeigt per Port-Forward auf die Datenbank der Umgebung (int bzw. prod); aus der Umgebung
@@ -770,9 +787,9 @@ DATABASE_URL="$DSN" pnpm --filter @clokr/api exec tsx scripts/backfill-539-role-
 echo "exit=${PIPESTATUS[0]}"
 ```
 
-Das Skript liegt erst im Image des neuen Release; der Standard-Einstiegspunkt dieses Images führt `prisma migrate deploy`
-aus und darf vor der Deploy-Entscheidung nicht gegen int oder prod gestartet werden. Deshalb entweder aus einem Checkout
-des Release-Stands per Port-Forward (wie oben) oder mit überschriebenem Einstiegspunkt:
+Das Skript liegt erst im Image des neuen Release. Nach dem Deploy (die Migration ist dann angewendet) läuft es im
+laufenden API-Container, aus einem Checkout des Release-Stands per Port-Forward (wie oben) oder mit überschriebenem
+Einstiegspunkt:
 
 ```bash
 docker run --rm -e DATABASE_URL --entrypoint sh <neues-api-image> \
@@ -787,7 +804,7 @@ Zuweisung, 3 ohne, und diese 3 sind **inaktiv**. Der Probelauf meldet daher auf 
 abweicht): **diese Zahl notieren**, sie ändert sich durch die Übernahme nicht. Exit-Code **2** heißt: es gibt mindestens
 einen übernehmbaren Nutzer; Exit-Code **1** ist ein Fehler (fehlende `DATABASE_URL`, Verbindung).
 
-**2. Bei Exit-Code 2 — Übernehmen (`--confirm`).** Die Treffer prüfen (sind es wirklich aktive Personen, die sich
+**3. Bei Exit-Code 2 — Übernehmen (`--confirm`), noch vor der Freigabe für Nutzer.** Die Treffer prüfen (sind es wirklich aktive Personen, die sich
 anmelden sollen?), dann:
 
 ```bash
@@ -799,13 +816,14 @@ Jeder übernommene Nutzer bekommt genau eine Zuweisung mit Scope Mandant auf die
 Rechte, die der Rückfall bisher gab; der Test `backfill-539-role-assignments.test.ts` belegt die Rechteneutralität) und
 eine Audit-Zeile `CREATE RoleAssignment` mit Grund „Übernahme der Alt-Rolle (#75)“. Pro Nutzer eine Transaktion;
 ein Abbruch mitten im Lauf ist unkritisch, der Lauf ist wiederholbar (zweiter Lauf: `written=0`). Die Spalte `User.role`
-wird nie geschrieben. Wer auf int oder prod **nicht** übernommen werden soll, bekommt stattdessen vor dem Deploy
-eine bewusst gewählte Rolle über die Mitarbeiterverwaltung oder wird deaktiviert.
+wird nie geschrieben. Wer auf int oder prod **nicht** übernommen werden soll, bekommt stattdessen eine
+bewusst gewählte Rolle über die Mitarbeiterverwaltung oder wird deaktiviert.
 
-**3. Deploy** wie gewohnt (Einstiegspunkt des neuen Images, vorher `pg_dump`). Es gibt keine Migration.
+**Deploy** wie gewohnt (Einstiegspunkt des neuen Images, vorher `pg_dump`); die Migration von #88 läuft dabei mit.
+#539 selbst bringt keine Migration.
 
-**4. Nach dem Deploy — Stichprobe.** Ein Admin meldet sich an (es muss gelingen). Im Audit-Protokoll stehen
-abgewiesene Anmeldungen als `LOGIN_REFUSED` mit Grund `NO_ROLE_ASSIGNED`; jede ist ein Nutzer, den Schritt 1 und 2 hätten
+**4. Nach der Übernahme — Stichprobe.** Ein Admin meldet sich an (es muss gelingen). Im Audit-Protokoll stehen
+abgewiesene Anmeldungen als `LOGIN_REFUSED` mit Grund `NO_ROLE_ASSIGNED`; jede ist ein Nutzer, den Schritt 1 bis 3 hätten
 erfassen müssen oder der absichtlich keine Rolle hat (das Mitarbeiterformular zeigt „Keine Rolle zugewiesen“).
 
 **5. Rollback.** Das vorige Image liest weiter `User.role` und den Rückfall; da Release A die Spalte unverändert aus den

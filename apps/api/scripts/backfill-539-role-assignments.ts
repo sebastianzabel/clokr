@@ -40,7 +40,8 @@
  *
  * Exit codes:
  *   0 — nothing to take over (dry run), or the takeover ran (--confirm)
- *   1 — DATABASE_URL missing, bad CLI, or a DB connection/query/write failure
+ *   1 — DATABASE_URL missing, bad CLI, an unapplied migration (missing column), or a DB
+ *       connection/query/write failure
  *   2 — dry run: one or more users are eligible (review, then run with --confirm)
  */
 import { PrismaClient, type Prisma, type Role } from "@clokr/db";
@@ -89,6 +90,33 @@ With --confirm it writes one audited assignment per eligible user (one transacti
 exits 0. Inactive, anonymised, Employee-less and malformed-only users are never touched.
 Run the dry run on every instance BEFORE deploying Release A, then --confirm if it lists anyone.
 `;
+
+// ── Schema pre-check ────────────────────────────────────────────────────────
+
+/** Columns the candidate query selects that a migration of the same release may still have to create. */
+const REQUIRED_COLUMNS = [{ table: "Tenant", column: "deactivatedAt", migration: "#88" }] as const;
+
+/**
+ * Returns an operator message when the connected database lacks a column this script reads (an
+ * unapplied migration), else null. Checked before the Prisma query so the operator gets a clear
+ * instruction instead of "The column `Tenant.deactivatedAt` does not exist" (Issue #707).
+ */
+export async function schemaProblem(prisma: PrismaClient): Promise<string | null> {
+  for (const { table, column, migration } of REQUIRED_COLUMNS) {
+    const rows = await prisma.$queryRaw<unknown[]>`
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = ${table} AND column_name = ${column}`;
+    if (rows.length === 0) {
+      return (
+        `Database schema is behind this script: column "${table}"."${column}" is missing ` +
+        `(migration of ${migration} is not applied). Run "prisma migrate deploy" first ` +
+        `(the API entrypoint does it), then run this script again. Nothing was read or written. ` +
+        `Before the migration, check read-only with the SQL in docs/migrations.md, "Phase 539".`
+      );
+    }
+  }
+  return null;
+}
 
 // ── Candidate selection ─────────────────────────────────────────────────────
 
@@ -313,6 +341,11 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
   }
 
   try {
+    const problem = await schemaProblem(prisma);
+    if (problem !== null) {
+      console.error(problem);
+      return EXIT_ERROR;
+    }
     const { candidates, report } = await findTakeoverCandidates(prisma);
 
     for (const candidate of candidates) {
