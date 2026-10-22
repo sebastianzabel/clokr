@@ -123,15 +123,32 @@ describe("Issue #612 - period table CSV serialiser", () => {
       expect(cells[8]).toBe("2 von 2");
     });
 
-    it("is empty under a salon filter, where no month is judged against a contract", () => {
+    // Old rule (#612): a row of a salon-filtered answer carried the reason SALON_FILTER and got an
+    // empty status and an empty "k von m". Owner decision #714: a filtered row is the whole person,
+    // so it gets its real status and count like every other row; the reason no longer exists.
+    it("gives every row its real status and confirmed count, also a row of a filtered answer", () => {
+      const cells = cellsOf({ labelled: true, monthCount: 2, confirmedMonthCount: 0 });
+      expect(cells[7]).toBe("Prognose");
+      expect(cells[8]).toBe("0 von 2");
+    });
+
+    it("keeps status and count on a row whose Soll is withheld for lack of permission", () => {
       const cells = cellsOf({
-        labelled: false,
+        expectedMinutes: null,
+        labelled: true,
         monthCount: 2,
-        confirmedMonthCount: 0,
-        sollUnavailableReason: "SALON_FILTER",
+        confirmedMonthCount: 1,
+        sollUnavailableReason: "NO_PERMISSION",
       });
-      expect(cells[7]).toBe("");
-      expect(cells[8]).toBe("");
+      expect(cells[2]).toBe("");
+      expect(cells[7]).toBe("Prognose");
+      expect(cells[8]).toBe("1 von 2");
+    });
+
+    it("no longer knows a salon reason on a row (owner decision #714)", () => {
+      // @ts-expect-error SALON_FILTER was removed from the row type with the rule it served
+      const stale: PeriodCsvRow = row({ sollUnavailableReason: "SALON_FILTER" });
+      expect(stale.employeeNumber).toBe("1001");
     });
   });
 

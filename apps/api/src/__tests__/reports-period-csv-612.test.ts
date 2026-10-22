@@ -42,7 +42,7 @@ type JsonRow = {
   labelled: boolean;
   sollUnavailableReason?: string;
 };
-type JsonPeriod = { rows: JsonRow[] };
+type JsonPeriod = { rows: JsonRow[]; helpers?: Array<{ employeeNumber: string }> };
 
 /** Splits a CSV (without BOM) into records of cells; handles RFC 4180 quoting. */
 function parseCsv(text: string): string[][] {
@@ -165,6 +165,21 @@ describe("Issue #612 - GET /reports/period/csv", { timeout: 120_000 }, () => {
         },
       });
     }
+
+    // Plan 714-02 (added to the fixture): the person homed in B also worked one day in the fixture's
+    // salon, so the filtered answer for that salon has an Aushilfe whose line must NOT be in the file.
+    await app.prisma.timeEntry.create({
+      data: {
+        employeeId: personInB,
+        salonId: fx.salonId,
+        date: new Date("2026-09-10T00:00:00Z"),
+        startTime: new Date("2026-09-10T08:00:00Z"),
+        endTime: new Date("2026-09-10T12:00:00Z"),
+        breakMinutes: 0,
+        type: "WORK",
+        source: "MANUAL",
+      },
+    });
 
     const passwordHash = await bcrypt.hash(PASSWORD, 4);
     const caller = async (
@@ -444,6 +459,24 @@ describe("Issue #612 - GET /reports/period/csv", { timeout: 120_000 }, () => {
       expect(withSoll).toBeGreaterThan(0);
       // the filter narrows: the unfiltered file is longer (salon B's person is only there)
       expect(all.data.length).toBeGreaterThan(data.length);
+    });
+
+    it("under salonId has one line per row of the filtered JSON and no line for an Aushilfe", async () => {
+      const qs = `from=2026-07&to=2026-10&salonId=${fx.salonId}`;
+      const body = await json(qs);
+      const { data } = await csv(qs);
+      // The fixture's Aushilfe (homed in B, 4 h in this salon) is a helper of the answer ...
+      const helperNumbers = (body.helpers ?? []).map((h) => h.employeeNumber);
+      expect(helperNumbers.length).toBeGreaterThan(0);
+      // ... and the file lists the rows only, never rows plus helpers.
+      expect(data).toHaveLength(body.rows.length);
+      expect(data.map((cells) => cells[0])).toEqual(body.rows.map((r) => r.employeeNumber));
+      for (const number of helperNumbers) {
+        expect(
+          data.some((cells) => cells[0] === number),
+          `helper ${number} has no line`,
+        ).toBe(false);
+      }
     });
 
     it("gives a SALONS-scoped manager only the persons of his reach", async () => {
