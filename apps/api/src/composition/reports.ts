@@ -63,6 +63,7 @@ import {
   type LeaveDaysForCode, // Issue #451 (D-01)
   sickLeaveDayCounts, // Issue #84 (D-14) — the one sick-day / § 9 counting rule
   type SickDaysByCode, // Issue #713 (D-02) — the kernel's per-code split
+  vocationalSchoolDayCount, // Issue #713 (D-05) — the Berufsschultage of the period
   DISPLAY_NAME, // Issue #617 (P-06) — display text of a day row; the identity is the code
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveEntitlement, LeaveRequestStatus, LeaveTypeCode } from "@clokr/db";
@@ -254,6 +255,7 @@ export function computeEmployeeSummary(
 ): {
   sickDays: number;
   sickDaysByCode: SickDaysByCode;
+  vocationalSchoolDays: number;
   sickDaysWithAttest: number;
   sickDaysWithoutAttest: number;
   vacationDays: number;
@@ -342,6 +344,9 @@ export function computeEmployeeSummary(
     // Issue #713 (D-02): the kernel's split, handed on unchanged; the /monthly handler picks its
     // fields one by one, so its JSON is unchanged.
     sickDaysByCode,
+    // Issue #713 (D-05): days with a Berufsschule Absence of the month; the /monthly handler does
+    // not read it.
+    vocationalSchoolDays: vocationalSchoolDayCount(emp.absences, firstDay, lastDay),
     sickDaysWithAttest,
     sickDaysWithoutAttest,
     vacationDays,
