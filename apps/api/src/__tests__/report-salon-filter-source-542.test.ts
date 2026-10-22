@@ -117,6 +117,16 @@ export const REGIONS: readonly RegionEntry[] = [
     validator: "resolveSalonInReach",
     membership: "resolvePeriodReachIds",
   },
+  // Issue #714 (D-07): the Aushilfen of the same period view are decided by the entry branch of the
+  // one membership rule - the pure helper next to salonViewMemberIds, never a second rule.
+  {
+    file: `${COMPOSITION}/reports-period.ts`,
+    method: "get",
+    path: "assemblePeriodReport",
+    kind: "function",
+    validator: "resolveSalonInReach",
+    membership: "salonHelperIds",
+  },
 ];
 
 /** Reads that must not happen before the validation. */

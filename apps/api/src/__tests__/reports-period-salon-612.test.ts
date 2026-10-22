@@ -40,6 +40,7 @@ type MonthEntry = {
   confirmed: boolean;
   labelled: boolean;
   sickDays: number;
+  salonWorkedMinutes?: number;
 };
 type Row = Record<string, unknown> & {
   employeeId: string;
@@ -55,12 +56,21 @@ type Row = Record<string, unknown> & {
   unconfirmedMonths: number | null;
   sickDays: number;
   sollUnavailableReason?: string;
+  salonWorkedMinutes?: number;
   months: MonthEntry[];
+};
+type Helper = {
+  employeeId: string;
+  employeeName: string;
+  employeeNumber: string;
+  salonWorkedMinutes: number;
 };
 type VacationRow = Record<string, unknown> & { employeeId: string; missingEntitlement: boolean };
 type Period = Record<string, unknown> & {
   kpis: Record<string, number | string | boolean | null>;
   rows: Row[];
+  helpers?: Helper[];
+  helpersReach?: string;
   vacation: { years: Array<{ year: number; asOf: string; rows: VacationRow[] }> };
   absences: Array<{ code: string; unit: string; personCount: number; totalDays: number }>;
 };
@@ -344,6 +354,14 @@ const GOLDEN_UNFILTERED: unknown = {
 };
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+// Issue #714 (plan 02): a filtered row adds ONLY the salon viewpoint `salonWorkedMinutes` (row and
+// months) to the whole person; stripped here, every other value must equal the unfiltered row.
+const withoutSalonMinutes = (row: Row): Row => {
+  const copy = { ...row, months: row.months.map((m) => ({ ...m })) };
+  delete copy.salonWorkedMinutes;
+  for (const m of copy.months) delete m.salonWorkedMinutes;
+  return copy;
+};
 const byText = (a: string, b: string): number => a.localeCompare(b);
 
 describe("Issue #612 — the period report follows the chosen salon (#542 rules)", () => {
@@ -585,7 +603,8 @@ describe("Issue #612 — the period report follows the chosen salon (#542 rules)
       const plain = await period(`from=2026-06&to=2026-07`);
       expect(filtered.rows.length).toBe(2);
       for (const row of filtered.rows) {
-        expect(row).toEqual(rowOf(plain, row.employeeId));
+        // owner decision #714: the whole person, plus the separate salon viewpoint (plan 02).
+        expect(withoutSalonMinutes(row)).toEqual(rowOf(plain, row.employeeId));
         expect(row.sollUnavailableReason).toBeUndefined();
       }
       // The fixture's concrete whole figures: PX counts all 11 sick days (not 5 of one salon).
@@ -597,7 +616,7 @@ describe("Issue #612 — the period report follows the chosen salon (#542 rules)
       expect(rowOf(filtered, ids.PA).months[1].workedMinutes).toBe(8 * 60);
     });
 
-    it("shows Soll and saldo of the Stammsalon persons and adds exactly personBasis and salonId", async () => {
+    it("shows Soll and saldo of the Stammsalon persons and adds exactly the salon-view keys", async () => {
       const filtered = await period(`from=2026-06&to=2026-07&salonId=${salonA}`);
       const plain = await period(`from=2026-06&to=2026-07`);
       for (const row of filtered.rows) {
@@ -617,9 +636,80 @@ describe("Issue #612 — the period report follows the chosen salon (#542 rules)
         expect(k in filtered, `${k} gone under a filter`).toBe(false);
       }
       const added = Object.keys(filtered).filter((k) => !(k in plain));
-      expect(added.sort(byText)).toEqual(["personBasis", "salonId"].sort(byText));
-      for (const k of ["salonId", "personBasis"]) {
+      // owner decision #714 (plan 02): the salon viewpoint adds helpers and the reach kind.
+      expect(added.sort(byText)).toEqual(
+        ["helpers", "helpersReach", "personBasis", "salonId"].sort(byText),
+      );
+      for (const k of ["salonId", "personBasis", "helpers", "helpersReach"]) {
         expect(k in plain, `${k} absent without a filter`).toBe(false);
+      }
+    });
+
+    // The property of the old #612 case "every month equals the row of the filtered /reports/monthly",
+    // kept for the one figure that is still a salon figure: Ist in the salon (owner decision #714).
+    it("Im Salon gearbeitet equals the Ist of the filtered /reports/monthly for every person-month", async () => {
+      const filtered = await period(`from=2026-06&to=2026-07&salonId=${salonA}`);
+      const m6 = await monthly(2026, 6, salonA);
+      const m7 = await monthly(2026, 7, salonA);
+      const monthlyBy = (rows: MonthlyRow[], id: string): MonthlyRow | undefined =>
+        rows.find((r) => r.employeeId === id);
+      const compared: string[] = [];
+      for (const row of filtered.rows) {
+        expect(typeof row.salonWorkedMinutes).toBe("number");
+        let monthSum = 0;
+        for (const month of row.months) {
+          const mRow = monthlyBy(month.month === 6 ? m6 : m7, row.employeeId);
+          expect(mRow, `monthly row ${row.employeeId} ${month.month}`).toBeDefined();
+          expect(
+            round2((month.salonWorkedMinutes ?? NaN) / 60),
+            `person-month ${month.month}`,
+          ).toBe(mRow!.workedHours);
+          compared.push(`${month.month}:${month.salonWorkedMinutes}/${mRow!.workedHours}`);
+          monthSum += month.salonWorkedMinutes ?? 0;
+        }
+        expect(row.salonWorkedMinutes).toBe(monthSum);
+      }
+      // PA June 1440, July 480; PX June 960, July 0 (A entries 22./23.6.).
+      expect(rowOf(filtered, ids.PA).months.map((m) => m.salonWorkedMinutes)).toEqual([1440, 480]);
+      expect(rowOf(filtered, ids.PX).months.map((m) => m.salonWorkedMinutes)).toEqual([960, 0]);
+      // PB is homed in B with a 4 h entry in A: a helper, never a row.
+      expect(filtered.helpers).toEqual([
+        {
+          employeeId: ids.PB,
+          employeeName: expect.any(String),
+          employeeNumber: expect.any(String),
+          salonWorkedMinutes: 240,
+        },
+      ]);
+      const helperMonthly = [...m6, ...m7]
+        .filter((r) => r.employeeId === ids.PB)
+        .reduce((s, r) => s + r.workedHours * 60, 0);
+      expect(filtered.helpers![0].salonWorkedMinutes).toBe(helperMonthly);
+      expect(filtered.kpis.salonWorkedMinutes).toBe(3120);
+      console.info(`[714-02] salon A person-months (period / monthly h): ${compared.join(" ")}`);
+    });
+
+    it("a helper object has exactly the four identity-and-minutes keys and the caller's reach kind is named", async () => {
+      const filtered = await period(`from=2026-06&to=2026-07&salonId=${salonA}`);
+      expect(filtered.helpers!.length).toBeGreaterThan(0);
+      for (const h of filtered.helpers!) {
+        expect(Object.keys(h).sort(byText)).toEqual(
+          ["employeeId", "employeeName", "employeeNumber", "salonWorkedMinutes"].sort(byText),
+        );
+      }
+      expect(filtered.helpersReach).toBe("WHOLE_TENANT");
+      const scoped = await period(`from=2026-06&to=2026-07&salonId=${salonA}`, scopedToken);
+      const scopedPlain = await period(`from=2026-06&to=2026-07`, scopedToken);
+      expect(scoped.helpersReach).toBe("SCOPED");
+      // Never wider: every helper of a scoped caller lies inside its unfiltered rows.
+      for (const h of scoped.helpers!) expect(rowIds(scopedPlain)).toContain(h.employeeId);
+      expect(scoped.helpers!.map((h) => h.employeeId)).not.toContain(ids.PB);
+      // The KPI is Σ rows + Σ helpers in both answers.
+      for (const a of [filtered, scoped]) {
+        const sum =
+          a.rows.reduce((s, r) => s + (r.salonWorkedMinutes ?? 0), 0) +
+          a.helpers!.reduce((s, h) => s + h.salonWorkedMinutes, 0);
+        expect(a.kpis.salonWorkedMinutes).toBe(sum);
       }
     });
 
@@ -778,6 +868,8 @@ describe("Issue #612 — the period report follows the chosen salon (#542 rules)
       for (const k of [
         "salonId",
         "personBasis",
+        "helpers",
+        "helpersReach",
         "workedBasis",
         "sollUnavailableReason",
         "leaveDaysUnavailableReason",
@@ -786,6 +878,12 @@ describe("Issue #612 — the period report follows the chosen salon (#542 rules)
       }
       expect(typeof rowOf(r, ids.PA).expectedMinutes).toBe("number");
       expect(rowOf(r, ids.PX).sickDays).toBe(11);
+      // The salon viewpoint exists only under a filter: no row, month or KPI carries it.
+      expect("salonWorkedMinutes" in r.kpis).toBe(false);
+      for (const row of r.rows) {
+        expect("salonWorkedMinutes" in row, "row").toBe(false);
+        for (const m of row.months) expect("salonWorkedMinutes" in m, "month").toBe(false);
+      }
       expect(rowIds(r)).toEqual(expect.arrayContaining([ids.PA, ids.PB, ids.PX, ids.PN]));
     });
   });

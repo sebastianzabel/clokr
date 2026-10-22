@@ -25,7 +25,7 @@ import {
   type MonthReportFigures,
   type MonthReportFiguresRequest,
 } from "../contexts/working-time-account";
-import { employeesWithValidWorkSince } from "../contexts/time-tracking";
+import { employeesWithValidWorkSince, addWorkingMinutes } from "../contexts/time-tracking";
 import { listEntitlementsForYear, vacationEntitlementWarning } from "../contexts/absence";
 import type { LeaveTypeCode } from "@clokr/db";
 import {
@@ -39,7 +39,7 @@ import {
   type EmployeeWithIncludes,
 } from "./reports";
 import { resolveMonthReachIds, resolvePeriodReachIds } from "./reach-day"; // Issues #679, #714: the reach day of a person
-import { SALON_VIEW_NOT_FOUND } from "./salon-view";
+import { SALON_VIEW_NOT_FOUND, salonHelperIds } from "./salon-view";
 import { periodCsvFilename, periodTableCsv } from "./period-csv";
 
 /**
@@ -126,6 +126,11 @@ export type PeriodMonthEntry = {
   confirmed: boolean;
   labelled: boolean;
   sickDays: number;
+  /**
+   * Issue #714 (D-06): hours recorded in the filter salon, ONLY under a salon filter. A viewpoint of
+   * its own that never meets Soll or saldo - not "Ist minus Soll" (no Scheinminus for a Springer).
+   */
+  salonWorkedMinutes?: number;
 };
 
 type PersonAccumulator = {
@@ -145,6 +150,33 @@ export type SollUnavailableReason = "NO_PERMISSION";
 
 /** The salon the chosen id does not name (foreign, unknown, inactive or outside the reach): one 404. */
 export class PeriodSalonNotFoundError extends Error {}
+
+/**
+ * Issue #714 (D-07): a person outside the salon's circle who recorded time in the salon. Identity and
+ * hours only - no Soll, saldo, status, month or link (G10: no drill-down).
+ */
+export type PeriodSalonHelper = {
+  employeeId: string;
+  employeeName: string;
+  employeeNumber: string;
+  salonWorkedMinutes: number;
+};
+
+/**
+ * Issue #714 (D-06, P-714-04): the working minutes of a person's closed, valid WORK entries recorded
+ * in the salon through tenant-local yesterday - today never counts (#438); a travel row counts for
+ * its departure salon (#92). The very derivation of the filtered `GET /reports/monthly` (#542 P-02),
+ * so the two Ist figures of the salon are one number.
+ */
+function salonWorkedMinutesOf(
+  entries: ReadonlyArray<{ salonId: string; date: Date } & Parameters<typeof addWorkingMinutes>[1]>,
+  salonId: string,
+  yesterday: Date,
+): number {
+  return entries
+    .filter((t) => t.salonId === salonId && t.date <= yesterday)
+    .reduce((sum, t) => addWorkingMinutes(sum, t), 0);
+}
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
@@ -498,6 +530,14 @@ async function assemblePeriodReport(
     ? await resolveAccessReach(app.prisma, access, "overtime:read:ZUGEWIESEN")
     : null;
 
+  // Issue #714 (P-714-04): tenant-local yesterday as a calendar-day date - the salon viewpoint stops there.
+  const yesterdayDate = new Date(today.getTime() - 86_400_000);
+  // Issue #714 (D-07): the Aushilfen, accumulated over the months (identity + hours only).
+  const helperTotals = new Map<
+    string,
+    PeriodSalonHelper & { firstName: string; lastName: string }
+  >();
+
   const persons = new Map<string, PersonAccumulator>();
   // Issue #688: the month entries whose account figures are asked for in ONE call after the loop.
   const figureSlots: Array<{ entry: PeriodMonthEntry; request: MonthReportFiguresRequest }> = [];
@@ -546,6 +586,40 @@ async function assemblePeriodReport(
     // the month body is the unfiltered one: whole-person figures (D-02).
     const employees =
       homeSet === null ? populationEmployees : populationEmployees.filter((e) => homeSet.has(e.id));
+
+    // Issue #714 (D-07, P-714-05): the Aushilfen of this month - population persons OUTSIDE the circle
+    // with a counted entry in the salon, decided by the one membership rule's entry branch. They get
+    // no row, no month and no figure besides their hours.
+    if (filterSalonId !== null && homeSet !== null) {
+      const outside = populationEmployees.filter((e) => !homeSet.has(e.id));
+      const helperIds = salonHelperIds({
+        salonId: filterSalonId,
+        candidateIds: outside.map((e) => e.id),
+        entries: outside.flatMap((e) =>
+          e.timeEntries
+            .filter((t) => t.date <= yesterdayDate)
+            .map((t) => ({ employeeId: e.id, salonId: t.salonId })),
+        ),
+        homeMemberIds: homeSet,
+      });
+      for (const e of outside) {
+        if (!helperIds.has(e.id)) continue;
+        const total = helperTotals.get(e.id) ?? {
+          employeeId: e.id,
+          employeeName: `${e.firstName} ${e.lastName}`,
+          employeeNumber: e.employeeNumber,
+          firstName: e.firstName,
+          lastName: e.lastName,
+          salonWorkedMinutes: 0,
+        };
+        total.salonWorkedMinutes += salonWorkedMinutesOf(
+          e.timeEntries,
+          filterSalonId,
+          yesterdayDate,
+        );
+        helperTotals.set(e.id, total);
+      }
+    }
 
     const section9ByEmp = await fetchConfirmedSection9CreditsByEmp(
       app,
@@ -613,6 +687,16 @@ async function assemblePeriodReport(
         confirmed: false,
         labelled: false,
         sickDays: summary.sickDays,
+        // Issue #714 (D-06): only under a filter - the unfiltered month object keeps its exact keys.
+        ...(filterSalonId !== null
+          ? {
+              salonWorkedMinutes: salonWorkedMinutesOf(
+                emp.timeEntries,
+                filterSalonId,
+                yesterdayDate,
+              ),
+            }
+          : {}),
       };
       person.months.push(entry);
       figureSlots.push({
@@ -721,6 +805,10 @@ async function assemblePeriodReport(
       confirmedMonthCount: person.months.filter((m) => m.confirmed).length,
       labelled: person.months.some((m) => m.labelled),
       sickDays: round2(sum((m) => m.sickDays)),
+      // Issue #714 (D-06): the salon viewpoint of the row = Σ its months; never next to a Soll figure.
+      ...(filterSalonId !== null
+        ? { salonWorkedMinutes: sum((m) => m.salonWorkedMinutes ?? 0) }
+        : {}),
       ...(sollReason === undefined ? {} : { sollUnavailableReason: sollReason }),
       months: person.months.map((m) =>
         covered
@@ -741,6 +829,20 @@ async function assemblePeriodReport(
           ? `${lastMonth.year + 1}-01-01`
           : `${lastMonth.year}-${String(lastMonth.month + 1).padStart(2, "0")}-01`,
       );
+  // Issue #714 (D-07): the Aushilfen ordered like every list of the report - last name, first name, id.
+  const helpers: PeriodSalonHelper[] = [...helperTotals.values()]
+    .sort(
+      (a, b) =>
+        a.lastName.localeCompare(b.lastName, "de") ||
+        a.firstName.localeCompare(b.firstName, "de") ||
+        a.employeeId.localeCompare(b.employeeId),
+    )
+    .map((h) => ({
+      employeeId: h.employeeId,
+      employeeName: h.employeeName,
+      employeeNumber: h.employeeNumber,
+      salonWorkedMinutes: h.salonWorkedMinutes,
+    }));
   const labelledMonths = rows.flatMap((r) => r.months.filter((m) => m.labelled));
 
   // P-05/P-06: one Urlaub table per calendar year the period touches, each at its own Stichtag.
@@ -813,6 +915,15 @@ async function assemblePeriodReport(
         coveredRows.length > 0 && coveredRows.every((r) => r.months[r.months.length - 1].confirmed),
       allMonthsConfirmed: labelledMonths.length > 0 && labelledMonths.every((m) => m.confirmed),
       sickDays: round2(rows.reduce((s, r) => s + r.sickDays, 0)),
+      // Issue #714 (D-06, AC-714-4): Σ rows + Σ Aushilfen - every hour recorded in the salon, the
+      // Springer included. A viewpoint of its own: no Soll, no saldo beside it (owner decision #714).
+      ...(filterSalonId !== null
+        ? {
+            salonWorkedMinutes:
+              rows.reduce((s, r) => s + (r.salonWorkedMinutes ?? 0), 0) +
+              helpers.reduce((s, h) => s + h.salonWorkedMinutes, 0),
+          }
+        : {}),
       ...(sections === "all"
         ? {
             vacationYear: endYear.year,
@@ -826,7 +937,15 @@ async function assemblePeriodReport(
     rows,
     // Issue #714 (P-714-03): additive keys, ONLY under a filter - the unfiltered shape stays as it was.
     ...(filterSalonId !== null
-      ? { salonId: filterSalonId, personBasis: "HOME_SALON_AT_PERIOD_END" as const }
+      ? {
+          salonId: filterSalonId,
+          personBasis: "HOME_SALON_AT_PERIOD_END" as const,
+          helpers,
+          // The web needs the caller's reach kind for its hint that helpers of salons outside the
+          // reach are not visible (G7); a helper is never drawn from outside the reach.
+          helpersReach:
+            reach.kind === "wholeTenant" ? ("WHOLE_TENANT" as const) : ("SCOPED" as const),
+        }
       : {}),
     ...(sections === "all"
       ? {

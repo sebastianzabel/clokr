@@ -53,6 +53,12 @@ type Row = Record<string, unknown> & {
   sollUnavailableReason?: string;
   months: MonthEntry[];
 };
+type Helper = {
+  employeeId: string;
+  employeeName: string;
+  employeeNumber: string;
+  salonWorkedMinutes: number;
+};
 type VacationRow = Record<string, unknown> & {
   employeeId: string;
   missingEntitlement: boolean;
@@ -62,6 +68,7 @@ type VacationRow = Record<string, unknown> & {
 type Period = Record<string, unknown> & {
   kpis: Record<string, number | string | boolean | null>;
   rows: Row[];
+  helpers?: Helper[];
   vacation: { years: Array<{ year: number; asOf: string; rows: VacationRow[] }> };
   absences: Array<{ code: string; unit: string; personCount: number; totalDays: number }>;
 };
@@ -70,6 +77,16 @@ const TAGS = ["SP", "NS", "WS", "MV", "OH", "LV", "IN", "EJ"] as const;
 type Tag = (typeof TAGS)[number];
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+// Plan 714-02: a filtered row adds only the separate salon viewpoint `salonWorkedMinutes` (row and
+// months) to the whole person; everything else must equal the unfiltered row.
+const whole = (row: Row): Row => {
+  const copy = { ...row, months: row.months.map((m) => ({ ...m })) } as Row & {
+    salonWorkedMinutes?: number;
+  };
+  delete copy.salonWorkedMinutes;
+  for (const m of copy.months) delete m.salonWorkedMinutes;
+  return copy;
+};
 const byText = (a: string, b: string): number => a.localeCompare(b);
 const sorted = (xs: Iterable<string>): string[] => [...xs].sort(byText);
 
@@ -338,7 +355,7 @@ describe("Issue #714 — the salon views of the period report add up to all salo
       for (const salonId of activeSalonIds) {
         const filtered = await period(`${PERIOD}&salonId=${salonId}`);
         for (const row of filtered.rows) {
-          expect(row, tagOf(row.employeeId)).toEqual(rowOf(plain, row.employeeId));
+          expect(whole(row), tagOf(row.employeeId)).toEqual(rowOf(plain, row.employeeId));
           expect(row.sollUnavailableReason).toBeUndefined();
           compared += 1;
         }
@@ -367,14 +384,94 @@ describe("Issue #714 — the salon views of the period report add up to all salo
       expect(sp.closingBalanceMinutes).toBe(0);
     });
 
-    it("is no row at all in Nord and West, and nothing of the Nord answer names the Springer", async () => {
-      for (const salonId of [nord, west]) {
-        const r = await period(`${FEB}&salonId=${salonId}`);
+    // Old rule (714-01): "nothing of the Nord answer names the Springer". Owner decision #714 (D-06,
+    // D-07, plan 02): the 80 h the Springer worked in Nord ARE shown in Nord - as hours of a helper
+    // and nothing else. The Scheinminus guard stays: no row, no Soll, no saldo of the Springer there.
+    it("is no row in Nord and West; in Nord the Springer is only a helper with the hours worked there", async () => {
+      const nordAnswer = await period(`${FEB}&salonId=${nord}`);
+      const westAnswer = await period(`${FEB}&salonId=${west}`);
+      for (const r of [nordAnswer, westAnswer]) {
         expect(rowIds(r)).not.toContain(ids.SP);
-        expect(JSON.stringify(r)).not.toContain(ids.SP);
-        // Not vacuous: the answer has rows and lists the Springer's name nowhere (no Scheinminus).
         expect(r.rows.length).toBeGreaterThan(0);
       }
+      const helper = (nordAnswer.helpers as Helper[]).find((h) => h.employeeId === ids.SP);
+      expect(helper).toBeDefined();
+      expect(helper!.salonWorkedMinutes).toBe(4800);
+      expect(Object.keys(helper!).sort(byText)).toEqual(
+        ["employeeId", "employeeName", "employeeNumber", "salonWorkedMinutes"].sort(byText),
+      );
+      // The Springer's Soll, saldo and closing never show up in the Nord answer (no Scheinminus):
+      // the only place the id occurs is the helper object.
+      const withoutHelpers = { ...nordAnswer, helpers: [] };
+      expect(JSON.stringify(withoutHelpers)).not.toContain(ids.SP);
+      // West has no hour of the Springer at all.
+      expect(JSON.stringify(westAnswer)).not.toContain(ids.SP);
+    });
+
+    it("shows the Springer's Sued hours as the row's salon viewpoint next to the whole 9600 minutes", async () => {
+      const r = await period(`${FEB}&salonId=${sued}`);
+      const sp = rowOf(r, ids.SP);
+      expect(sp.salonWorkedMinutes).toBe(4800);
+      expect(sp.workedMinutes).toBe(9600);
+    });
+  });
+
+  describe("Im Salon gearbeitet (AC-714-4, D-06, D-07)", () => {
+    const PERIOD = "from=2026-01&to=2026-02";
+
+    it("Σ over the active salons of the KPI is every hour recorded in an active salon, Springer and Aushilfen included", async () => {
+      const answers = await Promise.all(
+        activeSalonIds.map((salonId) => period(`${PERIOD}&salonId=${salonId}`)),
+      );
+      // Measured from the rows the world created: closed WORK entries of the fixture persons in the
+      // active salons through yesterday (the inactive Alt salon and every other tenant are out).
+      const fixtureIds = Object.values(ids);
+      const entries = await app.prisma.timeEntry.findMany({
+        where: {
+          employeeId: { in: fixtureIds },
+          salonId: { in: activeSalonIds },
+          deletedAt: null,
+          type: "WORK",
+          endTime: { not: null },
+          date: { lte: new Date("2026-03-15T00:00:00Z") },
+        },
+      });
+      const expected = entries.reduce(
+        (sum, t) => sum + (t.endTime!.getTime() - t.startTime.getTime()) / 60_000,
+        0,
+      );
+      expect(entries.length).toBeGreaterThan(0);
+      const perSalon = answers.map((a) => a.kpis.salonWorkedMinutes);
+      expect(perSalon.reduce((s: number, x) => s + Number(x), 0)).toBe(expected);
+      // Every KPI = Σ its rows + Σ its helpers.
+      for (const a of answers) {
+        const sum =
+          a.rows.reduce((s, r) => s + Number(r.salonWorkedMinutes ?? 0), 0) +
+          (a.helpers ?? []).reduce((s, h) => s + h.salonWorkedMinutes, 0);
+        expect(a.kpis.salonWorkedMinutes).toBe(sum);
+      }
+      console.info(
+        `[714-02] salon hours per salon (Sued, Nord, West): ${perSalon.join(" + ")} = ${expected}`,
+      );
+    });
+
+    it("lists the Springer in Nord with 4800 minutes, MV and OH with their Nord hours, and nobody of the circle", async () => {
+      const feb = await period(`from=2026-02&to=2026-02&salonId=${nord}`);
+      const helpers = feb.helpers as Helper[];
+      const minutesOf = (id: string): number | undefined =>
+        helpers.find((h) => h.employeeId === id)?.salonWorkedMinutes;
+      expect(minutesOf(ids.SP)).toBe(4800);
+      expect(minutesOf(ids.MV)).toBe(2 * 480); // Nord days 2./3.2. before the move to Sued
+      expect(minutesOf(ids.OH)).toBe(480); // 5.2. in Nord; no Stammsalon at all
+      // MV is a Sued row (whole) and a Nord helper; NS is Nord's own row, never its own helper.
+      expect(rowIds(feb)).not.toContain(ids.MV);
+      expect(rowIds(feb)).toContain(ids.NS);
+      expect(helpers.map((h) => h.employeeId)).not.toContain(ids.NS);
+      const sued2 = await period(`from=2026-02&to=2026-02&salonId=${sued}`);
+      expect(rowIds(sued2)).toContain(ids.MV);
+      // Order: last name, first name, id.
+      const names = helpers.map((h) => h.employeeName);
+      expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, "de")));
     });
   });
 
@@ -445,7 +542,7 @@ describe("Issue #714 — the salon views of the period report add up to all salo
       const inNord = await period(`${q}&salonId=${nord}`);
       expect(rowIds(inSued)).toContain(ids.MV);
       expect(rowIds(inNord)).not.toContain(ids.MV);
-      expect(rowOf(inSued, ids.MV)).toEqual(rowOf(plain, ids.MV));
+      expect(whole(rowOf(inSued, ids.MV))).toEqual(rowOf(plain, ids.MV));
       // Whole values: the two Nord days before the move are in the row, not left in Nord.
       expect(rowOf(inSued, ids.MV).workedMinutes).toBe(4 * 480);
     });
@@ -474,7 +571,7 @@ describe("Issue #714 — the salon views of the period report add up to all salo
       const q = "from=2026-02&to=2026-02";
       const alone = await period(`${q}&employeeId=${ids.SP}`);
       const filtered = await period(`${q}&salonId=${sued}&employeeId=${ids.SP}`);
-      expect(filtered.rows).toEqual([rowOf(alone, ids.SP)]);
+      expect(filtered.rows.map(whole)).toEqual([rowOf(alone, ids.SP)]);
     });
 
     it("keeps the one 404 for a foreign or unknown salon, with any employeeId", async () => {
