@@ -415,24 +415,34 @@ describe("Issue #612 - GET /reports/period/csv", { timeout: 120_000 }, () => {
   });
 
   describe("the rules of the JSON answer (T-612-15, T-612-16)", () => {
-    it("under salonId lists the filtered JSON rows with empty Soll and saldo cells", async () => {
+    // Old rule (#612): the filtered file had empty Soll, saldo, status and "k von m" cells. Owner
+    // decision #714: a filtered line is the whole person, like the unfiltered file's line.
+    it("under salonId lists the Stammsalon persons with their Soll, saldo and status", async () => {
       const qs = `from=2026-07&to=2026-10&salonId=${fx.salonId}`;
       const body = await json(qs);
       const { data } = await csv(qs);
       expect(body.rows.length).toBeGreaterThan(0);
       expect(data).toHaveLength(body.rows.length);
+      const all = await csv("from=2026-07&to=2026-10");
+      const allLineOf = new Map(all.data.map((cells) => [cells[0], cells]));
+      let withSoll = 0;
       data.forEach((cells, i) => {
         const r = body.rows[i];
+        expect(r.sollUnavailableReason).toBeUndefined();
         expect(cells[0]).toBe(r.employeeNumber);
-        expect(cells[2]).toBe("");
+        expect(cells[2]).toBe(hours(r.expectedMinutes));
         expect(cells[3]).toBe(hours(r.workedMinutes));
-        expect(cells.slice(4, 7)).toEqual(["", "", ""]);
-        // no month is judged against a contract under a filter: no status either
-        expect(cells[7]).toBe("");
-        expect(cells[8]).toBe("");
+        expect(cells[4]).toBe(hours(r.openingBalanceMinutes));
+        expect(cells[5]).toBe(hours(r.balanceMinutes));
+        expect(cells[6]).toBe(hours(r.closingBalanceMinutes));
+        expect(cells[7]).toBe(statusOf(r));
+        expect(cells[8]).toBe(`${r.confirmedMonthCount} von ${r.monthCount}`);
+        // the same cells as the unfiltered file's line of the same person
+        expect(cells.slice(2, 9)).toEqual(allLineOf.get(r.employeeNumber)?.slice(2, 9));
+        if (r.expectedMinutes !== null) withSoll += 1;
       });
+      expect(withSoll).toBeGreaterThan(0);
       // the filter narrows: the unfiltered file is longer (salon B's person is only there)
-      const all = await csv("from=2026-07&to=2026-10");
       expect(all.data.length).toBeGreaterThan(data.length);
     });
 

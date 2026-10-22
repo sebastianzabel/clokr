@@ -7,7 +7,7 @@ import {
   resolveAccessReach,
   resolveStammsalonScopedEmployeeIds,
   resolveSalonInReach,
-  homeSalonsForDays,
+  salonOnlyReach,
   type AccessReach,
   reportPopulationWhere,
   isEmployedInPeriod,
@@ -25,24 +25,21 @@ import {
   type MonthReportFigures,
   type MonthReportFiguresRequest,
 } from "../contexts/working-time-account";
-import { employeesWithValidWorkSince, addWorkingMinutes } from "../contexts/time-tracking";
+import { employeesWithValidWorkSince } from "../contexts/time-tracking";
 import { listEntitlementsForYear, vacationEntitlementWarning } from "../contexts/absence";
 import type { LeaveTypeCode } from "@clokr/db";
-import type { LeaveDaysForCode } from "../contexts/absence";
 import {
   buildEmployeeInclude,
   computeEmployeeSummary,
   fetchConfirmedSection9CreditsByEmp,
   fetchLeaveDaysByCodeForMonthlyReport,
   dayBeforeStr,
-  calendarDaysBetween,
-  salonPersonsAtStichtag,
   vacationYearFigures,
   yearPopulationPeriod,
   type EmployeeWithIncludes,
 } from "./reports";
-import { resolveMonthReachIds } from "./reach-day"; // Issue #679: the reach day of a person in a month
-import { salonViewMemberIds, SALON_VIEW_NOT_FOUND } from "./salon-view";
+import { resolveMonthReachIds, resolvePeriodReachIds } from "./reach-day"; // Issues #679, #714: the reach day of a person
+import { SALON_VIEW_NOT_FOUND } from "./salon-view";
 import { periodCsvFilename, periodTableCsv } from "./period-csv";
 
 /**
@@ -65,6 +62,10 @@ import { periodCsvFilename, periodTableCsv } from "./period-csv";
  * Soll follows the saldo gate (P-04): Soll and Ist together reveal the month saldo, so where
  * `overtime:read` does not cover a person in every listed month, Soll, saldo, opening and closing
  * are `null` (with `sollUnavailableReason: "NO_PERMISSION"`) and only Ist stays.
+ *
+ * Issue #714 — under a salon filter: ONE circle (the persons whose Stammsalon is the salon at the
+ * period Stichtag, `reach-day.ts`), each person with the whole figures of the unfiltered path;
+ * nothing is split by salon and no second computation exists (owner decision 19.10.2026).
  *
  * The evaluation is sequential on purpose (P-09), and the 12-month cap bounds the work. No parallel
  * fan-out over persons or months. Issue #688: the figures of all (person, month) pairs are asked
@@ -139,8 +140,8 @@ type PersonAccumulator = {
   covered: boolean;
 };
 
-/** Why Soll and saldo are withheld on a row: no `overtime:read` (wins) or the salon filter (#542). */
-export type SollUnavailableReason = "NO_PERMISSION" | "SALON_FILTER";
+/** Why Soll and saldo are withheld on a row: no `overtime:read` over the person. */
+export type SollUnavailableReason = "NO_PERMISSION";
 
 /** The salon the chosen id does not name (foreign, unknown, inactive or outside the reach): one 404. */
 export class PeriodSalonNotFoundError extends Error {}
@@ -476,6 +477,21 @@ async function assemblePeriodReport(
   const salonFilter = await resolveSalonInReach(app.prisma, tenantId, reach, query.salonId);
   if (!salonFilter.ok) throw new PeriodSalonNotFoundError();
   const filterSalonId = salonFilter.salonId;
+  // Issue #714 (D-01): under a filter the circle is decided ONCE - the persons homed in the salon at
+  // their period Stichtag (the exit day for an exit inside the period, else the period's last day).
+  // A salon-only reach never answers "all"; if it did, the circle is empty (fail-closed).
+  let homeSet: ReadonlySet<string> | null = null;
+  if (filterSalonId !== null) {
+    const homeIds = await resolvePeriodReachIds(
+      app.prisma,
+      tenantId,
+      salonOnlyReach(filterSalonId),
+      months[0],
+      months[months.length - 1],
+      tz,
+    );
+    homeSet = new Set(homeIds === "all" ? [] : homeIds);
+  }
   // P-04: Soll and saldo follow overtime:read; the reach of that permission is judged per month.
   const canSeeSaldo = await hasPermission(req, "overtime:read:ZUGEWIESEN");
   const overtimeReach = canSeeSaldo
@@ -525,34 +541,11 @@ async function assemblePeriodReport(
       orderBy: { lastName: "asc" },
     })) as unknown as EmployeeWithIncludes[];
 
-    // Issue #542 (P-01, P-02): under a filter the population above (period population, Stammsalon
-    // scope at month end, optional employeeId) is intersected with the ONE membership rule - an
-    // entry in the salon this month OR the Stammsalon on at least one calendar day of it. The filter
-    // can only narrow. `homeByPerson` doubles as the per-day attribution of the sick days (#84).
-    let employees = populationEmployees;
-    let homeByPerson: Map<string, Map<string, string | null>> | null = null;
-    if (filterSalonId !== null) {
-      const monthDays = calendarDaysBetween(firstDay, lastDay);
-      homeByPerson = await homeSalonsForDays(
-        app.prisma,
-        tenantId,
-        populationEmployees.map((e) => e.id),
-        monthDays[0],
-        monthDays[monthDays.length - 1],
-      );
-      const members = salonViewMemberIds({
-        salonId: filterSalonId,
-        candidateIds: populationEmployees.map((e) => e.id),
-        entries: populationEmployees.flatMap((e) =>
-          e.timeEntries.map((t) => ({ employeeId: e.id, salonId: t.salonId })),
-        ),
-        homeByPerson,
-        days: monthDays,
-      });
-      employees = populationEmployees.filter((e) => members.has(e.id));
-    }
-    // Issue #542: tenant-local yesterday as a calendar day - today never counts (#438).
-    const yesterdayDate = new Date(todayInTz(tz).getTime() - 86_400_000);
+    // Issue #714 (D-01, D-10): under a filter the population above (period population, reach of the
+    // month, optional employeeId) is intersected with the home set - it can only narrow. From here on
+    // the month body is the unfiltered one: whole-person figures (D-02).
+    const employees =
+      homeSet === null ? populationEmployees : populationEmployees.filter((e) => homeSet.has(e.id));
 
     const section9ByEmp = await fetchConfirmedSection9CreditsByEmp(
       app,
@@ -560,12 +553,13 @@ async function assemblePeriodReport(
       firstDay,
       lastDay,
     );
-    // Issue #542 (D-542-1): the priced leave counts follow a chronological prefix rule per period and
-    // are not fetched under a filter (a per-day variant would be a second counting rule, #451).
-    const leaveDaysByEmp =
-      filterSalonId === null
-        ? await fetchLeaveDaysByCodeForMonthlyReport(app, tenantId, employees, ym.year, ym.month)
-        : new Map<string, Map<LeaveTypeCode, LeaveDaysForCode>>();
+    const leaveDaysByEmp = await fetchLeaveDaysByCodeForMonthlyReport(
+      app,
+      tenantId,
+      employees,
+      ym.year,
+      ym.month,
+    );
 
     for (const emp of employees) {
       const summary = computeEmployeeSummary(
@@ -575,19 +569,7 @@ async function assemblePeriodReport(
         tz,
         leaveDaysByEmp.get(emp.id) ?? new Map(),
         section9ByEmp.get(emp.id) ?? [],
-        filterSalonId === null
-          ? undefined
-          : (day) => homeByPerson?.get(emp.id)?.get(day) === filterSalonId,
       );
-      // Under a filter Ist = the closed, valid WORK entries recorded in the salon through yesterday
-      // (a travel row counts for its departure salon, #92); Soll, saldo and the account are
-      // contract figures of the person and are not read (#84, #542).
-      const filteredMinutes =
-        filterSalonId === null
-          ? 0
-          : emp.timeEntries
-              .filter((t) => t.salonId === filterSalonId && t.date <= yesterdayDate)
-              .reduce((sum, t) => addWorkingMinutes(sum, t), 0);
       if (sections === "all") {
         for (const code of ABSENCE_KIND_ORDER) {
           const days = absenceKindDays(summary)[code];
@@ -624,7 +606,7 @@ async function assemblePeriodReport(
       const entry: PeriodMonthEntry = {
         year: ym.year,
         month: ym.month,
-        workedMinutes: filteredMinutes,
+        workedMinutes: 0,
         expectedMinutes: null,
         balanceMinutes: null,
         closingBalanceMinutes: null,
@@ -633,13 +615,10 @@ async function assemblePeriodReport(
         sickDays: summary.sickDays,
       };
       person.months.push(entry);
-      // Under a filter the account is not read at all (#84, #542).
-      if (filterSalonId === null) {
-        figureSlots.push({
-          entry,
-          request: { employeeId: emp.id, year: ym.year, month: ym.month },
-        });
-      }
+      figureSlots.push({
+        entry,
+        request: { employeeId: emp.id, year: ym.year, month: ym.month },
+      });
     }
   }
 
@@ -691,9 +670,7 @@ async function assemblePeriodReport(
   // P-01 (Issue #688): the month before `from` of every row that shows saldo values, in ONE call; a
   // closed month answers its stored carry-over.
   const openingFor = (person: PersonAccumulator): boolean =>
-    person.covered &&
-    filterSalonId === null &&
-    isEmployedInPeriod(person, beforeRange.start, beforeRange.end);
+    person.covered && isEmployedInPeriod(person, beforeRange.start, beforeRange.end);
   const beforeFiguresByKey = await computeMonthReportFiguresForMany(
     app,
     tenantId,
@@ -704,14 +681,12 @@ async function assemblePeriodReport(
 
   const rows = [];
   for (const person of ordered) {
-    // Soll and saldo are shown only where overtime:read covers the person AND no salon filter is
-    // active (contract figures are never split by salon, #84/#542). NO_PERMISSION wins as the reason.
-    const covered = person.covered && filterSalonId === null;
+    // Soll and saldo are shown only where overtime:read covers the person. Under a salon filter a row
+    // is the whole person like without one (D-02, owner decision #714): the only reason is NO_PERMISSION.
+    const covered = person.covered;
     const sollReason: SollUnavailableReason | undefined = !person.covered
       ? "NO_PERMISSION"
-      : filterSalonId !== null
-        ? "SALON_FILTER"
-        : undefined;
+      : undefined;
     let opening: number | null = null;
     let beforeFigures: MonthReportFigures | null = null;
     if (openingFor(person)) {
@@ -771,21 +746,6 @@ async function assemblePeriodReport(
   // P-05/P-06: one Urlaub table per calendar year the period touches, each at its own Stichtag.
   const vacationYears: PeriodVacationYear[] = [];
   if (sections === "all") {
-    // Under a filter: the persons whose Stammsalon is the salon at the period end (the Monatsexport
-    // rule), each with whole personal values that are never split by salon (P-06).
-    const lastMonthOfPeriod = months[months.length - 1];
-    const homedAtEnd =
-      filterSalonId === null
-        ? undefined
-        : new Set(
-            await salonPersonsAtStichtag(
-              app,
-              tenantId,
-              filterSalonId,
-              lastMonthOfPeriod.year,
-              lastMonthOfPeriod.month,
-            ),
-          );
     const yesterday = dayBeforeStr(dateStrInTz(new Date(), tz));
     for (const year of [...new Set(months.map((m) => m.year))]) {
       const stichtag = vacationStichtag(year, months, tz, yesterday);
@@ -799,7 +759,8 @@ async function assemblePeriodReport(
           year,
           stichtag,
           employeeId: query.employeeId,
-          ...(homedAtEnd ? { onlyEmployeeIds: homedAtEnd } : {}),
+          // One circle (AC-714-3): under a filter exactly the persons that got a row above.
+          ...(filterSalonId !== null ? { onlyEmployeeIds: new Set(persons.keys()) } : {}),
         }),
       });
     }
@@ -863,14 +824,9 @@ async function assemblePeriodReport(
         : {}),
     },
     rows,
-    // Issue #542 (P-03): additive keys, ONLY under a filter - the unfiltered shape stays as it was.
+    // Issue #714 (P-714-03): additive keys, ONLY under a filter - the unfiltered shape stays as it was.
     ...(filterSalonId !== null
-      ? {
-          salonId: filterSalonId,
-          workedBasis: "SALON_ENTRIES" as const,
-          sollUnavailableReason: "SALON_FILTER" as const,
-          leaveDaysUnavailableReason: "SALON_FILTER" as const,
-        }
+      ? { salonId: filterSalonId, personBasis: "HOME_SALON_AT_PERIOD_END" as const }
       : {}),
     ...(sections === "all"
       ? {
@@ -888,7 +844,7 @@ export async function reportsPeriodRoutes(app: FastifyInstance) {
       tags: ["Reporting"],
       security: [{ bearerAuth: [] }],
       description:
-        "Period report: one row per person of the period with the per-month series (Soll, Ist, saldo, Gesamtsaldo, confirmation) taken from the working-time account, and the row and KPI sums of those months. At most 12 months, none in the future. Soll and saldo values are null without overtime:read over the person.",
+        "Period report: one row per person of the period with the per-month series (Soll, Ist, saldo, Gesamtsaldo, confirmation) taken from the working-time account, and the row and KPI sums of those months. At most 12 months, none in the future. Soll and saldo values are null without overtime:read over the person. With salonId the report lists the persons whose Stammsalon is that salon at the period end, each with the whole personal figures.",
     },
     preHandler: requirePermission("report:read:ZUGEWIESEN"),
     handler: async (req, reply) => {

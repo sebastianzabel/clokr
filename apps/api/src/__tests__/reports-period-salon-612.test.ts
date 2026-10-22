@@ -1,9 +1,11 @@
 /**
- * Issue #612 (P-06, D-612-1, T-612-07..09) — `GET /api/v1/reports/period?salonId=` follows the
- * header salon by the #542 rules: one 404 for every inadmissible salon, never wider than the
- * caller's reach, every month equal to the filtered `/reports/monthly` row, Soll and saldo
- * withheld with a reason, the vacation tables limited to the persons homed in the salon at the
- * period end (whole personal values).
+ * Issue #612 (P-06, D-612-1, T-612-07..09), rule paragraph replaced by Issue #714 (owner decision
+ * 19.10.2026) — `GET /api/v1/reports/period?salonId=`: one 404 for every inadmissible salon (#542
+ * rules), never wider than the caller's reach, and, since #714, ONE circle under a filter: the
+ * persons whose Stammsalon is the salon at the period Stichtag (the exit day for an exit inside the
+ * period, else the period's last day), each with the WHOLE figures of the unfiltered answer (Soll,
+ * Ist, saldo, status, sick days, every absence kind). Nothing is split by salon; the vacation tables
+ * list exactly the persons that have a row.
  *
  * Fixture = the #542 fixture (`reports-salon-filter-542.test.ts`), `Date` faked to
  * 2026-07-15T10:00Z, period June (past) to July (running):
@@ -566,87 +568,98 @@ describe("Issue #612 — the period report follows the chosen salon (#542 rules)
   });
 
   describe("under a filter", () => {
-    it("lists the persons of salon A with the months they belong to", async () => {
+    it("lists the persons homed in salon A at the period end with the months they belong to", async () => {
       const r = await period(`from=2026-06&to=2026-07&salonId=${salonA}`);
-      expect(rowIds(r)).toEqual([ids.PA, ids.PB, ids.PX].sort(byText));
+      // PA (A) and PX (A since 16.6.); PB is homed in B and is no row any more (owner decision #714).
+      expect(rowIds(r)).toEqual([ids.PA, ids.PX].sort(byText));
       expect(rowOf(r, ids.PA).months.map((m) => m.month)).toEqual([6, 7]);
       expect(rowOf(r, ids.PX).months.map((m) => m.month)).toEqual([6, 7]);
-      // PB recorded time in A only in June and is homed in B: no July month.
-      expect(rowOf(r, ids.PB).months.map((m) => m.month)).toEqual([6]);
     });
 
-    it("every month equals the row of the filtered GET /reports/monthly (Ist hours, sick days)", async () => {
-      const r = await period(`from=2026-06&to=2026-07&salonId=${salonA}`);
-      let compared = 0;
-      for (const [month, hours] of [
-        [6, await monthly(2026, 6, salonA)],
-        [7, await monthly(2026, 7, salonA)],
-      ] as const) {
-        for (const m of hours) {
-          const row = r.rows.find((x) => x.employeeId === m.employeeId);
-          const entryOfMonth = row?.months.find((x) => x.month === month);
-          expect(entryOfMonth, `${m.employeeId} ${month}`).toBeDefined();
-          expect(round2(entryOfMonth!.workedMinutes / 60), `Ist ${m.employeeId} ${month}`).toBe(
-            m.workedHours,
-          );
-          expect(entryOfMonth!.sickDays, `sick ${m.employeeId} ${month}`).toBe(m.sickDays);
-          compared += 1;
-        }
+    // Old rule (#612): every month equalled the row of the filtered GET /reports/monthly (Ist = the
+    // salon's entries). Owner decision #714: a filtered row is the whole person. The salon-Ist parity
+    // with the filtered /reports/monthly returns in 714-02 as "Im Salon gearbeitet equals the Ist of
+    // the filtered /reports/monthly"; it is not dropped.
+    it("every filtered row equals the unfiltered row of the same person (whole personal values)", async () => {
+      const filtered = await period(`from=2026-06&to=2026-07&salonId=${salonA}`);
+      const plain = await period(`from=2026-06&to=2026-07`);
+      expect(filtered.rows.length).toBe(2);
+      for (const row of filtered.rows) {
+        expect(row).toEqual(rowOf(plain, row.employeeId));
+        expect(row.sollUnavailableReason).toBeUndefined();
       }
-      expect(compared).toBeGreaterThanOrEqual(5);
-      // The fixture's concrete figures: 24 h, 4 h (PB), 16 h (PX) in June; 8 h (PA) through yesterday in July.
-      expect(rowOf(r, ids.PA).months[0].workedMinutes).toBe(24 * 60);
-      expect(rowOf(r, ids.PB).months[0].workedMinutes).toBe(4 * 60);
-      expect(rowOf(r, ids.PX).months[0].workedMinutes).toBe(16 * 60);
-      expect(rowOf(r, ids.PA).months[1].workedMinutes).toBe(8 * 60);
-      expect(rowOf(r, ids.PX).months[0].sickDays).toBe(5);
+      // The fixture's concrete whole figures: PX counts all 11 sick days (not 5 of one salon).
+      expect(rowOf(filtered, ids.PX).sickDays).toBe(11);
+      expect(typeof rowOf(filtered, ids.PA).expectedMinutes).toBe("number");
+      expect(typeof rowOf(filtered, ids.PA).closingBalanceMinutes).toBe("number");
+      // PA: 24 h + 4 h in June (both salons, whole person), 8 h through yesterday in July.
+      expect(rowOf(filtered, ids.PA).months[0].workedMinutes).toBe(28 * 60);
+      expect(rowOf(filtered, ids.PA).months[1].workedMinutes).toBe(8 * 60);
     });
 
-    it("withholds Soll and saldo with the reason and adds exactly the four envelope keys", async () => {
+    it("shows Soll and saldo of the Stammsalon persons and adds exactly personBasis and salonId", async () => {
       const filtered = await period(`from=2026-06&to=2026-07&salonId=${salonA}`);
       const plain = await period(`from=2026-06&to=2026-07`);
       for (const row of filtered.rows) {
-        expect(row.expectedMinutes).toBeNull();
-        expect(row.balanceMinutes).toBeNull();
-        expect(row.openingBalanceMinutes).toBeNull();
-        expect(row.closingBalanceMinutes).toBeNull();
-        expect(row.closingConfirmedMinutes).toBeNull();
-        expect(row.closingOpenMinutes).toBeNull();
-        expect(row.unconfirmedMonths).toBeNull();
-        expect(row.sollUnavailableReason).toBe("SALON_FILTER");
+        expect(typeof row.expectedMinutes).toBe("number");
+        expect(typeof row.balanceMinutes).toBe("number");
+        expect(typeof row.closingBalanceMinutes).toBe("number");
+        expect("sollUnavailableReason" in row).toBe(false);
         for (const m of row.months) {
-          expect(m.expectedMinutes).toBeNull();
-          expect(m.balanceMinutes).toBeNull();
-          expect(m.closingBalanceMinutes).toBeNull();
+          expect(typeof m.expectedMinutes).toBe("number");
+          expect(typeof m.balanceMinutes).toBe("number");
+          expect(typeof m.closingBalanceMinutes).toBe("number");
         }
       }
       expect(filtered.salonId).toBe(salonA);
-      expect(filtered.workedBasis).toBe("SALON_ENTRIES");
-      expect(filtered.sollUnavailableReason).toBe("SALON_FILTER");
-      expect(filtered.leaveDaysUnavailableReason).toBe("SALON_FILTER");
+      expect(filtered.personBasis).toBe("HOME_SALON_AT_PERIOD_END");
+      for (const k of ["workedBasis", "sollUnavailableReason", "leaveDaysUnavailableReason"]) {
+        expect(k in filtered, `${k} gone under a filter`).toBe(false);
+      }
       const added = Object.keys(filtered).filter((k) => !(k in plain));
-      expect(added.sort(byText)).toEqual(
-        ["leaveDaysUnavailableReason", "salonId", "sollUnavailableReason", "workedBasis"].sort(
-          byText,
-        ),
-      );
-      for (const k of ["salonId", "workedBasis", "leaveDaysUnavailableReason"]) {
+      expect(added.sort(byText)).toEqual(["personBasis", "salonId"].sort(byText));
+      for (const k of ["salonId", "personBasis"]) {
         expect(k in plain, `${k} absent without a filter`).toBe(false);
       }
     });
 
-    it("keeps only the sick row in the absence statistics and nulls the saldo KPIs", async () => {
+    it("counts every absence kind of the Stammsalon persons and sums their saldo in the KPIs", async () => {
       const filtered = await period(`from=2026-06&to=2026-07&salonId=${salonA}`);
       const plain = await period(`from=2026-06&to=2026-07`);
-      expect(filtered.absences.map((a) => a.code)).toEqual(["SICK"]);
-      // PX counts 5 sick days in A (Stammsalon per day), 11 without a filter.
-      expect(filtered.absences[0].totalDays).toBe(5);
-      expect(plain.absences.map((a) => a.code)).toEqual(["VACATION", "SICK"]);
-      expect(filtered.kpis.expectedMinutes).toBeNull();
-      expect(filtered.kpis.balanceMinutes).toBeNull();
-      expect(filtered.kpis.closingBalanceMinutes).toBeNull();
-      expect(filtered.kpis.saldoPersonCount).toBe(0);
-      expect(filtered.kpis.personCount).toBe(3);
+      // Measured, never copied from a run: the unfiltered answers of exactly the two Stammsalon persons.
+      const own = [
+        await period(`from=2026-06&to=2026-07&employeeId=${ids.PA}`),
+        await period(`from=2026-06&to=2026-07&employeeId=${ids.PX}`),
+      ];
+      const expectedAbsences = new Map<string, { personCount: number; totalDays: number }>();
+      for (const answer of own) {
+        for (const a of answer.absences) {
+          const sum = expectedAbsences.get(a.code) ?? { personCount: 0, totalDays: 0 };
+          sum.personCount += a.personCount;
+          sum.totalDays = round2(sum.totalDays + a.totalDays);
+          expectedAbsences.set(a.code, sum);
+        }
+      }
+      expect(expectedAbsences.has("VACATION")).toBe(true);
+      expect(expectedAbsences.has("SICK")).toBe(true);
+      expect(filtered.absences.map((a) => a.code)).toEqual(plain.absences.map((a) => a.code));
+      for (const a of filtered.absences) {
+        expect(a.personCount, `personCount ${a.code}`).toBe(
+          expectedAbsences.get(a.code)?.personCount,
+        );
+        expect(a.totalDays, `totalDays ${a.code}`).toBe(expectedAbsences.get(a.code)?.totalDays);
+      }
+      // PX counts 11 sick days whole, not 5 of one salon.
+      expect(filtered.absences.find((a) => a.code === "SICK")?.totalDays).toBe(11);
+
+      const two = [rowOf(plain, ids.PA), rowOf(plain, ids.PX)];
+      const sumOf = (pick: (r: Row) => number | null): number =>
+        two.reduce((s, r) => s + (pick(r) ?? 0), 0);
+      expect(filtered.kpis.expectedMinutes).toBe(sumOf((r) => r.expectedMinutes));
+      expect(filtered.kpis.balanceMinutes).toBe(sumOf((r) => r.balanceMinutes));
+      expect(filtered.kpis.closingBalanceMinutes).toBe(sumOf((r) => r.closingBalanceMinutes));
+      expect(filtered.kpis.saldoPersonCount).toBe(2);
+      expect(filtered.kpis.personCount).toBe(2);
     });
 
     it("lists as vacation rows the persons homed in the salon at the period end, with whole personal values", async () => {
@@ -764,6 +777,7 @@ describe("Issue #612 — the period report follows the chosen salon (#542 rules)
       const r = await period(`from=2026-06&to=2026-07`);
       for (const k of [
         "salonId",
+        "personBasis",
         "workedBasis",
         "sollUnavailableReason",
         "leaveDaysUnavailableReason",

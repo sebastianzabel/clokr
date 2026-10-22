@@ -107,15 +107,15 @@ export const REGIONS: readonly RegionEntry[] = [
     membership: "salonPersonsAtStichtag",
   },
   // Issue #612: the period report's one assembly validates the chosen salon against the reach of the
-  // route's own permission before any person, entry, account or vacation read, and decides the
-  // month membership through the same rule as /monthly.
+  // route's own permission before any person, entry, account or vacation read.
+  // Issue #714: the persons homed in the salon at the period Stichtag (D-01), after the validation.
   {
     file: `${COMPOSITION}/reports-period.ts`,
     method: "get",
     path: "assemblePeriodReport",
     kind: "function",
     validator: "resolveSalonInReach",
-    membership: "salonViewMemberIds",
+    membership: "resolvePeriodReachIds",
   },
 ];
 
@@ -128,6 +128,7 @@ const READ_CALLEES: ReadonlyArray<RegExp> = [
   /^loadDatevMonth$/,
   /^selectMonthlyExportPersons$/,
   /^salonPersonsAtStichtag$/,
+  /^resolvePeriodReachIds$/,
   /^findSalon$/,
   /^app\.prisma\.employee\./,
 ];
