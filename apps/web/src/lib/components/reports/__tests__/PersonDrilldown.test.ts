@@ -349,6 +349,93 @@ describe("PersonDrilldown - the month series", () => {
   });
 });
 
+// Issue #713 (AC-713-5, D-07, T-713-16): the person's absences of the period as counts per kind and
+// unit - never a date, whatever the reader's time-entry right is.
+describe("PersonDrilldown - Abwesenheiten (Issue #713)", () => {
+  const withAbsence = (absence: Partial<PeriodRow["absence"]>) =>
+    row({ absence: { ...zeroAbsence(), ...absence } });
+  const section = () =>
+    screen.getByRole("heading", { name: "Abwesenheiten" }).closest("section") as HTMLElement;
+
+  it("lists the non-zero kinds with their unit in canonical order, singular for exactly 1", () => {
+    viewport(false);
+    renderWithTheme(
+      PersonDrilldown,
+      props({
+        row: withAbsence({
+          SICK: 2,
+          SICK_CHILD: 1,
+          VACATION: 1.5,
+          VOCATIONAL_SCHOOL: 1,
+        }),
+      }),
+    );
+    expect(
+      within(section())
+        .getAllByRole("listitem")
+        .map((li) => li.textContent?.trim()),
+    ).toEqual([
+      "Krank: 2 Kalendertage",
+      "Kinderkrank: 1 Kalendertag",
+      "Urlaub: 1,5 Arbeitstage",
+      "Berufsschule: 1 Tag",
+    ]);
+  });
+
+  it("sits after the section Urlaub and before the day list", () => {
+    viewport(false);
+    renderWithTheme(PersonDrilldown, props({ row: withAbsence({ SICK: 2 }) }));
+    const order = screen
+      .getAllByRole("heading", { level: 3 })
+      .map((h) => h.textContent?.trim() ?? "");
+    const vacation = order.indexOf("Urlaub");
+    const absences = order.indexOf("Abwesenheiten");
+    const days = order.findIndex((t) => t.startsWith("Tage im"));
+    expect(vacation).toBeGreaterThan(-1);
+    expect(absences).toBeGreaterThan(vacation);
+    expect(days).toBeGreaterThan(absences);
+  });
+
+  it("says so when the person has no absence in the period", () => {
+    viewport(false);
+    renderWithTheme(PersonDrilldown, props());
+    expect(within(section()).getByText("Keine Abwesenheiten im Zeitraum.")).toBeInTheDocument();
+    expect(within(section()).queryAllByRole("listitem")).toHaveLength(0);
+  });
+
+  it("shows counts only: no calendar day appears in the section", () => {
+    viewport(false);
+    renderWithTheme(
+      PersonDrilldown,
+      props({ row: withAbsence({ SICK: 3, SICK_CHILD: 2, MATERNITY: 4 }) }),
+    );
+    expect(section().textContent).not.toMatch(/\d{1,2}\.\d{1,2}\.|\d{4}-\d{2}-\d{2}/);
+  });
+
+  it("is independent of the time-entry right and of a vacation row", () => {
+    viewport(false);
+    const loadDayEntries = vi.fn().mockResolvedValue(ENTRIES);
+    renderWithTheme(
+      PersonDrilldown,
+      props({
+        row: withAbsence({ SICK: 2 }),
+        canTimeEntryRead: false,
+        vacationRow: null,
+        loadDayEntries,
+      }),
+    );
+    expect(within(section()).getByText("Krank: 2 Kalendertage")).toBeInTheDocument();
+    expect(loadDayEntries).not.toHaveBeenCalled();
+  });
+
+  it("keeps the HR phrase out and reads the counts from the row without summing", () => {
+    viewport(false);
+    renderWithTheme(PersonDrilldown, props({ row: withAbsence({ SICK: 2 }) }));
+    expect(document.body.textContent).not.toContain(HR_E2E_PHRASE);
+    expect(source).not.toMatch(/absence\[[^\]]+\]\s*[-+*/]/);
+  });
+});
+
 describe("PersonDrilldown - the day list (only with time-entry:read)", () => {
   it("renders one row per entry; the date only on the first of a day; no totals row", async () => {
     viewport(false);

@@ -208,10 +208,10 @@ describe("Issue #542 — Berichte follow the header salon", () => {
       expect(EXPORT_DIALOG, name).toContain(`{${name}}`);
     }
     expect(PAGE).toMatch(/<ExportDialog[^>]*filterActive=\{pageSalonId !== null\}/s);
-    // Every note sits under a `filterActive` guard: none renders unconditionally. Three guards since
-    // #714 (Monatsexport, DATEV, CSV block).
+    // Every note sits under a `filterActive` guard: none renders unconditionally. Four guards since
+    // #713 (Monatsexport, DATEV, CSV block, Abwesenheiten block); three since #714.
     const guards = EXPORT_DIALOG.match(/\{#if filterActive\}/g)?.length ?? 0;
-    expect(guards).toBe(3);
+    expect(guards).toBe(4);
   });
 
   it("[elsewhere] an attendance row with workedElsewhere shows the badge", () => {

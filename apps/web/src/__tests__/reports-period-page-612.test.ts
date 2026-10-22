@@ -454,12 +454,13 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     expect(TEMPLATE).toContain("bind:open={exportOpen}");
   });
 
-  it("wires the three downloads, the § 9 loader and the error toast", () => {
+  it("wires the four downloads, the § 9 loader and the error toast", () => {
     for (const wiring of [
       "loadSection9Note={loadExportSection9Note}",
       "onMonthlyExport={downloadMonthlyExport}",
       "onDatev={downloadDatev}",
       "onCsv={downloadPeriodCsv}",
+      "onAbsenceCsv={downloadAbsencesCsv}", // Issue #713
       "onError={(message) => toasts.error(message)}",
     ]) {
       expect(TEMPLATE, wiring).toContain(wiring);
@@ -471,6 +472,22 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     expect(functionBody("downloadPeriodCsv")).toContain("pageSalonId");
     expect(functionBody("downloadDatev")).not.toContain("pageSalonId");
     expect(functionBody("downloadDatev")).not.toContain("withSalonId(");
+  });
+
+  // Issue #713 (D-11): the Abwesenheiten file asks the same question as the table and carries the
+  // header salon like the times CSV; DATEV still never does.
+  it("the Abwesenheiten CSV takes the salon and is saved as Abwesenheiten-je-Person_<from>_<to>.csv (Issue #713)", () => {
+    const body = functionBody("downloadAbsencesCsv");
+    expect(body).toContain("periodAbsencesCsvPath(urlState.from, urlState.to, pageSalonId)");
+    expect(body).toContain(
+      "`Abwesenheiten-je-Person_${ymKey(urlState.from)}_${ymKey(urlState.to)}.csv`",
+    );
+    // the one salon 404 is a calm state in the dialog, any other failure is thrown to it
+    expect(body).toContain("exportSalonRejected = false;");
+    expect(body).toContain("isSalonFilterRejected(e)");
+    expect(body).toContain("exportSalonRejected = true;");
+    expect(body).toContain("throw e;");
+    expect(functionBody("downloadDatev")).not.toContain("pageSalonId");
   });
 
   it("the CSV is saved as Zeiten-und-Konten_<from>_<to>.csv", () => {
