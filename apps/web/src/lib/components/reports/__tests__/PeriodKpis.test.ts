@@ -15,7 +15,13 @@ vi.mock("$lib/utils/logger", () => ({ clientLogger: { warn: vi.fn(), error: vi.f
 
 import { screen, within } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
-import { SALON_SOLL_NOT_ATTRIBUTABLE_NOTE } from "$lib/salons/page-scope";
+import {
+  HOME_SALON_CHANGE_NOTE,
+  PERSON_SALDO_BY_HOME_SALON_LABEL,
+  SALON_WORKED_DELTA_NOTE,
+  SALON_WORKED_LABEL,
+  withoutHomeSalonNote,
+} from "$lib/salons/page-scope";
 import type { PeriodKpis as Kpis } from "$lib/reports/period-report";
 import PeriodKpis from "../PeriodKpis.svelte";
 import source from "../PeriodKpis.svelte?raw";
@@ -159,30 +165,98 @@ describe("PeriodKpis - withheld figures", () => {
     expect(screen.getByTestId("period-kpis-persons")).toHaveTextContent(/^Summe über 24 Personen$/);
   });
 
-  it("under a salon filter the same tiles say Nicht je Salon and the callout names the rule", () => {
+  it("under a salon filter without overtime:read the same tiles read the dash with Keine Berechtigung, never a salon reason", () => {
     renderWithTheme(PeriodKpis, {
       kpis: kpis({
         expectedMinutes: null,
         balanceMinutes: null,
         closingBalanceMinutes: null,
         saldoPersonCount: 0,
+        salonWorkedMinutes: 4800,
       }),
       filterActive: true,
+      withoutHomeSalonCount: 0,
       loading: false,
     });
     for (const label of ["Saldo im Zeitraum", "Gesamtsaldo am Ende", "Soll"]) {
-      expect(tile(label), label).toEqual({ value: "—", delta: "Nicht je Salon" });
+      expect(tile(label), label).toEqual({ value: "—", delta: "Keine Berechtigung" });
     }
-    const note = screen.getByTestId("period-kpis-salon-note");
-    expect(note).toHaveClass("callout", "brand");
-    expect(note).toHaveTextContent(
-      `${SALON_SOLL_NOT_ATTRIBUTABLE_NOTE} Saldo-Werte werden deshalb nur ohne Salonauswahl gezeigt.`,
-    );
+    expect(screen.queryByText("Nicht je Salon")).toBeNull();
   });
-
-  it("no salon note without a filter", () => {
+  it("no salon note and no salon-hours tile without a filter", () => {
     renderWithTheme(PeriodKpis, { kpis: kpis(), filterActive: false, loading: false });
     expect(screen.queryByTestId("period-kpis-salon-note")).toBeNull();
+    expect(screen.queryByText(SALON_WORKED_LABEL, { selector: ".kpi-label" })).toBeNull();
+    expect(document.querySelectorAll(".kpi-label")).toHaveLength(8);
+  });
+});
+
+// Issue #714 (owner decision 19.10.2026): under a salon filter the card shows the whole sums of the
+// persons by Stammsalon, with the hint; the hours worked in the salon are a separate tile with no
+// saldo delta. The component formats server figures and sums nothing.
+describe("PeriodKpis - under a salon filter (#714)", () => {
+  const filtered = (overrides: Partial<Kpis> = {}, withoutHomeSalonCount = 2) =>
+    renderWithTheme(PeriodKpis, {
+      kpis: kpis({ salonWorkedMinutes: 4800, ...overrides }),
+      filterActive: true,
+      withoutHomeSalonCount,
+      loading: false,
+    });
+
+  it("shows the server's whole-person Soll and saldo with the normal deltas", () => {
+    filtered();
+    expect(tile("Saldo im Zeitraum")).toEqual({ value: "+12:45 h", delta: "bestätigt" });
+    expect(tile("Gesamtsaldo am Ende")).toEqual({
+      value: "+1.204:30 h",
+      delta: "Stand 30.09.2026 · bestätigt",
+    });
+    expect(tile("Soll")).toEqual({ value: "3.800:00 h", delta: null });
+  });
+
+  it("the callout names the circle, the mover rule and the persons without a Stammsalon", () => {
+    filtered();
+    const note = screen.getByTestId("period-kpis-salon-note");
+    expect(note).toHaveClass("callout", "brand");
+    expect(note).toHaveTextContent(PERSON_SALDO_BY_HOME_SALON_LABEL);
+    expect(note).toHaveTextContent(HOME_SALON_CHANGE_NOTE);
+    expect(note).toHaveTextContent(withoutHomeSalonNote(2));
+  });
+
+  it("leaves the remainder sentence out when nobody is without a Stammsalon", () => {
+    filtered({}, 0);
+    const note = screen.getByTestId("period-kpis-salon-note");
+    expect(note).toHaveTextContent(PERSON_SALDO_BY_HOME_SALON_LABEL);
+    expect(note).not.toHaveTextContent("ohne Stammsalon");
+  });
+
+  it("adds the salon hours as a ninth tile in its own grid row, with no saldo delta", () => {
+    filtered();
+    expect(document.querySelectorAll(".kpi-label")).toHaveLength(9);
+    expect(tile(SALON_WORKED_LABEL)).toEqual({ value: "80:00 h", delta: SALON_WORKED_DELTA_NOTE });
+    const article = screen
+      .getByText(SALON_WORKED_LABEL, { selector: ".kpi-label" })
+      .closest("article")!;
+    const grid = article.parentElement!;
+    expect(grid).toHaveClass("kpi-grid");
+    expect(grid.querySelectorAll("article")).toHaveLength(1);
+    expect(grid.previousElementSibling?.tagName).toBe("HR");
+  });
+
+  it("shows no salon-hours tile while the answer carries no salon hours", () => {
+    filtered({ salonWorkedMinutes: undefined });
+    expect(document.querySelectorAll(".kpi-label")).toHaveLength(8);
+  });
+
+  it("the skeleton keeps eight lines under a filter", () => {
+    renderWithTheme(PeriodKpis, {
+      kpis: null,
+      filterActive: true,
+      withoutHomeSalonCount: null,
+      loading: true,
+    });
+    expect(screen.getByTestId("period-kpis-skeleton").querySelectorAll(".skeleton")).toHaveLength(
+      8,
+    );
   });
 });
 

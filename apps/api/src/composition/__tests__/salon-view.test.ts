@@ -3,7 +3,7 @@
  * module is pure, so the cases build the inputs by hand.
  */
 import { describe, it, expect } from "vitest";
-import { salonViewMemberIds, SALON_VIEW_NOT_FOUND } from "../salon-view";
+import { salonViewMemberIds, salonHelperIds, SALON_VIEW_NOT_FOUND } from "../salon-view";
 
 const A = "salon-a";
 const B = "salon-b";
@@ -106,5 +106,57 @@ describe("Issue #542 — SALON_VIEW_NOT_FOUND", () => {
     expect(SALON_VIEW_NOT_FOUND).toEqual({ error: "Salon nicht gefunden" });
     expect(Object.isFrozen(SALON_VIEW_NOT_FOUND)).toBe(true);
     expect(JSON.stringify(SALON_VIEW_NOT_FOUND)).toBe('{"error":"Salon nicht gefunden"}');
+  });
+});
+
+describe("Issue #714 — salonHelperIds", () => {
+  it("lists a candidate outside the home set that recorded time in the salon", () => {
+    const result = salonHelperIds({
+      salonId: A,
+      candidateIds: ["p1", "p2"],
+      entries: [{ employeeId: "p1", salonId: A }],
+      homeMemberIds: new Set(["p2"]),
+    });
+    expect([...result]).toEqual(["p1"]);
+  });
+
+  it("never lists a candidate of the home set, even with an entry in the salon", () => {
+    const result = salonHelperIds({
+      salonId: A,
+      candidateIds: ["p1"],
+      entries: [{ employeeId: "p1", salonId: A }],
+      homeMemberIds: new Set(["p1"]),
+    });
+    expect(result.size).toBe(0);
+  });
+
+  it("does not list a candidate whose entries are only in another salon", () => {
+    const result = salonHelperIds({
+      salonId: A,
+      candidateIds: ["p1"],
+      entries: [{ employeeId: "p1", salonId: B }],
+      homeMemberIds: new Set(),
+    });
+    expect(result.size).toBe(0);
+  });
+
+  it("never lists a non-candidate with an entry in the salon", () => {
+    const result = salonHelperIds({
+      salonId: A,
+      candidateIds: ["p1"],
+      entries: [{ employeeId: "p9", salonId: A }],
+      homeMemberIds: new Set(),
+    });
+    expect(result.size).toBe(0);
+  });
+
+  it("answers an empty set without entries", () => {
+    const result = salonHelperIds({
+      salonId: A,
+      candidateIds: ["p1", "p2"],
+      entries: [],
+      homeMemberIds: new Set(),
+    });
+    expect(result.size).toBe(0);
   });
 });

@@ -23,7 +23,6 @@
   import { VACATION_YEAR_COLUMNS } from "$lib/reports/vacation-columns"; // Issue #617
   import {
     PERSON_VALUES_NOT_SPLIT_LABEL,
-    SALON_LEAVE_DAYS_NOT_ATTRIBUTABLE_NOTE,
     SALON_PERIOD_END_PERSONS_NOTE,
   } from "$lib/salons/page-scope";
 
@@ -32,7 +31,7 @@
     vacation: { year: number; asOf: string; years: PeriodVacationYear[] } | null;
     /** The `absences` of the period answer; null until the first answer. */
     absences: PeriodAbsence[] | null;
-    /** A salon filter applies: persons by Stammsalon at the period end, only the sick row. */
+    /** A salon filter applies: persons by Stammsalon at the period end, whole personal values (#714). */
     filterActive: boolean;
     /** A request is in flight. */
     loading: boolean;
@@ -245,10 +244,9 @@
     return `${kindEntry(a.code)?.label ?? a.code} (Arbeitstage)`;
   }
 
-  // Under a salon filter only the sick row is shown: priced leave belongs to a person, not a salon.
-  const shownAbsences = $derived(
-    (absences ?? []).filter((a) => !filterActive || a.code === "SICK"),
-  );
+  // Issue #714: the server's list is shown as it is, also under a salon filter - the listed persons
+  // are the Stammsalon circle and every figure is a whole personal value.
+  const shownAbsences = $derived(absences ?? []);
 </script>
 
 {#snippet verfallBody(row: PeriodVacationRow)}
@@ -486,10 +484,6 @@
 
 <Card animate>
   <CardHeader title="Abwesenheiten nach Art" sub={periodLabel} />
-
-  {#if filterActive}
-    <p class="form-hint">{SALON_LEAVE_DAYS_NOT_ATTRIBUTABLE_NOTE}</p>
-  {/if}
 
   {#if absences === null}
     {#if loading}

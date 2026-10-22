@@ -781,3 +781,28 @@ describe("/reports (Issue #612) - staggered reveal", () => {
     expect(screen.getByTestId("period-section").classList.contains("card-animate")).toBe(true);
   });
 });
+
+// Issue #714 - the page wiring of the Stammsalon view: additive pins, the no-sum pins above stay.
+describe("/reports period area (Issue #714) - the salon viewpoint is wired, the page sums nothing", () => {
+  it("hands the remainder count to the KPI card", () => {
+    expect(TEMPLATE).toContain("withoutHomeSalonCount={period?.withoutHomeSalonCount ?? null}");
+  });
+
+  it("renders SalonWorkedSection once, inside the zeiten tab, only when the answer carries helpers", () => {
+    expect(TEMPLATE.match(/<SalonWorkedSection/g)).toHaveLength(1);
+    const zeiten = TEMPLATE.slice(
+      TEMPLATE.indexOf('{#if activeTab === "zeiten"}'),
+      TEMPLATE.indexOf('{:else if activeTab === "urlaub"}'),
+    );
+    expect(zeiten).toContain("<SalonWorkedSection");
+    expect(zeiten).toContain("{#if period?.helpers !== undefined}");
+    expect(zeiten).toContain("helpers={period.helpers}");
+  });
+
+  it("passes the server's total and reach, never a sum of its own", () => {
+    expect(TEMPLATE).toContain("totalMinutes={period.kpis.salonWorkedMinutes ?? null}");
+    expect(TEMPLATE).toContain("helpersReach={period.helpersReach ?? null}");
+    expect(PAGE).not.toMatch(/salonWorkedMinutes[^\n]*\.reduce\(/);
+    expect(PAGE).not.toMatch(/\.reduce\([^\n]*salonWorkedMinutes/);
+  });
+});

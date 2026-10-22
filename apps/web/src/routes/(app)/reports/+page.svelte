@@ -26,6 +26,7 @@
   import PeriodRangeDialog from "$lib/components/reports/PeriodRangeDialog.svelte"; // Issue #612
   import PersonDrilldown from "$lib/components/reports/PersonDrilldown.svelte"; // Issue #612
   import TodayAttendance from "$lib/components/reports/TodayAttendance.svelte"; // Issue #612
+  import SalonWorkedSection from "$lib/components/reports/SalonWorkedSection.svelte"; // Issue #714
   import TimesAccountsTable from "$lib/components/reports/TimesAccountsTable.svelte"; // Issue #612
   import VacationAbsenceTab from "$lib/components/reports/VacationAbsenceTab.svelte"; // Issue #612
   import { toasts } from "$stores/toast"; // Issue #612
@@ -820,6 +821,7 @@
             <PeriodKpis
               kpis={period?.kpis ?? null}
               filterActive={pageSalonId !== null}
+              withoutHomeSalonCount={period?.withoutHomeSalonCount ?? null}
               loading={periodLoading}
             />
           </Card>
@@ -839,6 +841,17 @@
               onOpenPerson={openPerson}
               exited={exitedBlock}
             />
+            {#if period?.helpers !== undefined}
+              <!-- Issue #714: the salon viewpoint (names + hours only), only under a salon filter. -->
+              <SalonWorkedSection
+                rows={period.rows}
+                helpers={period.helpers}
+                totalMinutes={period.kpis.salonWorkedMinutes ?? null}
+                helpersReach={period.helpersReach ?? null}
+                periodLabel={periodLabel(urlState.from, urlState.to, today)}
+                loading={periodLoading}
+              />
+            {/if}
           {:else if activeTab === "urlaub"}
             <VacationAbsenceTab
               vacation={period?.vacation ?? null}

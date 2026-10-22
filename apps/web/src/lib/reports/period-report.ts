@@ -24,6 +24,11 @@ export interface PeriodMonth {
   confirmed: boolean;
   labelled: boolean;
   sickDays: number;
+  /**
+   * Hours worked in the chosen salon in this month (minutes). Present ONLY under a salon filter
+   * (#714); a separate figure that never meets Soll.
+   */
+  salonWorkedMinutes?: number;
 }
 
 export interface PeriodRow {
@@ -53,11 +58,12 @@ export interface PeriodRow {
   labelled: boolean;
   sickDays: number;
   /**
-   * Present only when Soll and saldo are withheld: no overtime:read over the person
-   * (`NO_PERMISSION`, which wins) or a chosen salon (`SALON_FILTER`, contract figures are never
-   * split by salon).
+   * Present only when Soll and saldo are withheld: no overtime:read over the person. Since #714 a
+   * salon filter withholds nothing - it lists whole persons by Stammsalon at the period end.
    */
-  sollUnavailableReason?: "NO_PERMISSION" | "SALON_FILTER";
+  sollUnavailableReason?: "NO_PERMISSION";
+  /** Hours worked in the chosen salon across the row's months (minutes); present only under a salon filter (#714). */
+  salonWorkedMinutes?: number;
   months: PeriodMonth[];
 }
 
@@ -80,6 +86,16 @@ export interface PeriodKpis {
   vacationTakenDays: number;
   vacationApprovedDays: number;
   vacationEntitlementDays: number;
+  /** Hours worked in the chosen salon, helpers included (minutes); present only under a salon filter (#714). */
+  salonWorkedMinutes?: number;
+}
+
+/** A person from another salon who worked in the chosen one: name and hours only (#714). */
+export interface PeriodHelper {
+  employeeId: string;
+  employeeName: string;
+  employeeNumber: string;
+  salonWorkedMinutes: number;
 }
 
 /**
@@ -145,13 +161,18 @@ export interface PeriodReport {
   vacation: { year: number; asOf: string; years: PeriodVacationYear[] };
   absences: PeriodAbsence[];
   /**
-   * The four envelope keys below are present ONLY under a salon filter (#542 rules): working time
-   * counts the salon's entries, Soll/saldo and the priced leave counts are withheld.
+   * The keys below are present ONLY under a salon filter (owner decision #714): the rows are the
+   * persons whose Stammsalon is the chosen salon at the period end, each with the whole personal
+   * values; the hours worked in the salon are a separate figure that never meets Soll.
    */
   salonId?: string;
-  workedBasis?: "SALON_ENTRIES";
-  sollUnavailableReason?: "SALON_FILTER";
-  leaveDaysUnavailableReason?: "SALON_FILTER";
+  personBasis?: "HOME_SALON_AT_PERIOD_END";
+  /** Persons from other salons with hours in the chosen one - name and hours, no Soll or saldo. */
+  helpers?: PeriodHelper[];
+  /** Persons of the reader's reach without a Stammsalon in an active salon (counted, not listed). */
+  withoutHomeSalonCount?: number;
+  /** Whether the helper list covers the whole tenant or only the reader's reach. */
+  helpersReach?: "WHOLE_TENANT" | "SCOPED";
 }
 
 /** `YYYY-MM` of a year-month, the form the API and the URL use. */

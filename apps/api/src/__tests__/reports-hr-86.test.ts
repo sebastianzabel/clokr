@@ -22,6 +22,7 @@ import {
   seedEntitlementYears,
 } from "./setup";
 import { deriveMatrixRoutes } from "./neutrality/route-derivation";
+import { createPopulationPerson } from "./population-fixtures-613";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
 import { addDaysStr, dbDateStr, futureDateStr, monthStartUtc, todayStr } from "./test-dates";
 
@@ -31,6 +32,9 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
   let employeeX: { id: string };
+  // Issue #714 (P-714-10): a person homed in the fixture's salon, so the filtered period answer has a
+  // row (employee X has no Stammsalon and appears there as a helper).
+  let employeeZ: { employeeId: string };
   let hrToken: string;
   let hrPermissions: string[];
 
@@ -74,6 +78,38 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
         startTime: new Date(`${entryDay}T08:00:00Z`),
         endTime: new Date(`${entryDay}T16:00:00Z`),
         source: "MANUAL",
+      },
+    });
+
+    employeeZ = await createPopulationPerson(app, {
+      tenantId: data.tenant.id,
+      salonId: data.salonId,
+      tag: "HRZ",
+      hireDate: new Date("2024-01-01T00:00:00Z"),
+    });
+    const entryDayZ = addDaysStr(dbDateStr(prevMonthStart), 10);
+    await app.prisma.timeEntry.create({
+      data: {
+        employeeId: employeeZ.employeeId,
+        salonId: data.salonId,
+        date: new Date(entryDayZ),
+        startTime: new Date(`${entryDayZ}T08:00:00Z`),
+        endTime: new Date(`${entryDayZ}T12:00:00Z`),
+        source: "MANUAL",
+      },
+    });
+
+    // Z takes the same vacation, so the filtered answer (Z's circle) carries an absence statistic too.
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: employeeZ.employeeId,
+        leaveTypeId: data.vacationType.id,
+        startDate: new Date(addDaysStr(dbDateStr(prevMonthStart), 13)),
+        endDate: new Date(addDaysStr(dbDateStr(prevMonthStart), 15)),
+        days: 3,
+        status: "APPROVED",
+        reviewedBy: data.adminUser.id,
+        reviewedAt: new Date(),
       },
     });
 
@@ -215,6 +251,13 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
       name: "GET /reports/period",
       url: () =>
         `/reports/period?from=${prevYear}-${pad2(prevMonth)}&to=${prevYear}-${pad2(prevMonth)}`,
+    },
+    // Issue #714 (P-714-10): the same period answer under a salon filter - the Stammsalon rows, the
+    // salon hours and the Aushilfen; it too must stay day-free and carry only the listed paths.
+    {
+      name: "GET /reports/period (Salon)",
+      url: () =>
+        `/reports/period?from=${prevYear}-${pad2(prevMonth)}&to=${prevYear}-${pad2(prevMonth)}&salonId=${data.salonId}`,
     },
   ] as const;
 
@@ -432,9 +475,43 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
         "$.rows[].lastWarningSentAt",
       ],
     };
+    // Issue #714: under a salon filter the period answer keeps every path above and adds exactly
+    // these - identity and minutes of the Aushilfen, the salon hours as a figure of its own, the basis
+    // marker and the reach kind. Hours only: no Soll, saldo, status, month or day for a helper.
+    ALLOW_LIST["GET /reports/period (Salon)"] = [
+      ...ALLOW_LIST["GET /reports/period"],
+      // envelope of a salon view: the salon id, the person basis, the caller's reach kind
+      "$.salonId",
+      "$.personBasis",
+      "$.helpersReach",
+      // the number of persons without a Stammsalon in an active salon - one count, never who
+      "$.withoutHomeSalonCount",
+      // the Aushilfen of other salons: identity and the hours worked in the salon, nothing else
+      "$.helpers",
+      "$.helpers[]",
+      "$.helpers[].employeeId",
+      "$.helpers[].employeeName",
+      "$.helpers[].employeeNumber",
+      "$.helpers[].salonWorkedMinutes",
+      // hours worked in the salon: KPI sum, per row and per month - minutes, never a day
+      "$.kpis.salonWorkedMinutes",
+      "$.rows[].salonWorkedMinutes",
+      "$.rows[].months[].salonWorkedMinutes",
+    ];
 
     /** The row of employee X inside a body, so a vacuous (empty) answer cannot pass. */
     function rowsOfX(name: string, body: unknown): unknown[] {
+      if (name === "GET /reports/period (Salon)") {
+        // Z is a Stammsalon row, X (no Stammsalon, an entry in the salon) is an Aushilfe.
+        const salon = body as {
+          rows: Array<{ employeeId: string }>;
+          helpers: Array<{ employeeId: string }>;
+        };
+        return [
+          ...salon.rows.filter((r) => r.employeeId === employeeZ.employeeId),
+          ...salon.helpers.filter((h) => h.employeeId === employeeX.id),
+        ];
+      }
       if (name === "GET /reports/monthly" || name === "GET /reports/period") {
         return (body as { rows: Array<{ employeeId: string }> }).rows.filter(
           (r) => r.employeeId === employeeX.id,
@@ -477,6 +554,18 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
         expect(findDayLevelStructures(JSON.parse(res.body))).toEqual([]);
       });
     }
+
+    it("GET /reports/period (Salon): Z is a Stammsalon row and X an Aushilfe, so both groups are really checked", async () => {
+      const res = await asHr("GET", READ_ROUTES[READ_ROUTES.length - 1].url());
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        rows: Array<{ employeeId: string }>;
+        helpers: Array<{ employeeId: string }>;
+      };
+      expect(body.rows.map((r) => r.employeeId)).toContain(employeeZ.employeeId);
+      expect(body.rows.map((r) => r.employeeId)).not.toContain(employeeX.id);
+      expect(body.helpers.map((h) => h.employeeId)).toEqual([employeeX.id]);
+    });
 
     it("positive control: the detector finds the day series of the admin's month-saldo answer", async () => {
       const res = await adminGet(

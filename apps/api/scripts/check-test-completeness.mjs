@@ -945,7 +945,12 @@ import { readFileSync } from "node:fs";
 // (origin/main @ 62cd922e + #688) - 709 test files, 10757 tests (10754 passed, 3 skipped). One new file:
 // reports-period-bulk-read-688 (5 cases); nothing removed, skipped or loosened. MIN_FILES 708 -> 709, never lowered.
 // Issue #184 (2026-10-22): MIN_FILES 709 -> 710, the new storage-fail-fast-184.test.ts. Never lowered.
-const MIN_FILES = 710;
+// Phase 714 (2026-10-22): measured with a full run on `feat/714-salonfilter-stammsalon` @ 8e32f17c (origin/main @ a154f8ee + #714) -
+// 713 test files, 10812 tests (10809 passed, 3 skipped); new file reports-period-home-salon-714 (20 cases); extended:
+// reports-period-salon-612, reports-period-csv-612, period-csv-612, salon-view, report-salon-filter-source-542, reports-hr-86;
+// nothing removed, skipped or loosened. The floor lagged the measured total of main (lower-bound convention), so the step is
+// larger than the phase's own delta. MIN_FILES 710 -> 713, never lowered.
+const MIN_FILES = 713;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1007,7 +1012,9 @@ const MIN_FILES = 710;
 // shifts-conflicts.test.ts (reach of the softDeleted/flagged buckets) plus drift already absorbed. Never lowered.
 // Issue #184 (2026-10-22): MIN_TESTS 10757 -> 10767, measured with a full run on `fix/184-storage-fail-fast`
 // (origin/main @ 7d5818c0 + #184): 710 test files, 10767 tests (10764 passed, 3 skipped); the new storage-fail-fast-184.test.ts holds 9 cases. Never lowered.
-const MIN_TESTS = 10767;
+// Phase 714 (2026-10-22): MIN_TESTS 10767 -> 10812, the measured total of the full run named at MIN_FILES (10809 passed, 3
+// skipped). Never lowered.
+const MIN_TESTS = 10812;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

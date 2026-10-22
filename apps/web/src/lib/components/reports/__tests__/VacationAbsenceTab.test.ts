@@ -24,7 +24,6 @@ import { screen, fireEvent, within, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import { VACATION_YEAR_COLUMNS } from "$lib/reports/vacation-columns";
 import {
-  SALON_LEAVE_DAYS_NOT_ATTRIBUTABLE_NOTE,
   SALON_PERIOD_END_PERSONS_NOTE,
   PERSON_VALUES_NOT_SPLIT_LABEL,
 } from "$lib/salons/page-scope";
@@ -474,13 +473,16 @@ describe("VacationAbsenceTab - Abwesenheiten nach Art", () => {
     expect(screen.getByText("Keine Abwesenheiten im Zeitraum.")).toBeTruthy();
   });
 
-  it("keeps only the sick row under a salon filter and says why", () => {
+  // Owner decision #714: under a salon filter the persons are the Stammsalon circle with whole
+  // personal values, so every absence kind of the answer is shown, exactly as without a filter.
+  it("lists every absence kind of the Stammsalon persons under a salon filter", () => {
     viewport(false);
     renderWithTheme(VacationAbsenceTab, props({ filterActive: true }));
     const table = screen.getByRole("table", { name: /Abwesenheiten nach Art/ });
-    expect(within(table).getAllByRole("row")).toHaveLength(2);
-    expect(within(table).queryByText(/Urlaub \(Arbeitstage\)/)).toBeNull();
-    expect(screen.getByText(SALON_LEAVE_DAYS_NOT_ATTRIBUTABLE_NOTE)).toBeTruthy();
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    expect(within(table).getByText(/Urlaub \(Arbeitstage\)/)).toBeTruthy();
+    expect(within(table).getByText(/Krankheit \(Kalendertage\)/)).toBeTruthy();
+    expect(screen.queryByText(/je Salon nicht ausgewiesen/)).toBeNull();
   });
 });
 
@@ -497,7 +499,7 @@ describe("VacationAbsenceTab - salon filter notes (P-06)", () => {
     viewport(false);
     renderWithTheme(VacationAbsenceTab, props());
     expect(screen.queryByTestId("vacation-salon-note")).toBeNull();
-    expect(screen.queryByText(SALON_LEAVE_DAYS_NOT_ATTRIBUTABLE_NOTE)).toBeNull();
+    expect(screen.queryByText(/je Salon nicht ausgewiesen/)).toBeNull();
   });
 });
 

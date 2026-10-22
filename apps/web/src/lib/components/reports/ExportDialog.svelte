@@ -20,8 +20,9 @@
     DATEV_ALL_SALONS_NOTE,
     EXPORT_NO_STAMMSALON_NOTE,
     PERSON_SALDO_NOT_SPLIT_LABEL,
+    SALON_CSV_PERSONS_NOTE,
     SALON_EXPORT_PERSONS_NOTE,
-  } from "$lib/salons/page-scope"; // Issue #542
+  } from "$lib/salons/page-scope"; // Issue #542, #714
 
   interface Props {
     /** Two-way bindable open state (Escape, backdrop and „Schließen“ clear it). */
@@ -211,6 +212,10 @@
     <p class="export-desc">
       Die Tabelle „Zeiten &amp; Konten“ für den ganzen Zeitraum, Semikolon-getrennt, für Excel.
     </p>
+    {#if filterActive}
+      <!-- Issue #714 (D-09): who the file lists under a salon filter. -->
+      <p class="form-hint" data-testid="export-csv-salon-note">{SALON_CSV_PERSONS_NOTE}</p>
+    {/if}
     <button
       type="button"
       class="btn btn-outline sm"

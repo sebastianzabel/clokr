@@ -50,6 +50,34 @@ export function salonViewMemberIds(input: SalonViewMembershipInput): Set<string>
   return members;
 }
 
+export interface SalonHelperInput {
+  /** The chosen salon. */
+  salonId: string;
+  /** The persons already admitted by the caller's reach and population - the result is bounded by them. */
+  candidateIds: readonly string[];
+  /** Recorded entries (any persons; only candidates outside the home set can become helpers). */
+  entries: readonly SalonViewEntry[];
+  /** The persons whose Stammsalon is the salon: they are the rows of the view, never its helpers. */
+  homeMemberIds: ReadonlySet<string>;
+}
+
+/**
+ * Issue #714 (D-07) - the Aushilfen of a period salon view: the candidates OUTSIDE the home set that
+ * recorded time in the salon. It is the entry branch of the one membership rule
+ * ({@link salonViewMemberIds}, #542 P-01), applied to the candidates that are not homed in the salon,
+ * and never a second rule: it delegates and decides nothing itself. Pure, no import.
+ */
+export function salonHelperIds(input: SalonHelperInput): Set<string> {
+  const { salonId, candidateIds, entries, homeMemberIds } = input;
+  return salonViewMemberIds({
+    salonId,
+    candidateIds: candidateIds.filter((id) => !homeMemberIds.has(id)),
+    entries,
+    homeByPerson: new Map(),
+    days: [],
+  });
+}
+
 /**
  * The one 404 body of every composition salon view (#85 D-13 / T-100-09): a foreign tenant's salon,
  * an unknown id, an inactive salon and a salon outside the caller's reach are indistinguishable.

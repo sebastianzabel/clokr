@@ -17,6 +17,9 @@ import {
 // Stichtag rule as the Saldenübersicht #613 and the Monatsexport salon filter #542). The Stammsalon
 // resolution itself (`contexts/platform/scope-filter.ts`) is unchanged and always receives a
 // tenant-local CALENDAR day (UTC-midnight Date, HOME validity is @db.Date, #493), never an instant.
+// Issue #714 generalises the month rule to a period: for a person whose exit lies inside the period
+// the exit day, else the last calendar day of the period's last month. A single month is the period
+// from = to, so every single-month caller keeps its exact behaviour.
 // This module carries no business rule of its own: it only picks the day and delegates.
 
 /** Tenant-local calendar day (UTC-midnight Date) of "today" for a reach lookup. */
@@ -24,13 +27,24 @@ export function reachToday(tz: string): Date {
   return todayInTz(tz);
 }
 
+/** A calendar month, as the period route and the single-month callers name it. */
+export type ReachMonth = { year: number; month: number };
+
 /**
- * The calendar day a person's reach is judged on for month `y`/`m`: the tenant-local exit day when
- * `exitDate` lies inside the month, else the month's last calendar day.
+ * The calendar day a person's reach is judged on for the period `from`..`to` (Issue #714, the
+ * period generalisation of the month rule): the tenant-local exit day when `exitDate` lies inside
+ * the period (from the start of the `from` month to the end of the `to` month), else the last
+ * calendar day of the `to` month. For `from` = `to` this is exactly the month rule of #679.
  */
-export function monthReachDay(exitDate: Date | null, y: number, m: number, tz: string): Date {
-  const { start, end } = monthRangeUtc(y, m, tz);
-  const { lastDay } = monthDateRange(y, m, tz);
+export function periodReachDay(
+  exitDate: Date | null,
+  from: ReachMonth,
+  to: ReachMonth,
+  tz: string,
+): Date {
+  const { start } = monthRangeUtc(from.year, from.month, tz);
+  const { end } = monthRangeUtc(to.year, to.month, tz);
+  const { lastDay } = monthDateRange(to.year, to.month, tz);
   if (exitDate !== null && exitDate >= start && exitDate <= end) {
     return new Date(`${dateStrInTz(exitDate, tz)}T00:00:00Z`);
   }
@@ -38,20 +52,29 @@ export function monthReachDay(exitDate: Date | null, y: number, m: number, tz: s
 }
 
 /**
- * List mode: every person in `reach` for month `y`/`m`, each judged on their own reach day
- * ({@link monthReachDay}). `wholeTenant` -> `"all"` without a query.
+ * The calendar day a person's reach is judged on for month `y`/`m`: the tenant-local exit day when
+ * `exitDate` lies inside the month, else the month's last calendar day.
  */
-export async function resolveMonthReachIds(
+export function monthReachDay(exitDate: Date | null, y: number, m: number, tz: string): Date {
+  return periodReachDay(exitDate, { year: y, month: m }, { year: y, month: m }, tz);
+}
+
+/**
+ * List mode over a period (Issue #714): every person in `reach` for the period `from`..`to`, each
+ * judged on their own reach day ({@link periodReachDay}). `wholeTenant` -> `"all"` without a query.
+ */
+export async function resolvePeriodReachIds(
   db: Prisma.TransactionClient,
   tenantId: string,
   reach: AccessReach,
-  y: number,
-  m: number,
+  from: ReachMonth,
+  to: ReachMonth,
   tz: string,
 ): Promise<"all" | string[]> {
   if (reach.kind === "wholeTenant") return "all";
-  const { start, end } = monthRangeUtc(y, m, tz);
-  const { lastDay } = monthDateRange(y, m, tz);
+  const { start } = monthRangeUtc(from.year, from.month, tz);
+  const { end } = monthRangeUtc(to.year, to.month, tz);
+  const { lastDay } = monthDateRange(to.year, to.month, tz);
   const homeOn = async (calendarDay: Date): Promise<Set<string>> => {
     const ids = await resolveStammsalonScopedEmployeeIds(db, tenantId, reach, calendarDay);
     return new Set(ids === "all" ? [] : ids);
@@ -68,7 +91,8 @@ export async function resolveMonthReachIds(
   }
   const byExitDay = new Map<string, string[]>();
   for (const leaver of leavers) {
-    const exitDay = dateStrInTz(leaver.exitDate as Date, tz);
+    // The Stichtag rule lives in periodReachDay only; a leaver here lies inside the period.
+    const exitDay = periodReachDay(leaver.exitDate, from, to, tz).toISOString().slice(0, 10);
     byExitDay.set(exitDay, [...(byExitDay.get(exitDay) ?? []), leaver.id]);
   }
   for (const [exitDay, ids] of byExitDay) {
@@ -76,6 +100,28 @@ export async function resolveMonthReachIds(
     for (const id of ids) if (home.has(id)) members.add(id);
   }
   return [...members];
+}
+
+/**
+ * List mode: every person in `reach` for month `y`/`m`, each judged on their own reach day
+ * ({@link monthReachDay}). `wholeTenant` -> `"all"` without a query.
+ */
+export async function resolveMonthReachIds(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  reach: AccessReach,
+  y: number,
+  m: number,
+  tz: string,
+): Promise<"all" | string[]> {
+  return resolvePeriodReachIds(
+    db,
+    tenantId,
+    reach,
+    { year: y, month: m },
+    { year: y, month: m },
+    tz,
+  );
 }
 
 /** Single-row mode of {@link resolveMonthReachIds}: is `employeeId` in `reach` for month `y`/`m`? */

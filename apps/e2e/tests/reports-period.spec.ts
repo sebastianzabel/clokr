@@ -26,6 +26,11 @@
  *                   overflows its tile at 961, 1280 and 1440 px; the sticky table header is never hidden
  *                   behind the period bar (editorial/modern × comfortable/compact).
  *
+ * A fourth describe (Issue #714) proves what the salon switch shows where a reader looks: after the
+ * header is switched to a salon, the KPI tile "Im Salon gearbeitet", the Stammsalon hint, the row of
+ * the person homed there and the section with "Aushilfen aus anderen Salons" are each in the
+ * viewport (1280, 390 and 360 px, light and dark), with two controls that show the check can fail.
+ *
  * Auth: same model as hr-view-86.spec.ts (throwaway tenant, API login, localStorage hydrated with
  * addInitScript). Names are synthetic. No fixed sleeps: every wait is on an observable condition.
  * Dates of the functional describe are computed from the current day; the matrix and layout checks
@@ -33,7 +38,7 @@
  */
 import { randomUUID } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
-import type { APIRequestContext, BrowserContext, Page, Route } from "@playwright/test";
+import type { APIRequestContext, BrowserContext, Locator, Page, Route } from "@playwright/test";
 import { test, expect } from "../fixtures";
 import type { TestTenant } from "../fixtures";
 import { measurePageOverflow } from "../helpers/viewport-geometry";
@@ -218,6 +223,7 @@ async function createPerson(
   firstName: string,
   lastName: string,
   hireDay: string,
+  homeSalonId?: string,
 ): Promise<Person> {
   const email = `${key}.${tenant.tenantId.toLowerCase()}@example.invalid`;
   const res = await request.post(`${API_BASE}/api/v1/employees`, {
@@ -231,6 +237,7 @@ async function createPerson(
       scheduleType: "FIXED_SCHEDULE",
       weeklyHours: 40,
       password: PERSON_PASSWORD,
+      ...(homeSalonId ? { homeSalonId } : {}),
     },
   });
   expect(res.status(), `create person ${key} (${await res.text()})`).toBe(201);
@@ -246,6 +253,7 @@ async function recordOwnEntry(
   start: string,
   end: string,
   breakMinutes: number,
+  salonId?: string,
 ) {
   const auth = await loginAs(request, person.email, PERSON_PASSWORD);
   const res = await request.post(`${API_BASE}/api/v1/time-entries`, {
@@ -255,6 +263,7 @@ async function recordOwnEntry(
       startTime: zonedInstant(day, start, TENANT_TZ).toISOString(),
       endTime: zonedInstant(day, end, TENANT_TZ).toISOString(),
       breakMinutes,
+      ...(salonId ? { salonId } : {}),
     },
   });
   expect(res.status(), `record an entry on ${day} (${await res.text()})`).toBe(201);
@@ -302,8 +311,11 @@ async function seedTwoPeople(request: APIRequestContext, tenant: TestTenant): Pr
 interface PeriodAnswer {
   from: string;
   to: string;
-  kpis: { workedMinutes: number; personCount: number };
+  kpis: { workedMinutes: number; personCount: number; salonWorkedMinutes?: number };
   rows: Array<{ employeeId: string; employeeName: string; workedMinutes: number }>;
+  /** Present only under a salon filter (Issue #714). */
+  personBasis?: string;
+  helpers?: Array<{ employeeId: string; employeeName: string; salonWorkedMinutes: number }>;
 }
 
 function isPeriodUrl(url: string): boolean {
@@ -1248,6 +1260,188 @@ test.describe("Issue #612 — Layoutprüfungen", () => {
           geo.barBottom + 3,
         );
         expect(geo.headHit, "the header cell is what the pointer hits").toBe("thead");
+      });
+    }
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// salon switch (Issue #714): the Stammsalon view is where a reader looks
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+const SALON_SWITCH_VIEWPORTS = [{ width: 1280, height: 800 }, ...VIEWPORTS] as const;
+const STAMMSALON_HINT = "Personensaldo nach Stammsalon, nicht nach Salon aufgeteilt";
+
+/**
+ * Scrolls the element to the middle of the screen, then asserts it is in the viewport and that
+ * the pointer at its centre hits the element itself (not a sticky bar or an overlay on top of it).
+ */
+async function expectSeenInViewport(locator: Locator, what: string) {
+  await expect(locator, `${what} exists`).toHaveCount(1);
+  await locator.evaluate((el) => el.scrollIntoView({ block: "center", inline: "nearest" }));
+  await expect(locator, `${what} is in the viewport`).toBeInViewport({ ratio: 0.9 });
+  const hit = await locator.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return top !== null && (el === top || el.contains(top));
+  });
+  expect(hit, `${what} is not covered by another element`).toBe(true);
+}
+
+test.describe("Issue #714 — Salonwechsel: Stammsalon-Sicht im Blick", () => {
+  for (const viewport of SALON_SWITCH_VIEWPORTS) {
+    for (const mode of MODES) {
+      test(`Salonwechsel bei ${viewport.width} px, ${mode === "light" ? "hell" : "dunkel"}`, async ({
+        page,
+        request,
+        tenant,
+      }, testInfo) => {
+        // ── Seed through the API: two salons, one person homed in each, both worked in the second.
+        const win = await request.put(`${API_BASE}/api/v1/settings/work`, {
+          headers: authHeaders(tenant.adminToken),
+          data: { retroEntryWindowDays: 90 },
+        });
+        expect(win.ok(), `raise the retro window (${win.status()})`).toBe(true);
+        const salonsRes = await request.get(`${API_BASE}/api/v1/salons`, {
+          headers: authHeaders(tenant.adminToken),
+        });
+        expect(salonsRes.ok()).toBe(true);
+        const first = ((await salonsRes.json()) as { salons: Array<{ id: string }> }).salons[0];
+        const created = await request.post(`${API_BASE}/api/v1/salons`, {
+          headers: authHeaders(tenant.adminToken),
+          data: {
+            name: "Zweitsalon Stammsalon",
+            federalState: "HESSEN",
+            openingHours: [0, 1, 2, 3, 4, 5, 6].map((day) => ({
+              day,
+              open: "09:00",
+              close: "18:00",
+              ...(day === 6 ? { closed: true } : {}),
+            })),
+          },
+        });
+        expect(created.status(), `create the second salon (${await created.text()})`).toBe(201);
+        const second = (await created.json()) as { id: string };
+
+        const now = ymOf(todayInTenantZone());
+        const prev = addMonths(now, -1);
+        const hire = `${ymKey(addMonths(now, -3))}-01`;
+        const sina = await createPerson(
+          request,
+          tenant,
+          "sina",
+          "Sina",
+          "Stamm-Zwei",
+          hire,
+          second.id,
+        );
+        const ali = await createPerson(
+          request,
+          tenant,
+          "ali",
+          "Ali",
+          "Aushilfe-Eins",
+          hire,
+          first.id,
+        );
+        const day = weekdayMidMonth(prev);
+        await recordOwnEntry(request, sina, day, "08:00", "16:00", 30, second.id);
+        await recordOwnEntry(request, ali, day, "09:00", "13:00", 0, second.id);
+
+        // ── Open the page on the second salon (never mocked: the answer is read).
+        await signInAdmin(page, request, tenant, { mode });
+        await page.setViewportSize(viewport);
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        const loaded = periodResponse(page, prev, prev, second.id);
+        await page.goto(
+          `${tenant.baseUrl}/reports?from=${ymKey(prev)}&to=${ymKey(prev)}&salonId=${second.id}&tab=zeiten`,
+        );
+        const answer = await answerOf(await loaded);
+        expect(answer.personBasis, "the answer is the Stammsalon view").toBe(
+          "HOME_SALON_AT_PERIOD_END",
+        );
+        expect(answer.rows.map((r) => r.employeeId)).toContain(sina.id);
+        expect(answer.rows.map((r) => r.employeeId)).not.toContain(ali.id);
+        expect((answer.helpers ?? []).map((h) => h.employeeId)).toContain(ali.id);
+        const salonMinutes = answer.kpis.salonWorkedMinutes;
+        expect(typeof salonMinutes, "the answer carries the salon hours").toBe("number");
+        await waitKpisSettled(page);
+        await expect(page.getByTestId("salon-worked-section")).toHaveCount(1);
+        await settle(page);
+
+        // ── Each element is in the viewport once scrolled to.
+        const tile = page.locator("article.kpi", {
+          has: page.locator(".kpi-label", { hasText: /^Im Salon gearbeitet$/ }),
+        });
+        await expectSeenInViewport(tile, "the KPI tile 'Im Salon gearbeitet'");
+        await expect(tile.locator(".kpi-value")).toContainText(fmtHours(salonMinutes as number));
+
+        const hint = page.getByTestId("period-kpis-salon-note");
+        await expectSeenInViewport(hint, "the Stammsalon hint callout");
+        await expect(hint).toContainText(STAMMSALON_HINT);
+
+        const row =
+          viewport.width >= 768
+            ? page.locator("tr.period-row", { hasText: sina.fullName })
+            : page.locator(".period-list li", { hasText: sina.fullName });
+        await expectSeenInViewport(row, `the row of ${sina.fullName}`);
+        await expect(
+          page.locator("tr.period-row, .period-list li", { hasText: ali.fullName }),
+          "the helper is not a table row",
+        ).toHaveCount(0);
+
+        const sectionTitle = page.locator(".salon-worked .card-title", {
+          hasText: /^Im Salon gearbeitet$/,
+        });
+        await expectSeenInViewport(sectionTitle, "the section heading 'Im Salon gearbeitet'");
+        await expectSeenInViewport(
+          page.getByRole("heading", { name: "Aushilfen aus anderen Salons" }),
+          "the sub-heading 'Aushilfen aus anderen Salons'",
+        );
+        await expectSeenInViewport(
+          page.getByTestId("salon-worked-helpers").getByText(ali.fullName),
+          `the helper name ${ali.fullName}`,
+        );
+
+        const overflow = await measurePageOverflow(page, TOLERANCE_PX);
+        expect(overflow.overflowing, "no element overflows the page").toEqual([]);
+        expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth);
+
+        // Written into the test's output folder (kept after a green run) and attached as well.
+        const shot = testInfo.outputPath(`salonwechsel-${viewport.width}-${mode}.png`);
+        await page.screenshot({ path: shot, fullPage: true });
+        await testInfo.attach(`salonwechsel-${viewport.width}-${mode}`, {
+          path: shot,
+          contentType: "image/png",
+        });
+
+        // ── Control (a): an element placed off screen is NOT in the viewport.
+        await page.evaluate(() => {
+          const probe = document.createElement("div");
+          probe.id = "offscreen-probe";
+          probe.textContent = "probe";
+          probe.style.cssText = "position:fixed;left:-10000px;top:0;width:100px;height:20px";
+          document.body.appendChild(probe);
+        });
+        await expect(
+          page.locator("#offscreen-probe"),
+          "control: the off-screen probe is not in the viewport",
+        ).not.toBeInViewport();
+        await page.evaluate(() => document.getElementById("offscreen-probe")?.remove());
+
+        // ── Control (b): under "Alle Salons" the salon-only elements do not exist.
+        const unfiltered = page.waitForResponse((res) => {
+          if (!isPeriodUrl(res.url())) return false;
+          const u = new URL(res.url());
+          return u.searchParams.get("from") === ymKey(prev) && !u.searchParams.has("salonId");
+        });
+        await page.locator("select.salon-switcher-select").selectOption("ALL");
+        await unfiltered;
+        await waitKpisSettled(page);
+        await expect(page.getByTestId("period-kpis"), "the KPI card is still shown").toBeVisible();
+        await expect(tile, "control: no salon tile under 'Alle Salons'").toHaveCount(0);
+        await expect(page.getByTestId("salon-worked-section")).toHaveCount(0);
+        await expect(page.getByTestId("period-kpis-salon-note")).toHaveCount(0);
       });
     }
   }

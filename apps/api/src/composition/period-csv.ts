@@ -44,7 +44,7 @@ export type PeriodCsvRow = {
   monthCount: number;
   confirmedMonthCount: number;
   labelled: boolean;
-  sollUnavailableReason?: "NO_PERMISSION" | "SALON_FILTER";
+  sollUnavailableReason?: "NO_PERMISSION";
 };
 
 const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
@@ -73,12 +73,11 @@ function hoursCell(minutes: number | null): string {
 
 /**
  * Status text of a row (P-08, the Monatsexport vocabulary): "ohne Soll" when no listed month has a
- * Soll, "Bestätigt" when every listed month is closed, "Prognose" otherwise. Under a salon filter
- * no month is evaluated against a contract at all, so the status is empty rather than a misleading
- * "ohne Soll".
+ * Soll, "Bestätigt" when every listed month is closed, "Prognose" otherwise. Every row gets its real
+ * status: under a salon filter a row is the whole person of the Stammsalon circle (owner decision
+ * #714), so there is no salon exception.
  */
 function statusText(row: PeriodCsvRow): string {
-  if (row.sollUnavailableReason === "SALON_FILTER") return "";
   if (!row.labelled) return "ohne Soll";
   return row.confirmedMonthCount === row.monthCount ? "Bestätigt" : "Prognose";
 }
@@ -87,10 +86,7 @@ function statusText(row: PeriodCsvRow): string {
 export function periodTableCsv(rows: readonly PeriodCsvRow[]): Buffer {
   const lines = [PERIOD_CSV_HEADER];
   for (const row of rows) {
-    const confirmed =
-      row.sollUnavailableReason === "SALON_FILTER"
-        ? ""
-        : `${row.confirmedMonthCount} von ${row.monthCount}`;
+    const confirmed = `${row.confirmedMonthCount} von ${row.monthCount}`;
     lines.push(
       [
         cell(row.employeeNumber),

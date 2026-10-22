@@ -10,6 +10,7 @@ import {
   DATEV_ALL_SALONS_NOTE,
   EXPORT_NO_STAMMSALON_NOTE,
   PERSON_SALDO_NOT_SPLIT_LABEL,
+  SALON_CSV_PERSONS_NOTE,
   SALON_EXPORT_PERSONS_NOTE,
   SALON_VIEW_UNAVAILABLE_TEXT,
 } from "$lib/salons/page-scope";
@@ -300,10 +301,20 @@ describe("ExportDialog - salon filter (#542)", () => {
     expect(datev.closest("[data-export-block]")?.getAttribute("data-export-block")).toBe("datev");
   });
 
-  it("shows neither note without a filter", () => {
+  // Issue #714 (D-09): the CSV block names whom the file lists under a filter.
+  it("names in the CSV block whom the file lists: the Stammsalon at the period end, no helpers (#714)", () => {
+    renderWithTheme(ExportDialog, props({ filterActive: true }));
+    const csv = screen.getByTestId("export-csv-salon-note");
+    expect(csv.textContent).toBe(SALON_CSV_PERSONS_NOTE);
+    expect(csv.classList.contains("form-hint")).toBe(true);
+    expect(csv.closest("[data-export-block]")?.getAttribute("data-export-block")).toBe("csv");
+  });
+
+  it("shows none of the three notes without a filter", () => {
     renderWithTheme(ExportDialog, props());
     expect(screen.queryByTestId("export-salon-persons-note")).toBeNull();
     expect(screen.queryByTestId("datev-all-salons-note")).toBeNull();
+    expect(screen.queryByTestId("export-csv-salon-note")).toBeNull();
   });
 
   it("shows the calm state instead of an error when the salon was rejected", () => {

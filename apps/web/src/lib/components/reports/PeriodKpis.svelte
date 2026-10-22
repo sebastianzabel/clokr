@@ -3,26 +3,36 @@
   // KPIStat tiles. Pattern 3: every value is the server's own figure (minutes, days) formatted
   // here; nothing is added, derived or recomputed. A figure the caller may not see arrives as
   // `null` and renders as a dash with the reason as its delta line, so the grid never jumps.
+  // Issue #714: under a salon filter the card shows the whole sums of the persons by Stammsalon at
+  // the period end, with the owner's hint; the hours worked in the salon are a separate tile in
+  // its own row with no saldo beside it, so they never meet Soll.
   import KPIStat from "$components/ui/KPIStat.svelte";
   import type { PeriodKpis } from "$lib/reports/period-report";
   import { fmtDateDe, fmtDaysDe, fmtHoursDe } from "$lib/reports/period-format";
-  import { SALON_SOLL_NOT_ATTRIBUTABLE_NOTE } from "$lib/salons/page-scope";
+  import {
+    HOME_SALON_CHANGE_NOTE,
+    PERSON_SALDO_BY_HOME_SALON_LABEL,
+    SALON_WORKED_DELTA_NOTE,
+    SALON_WORKED_LABEL,
+    withoutHomeSalonNote,
+  } from "$lib/salons/page-scope";
 
   interface Props {
     /** The `kpis` object of the period answer; null until the first answer. */
     kpis: PeriodKpis | null;
-    /** A salon filter applies (Soll and saldo are never split by salon). */
+    /** A salon filter applies (persons by Stammsalon, whole values, #714). */
     filterActive: boolean;
+    /** Persons of the reach without a Stammsalon in an active salon; null without a filter. */
+    withoutHomeSalonCount?: number | null;
     /** A request is in flight; without `kpis` this renders the skeleton. */
     loading: boolean;
   }
 
-  let { kpis, filterActive, loading }: Props = $props();
+  let { kpis, filterActive, withoutHomeSalonCount = null, loading }: Props = $props();
 
   const DASH = "—";
-  const NO_PERMISSION_TEXT = "Keine Berechtigung";
-  const SALON_FILTER_TEXT = "Nicht je Salon";
-  const WITHHELD_REASON = $derived(filterActive ? SALON_FILTER_TEXT : NO_PERMISSION_TEXT);
+  // A salon filter withholds nothing (#714): the only reason a figure is missing is the permission.
+  const WITHHELD_REASON = "Keine Berechtigung";
 
   const showSkeleton = $derived(kpis === null && loading);
 
@@ -58,6 +68,11 @@
       : null,
   );
   const forecastNote = $derived(kpis !== null && !kpis.allMonthsConfirmed);
+  const salonWorkedMinutes = $derived(
+    filterActive && kpis !== null && typeof kpis.salonWorkedMinutes === "number"
+      ? kpis.salonWorkedMinutes
+      : null,
+  );
 </script>
 
 <div class="period-kpis" data-testid="period-kpis" aria-busy={loading}>
@@ -131,6 +146,20 @@
       />
     </div>
 
+    {#if salonWorkedMinutes !== null}
+      <hr class="divider" />
+
+      <div class="kpi-grid" data-testid="period-kpis-salon-hours">
+        <KPIStat
+          label={SALON_WORKED_LABEL}
+          value={fmtHoursDe(salonWorkedMinutes)}
+          unit="h"
+          delta={SALON_WORKED_DELTA_NOTE}
+          deltaTone="neutral"
+        />
+      </div>
+    {/if}
+
     {#if forecastNote || filterActive}
       <div class="period-kpi-notes">
         {#if forecastNote}
@@ -140,9 +169,12 @@
         {/if}
         {#if filterActive}
           <div class="callout brand" data-testid="period-kpis-salon-note">
-            <p>
-              {SALON_SOLL_NOT_ATTRIBUTABLE_NOTE} Saldo-Werte werden deshalb nur ohne Salonauswahl gezeigt.
-            </p>
+            <p>{PERSON_SALDO_BY_HOME_SALON_LABEL}. {HOME_SALON_CHANGE_NOTE}</p>
+            {#if withoutHomeSalonCount !== null && withoutHomeSalonCount > 0}
+              <p data-testid="period-kpis-without-home-salon">
+                {withoutHomeSalonNote(withoutHomeSalonCount)}
+              </p>
+            {/if}
           </div>
         {/if}
       </div>
