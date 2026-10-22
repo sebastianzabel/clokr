@@ -820,6 +820,7 @@
             <PeriodKpis
               kpis={period?.kpis ?? null}
               filterActive={pageSalonId !== null}
+              withoutHomeSalonCount={period?.withoutHomeSalonCount ?? null}
               loading={periodLoading}
             />
           </Card>
