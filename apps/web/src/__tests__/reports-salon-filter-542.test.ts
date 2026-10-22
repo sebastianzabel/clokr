@@ -203,13 +203,15 @@ describe("Issue #542 — Berichte follow the header salon", () => {
       "PERSON_SALDO_NOT_SPLIT_LABEL",
       "DATEV_ALL_SALONS_NOTE",
       "EXPORT_NO_STAMMSALON_NOTE",
+      "SALON_CSV_PERSONS_NOTE", // Issue #714: the CSV block names whom the file lists
     ]) {
       expect(EXPORT_DIALOG, name).toContain(`{${name}}`);
     }
     expect(PAGE).toMatch(/<ExportDialog[^>]*filterActive=\{pageSalonId !== null\}/s);
-    // Every note sits under a `filterActive` guard: none renders unconditionally.
+    // Every note sits under a `filterActive` guard: none renders unconditionally. Three guards since
+    // #714 (Monatsexport, DATEV, CSV block).
     const guards = EXPORT_DIALOG.match(/\{#if filterActive\}/g)?.length ?? 0;
-    expect(guards).toBe(2);
+    expect(guards).toBe(3);
   });
 
   it("[elsewhere] an attendance row with workedElsewhere shows the badge", () => {
