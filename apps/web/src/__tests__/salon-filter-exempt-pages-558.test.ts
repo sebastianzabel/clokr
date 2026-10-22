@@ -84,7 +84,7 @@ const EXEMPT_PAGES: ReadonlyArray<{
     file: "(app)/shifts/conflicts/+page.svelte",
     loads: "/shifts/conflicts",
     reason:
-      "work queue whose buckets are tenant-only today (#645, D-15): a header salon would decorate an unscoped read and pretend a scope the server does not apply",
+      "work queue that follows the caller's shift:read reach on the server since #645 (all three buckets); a header salon filter is not its fix, the page lists every conflict the caller may see",
   },
   {
     page: "admin/shifts",

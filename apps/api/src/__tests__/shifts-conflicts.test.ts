@@ -313,6 +313,147 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
     }
   });
 
+  it("softDeleted/flagged buckets are narrowed to the caller's reach; whole-tenant body is unchanged (Issue #645)", async () => {
+    const salonA = await createTestSalon(app.prisma, data.tenant.id, { name: "Reach645 A" });
+    const salonB = await createTestSalon(app.prisma, data.tenant.id, { name: "Reach645 B" });
+    const day = new Date(Date.UTC(2033, 2, 7));
+    const passwordHash = await bcrypt.hash("test1234", 10);
+    const tag = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+    async function createEmp(label: string) {
+      const user = await app.prisma.user.create({
+        data: { email: `${label}-${tag}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      });
+      const employee = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          employeeNumber: `${label}-${tag}`.toUpperCase().slice(0, 20),
+          firstName: `Name${label}${tag}`,
+          lastName: "Reach645",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      return { user, employee };
+    }
+    const empA = await createEmp("ra");
+    const empB = await createEmp("rb");
+    const planner = await createEmp("rp");
+    const created: string[] = [];
+    for (const [emp, salonId] of [
+      [empA, salonA.id],
+      [empB, salonB.id],
+    ] as const) {
+      for (const extra of [
+        { deletedAt: new Date(), deletedReason: "AUTO_BS_DAY_CLEANUP" as const },
+        { conflictsWithLeave: true },
+      ]) {
+        const sh = await app.prisma.shift.create({
+          data: {
+            employeeId: emp.employee.id,
+            salonId,
+            date: day,
+            startTime: "08:00",
+            endTime: "12:00",
+            ...extra,
+          },
+        });
+        created.push(sh.id);
+      }
+    }
+    await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: planner.user.id,
+        accessRoleId: SYSTEM_ROLE_IDS.SALON_MANAGER,
+        scopeType: "SALONS",
+        salonIds: [salonA.id],
+        employeeIds: [],
+      },
+    });
+
+    try {
+      const url = `/api/v1/shifts/conflicts?from=2033-03-07&to=2033-03-07`;
+      const login = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: planner.user.email, password: "test1234" },
+      });
+      expect(login.statusCode).toBe(200);
+      const scoped = await app.inject({
+        method: "GET",
+        url,
+        headers: { authorization: `Bearer ${JSON.parse(login.body).accessToken}` },
+      });
+      expect(scoped.statusCode).toBe(200);
+      const sb = JSON.parse(scoped.body);
+      expect(sb.softDeleted.map((x: { employeeId: string }) => x.employeeId)).toEqual([
+        empA.employee.id,
+      ]);
+      expect(sb.flagged.map((x: { employeeId: string }) => x.employeeId)).toEqual([
+        empA.employee.id,
+      ]);
+      expect(scoped.body).not.toContain(empB.employee.id);
+      expect(scoped.body).not.toContain(`Name${"rb"}${tag}`);
+
+      // Whole-tenant admin: body equals the pre-#645 unscoped answer, byte for byte.
+      const admin = await app.inject({
+        method: "GET",
+        url,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(admin.statusCode).toBe(200);
+      const include = { employee: { select: { id: true, firstName: true, lastName: true } } };
+      const ser = (s: { date: Date; deletedAt: Date | null }) => ({
+        ...s,
+        date: s.date.toISOString().slice(0, 10),
+        deletedAt: s.deletedAt ? s.deletedAt.toISOString() : null,
+      });
+      const legacySoft = await app.prisma.shift.findMany({
+        where: {
+          employee: { tenantId: data.tenant.id },
+          deletedAt: { not: null },
+          deletedReason: "AUTO_BS_DAY_CLEANUP",
+          date: { gte: day, lte: day },
+        },
+        include,
+        orderBy: [{ date: "asc" }],
+      });
+      const legacyFlagged = await app.prisma.shift.findMany({
+        where: {
+          employee: { tenantId: data.tenant.id },
+          deletedAt: null,
+          conflictsWithLeave: true,
+          date: { gte: day, lte: day },
+        },
+        include,
+        orderBy: [{ date: "asc" }],
+      });
+      const ab = JSON.parse(admin.body);
+      expect(JSON.stringify(ab.softDeleted.map((x: { id: string }) => x.id).sort())).toBe(
+        JSON.stringify(legacySoft.map((x) => x.id).sort()),
+      );
+      expect(legacySoft.length).toBe(2);
+      expect(legacyFlagged.length).toBe(2);
+      const key = (x: { id: string }) => x.id;
+      const sortById = <T extends { id: string }>(a: T[]) =>
+        [...a].sort((p, q) => key(p).localeCompare(key(q)));
+      expect(JSON.stringify(sortById(ab.softDeleted))).toBe(
+        JSON.stringify(sortById(legacySoft.map(ser))),
+      );
+      expect(JSON.stringify(sortById(ab.flagged))).toBe(
+        JSON.stringify(sortById(legacyFlagged.map(ser))),
+      );
+    } finally {
+      await app.prisma.roleAssignment.deleteMany({ where: { userId: planner.user.id } });
+      await app.prisma.shift.deleteMany({ where: { id: { in: created } } });
+      for (const e of [empA, empB, planner]) {
+        await app.prisma.employee.delete({ where: { id: e.employee.id } });
+        await app.prisma.user.delete({ where: { id: e.user.id } });
+      }
+    }
+  });
+
   it("Cross-tenant isolation: other-tenant soft-deleted shift NOT returned", async () => {
     // Build a second tenant with a soft-deleted BS shift; the first tenant's admin
     // token MUST NOT see it.
