@@ -21,7 +21,11 @@ vi.mock("$api/client", () => ({
 vi.mock("$lib/utils/logger", () => ({ clientLogger: { warn: vi.fn(), error: vi.fn() } }));
 import { screen, fireEvent, within } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
-import { SALON_PERIOD_ROWS_NOTE } from "$lib/salons/page-scope";
+import {
+  HOME_SALON_CHANGE_NOTE,
+  PERSON_SALDO_BY_HOME_SALON_LABEL,
+  SALON_PERIOD_END_PERSONS_NOTE,
+} from "$lib/salons/page-scope";
 import { forecastLabel } from "$lib/saldo/forecast-label";
 import type { PeriodRow } from "$lib/reports/period-report";
 import TimesAccountsTable from "../TimesAccountsTable.svelte";
@@ -259,11 +263,29 @@ describe("TimesAccountsTable - status chips (P-08, amendments 7 and 14)", () => 
     expect(cell.querySelector(".chip")).toHaveTextContent("ohne Soll");
   });
 
-  it("under a salon filter the status is a dash with the reason (aligned with the CSV)", () => {
+  // Issue #714 (owner decision #714): the circle under a salon filter is whole persons, so the
+  // status is the real one; the old „Nicht je Salon“ dash is gone.
+  it("under a salon filter an all-closed row shows the Bestätigt chip, no dash (#714)", () => {
     const cell = statusCell(row("A"), { filterActive: true });
-    expect(cell).toHaveTextContent("—");
-    expect(cell.querySelector(".chip")).toBeNull();
-    expect(cell.querySelector("[title='Nicht je Salon']")).not.toBeNull();
+    expect(cell.querySelector(".chip")).toHaveTextContent("Bestätigt");
+    expect(cell).not.toHaveTextContent("—");
+    expect(cell.querySelector("[title='Nicht je Salon']")).toBeNull();
+  });
+
+  it("under a salon filter a forecast row shows the forecast chip with its detail (#714)", () => {
+    const cell = statusCell(
+      row("B", { monthCount: 3, confirmedMonthCount: 1, unconfirmedMonths: 2 }),
+      { filterActive: true },
+    );
+    expect(cell.querySelector(".chip")).toHaveTextContent(forecastLabel(2, true));
+    expect(cell).toHaveTextContent("1 von 3 Monaten bestätigt");
+  });
+
+  it("under a salon filter a row without a labelled month shows „ohne Soll“ (#714)", () => {
+    const cell = statusCell(row("C", { labelled: false, confirmedMonthCount: 0 }), {
+      filterActive: true,
+    });
+    expect(cell.querySelector(".chip")).toHaveTextContent("ohne Soll");
   });
 });
 
@@ -624,13 +646,50 @@ describe("TimesAccountsTable - source", () => {
   });
 });
 
-// Issue #612 (orchestrator amendment 16): under a salon filter the table says who it lists - the
-// #542 membership rule - and says nothing without one.
+// Issue #714 (owner decision #714, replaces the #612 amendment-16 membership note): under a salon
+// filter the table says who it lists - the Stammsalon circle - and where a mover counts; it says
+// nothing without a filter.
 describe("TimesAccountsTable - salon filter note", () => {
-  it("shows the membership note under a filter", () => {
+  it("names the Stammsalon circle, the whole-person saldo and the mover rule under a filter", () => {
     viewport(false);
     renderWithTheme(TimesAccountsTable, props([row("A")], { filterActive: true }));
-    expect(screen.getByTestId("times-salon-note").textContent).toBe(SALON_PERIOD_ROWS_NOTE);
+    const note = screen.getByTestId("times-salon-note").textContent ?? "";
+    expect(note).toContain(SALON_PERIOD_END_PERSONS_NOTE);
+    expect(note).toContain(PERSON_SALDO_BY_HOME_SALON_LABEL);
+    expect(note).toContain(HOME_SALON_CHANGE_NOTE);
+    expect(note).not.toContain("Eintrag in diesem Salon");
+  });
+
+  it("has the same columns with and without a filter (no salon column)", () => {
+    viewport(false);
+    const heads = () =>
+      Array.from(document.querySelectorAll("thead th")).map((th) => th.textContent?.trim());
+    const view = renderWithTheme(TimesAccountsTable, props([row("A")]));
+    const plain = heads();
+    view.unmount();
+    renderWithTheme(TimesAccountsTable, props([row("A")], { filterActive: true }));
+    expect(heads()).toEqual(plain);
+    expect(plain.some((h) => h?.includes("Salon"))).toBe(false);
+  });
+
+  it("a NO_PERMISSION row keeps its dash with „Keine Berechtigung“ under a filter", () => {
+    viewport(false);
+    renderWithTheme(
+      TimesAccountsTable,
+      props(
+        [
+          row("A", {
+            expectedMinutes: null,
+            balanceMinutes: null,
+            openingBalanceMinutes: null,
+            closingBalanceMinutes: null,
+            sollUnavailableReason: "NO_PERMISSION",
+          }),
+        ],
+        { filterActive: true },
+      ),
+    );
+    expect(screen.getAllByText("Keine Berechtigung").length).toBeGreaterThan(0);
   });
 
   it("shows no note without a filter", () => {

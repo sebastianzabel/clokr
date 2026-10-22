@@ -99,14 +99,6 @@ export const SALON_PERIOD_END_PERSONS_NOTE = "Personen nach Stammsalon am Ende d
 export const PERSON_VALUES_NOT_SPLIT_LABEL = "Personenwerte, nicht nach Salon aufgeteilt";
 
 /**
- * Issue #612 (orchestrator amendment 16) - who the "Zeiten & Konten" table lists under a salon
- * filter: the #542 salon-view membership rule (`salonViewMemberIds`, the API's one rule), spelled
- * as the reader needs it.
- */
-export const SALON_PERIOD_ROWS_NOTE =
-  "Personen mit Eintrag in diesem Salon oder Stammsalon an mindestens einem Tag des Zeitraums";
-
-/**
  * Issue #714 (D-04) - the period report under a salon filter: every figure of a listed person is
  * the whole personal value, and the persons are those whose Stammsalon is the chosen salon at the
  * end of the period. Replaces `PERSON_SALDO_NOT_SPLIT_LABEL` on the KPI card and the table.

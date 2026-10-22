@@ -28,7 +28,11 @@
     periodSaldoExclusion,
     periodSaldoFigures,
   } from "$lib/reports/team-saldo"; // Issue #588 (P-12): the one rule
-  import { SALON_PERIOD_ROWS_NOTE } from "$lib/salons/page-scope"; // Issue #612 (amendment 16)
+  import {
+    HOME_SALON_CHANGE_NOTE,
+    PERSON_SALDO_BY_HOME_SALON_LABEL,
+    SALON_PERIOD_END_PERSONS_NOTE,
+  } from "$lib/salons/page-scope"; // Issue #714: the Stammsalon circle
 
   interface Props {
     /** The `rows` of the period answer; null until the first answer. */
@@ -37,7 +41,10 @@
     loading: boolean;
     /** The period label shown under the heading and in the table caption. */
     periodLabel: string;
-    /** A salon filter applies: Soll and saldo are never split by salon, the status is empty. */
+    /**
+     * A salon filter applies: the rows are the Stammsalon persons at the period end with whole
+     * values (#714); only the note changes, the columns and the status stay.
+     */
     filterActive: boolean;
     /** The drill-down URL of a person (the name link's `href`; opens in a new tab too). */
     personHref: (row: PeriodRow) => string;
@@ -173,21 +180,17 @@
 {/snippet}
 
 {#snippet statusChip(row: PeriodRow)}
-  {#if filterActive}
-    <span title="Nicht je Salon">{DASH}</span><span class="sr-only">Nicht je Salon</span>
+  {@const status = rowStatus(row)}
+  {#if status.kind === "confirmed"}
+    <span class="chip chip-good">
+      <Icon name="lock" size={11} />
+      {status.label}
+    </span>
+  {:else if status.kind === "forecast"}
+    <span class="chip"><span class="dot"></span> {status.label}</span>
+    {#if status.detail}<span class="period-sub">{status.detail}</span>{/if}
   {:else}
-    {@const status = rowStatus(row)}
-    {#if status.kind === "confirmed"}
-      <span class="chip chip-good">
-        <Icon name="lock" size={11} />
-        {status.label}
-      </span>
-    {:else if status.kind === "forecast"}
-      <span class="chip"><span class="dot"></span> {status.label}</span>
-      {#if status.detail}<span class="period-sub">{status.detail}</span>{/if}
-    {:else}
-      <span class="chip">{status.label}</span>
-    {/if}
+    <span class="chip">{status.label}</span>
   {/if}
 {/snippet}
 
@@ -203,7 +206,12 @@
   </div>
 
   {#if filterActive}
-    <p class="period-sub" data-testid="times-salon-note">{SALON_PERIOD_ROWS_NOTE}</p>
+    <div data-testid="times-salon-note">
+      <p class="period-sub">
+        {SALON_PERIOD_END_PERSONS_NOTE} · {PERSON_SALDO_BY_HOME_SALON_LABEL}
+      </p>
+      <p class="period-sub">{HOME_SALON_CHANGE_NOTE}</p>
+    </div>
   {/if}
 
   {#if rows === null}

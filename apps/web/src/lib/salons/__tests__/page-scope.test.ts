@@ -34,7 +34,6 @@ import {
   SALON_HELPERS_REACH_NOTE,
   SALON_HOME_PERSONS_NOTE,
   SALON_PERIOD_END_PERSONS_NOTE,
-  SALON_PERIOD_ROWS_NOTE,
   SALON_SOLL_NOT_ATTRIBUTABLE_NOTE,
   SALON_VIEW_UNAVAILABLE_TEXT,
   SALON_WORKED_DELTA_NOTE,
@@ -140,12 +139,6 @@ describe("Issue #612 - the period report's salon notes", () => {
   it("names who the vacation table lists under a filter: the Stammsalon at the end of the period", () => {
     expect(SALON_PERIOD_END_PERSONS_NOTE).toBe("Personen nach Stammsalon am Ende des Zeitraums");
     expect(PERSON_VALUES_NOT_SPLIT_LABEL).toBe("Personenwerte, nicht nach Salon aufgeteilt");
-  });
-
-  it("names who the Zeiten table lists under a filter: the #542 membership rule", () => {
-    expect(SALON_PERIOD_ROWS_NOTE).toBe(
-      "Personen mit Eintrag in diesem Salon oder Stammsalon an mindestens einem Tag des Zeitraums",
-    );
   });
 });
 
