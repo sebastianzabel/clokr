@@ -1,28 +1,102 @@
 name: Cleanup old container images
 
 # Runs weekly on Sunday at 03:00.
-# Removes old SHA-tagged images from GHCR, keeps release tags and latest.
+# Removes old TAGGED, unprotected versions (sha-*, pr-*, ...) from GHCR and keeps the newest
+# KEEP_NEWEST of them. Issue #274.
+#
+# Why this is a script and not actions/delete-package-versions: a multi-arch push stores one
+# index version plus untagged child manifests (platforms, attestations). Deleting an index
+# deletes its children too, so the action's next delete of a child answered "Package not found"
+# and failed the run (about 100 deletions, then red, every Sunday since 2026-08-23). Here a 404
+# on delete is treated as "already gone" and any other failure fails the run loudly.
+#
+# Protected, never deleted: a version carrying ANY tag of latest | main | int | prod | demo |
+# X.Y | X.Y.Z[-suffix] (a release re-tags the same digest, so its sha-* tag is protected with it),
+# and every untagged version (children of protected indexes cannot be told apart without
+# resolving manifests; leaving them is the safe side).
+#
+# If listing fails with 403/404 the package is probably not linked to this repository
+# (GitHub UI: Package settings -> "Manage Actions access" -> add this repo with Write role).
 
 on:
   schedule:
     - cron: "0 3 * * 0"
-  workflow_dispatch: # allow manual trigger
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List what would be deleted, delete nothing"
+        type: boolean
+        default: true
+
+permissions:
+  packages: write
+
+env:
+  KEEP_NEWEST: "10"
+  MAX_DELETE_PER_RUN: "100"
+  PROTECTED_TAG_REGEX: '^(latest|main|int|prod|demo|[0-9]+\.[0-9]+|[0-9]+\.[0-9]+\.[0-9]+(-.+)?)$'
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
-    permissions:
-      packages: write
-
+    timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
         package: [clokr-api, clokr-web]
 
     steps:
-      - uses: actions/delete-package-versions@v5
-        with:
-          package-name: ${{ matrix.package }}
-          package-type: container
-          min-versions-to-keep: 10
-          delete-only-untagged-versions: false
-          ignore-versions: "^(latest|main|\\d+\\.\\d+\\.\\d+|\\d+\\.\\d+)$"
+      - name: Delete old unprotected image versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: ${{ matrix.package }}
+          # Scheduled runs have no inputs and delete; a manual run defaults to a dry run.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+
+          for kind in users orgs; do
+            base="/${kind}/${OWNER}/packages/container/${PACKAGE}/versions"
+            if gh api "${base}?per_page=1" >/dev/null 2>"$RUNNER_TEMP/err"; then break; fi
+            base=""
+          done
+          if [ -z "${base}" ]; then
+            echo "::error::Cannot list versions of ghcr.io/${OWNER}/${PACKAGE}: $(cat "$RUNNER_TEMP/err")"
+            echo "::error::Owner step: GitHub -> Packages -> ${PACKAGE} -> Package settings -> Manage Actions access -> add this repository with Write role."
+            exit 1
+          fi
+
+          gh api --paginate "${base}?per_page=100" > "$RUNNER_TEMP/versions.json"
+          # --paginate emits one array per page; merge, newest first, tagged versions only.
+          jq -s 'add | sort_by(.created_at) | reverse' "$RUNNER_TEMP/versions.json" > "$RUNNER_TEMP/all.json"
+
+          total=$(jq length "$RUNNER_TEMP/all.json")
+          jq -r --arg re "$PROTECTED_TAG_REGEX" --argjson keep "$KEEP_NEWEST" --argjson max "$MAX_DELETE_PER_RUN" '
+            [ .[]
+              | select((.metadata.container.tags | length) > 0)
+              | select(all(.metadata.container.tags[]; test($re) | not)) ]
+            | .[$keep:] | .[:$max]
+            | .[] | "\(.id)\t\(.created_at)\t\(.metadata.container.tags | join(","))"
+          ' "$RUNNER_TEMP/all.json" > "$RUNNER_TEMP/candidates.tsv"
+
+          count=$(wc -l < "$RUNNER_TEMP/candidates.tsv" | tr -d ' ')
+          echo "${PACKAGE}: ${total} versions, ${count} candidates (keep newest ${KEEP_NEWEST} unprotected, cap ${MAX_DELETE_PER_RUN}), dry_run=${DRY_RUN}"
+
+          deleted=0; gone=0
+          while IFS=$'\t' read -r id created tags; do
+            [ -n "${id}" ] || continue
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "would delete ${id} (${created}) tags=${tags}"
+              continue
+            fi
+            if out=$(gh api -X DELETE "${base}/${id}" 2>&1); then
+              deleted=$((deleted + 1))
+            elif echo "${out}" | grep -qiE 'not found|404'; then
+              gone=$((gone + 1))   # removed together with its index in an earlier step
+            else
+              echo "::error::Delete of version ${id} failed: ${out}"
+              exit 1
+            fi
+          done < "$RUNNER_TEMP/candidates.tsv"
+          echo "${PACKAGE}: deleted ${deleted}, already gone ${gone}"

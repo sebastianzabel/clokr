@@ -21,7 +21,7 @@
  *
  * The comparisons are deep equality on parsed bodies and full row snapshots, never status-only.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
@@ -103,15 +103,29 @@ async function getJson(url: string, token = t.adminToken): Promise<unknown> {
   return JSON.parse(res.body) as unknown;
 }
 
+let pdfFrozenAt: Date | undefined;
+
 async function getPdf(
   url: string,
 ): Promise<{ status: number; contentType: unknown; bytes: number }> {
-  const res = await app.inject({
-    method: "GET",
-    url,
-    headers: bearer(t.adminToken),
-    remoteAddress: uniqueAddress(),
-  });
+  // Issue #697: the PDF footer ("Erstellt am ...") and pdfkit's CreationDate carry the render
+  // instant, so a minute boundary between two renders changes the compressed size. Both renders
+  // see the same frozen Date (only Date is faked, timers and I/O stay real), which keeps the
+  // byte comparison exact instead of loosening it. The instant is taken on first use, after the
+  // tokens were issued, so it never lies before a token's iat.
+  pdfFrozenAt ??= new Date();
+  vi.useFakeTimers({ toFake: ["Date"], now: pdfFrozenAt });
+  let res: Awaited<ReturnType<typeof app.inject>>;
+  try {
+    res = await app.inject({
+      method: "GET",
+      url,
+      headers: bearer(t.adminToken),
+      remoteAddress: uniqueAddress(),
+    });
+  } finally {
+    vi.useRealTimers();
+  }
   return {
     status: res.statusCode,
     contentType: res.headers["content-type"],
