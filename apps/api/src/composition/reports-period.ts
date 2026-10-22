@@ -42,7 +42,12 @@ import {
 } from "./reports";
 import { resolveMonthReachIds, resolvePeriodReachIds, periodReachDay } from "./reach-day"; // Issues #679, #714: the reach day of a person
 import { SALON_VIEW_NOT_FOUND, salonHelperIds } from "./salon-view";
-import { periodCsvFilename, periodTableCsv } from "./period-csv";
+import {
+  periodAbsencesCsv,
+  periodAbsencesCsvFilename,
+  periodCsvFilename,
+  periodTableCsv,
+} from "./period-csv";
 
 /**
  * Issue #612 — `GET /api/v1/reports/period`: the period report of the reports page.
@@ -91,6 +96,11 @@ const periodQuerySchema = z.object({
   salonId: z.string().uuid().optional(),
 });
 type PeriodQuery = z.infer<typeof periodQuerySchema>;
+// Issue #713 (P-713-09): the CSV route alone knows which table it serves; the JSON route keeps
+// `periodQuerySchema`. An unknown value is a 400 through the global Zod handler, before anything is read.
+const periodCsvQuerySchema = periodQuerySchema.extend({
+  table: z.enum(["times", "absences"]).default("times"),
+});
 
 type YearMonth = { year: number; month: number };
 
@@ -1052,21 +1062,22 @@ export async function reportsPeriodRoutes(app: FastifyInstance) {
     },
   });
 
-  // GET /api/v1/reports/period/csv?from=YYYY-MM&to=YYYY-MM&salonId=&employeeId=
-  // The "Zeiten & Konten" table of the same assembly as the JSON, as a spreadsheet file (P-11). It is
-  // an export of personal data: the reach is the one of `report:export`, and every successful
-  // download is audited BEFORE the bytes leave. A refusal (400/404) throws out of the assembly and
-  // writes nothing.
+  // GET /api/v1/reports/period/csv?from=YYYY-MM&to=YYYY-MM&salonId=&employeeId=&table=times|absences
+  // One of the two tables of the same assembly as the JSON, as a spreadsheet file: "Zeiten & Konten"
+  // (`table=times`, the default, P-11) or "Abwesenheiten je Person" (`table=absences`, Issue #713,
+  // D-11). It is an export of personal data: the reach is the one of `report:export`, and every
+  // successful download is audited BEFORE the bytes leave, each table under its own audit type. A
+  // refusal (400/404) throws out of the assembly and writes nothing.
   app.get("/period/csv", {
     schema: {
       tags: ["Reporting"],
       security: [{ bearerAuth: [] }],
       description:
-        "CSV export of the period table (Zeiten & Konten): one line per person with Soll, Ist, saldo at the start, over the period and at the end in hours with a decimal comma, UTF-8 with BOM, semicolon separated. Same assembly and rules as GET /reports/period, with the reach of report:export. Audited as EXPORT.",
+        "CSV export of the period table (Zeiten & Konten): one line per person with Soll, Ist, saldo at the start, over the period and at the end in hours with a decimal comma, UTF-8 with BOM, semicolon separated. Same assembly and rules as GET /reports/period, with the reach of report:export. Audited as EXPORT. With table=absences the file is the table Abwesenheiten je Person (per person and leave-type code: calendar days for sickness and child sickness, Berufsschule days, workdays for the requested kinds), audited as PERIOD_ABSENCES_CSV.",
     },
     preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
-      const query = periodQuerySchema.parse(req.query);
+      const { table, ...query } = periodCsvQuerySchema.parse(req.query);
       let report: Awaited<ReturnType<typeof assemblePeriodReport>>;
       try {
         report = await assemblePeriodReport(app, req, query, "report:export:ZUGEWIESEN", {
@@ -1079,13 +1090,14 @@ export async function reportsPeriodRoutes(app: FastifyInstance) {
         }
         throw err;
       }
-      const file = periodTableCsv(report.rows);
+      const absences = table === "absences";
+      const file = absences ? periodAbsencesCsv(report.rows) : periodTableCsv(report.rows);
       await app.audit({
         userId: req.user.sub,
         action: "EXPORT",
         entity: "Report",
         newValue: {
-          type: "PERIOD_CSV",
+          type: absences ? "PERIOD_ABSENCES_CSV" : "PERIOD_CSV",
           from: report.from,
           to: report.to,
           // The validated salon id (never a name) - only present under a filter.
@@ -1096,7 +1108,11 @@ export async function reportsPeriodRoutes(app: FastifyInstance) {
       reply.header("Content-Type", "text/csv; charset=utf-8");
       reply.header(
         "Content-Disposition",
-        `attachment; filename="${periodCsvFilename(report.from, report.to)}"`,
+        `attachment; filename="${
+          absences
+            ? periodAbsencesCsvFilename(report.from, report.to)
+            : periodCsvFilename(report.from, report.to)
+        }"`,
       );
       return reply.send(file);
     },

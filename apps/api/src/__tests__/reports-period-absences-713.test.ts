@@ -26,10 +26,12 @@ import {
   cleanupTestData,
   createTestSalon,
   reissueTokenNow,
+  soleAuditRow,
 } from "./setup";
 import { createPopulationPerson } from "./population-fixtures-613";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
+import { PERIOD_ABSENCES_CSV_HEADER } from "../composition/period-csv";
 import {
   seedMonthlyExportFixture,
   FAKE_NOW,
@@ -38,6 +40,41 @@ import {
 
 const byText = (a: string, b: string): number => a.localeCompare(b);
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+/** Independent of the production formatter: a day figure with a decimal comma. */
+const deDays = (n: number): string => String(round2(n)).replace(".", ",");
+
+/** Splits a CSV (without BOM) into records of cells; handles RFC 4180 quoting. */
+function parseCsv(text: string): string[][] {
+  const records: string[][] = [];
+  let record: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"' && text[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else if (ch === '"') inQuotes = false;
+      else cell += ch;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ";") {
+      record.push(cell);
+      cell = "";
+    } else if (ch === "\r" && text[i + 1] === "\n") {
+      record.push(cell);
+      records.push(record);
+      record = [];
+      cell = "";
+      i++;
+    } else cell += ch;
+  }
+  if (cell !== "" || record.length > 0) {
+    record.push(cell);
+    records.push(record);
+  }
+  return records;
+}
 
 const CODES = [
   "SICK",
@@ -73,12 +110,15 @@ type MonthlyRow = { employeeId: string; sickDays: number } & Record<
 >;
 type PeriodRow = {
   employeeId: string;
+  employeeNumber: string;
   sickDays: number;
   absence: Record<Code, number>;
   months: Array<Record<string, unknown>>;
 };
 type AbsenceLine = { code: Code; unit: string; personCount: number; totalDays: number };
 type Period = {
+  from: string;
+  to: string;
   kpis: { sickDays: number };
   rows: PeriodRow[];
   absences: AbsenceLine[];
@@ -302,6 +342,162 @@ describe("Issue #713 — the per-person absence counts of the period report", ()
   });
 
   /*
+   * D-11, T-713-10..13: `GET /reports/period/csv?table=absences` - the same assembly as the JSON, a
+   * file of its own with one audit row (`PERIOD_ABSENCES_CSV`) written before the bytes.
+   */
+  describe("the absences CSV (D-11)", { timeout: 120_000 }, () => {
+    const CSV_QUERY = "from=2026-08&to=2026-10";
+    const csvUrl = (qs: string) => `/api/v1/reports/period/csv?${qs}`;
+    const adminGet = (url: string) => get(url, reissueTokenNow(app, fx.adminToken));
+    const auditWhere = (type: string) => ({
+      action: "EXPORT" as const,
+      entity: "Report",
+      userId: fx.adminUserId,
+      newValue: { path: ["type"], equals: type },
+    });
+    const count = (type: string) => app.prisma.auditLog.count({ where: auditWhere(type) });
+    const bodyOf = (res: { rawPayload: Buffer }) => res.rawPayload.subarray(3).toString("utf8");
+
+    it("answers the file with BOM, content type, filename and the pinned header", async () => {
+      const res = await adminGet(csvUrl(`${CSV_QUERY}&table=absences`));
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.headers["content-type"]).toBe("text/csv; charset=utf-8");
+      expect(res.headers["content-disposition"]).toBe(
+        'attachment; filename="Abwesenheiten-je-Person_2026-08_2026-10.csv"',
+      );
+      expect([...res.rawPayload.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+      const text = bodyOf(res);
+      expect(text.endsWith("\r\n")).toBe(true);
+      const [header] = parseCsv(text);
+      expect(header.join(";")).toBe(PERIOD_ABSENCES_CSV_HEADER);
+      expect(header).toEqual([
+        "Personalnummer",
+        "Name",
+        "Krank (Kalendertage)",
+        "Kinderkrank (Kalendertage)",
+        "Urlaub (Arbeitstage)",
+        "Überstundenausgleich (Arbeitstage)",
+        "Sonderurlaub (Arbeitstage)",
+        "Berufsschule (Tage)",
+        "Bildungsurlaub (Arbeitstage)",
+        "Unbezahlt (Arbeitstage)",
+        "Mutterschutz (Arbeitstage)",
+        "Elternzeit (Arbeitstage)",
+      ]);
+      // Evidence for the SUMMARY: the first three lines of the file.
+      console.info(`CSV first lines: ${JSON.stringify(text.split("\r\n").slice(0, 3))}`);
+    });
+
+    it("has one line per JSON row in the JSON order, each day cell the row's figure", async () => {
+      const json = await period(CSV_QUERY);
+      const res = await adminGet(csvUrl(`${CSV_QUERY}&table=absences`));
+      const [, ...data] = parseCsv(bodyOf(res)).filter((r) => r.length > 1);
+      expect(json.rows.length).toBeGreaterThanOrEqual(Object.keys(fx.people).length);
+      expect(data.map((r) => r[0])).toEqual(json.rows.map((r) => r.employeeNumber));
+      json.rows.forEach((row, i) => {
+        expect(data[i]).toHaveLength(12);
+        CODES.forEach((code, k) => {
+          expect(data[i][2 + k], `${row.employeeNumber} ${code}`).toBe(deDays(row.absence[code]));
+        });
+      });
+      // Evidence for the SUMMARY: p3 carries SICK, SICK_CHILD and the requested kinds.
+      const p3Line = data.find((r) => r[0] === rowOf(json, fx.people.p3.id).employeeNumber);
+      console.info(`CSV p3 line: ${JSON.stringify(p3Line)}`);
+      // Not vacuous: a non-zero figure and a zero figure both occur.
+      const flat = data.flatMap((r) => r.slice(2));
+      expect(flat.some((c) => c !== "0")).toBe(true);
+      expect(flat.some((c) => c === "0")).toBe(true);
+    });
+
+    it("writes exactly one audit row with its own type, period, salon and person count", async () => {
+      // A period of its own: no other case of this file downloads it, so the row is unambiguous.
+      const AUDIT_QUERY = "from=2026-06&to=2026-09";
+      const json = await period(AUDIT_QUERY);
+      const before = await count("PERIOD_ABSENCES_CSV");
+      const timesBefore = await count("PERIOD_CSV");
+      const res = await adminGet(csvUrl(`${AUDIT_QUERY}&table=absences`));
+      expect(res.statusCode).toBe(200);
+      expect(await count("PERIOD_ABSENCES_CSV")).toBe(before + 1);
+      expect(await count("PERIOD_CSV")).toBe(timesBefore);
+      const row = await soleAuditRow(app.prisma, {
+        where: {
+          ...auditWhere("PERIOD_ABSENCES_CSV"),
+          AND: [{ newValue: { path: ["from"], equals: "2026-06" } }],
+        },
+      });
+      expect(row.newValue).toEqual({
+        type: "PERIOD_ABSENCES_CSV",
+        from: "2026-06",
+        to: "2026-09",
+        salonId: null,
+        personCount: json.rows.length,
+      });
+      console.info(`AUDIT newValue: ${JSON.stringify(row.newValue)}`);
+    });
+
+    it("under a salon filter lists the filtered JSON rows and audits the salon id", async () => {
+      const qs = `from=2026-07&to=2026-10&salonId=${fx.salonId}`;
+      const json = await period(qs);
+      const res = await adminGet(csvUrl(`${qs}&table=absences`));
+      expect(res.statusCode, res.body).toBe(200);
+      const [, ...data] = parseCsv(bodyOf(res)).filter((r) => r.length > 1);
+      expect(json.rows.length).toBeGreaterThan(0);
+      expect(data.map((r) => r[0])).toEqual(json.rows.map((r) => r.employeeNumber));
+      json.rows.forEach((row, i) => {
+        CODES.forEach((code, k) => expect(data[i][2 + k]).toBe(deDays(row.absence[code])));
+      });
+      const audit = await soleAuditRow(app.prisma, {
+        where: {
+          ...auditWhere("PERIOD_ABSENCES_CSV"),
+          AND: [{ newValue: { path: ["from"], equals: "2026-07" } }],
+        },
+      });
+      expect(audit.newValue).toEqual({
+        type: "PERIOD_ABSENCES_CSV",
+        from: "2026-07",
+        to: "2026-10",
+        salonId: fx.salonId,
+        personCount: json.rows.length,
+      });
+    });
+
+    it("leaves today's file untouched: no table and table=times are byte-identical and audit PERIOD_CSV", async () => {
+      const before = await count("PERIOD_ABSENCES_CSV");
+      const timesBefore = await count("PERIOD_CSV");
+      const plain = await adminGet(csvUrl(CSV_QUERY));
+      const times = await adminGet(csvUrl(`${CSV_QUERY}&table=times`));
+      expect(plain.statusCode).toBe(200);
+      expect(times.statusCode).toBe(200);
+      expect(Buffer.compare(plain.rawPayload, times.rawPayload)).toBe(0);
+      expect(plain.headers["content-disposition"]).toBe(
+        'attachment; filename="Zeiten-und-Konten_2026-08_2026-10.csv"',
+      );
+      expect(parseCsv(bodyOf(plain))[0][2]).toBe("Soll (h)");
+      expect(await count("PERIOD_CSV")).toBe(timesBefore + 2);
+      expect(await count("PERIOD_ABSENCES_CSV")).toBe(before);
+    });
+
+    it("refuses an unknown table, a future range and an unknown salon without an audit row", async () => {
+      const before = await count("PERIOD_ABSENCES_CSV");
+      const timesBefore = await count("PERIOD_CSV");
+      const badTable = await adminGet(csvUrl(`${CSV_QUERY}&table=foo`));
+      expect(badTable.statusCode, badTable.body).toBe(400);
+      const future = await adminGet(csvUrl("from=2026-11&to=2026-12&table=absences"));
+      expect(future.statusCode, future.body).toBe(400);
+      const unknownSalon = await adminGet(
+        csvUrl(`${CSV_QUERY}&table=absences&salonId=${randomUUID()}`),
+      );
+      expect(unknownSalon.statusCode).toBe(404);
+      // The one 404 body of the salon filter: the same as the times file answers for an unknown salon.
+      const timesUnknown = await adminGet(csvUrl(`${CSV_QUERY}&salonId=${randomUUID()}`));
+      expect(timesUnknown.statusCode).toBe(404);
+      expect(unknownSalon.body).toBe(timesUnknown.body);
+      expect(await count("PERIOD_ABSENCES_CSV")).toBe(before);
+      expect(await count("PERIOD_CSV")).toBe(timesBefore);
+    });
+  });
+
+  /*
    * AC-713-4 (D-06, P-713-07): no new gate - the absence counts are served to exactly the rows
    * report:read already lists. World (own tenant): RA homed in salon A, RB homed in salon B, each
    * with an APPROVED SICK request of two calendar days (07.-08.09.2026) and an APPROVED SICK_CHILD
@@ -468,6 +664,43 @@ describe("Issue #713 — the per-person absence counts of the period report", ()
       const ids = both.rows.map((x) => x.employeeId);
       expect(ids).toContain(person.RA);
       expect(ids).toContain(person.RB);
+    });
+
+    it("the absences CSV lists RA only, and the id of a person homed in B gives the file of an unknown id", async () => {
+      const csvAs = (qs: string) =>
+        getAs(`/api/v1/reports/period/csv?${REACH_QUERY}&table=absences${qs}`, managerToken);
+      const list = await csvAs("");
+      expect(list.statusCode, list.body).toBe(200);
+      const records = parseCsv(list.rawPayload.subarray(3).toString("utf8")).filter(
+        (r) => r.length > 1,
+      );
+      const jsonRows = (await periodAs(REACH_QUERY, managerToken)).rows;
+      expect(jsonRows.map((r) => r.employeeId)).toEqual([person.RA]);
+      expect(records.slice(1).map((r) => r[0])).toEqual(jsonRows.map((r) => r.employeeNumber));
+      // Derived from the world: RA SICK 2 (07.-08.09.), SICK_CHILD 1 (09.09.).
+      expect(records[1].slice(2, 4)).toEqual(["2", "1"]);
+
+      const outside = await csvAs(`&employeeId=${person.RB}`);
+      const unknown = await csvAs(`&employeeId=${randomUUID()}`);
+      expect(outside.statusCode).toBe(200);
+      expect(unknown.statusCode).toBe(200);
+      expect(Buffer.compare(outside.rawPayload, unknown.rawPayload)).toBe(0);
+      // Header only: the BOM, the header line and its CRLF.
+      expect(outside.rawPayload.subarray(3).toString("utf8")).toBe(
+        `${PERIOD_ABSENCES_CSV_HEADER}\r\n`,
+      );
+      console.info(
+        `REACH csv out-of-reach vs unknown ${outside.rawPayload.length} / ${unknown.rawPayload.length} bytes`,
+      );
+      // Control: the admin gets RB's line for the same id.
+      const control = await getAs(
+        `/api/v1/reports/period/csv?${REACH_QUERY}&table=absences&employeeId=${person.RB}`,
+        world.adminToken,
+      );
+      expect(control.statusCode).toBe(200);
+      expect(
+        parseCsv(control.rawPayload.subarray(3).toString("utf8")).filter((r) => r.length > 1),
+      ).toHaveLength(2);
     });
   });
 });
