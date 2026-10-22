@@ -3861,6 +3861,58 @@ erweitert, die Tagesfreiheit bleibt (kein Schlüssel `days`).
   („Absence = Berufsschule, Mutterschutz, Elternzeit“) bleibt stehen, der Ist-Stand ist dort vermerkt.
 - Ein Tag mit überlappenden Anträgen derselben Art zählt in der Tabelle so oft, wie der Kern ihn zählt (wie `kpis.sickDays`).
 
+**Gemessen** (Quellen: `713-01` … `713-05-SUMMARY.md`, Läufe vom 22.10.2026):
+
+- Paritätswelt `reports-period-absences-713` (Fixture des Monatsexports #617, Zeitraum 2026-08 bis 2026-10, Aufrufer „ganzer Mandant“;
+  Σ der Zeilen je Code / Zeile „nach Art“ als Tage und Personen; ungefiltert und unter dem Fixture-Salon identisch):
+
+  | Code              | Σ Zeilen | Zeile „nach Art“ (Tage / Personen) |
+  | ----------------- | -------- | ---------------------------------- |
+  | SICK              | 4        | 4 / 2                              |
+  | SICK_CHILD        | 1        | 1 / 1                              |
+  | VACATION          | 10       | 10 / 3                             |
+  | OVERTIME_COMP     | 1        | 1 / 1                              |
+  | SPECIAL           | 1        | 1 / 1                              |
+  | EDUCATION         | 1        | 1 / 1                              |
+  | UNPAID            | 1        | 1 / 1                              |
+  | MATERNITY         | 2        | 2 / 1                              |
+  | PARENTAL          | 1        | 1 / 1                              |
+  | VOCATIONAL_SCHOOL | 1        | keine Zeile (P-713-04)             |
+
+  `kpis.sickDays` = Σ (SICK + SICK_CHILD) = 5 = Summe beider Zeilen; die Berufsschule (1) ist die Zahl der gespeicherten `Absence`-Zeilen.
+  Die Beispielzeile der CSV (Person p3): Krank 2, Kinderkrank 1, Urlaub 2, Überstundenausgleich 1, Sonderurlaub 1, Berufsschule 0,
+  Bildungsurlaub 1, Unbezahlt 1, Mutterschutz 0, Elternzeit 0.
+
+- Reichweite: Ein Salonleiter sieht nur die Person seines Salons (Krank 2, Kinderkrank 1); eine Person außerhalb der Reichweite und
+  eine zufällige Kennung antworten mit 568 / 568 Bytes im JSON und 281 / 281 Bytes in der CSV, jeweils byte-gleich; der Gegenfall
+  (Administrator) sieht die Person.
+- Testdateien: neu `reports-period-absences-713` (18 Fälle, davon 7 zur CSV-Route), `period-absences-csv-713` (16),
+  `vocational-school-day-count-713` (7) und im Web `absence-table-713` (16) sowie `AbsencesByPersonTable.test` (25); erweitert
+  `sick-leave-days` (+8), `reports-hr-86` (+1, Allow-List um die elf Pfade), `reports-period-salon-612` (goldene Zeilen mit `absence`),
+  `reports-period-vacation-612`, `reports-period-home-salon-714` (je eine Behauptung auf „SICK + SICK_CHILD“ umgestellt) sowie im Web
+  `VacationAbsenceTab`, `ExportDialog`, `PersonDrilldown`, `reports-period-page-612`, `reports-salon-filter-542`. Jede geänderte alte
+  Behauptung ist im Commit-Text mit „Issue #713“ benannt; keine wurde abgeschwächt.
+- Mutationsnachweise (je zurückgespielt und byte-verglichen): Aufteilung nach Attest statt nach Code, alle Zeilen als `SICK`, Berufsschul-
+  Zähler ohne Typfilter und ohne Bereich, Zeilen einer anderen Person, `absences[]` ohne die letzte Zeile, Berufsschultage nicht
+  summiert, Werte unter einem Salon genullt, Audittyp immer `PERIOD_CSV`, CSV-Zweig liefert die Zeiten-Tabelle, Schema nimmt
+  `table=foo` an; im Web die Spaltenwahl je Seite statt über die ganze Antwort, die Seite ohne Zeilen für die Karte und die Sortierung
+  ohne Namens-Gleichstand.
+- Neutralität: 3 Dateien, 1720 Fälle, 0 geänderte Zellen; `neutrality/recorded/` byte-gleich zum Merge-Basisstand.
+- Browser: `reports-period.spec.ts` bekommt einen fünften Block „Abwesenheiten je Person im Blick“ (6 Tests: 1280, 390 und 360 px, je
+  hell und dunkel; echte, über die API angelegte Daten, nichts gemockt: Krank 2, Kinderkrank 1, `sickDays` 3). Pro Test liegen die
+  Karte, die Werte der Person, die beiden Krankzeilen in „nach Art“, der Abschnitt „Abwesenheiten“ der Personenansicht mit
+  „Kinderkrank: 1 Kalendertag“ und die Export-Option je im Sichtbereich und nicht überdeckt, ohne überlaufendes Element auf der Seite,
+  in der Personenansicht und im Export-Dialog. Zwei Kontrollen zeigen, dass die Prüfung scheitern kann: ein Element außerhalb des
+  Bildschirms ist nicht im Sichtbereich, und eine Art ohne Wert (Elternzeit) hat keine Spalte und keinen Listeneintrag, nur den
+  Hinweis. Der Block schlug zunächst an zwei Stellen der Prüfung selbst an (eine Zeichenkettensuche, die ohne Beachtung der
+  Schreibweise „Kinderkrank“ als „Krank“ fand, und die großgeschriebenen Kopfzeilen von `innerText`); die Seite war nicht betroffen.
+  e2e-ci gesamt: 273 bestanden, 1 übersprungen (die bekannte bedingte Überspringung in `functional.spec.ts`) in 1,8 min auf einem
+  frischen Test-Stack. Die visuellen Pixelvergleiche laufen nicht mit: es wurde kein gemeinsames Primitiv geändert, und `/reports` hat
+  keine Pixel-Basislinie.
+- Gesamtläufe (Stand Abschluss Phase 713, `origin/main` @ a7501669 plus die Phase): API 716 Dateien / 10862 Tests (10859 grün, 3
+  übersprungen); Web 263 Dateien / 4123 Tests grün, Abdeckung `src/lib` 86,3 % (Boden 5 %); beide Builds und `typecheck:scripts`
+  grün; Boden `check-test-completeness.mjs` 713 → 716 Dateien, 10812 → 10862 Tests (gemessene Summe).
+
 ### Nachrechnen (Nachtrag Phase 713)
 
 ```bash
