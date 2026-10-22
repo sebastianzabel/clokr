@@ -54,7 +54,9 @@ import { periodCsvFilename, periodTableCsv } from "./period-csv";
  * and `computeEmployeeSummary` for the sick days — through the helpers `reports.ts` exports, never
  * by editing the frozen `/monthly` handler. Issue #713 — „Abwesenheiten nach Art“ lists own illness
  * (`SICK`) and child sickness (`SICK_CHILD`) as two lines; both are calendar days of the one
- * sick-day kernel. A person is listed with the months whose population
+ * sick-day kernel. Every row carries `absence`, the person's counts per code (Kalendertage for
+ * SICK/SICK_CHILD, Arbeitstage for the requested kinds, Berufsschultage); „nach Art“ is the sum of
+ * those rows, never a second accumulation. A person is listed with the months whose population
  * contains them; the row and the KPIs are sums of those months.
  *
  * Opening saldo (P-01) = the Gesamtsaldo at the end of the month BEFORE `from`, the very figure the
@@ -147,6 +149,8 @@ type PersonAccumulator = {
   exitDate: Date | null;
   months: PeriodMonthEntry[];
   covered: boolean;
+  /** Issue #713 (D-04): Σ over the person's months of the per-code counts of the /monthly assembly. */
+  absence: PeriodPersonAbsence;
 };
 
 /** Why Soll and saldo are withheld on a row: no `overtime:read` over the person. */
@@ -218,7 +222,40 @@ function absenceKindDays(
   };
 }
 
-type AbsenceTotal = { totalDays: number; persons: Set<string> };
+/**
+ * Issue #713 (P-713-01): the ten codes of `rows[].absence`, in the canonical column order. Keyed by
+ * CODE (control value), never by a display name. `SICK`/`SICK_CHILD` count calendar days, the seven
+ * requested kinds Arbeitstage, `VOCATIONAL_SCHOOL` Berufsschultage.
+ */
+export const PERIOD_PERSON_ABSENCE_CODES = [
+  "SICK",
+  "SICK_CHILD",
+  "VACATION",
+  "OVERTIME_COMP",
+  "SPECIAL",
+  "VOCATIONAL_SCHOOL",
+  "EDUCATION",
+  "UNPAID",
+  "MATERNITY",
+  "PARENTAL",
+] as const satisfies readonly (LeaveTypeCode | "VOCATIONAL_SCHOOL")[];
+export type PeriodPersonAbsenceCode = (typeof PERIOD_PERSON_ABSENCE_CODES)[number];
+export type PeriodPersonAbsence = Record<PeriodPersonAbsenceCode, number>;
+
+function zeroPersonAbsence(): PeriodPersonAbsence {
+  return {
+    SICK: 0,
+    SICK_CHILD: 0,
+    VACATION: 0,
+    OVERTIME_COMP: 0,
+    SPECIAL: 0,
+    VOCATIONAL_SCHOOL: 0,
+    EDUCATION: 0,
+    UNPAID: 0,
+    MATERNITY: 0,
+    PARENTAL: 0,
+  };
+}
 
 export type PeriodAbsence = {
   code: AbsenceKindCode | "SICK" | "SICK_CHILD";
@@ -549,11 +586,6 @@ async function assemblePeriodReport(
   const persons = new Map<string, PersonAccumulator>();
   // Issue #688: the month entries whose account figures are asked for in ONE call after the loop.
   const figureSlots: Array<{ entry: PeriodMonthEntry; request: MonthReportFiguresRequest }> = [];
-  // P-07: Σ over months of the per-kind counts of the /monthly assembly, with the persons that have > 0.
-  const absenceTotals = new Map<AbsenceKindCode, AbsenceTotal>();
-  // Issue #713 (D-01): own illness and child sickness are two lines of the one calendar-day kernel.
-  const sickTotal: AbsenceTotal = { totalDays: 0, persons: new Set() };
-  const sickChildTotal: AbsenceTotal = { totalDays: 0, persons: new Set() };
   for (const ym of months) {
     const { start, end } = monthRangeUtc(ym.year, ym.month, tz);
     const { firstDay, lastDay } = monthDateRange(ym.year, ym.month, tz);
@@ -658,24 +690,6 @@ async function assemblePeriodReport(
         leaveDaysByEmp.get(emp.id) ?? new Map(),
         section9ByEmp.get(emp.id) ?? [],
       );
-      if (sections === "all") {
-        for (const code of ABSENCE_KIND_ORDER) {
-          const days = absenceKindDays(summary)[code];
-          if (days <= 0) continue;
-          const total = absenceTotals.get(code) ?? { totalDays: 0, persons: new Set<string>() };
-          total.totalDays += days;
-          total.persons.add(emp.id);
-          absenceTotals.set(code, total);
-        }
-        if (summary.sickDaysByCode.SICK > 0) {
-          sickTotal.totalDays += summary.sickDaysByCode.SICK;
-          sickTotal.persons.add(emp.id);
-        }
-        if (summary.sickDaysByCode.SICK_CHILD > 0) {
-          sickChildTotal.totalDays += summary.sickDaysByCode.SICK_CHILD;
-          sickChildTotal.persons.add(emp.id);
-        }
-      }
       const monthCovered = overtimeIds === "all" || overtimeIds.has(emp.id);
 
       let person = persons.get(emp.id);
@@ -690,9 +704,17 @@ async function assemblePeriodReport(
           exitDate: emp.exitDate,
           months: [],
           covered: canSeeSaldo,
+          absence: zeroPersonAbsence(),
         };
         persons.set(emp.id, person);
       }
+      // Issue #713 (D-04): the per-person kinds the /monthly assembly already answers - summed over
+      // the person's months, nothing recomputed. Every `sections` value: it is part of `rows`.
+      person.absence.SICK += summary.sickDaysByCode.SICK;
+      person.absence.SICK_CHILD += summary.sickDaysByCode.SICK_CHILD;
+      person.absence.VOCATIONAL_SCHOOL += summary.vocationalSchoolDays;
+      const kindDays = absenceKindDays(summary);
+      for (const code of ABSENCE_KIND_ORDER) person.absence[code] += kindDays[code];
       // A row is covered only if every listed month is.
       person.covered = person.covered && canSeeSaldo && monthCovered;
       const entry: PeriodMonthEntry = {
@@ -849,6 +871,10 @@ async function assemblePeriodReport(
       confirmedMonthCount: person.months.filter((m) => m.confirmed).length,
       labelled: person.months.some((m) => m.labelled),
       sickDays: round2(sum((m) => m.sickDays)),
+      // Issue #713 (P-713-01): one number per code, filtered or not (D-08), canonical order.
+      absence: Object.fromEntries(
+        PERIOD_PERSON_ABSENCE_CODES.map((code) => [code, round2(person.absence[code])]),
+      ) as PeriodPersonAbsence,
       // Issue #714 (D-06): the salon viewpoint of the row = Σ its months; never next to a Soll figure.
       ...(filterSalonId !== null
         ? { salonWorkedMinutes: sum((m) => m.salonWorkedMinutes ?? 0) }
@@ -914,32 +940,25 @@ async function assemblePeriodReport(
   const endYear = vacationYears[vacationYears.length - 1];
   const sumVacation = (pick: (r: PeriodVacationRow) => number | null): number =>
     round2(endYear.rows.reduce((s, r) => s + (r.missingEntitlement ? 0 : (pick(r) ?? 0)), 0));
+  // Issue #713 (D-04, P-713-05): „Abwesenheiten nach Art“ is the sum of the rows just built - Σ persons
+  // = the line by construction. No Berufsschule line: that list keeps its LeaveRequest semantics (D-05).
   const absences: PeriodAbsence[] = [];
-  for (const code of ABSENCE_KIND_ORDER) {
-    const total = absenceTotals.get(code);
-    if (!total) continue;
-    absences.push({
-      code,
-      unit: "WORKDAYS",
-      personCount: total.persons.size,
-      totalDays: round2(total.totalDays),
-    });
-  }
-  if (sickTotal.persons.size > 0) {
-    absences.push({
-      code: "SICK",
-      unit: "CALENDAR_DAYS",
-      personCount: sickTotal.persons.size,
-      totalDays: round2(sickTotal.totalDays),
-    });
-  }
-  if (sickChildTotal.persons.size > 0) {
-    absences.push({
-      code: "SICK_CHILD",
-      unit: "CALENDAR_DAYS",
-      personCount: sickChildTotal.persons.size,
-      totalDays: round2(sickChildTotal.totalDays),
-    });
+  if (sections === "all") {
+    const lines = [
+      ...ABSENCE_KIND_ORDER.map((code) => ({ code, unit: "WORKDAYS" as const })),
+      { code: "SICK" as const, unit: "CALENDAR_DAYS" as const },
+      { code: "SICK_CHILD" as const, unit: "CALENDAR_DAYS" as const },
+    ];
+    for (const { code, unit } of lines) {
+      const withValue = rows.filter((r) => r.absence[code] > 0);
+      if (withValue.length === 0) continue;
+      absences.push({
+        code,
+        unit,
+        personCount: withValue.length,
+        totalDays: round2(withValue.reduce((s, r) => s + r.absence[code], 0)),
+      });
+    }
   }
 
   return {

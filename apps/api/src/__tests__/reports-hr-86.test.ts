@@ -394,6 +394,18 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
         "$.rows[].confirmedMonthCount",
         "$.rows[].labelled",
         "$.rows[].sickDays",
+        // Issue #713 (D-07): counts per leave-type code for the period, never a day
+        "$.rows[].absence",
+        "$.rows[].absence.SICK",
+        "$.rows[].absence.SICK_CHILD",
+        "$.rows[].absence.VACATION",
+        "$.rows[].absence.OVERTIME_COMP",
+        "$.rows[].absence.SPECIAL",
+        "$.rows[].absence.VOCATIONAL_SCHOOL",
+        "$.rows[].absence.EDUCATION",
+        "$.rows[].absence.UNPAID",
+        "$.rows[].absence.MATERNITY",
+        "$.rows[].absence.PARENTAL",
         // the per-month series: one entry per month with monthly sums - never a per-day series
         "$.rows[].months",
         "$.rows[].months[]",
