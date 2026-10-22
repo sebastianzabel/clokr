@@ -66,9 +66,13 @@
   }: Props = $props();
 
   const DASH = "—";
-  // The sick row is the one kind counted in calendar days; its label is one constant (the leave
-  // type table names the request type „Krankmeldung“, this row names the statistic).
-  const SICK_ROW_LABEL = "Krankheit (Kalendertage)";
+  // Issue #713: the two sick kinds are the ones counted in calendar days and are two lines by code
+  // (own illness / child sickness). The label carries the unit, so no bare display name appears;
+  // the leave type table names the request types „Krankmeldung“ and „Kinderkrank“.
+  const CALENDAR_DAY_LABELS: Partial<Record<PeriodAbsence["code"], string>> = {
+    SICK: "Krank (Kalendertage)",
+    SICK_CHILD: "Kinderkrank (Kalendertage)",
+  };
   const FIGURE_COLUMNS = VACATION_YEAR_COLUMNS.length;
 
   let search = $state("");
@@ -240,7 +244,8 @@
   }
 
   function kindLabel(a: PeriodAbsence): string {
-    if (a.code === "SICK") return SICK_ROW_LABEL;
+    const calendarLabel = CALENDAR_DAY_LABELS[a.code];
+    if (calendarLabel !== undefined) return calendarLabel;
     return `${kindEntry(a.code)?.label ?? a.code} (Arbeitstage)`;
   }
 

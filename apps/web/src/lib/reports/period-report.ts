@@ -58,6 +58,12 @@ export interface PeriodRow {
   labelled: boolean;
   sickDays: number;
   /**
+   * The person's counts per leave-type code for the period: Kalendertage for SICK and SICK_CHILD,
+   * Berufsschultage for VOCATIONAL_SCHOOL, Arbeitstage for the rest; never null, also under a salon
+   * filter (#714). Issue #713: rendered as given, never summed by the page.
+   */
+  absence: Record<PeriodPersonAbsenceCode, number>;
+  /**
    * Present only when Soll and saldo are withheld: no overtime:read over the person. Since #714 a
    * salon filter withholds nothing - it lists whole persons by Stammsalon at the period end.
    */
@@ -143,7 +149,26 @@ export type PeriodAbsenceCode =
   | "UNPAID"
   | "MATERNITY"
   | "PARENTAL"
-  | "SICK";
+  | "SICK"
+  | "SICK_CHILD";
+
+/**
+ * The ten codes of `rows[].absence` in the canonical order - the order of the API's object and of
+ * the absences CSV (713-02/03). Codes are control values; the labels live in `absence-table.ts`.
+ */
+export const PERIOD_PERSON_ABSENCE_CODES = [
+  "SICK",
+  "SICK_CHILD",
+  "VACATION",
+  "OVERTIME_COMP",
+  "SPECIAL",
+  "VOCATIONAL_SCHOOL",
+  "EDUCATION",
+  "UNPAID",
+  "MATERNITY",
+  "PARENTAL",
+] as const;
+export type PeriodPersonAbsenceCode = (typeof PERIOD_PERSON_ABSENCE_CODES)[number];
 
 export interface PeriodAbsence {
   code: PeriodAbsenceCode;
@@ -193,6 +218,19 @@ export function periodReportPath(from: YearMonth, to: YearMonth, salonId: string
  */
 export function periodCsvPath(from: YearMonth, to: YearMonth, salonId: string | null): string {
   const base = `/reports/period/csv?from=${ymKey(from)}&to=${ymKey(to)}`;
+  return salonId === null ? base : `${base}&salonId=${encodeURIComponent(salonId)}`;
+}
+
+/**
+ * The request path of the CSV download of the table "Abwesenheiten je Person" (Issue #713, D-11):
+ * the period query of `periodCsvPath` plus `table=absences`, then the salon when one is chosen.
+ */
+export function periodAbsencesCsvPath(
+  from: YearMonth,
+  to: YearMonth,
+  salonId: string | null,
+): string {
+  const base = `/reports/period/csv?from=${ymKey(from)}&to=${ymKey(to)}&table=absences`;
   return salonId === null ? base : `${base}&salonId=${encodeURIComponent(salonId)}`;
 }
 

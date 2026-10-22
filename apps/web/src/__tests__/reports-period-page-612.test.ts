@@ -22,7 +22,7 @@ import { describe, it, expect, vi } from "vitest";
 import { screen, within } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import { reportRights } from "$lib/page-rights";
-import type { PeriodRow } from "$lib/reports/period-report";
+import { PERIOD_PERSON_ABSENCE_CODES, type PeriodRow } from "$lib/reports/period-report";
 import TimesAccountsTable from "$lib/components/reports/TimesAccountsTable.svelte";
 import VacationAbsenceTab from "$lib/components/reports/VacationAbsenceTab.svelte";
 import PeriodKpis from "$lib/components/reports/PeriodKpis.svelte";
@@ -640,6 +640,10 @@ function person(id: string): PeriodRow {
     confirmedMonthCount: 1,
     labelled: true,
     sickDays: 0,
+    // Issue #713: the server always sends the ten counts.
+    absence: Object.fromEntries(
+      PERIOD_PERSON_ABSENCE_CODES.map((code) => [code, 0]),
+    ) as PeriodRow["absence"],
     months: [],
   };
 }

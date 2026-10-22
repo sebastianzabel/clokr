@@ -7,7 +7,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen, fireEvent, within, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
-import type { PeriodMonth, PeriodRow, PeriodVacationRow } from "$lib/reports/period-report";
+import {
+  PERIOD_PERSON_ABSENCE_CODES,
+  type PeriodMonth,
+  type PeriodRow,
+  type PeriodVacationRow,
+} from "$lib/reports/period-report";
 import PersonDrilldown from "../PersonDrilldown.svelte";
 import source from "../PersonDrilldown.svelte?raw";
 
@@ -24,6 +29,12 @@ function month(m: number, extra: Partial<PeriodMonth> = {}): PeriodMonth {
     sickDays: 0,
     ...extra,
   };
+}
+
+function zeroAbsence(): PeriodRow["absence"] {
+  return Object.fromEntries(
+    PERIOD_PERSON_ABSENCE_CODES.map((code) => [code, 0]),
+  ) as PeriodRow["absence"];
 }
 
 function row(extra: Partial<PeriodRow> = {}): PeriodRow {
@@ -45,6 +56,8 @@ function row(extra: Partial<PeriodRow> = {}): PeriodRow {
     confirmedMonthCount: 1,
     labelled: true,
     sickDays: 0,
+    // Issue #713: the server always sends the ten counts; the zero object keeps these fixtures neutral.
+    absence: zeroAbsence(),
     months: [
       month(7, { confirmed: true, closingBalanceMinutes: 600 }),
       month(8),
