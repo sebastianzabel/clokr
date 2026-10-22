@@ -3762,6 +3762,9 @@ Salon-Ansicht (Einträge, Stammsalon je Tag), der Periodenbericht die Personen-A
   360 px, je hell und dunkel; jeder mit zwei Kontrollen: ein Element außerhalb des Bildschirms ist nicht im Sichtbereich, und unter
   „Alle Salons“ existieren Kachel und Abschnitt nicht). e2e-ci gesamt: 267 bestanden, 1 übersprungen (die bekannte bedingte
   Überspringung in `functional.spec.ts`) in 1,7 min auf einem frischen Test-Stack.
+- Gesamtläufe (Stand Abschluss Phase 714, `origin/main` @ a154f8ee plus die Phase): API 713 Dateien / 10812 Tests (10809 grün,
+  3 übersprungen); Web 261 Dateien / 4067 Tests grün, Abdeckung `src/lib` 86 % (Boden 5 %); Boden `check-test-completeness.mjs`
+  710 → 713 Dateien, 10767 → 10812 Tests (gemessene Summe; der Boden hinkte der Messung von main hinterher).
 
 ### Nachrechnen (Nachtrag Phase 714)
 
