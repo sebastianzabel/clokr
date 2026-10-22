@@ -1616,11 +1616,12 @@ export async function employeeRoutes(app: FastifyInstance) {
                 ...requestAuditFields(req, entry.newValue),
               }),
             );
-            const { removedRoleAssignments, exitDate } = await anonymizeEmployeeData({
-              tx,
-              employeeId: id,
-              exitDayIfUnset,
-            });
+            const { removedRoleAssignments, exitDate, clearedDeviceIdentifiers } =
+              await anonymizeEmployeeData({
+                tx,
+                employeeId: id,
+                exitDayIfUnset,
+              });
             // Issue #614 (D-01): when the anonymization itself set the exit date, bring the
             // exit-year VACATION row to its § 5 BUrlG value exactly as PATCH /:id/deactivate does
             // (Issue #447 invariant; never past years, never a human-written row).
@@ -1664,6 +1665,9 @@ export async function employeeRoutes(app: FastifyInstance) {
                   deleted: exitResult.deleted.length,
                 },
                 skipped: exitResult.skipped,
+                // Issue #388/#508: counts only, never the MAC addresses or the cleared text.
+                clearedDeviceIdentifiers,
+                clearedFields: ["wifiMacs", "presenceDevices", "breakWaivedReason"],
               }),
               tx,
             });

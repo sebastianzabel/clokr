@@ -662,6 +662,12 @@ export async function clearEntryNotesForEmployee(
     where: { employeeId, note: { not: null } },
     data: { note: null },
   });
+  // Issue #508: the free-text reason of a "durchgearbeitet" acknowledgement (Phase 91, WAIVED) is
+  // the same class as `note`; breakStatus stays, only the text goes. Reaches soft-deleted rows too.
+  await db.timeEntry.updateMany({
+    where: { employeeId, breakWaivedReason: { not: null } },
+    data: { breakWaivedReason: null },
+  });
   await db.dayBreakAck.updateMany({
     where: { employeeId, reason: { not: null } },
     data: { reason: null },

@@ -18,6 +18,8 @@
  *     create/change answer 409, see employee-creation.ts). The anonymization sentinel
  *     (firstName + lastName) does not depend on it.
  *   - Employee.nfcCardId       → null
+ *   - Employee.wifiMacs        → [] AND wifiPresenceEnabled → false, wifiOptInAt → null (Issue #388)
+ *   - PresenceDevice (enrolled WLAN devices) → hard-deleted (Issue #388; MAC = personal device id)
  *   - Employee.exitDate        → the caller's `exitDayIfUnset`, ONLY when it was empty (Issue #614,
  *     D-01: an anonymized person is no longer employed; an existing exit date, past or future,
  *     is never changed). The caller passes the tenant-local calendar day as UTC midnight (the
@@ -29,6 +31,7 @@
  *   - User.role                → EMPLOYEE (Issue #357 sub-fix C, revises Phase 75b D-14 — see
  *     below and CLAUDE.md "DSGVO Employee Deletion = Anonymization")
  *   - TimeEntry.note           → null (for that employee)
+ *   - TimeEntry.breakWaivedReason → null (Issue #508; breakStatus and the entry stay)
  *   - LeaveRequest.note        → null (for that employee)
  *   - Absence.note             → null AND Absence.documentPath → null
  *   - Section9Credit.documentPath → null AND Section9Credit.reason → null (Phase 104,
@@ -77,7 +80,7 @@
  * are expected to validate that before opening the transaction.
  */
 import type { Prisma } from "@clokr/db";
-import { clearEntryNotesForEmployee } from "../time-tracking"; // Phase 100B Plan 08 — T10
+import { clearEntryNotesForEmployee, deletePresenceDevicesOfEmployee } from "../time-tracking"; // Phase 100B Plan 08 — T10
 import { anonymizeSection9CreditsForEmployee } from "../absence"; // Phase 100B Plan 11 — T-100B-48
 import { anonymizeAbsencesForEmployee } from "../absence"; // Phase 100B Plan 12 — F3
 import { anonymizeLeaveRequestsForEmployee } from "../absence"; // Phase 100B Plan 13 — F3
@@ -106,6 +109,8 @@ export interface AnonymizeEmployeeResult {
   removedRoleAssignments: RemovedRoleAssignment[];
   /** Issue #614 (D-01): the exit date before and after; `before` null means this call set it. */
   exitDate: { before: Date | null; after: Date };
+  /** Issue #388: counts only of the cleared device identifiers; the addresses are never returned. */
+  clearedDeviceIdentifiers: { wifiMacs: number; presenceDevices: number };
 }
 
 /**
@@ -120,7 +125,14 @@ export async function anonymizeEmployeeData(
 
   const employee = await tx.employee.findUnique({
     where: { id: employeeId },
-    select: { id: true, tenantId: true, userId: true, employeeNumber: true, exitDate: true },
+    select: {
+      id: true,
+      tenantId: true,
+      userId: true,
+      employeeNumber: true,
+      exitDate: true,
+      wifiMacs: true,
+    },
   });
   if (!employee) {
     throw new Error(`anonymizeEmployeeData: employee ${employeeId} not found`);
@@ -139,6 +151,10 @@ export async function anonymizeEmployeeData(
       lastName: anonymizedLabel,
       // The employee number is deliberately NOT written here (Issue #614, D-03, see the header contract).
       nfcCardId: null,
+      // Issue #388: WLAN presence identifiers of private devices are personal data (Art. 17).
+      wifiMacs: [],
+      wifiPresenceEnabled: false,
+      wifiOptInAt: null,
       // Issue #614 (D-01): ends the employment when no exit date was entered; never moves one.
       ...(employee.exitDate === null ? { exitDate: exitDayIfUnset } : {}),
     },
@@ -166,6 +182,9 @@ export async function anonymizeEmployeeData(
 
   // Phase 74b (D-22): an anonymized person holds no rights — remove every role assignment.
   const removedRoleAssignments = await removeRoleAssignmentsOfUser(tx, employee.tenantId, userId);
+
+  // Issue #388: enrolled WLAN devices (MAC + label) are removed with the employee's own MAC list.
+  const presenceDevices = await deletePresenceDevicesOfEmployee(tx, employeeId, employee.tenantId);
 
   // Notizen in Zeiteinträgen anonymisieren (können persönliche Daten enthalten)
   // Phase 100B Plan 08 — T10, contexts/time-tracking facade (reaches soft-deleted rows too).
@@ -216,5 +235,6 @@ export async function anonymizeEmployeeData(
   return {
     removedRoleAssignments,
     exitDate: { before: employee.exitDate, after: employee.exitDate ?? exitDayIfUnset },
+    clearedDeviceIdentifiers: { wifiMacs: employee.wifiMacs.length, presenceDevices },
   };
 }

@@ -98,7 +98,11 @@ async function checkLeftoverNotes() {
   const timeEntryNotes = await prisma.timeEntry.count({ where: { note: { not: null } } });
   const leaveRequestNotes = await prisma.leaveRequest.count({ where: { note: { not: null } } });
   const absenceNotes = await prisma.absence.count({ where: { note: { not: null } } });
-  const total = timeEntryNotes + leaveRequestNotes + absenceNotes;
+  // Issue #508: the waiver reason of a day-break acknowledgement is free text like `note`.
+  const waivedReasons = await prisma.timeEntry.count({
+    where: { breakWaivedReason: { not: null } },
+  });
+  const total = timeEntryNotes + leaveRequestNotes + absenceNotes + waivedReasons;
   if (total > 0) {
     findings.push({
       rule: "leftover-free-text-notes",
@@ -108,7 +112,25 @@ async function checkLeftoverNotes() {
         `TimeEntry.note: ${timeEntryNotes}`,
         `LeaveRequest.note: ${leaveRequestNotes}`,
         `Absence.note: ${absenceNotes}`,
+        `TimeEntry.breakWaivedReason: ${waivedReasons}`,
       ],
+    });
+  }
+}
+
+async function checkWifiIdentifiers() {
+  // Issue #388: only anonymized employees are judged (a live employee keeps their opted-in MACs).
+  const anonymized = { firstName: "Gelöscht" };
+  const macs = await prisma.employee.count({
+    where: { ...anonymized, NOT: { wifiMacs: { isEmpty: true } } },
+  });
+  const devices = await prisma.presenceDevice.count({ where: { employee: anonymized } });
+  if (macs + devices > 0) {
+    findings.push({
+      rule: "wifi-identifiers-not-cleared",
+      severity: "blocking",
+      count: macs + devices,
+      sample: [`Employee.wifiMacs: ${macs}`, `PresenceDevice: ${devices}`],
     });
   }
 }
@@ -239,6 +261,7 @@ async function main() {
     ["User email matches *@anonymized.local", checkUserEmails],
     ["Free-text notes cleared (TimeEntry/LeaveRequest/Absence)", checkLeftoverNotes],
     ["Absence documentPath cleared", checkAbsenceDocuments],
+    ["WLAN identifiers cleared (wifiMacs, PresenceDevice)", checkWifiIdentifiers],
     ["AuditLog userId nulled for anonymized users", checkAuditLogUserIds],
     ["Employee.nfcCardId cleared + phone scan", checkPhoneFormatColumns],
     ["Row counts preserved per ANONYMIZATION_RUN log", checkVolumePreservation],

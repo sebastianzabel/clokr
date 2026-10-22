@@ -12,6 +12,7 @@
  *   - Employee.firstName / lastName → distinct realistic fake name (pool-based,
  *     deterministic by stable id order so re-runs are idempotent)
  *   - Employee.nfcCardId            → null
+ *   - Employee.wifiMacs             → [] and PresenceDevice rows → deleted (Issue #388)
  *   - User.email                    → int-{employeeNumber-or-id8}@example.invalid
  *   - User.passwordHash             → "ANONYMIZED" (no real login possible)
  *   - Auth tokens (Invitation/OtpToken/RefreshToken) → hard-deleted (not needed on int)
@@ -25,7 +26,8 @@
  *   - Employee.id            (unchanged — reports/links must keep working)
  *   - Employee.employeeNumber (unchanged — same reason)
  *   - User.isActive          (unchanged — do NOT hide them from active lists)
- *   - TimeEntry/LeaveRequest/Absence NOTES + all time/leave/absence/schedule/
+ *   - TimeEntry/LeaveRequest/Absence NOTES (and TimeEntry.breakWaivedReason, Issue #508: kept
+ *     like the notes, int is not an erasure) + all time/leave/absence/schedule/
  *     overtime data (unchanged)
  *   - AuditLog (unchanged)
  *   - OperatorAuditLog (unchanged, Phase 88): append-only by trigger, holds no credentials, and failed
@@ -142,8 +144,11 @@ async function main() {
       // Employee: fake name + drop NFC. id + employeeNumber left UNTOUCHED.
       await tx.employee.update({
         where: { id: emp.id },
-        data: { firstName, lastName, nfcCardId: null },
+        data: { firstName, lastName, nfcCardId: null, wifiMacs: [] },
       });
+
+      // Issue #388: enrolled WLAN devices (MAC addresses) must not travel to int either.
+      await tx.presenceDevice.deleteMany({ where: { employeeId: emp.id } });
 
       // User (if any): pseudo email + disable login. isActive PRESERVED.
       if (emp.userId) {
