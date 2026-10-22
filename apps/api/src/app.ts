@@ -47,7 +47,7 @@ import { vocationalSchoolGeneratorPlugin } from "./contexts/absence/plugins/voca
 import { schoolHolidaysSyncPlugin } from "./contexts/platform/plugins/school-holidays-sync";
 import { autoCloseMonthPlugin } from "./contexts/working-time-account/plugins/auto-close-month";
 import { deferredMonthCloseReminderPlugin } from "./contexts/working-time-account/plugins/deferred-month-close-reminder";
-import { storagePlugin } from "./contexts/platform/plugins/storage";
+import { storagePlugin, StorageUnavailableError } from "./contexts/platform/plugins/storage";
 import multipart from "@fastify/multipart";
 import { notificationRoutes } from "./contexts/platform/api/notifications";
 import { invitationRoutes } from "./contexts/platform/api/invitations";
@@ -200,6 +200,16 @@ export async function buildApp() {
       // code. One mapping for every caller, so no caller can leak a 500 or build its own body.
       if (error instanceof PackageRefusalError) {
         return reply.code(409).send({ error: error.message, code: error.code });
+      }
+      // Issue #184: the object store is down or refuses us — a deliberate, retryable 503 with a
+      // machine-readable code instead of an opaque 500 (the code is the control value).
+      if (error instanceof StorageUnavailableError) {
+        req.log.error({ err: error, route: req.routeOptions?.url }, "object storage unavailable");
+        return reply.code(503).send({
+          error:
+            "Der Dokumentenspeicher ist derzeit nicht erreichbar. Bitte versuche es später erneut oder wende dich an den Administrator.",
+          code: error.code,
+        });
       }
       // Issue #330: a 5xx is an unexpected failure, and its message is internal (Prisma model,
       // field and constraint names, hosts, paths). The client gets a fixed body; the original
@@ -493,7 +503,20 @@ export async function buildApp() {
           setTimeout(() => reject(new Error("DB ping timed out")), DB_PING_TIMEOUT_MS),
         ),
       ]);
-      return { status: "ok", timestamp: new Date().toISOString() };
+      // Issue #184: the object store is reported, never decisive. The status code and "status"
+      // stay DB-only, so a store outage can never fail the liveness probe (docker/k8s/LB would
+      // restart a healthy API). The body shows the last known state; refresh() is throttled
+      // and single-flight, so polling (docker healthcheck every 2 s) cannot pile up probes.
+      app.storage.refresh();
+      return {
+        status: "ok",
+        storage: app.storage.status().unconfigured
+          ? "unconfigured"
+          : app.storage.status().available
+            ? "ok"
+            : "unavailable",
+        timestamp: new Date().toISOString(),
+      };
     } catch {
       return reply.code(503).send({ status: "degraded", timestamp: new Date().toISOString() });
     }

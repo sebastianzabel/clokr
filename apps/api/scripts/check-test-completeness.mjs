@@ -944,7 +944,8 @@ import { readFileSync } from "node:fs";
 // Issue #688 (2026-10-18): measured with a full run (`pnpm --filter @clokr/api test`) on `perf/688-period-bulk-read`
 // (origin/main @ 62cd922e + #688) - 709 test files, 10757 tests (10754 passed, 3 skipped). One new file:
 // reports-period-bulk-read-688 (5 cases); nothing removed, skipped or loosened. MIN_FILES 708 -> 709, never lowered.
-const MIN_FILES = 709;
+// Issue #184 (2026-10-22): MIN_FILES 709 -> 710, the new storage-fail-fast-184.test.ts. Never lowered.
+const MIN_FILES = 710;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1004,7 +1005,9 @@ const MIN_FILES = 709;
 // cases of the new reports-period-bulk-read-688.test.ts. Never lowered.
 // Issue #645: MIN_TESTS 10757 -> 10759, the measured total of the full run (709 files): one new case in
 // shifts-conflicts.test.ts (reach of the softDeleted/flagged buckets) plus drift already absorbed. Never lowered.
-const MIN_TESTS = 10759;
+// Issue #184 (2026-10-22): MIN_TESTS 10757 -> 10767, measured with a full run on `fix/184-storage-fail-fast`
+// (origin/main @ 7d5818c0 + #184): 710 test files, 10767 tests (10764 passed, 3 skipped); the new storage-fail-fast-184.test.ts holds 9 cases. Never lowered.
+const MIN_TESTS = 10767;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
