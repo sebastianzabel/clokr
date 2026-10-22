@@ -302,6 +302,25 @@ describe("/reports period area (Issue #612) - dialogs, export-only callers, tabs
     expect(PAGE).not.toContain("carryoverHorizon");
   });
 
+  // Issue #713 (D-10): the card „Abwesenheiten je Person“ sits in the vacation tab right after the
+  // tab's own cards and renders the one period answer's rows - the page derives nothing.
+  it("the vacation tab renders the card „Abwesenheiten je Person“ after the tab, from the period rows (Issue #713)", () => {
+    expect((TEMPLATE.match(/<AbsencesByPersonTable\b/g) ?? []).length).toBe(1);
+    const branch = TEMPLATE.indexOf('{:else if activeTab === "urlaub"}');
+    expect(branch).toBeGreaterThan(-1);
+    const card = TEMPLATE.indexOf("<AbsencesByPersonTable");
+    expect(card).toBeGreaterThan(branch);
+    expect(card).toBeGreaterThan(TEMPLATE.indexOf("<VacationAbsenceTab"));
+    // still inside the urlaub branch: neither another branch nor a closing {/if} lies between
+    expect(TEMPLATE.slice(branch + 1, card)).not.toMatch(/\{:else|\{\/if\}/);
+    const tag = TEMPLATE.slice(card, TEMPLATE.indexOf("/>", card));
+    expect(tag).toContain("rows={period?.rows ?? null}");
+    expect(tag).toContain("loading={periodLoading}");
+    expect(tag).toContain("filterActive={pageSalonId !== null}");
+    expect(tag).toContain("{personHref}");
+    expect(tag).toContain("onOpenPerson={openPerson}");
+  });
+
   it("the notice is the existing carry-over route with the entitlement id, and re-reads nothing", () => {
     const body = functionBody("sendCarryoverNotice");
     expect(body).toContain('"/reports/carryover-warn"');

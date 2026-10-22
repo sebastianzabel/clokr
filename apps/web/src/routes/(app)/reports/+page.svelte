@@ -20,6 +20,7 @@
   import KPIStat from "$components/ui/KPIStat.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
+  import AbsencesByPersonTable from "$lib/components/reports/AbsencesByPersonTable.svelte"; // Issue #713
   import ExportDialog from "$lib/components/reports/ExportDialog.svelte"; // Issue #612
   import PeriodBar from "$lib/components/reports/PeriodBar.svelte"; // Issue #612
   import PeriodKpis from "$lib/components/reports/PeriodKpis.svelte"; // Issue #612
@@ -864,6 +865,14 @@
               personHref={vacationPersonHref}
               onOpenPerson={openVacationPerson}
               onNotify={sendCarryoverNotice}
+            />
+            <AbsencesByPersonTable
+              rows={period?.rows ?? null}
+              loading={periodLoading}
+              periodLabel={periodLabel(urlState.from, urlState.to, today)}
+              filterActive={pageSalonId !== null}
+              {personHref}
+              onOpenPerson={openPerson}
             />
           {/if}
         </div>
