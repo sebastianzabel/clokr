@@ -134,7 +134,6 @@ export function hasSaldoFigures(rows: readonly PeriodRow[]): boolean {
 /** Why a figure is missing, as the cell's title and its screen-reader text. */
 export function withheldReason(row: PeriodRow): string {
   if (row.sollUnavailableReason === "NO_PERMISSION") return "Keine Berechtigung";
-  if (row.sollUnavailableReason === "SALON_FILTER") return "Nicht je Salon";
   return "Kein Wert vorhanden";
 }
 

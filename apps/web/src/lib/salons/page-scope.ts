@@ -112,3 +112,47 @@ export const SALON_LEAVE_DAYS_NOT_ATTRIBUTABLE_NOTE =
  */
 export const SALON_PERIOD_ROWS_NOTE =
   "Personen mit Eintrag in diesem Salon oder Stammsalon an mindestens einem Tag des Zeitraums";
+
+/**
+ * Issue #714 (D-04) - the period report under a salon filter: every figure of a listed person is
+ * the whole personal value, and the persons are those whose Stammsalon is the chosen salon at the
+ * end of the period. Replaces `PERSON_SALDO_NOT_SPLIT_LABEL` on the KPI card and the table.
+ */
+export const PERSON_SALDO_BY_HOME_SALON_LABEL =
+  "Personensaldo nach Stammsalon, nicht nach Salon aufgeteilt";
+
+/**
+ * Issue #714 (D-05) - how many persons of the reader's reach have no Stammsalon in an active salon
+ * and therefore appear only without a salon choice. The count is the server's; this only words it.
+ */
+export function withoutHomeSalonNote(count: number): string {
+  const persons = count === 1 ? "1 Person" : `${count} Personen`;
+  return `${persons} ohne Stammsalon in einem aktiven Salon – nur unter „Alle Salons“ enthalten`;
+}
+
+/**
+ * Issue #714 (D-03) - where a person who changed the Stammsalon inside the period counts: whole for
+ * the Stammsalon at the end, with the hours in the former salon under the salon hours.
+ */
+export const HOME_SALON_CHANGE_NOTE =
+  "Wer im Zeitraum den Stammsalon gewechselt hat, zählt ganz zum Stammsalon am Ende des Zeitraums; die Stunden im früheren Salon stehen dort unter „Im Salon gearbeitet“.";
+
+/** Issue #714 (D-06) - the label of the separate salon-hours figure (KPI tile, column, row value). */
+export const SALON_WORKED_LABEL = "Im Salon gearbeitet";
+
+/** Issue #714 (D-06) - the delta text of the salon-hours tile: it names no saldo, only who is in it. */
+export const SALON_WORKED_DELTA_NOTE = "inkl. Aushilfen aus anderen Salons";
+
+/** Issue #714 (D-07) - heading of the section listing persons of other salons who worked here. */
+export const SALON_HELPERS_HEADING = "Aushilfen aus anderen Salons";
+
+/**
+ * Issue #714 (G7, D-07) - a scoped reader sees helpers only from salons inside their reach; the
+ * hint keeps a short list from reading as "nobody helped".
+ */
+export const SALON_HELPERS_REACH_NOTE =
+  "Aushilfen aus Salons außerhalb deiner Reichweite erscheinen hier nicht.";
+
+/** Issue #714 (D-09) - what the period CSV lists under a salon filter. */
+export const SALON_CSV_PERSONS_NOTE =
+  "Die Datei listet die Personen nach Stammsalon am Ende des Zeitraums, ohne Aushilfen aus anderen Salons.";

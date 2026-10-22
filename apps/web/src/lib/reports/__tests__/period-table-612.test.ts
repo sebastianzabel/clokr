@@ -145,14 +145,17 @@ describe("helpers", () => {
     expect(hasSaldoFigures([])).toBe(false);
   });
 
-  it("withheldReason names the server's reason and has a neutral fallback", () => {
+  it("withheldReason names the server's reason and has a neutral fallback (no salon reason since #714)", () => {
     expect(withheldReason(row("1", { sollUnavailableReason: "NO_PERMISSION" }))).toBe(
       "Keine Berechtigung",
     );
-    expect(withheldReason(row("1", { sollUnavailableReason: "SALON_FILTER" }))).toBe(
-      "Nicht je Salon",
-    );
     expect(withheldReason(row("1"))).toBe("Kein Wert vorhanden");
+    // Owner decision #714: a salon filter withholds nothing, so the contract has no salon reason.
+    // @ts-expect-error SALON_FILTER is no row reason any more
+    const salonReason: PeriodRow["sollUnavailableReason"] = "SALON_FILTER";
+    expect(withheldReason(row("1", { sollUnavailableReason: salonReason }))).toBe(
+      "Kein Wert vorhanden",
+    );
   });
 
   it("initialsOf takes the first letters of the first and last word", () => {

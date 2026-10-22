@@ -24,20 +24,28 @@ import {
   ALL_SALONS_BLOCK_NOTE,
   DATEV_ALL_SALONS_NOTE,
   EXPORT_NO_STAMMSALON_NOTE,
+  HOME_SALON_CHANGE_NOTE,
+  PERSON_SALDO_BY_HOME_SALON_LABEL,
   PERSON_SALDO_NOT_SPLIT_LABEL,
   PERSON_VALUES_NOT_SPLIT_LABEL,
+  SALON_CSV_PERSONS_NOTE,
   SALON_EXPORT_PERSONS_NOTE,
+  SALON_HELPERS_HEADING,
+  SALON_HELPERS_REACH_NOTE,
   SALON_HOME_PERSONS_NOTE,
   SALON_LEAVE_DAYS_NOT_ATTRIBUTABLE_NOTE,
   SALON_PERIOD_END_PERSONS_NOTE,
   SALON_PERIOD_ROWS_NOTE,
   SALON_SOLL_NOT_ATTRIBUTABLE_NOTE,
   SALON_VIEW_UNAVAILABLE_TEXT,
+  SALON_WORKED_DELTA_NOTE,
+  SALON_WORKED_LABEL,
   isSalonFilterRejected,
   salonNameLabel,
   salonPageFilter,
   salonScopeLabel,
   withSalonId,
+  withoutHomeSalonNote,
 } from "../page-scope";
 
 const A = { id: "salon-a", name: "Salon Nord" };
@@ -145,5 +153,53 @@ describe("Issue #612 - the period report's salon notes", () => {
     expect(SALON_PERIOD_ROWS_NOTE).toBe(
       "Personen mit Eintrag in diesem Salon oder Stammsalon an mindestens einem Tag des Zeitraums",
     );
+  });
+});
+
+// Issue #714 (owner decision 19.10.2026): under a salon filter the period report shows the whole
+// personal values of the persons by Stammsalon at the period end. Each text is pinned here,
+// character for character; the web computes none of the figures they describe.
+describe("Issue #714 — the period report's Stammsalon notes", () => {
+  it("names the circle: the whole personal saldo by Stammsalon", () => {
+    expect(PERSON_SALDO_BY_HOME_SALON_LABEL).toBe(
+      "Personensaldo nach Stammsalon, nicht nach Salon aufgeteilt",
+    );
+  });
+
+  it("counts the persons without a Stammsalon in an active salon, singular and plural", () => {
+    expect(withoutHomeSalonNote(3)).toBe(
+      "3 Personen ohne Stammsalon in einem aktiven Salon – nur unter „Alle Salons“ enthalten",
+    );
+    expect(withoutHomeSalonNote(1)).toBe(
+      "1 Person ohne Stammsalon in einem aktiven Salon – nur unter „Alle Salons“ enthalten",
+    );
+  });
+
+  it("says where a mover counts and where the hours in the former salon appear", () => {
+    expect(HOME_SALON_CHANGE_NOTE).toBe(
+      "Wer im Zeitraum den Stammsalon gewechselt hat, zählt ganz zum Stammsalon am Ende des Zeitraums; die Stunden im früheren Salon stehen dort unter „Im Salon gearbeitet“.",
+    );
+  });
+
+  it("labels the salon hours and the helpers", () => {
+    expect(SALON_WORKED_LABEL).toBe("Im Salon gearbeitet");
+    expect(SALON_WORKED_DELTA_NOTE).toBe("inkl. Aushilfen aus anderen Salons");
+    expect(SALON_HELPERS_HEADING).toBe("Aushilfen aus anderen Salons");
+  });
+
+  it("tells a scoped reader that helpers outside the reach do not appear, and what the CSV lists", () => {
+    expect(SALON_HELPERS_REACH_NOTE).toBe(
+      "Aushilfen aus Salons außerhalb deiner Reichweite erscheinen hier nicht.",
+    );
+    expect(SALON_CSV_PERSONS_NOTE).toBe(
+      "Die Datei listet die Personen nach Stammsalon am Ende des Zeitraums, ohne Aushilfen aus anderen Salons.",
+    );
+  });
+
+  it("addresses the reader with du, never Sie, in the new texts", () => {
+    for (const text of [HOME_SALON_CHANGE_NOTE, SALON_HELPERS_REACH_NOTE, SALON_CSV_PERSONS_NOTE]) {
+      expect(text).not.toMatch(/\bSie\b|\bIhr/);
+    }
+    expect(SALON_HELPERS_REACH_NOTE).toContain("deiner");
   });
 });
