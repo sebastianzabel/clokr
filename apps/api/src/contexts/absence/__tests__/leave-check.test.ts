@@ -28,6 +28,7 @@ interface LeaveRequestRow {
   employeeId: string;
   deletedAt: Date | null;
   status: "APPROVED" | "CANCELLATION_REQUESTED";
+  halfDay: boolean;
   startDate: Date;
   endDate: Date;
   leaveType: { code: LeaveTypeCode | null };
@@ -78,6 +79,7 @@ function leaveRow(overrides: Partial<LeaveRequestRow> = {}): LeaveRequestRow {
     employeeId: EMP,
     deletedAt: null,
     status: "APPROVED",
+    halfDay: false,
     startDate: new Date("2026-09-15T00:00:00Z"),
     endDate: new Date("2026-09-15T23:59:59Z"),
     // No `name` field at all — this fixture cannot even express a "renamed LeaveType" scenario,
@@ -107,9 +109,8 @@ function stubPrisma(
     leaveRequest: {
       // `include`/`select` are ignored on purpose — the stub always hands back the whole matching
       // row; each test states only the fields the fixture builder produces.
-      findFirst: vi.fn(
-        async (args: { where: WhereClause }) =>
-          leaveRequests.find((r) => matchesWhere(r, args.where)) ?? null,
+      findMany: vi.fn(async (args: { where: WhereClause }) =>
+        leaveRequests.filter((r) => matchesWhere(r, args.where)),
       ),
     },
     absence: {
@@ -271,5 +272,42 @@ describe("stub matcher", () => {
       DATE,
     );
     expect(result).toBeNull();
+  });
+});
+
+describe("hasApprovedLeaveOnDate — half-day requests do not block (Issue #728)", () => {
+  it("ignores an approved half-day request", async () => {
+    const result = await hasApprovedLeaveOnDate(
+      stubPrisma({ leaveRequests: [leaveRow({ halfDay: true })] }),
+      EMP,
+      DATE,
+    );
+    expect(result).toBeNull();
+  });
+
+  it("a full-day request wins over a half-day request on the same day, in either order", async () => {
+    const half = leaveRow({ halfDay: true, leaveType: { code: "OVERTIME_COMP" } });
+    const full = leaveRow({ leaveType: { code: "VACATION" } });
+    for (const rows of [
+      [half, full],
+      [full, half],
+    ]) {
+      const result = await hasApprovedLeaveOnDate(stubPrisma({ leaveRequests: rows }), EMP, DATE);
+      expect(result).toEqual({ code: "VACATION", status: "APPROVED" });
+    }
+  });
+
+  it("prefers APPROVED over CANCELLATION_REQUESTED regardless of row order", async () => {
+    const result = await hasApprovedLeaveOnDate(
+      stubPrisma({
+        leaveRequests: [
+          leaveRow({ status: "CANCELLATION_REQUESTED", leaveType: { code: "SPECIAL" } }),
+          leaveRow({ status: "APPROVED" }),
+        ],
+      }),
+      EMP,
+      DATE,
+    );
+    expect(result).toEqual({ code: "VACATION", status: "APPROVED" });
   });
 });
