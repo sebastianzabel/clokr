@@ -1726,6 +1726,7 @@ test.describe("Issue #713 — Abwesenheiten je Person im Blick", () => {
 test.describe("Issue #726 — Suchfeld der Filterleiste", () => {
   const MIN_SEARCH_PX = 180;
   const TABS = ["zeiten", "urlaub"] as const;
+  const SEARCH_FIELDS_PER_TAB: Record<(typeof TABS)[number], number> = { zeiten: 1, urlaub: 2 };
 
   for (const tab of TABS) {
     for (const viewport of [
@@ -1741,33 +1742,43 @@ test.describe("Issue #726 — Suchfeld der Filterleiste", () => {
             `${tenant.baseUrl}/reports?from=${MATRIX_PERIOD}&to=${MATRIX_PERIOD}&tab=${tab}`,
           );
         }
-        const search = page.locator(".filter-bar .filter-search");
-        await expect(search, "the filter bar offers its search field").toBeVisible();
+        // Every filter bar of the tab: since #713 the Urlaub tab carries two (Urlaubsübersicht
+        // and Abwesenheiten je Person), each with its own search field.
+        const fields = page.locator(".filter-bar .filter-search");
+        await expect(fields, "every filter bar of the tab offers its search field").toHaveCount(
+          SEARCH_FIELDS_PER_TAB[tab],
+        );
 
-        const geo = await search.evaluate((el) => {
-          const bar = el.closest(".filter-bar") as HTMLElement;
-          const r = el.getBoundingClientRect();
-          const b = bar.getBoundingClientRect();
-          const siblings = [...bar.children]
-            .filter((c) => c !== el)
-            .map((c) => c.getBoundingClientRect())
-            .filter((c) => c.width > 0);
-          return {
-            width: r.width,
-            barWidth: b.width,
-            sharesRow: siblings.some((s) => s.top < r.bottom - 1 && s.bottom > r.top + 1),
-          };
-        });
+        for (let i = 0; i < SEARCH_FIELDS_PER_TAB[tab]; i++) {
+          const search = fields.nth(i);
+          await search.scrollIntoViewIfNeeded();
+          await expect(search, `search field ${i + 1} is visible`).toBeVisible();
 
-        if (viewport.width <= 480) {
-          expect(geo.width, "search width").toBeGreaterThanOrEqual(MIN_SEARCH_PX);
-          expect(geo.sharesRow, "the search field has its own row").toBe(false);
-          expect(geo.width, "full row width").toBeGreaterThanOrEqual(geo.barWidth - 1);
-        } else {
-          // Desktop is unchanged: a flexible field between 180 and 320 px next to its siblings.
-          expect(geo.width).toBeGreaterThanOrEqual(MIN_SEARCH_PX);
-          expect(geo.width).toBeLessThanOrEqual(320 + 0.5);
-          expect(geo.sharesRow, "desktop: count/select stay on the search row").toBe(true);
+          const geo = await search.evaluate((el) => {
+            const bar = el.closest(".filter-bar") as HTMLElement;
+            const r = el.getBoundingClientRect();
+            const b = bar.getBoundingClientRect();
+            const siblings = [...bar.children]
+              .filter((c) => c !== el)
+              .map((c) => c.getBoundingClientRect())
+              .filter((c) => c.width > 0);
+            return {
+              width: r.width,
+              barWidth: b.width,
+              sharesRow: siblings.some((s) => s.top < r.bottom - 1 && s.bottom > r.top + 1),
+            };
+          });
+
+          if (viewport.width <= 480) {
+            expect(geo.width, "search width").toBeGreaterThanOrEqual(MIN_SEARCH_PX);
+            expect(geo.sharesRow, "the search field has its own row").toBe(false);
+            expect(geo.width, "full row width").toBeGreaterThanOrEqual(geo.barWidth - 1);
+          } else {
+            // Desktop is unchanged: a flexible field between 180 and 320 px next to its siblings.
+            expect(geo.width).toBeGreaterThanOrEqual(MIN_SEARCH_PX);
+            expect(geo.width).toBeLessThanOrEqual(320 + 0.5);
+            expect(geo.sharesRow, "desktop: count/select stay on the search row").toBe(true);
+          }
         }
 
         if (viewport.width <= 480) {
@@ -1781,7 +1792,7 @@ test.describe("Issue #726 — Suchfeld der Filterleiste", () => {
         await page.addStyleTag({
           content: ".filter-bar .filter-search{min-width:0 !important;flex:0 1 0 !important}",
         });
-        const broken = await search.evaluate((el) => el.getBoundingClientRect().width);
+        const broken = await fields.first().evaluate((el) => el.getBoundingClientRect().width);
         expect(broken, "control: the probe sees a shrunken field").toBeLessThan(MIN_SEARCH_PX);
       });
     }
