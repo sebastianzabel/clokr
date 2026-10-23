@@ -175,10 +175,12 @@ describe("Issue #713 — the per-person absence counts of the period report", ()
     let unfiltered: Period;
     const monthly = new Map<number, MonthlyRow[]>();
 
+    // One period read plus one /reports/monthly read per month: under the coverage run in CI this
+    // exceeded vitest's default 10 s hook timeout (testTimeout is 30 s, hookTimeout is not set).
     beforeAll(async () => {
       unfiltered = await period(QUERY);
       for (const m of MONTHS) monthly.set(m, await monthlyRows(m));
-    });
+    }, 60_000);
 
     it("every row has exactly the ten codes as numbers, and no month entry has an absence key", () => {
       expect(unfiltered.rows.length).toBeGreaterThanOrEqual(Object.keys(fx.people).length);
@@ -602,7 +604,7 @@ describe("Issue #713 — the per-person absence counts of the period report", ()
       });
       expect(login.statusCode, login.body).toBe(200);
       managerToken = (JSON.parse(login.body) as { accessToken: string }).accessToken;
-    });
+    }, 60_000);
 
     afterAll(async () => {
       try {
