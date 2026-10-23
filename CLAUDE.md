@@ -124,7 +124,7 @@ Rules — these are directives, not preferences:
 
 - **Absence is NEVER a `TimeEntryType`.** A time entry has no "requested" status, and approved leave for next August is not a recorded period. `TimeEntryType` stays free of absence values.
 - **`calcLeaveAbsenceMinutesTz()` (`apps/api/src/contexts/working-time-account/timezone.ts`) belongs to Arbeitszeitkonto and is NOT to be split.** It and the `sbClaimed` dedup set in `close-employee-month.ts` carry the invariant _a day reduces Soll exactly once_. Anyone wanting to split it must first prove the invariant is secured otherwise.
-- **`LeaveRequest` = requested absence** (status, entitlement, approver): Urlaub, Krankheit, Sonderurlaub. **`Absence` = imposed absence** (occurs, is not requested): Berufsschule, Mutterschutz, Elternzeit. `SICK` belongs to `LeaveRequest`.
+- **`LeaveRequest` = requested absence** (status, entitlement, approver): Urlaub, Krankheit, Sonderurlaub. **`Absence` = imposed absence** (occurs, is not requested): Berufsschule, Mutterschutz, Elternzeit (as built, only Berufsschule is written as an `Absence`; Mutterschutz and Elternzeit are requested as the `LeaveRequest` codes `MATERNITY`/`PARENTAL` of `REQUESTABLE_CODES` — Issue #713). `SICK` belongs to `LeaveRequest`.
 - **No foreign keys between peer contexts; foreign keys onto the Unterbau are allowed** (ADR 0002, Entscheidung 4). Existing `onDelete` behaviour is untouched; the `onDelete: Restrict` compliance control on Employee→TimeEntry/LeaveRequest/Absence stays in the database. A new FK onto the Unterbau is named in its issue as a new Shared-Kernel dependency, revision-relevant relations use `onDelete: Restrict`, and the referenced Unterbau row must belong to the same tenant.
 - **No direct table access across contexts.** Go through the owning context's public interface.
   **Mechanically enforced (Phase 101B, Issue #101):** `eslint.boundaries.mjs`'s `no-restricted-imports`
@@ -260,6 +260,10 @@ Current: recalculated from hire date on every request (does not scale). Target a
   uses it to attribute a day to a salon). `/reports/monthly` (the JSON, the Stundennachweis and the Monatsexport) and the dashboard
   team trend both call it — it used to live in `composition/reports.ts`, a business rule in the
   composition layer. `Absence` rows (imposed absences) never count as sick days.
+  Since #713 the kernel also returns `sickDaysByCode` (`SICK`, `SICK_CHILD`), summed on the same line as the
+  day count, so every rule above holds for both codes and SICK + SICK_CHILD = the sick days; the period
+  report's per-person table and its two lines by kind read it. Overlapping rows of the two codes stay counted
+  twice (DATEV and the Monatsexport keep their own workday counts with SICK-first dedup).
   The `/leave` KPI reads `GET /leave/sick-days` (own data, calendar days from this same kernel, Issue
   #595); a request's stored `days` is a workday price and is shown as „Arbeitstage“ for sick types through
   `leaveDaysLabel()` (`apps/web/src/lib/leave/leave-days-label.ts`). DATEV Lohnart counts stay workdays.
@@ -328,16 +332,22 @@ Current: recalculated from hire date on every request (does not scale). Target a
   with a mid-period mover can differ). The vacation tables list the same persons as the rows, the CSV lists the rows. Vacation = the `/leave-overview` assembly at each touched
   year's Stichtag (the last period day in the year, at most tenant-local yesterday), filtered by Stammsalon at the
   period end, plus the Verfall facts. `GET /reports/period/csv` (`composition/period-csv.ts`, `report:export`) serves
-  the same assembly as a file and writes one `EXPORT` audit row before the bytes. `/reports/monthly` is not edited
-  (`reports.ts` differs from main by `export` keywords only). The web reads and writes the URL
+  the same assembly as a file and writes one `EXPORT` audit row before the bytes. Every row carries `absence`, the
+  person's counts per leave-type code (ten codes: Kalendertage for SICK/SICK_CHILD, Berufsschultage from
+  `vocationalSchoolDayCount()` — the #448 definition — and Arbeitstage from the priced kinds of
+  `computeEmployeeSummary`); „Abwesenheiten nach Art“ is built from those rows (separate SICK and SICK_CHILD lines, no
+  Berufsschule line); `GET /reports/period/csv?table=absences` serves the table with all columns, audited as
+  `PERIOD_ABSENCES_CSV` (#713). `/reports/monthly` is not edited
+  (`reports.ts` differs from main by `export` keywords and two additive return fields of
+  `computeEmployeeSummary`, #713). The web reads and writes the URL
   (`/reports?from&to&tab[&salonId][&person]`, the contract #591 links into) only through
   `$lib/reports/period-state.ts` and sums nothing itself. Never add a second period computation, a period field to
   `/reports/monthly` or a Soll/saldo the account did not state. Proofs: `reports-period-612`, `-sums-612` (row = Σ months
   = `/monthly` = Monatsexport = live saldo), `-vacation-612`, `-salon-612`, `-home-salon-714` (3 salons, a Springer, a person without Stammsalon: Σ parity, no
-  Scheinminus), `-reach-612`, `-csv-612`, `period-csv-612`,
+  Scheinminus), `-reach-612`, `-csv-612`, `period-csv-612`, `-absences-713` (per person SICK + SICK_CHILD = `sickDays`, Σ persons = „nach Art“ = `kpis.sickDays`, filtered and unfiltered, reach),
   `-perf-612` (a 60 s regression ceiling; the measured cost is ~13 ms per person-month, the bulk-read fix is #688),
   `reports-hr-86` (day-free key paths), the web `reports-period-page-612` and the e2e `reports-period.spec.ts`.
-  `docs/adr/0001-abweichungen.md`, Eintrag Q, Nachtrag Phase 612 and Nachtrag Phase 714.
+  `docs/adr/0001-abweichungen.md`, Eintrag Q, Nachtrag Phase 612, Nachtrag Phase 714 and Nachtrag Phase 713.
 - **`@db.Date` columns get calendar-day bounds, never a month/week instant (Issue #493).**
   `monthRangeUtc()` / `weekRangeUtc()` return tenant-local boundaries as UTC instants (local 1 Oct
   00:00 = `2026-09-30T22:00Z`); a Prisma filter or a JS clip on a `@db.Date` column

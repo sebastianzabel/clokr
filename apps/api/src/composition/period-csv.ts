@@ -1,3 +1,4 @@
+import type { LeaveTypeCode } from "@clokr/db";
 import { fmtDecimalDe } from "./pdf-format";
 
 /**
@@ -17,6 +18,11 @@ import { fmtDecimalDe } from "./pdf-format";
  *
  * Format: UTF-8 with BOM (Excel opens it as UTF-8), `;` as separator, CRLF line ends, RFC 4180
  * quoting (a cell with `;`, `"`, CR or LF is quoted, a quote is doubled).
+ *
+ * Issue #713 (P-713-09) - the table "Abwesenheiten je Person": Kalendertage for Krank/Kinderkrank,
+ * Berufsschultage, Arbeitstage for the requested kinds, exactly the numbers of `rows[].absence`;
+ * every column always, so a spreadsheet gets a stable schema. Every header names its unit because
+ * the columns mix calendar days and workdays (D-03).
  */
 
 /** The nine column titles, in file order. */
@@ -98,6 +104,63 @@ export function periodTableCsv(rows: readonly PeriodCsvRow[]): Buffer {
         hoursCell(row.closingBalanceMinutes),
         cell(statusText(row)),
         confirmed,
+      ].join(";"),
+    );
+  }
+  return Buffer.concat([BOM, Buffer.from(`${lines.join("\r\n")}\r\n`, "utf8")]);
+}
+
+// ── Abwesenheiten je Person (Issue #713) ─────────────────────────────────────────────────────────
+
+/** A kind column of the absences CSV: the code of `rows[].absence` and its header with the unit. */
+export type PeriodAbsencesCsvCode = Exclude<LeaveTypeCode, "OTHER"> | "VOCATIONAL_SCHOOL";
+export type PeriodAbsencesCsvColumn = {
+  code: PeriodAbsencesCsvCode;
+  header: string;
+};
+
+/** The ten kind columns, in file order (the order of the period answer's `absence` object). */
+export const PERIOD_ABSENCES_CSV_COLUMNS: readonly PeriodAbsencesCsvColumn[] = [
+  { code: "SICK", header: "Krank (Kalendertage)" },
+  { code: "SICK_CHILD", header: "Kinderkrank (Kalendertage)" },
+  { code: "VACATION", header: "Urlaub (Arbeitstage)" },
+  { code: "OVERTIME_COMP", header: "Überstundenausgleich (Arbeitstage)" },
+  { code: "SPECIAL", header: "Sonderurlaub (Arbeitstage)" },
+  { code: "VOCATIONAL_SCHOOL", header: "Berufsschule (Tage)" },
+  { code: "EDUCATION", header: "Bildungsurlaub (Arbeitstage)" },
+  { code: "UNPAID", header: "Unbezahlt (Arbeitstage)" },
+  { code: "MATERNITY", header: "Mutterschutz (Arbeitstage)" },
+  { code: "PARENTAL", header: "Elternzeit (Arbeitstage)" },
+];
+
+/** The twelve column titles of the absences CSV. */
+export const PERIOD_ABSENCES_CSV_HEADER = [
+  "Personalnummer",
+  "Name",
+  ...PERIOD_ABSENCES_CSV_COLUMNS.map((c) => c.header),
+].join(";");
+
+/** The subset of a period row the absences table reads. */
+export type PeriodAbsencesCsvRow = {
+  employeeNumber: string;
+  employeeName: string;
+  absence: Readonly<Record<PeriodAbsencesCsvCode, number>>;
+};
+
+/** `Abwesenheiten-je-Person_<from>_<to>.csv` for `YYYY-MM` bounds. */
+export function periodAbsencesCsvFilename(from: string, to: string): string {
+  return `Abwesenheiten-je-Person_${from}_${to}.csv`;
+}
+
+/** The absences CSV (BOM + header + one line per row, CRLF) for the rows in the given order. */
+export function periodAbsencesCsv(rows: readonly PeriodAbsencesCsvRow[]): Buffer {
+  const lines = [PERIOD_ABSENCES_CSV_HEADER];
+  for (const row of rows) {
+    lines.push(
+      [
+        cell(row.employeeNumber),
+        cell(row.employeeName),
+        ...PERIOD_ABSENCES_CSV_COLUMNS.map((c) => fmtDecimalDe(row.absence[c.code], 2)),
       ].join(";"),
     );
   }

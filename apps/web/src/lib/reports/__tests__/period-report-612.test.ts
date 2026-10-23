@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { periodCsvPath, periodReportPath, ymKey, type PeriodAbsence } from "../period-report";
+import {
+  PERIOD_PERSON_ABSENCE_CODES,
+  periodAbsencesCsvPath,
+  periodCsvPath,
+  periodReportPath,
+  ymKey,
+  type PeriodAbsence,
+} from "../period-report";
 
 describe("period-report contract (Issue #612)", () => {
   it("builds the request path with zero-padded months", () => {
@@ -33,6 +40,34 @@ describe("period-report contract (Issue #612)", () => {
     );
   });
 
+  it("builds the absences CSV path with the table parameter before the salon (Issue #713)", () => {
+    const from = { year: 2026, month: 7 };
+    const to = { year: 2026, month: 10 };
+    expect(periodAbsencesCsvPath(from, to, null)).toBe(
+      "/reports/period/csv?from=2026-07&to=2026-10&table=absences",
+    );
+    expect(periodAbsencesCsvPath(from, to, "a b&c")).toBe(
+      "/reports/period/csv?from=2026-07&to=2026-10&table=absences&salonId=a%20b%26c",
+    );
+    // the times file's path is untouched by the new table
+    expect(periodCsvPath(from, to, null)).toBe("/reports/period/csv?from=2026-07&to=2026-10");
+  });
+
+  it("names the ten per-person absence codes in the server's canonical order (Issue #713)", () => {
+    expect([...PERIOD_PERSON_ABSENCE_CODES]).toEqual([
+      "SICK",
+      "SICK_CHILD",
+      "VACATION",
+      "OVERTIME_COMP",
+      "SPECIAL",
+      "VOCATIONAL_SCHOOL",
+      "EDUCATION",
+      "UNPAID",
+      "MATERNITY",
+      "PARENTAL",
+    ]);
+  });
+
   it("formats a year-month key", () => {
     expect(ymKey({ year: 2026, month: 3 })).toBe("2026-03");
   });
@@ -50,6 +85,12 @@ describe("period-report contract (Issue #612)", () => {
       personCount: 1,
       totalDays: 3,
     } satisfies PeriodAbsence;
-    expect([sick.code, vacation.code]).toEqual(["SICK", "VACATION"]);
+    const sickChild = {
+      code: "SICK_CHILD",
+      unit: "CALENDAR_DAYS",
+      personCount: 1,
+      totalDays: 2,
+    } satisfies PeriodAbsence;
+    expect([sick.code, vacation.code, sickChild.code]).toEqual(["SICK", "VACATION", "SICK_CHILD"]);
   });
 });

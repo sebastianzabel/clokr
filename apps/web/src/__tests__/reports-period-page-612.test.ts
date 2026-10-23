@@ -22,7 +22,7 @@ import { describe, it, expect, vi } from "vitest";
 import { screen, within } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import { reportRights } from "$lib/page-rights";
-import type { PeriodRow } from "$lib/reports/period-report";
+import { PERIOD_PERSON_ABSENCE_CODES, type PeriodRow } from "$lib/reports/period-report";
 import TimesAccountsTable from "$lib/components/reports/TimesAccountsTable.svelte";
 import VacationAbsenceTab from "$lib/components/reports/VacationAbsenceTab.svelte";
 import PeriodKpis from "$lib/components/reports/PeriodKpis.svelte";
@@ -302,6 +302,25 @@ describe("/reports period area (Issue #612) - dialogs, export-only callers, tabs
     expect(PAGE).not.toContain("carryoverHorizon");
   });
 
+  // Issue #713 (D-10): the card „Abwesenheiten je Person“ sits in the vacation tab right after the
+  // tab's own cards and renders the one period answer's rows - the page derives nothing.
+  it("the vacation tab renders the card „Abwesenheiten je Person“ after the tab, from the period rows (Issue #713)", () => {
+    expect((TEMPLATE.match(/<AbsencesByPersonTable\b/g) ?? []).length).toBe(1);
+    const branch = TEMPLATE.indexOf('{:else if activeTab === "urlaub"}');
+    expect(branch).toBeGreaterThan(-1);
+    const card = TEMPLATE.indexOf("<AbsencesByPersonTable");
+    expect(card).toBeGreaterThan(branch);
+    expect(card).toBeGreaterThan(TEMPLATE.indexOf("<VacationAbsenceTab"));
+    // still inside the urlaub branch: neither another branch nor a closing {/if} lies between
+    expect(TEMPLATE.slice(branch + 1, card)).not.toMatch(/\{:else|\{\/if\}/);
+    const tag = TEMPLATE.slice(card, TEMPLATE.indexOf("/>", card));
+    expect(tag).toContain("rows={period?.rows ?? null}");
+    expect(tag).toContain("loading={periodLoading}");
+    expect(tag).toContain("filterActive={pageSalonId !== null}");
+    expect(tag).toContain("{personHref}");
+    expect(tag).toContain("onOpenPerson={openPerson}");
+  });
+
   it("the notice is the existing carry-over route with the entitlement id, and re-reads nothing", () => {
     const body = functionBody("sendCarryoverNotice");
     expect(body).toContain('"/reports/carryover-warn"');
@@ -435,12 +454,13 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     expect(TEMPLATE).toContain("bind:open={exportOpen}");
   });
 
-  it("wires the three downloads, the § 9 loader and the error toast", () => {
+  it("wires the four downloads, the § 9 loader and the error toast", () => {
     for (const wiring of [
       "loadSection9Note={loadExportSection9Note}",
       "onMonthlyExport={downloadMonthlyExport}",
       "onDatev={downloadDatev}",
       "onCsv={downloadPeriodCsv}",
+      "onAbsenceCsv={downloadAbsencesCsv}", // Issue #713
       "onError={(message) => toasts.error(message)}",
     ]) {
       expect(TEMPLATE, wiring).toContain(wiring);
@@ -452,6 +472,22 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     expect(functionBody("downloadPeriodCsv")).toContain("pageSalonId");
     expect(functionBody("downloadDatev")).not.toContain("pageSalonId");
     expect(functionBody("downloadDatev")).not.toContain("withSalonId(");
+  });
+
+  // Issue #713 (D-11): the Abwesenheiten file asks the same question as the table and carries the
+  // header salon like the times CSV; DATEV still never does.
+  it("the Abwesenheiten CSV takes the salon and is saved as Abwesenheiten-je-Person_<from>_<to>.csv (Issue #713)", () => {
+    const body = functionBody("downloadAbsencesCsv");
+    expect(body).toContain("periodAbsencesCsvPath(urlState.from, urlState.to, pageSalonId)");
+    expect(body).toContain(
+      "`Abwesenheiten-je-Person_${ymKey(urlState.from)}_${ymKey(urlState.to)}.csv`",
+    );
+    // the one salon 404 is a calm state in the dialog, any other failure is thrown to it
+    expect(body).toContain("exportSalonRejected = false;");
+    expect(body).toContain("isSalonFilterRejected(e)");
+    expect(body).toContain("exportSalonRejected = true;");
+    expect(body).toContain("throw e;");
+    expect(functionBody("downloadDatev")).not.toContain("pageSalonId");
   });
 
   it("the CSV is saved as Zeiten-und-Konten_<from>_<to>.csv", () => {
@@ -640,6 +676,10 @@ function person(id: string): PeriodRow {
     confirmedMonthCount: 1,
     labelled: true,
     sickDays: 0,
+    // Issue #713: the server always sends the ten counts.
+    absence: Object.fromEntries(
+      PERIOD_PERSON_ABSENCE_CODES.map((code) => [code, 0]),
+    ) as PeriodRow["absence"],
     months: [],
   };
 }

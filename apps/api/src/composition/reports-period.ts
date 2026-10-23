@@ -42,7 +42,12 @@ import {
 } from "./reports";
 import { resolveMonthReachIds, resolvePeriodReachIds, periodReachDay } from "./reach-day"; // Issues #679, #714: the reach day of a person
 import { SALON_VIEW_NOT_FOUND, salonHelperIds } from "./salon-view";
-import { periodCsvFilename, periodTableCsv } from "./period-csv";
+import {
+  periodAbsencesCsv,
+  periodAbsencesCsvFilename,
+  periodCsvFilename,
+  periodTableCsv,
+} from "./period-csv";
 
 /**
  * Issue #612 — `GET /api/v1/reports/period`: the period report of the reports page.
@@ -52,7 +57,11 @@ import { periodCsvFilename, periodTableCsv } from "./period-csv";
  * `/reports/monthly` assembly (P-03) — the #613 population of that month, the Stammsalon scope of
  * the caller's reach at that month's end, `computeMonthReportFigures` for Soll/Ist/Saldo/Gesamtsaldo
  * and `computeEmployeeSummary` for the sick days — through the helpers `reports.ts` exports, never
- * by editing the frozen `/monthly` handler. A person is listed with the months whose population
+ * by editing the frozen `/monthly` handler. Issue #713 — „Abwesenheiten nach Art“ lists own illness
+ * (`SICK`) and child sickness (`SICK_CHILD`) as two lines; both are calendar days of the one
+ * sick-day kernel. Every row carries `absence`, the person's counts per code (Kalendertage for
+ * SICK/SICK_CHILD, Arbeitstage for the requested kinds, Berufsschultage); „nach Art“ is the sum of
+ * those rows, never a second accumulation. A person is listed with the months whose population
  * contains them; the row and the KPIs are sums of those months.
  *
  * Opening saldo (P-01) = the Gesamtsaldo at the end of the month BEFORE `from`, the very figure the
@@ -87,6 +96,11 @@ const periodQuerySchema = z.object({
   salonId: z.string().uuid().optional(),
 });
 type PeriodQuery = z.infer<typeof periodQuerySchema>;
+// Issue #713 (P-713-09): the CSV route alone knows which table it serves; the JSON route keeps
+// `periodQuerySchema`. An unknown value is a 400 through the global Zod handler, before anything is read.
+const periodCsvQuerySchema = periodQuerySchema.extend({
+  table: z.enum(["times", "absences"]).default("times"),
+});
 
 type YearMonth = { year: number; month: number };
 
@@ -145,6 +159,8 @@ type PersonAccumulator = {
   exitDate: Date | null;
   months: PeriodMonthEntry[];
   covered: boolean;
+  /** Issue #713 (D-04): Σ over the person's months of the per-code counts of the /monthly assembly. */
+  absence: PeriodPersonAbsence;
 };
 
 /** Why Soll and saldo are withheld on a row: no `overtime:read` over the person. */
@@ -216,10 +232,43 @@ function absenceKindDays(
   };
 }
 
-type AbsenceTotal = { totalDays: number; persons: Set<string> };
+/**
+ * Issue #713 (P-713-01): the ten codes of `rows[].absence`, in the canonical column order. Keyed by
+ * CODE (control value), never by a display name. `SICK`/`SICK_CHILD` count calendar days, the seven
+ * requested kinds Arbeitstage, `VOCATIONAL_SCHOOL` Berufsschultage.
+ */
+export const PERIOD_PERSON_ABSENCE_CODES = [
+  "SICK",
+  "SICK_CHILD",
+  "VACATION",
+  "OVERTIME_COMP",
+  "SPECIAL",
+  "VOCATIONAL_SCHOOL",
+  "EDUCATION",
+  "UNPAID",
+  "MATERNITY",
+  "PARENTAL",
+] as const satisfies readonly (LeaveTypeCode | "VOCATIONAL_SCHOOL")[];
+export type PeriodPersonAbsenceCode = (typeof PERIOD_PERSON_ABSENCE_CODES)[number];
+export type PeriodPersonAbsence = Record<PeriodPersonAbsenceCode, number>;
+
+function zeroPersonAbsence(): PeriodPersonAbsence {
+  return {
+    SICK: 0,
+    SICK_CHILD: 0,
+    VACATION: 0,
+    OVERTIME_COMP: 0,
+    SPECIAL: 0,
+    VOCATIONAL_SCHOOL: 0,
+    EDUCATION: 0,
+    UNPAID: 0,
+    MATERNITY: 0,
+    PARENTAL: 0,
+  };
+}
 
 export type PeriodAbsence = {
-  code: AbsenceKindCode | "SICK";
+  code: AbsenceKindCode | "SICK" | "SICK_CHILD";
   /** Arbeitstage (priced, § 9 netted) for the leave kinds, Kalendertage for sickness. */
   unit: "WORKDAYS" | "CALENDAR_DAYS";
   personCount: number;
@@ -547,9 +596,6 @@ async function assemblePeriodReport(
   const persons = new Map<string, PersonAccumulator>();
   // Issue #688: the month entries whose account figures are asked for in ONE call after the loop.
   const figureSlots: Array<{ entry: PeriodMonthEntry; request: MonthReportFiguresRequest }> = [];
-  // P-07: Σ over months of the per-kind counts of the /monthly assembly, with the persons that have > 0.
-  const absenceTotals = new Map<AbsenceKindCode, AbsenceTotal>();
-  const sickTotal: AbsenceTotal = { totalDays: 0, persons: new Set() };
   for (const ym of months) {
     const { start, end } = monthRangeUtc(ym.year, ym.month, tz);
     const { firstDay, lastDay } = monthDateRange(ym.year, ym.month, tz);
@@ -654,20 +700,6 @@ async function assemblePeriodReport(
         leaveDaysByEmp.get(emp.id) ?? new Map(),
         section9ByEmp.get(emp.id) ?? [],
       );
-      if (sections === "all") {
-        for (const code of ABSENCE_KIND_ORDER) {
-          const days = absenceKindDays(summary)[code];
-          if (days <= 0) continue;
-          const total = absenceTotals.get(code) ?? { totalDays: 0, persons: new Set<string>() };
-          total.totalDays += days;
-          total.persons.add(emp.id);
-          absenceTotals.set(code, total);
-        }
-        if (summary.sickDays > 0) {
-          sickTotal.totalDays += summary.sickDays;
-          sickTotal.persons.add(emp.id);
-        }
-      }
       const monthCovered = overtimeIds === "all" || overtimeIds.has(emp.id);
 
       let person = persons.get(emp.id);
@@ -682,9 +714,17 @@ async function assemblePeriodReport(
           exitDate: emp.exitDate,
           months: [],
           covered: canSeeSaldo,
+          absence: zeroPersonAbsence(),
         };
         persons.set(emp.id, person);
       }
+      // Issue #713 (D-04): the per-person kinds the /monthly assembly already answers - summed over
+      // the person's months, nothing recomputed. Every `sections` value: it is part of `rows`.
+      person.absence.SICK += summary.sickDaysByCode.SICK;
+      person.absence.SICK_CHILD += summary.sickDaysByCode.SICK_CHILD;
+      person.absence.VOCATIONAL_SCHOOL += summary.vocationalSchoolDays;
+      const kindDays = absenceKindDays(summary);
+      for (const code of ABSENCE_KIND_ORDER) person.absence[code] += kindDays[code];
       // A row is covered only if every listed month is.
       person.covered = person.covered && canSeeSaldo && monthCovered;
       const entry: PeriodMonthEntry = {
@@ -841,6 +881,10 @@ async function assemblePeriodReport(
       confirmedMonthCount: person.months.filter((m) => m.confirmed).length,
       labelled: person.months.some((m) => m.labelled),
       sickDays: round2(sum((m) => m.sickDays)),
+      // Issue #713 (P-713-01): one number per code, filtered or not (D-08), canonical order.
+      absence: Object.fromEntries(
+        PERIOD_PERSON_ABSENCE_CODES.map((code) => [code, round2(person.absence[code])]),
+      ) as PeriodPersonAbsence,
       // Issue #714 (D-06): the salon viewpoint of the row = Σ its months; never next to a Soll figure.
       ...(filterSalonId !== null
         ? { salonWorkedMinutes: sum((m) => m.salonWorkedMinutes ?? 0) }
@@ -906,24 +950,25 @@ async function assemblePeriodReport(
   const endYear = vacationYears[vacationYears.length - 1];
   const sumVacation = (pick: (r: PeriodVacationRow) => number | null): number =>
     round2(endYear.rows.reduce((s, r) => s + (r.missingEntitlement ? 0 : (pick(r) ?? 0)), 0));
+  // Issue #713 (D-04, P-713-05): „Abwesenheiten nach Art“ is the sum of the rows just built - Σ persons
+  // = the line by construction. No Berufsschule line: that list keeps its LeaveRequest semantics (D-05).
   const absences: PeriodAbsence[] = [];
-  for (const code of ABSENCE_KIND_ORDER) {
-    const total = absenceTotals.get(code);
-    if (!total) continue;
-    absences.push({
-      code,
-      unit: "WORKDAYS",
-      personCount: total.persons.size,
-      totalDays: round2(total.totalDays),
-    });
-  }
-  if (sickTotal.persons.size > 0) {
-    absences.push({
-      code: "SICK",
-      unit: "CALENDAR_DAYS",
-      personCount: sickTotal.persons.size,
-      totalDays: round2(sickTotal.totalDays),
-    });
+  if (sections === "all") {
+    const lines = [
+      ...ABSENCE_KIND_ORDER.map((code) => ({ code, unit: "WORKDAYS" as const })),
+      { code: "SICK" as const, unit: "CALENDAR_DAYS" as const },
+      { code: "SICK_CHILD" as const, unit: "CALENDAR_DAYS" as const },
+    ];
+    for (const { code, unit } of lines) {
+      const withValue = rows.filter((r) => r.absence[code] > 0);
+      if (withValue.length === 0) continue;
+      absences.push({
+        code,
+        unit,
+        personCount: withValue.length,
+        totalDays: round2(withValue.reduce((s, r) => s + r.absence[code], 0)),
+      });
+    }
   }
 
   return {
@@ -1017,21 +1062,22 @@ export async function reportsPeriodRoutes(app: FastifyInstance) {
     },
   });
 
-  // GET /api/v1/reports/period/csv?from=YYYY-MM&to=YYYY-MM&salonId=&employeeId=
-  // The "Zeiten & Konten" table of the same assembly as the JSON, as a spreadsheet file (P-11). It is
-  // an export of personal data: the reach is the one of `report:export`, and every successful
-  // download is audited BEFORE the bytes leave. A refusal (400/404) throws out of the assembly and
-  // writes nothing.
+  // GET /api/v1/reports/period/csv?from=YYYY-MM&to=YYYY-MM&salonId=&employeeId=&table=times|absences
+  // One of the two tables of the same assembly as the JSON, as a spreadsheet file: "Zeiten & Konten"
+  // (`table=times`, the default, P-11) or "Abwesenheiten je Person" (`table=absences`, Issue #713,
+  // D-11). It is an export of personal data: the reach is the one of `report:export`, and every
+  // successful download is audited BEFORE the bytes leave, each table under its own audit type. A
+  // refusal (400/404) throws out of the assembly and writes nothing.
   app.get("/period/csv", {
     schema: {
       tags: ["Reporting"],
       security: [{ bearerAuth: [] }],
       description:
-        "CSV export of the period table (Zeiten & Konten): one line per person with Soll, Ist, saldo at the start, over the period and at the end in hours with a decimal comma, UTF-8 with BOM, semicolon separated. Same assembly and rules as GET /reports/period, with the reach of report:export. Audited as EXPORT.",
+        "CSV export of the period table (Zeiten & Konten): one line per person with Soll, Ist, saldo at the start, over the period and at the end in hours with a decimal comma, UTF-8 with BOM, semicolon separated. Same assembly and rules as GET /reports/period, with the reach of report:export. Audited as EXPORT. With table=absences the file is the table Abwesenheiten je Person (per person and leave-type code: calendar days for sickness and child sickness, Berufsschule days, workdays for the requested kinds), audited as PERIOD_ABSENCES_CSV.",
     },
     preHandler: requirePermission("report:export:ZUGEWIESEN"),
     handler: async (req, reply) => {
-      const query = periodQuerySchema.parse(req.query);
+      const { table, ...query } = periodCsvQuerySchema.parse(req.query);
       let report: Awaited<ReturnType<typeof assemblePeriodReport>>;
       try {
         report = await assemblePeriodReport(app, req, query, "report:export:ZUGEWIESEN", {
@@ -1044,13 +1090,14 @@ export async function reportsPeriodRoutes(app: FastifyInstance) {
         }
         throw err;
       }
-      const file = periodTableCsv(report.rows);
+      const absences = table === "absences";
+      const file = absences ? periodAbsencesCsv(report.rows) : periodTableCsv(report.rows);
       await app.audit({
         userId: req.user.sub,
         action: "EXPORT",
         entity: "Report",
         newValue: {
-          type: "PERIOD_CSV",
+          type: absences ? "PERIOD_ABSENCES_CSV" : "PERIOD_CSV",
           from: report.from,
           to: report.to,
           // The validated salon id (never a name) - only present under a filter.
@@ -1061,7 +1108,11 @@ export async function reportsPeriodRoutes(app: FastifyInstance) {
       reply.header("Content-Type", "text/csv; charset=utf-8");
       reply.header(
         "Content-Disposition",
-        `attachment; filename="${periodCsvFilename(report.from, report.to)}"`,
+        `attachment; filename="${
+          absences
+            ? periodAbsencesCsvFilename(report.from, report.to)
+            : periodCsvFilename(report.from, report.to)
+        }"`,
       );
       return reply.send(file);
     },

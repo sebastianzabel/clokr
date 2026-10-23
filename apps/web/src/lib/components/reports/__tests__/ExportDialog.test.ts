@@ -1,5 +1,6 @@
 // Issue #612 (D-612-6, ADD-5, UI-SPEC "„Exportieren“ dialog") - the one export dialog, mounted. It
-// holds Monatsexport (PDF), DATEV-Export and „Tabelle als CSV“; for a multi-month period it asks for
+// holds Monatsexport (PDF), DATEV-Export, „Tabelle als CSV“ and (Issue #713) „Abwesenheiten als CSV“;
+// for a multi-month period it asks for
 // the month of the first two; the § 9 note sits in the Monatsexport block and follows that month.
 // lib/components/reports/ is outside the lint:ui-classes gate (CLAUDE.md), so it is proven here.
 
@@ -44,6 +45,7 @@ function props(overrides: Record<string, unknown> = {}) {
     onMonthlyExport: vi.fn().mockResolvedValue(undefined),
     onDatev: vi.fn().mockResolvedValue(undefined),
     onCsv: vi.fn().mockResolvedValue(undefined),
+    onAbsenceCsv: vi.fn().mockResolvedValue(undefined),
     onError: vi.fn(),
     ...overrides,
   };
@@ -67,9 +69,14 @@ describe("ExportDialog - one-month period", () => {
     expect(screen.getByText("September 2026")).toBeTruthy();
   });
 
-  it("has the three blocks with their descriptions and buttons, and no month field", () => {
+  it("has the four blocks with their descriptions and buttons, and no month field", () => {
     renderWithTheme(ExportDialog, props());
-    for (const title of ["Monatsexport (PDF)", "DATEV-Export", "Tabelle als CSV"]) {
+    for (const title of [
+      "Monatsexport (PDF)",
+      "DATEV-Export",
+      "Tabelle als CSV",
+      "Abwesenheiten als CSV",
+    ]) {
       expect(screen.getByRole("heading", { name: title })).toBeTruthy();
     }
     expect(
@@ -83,10 +90,17 @@ describe("ExportDialog - one-month period", () => {
         "Die Tabelle „Zeiten & Konten“ für den ganzen Zeitraum, Semikolon-getrennt, für Excel.",
       ),
     ).toBeTruthy();
+    // Issue #713: the fourth block, after the CSV block
+    expect(
+      screen.getByText(
+        "Die Tabelle „Abwesenheiten je Person“ für den ganzen Zeitraum, alle Spalten, Semikolon-getrennt, für Excel.",
+      ),
+    ).toBeTruthy();
     for (const name of [
       "Monatsexport herunterladen",
       "DATEV-Datei herunterladen",
       "CSV-Datei herunterladen",
+      "Abwesenheiten-CSV herunterladen",
     ]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
     }
@@ -101,15 +115,30 @@ describe("ExportDialog - one-month period", () => {
     expect(marked[0].textContent).toContain("Monatsexport herunterladen");
   });
 
-  it("calls the three callbacks: Monatsexport and DATEV with the month, the CSV with nothing", async () => {
+  it("calls the four callbacks: Monatsexport and DATEV with the month, both CSVs with nothing", async () => {
     const p = props();
     renderWithTheme(ExportDialog, p);
     await fireEvent.click(screen.getByRole("button", { name: "Monatsexport herunterladen" }));
     await fireEvent.click(screen.getByRole("button", { name: "DATEV-Datei herunterladen" }));
     await fireEvent.click(screen.getByRole("button", { name: "CSV-Datei herunterladen" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Abwesenheiten-CSV herunterladen" }));
     expect(p.onMonthlyExport).toHaveBeenCalledWith(2026, 9);
     expect(p.onDatev).toHaveBeenCalledWith(2026, 9);
     expect(p.onCsv).toHaveBeenCalledWith();
+    expect(p.onAbsenceCsv).toHaveBeenCalledWith();
+  });
+
+  it("puts the Abwesenheiten block after the CSV block, as its own export block (Issue #713)", () => {
+    renderWithTheme(ExportDialog, props());
+    const blocks = Array.from(document.querySelectorAll("[data-export-block]")).map((b) =>
+      b.getAttribute("data-export-block"),
+    );
+    expect(blocks).toEqual(["monthly", "datev", "csv", "absences-csv"]);
+    const block = document.querySelector("[data-export-block='absences-csv']") as HTMLElement;
+    expect(within(block).getByRole("heading", { name: "Abwesenheiten als CSV" })).toBeTruthy();
+    expect(
+      within(block).getByRole("button", { name: "Abwesenheiten-CSV herunterladen" }),
+    ).toBeTruthy();
   });
 
   it("never renders the phrase the HR e2e matches by regex", () => {
@@ -159,9 +188,12 @@ describe("ExportDialog - multi-month period", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Monatsexport herunterladen" }));
     await fireEvent.click(screen.getByRole("button", { name: "DATEV-Datei herunterladen" }));
     await fireEvent.click(screen.getByRole("button", { name: "CSV-Datei herunterladen" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Abwesenheiten-CSV herunterladen" }));
     expect(p.onMonthlyExport).toHaveBeenCalledWith(2026, 7);
     expect(p.onDatev).toHaveBeenCalledWith(2026, 7);
     expect(p.onCsv).toHaveBeenCalledWith();
+    // like the times CSV, the Abwesenheiten file covers the whole period and takes no month
+    expect(p.onAbsenceCsv).toHaveBeenCalledWith();
   });
 
   it("lists the months of a period across the year change in order", () => {
@@ -252,6 +284,11 @@ describe("ExportDialog - errors and busy state", () => {
       "onCsv",
       "Die CSV-Datei konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
     ],
+    [
+      "Abwesenheiten-CSV herunterladen",
+      "onAbsenceCsv",
+      "Die Abwesenheiten-CSV konnte nicht erstellt werden. Versuch es bitte noch einmal.",
+    ],
   ])(
     "a rejected %s reports the copy-deck text and keeps the dialog open",
     async (button, cb, text) => {
@@ -286,6 +323,26 @@ describe("ExportDialog - errors and busy state", () => {
   });
 });
 
+describe("ExportDialog - the Abwesenheiten CSV is busy on its own (Issue #713)", () => {
+  it("disables only the running Abwesenheiten button, keeps its label and shows a spinner", async () => {
+    let finish!: () => void;
+    const onAbsenceCsv = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
+    renderWithTheme(ExportDialog, props({ onAbsenceCsv }));
+    await fireEvent.click(screen.getByRole("button", { name: "Abwesenheiten-CSV herunterladen" }));
+    const running = screen.getByRole("button", {
+      name: "Abwesenheiten-CSV herunterladen",
+    }) as HTMLButtonElement;
+    expect(running.disabled).toBe(true);
+    expect(within(running).getByRole("status")).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "CSV-Datei herunterladen" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    finish();
+    await waitFor(() => expect(running.disabled).toBe(false));
+  });
+});
+
 describe("ExportDialog - salon filter (#542)", () => {
   it("shows the person and no-Stammsalon notes in block 1 and the DATEV note in block 2", () => {
     renderWithTheme(ExportDialog, props({ filterActive: true }));
@@ -310,11 +367,23 @@ describe("ExportDialog - salon filter (#542)", () => {
     expect(csv.closest("[data-export-block]")?.getAttribute("data-export-block")).toBe("csv");
   });
 
-  it("shows none of the three notes without a filter", () => {
+  // Issue #713 (D-11): the Abwesenheiten file lists the same persons as the times CSV.
+  it("names in the Abwesenheiten block whom the file lists, with the CSV note (#713)", () => {
+    renderWithTheme(ExportDialog, props({ filterActive: true }));
+    const note = screen.getByTestId("export-absences-csv-salon-note");
+    expect(note.textContent).toBe(SALON_CSV_PERSONS_NOTE);
+    expect(note.classList.contains("form-hint")).toBe(true);
+    expect(note.closest("[data-export-block]")?.getAttribute("data-export-block")).toBe(
+      "absences-csv",
+    );
+  });
+
+  it("shows none of the four notes without a filter", () => {
     renderWithTheme(ExportDialog, props());
     expect(screen.queryByTestId("export-salon-persons-note")).toBeNull();
     expect(screen.queryByTestId("datev-all-salons-note")).toBeNull();
     expect(screen.queryByTestId("export-csv-salon-note")).toBeNull();
+    expect(screen.queryByTestId("export-absences-csv-salon-note")).toBeNull();
   });
 
   it("shows the calm state instead of an error when the salon was rejected", () => {

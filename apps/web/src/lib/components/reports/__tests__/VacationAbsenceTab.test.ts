@@ -455,7 +455,32 @@ describe("VacationAbsenceTab - Abwesenheiten nach Art", () => {
         .getAllByRole("cell")
         .map((c) => c.textContent?.replace(/\s+/g, " ").trim());
     expect(cells(rows[1])).toEqual(["Urlaub (Arbeitstage)", "4", "12,5"]);
-    expect(cells(rows[2])).toEqual(["Krankheit (Kalendertage)", "2", "6"]);
+    expect(cells(rows[2])).toEqual(["Krank (Kalendertage)", "2", "6"]);
+  });
+
+  it("lists Krank and Kinderkrank as two lines by kind, each with the server's persons and days (Issue #713)", () => {
+    viewport(false);
+    renderWithTheme(
+      VacationAbsenceTab,
+      props({
+        absences: [
+          { code: "VACATION", unit: "WORKDAYS", personCount: 4, totalDays: 12.5 },
+          { code: "SICK", unit: "CALENDAR_DAYS", personCount: 2, totalDays: 6 },
+          { code: "SICK_CHILD", unit: "CALENDAR_DAYS", personCount: 1, totalDays: 3.5 },
+        ] satisfies PeriodAbsence[],
+      }),
+    );
+    const table = screen.getByRole("table", { name: /Abwesenheiten nach Art/ });
+    const rows = within(table).getAllByRole("row");
+    const cells = (r: HTMLElement) =>
+      within(r)
+        .getAllByRole("cell")
+        .map((c) => c.textContent?.replace(/\s+/g, " ").trim());
+    expect(rows).toHaveLength(4);
+    expect(cells(rows[2])).toEqual(["Krank (Kalendertage)", "2", "6"]);
+    expect(cells(rows[3])).toEqual(["Kinderkrank (Kalendertage)", "1", "3,5"]);
+    const dots = document.querySelectorAll<HTMLElement>("span.type-dot");
+    expect(dots[2].getAttribute("style")).toContain("--type-color: var(--leave-type-sick-child)");
   });
 
   it("colours the kind dot through --type-color from the kind's token, looked up by code", () => {
@@ -481,7 +506,7 @@ describe("VacationAbsenceTab - Abwesenheiten nach Art", () => {
     const table = screen.getByRole("table", { name: /Abwesenheiten nach Art/ });
     expect(within(table).getAllByRole("row")).toHaveLength(3);
     expect(within(table).getByText(/Urlaub \(Arbeitstage\)/)).toBeTruthy();
-    expect(within(table).getByText(/Krankheit \(Kalendertage\)/)).toBeTruthy();
+    expect(within(table).getByText(/Krank \(Kalendertage\)/)).toBeTruthy();
     expect(screen.queryByText(/je Salon nicht ausgewiesen/)).toBeNull();
   });
 });

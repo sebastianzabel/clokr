@@ -1042,10 +1042,19 @@ select.form-input {
   min-width: 0;
 }
 
-.filter-search {
+.filter-bar .filter-search {
   flex: 1;
   min-width: 180px;
   max-width: 320px;
+}
+
+/* Narrow phones: the search field takes its own full row instead of sharing it with the
+   selects (Issue #726). Same specificity as `.filter-bar .form-input`, placed after it. */
+@media (max-width: 480px) {
+  .filter-bar .filter-search {
+    flex: 1 1 100%;
+    max-width: none;
+  }
 }
 
 .filter-select {

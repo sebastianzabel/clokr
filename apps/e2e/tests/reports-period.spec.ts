@@ -31,6 +31,12 @@
  * the person homed there and the section with "Aushilfen aus anderen Salons" are each in the
  * viewport (1280, 390 and 360 px, light and dark), with two controls that show the check can fail.
  *
+ * A fifth describe (Issue #713) proves the same for the absences per person: the card „Abwesenheiten
+ * je Person“, the person's Krank and Kinderkrank values, the two sick lines of „Abwesenheiten nach
+ * Art“, the drill-down section „Abwesenheiten“ and the export option are each in the viewport
+ * (1280, 390 and 360 px, light and dark), read from a real answer seeded through the API, with two
+ * controls that show the check can fail.
+ *
  * Auth: same model as hr-view-86.spec.ts (throwaway tenant, API login, localStorage hydrated with
  * addInitScript). Names are synthetic. No fixed sleeps: every wait is on an observable condition.
  * Dates of the functional describe are computed from the current day; the matrix and layout checks
@@ -312,7 +318,16 @@ interface PeriodAnswer {
   from: string;
   to: string;
   kpis: { workedMinutes: number; personCount: number; salonWorkedMinutes?: number };
-  rows: Array<{ employeeId: string; employeeName: string; workedMinutes: number }>;
+  rows: Array<{
+    employeeId: string;
+    employeeName: string;
+    workedMinutes: number;
+    sickDays: number;
+    /** The person's counts per leave-type code (Issue #713). */
+    absence: Record<string, number>;
+  }>;
+  /** The „Abwesenheiten nach Art“ lines (Issue #713 lists SICK and SICK_CHILD apart). */
+  absences: Array<{ code: string; unit: string; personCount: number; totalDays: number }>;
   /** Present only under a salon filter (Issue #714). */
   personBasis?: string;
   helpers?: Array<{ employeeId: string; employeeName: string; salonWorkedMinutes: number }>;
@@ -720,6 +735,20 @@ function buildAnswer(template: Json, people: SyntheticPerson[], from: string, to
       confirmedMonthCount: series.length - unconfirmed,
       labelled: true,
       sickDays: series.reduce((s, m) => s + m.sickDays, 0),
+      // Issue #713: the per-person counts, consistent with the row's own sickDays (SICK is the sum of
+      // the months' sick days, SICK_CHILD 0) and one vacation day for every third person.
+      absence: {
+        SICK: series.reduce((s, m) => s + m.sickDays, 0),
+        SICK_CHILD: 0,
+        VACATION: i % 3 === 0 ? 1 : 0,
+        OVERTIME_COMP: 0,
+        SPECIAL: 0,
+        VOCATIONAL_SCHOOL: 0,
+        EDUCATION: 0,
+        UNPAID: 0,
+        MATERNITY: 0,
+        PARENTAL: 0,
+      },
       sollUnavailableReason: undefined,
       months: series,
     };
@@ -1032,6 +1061,9 @@ test.describe("Issue #612 — Sichtmatrix 390/360 px, hell/dunkel", () => {
         await waitKpisSettled(page);
         await expect(page.getByText("Urlaubsübersicht", { exact: true }).first()).toBeVisible();
         await expect(page.getByRole("button", { name: /Hinweis senden/ }).first()).toBeVisible();
+        // Issue #713: the card „Abwesenheiten je Person“ lists the first page of the 30 people, so
+        // the overflow and clip probes below cover it with the long name.
+        await expect(page.locator(".abp-list li")).toHaveCount(25);
         results.push(
           await checkCell(page, "urlaub", viewport.width, mode, {
             axe: true,
@@ -1442,6 +1474,315 @@ test.describe("Issue #714 — Salonwechsel: Stammsalon-Sicht im Blick", () => {
         await expect(tile, "control: no salon tile under 'Alle Salons'").toHaveCount(0);
         await expect(page.getByTestId("salon-worked-section")).toHaveCount(0);
         await expect(page.getByTestId("period-kpis-salon-note")).toHaveCount(0);
+      });
+    }
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Issue #713 — absences per person
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The first Monday on or after the 10th of a month (a Monday-Tuesday-Thursday week fits the month). */
+function firstMondayFromTenth(ym: Ym): Date {
+  const d = new Date(Date.UTC(ym.year, ym.month - 1, 10));
+  while (d.getUTCDay() !== 1) d.setUTCDate(d.getUTCDate() + 1);
+  return d;
+}
+
+function plusDays(d: Date, n: number): string {
+  const x = new Date(d);
+  x.setUTCDate(x.getUTCDate() + n);
+  return dayKey(x);
+}
+
+/** A leave request filed by the admin on behalf of the person; approved when it is not already. */
+async function seedApprovedLeave(
+  request: APIRequestContext,
+  tenant: TestTenant,
+  person: Person,
+  type: "SICK" | "SICK_CHILD",
+  startDate: string,
+  endDate: string,
+) {
+  const created = await request.post(`${API_BASE}/api/v1/leave/requests`, {
+    headers: authHeaders(tenant.adminToken),
+    data: { type, startDate, endDate, employeeId: person.id },
+  });
+  expect(created.status(), `file ${type} ${startDate}..${endDate} (${await created.text()})`).toBe(
+    201,
+  );
+  const body = (await created.json()) as { id: string; status: string };
+  if (body.status !== "APPROVED") {
+    const review = await request.patch(`${API_BASE}/api/v1/leave/requests/${body.id}/review`, {
+      headers: authHeaders(tenant.adminToken),
+      data: { status: "APPROVED" },
+    });
+    expect(review.ok(), `approve ${type} (${review.status()} ${await review.text()})`).toBe(true);
+  }
+}
+
+test.describe("Issue #713 — Abwesenheiten je Person im Blick", () => {
+  for (const viewport of SALON_SWITCH_VIEWPORTS) {
+    for (const mode of MODES) {
+      test(`Abwesenheiten je Person bei ${viewport.width} px, ${
+        mode === "light" ? "hell" : "dunkel"
+      }`, async ({ page, request, tenant }, testInfo) => {
+        // ── Seed through the API: one person, two sick days and one child-sick day last month.
+        const now = ymOf(todayInTenantZone());
+        const prev = addMonths(now, -1);
+        const hire = `${ymKey(addMonths(now, -3))}-01`;
+        const kira = await createPerson(request, tenant, "kira", "Kira", "Krank-Kind", hire);
+        const monday = firstMondayFromTenth(prev);
+        await seedApprovedLeave(
+          request,
+          tenant,
+          kira,
+          "SICK",
+          plusDays(monday, 0),
+          plusDays(monday, 1),
+        );
+        await seedApprovedLeave(
+          request,
+          tenant,
+          kira,
+          "SICK_CHILD",
+          plusDays(monday, 3),
+          plusDays(monday, 3),
+        );
+
+        // ── Open the tab on the real answer (never mocked) and read the person's figures.
+        await signInAdmin(page, request, tenant, { mode });
+        await page.setViewportSize(viewport);
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        const loaded = periodResponse(page, prev, prev);
+        await page.goto(
+          `${tenant.baseUrl}/reports?from=${ymKey(prev)}&to=${ymKey(prev)}&tab=urlaub`,
+        );
+        const answer = await answerOf(await loaded);
+        const row = answer.rows.find((r) => r.employeeId === kira.id);
+        expect(row, "the answer lists the seeded person").toBeDefined();
+        expect(row?.absence.SICK, "two own sick calendar days").toBe(2);
+        expect(row?.absence.SICK_CHILD, "one child-sick calendar day").toBe(1);
+        expect(row?.sickDays, "sickDays stays the combined figure").toBe(3);
+        const sickLine = answer.absences.find((a) => a.code === "SICK");
+        const childLine = answer.absences.find((a) => a.code === "SICK_CHILD");
+        expect(sickLine, "„nach Art“ has a SICK line").toBeDefined();
+        expect(childLine, "„nach Art“ has a SICK_CHILD line").toBeDefined();
+        await waitKpisSettled(page);
+        await expect(page.getByTestId("absence-unit-hint")).toHaveCount(1);
+        await settle(page);
+
+        const wide = viewport.width >= 768;
+
+        // ── 1. The card and the person's values.
+        await expectSeenInViewport(
+          page.locator(".card-title", { hasText: /^Abwesenheiten je Person$/ }),
+          "the card heading 'Abwesenheiten je Person'",
+        );
+        if (wide) {
+          // `hasText` with a string matches case-insensitively, and „Kinderkrank“ contains „krank“.
+          const krankHeader = page.locator("table.abp-table thead th", {
+            hasText: /^\s*Krank \(Kalendertage\)/,
+          });
+          const childHeader = page.locator("table.abp-table thead th", {
+            hasText: "Kinderkrank (Kalendertage)",
+          });
+          await expectSeenInViewport(krankHeader, "the column header 'Krank (Kalendertage)'");
+          await expectSeenInViewport(childHeader, "the column header 'Kinderkrank (Kalendertage)'");
+          const tableRow = page.locator("tr.abp-row", { hasText: kira.fullName });
+          await expectSeenInViewport(tableRow, `the table row of ${kira.fullName}`);
+          const headers = (await page.locator("table.abp-table thead th").allInnerTexts()).map(
+            (h) => h.trim(),
+          );
+          const cellOf = (header: string) => {
+            // `innerText` carries the header's CSS uppercase transform, so compare case-insensitively.
+            const col = headers.findIndex((h) => h.toLowerCase().startsWith(header.toLowerCase()));
+            expect(col, `column ${header} among ${JSON.stringify(headers)}`).toBeGreaterThan(0);
+            return tableRow.locator("th, td").nth(col);
+          };
+          await expect(cellOf("Krank (Kalendertage)")).toHaveText("2");
+          await expect(cellOf("Kinderkrank (Kalendertage)")).toHaveText("1");
+        } else {
+          const item = page.locator(".abp-list li", { hasText: kira.fullName });
+          await expectSeenInViewport(item, `the list item of ${kira.fullName}`);
+          await expect(item).toContainText("Krank 2");
+          await expect(item).toContainText("Kinderkrank 1");
+        }
+
+        // ── 2. The two sick lines of „Abwesenheiten nach Art“.
+        const krankLine = page.locator("table.abs-table tbody tr", {
+          hasText: /^\s*Krank \(Kalendertage\)/,
+        });
+        const kinderLine = page.locator("table.abs-table tbody tr", {
+          hasText: /^\s*Kinderkrank \(Kalendertage\)/,
+        });
+        await expectSeenInViewport(krankLine, "the 'nach Art' line 'Krank (Kalendertage)'");
+        await expectSeenInViewport(kinderLine, "the 'nach Art' line 'Kinderkrank (Kalendertage)'");
+
+        // ── Geometry of the tab; a screenshot of the whole page.
+        const tabOverflow = await measurePageOverflow(page, TOLERANCE_PX);
+        expect(tabOverflow.overflowing, "no element overflows the tab").toEqual([]);
+        expect(tabOverflow.scrollWidth).toBeLessThanOrEqual(tabOverflow.innerWidth + TOLERANCE_PX);
+        const shot = testInfo.outputPath(`abwesenheiten-${viewport.width}-${mode}.png`);
+        await page.screenshot({ path: shot, fullPage: true });
+        await testInfo.attach(`abwesenheiten-${viewport.width}-${mode}`, {
+          path: shot,
+          contentType: "image/png",
+        });
+
+        // ── 3. The drill-down section „Abwesenheiten“ (a plain click on the person).
+        if (wide) {
+          await page
+            .locator("tr.abp-row", { hasText: kira.fullName })
+            .locator("a.abp-person-link")
+            .click();
+        } else {
+          await page
+            .getByRole("link", { name: `${kira.fullName} – Personenansicht öffnen` })
+            .first()
+            .click();
+        }
+        const dialog = page.getByRole("dialog", { name: kira.fullName });
+        await expect(dialog).toBeVisible();
+        await settle(page);
+        await expectSeenInViewport(
+          dialog.getByRole("heading", { name: "Abwesenheiten", exact: true }),
+          "the drill-down heading 'Abwesenheiten'",
+        );
+        await expectSeenInViewport(
+          dialog.getByText("Kinderkrank: 1 Kalendertag", { exact: true }),
+          "the drill-down line 'Kinderkrank: 1 Kalendertag'",
+        );
+        const drillOverflow = await measurePageOverflow(page, TOLERANCE_PX);
+        expect(drillOverflow.overflowing, "no element overflows with the drill-down").toEqual([]);
+        expect(drillOverflow.scrollWidth).toBeLessThanOrEqual(
+          drillOverflow.innerWidth + TOLERANCE_PX,
+        );
+        await page.keyboard.press("Escape");
+        await expect(dialog).toBeHidden();
+
+        // ── 4. The export option.
+        await page.getByTestId("reports-period-export").click();
+        const exportDialog = page.getByRole("dialog", { name: "Exportieren" });
+        await expect(exportDialog).toBeVisible();
+        await settle(page);
+        await expectSeenInViewport(
+          exportDialog.getByRole("button", { name: "Abwesenheiten-CSV herunterladen" }),
+          "the export option 'Abwesenheiten-CSV herunterladen'",
+        );
+        const exportOverflow = await measurePageOverflow(page, TOLERANCE_PX);
+        expect(exportOverflow.overflowing, "no element overflows with the export dialog").toEqual(
+          [],
+        );
+        await page.keyboard.press("Escape");
+        await expect(exportDialog).toBeHidden();
+
+        // ── Control (a): an element placed off screen is NOT in the viewport.
+        await page.evaluate(() => {
+          const probe = document.createElement("div");
+          probe.id = "offscreen-probe";
+          probe.textContent = "probe";
+          probe.style.cssText = "position:fixed;left:-10000px;top:0;width:100px;height:20px";
+          document.body.appendChild(probe);
+        });
+        await expect(
+          page.locator("#offscreen-probe"),
+          "control: the off-screen probe is not in the viewport",
+        ).not.toBeInViewport();
+        await page.evaluate(() => document.getElementById("offscreen-probe")?.remove());
+
+        // ── Control (b): a kind nobody has in the answer is not a column / list entry, only a hint.
+        expect(
+          answer.rows.every((r) => r.absence.PARENTAL === 0),
+          "nobody of the answer has Elternzeit",
+        ).toBe(true);
+        if (wide) {
+          await expect(
+            page.locator("table.abp-table thead th", { hasText: "Elternzeit (Arbeitstage)" }),
+            "control: no column for a kind nobody has",
+          ).toHaveCount(0);
+          await expect(
+            page.locator("table.abp-table thead th", { hasText: "Kinderkrank (Kalendertage)" }),
+            "control: the column of a kind somebody has exists",
+          ).toHaveCount(1);
+        } else {
+          const item = page.locator(".abp-list li", { hasText: kira.fullName });
+          await expect(item, "control: no Elternzeit entry in the list").not.toContainText(
+            "Elternzeit",
+          );
+          await expect(item).toContainText("Kinderkrank");
+        }
+        await expect(page.getByTestId("absence-hidden-hint")).toContainText("Elternzeit");
+      });
+    }
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Issue #726 — the search field of a filter bar keeps its width
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+test.describe("Issue #726 — Suchfeld der Filterleiste", () => {
+  const MIN_SEARCH_PX = 180;
+  const TABS = ["zeiten", "urlaub"] as const;
+
+  for (const tab of TABS) {
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 360, height: 800 },
+      { width: 1280, height: 800 },
+    ]) {
+      test(`Suchfeld ${tab} — ${viewport.width} px`, async ({ page, request, tenant }) => {
+        await page.setViewportSize(viewport);
+        await openSynthetic(page, request, tenant, { skin: "editorial", mode: "light" });
+        if (tab !== "zeiten") {
+          await page.goto(
+            `${tenant.baseUrl}/reports?from=${MATRIX_PERIOD}&to=${MATRIX_PERIOD}&tab=${tab}`,
+          );
+        }
+        const search = page.locator(".filter-bar .filter-search");
+        await expect(search, "the filter bar offers its search field").toBeVisible();
+
+        const geo = await search.evaluate((el) => {
+          const bar = el.closest(".filter-bar") as HTMLElement;
+          const r = el.getBoundingClientRect();
+          const b = bar.getBoundingClientRect();
+          const siblings = [...bar.children]
+            .filter((c) => c !== el)
+            .map((c) => c.getBoundingClientRect())
+            .filter((c) => c.width > 0);
+          return {
+            width: r.width,
+            barWidth: b.width,
+            sharesRow: siblings.some((s) => s.top < r.bottom - 1 && s.bottom > r.top + 1),
+          };
+        });
+
+        if (viewport.width <= 480) {
+          expect(geo.width, "search width").toBeGreaterThanOrEqual(MIN_SEARCH_PX);
+          expect(geo.sharesRow, "the search field has its own row").toBe(false);
+          expect(geo.width, "full row width").toBeGreaterThanOrEqual(geo.barWidth - 1);
+        } else {
+          // Desktop is unchanged: a flexible field between 180 and 320 px next to its siblings.
+          expect(geo.width).toBeGreaterThanOrEqual(MIN_SEARCH_PX);
+          expect(geo.width).toBeLessThanOrEqual(320 + 0.5);
+          expect(geo.sharesRow, "desktop: count/select stay on the search row").toBe(true);
+        }
+
+        if (viewport.width <= 480) {
+          const overflow = await measurePageOverflow(page, TOLERANCE_PX);
+          expect(overflow.overflowing).toEqual([]);
+          expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth + TOLERANCE_PX);
+        }
+
+        // Control: with the defect re-created (min-width 0, no growth) the same probe reads
+        // a stub, so the assertions above can fail.
+        await page.addStyleTag({
+          content: ".filter-bar .filter-search{min-width:0 !important;flex:0 1 0 !important}",
+        });
+        const broken = await search.evaluate((el) => el.getBoundingClientRect().width);
+        expect(broken, "control: the probe sees a shrunken field").toBeLessThan(MIN_SEARCH_PX);
       });
     }
   }

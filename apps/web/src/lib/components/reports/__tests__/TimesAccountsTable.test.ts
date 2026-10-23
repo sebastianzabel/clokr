@@ -27,9 +27,15 @@ import {
   SALON_PERIOD_END_PERSONS_NOTE,
 } from "$lib/salons/page-scope";
 import { forecastLabel } from "$lib/saldo/forecast-label";
-import type { PeriodRow } from "$lib/reports/period-report";
+import { PERIOD_PERSON_ABSENCE_CODES, type PeriodRow } from "$lib/reports/period-report";
 import TimesAccountsTable from "../TimesAccountsTable.svelte";
 import source from "../TimesAccountsTable.svelte?raw";
+
+function zeroAbsence(): PeriodRow["absence"] {
+  return Object.fromEntries(
+    PERIOD_PERSON_ABSENCE_CODES.map((code) => [code, 0]),
+  ) as PeriodRow["absence"];
+}
 
 function row(id: string, extra: Partial<PeriodRow> = {}): PeriodRow {
   return {
@@ -50,6 +56,8 @@ function row(id: string, extra: Partial<PeriodRow> = {}): PeriodRow {
     confirmedMonthCount: 1,
     labelled: true,
     sickDays: 0,
+    // Issue #713: the server always sends the ten counts; the zero object keeps these fixtures neutral.
+    absence: zeroAbsence(),
     months: [],
     ...extra,
   };

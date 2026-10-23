@@ -20,6 +20,7 @@
   import KPIStat from "$components/ui/KPIStat.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
+  import AbsencesByPersonTable from "$lib/components/reports/AbsencesByPersonTable.svelte"; // Issue #713
   import ExportDialog from "$lib/components/reports/ExportDialog.svelte"; // Issue #612
   import PeriodBar from "$lib/components/reports/PeriodBar.svelte"; // Issue #612
   import PeriodKpis from "$lib/components/reports/PeriodKpis.svelte"; // Issue #612
@@ -39,6 +40,7 @@
     type PeriodTab,
   } from "$lib/reports/period-state"; // Issue #612 (D-612-1)
   import {
+    periodAbsencesCsvPath,
     periodCsvPath,
     periodReportPath,
     ymKey,
@@ -649,6 +651,24 @@
     }
   }
 
+  // Issue #713 (D-11): the CSV of the table „Abwesenheiten je Person“ for the whole period - the same
+  // query as the table plus `table=absences`, so the header salon narrows it exactly like the page.
+  async function downloadAbsencesCsv() {
+    exportSalonRejected = false;
+    try {
+      await downloadPdf(
+        periodAbsencesCsvPath(urlState.from, urlState.to, pageSalonId),
+        `Abwesenheiten-je-Person_${ymKey(urlState.from)}_${ymKey(urlState.to)}.csv`,
+      );
+    } catch (e: unknown) {
+      if (pageSalonId !== null && isSalonFilterRejected(e)) {
+        exportSalonRejected = true;
+      } else {
+        throw e;
+      }
+    }
+  }
+
   // § 9-Hinweis (Phase 104, D-30): explains why days of a closed month moved from leave to sickness.
   // It comes from the server (`GET /reports/monthly`'s section9Note), is NOT derived here, and is
   // never narrowed by the header salon: that route's person rule is not the export's, and an
@@ -865,6 +885,14 @@
               onOpenPerson={openVacationPerson}
               onNotify={sendCarryoverNotice}
             />
+            <AbsencesByPersonTable
+              rows={period?.rows ?? null}
+              loading={periodLoading}
+              periodLabel={periodLabel(urlState.from, urlState.to, today)}
+              filterActive={pageSalonId !== null}
+              {personHref}
+              onOpenPerson={openPerson}
+            />
           {/if}
         </div>
       {/if}
@@ -906,6 +934,7 @@
       onMonthlyExport={downloadMonthlyExport}
       onDatev={downloadDatev}
       onCsv={downloadPeriodCsv}
+      onAbsenceCsv={downloadAbsencesCsv}
       onError={(message) => toasts.error(message)}
     />
   {/if}

@@ -225,6 +225,16 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
       expect(res.statusCode).toBe(403);
     });
 
+    // Issue #713 (D-11, AC-713-4): the absences table as a file is health data per person; it is an
+    // export like the times table, and the Personalabteilung holds report:read only.
+    it("GET /reports/period/csv?table=absences → 403 (report:export is not held)", async () => {
+      const res = await asHr(
+        "GET",
+        `/reports/period/csv?from=${prevYear}-${pad2(prevMonth)}&to=${prevYear}-${pad2(prevMonth)}&table=absences`,
+      );
+      expect(res.statusCode).toBe(403);
+    });
+
     it("GET /salons → 200", async () => {
       const res = await asHr("GET", "/salons");
       expect(res.statusCode).toBe(200);
@@ -394,6 +404,18 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
         "$.rows[].confirmedMonthCount",
         "$.rows[].labelled",
         "$.rows[].sickDays",
+        // Issue #713 (D-07): counts per leave-type code for the period, never a day
+        "$.rows[].absence",
+        "$.rows[].absence.SICK",
+        "$.rows[].absence.SICK_CHILD",
+        "$.rows[].absence.VACATION",
+        "$.rows[].absence.OVERTIME_COMP",
+        "$.rows[].absence.SPECIAL",
+        "$.rows[].absence.VOCATIONAL_SCHOOL",
+        "$.rows[].absence.EDUCATION",
+        "$.rows[].absence.UNPAID",
+        "$.rows[].absence.MATERNITY",
+        "$.rows[].absence.PARENTAL",
         // the per-month series: one entry per month with monthly sums - never a per-day series
         "$.rows[].months",
         "$.rows[].months[]",
