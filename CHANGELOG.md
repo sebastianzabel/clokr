@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.16.1](https://github.com/sebastianzabel/clokr/compare/v1.16.0...v1.16.1) (2026-10-23)
+
+
+### Features
+
+* **713:** Berichte – Abwesenheiten je Person, Krank und Kinderkrank getrennt ([#727](https://github.com/sebastianzabel/clokr/issues/727)) ([2b3850c](https://github.com/sebastianzabel/clokr/commit/2b3850cf665d79b69da87676699ad207c5a96301))
+* **714:** Berichte unter Salonfilter – Saldo nach Stammsalon, ein Personenkreis je Widget ([#725](https://github.com/sebastianzabel/clokr/issues/725)) ([a750166](https://github.com/sebastianzabel/clokr/commit/a75016697aa38d485b92e17d1653b6f4b7ec19b3))
+
+
+### Bug Fixes
+
+* **184:** report missing or unavailable object store instead of failing silently ([#722](https://github.com/sebastianzabel/clokr/issues/722)) ([3a750f5](https://github.com/sebastianzabel/clokr/commit/3a750f5d4a6a9e89734ce9150eef99b924cd2eac))
+* **388:** anonymization clears WLAN MACs, presence devices and break-waiver text ([#717](https://github.com/sebastianzabel/clokr/issues/717)) ([9c90610](https://github.com/sebastianzabel/clokr/commit/9c90610ec34afe61f5c45e4c99e4260f3fb18f26))
+* **645:** GET /shifts/conflicts nach Reichweite filtern ([#720](https://github.com/sebastianzabel/clokr/issues/720)) ([8bff1cf](https://github.com/sebastianzabel/clokr/commit/8bff1cf71c41b487f6c7a5f232af95fef3cad895))
+* **707:** run backfill-539 after the migration, fail clearly on a missing column ([#721](https://github.com/sebastianzabel/clokr/issues/721)) ([bfffee5](https://github.com/sebastianzabel/clokr/commit/bfffee54dd1e4e965db1dda45bd2e3028b9ff1f2))
+* **726:** filter bar search field keeps its width, own row below 480 px ([#729](https://github.com/sebastianzabel/clokr/issues/729)) ([cfb9408](https://github.com/sebastianzabel/clokr/commit/cfb9408f922e5a5955167e1a791b9b62c8aa0a4f))
+* **728:** an approved half-day absence no longer blocks recording for the rest of the day ([#730](https://github.com/sebastianzabel/clokr/issues/730)) ([4cddedc](https://github.com/sebastianzabel/clokr/commit/4cddedceef4f66d99d73a25027c264fd0464ed74))
+
+
+### Documentation
+
+* **release:** add release notes for v1.16.1 ([#732](https://github.com/sebastianzabel/clokr/issues/732)) ([97ec8af](https://github.com/sebastianzabel/clokr/commit/97ec8aff645b001ca8265c3f97fcf442cbd534e6))
+
 ## [1.16.0](https://github.com/sebastianzabel/clokr/compare/v1.15.0...v1.16.0) (2026-10-18)
 
 
