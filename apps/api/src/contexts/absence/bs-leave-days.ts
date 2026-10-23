@@ -86,6 +86,26 @@ export function vocationalSchoolDateSetFromRows(
 }
 
 /**
+ * Issue #713 (D-05): the number of Berufsschultage of the rows inside [firstDay, lastDay] - the
+ * #448 D-01 definition (a non-deleted VOCATIONAL_SCHOOL Absence; its startDate is the day). Pure;
+ * the caller passes non-deleted rows. A Berufsschultag is no leave day and no workday price; the
+ * report shows it in days of attendance. Both bounds are inclusive UTC-midnight calendar days.
+ */
+export function vocationalSchoolDayCount(
+  rows: ReadonlyArray<{ type: string; startDate: Date }>,
+  firstDay: Date,
+  lastDay: Date,
+): number {
+  const first = firstDay.toISOString().slice(0, 10);
+  const last = lastDay.toISOString().slice(0, 10);
+  let count = 0;
+  for (const key of vocationalSchoolDateSetFromRows([...rows])) {
+    if (key >= first && key <= last) count += 1;
+  }
+  return count;
+}
+
+/**
  * D-05: the BS dates from `bsDates` that fall inside `range`, sorted ascending — but only when
  * {@link vocationalSchoolDisplacesLeave} says this leave type is displaced by a Berufsschultag at
  * all (SICK/SPECIAL/etc. always return `[]`, matching the pricing side's own D-02 scope). Pure,

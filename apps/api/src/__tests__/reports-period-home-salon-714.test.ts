@@ -52,6 +52,7 @@ type Row = Record<string, unknown> & {
   balanceMinutes: number | null;
   closingBalanceMinutes: number | null;
   sickDays: number;
+  absence: Record<string, number>;
   sollUnavailableReason?: string;
   months: MonthEntry[];
 };
@@ -631,8 +632,16 @@ describe("Issue #714 — the salon views of the period report add up to all salo
             sum((x) => x.closingBalanceMinutes),
           );
           expect(r.kpis.sickDays, `${label} sickDays`).toBe(round2(sum((x) => x.sickDays)));
+          // Issue #713 (D-14): SICK is own illness only now; with SICK_CHILD it is the old sick total.
           const sick = r.absences.find((a) => a.code === "SICK");
-          expect(sick?.totalDays ?? 0, `${label} SICK total`).toBe(round2(sum((x) => x.sickDays)));
+          const sickChild = r.absences.find((a) => a.code === "SICK_CHILD");
+          expect(
+            round2((sick?.totalDays ?? 0) + (sickChild?.totalDays ?? 0)),
+            `${label} SICK + SICK_CHILD total`,
+          ).toBe(round2(sum((x) => x.sickDays)));
+          expect(sick?.totalDays ?? 0, `${label} SICK total`).toBe(
+            round2(sum((x) => x.absence.SICK)),
+          );
 
           const table = vacationRows(r);
           expect(sorted(table.map((x) => x.employeeId)), `${label} vacation ids`).toEqual(

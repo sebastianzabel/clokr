@@ -11,6 +11,7 @@
   import Modal from "$components/ui/Modal.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte";
+  import { absenceEntryText, personAbsenceEntries } from "$lib/reports/absence-table"; // Issue #713
   import { fmtDaysDe, fmtHoursDe, monthNameDe } from "$lib/reports/period-format";
   import type {
     DayEntry,
@@ -88,6 +89,8 @@
 
   const selected = $derived<PeriodMonth | null>(months[selectedIndex] ?? null);
   const selectedName = $derived(selected ? monthNameDe(selected.year, selected.month) : "");
+  // Issue #713: the person's non-zero absence counts of the period, from the server's row.
+  const absenceEntries = $derived(row ? personAbsenceEntries(row) : []);
 
   function hours(min: number | null, signed: boolean): string {
     return min === null ? DASH : fmtHoursDe(min, { signed });
@@ -374,6 +377,21 @@
         </section>
       {/if}
 
+      <!-- Issue #713 (AC-713-5, D-07): counts per kind and unit, never a date; no right beyond the
+           row itself is needed, so the section does not depend on the day list's permission. -->
+      <section aria-labelledby="drill-absences">
+        <h3 id="drill-absences" class="drill-h">Abwesenheiten</h3>
+        {#if absenceEntries.length === 0}
+          <p class="drill-sub">Keine Abwesenheiten im Zeitraum.</p>
+        {:else}
+          <ul class="drill-absence-list">
+            {#each absenceEntries as entry (entry.label)}
+              <li>{absenceEntryText(entry)}</li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
+
       {#if selected}
         <section aria-labelledby="drill-days">
           <h3 id="drill-days" class="drill-h">Tage im {selectedName}</h3>
@@ -483,6 +501,19 @@
     font-size: 12px;
     line-height: 1.4;
     color: var(--text-muted);
+  }
+
+  .drill-absence-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    font-size: 15px;
+    line-height: 1.4;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
   }
 
   .drill-h {

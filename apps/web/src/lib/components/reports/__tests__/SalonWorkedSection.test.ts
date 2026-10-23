@@ -25,10 +25,20 @@ import {
   SALON_HELPERS_REACH_NOTE,
   SALON_WORKED_LABEL,
 } from "$lib/salons/page-scope";
-import type { PeriodHelper, PeriodRow } from "$lib/reports/period-report";
+import {
+  PERIOD_PERSON_ABSENCE_CODES,
+  type PeriodHelper,
+  type PeriodRow,
+} from "$lib/reports/period-report";
 import SalonWorkedSection from "../SalonWorkedSection.svelte";
 import source from "../SalonWorkedSection.svelte?raw";
 import pageSource from "../../../../routes/(app)/reports/+page.svelte?raw";
+
+function zeroAbsence(): PeriodRow["absence"] {
+  return Object.fromEntries(
+    PERIOD_PERSON_ABSENCE_CODES.map((code) => [code, 0]),
+  ) as PeriodRow["absence"];
+}
 
 function row(id: string, salonWorkedMinutes: number | undefined): PeriodRow {
   return {
@@ -49,6 +59,8 @@ function row(id: string, salonWorkedMinutes: number | undefined): PeriodRow {
     confirmedMonthCount: 1,
     labelled: true,
     sickDays: 0,
+    // Issue #713: the server always sends the ten counts; the zero object keeps these fixtures neutral.
+    absence: zeroAbsence(),
     months: [],
     ...(salonWorkedMinutes === undefined ? {} : { salonWorkedMinutes }),
   };

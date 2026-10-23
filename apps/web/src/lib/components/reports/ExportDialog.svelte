@@ -1,11 +1,11 @@
 <script lang="ts">
   // Issue #612 (D-612-6, ADD-5, UI-SPEC "Exportieren dialog") - the one dialog behind the period
-  // bar's „Exportieren“ button: Monatsexport (PDF), DATEV-Export and the CSV of the table „Zeiten &
-  // Konten“. For a period of several months it asks for the month of the first two (default: the
-  // last); the CSV always covers the whole period. The § 9 note belongs to the Monatsexport block
-  // and follows the chosen month.
+  // bar's „Exportieren“ button: Monatsexport (PDF), DATEV-Export, the CSV of the table „Zeiten &
+  // Konten“ and (Issue #713) the CSV of the table „Abwesenheiten je Person“. For a period of several
+  // months it asks for the month of the first two (default: the last); both CSVs always cover the
+  // whole period. The § 9 note belongs to the Monatsexport block and follows the chosen month.
   //
-  // The component names no route and owns no download: the page injects the three downloads, the
+  // The component names no route and owns no download: the page injects the four downloads, the
   // § 9 loader and the error report, so the salon rules (Monatsexport and CSV carry the header
   // salon, DATEV never does) stay in ONE place - the page - and are pinned there.
   import { untrack } from "svelte";
@@ -42,6 +42,8 @@
     onDatev: (year: number, month: number) => Promise<void>;
     /** The CSV covers the whole period of the page. */
     onCsv: () => Promise<void>;
+    /** The CSV of the table „Abwesenheiten je Person“ covers the whole period of the page (#713). */
+    onAbsenceCsv: () => Promise<void>;
     /** A download failed: the copy-deck text (the page shows it as a toast). */
     onError: (message: string) => void;
   }
@@ -57,6 +59,7 @@
     onMonthlyExport,
     onDatev,
     onCsv,
+    onAbsenceCsv,
     onError,
   }: Props = $props();
 
@@ -64,6 +67,8 @@
     monthly: "Der Monatsexport konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
     datev: "Der DATEV-Export konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
     csv: "Die CSV-Datei konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
+    // Issue #713: new text speaks to the reader as „du“.
+    absences: "Die Abwesenheiten-CSV konnte nicht erstellt werden. Versuch es bitte noch einmal.",
   } as const;
 
   type Kind = keyof typeof ERROR_TEXT;
@@ -119,7 +124,12 @@
 
   // ── Downloads ───────────────────────────────────────────────────────────────────────
 
-  let busy = $state<Record<Kind, boolean>>({ monthly: false, datev: false, csv: false });
+  let busy = $state<Record<Kind, boolean>>({
+    monthly: false,
+    datev: false,
+    csv: false,
+    absences: false,
+  });
 
   async function run(kind: Kind, download: () => Promise<void>) {
     busy = { ...busy, [kind]: true };
@@ -225,6 +235,32 @@
     >
       {#if busy.csv}<Spinner size={13} />{:else}<Icon name="download" size={14} />{/if}
       CSV-Datei herunterladen
+    </button>
+  </section>
+
+  <hr class="divider" />
+
+  <section class="export-block" data-export-block="absences-csv">
+    <h4 class="export-title">Abwesenheiten als CSV</h4>
+    <p class="export-desc">
+      Die Tabelle „Abwesenheiten je Person“ für den ganzen Zeitraum, alle Spalten,
+      Semikolon-getrennt, für Excel.
+    </p>
+    {#if filterActive}
+      <!-- Issue #713 (D-11): the same persons as the times CSV under a salon filter. -->
+      <p class="form-hint" data-testid="export-absences-csv-salon-note">
+        {SALON_CSV_PERSONS_NOTE}
+      </p>
+    {/if}
+    <button
+      type="button"
+      class="btn btn-outline sm"
+      aria-label="Abwesenheiten-CSV herunterladen"
+      disabled={busy.absences}
+      onclick={() => run("absences", () => onAbsenceCsv())}
+    >
+      {#if busy.absences}<Spinner size={13} />{:else}<Icon name="download" size={14} />{/if}
+      Abwesenheiten-CSV herunterladen
     </button>
   </section>
 

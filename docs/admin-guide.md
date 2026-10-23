@@ -151,12 +151,21 @@ Ansicht öffnet.
   genehmigt, beantragt, verbleibend, gefährdeter Resturlaub), Stand zum letzten Tag des Zeitraums in diesem Jahr,
   höchstens bis gestern. Die Spalte **Verfall** zeigt Frist und gefährdete Tage; **Hinweis senden** (Berechtigung „Vor verfallendem
   Resturlaub warnen“) schreibt die betroffene Person an, solange die Frist heute oder später liegt. Darunter stehen die
-  Abwesenheiten nach Art (Summe der Monate, Arbeitstage; Krankheit in Kalendertagen).
+  Abwesenheiten nach Art (Summe der Monate, Arbeitstage), mit **Krank** und **Kinderkrank** als zwei Zeilen in Kalendertagen
+  (Wochenende eingeschlossen), und die Tabelle **Abwesenheiten je Person**: eine Zeile je Person, Krank und Kinderkrank in
+  Kalendertagen, Berufsschule in Berufsschultagen, alle anderen Arten (Urlaub, Überstundenausgleich, Sonderurlaub,
+  Bildungsurlaub, Unbezahlt, Mutterschutz, Elternzeit) in Arbeitstagen. Spalten, die im ganzen Zeitraum bei niemandem einen
+  Wert haben, bleiben ausgeblendet und stehen im Hinweis unter der Tabelle. Die Tabelle lässt sich sortieren und durchsuchen,
+  unter 960 px erscheint sie als Liste; ein Klick auf eine Person öffnet die Personenansicht mit dem Abschnitt
+  „Abwesenheiten“. Die Kalendertage-Auswertung weicht bewusst vom Kinderkrankengeld nach § 45 SGB V, vom Monatsexport und von
+  DATEV ab, die Arbeitstage zählen.
 - **Heute:** die Anwesenheit des laufenden Tages (Berechtigung „Team-Übersichten im zugewiesenen Bereich sehen“), unabhängig vom Zeitraum.
 - **Exportieren:** ein einziges Fenster hinter der Schaltfläche „Exportieren“ (Berechtigung „DATEV- und PDF-Exporte im zugewiesenen Bereich erstellen“)
-  mit drei Blöcken: **Monatsexport** als PDF und **DATEV** für einen wählbaren Monat des Zeitraums und die **Tabelle
-  als CSV** für den ganzen Zeitraum. Die CSV hat die Spalten der Tabelle (Stunden mit Dezimalkomma, UTF-8, Trennzeichen
-  Semikolon) und wird wie jeder Export protokolliert (Zeitraum, Salon, Personenzahl).
+  mit vier Blöcken: **Monatsexport** als PDF und **DATEV** für einen wählbaren Monat des Zeitraums, die **Tabelle
+  als CSV** und **Abwesenheiten als CSV** für den ganzen Zeitraum. Die CSV hat die Spalten der Tabelle (Stunden mit Dezimalkomma, UTF-8, Trennzeichen
+  Semikolon); die Abwesenheiten-CSV enthält alle Spalten der Tabelle „Abwesenheiten je Person“, jede mit ihrer Einheit, auch
+  die ausgeblendeten. Beide werden wie jeder Export protokolliert (Zeitraum, Salon, Personenzahl; die Abwesenheiten-CSV als
+  eigener Eintrag).
 - **Salon:** folgt der Salonauswahl in der Kopfleiste (nur bei Mandanten mit Salonauswahl). Die Tabelle zeigt die Personen
   mit Stammsalon in diesem Salon am Ende des Zeitraums (bei einem Austritt im Zeitraum am Austrittstag), jede mit ihren
   ganzen Werten: Soll, Ist, Saldo, Urlaub und Krankheit sind Personenwerte und werden nie auf Salons aufgeteilt, der

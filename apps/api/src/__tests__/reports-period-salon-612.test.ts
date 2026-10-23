@@ -81,6 +81,10 @@ type MonthlyRow = { employeeId: string; workedHours: number; sickDays: number } 
 >;
 
 // Recorded with the code before the salon filter existed (commit 548a5e79); see the test below.
+// Issue #713 (D-14): every row additionally carries its absence counts per code - a deliberate shape
+// change, added to the recording, nothing else changed. Derived from the fixture's leave rows:
+// PX: SICK 10.-20.06. = 11 calendar days; PX VACATION 18.-19.06. (Thu, Fri) = 2 Arbeitstage;
+// PA: VACATION 12.06. (Fri) = 1 Arbeitstag; PB and PN have no leave. Σ VACATION = 3 = the block below.
 const GOLDEN_UNFILTERED: unknown = {
   envelopeKeys: ["absences", "from", "kpis", "months", "rows", "to", "vacation"],
   kpiKeys: [
@@ -121,6 +125,18 @@ const GOLDEN_UNFILTERED: unknown = {
       confirmedMonthCount: 0,
       labelled: true,
       sickDays: 0,
+      absence: {
+        SICK: 0,
+        SICK_CHILD: 0,
+        VACATION: 1,
+        OVERTIME_COMP: 0,
+        SPECIAL: 0,
+        VOCATIONAL_SCHOOL: 0,
+        EDUCATION: 0,
+        UNPAID: 0,
+        MATERNITY: 0,
+        PARENTAL: 0,
+      },
       months: [
         {
           year: 2026,
@@ -162,6 +178,18 @@ const GOLDEN_UNFILTERED: unknown = {
       confirmedMonthCount: 0,
       labelled: true,
       sickDays: 0,
+      absence: {
+        SICK: 0,
+        SICK_CHILD: 0,
+        VACATION: 0,
+        OVERTIME_COMP: 0,
+        SPECIAL: 0,
+        VOCATIONAL_SCHOOL: 0,
+        EDUCATION: 0,
+        UNPAID: 0,
+        MATERNITY: 0,
+        PARENTAL: 0,
+      },
       months: [
         {
           year: 2026,
@@ -203,6 +231,18 @@ const GOLDEN_UNFILTERED: unknown = {
       confirmedMonthCount: 0,
       labelled: true,
       sickDays: 0,
+      absence: {
+        SICK: 0,
+        SICK_CHILD: 0,
+        VACATION: 0,
+        OVERTIME_COMP: 0,
+        SPECIAL: 0,
+        VOCATIONAL_SCHOOL: 0,
+        EDUCATION: 0,
+        UNPAID: 0,
+        MATERNITY: 0,
+        PARENTAL: 0,
+      },
       months: [
         {
           year: 2026,
@@ -244,6 +284,18 @@ const GOLDEN_UNFILTERED: unknown = {
       confirmedMonthCount: 0,
       labelled: true,
       sickDays: 11,
+      absence: {
+        SICK: 11,
+        SICK_CHILD: 0,
+        VACATION: 2,
+        OVERTIME_COMP: 0,
+        SPECIAL: 0,
+        VOCATIONAL_SCHOOL: 0,
+        EDUCATION: 0,
+        UNPAID: 0,
+        MATERNITY: 0,
+        PARENTAL: 0,
+      },
       months: [
         {
           year: 2026,

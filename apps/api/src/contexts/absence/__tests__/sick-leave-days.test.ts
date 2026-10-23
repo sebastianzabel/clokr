@@ -6,6 +6,9 @@
  * function. The cases below therefore mirror the report exactly: calendar days including weekends,
  * clip to the period, half day x 0.5, the attest split and the § 9 shift between the attest
  * buckets. DB-free: the kernel is pure.
+ *
+ * Issue #713 (D-02, D-09): the kernel also returns the per-code split `sickDaysByCode` (own illness
+ * `SICK`, child sickness `SICK_CHILD`); the last block pins it.
  */
 import { describe, it, expect } from "vitest";
 import type { LeaveRequestStatus, LeaveTypeCode } from "@clokr/db";
@@ -39,6 +42,7 @@ function row(
 
 const ZERO = {
   sickDays: 0,
+  sickDaysByCode: { SICK: 0, SICK_CHILD: 0 },
   sickDaysWithAttest: 0,
   sickDaysWithoutAttest: 0,
   section9DaysThisMonth: 0,
@@ -65,6 +69,7 @@ describe("sickLeaveDayCounts (Issue #84, D-14)", () => {
     );
     expect(result).toEqual({
       sickDays: 3,
+      sickDaysByCode: { SICK: 2, SICK_CHILD: 1 },
       sickDaysWithAttest: 0,
       sickDaysWithoutAttest: 3,
       section9DaysThisMonth: 0,
@@ -122,6 +127,7 @@ describe("sickLeaveDayCounts (Issue #84, D-14)", () => {
     );
     expect(result).toEqual({
       sickDays: 0.5,
+      sickDaysByCode: { SICK: 0.5, SICK_CHILD: 0 },
       sickDaysWithAttest: 0,
       sickDaysWithoutAttest: 0.5,
       section9DaysThisMonth: 0,
@@ -143,6 +149,7 @@ describe("sickLeaveDayCounts (Issue #84, D-14)", () => {
     );
     expect(partial).toEqual({
       sickDays: 4,
+      sickDaysByCode: { SICK: 4, SICK_CHILD: 0 },
       sickDaysWithAttest: 2,
       sickDaysWithoutAttest: 2,
       section9DaysThisMonth: 0,
@@ -172,6 +179,7 @@ describe("sickLeaveDayCounts (Issue #84, D-14)", () => {
     );
     expect(result).toEqual({
       sickDays: 3,
+      sickDaysByCode: { SICK: 3, SICK_CHILD: 0 },
       sickDaysWithAttest: 3,
       sickDaysWithoutAttest: 0,
       section9DaysThisMonth: 0,
@@ -185,6 +193,7 @@ describe("sickLeaveDayCounts (Issue #84, D-14)", () => {
     });
     expect(result).toEqual({
       sickDays: 3,
+      sickDaysByCode: { SICK: 3, SICK_CHILD: 0 },
       sickDaysWithAttest: 1,
       sickDaysWithoutAttest: 2,
       section9DaysThisMonth: 1,
@@ -267,6 +276,7 @@ describe("sickLeaveDayCounts (Issue #84, D-14)", () => {
       // credit 5.-6. -> only the 5. is accepted = 1 day, which moves from without to with.
       expect(result).toEqual({
         sickDays: 2,
+        sickDaysByCode: { SICK: 2, SICK_CHILD: 0 },
         sickDaysWithAttest: 2,
         sickDaysWithoutAttest: 0,
         section9DaysThisMonth: 1,
@@ -328,6 +338,165 @@ describe("sickLeaveDayCounts (Issue #84, D-14)", () => {
         });
         expect(withPredicate).toEqual(plain);
       }
+    });
+  });
+
+  describe("the split by code (Issue #713, D-02, D-09)", () => {
+    it("counts own illness only as SICK", () => {
+      const result = sickLeaveDayCounts([row("2026-06-03", "2026-06-05")], FIRST, LAST);
+      expect(result.sickDaysByCode).toEqual({ SICK: 3, SICK_CHILD: 0 });
+      expect(result.sickDays).toBe(3);
+    });
+
+    it("counts child sickness only as SICK_CHILD", () => {
+      const result = sickLeaveDayCounts(
+        [row("2026-06-03", "2026-06-05", { code: "SICK_CHILD" })],
+        FIRST,
+        LAST,
+      );
+      expect(result.sickDaysByCode).toEqual({ SICK: 0, SICK_CHILD: 3 });
+      expect(result.sickDays).toBe(3);
+    });
+
+    it("clips a SICK_CHILD half day across the period end and halves it", () => {
+      // 29.06. - 03.07.: June part 29.-30. = 2 calendar days, x 0.5 = 1
+      const result = sickLeaveDayCounts(
+        [row("2026-06-29", "2026-07-03", { code: "SICK_CHILD", halfDay: true })],
+        FIRST,
+        LAST,
+      );
+      expect(result.sickDaysByCode).toEqual({ SICK: 0, SICK_CHILD: 1 });
+      expect(result.sickDays).toBe(1);
+    });
+
+    it("leaves the split alone when the attest window and the § 9 credit move days between the buckets", () => {
+      // SICK_CHILD 15.-18.06., attest 16.-17.06. -> 2 with, 2 without; the credit on 18.06. moves
+      // one day from without to with. The split stays 4 for SICK_CHILD.
+      const result = sickLeaveDayCounts(
+        [
+          row("2026-06-15", "2026-06-18", {
+            code: "SICK_CHILD",
+            attestPresent: true,
+            attestValidFrom: d("2026-06-16"),
+            attestValidTo: d("2026-06-17"),
+          }),
+        ],
+        FIRST,
+        LAST,
+        { section9Credits: [{ creditedStart: d("2026-06-18"), creditedEnd: d("2026-06-18") }] },
+      );
+      expect(result).toEqual({
+        sickDays: 4,
+        sickDaysByCode: { SICK: 0, SICK_CHILD: 4 },
+        sickDaysWithAttest: 3,
+        sickDaysWithoutAttest: 1,
+        section9DaysThisMonth: 1,
+      });
+    });
+
+    it("restricts both codes with the countsDay predicate", () => {
+      const result = sickLeaveDayCounts(
+        [row("2026-06-03", "2026-06-05"), row("2026-06-03", "2026-06-05", { code: "SICK_CHILD" })],
+        FIRST,
+        LAST,
+        { countsDay: (day) => day === "2026-06-04" || day === "2026-06-05" },
+      );
+      expect(result.sickDaysByCode).toEqual({ SICK: 2, SICK_CHILD: 2 });
+      expect(result.sickDays).toBe(4);
+    });
+
+    it("counts two overlapping rows of different codes on one day once per code (no de-duplication)", () => {
+      const result = sickLeaveDayCounts(
+        [row("2026-06-03", "2026-06-03"), row("2026-06-03", "2026-06-03", { code: "SICK_CHILD" })],
+        FIRST,
+        LAST,
+      );
+      expect(result.sickDaysByCode).toEqual({ SICK: 1, SICK_CHILD: 1 });
+    });
+
+    it("adds nothing for PENDING, REJECTED or CANCELLED rows of either code", () => {
+      const result = sickLeaveDayCounts(
+        [
+          row("2026-06-03", "2026-06-03", { status: "PENDING" }),
+          row("2026-06-04", "2026-06-04", { status: "REJECTED", code: "SICK_CHILD" }),
+          row("2026-06-05", "2026-06-05", { status: "CANCELLED", code: "SICK_CHILD" }),
+          row("2026-06-08", "2026-06-08", { status: "CANCELLED" }),
+        ],
+        FIRST,
+        LAST,
+      );
+      expect(result).toEqual(ZERO);
+    });
+
+    it("keeps SICK + SICK_CHILD equal to sickDays over every input of a table", () => {
+      const inputs: Array<{
+        rows: SickLeaveDayRow[];
+        credits: Array<{ creditedStart: Date; creditedEnd: Date }>;
+        countsDay?: (day: string) => boolean;
+      }> = [
+        { rows: [], credits: [] },
+        { rows: [row("2026-06-03", "2026-06-05")], credits: [] },
+        { rows: [row("2026-06-03", "2026-06-05", { code: "SICK_CHILD" })], credits: [] },
+        {
+          rows: [
+            row("2026-05-29", "2026-06-02", { code: "SICK_CHILD" }),
+            row("2026-06-29", "2026-07-03"),
+          ],
+          credits: [],
+        },
+        {
+          rows: [
+            row("2026-06-10", "2026-06-12", { halfDay: true }),
+            row("2026-06-10", "2026-06-12", { halfDay: true, code: "SICK_CHILD" }),
+          ],
+          credits: [],
+        },
+        {
+          rows: [
+            row("2026-06-15", "2026-06-18", {
+              attestPresent: true,
+              attestValidFrom: d("2026-06-16"),
+              attestValidTo: d("2026-06-17"),
+            }),
+            row("2026-06-20", "2026-06-21", { attestPresent: true, code: "SICK_CHILD" }),
+          ],
+          credits: [{ creditedStart: d("2026-06-15"), creditedEnd: d("2026-06-15") }],
+        },
+        {
+          rows: [
+            row("2026-06-08", "2026-06-10", { code: "SICK_CHILD" }),
+            row("2026-06-09", "2026-06-09"),
+          ],
+          credits: [
+            { creditedStart: d("2026-06-09"), creditedEnd: d("2026-06-09") },
+            { creditedStart: d("2026-05-31"), creditedEnd: d("2026-06-01") },
+          ],
+          countsDay: (day) => day !== "2026-06-10",
+        },
+        {
+          rows: [
+            row("2026-06-22", "2026-06-22", {
+              status: "CANCELLATION_REQUESTED",
+              code: "SICK_CHILD",
+            }),
+            row("2026-06-24", "2026-06-24", { status: "PENDING" }),
+            row("2026-06-25", "2026-06-25", { code: "VACATION" }),
+          ],
+          credits: [],
+        },
+      ];
+      expect(inputs.length).toBeGreaterThanOrEqual(8);
+      let withBoth = 0;
+      for (const { rows, credits, countsDay } of inputs) {
+        const result = sickLeaveDayCounts(rows, FIRST, LAST, {
+          section9Credits: credits,
+          ...(countsDay ? { countsDay } : {}),
+        });
+        expect(result.sickDaysByCode.SICK + result.sickDaysByCode.SICK_CHILD).toBe(result.sickDays);
+        if (result.sickDaysByCode.SICK > 0 && result.sickDaysByCode.SICK_CHILD > 0) withBoth += 1;
+      }
+      // Not vacuous: some inputs carry both codes.
+      expect(withBoth).toBeGreaterThanOrEqual(2);
     });
   });
 });

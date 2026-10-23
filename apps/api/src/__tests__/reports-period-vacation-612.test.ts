@@ -468,10 +468,24 @@ describe("Issue #612 — the period report: vacation, Verfall, absences, recorde
           if (row.sickDays > 0) sickPersons.add(row.employeeId);
         }
       }
+      // Issue #713 (D-01, P-713-05): SICK is own illness, SICK_CHILD the child's - two lines of one
+      // calendar-day kernel whose sum is the (unchanged) KPI and the old combined sick figure.
       const sickEntry = r.absences.find((a) => a.code === "SICK");
+      const childEntry = r.absences.find((a) => a.code === "SICK_CHILD");
       expect(sickEntry?.unit).toBe("CALENDAR_DAYS");
-      expect(sickEntry?.totalDays).toBe(round2(sick));
-      expect(sickEntry?.personCount).toBe(sickPersons.size);
+      expect(childEntry?.unit).toBe("CALENDAR_DAYS");
+      expect(round2((sickEntry?.totalDays ?? 0) + (childEntry?.totalDays ?? 0))).toBe(round2(sick));
+      // The fixture's one child-sickness request is p3's 17.09.2026 (one calendar day, one person);
+      // p3's and p6's own illness (15.-16.09. and 23.-24.09.) make the SICK line.
+      expect(childEntry?.totalDays).toBe(1);
+      expect(childEntry?.personCount).toBe(1);
+      // A person with any sick day is a person of at least one of the two lines, and of at most both.
+      const lineSum = (sickEntry?.personCount ?? 0) + (childEntry?.personCount ?? 0);
+      expect(sickPersons.size).toBeLessThanOrEqual(lineSum);
+      expect(sickPersons.size).toBeGreaterThanOrEqual(
+        Math.max(sickEntry?.personCount ?? 0, childEntry?.personCount ?? 0),
+      );
+      expect(sickEntry?.totalDays).toBeGreaterThan(0);
       expect(r.kpis.sickDays).toBe(round2(sick));
 
       // Not vacuous: the fixture yields every kind, and no entry carries zero days.
@@ -480,7 +494,8 @@ describe("Issue #612 — the period report: vacation, Verfall, absences, recorde
       );
       expect(sick).toBeGreaterThan(0);
       for (const a of r.absences) expect(a.totalDays).toBeGreaterThan(0);
-      expect(r.absences.length).toBe(Object.keys(KIND_FIELDS).length + 1);
+      // Issue #713 (D-14): the sick row became two lines (SICK, SICK_CHILD).
+      expect(r.absences.length).toBe(Object.keys(KIND_FIELDS).length + 2);
     });
 
     it("no key of the answer is a day list (calendar fields are only counts and sums)", async () => {
