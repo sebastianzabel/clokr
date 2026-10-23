@@ -950,7 +950,10 @@ import { readFileSync } from "node:fs";
 // reports-period-salon-612, reports-period-csv-612, period-csv-612, salon-view, report-salon-filter-source-542, reports-hr-86;
 // nothing removed, skipped or loosened. The floor lagged the measured total of main (lower-bound convention), so the step is
 // larger than the phase's own delta. MIN_FILES 710 -> 713, never lowered.
-const MIN_FILES = 713;
+// Issue #728: one new file (half-day-leave-recording-728.test.ts) and 3 + 5 new cases in
+// leave-check.test.ts / that file: floors re-measured 714 files / 10820 tests.
+
+const MIN_FILES = 714;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1014,7 +1017,7 @@ const MIN_FILES = 713;
 // (origin/main @ 7d5818c0 + #184): 710 test files, 10767 tests (10764 passed, 3 skipped); the new storage-fail-fast-184.test.ts holds 9 cases. Never lowered.
 // Phase 714 (2026-10-22): MIN_TESTS 10767 -> 10812, the measured total of the full run named at MIN_FILES (10809 passed, 3
 // skipped). Never lowered.
-const MIN_TESTS = 10812;
+const MIN_TESTS = 10820;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

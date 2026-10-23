@@ -14,13 +14,25 @@
 import type { LeaveTypeCode, Prisma } from "@clokr/db";
 import { EFFECTIVE_LEAVE_STATUSES } from "./effective-leave-statuses"; // Issue #446 (D-01)
 
-/** § 8 BUrlG: Prüft ob aktiver Urlaub an dem Tag vorliegt */
+/**
+ * § 8 BUrlG: reports active leave that blocks recording working time on the day.
+ *
+ * A half-day request (`halfDay = true`, any leave type) does NOT block: § 8 BUrlG forbids gainful
+ * work DURING leave, and a half day leaves the other half open as working time. Soll already
+ * drops by half (`calcLeaveAbsenceMinutesTz`), so the recorded time is the missing counterpart
+ * (Issue #728). `halfDay` is single-date by contract (`halfDayIsSingleDate`, Issue #449, API
+ * refusal in `api/leave.ts`), so "half-day request" and "half-day on this date" coincide; a
+ * legacy multi-day half-day row is treated the same way on every day it covers, because its
+ * stored quantity is also halved as a whole. A full-day request still blocks, and wins over a
+ * half-day request on the same day (the half-day rows are not even fetched). Among several
+ * blocking rows an APPROVED one is preferred over CANCELLATION_REQUESTED, deterministically.
+ */
 export async function hasApprovedLeaveOnDate(
   prisma: Prisma.TransactionClient,
   employeeId: string,
   dateStr: string,
 ): Promise<{ code: LeaveTypeCode; status: "APPROVED" | "CANCELLATION_REQUESTED" } | null> {
-  const leave = await prisma.leaveRequest.findFirst({
+  const leaves = await prisma.leaveRequest.findMany({
     where: {
       employeeId,
       // CR-02 (Phase 76.2 code review): CLAUDE.md audit-proof rule —
@@ -28,6 +40,7 @@ export async function hasApprovedLeaveOnDate(
       // MUST include deletedAt: null. Otherwise a soft-deleted APPROVED leave
       // would still block clock-in via the resolver's BUrlG § 8 check.
       deletedAt: null,
+      halfDay: false, // Issue #728: a half day leaves the other half open for recording
       status: { in: [...EFFECTIVE_LEAVE_STATUSES] },
       startDate: { lte: new Date(dateStr + "T23:59:59Z") },
       endDate: { gte: new Date(dateStr + "T00:00:00Z") },
@@ -39,6 +52,8 @@ export async function hasApprovedLeaveOnDate(
     // (time-entries.ts, services/clock/resolver.ts), so it may not use that helper either.
     include: { leaveType: { select: { code: true } } },
   });
+  // Deterministic pick: an APPROVED row blocks, so it must not lose to a CANCELLATION_REQUESTED one.
+  const leave = leaves.find((l) => l.status === "APPROVED") ?? leaves[0];
   if (leave) {
     // LeaveType.code is NOT NULL in the database as of issue #206 (schema.prisma, migration
     // 20260923090815_leave_type_code_not_null) — the six preconditions measured against int/prod
