@@ -22,8 +22,11 @@ pre|0|audit-662-cancelled-leave-section9|script|audit-662-cancelled-leave-sectio
 pre|0|audit-682-opening-balance|script|audit-682-opening-balance-live-gap.ts --all-tenants
 pre|0|audit-663-backfilled-snapshots|script|audit-663-backfilled-snapshots.ts
 pre|0|audit-595-legacy-period-start|script|audit-595-legacy-period-start.ts
-pre|0|audit-568-bulk-apply-history|script|audit-568-bulk-apply-history.ts
+pre|0,2|audit-568-bulk-apply-history|script|audit-568-bulk-apply-history.ts
 # audit-511 is NOT a pre-deploy step: it reads DayBreak, a table this release creates (found by the rehearsal, #709)
+# Notes "Vor dem Deploy" 11: the drifted index on prod (found by the rehearsal on a pseudonymized prod copy, 23.10.2026);
+# dropped only when its definition equals the migration's, which then re-creates it
+pre|0|drop-drifted-index-70|sql|DO $$ BEGIN IF (SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='TimeEntry_employeeId_date_idx') = 'CREATE INDEX "TimeEntry_employeeId_date_idx" ON public."TimeEntry" USING btree ("employeeId", date)' THEN EXECUTE 'DROP INDEX "TimeEntry_employeeId_date_idx"'; END IF; END $$
 # Deploy: the 14 migrations
 migrate|0|migrate-deploy|migrate|
 # Notes "Nach dem Deploy" 3: directly after the migration, dry run first (0 = control, 2 = hits to confirm)
