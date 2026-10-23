@@ -1718,3 +1718,72 @@ test.describe("Issue #713 — Abwesenheiten je Person im Blick", () => {
     }
   }
 });
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Issue #726 — the search field of a filter bar keeps its width
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+test.describe("Issue #726 — Suchfeld der Filterleiste", () => {
+  const MIN_SEARCH_PX = 180;
+  const TABS = ["zeiten", "urlaub"] as const;
+
+  for (const tab of TABS) {
+    for (const viewport of [
+      { width: 390, height: 844 },
+      { width: 360, height: 800 },
+      { width: 1280, height: 800 },
+    ]) {
+      test(`Suchfeld ${tab} — ${viewport.width} px`, async ({ page, request, tenant }) => {
+        await page.setViewportSize(viewport);
+        await openSynthetic(page, request, tenant, { skin: "editorial", mode: "light" });
+        if (tab !== "zeiten") {
+          await page.goto(
+            `${tenant.baseUrl}/reports?from=${MATRIX_PERIOD}&to=${MATRIX_PERIOD}&tab=${tab}`,
+          );
+        }
+        const search = page.locator(".filter-bar .filter-search");
+        await expect(search, "the filter bar offers its search field").toBeVisible();
+
+        const geo = await search.evaluate((el) => {
+          const bar = el.closest(".filter-bar") as HTMLElement;
+          const r = el.getBoundingClientRect();
+          const b = bar.getBoundingClientRect();
+          const siblings = [...bar.children]
+            .filter((c) => c !== el)
+            .map((c) => c.getBoundingClientRect())
+            .filter((c) => c.width > 0);
+          return {
+            width: r.width,
+            barWidth: b.width,
+            sharesRow: siblings.some((s) => s.top < r.bottom - 1 && s.bottom > r.top + 1),
+          };
+        });
+
+        if (viewport.width <= 480) {
+          expect(geo.width, "search width").toBeGreaterThanOrEqual(MIN_SEARCH_PX);
+          expect(geo.sharesRow, "the search field has its own row").toBe(false);
+          expect(geo.width, "full row width").toBeGreaterThanOrEqual(geo.barWidth - 1);
+        } else {
+          // Desktop is unchanged: a flexible field between 180 and 320 px next to its siblings.
+          expect(geo.width).toBeGreaterThanOrEqual(MIN_SEARCH_PX);
+          expect(geo.width).toBeLessThanOrEqual(320 + 0.5);
+          expect(geo.sharesRow, "desktop: count/select stay on the search row").toBe(true);
+        }
+
+        if (viewport.width <= 480) {
+          const overflow = await measurePageOverflow(page, TOLERANCE_PX);
+          expect(overflow.overflowing).toEqual([]);
+          expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth + TOLERANCE_PX);
+        }
+
+        // Control: with the defect re-created (min-width 0, no growth) the same probe reads
+        // a stub, so the assertions above can fail.
+        await page.addStyleTag({
+          content: ".filter-bar .filter-search{min-width:0 !important;flex:0 1 0 !important}",
+        });
+        const broken = await search.evaluate((el) => el.getBoundingClientRect().width);
+        expect(broken, "control: the probe sees a shrunken field").toBeLessThan(MIN_SEARCH_PX);
+      });
+    }
+  }
+});
