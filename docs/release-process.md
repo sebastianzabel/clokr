@@ -87,6 +87,25 @@ or the script, and rehearse again. After a failed `migrate` the later steps are 
 redacted protocol summary to the release PR. Retro proof: `scripts/rehearsal-fixtures/v1.16.0-as-shipped.steps`
 with the 1.16.0 image against a pre-1.16.0 demo dump reports the #707 error.
 
+**On the prod host (mandatory for a release with migrations, Issue #742).** The demo rehearsal missed the
+drifted index on prod (#733): demo did not have it, a pseudonymized prod copy did. Therefore a release with
+migrations is rehearsed against a fresh dump of prod itself, on the prod host (demo stays allowed as an
+additional rehearsal):
+
+```bash
+scripts/release-rehearsal.sh --host dmz-proxy --dump live:clokr-db --steps docs/release-notes/vX.Y.Z.steps \
+  --image ghcr.io/<owner>/clokr-api:sha-<7> --protocol rehearsal-vX.Y.Z-prod.txt
+```
+
+`live:<container>` streams `pg_dump -Fc` from the running DB container straight into the throwaway
+postgres (no dump file, nothing is copied off the host); the throwaway uses the source container's image,
+so it has prod's postgres major version. The script aborts below 1 GB free on the docker root (prod's disk
+is tight) and only reads the live DB; the running stack, volumes, networks and env file are never touched.
+The new image must be pulled to the host first (`docker pull`, an image only, no stack change). Afterwards
+check `docker ps -a`, `docker network ls`, `docker volume ls` and `df -h /` for leftovers. A read-only smoke
+list for the current version is `scripts/rehearsal-fixtures/smoke-readonly.steps` (proof of 25.10.2026 on
+1.16.1: all steps PASS, `migrate deploy` applied nothing, no leftovers).
+
 ### Why the notes moved in front of the build
 
 The old step 5 wrote the German release notes onto an already-published GitHub Release, by
@@ -475,6 +494,21 @@ fresh admin; do not resurrect an existing account.
 `validate-anonymization.ts` belongs to `anonymize-dump.ts` (full erasure), **not** to the
 pseudonymizer — it asserts `firstName === "Gelöscht"` and will fail against pseudonymized data. The
 pseudonymizer runs its own inline verification.
+
+### Before every int rollout (Issue #742)
+
+int is refreshed from a **fresh** pseudonymized prod dump before each release is rolled out to it, so int
+carries prod's real shape (drifted indexes, odd rows). Lessons of the refresh of 23.10.2026:
+
+- Use the pseudonymizer **of prod's schema version**: check out a worktree at prod's tag
+  (`git worktree add ../clokr-worktrees/pseudo-<tag> v<prod version>`) and run its
+  `apps/api/scripts/pseudonymize-dump.ts` against the staging DB; the newer one expects columns prod lacks.
+- If that older pseudonymizer does not clear WLAN MACs / `PresenceDevice` rows, run the clean-up SQL on the
+  staging DB yourself before dumping (empty the MAC addresses and delete the device rows) and verify zero
+  remain, in addition to the 0 emails / 0 NFC ids / 0 usable hashes check.
+- Keep the previous int DB as `clokr_old_<YYYYMMDD>` (rename, do not drop) until the new int is verified.
+- Afterwards nobody can log in: restore one admin with `seed-int-admin.ts`.
+- Delete every local dump and staging DB when done (the raw prod dump included).
 
 ## References
 

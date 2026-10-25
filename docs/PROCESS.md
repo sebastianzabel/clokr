@@ -86,6 +86,34 @@ Ready, however long it has been sitting in Backlog.
 For bugs, reproduction steps plus expected behaviour _are_ the acceptance criteria — that is
 why `bug.yml` has no separate field. A bug you cannot reproduce is not Ready either.
 
+### A bug found in operation is done only with a regression test and a case-class search
+
+A bug that surfaces on demo, int or prod in real use carries the label `prod-befund`
+(the bug form asks "Wo aufgefallen" and "Fallklasse" for this). It is **Done only when both hold**:
+
+1. **A regression test pins the case.** The test fails without the fix (check by mutation).
+2. **A case-class search is documented as an issue comment.** The search starts from the
+   case class named in the "Fallklasse" field, not from the one failing line: list every place
+   in the code that handles (or should handle) the same class of input or state, found by call
+   pattern rather than by keyword, with a verdict per place (`file:line`, ok / finding).
+   Real findings become their own issues; they are never fixed silently in the same PR.
+
+Why: #728 (an approved half day blocked clocking in) passed every test because the case was never
+specified, and the same class could be hiding in every other reader of approved leave. The index
+outside the migration history on prod (#733) was only caught in the rehearsal. Fixing the one
+instance leaves the class alone.
+
+### Owner acceptance for risky changes
+
+A PR that touches the saldo / working-time account, leave or absence entitlement,
+permissions or reach, migrations, or DSGVO / anonymization carries an **Abnahme-Checkliste** in its
+body, in German: 3 to 6 click steps on int, written for a non-programmer. Each step names the login
+or role, the page, what you should see and what you must NOT see. The owner clicks it on int after
+the deploy; the issue is Done only after that. The owner reviews behaviour, not code.
+
+For these PRs the orchestrator also suggests to the owner to run `/code-review ultra <PR#>`
+before merge (owner-triggered, billed).
+
 ## Mapping to GSD
 
 | GitHub    | GSD                                              |
