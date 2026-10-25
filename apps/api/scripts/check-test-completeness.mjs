@@ -957,7 +957,9 @@ import { readFileSync } from "node:fs";
 // Issue #728: one new file (half-day-leave-recording-728.test.ts) on top of #713: MIN_FILES 716 -> 717.
 // Issue #668: one new file (month-close-employment-668.test.ts) -> MIN_FILES 717 -> 718, measured with a full run on
 // `fix/668-close-by-employment` (origin/main @ d1ec1f04 + #668): 718 test files, 10880 tests.
-const MIN_FILES = 718;
+// Issue #668 review fixes: one more file (month-close-review-668.test.ts) -> 719; measured full run on the same branch @ 8f8e5295:
+// 719 test files, 10903 tests (10900 passed, 3 skipped).
+const MIN_FILES = 719;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1027,7 +1029,8 @@ const MIN_FILES = 718;
 // lower-bound convention): MIN_TESTS 10862 -> 10870.
 // Issue #668: MIN_TESTS 10870 -> 10880, the measured total of the full run named at MIN_FILES (10872 passed, 5 then-red cases
 // since fixed, 3 skipped); the new file holds 9 cases. Never lowered.
-const MIN_TESTS = 10880;
+// Issue #668 review fixes: MIN_TESTS 10880 -> 10903, the measured total of the full run named at MIN_FILES. Never lowered.
+const MIN_TESTS = 10903;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
