@@ -1032,8 +1032,8 @@ const MIN_FILES = 720;
 // Issue #668: MIN_TESTS 10870 -> 10880, the measured total of the full run named at MIN_FILES (10872 passed, 5 then-red cases
 // since fixed, 3 skipped); the new file holds 9 cases. Never lowered.
 // Issue #668 review fixes: MIN_TESTS 10880 -> 10903, the measured total of the full run named at MIN_FILES. Never lowered.
-// #668 (+33 tests) and #745/#746 (+10 tests) on the common base 10870: MIN_TESTS 10913 (lower-bound sum). Never lowered.
-const MIN_TESTS = 10913;
+// #668 (+33 tests) and #745/#746 (+10 tests) on the common base 10870: measured 10912 in the CI run of PR #751 (the sum 10913 counted one case twice). Never lowered below a measurement.
+const MIN_TESTS = 10912;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
