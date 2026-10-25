@@ -5,7 +5,7 @@
 # code differs from the expected one blocks the release (exit 1).
 #
 #   scripts/release-rehearsal.sh --steps docs/release-notes/vX.Y.Z.steps \
-#       --image ghcr.io/<owner>/clokr-api:<tag> [--host clokr-demo] [--dump latest|<path on the host>] \
+#       --image ghcr.io/<owner>/clokr-api:<tag> [--host clokr-demo] [--dump latest|<path on the host>|live:<container>] \
 #       [--protocol rehearsal-vX.Y.Z.txt]
 #
 # With --host the whole run happens on that machine over ssh: only this script, the steps file and
@@ -13,6 +13,12 @@
 # the host's backup directory and copied only into the throwaway container). Without --host it runs
 # locally against a local docker; then the dump must already be on this machine - never fetch a
 # dump to a laptop unencrypted.
+#
+# --dump live:<container> (Issue #742) takes the dump fresh from a RUNNING postgres container of that host
+# (`pg_dump -Fc` as the container's own user, read-only) and streams it straight into the throwaway
+# container's pg_restore: no dump file exists anywhere. The throwaway postgres then uses the image of
+# that container, so it has prod's major version. Aborts when less than 1 GB is free on the docker root.
+#   scripts/release-rehearsal.sh --host dmz-proxy --dump live:clokr-db --steps ... --image ...
 #
 # Cleanup is guaranteed by a trap: the throwaway postgres container, its anonymous volume, its
 # network and the working directory are removed on every exit path. The running stack, its DB, its
@@ -32,7 +38,7 @@ while [ $# -gt 0 ]; do
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
-[ -n "$STEPS" ] && [ -f "$STEPS" ] && [ -n "$IMAGE" ] || { echo "usage: --steps FILE --image IMAGE [--host H] [--dump latest|PATH] [--protocol FILE]" >&2; exit 64; }
+[ -n "$STEPS" ] && [ -f "$STEPS" ] && [ -n "$IMAGE" ] || { echo "usage: --steps FILE --image IMAGE [--host H] [--dump latest|PATH|live:CONTAINER] [--protocol FILE]" >&2; exit 64; }
 [ -n "$PROTOCOL" ] || PROTOCOL="rehearsal-$(basename "$STEPS" .steps)-$(date +%Y%m%d-%H%M%S).txt"
 
 # ── Remote mode: ship script + steps, run there, fetch only the protocol ────────────────────
@@ -59,8 +65,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ "$DUMP" = "latest" ]; then DUMP="$(ls -1t "$BACKUP_DIR"/*.dump 2>/dev/null | head -1)"; fi
-[ -f "$DUMP" ] || { echo "no dump found ($DUMP)" >&2; exit 66; }
+LIVE=""
+case "$DUMP" in
+  live:?*)
+    LIVE="${DUMP#live:}"
+    # Same postgres major version as the source: use the source container's own image.
+    SRC_IMAGE="$(docker inspect "$LIVE" --format '{{.Config.Image}}' 2>/dev/null)" || { echo "container $LIVE not found" >&2; exit 66; }
+    [ -z "${REHEARSAL_PG_IMAGE:-}" ] && PG_IMAGE="$SRC_IMAGE"
+    ROOT="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null)"
+    FREE_KB="$(df -Pk "${ROOT:-/}" | awk 'NR==2{print $4}')"
+    [ "${FREE_KB:-0}" -ge 1048576 ] || { echo "less than 1 GB free on the docker root ($((${FREE_KB:-0}/1024)) MB); aborting" >&2; exit 75; }
+    ;;
+  *)
+    if [ "$DUMP" = "latest" ]; then DUMP="$(ls -1t "$BACKUP_DIR"/*.dump 2>/dev/null | head -1)"; fi
+    [ -f "$DUMP" ] || { echo "no dump found ($DUMP)" >&2; exit 66; }
+    ;;
+esac
 
 FAILS=0
 : > "$PROTOCOL"
@@ -68,7 +88,11 @@ log() { printf '%s\n' "$*" >> "$PROTOCOL"; }
 log "# Release rehearsal protocol"
 log "steps:  $(basename "$STEPS")"
 log "image:  $IMAGE ($(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}' 2>/dev/null || echo 'digest unknown'))"
-log "dump:   $(basename "$DUMP") (read in place, restored into a throwaway database)"
+if [ -n "$LIVE" ]; then
+  log "dump:   live pg_dump of container $LIVE (streamed, no file), postgres image $PG_IMAGE"
+else
+  log "dump:   $(basename "$DUMP") (read in place, restored into a throwaway database)"
+fi
 log "start:  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 log ""
 
@@ -98,6 +122,12 @@ step() {
 }
 
 restore() {
+  if [ -n "$LIVE" ]; then
+    # pipefail: a failing pg_dump OR pg_restore fails the step. pg_dump only reads the live DB.
+    docker exec "$LIVE" sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' | \
+      docker exec -i "$PG" pg_restore -U clokr -d clokr --no-owner --exit-on-error
+    return $?
+  fi
   docker cp "$DUMP" "$PG:/tmp/restore.dump" && \
   docker exec "$PG" pg_restore -U clokr -d clokr --no-owner --exit-on-error /tmp/restore.dump
   local rc=$?
