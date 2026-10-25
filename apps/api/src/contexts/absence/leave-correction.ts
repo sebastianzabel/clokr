@@ -26,6 +26,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
+import { EFFECTIVE_LEAVE_STATUSES } from "./effective-leave-statuses"; // Issue #478
 import { computeAffectedMonths, monthsInRange } from "./correction-lock";
 import {
   resolveLeaveDays,
@@ -258,7 +259,7 @@ export async function prepareLeaveCorrection(
       where: {
         employeeId: existing.employeeId,
         deletedAt: null,
-        status: { in: ["PENDING", "APPROVED"] },
+        status: { in: ["PENDING", ...EFFECTIVE_LEAVE_STATUSES] }, // Issue #478: same set as POST
         startDate: { lte: end },
         endDate: { gte: start },
         id: { not: existing.id },
@@ -275,7 +276,8 @@ export async function prepareLeaveCorrection(
     // phase. Mirrored bidirectionally: /correct can be called on either side of the pair.
     const correctedIsSick = isSickLeaveTypeCode(newType);
     const blockingOverlap = overlaps.find((o) => {
-      if (o.status !== "APPROVED") return true; // § 9 exception never applies vs PENDING
+      // § 9 exception never applies vs PENDING (Issue #478: CANCELLATION_REQUESTED counts as active)
+      if (!(EFFECTIVE_LEAVE_STATUSES as readonly string[]).includes(o.status)) return true;
       const otherIsSick = isSickLeaveTypeCode(o.leaveType.code);
       if (correctedIsSick !== otherIsSick) return false; // § 9 case — permitted either way
       return true; // same-kind overlap (vacation/vacation, sick/sick) — still blocked

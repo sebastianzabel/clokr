@@ -20,6 +20,7 @@
  */
 import type { LeaveTypeCode } from "@clokr/db";
 import { isSickLeaveTypeCode } from "./leave-type";
+import { EFFECTIVE_LEAVE_STATUSES } from "./effective-leave-statuses";
 
 export type LeaveRangeRow = {
   id: string;
@@ -59,7 +60,11 @@ export function findSection9Overlaps(
 ): Section9Overlap[] {
   const out: Section9Overlap[] = [];
   for (const c of candidates) {
-    if (c.status !== "APPROVED") continue;
+    // Issue #478: a CANCELLATION_REQUESTED request is still active leave until its cancellation
+    // is approved, and a sick request over it is allowed — so the § 9 case is detected against
+    // it exactly like against an APPROVED one (a later approved cancellation supersedes the
+    // credit, Issue #662).
+    if (!(EFFECTIVE_LEAVE_STATUSES as readonly string[]).includes(c.status)) continue;
     if (isSickLeaveTypeCode(c.leaveType.code)) continue;
     const hit = intersectRanges(sickStart, sickEnd, c.startDate, c.endDate);
     if (!hit) continue;

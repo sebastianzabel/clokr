@@ -540,20 +540,27 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Gleichartige Überschneidungen (Urlaub/Urlaub, Krank/Krank) und Überschneidungen mit
       // noch PENDING-Anträgen bleiben unverändert gesperrt — ein Blanko-Entfernen des Guards
       // würde die Doppelbuchung wieder öffnen, gegen die er existiert.
+      //
+      // Issue #478: the blocking set is PENDING plus EFFECTIVE_LEAVE_STATUSES — a request in
+      // CANCELLATION_REQUESTED is still active leave until the cancellation is approved
+      // (CLAUDE.md "Leave Cancellation Flow"), so a new request over it is a double booking
+      // too. The § 9 exception is the same set: sick over CANCELLATION_REQUESTED stays allowed
+      // exactly like over APPROVED. Two half days on one date stay an overlap (owner
+      // decision 25.10.2026).
       const isSickRequest = body.type === "SICK" || body.type === "SICK_CHILD";
       const overlaps = await app.prisma.leaveRequest.findMany({
         where: {
           employeeId,
           deletedAt: null,
-          status: { in: ["PENDING", "APPROVED"] },
+          status: { in: ["PENDING", ...EFFECTIVE_LEAVE_STATUSES] },
           startDate: { lte: end },
           endDate: { gte: start },
         },
         include: { leaveType: true },
       });
       const blockingOverlap = overlaps.find((o) => {
-        if (!isSickRequest) return true; // non-sick: unchanged behaviour
-        if (o.status !== "APPROVED") return true; // sick vs PENDING: still blocked
+        if (!isSickRequest) return true; // non-sick: any counted or pending request blocks
+        if (!(EFFECTIVE_LEAVE_STATUSES as readonly string[]).includes(o.status)) return true; // sick vs PENDING: still blocked
         if (isSickLeaveTypeCode(o.leaveType.code)) return true; // sick vs sick: still blocked
         return false; // § 9 case — permitted
       });
@@ -625,7 +632,9 @@ export async function leaveRoutes(app: FastifyInstance) {
             employeeId,
             leaveTypeId,
             deletedAt: null,
-            status: { in: ["PENDING", "APPROVED"] },
+            // Issue #478: same set as the overlap guard above — a request in
+            // CANCELLATION_REQUESTED is still active leave and keeps using up the quota.
+            status: { in: ["PENDING", ...EFFECTIVE_LEAVE_STATUSES] },
             startDate: { gte: yearStart, lte: yearEnd },
           },
           _sum: { days: true },
@@ -1718,7 +1727,10 @@ export async function leaveRoutes(app: FastifyInstance) {
             where: {
               employeeId: existing.employeeId,
               deletedAt: null,
-              status: "APPROVED",
+              // Issue #478: sick over a CANCELLATION_REQUESTED request is allowed by the POST
+              // guard, so the § 9 case must be detected against it as well (a credit left
+              // behind by an approved cancellation is superseded, Issue #662).
+              status: { in: [...EFFECTIVE_LEAVE_STATUSES] },
               id: { not: existing.id },
               startDate: { lte: existing.endDate },
               endDate: { gte: existing.startDate },
