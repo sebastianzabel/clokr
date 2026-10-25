@@ -247,6 +247,8 @@ export interface CalendarLeaveOverlap {
   startDate: Date;
   endDate: Date;
   status: LeaveRequestStatus;
+  /** Issue #743: a half-day request (read by the day status, never by a Soll input). */
+  halfDay: boolean;
   leaveType: { name: string; code: LeaveTypeCode | null };
 }
 
@@ -283,6 +285,7 @@ export async function getCalendarLeaveOverlapping(
       startDate: true,
       endDate: true,
       status: true,
+      halfDay: true,
       leaveType: { select: { name: true, code: true } },
     },
   });
