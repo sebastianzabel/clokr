@@ -65,6 +65,7 @@ import {
   type SickDaysByCode, // Issue #713 (D-02) — the kernel's per-code split
   vocationalSchoolDayCount, // Issue #713 (D-05) — the Berufsschultage of the period
   DISPLAY_NAME, // Issue #617 (P-06) — display text of a day row; the identity is the code
+  withHalfDayMarker, // Issue #746 — the one half-day wording, owned by the absence context
 } from "../contexts/absence"; // Phase 100B Plan 10 — A12/A14/A15; Plan 11 — A22
 import type { LeaveEntitlement, LeaveRequestStatus, LeaveTypeCode } from "@clokr/db";
 
@@ -182,8 +183,6 @@ export type EmployeeWithIncludes = {
 // rows other modules already decided: no workday rule, no counting. A row's label is the display
 // text of its CODE (`DISPLAY_NAME`) - never `leaveType.name`, which a tenant can rename. It is not
 // `getCalendarLeaveOverlapping` on purpose: that read is display-only and includes PENDING requests.
-const HALF_DAY_SUFFIX = " (halber Tag)";
-
 function buildStundennachweisDayRows(
   emp: EmployeeWithIncludes,
   firstDay: Date,
@@ -197,7 +196,7 @@ function buildStundennachweisDayRows(
   const last = dayOf(lastDay);
   const labelOf = (code: string | null, halfDay: boolean): string => {
     const base = (code ? DISPLAY_NAME[code as LeaveTypeCode] : undefined) ?? DISPLAY_NAME.OTHER;
-    return halfDay ? `${base}${HALF_DAY_SUFFIX}` : base;
+    return withHalfDayMarker(base, halfDay);
   };
   const rows: MonthlyReportDayRow[] = [];
   const addPeriod = (start: Date, end: Date, label: string): void => {
