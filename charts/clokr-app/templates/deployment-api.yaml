@@ -20,6 +20,9 @@ spec:
       # This pod (Fastify API plus a busybox nc wait-for-db initContainer) never calls the Kubernetes API, so the service-account token
       # would be pure attack surface.
       automountServiceAccountToken: false
+      # Kubernetes injects docker-link variables for every service in the namespace; the service
+      # "minio" (Issue #184) would set MINIO_PORT=tcp://<ip>:9000 and break the API's config parse.
+      enableServiceLinks: false
       {{- if .Values.postgres.enabled }}
       initContainers:
       - name: wait-for-db
@@ -42,6 +45,12 @@ spec:
         envFrom:
         - secretRef:
             name: clokr-secrets
+        {{- if .Values.api.extraSecretName }}
+        # Issue #184: values kept out of the chart-rendered secret (e.g. the MINIO_* credentials),
+        # created by hand per environment.
+        - secretRef:
+            name: {{ .Values.api.extraSecretName }}
+        {{- end }}
         env:
         - name: NODE_ENV
           value: "production"
