@@ -75,7 +75,9 @@
       "@playwright/test": "1.60.0",
       "deepmerge-ts": ">=8.0.0",
       "mysql2": ">=3.22.0",
-      "source-map-js": ">=1.2.2"
+      "source-map-js": ">=1.2.2",
+      "undici": ">=8.12.2",
+      "body-parser": ">=2.4.0"
     }
   }
 }
