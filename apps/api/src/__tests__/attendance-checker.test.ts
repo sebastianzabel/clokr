@@ -506,3 +506,87 @@ describe("attendance-checker — Feature 6: vacation-expiry reminder (§ 7 BUrlG
     expect(notifs[0].type).toBe("VACATION_EXPIRY");
   });
 });
+
+// ── Issue #745: Absence half day reaches the gap reminders (class of #728) ────────────────────
+// The month-close gap check (`month-gap-check.ts`) passes `Absence.halfDay` to
+// `findMissingWorkdays`; the reminders of Feature 7 and 8 used to drop it, so a half absence day
+// counted as fully covered there while the close reported a partial gap.
+describe("attendance-checker — Issue #745: Absence half day in the gap reminders", () => {
+  let app: FastifyInstance;
+  const tenantIds: string[] = [];
+  // Every Mon-Fri of July 2026 except Monday 2026-07-06, which carries the Absence under test.
+  const JULY_WORKDAYS_EXCEPT_06 = [
+    1, 2, 3, 7, 8, 9, 10, 13, 14, 15, 16, 17, 20, 21, 22, 23, 24, 27, 28, 29, 30, 31,
+  ].map((d) => `2026-07-${String(d).padStart(2, "0")}`);
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  afterAll(async () => {
+    for (const id of tenantIds) {
+      try {
+        await cleanupTestData(app, id);
+      } catch (err) {
+        console.error(`Cleanup failed for tenant ${id}:`, err);
+      }
+    }
+    await closeTestApp();
+  });
+
+  async function seedWithAbsence(suffix: string, halfDay: boolean) {
+    const seed = await seedIsolatedTenant(app, suffix);
+    tenantIds.push(seed.tenant.id);
+    for (const d of JULY_WORKDAYS_EXCEPT_06) await seedEntry(app, seed.employee.id, d);
+    // The manager is an employee of the tenant too: give them a complete month so only the
+    // employee under test can produce a gap.
+    for (const d of [...JULY_WORKDAYS_EXCEPT_06, "2026-07-06"])
+      await seedEntry(app, seed.mgrEmployee.id, d);
+    await app.prisma.absence.create({
+      data: {
+        employeeId: seed.employee.id,
+        type: "EDUCATION",
+        startDate: new Date("2026-07-06T00:00:00Z"),
+        endDate: new Date("2026-07-06T00:00:00Z"),
+        days: halfDay ? 0.5 : 1,
+        halfDay,
+        createdBy: seed.mgrUser.id,
+      },
+    });
+    return seed;
+  }
+
+  it("Feature 7: a half-day Absence without an entry reports the partial gap", async () => {
+    const seed = await seedWithAbsence("745-f7-half", true);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-29T07:00:00.000Z"));
+    await app.tryEndOfMonthGapReminder();
+    expect(await getGapEmployeeNotifs(app, seed.empUser.id)).toHaveLength(1);
+  });
+
+  it("Feature 7: a full-day Absence covers the day (no reminder)", async () => {
+    const seed = await seedWithAbsence("745-f7-full", false);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-29T07:00:00.000Z"));
+    await app.tryEndOfMonthGapReminder();
+    expect(await getGapEmployeeNotifs(app, seed.empUser.id)).toHaveLength(0);
+  });
+
+  it("Feature 8: a half-day Absence without an entry reports the partial gap", async () => {
+    const seed = await seedWithAbsence("745-f8-half", true);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-02T07:00:00.000Z"));
+    await app.tryBeginningOfMonthGapReminder();
+    expect(await getGapManagerNotifs(app, seed.mgrUser.id)).toHaveLength(1);
+  });
+
+  it("Feature 8: a full-day Absence covers the day (no reminder)", async () => {
+    const seed = await seedWithAbsence("745-f8-full", false);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-02T07:00:00.000Z"));
+    await app.tryBeginningOfMonthGapReminder();
+    expect(await getGapManagerNotifs(app, seed.mgrUser.id)).toHaveLength(0);
+  });
+});
