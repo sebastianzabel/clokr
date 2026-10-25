@@ -448,10 +448,12 @@ describe("GET /api/v1/dashboard/open-items — work obligation per schedule type
     expect(body.missingDays).toEqual(FIXED_EXPECTED.slice(1));
   });
 
-  it("case 9 — a half-day approved leave with no entry is NOT nagged about (partial gaps are filtered)", async () => {
+  // Issue #743 (owner decision 25.10.2026) replaced the old "partial gaps are filtered" pin: a PAST
+  // half day without an entry owes its other half and is a gap, like the team week's "Fehlt".
+  it("case 9 — a past half-day approved leave with no entry IS a gap (the other half is owed, #743)", async () => {
     const halfDayTarget = NON_HOLIDAY.filter((d) => [1, 2, 3, 4, 5].includes(dowOf(d)))[0];
     const body = await openItems("c9halfday");
-    expect(body.missingDays).not.toContain(halfDayTarget);
+    expect(body.missingDays).toContain(halfDayTarget);
   });
 
   it("case 10 — an isTimeTrackingExempt employee reports nothing (pre-existing guard, unchanged)", async () => {

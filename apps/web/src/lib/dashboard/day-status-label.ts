@@ -39,6 +39,9 @@ export function attendanceStatusText(row: {
     case "requested":
       return DAY_STATUS_LABEL.requested;
     case "missing":
+      // Issue #743: a past half day of leave without an entry is "missing" and carries the leave
+      // type as its reason (the only "missing" row with a reason): the absence stays visible.
+      if (row.reason) return `${DAY_STATUS_LABEL.missing} · halber Tag ${row.reason}`;
       return row.expectedStart != null && row.lateMinutes != null
         ? `${DAY_STATUS_LABEL.missing} · erwartet ${row.expectedStart} · ${row.lateMinutes} Min. zu spät`
         : DAY_STATUS_LABEL.missing;
