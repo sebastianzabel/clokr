@@ -23,6 +23,8 @@ image:
 api:
   port: 4000
   replicas: 1
+  # Issue #184: name of a hand-created secret the API also reads (envFrom); empty = none.
+  extraSecretName: ""
   # The API writes nothing to the container filesystem in this chart's configuration: uploads
   # (avatars, section 9 documents) are buffered in memory and stored in MinIO, PDFs and exports are
   # streamed, and LOG_FILE is not set (stdout only). Ephemeral storage therefore covers the
@@ -73,6 +75,25 @@ postgres:
       memory: 512Mi
       cpu: 200m
       ephemeral-storage: 1Gi
+
+# Issue #184: optional object store. Off by default; an environment that enables it creates the
+# secret named in minio.secretName by hand (MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, MINIO_ENDPOINT,
+# MINIO_ACCESS_KEY, MINIO_SECRET_KEY) and sets api.extraSecretName to the same name.
+minio:
+  enabled: false
+  image: cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
+  secretName: clokr-minio
+  storage: 5Gi
+  storageClass: "" # blank = k3s default (local-path-provisioner)
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 50m
+      ephemeral-storage: 64Mi
+    limits:
+      memory: 512Mi
+      cpu: 500m
+      ephemeral-storage: 512Mi
 
 ingress:
   enabled: true

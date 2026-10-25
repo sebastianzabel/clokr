@@ -42,6 +42,12 @@ spec:
         envFrom:
         - secretRef:
             name: clokr-secrets
+        {{- if .Values.api.extraSecretName }}
+        # Issue #184: values kept out of the chart-rendered secret (e.g. the MINIO_* credentials),
+        # created by hand per environment.
+        - secretRef:
+            name: {{ .Values.api.extraSecretName }}
+        {{- end }}
         env:
         - name: NODE_ENV
           value: "production"
