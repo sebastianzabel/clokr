@@ -819,7 +819,10 @@ describe("confirm — Phase 104-06 Task 1", () => {
   // vacation can be cancelled — and the cancel path already gives the days back. Confirming
   // afterwards ran reverseVacationDays() a SECOND time (double credit) and booked a § 9
   // credit against a vacation that legally no longer exists.
-  it("Test 6b (WR-01): confirming a credit whose vacation is no longer APPROVED returns 409 and books nothing", async () => {
+  // Issue #478: CANCELLATION_REQUESTED is still active leave, so its credit CAN be confirmed
+  // (leave-edit-guards-478.test.ts proves the chain incl. the #662 supersession); only a
+  // CANCELLED vacation stays refused.
+  it("Test 6b (WR-01): confirming a credit whose vacation is CANCELLED returns 409 and books nothing", async () => {
     const { vacId, sickId } = await vacAndSick(
       ["2026-05-11", "2026-05-13"],
       ["2026-05-11", "2026-05-13"],
@@ -833,11 +836,9 @@ describe("confirm — Phase 104-06 Task 1", () => {
       reason: "AU liegt vor, der Urlaub ist aber zwischenzeitlich storniert worden",
     };
 
-    // CANCELLATION_REQUESTED: the leave is still active today, but approving that
-    // cancellation later would decrement the same days a second time.
     // CANCELLED: the days are already back — a second reverseVacationDays() would
     // over-credit outright.
-    for (const blockedStatus of ["CANCELLATION_REQUESTED", "CANCELLED"] as const) {
+    for (const blockedStatus of ["CANCELLED"] as const) {
       await app.prisma.leaveRequest.update({
         where: { id: vacId },
         data: { status: blockedStatus },

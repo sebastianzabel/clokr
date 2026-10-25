@@ -20,7 +20,7 @@
  */
 import type { LeaveTypeCode } from "@clokr/db";
 import { isSickLeaveTypeCode } from "./leave-type";
-import { EFFECTIVE_LEAVE_STATUSES } from "./effective-leave-statuses";
+import { isEffectiveLeaveStatus } from "./effective-leave-statuses";
 
 export type LeaveRangeRow = {
   id: string;
@@ -49,7 +49,8 @@ export function intersectRanges(
 }
 
 /**
- * The § 9 candidates for a sick range: every APPROVED, non-SICK request it intersects.
+ * The § 9 candidates for a sick range: every non-SICK request in EFFECTIVE_LEAVE_STATUSES
+ * (APPROVED or CANCELLATION_REQUESTED, Issue #478) it intersects.
  * PENDING requests are deliberately excluded — an unapproved vacation is not yet an
  * "erfüllter Urlaubsanspruch" and there is nothing to not-count against.
  */
@@ -64,7 +65,7 @@ export function findSection9Overlaps(
     // is approved, and a sick request over it is allowed — so the § 9 case is detected against
     // it exactly like against an APPROVED one (a later approved cancellation supersedes the
     // credit, Issue #662).
-    if (!(EFFECTIVE_LEAVE_STATUSES as readonly string[]).includes(c.status)) continue;
+    if (!isEffectiveLeaveStatus(c.status)) continue;
     if (isSickLeaveTypeCode(c.leaveType.code)) continue;
     const hit = intersectRanges(sickStart, sickEnd, c.startDate, c.endDate);
     if (!hit) continue;
