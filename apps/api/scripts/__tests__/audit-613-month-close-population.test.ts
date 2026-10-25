@@ -226,3 +226,157 @@ describe("audit-613-month-close-population (Issue #613, D-03)", () => {
     }
   });
 });
+
+describe("audit-613-month-close-population - backfill section (Issue #668, review finding 4)", () => {
+  let app: FastifyInstance;
+  let d: Awaited<ReturnType<typeof seedTestData>>;
+  let p: Record<"P1" | "P2" | "P3" | "P4" | "P5", PopulationPerson>;
+  let run: { code: number; lines: string[] };
+  let before: Record<string, number>;
+
+  const counts = async () => ({
+    snapshots: await app.prisma.saldoSnapshot.count({
+      where: { employee: { tenantId: d.tenant.id } },
+    }),
+    audit: await app.prisma.auditLog.count(),
+    entries: await app.prisma.timeEntry.count({ where: { employee: { tenantId: d.tenant.id } } }),
+  });
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    d = await seedTestData(app, "b668");
+    const base = { tenantId: d.tenant.id, salonId: d.salonId, hireDate: day("2026-09-01") };
+    p = {
+      // P1: login off, left 30.09., hire 01.08. with August closed -> September would close.
+      P1: await createPopulationPerson(app, {
+        ...base,
+        tag: "p1",
+        hireDate: day("2026-08-01"),
+        loginActive: false,
+        exitDate: day("2026-09-30"),
+      }),
+      // P2: login off, no exit date, gap days -> September defers (EXIT_DATE_MISSING).
+      P2: await createPopulationPerson(app, { ...base, tag: "p2", loginActive: false }),
+      // P3: login off, no exit date, no daily gap rule -> September and October would close.
+      P3: await createPopulationPerson(app, { ...base, tag: "p3", loginActive: false }),
+      // P4: anonymised after leaving 30.09.
+      P4: await createPopulationPerson(app, {
+        ...base,
+        tag: "p4",
+        anonymized: true,
+        exitDate: day("2026-09-30"),
+      }),
+      // P5: active login -> already selected by the old rule, no backfill line.
+      P5: await createPopulationPerson(app, { ...base, tag: "p5" }),
+    };
+    await app.prisma.workSchedule.updateMany({
+      where: { employeeId: p.P3.employeeId },
+      data: { type: "MONTHLY_HOURS", monthlyHours: 40 },
+    });
+    await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId: p.P1.employeeId,
+        periodType: "MONTHLY",
+        periodStart: day("2026-07-31"),
+        periodEnd: day("2026-08-31"),
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date("2026-09-02T06:00:00Z"),
+        superseded: false,
+      },
+    });
+    before = await counts();
+    run = await capture(() => main(["--tenant-id", d.tenant.id], app.prisma));
+  }, 180_000);
+
+  afterAll(async () => {
+    try {
+      const ids = (
+        await app.prisma.employee.findMany({
+          where: { tenantId: d.tenant.id },
+          select: { id: true },
+        })
+      ).map((e) => e.id);
+      await app.prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: ids } } });
+      await cleanupTestData(app, d.tenant.id);
+    } catch (err) {
+      console.error("audit-668 cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  const bf = (id: string, rest: string) => `tenant=${d.tenant.id} backfill employee=${id} ${rest}`;
+
+  it("lists, per newly included person, what the next cron run would write", () => {
+    expect(run.lines).toContain(
+      bf(
+        p.P1.employeeId,
+        "reason=EMPLOYED_LOGIN_INACTIVE openMonths=1 wouldClose=1 wouldDefer=0 deferredAt=none",
+      ),
+    );
+    expect(run.lines).toContain(
+      bf(
+        p.P4.employeeId,
+        "reason=ANONYMIZED_LEAVER openMonths=1 wouldClose=1 wouldDefer=0 deferredAt=none",
+      ),
+    );
+  });
+
+  it("reports a deactivated login without an exit date separately and stops at its first gap month", () => {
+    expect(run.lines).toContain(
+      bf(
+        p.P2.employeeId,
+        "reason=EXIT_DATE_MISSING openMonths=1 wouldClose=0 wouldDefer=1 deferredAt=2026-09",
+      ),
+    );
+    // No daily gap rule: nothing blocks, both months close.
+    expect(run.lines).toContain(
+      bf(
+        p.P3.employeeId,
+        "reason=EXIT_DATE_MISSING openMonths=2 wouldClose=2 wouldDefer=0 deferredAt=none",
+      ),
+    );
+  });
+
+  it("prints no backfill line for a person the old rule already selected", () => {
+    expect(run.lines.filter((l) => l.includes(`employee=${p.P5.employeeId} `))).toEqual([]);
+  });
+
+  it("prints per-tenant and overall totals and exits 2", () => {
+    expect(run.lines).toContain(
+      `tenant=${d.tenant.id} backfill newlyIncluded=4 wouldClose=4 wouldDefer=1 exitDateMissing=2`,
+    );
+    const totals = run.lines.find((l) => l.startsWith("Totals: tenants=1 "));
+    expect(totals).toContain("newlyIncluded=4 wouldClose=4 wouldDefer=1 exitDateMissing=2");
+    expect(run.code).toBe(EXIT_FINDINGS);
+  });
+
+  it("prints ids and counts only and writes nothing", async () => {
+    const all = run.lines.join("\n");
+    for (const person of Object.values(p)) {
+      expect(all).not.toContain(person.email);
+      expect(all).not.toContain(person.employeeNumber);
+    }
+    expect(await counts()).toEqual(before);
+  });
+
+  it("its prediction is the cron's: after a real run P1 and P3 have exactly the predicted months, P2 none", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FAKE_NOW);
+    try {
+      await app.tryAutoCloseMonth();
+    } finally {
+      vi.useRealTimers();
+    }
+    const monthly = (id: string) =>
+      app.prisma.saldoSnapshot.count({
+        where: { employeeId: id, periodType: "MONTHLY", superseded: false },
+      });
+    expect(await monthly(p.P1.employeeId)).toBe(1 + 1); // August (seeded) + September
+    expect(await monthly(p.P3.employeeId)).toBe(2);
+    expect(await monthly(p.P4.employeeId)).toBe(1);
+    expect(await monthly(p.P2.employeeId)).toBe(0);
+  });
+});

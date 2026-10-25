@@ -1221,10 +1221,36 @@ nächste Lauf zusätzlich abschließt.
 DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx scripts/audit-613-month-close-population.ts [--tenant-id <uuid>] [--year <YYYY> --month <M>]
 ```
 
-Exit-Code `0`: gleiche Auswahl; `2`: Liste gedruckt; `1`: Aufruf- oder Verbindungsfehler.
+Exit-Code `0`: gleiche Auswahl und keine neu einbezogene Person; `2`: Liste gedruckt; `1`: Aufruf- oder Verbindungsfehler.
 
 **2. Auswerten.** Jede `EMPLOYED_LOGIN_INACTIVE`-Zeile ist eine Person, für die der Cron nach dem Deploy die offenen Monate bis
 zum Austritt schließt; `NOT_EMPLOYED_LOGIN_ACTIVE` sind Personen, für die er keinen weiteren Monat mehr schließt.
+
+Der Cron schließt nicht nur den Vormonat, sondern **jeden offenen Monat** ab dem Folgemonat des letzten Abschlusses (oder dem
+Eintrittsmonat) bis zum Vormonat, höchstens bis zum Austrittsmonat. Deshalb druckt der Probelauf zusätzlich je Mandant einen
+Block „Backfill“ für jede neu einbezogene Person (Login aus, im Cron-Zeitraum beschäftigt) mit den Monaten, die der nächste Lauf
+schreiben würde. Er benutzt dafür denselben Monatsbereich und dieselbe Lückenentscheidung wie der Cron (`decideGapMonth`,
+`detectMonthGaps`); Zeilen nur mit Ids und Zahlen:
+
+```
+tenant=<id> backfill employee=<id> reason=<CODE> openMonths=<n> wouldClose=<n> wouldDefer=<0|1> deferredAt=<YYYY-MM|none>
+tenant=<id> backfill newlyIncluded=<n> wouldClose=<n> wouldDefer=<n> exitDateMissing=<n>
+Totals: tenants=<n> differences=<n> newlyIncluded=<n> wouldClose=<n> wouldDefer=<n> exitDateMissing=<n>
+```
+
+- `wouldClose`: Monate, die der nächste Lauf als Snapshot schreibt (der Cron bricht beim ersten verschobenen Monat ab).
+- `wouldDefer=1`: der Cron verschiebt einen Monat mit Lückentagen (Selbstbearbeitungsfenster oder `closeMonthWithGapsAllowed=false`);
+  Verschiebungen durch unbestätigte Pausen oder § 4-ArbZG-Befunde (Mandanten-Opt-in) werden nicht vorhergesagt.
+- `reason=EXIT_DATE_MISSING`: Login abgeschaltet **und kein Austrittsdatum** (alte Abmeldung ohne Datum). Der Cron schließt für
+  diese Personen **nie** einen Monat mit Lückentagen mit 0 h; Monate ohne Lücken schließen normal. Die Person erscheint im
+  verzögerten Abschluss mit dem Grund „Austrittsdatum fehlt – bitte prüfen“ und in der Manager-Benachrichtigung. Vor dem Deploy
+  für jede dieser Personen das Austrittsdatum setzen oder die Zeiten nachtragen. Sie werden getrennt gezählt (`exitDateMissing`).
+
+**Weitere Folgen derselben Regel.** Lücken zählen nur bis zum Austrittstag (Cron, verzögerter Abschluss, Status). Der
+Jahresabschluss erwartet bei einer Person mit Austritt vor Dezember nur die Monate bis zum Austrittsmonat und schreibt dann den
+Jahres-Snapshot samt Übertrag; wer in einem früheren Jahr ausgetreten ist, bekommt für dieses Jahr keinen. Die Monatsabschluss-
+Übersicht (`GET /overtime/close-month/status`, `/year-status`) zeigt genau die Personen von Cron und verzögertem Abschluss, auch
+eine nach dem Austritt anonymisierte Person, damit jeder überfällige Monat in der Oberfläche geöffnet und geschlossen werden kann.
 
 **3. Rollback.** Das vorige Image wählt wieder nach Login. Bereits geschriebene Abschlüsse bleiben (revisionssicher, nie
 neu berechnet).

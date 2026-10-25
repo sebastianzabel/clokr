@@ -39,3 +39,38 @@ export function isInMonthClosePopulation(
   if (isAnonymizedEmployee(row) && row.exitDate === null) return false;
   return isEmployedInPeriod(row, start, end);
 }
+
+/**
+ * A person whose login was switched off but who has NO exit date (an old offboarding that never
+ * recorded one). Their employment is unbounded, so the month close cannot tell whether a gap day
+ * is a forgotten entry or simply after the person left. An anonymised row is never in the
+ * population without an exit date, so it cannot be this case.
+ */
+export function isExitDateMissing(row: {
+  exitDate: Date | null;
+  user?: { isActive: boolean } | null;
+}): boolean {
+  return row.exitDate === null && row.user?.isActive === false;
+}
+
+export type GapDeferralDecision =
+  "CLOSE" | "DEFER_IN_WINDOW" | "DEFER_EXIT_DATE_MISSING" | "DEFER_MANUAL";
+
+/**
+ * What the month close does with a month that has gap days - the ONE place the order is stated
+ * (the cron and the pre-deploy dry run both call it). In the retro window every month defers;
+ * past it, a person without an exit date is NEVER force-closed at 0 h (their gap days are not
+ * provably forgotten entries), then the tenant switch decides. Only `CLOSE` writes a snapshot.
+ */
+export function decideGapMonth(args: {
+  gapCount: number;
+  pastWindow: boolean;
+  closeAllowed: boolean;
+  exitDateMissing: boolean;
+}): GapDeferralDecision {
+  if (args.gapCount === 0) return "CLOSE";
+  if (!args.pastWindow) return "DEFER_IN_WINDOW";
+  if (args.exitDateMissing) return "DEFER_EXIT_DATE_MISSING";
+  if (!args.closeAllowed) return "DEFER_MANUAL";
+  return "CLOSE";
+}

@@ -28,6 +28,25 @@
  * Saldo-Übersicht uses (`getConfirmedCarryOverBulk` + `finalSaldoOpen`). That line is informational
  * and does not change the exit code.
  *
+ * Backfill section (Issue #668, review finding 4). The cron does not close one month, it closes
+ * EVERY open month of a person from the month after their last snapshot (or the hire month) up to
+ * the previous month, capped at the exit month. So per tenant a second block lists, for every
+ * person the new rule adds (selected now, not by the old login rule), what the NEXT cron run would
+ * write, with the cron's own month range and gap decision (`decideGapMonth`, `detectMonthGaps`):
+ *
+ *   tenant=<id> backfill employee=<id> reason=<CODE> openMonths=<n> wouldClose=<n> wouldDefer=<0|1> deferredAt=<YYYY-MM|none>
+ *   tenant=<id> backfill newlyIncluded=<n> wouldClose=<n> wouldDefer=<n> exitDateMissing=<n>
+ *
+ *   EMPLOYED_LOGIN_INACTIVE   login off, exit date set (or still employed)
+ *   ANONYMIZED_LEAVER         anonymised after leaving (exit date set)
+ *   EXIT_DATE_MISSING         login off and NO exit date: months with gap days are never force-closed
+ *                             and stop the run (`wouldDefer=1`); months without gaps still close.
+ *                             Reported separately; an admin should set the exit date first.
+ *
+ * A person with no open month in range is not listed. `openMonths` counts the open months up to and
+ * including the first deferred one. `wouldClose` counts the months that would be written (the cron stops at the first deferred month);
+ * deferrals through unconfirmed breaks or § 4 ArbZG findings (tenant opt-in) are not predicted.
+ *
  * READ-ONLY. ZERO mutations: only Prisma reads run, there is no write flag, and none may ever be
  * added. The output carries tenant ids, employee ids, reason codes and counts only - never a name,
  * an employee number or an e-mail address (DSGVO). Full, untruncated UUIDs.
@@ -38,9 +57,9 @@
  *     scripts/audit-613-month-close-population.ts [--tenant-id <uuid>] [--year <YYYY> --month <M>] [--help]
  *
  * Exit codes:
- *   0 - the two selections agree for every checked tenant and month
+ *   0 - the two selections agree for every checked tenant and month and no person is newly included
  *   1 - DATABASE_URL missing, bad CLI, or a DB connection/query failure
- *   2 - one or more differences were listed
+ *   2 - one or more differences or newly included persons were listed
  */
 import { PrismaClient } from "@clokr/db";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -53,7 +72,20 @@ import {
   isAnonymizedEmployee,
   reportPopulationWhere,
 } from "../src/contexts/platform";
-import { monthClosePopulationWhere } from "../src/contexts/working-time-account/month-close-population";
+import {
+  monthClosePopulationWhere,
+  isInMonthClosePopulation,
+  isExitDateMissing,
+  decideGapMonth,
+} from "../src/contexts/working-time-account/month-close-population";
+import {
+  DEFAULT_RETRO_ENTRY_WINDOW_DAYS,
+  buildMonthRange,
+  computeFirstOpenMonth,
+  isMonthPastItsWindow,
+} from "../src/contexts/working-time-account/month-close-window";
+import { detectMonthGaps } from "../src/contexts/working-time-account/month-gap-check";
+import { periodStartWindow } from "../src/contexts/working-time-account/snapshot-period";
 import {
   dateStrInTz,
   dayRangeUtc,
@@ -70,6 +102,8 @@ export const EXIT_FINDINGS = 2;
 
 export type DifferenceReason =
   "EMPLOYED_LOGIN_INACTIVE" | "NOT_EMPLOYED_LOGIN_ACTIVE" | "ANONYMIZED_LOGIN_ACTIVE";
+
+export type BackfillReason = "EMPLOYED_LOGIN_INACTIVE" | "ANONYMIZED_LEAVER" | "EXIT_DATE_MISSING";
 
 // ── CLI parsing ───────────────────────────────────────────────────────────────
 export type CliArgs = {
@@ -133,6 +167,91 @@ function previousMonth(now: Date, tz: string): { year: number; month: number } {
   return { year, month };
 }
 
+type BackfillPerson = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  hireDate: Date;
+  exitDate: Date | null;
+  user: { isActive: boolean };
+  workSchedules: Array<{ validFrom: Date } & Record<string, unknown>>;
+};
+
+/**
+ * What the next cron run writes for one person: the cron's month range (lastSnap+1 or the hire
+ * month up to the ceiling, only months of employment, existing snapshots skipped) and its gap
+ * decision, month by month, stopping at the first deferral exactly like the cron's `break`.
+ */
+async function planBackfill(
+  prisma: PrismaClient,
+  tenantId: string,
+  emp: BackfillPerson,
+  ctx: {
+    tz: string;
+    ceiling: { year: number; month: number };
+    now: Date;
+    retroWindowDays: number;
+    closeAllowed: boolean;
+  },
+): Promise<{ openMonths: number; wouldClose: number; deferredAt: string | null }> {
+  const lastSnap = await prisma.saldoSnapshot.findFirst({
+    where: { employeeId: emp.id, periodType: "MONTHLY", superseded: false },
+    orderBy: { periodStart: "desc" },
+    select: { periodStart: true },
+  });
+  const range = buildMonthRange(computeFirstOpenMonth(emp.hireDate, lastSnap, ctx.tz), ctx.ceiling);
+  let openMonths = 0;
+  let wouldClose = 0;
+  let deferredAt: string | null = null;
+  for (const monthKey of range) {
+    const { start, end } = monthRangeUtc(monthKey.year, monthKey.month, ctx.tz);
+    const existing = await prisma.saldoSnapshot.count({
+      where: {
+        employeeId: emp.id,
+        periodType: "MONTHLY",
+        superseded: false,
+        periodStart: periodStartWindow(start),
+      },
+    });
+    if (existing > 0) continue;
+    if (!isInMonthClosePopulation(emp, start, end)) continue;
+    openMonths += 1;
+
+    const schedule = emp.workSchedules.find((ws) => ws.validFrom <= end);
+    let gapCount = 0;
+    if (schedule) {
+      const gaps = await detectMonthGaps(prisma, {
+        tenantId,
+        employeeId: emp.id,
+        hireDate: emp.hireDate,
+        exitDate: emp.exitDate,
+        schedule,
+        month: monthKey,
+        tz: ctx.tz,
+      });
+      gapCount = gaps.gapRuleApplies ? gaps.gapDates.length : 0;
+    }
+    const decision = decideGapMonth({
+      gapCount,
+      pastWindow: isMonthPastItsWindow(
+        monthKey.year,
+        monthKey.month,
+        ctx.tz,
+        ctx.retroWindowDays,
+        ctx.now,
+      ),
+      closeAllowed: ctx.closeAllowed,
+      exitDateMissing: isExitDateMissing(emp),
+    });
+    if (decision !== "CLOSE") {
+      deferredAt = `${monthKey.year}-${String(monthKey.month).padStart(2, "0")}`;
+      break;
+    }
+    wouldClose += 1;
+  }
+  return { openMonths, wouldClose, deferredAt };
+}
+
 function compareIds(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -177,11 +296,17 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
     // Active tenants only, like the cron (Phase 88, D-05a).
     const tenants = await prisma.tenant.findMany({
       where: { ...ACTIVE_TENANT_WHERE, ...(args.tenantId !== null ? { id: args.tenantId } : {}) },
-      select: { id: true, config: { select: { timezone: true } } },
+      select: {
+        id: true,
+        config: {
+          select: { timezone: true, retroEntryWindowDays: true, closeMonthWithGapsAllowed: true },
+        },
+      },
       orderBy: { id: "asc" },
     });
 
     let differences = 0;
+    const totals = { newlyIncluded: 0, wouldClose: 0, wouldDefer: 0, exitDateMissing: 0 };
     for (const tenant of tenants) {
       const tz = tenant.config?.timezone ?? "Europe/Berlin";
       const { year, month } =
@@ -266,17 +391,72 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
           }),
       ).length;
       console.info(`tenant=${tenant.id} exitedOpenFinalSaldo=${openFinalSaldo}`);
+
+      // ── Backfill: what the NEXT cron run writes for every person the new rule adds ──────────
+      const ceiling = previousMonth(now, tz);
+      const { end: ceilingEnd } = monthRangeUtc(ceiling.year, ceiling.month, tz);
+      const added = (await prisma.employee.findMany({
+        where: {
+          tenantId: tenant.id,
+          isTimeTrackingExempt: false,
+          user: { isActive: false },
+          AND: [monthClosePopulationWhere(new Date(0), ceilingEnd)],
+        },
+        include: {
+          user: { select: { isActive: true } },
+          workSchedules: { orderBy: { validFrom: "desc" } },
+        },
+      })) as unknown as BackfillPerson[];
+      added.sort((a, b) => compareIds(a.id, b.id));
+      const tenantTotals = { wouldClose: 0, wouldDefer: 0, exitDateMissing: 0 };
+      let newlyIncluded = 0;
+      for (const emp of added) {
+        const plan = await planBackfill(prisma, tenant.id, emp, {
+          tz,
+          ceiling,
+          now,
+          retroWindowDays: tenant.config?.retroEntryWindowDays ?? DEFAULT_RETRO_ENTRY_WINDOW_DAYS,
+          closeAllowed: tenant.config?.closeMonthWithGapsAllowed ?? true,
+        });
+        // A person with no open month in range is not touched by the next run: no line.
+        if (plan.openMonths === 0) continue;
+        newlyIncluded += 1;
+        const reason: BackfillReason = isExitDateMissing(emp)
+          ? "EXIT_DATE_MISSING"
+          : isAnonymizedEmployee(emp)
+            ? "ANONYMIZED_LEAVER"
+            : "EMPLOYED_LOGIN_INACTIVE";
+        console.info(
+          `tenant=${tenant.id} backfill employee=${emp.id} reason=${reason} ` +
+            `openMonths=${plan.openMonths} wouldClose=${plan.wouldClose} ` +
+            `wouldDefer=${plan.deferredAt !== null ? 1 : 0} deferredAt=${plan.deferredAt ?? "none"}`,
+        );
+        tenantTotals.wouldClose += plan.wouldClose;
+        tenantTotals.wouldDefer += plan.deferredAt !== null ? 1 : 0;
+        tenantTotals.exitDateMissing += reason === "EXIT_DATE_MISSING" ? 1 : 0;
+      }
+      console.info(
+        `tenant=${tenant.id} backfill newlyIncluded=${newlyIncluded} wouldClose=${tenantTotals.wouldClose} ` +
+          `wouldDefer=${tenantTotals.wouldDefer} exitDateMissing=${tenantTotals.exitDateMissing}`,
+      );
+      totals.newlyIncluded += newlyIncluded;
+      totals.wouldClose += tenantTotals.wouldClose;
+      totals.wouldDefer += tenantTotals.wouldDefer;
+      totals.exitDateMissing += tenantTotals.exitDateMissing;
     }
 
-    console.info(`Totals: tenants=${tenants.length} differences=${differences}`);
-    if (differences === 0) {
+    console.info(
+      `Totals: tenants=${tenants.length} differences=${differences} newlyIncluded=${totals.newlyIncluded} ` +
+        `wouldClose=${totals.wouldClose} wouldDefer=${totals.wouldDefer} exitDateMissing=${totals.exitDateMissing}`,
+    );
+    if (differences === 0 && totals.newlyIncluded === 0) {
       console.info("The cron population and the report population agree.");
     } else {
       console.info(
         "Each listed person is selected by exactly one of the two rules. This script writes nothing.",
       );
     }
-    return differences > 0 ? EXIT_FINDINGS : EXIT_OK;
+    return differences > 0 || totals.newlyIncluded > 0 ? EXIT_FINDINGS : EXIT_OK;
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     return EXIT_ERROR;

@@ -56,8 +56,14 @@ describe("Issue #668 - month close selects by employment", () => {
     seed = await seedTestData(app, "m668");
     const base = { tenantId: seed.tenant.id, salonId: seed.salonId, hireDate: d("2026-09-01") };
     p = {
-      // A: login switched off, employed all along -> IS closed.
-      A: await createPopulationPerson(app, { ...base, tag: "a", loginActive: false }),
+      // A: login switched off, employed all along, WITH an exit date after the ceiling -> IS closed
+      // (a deactivated login WITHOUT an exit date is the EXIT_DATE_MISSING case, month-close-review-668).
+      A: await createPopulationPerson(app, {
+        ...base,
+        tag: "a",
+        loginActive: false,
+        exitDate: d("2026-12-31"),
+      }),
       // B: active login, left on 31.08. -> NOT closed for September or October.
       B: await createPopulationPerson(app, { ...base, tag: "b", exitDate: d("2026-08-31") }),
       // C: active login, hired 15.10. -> October only.
@@ -79,7 +85,12 @@ describe("Issue #668 - month close selects by employment", () => {
         exitDate: d("2026-10-15"),
       }),
       // G: login off, September ALREADY closed with figures the cron would never produce.
-      G: await createPopulationPerson(app, { ...base, tag: "g", loginActive: false }),
+      G: await createPopulationPerson(app, {
+        ...base,
+        tag: "g",
+        loginActive: false,
+        exitDate: d("2026-12-31"),
+      }),
     };
     const { start } = monthRangeUtc(2026, 9, "Europe/Berlin");
     const row = await app.prisma.saldoSnapshot.create({

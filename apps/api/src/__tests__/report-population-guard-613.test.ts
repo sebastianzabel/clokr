@@ -299,8 +299,10 @@ const READERS: readonly ReaderEntry[] = [
     name: "getDeferredMonthCloseState",
     calls: ["monthClosePopulationWhere"],
   },
-  route(OVERTIME, "/close-month/status", ["reportPopulationWhere"]),
-  route(OVERTIME, "/close-month/year-status", ["reportPopulationWhere"]),
+  // Issue #668: the status routes show exactly the persons the cron and the deferred list can
+  // produce, so an overdue month can always be opened and closed in the UI.
+  route(OVERTIME, "/close-month/status", ["monthClosePopulationWhere"]),
+  route(OVERTIME, "/close-month/year-status", ["monthClosePopulationWhere"]),
   route(DASHBOARD, "/team-week", ["reportPopulationWhere"]),
   route(DASHBOARD, "/today-attendance", ["reportPopulationWhere"]),
   route(DASHBOARD, "/team-trend", ["reportPopulationWhere"]),

@@ -42,7 +42,11 @@ import {
 } from "../time-tracking";
 import { isMinorAtDate } from "../absence"; // Issue #511 (D-05) — injected into the break-finding detector
 import { detectMonthGaps } from "./month-gap-check";
-import { monthClosePopulationWhere, isInMonthClosePopulation } from "./month-close-population"; // Issue #668
+import {
+  monthClosePopulationWhere,
+  isInMonthClosePopulation,
+  isExitDateMissing,
+} from "./month-close-population"; // Issue #668
 import {
   DEFAULT_RETRO_ENTRY_WINDOW_DAYS,
   buildMonthRange,
@@ -56,7 +60,13 @@ export type DeferredMonthCloseSeverity = "NONE" | "INFO" | "WARNING" | "CRITICAL
 
 /** Why the oldest overdue month is still open, as far as it can be determined from the data. */
 export type DeferralReason =
-  "GAPS" | "UNCONFIRMED_BREAKS" | "CROSS_SALON_BREAKS" | "BREAK_PLACEMENT" | "UNKNOWN";
+  | "GAPS"
+  | "UNCONFIRMED_BREAKS"
+  | "CROSS_SALON_BREAKS"
+  | "BREAK_PLACEMENT"
+  /** Issue #668: login deactivated, no exit date - the cron never force-closes their gap months. */
+  | "EXIT_DATE_MISSING"
+  | "UNKNOWN";
 
 export type DeferredMonthCloseEmployee = {
   employeeId: string;
@@ -187,6 +197,7 @@ export async function getDeferredMonthCloseState(
       employeeNumber: true,
       hireDate: true,
       exitDate: true,
+      user: { select: { isActive: true } }, // Issue #668: EXIT_DATE_MISSING
       workSchedules: { orderBy: { validFrom: "desc" } },
     },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
@@ -215,6 +226,7 @@ export async function getDeferredMonthCloseState(
     if (overdue.length === 0) continue;
 
     const oldestOpenMonth = overdue[0];
+    const exitDateMissing = isExitDateMissing(emp);
     let reason: DeferralReason = "UNKNOWN";
     let gapDates: string[] = [];
 
@@ -230,13 +242,14 @@ export async function getDeferredMonthCloseState(
           tenantId,
           employeeId: emp.id,
           hireDate: emp.hireDate,
+          exitDate: emp.exitDate, // Issue #668: no gap after the exit day (CLOSE-04)
           schedule: scheduleForMonth as unknown as Record<string, unknown>,
           month: oldestOpenMonth,
           tz,
         });
         gapDates = gapResult.gapDates;
         if (gapDates.length > 0) {
-          reason = "GAPS";
+          reason = exitDateMissing ? "EXIT_DATE_MISSING" : "GAPS";
         } else if (tenant.config?.blockMonthCloseOnUnconfirmedBreak) {
           const { firstDay, lastDay } = monthDayBounds(oldestStart, oldestEnd, tz);
           const unconfirmed = await findUnconfirmedBreakDays(db, {
@@ -272,6 +285,9 @@ export async function getDeferredMonthCloseState(
           }
         }
       }
+    } else if (exitDateMissing) {
+      // Issue #668: without gap detail the missing exit date is the one thing worth naming.
+      reason = "EXIT_DATE_MISSING";
     }
 
     affected.push({
