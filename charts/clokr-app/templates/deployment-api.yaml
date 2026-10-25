@@ -20,6 +20,9 @@ spec:
       # This pod (Fastify API plus a busybox nc wait-for-db initContainer) never calls the Kubernetes API, so the service-account token
       # would be pure attack surface.
       automountServiceAccountToken: false
+      # Kubernetes injects docker-link variables for every service in the namespace; the service
+      # "minio" (Issue #184) would set MINIO_PORT=tcp://<ip>:9000 and break the API's config parse.
+      enableServiceLinks: false
       {{- if .Values.postgres.enabled }}
       initContainers:
       - name: wait-for-db
