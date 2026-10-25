@@ -1026,8 +1026,8 @@ const MIN_FILES = 720;
 // Issue #728: +8 cases (3 in leave-check.test.ts, 5 in half-day-leave-recording-728.test.ts) on top of #713 (source-counted,
 // lower-bound convention): MIN_TESTS 10862 -> 10870.
 // Issue #745/#746: MIN_TESTS 10870 -> 10880 (measured). Issue #744 (2026-10-25): +14 cases measured on its own base
-// (10870 -> 10884); both together, lower-bound convention: MIN_TESTS 10880 -> 10894. Never lowered.
-const MIN_TESTS = 10894;
+// (10870 -> 10884); both together: measured 10893 in the CI run of PR #749 (the sum 10894 counted one case twice). Never lowered below a measurement.
+const MIN_TESTS = 10893;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
