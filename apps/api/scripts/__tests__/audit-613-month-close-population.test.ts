@@ -213,14 +213,15 @@ describe("audit-613-month-close-population (Issue #613, D-03)", () => {
     expect(process.exitCode ?? 0).toBe(0);
   });
 
-  it("source anchor: the cron and the deferred close still select by login state and exclude exempt persons", () => {
+  it("source anchor (Issue #668): the cron and the deferred close select by employment, not by login state, and exclude exempt persons", () => {
     const read = (rel: string) =>
       readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
     const cron = read("../../src/contexts/working-time-account/plugins/auto-close-month.ts");
     const deferred = read("../../src/contexts/working-time-account/deferred-month-close.ts");
     for (const source of [cron, deferred]) {
       expect(source.length).toBeGreaterThan(1000);
-      expect(source).toContain("user: { isActive: true },");
+      expect(source).toContain("monthClosePopulationWhere(");
+      expect(source).not.toContain("user: { isActive: true },");
       expect(source).toContain("isTimeTrackingExempt: false");
     }
   });

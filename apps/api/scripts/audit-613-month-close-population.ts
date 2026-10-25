@@ -1,12 +1,12 @@
 /**
  * Audit tool — Issue #613 (Phase 613, D-03).
  *
- * Owner decision 16.10.2026: the auto-close cron (`plugins/auto-close-month.ts`) and the deferred
- * close (`deferred-month-close.ts`) keep selecting persons by LOGIN state — changing whom payroll
- * months are closed for is a behaviour change on write paths and needs its own decision. Since
- * Issue #613 every report, status and overview selects by EMPLOYMENT (`reportPopulationWhere`:
- * employed in the period, never anonymised). This script measures how far the two populations
- * differ, per active tenant and month, so the follow-up decision can be taken on data.
+ * Until Issue #668 the auto-close cron (`plugins/auto-close-month.ts`) and the deferred close
+ * (`deferred-month-close.ts`) selected persons by LOGIN state; since #668 (owner decision
+ * 19.10.2026) they select by EMPLOYMENT (`monthClosePopulationWhere`: employed in the month, an
+ * anonymised person only with an exit date). This script is the PRE-DEPLOY DRY RUN of that switch:
+ * it measures how far the old and the new population differ, per active tenant and month, i.e.
+ * whom the cron will newly close (or stop closing).
  *
  * What it lists, per active tenant and month (default: the previous month in the tenant's time
  * zone, exactly the cron's ceiling): one line for every person that exactly one of the two
@@ -53,6 +53,7 @@ import {
   isAnonymizedEmployee,
   reportPopulationWhere,
 } from "../src/contexts/platform";
+import { monthClosePopulationWhere } from "../src/contexts/working-time-account/month-close-population";
 import {
   dateStrInTz,
   dayRangeUtc,
@@ -190,18 +191,20 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       const { start, end } = monthRangeUtc(year, month, tz);
       const monthLabel = `${year}-${String(month).padStart(2, "0")}`;
 
-      // CRON set: the population query of `plugins/auto-close-month.ts` and
-      // `deferred-month-close.ts`, copied verbatim (login state, not exempt).
+      // OLD set: the population query the cron and the deferred close used BEFORE Issue #668,
+      // copied verbatim (login state, not exempt) - kept here so the dry run still lists who the
+      // switch to employment adds or drops.
       const cronPeople = await prisma.employee.findMany({
         where: { tenantId: tenant.id, user: { isActive: true }, isTimeTrackingExempt: false },
         select: { id: true, firstName: true, lastName: true },
       });
-      // RULE set: what every report selects since Issue #613 (not exempt, like the cron).
+      // NEW set: what the cron and the deferred close select since Issue #668 (employed in the
+      // month; an anonymised person only with an exit date; not exempt).
       const rulePeople = await prisma.employee.findMany({
         where: {
           tenantId: tenant.id,
           isTimeTrackingExempt: false,
-          AND: [reportPopulationWhere(start, end)],
+          AND: [monthClosePopulationWhere(start, end)],
         },
         select: { id: true },
       });

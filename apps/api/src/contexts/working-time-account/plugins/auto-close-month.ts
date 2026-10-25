@@ -9,6 +9,7 @@ import {
   ACTIVE_TENANT_WHERE, // Phase 88 (D-05a) — deactivated tenants are skipped
 } from "../../platform";
 import { periodStartWindow } from "../snapshot-period";
+import { monthClosePopulationWhere, isInMonthClosePopulation } from "../month-close-population"; // Issue #668
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { detectMonthGaps } from "../month-gap-check"; // Phase 292 (#292) — the shared gap definition
@@ -114,11 +115,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
 
         const { start: prevMonthStart, end: prevMonthEnd } = monthRangeUtc(prevYear, prevMonth, tz);
 
-        // Get all active employees
+        // Everyone employed at some point up to the ceiling month (Issue #668): selected by
+        // EMPLOYMENT, never by login state. The month loop below closes only the months the person
+        // was actually employed in (`isInMonthClosePopulation`).
         const employees = await app.prisma.employee.findMany({
           where: {
             tenantId: tenant.id,
-            user: { isActive: true },
+            AND: [monthClosePopulationWhere(new Date(0), prevMonthEnd)],
             isTimeTrackingExempt: false, // D-02: §18 ArbZG-exempt employees are not snapshotted (parity with manual close)
           },
           include: {
@@ -231,8 +234,9 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 continue;
               }
 
-              // Skip months that started after the employee's hire date check
-              if (emp.hireDate > monthEnd) continue;
+              // Issue #668: a month the person was not employed in gets no snapshot (hired after
+              // it, left before it). Existing snapshots were handled above and are never touched.
+              if (!isInMonthClosePopulation(emp, monthStart, monthEnd)) continue;
 
               // ── Per-month gap readiness check ──────────────────────────────────
               // Phase 292 (GitHub issue #292): the fetch + findMissingWorkdays body moved to
@@ -692,8 +696,11 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               // COMP-V1814-08: mid-year hires only need their share of months.
               // A July hire has 6 months in the year (Jul-Dec); requiring 12 would
               // prevent their yearly carry-over from ever running.
-              const hireYear = emp.hireDate ? new Date(emp.hireDate).getFullYear() : null;
-              const hireMonth = emp.hireDate ? new Date(emp.hireDate).getMonth() + 1 : 1; // 1-12
+              // Issue #277 (finding 1): the hire month is read in the TENANT time zone, never in
+              // the zone of the Node process.
+              const hireDay = emp.hireDate ? dateStrInTz(emp.hireDate, tz) : null; // YYYY-MM-DD
+              const hireYear = hireDay ? Number(hireDay.slice(0, 4)) : null;
+              const hireMonth = hireDay ? Number(hireDay.slice(5, 7)) : 1; // 1-12
               const firstMonth = hireYear === prevYear ? hireMonth : 1;
               const expectedMonths = 12 - firstMonth + 1;
               if (monthSnapshots.length < expectedMonths) continue; // Not all expected months closed yet

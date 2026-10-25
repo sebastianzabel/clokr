@@ -42,6 +42,7 @@ import {
 } from "../time-tracking";
 import { isMinorAtDate } from "../absence"; // Issue #511 (D-05) — injected into the break-finding detector
 import { detectMonthGaps } from "./month-gap-check";
+import { monthClosePopulationWhere, isInMonthClosePopulation } from "./month-close-population"; // Issue #668
 import {
   DEFAULT_RETRO_ENTRY_WINDOW_DAYS,
   buildMonthRange,
@@ -175,7 +176,7 @@ export async function getDeferredMonthCloseState(
   const employees = await db.employee.findMany({
     where: {
       tenantId,
-      user: { isActive: true },
+      AND: [monthClosePopulationWhere(new Date(0), prevMonthEnd)], // Issue #668: employment, not login
       isTimeTrackingExempt: false, // parity with auto-close-month.ts (D-02)
       ...(opts.employeeIds ? { id: { in: [...opts.employeeIds] } } : {}),
     },
@@ -185,6 +186,7 @@ export async function getDeferredMonthCloseState(
       lastName: true,
       employeeNumber: true,
       hireDate: true,
+      exitDate: true,
       workSchedules: { orderBy: { validFrom: "desc" } },
     },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
@@ -203,9 +205,13 @@ export async function getDeferredMonthCloseState(
 
     const firstOpen = computeFirstOpenMonth(emp.hireDate, lastSnap, tz);
 
-    const overdue = buildMonthRange(firstOpen, { year: prevYear, month: prevMonth }).filter((m) =>
-      isMonthPastItsWindow(m.year, m.month, tz, retroWindowDays, now),
-    );
+    // Issue #668: same months as the cron closes - only those the person was employed in.
+    const overdue = buildMonthRange(firstOpen, { year: prevYear, month: prevMonth })
+      .filter((m) => {
+        const { start, end } = monthRangeUtc(m.year, m.month, tz);
+        return isInMonthClosePopulation(emp, start, end);
+      })
+      .filter((m) => isMonthPastItsWindow(m.year, m.month, tz, retroWindowDays, now));
     if (overdue.length === 0) continue;
 
     const oldestOpenMonth = overdue[0];

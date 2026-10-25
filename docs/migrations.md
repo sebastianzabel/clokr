@@ -1202,6 +1202,33 @@ Monats ist eine bewusste Korrekturbuchung.
 
 **3. Rollback.** Es gibt nichts zurückzunehmen; das vorige Image enthält nur das alte Skript.
 
+## Phase 668 — Monatsabschluss wählt nach Beschäftigung statt nach Login (Issue #668)
+
+**Was sich ändert.** Es gibt **keine Migration und keinen Schemawechsel**. Der automatische Monatsabschluss (Cron) und der
+verzögerte Abschluss wählen Personen nach **Beschäftigung im Monat** (`monthClosePopulationWhere`,
+`contexts/working-time-account/month-close-population.ts`), nicht mehr nach `user.isActive`. Neu abgeschlossen werden also
+beschäftigte Personen mit abgeschaltetem Login, auch deren Austrittsmonat (§ 41 EStG); ein Monat ohne Beschäftigung
+(Austritt davor, Eintritt danach) bekommt keinen Abschluss mehr. Eine anonymisierte Person wird bis zu ihrem Austrittstag
+abgeschlossen; eine anonymisierte Altzeile **ohne** Austrittsdatum nie (Bestand siehe „Phase 666“). Bereits abgeschlossene
+Monate und Eröffnungs-/Null-Snapshots werden nie angefasst (Idempotenzprüfung des Crons).
+
+**1. Vor dem Deploy prüfen (lesend, auf int UND prod).** `apps/api/scripts/audit-613-month-close-population.ts` schreibt nichts
+und listet je Mandant und Monat (Standard: Vormonat) jede Person, die die alte (Login) und die neue Auswahl (Beschäftigung)
+unterschiedlich behandeln, mit `monthClosed=yes|no`. `EMPLOYED_LOGIN_INACTIVE` mit `monthClosed=no` sind die Personen, die der
+nächste Lauf zusätzlich abschließt.
+
+```bash
+DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx scripts/audit-613-month-close-population.ts [--tenant-id <uuid>] [--year <YYYY> --month <M>]
+```
+
+Exit-Code `0`: gleiche Auswahl; `2`: Liste gedruckt; `1`: Aufruf- oder Verbindungsfehler.
+
+**2. Auswerten.** Jede `EMPLOYED_LOGIN_INACTIVE`-Zeile ist eine Person, für die der Cron nach dem Deploy die offenen Monate bis
+zum Austritt schließt; `NOT_EMPLOYED_LOGIN_ACTIVE` sind Personen, für die er keinen weiteren Monat mehr schließt.
+
+**3. Rollback.** Das vorige Image wählt wieder nach Login. Bereits geschriebene Abschlüsse bleiben (revisionssicher, nie
+neu berechnet).
+
 ## Phase 682 — Live-Saldo mit Eröffnungssaldo ohne abgeschlossenen Monat (Issue #682)
 
 **Was sich ändert.** Es gibt **keine Migration und keinen Schemawechsel**. Der Live-Saldo (Dashboard, `GET /overtime/:id`,
