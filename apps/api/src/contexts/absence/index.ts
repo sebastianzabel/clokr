@@ -177,7 +177,8 @@ export {
 // leaf module directly any more, except the two permanent register sites (E-4, E-8; see
 // `apps/api/scripts/context-boundary-import-exceptions.json`).
 export { loadBsSlotOverrides } from "./load-bs-slot-overrides";
-export { DISPLAY_NAME, isSickLeaveTypeCode } from "./leave-type";
+export { DISPLAY_NAME, isSickLeaveTypeCode, withHalfDayMarker } from "./leave-type";
+// Issue #746 — withHalfDayMarker: the one half-day wording (reports day rows + iCal feeds)
 // Issue #84 (D-14) — the one sick-day counting rule; consumed by composition/reports.ts and composition/dashboard.ts
 export { sickLeaveDayCounts } from "./sick-leave-days";
 export type { SickLeaveDayRow, SickLeaveDayCounts, SickDaysByCode } from "./sick-leave-days";
