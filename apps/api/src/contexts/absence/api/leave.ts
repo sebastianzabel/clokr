@@ -101,6 +101,7 @@ import {
   LEAVE_TYPE_DEFS,
   LEAVE_REQUEST_EMAIL_SUBJECT,
   DISPLAY_NAME,
+  withHalfDayMarker,
 } from "../leave-type"; // Phase 97 (T2, D-04) — the one mapping; DISPLAY_NAME added Phase 98b (D-04)
 
 // Forwarded for the same backward-compatibility reason as the import above.
@@ -3068,7 +3069,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         uid: `leave-${r.id}@clokr`,
         // Phase 97 (AC-2): the row's own display name. Before this phase the canonical name from
         // LEAVE_TYPE_DEFS overrode it, which silently undid a tenant's rename in the calendar feed.
-        summary: r.leaveType.name,
+        summary: withHalfDayMarker(r.leaveType.name, r.halfDay),
         dtstart: r.startDate.toISOString().split("T")[0],
         dtend: addOneDay(r.endDate.toISOString().split("T")[0]),
         description: r.note ?? undefined,
@@ -3085,7 +3086,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           // could not name VOCATIONAL_SCHOOL or OTHER at all and fell through to the generic
           // word, while the dashboard already said "Berufsschule" — the app contradicted itself.
           // DISPLAY_NAME is exhaustive over LeaveTypeCode, so no fallback branch is needed.
-          summary: DISPLAY_NAME[a.type],
+          summary: withHalfDayMarker(DISPLAY_NAME[a.type], a.halfDay),
           dtstart: a.startDate.toISOString().split("T")[0],
           dtend: addOneDay(a.endDate.toISOString().split("T")[0]),
           description: a.note ?? undefined,
@@ -3166,7 +3167,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         const name = `${r.employee.firstName} ${r.employee.lastName}`;
         return {
           uid: `leave-${r.id}@clokr`,
-          summary: `${name} \u2014 ${r.leaveType.name}`,
+          summary: withHalfDayMarker(`${name} \u2014 ${r.leaveType.name}`, r.halfDay),
           dtstart: r.startDate.toISOString().split("T")[0],
           dtend: addOneDay(r.endDate.toISOString().split("T")[0]),
           description: r.note ?? undefined,
@@ -3179,7 +3180,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         const name = `${a.employee.firstName} ${a.employee.lastName}`;
         events.push({
           uid: `absence-${a.id}@clokr`,
-          summary: `${name} \u2014 ${DISPLAY_NAME[a.type]}`,
+          summary: withHalfDayMarker(`${name} \u2014 ${DISPLAY_NAME[a.type]}`, a.halfDay),
           dtstart: a.startDate.toISOString().split("T")[0],
           dtend: addOneDay(a.endDate.toISOString().split("T")[0]),
           description: a.note ?? undefined,

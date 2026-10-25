@@ -271,3 +271,12 @@ export const SICK_LEAVE_TYPE_CODES = [
 export function isSickLeaveTypeCode(code: LeaveTypeCode | null | undefined): boolean {
   return code === "SICK" || code === "SICK_CHILD";
 }
+
+// Issue #746 (class of #728): the ONE wording of a half day next to a display label. Reports
+// (Stundennachweis day rows) and the iCal feeds both append it; nobody spells the suffix inline.
+export const HALF_DAY_SUFFIX = " (halber Tag)";
+
+/** Appends the half-day marker to a display label; a full day keeps the label unchanged. */
+export function withHalfDayMarker(label: string, halfDay: boolean): string {
+  return halfDay ? `${label}${HALF_DAY_SUFFIX}` : label;
+}
