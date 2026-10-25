@@ -1,0 +1,7 @@
+# Read-only smoke list for the prod-host rehearsal (Issue #742): proves the live-dump path and the
+# image against the CURRENT schema. Format: see scripts/rehearsal-fixtures/v1.16.0-as-shipped.steps.
+# With the image of the version prod already runs, migrate must find nothing to apply.
+pre|0|timeentry-count|sql|select count(*) from "TimeEntry"
+pre|0|audit-70-entry-overlaps|script|audit-70-entry-overlaps.ts
+migrate|0|migrate-deploy-noop|migrate|
+post|0|backfill-539-dry-run|script|backfill-539-role-assignments.ts
