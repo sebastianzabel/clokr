@@ -693,7 +693,8 @@ jobs:
   # removed, both in the same phase. Scans the public /login page only;
   # extending to authenticated pages remains open, not scheduled.
   axe-scan:
-    runs-on: ubuntu-latest
+    # Playwright has no chromium build for ubuntu26.04 yet (image ubuntu26/20261012.163); drop this pin once it does.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read # actions/checkout
     steps:
