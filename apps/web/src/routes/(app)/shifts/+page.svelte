@@ -41,6 +41,8 @@
     }>;
   }
   interface Shift {
+    // Issue #744 — non-blocking hint of a shift write on a half-day leave (code HALF_DAY_LEAVE)
+    hint?: { code: string; message: string };
     id: string;
     employeeId: string;
     templateId: string | null;
@@ -868,7 +870,7 @@
 
       dropPending = key;
       try {
-        await api.post<Shift>("/shifts", {
+        const created = await api.post<Shift>("/shifts", {
           employeeId,
           templateId: tpl.id,
           date: iso,
@@ -880,6 +882,7 @@
           ...(pageSalonId !== null ? { salonId: pageSalonId } : {}),
         });
         toasts.success(`Schicht zugewiesen: ${tpl.name}`);
+        announceShiftHint(created);
         await load();
       } catch (err) {
         // Phase 47.4-02 — § 3 ArbZG hard-block (422). Drag never auto-forces; toast only.
@@ -956,11 +959,12 @@
     }
     dropPending = targetKey;
     try {
-      await api.put<Shift>(`/shifts/${item.shiftId}`, {
+      const moved = await api.put<Shift>(`/shifts/${item.shiftId}`, {
         employeeId: newEmployeeId,
         date: newIso,
       });
       toasts.success("Schicht verschoben.");
+      announceShiftHint(moved);
       await load();
     } catch (err) {
       // Phase 47.4-02 — § 3 ArbZG hard-block (422). Drag never auto-forces; toast only.
@@ -1252,6 +1256,11 @@
     }
   }
 
+  // Issue #744 — a shift on a half-day leave is saved; the server answers with a hint, never a 409.
+  function announceShiftHint(saved: Shift | undefined) {
+    if (saved?.hint?.code === "HALF_DAY_LEAVE") toasts.warning(saved.hint.message, 8000);
+  }
+
   // Persist the modal as a shift. `force` adds ?force=true so the API will write
   // an SHIFT_FORCED_OVER_LEAVE audit entry alongside the regular CREATE/UPDATE.
   async function saveShift(force = false) {
@@ -1264,7 +1273,7 @@
     try {
       const qs = force ? "?force=true" : "";
       if (editingShiftId) {
-        await api.put<Shift>(`/shifts/${editingShiftId}${qs}`, {
+        const saved = await api.put<Shift>(`/shifts/${editingShiftId}${qs}`, {
           templateId: modalTemplateId || undefined,
           startTime: modalStartTime,
           endTime: modalEndTime,
@@ -1272,8 +1281,9 @@
           note: modalNote || undefined,
         });
         toasts.success(force ? "Schicht trotz Konflikt aktualisiert." : "Schicht aktualisiert.");
+        announceShiftHint(saved);
       } else {
-        await api.post<Shift>(`/shifts${qs}`, {
+        const saved = await api.post<Shift>(`/shifts${qs}`, {
           employeeId: modalEmployeeId,
           templateId: modalTemplateId || undefined,
           date: modalDate,
@@ -1285,6 +1295,7 @@
           ...(pageSalonId !== null ? { salonId: pageSalonId } : {}),
         });
         toasts.success(force ? "Schicht trotz Konflikt zugewiesen." : "Schicht zugewiesen.");
+        announceShiftHint(saved);
       }
       modalOpen = false;
       editingShiftId = null;

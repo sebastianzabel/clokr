@@ -22,6 +22,7 @@
 import type { Prisma } from "@clokr/db";
 import { type EmployeeScope } from "../platform";
 import { getActiveLeaveOverlapping } from "../absence";
+import { leaveBlocksShift } from "./shift-leave-rule"; // Issue #744 — half-day rows never flag
 
 /**
  * S4 — mirrors S2's own idempotency idiom exactly (every RELEVANT_METHOD call here carries the
@@ -49,7 +50,8 @@ export async function flagShiftIfConflictsWithApprovedLeave(
   leaveEnd: Date;
 } | null> {
   const scope: EmployeeScope = { kind: "employee", employeeId, tenantId };
-  const [leave] = await getActiveLeaveOverlapping(db, scope, date, date);
+  // Issue #744: only a full-day row conflicts; a half-day row leaves the other half plannable.
+  const leave = (await getActiveLeaveOverlapping(db, scope, date, date)).find(leaveBlocksShift);
   if (!leave) return null;
 
   const { count } = await db.shift.updateMany({

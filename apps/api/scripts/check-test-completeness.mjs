@@ -956,7 +956,11 @@ import { readFileSync } from "node:fs";
 // reports-period-home-salon-714 (assertions only); nothing removed, skipped or loosened. MIN_FILES 713 -> 716, never lowered.
 // Issue #728: one new file (half-day-leave-recording-728.test.ts) on top of #713: MIN_FILES 716 -> 717.
 // Issue #745/#746 (half day, class of #728): +1 file (leave-ical-half-day-746) and +9 tests, measured 718 files / 10880 tests (10877 passed + 3 skipped).
-const MIN_FILES = 719;
+// Issue #744 on top of #745/#746: +2 files (shift-half-day-leave-744, shift-leave-rule-744): MIN_FILES 718 -> 720.
+// Issue #743: re-measured with the full run (719 files, 10888 tests incl. 3 skipped).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+const MIN_FILES = 720;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1024,7 +1028,11 @@ const MIN_FILES = 719;
 // skipped): +41 cases in the three new files, +8 in sick-leave-days, +1 in reports-hr-86. Never lowered.
 // Issue #728: +8 cases (3 in leave-check.test.ts, 5 in half-day-leave-recording-728.test.ts) on top of #713 (source-counted,
 // lower-bound convention): MIN_TESTS 10862 -> 10870.
-const MIN_TESTS = 10884;
+// Issue #745/#746: MIN_TESTS 10870 -> 10880 (measured). Issue #744 (2026-10-25): +14 cases measured on its own base
+// (10870 -> 10884); both together: measured 10893 in the CI run of PR #749 (the sum 10894 counted one case twice). Never lowered below a measurement.
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+const MIN_TESTS = 10893;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
