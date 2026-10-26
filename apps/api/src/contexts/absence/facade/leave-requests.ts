@@ -684,6 +684,12 @@ export async function anonymizeLeaveRequestsForEmployee(
     where: { employeeId, note: { not: null } },
     data: { note: null },
   });
+  // Issue #718: the approver's free-text `reviewNote` is the same class as `note`; status,
+  // reviewer and review timestamp stay (they are the approval record). Reaches soft-deleted rows.
+  await db.leaveRequest.updateMany({
+    where: { employeeId, reviewNote: { not: null } },
+    data: { reviewNote: null },
+  });
 }
 
 /**

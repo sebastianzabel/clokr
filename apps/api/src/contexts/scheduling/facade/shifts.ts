@@ -184,3 +184,25 @@ export async function cancelOrphanShifts(
 ) {
   return db.shift.deleteMany({ where: { id: { in: shiftIds }, employee: { tenantId } } });
 }
+
+/**
+ * Issue #718 (DSGVO Art. 17): nulls the free-text `note` of every `Shift` and every
+ * `EmployeeAvailability` row of `employeeId`; the rows stay (roster history, availability audit
+ * trail). No `deletedAt` guard: a soft-deleted shift keeps its text and is reached too. Deliberately
+ * NO tenant parameter (named F3 exception): the sole caller is `platform/anonymize.ts`'s
+ * `anonymizeEmployeeData()`, reached only after the route validated the id against the caller's
+ * tenant. Returns nothing - the audit carries no text and no per-field counts.
+ */
+export async function clearSchedulingNotesForEmployee(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+): Promise<void> {
+  await db.shift.updateMany({
+    where: { employeeId, note: { not: null } },
+    data: { note: null },
+  });
+  await db.employeeAvailability.updateMany({
+    where: { employeeId, note: { not: null } },
+    data: { note: null },
+  });
+}

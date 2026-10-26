@@ -654,6 +654,12 @@ export async function archiveDayBreakDataBefore(
  * `ANONYMIZE` audit that same transaction writes; a nulled note carries nothing left worth
  * logging per row.
  */
+/**
+ * Neutral replacement for the required `RetroEntryRequest.reason` of an anonymized person
+ * (Issue #718). A fixed text, never derived from the original, so nothing of it survives.
+ */
+export const RETRO_REASON_ANONYMIZED = "Gelöscht (Anonymisierung)";
+
 export async function clearEntryNotesForEmployee(
   db: Prisma.TransactionClient,
   employeeId: string,
@@ -671,6 +677,18 @@ export async function clearEntryNotesForEmployee(
   await db.dayBreakAck.updateMany({
     where: { employeeId, reason: { not: null } },
     data: { reason: null },
+  });
+  // Issue #718: a Zeitnachtrag carries the employee's own justification (`reason`, required) and
+  // the approver's free-text review note. Both are person-authored free text. The row stays (it is
+  // the Nachweis of the retro grant, status/times/reviewer untouched); the required column gets a
+  // neutral text instead of null. Soft-deleted rows are reached too.
+  await db.retroEntryRequest.updateMany({
+    where: { employeeId, reason: { not: RETRO_REASON_ANONYMIZED } },
+    data: { reason: RETRO_REASON_ANONYMIZED },
+  });
+  await db.retroEntryRequest.updateMany({
+    where: { employeeId, reviewNote: { not: null } },
+    data: { reviewNote: null },
   });
 }
 
