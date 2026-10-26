@@ -256,7 +256,7 @@ describe("analyzeSource — POST_FIX_FIXTURES all report 'safe'", () => {
 });
 
 describe('analyzeSource — scoping (periodType:"MONTHLY" sibling + where-only)', () => {
-  it("does NOT flag a data: (write) fragment even with an identical naive Date.UTC shape", () => {
+  it("a data: (write) fragment whose value is a bare parameter is a candidate but 'unknown', never flagged (Issue #277: writes are in scope, unresolved values stay honest)", () => {
     const src = `
       async function close(prisma: any, employeeId: string, monthStart: Date) {
         return prisma.saldoSnapshot.create({
@@ -264,7 +264,7 @@ describe('analyzeSource — scoping (periodType:"MONTHLY" sibling + where-only)'
         });
       }
     `;
-    expect(analyzeSource(src, "fixture.ts")).toEqual([]);
+    expect(analyzeSource(src, "fixture.ts").map((c) => c.verdict)).toEqual(["unknown"]);
   });
 
   it("does NOT flag a YEARLY where-comparison using the SAME naive Date.UTC shape — YEARLY is a deliberately different, self-consistent convention", () => {
@@ -642,6 +642,72 @@ describe("buildFacadeParamResolver (100B Plan 07 — facade parameter resolution
 });
 
 // ── live tree — the real scan against the real exceptions file ─────────────────────────────────
+
+// ── Issue #277 (finding 3): MONTHLY row WRITES are candidates, not only read filters ─────────────
+
+describe("write fragments (Issue #277)", () => {
+  const verdictOf = (src: string): string[] =>
+    analyzeSource(src, "apps/api/src/x.ts").map((c) => c.verdict);
+
+  it("flags a naive date in create({ data }) as unsafe", () => {
+    expect(
+      verdictOf(`
+        async function f(prisma: any, year: number, month: number) {
+          await prisma.saldoSnapshot.create({
+            data: { periodType: "MONTHLY", periodStart: new Date(Date.UTC(year, month - 1, 1)) },
+          });
+        }`),
+    ).toEqual(["unsafe"]);
+  });
+
+  it("flags a naive date in a createMany({ data: [...] }) element as unsafe", () => {
+    expect(
+      verdictOf(`
+        async function f(prisma: any) {
+          await prisma.saldoSnapshot.createMany({
+            data: [{ periodType: "MONTHLY", periodStart: new Date("2026-06-01T00:00:00Z") }],
+          });
+        }`),
+    ).toEqual(["unsafe"]);
+  });
+
+  it("flags a naive date in upsert create:/update: as unsafe", () => {
+    expect(
+      verdictOf(`
+        async function f(prisma: any) {
+          const d = new Date(Date.UTC(2026, 5, 1));
+          await prisma.saldoSnapshot.upsert({
+            where: { id: "x" },
+            create: { periodType: "MONTHLY", periodStart: d },
+            update: { periodType: "MONTHLY", periodStart: d },
+          });
+        }`),
+    ).toEqual(["unsafe", "unsafe"]);
+  });
+
+  it("accepts the authoritative writer: a monthRangeUtc()-derived periodStart is safe", () => {
+    expect(
+      verdictOf(`
+        async function f(prisma: any, year: number, month: number, tz: string) {
+          const { start: monthStart } = monthRangeUtc(year, month, tz);
+          await prisma.saldoSnapshot.create({
+            data: { periodType: "MONTHLY", periodStart: monthStart },
+          });
+        }`),
+    ).toEqual(["safe"]);
+  });
+
+  it("does not flag a YEARLY write (its own UTC-year convention)", () => {
+    expect(
+      verdictOf(`
+        async function f(prisma: any) {
+          await prisma.saldoSnapshot.create({
+            data: { periodType: "YEARLY", periodStart: new Date("2026-01-01T00:00:00Z") },
+          });
+        }`),
+    ).toEqual([]);
+  });
+});
 
 describe("live tree — real scan, real exceptions file", () => {
   it("finds at least one real candidate (sanity: the #229 guard's precondition holds today)", () => {
