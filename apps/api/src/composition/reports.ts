@@ -1405,7 +1405,12 @@ export async function reportRoutes(app: FastifyInstance) {
 
   // GET /api/v1/reports/leave-overview?year=
   app.get("/leave-overview", {
-    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    schema: {
+      tags: ["Reporting"],
+      description:
+        "Kept as a read interface for API keys; the web app has no caller since GET /reports/period (Issue #690).",
+      security: [{ bearerAuth: [] }],
+    },
     preHandler: requirePermission("report:read:ZUGEWIESEN"),
     handler: async (req) => {
       const now = new Date();
@@ -1542,7 +1547,12 @@ export async function reportRoutes(app: FastifyInstance) {
   // Used by the /reports "Verfall-Warnungen" widget so managers see at-risk
   // employees before the EuGH C-684/16 deadline triggers.
   app.get("/carryover-at-risk", {
-    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    schema: {
+      tags: ["Reporting"],
+      description:
+        "Kept as a read interface for API keys; the web app has no caller since GET /reports/period (Issue #690).",
+      security: [{ bearerAuth: [] }],
+    },
     preHandler: requirePermission("report:read:ZUGEWIESEN"),
     handler: async (req) => {
       const { days } = req.query as { days?: string };
