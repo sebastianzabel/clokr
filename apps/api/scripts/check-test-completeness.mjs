@@ -961,7 +961,8 @@ import { readFileSync } from "node:fs";
 // Issue #743: re-measured with the full run (719 files, 10888 tests incl. 3 skipped).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
-const MIN_FILES = 720;
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+const MIN_FILES = 722;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1032,9 +1033,11 @@ const MIN_FILES = 720;
 // Issue #745/#746: MIN_TESTS 10870 -> 10880 (measured). Issue #744 (2026-10-25): +14 cases measured on its own base
 // (10870 -> 10884); both together: measured 10893 in the CI run of PR #749 (the sum 10894 counted one case twice). Never lowered below a measurement.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #215: +1 file (absence-type-fields-215.test.ts, 6 cases); full run measured 722 files / 10907 tests. Never lowered.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
-const MIN_TESTS = 10894;
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+const MIN_TESTS = 10907;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
