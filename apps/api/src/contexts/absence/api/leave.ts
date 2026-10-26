@@ -914,6 +914,13 @@ export async function leaveRoutes(app: FastifyInstance) {
         year?: string;
         upcoming?: string;
       };
+      // Issue #409: an EIGENE-only caller naming a foreign `?employeeId=` used to get the own
+      // (usually empty) list with 200, because the own-requests branch below ignores the param.
+      // `leave-request:read:EIGENE` excludes foreign requests, so this is a 403 — same form as
+      // #368 finding 4 for `GET /time-entries`. Own id or no id stays unchanged.
+      if (!isManager && employeeId && employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
       const { salonId } = leaveSalonQuerySchema.parse(req.query);
 
       // Für Manager: PENDING-Filter schließt CANCELLATION_REQUESTED immer ein
