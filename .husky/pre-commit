@@ -47,4 +47,9 @@ pnpm --filter @clokr/api run lint:role-checks || exit 1
 # walked set must be the whole tree. About 1s.
 pnpm --filter @clokr/api run lint:unordered-test-reads || exit 1
 
+# One-shot svelte-check (Issue #699). `tsc` does not read .svelte files, so a type error inside a
+# component is invisible to every other gate. Whole web app, not staged-only: a changed type in a
+# .ts module breaks the components that import it. 0 errors, warnings frozen (see the script). About 15 s measured.
+pnpm --filter @clokr/web run check:svelte || exit 1
+
 pnpm exec lint-staged

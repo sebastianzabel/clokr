@@ -13,7 +13,8 @@
     "lint:ui-classes": "node scripts/lint-ui-classes.mjs",
     "lint:save-pattern": "node scripts/lint-save-pattern.mjs",
     "lint:role-checks": "node scripts/lint-role-checks.mjs",
-    "typecheck": "svelte-kit sync && tsc --noEmit",
+    "check:svelte": "node scripts/svelte-check-gate.mjs",
+    "typecheck": "svelte-kit sync && tsc --noEmit && node scripts/svelte-check-gate.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

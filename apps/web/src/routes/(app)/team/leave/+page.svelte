@@ -157,7 +157,7 @@
   // Quick 260824-ef6: Storno-Button (Zurückziehen / Stornierung beantragen) in der
   // Anträge-Tabelle. `resolveStornoAction` gates which button (if any) a row gets;
   // see apps/web/src/lib/leave/storno.ts for the full decision matrix and reasoning.
-  let stornoRequest: LeaveRequest | null = $state(null);
+  let stornoRequest = $state<LeaveRequest | null>(null);
   let stornoOpen = $state(false);
   let stornoKind: StornoKind | null = $derived(
     stornoRequest

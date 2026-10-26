@@ -303,7 +303,7 @@
   const OPEN_BREAK_STORAGE_KEY = "clokr.dashboard.openBreak";
 
   let stats: DashboardStats | null = $state(null);
-  let teamWeek: TeamWeek | null = $state(null);
+  let teamWeek = $state<TeamWeek | null>(null);
   let teamPage = $state(1);
   let teamPageSize = $state(10);
   let pagedTeam = $derived(
@@ -330,14 +330,14 @@
   let shiftFallback = $state(false);
 
   // Open items widget
-  let openItems: {
+  let openItems = $state<{
     pendingApprovals: number;
     missingDays: string[];
     pendingRequests: number;
     invalidEntries: number;
     unconfirmedBreakDays: string[];
     total: number;
-  } | null = $state(null);
+  } | null>(null);
 
   // ── Pausen-Bestätigung Nudge (BREAK-05/07) ───────────────────────────────
   // Phase 126 (issue #126): the count is SERVER-COMPUTED. `openItems.unconfirmedBreakDays`
@@ -1486,7 +1486,7 @@
       {#if day.shift}
         <span class="shift-time">{day.shift.startTime}–{day.shift.endTime}</span>
       {:else}
-        <span class="shift-time">{fmtHours(day.expectedHours)}</span>
+        <span class="shift-time">{fmtHours(day.expectedHours ?? 0)}</span>
       {/if}
     </span>
   {:else if day.status === "requested"}

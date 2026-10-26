@@ -13,7 +13,7 @@
   // `Modal.svelte` remains correct for genuinely blocking flows and is not modified by this plan.
   import { releaseNotesStore, whatsNewOpen, markReleaseNotesSeen } from "$stores/release-notes";
 
-  let view: "latest" | "history" = $state("latest");
+  let view = $state<"latest" | "history">("latest");
 
   let notes = $derived($releaseNotesStore);
   let latest = $derived(notes[0] ?? null);
