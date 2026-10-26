@@ -83,6 +83,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/prisma-unique-violation.ts": "rahmen", // generic Prisma P2002 target reader; imported by the platform and scheduling contexts, owns no model
   "src/utils/crypto.ts": "rahmen", // generic crypto helper (hashing/encryption), no model, no single owning context
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
+  "src/utils/audit-diff.ts": "rahmen", // generic before/after diff for settings audit rows (Issue #285); pure, no model, imported by the platform and absence settings routes
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
   "src/__tests__/entry-lock-race-helpers.ts": "rahmen", // Issue #70 (Phase 70b-04) — test infra: holds the Employee writer lock while a request under test queues on it; no model of its own
