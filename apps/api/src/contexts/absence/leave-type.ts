@@ -47,6 +47,12 @@ export type RequestableCode = (typeof REQUESTABLE_CODES)[number];
  * The two codes that are IMPOSED, never requested — the members Phase 98b adds to the Prisma
  * `LeaveTypeCode` enum. Order matches the schema's own declaration order.
  *
+ * **This is NOT the set of codes an `Absence` may hold.** It is only the complement of
+ * REQUESTABLE_CODES inside the enum ("what a `LeaveRequest` must never carry"). `MATERNITY` and
+ * `PARENTAL` are in REQUESTABLE_CODES and are nevertheless read from the `Absence` table by
+ * `leave-check.ts`. The Absence-valid set is {@link ABSENCE_CODES} below, and the only typed
+ * write path for `Absence.type` is {@link absenceTypeFields} (Issue #215).
+ *
  * `OTHER` is NOT a dead value and is NOT removable. It has no writer anywhere in production code,
  * which is exactly what makes it look dead. It is not: 15 production rows exist — hand-inserted
  * pre-tracking bridge rows across 13 employees, startDate 2026-01-01 through 2026-05-26,
@@ -67,6 +73,35 @@ export const IMPOSED_ONLY_CODES = [
   "OTHER",
 ] as const satisfies readonly LeaveTypeCode[];
 export type ImposedOnlyCode = (typeof IMPOSED_ONLY_CODES)[number];
+
+/**
+ * The codes an `Absence` row (imposed absence) may carry — the explicit, named Absence-valid set
+ * (Issue #215). Two imposed-only codes plus the two requestable codes that are reported rather
+ * than applied for and read from the `Absence` table (`leave-check.ts`: `MATERNITY`, `PARENTAL`).
+ * Spelled out member by member on purpose: it is neither `IMPOSED_ONLY_CODES` nor derived from it.
+ */
+export const ABSENCE_CODES = [
+  "VOCATIONAL_SCHOOL",
+  "OTHER",
+  "MATERNITY",
+  "PARENTAL",
+] as const satisfies readonly LeaveTypeCode[];
+export type AbsenceCode = (typeof ABSENCE_CODES)[number];
+
+/**
+ * Prisma `data:` fragment for the `type` of a new `Absence` row — the counterpart of
+ * {@link leaveTypeFields} on the imposed side. Every `absence.create()` / `createMany()` /
+ * `upsert()` in `apps/api/src` spreads this instead of writing a literal `type:`.
+ *
+ * Enforcement, stated honestly: the COMPILER rejects a non-Absence code at this function
+ * (`absenceTypeFields("VACATION")` does not compile, proven by `absence-type-fields-215.test.ts`
+ * through `tsc`). Prisma's generated `Absence.type` is the full `LeaveTypeCode` and cannot be
+ * narrowed by us, so a hand-written `type: "VACATION"` in a Prisma call still compiles; that
+ * route is closed by the source guard in the same test file plus G5, not by the type system.
+ */
+export function absenceTypeFields(code: AbsenceCode): { type: AbsenceCode } {
+  return { type: code };
+}
 
 /**
  * Code -> display name, the two policy flags a newly created row is seeded with, and the two

@@ -42,6 +42,7 @@ import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve as resolvePath } from "node:path";
 import bcrypt from "bcryptjs";
+import { absenceTypeFields } from "../src/contexts/absence/leave-type";
 import { assertTestDatabaseMarker } from "./test-database-guard";
 // `apps/api/src/utils/test-database.ts` itself has zero imports and no module-evaluation side
 // effect (see that module's own header) — unlike `config.ts`/`app.ts`/the routes and utils
@@ -489,7 +490,7 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
   await prisma.absence.create({
     data: {
       employeeId: empId,
-      type: "VOCATIONAL_SCHOOL",
+      ...absenceTypeFields("VOCATIONAL_SCHOOL"),
       source: "PATTERN",
       startDate: new Date("2026-01-14T00:00:00Z"),
       endDate: new Date("2026-01-14T00:00:00Z"),
