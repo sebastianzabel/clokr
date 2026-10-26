@@ -1294,6 +1294,46 @@ Bereits anonymisierte Personen (Bestand) bleiben unverändert; sichtbar macht si
 `audit-388-anonymized-leftovers.ts` (neue Kategorien `LEAVE_REVIEW_NOTE`, `RETRO_REASON`, `RETRO_REVIEW_NOTE`,
 `OVERTIME_PLAN_NOTE`, `SHIFT_NOTE`, `AVAILABILITY_NOTE`; nur IDs und Zahlen). Ein Backfill ist ein eigenes Folge-Issue.
 
+## Phase 774 — Bestandskorrektur: Freitexte anonymisierter Personen (Issue #774)
+
+**Hinweis für die Release Notes.** Es gibt **keine Migration und keinen Schemawechsel.** Folge von Phase 718: Personen, die **vor**
+#718 anonymisiert wurden, tragen noch `LeaveRequest.reviewNote`, `RetroEntryRequest.reason`/`reviewNote`, `OvertimePlan.note`,
+`Shift.note` und `EmployeeAvailability.note`. Das Skript `apps/api/scripts/backfill-774-anonymized-freetext.ts` leert sie mit
+**denselben Funktionen** wie die Anonymisierung (keine zweite Regel; `RetroEntryRequest.reason` wird zu „Gelöscht (Anonymisierung)“).
+`SaldoSnapshot`- und `OpeningBalance`-Texte bleiben bewusst stehen (§ 147 AO). Mandanten mit Deaktivierung sind eingeschlossen.
+
+Der **Probelauf** (Voreinstellung) führt die Funktionen in einer Transaktion aus und rollt sie zurück: die Zahlen sind genau die des
+Schreiblaufs, es bleibt **nichts** geschrieben. `--confirm` schreibt, eine Transaktion je Person, dazu eine Audit-Zeile je Person mit
+Fund (`UPDATE` auf `Employee`, ohne Benutzer = System, `newValue = { clearedFreeText: {Zahlen}, trigger: "BACKFILL_774",
+auditReason: "Bestandskorrektur #774" }`, kein Text). Idempotent: ein zweiter Lauf findet nichts und schreibt nichts. Scheitert eine
+Person, wird sie gemeldet (`result=failed:<CODE>`, Exit-Code `1`), die übrigen laufen weiter.
+
+**Reihenfolge.** Dieses Skript setzt #718 voraus (Release mit #718 muss deployt sein).
+
+**Ablauf (Owner, auf int UND prod; vorher `pg_dump`).**
+
+```bash
+# 0. Bestandsbild vorher (lesend), Ausgabe aufbewahren
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/audit-388-anonymized-leftovers.ts" \
+  | tee "774-audit388-vorher-<umgebung>-$(date +%Y%m%d).txt"
+
+# 1. Probelauf (Voreinstellung, schreibt NICHTS) - mit dem Bestandsbild vergleichen
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/backfill-774-anonymized-freetext.ts" \
+  | tee "774-probelauf-<umgebung>-$(date +%Y%m%d).txt"
+
+# 2. Schreiben (optional --tenant <id>)
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/backfill-774-anonymized-freetext.ts --confirm" \
+  | tee "774-lauf-<umgebung>-$(date +%Y%m%d).txt"
+
+# 3. Bestandsbild nachher (lesend): keine Funde der Kategorien LEAVE_REVIEW_NOTE, RETRO_REASON, RETRO_REVIEW_NOTE,
+#    OVERTIME_PLAN_NOTE, SHIFT_NOTE, AVAILABILITY_NOTE mehr
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/audit-388-anonymized-leftovers.ts" \
+  | tee "774-audit388-nachher-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+Eine Zeile je Person: `tenant=<id> employee=<id> leaveReviewNotes=<n> retroReasons=<n> retroReviewNotes=<n> overtimePlanNotes=<n>
+shiftNotes=<n> availabilityNotes=<n> result=<planned|written|unchanged|failed:CODE>`, dann eine `Totals:`-Zeile. Nur Ids und Zahlen.
+
 ## Phase 388 — Anonymisierung löscht WLAN-Kennungen und Pausen-Verzicht-Freitext (Issues #388, #508)
 
 **Was sich ändert.** Es gibt **keine Migration und keinen Schemawechsel**. Die DSGVO-Anonymisierung
