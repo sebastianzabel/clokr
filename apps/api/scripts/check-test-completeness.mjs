@@ -961,6 +961,7 @@ import { readFileSync } from "node:fs";
 // 719 test files, 10903 tests (10900 passed, 3 skipped).
 // Issue #745/#746 (half day, class of #728): +1 file (leave-ical-half-day-746) and +9 tests, measured 718 files / 10880 tests (10877 passed + 3 skipped).
 // #668 (+2 files) and #745/#746 (+1 file) on the common base 717: MIN_FILES 720 (lower-bound sum).
+// Issue #478: +1 file (leave-overlap-cancellation-478.test.ts, +6 tests) and +1 file (leave-edit-guards-478.test.ts, +8 tests); measured 720 files / 10894 tests (incl. 3 skipped).
 // Issue #744 on top of #745/#746: +2 files (shift-half-day-leave-744, shift-leave-rule-744): MIN_FILES 718 -> 720.
 // Issue #743: re-measured with the full run (719 files, 10888 tests incl. 3 skipped).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
@@ -1039,6 +1040,7 @@ const MIN_FILES = 720;
 // #668 (+33 tests) and #745/#746 (+10 tests) on the common base 10870: measured 10912 in the CI run of PR #751 (the sum 10913 counted one case twice). Never lowered below a measurement.
 // Issue #745/#746: MIN_TESTS 10870 -> 10880 (measured). Issue #744 (2026-10-25): +14 cases measured on its own base
 // (10870 -> 10884); both together: measured 10893 in the CI run of PR #749 (the sum 10894 counted one case twice). Never lowered below a measurement.
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
