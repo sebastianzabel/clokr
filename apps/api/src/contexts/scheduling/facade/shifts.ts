@@ -191,18 +191,19 @@ export async function cancelOrphanShifts(
  * trail). No `deletedAt` guard: a soft-deleted shift keeps its text and is reached too. Deliberately
  * NO tenant parameter (named F3 exception): the sole caller is `platform/anonymize.ts`'s
  * `anonymizeEmployeeData()`, reached only after the route validated the id against the caller's
- * tenant. Returns nothing - the audit carries no text and no per-field counts.
+ * tenant. Returns row counts only (for the ANONYMIZE audit), never text.
  */
 export async function clearSchedulingNotesForEmployee(
   db: Prisma.TransactionClient,
   employeeId: string,
-): Promise<void> {
-  await db.shift.updateMany({
+): Promise<{ shiftNotes: number; availabilityNotes: number }> {
+  const shifts = await db.shift.updateMany({
     where: { employeeId, note: { not: null } },
     data: { note: null },
   });
-  await db.employeeAvailability.updateMany({
+  const availability = await db.employeeAvailability.updateMany({
     where: { employeeId, note: { not: null } },
     data: { note: null },
   });
+  return { shiftNotes: shifts.count, availabilityNotes: availability.count };
 }

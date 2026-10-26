@@ -301,9 +301,10 @@ export async function hardDeleteOvertimeDataForEmployee(
 export async function clearOvertimePlanNotesForEmployee(
   db: Prisma.TransactionClient,
   employeeId: string,
-): Promise<void> {
-  await db.overtimePlan.updateMany({
+): Promise<number> {
+  const cleared = await db.overtimePlan.updateMany({
     where: { employeeId, note: { not: null } },
     data: { note: null },
   });
+  return cleared.count;
 }

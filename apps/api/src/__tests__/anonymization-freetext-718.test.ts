@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRow } from "./setup";
 import { anonymizeEmployeeData } from "../contexts/platform/anonymize";
 import { RETRO_REASON_ANONYMIZED } from "../contexts/time-tracking";
 
@@ -248,5 +248,42 @@ describe("anonymization clears the remaining person-authored free texts (#718)",
       where: { employeeId: target },
     });
     expect(retro.reason).toBe(RETRO_REASON_ANONYMIZED);
+  });
+
+  it("the ANONYMIZE audit names the new fields and carries counts only, never text", async () => {
+    const viaRoute = (await makeEmployee("route718")).id;
+    await seedTexts(viaRoute);
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/employees/${viaRoute}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(204);
+    const row = await soleAuditRow(app.prisma, {
+      where: { entity: "Employee", entityId: viaRoute, action: "ANONYMIZE" },
+    });
+    const value = row.newValue as {
+      clearedFields: string[];
+      clearedFreeText: Record<string, number>;
+    };
+    expect(value.clearedFields).toEqual(
+      expect.arrayContaining([
+        "leaveReviewNote",
+        "retroReason",
+        "retroReviewNote",
+        "overtimePlanNote",
+        "shiftNote",
+        "availabilityNote",
+      ]),
+    );
+    expect(value.clearedFreeText).toEqual({
+      leaveReviewNotes: 2,
+      retroReasons: 1,
+      retroReviewNotes: 1,
+      overtimePlanNotes: 1,
+      shiftNotes: 1,
+      availabilityNotes: 1,
+    });
+    expect(JSON.stringify(row.newValue)).not.toContain(T);
   });
 });

@@ -1616,7 +1616,7 @@ export async function employeeRoutes(app: FastifyInstance) {
                 ...requestAuditFields(req, entry.newValue),
               }),
             );
-            const { removedRoleAssignments, exitDate, clearedDeviceIdentifiers } =
+            const { removedRoleAssignments, exitDate, clearedDeviceIdentifiers, clearedFreeText } =
               await anonymizeEmployeeData({
                 tx,
                 employeeId: id,
@@ -1667,7 +1667,19 @@ export async function employeeRoutes(app: FastifyInstance) {
                 skipped: exitResult.skipped,
                 // Issue #388/#508: counts only, never the MAC addresses or the cleared text.
                 clearedDeviceIdentifiers,
-                clearedFields: ["wifiMacs", "presenceDevices", "breakWaivedReason"],
+                clearedFields: [
+                  "wifiMacs",
+                  "presenceDevices",
+                  "breakWaivedReason",
+                  "leaveReviewNote",
+                  "retroReason",
+                  "retroReviewNote",
+                  "overtimePlanNote",
+                  "shiftNote",
+                  "availabilityNote",
+                ],
+                // Issue #718: row counts per free-text field, never the text.
+                clearedFreeText,
               }),
               tx,
             });

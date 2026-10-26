@@ -122,6 +122,15 @@ export interface AnonymizeEmployeeResult {
   exitDate: { before: Date | null; after: Date };
   /** Issue #388: counts only of the cleared device identifiers; the addresses are never returned. */
   clearedDeviceIdentifiers: { wifiMacs: number; presenceDevices: number };
+  /** Issue #718: row counts of the cleared free-text fields; counts only, never text. */
+  clearedFreeText: {
+    leaveReviewNotes: number;
+    retroReasons: number;
+    retroReviewNotes: number;
+    overtimePlanNotes: number;
+    shiftNotes: number;
+    availabilityNotes: number;
+  };
 }
 
 /**
@@ -199,16 +208,16 @@ export async function anonymizeEmployeeData(
 
   // Notizen in Zeiteinträgen anonymisieren (können persönliche Daten enthalten)
   // Phase 100B Plan 08 — T10, contexts/time-tracking facade (reaches soft-deleted rows too).
-  await clearEntryNotesForEmployee(tx, employeeId);
+  const retro = await clearEntryNotesForEmployee(tx, employeeId);
 
   // Notizen in Urlaubsanträgen anonymisieren
   // Phase 100B Plan 13 — F3, contexts/absence facade.
   // Issue #718: also reviewNote.
-  await anonymizeLeaveRequestsForEmployee(tx, employeeId);
+  const leaveReviewNotes = await anonymizeLeaveRequestsForEmployee(tx, employeeId);
 
   // Issue #718: Überstundenplan-, Schicht- and Verfügbarkeitsnotizen (person-authored free text).
-  await clearOvertimePlanNotesForEmployee(tx, employeeId);
-  await clearSchedulingNotesForEmployee(tx, employeeId);
+  const overtimePlanNotes = await clearOvertimePlanNotesForEmployee(tx, employeeId);
+  const scheduling = await clearSchedulingNotesForEmployee(tx, employeeId);
 
   // Notizen in Abwesenheiten anonymisieren + Dokument-Pfad entfernen
   // Phase 100B Plan 12 — F3, contexts/absence facade.
@@ -252,5 +261,6 @@ export async function anonymizeEmployeeData(
     removedRoleAssignments,
     exitDate: { before: employee.exitDate, after: employee.exitDate ?? exitDayIfUnset },
     clearedDeviceIdentifiers: { wifiMacs: employee.wifiMacs.length, presenceDevices },
+    clearedFreeText: { leaveReviewNotes, ...retro, overtimePlanNotes, ...scheduling },
   };
 }

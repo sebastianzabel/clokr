@@ -663,7 +663,7 @@ export const RETRO_REASON_ANONYMIZED = "Gelöscht (Anonymisierung)";
 export async function clearEntryNotesForEmployee(
   db: Prisma.TransactionClient,
   employeeId: string,
-): Promise<void> {
+): Promise<{ retroReasons: number; retroReviewNotes: number }> {
   await db.timeEntry.updateMany({
     where: { employeeId, note: { not: null } },
     data: { note: null },
@@ -682,14 +682,16 @@ export async function clearEntryNotesForEmployee(
   // the approver's free-text review note. Both are person-authored free text. The row stays (it is
   // the Nachweis of the retro grant, status/times/reviewer untouched); the required column gets a
   // neutral text instead of null. Soft-deleted rows are reached too.
-  await db.retroEntryRequest.updateMany({
+  const reasons = await db.retroEntryRequest.updateMany({
     where: { employeeId, reason: { not: RETRO_REASON_ANONYMIZED } },
     data: { reason: RETRO_REASON_ANONYMIZED },
   });
-  await db.retroEntryRequest.updateMany({
+  const reviewNotes = await db.retroEntryRequest.updateMany({
     where: { employeeId, reviewNote: { not: null } },
     data: { reviewNote: null },
   });
+  // Row counts for the ANONYMIZE audit (Issue #718) - never text.
+  return { retroReasons: reasons.count, retroReviewNotes: reviewNotes.count };
 }
 
 // ── T11 — hard delete: Break before TimeEntry, the ORDER is the invariant ────────────────────
