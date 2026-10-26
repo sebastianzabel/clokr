@@ -1036,6 +1036,7 @@ const MIN_FILES = 728;
 // skipped): +41 cases in the three new files, +8 in sick-leave-days, +1 in reports-hr-86. Never lowered.
 // Issue #728: +8 cases (3 in leave-check.test.ts, 5 in half-day-leave-recording-728.test.ts) on top of #713 (source-counted,
 // lower-bound convention): MIN_TESTS 10862 -> 10870.
+// Issue #396: +1 file, +3 cases (post-commit-refetch-396.test.ts); measured full run 719 files, 10883 tests (10880 passed, 3 skipped). Never lowered.
 // Issue #668: MIN_TESTS 10870 -> 10880, the measured total of the full run named at MIN_FILES (10872 passed, 5 then-red cases
 // since fixed, 3 skipped); the new file holds 9 cases. Never lowered.
 // Issue #668 review fixes: MIN_TESTS 10880 -> 10903, the measured total of the full run named at MIN_FILES. Never lowered.
