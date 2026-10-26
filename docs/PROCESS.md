@@ -83,6 +83,35 @@ nothing reminded you of. Group or filter by the built-in `Labels` field instead.
 asserts that it is answerable. An issue whose acceptance criteria say "make it better" is not
 Ready, however long it has been sitting in Backlog.
 
+### Freshness check before Ready (Issue #711)
+
+A ticket written against an old state of the code produces a wrong plan: on 19.10.2026, 28 of 44
+tickets from the UX review of 13.10. needed a text correction because the area (the reports page
+#612, the dashboard #588/#591) had been rebuilt in between. So before a ticket moves to `Ready`
+it is checked against the current `main` when **either** trigger holds:
+
+- the ticket is older than one sprint (14 days since it was created), or
+- the area it describes changed since it was created. Measure it, do not guess:
+  `git log --since=<created> --oneline -- <paths named in the ticket>`; any commit is a hit.
+
+The check records three things: is it **already done**, is it **superseded**, and **which text or
+line references need updating**. The result goes into the ticket as a comment in this format
+(template: the „Überarbeitung nötig“ comments of 19.10.2026):
+
+```text
+**Überarbeitung nötig (Ticket-Durchsicht <TT.MM.JJJJ>)**
+
+<What has to be re-measured or rewritten, one or two sentences.>
+
+Beleg: <the changed paths or commits from git log, and what they changed.>
+
+Vor dem Status `Ready` wird der Ticket-Text entsprechend angepasst.
+```
+
+If nothing has to change, the comment says „Frische-Prüfung (<date>): unverändert gültig“ with the
+`git log` result as evidence. Then the ticket text is updated and only then is the card set to
+`Ready`. Never the other way round.
+
 For bugs, reproduction steps plus expected behaviour _are_ the acceptance criteria — that is
 why `bug.yml` has no separate field. A bug you cannot reproduce is not Ready either.
 
@@ -158,7 +187,10 @@ Their mapping is recorded in the ROADMAP entry of each phase (`**GitHub:** Issue
 
 Not every issue needs the full phase pipeline (discuss → research → plan → plan check → execute →
 verify). When an issue moves to `Ready`, the triage decides the route and writes it as a short
-comment on the issue („Umsetzung: Quick-Task, weil …“ / „Umsetzung: Phase, weil …“). The decision
+comment on the issue („Umsetzung: Quick-Task, weil …“ / „Umsetzung: Phase, weil …“).
+The same triage comment names the **freshness check** (see above): either its result
+(„Frische-Prüfung: unverändert gültig“ / „Überarbeitung nötig …“) or why neither trigger applies
+(„Frische-Prüfung: nicht nötig, Ticket jünger als ein Sprint, Bereich unverändert“). The decision
 may be made by the AI agent doing the triage; the owner can overrule it in the issue.
 
 **`/gsd-quick --full` is enough when all of these hold:**
@@ -312,9 +344,30 @@ Use `--dry-run` to see the shaped issue without creating it.
 | What                                          | When                                                | Where                                          |
 | --------------------------------------------- | --------------------------------------------------- | ---------------------------------------------- |
 | Sprint checklist issue                        | every second Monday, 07:00 Berlin (06:00 in winter) | `.github/workflows/sprint-rollover.yml`        |
+| Board hygiene list (part of that checklist)   | same run                                            | `.github/scripts/sprint-hygiene.mjs`           |
 | Branch protection drift check                 | manual, on the sprint checklist                     | `scripts/apply-branch-protection.sh`           |
 | Release PR                                    | on every push to `main`                             | see [`release-process.md`](release-process.md) |
 | Build & Push for commits without a push event | every 15 minutes                                    | `.github/workflows/build-push-reconcile.yml`   |
 
 Scheduled workflows and issue forms only ever run from the **default branch**. Both are inert
 anywhere else — this is why `main` was resynced onto the release line rather than left behind.
+
+## Board hygiene list in the sprint checklist (Issue #712)
+
+The sprint checklist issue ends with a **measured** list, written by
+`.github/scripts/sprint-hygiene.mjs` from the Projects v2 API, so the sprint change does not rely
+on eyeballing. It is part of the sprint checklist: work through it before pulling cards to Ready.
+
+- closed cards without a sprint, or in a sprint that does not contain their close date (last 28 days),
+- `Ready` cards with their **Liegezeit** in days since they moved to Ready (from the status-change
+  events of the board); more than one sprint (14 days) is marked ⚠ and needs the decision „diesen
+  Sprint“ or „zurück ins Backlog“,
+- open sprint checklists of earlier sprints,
+- the size of the Inbox,
+- open issues without a milestone that are not deliberately in the Backlog.
+
+Dry run against the live board (read only, prints the list and writes nothing):
+`node .github/scripts/sprint-hygiene.mjs --dry-run` (needs a `gh` login with the `project` scope).
+In the workflow the board is read with the optional secret `PROJECT_READ_TOKEN` (a token that can
+read the project); the Actions token cannot read a user-owned project. Without the secret the
+board sections are replaced by a note and only the repository-based sections are measured.
