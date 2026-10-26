@@ -30,7 +30,7 @@ import {
   auditReasonSchema,
 } from "../../platform";
 import { todayInTz, getTenantTimezone } from "../../working-time-account";
-import { EFFECTIVE_LEAVE_STATUSES } from "../effective-leave-statuses";
+import { isEffectiveLeaveStatus } from "../effective-leave-statuses";
 import { getVacationEntitlement } from "../facade/entitlements";
 import { recalculateCarryOver } from "../leave-days";
 import { buildParentalReductionPreview } from "../parental-leave-reduction";
@@ -152,7 +152,7 @@ export async function parentalLeaveReductionRoutes(app: FastifyInstance) {
       const existing = await loadReducibleRequest(app, req, reply, leaveRequestId);
       if (!existing) return;
 
-      if (!(EFFECTIVE_LEAVE_STATUSES as readonly string[]).includes(existing.status)) {
+      if (!isEffectiveLeaveStatus(existing.status)) {
         return reply.code(409).send({ error: APPROVED_MESSAGE });
       }
 

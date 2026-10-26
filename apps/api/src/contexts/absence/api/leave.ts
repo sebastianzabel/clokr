@@ -10,7 +10,7 @@ import { scheduledLeaveMinutes, overtimeCompReversalMinutes } from "../overtime-
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
 import { closedMonthLeaveMessage } from "../correction-lock"; // Issue #446 (D-07/D-08)
 import { findClosedMonthsInRange } from "../closed-month-guard"; // Issue #446 (D-07)
-import { EFFECTIVE_LEAVE_STATUSES } from "../effective-leave-statuses"; // Issue #446 (D-04)
+import { EFFECTIVE_LEAVE_STATUSES, isEffectiveLeaveStatus } from "../effective-leave-statuses"; // Issue #446 (D-04)
 // Phase 101B (Issue #101, D-11 Welle absence): lifted out of this file into ./leave-days.ts.
 // resolveLeaveDays/getHolidayMap/deductVacationDays/reverseVacationDays are re-exported below
 // (unchanged) so scheduling/api/shifts.ts, services/phorest/sync-shifts.ts and
@@ -74,7 +74,12 @@ import { filterLeaveRowsToHomeSalon } from "../salon-leave-attribution"; // Issu
 import { preserveCarryOverDeadline } from "../illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { supersedeSection9CreditsOfCancelledRequest } from "../section9-supersede";
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06, Issue #468 (D-04/A-3)
-import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
+import { isSickLeaveTypeCode } from "../leave-type";
+import {
+  findBlockingLeaveOverlap,
+  leaveDaysUsedInYear,
+  LEAVE_OVERLAP_ERROR,
+} from "../leave-overlap"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
 import { activeParentalReductions } from "../parental-leave-reduction"; // Issue #468 plan 07 (D-10) — revoke-before-change guards
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
 import { sickLeaveDayCounts } from "../sick-leave-days"; // Issue #595 (D-04) — the one sick-day counter
@@ -540,25 +545,21 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Gleichartige Überschneidungen (Urlaub/Urlaub, Krank/Krank) und Überschneidungen mit
       // noch PENDING-Anträgen bleiben unverändert gesperrt — ein Blanko-Entfernen des Guards
       // würde die Doppelbuchung wieder öffnen, gegen die er existiert.
+      //
+      // Issue #478: the blocking set is PENDING plus EFFECTIVE_LEAVE_STATUSES — a request in
+      // CANCELLATION_REQUESTED is still active leave until the cancellation is approved
+      // (CLAUDE.md "Leave Cancellation Flow"), so a new request over it is a double booking
+      // too. The § 9 exception is the same set: sick over CANCELLATION_REQUESTED stays allowed
+      // exactly like over APPROVED. Two half days on one date stay an overlap (owner
+      // decision 25.10.2026).
       const isSickRequest = body.type === "SICK" || body.type === "SICK_CHILD";
-      const overlaps = await app.prisma.leaveRequest.findMany({
-        where: {
-          employeeId,
-          deletedAt: null,
-          status: { in: ["PENDING", "APPROVED"] },
-          startDate: { lte: end },
-          endDate: { gte: start },
-        },
-        include: { leaveType: true },
+      const blockingOverlap = await findBlockingLeaveOverlap(app.prisma, {
+        employeeId,
+        start,
+        end,
+        isSickRequest,
       });
-      const blockingOverlap = overlaps.find((o) => {
-        if (!isSickRequest) return true; // non-sick: unchanged behaviour
-        if (o.status !== "APPROVED") return true; // sick vs PENDING: still blocked
-        if (isSickLeaveTypeCode(o.leaveType.code)) return true; // sick vs sick: still blocked
-        return false; // § 9 case — permitted
-      });
-      if (blockingOverlap)
-        return reply.code(409).send({ error: "Überschneidung mit bestehendem Antrag" });
+      if (blockingOverlap) return reply.code(409).send({ error: LEAVE_OVERLAP_ERROR });
 
       // Load tenant config for leave rules
       const tenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
@@ -618,19 +619,9 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       // ── Max days per year check ──
       if (leaveType?.maxDaysPerYear) {
-        const yearStart = new Date(start.getFullYear(), 0, 1);
-        const yearEnd = new Date(start.getFullYear(), 11, 31);
-        const usedThisYear = await app.prisma.leaveRequest.aggregate({
-          where: {
-            employeeId,
-            leaveTypeId,
-            deletedAt: null,
-            status: { in: ["PENDING", "APPROVED"] },
-            startDate: { gte: yearStart, lte: yearEnd },
-          },
-          _sum: { days: true },
-        });
-        const used = Number(usedThisYear._sum.days ?? 0);
+        // Issue #478: shared with the PENDING edit — a request in CANCELLATION_REQUESTED is
+        // still active leave and keeps using up the quota.
+        const used = await leaveDaysUsedInYear(app.prisma, { employeeId, leaveTypeId, start });
         if (used + days > leaveType.maxDaysPerYear) {
           return reply.code(400).send({
             error: `Max. ${leaveType.maxDaysPerYear} Tage/Jahr für diesen Typ (bereits ${used} genutzt)`,
@@ -1571,6 +1562,22 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
+      // Issue #478: approving must not turn a double booking into active leave. A PENDING
+      // request is normally collision-free from POST/PATCH, but a stored double booking (made
+      // before those guards) is refused here with the same 409 as POST.
+      if (body.status === "APPROVED") {
+        const approveBlockingOverlap = await findBlockingLeaveOverlap(app.prisma, {
+          employeeId: existing.employeeId,
+          start: existing.startDate,
+          end: existing.endDate,
+          isSickRequest: isSickLeaveTypeCode(existing.leaveType.code),
+          excludeRequestId: id,
+        });
+        if (approveBlockingOverlap) {
+          return reply.code(409).send({ error: LEAVE_OVERLAP_ERROR });
+        }
+      }
+
       const reviewTypeCode = existing.leaveType.code;
 
       // Issue #294: the OVERTIME_COMP booking below is computed but NOT written where it is
@@ -1718,7 +1725,10 @@ export async function leaveRoutes(app: FastifyInstance) {
             where: {
               employeeId: existing.employeeId,
               deletedAt: null,
-              status: "APPROVED",
+              // Issue #478: sick over a CANCELLATION_REQUESTED request is allowed by the POST
+              // guard, so the § 9 case must be detected against it as well (a credit left
+              // behind by an approved cancellation is superseded, Issue #662).
+              status: { in: [...EFFECTIVE_LEAVE_STATUSES] },
               id: { not: existing.id },
               startDate: { lte: existing.endDate },
               endDate: { gte: existing.startDate },
@@ -2173,6 +2183,31 @@ export async function leaveRoutes(app: FastifyInstance) {
         );
         if (editRejection) {
           return reply.code(400).send(editRejection);
+        }
+      }
+
+      // Issue #478: the edit used to be a way around the create-side guards (create on free
+      // dates, then move onto an approved or cancellation-requested request). Same shared
+      // helpers as POST, the request itself excluded.
+      const editBlockingOverlap = await findBlockingLeaveOverlap(app.prisma, {
+        employeeId: existing.employeeId,
+        start,
+        end,
+        isSickRequest: existingTypeCode === "SICK" || existingTypeCode === "SICK_CHILD",
+        excludeRequestId: id,
+      });
+      if (editBlockingOverlap) return reply.code(409).send({ error: LEAVE_OVERLAP_ERROR });
+      if (existing.leaveType.maxDaysPerYear) {
+        const usedByOthers = await leaveDaysUsedInYear(app.prisma, {
+          employeeId: existing.employeeId,
+          leaveTypeId: existing.leaveTypeId,
+          start,
+          excludeRequestId: id,
+        });
+        if (usedByOthers + days > existing.leaveType.maxDaysPerYear) {
+          return reply.code(400).send({
+            error: `Max. ${existing.leaveType.maxDaysPerYear} Tage/Jahr für diesen Typ (bereits ${usedByOthers} genutzt)`,
+          });
         }
       }
 
@@ -3918,18 +3953,17 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "Die Krankmeldung muss zuerst genehmigt werden." });
       }
 
-      // Phase 104 review (WR-01): the credit is detected at SICK-approval time, when the
-      // vacation was APPROVED. Between then and this confirm the vacation can move to
-      // CANCELLATION_REQUESTED or CANCELLED (leave.ts cancel path) — and the cancel path
-      // already decrements usedDays back. Confirming afterwards would run
-      // reverseVacationDays() a SECOND time for the same days (double credit), and would
-      // book a § 9 credit against a vacation that legally no longer exists: nothing was
-      // "angerechnet", so nothing can be "nicht angerechnet". selfHealUsedDays() masks the
-      // numeric symptom on the next load, but the CONFIRMED row itself stays wrong and
-      // feeds section9Movements, the monthly report and the DATEV Krank/Urlaub shift.
-      // CANCELLATION_REQUESTED is blocked too: the leave is still active today, but an
-      // approval of that cancellation later would decrement the same days again.
-      if (credit.vacationRequest.status !== "APPROVED") {
+      // Phase 104 review (WR-01), revised by Issue #478: the credit is detected at SICK-approval
+      // time against a vacation in EFFECTIVE_LEAVE_STATUSES (APPROVED or CANCELLATION_REQUESTED).
+      // Between then and this confirm the vacation can become CANCELLED (leave.ts cancel path)
+      // — and the cancel path already decrements usedDays back. Confirming afterwards would run
+      // reverseVacationDays() a SECOND time for the same days (double credit), and would book a
+      // § 9 credit against a vacation that legally no longer exists. A vacation still in
+      // CANCELLATION_REQUESTED is active leave, so its credit can be confirmed (otherwise the
+      // case the sick approval opened could never be acted on); if that cancellation is later
+      // approved, supersedeSection9CreditsOfCancelledRequest() (#662) supersedes the credit and
+      // takes the ledger give-back out again, so no day is credited twice.
+      if (!isEffectiveLeaveStatus(credit.vacationRequest.status)) {
         return reply.code(409).send({
           error:
             "Der betroffene Urlaubsantrag ist nicht mehr genehmigt — keine Gutschrift möglich.",
