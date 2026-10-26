@@ -54,6 +54,12 @@ import {
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
 import { getShiftsInRange } from "../facade/shifts"; // Phase 430 (D-12) — planning-overview's "geplant" column
 import { flagShiftIfConflictsWithApprovedLeave } from "../shift-leave-check"; // Phase 430 (D-03/D-04, moved 430-06 to avoid widening the boundary-import cycle) — S4, the inverse Type-1 direction
+import {
+  halfDayLeaveHint,
+  leaveBlocksShift,
+  splitLeaveForShift,
+  type HalfDayLeaveHint,
+} from "../shift-leave-rule"; // Issue #744 — the one half-day rule
 import { notifyShiftLeaveConflicts } from "../shift-leave-conflict-notify"; // Phase 430 (D-02)
 import {
   detectWeekCapacityConflict,
@@ -288,28 +294,42 @@ interface ShiftConflict {
   absenceId?: string;
 }
 
+/** Result of the single-day check: a blocking conflict and/or the non-blocking half-day hint. */
+interface ShiftDayCheck {
+  conflict: ShiftConflict | null;
+  /** Issue #744 — set when the day carries a half-day leave and no full-day leave. */
+  halfDayHint: HalfDayLeaveHint | null;
+}
+
 /**
- * Check whether an employee has an APPROVED LeaveRequest or non-deleted Absence
- * covering the given date. Returns the first conflict found (leave takes precedence).
+ * Check whether an employee has an effective LeaveRequest or non-deleted Absence covering the
+ * given date. Returns the first blocking conflict found (leave takes precedence). Issue #744: a
+ * half-day leave row does not block - it yields `halfDayHint` instead; a full-day row on the same
+ * date wins (see `shift-leave-rule.ts`).
  */
 async function findShiftConflict(
   prisma: import("@clokr/db").PrismaClient,
   employeeId: string,
   access: AccessContext,
   isoDate: string,
-): Promise<ShiftConflict | null> {
+): Promise<ShiftDayCheck> {
   const day = new Date(isoDate + "T00:00:00Z");
   const scope = employeeScopeFor(access, { employeeId });
 
   // Check effective LeaveRequest first (vacation/sonder) — Phase 100B Plan 13 (A2), contexts/absence
   // facade. Since Issue #446 (D-02) this reads the effective set (APPROVED or
   // CANCELLATION_REQUESTED) — a cancellation-pending leave still blocks the day, just from === to.
-  const [leave] = await getActiveLeaveOverlapping(prisma, scope, day, day);
+  const { blocking: leave, halfDay: halfDayLeave } = splitLeaveForShift(
+    await getActiveLeaveOverlapping(prisma, scope, day, day),
+  );
   if (leave) {
     return {
-      kind: "leave",
-      conflictType: classifyLeaveTypeCode(leave.leaveType.code),
-      leaveRequestId: leave.id,
+      conflict: {
+        kind: "leave",
+        conflictType: classifyLeaveTypeCode(leave.leaveType.code),
+        leaveRequestId: leave.id,
+      },
+      halfDayHint: null,
     };
   }
 
@@ -320,13 +340,19 @@ async function findShiftConflict(
   const [absence] = await getAbsencesOverlapping(prisma, scope, day, day);
   if (absence) {
     return {
-      kind: "absence",
-      conflictType: classifyLeaveTypeCode(absence.type),
-      absenceId: absence.id,
+      conflict: {
+        kind: "absence",
+        conflictType: classifyLeaveTypeCode(absence.type),
+        absenceId: absence.id,
+      },
+      halfDayHint: null,
     };
   }
 
-  return null;
+  return {
+    conflict: null,
+    halfDayHint: halfDayLeave ? halfDayLeaveHint(halfDayLeave.id, formatDateDe(isoDate)) : null,
+  };
 }
 
 /**
@@ -2434,7 +2460,12 @@ export async function shiftRoutes(app: FastifyInstance) {
       }
 
       // Conflict-check unless force=true
-      const conflict = await findShiftConflict(app.prisma, body.employeeId, access, body.date);
+      const { conflict, halfDayHint } = await findShiftConflict(
+        app.prisma,
+        body.employeeId,
+        access,
+        body.date,
+      );
       if (conflict && !force) {
         const isLeave = conflict.kind === "leave";
         return reply.code(409).send({
@@ -2634,7 +2665,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         salon.id,
       );
 
-      return reply.code(201).send(shift);
+      return reply.code(201).send(halfDayHint ? { ...shift, hint: halfDayHint } : shift);
     },
   });
 
@@ -2830,7 +2861,12 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
-      const conflict = await findShiftConflict(app.prisma, effEmployeeId, access, effDateIso);
+      const { conflict, halfDayHint } = await findShiftConflict(
+        app.prisma,
+        effEmployeeId,
+        access,
+        effDateIso,
+      );
       if (conflict && !force) {
         const isLeave = conflict.kind === "leave";
         return reply.code(409).send({
@@ -3045,7 +3081,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         Array.from(affectedPairs.values()).map((pair) => ({ ...pair, salonId: updated.salonId })),
       );
 
-      return updated;
+      return halfDayHint ? { ...updated, hint: halfDayHint } : updated;
     },
   });
 
@@ -3280,7 +3316,10 @@ export async function shiftRoutes(app: FastifyInstance) {
 
           // Leave on this day?
           const hasLeave = leaveRequests.some(
-            (lr) => lr.employeeId === emp.id && rangeCovers(lr.startDate, lr.endDate, iso),
+            (lr) =>
+              leaveBlocksShift(lr) && // Issue #744 — a half-day row leaves the other half plannable
+              lr.employeeId === emp.id &&
+              rangeCovers(lr.startDate, lr.endDate, iso),
           );
           if (hasLeave) {
             skip.push({ employeeId: emp.id, date: iso, reason: "leave" });
@@ -3682,7 +3721,9 @@ export async function shiftRoutes(app: FastifyInstance) {
         // Leave on target date?
         const hasLeave = leaveRequests.some(
           (lr) =>
-            lr.employeeId === src.employeeId && rangeCovers(lr.startDate, lr.endDate, targetIso),
+            leaveBlocksShift(lr) && // Issue #744 — a half-day row leaves the other half plannable
+            lr.employeeId === src.employeeId &&
+            rangeCovers(lr.startDate, lr.endDate, targetIso),
         );
         if (hasLeave) {
           skip.push({ employeeId: src.employeeId, date: targetIso, reason: "leave" });

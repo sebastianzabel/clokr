@@ -238,6 +238,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
         data.tenant.id,
         new Date("2026-12-01T00:00:00Z"),
         new Date("2026-12-02T00:00:00Z"),
+        { halfDay: false },
       );
 
       expect(flagged.map((s) => s.id).sort()).toEqual([shift1.id, shift2.id].sort());
@@ -269,6 +270,7 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
         data.tenant.id, // WRONG tenant on purpose
         new Date("2026-12-01T00:00:00Z"),
         new Date("2026-12-01T00:00:00Z"),
+        { halfDay: false },
       );
       expect(flaggedAgain).toHaveLength(0);
       const reloadedOther = await app.prisma.shift.findUniqueOrThrow({
