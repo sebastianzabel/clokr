@@ -972,7 +972,8 @@ import { readFileSync } from "node:fs";
 // Issue #277: +1 file (year-close-277), +5 gate cases; measured full run 732 files, 11016 tests incl. 3 skipped.
 // Issue #718: +1 file (anonymization-freetext-718), measured full run 733 files, 11019 tests incl. 3 skipped.
 // Issue #774: +1 file (backfill-774-anonymized-freetext), +3 cases; measured full run 734 files, 11023 tests collected.
-const MIN_FILES = 734;
+// Issue #512: +2 files (anonymization-audit-freetext-512, backfill-512-anonymized-audit-freetext), +6 cases; counted from source.
+const MIN_FILES = 736;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1057,7 +1058,8 @@ const MIN_FILES = 734;
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #718: +4 cases (anonymization-freetext-718); expected full run 11020 tests incl. 3 skipped.
 // Issue #774: +3 cases (backfill-774-anonymized-freetext); measured 11023 collected.
-const MIN_TESTS = 11023;
+// Issue #512: +6 cases (4 + 2).
+const MIN_TESTS = 11029;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

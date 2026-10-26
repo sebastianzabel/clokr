@@ -1414,3 +1414,26 @@ Exit-Code `0`: kein Befund; `2`: mindestens ein Befund (Liste in der Ausgabe); `
 Release korrigiert keine Bestandszeile:** Die Befunde vor dem Deploy sind das Bestandsbild, nach dem Deploy darf die Liste nur
 noch um nichts wachsen. Eine bestätigte Gutschrift hat eine Kontowirkung, deren Rücknahme eine eigene, auditierte Korrekturbuchung
 wäre — Entscheidung beim Betreiber, nichts still korrigieren.
+
+## Phase 512 — Bestandskorrektur: Freitext im AuditLog anonymisierter Personen (Issue #512)
+
+**Hinweis für die Release Notes.** Es gibt **keine Migration und keinen Schemawechsel.** Seit #512 ersetzt die Anonymisierung
+den frei formulierten Text in den Audit-Werten der Person typbasiert durch „[ausgeblendet]“ (Zahlen, Ids, Daten, Kennwerte,
+Uhrzeiten und der Akteur-Stempel bleiben; Zeilen werden nie gelöscht). Das Skript
+`apps/api/scripts/backfill-512-anonymized-audit-freetext.ts` wendet **dieselbe Funktion** auf Personen an, die **vorher**
+anonymisiert wurden. Grenze: Zeilen, die die Person selbst verfasst hat, sind dort nicht mehr auffindbar (`userId` war null);
+erreicht werden Audit-Zeilen, deren Wert die `employeeId` nennt. Mandanten mit Deaktivierung sind eingeschlossen.
+
+Probelauf (Voreinstellung) rollt zurück, schreibt **nichts**; `--confirm` schreibt eine Transaktion je Person plus eine
+Audit-Zeile je Person mit Fund (`UPDATE` auf `Employee`, `newValue = { auditRowsRedacted: <n>, trigger: "BACKFILL_512",
+auditReason: "Bestandskorrektur #512" }`). Idempotent. Die Zeilen des AuditLog werden verändert: vorher `pg_dump`.
+
+```bash
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/backfill-512-anonymized-audit-freetext.ts" \
+  | tee "512-probelauf-<umgebung>-$(date +%Y%m%d).txt"
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/backfill-512-anonymized-audit-freetext.ts --confirm" \
+  | tee "512-lauf-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+Eine Zeile je Person: `tenant=<id> employee=<id> auditRowsScanned=<n> auditRowsRedacted=<n> result=<planned|written|unchanged|failed:CODE>`,
+dann `Totals:`. Nur Ids und Zahlen.
