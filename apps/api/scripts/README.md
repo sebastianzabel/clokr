@@ -712,7 +712,10 @@ a facade cannot silently downgrade the gate's own verdict on it) — to an actua
 `monthRangeUtc()`. Three-way verdict: `"safe"` / `"unsafe"` (a finding) / `"unknown"` (the trace
 crosses a boundary this single-file gate genuinely cannot resolve — reported explicitly, never
 silently counted as a pass). `YEARLY` comparisons are out of scope on purpose (a different,
-self-consistent naive-UTC convention `auto-close-month.ts` uses deliberately).
+self-consistent naive-UTC convention `auto-close-month.ts` uses deliberately). Since Issue #277 the
+write fragments (`data:` of `create`/`createMany`/`update`, `create:`/`update:` of `upsert`) of a
+`periodType: "MONTHLY"` row are candidates as well: the authoritative writer traces `"safe"` to
+`monthRangeUtc()`, a locally built naive date is a finding, a bare parameter stays `"unknown"`.
 
 - **Run locally:** `pnpm --filter @clokr/api run lint:saldo-lock-derivation`
 - **Runs in CI as:** the `Lint saldo-lock periodStart derivation` step in
