@@ -251,6 +251,7 @@ export async function seedPendingLeaveRequest(
   endStr: string,
   status: "PENDING" | "CANCELLATION_REQUESTED" | "APPROVED" = "PENDING",
   deletedAt: Date | null = null,
+  halfDay = false, // Issue #744
 ): Promise<void> {
   const prisma = app.prisma;
   const emp = await prisma.employee.findUnique({
@@ -281,7 +282,8 @@ export async function seedPendingLeaveRequest(
       leaveTypeId: leaveType.id,
       startDate: start,
       endDate: end,
-      days,
+      days: halfDay ? 0.5 : days,
+      halfDay,
       status,
       deletedAt,
       createdAt: new Date(),

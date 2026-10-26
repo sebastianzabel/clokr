@@ -294,3 +294,47 @@ describe("resolveDayStatus expected start and lateness (Issue #587)", () => {
     expect(TIME_CASES.length).toBeGreaterThan(5);
   });
 });
+
+// ── Half-day leave (Issue #743) ─────────────────────────────────────────────────────────────────
+describe("resolveDayStatus half-day leave (Issue #743)", () => {
+  const half = (status: "APPROVED" | "CANCELLATION_REQUESTED" | "PENDING" = "APPROVED") => ({
+    status,
+    leaveTypeName: "Urlaub",
+    halfDay: true,
+  });
+  const past = { dayStr: MON, dow: 1, todayStr: WED };
+
+  it("past workday, no entry: missing, the leave type stays in the reason", () => {
+    expect(resolveDayStatus(input({ ...past, leave: half() }))).toMatchObject({
+      status: "missing",
+      reason: "Urlaub",
+    });
+    expect(resolveDayStatus(input({ ...past, leave: half("CANCELLATION_REQUESTED") })).status).toBe(
+      "missing",
+    );
+  });
+  it("today (even with a started shift): still absent", () => {
+    expect(resolveDayStatus(input({ leave: half() })).status).toBe("absent");
+    expect(resolveDayStatus(input({ leave: half(), shift: { startTime: "09:00" } })).status).toBe(
+      "absent",
+    );
+  });
+  it("with a valid entry: present", () => {
+    expect(resolveDayStatus(input({ ...past, leave: half(), entries: [CLOSED] })).status).toBe(
+      "present",
+    );
+  });
+  it("full day stays absent; pending stays requested; holiday and non-workday are not owed", () => {
+    expect(
+      resolveDayStatus(input({ ...past, leave: { status: "APPROVED", leaveTypeName: "Urlaub" } }))
+        .status,
+    ).toBe("absent");
+    expect(resolveDayStatus(input({ ...past, leave: half("PENDING") })).status).toBe("requested");
+    expect(resolveDayStatus(input({ ...past, leave: half(), holidayName: "X" })).status).toBe(
+      "absent",
+    );
+    expect(
+      resolveDayStatus(input({ ...past, leave: half(), scheduleType: "FLEXTIME" })).status,
+    ).toBe("absent");
+  });
+});

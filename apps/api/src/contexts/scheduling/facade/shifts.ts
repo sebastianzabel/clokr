@@ -97,6 +97,7 @@
  */
 import type { Prisma } from "@clokr/db";
 import { type EmployeeScope, employeeScopeWhere } from "../../platform";
+import { leaveBlocksShift, type ShiftLeaveRow } from "../shift-leave-rule"; // Issue #744
 
 /**
  * S1 — the one date-range read for `Shift`, covering all three `EmployeeScope` variants in ONE
@@ -142,7 +143,10 @@ export async function flagShiftsConflictingWithLeave(
   tenantId: string,
   from: Date,
   to: Date,
+  // Issue #744: a half-day request leaves the other half plannable, so it flags nothing.
+  leave: ShiftLeaveRow,
 ) {
+  if (!leaveBlocksShift(leave)) return [];
   const conflictingShifts = await db.shift.findMany({
     where: {
       employeeId,

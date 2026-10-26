@@ -1277,6 +1277,44 @@ describe("Phase 430 — Type-1 leave conflict on Phorest import", () => {
     }
   });
 
+  it("Issue #744: a HALF-day approved leave on the import day never flags the shift; a full day still does", async () => {
+    const seed = await seedPhorestTenant(app, "leaveconflict-halfday");
+    try {
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-07-30",
+        "2026-07-30",
+        "APPROVED",
+        null,
+        true,
+      );
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-07-31",
+        "2026-07-31",
+        "APPROVED",
+      );
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, seed.target, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+
+      const halfDayShift = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: new Date("2026-07-30") },
+      });
+      const fullDayShift = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: new Date("2026-07-31") },
+      });
+      expect(halfDayShift).not.toBeNull();
+      expect(halfDayShift?.conflictsWithLeave).toBe(false);
+      expect(fullDayShift?.conflictsWithLeave).toBe(true);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
   it("a PENDING (not APPROVED) leave on the import day never flags the shift", async () => {
     const seed = await seedPhorestTenant(app, "leaveconflict-pending");
     try {
