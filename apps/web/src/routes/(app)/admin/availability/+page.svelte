@@ -50,13 +50,7 @@
   });
 </script>
 
-<ListDetail
-  view="list"
-  eyebrow="Planung"
-  title="Verfügbarkeit"
-  sub="Wer kann wann arbeiten?"
-  animate
->
+<ListDetail view="list" eyebrow="Planung" title="Verfügbarkeit" sub="Wer kann wann arbeiten?">
   {#snippet list()}
     <Section
       title="Mitarbeiter"

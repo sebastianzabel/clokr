@@ -522,6 +522,7 @@
       gTenantName = cfg.tenantName ?? "";
       gTimezone = cfg.timezone ?? "Europe/Berlin";
       _gOtherFields = {
+        timezone: gTimezone,
         defaultWeeklyHours: Number(cfg.defaultWeeklyHours),
         defaultMondayHours: Number(cfg.defaultMondayHours),
         defaultTuesdayHours: Number(cfg.defaultTuesdayHours),

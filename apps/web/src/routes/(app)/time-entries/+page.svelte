@@ -211,7 +211,7 @@
 
   // ── State ─────────────────────────────────────────────────────────────────
   let entries: TimeEntry[] = $state([]);
-  let schedule: WorkSchedule | null = $state(null);
+  let schedule = $state<WorkSchedule | null>(null);
   let holidays: Map<string, string> = $state(new Map()); // dateStr → name
   let calendarDays: CalDay[] = $state([]);
   // Phase 116 (issue #119) — starts TRUE. `onMount` fires AFTER the component is mounted, so with
@@ -302,7 +302,7 @@
     monthSollMinutes?: number;
     days: MonthSaldoDay[];
   }
-  let monthSaldo: MonthSaldo | null = $state(null);
+  let monthSaldo = $state<MonthSaldo | null>(null);
   // Map from YYYY-MM-DD → cumulativeSaldoMinutes for O(1) cell lookup (per-month day cells).
   let monthSaldoDayMap: Map<string, number> = $derived(
     monthSaldo
@@ -328,7 +328,7 @@
 
   // Modal
   let modalOpen = $state(false);
-  let editEntry: TimeEntry | null = $state(null);
+  let editEntry = $state<TimeEntry | null>(null);
   let formDate = $state(todayStr);
   let formStart = $state("09:00");
   let formEnd = $state("17:00");
@@ -1546,11 +1546,6 @@
   // monthSollMinutes routes into saldoFetchFailed above instead of being rendered as a
   // fabricated 0 (see the month-saldo fetch in loadAll).
   let monthlyBudgetSoll = $derived(hasMonthlyTarget ? (monthSaldo?.monthSollMinutes ?? 0) : 0);
-  let mBalance = $derived(
-    // MONTHLY_HOURS(target): worked − the server's month Soll (monthlyBudgetSoll), "budget remaining".
-    // FIXED_SCHEDULE / FLEXTIME and no-target MONTHLY_HOURS: keep the up-to-today accrual.
-    hasMonthlyTarget ? totalWorked - monthlyBudgetSoll : totalWorked - totalExpected,
-  );
   // Worked + Expected up to cutoff: always YESTERDAY, never today. Today's entry may still be
   // open, or it may be closed only because of a lunch-break clock-out that the clock resolver
   // reopens on the next clock-in (commit 446d4bb6) — there is no reliable signal that today is
@@ -1589,6 +1584,12 @@
         return !d.isToday;
       })
       .reduce((s, d) => s + d.expectedMin, 0),
+  );
+  // Declared after totalWorked/totalExpected, which it reads.
+  let mBalance = $derived(
+    // MONTHLY_HOURS(target): worked − the server's month Soll (monthlyBudgetSoll), "budget remaining".
+    // FIXED_SCHEDULE / FLEXTIME and no-target MONTHLY_HOURS: keep the up-to-today accrual.
+    hasMonthlyTarget ? totalWorked - monthlyBudgetSoll : totalWorked - totalExpected,
   );
   // Phase 49.1 — FLEXTIME weekly diff: sum this week's worked vs expected, through yesterday,
   // the same cutoff as the month figures (issue #438)

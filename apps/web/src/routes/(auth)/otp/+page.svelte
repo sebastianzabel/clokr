@@ -30,6 +30,8 @@
           id: string;
           email: string;
           employeeId: string | null;
+          firstName: string | null;
+          permissions?: string[];
         };
       }>("/auth/verify-otp", { userId, code });
 

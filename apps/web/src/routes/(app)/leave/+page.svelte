@@ -528,7 +528,7 @@
   // Quick 260824-cjd: Storno now requires a Begründung — routed through a
   // ReasonDialog rather than fired directly from the row buttons.
   let cancelDialogOpen = $state(false);
-  let cancelDialogRequest: LeaveRequest | null = $state(null);
+  let cancelDialogRequest = $state<LeaveRequest | null>(null);
   let cancelDialogTitle = $derived(
     cancelDialogRequest?.status === "APPROVED" ? "Stornierung beantragen?" : "Antrag zurückziehen?",
   );
