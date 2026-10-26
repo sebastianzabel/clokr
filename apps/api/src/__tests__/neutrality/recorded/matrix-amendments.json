@@ -12503,6 +12503,52 @@
           "tenant.hardDeleteTarget.employee"
         ]
       }
+    },
+    {
+      "date": "2026-10-26",
+      "from": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.user",
+          "anchor.admin.user",
+          "anchor.admin.user",
+          "own.employee",
+          "own.employee",
+          "own.employee",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.approved",
+          "own.leaveRequest.pending",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick",
+          "own.leaveRequest.withdrawable",
+          "own.section9.credit",
+          "own.section9.credit",
+          "tenant",
+          "tenant",
+          "tenant",
+          "tenant",
+          "tenant",
+          "tenant.leaveType.SICK",
+          "tenant.leaveType.SICK",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION",
+          "tenant.leaveType.VACATION"
+        ]
+      },
+      "issue": 409,
+      "key": "EMPLOYEE | GET /api/v1/leave/requests | foreign",
+      "reason": "Issue #409: der Aufrufer haelt ausschliesslich leave-request:read:EIGENE (kein ZUGEWIESEN). Vor dem Fix ignorierte GET /leave/requests einen fremden ?employeeId= im EIGENE-Zweig und antwortete 200 mit den eigenen Antraegen — der Permission-Katalog schliesst fremde Antraege unter EIGENE aber ausdruecklich aus. Fix: 403 Forbidden, derselbe Guard wie #368 Befund 4 fuer GET /time-entries. Eigene employeeId und kein employeeId bleiben unveraendert (200).",
+      "to": {
+        "status": 403,
+        "error": "Forbidden",
+        "ids": []
+      }
     }
   ]
 }
