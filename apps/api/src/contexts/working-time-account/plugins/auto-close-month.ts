@@ -10,6 +10,12 @@ import {
 } from "../../platform";
 import { periodStartWindow } from "../snapshot-period";
 import {
+  expectedCloseMonthsOfYear,
+  assignYearMonthSnapshots,
+  resolveYearCarryOver,
+  exitedInYear,
+} from "../expected-close-months"; // Issue #753
+import {
   monthClosePopulationWhere,
   isInMonthClosePopulation,
   isExitDateMissing,
@@ -732,36 +738,37 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               // prevent their yearly carry-over from ever running.
               // Issue #277 (finding 1): the hire month is read in the TENANT time zone, never in
               // the zone of the Node process.
-              const hireDay = emp.hireDate ? dateStrInTz(emp.hireDate, tz) : null; // YYYY-MM-DD
-              const hireYear = hireDay ? Number(hireDay.slice(0, 4)) : null;
-              const hireMonth = hireDay ? Number(hireDay.slice(5, 7)) : 1; // 1-12
-              const firstMonth = hireYear === prevYear ? hireMonth : 1;
-              // Issue #668: a leaver is expected only through the exit month (tenant zone); once
-              // every employed month is closed the year closes. A person who left in an earlier
+              // Issue #753: the expected span (hire month .. exit month, tenant zone) comes from the
+              // one function the manual close-year route shares; a person who left in an earlier
               // year has no month in this one and gets no yearly snapshot.
-              const exitDay = emp.exitDate ? dateStrInTz(emp.exitDate, tz) : null;
-              const exitYear = exitDay ? Number(exitDay.slice(0, 4)) : null;
-              if (exitYear !== null && exitYear < prevYear) continue;
-              const lastMonth = exitDay && exitYear === prevYear ? Number(exitDay.slice(5, 7)) : 12;
-              const expectedMonths = lastMonth - firstMonth + 1;
-              if (expectedMonths < 1) continue;
-              if (monthSnapshots.length < expectedMonths) continue; // Not all expected months closed yet
+              const expectedMonths = expectedCloseMonthsOfYear({
+                year: prevYear,
+                tz,
+                hireDate: emp.hireDate,
+                exitDate: emp.exitDate,
+              });
+              if (expectedMonths.length < 1) continue;
+              // One snapshot per expected month (#595 rules, shared with the route): a duplicate
+              // pair counts once and cannot mask a month without a row.
+              const { assigned: yearMonthSnapshots, missing: missingYearMonths } =
+                assignYearMonthSnapshots(monthSnapshots, expectedMonths, prevYear, tz);
+              if (missingYearMonths.length > 0) continue; // Not all expected months closed yet
 
-              const yearWorked = monthSnapshots.reduce((s, m) => s + m.workedMinutes, 0);
-              const yearExpected = monthSnapshots.reduce((s, m) => s + m.expectedMinutes, 0);
-              const yearBalance = monthSnapshots.reduce((s, m) => s + m.balanceMinutes, 0);
-              const decSnapshot = monthSnapshots[monthSnapshots.length - 1];
-              const finalCarryOver = decSnapshot.carryOver;
+              const yearWorked = yearMonthSnapshots.reduce((s, m) => s + m.workedMinutes, 0);
+              const yearExpected = yearMonthSnapshots.reduce((s, m) => s + m.expectedMinutes, 0);
+              const yearBalance = yearMonthSnapshots.reduce((s, m) => s + m.balanceMinutes, 0);
+              const lastSnapshot = yearMonthSnapshots[yearMonthSnapshots.length - 1];
+              const finalCarryOver = lastSnapshot.carryOver;
 
-              // Apply carry-over rules
+              // Apply carry-over rules (not for a year of exit, owner decision 26.10.2026)
               const mode = tenant.config?.overtimeCarryOverMode ?? "FULL";
               const cap = tenant.config?.overtimeCarryOverCap;
-              let appliedCarryOver = finalCarryOver;
-              if (mode === "RESET") {
-                appliedCarryOver = 0;
-              } else if (mode === "CAPPED" && cap != null && finalCarryOver > cap) {
-                appliedCarryOver = cap;
-              }
+              const { appliedCarryOver, ruleApplied, exitKept } = resolveYearCarryOver({
+                finalCarryOver,
+                mode,
+                cap,
+                leftInYear: exitedInYear(emp.exitDate, prevYear, tz),
+              });
 
               // PERF-V1814-02: saldoSnapshot.create + overtimeAccount.upsert in ONE $transaction.
               // A crash between snapshot commit and balance upsert can no longer leave stale data
@@ -779,10 +786,11 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     carryOver: appliedCarryOver,
                     closedAt: new Date(),
                     closedBy: null,
-                    note:
-                      mode === "RESET"
+                    note: exitKept
+                      ? `Automatischer Jahresübertrag: Endsaldo des Austrittsmonats ${Math.round(appliedCarryOver / 60)}h (Austritt, Übertragsregel nicht angewendet)`
+                      : ruleApplied === "RESET"
                         ? "Automatischer Jahresübertrag: Reset auf 0"
-                        : mode === "CAPPED" && cap != null && finalCarryOver > cap
+                        : ruleApplied === "CAPPED" && cap != null
                           ? `Automatischer Jahresübertrag: gedeckelt auf ${Math.round(cap / 60)}h`
                           : `Automatischer Jahresübertrag: ${Math.round(appliedCarryOver / 60)}h`,
                   },
@@ -808,6 +816,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   mode,
                   originalCarryOver: finalCarryOver,
                   appliedCarryOver,
+                  exitKept,
                   auto: true,
                 },
               });
