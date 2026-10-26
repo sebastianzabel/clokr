@@ -24,6 +24,8 @@
               id: string;
               email: string;
               employeeId: string | null;
+              firstName: string | null;
+              permissions?: string[];
             };
             sessionConfig?: { sessionTimeoutMinutes: number; rememberMeEnabled: boolean };
           }

@@ -261,7 +261,7 @@
   async function deactivateSalon() {
     if (!salon) return;
     try {
-      await api.post(`/salons/${salon.id}/deactivate`);
+      await api.post(`/salons/${salon.id}/deactivate`, undefined);
     } catch (err) {
       toasts.error(err instanceof Error ? err.message : "Deaktivieren fehlgeschlagen.");
       throw err;
@@ -273,7 +273,7 @@
   async function activateSalon() {
     if (!salon) return;
     try {
-      await api.post(`/salons/${salon.id}/activate`);
+      await api.post(`/salons/${salon.id}/activate`, undefined);
     } catch (err) {
       toasts.error(err instanceof Error ? err.message : "Aktivieren fehlgeschlagen.");
       throw err;
@@ -303,7 +303,6 @@
       { label: "Salons", href: "/admin/salons" },
       { label: salon ? salon.name : "Neuer Salon" },
     ]}
-    animate
   >
     {#snippet tabContent(_tab)}
       {#snippet masterFooter()}

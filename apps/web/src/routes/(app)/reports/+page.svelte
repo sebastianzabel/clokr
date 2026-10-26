@@ -249,7 +249,7 @@
 
   // ── Exited persons with an open final saldo (Issue #613, from the saldo overview) ──
 
-  let overtimeOverview: OvertimeOverview | null = $state(null);
+  let overtimeOverview = $state<OvertimeOverview | null>(null);
   let overtimeError = $state("");
 
   // Issue #613: the server flags the exited persons with an open final saldo. Issue #612: the period

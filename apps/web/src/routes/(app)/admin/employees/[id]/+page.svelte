@@ -292,7 +292,7 @@
   let retroPreview = $state<RetroactivePreview | null>(null);
   let retroOpen = $state(false);
 
-  const employeeId = $derived($page.params.id);
+  const employeeId = $derived($page.params.id ?? "");
 
   onMount(async () => {
     loading = true;
@@ -601,7 +601,6 @@
         (empBsSlotFirstLong !== "" ? Number(empBsSlotFirstLong) : null) ??
         firstPatternBsFirst ??
         tenantBreakConfig?.bsSlotFirstLongDayMinutes ??
-        null ??
         empDailySollMin;
       if (effectiveFirst === null || !Number.isFinite(effectiveFirst)) return "";
       if (v2 > effectiveFirst) {
@@ -3750,6 +3749,8 @@
         <SalonAssignmentsSection {employeeId} canEdit={rights.canUpdate} />
       {:else if tab === "berechtigungen"}
         <!-- ── Berechtigungen ─────────────────────────────────────────────── -->
+        <!-- The tab snippet loses the `!employee` narrowing of the page branch. -->
+        {@const accountUser = employee?.user}
         <Section
           title="Rolle & Zugang"
           sub="Benutzerkonto, Rolle und Einladungsstatus"
@@ -3779,32 +3780,32 @@
               </div>
             {/if}
 
-            {#if hasNoRole(employee.user)}
+            {#if hasNoRole(accountUser)}
               <div class="form-group form-group--full">
                 <div class="callout">{NO_ROLE_HINT}</div>
               </div>
             {/if}
 
-            {#if employee.user}
+            {#if accountUser}
               <div class="form-group">
                 <span class="form-label">E-Mail</span>
-                <p class="field-value">{employee.user.email}</p>
+                <p class="field-value">{accountUser.email}</p>
               </div>
               <div class="form-group">
                 <span class="form-label">Status</span>
                 <p class="field-value">
-                  {#if employee.user.isActive}
+                  {#if accountUser.isActive}
                     <span class="badge badge-ok">Aktiv</span>
                   {:else}
                     <span class="badge badge-muted">Inaktiv</span>
                   {/if}
                 </p>
               </div>
-              {#if employee.user.lastLoginAt}
+              {#if accountUser.lastLoginAt}
                 <div class="form-group">
                   <span class="form-label">Letzter Login</span>
                   <p class="field-value">
-                    {new Date(employee.user.lastLoginAt).toLocaleDateString("de-DE", {
+                    {new Date(accountUser.lastLoginAt).toLocaleDateString("de-DE", {
                       day: "2-digit",
                       month: "2-digit",
                       year: "numeric",

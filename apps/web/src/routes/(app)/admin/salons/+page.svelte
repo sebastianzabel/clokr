@@ -54,7 +54,6 @@
   eyebrow="Administration"
   title="Salons"
   sub="Standorte Ihres Unternehmens mit Adresse und Öffnungszeiten."
-  animate
   view="list"
 >
   {#snippet actions()}
