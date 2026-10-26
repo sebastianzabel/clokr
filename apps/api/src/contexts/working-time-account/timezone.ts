@@ -47,6 +47,28 @@ export function todayInTz(tz: string): Date {
 }
 
 /**
+ * Add `n` whole CALENDAR days (negative = subtract) to `date` using UTC calendar fields, so the
+ * result never depends on the host timezone or on DST (Issue #172). The time of day is preserved.
+ *
+ * Use it on UTC-midnight `@db.Date` values and on `todayInTz()` results, and to step an instant by
+ * calendar days. Never write `d.setDate(d.getDate() + n)` or `d.setHours(0, 0, 0, 0)` for this: those
+ * are host-local and drift by an hour across a DST switch. Never subtract `n * 24 h` from a real
+ * instant and then derive the tenant day from it either - on a 25 h day that lands on the same day.
+ */
+export function addDaysUtc(date: Date, n: number): Date {
+  const d = new Date(date.getTime());
+  d.setUTCDate(d.getUTCDate() + n);
+  return d;
+}
+
+/** Start (00:00 UTC) of the UTC calendar day containing `date` - the host-TZ-free `setHours(0,0,0,0)`. */
+export function startOfDayUtc(date: Date): Date {
+  const d = new Date(date.getTime());
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
  * Format a UTC date as "YYYY-MM-DD" in the given timezone.
  */
 export function dateStrInTz(utcDate: Date, tz: string): string {

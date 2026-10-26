@@ -55,6 +55,7 @@ import {
 import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../../platform"; // Quick 260824-cjd
 import {
   getOvertimeAccount, // Phase 100B Plan 06 — W8/W14; Plan 07 — W3 merge, W1
+  addDaysUtc, // Issue #172
   getTenantTimezone,
   todayInTz,
   dateStrInTz,
@@ -1372,13 +1373,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             : (user.employeeId ?? undefined);
 
       // PERF-V1814-03: cap + defaulted 90d window (non-breaking; web callers always pass bounds)
-      const defaultFrom = from
-        ? new Date(from)
-        : (() => {
-            const d = new Date();
-            d.setDate(d.getDate() - 90);
-            return d;
-          })();
+      const defaultFrom = from ? new Date(from) : addDaysUtc(new Date(), -90);
       const defaultTo = to ? new Date(to) : new Date();
 
       // Phase 91b Plan 03 (#91), D-09: a manager's reach narrows the list to in-scope entries

@@ -58,6 +58,7 @@ import {
   weekRangeUtc,
   monthRangeUtc,
   dayRangeUtc, // Issue #613 — tenant-local day as UTC instants
+  addDaysUtc, // Issue #172
   monthDayBounds,
   weekDateRange, // Issue #493 (D-10)
   monthDateRange, // Issue #493 (D-10)
@@ -1873,13 +1874,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
         select: { missingEntriesDays: true, enforceBreakConfirmation: true },
       });
       const missingEntriesDays = resolveMissingEntriesDays(openItemsConfig);
-      const windowStart = new Date(today);
-      windowStart.setDate(windowStart.getDate() - missingEntriesDays);
+      const windowStart = addDaysUtc(today, -missingEntriesDays);
       // findMissingWorkdays' effectiveEnd is INCLUSIVE; the replaced loop ran `cursor < today`,
       // so the last day of the window is yesterday. The window's SIZE is now configured
       // (missingEntriesDays); its bounds (windowStart..yesterday, inclusive) are unchanged.
-      const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterday = addDaysUtc(today, -1);
       // The last instant of yesterday (tenant-local): contracts valid up to then apply to the
       // window's days.
       const yesterdayEnd = dayRangeUtc(yesterday.toISOString().slice(0, 10), tz).end;
