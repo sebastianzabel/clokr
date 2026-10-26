@@ -42,7 +42,7 @@
   let { open = $bindable(), request, onChanged }: Props = $props();
 
   // ── Local state ──────────────────────────────────────────────────────────
-  let preview: ParentalReductionPreview | null = $state(null);
+  let preview = $state<ParentalReductionPreview | null>(null);
   let loading = $state(false);
   let saving = $state(false);
   let error = $state("");

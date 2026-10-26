@@ -226,7 +226,6 @@
   eyebrow="Personal"
   title="Betriebsurlaub"
   sub="Verwaltung von Betriebsurlaubs-Perioden"
-  animate
   view="list"
 >
   {#snippet actions()}

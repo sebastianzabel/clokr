@@ -57,7 +57,7 @@ describe("/admin/employees/[id] - a person without a role (Issue #539)", () => {
   it("renders the hint in the E-Mail/Status block, outside the canAssignRoles condition", () => {
     const hintAt = PAGE.indexOf("{NO_ROLE_HINT}");
     expect(hintAt).toBeGreaterThan(-1);
-    const guard = PAGE.lastIndexOf("{#if hasNoRole(employee.user)}", hintAt);
+    const guard = PAGE.lastIndexOf("{#if hasNoRole(accountUser)}", hintAt);
     expect(guard).toBeGreaterThan(-1);
     expect(hintAt - guard).toBeLessThan(300);
     // The role select's own block ends before the hint block starts.

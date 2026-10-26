@@ -61,17 +61,17 @@
     ) !== datevSnapshot,
   );
 
-  // Issue #256 (Befund 3): the export is refused (HTTP 409) while either number is unset.
-  // Say so up front instead of letting the operator discover it at download time.
-  let kanzleiMissing = $derived(
-    snapshotsReady && (datevBeraterNr == null || datevMandantenNr == null),
-  );
-
   // Gate the registration on "the baseline has been taken" (WR-01). loadDatev swallows its error
   // ("non-blocking: keep defaults"), and saveDatev then provably cannot write at all
   // (`if (!_gOtherFields) return;`) — a "Nicht gespeichert" marker on a page whose save button is
   // a no-op would be a lie, and the guard would trap the user on it.
   let snapshotsReady = $state(false);
+
+  // Issue #256 (Befund 3): the export is refused (HTTP 409) while either number is unset.
+  // Say so up front instead of letting the operator discover it at download time.
+  let kanzleiMissing = $derived(
+    snapshotsReady && (datevBeraterNr == null || datevMandantenNr == null),
+  );
 
   $effect(() => {
     markUnsaved("admin-export", snapshotsReady && datevDirty);

@@ -65,6 +65,8 @@
 {:else if loadError || !entry}
   <div class="page-error">{loadError || "Audit-Eintrag nicht gefunden."}</div>
 {:else}
+  {@const shownEntry = entry}
+  <!-- A snippet body loses the `!entry` narrowing of the branch above, so it reads this const. -->
   <ListDetail
     view="detail"
     eyebrow="Compliance"
@@ -80,35 +82,35 @@
       <Section title="Details">
         <dl class="entry-dl">
           <dt>Zeitstempel</dt>
-          <dd>{fmtDate(entry.createdAt)}</dd>
+          <dd>{fmtDate(shownEntry.createdAt)}</dd>
 
           <dt>Benutzer</dt>
-          <dd>{entry.user?.email ?? entry.userId ?? "—"}</dd>
+          <dd>{shownEntry.user?.email ?? shownEntry.userId ?? "—"}</dd>
 
           <dt>Aktion</dt>
-          <dd>{entry.action}</dd>
+          <dd>{shownEntry.action}</dd>
 
           <dt>Entität</dt>
-          <dd>{entry.entity}{entry.entityId ? ` #${entry.entityId}` : ""}</dd>
+          <dd>{shownEntry.entity}{shownEntry.entityId ? ` #${shownEntry.entityId}` : ""}</dd>
 
           <dt>IP-Adresse</dt>
-          <dd>{entry.ipAddress ?? "—"}</dd>
+          <dd>{shownEntry.ipAddress ?? "—"}</dd>
 
           <dt>User-Agent</dt>
-          <dd class="ua">{entry.userAgent ?? "—"}</dd>
+          <dd class="ua">{shownEntry.userAgent ?? "—"}</dd>
 
           <dt>Bereinigbar</dt>
-          <dd>{entry.purgeable ? "Ja (automatisch nach 90 Tagen)" : "Nein"}</dd>
+          <dd>{shownEntry.purgeable ? "Ja (automatisch nach 90 Tagen)" : "Nein"}</dd>
         </dl>
 
-        {#if hasValue(entry.oldValue)}
+        {#if hasValue(shownEntry.oldValue)}
           <h3 class="value-heading">Vorher</h3>
-          <pre class="value-pre">{JSON.stringify(entry.oldValue, null, 2)}</pre>
+          <pre class="value-pre">{JSON.stringify(shownEntry.oldValue, null, 2)}</pre>
         {/if}
 
-        {#if hasValue(entry.newValue)}
+        {#if hasValue(shownEntry.newValue)}
           <h3 class="value-heading">Nachher</h3>
-          <pre class="value-pre">{JSON.stringify(entry.newValue, null, 2)}</pre>
+          <pre class="value-pre">{JSON.stringify(shownEntry.newValue, null, 2)}</pre>
         {/if}
       </Section>
     {/snippet}
