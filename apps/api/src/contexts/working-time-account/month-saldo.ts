@@ -33,9 +33,11 @@ import {
   openMonthCarryInMinutes,
   openMonthCarryInMinutesForMany,
   openMonthCarryInKey,
+  loadChainSources,
+  querySource,
+  type ChainSource,
 } from "./overtime-balance"; // Issue #681 — the open-month chain (#696: its bulk twin)
 import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
-import { loadChainSources, querySource, type ChainSource } from "./chain-source"; // Issue #696 — where the month core reads from
 import {
   closeEmployeeMonth,
   toCloseMonthApprovedLeave,
