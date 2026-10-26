@@ -32,6 +32,7 @@ import {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
   dateStrInTz,
+  dayRangeUtc,
   monthRangeUtc,
   updateOvertimeAccount,
 } from "../../working-time-account"; // Phase 101B
@@ -1407,9 +1408,14 @@ export async function shiftRoutes(app: FastifyInstance) {
             breakOver6hOverride: true,
             breakOver9hOverride: true,
             workSchedules: {
-              where: { validFrom: { lte: new Date() } },
+              // Issue #389: the contract is decided by the DISPLAYED week, not by today. Every
+              // row that started on or before the week's end is loaded (newest first); the
+              // per-day resolution below picks the one valid on each day. Contract changes are
+              // month-first only, so a week holds at most one change; `take: 8` is headroom for
+              // legacy non-month-first rows.
+              where: { validFrom: { lte: sundayForSoll } },
               orderBy: { validFrom: "desc" as const },
-              take: 1,
+              take: 8,
               // Phase 76.11 — per-day hours + monthlyHours included so
               // `calcExpectedMinutesTz` can compute leave/absence minutes for
               // FIXED_WEEKLY / FLEXTIME / MONTHLY_HOURS schedules too. SHIFT_BASED
@@ -1417,6 +1423,7 @@ export async function shiftRoutes(app: FastifyInstance) {
               // every employee (planner UI currently consumes the map only for
               // SHIFT_BASED rows, but downstream consumers may want the rest).
               select: {
+                validFrom: true,
                 type: true,
                 weeklyHours: true,
                 monthlyHours: true,
@@ -1591,6 +1598,32 @@ export async function shiftRoutes(app: FastifyInstance) {
       for (let i = 0; i < 7; i++) {
         weekDays.push(cur.toISOString().split("T")[0]);
         cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+
+      // Issue #389 - per person and displayed week, the contract VALID ON EACH DAY decides that
+      // day (validFrom compared by its tenant-local calendar day). A person belongs to the
+      // SHIFT_BASED grid when the contract is SHIFT_BASED on at least one day of the week; the
+      // single `workSchedules[0]` the response carries is then that SHIFT_BASED contract
+      // (otherwise the contract of the last day). `schedulesByDay` keeps the per-day truth for
+      // the Soll computation below.
+      type DaySchedule = (Record<string, unknown> & { validFrom: Date; type: string }) | undefined;
+      const schedulesByDay = new Map<string, DaySchedule[]>();
+      for (const emp of employees) {
+        const all = emp.workSchedules as unknown as Array<NonNullable<DaySchedule>>;
+        const perDay: DaySchedule[] = weekDays.map((iso) =>
+          all.find((ws) => dateStrInTz(ws.validFrom, tenantTz) <= iso),
+        );
+        schedulesByDay.set(emp.id, perDay);
+        const rep =
+          [...perDay].reverse().find((ws) => ws?.type === "SHIFT_BASED") ??
+          [...perDay].reverse().find((ws) => ws !== undefined);
+        (emp as { workSchedules: unknown[] }).workSchedules = rep ? [rep] : [];
+      }
+      // True when the week spans two different contracts for this person (rare: a month-first change).
+      function hasMixedContracts(employeeId: string): boolean {
+        return (
+          new Set(schedulesByDay.get(employeeId)?.map((ws) => ws?.validFrom.getTime())).size > 1
+        );
       }
 
       // Helper: does a [start..end] range cover the given iso day?
@@ -1937,6 +1970,30 @@ export async function shiftRoutes(app: FastifyInstance) {
         );
       }
 
+      // Issue #389: for a person whose week spans two contracts, each day is priced under the
+      // contract valid on it (and claimed, so an overlapping request deducts the day once).
+      function perDayLeaveMinutes(
+        employeeId: string,
+        clip: { start: Date; end: Date },
+        halfDay: boolean,
+      ): number {
+        const from = clip.start.toISOString().slice(0, 10);
+        const to = clip.end.toISOString().slice(0, 10);
+        let total = 0;
+        weekDays.forEach((iso, i) => {
+          if (iso < from || iso > to) return;
+          const daySched = schedulesByDay.get(employeeId)?.[i];
+          if (!daySched) return;
+          const { start, end } = dayRangeUtc(iso, tenantTz);
+          total += calcLeaveAbsenceMinutesTz(daySched, start, end, tenantTz, {
+            halfDay,
+            excludeHolidays: claimSetFor(employeeId),
+          });
+          claimWeekDays(employeeId, start, start);
+        });
+        return total;
+      }
+
       const leaveMinutesByEmp: Record<string, number> = {};
       const absenceMinutesByEmp: Record<string, number> = {};
 
@@ -1953,11 +2010,13 @@ export async function shiftRoutes(app: FastifyInstance) {
         // Phase 104 (D-15): claimSetFor() extends that same excludeHolidays Set with
         // days already claimed by an earlier-processed (sortForSollDedup order)
         // overlapping request, so an overlapping day is deducted exactly once.
-        const minutes = calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
-          halfDay: Boolean(lr.halfDay),
-          excludeHolidays: claimSetFor(lr.employeeId),
-        });
-        claimWeekDays(lr.employeeId, clip.start, clip.end);
+        const minutes = hasMixedContracts(lr.employeeId)
+          ? perDayLeaveMinutes(lr.employeeId, clip, Boolean(lr.halfDay))
+          : calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
+              halfDay: Boolean(lr.halfDay),
+              excludeHolidays: claimSetFor(lr.employeeId),
+            });
+        if (!hasMixedContracts(lr.employeeId)) claimWeekDays(lr.employeeId, clip.start, clip.end);
         if (minutes <= 0) continue;
         leaveMinutesByEmp[lr.employeeId] = (leaveMinutesByEmp[lr.employeeId] ?? 0) + minutes;
       }
@@ -1975,11 +2034,13 @@ export async function shiftRoutes(app: FastifyInstance) {
         if (!clip) continue;
         // Phase 76.12 — Ø-Methode. Phase 76.32.1 (Wave 4): halfDay threaded through.
         // WR-02 fix: pass excludeHolidays for the same reason as the leave loop above.
-        const minutes = calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
-          halfDay: Boolean(ab.halfDay),
-          excludeHolidays: claimSetFor(ab.employeeId),
-        });
-        claimWeekDays(ab.employeeId, clip.start, clip.end);
+        const minutes = hasMixedContracts(ab.employeeId)
+          ? perDayLeaveMinutes(ab.employeeId, clip, Boolean(ab.halfDay))
+          : calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
+              halfDay: Boolean(ab.halfDay),
+              excludeHolidays: claimSetFor(ab.employeeId),
+            });
+        if (!hasMixedContracts(ab.employeeId)) claimWeekDays(ab.employeeId, clip.start, clip.end);
         if (minutes <= 0) continue;
         absenceMinutesByEmp[ab.employeeId] = (absenceMinutesByEmp[ab.employeeId] ?? 0) + minutes;
       }
@@ -2011,13 +2072,16 @@ export async function shiftRoutes(app: FastifyInstance) {
         // instead of raw UTC sunday to prevent iterateDaysInTz from counting 8
         // days in UTC+ timezones (Europe/Berlin CEST inflated 40h→48h).
         // D-08: pass empHolidaySet so Feiertage are excluded from workdaysInRange.
-        const baseSoll = calcExpectedMinutesTz(
-          sched,
-          monday,
-          sundayForSoll,
-          tenantTz,
-          empHolidaySet,
-        );
+        // Issue #389: a week spanning two contracts sums the Soll of each day under the contract
+        // valid on it; the same Arbeitszeitkonto function prices every day.
+        const baseSoll = hasMixedContracts(emp.id)
+          ? weekDays.reduce((sum, iso, i) => {
+              const daySched = schedulesByDay.get(emp.id)?.[i];
+              if (!daySched) return sum;
+              const { start, end } = dayRangeUtc(iso, tenantTz);
+              return sum + calcExpectedMinutesTz(daySched, start, end, tenantTz, empHolidaySet);
+            }, 0)
+          : calcExpectedMinutesTz(sched, monday, sundayForSoll, tenantTz, empHolidaySet);
         const leaveMin = leaveMinutesByEmp[emp.id] ?? 0;
         const absenceMin = absenceMinutesByEmp[emp.id] ?? 0;
         // D-01: vocSchoolMin removed — bsH is already on assignedH (Ist) side in the frontend.
@@ -2096,29 +2160,38 @@ export async function shiftRoutes(app: FastifyInstance) {
         return reply.code(410).send({ error: "Kein Mitarbeiter-Profil verknüpft" });
       }
 
-      // Verify caller is SHIFT_BASED (latest active WorkSchedule)
+      // Week math — mirror GET /week
+      const { date } = req.query as { date?: string };
+      const refDate = date ? new Date(date + "T00:00:00Z") : new Date();
+
+      // Verify caller is SHIFT_BASED on at least one day of the DISPLAYED week (Issue #389; the
+      // contract valid on each day decides, validFrom judged by its tenant-local calendar day).
+      const myTz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const myWeek = weekRangeUtc(refDate, myTz);
       const me = await app.prisma.employee.findFirst({
         where: { id: employeeId, tenantId: req.user.tenantId },
         select: {
           id: true,
           workSchedules: {
-            where: { validFrom: { lte: new Date() } },
+            where: { validFrom: { lte: myWeek.end } },
             orderBy: { validFrom: "desc" as const },
-            take: 1,
-            select: { type: true },
+            take: 8, // month-first changes: at most one per week, headroom for legacy rows
+            select: { type: true, validFrom: true },
           },
         },
       });
       if (!me) {
         return reply.code(410).send({ error: "Mitarbeiter nicht gefunden" });
       }
-      if (me.workSchedules[0]?.type !== "SHIFT_BASED") {
+      const shiftBasedInWeek = myWeek.days.some(
+        (iso) =>
+          me.workSchedules.find((ws) => dateStrInTz(ws.validFrom, myTz) <= iso)?.type ===
+          "SHIFT_BASED",
+      );
+      if (!shiftBasedInWeek) {
         return reply.code(410).send({ error: "Nicht im Schichtsystem" });
       }
 
-      // Week math — mirror GET /week
-      const { date } = req.query as { date?: string };
-      const refDate = date ? new Date(date + "T00:00:00Z") : new Date();
       const dow = refDate.getUTCDay();
       const mondayOffset = dow === 0 ? -6 : 1 - dow;
       const monday = new Date(refDate);
