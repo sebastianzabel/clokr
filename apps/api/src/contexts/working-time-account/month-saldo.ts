@@ -29,26 +29,22 @@
 import type { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { periodStartWindow, monthlySnapshotOrder, isPeriodStartInMonth } from "./snapshot-period";
-import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
-import { openMonthCarryInMinutes } from "./overtime-balance"; // Issue #681 — the open-month chain
+import {
+  openMonthCarryInMinutes,
+  openMonthCarryInMinutesForMany,
+  openMonthCarryInKey,
+} from "./overtime-balance"; // Issue #681 — the open-month chain (#696: its bulk twin)
 import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
-import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
+import { loadChainSources, querySource, type ChainSource } from "./chain-source"; // Issue #696 — where the month core reads from
 import {
   closeEmployeeMonth,
   toCloseMonthApprovedLeave,
   monthlyHoursMonthSollMinutes, // Issue #433 (D-11)
 } from "./close-employee-month";
 import {
-  getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1; Phase 101B wave 8 merged in
-  getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, feeds the holiday resolver below
   getEffectiveBreakDuration,
   addWorkingMinutes, // Phase 79 (Issue #79), D-12 — fold step
 } from "../time-tracking";
-import {
-  getAbsencesOverlapping, // Phase 100B Plan 12 — A4
-  getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2; Issue #446 — effective leave
-  loadBsSlotOverrides,
-} from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -140,6 +136,15 @@ export type MonthSaldoResult = {
  *
  * Read-only: no write, ever (T-451-07 — closed months are legal record).
  */
+/**
+ * Issue #696 — optional inputs a bulk caller (`computeMonthReportFiguresForMany`) hands in:
+ * `carryIn` is the open month's carry-in from `openMonthCarryInMinutesForMany`; `src` a source whose
+ * collections were read for many persons at once. With `src` the caller also guarantees that no
+ * active snapshot exists for the month (it asks for the OPEN month only). Absent, everything is read
+ * per person, as before.
+ */
+export type MonthSaldoSourceOptions = { carryIn?: number; src?: ChainSource };
+
 export type MonthReportFigures = {
   workedMinutes: number;
   expectedMinutes: number;
@@ -186,6 +191,9 @@ export async function computeMonthReportFigures(
   employeeId: string,
   year: number,
   month: number,
+  // Issue #696: the carry-in of an open month, when the caller already holds it from
+  // `openMonthCarryInMinutesForMany` (the same function family). Absent: read per person as before.
+  options: MonthSaldoSourceOptions = {},
 ): Promise<MonthReportFigures> {
   const unlabelled = (workedMinutes: number): MonthReportFigures => ({
     workedMinutes,
@@ -198,23 +206,18 @@ export async function computeMonthReportFigures(
     basis: "untracked",
   });
 
-  const employee = await app.prisma.employee.findUnique({
-    where: { id: employeeId },
-    select: { tenantId: true, isTimeTrackingExempt: true },
-  });
+  const src = options.src ?? querySource(app, employeeId);
+  const employee = await src.employee();
   if (!employee || employee.isTimeTrackingExempt) {
     return unlabelled(0);
   }
 
-  const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+  const tz = await src.timezone(employee.tenantId);
   const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
 
   // Same eligibility rule as computeMonthSaldo's OPEN path: the schedule valid at the reported
   // month's end — NOT the employee's schedule today, which can differ for a past month.
-  const schedule = await app.prisma.workSchedule.findFirst({
-    where: { employeeId, validFrom: { lte: monthEnd } },
-    orderBy: { validFrom: "desc" },
-  });
+  const schedule = await src.scheduleRowAt(monthEnd);
   if (isUnlabelledReportSchedule(schedule)) {
     // Issue #493: the untracked Ist reads TimeEntry.date, a @db.Date column — the month instants
     // admitted the previous month's last day (prod Ist 5.58 h). Calendar-day bounds instead.
@@ -223,19 +226,14 @@ export async function computeMonthReportFigures(
       monthEnd,
       tz,
     );
-    const entries = await getValidWorkedEntriesInRange(
-      app.prisma,
-      { kind: "employee", employeeId, tenantId: employee.tenantId },
-      monthFirstDay,
-      monthLastDay,
-    );
+    const entries = await src.validEntries(employee.tenantId, monthFirstDay, monthLastDay);
     // T1 returns closed rows only, so the open-row branch (0 here, previously minus the break) is
     // unreachable — a harmonisation, not a behaviour change (Phase 79, D-03).
     const workedMinutes = entries.reduce((sum, e) => addWorkingMinutes(sum, e), 0);
     return unlabelled(Math.round(workedMinutes));
   }
 
-  const ms = await computeMonthSaldo(app, employeeId, year, month);
+  const ms = await computeMonthSaldo(app, employeeId, year, month, options);
   const basis: MonthReportFigures["basis"] = ms.closed
     ? "snapshot"
     : ms.fullMonth
@@ -359,6 +357,8 @@ export async function computeMonthReportFiguresForMany(
     }
   }
 
+  // Pass 1: every pair a stored snapshot answers verbatim; the rest go through the account kernel.
+  const openPairs: MonthReportFiguresRequest[] = [];
   for (const req of requests) {
     const key = monthReportFiguresKey(req.employeeId, req.year, req.month);
     if (result.has(key)) continue;
@@ -390,8 +390,53 @@ export async function computeMonthReportFiguresForMany(
         continue;
       }
     }
+    openPairs.push(req);
+  }
+
+  // Issue #696: a pair the account kernel answers with the bulk source - a tracked person without a
+  // stored snapshot in the month whose schedule at the month's end is a labelled one. For these the
+  // carry-in comes from the bulk twin of `openMonthCarryInMinutes` and the month core reads its
+  // inputs from collections loaded once for all persons. Every other pair keeps the per-person path.
+  const fastPairs = openPairs.filter((req) => {
+    if (!tracked.has(req.employeeId)) return false;
+    if (snapshotFor.has(`${req.employeeId}::${req.year}-${req.month}`)) return false;
+    const monthEnd = bounds.get(`${req.year}-${req.month}`)!.end.getTime();
+    const candidates = (schedulesByEmp.get(req.employeeId) ?? []).filter(
+      (s) => s.validFrom.getTime() <= monthEnd,
+    );
+    const schedule = candidates[0] ?? null;
+    if (
+      candidates.length > 1 &&
+      candidates[1].validFrom.getTime() === schedule!.validFrom.getTime()
+    )
+      return false;
+    return !isUnlabelledReportSchedule(schedule);
+  });
+  const sources = await loadChainSources(app, tenantId, fastPairs);
+  const carryIns = await openMonthCarryInMinutesForMany(app, tenantId, fastPairs, sources);
+  const fastKeys = new Set(
+    fastPairs.map((req) => monthReportFiguresKey(req.employeeId, req.year, req.month)),
+  );
+
+  for (const req of openPairs) {
+    const key = monthReportFiguresKey(req.employeeId, req.year, req.month);
+    if (result.has(key)) continue;
     // Sequential on purpose (Issue #612, P-09): the open months walk the account kernel.
-    result.set(key, await computeMonthReportFigures(app, req.employeeId, req.year, req.month));
+    result.set(
+      key,
+      await computeMonthReportFigures(
+        app,
+        req.employeeId,
+        req.year,
+        req.month,
+        fastKeys.has(key)
+          ? {
+              carryIn: carryIns.get(openMonthCarryInKey(req.employeeId, req.year, req.month)),
+              src: sources.get(req.employeeId),
+            }
+          : {},
+      ),
+    );
   }
   return result;
 }
@@ -414,19 +459,13 @@ export async function computeMonthSaldo(
   employeeId: string,
   year: number,
   month: number,
+  // Issue #696: a carry-in already computed by `openMonthCarryInMinutesForMany` (see
+  // `computeMonthReportFigures`); used only where the open month would read it itself.
+  options: MonthSaldoSourceOptions = {},
 ): Promise<MonthSaldoResult> {
   // ── Resolve timezone + month bounds ──────────────────────────────────────
-  const employee = await app.prisma.employee.findUnique({
-    where: { id: employeeId },
-    select: {
-      tenantId: true,
-      hireDate: true,
-      exitDate: true,
-      isTimeTrackingExempt: true,
-      breakOver6hOverride: true,
-      breakOver9hOverride: true,
-    },
-  });
+  const src = options.src ?? querySource(app, employeeId);
+  const employee = await src.employee();
   if (!employee) {
     return { workedMinutes: 0, expectedMinutes: 0, balanceMinutes: 0, closed: false, days: [] };
   }
@@ -434,7 +473,7 @@ export async function computeMonthSaldo(
     return { workedMinutes: 0, expectedMinutes: 0, balanceMinutes: 0, closed: false, days: [] };
   }
 
-  const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+  const tz = await src.timezone(employee.tenantId);
   const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
   const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
     monthStart,
@@ -449,15 +488,19 @@ export async function computeMonthSaldo(
   // in both PDFs while the snapshot list showed it closed. The stored row is still returned
   // verbatim below (Revisionssicherheit); with duplicates the first row of
   // monthlySnapshotOrder() wins (P-01).
-  const snapshot = await app.prisma.saldoSnapshot.findFirst({
-    where: {
-      employeeId,
-      periodType: "MONTHLY",
-      periodStart: periodStartWindow(monthStart),
-      superseded: false,
-    },
-    orderBy: monthlySnapshotOrder(),
-  });
+  // Issue #696: a caller that hands in a bulk source has already read the active snapshots of this
+  // month for every person and found none for this pair - it asks for the open month only.
+  const snapshot = options.src
+    ? null
+    : await app.prisma.saldoSnapshot.findFirst({
+        where: {
+          employeeId,
+          periodType: "MONTHLY",
+          periodStart: periodStartWindow(monthStart),
+          superseded: false,
+        },
+        orderBy: monthlySnapshotOrder(),
+      });
 
   if (snapshot) {
     // Revisionssicherheit: return snapshot verbatim.
@@ -496,35 +539,23 @@ export async function computeMonthSaldo(
     : null;
   const exitDayStr = exitDateNorm ? dateStrInTz(exitDateNorm, tz) : null;
 
-  const tenantConfig = await app.prisma.tenantConfig.findUnique({
-    where: { tenantId: employee.tenantId },
-  });
+  const tenantConfig = await src.tenantConfig(employee.tenantId);
 
   // Phase 71b (issue #71) — holidays by work location per day (§ 2 EFZG), from the Unterbau's
   // central resolver instead of a single tenant-wide federal state. The entries passed are the
   // employee's own closed work entries (facade T2) — the Unterbau never reads them itself. The
   // resulting Set still feeds closeEmployeeMonth completely unchanged (D-08).
-  const workLocationEntries = await getWorkedEntriesInRange(
-    app.prisma,
-    { kind: "employee", employeeId, tenantId: employee.tenantId },
+  const holidayDateStrings = await src.holidayDatesBetween(
+    employee.tenantId,
+    employeeId,
     effectiveStart,
     monthLastDay,
-  );
-  const holidaysByEmployee = await holidaysAtWorkLocation(
-    app.prisma,
-    employee.tenantId,
-    [employeeId],
     dateStrInTz(effectiveStart, tz),
     dateStrInTz(monthEnd, tz),
-    workLocationEntries,
   );
-  const holidayDateStrings = new Set<string>(holidaysByEmployee.get(employeeId)?.keys() ?? []);
 
   // Effective schedule
-  const schedule = await app.prisma.workSchedule.findFirst({
-    where: { employeeId, validFrom: { lte: monthEnd } },
-    orderBy: { validFrom: "desc" },
-  });
+  const schedule = await src.scheduleRowAt(monthEnd);
   if (!schedule) {
     return { workedMinutes: 0, expectedMinutes: 0, balanceMinutes: 0, closed: false, days: [] };
   }
@@ -533,32 +564,12 @@ export async function computeMonthSaldo(
   // Pre-fetch all collections (mirroring overtime.ts lines 943–995)
   const [closeEntries, closeShifts, closeApprovedLeave, closeAbsences] = await Promise.all([
     // Phase 100B Plan 08 — T1, contexts/time-tracking facade. THE SALDO INPUT.
-    getValidWorkedEntriesInRange(
-      app.prisma,
-      { kind: "employee", employeeId, tenantId: employee.tenantId },
-      effectiveStart,
-      monthLastDay,
-    ),
-    getShiftsInRange(
-      app.prisma,
-      { kind: "employee", employeeId, tenantId: employee.tenantId },
-      effectiveStart,
-      monthLastDay,
-    ),
+    src.validEntries(employee.tenantId, effectiveStart, monthLastDay),
+    src.shifts(employee.tenantId, effectiveStart, monthLastDay),
     // Issue #446 (D-02) — effective leave (APPROVED + CANCELLATION_REQUESTED), contexts/absence facade. THE SALDO INPUT.
-    getActiveLeaveOverlapping(
-      app.prisma,
-      { kind: "employee", employeeId, tenantId: employee.tenantId },
-      monthStart,
-      monthEnd,
-    ),
+    src.leave(employee.tenantId, monthStart, monthEnd),
     // Phase 100B Plan 12 — A4, contexts/absence facade. THE SALDO INPUT.
-    getAbsencesOverlapping(
-      app.prisma,
-      { kind: "employee", employeeId, tenantId: employee.tenantId },
-      effectiveStart,
-      monthEnd,
-    ),
+    src.absences(employee.tenantId, effectiveStart, monthEnd),
   ]);
 
   // Days of the cumulative series: from month-start (or hireDate if later) through windowEnd =
@@ -598,15 +609,12 @@ export async function computeMonthSaldo(
   const trackOnlyMonth = isTrackOnlySchedule(schedule);
   const carryOverIn =
     dayStrings.length > 0 && !trackOnlyMonth
-      ? await openMonthCarryInMinutes(app, employeeId, year, month)
+      ? (options.carryIn ?? (await openMonthCarryInMinutes(app, employeeId, year, month)))
       : 0;
 
   // BS slot overrides for this month
-  const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } = await loadBsSlotOverrides(
-    app.prisma,
-    employeeId,
-    monthFirstDay,
-  );
+  const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } =
+    await src.bsSlotOverrides(monthFirstDay);
 
   // Shared tenantConfig shape for closeEmployeeMonth
   const tenantCfg = tenantConfig

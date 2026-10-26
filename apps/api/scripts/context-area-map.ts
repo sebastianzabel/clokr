@@ -366,6 +366,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/working-time-account/month-close-notification.ts": "arbeitszeitkonto", // Phase 292 (#292) — naming/linking/dedup of the Monatsabschluss deferral messages
   "src/contexts/working-time-account/month-saldo.ts": "arbeitszeitkonto", // core Soll-vs-Ist saldo calculation — Arbeitszeitkonto's own definition
   "src/contexts/working-time-account/negative-balance-tolerance.ts": "arbeitszeitkonto", // Überstundenabbau minus-hours tolerance (Phase 100)
+  "src/contexts/working-time-account/chain-source.ts": "arbeitszeitkonto", // Issue #696 — where the account chain and the month core read their inputs from (one person or many); no rule of its own
   "src/contexts/working-time-account/overtime-balance.ts": "arbeitszeitkonto", // Phase 101B (Issue #101) — lifted out of time-tracking/api/time-entries.ts (owner's Nebenbefund); writes/computes OvertimeAccount balance, Arbeitszeitkonto's own subject
   "src/contexts/working-time-account/recalculate-snapshots.ts": "arbeitszeitkonto", // SaldoSnapshot recompute across the effective range
   "src/contexts/working-time-account/shift-based-leave-credit.ts": "arbeitszeitkonto", // Issue #429 — SHIFT_BASED leave Soll credit per ISO week, consumed by close-employee-month.ts
