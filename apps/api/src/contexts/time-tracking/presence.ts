@@ -16,6 +16,8 @@ export interface PresenceEntry {
 export interface PresenceLeave {
   status: "APPROVED" | "CANCELLATION_REQUESTED" | "PENDING";
   leaveTypeName: string;
+  /** Issue #743: a half-day request; the other half of a past workday is still owed. */
+  halfDay?: boolean;
 }
 
 export interface PresenceAbsence {
@@ -279,7 +281,7 @@ export function resolveDayStatus(input: DayStatusInput): DayStatus {
     shiftStartTime: input.shift?.startTime ?? null,
   });
 
-  const { status, reason } = resolvePresenceState({
+  const state = resolvePresenceState({
     entries: input.entries,
     leave: input.leave,
     absence: input.absence,
@@ -291,6 +293,22 @@ export function resolveDayStatus(input: DayStatusInput): DayStatus {
     isHoliday: input.holidayName !== null,
     holidayName: input.holidayName,
   });
+
+  // Issue #743: a PAST obligated workday with an approved half-day leave and no valid entry is
+  // "missing" - the other half was owed. The leave type stays in `reason` so the absence remains
+  // visible. Today is never overdue because of the half day (only strictly past days), a holiday
+  // owes nothing, and a row listed only by an entry is never "missing" (#548). A day with a valid
+  // entry never reaches "absent" above, so it reads as before.
+  const halfDayOwed =
+    state.status === "absent" &&
+    input.leave?.halfDay === true &&
+    (input.leave.status === "APPROVED" || input.leave.status === "CANCELLATION_REQUESTED") &&
+    isWorkday &&
+    input.dayStr < input.todayStr &&
+    input.holidayName === null &&
+    !input.entryOnlyRow;
+  const status: PresenceStatus = halfDayOwed ? "missing" : state.status;
+  const reason = state.reason;
 
   // Issue #587 (D-587-3, P-05): the expected start is the shift start and nothing else; lateness
   // exists only for a "missing" row of TODAY with a shift, where `isDayDue` guarantees now >= start.
