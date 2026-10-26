@@ -17,6 +17,7 @@ import {
   createTestSalon,
   soleAuditRowOrNull,
 } from "./setup";
+import { monthRangeUtc } from "../contexts/working-time-account/timezone";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
 const PASSWORD = "test1234";
@@ -443,6 +444,92 @@ describe("Issue #91 (Phase 91b Plan 05) — overtime.ts salon/person scope", () 
       },
     });
     expect(audit).not.toBeNull();
+  });
+
+  // Issue #753: a leaver's Stammsalon reach is judged on the exit day, not on 31 December.
+  async function seedLeaverYear(employeeId: string, year: number) {
+    for (let m = 1; m <= 6; m++) {
+      const { start, end } = monthRangeUtc(year, m, "Europe/Berlin");
+      await app.prisma.saldoSnapshot.create({
+        data: {
+          employeeId,
+          periodType: "MONTHLY",
+          periodStart: start,
+          periodEnd: end,
+          workedMinutes: 100,
+          expectedMinutes: 90,
+          balanceMinutes: 10,
+          carryOver: 10 * m,
+          closedAt: new Date(),
+          closedBy: "test-system",
+          superseded: false,
+        },
+      });
+    }
+  }
+
+  it("POST /close-year: a leaver whose home assignment ended at the exit is judged on the exit day (201)", async () => {
+    const year = 2024;
+    const leaver = await createEmployeeWithAccount("lv753a");
+    await app.prisma.employee.update({
+      where: { id: leaver.employee.id },
+      data: { exitDate: new Date(`${year}-06-15T10:00:00Z`) },
+    });
+    await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        employeeId: leaver.employee.id,
+        salonId: salonA.id,
+        kind: "HOME",
+        validFrom: new Date("2020-01-01"),
+        validUntil: new Date(`${year}-06-15`),
+        weekdays: [],
+      },
+    });
+    await seedLeaverYear(leaver.employee.id, year);
+    const manager = await createScopedManager("mgr-cy753a", ["month-close:close-year:ZUGEWIESEN"], {
+      scopeType: "SALONS",
+      salonIds: [salonA.id],
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/overtime/close-year",
+      headers: { authorization: `Bearer ${await login(manager.user.email)}` },
+      payload: { employeeId: leaver.employee.id, year },
+    });
+    expect(res.statusCode).toBe(201);
+  });
+
+  it("POST /close-year: a leaver of a foreign salon still 404s", async () => {
+    const year = 2024;
+    const leaver = await createEmployeeWithAccount("lv753b");
+    await app.prisma.employee.update({
+      where: { id: leaver.employee.id },
+      data: { exitDate: new Date(`${year}-06-15T10:00:00Z`) },
+    });
+    await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        employeeId: leaver.employee.id,
+        salonId: salonB.id,
+        kind: "HOME",
+        validFrom: new Date("2020-01-01"),
+        validUntil: new Date(`${year}-06-15`),
+        weekdays: [],
+      },
+    });
+    await seedLeaverYear(leaver.employee.id, year);
+    const manager = await createScopedManager("mgr-cy753b", ["month-close:close-year:ZUGEWIESEN"], {
+      scopeType: "SALONS",
+      salonIds: [salonA.id],
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/overtime/close-year",
+      headers: { authorization: `Bearer ${await login(manager.user.email)}` },
+      payload: { employeeId: leaver.employee.id, year },
+    });
+    expect(res.statusCode).toBe(404);
   });
 
   it("POST /opening-balance: an out-of-scope employee 404s with SCOPE_ACCESS_DENIED audit", async () => {

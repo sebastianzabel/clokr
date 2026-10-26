@@ -967,6 +967,7 @@ import { readFileSync } from "node:fs";
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #753: +1 file (close-year-exit-753), measured full run 729 files, 10991 tests incl. 3 skipped.
 const MIN_FILES = 729;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
@@ -1049,7 +1050,8 @@ const MIN_FILES = 729;
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #459: +1 file (recalculate-snapshots-start-month-459.test.ts, 7 cases); floors set to the measured full run after merging main: 729 files, 10968 tests (incl. 3 skipped).
-const MIN_TESTS = 10968;
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+const MIN_TESTS = 10991;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
