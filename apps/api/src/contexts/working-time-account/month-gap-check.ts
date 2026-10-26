@@ -8,7 +8,7 @@
  * issue #292 turned on exactly which entries count; there must be one place that decides it.
  *
  * ── What counts as a gap, as measured (issue #292, first acceptance criterion) ────────────────
- * A day in [max(hireDate, 1st) .. last day of month] is a gap when ALL of:
+ * A day in [max(hireDate, 1st) .. min(exit day, last day of month)] is a gap when ALL of:
  *   1. the schedule type has a daily gap rule at all — `MONTHLY_HOURS` and `FLEXTIME` never
  *      produce one ({@link findMissingWorkdays} returns `gaps: []` for them, so such an employee
  *      can never be gap-blocked, whatever their time entries look like);
@@ -53,6 +53,12 @@ export type MonthGapCheckInput = {
   tenantId: string;
   employeeId: string;
   hireDate: Date;
+  /**
+   * Issue #668: the gap window ends on the exit day (inclusive, tenant-local), like
+   * `closeEmployeeMonth` and `findMissingWorkdays` callers (CLOSE-04) - a workday after the exit is
+   * never a gap. Required so no caller can forget it; pass null for an employee who has not left.
+   */
+  exitDate: Date | null;
   /** The `WorkSchedule` row valid FOR this month — not the employee's current one. */
   schedule: Record<string, unknown>;
   month: MonthKey;
@@ -76,7 +82,7 @@ export async function detectMonthGaps(
   db: Prisma.TransactionClient,
   input: MonthGapCheckInput,
 ): Promise<MonthGapCheckResult> {
-  const { tenantId, employeeId, hireDate, schedule, month, tz } = input;
+  const { tenantId, employeeId, hireDate, exitDate, schedule, month, tz } = input;
   const scheduleType = String(schedule.type ?? "");
 
   if (!hasDailyGapRule(scheduleType)) {
@@ -121,10 +127,19 @@ export async function detectMonthGaps(
   const hireDateNorm = new Date(dateStrInTz(hireDate, tz) + "T00:00:00Z");
   const effectiveStart = hireDateNorm > monthFirstDay ? hireDateNorm : monthFirstDay;
 
+  // effectiveEnd = min(exitDate, monthLastDay) - TZ-normalised (CLOSE-04, Issue #668). A month
+  // that lies entirely after the exit has no window and therefore no gap.
+  let effectiveEnd = monthLastDay;
+  if (exitDate !== null) {
+    const exitDateNorm = new Date(dateStrInTz(exitDate, tz) + "T00:00:00Z");
+    if (exitDateNorm < monthFirstDay) return { gapRuleApplies: true, gapDates: [] };
+    if (exitDateNorm < monthLastDay) effectiveEnd = exitDateNorm;
+  }
+
   const result = findMissingWorkdays({
     schedule,
     effectiveStart,
-    effectiveEnd: monthLastDay,
+    effectiveEnd,
     tz,
     entryDates,
     approvedLeave: approvedLeave.map((lr) => ({

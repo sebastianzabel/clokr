@@ -9,6 +9,12 @@ import {
   ACTIVE_TENANT_WHERE, // Phase 88 (D-05a) — deactivated tenants are skipped
 } from "../../platform";
 import { periodStartWindow } from "../snapshot-period";
+import {
+  monthClosePopulationWhere,
+  isInMonthClosePopulation,
+  isExitDateMissing,
+  decideGapMonth,
+} from "../month-close-population"; // Issue #668
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { detectMonthGaps } from "../month-gap-check"; // Phase 292 (#292) — the shared gap definition
@@ -114,11 +120,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
 
         const { start: prevMonthStart, end: prevMonthEnd } = monthRangeUtc(prevYear, prevMonth, tz);
 
-        // Get all active employees
+        // Everyone employed at some point up to the ceiling month (Issue #668): selected by
+        // EMPLOYMENT, never by login state. The month loop below closes only the months the person
+        // was actually employed in (`isInMonthClosePopulation`).
         const employees = await app.prisma.employee.findMany({
           where: {
             tenantId: tenant.id,
-            user: { isActive: true },
+            AND: [monthClosePopulationWhere(new Date(0), prevMonthEnd)],
             isTimeTrackingExempt: false, // D-02: §18 ArbZG-exempt employees are not snapshotted (parity with manual close)
           },
           include: {
@@ -154,6 +162,8 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           missingDates: string[];
           month: number;
           year: number;
+          /** Issue #668: set when the person has a deactivated login but no exit date. */
+          reason?: "EXIT_DATE_MISSING";
         }[] = [];
 
         // ── SNAP-02 / Phase 76.27: Bounded backward backfill loop ─────────────────
@@ -231,8 +241,9 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 continue;
               }
 
-              // Skip months that started after the employee's hire date check
-              if (emp.hireDate > monthEnd) continue;
+              // Issue #668: a month the person was not employed in gets no snapshot (hired after
+              // it, left before it). Existing snapshots were handled above and are never touched.
+              if (!isInMonthClosePopulation(emp, monthStart, monthEnd)) continue;
 
               // ── Per-month gap readiness check ──────────────────────────────────
               // Phase 292 (GitHub issue #292): the fetch + findMissingWorkdays body moved to
@@ -247,6 +258,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   tenantId: tenant.id,
                   employeeId: emp.id,
                   hireDate: emp.hireDate,
+                  exitDate: emp.exitDate, // Issue #668: no gap after the exit day (CLOSE-04)
                   schedule: scheduleForMonth as unknown as Record<string, unknown>,
                   month: monthKey,
                   tz,
@@ -271,7 +283,15 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                       now,
                     );
 
-                    if (!pastWindow) {
+                    // Issue #668: one decision for the cron and the pre-deploy dry run.
+                    const decision = decideGapMonth({
+                      gapCount: missingDates.length,
+                      pastWindow,
+                      closeAllowed,
+                      exitDateMissing: isExitDateMissing(emp),
+                    });
+
+                    if (decision === "DEFER_IN_WINDOW") {
                       // Within the retro self-service window (today < day N of M+1).
                       // Defer: BREAK + notify. Do NOT close later months on stale carryOver.
                       app.log.warn(
@@ -287,7 +307,25 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                       break; // F-02: defer while in-window
                     }
 
-                    if (!closeAllowed) {
+                    if (decision === "DEFER_EXIT_DATE_MISSING") {
+                      // Issue #668: a deactivated login without an exit date - the gap days may be
+                      // days after an unrecorded exit, so they are never force-closed at 0 h. An
+                      // admin sets the exit date or records the time; months without gaps closed above.
+                      app.log.warn(
+                        { employeeId: emp.id, month: monthKey.month, year: monthKey.year },
+                        "Auto-Monatsabschluss: Lücken, Login deaktiviert und kein Austrittsdatum — verschoben (manuell)",
+                      );
+                      missing.push({
+                        employee: emp,
+                        missingDates,
+                        month: monthKey.month,
+                        year: monthKey.year,
+                        reason: "EXIT_DATE_MISSING",
+                      });
+                      break; // never close later months on a stale carryOver
+                    }
+
+                    if (decision === "DEFER_MANUAL") {
                       // Past window but flag=false → defer forever (manual-only, never auto-finalize).
                       app.log.warn(
                         { employeeId: emp.id, month: monthKey.month, year: monthKey.year },
@@ -692,10 +730,21 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               // COMP-V1814-08: mid-year hires only need their share of months.
               // A July hire has 6 months in the year (Jul-Dec); requiring 12 would
               // prevent their yearly carry-over from ever running.
-              const hireYear = emp.hireDate ? new Date(emp.hireDate).getFullYear() : null;
-              const hireMonth = emp.hireDate ? new Date(emp.hireDate).getMonth() + 1 : 1; // 1-12
+              // Issue #277 (finding 1): the hire month is read in the TENANT time zone, never in
+              // the zone of the Node process.
+              const hireDay = emp.hireDate ? dateStrInTz(emp.hireDate, tz) : null; // YYYY-MM-DD
+              const hireYear = hireDay ? Number(hireDay.slice(0, 4)) : null;
+              const hireMonth = hireDay ? Number(hireDay.slice(5, 7)) : 1; // 1-12
               const firstMonth = hireYear === prevYear ? hireMonth : 1;
-              const expectedMonths = 12 - firstMonth + 1;
+              // Issue #668: a leaver is expected only through the exit month (tenant zone); once
+              // every employed month is closed the year closes. A person who left in an earlier
+              // year has no month in this one and gets no yearly snapshot.
+              const exitDay = emp.exitDate ? dateStrInTz(emp.exitDate, tz) : null;
+              const exitYear = exitDay ? Number(exitDay.slice(0, 4)) : null;
+              if (exitYear !== null && exitYear < prevYear) continue;
+              const lastMonth = exitDay && exitYear === prevYear ? Number(exitDay.slice(5, 7)) : 12;
+              const expectedMonths = lastMonth - firstMonth + 1;
+              if (expectedMonths < 1) continue;
               if (monthSnapshots.length < expectedMonths) continue; // Not all expected months closed yet
 
               const yearWorked = monthSnapshots.reduce((s, m) => s + m.workedMinutes, 0);
@@ -784,6 +833,10 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 }),
               )
               .join(", ");
+            // Issue #668: a deactivated login without an exit date is named as such, not as a gap list.
+            if (m.reason === "EXIT_DATE_MISSING") {
+              return `${name} (${m.month}/${m.year}): Austrittsdatum fehlt – bitte prüfen (Lücken: ${dates})`;
+            }
             return `${name} (${m.month}/${m.year}): ${dates}`;
           });
 

@@ -81,7 +81,13 @@
     employeeName: string;
     oldestOpenMonth: { year: number; month: number };
     monthsBehind: number;
-    reason: "GAPS" | "UNCONFIRMED_BREAKS" | "CROSS_SALON_BREAKS" | "BREAK_PLACEMENT" | "UNKNOWN";
+    reason:
+      | "GAPS"
+      | "UNCONFIRMED_BREAKS"
+      | "CROSS_SALON_BREAKS"
+      | "BREAK_PLACEMENT"
+      | "EXIT_DATE_MISSING"
+      | "UNKNOWN";
     gapDates: string[];
     gapCount: number;
     /** Issue #86 (D-02): `gapDates` is emptied while `gapCount` stays. */
@@ -707,7 +713,9 @@
               {#each deferred.employees.slice(0, 8) as e (e.employeeId)}
                 <li>
                   {e.employeeName} – offen seit {monthLabel(e.oldestOpenMonth)}
-                  {#if gapCountOf(e) > 0}
+                  {#if e.reason === "EXIT_DATE_MISSING"}
+                    · Austrittsdatum fehlt – bitte prüfen
+                  {:else if gapCountOf(e) > 0}
                     · {e.dayDetailsWithheld ? "" : "fehlende Tage: "}{missingDaysText(e, {
                       iso: true,
                     })}

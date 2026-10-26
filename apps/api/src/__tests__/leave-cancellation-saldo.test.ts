@@ -133,6 +133,7 @@ describe("Issue #446 — leave under CANCELLATION_REQUESTED still reduces Soll (
       tenantId: data.tenant.id,
       employeeId,
       hireDate: new Date("2026-06-01"),
+      exitDate: null,
       schedule: schedule as unknown as Record<string, unknown>,
       month: { year: 2026, month: 6 },
       tz,

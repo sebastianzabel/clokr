@@ -955,7 +955,12 @@ import { readFileSync } from "node:fs";
 // (7), period-absences-csv-713 (16); extended: sick-leave-days (+8 cases), reports-hr-86 (+1), reports-period-salon-612, reports-period-vacation-612,
 // reports-period-home-salon-714 (assertions only); nothing removed, skipped or loosened. MIN_FILES 713 -> 716, never lowered.
 // Issue #728: one new file (half-day-leave-recording-728.test.ts) on top of #713: MIN_FILES 716 -> 717.
+// Issue #668: one new file (month-close-employment-668.test.ts) -> MIN_FILES 717 -> 718, measured with a full run on
+// `fix/668-close-by-employment` (origin/main @ d1ec1f04 + #668): 718 test files, 10880 tests.
+// Issue #668 review fixes: one more file (month-close-review-668.test.ts) -> 719; measured full run on the same branch @ 8f8e5295:
+// 719 test files, 10903 tests (10900 passed, 3 skipped).
 // Issue #745/#746 (half day, class of #728): +1 file (leave-ical-half-day-746) and +9 tests, measured 718 files / 10880 tests (10877 passed + 3 skipped).
+// #668 (+2 files) and #745/#746 (+1 file) on the common base 717: MIN_FILES 720 (lower-bound sum).
 // Issue #478: +1 file (leave-overlap-cancellation-478.test.ts, +6 tests) and +1 file (leave-edit-guards-478.test.ts, +8 tests); measured 720 files / 10894 tests (incl. 3 skipped).
 // Issue #744 on top of #745/#746: +2 files (shift-half-day-leave-744, shift-leave-rule-744): MIN_FILES 718 -> 720.
 // Issue #743: re-measured with the full run (719 files, 10888 tests incl. 3 skipped).
@@ -1031,6 +1036,10 @@ const MIN_FILES = 722;
 // Issue #728: +8 cases (3 in leave-check.test.ts, 5 in half-day-leave-recording-728.test.ts) on top of #713 (source-counted,
 // lower-bound convention): MIN_TESTS 10862 -> 10870.
 // Issue #396: +1 file, +3 cases (post-commit-refetch-396.test.ts); measured full run 719 files, 10883 tests (10880 passed, 3 skipped). Never lowered.
+// Issue #668: MIN_TESTS 10870 -> 10880, the measured total of the full run named at MIN_FILES (10872 passed, 5 then-red cases
+// since fixed, 3 skipped); the new file holds 9 cases. Never lowered.
+// Issue #668 review fixes: MIN_TESTS 10880 -> 10903, the measured total of the full run named at MIN_FILES. Never lowered.
+// #668 (+33 tests) and #745/#746 (+10 tests) on the common base 10870: measured 10912 in the CI run of PR #751 (the sum 10913 counted one case twice). Never lowered below a measurement.
 // Issue #745/#746: MIN_TESTS 10870 -> 10880 (measured). Issue #744 (2026-10-25): +14 cases measured on its own base
 // (10870 -> 10884); both together: measured 10893 in the CI run of PR #749 (the sum 10894 counted one case twice). Never lowered below a measurement.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
@@ -1038,7 +1047,8 @@ const MIN_FILES = 722;
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
-const MIN_TESTS = 10907;
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+const MIN_TESTS = 10912;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
