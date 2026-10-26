@@ -358,6 +358,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/working-time-account/facade/saldo-snapshot.ts": "arbeitszeitkonto", // Phase 100B Plan 07 — W1-W7, SaldoSnapshot's only external access path
   "src/contexts/working-time-account/find-missing-workdays.ts": "arbeitszeitkonto", // Soll-vs-Ist gap detector; 3 of 5 importers (auto-close-month/close-employee-month/overtime) are Arbeitszeitkonto's own saldo paths
   "src/contexts/working-time-account/missing-entries-window.ts": "arbeitszeitkonto", // window-size companion of find-missing-workdays.ts, same callers
+  "src/contexts/working-time-account/expected-close-months.ts": "arbeitszeitkonto", // Issue #753 — the expected months of a yearly close, shared by the cron and POST /close-year
   "src/contexts/working-time-account/month-close-population.ts": "arbeitszeitkonto", // Issue #668 — who the Monatsabschluss closes (employment, not login), shared by the cron and the deferred close
   "src/contexts/working-time-account/month-close-window.ts": "arbeitszeitkonto", // Phase 292 (#292) — month-stepping + day-N window arithmetic of the Monatsabschluss, shared by the cron and the deferral reader
   "src/contexts/working-time-account/month-gap-check.ts": "arbeitszeitkonto", // Phase 292 (#292) — the ONE definition of "gap" for the Monatsabschluss (lifted out of auto-close-month.ts)

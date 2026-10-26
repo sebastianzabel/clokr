@@ -9,6 +9,7 @@ import {
   ACTIVE_TENANT_WHERE, // Phase 88 (D-05a) — deactivated tenants are skipped
 } from "../../platform";
 import { periodStartWindow } from "../snapshot-period";
+import { expectedCloseMonthsOfYear } from "../expected-close-months"; // Issue #753
 import {
   monthClosePopulationWhere,
   isInMonthClosePopulation,
@@ -732,18 +733,15 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               // prevent their yearly carry-over from ever running.
               // Issue #277 (finding 1): the hire month is read in the TENANT time zone, never in
               // the zone of the Node process.
-              const hireDay = emp.hireDate ? dateStrInTz(emp.hireDate, tz) : null; // YYYY-MM-DD
-              const hireYear = hireDay ? Number(hireDay.slice(0, 4)) : null;
-              const hireMonth = hireDay ? Number(hireDay.slice(5, 7)) : 1; // 1-12
-              const firstMonth = hireYear === prevYear ? hireMonth : 1;
-              // Issue #668: a leaver is expected only through the exit month (tenant zone); once
-              // every employed month is closed the year closes. A person who left in an earlier
+              // Issue #753: the expected span (hire month .. exit month, tenant zone) comes from the
+              // one function the manual close-year route shares; a person who left in an earlier
               // year has no month in this one and gets no yearly snapshot.
-              const exitDay = emp.exitDate ? dateStrInTz(emp.exitDate, tz) : null;
-              const exitYear = exitDay ? Number(exitDay.slice(0, 4)) : null;
-              if (exitYear !== null && exitYear < prevYear) continue;
-              const lastMonth = exitDay && exitYear === prevYear ? Number(exitDay.slice(5, 7)) : 12;
-              const expectedMonths = lastMonth - firstMonth + 1;
+              const expectedMonths = expectedCloseMonthsOfYear({
+                year: prevYear,
+                tz,
+                hireDate: emp.hireDate,
+                exitDate: emp.exitDate,
+              }).length;
               if (expectedMonths < 1) continue;
               if (monthSnapshots.length < expectedMonths) continue; // Not all expected months closed yet
 

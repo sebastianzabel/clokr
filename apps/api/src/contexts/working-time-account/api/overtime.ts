@@ -41,6 +41,7 @@ import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee
 import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — gap detector
 import { getDeferredMonthCloseState } from "../deferred-month-close"; // Phase 292 (#292)
 import { computeMonthSaldo } from "../month-saldo"; // §615 Team-Zeiten display fix
+import { expectedCloseMonthsOfYear } from "../expected-close-months"; // Issue #753
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { recalculateSnapshots } from "../recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
 import { resolveNegativeBalanceTolerance } from "../negative-balance-tolerance"; // Phase 100 (OTC-01) — the one shared precedence chain
@@ -2036,7 +2037,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       const employee = await app.prisma.employee.findUnique({
         where: { id: employeeId },
-        select: { tenantId: true },
+        select: { tenantId: true, exitDate: true },
       });
       if (!employee || employee.tenantId !== req.user.tenantId) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
@@ -2094,7 +2095,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "Jahr ist bereits abgeschlossen" });
       }
 
-      // Check all 12 months are closed
+      // Check all expected months are closed (twelve, or through the exit month for a leaver, #753)
       //
       // MONTHLY read filter ONLY — tenant-TZ-aware (Issue #242). yearStart/yearEnd above stay
       // naive UTC on purpose: they are the STORED identity of the YEARLY snapshot written below
@@ -2125,7 +2126,21 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // isPeriodStartInMonth covers both storage conventions found in production (TZ-converted
       // and naive) and is robust against the @db.Date truncation; no hand-rolled UTC-offset
       // arithmetic (CONTEXT D-03).
-      const monthsOfYear = Array.from({ length: 12 }, (_, i) => i + 1).map((month) => ({
+      // Issue #753: the expected months come from the one function the auto-close cron shares - a
+      // leaver is expected only through the exit month. hireDate is passed as null on purpose: the
+      // manual route's mid-year-hire behaviour (January onward) stays unchanged.
+      const expectedMonths = expectedCloseMonthsOfYear({
+        year,
+        tz,
+        hireDate: null,
+        exitDate: employee.exitDate,
+      });
+      if (expectedMonths.length === 0) {
+        return reply
+          .code(400)
+          .send({ error: "Für dieses Jahr gibt es keine Monate zum Abschließen" });
+      }
+      const monthsOfYear = expectedMonths.map((month) => ({
         month,
         snapshot:
           monthSnapshots.find((s) =>
@@ -2138,7 +2153,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           error: `Nicht alle Monate abgeschlossen. Fehlend: ${missing.join(", ")}`,
         });
       }
-      // Exactly the twelve month-assigned snapshots — NOT the raw query result, which may also
+      // Exactly the expected month-assigned snapshots — NOT the raw query result, which may also
       // contain a following year's already-closed January (its periodStart passes the same
       // naive-or-TZ-aware range filter; Issue #242 Test 4).
       const yearMonthSnapshots = monthsOfYear.map((m) => m.snapshot!);
@@ -2161,7 +2176,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // or, worse, incorrectly re-apply it if some future refactor ever loosened the "only at
       // the head" rule. The opening balance therefore reaches the yearly figure transitively
       // through the monthly chain it aggregates, never directly.
-      const decemberSnapshot = yearMonthSnapshots[11];
+      const decemberSnapshot = yearMonthSnapshots[yearMonthSnapshots.length - 1]; // last expected month (December, or the exit month)
       const finalCarryOver = decemberSnapshot.carryOver;
 
       // Apply carry-over rules from tenant config
