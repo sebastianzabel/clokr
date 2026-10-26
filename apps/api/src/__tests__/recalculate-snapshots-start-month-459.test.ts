@@ -270,6 +270,29 @@ describe("Issue #459 - recalculateSnapshots recomputes the start month", () => {
     expect(active[1].carryOver).toBe(active[0].carryOver + active[1].balanceMinutes);
   });
 
+  it("carry-in comes from the winner of a duplicate previous month (#595 order), not the legacy row", async () => {
+    const employeeId = await makeEmployee();
+    await addEntry(employeeId, "2026-04-02", false);
+    // Previous month (March): TZ row wins (smallest periodStart), legacy row has another carryOver.
+    const marchTz = await addSnapshot(employeeId, march(), 1111);
+    // The head row stores no implied predecessor (carryOver = balance), so the chain seed decides.
+    await addSnapshot(employeeId, legacySaldoSnapshotPeriodBounds(2026, 3), 5555);
+    await addSnapshot(employeeId, april(), STALE_WORKED - 9000);
+
+    await recalculateSnapshots(app, employeeId, new Date("2026-04-20T00:00:00Z"));
+
+    const active = await app.prisma.saldoSnapshot.findFirst({
+      where: {
+        employeeId,
+        periodType: "MONTHLY",
+        superseded: false,
+        periodStart: april().start,
+      },
+    });
+    expect(active?.workedMinutes).toBe(450);
+    expect(active!.carryOver).toBe(marchTz.carryOver + active!.balanceMinutes);
+  });
+
   it("still skips and reports a locked start month", async () => {
     const employeeId = await makeEmployee();
     await addEntry(employeeId, "2026-03-02", true);

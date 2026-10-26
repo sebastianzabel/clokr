@@ -1048,8 +1048,8 @@ const MIN_FILES = 729;
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
-// Issue #459: +1 file (recalculate-snapshots-start-month-459.test.ts, 6 cases); floors set to the measured full run after merging main: 729 files, 10967 tests (incl. 3 skipped).
-const MIN_TESTS = 10967;
+// Issue #459: +1 file (recalculate-snapshots-start-month-459.test.ts, 7 cases); floors set to the measured full run after merging main: 729 files, 10968 tests (incl. 3 skipped).
+const MIN_TESTS = 10968;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

@@ -21,7 +21,13 @@ import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
 import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
-import { isLegacyPeriodStart, selectMonthlySnapshotPerMonth } from "./snapshot-period"; // Issue #595 — one row per month, legacy detection
+import {
+  isLegacyPeriodStart,
+  monthlySnapshotOrder,
+  periodStartWindow,
+  selectMonthlySnapshotPerMonth,
+  snapshotMonthOf,
+} from "./snapshot-period"; // Issue #595 — one row per month, legacy detection
 import { isSnapshotLocked } from "./snapshot-lock"; // Phase 99 (OB-03/D-09) — immutability after lock
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -125,7 +131,10 @@ export async function recalculateSnapshots(
   });
 
   // Get the carry-over from the snapshot immediately before the first affected one
-  const prevSnapshot = await app.prisma.saldoSnapshot.findFirst({
+  // Issue #459 / #595: the predecessor is the ONE row of the previous month the account reads
+  // (first of `monthlySnapshotOrder()`), not simply the row with the latest periodStart - that would
+  // pick the legacy row of a duplicate pair.
+  const prevCandidate = await app.prisma.saldoSnapshot.findFirst({
     where: {
       employeeId,
       periodType: "MONTHLY",
@@ -134,6 +143,20 @@ export async function recalculateSnapshots(
     },
     orderBy: { periodStart: "desc" },
   });
+  let prevSnapshot = prevCandidate;
+  const prevMonth = prevCandidate ? snapshotMonthOf(prevCandidate.periodStart, tz) : null;
+  if (prevCandidate && prevMonth) {
+    const prevRows = await app.prisma.saldoSnapshot.findMany({
+      where: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: periodStartWindow(monthRangeUtc(prevMonth.year, prevMonth.month, tz).start),
+        superseded: false,
+      },
+      orderBy: monthlySnapshotOrder(),
+    });
+    prevSnapshot = prevRows[0] ?? prevCandidate;
+  }
   // Phase 99 (OB-02) — chain-head seed. getCarryOverBase() resolves
   // prevSnapshot?.carryOver ?? openingBalance?.minutes ?? 0: the opening balance is
   // consulted ONLY when there is no predecessor at all (a true chain head). Computed
