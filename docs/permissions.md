@@ -494,6 +494,8 @@ Liste — eine neue Katalog-Permission macht diesen Test rot, bis jemand für de
 Gesundheitsdaten nach Art. 9 DSGVO handelt — die Personalabteilung ist die übliche Halterin
 ärztlicher Bescheinigungen.
 
+**Routen ohne Web-Aufrufer (Issue #690).** `GET /reports/leave-overview` bleibt bewusst bestehen, ohne Aufrufer in der Web-Anwendung, als Lese-Schnittstelle für API-Schlüssel; die Berichtsseite liest seit #612 `GET /reports/period`. `GET /reports/carryover-at-risk` bleibt aus demselben Grund bestehen, ebenfalls als Lese-Schnittstelle für API-Schlüssel ohne Web-Aufrufer. Beide bleiben Quelle der Wahrheit der Periodenroute (Paritätstests) und Teil von Neutralitätsmatrix und HR-Allow-List.
+
 **Seit #86 (Owner-Entscheidung 16.10.2026).** `report:read` ist enthalten, weil die vier
 JSON-Antworten (`GET /reports/monthly`, `/reports/leave-overview`, `/reports/carryover-at-risk`, `/reports/period`)
 nur Summen je Person und Monat bzw. Jahr tragen — das ist durch `reports-hr-86.test.ts` festgenagelt
