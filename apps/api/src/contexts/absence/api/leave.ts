@@ -1965,6 +1965,7 @@ export async function leaveRoutes(app: FastifyInstance) {
             existing.employee.tenantId,
             existing.startDate,
             existing.endDate,
+            { halfDay: existing.halfDay },
           );
 
           if (conflictingShifts.length > 0) {
