@@ -115,17 +115,22 @@ describe("Issue #459 - recalculateSnapshots recomputes the start month", () => {
     });
   }
 
-  async function addSnapshot(employeeId: string, bounds: { start: Date; end: Date }) {
+  async function addSnapshot(
+    employeeId: string,
+    bounds: { start: Date; end: Date },
+    carryOver = STALE_WORKED - 9000,
+    worked = STALE_WORKED,
+  ) {
     return app.prisma.saldoSnapshot.create({
       data: {
         employeeId,
         periodType: "MONTHLY",
         periodStart: bounds.start,
         periodEnd: bounds.end,
-        workedMinutes: STALE_WORKED,
+        workedMinutes: worked,
         expectedMinutes: 9000,
-        balanceMinutes: STALE_WORKED - 9000,
-        carryOver: STALE_WORKED - 9000,
+        balanceMinutes: worked - 9000,
+        carryOver,
         closedAt: new Date("2026-06-01T00:00:00Z"),
         closedBy: adminUserId,
       },
@@ -164,21 +169,105 @@ describe("Issue #459 - recalculateSnapshots recomputes the start month", () => {
     expect(old?.superseded).toBe(true);
   });
 
-  it("recomputes a legacy UTC-naive month and leaves the previous month untouched", async () => {
+  it("never rewrites a legacy UTC-naive month: it is left untouched and reported, the previous month stays untouched", async () => {
+    // Correction of the first version of this test, which expected the legacy row to be
+    // superseded. Issue #595 says a legacy row is READ as closed with its stored figures and never
+    // rewritten (ultrareview finding on PR #760). The new assertion is stricter, not weaker.
     const employeeId = await makeEmployee();
     await addEntry(employeeId, "2026-04-02", false);
     const previous = await addSnapshot(employeeId, march());
     const legacy = await addSnapshot(employeeId, legacySaldoSnapshotPeriodBounds(2026, 4));
 
-    await recalculateSnapshots(app, employeeId, new Date("2026-04-20T00:00:00Z"));
+    const result = await recalculateSnapshots(app, employeeId, new Date("2026-04-20T00:00:00Z"));
 
     const legacyAfter = await app.prisma.saldoSnapshot.findUnique({ where: { id: legacy.id } });
-    expect(legacyAfter?.superseded).toBe(true);
+    expect(legacyAfter?.superseded).toBe(false);
+    expect(legacyAfter?.workedMinutes).toBe(STALE_WORKED);
+    expect(legacyAfter?.carryOver).toBe(legacy.carryOver);
+    expect(result.legacyMonthsSkipped.map((m) => m.snapshotId)).toEqual([legacy.id]);
     const previousAfter = await app.prisma.saldoSnapshot.findUnique({
       where: { id: previous.id },
     });
     expect(previousAfter?.superseded).toBe(false);
     expect(previousAfter?.workedMinutes).toBe(STALE_WORKED);
+  });
+
+  const april = () => saldoSnapshotPeriodBounds(new Date("2026-04-01T00:00:00Z"));
+  const LEGACY_WORKED = 7777;
+
+  async function expectDuplicateMonthCountedOnce(
+    employeeId: string,
+    monthRow: { id: string },
+    legacy: { id: string; carryOver: number },
+    nextRow: { id: string; balanceMinutes: number },
+  ) {
+    const monthAfter = await app.prisma.saldoSnapshot.findUnique({ where: { id: monthRow.id } });
+    expect(monthAfter?.superseded).toBe(true);
+    // The legacy duplicate is untouched: still active, stored figures unchanged.
+    const legacyAfter = await app.prisma.saldoSnapshot.findUnique({ where: { id: legacy.id } });
+    expect(legacyAfter?.superseded).toBe(false);
+    expect(legacyAfter?.workedMinutes).toBe(LEGACY_WORKED);
+    expect(legacyAfter?.carryOver).toBe(legacy.carryOver);
+    const active = await app.prisma.saldoSnapshot.findMany({
+      where: { employeeId, periodType: "MONTHLY", superseded: false, id: { not: legacy.id } },
+      orderBy: { periodStart: "asc" },
+    });
+    // Exactly one active row per month besides the untouched legacy duplicate.
+    expect(active).toHaveLength(2);
+    const [marchNew, nextNew] = active;
+    expect(marchNew.id).not.toBe(monthRow.id);
+    expect(nextNew.id).not.toBe(nextRow.id);
+    // The month balance enters the chain exactly once (a double count would add the legacy balance).
+    expect(nextNew!.carryOver).toBe(marchNew.carryOver + nextNew.balanceMinutes);
+  }
+
+  it("duplicate active pair in the START month: the TZ row is recomputed once, the legacy row untouched, the balance counted once", async () => {
+    const employeeId = await makeEmployee();
+    await addEntry(employeeId, "2026-03-02", false);
+    const marchRow = await addSnapshot(employeeId, march());
+    const legacy = await addSnapshot(
+      employeeId,
+      legacySaldoSnapshotPeriodBounds(2026, 3),
+      LEGACY_WORKED - 9000,
+      LEGACY_WORKED,
+    );
+    const aprilRow = await addSnapshot(employeeId, april(), 2 * (STALE_WORKED - 9000));
+
+    await recalculateSnapshots(app, employeeId, new Date("2026-03-16T00:00:00Z"));
+
+    await expectDuplicateMonthCountedOnce(employeeId, marchRow, legacy, aprilRow);
+  });
+
+  it("duplicate active pair in a LATER month: same guarantees when fromDate lies in an earlier month", async () => {
+    const employeeId = await makeEmployee();
+    await addEntry(employeeId, "2026-04-02", false);
+    const marchRow = await addSnapshot(employeeId, march());
+    const aprilRow = await addSnapshot(employeeId, april(), 2 * (STALE_WORKED - 9000));
+    const legacyApril = await addSnapshot(
+      employeeId,
+      legacySaldoSnapshotPeriodBounds(2026, 4),
+      LEGACY_WORKED - 9000,
+      LEGACY_WORKED,
+    );
+
+    await recalculateSnapshots(app, employeeId, new Date("2026-03-16T00:00:00Z"));
+
+    const marchAfter = await app.prisma.saldoSnapshot.findUnique({ where: { id: marchRow.id } });
+    expect(marchAfter?.superseded).toBe(true);
+    const aprilAfter = await app.prisma.saldoSnapshot.findUnique({ where: { id: aprilRow.id } });
+    expect(aprilAfter?.superseded).toBe(true);
+    const legacyAfter = await app.prisma.saldoSnapshot.findUnique({
+      where: { id: legacyApril.id },
+    });
+    expect(legacyAfter?.superseded).toBe(false);
+    expect(legacyAfter?.workedMinutes).toBe(LEGACY_WORKED);
+    const active = await app.prisma.saldoSnapshot.findMany({
+      where: { employeeId, periodType: "MONTHLY", superseded: false, id: { not: legacyApril.id } },
+      orderBy: { periodStart: "asc" },
+    });
+    expect(active).toHaveLength(2);
+    // April's carry-over = March's recomputed carry-over + April's own balance, once.
+    expect(active[1].carryOver).toBe(active[0].carryOver + active[1].balanceMinutes);
   });
 
   it("still skips and reports a locked start month", async () => {

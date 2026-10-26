@@ -100,6 +100,22 @@ export function snapshotMonthOf(
 }
 
 /**
+ * Is a stored MONTHLY row a legacy UTC-naive one (Issue #459, Issue #595)? True when its date is the
+ * 1st of its named month AND differs from the TZ-converted start of that month. Where the two
+ * conventions store the same value (zones at or behind UTC) nothing is legacy, same rule as the
+ * `LEGACY` kind of `scripts/audit-595-legacy-period-start.ts`. A legacy row is READ as closed with
+ * its stored figures and never rewritten.
+ */
+export function isLegacyPeriodStart(periodStart: Date, tz: string): boolean {
+  const named = snapshotMonthOf(periodStart, tz);
+  if (named === null) return false;
+  const stored = periodStart.toISOString().slice(0, 10);
+  const windowStart = monthRangeUtc(named.year, named.month, tz).start.toISOString().slice(0, 10);
+  const firstOfMonth = `${named.year}-${String(named.month).padStart(2, "0")}-01`;
+  return stored !== windowStart && stored === firstOfMonth;
+}
+
+/**
  * The calendar year of a YEARLY snapshot: the UTC year of its `periodStart`. YEARLY rows are
  * written as a plain UTC year boundary (`${year}-01-01T00:00:00Z`, close-year handler), never
  * through `monthRangeUtc`, so no zone conversion applies.
