@@ -1426,6 +1426,8 @@ export async function shiftRoutes(app: FastifyInstance) {
                 // back to the (possibly stale, for pre-Phase-61 rows) {day}Hours
                 // divisor. See debug session soll-ignores-workdays-on-legacy-schedules.md.
                 workDays: true,
+                // Issue #323: the SHIFT_BASED Ø-day divisor of avgWorkMinutesCore.
+                contractWorkDaysPerWeek: true,
                 mondayHours: true,
                 tuesdayHours: true,
                 wednesdayHours: true,
