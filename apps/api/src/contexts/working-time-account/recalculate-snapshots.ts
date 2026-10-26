@@ -21,6 +21,7 @@ import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
 import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
+import { periodStartWindow } from "./snapshot-period"; // Issue #595 — convention-robust month window
 import { isSnapshotLocked } from "./snapshot-lock"; // Phase 99 (OB-03/D-09) — immutability after lock
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -33,6 +34,18 @@ import {
   getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2; Issue #446 — effective leave
   loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
 } from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
+
+/**
+ * The calendar month a recalculation starts in (Issue #459). A callers' `fromDate` is either a
+ * calendar day stored as UTC midnight (`@db.Date` columns, the bulk-apply day) - read by its UTC
+ * parts, because converting midnight into a zone behind UTC would name the previous day - or a real
+ * instant (contract `validFrom`, hire date), read in the tenant zone.
+ */
+function recalcStartMonth(fromDate: Date, tz: string): { year: number; month: number } {
+  const isUtcMidnight = fromDate.getTime() % (24 * 60 * 60 * 1000) === 0;
+  const day = isUtcMidnight ? fromDate.toISOString().slice(0, 10) : dateStrInTz(fromDate, tz);
+  return { year: Number(day.slice(0, 4)), month: Number(day.slice(5, 7)) };
+}
 
 // Phase 99 (D-09) — a closed month that recalc skipped, reported so a caller can
 // surface it to a human instead of the change happening silently.
@@ -58,19 +71,6 @@ export async function recalculateSnapshots(
 ): Promise<RecalcResult> {
   const lockedMonthsSkipped: SkippedLockedMonth[] = [];
 
-  // Find all MONTHLY snapshots at or after fromDate
-  const snapshots = await app.prisma.saldoSnapshot.findMany({
-    where: {
-      employeeId,
-      periodType: "MONTHLY",
-      periodStart: { gte: fromDate },
-      superseded: false,
-    },
-    orderBy: { periodStart: "asc" },
-  });
-
-  if (snapshots.length === 0) return { lockedMonthsSkipped };
-
   const employee = await app.prisma.employee.findUnique({
     where: { id: employeeId },
     select: {
@@ -87,6 +87,30 @@ export async function recalculateSnapshots(
   if (employee.isTimeTrackingExempt) return { lockedMonthsSkipped };
 
   const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+
+  // Issue #459 - callers pass the date a change STARTS (mid-month), but a snapshot is keyed by its
+  // month start. Widen the lower bound to the start of the tenant-local month that contains
+  // `fromDate`, so the month the change begins in is recomputed too (it used to be skipped, leaving
+  // a closed-but-unlocked month stale). `monthRangeUtc().start` is the TZ-converted convention;
+  // the legacy UTC-naive row of the same month (1st of the month) lies inside the same
+  // `periodStartWindow()`, so `gte` catches both and never the previous month (its rows end at or
+  // before monthStart - 1 day). Locked months are still skipped in the loop below.
+  const startMonth = recalcStartMonth(fromDate, tz);
+  const startMonthStart = monthRangeUtc(startMonth.year, startMonth.month, tz).start;
+
+  // Find all MONTHLY snapshots from the start month on
+  const snapshots = await app.prisma.saldoSnapshot.findMany({
+    where: {
+      employeeId,
+      periodType: "MONTHLY",
+      periodStart: { gte: periodStartWindow(startMonthStart).gte },
+      superseded: false,
+    },
+    orderBy: { periodStart: "asc" },
+  });
+
+  if (snapshots.length === 0) return { lockedMonthsSkipped };
+
   const tenantConfig = await app.prisma.tenantConfig.findUnique({
     where: { tenantId: employee.tenantId },
   });
