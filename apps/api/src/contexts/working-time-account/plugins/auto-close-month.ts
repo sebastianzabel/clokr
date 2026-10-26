@@ -9,7 +9,12 @@ import {
   ACTIVE_TENANT_WHERE, // Phase 88 (D-05a) — deactivated tenants are skipped
 } from "../../platform";
 import { periodStartWindow } from "../snapshot-period";
-import { expectedCloseMonthsOfYear } from "../expected-close-months"; // Issue #753
+import {
+  expectedCloseMonthsOfYear,
+  assignYearMonthSnapshots,
+  resolveYearCarryOver,
+  exitedInYear,
+} from "../expected-close-months"; // Issue #753
 import {
   monthClosePopulationWhere,
   isInMonthClosePopulation,
@@ -741,25 +746,29 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 tz,
                 hireDate: emp.hireDate,
                 exitDate: emp.exitDate,
-              }).length;
-              if (expectedMonths < 1) continue;
-              if (monthSnapshots.length < expectedMonths) continue; // Not all expected months closed yet
+              });
+              if (expectedMonths.length < 1) continue;
+              // One snapshot per expected month (#595 rules, shared with the route): a duplicate
+              // pair counts once and cannot mask a month without a row.
+              const { assigned: yearMonthSnapshots, missing: missingYearMonths } =
+                assignYearMonthSnapshots(monthSnapshots, expectedMonths, prevYear, tz);
+              if (missingYearMonths.length > 0) continue; // Not all expected months closed yet
 
-              const yearWorked = monthSnapshots.reduce((s, m) => s + m.workedMinutes, 0);
-              const yearExpected = monthSnapshots.reduce((s, m) => s + m.expectedMinutes, 0);
-              const yearBalance = monthSnapshots.reduce((s, m) => s + m.balanceMinutes, 0);
-              const decSnapshot = monthSnapshots[monthSnapshots.length - 1];
-              const finalCarryOver = decSnapshot.carryOver;
+              const yearWorked = yearMonthSnapshots.reduce((s, m) => s + m.workedMinutes, 0);
+              const yearExpected = yearMonthSnapshots.reduce((s, m) => s + m.expectedMinutes, 0);
+              const yearBalance = yearMonthSnapshots.reduce((s, m) => s + m.balanceMinutes, 0);
+              const lastSnapshot = yearMonthSnapshots[yearMonthSnapshots.length - 1];
+              const finalCarryOver = lastSnapshot.carryOver;
 
-              // Apply carry-over rules
+              // Apply carry-over rules (not for a year of exit, owner decision 26.10.2026)
               const mode = tenant.config?.overtimeCarryOverMode ?? "FULL";
               const cap = tenant.config?.overtimeCarryOverCap;
-              let appliedCarryOver = finalCarryOver;
-              if (mode === "RESET") {
-                appliedCarryOver = 0;
-              } else if (mode === "CAPPED" && cap != null && finalCarryOver > cap) {
-                appliedCarryOver = cap;
-              }
+              const { appliedCarryOver, ruleApplied, exitKept } = resolveYearCarryOver({
+                finalCarryOver,
+                mode,
+                cap,
+                leftInYear: exitedInYear(emp.exitDate, prevYear, tz),
+              });
 
               // PERF-V1814-02: saldoSnapshot.create + overtimeAccount.upsert in ONE $transaction.
               // A crash between snapshot commit and balance upsert can no longer leave stale data
@@ -777,10 +786,11 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     carryOver: appliedCarryOver,
                     closedAt: new Date(),
                     closedBy: null,
-                    note:
-                      mode === "RESET"
+                    note: exitKept
+                      ? `Automatischer Jahresübertrag: Endsaldo des Austrittsmonats ${Math.round(appliedCarryOver / 60)}h (Austritt, Übertragsregel nicht angewendet)`
+                      : ruleApplied === "RESET"
                         ? "Automatischer Jahresübertrag: Reset auf 0"
-                        : mode === "CAPPED" && cap != null && finalCarryOver > cap
+                        : ruleApplied === "CAPPED" && cap != null
                           ? `Automatischer Jahresübertrag: gedeckelt auf ${Math.round(cap / 60)}h`
                           : `Automatischer Jahresübertrag: ${Math.round(appliedCarryOver / 60)}h`,
                   },
@@ -806,6 +816,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   mode,
                   originalCarryOver: finalCarryOver,
                   appliedCarryOver,
+                  exitKept,
                   auto: true,
                 },
               });

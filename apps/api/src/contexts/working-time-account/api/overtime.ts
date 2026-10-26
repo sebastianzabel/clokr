@@ -41,7 +41,14 @@ import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee
 import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — gap detector
 import { getDeferredMonthCloseState } from "../deferred-month-close"; // Phase 292 (#292)
 import { computeMonthSaldo } from "../month-saldo"; // §615 Team-Zeiten display fix
-import { expectedCloseMonthsOfYear } from "../expected-close-months"; // Issue #753
+import {
+  expectedCloseMonthsOfYear,
+  emptyCloseYearCause,
+  assignYearMonthSnapshots,
+  resolveYearCarryOver,
+  exitedInYear,
+  yearCloseReachDay,
+} from "../expected-close-months"; // Issue #753
 import { getCarryOverBase } from "../carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { recalculateSnapshots } from "../recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
 import { resolveNegativeBalanceTolerance } from "../negative-balance-tolerance"; // Phase 100 (OTC-01) — the one shared precedence chain
@@ -2037,7 +2044,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       const employee = await app.prisma.employee.findUnique({
         where: { id: employeeId },
-        select: { tenantId: true, exitDate: true },
+        select: { tenantId: true, exitDate: true, hireDate: true },
       });
       if (!employee || employee.tenantId !== req.user.tenantId) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
@@ -2050,7 +2057,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const yearEnd = new Date(`${year}-12-31T23:59:59Z`);
 
       // Phase 91b Plan 05 (Issue #91), D-10/D-14 — scope check. Stichtag = the period's own last
-      // day (yearEnd) — the year being closed.
+      // day (yearEnd) — the year being closed; for a person who left in that year the tenant-local
+      // exit day (#753, same idea as the #679 report reach day), because the Stammsalon assignment
+      // ends with the exit.
       {
         const access = accessContextFromRequest(req);
         const scopeReach = await resolveAccessReach(
@@ -2064,7 +2073,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             req.user.tenantId,
             scopeReach,
             employeeId,
-            yearEnd,
+            yearCloseReachDay(employee.exitDate, year, tz, yearEnd),
           ))
         ) {
           await app.audit({
@@ -2126,38 +2135,29 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // isPeriodStartInMonth covers both storage conventions found in production (TZ-converted
       // and naive) and is robust against the @db.Date truncation; no hand-rolled UTC-offset
       // arithmetic (CONTEXT D-03).
-      // Issue #753: the expected months come from the one function the auto-close cron shares - a
-      // leaver is expected only through the exit month. hireDate is passed as null on purpose: the
-      // manual route's mid-year-hire behaviour (January onward) stays unchanged.
-      const expectedMonths = expectedCloseMonthsOfYear({
+      // Issue #753: the expected months (hire month .. exit month) come from the one function the
+      // auto-close cron shares, and each gets its single snapshot from the one shared assignment.
+      const closeSpan = { year, tz, hireDate: employee.hireDate, exitDate: employee.exitDate };
+      const expectedMonths = expectedCloseMonthsOfYear(closeSpan);
+      if (expectedMonths.length === 0) {
+        return reply.code(400).send({
+          error:
+            emptyCloseYearCause(closeSpan) === "HIRED_LATER"
+              ? "Für dieses Jahr gibt es keine Monate zum Abschließen, weil die Person erst nach diesem Jahr eingestellt wurde."
+              : "Für dieses Jahr gibt es keine Monate zum Abschließen, weil die Person vor diesem Jahr ausgetreten ist.",
+        });
+      }
+      const { assigned: yearMonthSnapshots, missing } = assignYearMonthSnapshots(
+        monthSnapshots,
+        expectedMonths,
         year,
         tz,
-        hireDate: null,
-        exitDate: employee.exitDate,
-      });
-      if (expectedMonths.length === 0) {
-        return reply
-          .code(400)
-          .send({ error: "Für dieses Jahr gibt es keine Monate zum Abschließen" });
-      }
-      const monthsOfYear = expectedMonths.map((month) => ({
-        month,
-        snapshot:
-          monthSnapshots.find((s) =>
-            isPeriodStartInMonth(s.periodStart, monthRangeUtc(year, month, tz).start),
-          ) ?? null,
-      }));
-      const missing = monthsOfYear.filter((m) => m.snapshot === null).map((m) => m.month);
+      );
       if (missing.length > 0) {
         return reply.code(400).send({
           error: `Nicht alle Monate abgeschlossen. Fehlend: ${missing.join(", ")}`,
         });
       }
-      // Exactly the expected month-assigned snapshots — NOT the raw query result, which may also
-      // contain a following year's already-closed January (its periodStart passes the same
-      // naive-or-TZ-aware range filter; Issue #242 Test 4).
-      const yearMonthSnapshots = monthsOfYear.map((m) => m.snapshot!);
-
       // Calculate yearly totals from monthly snapshots
       const yearWorked = yearMonthSnapshots.reduce((s, m) => s + m.workedMinutes, 0);
       const yearExpected = yearMonthSnapshots.reduce((s, m) => s + m.expectedMinutes, 0);
@@ -2186,13 +2186,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const mode = tenantConfig?.overtimeCarryOverMode ?? "FULL";
       const cap = tenantConfig?.overtimeCarryOverCap;
 
-      let appliedCarryOver = finalCarryOver;
-      if (mode === "RESET") {
-        appliedCarryOver = 0;
-      } else if (mode === "CAPPED" && cap != null && finalCarryOver > cap) {
-        appliedCarryOver = cap;
-      }
-      // FULL: keep everything
+      // Not for a year of exit (owner decision 26.10.2026, #753): the exit month's carry stays.
+      const { appliedCarryOver, ruleApplied, exitKept } = resolveYearCarryOver({
+        finalCarryOver,
+        mode,
+        cap,
+        leftInYear: exitedInYear(employee.exitDate, year, tz),
+      });
 
       // PERF-V1814-02: saldoSnapshot.create + overtimeAccount.upsert in ONE $transaction.
       // A crash between the snapshot commit and the balance upsert can no longer leave
@@ -2210,10 +2210,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
             carryOver: appliedCarryOver,
             closedAt: new Date(),
             closedBy: req.user.sub,
-            note:
-              mode === "RESET"
+            note: exitKept
+              ? `Jahresübertrag: Endsaldo des Austrittsmonats ${Math.round(appliedCarryOver / 60)}h (Austritt, Übertragsregel nicht angewendet)`
+              : ruleApplied === "RESET"
                 ? "Jahresübertrag: Reset auf 0"
-                : mode === "CAPPED" && cap != null && finalCarryOver > cap
+                : ruleApplied === "CAPPED" && cap != null
                   ? `Jahresübertrag: gedeckelt auf ${Math.round(cap / 60)}h (${Math.round(finalCarryOver / 60)}h verfallen)`
                   : `Jahresübertrag: ${Math.round(appliedCarryOver / 60)}h`,
           },
@@ -2233,7 +2234,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         action: "CREATE",
         entity: "SaldoSnapshot",
         entityId: snapshot.id,
-        newValue: { ...snapshot, mode, originalCarryOver: finalCarryOver },
+        newValue: { ...snapshot, mode, originalCarryOver: finalCarryOver, exitKept },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
