@@ -988,7 +988,9 @@
     onCancel={cancelCreateCollision}
   >
     {#snippet body()}
-      <CollisionWarnBody summary={collisionSummary} variant="range" />
+      {#if collisionSummary}
+        <CollisionWarnBody summary={collisionSummary} variant="range" />
+      {/if}
     {/snippet}
   </ConfirmDialog>
 {/if}

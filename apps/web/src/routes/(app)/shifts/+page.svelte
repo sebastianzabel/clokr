@@ -153,7 +153,7 @@
 
   // ── State ──────────────────────────────────────────────────────────────────
   let cursorMonday = $state(mondayOfWeek(new Date()));
-  let week: WeekData | null = $state(null);
+  let week = $state<WeekData | null>(null);
   let templates: Template[] = $state([]);
   let loading = $state(true);
   let error = $state("");
@@ -847,13 +847,9 @@
     const cellAvailability = availabilityByEmpDate.get(key);
     if (cellAvailability === "vocational_school") {
       restoreTemplatesStrip();
-      // Phase 65 follow-up: BS dropped onto an existing BS cell — already exists,
-      // surface the same 409 message we'd get from the server.
-      if (item.kind === "vocational_school") {
-        toasts.error("Berufsschultag existiert bereits für diesen Tag");
-      } else {
-        toasts.error("Berufsschultag — Schichten können nicht eingeplant werden");
-      }
+      // A drag item is only ever a template chip or a shift pill (the BS chip left the strip in
+      // v1.7.4), so a drop onto a BS cell always gets this message.
+      toasts.error("Berufsschultag — Schichten können nicht eingeplant werden");
       return;
     }
 

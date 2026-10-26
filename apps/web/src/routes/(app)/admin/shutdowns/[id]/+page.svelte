@@ -241,13 +241,14 @@
 {:else if loadError || !shutdown}
   <div class="page-error">{loadError || "Betriebsurlaub nicht gefunden."}</div>
 {:else}
+  {@const shownShutdown = shutdown}
+  <!-- A snippet body loses the `!shutdown` narrowing of the branch above, so it reads this const. -->
   <ListDetail
     eyebrow="Personal"
     title={shutdown.name}
     sub="Betriebsurlaub bearbeiten"
     view="detail"
     crumbs={[{ label: "Betriebsurlaub", href: "/admin/shutdowns" }, { label: shutdown.name }]}
-    animate
   >
     {#snippet tabContent(_tab)}
       <!-- ── Zeitraum & Einstellungen ──────────────────────────────────────── -->
@@ -282,10 +283,12 @@
         <div class="form-group">
           <div class="meta-row">
             <span class="badge badge-neutral">
-              {calcDays(formStart || shutdown.startDate, formEnd || shutdown.endDate)} Tage
+              {calcDays(formStart || shownShutdown.startDate, formEnd || shownShutdown.endDate)} Tage
             </span>
             <span class="meta-dates">
-              {fmtDate(formStart || shutdown.startDate)} – {fmtDate(formEnd || shutdown.endDate)}
+              {fmtDate(formStart || shownShutdown.startDate)} – {fmtDate(
+                formEnd || shownShutdown.endDate,
+              )}
             </span>
           </div>
         </div>
@@ -324,7 +327,7 @@
           >
         {/snippet}
 
-        {#if shutdown.exceptions.length === 0}
+        {#if shownShutdown.exceptions.length === 0}
           <p class="text-muted">Noch keine Ausnahmen angelegt.</p>
         {:else}
           <div class="table-responsive">
@@ -338,7 +341,7 @@
                 </tr>
               </thead>
               <tbody>
-                {#each shutdown.exceptions as ex (ex.id)}
+                {#each shownShutdown.exceptions as ex (ex.id)}
                   <tr>
                     <td>{ex.employee.firstName} {ex.employee.lastName}</td>
                     <td class="text-muted">{ex.employee.employeeNumber}</td>
@@ -371,7 +374,7 @@
           <ConfirmDialog
             bind:open={deleteConfirmOpen}
             title="Betriebsurlaub löschen?"
-            description={`„${shutdown.name}" wird entfernt. Diese Aktion kann nicht rückgängig gemacht werden.`}
+            description={`„${shownShutdown.name}" wird entfernt. Diese Aktion kann nicht rückgängig gemacht werden.`}
             confirmLabel="Löschen"
             danger
             onConfirm={confirmDelete}

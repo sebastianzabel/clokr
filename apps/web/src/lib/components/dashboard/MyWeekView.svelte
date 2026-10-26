@@ -70,7 +70,7 @@
   }
 
   let cursorMonday = $state(mondayOfWeek(new Date()));
-  let data: MyWeekResponse | null = $state(null);
+  let data = $state<MyWeekResponse | null>(null);
   let loading = $state(true);
   let error = $state("");
 
