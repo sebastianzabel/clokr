@@ -17,6 +17,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { saldoSnapshotPeriodBounds } from "./test-dates";
 import { recalculateSnapshots } from "../contexts/working-time-account/recalculate-snapshots";
 
 describe("recalculateSnapshots — atomic supersede+create (CR-01)", () => {
@@ -25,8 +26,11 @@ describe("recalculateSnapshots — atomic supersede+create (CR-01)", () => {
   let seedSnapshotId: string;
 
   // Use a historical period well outside any other test's date range.
-  const PERIOD_START = new Date("2023-06-01T00:00:00.000Z");
-  const PERIOD_END = new Date("2023-06-30T23:59:59.999Z");
+  // TZ-converted storage convention (what the API closer writes). A legacy UTC-naive row is never
+  // superseded by recalculateSnapshots (Issue #459 / #595), so it cannot exercise this path.
+  const { start: PERIOD_START, end: PERIOD_END } = saldoSnapshotPeriodBounds(
+    new Date("2023-06-01T00:00:00.000Z"),
+  );
 
   beforeAll(async () => {
     app = await getTestApp();

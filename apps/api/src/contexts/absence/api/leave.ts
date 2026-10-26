@@ -1470,7 +1470,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         // counted while CANCELLATION_REQUESTED and counts again as APPROVED), but heals
         // snapshots written under the old APPROVED-only rule. Locked months are skipped by
         // recalculateSnapshots itself (Phase 99, D-09); like every other caller, the
-        // recalculation starts at the first snapshot whose periodStart >= startDate.
+        // recalculation starts with the snapshot of the month containing startDate (Issue #459).
         if (body.status !== "APPROVED") {
           await recalculateSnapshots(app, existing.employeeId, existing.startDate).catch((err) =>
             app.log.error(

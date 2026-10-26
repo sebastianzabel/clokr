@@ -21,6 +21,13 @@ import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
 import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
+import {
+  isLegacyPeriodStart,
+  monthlySnapshotOrder,
+  periodStartWindow,
+  selectMonthlySnapshotPerMonth,
+  snapshotMonthOf,
+} from "./snapshot-period"; // Issue #595 — one row per month, legacy detection
 import { isSnapshotLocked } from "./snapshot-lock"; // Phase 99 (OB-03/D-09) — immutability after lock
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -34,10 +41,26 @@ import {
   loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
 } from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
 
+/**
+ * The calendar month a recalculation starts in (Issue #459). A callers' `fromDate` is either a
+ * calendar day stored as UTC midnight (`@db.Date` columns, the bulk-apply day) - read by its UTC
+ * parts, because converting midnight into a zone behind UTC would name the previous day - or a real
+ * instant (contract `validFrom`, hire date), read in the tenant zone.
+ */
+function recalcStartMonth(fromDate: Date, tz: string): { year: number; month: number } {
+  const isUtcMidnight = fromDate.getTime() % (24 * 60 * 60 * 1000) === 0;
+  const day = isUtcMidnight ? fromDate.toISOString().slice(0, 10) : dateStrInTz(fromDate, tz);
+  return { year: Number(day.slice(0, 4)), month: Number(day.slice(5, 7)) };
+}
+
 // Phase 99 (D-09) — a closed month that recalc skipped, reported so a caller can
 // surface it to a human instead of the change happening silently.
 export type SkippedLockedMonth = { snapshotId: string; periodStart: Date; periodEnd: Date };
-export type RecalcResult = { lockedMonthsSkipped: SkippedLockedMonth[] };
+export type RecalcResult = {
+  lockedMonthsSkipped: SkippedLockedMonth[];
+  /** Legacy UTC-naive months kept untouched (Issue #459 / #595: never rewritten, read as closed). */
+  legacyMonthsSkipped: SkippedLockedMonth[];
+};
 
 /**
  * Recalculate all MONTHLY SaldoSnapshots for an employee starting from `fromDate`.
@@ -57,19 +80,7 @@ export async function recalculateSnapshots(
   fromDate: Date,
 ): Promise<RecalcResult> {
   const lockedMonthsSkipped: SkippedLockedMonth[] = [];
-
-  // Find all MONTHLY snapshots at or after fromDate
-  const snapshots = await app.prisma.saldoSnapshot.findMany({
-    where: {
-      employeeId,
-      periodType: "MONTHLY",
-      periodStart: { gte: fromDate },
-      superseded: false,
-    },
-    orderBy: { periodStart: "asc" },
-  });
-
-  if (snapshots.length === 0) return { lockedMonthsSkipped };
+  const legacyMonthsSkipped: SkippedLockedMonth[] = [];
 
   const employee = await app.prisma.employee.findUnique({
     where: { id: employeeId },
@@ -82,17 +93,48 @@ export async function recalculateSnapshots(
       breakOver9hOverride: true,
     },
   });
-  if (!employee) return { lockedMonthsSkipped };
+  if (!employee) return { lockedMonthsSkipped, legacyMonthsSkipped };
   // Phase 76.7 (D-06) — exempt employees never get snapshot recalcs.
-  if (employee.isTimeTrackingExempt) return { lockedMonthsSkipped };
+  if (employee.isTimeTrackingExempt) return { lockedMonthsSkipped, legacyMonthsSkipped };
 
   const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+
+  // Issue #459 - callers pass the date a change STARTS (mid-month), but a snapshot is keyed by its
+  // month start. Widen the lower bound to the start of the tenant-local month that contains
+  // `fromDate`, so the month the change begins in is recomputed too (it used to be skipped, leaving
+  // a closed-but-unlocked month stale). `monthRangeUtc().start` is the TZ-converted convention;
+  // the legacy UTC-naive row of the same month (1st of the month) lies inside the same
+  // `periodStartWindow()` and is fetched too, and never the previous month (its rows end at or
+  // before monthStart - 1 day). Because a duplicate active pair (TZ-converted + legacy) of one month
+  // exists on production, the fetched rows are reduced to ONE row per month below.
+  const startMonth = recalcStartMonth(fromDate, tz);
+  const startMonthStart = monthRangeUtc(startMonth.year, startMonth.month, tz).start;
+
+  // Find all MONTHLY snapshots from the start month on
+  const fetched = await app.prisma.saldoSnapshot.findMany({
+    where: {
+      employeeId,
+      periodType: "MONTHLY",
+      periodStart: { gte: startMonthStart },
+      superseded: false,
+    },
+    orderBy: { periodStart: "asc" },
+  });
+  // Issue #459 / #595: each month takes part in the carry chain exactly once - the row the account
+  // reads (first of `monthlySnapshotOrder()`). A losing duplicate is neither recomputed nor chained.
+  const snapshots = selectMonthlySnapshotPerMonth(fetched, tz);
+
+  if (snapshots.length === 0) return { lockedMonthsSkipped, legacyMonthsSkipped };
+
   const tenantConfig = await app.prisma.tenantConfig.findUnique({
     where: { tenantId: employee.tenantId },
   });
 
   // Get the carry-over from the snapshot immediately before the first affected one
-  const prevSnapshot = await app.prisma.saldoSnapshot.findFirst({
+  // Issue #459 / #595: the predecessor is the ONE row of the previous month the account reads
+  // (first of `monthlySnapshotOrder()`), not simply the row with the latest periodStart - that would
+  // pick the legacy row of a duplicate pair.
+  const prevCandidate = await app.prisma.saldoSnapshot.findFirst({
     where: {
       employeeId,
       periodType: "MONTHLY",
@@ -101,6 +143,20 @@ export async function recalculateSnapshots(
     },
     orderBy: { periodStart: "desc" },
   });
+  let prevSnapshot = prevCandidate;
+  const prevMonth = prevCandidate ? snapshotMonthOf(prevCandidate.periodStart, tz) : null;
+  if (prevCandidate && prevMonth) {
+    const prevRows = await app.prisma.saldoSnapshot.findMany({
+      where: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: periodStartWindow(monthRangeUtc(prevMonth.year, prevMonth.month, tz).start),
+        superseded: false,
+      },
+      orderBy: monthlySnapshotOrder(),
+    });
+    prevSnapshot = prevRows[0] ?? prevCandidate;
+  }
   // Phase 99 (OB-02) — chain-head seed. getCarryOverBase() resolves
   // prevSnapshot?.carryOver ?? openingBalance?.minutes ?? 0: the opening balance is
   // consulted ONLY when there is no predecessor at all (a true chain head). Computed
@@ -230,6 +286,26 @@ export async function recalculateSnapshots(
     // zero-activity bridges; injectedDelta preservation below handles the DIFFERENT
     // case of a real-activity row with an injected correction on top.
     if (isBridgeSnapshot(snapshot)) {
+      runningCarryOver = snapshot.carryOver;
+      continue;
+    }
+
+    // Issue #459 / #595 - a legacy UTC-naive row is READ as closed with its stored figures, never
+    // superseded or rewritten: skipped and reported like a locked month, no audit entry (nothing
+    // changed). Its stored carryOver threads forward unchanged.
+    if (isLegacyPeriodStart(snapshot.periodStart, tz)) {
+      legacyMonthsSkipped.push({
+        snapshotId: snapshot.id,
+        periodStart: snapshot.periodStart,
+        periodEnd: snapshot.periodEnd,
+      });
+      app.log.info(
+        {
+          employeeId: employeeId.slice(0, 8),
+          periodStart: snapshot.periodStart.toISOString().slice(0, 10),
+        },
+        "[recalculateSnapshots] skipped a legacy UTC-naive month (never rewritten, Issue #595)",
+      );
       runningCarryOver = snapshot.carryOver;
       continue;
     }
@@ -571,5 +647,5 @@ export async function recalculateSnapshots(
     update: { balanceHours: runningCarryOver / 60 },
   });
 
-  return { lockedMonthsSkipped };
+  return { lockedMonthsSkipped, legacyMonthsSkipped };
 }
