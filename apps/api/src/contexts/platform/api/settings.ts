@@ -56,7 +56,8 @@ import {
 } from "../../absence"; // issue #246, E-6
 import { validateUsualWorkDays } from "../usual-work-days"; // Phase 436 (D-02)
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter"; // Issue #569
-import { requestAuditFields } from "../request-audit-fields"; // Issue #450 (D-08) — attributes the recompute's audit to the acting user
+import { requestAuditFields } from "../request-audit-fields";
+import { changedFieldsAudit } from "../../../utils/audit-diff"; // Issue #450 (D-08) — attributes the recompute's audit to the acting user
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
@@ -834,9 +835,15 @@ export async function settingsRoutes(app: FastifyInstance) {
       // Phase 64 (D-11): Snapshot pre-change break-default values so the
       // dedicated BREAK_DEFAULT_CHANGED audit row below carries a stable
       // before-image even if the upsert later mutates the row in place.
+      // Issue #285: the full pre-change row (retired columns omitted) is the before-image of the
+      // generic UPDATE audit row below, not just the two break defaults.
       const previousConfig = await app.prisma.tenantConfig.findUnique({
         where: { tenantId },
-        select: { defaultBreakOver6h: true, defaultBreakOver9h: true },
+        omit: RETIRED_TENANT_CONFIG_COLUMNS,
+      });
+      const previousTenant = await app.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { federalState: true, name: true },
       });
 
       // federalState and tenantName belong to Tenant, not to TenantConfig (D-17: renaming the
@@ -1085,17 +1092,25 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
 
       // The selection and fingerprint live in the BULK_APPLY row only (D-06); this row keeps the
-      // saved values and the count of written rows.
-      const auditBody: Record<string, unknown> = { ...body };
-      delete auditBody.applyEmployeeIds;
-      delete auditBody.previewFingerprint;
-      delete auditBody.effectiveFrom;
+      // CHANGED config fields with their before and after value (Issue #285) and the count of
+      // written rows. The writable set is the key set of what the upsert wrote - no field list.
+      const written: Record<string, unknown> = { ...configData };
+      if (tenantUpdate.federalState !== undefined) written.federalState = tenantUpdate.federalState;
+      if (tenantUpdate.name !== undefined) written.tenantName = tenantUpdate.name;
+      const stored: Record<string, unknown> = {
+        ...(previousConfig ?? {}),
+        federalState: previousTenant?.federalState,
+        tenantName: previousTenant?.name,
+      };
+      const diff = changedFieldsAudit(previousConfig || previousTenant ? stored : null, written);
       await app.audit({
         userId: req.user.sub,
         action: "UPDATE",
         entity: "TenantConfig",
         entityId: config.id,
-        newValue: { ...auditBody, appliedCount },
+        oldValue: diff.oldValue,
+        newValue: { ...diff.newValue, appliedCount },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       // Phase 64 (D-11): Dedicated audit row for break-default changes — emitted
@@ -1896,25 +1911,34 @@ export async function settingsRoutes(app: FastifyInstance) {
         create: { tenantId, ...updateData },
       });
 
+      // Issue #286: changed fields only, before and after. The password is stored encrypted and
+      // is a secret: it is masked on both sides and flagged, never written in clear text.
+      const diff = changedFieldsAudit(
+        oldConfig
+          ? {
+              ...oldConfig,
+              // Compared as presence, not as ciphertext: a fresh encrypt() differs on every call.
+              smtpPassword: undefined,
+            }
+          : null,
+        {
+          smtpHost: body.smtpHost,
+          smtpPort: body.smtpPort,
+          smtpUser: body.smtpUser,
+          smtpFromEmail: body.smtpFromEmail,
+          smtpFromName: body.smtpFromName,
+          smtpSecure: body.smtpSecure,
+          ...(body.smtpPassword ? { smtpPassword: "changed" } : {}),
+        },
+        { maskedKeys: ["smtpPassword"] },
+      );
       await app.audit({
         userId: req.user.sub,
         action: "UPDATE",
         entity: "TenantConfig",
         entityId: tenantId,
-        oldValue: oldConfig
-          ? {
-              smtpHost: oldConfig.smtpHost,
-              smtpPort: oldConfig.smtpPort,
-              smtpUser: oldConfig.smtpUser,
-              smtpFromEmail: oldConfig.smtpFromEmail,
-            }
-          : null,
-        newValue: {
-          smtpHost: body.smtpHost,
-          smtpPort: body.smtpPort,
-          smtpUser: body.smtpUser,
-          smtpFromEmail: body.smtpFromEmail,
-        },
+        oldValue: oldConfig ? diff.oldValue : null,
+        newValue: diff.newValue,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
