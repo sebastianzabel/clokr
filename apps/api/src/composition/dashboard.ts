@@ -248,6 +248,7 @@ function presenceLeaveOf(leave: CalendarLeaveRow | undefined): PresenceLeave | n
     ? {
         status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED" | "PENDING",
         leaveTypeName: leave.leaveType.name,
+        halfDay: leave.halfDay,
       }
     : null;
 }
