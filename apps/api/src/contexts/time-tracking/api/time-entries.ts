@@ -125,10 +125,10 @@ export type { OvertimeBalanceBreakdown };
 async function autoInsertBreak(
   app: FastifyInstance,
   params: { entryId: string; plan: AutoBreakPlan },
-): Promise<number> {
+): Promise<{ minutes: number; breaks: StoredBreak[] }> {
   const { entryId, plan } = params;
-  await app.prisma.$transaction([
-    app.prisma.break.createMany({
+  const [breaks] = await app.prisma.$transaction([
+    app.prisma.break.createManyAndReturn({
       data: plan.segments.map((s) => ({
         timeEntryId: entryId,
         startTime: s.startTime,
@@ -141,7 +141,44 @@ async function autoInsertBreak(
       data: { breakMinutes: plan.amountMin, breakStatus: "AUTO" },
     }),
   ]);
-  return plan.amountMin;
+  return { minutes: plan.amountMin, breaks };
+}
+
+type StoredBreak = {
+  id: string;
+  timeEntryId: string;
+  startTime: Date;
+  endTime: Date;
+  createdAt: Date;
+};
+
+/**
+ * Issue #396: the response re-read AFTER a committed write. A failing read (a connection blip)
+ * must never turn a persisted write into a 500 - the client would retry a request that already
+ * took effect. On failure the problem is logged (warn) and the response is assembled from what
+ * the handler already holds.
+ */
+async function readAfterCommit<T>(
+  app: FastifyInstance,
+  context: { entryId: string; route: string },
+  read: () => Promise<T | null>,
+  fallback: () => Promise<T> | T,
+): Promise<T> {
+  try {
+    const row = await read();
+    if (row) return row;
+  } catch (err) {
+    app.log.warn(
+      { err, timeEntryId: context.entryId, route: context.route },
+      "post-commit re-fetch failed; answering from the written entry",
+    );
+    return await fallback();
+  }
+  app.log.warn(
+    { timeEntryId: context.entryId, route: context.route },
+    "post-commit re-fetch found no row; answering from the written entry",
+  );
+  return await fallback();
 }
 
 const nfcPunchSchema = z.object({
@@ -940,6 +977,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           })
         : null;
 
+      let clockOutAutoBreaks: StoredBreak[] = [];
+      let clockOutAutoMinutes = 0;
       // D-01 Pitfall 1 guard: skip auto-break when Break records already exist on this entry.
       // A reopened entry carries a gap Break — auto-break must not overwrite its breakMinutes.
       const existingBreakCount = await app.prisma.break.count({
@@ -959,7 +998,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             entryDate: closedEntry.date,
             tz,
           });
-          if (plan) await autoInsertBreak(app, { entryId: closedEntryId, plan });
+          if (plan) {
+            const inserted = await autoInsertBreak(app, { entryId: closedEntryId, plan });
+            clockOutAutoBreaks = inserted.breaks;
+            clockOutAutoMinutes = inserted.minutes;
+          }
         }
       }
 
@@ -985,11 +1028,39 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         );
       }
 
-      // Re-fetch with breaks for response (auto-break may have added one).
-      const entryWithBreaks = await app.prisma.timeEntry.findUnique({
-        where: { id: closedEntryId },
-        include: { breaks: { orderBy: { startTime: "asc" } } },
-      });
+      // Re-fetch with breaks for response (auto-break may have added one). Issue #396: the write is
+      // committed here, so a failing read answers from the resolver's entry, never with a 500.
+      const entryWithBreaks = await readAfterCommit(
+        app,
+        { entryId: closedEntryId, route: "clock-out" },
+        () =>
+          app.prisma.timeEntry.findUnique({
+            where: { id: closedEntryId },
+            include: { breaks: { orderBy: { startTime: "asc" } } },
+          }),
+        async () => {
+          let breaks: StoredBreak[] = clockOutAutoBreaks;
+          if (breaks.length === 0) {
+            // Best effort: a reopened entry carries break rows of its own.
+            try {
+              breaks = await app.prisma.break.findMany({
+                where: { timeEntryId: closedEntryId },
+                orderBy: { startTime: "asc" },
+              });
+            } catch {
+              breaks = [];
+            }
+          }
+          return {
+            ...resolution.entry,
+            ...(body.note !== undefined ? { note: body.note } : {}),
+            ...(clockOutAutoBreaks.length > 0
+              ? { breakMinutes: clockOutAutoMinutes, breakStatus: "AUTO" as const }
+              : {}),
+            breaks,
+          } as never;
+        },
+      );
 
       return reply
         .code(200)
@@ -1999,8 +2070,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       // Create break slot records
+      let createdBreaks: StoredBreak[] = [];
       if (breakSlots.length > 0) {
-        await app.prisma.break.createMany({
+        createdBreaks = await app.prisma.break.createManyAndReturn({
           data: breakSlots.map((b) => ({
             timeEntryId: entry.id,
             startTime: b.startTime,
@@ -2013,8 +2085,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           entryId: entry.id,
           plan: autoBreakPlanOnCreate,
         });
+        createdBreaks = written.breaks;
         // Update entry object for response
-        entry.breakMinutes = written;
+        entry.breakMinutes = written.minutes;
         entry.breakStatus = "AUTO";
       }
 
@@ -2044,15 +2117,32 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         });
       }
 
-      // Re-fetch entry with breaks for response
-      const entryWithBreaks = await app.prisma.timeEntry.findUnique({
-        where: { id: entry.id },
-        include: {
-          breaks: { orderBy: { startTime: "asc" } },
-          // Issue #81 (D-06): the response and the CREATE audit carry the allocation.
-          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
-        },
-      });
+      // Re-fetch entry with breaks for response. Issue #396: the entry is committed, so a failing
+      // read answers from the created entry + its breaks (same shape), never with a 500 - a retry
+      // would meet the overlap 409 and the client would think the write failed.
+      const entryWithBreaks = await readAfterCommit(
+        app,
+        { entryId: entry.id, route: "create" },
+        () =>
+          app.prisma.timeEntry.findUnique({
+            where: { id: entry.id },
+            include: {
+              breaks: { orderBy: { startTime: "asc" } },
+              // Issue #81 (D-06): the response and the CREATE audit carry the allocation.
+              activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+            },
+          }),
+        () =>
+          ({
+            ...entry,
+            breaks: [...createdBreaks].sort(
+              (x, y) => x.startTime.getTime() - y.startTime.getTime(),
+            ),
+            activityShares: (body.activityShares ?? [])
+              .map(({ kind, minutes }) => ({ kind, minutes }))
+              .sort((x, y) => (x.kind < y.kind ? -1 : x.kind > y.kind ? 1 : 0)),
+          }) as never,
+      );
 
       await app.audit({
         userId: user.sub,
