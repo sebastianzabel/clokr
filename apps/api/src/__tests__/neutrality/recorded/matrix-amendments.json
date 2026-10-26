@@ -12395,6 +12395,114 @@
           "tenant.leaveType.VACATION"
         ]
       }
+    },
+    {
+      "date": "2026-10-25",
+      "from": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant"
+        ]
+      },
+      "issue": 668,
+      "key": "ADMIN | GET /api/v1/overtime/close-month/deferred | none",
+      "reason": "Issue #668: Der verzögerte Monatsabschluss (GET /overtime/close-month/deferred) wählt seine Personen nach Beschäftigung statt nach Login. Der anonymisierte Fixtur-Mitarbeitende mit Austritt 2023 und ohne Monatsabschluss (tenant.hardDeleteTarget.employee) steht damit in der Liste der offenen Monate bis zum Austritt (Lohnkonto, § 41 EStG). Die Änderung ist nicht rollenspezifisch: alle vier Akteure mit Zugriff erhalten dieselbe zusätzliche ID; Status, Route und Permission-Check sind unverändert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant.hardDeleteTarget.employee"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "from": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant"
+        ]
+      },
+      "issue": 668,
+      "key": "APIKEY_ADMIN | GET /api/v1/overtime/close-month/deferred | none",
+      "reason": "Issue #668: Der verzögerte Monatsabschluss (GET /overtime/close-month/deferred) wählt seine Personen nach Beschäftigung statt nach Login. Der anonymisierte Fixtur-Mitarbeitende mit Austritt 2023 und ohne Monatsabschluss (tenant.hardDeleteTarget.employee) steht damit in der Liste der offenen Monate bis zum Austritt (Lohnkonto, § 41 EStG). Die Änderung ist nicht rollenspezifisch: alle vier Akteure mit Zugriff erhalten dieselbe zusätzliche ID; Status, Route und Permission-Check sind unverändert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant.hardDeleteTarget.employee"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "from": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant"
+        ]
+      },
+      "issue": 668,
+      "key": "APIKEY_PLAIN | GET /api/v1/overtime/close-month/deferred | none",
+      "reason": "Issue #668: Der verzögerte Monatsabschluss (GET /overtime/close-month/deferred) wählt seine Personen nach Beschäftigung statt nach Login. Der anonymisierte Fixtur-Mitarbeitende mit Austritt 2023 und ohne Monatsabschluss (tenant.hardDeleteTarget.employee) steht damit in der Liste der offenen Monate bis zum Austritt (Lohnkonto, § 41 EStG). Die Änderung ist nicht rollenspezifisch: alle vier Akteure mit Zugriff erhalten dieselbe zusätzliche ID; Status, Route und Permission-Check sind unverändert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant.hardDeleteTarget.employee"
+        ]
+      }
+    },
+    {
+      "date": "2026-10-25",
+      "from": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant"
+        ]
+      },
+      "issue": 668,
+      "key": "MANAGER | GET /api/v1/overtime/close-month/deferred | none",
+      "reason": "Issue #668: Der verzögerte Monatsabschluss (GET /overtime/close-month/deferred) wählt seine Personen nach Beschäftigung statt nach Login. Der anonymisierte Fixtur-Mitarbeitende mit Austritt 2023 und ohne Monatsabschluss (tenant.hardDeleteTarget.employee) steht damit in der Liste der offenen Monate bis zum Austritt (Lohnkonto, § 41 EStG). Die Änderung ist nicht rollenspezifisch: alle vier Akteure mit Zugriff erhalten dieselbe zusätzliche ID; Status, Route und Permission-Check sind unverändert.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "anchor.admin.employee",
+          "foreign.employee",
+          "holder.employee",
+          "own.employee",
+          "tenant",
+          "tenant.hardDeleteTarget.employee"
+        ]
+      }
     }
   ]
 }

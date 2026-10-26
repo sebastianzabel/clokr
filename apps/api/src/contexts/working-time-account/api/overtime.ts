@@ -1,12 +1,11 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
+import { permissionReach, requirePermission } from "../../platform";
 import {
-  permissionReach,
-  requirePermission,
-  reportPopulationWhere, // Issue #613 — the one period population rule
-  isEmployedInPeriod, // Issue #613 — its in-memory twin
-} from "../../platform";
+  monthClosePopulationWhere, // Issue #668 — the month-close population (cron, deferred, status)
+  isInMonthClosePopulation, // Issue #668 — its in-memory twin
+} from "../month-close-population";
 import {
   updateOvertimeAccount,
   computeOvertimeBalanceBreakdown,
@@ -666,15 +665,16 @@ export async function overtimeRoutes(app: FastifyInstance) {
             );
 
       // PERF-V1814-01: Get employees with tenant JOIN (folds tenant.findUnique, no extra query)
-      // Issue #613: the month's population is the one period rule (employed in the month, never
-      // anonymised); the login state (`user.isActive`) never decides it, so a person who left in
-      // this month is listed for it and a deactivated login without an exit date stays.
+      // Issue #613/#668: the month's population is the month-close rule (employed in the month; an
+      // anonymised person only with an exit date) - exactly the persons the cron and the deferred
+      // list can produce, so every month they report as overdue can be opened and closed here.
+      // The login state (`user.isActive`) never decides it.
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
           ...EXCLUDE_EXEMPT_EMPLOYEE_FILTER, // Phase 76.7 (D-07, SALDO-V19-04a)
           AND: [
-            reportPopulationWhere(monthStart, monthEnd),
+            monthClosePopulationWhere(monthStart, monthEnd),
             ...(statusScopedEmployeeIds !== "all" ? [{ id: { in: statusScopedEmployeeIds } }] : []),
           ],
         },
@@ -982,9 +982,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
               yearStatusStichtag,
             );
 
-      // Issue #613: the year's population is selected once by the one period rule over the whole
-      // year; each month then counts a person only while they are employed in it
-      // (`isEmployedInPeriod`, the in-memory twin of the same rule).
+      // Issue #613/#668: the year's population is selected once by the month-close rule over the
+      // whole year; each month then counts a person only while they are employed in it
+      // (`isInMonthClosePopulation`, the in-memory twin of the same rule).
       const { start: yearStart } = monthRangeUtc(year, 1, tz);
       const { end: yearEnd } = monthRangeUtc(year, 12, tz);
 
@@ -994,7 +994,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           tenantId,
           ...EXCLUDE_EXEMPT_EMPLOYEE_FILTER, // Phase 76.7 (D-07, SALDO-V19-04a)
           AND: [
-            reportPopulationWhere(yearStart, yearEnd),
+            monthClosePopulationWhere(yearStart, yearEnd),
             ...(yearStatusScopedEmployeeIds !== "all"
               ? [{ id: { in: yearStatusScopedEmployeeIds } }]
               : []),
@@ -1036,7 +1036,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // Issue #613: a person counts in the months of their employment only (hired by the month
         // end, not yet exited before the month start).
         const relevantEmployees = employees.filter((emp) =>
-          isEmployedInPeriod(emp, monthStart, monthEnd),
+          isInMonthClosePopulation(emp, monthStart, monthEnd),
         );
         const totalCount = relevantEmployees.length;
 
