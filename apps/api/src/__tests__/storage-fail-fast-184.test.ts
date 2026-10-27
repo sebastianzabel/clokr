@@ -1,6 +1,6 @@
 /**
  * Issue #184 — object store fail-fast.
- *  - config: production without MINIO_* stops the start; dev/test get the compose defaults
+ *  - config: production without MINIO_* fails config validation (the API refuses to start); dev/test get the compose defaults
  *  - unavailable store: upload answers 503 STORAGE_UNAVAILABLE (not a 500), /health reports it
  *    in the body while its status code stays DB-only (liveness)
  */
@@ -27,22 +27,19 @@ const base = {
 };
 
 describe("config: MINIO_* (Issue #184)", () => {
-  it("production without MINIO_* still parses, with no defaults and the missing names listed", () => {
+  it("production without MINIO_* refuses the start and names every missing variable", () => {
     const r = envSchema.safeParse({ ...base, NODE_ENV: "production" });
-    expect(r.success).toBe(true);
-    if (r.success) {
-      expect(r.data.MINIO_ENDPOINT).toBeUndefined();
-      expect(r.data.MINIO_ACCESS_KEY).toBeUndefined();
-      expect(r.data.MINIO_SECRET_KEY).toBeUndefined();
-      expect(r.data.MINIO_MISSING).toEqual([
-        "MINIO_ENDPOINT",
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      expect(Object.keys(r.error.flatten().fieldErrors).sort()).toEqual([
         "MINIO_ACCESS_KEY",
+        "MINIO_ENDPOINT",
         "MINIO_SECRET_KEY",
       ]);
     }
   });
 
-  it("production treats blank values as missing", () => {
+  it("production treats blank values as missing and names only those", () => {
     const r = envSchema.safeParse({
       ...base,
       NODE_ENV: "production",
@@ -50,8 +47,36 @@ describe("config: MINIO_* (Issue #184)", () => {
       MINIO_ACCESS_KEY: "  ",
       MINIO_SECRET_KEY: "s",
     });
-    expect(r.success).toBe(true);
-    if (r.success) expect(r.data.MINIO_MISSING).toEqual(["MINIO_ENDPOINT", "MINIO_ACCESS_KEY"]);
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      expect(Object.keys(r.error.flatten().fieldErrors).sort()).toEqual([
+        "MINIO_ACCESS_KEY",
+        "MINIO_ENDPOINT",
+      ]);
+    }
+  });
+
+  it("production reports the issues with the variable names in the message text", () => {
+    const r = envSchema.safeParse({ ...base, NODE_ENV: "production" });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const text = r.error.issues.map((i) => i.message).join("\n");
+      for (const name of ["MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"]) {
+        expect(text).toContain(name);
+      }
+    }
+  });
+
+  it("production with only the secret key missing names exactly that variable", () => {
+    const r = envSchema.safeParse({
+      ...base,
+      NODE_ENV: "production",
+      MINIO_ENDPOINT: "minio",
+      MINIO_ACCESS_KEY: "ak",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success)
+      expect(Object.keys(r.error.flatten().fieldErrors)).toEqual(["MINIO_SECRET_KEY"]);
   });
 
   it("production with all three passes and keeps its values", () => {
@@ -66,7 +91,6 @@ describe("config: MINIO_* (Issue #184)", () => {
     });
     expect(r.success).toBe(true);
     if (r.success) {
-      expect(r.data.MINIO_MISSING).toEqual([]);
       expect(r.data).toMatchObject({
         MINIO_ENDPOINT: "minio.internal",
         MINIO_PORT: 9100,
@@ -131,7 +155,6 @@ describe("unavailable object store (Issue #184)", () => {
     vi.spyOn(app.storage, "refresh").mockImplementation(() => {});
     vi.spyOn(app.storage, "status").mockReturnValue({
       available: false,
-      unconfigured: false,
       checkedAt: null,
     });
     const down = await app.inject({ method: "GET", url: "/health" });
@@ -140,22 +163,10 @@ describe("unavailable object store (Issue #184)", () => {
 
     vi.spyOn(app.storage, "status").mockReturnValue({
       available: true,
-      unconfigured: false,
       checkedAt: null,
     });
     const up = await app.inject({ method: "GET", url: "/api/v1/health" });
     expect(JSON.parse(up.body)).toMatchObject({ status: "ok", storage: "ok" });
-  });
-
-  it("unconfigured store: operations throw StorageUnavailableError and /health says unconfigured", async () => {
-    vi.spyOn(app.storage, "status").mockReturnValue({
-      available: false,
-      unconfigured: true,
-      checkedAt: null,
-    });
-    const res = await app.inject({ method: "GET", url: "/health" });
-    expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toMatchObject({ status: "ok", storage: "unconfigured" });
   });
 
   it("an avatar upload with the store down answers 503 STORAGE_UNAVAILABLE, not a 500", async () => {
@@ -189,39 +200,6 @@ describe("unavailable object store (Issue #184)", () => {
       expect(emp.avatarPath).toBeNull();
     } finally {
       await cleanupTestData(app, seed.tenant.id);
-    }
-  });
-});
-
-describe("storage plugin without configuration (production, Issue #184)", () => {
-  it("builds no client: status is unconfigured and every operation throws StorageUnavailableError", async () => {
-    vi.resetModules();
-    vi.doMock("../config", () => ({
-      config: {
-        MINIO_ENDPOINT: undefined,
-        MINIO_ACCESS_KEY: undefined,
-        MINIO_SECRET_KEY: undefined,
-        MINIO_MISSING: ["MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"],
-        MINIO_BUCKET: "clokr",
-        MINIO_PORT: 9000,
-        MINIO_USE_SSL: false,
-      },
-    }));
-    try {
-      const { default: Fastify } = await import("fastify");
-      const mod = await import("../contexts/platform/plugins/storage");
-      const f = Fastify({ logger: false });
-      await f.register(mod.storagePlugin);
-      await f.ready();
-      expect(f.storage.status()).toMatchObject({ available: false, unconfigured: true });
-      expect(await f.storage.check()).toBe(false);
-      await expect(f.storage.upload("a", Buffer.from("x"), "text/plain")).rejects.toBeInstanceOf(
-        mod.StorageUnavailableError,
-      );
-      await f.close();
-    } finally {
-      vi.doUnmock("../config");
-      vi.resetModules();
     }
   });
 });
