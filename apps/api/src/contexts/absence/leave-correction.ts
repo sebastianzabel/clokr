@@ -52,6 +52,8 @@ import {
 } from "../working-time-account";
 import { revalidateLeaveCancellationEntries } from "../time-tracking";
 import { Section9ConcurrentCorrectionError, supersedeSection9Credit } from "./section9-supersede";
+import { lockEmployeeForLeavePricing } from "./employee-leave-lock";
+import { repriceLaterVacationRequests } from "./later-request-reprice";
 
 export { Section9ConcurrentCorrectionError };
 
@@ -604,6 +606,10 @@ export async function applyLeaveCorrection(
   } = plan;
   const body = { halfDay: plan.halfDay, note: plan.note, reason: plan.reason };
 
+  // Issue #467: serialise with every other writer that prices this employee's vacation requests
+  // (POST /requests), FIRST statement of the transaction — see employee-leave-lock.ts.
+  await lockEmployeeForLeavePricing(tx, tenantId, existing.employeeId);
+
   // ── Step 8: REVERSE the OLD booking (dispatch on the OLD typeCode) ──────
   if (oldTypeCode === "VACATION") {
     await reverseVacationDays(
@@ -709,6 +715,20 @@ export async function applyLeaveCorrection(
   }
   // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
   // entitlement-neutral on the apply side (light).
+
+  // ── Step 10a (Issue #467): requests created LATER than this one were priced while it did not
+  //    yet cover their ISO weeks; re-price them (only ever cheaper, audited, closed months
+  //    untouched) so a week is never deducted twice.
+  if (newType === "VACATION") {
+    await repriceLaterVacationRequests(tx, {
+      employeeId: existing.employeeId,
+      tenantId,
+      correctedRequest: { id: existing.id, createdAt: existing.createdAt },
+      start,
+      end,
+      audit: port.audit,
+    });
+  }
 
   // ── Step 10b: RE-CREDIT the clipped part of a partially-superseded CONFIRMED credit
   //    (Issue #468, D-04/A-3) — a new revision+1 correction credit for exactly the part
