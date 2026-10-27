@@ -87,31 +87,29 @@ export const envSchema = z
   )
   // Non-production defaults mirror docker-compose.yml's dev MinIO and the CI MinIO step. In
   // production there is NO default (a silent "minio"/"minioadmin" would hit a host that may not
-  // exist): a missing value leaves the store "unconfigured" — the API still starts, logs one error
-  // naming the variables, and uploads answer 503 STORAGE_UNAVAILABLE (Issue #184). Switching this to
-  // refuse-to-start is the planned follow-up once every stage carries the variables.
+  // exist): a missing value refuses the start and names the variables (Issue #184).
+  .superRefine((data, ctx) => {
+    if (data.NODE_ENV !== "production") return;
+    for (const key of ["MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"] as const) {
+      if (data[key] === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: `${key} is required in production (object store)`,
+          path: [key],
+        });
+      }
+    }
+  })
   .transform((data) => {
     const dev = data.NODE_ENV !== "production";
-    const endpoint = data.MINIO_ENDPOINT ?? (dev ? "minio" : undefined);
-    const accessKey = data.MINIO_ACCESS_KEY ?? (dev ? "minioadmin" : undefined);
-    const secretKey = data.MINIO_SECRET_KEY ?? (dev ? "minioadmin" : undefined);
-    const missing = (
-      [
-        ["MINIO_ENDPOINT", endpoint],
-        ["MINIO_ACCESS_KEY", accessKey],
-        ["MINIO_SECRET_KEY", secretKey],
-      ] as const
-    )
-      .filter(([, v]) => v === undefined)
-      .map(([k]) => k);
+    // In production superRefine guarantees the three values; the dev fallbacks never apply there.
     return {
       ...data,
-      MINIO_ENDPOINT: endpoint,
+      MINIO_ENDPOINT: (data.MINIO_ENDPOINT ?? (dev ? "minio" : undefined)) as string,
       MINIO_PORT: data.MINIO_PORT ?? 9000,
-      MINIO_ACCESS_KEY: accessKey,
-      MINIO_SECRET_KEY: secretKey,
+      MINIO_ACCESS_KEY: (data.MINIO_ACCESS_KEY ?? (dev ? "minioadmin" : undefined)) as string,
+      MINIO_SECRET_KEY: (data.MINIO_SECRET_KEY ?? (dev ? "minioadmin" : undefined)) as string,
       MINIO_BUCKET: data.MINIO_BUCKET ?? "clokr",
-      MINIO_MISSING: missing as string[],
     };
   });
 
