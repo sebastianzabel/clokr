@@ -194,6 +194,32 @@ export async function validateTimeEntryInvariants(
 }
 
 // ── Effektiven Arbeitsplan ermitteln (Employee > TenantConfig > Hardcoded) ────
+
+/**
+ * The schedule an employee without any valid `WorkSchedule` row falls back to (tenant defaults,
+ * else the hardcoded ones). Pure and shared: `getEffectiveSchedule` and the bulk chain loader of
+ * Issue #696 (`overtime-balance.ts`) both read it, so the fallback has one spelling.
+ */
+export function defaultScheduleFromTenantConfig(
+  tenantConfig: Prisma.TenantConfigGetPayload<object> | null,
+) {
+  return {
+    type: "FIXED_SCHEDULE" as const,
+    weeklyHours: tenantConfig?.defaultWeeklyHours ?? 40,
+    monthlyHours: null,
+    mondayHours: tenantConfig?.defaultMondayHours ?? 8,
+    tuesdayHours: tenantConfig?.defaultTuesdayHours ?? 8,
+    wednesdayHours: tenantConfig?.defaultWednesdayHours ?? 8,
+    thursdayHours: tenantConfig?.defaultThursdayHours ?? 8,
+    fridayHours: tenantConfig?.defaultFridayHours ?? 8,
+    saturdayHours: tenantConfig?.defaultSaturdayHours ?? 0,
+    sundayHours: tenantConfig?.defaultSundayHours ?? 0,
+    overtimeThreshold: tenantConfig?.overtimeThreshold ?? 60,
+    allowOvertimePayout: tenantConfig?.allowOvertimePayout ?? false,
+    overtimeMode: "CARRY_FORWARD" as const,
+  };
+}
+
 export async function getEffectiveSchedule(
   app: FastifyInstance,
   employeeId: string,
@@ -214,19 +240,5 @@ export async function getEffectiveSchedule(
     ? await app.prisma.tenantConfig.findUnique({ where: { tenantId: employee.tenantId } })
     : null;
 
-  return {
-    type: "FIXED_SCHEDULE" as const,
-    weeklyHours: tenantConfig?.defaultWeeklyHours ?? 40,
-    monthlyHours: null,
-    mondayHours: tenantConfig?.defaultMondayHours ?? 8,
-    tuesdayHours: tenantConfig?.defaultTuesdayHours ?? 8,
-    wednesdayHours: tenantConfig?.defaultWednesdayHours ?? 8,
-    thursdayHours: tenantConfig?.defaultThursdayHours ?? 8,
-    fridayHours: tenantConfig?.defaultFridayHours ?? 8,
-    saturdayHours: tenantConfig?.defaultSaturdayHours ?? 0,
-    sundayHours: tenantConfig?.defaultSundayHours ?? 0,
-    overtimeThreshold: tenantConfig?.overtimeThreshold ?? 60,
-    allowOvertimePayout: tenantConfig?.allowOvertimePayout ?? false,
-    overtimeMode: "CARRY_FORWARD" as const,
-  };
+  return defaultScheduleFromTenantConfig(tenantConfig);
 }

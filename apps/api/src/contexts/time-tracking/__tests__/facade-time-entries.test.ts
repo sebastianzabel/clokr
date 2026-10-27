@@ -139,9 +139,11 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
       });
       expect(rows.map((r) => r.id)).toEqual([validEntry.id]);
       // Issue #81 (D-12): the saldo input never carries the activity dimension.
+      // Issue #696: `employeeId` is additive, so a bulk read over several persons can be split.
       expect(Object.keys(rows[0]).sort()).toEqual([
         "breakMinutes",
         "date",
+        "employeeId",
         "endTime",
         "id",
         "startTime",
