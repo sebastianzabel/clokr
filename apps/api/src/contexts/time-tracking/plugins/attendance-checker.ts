@@ -22,6 +22,8 @@ import {
 import { placementWarnings } from "../arbzg"; // Issue #511 (D-13)
 import {
   getTenantTimezone,
+  addDaysUtc, // Issue #172
+  startOfDayUtc, // Issue #172
   dateStrInTz,
   timeStrInTz,
   monthRangeUtc,
@@ -179,8 +181,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
             where: { tenantId: tenant.id },
           });
           const dayThreshold = resolveMissingEntriesDays(cfg);
-          const cutoffDate = new Date();
-          cutoffDate.setDate(cutoffDate.getDate() - dayThreshold);
+          const cutoffDate = addDaysUtc(new Date(), -dayThreshold);
 
           // Find all active employees for this tenant
           const employees = await app.prisma.employee.findMany({
@@ -215,8 +216,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
             if (recentEntryCount > 0) continue;
 
             // Deduplicate: check if notification sent within last 7 days
-            const sevenDaysAgo = new Date();
-            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            const sevenDaysAgo = addDaysUtc(new Date(), -7);
 
             const existingNotification = await app.prisma.notification.findFirst({
               where: {
@@ -566,10 +566,8 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           if (!cfg?.reminderUpcomingAbsenceEnabled) continue;
 
           const daysAhead = cfg.reminderUpcomingAbsenceDays ?? 3;
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const targetDate = new Date(today);
-          targetDate.setDate(targetDate.getDate() + daysAhead);
+          const today = startOfDayUtc(new Date());
+          const targetDate = addDaysUtc(today, daysAhead);
 
           // Phase 100B Plan 13 — A9, contexts/absence facade.
           const upcoming = await getLeaveStartingInWindow(app.prisma, tenant.id, today, targetDate);
