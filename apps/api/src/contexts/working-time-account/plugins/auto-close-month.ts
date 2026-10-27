@@ -22,8 +22,11 @@ import {
   decideGapMonth,
 } from "../month-close-population"; // Issue #668
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
-import { resolveMonthContract } from "../month-contract"; // Issue #780
-import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
+import {
+  closeEmployeeMonth,
+  toCloseMonthApprovedLeave,
+  resolveMonthContract,
+} from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { detectMonthGaps } from "../month-gap-check"; // Phase 292 (#292) — the shared gap definition
 import {
   MONTH_CLOSE_DEFERRAL_RELATED_TYPE,

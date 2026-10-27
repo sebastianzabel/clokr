@@ -65,9 +65,10 @@
 import type { FastifyInstance } from "fastify";
 import { findMissingWorkdays, type WorkdayGap } from "./find-missing-workdays";
 import { calcShiftBasedSaldo } from "./shift-based-saldo";
-import { isNoContractSchedule, resolveMonthContract } from "./month-contract"; // Issue #780
+import { isNoContractSchedule, NO_CONTRACT_SCHEDULE } from "./month-contract"; // Issue #780
 import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
 import {
+  getEffectiveSchedule,
   getEffectiveBreakDuration, // Phase 101B (Issue #101, wave 8)
   getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1; THE SALDO INPUT (computeWeekProgress)
   getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, feeds the holiday resolver (computeWeekProgress)
@@ -1557,4 +1558,24 @@ export async function computeWeekProgress(
   }
 
   return { weekSollMinutes, toDateSollMinutes, toDateWorkedMinutes };
+}
+
+/**
+ * The contract of a month, or {@link NO_CONTRACT_SCHEDULE} when none is valid at `monthEnd`.
+ * `scheduleAt` is the instant the contract row itself is read at - the report and live paths use
+ * the month's end, the close paths their historical mid-month convention; only the question
+ * "is there a contract at all in this month" is always judged at `monthEnd`.
+ */
+export async function resolveMonthContract(
+  app: FastifyInstance,
+  employeeId: string,
+  monthEnd: Date,
+  scheduleAt: Date = monthEnd,
+) {
+  const anyContract = await app.prisma.workSchedule.findFirst({
+    where: { employeeId, validFrom: { lte: monthEnd } },
+    select: { id: true },
+  });
+  if (!anyContract) return NO_CONTRACT_SCHEDULE;
+  return getEffectiveSchedule(app, employeeId, scheduleAt);
 }

@@ -17,8 +17,11 @@
 import { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
-import { resolveMonthContract } from "./month-contract"; // Issue #780
-import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
+import {
+  closeEmployeeMonth,
+  toCloseMonthApprovedLeave,
+  resolveMonthContract,
+} from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
 import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed

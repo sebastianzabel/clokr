@@ -26,10 +26,13 @@ import {
 } from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports (plan-04 carry-over row)
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
 import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
-import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month"; // SNAP-03 — Phase 76.27
+import {
+  closeEmployeeMonth,
+  toCloseMonthApprovedLeave,
+  resolveMonthContract,
+} from "./close-employee-month"; // SNAP-03 — Phase 76.27
 import { getConfirmedCarryOver } from "./confirmed-saldo"; // Phase 97-06
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — chain-head seed, Issue #681
-import { resolveMonthContract } from "./month-contract"; // Issue #780
 import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
 import {
   getTenantTimezone,

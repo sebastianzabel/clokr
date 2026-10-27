@@ -37,8 +37,11 @@ import {
   selectMonthlySnapshotPerMonth,
   yearlySnapshotYearOf,
 } from "../snapshot-period";
-import { resolveMonthContract } from "../month-contract"; // Issue #780
-import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared saldo core
+import {
+  closeEmployeeMonth,
+  toCloseMonthApprovedLeave,
+  resolveMonthContract,
+} from "../close-employee-month"; // Phase 76.26 — shared saldo core
 import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — gap detector
 import { getDeferredMonthCloseState } from "../deferred-month-close"; // Phase 292 (#292)
 import { computeMonthSaldo } from "../month-saldo"; // §615 Team-Zeiten display fix
