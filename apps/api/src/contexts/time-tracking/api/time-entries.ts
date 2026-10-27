@@ -22,7 +22,12 @@ import type { PermissionKey } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
 import { warningsVisibleToCaller } from "../warning-visibility"; // Issue #85 (D-12) — ArbZG warnings only as far as the caller's reach covers them
-import { planAutoBreak, autoBreakAppliesOnCreate, type AutoBreakPlan } from "../auto-break-plan"; // Issue #511 (AK-4, D-17/D-20) — the one automatic-break decision, also used by the preview
+import { planAutoBreak, autoBreakAppliesOnCreate, type AutoBreakPlan } from "../auto-break-plan";
+import {
+  autoInsertBreak,
+  applyAutoBreakAfterClockStop,
+  type StoredBreak,
+} from "../auto-break-write"; // Issue #799 // Issue #511 (AK-4, D-17/D-20) — the one automatic-break decision, also used by the preview
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
 import { resolveEntrySalon, SALON_NOT_FOUND_BODY, SALON_INACTIVE_BODY } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
@@ -115,43 +120,6 @@ class GrantAlreadyUsedError extends Error {
 export { validateTimeEntryInvariants, getEffectiveSchedule };
 export { updateOvertimeAccount, computeOvertimeBalanceBreakdown, computeOvertimeBalanceHours };
 export type { OvertimeBalanceBreakdown };
-
-/**
- * Issue #511 (AK-4, D-17): the ONE write of an automatic break, shared by the NFC clock-out, the
- * regular clock-out and the manual POST. WHICH break (regime, amount, tenant-zone placement
- * conformant to § 4 Satz 2/3 ArbZG or § 11 JArbSchG) is decided by `planAutoBreak`, the same
- * function the entry-form preview simulates it with. Break rows and the entry's summary fields are
- * written together or not at all. Returns the minutes written.
- */
-async function autoInsertBreak(
-  app: FastifyInstance,
-  params: { entryId: string; plan: AutoBreakPlan },
-): Promise<{ minutes: number; breaks: StoredBreak[] }> {
-  const { entryId, plan } = params;
-  const [breaks] = await app.prisma.$transaction([
-    app.prisma.break.createManyAndReturn({
-      data: plan.segments.map((s) => ({
-        timeEntryId: entryId,
-        startTime: s.startTime,
-        endTime: s.endTime,
-      })),
-    }),
-    // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
-    app.prisma.timeEntry.update({
-      where: { id: entryId },
-      data: { breakMinutes: plan.amountMin, breakStatus: "AUTO" },
-    }),
-  ]);
-  return { minutes: plan.amountMin, breaks };
-}
-
-type StoredBreak = {
-  id: string;
-  timeEntryId: string;
-  startTime: Date;
-  endTime: Date;
-  createdAt: Date;
-};
 
 /**
  * Issue #396: the response re-read AFTER a committed write. A failing read (a connection blip)
@@ -599,45 +567,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(500).send({ error: "Interner Serverfehler" });
       }
 
-      // CLOCKED_OUT or CONSOLIDATED — post-resolution side effects (auto-break — Phase 64 preserved)
-      const clockedOutEntryId = resolution.entry.id;
-      // D-01 Pitfall 1 guard (aligned with clock-out route): skip auto-break when Break records
-      // already exist. A reopened entry carries a gap Break — auto-break must not overwrite it.
-      // Use count (not findMany+sum) to match the clock-out route guard at line ~635.
-      const existingBreakCount = await app.prisma.break.count({
-        where: { timeEntryId: clockedOutEntryId },
+      // CLOCKED_OUT or CONSOLIDATED — the shared post-STOP auto-break step (Issue #799).
+      await applyAutoBreakAfterClockStop(app, {
+        entryId: resolution.entry.id,
+        employeeId: employee.id,
+        tz,
       });
-      if (existingBreakCount === 0) {
-        const tenantConfig = await app.prisma.tenantConfig.findUnique({
-          where: { tenantId: employee.tenantId },
-        });
-        if (tenantConfig?.autoBreakEnabled) {
-          const entryForBreak = await app.prisma.timeEntry.findUnique({
-            where: { id: clockedOutEntryId },
-          });
-          if (entryForBreak?.startTime && entryForBreak?.endTime) {
-            const employeeBreakFields = await app.prisma.employee.findUnique({
-              where: { id: entryForBreak.employeeId },
-              select: { breakOver6hOverride: true, breakOver9hOverride: true, birthDate: true },
-            });
-            // Issue #511 (D-20): a minor gets at least the § 11 JArbSchG amount, decided on the
-            // work date of the entry; adults keep the configured amount unchanged (D-17).
-            const plan = planAutoBreak({
-              employee: employeeBreakFields ?? {
-                breakOver6hOverride: null,
-                breakOver9hOverride: null,
-                birthDate: null,
-              },
-              tenantConfig,
-              start: entryForBreak.startTime,
-              end: entryForBreak.endTime,
-              entryDate: entryForBreak.date,
-              tz,
-            });
-            if (plan) await autoInsertBreak(app, { entryId: clockedOutEntryId, plan });
-          }
-        }
-      }
 
       await updateOvertimeAccount(app, employee.id);
       const balanceHours = await getBalance();
@@ -967,45 +902,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         });
       }
 
-      // Auto-break (Phase 64 contract — preserved verbatim; Phase 129 removed the `else` wrapper
-      // that used to guard it, but changed nothing inside it).
-      const targetEmployee = await app.prisma.employee.findUnique({
-        where: { id: entry.employeeId },
-      });
-      const tenantConfig = targetEmployee
-        ? await app.prisma.tenantConfig.findUnique({
-            where: { tenantId: targetEmployee.tenantId },
-          })
-        : null;
-
-      let clockOutAutoBreaks: StoredBreak[] = [];
-      let clockOutAutoMinutes = 0;
-      // D-01 Pitfall 1 guard: skip auto-break when Break records already exist on this entry.
-      // A reopened entry carries a gap Break — auto-break must not overwrite its breakMinutes.
-      const existingBreakCount = await app.prisma.break.count({
-        where: { timeEntryId: closedEntryId },
-      });
-      if (tenantConfig?.autoBreakEnabled && targetEmployee && existingBreakCount === 0) {
-        const closedEntry = await app.prisma.timeEntry.findUnique({
-          where: { id: closedEntryId },
+      // Auto-break (Phase 64 contract; Issue #799: the same shared step NFC and WIFI run).
+      const { breaks: clockOutAutoBreaks, minutes: clockOutAutoMinutes } =
+        await applyAutoBreakAfterClockStop(app, {
+          entryId: closedEntryId,
+          employeeId: entry.employeeId,
+          tz,
         });
-        if (closedEntry?.startTime && closedEntry?.endTime) {
-          // Issue #511 (D-20): minors get at least the § 11 JArbSchG amount; adults unchanged.
-          const plan = planAutoBreak({
-            employee: targetEmployee,
-            tenantConfig,
-            start: closedEntry.startTime,
-            end: closedEntry.endTime,
-            entryDate: closedEntry.date,
-            tz,
-          });
-          if (plan) {
-            const inserted = await autoInsertBreak(app, { entryId: closedEntryId, plan });
-            clockOutAutoBreaks = inserted.breaks;
-            clockOutAutoMinutes = inserted.minutes;
-          }
-        }
-      }
 
       await updateOvertimeAccount(app, entry.employeeId);
 

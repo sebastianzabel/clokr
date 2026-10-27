@@ -38,7 +38,7 @@ Eine Pause ist die Summe aus:
 
 ### Auto-Break (opt-in pro Tenant)
 
-Wenn `TenantConfig.autoBreakEnabled = true` und beim Clock-out (oder beim manuellen Anlegen) **keine Pause eingetragen** wurde, setzt Clokr automatisch:
+Wenn `TenantConfig.autoBreakEnabled = true` und beim Clock-out (oder beim manuellen Anlegen) **keine Pause eingetragen** wurde, setzt Clokr automatisch. Das gilt für jeden Stempel-Auslöser gleich (Web, NFC-Terminal, WLAN-Präsenz; seit Issue #799 über einen gemeinsamen Schritt nach dem Ausstempeln, `applyAutoBreakAfterClockStop`); ein wiedereröffneter Eintrag mit Lücken-Pause bekommt keine zusätzliche:
 
 - `30min` bei >6h Arbeit
 - `45min` bei >9h Arbeit
