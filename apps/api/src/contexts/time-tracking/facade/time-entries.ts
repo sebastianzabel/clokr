@@ -128,7 +128,16 @@ export async function getValidWorkedEntriesInRange(
       type: "WORK",
       isInvalid: false,
     },
-    select: { id: true, date: true, startTime: true, endTime: true, breakMinutes: true },
+    // Issue #696: `employeeId` is selected additively so a bulk read over several persons can be
+    // split per person; every single-person reader ignores it.
+    select: {
+      id: true,
+      employeeId: true,
+      date: true,
+      startTime: true,
+      endTime: true,
+      breakMinutes: true,
+    },
   });
 }
 
