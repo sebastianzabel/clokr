@@ -1292,6 +1292,8 @@ automatische Pause (`TenantConfig.autoBreakEnabled`), über denselben Schritt `a
 WLAN-Einträge haben dadurch weniger Ist (um die Pause) als bisher; bereits gespeicherte Einträge ändern sich **nicht** und
 werden **nie** nachträglich korrigiert (kein Backfill).
 
+**Migration.** Additiv: `Break.isAuto Boolean NOT NULL DEFAULT false` (`*_break_is_auto`, erzeugt per Shadow-DB und `migrate diff`, nicht per `migrate dev`). Nur Zeilen, die `autoInsertBreak` schreibt, tragen `true`; bestehende Pausen bleiben `false` und werden vom Ersetzen beim Wiedereröffnen nie entfernt. Nach `migrate deploy` ist `prisma generate` nötig.
+
 **Vor dem Deploy prüfen (lesend, int UND prod).** `apps/api/scripts/audit-799-clock-entries-without-auto-break.ts` schreibt
 nichts (`--apply`/`--confirm` werden abgelehnt) und nennt nur Mandanten-Id, Eintrags-Id und Quelle der geschlossenen NFC-/WLAN-Einträge
 ohne Pause (länger als 6 h, Monat nicht abgeschlossen, Mandant mit aktiver Auto-Pause). Exit-Code `0`: nichts gefunden; `2`: Liste

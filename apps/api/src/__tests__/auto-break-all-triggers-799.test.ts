@@ -244,6 +244,7 @@ describe("auto-break on every clock trigger (#799)", () => {
         timeEntryId: e.id,
         startTime: new Date(start.getTime() + 3 * 3_600_000),
         endTime: new Date(start.getTime() + 3 * 3_600_000 + 30 * 60_000),
+        isAuto: true,
       },
     });
     return e;
@@ -364,7 +365,7 @@ describe("auto-break on every clock trigger (#799)", () => {
       new Date(now - 20 * 60_000).toISOString(),
       todayInTz("Europe/Berlin"),
     );
-    await app.prisma.timeEntry.update({ where: { id: e.id }, data: { breakStatus: "CONFIRMED" } });
+    await app.prisma.break.updateMany({ where: { timeEntryId: e.id }, data: { isAuto: false } });
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/time-entries/clock-in",
@@ -373,5 +374,35 @@ describe("auto-break on every clock trigger (#799)", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(await app.prisma.break.count({ where: { timeEntryId: e.id } })).toBe(2);
+  });
+
+  it("a pre-fix shaped entry (status AUTO, Break rows without the isAuto marker) loses nothing on reopen", async () => {
+    const now = Date.now();
+    const e = await seedClosedAutoEntry(
+      "MANUAL",
+      new Date(now - 7 * 3_600_000).toISOString(),
+      new Date(now - 20 * 60_000).toISOString(),
+      todayInTz("Europe/Berlin"),
+    );
+    // History: the auto break and an earlier recorded gap break, both written before the marker.
+    await app.prisma.break.updateMany({ where: { timeEntryId: e.id }, data: { isAuto: false } });
+    await app.prisma.break.create({
+      data: {
+        timeEntryId: e.id,
+        startTime: new Date(now - 5 * 3_600_000),
+        endTime: new Date(now - 5 * 3_600_000 + 10 * 60_000),
+      },
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/time-entries/clock-in",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { source: "MANUAL" },
+    });
+    expect(res.statusCode).toBe(200);
+    // the two old rows plus the new gap break
+    expect(await app.prisma.break.count({ where: { timeEntryId: e.id } })).toBe(3);
+    const row = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: e.id } });
+    expect(row.breakStatus).toBe("AUTO");
   });
 });

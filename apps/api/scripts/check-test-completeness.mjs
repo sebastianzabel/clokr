@@ -1072,7 +1072,7 @@ const MIN_FILES = 750;
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #787: +2 cases (same file) on the base 11025.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
-const MIN_TESTS = 11080;
+const MIN_TESTS = 11081;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

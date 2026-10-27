@@ -32,6 +32,7 @@ export async function autoInsertBreak(
         timeEntryId: entryId,
         startTime: s.startTime,
         endTime: s.endTime,
+        isAuto: true, // Issue #799: the row-level marker the reopen replacement selects on
       })),
     }),
     // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation

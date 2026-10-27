@@ -1,6 +1,6 @@
 // Issue #799 — a recorded pause replaces the automatic one.
 //
-// When an entry that carries an automatic break (`breakStatus = AUTO`, written only by
+// When an entry that carries an automatic break (its Break rows with `isAuto`, written only by
 // `autoInsertBreak`) is reopened or merged into, the real gap is added as a Break. The automatic
 // break of the earlier stop is removed first, so the next stop re-plans it
 // (`applyAutoBreakAfterClockStop`: the existing-Break guard then sees the gap break and adds
@@ -17,11 +17,12 @@ export type RemovedAutoBreak = { id: string; startTime: Date; endTime: Date };
 /** Removes the Break rows of an AUTO entry and returns them (empty for any other entry). */
 export async function removeAutoBreaksOfEntry(
   tx: Prisma.TransactionClient,
-  entry: { id: string; breakStatus: string },
+  entry: { id: string },
 ): Promise<RemovedAutoBreak[]> {
-  if (entry.breakStatus !== "AUTO") return [];
+  // Row-level marker: only rows `autoInsertBreak` wrote (isAuto). Rows from before the marker
+  // existed default to false and are never removed, so recorded history is untouched.
   const rows = await tx.break.findMany({
-    where: { timeEntryId: entry.id },
+    where: { timeEntryId: entry.id, isAuto: true },
     select: { id: true, startTime: true, endTime: true },
   });
   if (rows.length === 0) return [];
