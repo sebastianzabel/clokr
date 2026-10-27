@@ -29,7 +29,12 @@ import { holidaysAtWorkLocation } from "../platform";
 import { getShiftsInRange } from "../scheduling";
 import { getCarryOverBase } from "./carry-over-base";
 import { getConfirmedCarryOver, type ConfirmedCarryOver } from "./confirmed-saldo";
-import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month"; // SNAP-03 — Phase 76.27
+import {
+  closeEmployeeMonth,
+  toCloseMonthApprovedLeave,
+  resolveMonthContract, // Issue #780 — no contract yet at month end = no Soll
+} from "./close-employee-month"; // SNAP-03 — Phase 76.27
+import { NO_CONTRACT_SCHEDULE } from "./month-contract"; // Issue #780
 import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { setOvertimeAccountBalance } from "./facade/overtime-account";
@@ -367,7 +372,7 @@ async function computeAccountChain(
   // at all — the SAME `effectiveEnd >= currentMonthOpenStart` condition the partial-month block
   // itself gates on.
   const completeMonthSchedules = await Promise.all(
-    completeOpenMonths.map((cm) => src.scheduleAt(cm.monthEnd)),
+    completeOpenMonths.map((cm) => src.monthContractAt(cm.monthEnd)),
   );
 
   const currentMonthOpenStart =
@@ -377,7 +382,7 @@ async function computeAccountChain(
   // case) — never fetched speculatively, so an unevaluated month's contract can never leak into
   // the SHIFT_BASED prefetch gate below.
   const partialMonthSchedule =
-    effectiveEnd >= currentMonthOpenStart ? await src.scheduleAt(currentMonthRange.end) : null;
+    effectiveEnd >= currentMonthOpenStart ? await src.monthContractAt(currentMonthRange.end) : null;
   const partialMonthScheduleType = partialMonthSchedule
     ? String(partialMonthSchedule.type ?? "")
     : "";
@@ -1073,6 +1078,9 @@ export interface ChainSource {
   timezone(tenantId: string): Promise<string>;
   /** The schedule valid at `date` (default: now), the tenant-default fallback otherwise. */
   scheduleAt(date?: Date): Promise<ChainSchedule>;
+  /** The contract of an open month judged at its end; `NO_CONTRACT_SCHEDULE` when no contract row
+   * is valid by then (Issue #780: a hire before the first contract owes no Soll). */
+  monthContractAt(monthEnd: Date): Promise<ChainSchedule | typeof NO_CONTRACT_SCHEDULE>;
   /** The stored schedule row valid at `date`, `null` when there is none (no fallback). */
   scheduleRowAt(date: Date): Promise<Prisma.WorkScheduleGetPayload<object> | null>;
   /** The latest closed month (optionally only those starting before `periodStartBefore`). */
@@ -1153,6 +1161,7 @@ export function querySource(app: FastifyInstance, employeeId: string): ChainSour
       }),
     timezone: (tenantId) => getTenantTimezone(app.prisma, tenantId),
     scheduleAt: (date) => getEffectiveSchedule(app, employeeId, date),
+    monthContractAt: (monthEnd) => resolveMonthContract(app, employeeId, monthEnd),
     scheduleRowAt: (date) =>
       app.prisma.workSchedule.findFirst({
         where: { employeeId, validFrom: { lte: date } },
@@ -1416,6 +1425,9 @@ export async function loadChainSources(
           defaultScheduleFromTenantConfig(tenantConfig)
         );
       },
+      // Same rule as resolveMonthContract (Issue #780): no row valid by the month end = no contract.
+      monthContractAt: async (monthEnd) =>
+        scheduleList.find((s) => s.validFrom <= monthEnd) ?? NO_CONTRACT_SCHEDULE,
       confirmedCarryOver: async (_tenant, options) => {
         const before = options.periodStartBefore;
         const hit = snaps.find((s) => (before ? s.periodStart < dayOf(before) : true));
