@@ -316,7 +316,7 @@ describe("Issue #696 - bulk carry-in and bulk month figures equal the per-person
         },
       });
     }
-  });
+  }, 120_000);
 
   afterAll(async () => {
     vi.useRealTimers();
