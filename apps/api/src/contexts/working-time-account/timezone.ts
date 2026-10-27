@@ -576,6 +576,30 @@ export function calcMonthlyHoursHolidayMinutesTz(
 }
 
 /**
+ * Issue #473: the Ø-day value of ONE tenant-local day of a MONTHLY_HOURS contract,
+ * `monthlyHours x 60 / (contractual workdays of the FULL calendar month)` (same
+ * denominator and rounding as a one-day `monthlyHoursMinutesCore` range, i.e. the value
+ * a leave day or holiday is priced at). Returns 0 when `monthlyHours` is null/0/negative
+ * (pure tracking) or when `dateStr` is not a contractual workday (D-05 chain), so a
+ * Berufsschule day on a non-workday credits nothing that no Soll ever carried.
+ */
+export function calcMonthlyHoursDayMinutesTz(
+  schedule: Record<string, unknown>,
+  dateStr: string,
+  tz: string,
+  defaultWorkDays?: readonly number[] | null,
+): number {
+  const mh = Number(schedule.monthlyHours ?? 0);
+  if (mh <= 0) return 0;
+  const workdaySet = monthlyHoursWorkDays(schedule, defaultWorkDays);
+  const dow = getDayOfWeekInTz(fromZonedTime(`${dateStr}T12:00:00`, tz), tz);
+  if (!workdaySet.has(dow)) return 0;
+  const fullMonthWorkdays = monthlyHoursFullMonthWorkdays(dateStr.slice(0, 7), tz, workdaySet);
+  if (fullMonthWorkdays === 0) return 0;
+  return Math.round((mh * 60) / fullMonthWorkdays);
+}
+
+/**
  * Calculate expected working minutes between two UTC dates in a given timezone,
  * using a schedule object that maps day-of-week to hours.
  * Supports MONTHLY_HOURS schedules (Minijobber): prorates the monthly budget

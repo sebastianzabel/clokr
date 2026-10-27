@@ -84,6 +84,7 @@ export {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
   addDaysUtc, // Issue #172
+  calcMonthlyHoursDayMinutesTz, // Issue #473
   dateStrInTz,
   dayRangeUtc, // Issue #613
   getDayHoursFromSchedule,

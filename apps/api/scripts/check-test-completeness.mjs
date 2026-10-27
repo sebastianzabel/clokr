@@ -972,6 +972,7 @@ import { readFileSync } from "node:fs";
 // Issue #467: +1 file (shift-leave-race-467.test.ts, 1 case); full run measured 732 files, 11004 tests.
 // Issue #277: +1 file (year-close-277), +5 gate cases; measured full run 732 files, 11016 tests incl. 3 skipped.
 // Issue #718: +1 file (anonymization-freetext-718), measured full run 733 files, 11019 tests incl. 3 skipped.
+// Issue #473: +1 file (close-employee-month-monthly-hours-bs-473), +6 cases; measured full run 733 files, 11022 tests.
 // Issue #696: +1 file (open-month-carry-bulk-696, 3 cases); measured full run 733 files, 11019 tests.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
@@ -1063,7 +1064,9 @@ const MIN_FILES = 735;
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #696: +3 cases (open-month-carry-bulk-696); measured full run 11019 tests.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #771: +1 file, +4 tests (yesterday-dst-771.test.ts) on the base 11021.
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 const MIN_TESTS = 11025;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
