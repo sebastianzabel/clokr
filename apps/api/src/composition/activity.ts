@@ -12,6 +12,7 @@ import {
   snapshotMonthOf, // Issue #595 (D-03) — the one place a stored snapshot gets a calendar month
   getTenantTimezone,
   todayInTz,
+  addDaysUtc, // Issue #172
   timeStrInTz,
 } from "../contexts/working-time-account"; // Phase 101B
 import { getEntryActivityFeed } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T5
@@ -74,8 +75,7 @@ export async function activityRoutes(app: FastifyInstance) {
       // Vorrang: audit-log:read wins; the team branch below runs only for callers
       // without it (issue #75, D-13).
       if (await hasPermission(req, "audit-log:read:ZUGEWIESEN")) {
-        const since = new Date();
-        since.setDate(since.getDate() - 7);
+        const since = addDaysUtc(new Date(), -7);
 
         // Tenant scoping for audit logs (WR-06):
         // AuditLog has no direct tenantId column, only a nullable userId.
@@ -133,8 +133,7 @@ export async function activityRoutes(app: FastifyInstance) {
 
       // Own time entries (today + last 7 days)
       if (employeeId) {
-        const since = new Date();
-        since.setDate(since.getDate() - 7);
+        const since = addDaysUtc(new Date(), -7);
         // Clock-in/out times are @db.Timestamptz (UTC). The dashboard "Aktivität"
         // widget must render them in the tenant timezone, not UTC — otherwise a
         // Europe/Berlin tenant sees times ~1-2h too early. Use timeStrInTz.
