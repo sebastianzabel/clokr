@@ -1,0 +1,23 @@
+{
+  "name": "@clokr/sim",
+  "version": "1.16.1",
+  "private": true,
+  "description": "Simulation instance tooling (Issue #715): synthetic provisioning, seeded bots and the nightly invariant checker. Talks to a deployed Clokr only through its real interfaces; never part of a release image.",
+  "type": "module",
+  "scripts": {
+    "sim": "tsx --env-file-if-exists=sim.env src/cli.ts",
+    "lint": "eslint src test --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "otpauth": "^9.5.2",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

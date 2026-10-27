@@ -91,6 +91,8 @@ jobs:
           filters: |
             api:
               - 'apps/api/**'
+              # apps/api/scripts/__tests__/sim-invariants-715.test.ts runs the checker code of apps/sim.
+              - 'apps/sim/**'
               - 'packages/**'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
@@ -384,7 +386,7 @@ jobs:
         run: pnpm --filter @clokr/web exec eslint src/
 
       - name: Format check (Prettier)
-        run: pnpm exec prettier --check "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,svelte,css}" "packages/**/*.ts" "packages/**/*.json"
+        run: pnpm exec prettier --check "apps/api/src/**/*.ts" "apps/sim/{src,test}/**/*.ts" "apps/web/src/**/*.{ts,svelte,css}" "packages/**/*.ts" "packages/**/*.json"
 
       - name: Lint UI primitives usage
         run: pnpm --filter @clokr/web lint:ui
@@ -426,6 +428,15 @@ jobs:
 
       - name: Type check Web
         run: pnpm --filter @clokr/web typecheck
+
+      - name: Lint, type check and test the simulation tooling (Issue #715)
+        # apps/sim never ships in a release image; this is its only gate. Pure unit tests, no
+        # database: the invariants that need the schema are proven in the API suite
+        # (apps/api/scripts/__tests__/sim-invariants-715.test.ts).
+        run: |
+          pnpm --filter @clokr/sim lint
+          pnpm --filter @clokr/sim typecheck
+          pnpm --filter @clokr/sim test
 
       - name: Run API tests with coverage
         id: tests

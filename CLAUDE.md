@@ -393,6 +393,13 @@ Refreshing int from prod data requires `apps/api/scripts/pseudonymize-dump.ts` �
 prod dump to int. The refresh also neutralises every `OperatorAccount` (email, password hash, TOTP
 secret — Phase 88, D-11), so no operator credential of prod survives on int.
 
+## Simulation instance (Issue #715)
+
+A separate, non-public server runs the current release with synthetic tenants, seeded bots and a nightly
+read-only invariant checker (`apps/sim`, never in a release image). **Read `docs/simulation.md` before
+touching it.** It holds no real personal data; the bots use only real interfaces (no database access);
+a finding becomes a `simulation` issue with ids only.
+
 ## CVE / Security Vulnerability Handling
 
 Trivy/Dependabot process (update direct/transitive/base-image, justify exceptions in `.trivyignore`, never lower severity, document in commit) → see `docs/cve-handling.md`.
