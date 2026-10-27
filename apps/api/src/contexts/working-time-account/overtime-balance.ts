@@ -20,33 +20,30 @@
 import { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
 import {
-  getAbsencesOverlapping, // Phase 100B Plan 12 — A4
-  getActiveLeaveOverlapping, // Phase 100B Plan 13 — A2; Issue #446 — effective leave
-  loadBsSlotOverrides, // Phase 76.31 — D-06 slot overrides
-} from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports (plan-04 carry-over row)
-import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
-import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
+  getAbsencesOverlapping,
+  getActiveLeaveOverlapping,
+  loadBsSlotOverrides,
+  loadBsSlotOverridesForMany,
+} from "../absence";
+import { holidaysAtWorkLocation } from "../platform";
+import { getShiftsInRange } from "../scheduling";
+import { getCarryOverBase } from "./carry-over-base";
+import { getConfirmedCarryOver, type ConfirmedCarryOver } from "./confirmed-saldo";
 import {
   closeEmployeeMonth,
   toCloseMonthApprovedLeave,
-  resolveMonthContract,
+  resolveMonthContract, // Issue #780 — no contract yet at month end = no Soll
 } from "./close-employee-month"; // SNAP-03 — Phase 76.27
-import { getConfirmedCarryOver } from "./confirmed-saldo"; // Phase 97-06
-import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — chain-head seed, Issue #681
+import { NO_CONTRACT_SCHEDULE } from "./month-contract"; // Issue #780
 import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
-import {
-  getTenantTimezone,
-  dateStrInTz,
-  monthRangeUtc,
-  monthDayBounds,
-  calcExpectedMinutesTz,
-} from "./timezone";
+import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { setOvertimeAccountBalance } from "./facade/overtime-account";
 import {
-  getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1
-  getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, feeds the holiday resolver below
   getEffectiveBreakDuration,
   getEffectiveSchedule,
+  defaultScheduleFromTenantConfig,
+  getValidWorkedEntriesInRange,
+  getWorkedEntriesInRange,
 } from "../time-tracking"; // Phase 101B (Issue #101, wave 8) — merged from three deep imports (plan-04 carry-over)
 
 // ── Hilfsfunktion: Überstundensaldo berechnen (snapshot-basiert, TZ-aware) ────
@@ -132,22 +129,18 @@ async function computeAccountChain(
   app: FastifyInstance,
   employeeId: string,
   stichtag: AccountChainStichtag,
+  // Issue #696: where the inputs come from. Default: this person, queried on demand (what the live
+  // saldo always did); the bulk carry-in passes a source whose collections were read for many
+  // persons at once. The arithmetic below is the same for both.
+  src: ChainSource = querySource(app, employeeId),
 ): Promise<(OvertimeBalanceBreakdown & { chainMinutes: number }) | null> {
-  const schedule = await getEffectiveSchedule(app, employeeId);
+  const schedule = await src.scheduleAt();
 
   // Tenant-Timezone laden + hireDate + federalState for holiday computation
   // v1.8.9: also fetch break overrides for SHIFT_BASED netto calculation.
-  const employee = await app.prisma.employee.findUnique({
-    where: { id: employeeId },
-    select: {
-      tenantId: true,
-      hireDate: true,
-      exitDate: true, // Issue #447 (D-12) — clamps the live window at the exit date
-      isTimeTrackingExempt: true, // Phase 76.7 (D-04, SALDO-V19-04)
-      breakOver6hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
-      breakOver9hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
-    },
-  });
+  // (exitDate clamps the live window, Issue #447 D-12; isTimeTrackingExempt, Phase 76.7 D-04;
+  // the break overrides feed the SHIFT_BASED netto saldo, v1.8.9 — see `ChainEmployee`.)
+  const employee = await src.employee();
 
   // Phase 76.7 (D-04, D-10) — exempt employees never compute saldo.
   // We do NOT reset balanceHours to 0 (preserve audit-trail of prior value).
@@ -159,7 +152,7 @@ async function computeAccountChain(
     return null;
   }
 
-  const tz = await getTenantTimezone(app.prisma, employee?.tenantId ?? "");
+  const tz = await src.timezone(employee?.tenantId ?? "");
 
   // Find the latest closed month (basis for the computation below). Phase 100B Plan 07
   // (W3 merge) — this used to be its own direct SaldoSnapshot query (getLatestClosedMonth);
@@ -169,9 +162,7 @@ async function computeAccountChain(
   // Issue #681: with a Stichtag the chain starts at the latest closed month BEFORE the Stichtag's
   // calendar month — never at a later one. Without a Stichtag the call is unchanged.
   const virtualToday = stichtag.virtualToday;
-  const confirmed = await getConfirmedCarryOver(
-    app.prisma,
-    employeeId,
+  const confirmed = await src.confirmedCarryOver(
     employee?.tenantId ?? "",
     virtualToday !== undefined
       ? {
@@ -231,11 +222,6 @@ async function computeAccountChain(
   // (`holidaysAtWorkLocation` returns an empty map for `fromDay > toDay`), the complete-months
   // loop (breaks immediately at the current month), and the partial-month gate just below
   // (`effectiveEnd >= currentMonthOpenStart` is false).
-  const employeeScope = {
-    kind: "employee" as const,
-    employeeId,
-    tenantId: employee?.tenantId ?? "",
-  };
   // Issue #447 (D-12) — normalize exitDate to tenant-TZ UTC midnight, mirroring hireDateNorm
   // above (and close-employee-month.ts's own exitDateNorm convention).
   const exitDateNorm = employee?.exitDate
@@ -253,12 +239,7 @@ async function computeAccountChain(
   // Entries since snapshot (or month start). Same T1 facade read — every downstream use of
   // `entries` in this file only reads `date`/`startTime`/`endTime`/`breakMinutes`, exactly the
   // fields T1's `select` returns.
-  const entries = await getValidWorkedEntriesInRange(
-    app.prisma,
-    employeeScope,
-    rangeStart,
-    effectiveEnd,
-  );
+  const entries = await src.validEntries(employee?.tenantId ?? "", rangeStart, effectiveEnd);
 
   // ── SNAP-03 (Phase 76.27): Per-month iteration via closeEmployeeMonth() ─────
   // ALL schedule models now use the unified per-month loop for COMPLETE open months,
@@ -275,9 +256,7 @@ async function computeAccountChain(
   // which is deliberately a rule of the CURRENT (today's) contract, not a historical one.
 
   // Tenant config is needed by the closeEmployeeMonth branches
-  const tenantConfig = await app.prisma.tenantConfig.findUnique({
-    where: { tenantId: employee!.tenantId },
-  });
+  const tenantConfig = await src.tenantConfig(employee!.tenantId);
 
   // Hoisted holiday block — FULL-YEAR coverage (not filtered to [rangeStart, effectiveEnd]).
   //
@@ -296,47 +275,19 @@ async function computeAccountChain(
   // full-year window (previously only manual rows in [rangeStart, effectiveEnd] were loaded — no
   // consumer ever read a day outside that range, so no value changes). The entries passed are the
   // employee's own closed work entries (facade T2) — the Unterbau never reads them itself.
-  const rangeYear = rangeStart.getUTCFullYear();
-  const effectiveEndYear = effectiveEnd.getUTCFullYear();
-  const holidayFromDay = `${rangeYear}-01-01`;
-  const holidayToDay = `${effectiveEndYear}-12-31`;
-  const workLocationEntries = await getWorkedEntriesInRange(
-    app.prisma,
-    employeeScope,
-    new Date(`${holidayFromDay}T00:00:00Z`),
-    new Date(`${holidayToDay}T00:00:00Z`),
-  );
-  // This function has NO surrounding try/catch at many of its ~20 call sites (e.g. shifts.ts's
-  // PUT handler: "no try/catch — saldo divergence must be loud", updateOvertimeAccount() runs as
-  // a side effect of unrelated mutations) — it must not itself become a new way for an UNRELATED
-  // write to 500. The resolver is fail-closed when a tenant has no active salon at all (Phase 64b
-  // D-18 calls this state unreachable THROUGH the app's own guarded routes) — but a tenant CAN
-  // reach it via a direct data change that bypasses those routes (shift-salon.test.ts's D-05/D-07
-  // fixture deliberately does this to test unrelated shift behavior, and hit exactly this throw).
-  // Before Phase 71b this function never depended on salon presence at all, so degrading to "no
-  // work-location holiday resolvable this window" on that ONE specific, identified failure —
-  // rather than throwing — restores that pre-71b resilience without swallowing unrelated bugs.
-  let holidaysByEmployee: Awaited<ReturnType<typeof holidaysAtWorkLocation>>;
-  try {
-    holidaysByEmployee = await holidaysAtWorkLocation(
-      app.prisma,
-      employee?.tenantId ?? "",
-      [employeeId],
-      holidayFromDay,
-      holidayToDay,
-      workLocationEntries,
-    );
-  } catch (err) {
-    app.log.warn(
-      { err, employeeId },
-      "computeOvertimeBalanceBreakdown: holidaysAtWorkLocation failed (tenant likely has no active salon) — continuing with no work-location holidays for this window",
-    );
-    holidaysByEmployee = new Map();
-  }
+  // (Resolver call, its fail-soft handling for a tenant without an active salon, and the
+  // full-calendar-year window `[Jan 1 of rangeStart's year, Dec 31 of effectiveEnd's year]` live in
+  // `ChainSource.holidayDates` - the query source keeps the pre-#696 code verbatim.)
   // D-06: holiday dates as tenant-TZ YYYY-MM-DD, passed to calcLeaveAbsenceMinutesTz so a
   // holiday inside approved leave/absence is NOT double-deducted (holidayMinutes already
   // subtracts it separately). Full-year set used for all closeEmployeeMonth calls.
-  const holidayDateStrSet = new Set<string>(holidaysByEmployee.get(employeeId)?.keys() ?? []);
+  const holidayDateStrSet = await src.holidayDates(
+    app,
+    employee?.tenantId ?? "",
+    employeeId,
+    rangeStart,
+    effectiveEnd,
+  );
 
   // ── SNAP-03 (Phase 76.27): Per-month iteration via closeEmployeeMonth() ────────
   //
@@ -421,7 +372,7 @@ async function computeAccountChain(
   // at all — the SAME `effectiveEnd >= currentMonthOpenStart` condition the partial-month block
   // itself gates on.
   const completeMonthSchedules = await Promise.all(
-    completeOpenMonths.map((cm) => resolveMonthContract(app, employeeId, cm.monthEnd)),
+    completeOpenMonths.map((cm) => src.monthContractAt(cm.monthEnd)),
   );
 
   const currentMonthOpenStart =
@@ -431,9 +382,7 @@ async function computeAccountChain(
   // case) — never fetched speculatively, so an unevaluated month's contract can never leak into
   // the SHIFT_BASED prefetch gate below.
   const partialMonthSchedule =
-    effectiveEnd >= currentMonthOpenStart
-      ? await resolveMonthContract(app, employeeId, currentMonthRange.end)
-      : null;
+    effectiveEnd >= currentMonthOpenStart ? await src.monthContractAt(currentMonthRange.end) : null;
   const partialMonthScheduleType = partialMonthSchedule
     ? String(partialMonthSchedule.type ?? "")
     : "";
@@ -471,12 +420,7 @@ async function computeAccountChain(
   // Phase 100B Plan 05 — S1, contexts/scheduling facade. Issue #451 (D-04): gated on
   // anyMonthShiftBased (any EVALUATED month's own contract), not today's contract.
   const allShifts = anyMonthShiftBased
-    ? await getShiftsInRange(
-        app.prisma,
-        { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
-        rangeFirstDay,
-        shiftRangeLastDay,
-      )
+    ? await src.shifts(employee?.tenantId ?? "", rangeFirstDay, shiftRangeLastDay)
     : [];
 
   // Upper bound = shiftRangeLastDay (= full current calendar month, NOT effectiveEnd).
@@ -490,20 +434,10 @@ async function computeAccountChain(
   // leave/absence fetch was left at effectiveEnd — that asymmetry is the divergence root cause.
   // Non-SHIFT partial (monthEnd = effectiveEnd) ignores the extra rows (out of window) → no-op.
   // Issue #446 (D-02) — effective leave (APPROVED + CANCELLATION_REQUESTED), contexts/absence facade.
-  const allApprovedLeave = await getActiveLeaveOverlapping(
-    app.prisma,
-    { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
-    rangeStart,
-    shiftRangeLastDay,
-  );
+  const allApprovedLeave = await src.leave(employee?.tenantId ?? "", rangeStart, shiftRangeLastDay);
 
   // Phase 100B Plan 12 — A4, contexts/absence facade.
-  const allAbsences = await getAbsencesOverlapping(
-    app.prisma,
-    { kind: "employee", employeeId, tenantId: employee?.tenantId ?? "" },
-    rangeStart,
-    shiftRangeLastDay,
-  );
+  const allAbsences = await src.absences(employee?.tenantId ?? "", rangeStart, shiftRangeLastDay);
 
   // Build a full-range holidayDateStrings Set covering all years in [rangeStart, effectiveEnd].
   // (Already computed above as holidayDateStrSet — reuse it directly for closeEmployeeMonth calls.)
@@ -525,9 +459,7 @@ async function computeAccountChain(
   // from the Gesamtsaldo of the month series by exactly its minutes. With a closed month the value is
   // the stored carry, which the first close already seeded with the OpeningBalance — it is never read
   // a second time (no double count).
-  const chainBase = await getCarryOverBase(
-    app.prisma,
-    employeeId,
+  const chainBase = await src.carryOverBase(
     confirmed.hasClosedMonth ? { carryOver: snapshotCarryOver } : null,
   );
   let accumulatedCarryOver = chainBase;
@@ -571,7 +503,7 @@ async function computeAccountChain(
     // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides for this
     // month so the complete-month recompute honors per-MA / per-pattern slot amounts.
     const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } =
-      await loadBsSlotOverrides(app.prisma, employeeId, monthFirstDay);
+      await src.bsSlotOverrides(monthFirstDay);
     const result = closeEmployeeMonth({
       employeeId,
       monthStart,
@@ -709,7 +641,7 @@ async function computeAccountChain(
     // Load Employee + active-Pattern bsSlot* overrides + per-DOW Unterrichtszeit map for
     // the current month (same convention as the complete-months loop above).
     const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } =
-      await loadBsSlotOverrides(app.prisma, employeeId, curMonthFirstDay);
+      await src.bsSlotOverrides(curMonthFirstDay);
 
     // Pre-compute rosterProration for SHIFT_BASED (partial month only). R_toDate uses shifts
     // up to effectiveEnd (coveredDates for the open window); R_periodFull uses ALL current-
@@ -968,18 +900,60 @@ export async function openMonthCarryInMinutes(
   year: number,
   month: number,
 ): Promise<number> {
-  const employee = await app.prisma.employee.findUnique({
-    where: { id: employeeId },
-    select: { tenantId: true, hireDate: true },
-  });
+  return openMonthCarryInFrom(app, employeeId, year, month, querySource(app, employeeId));
+}
+
+/**
+ * Issue #696 — `openMonthCarryInMinutes` for many (person, month) pairs of ONE tenant: the same
+ * function (`openMonthCarryInFrom`, same chain, same arithmetic) with its inputs read once for all
+ * persons instead of once per person. Every answer equals the single call's (pinned by
+ * `open-month-carry-bulk-696.test.ts`); closed months are only read, nothing is written. A pair
+ * whose person is not found or time-tracking exempt answers exactly as the single call does.
+ * Sequential on purpose (Issue #612, P-09): the persons are folded one after another, never in
+ * parallel.
+ */
+export async function openMonthCarryInMinutesForMany(
+  app: FastifyInstance,
+  tenantId: string,
+  requests: readonly { employeeId: string; year: number; month: number }[],
+  // The sources of `loadChainSources` for these requests, when the caller already loaded them.
+  preloaded?: Map<string, ChainSource>,
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (requests.length === 0) return result;
+  const sources = preloaded ?? (await loadChainSources(app, tenantId, requests));
+  for (const r of requests) {
+    const key = openMonthCarryInKey(r.employeeId, r.year, r.month);
+    if (result.has(key)) continue;
+    result.set(
+      key,
+      await openMonthCarryInFrom(app, r.employeeId, r.year, r.month, sources.get(r.employeeId)!),
+    );
+  }
+  return result;
+}
+
+/** The key of `openMonthCarryInMinutesForMany`'s answer. */
+export function openMonthCarryInKey(employeeId: string, year: number, month: number): string {
+  return `${employeeId}::${year}-${String(month).padStart(2, "0")}`;
+}
+
+async function openMonthCarryInFrom(
+  app: FastifyInstance,
+  employeeId: string,
+  year: number,
+  month: number,
+  src: ChainSource,
+): Promise<number> {
+  const employee = await src.employee();
   if (!employee) return 0;
-  const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+  const tz = await src.timezone(employee.tenantId);
   const monthFirstDayStr = `${year}-${String(month).padStart(2, "0")}-01`;
   const todayStr = dateStrInTz(new Date(), tz);
   const virtualToday = monthFirstDayStr < todayStr ? monthFirstDayStr : todayStr;
 
   // The same bound `computeAccountChain` applies for this Stichtag (the start of its month).
-  const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, employee.tenantId, {
+  const confirmed = await src.confirmedCarryOver(employee.tenantId, {
     periodStartBefore: monthRangeUtc(
       Number(virtualToday.slice(0, 4)),
       Number(virtualToday.slice(5, 7)),
@@ -987,9 +961,7 @@ export async function openMonthCarryInMinutes(
     ).start,
   });
   // The chain head when no month is closed before M (Phase 99 OB-02) — read once, used by both paths.
-  const headSeed = confirmed.hasClosedMonth
-    ? 0
-    : await getCarryOverBase(app.prisma, employeeId, null);
+  const headSeed = confirmed.hasClosedMonth ? 0 : await src.carryOverBase(null);
 
   // Chain start exactly as `computeAccountChain` derives it: the day after the last close, else the
   // hire day. Its month at or after M means the chain's month loop has nothing before M.
@@ -1003,7 +975,7 @@ export async function openMonthCarryInMinutes(
     return confirmed.hasClosedMonth ? confirmed.minutes : headSeed;
   }
 
-  const chain = await computeAccountChain(app, employeeId, { virtualToday });
+  const chain = await computeAccountChain(app, employeeId, { virtualToday }, src);
   if (chain === null) return confirmed.hasClosedMonth ? confirmed.minutes : headSeed;
   // Issue #682: the chain already starts at the head seed (`chainBase`); adding `headSeed` here
   // would count the OpeningBalance twice. A track-only month in the chain drops it, like its close.
@@ -1077,4 +1049,408 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   if (effectiveBalanceHours === null) return; // §18-exempt — do not touch stored balance
 
   await persistOvertimeBalance(app, app.prisma, employeeId, effectiveBalanceHours);
+}
+
+// ── Issue #696 — where the account chain reads its inputs from ───────────────────────────────
+// (Was chain-source.ts; kept in this module so the context import graph gains no new cycle member.)
+// The chain's arithmetic is written once; only the READS differ: `querySource` (one person, queried
+// on demand) or `loadChainSources` (many persons, every collection read once, filtered in memory).
+// A person whose data would make the in-memory answer ambiguous gets the query source.
+
+export type ChainEmployee = {
+  tenantId: string;
+  hireDate: Date;
+  exitDate: Date | null;
+  isTimeTrackingExempt: boolean;
+  breakOver6hOverride: number | null;
+  breakOver9hOverride: number | null;
+};
+export type ChainTenantConfig = Prisma.TenantConfigGetPayload<object>;
+export type ChainSchedule = Awaited<ReturnType<typeof getEffectiveSchedule>>;
+export type ChainEntry = Awaited<ReturnType<typeof getValidWorkedEntriesInRange>>[number];
+export type ChainShift = Awaited<ReturnType<typeof getShiftsInRange>>[number];
+export type ChainLeave = Awaited<ReturnType<typeof getActiveLeaveOverlapping>>[number];
+export type ChainAbsence = Awaited<ReturnType<typeof getAbsencesOverlapping>>[number];
+export type ChainBsOverrides = Awaited<ReturnType<typeof loadBsSlotOverrides>>;
+
+export interface ChainSource {
+  employee(): Promise<ChainEmployee | null>;
+  timezone(tenantId: string): Promise<string>;
+  /** The schedule valid at `date` (default: now), the tenant-default fallback otherwise. */
+  scheduleAt(date?: Date): Promise<ChainSchedule>;
+  /** The contract of an open month judged at its end; `NO_CONTRACT_SCHEDULE` when no contract row
+   * is valid by then (Issue #780: a hire before the first contract owes no Soll). */
+  monthContractAt(monthEnd: Date): Promise<ChainSchedule | typeof NO_CONTRACT_SCHEDULE>;
+  /** The stored schedule row valid at `date`, `null` when there is none (no fallback). */
+  scheduleRowAt(date: Date): Promise<Prisma.WorkScheduleGetPayload<object> | null>;
+  /** The latest closed month (optionally only those starting before `periodStartBefore`). */
+  confirmedCarryOver(
+    tenantId: string,
+    options: { periodStartBefore?: Date },
+  ): Promise<ConfirmedCarryOver>;
+  tenantConfig(tenantId: string): Promise<ChainTenantConfig | null>;
+  /** T1: closed, valid WORK entries with `from <= date <= to`. */
+  validEntries(tenantId: string, from: Date, to: Date): Promise<ChainEntry[]>;
+  /**
+   * The holiday dates (tenant-local YYYY-MM-DD) at the person's work location over the calendar
+   * years of `[rangeStart, effectiveEnd]`; empty when the tenant has no active salon (fail-soft,
+   * see the call site's comment in `computeAccountChain`).
+   */
+  holidayDates(
+    app: FastifyInstance,
+    tenantId: string,
+    employeeId: string,
+    rangeStart: Date,
+    effectiveEnd: Date,
+  ): Promise<Set<string>>;
+  /**
+   * The holiday dates between two tenant-local days at the person's work location (the month core's
+   * window). Unlike `holidayDates` it does not swallow a refusal: a tenant without an active salon
+   * throws, as the month core always did.
+   */
+  holidayDatesBetween(
+    tenantId: string,
+    employeeId: string,
+    entriesFrom: Date,
+    entriesTo: Date,
+    fromDay: string,
+    toDay: string,
+  ): Promise<Set<string>>;
+  shifts(tenantId: string, from: Date, to: Date): Promise<ChainShift[]>;
+  leave(tenantId: string, from: Date, to: Date): Promise<ChainLeave[]>;
+  absences(tenantId: string, from: Date, to: Date): Promise<ChainAbsence[]>;
+  /** The chain head (`getCarryOverBase`): the last close's carry, else the OpeningBalance. */
+  carryOverBase(prevSnapshot: { carryOver: number } | null): Promise<number>;
+  bsSlotOverrides(referenceDate: Date): Promise<ChainBsOverrides>;
+}
+
+/**
+ * What the database compares a bound against on a `@db.Date` column: Prisma casts the instant to
+ * its UTC date part (see `periodStartWindow`, snapshot-period.ts). The in-memory filters below use
+ * the same cast, so they keep exactly the rows the single queries keep - including the previous
+ * local day that an instant month bound takes in (Issue #493).
+ */
+function dayOf(instant: Date): Date {
+  return new Date(`${instant.toISOString().slice(0, 10)}T00:00:00Z`);
+}
+
+/** The calendar-year window the chain resolves holidays for (full years, see its call site). */
+function holidayWindow(rangeStart: Date, effectiveEnd: Date): { fromDay: string; toDay: string } {
+  return {
+    fromDay: `${rangeStart.getUTCFullYear()}-01-01`,
+    toDay: `${effectiveEnd.getUTCFullYear()}-12-31`,
+  };
+}
+
+// ── One person, queried on demand (the behaviour before Issue #696, unchanged) ───────────────
+
+export function querySource(app: FastifyInstance, employeeId: string): ChainSource {
+  const scope = (tenantId: string) => ({ kind: "employee" as const, employeeId, tenantId });
+  return {
+    employee: () =>
+      app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: {
+          tenantId: true,
+          hireDate: true,
+          exitDate: true, // Issue #447 (D-12) — clamps the live window at the exit date
+          isTimeTrackingExempt: true, // Phase 76.7 (D-04, SALDO-V19-04)
+          breakOver6hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
+          breakOver9hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
+        },
+      }),
+    timezone: (tenantId) => getTenantTimezone(app.prisma, tenantId),
+    scheduleAt: (date) => getEffectiveSchedule(app, employeeId, date),
+    monthContractAt: (monthEnd) => resolveMonthContract(app, employeeId, monthEnd),
+    scheduleRowAt: (date) =>
+      app.prisma.workSchedule.findFirst({
+        where: { employeeId, validFrom: { lte: date } },
+        orderBy: { validFrom: "desc" },
+      }),
+    holidayDatesBetween: async (tenantId, id, entriesFrom, entriesTo, fromDay, toDay) => {
+      const workLocationEntries = await getWorkedEntriesInRange(
+        app.prisma,
+        scope(tenantId),
+        entriesFrom,
+        entriesTo,
+      );
+      const byEmployee = await holidaysAtWorkLocation(
+        app.prisma,
+        tenantId,
+        [id],
+        fromDay,
+        toDay,
+        workLocationEntries,
+      );
+      return new Set<string>(byEmployee.get(id)?.keys() ?? []);
+    },
+    confirmedCarryOver: (tenantId, options) =>
+      getConfirmedCarryOver(app.prisma, employeeId, tenantId, options),
+    tenantConfig: (tenantId) => app.prisma.tenantConfig.findUnique({ where: { tenantId } }),
+    validEntries: (tenantId, from, to) =>
+      getValidWorkedEntriesInRange(app.prisma, scope(tenantId), from, to),
+    holidayDates: async (appInstance, tenantId, id, rangeStart, effectiveEnd) => {
+      const { fromDay, toDay } = holidayWindow(rangeStart, effectiveEnd);
+      const workLocationEntries = await getWorkedEntriesInRange(
+        app.prisma,
+        scope(tenantId),
+        new Date(`${fromDay}T00:00:00Z`),
+        new Date(`${toDay}T00:00:00Z`),
+      );
+      // This function has NO surrounding try/catch at many of its ~20 call sites - it must not
+      // itself become a new way for an UNRELATED write to 500. The resolver is fail-closed when a
+      // tenant has no active salon at all; degrade to "no work-location holiday resolvable".
+      try {
+        const byEmployee = await holidaysAtWorkLocation(
+          app.prisma,
+          tenantId,
+          [id],
+          fromDay,
+          toDay,
+          workLocationEntries,
+        );
+        return new Set<string>(byEmployee.get(id)?.keys() ?? []);
+      } catch (err) {
+        appInstance.log.warn(
+          { err, employeeId: id },
+          "computeOvertimeBalanceBreakdown: holidaysAtWorkLocation failed (tenant likely has no active salon) — continuing with no work-location holidays for this window",
+        );
+        return new Set<string>();
+      }
+    },
+    shifts: (tenantId, from, to) => getShiftsInRange(app.prisma, scope(tenantId), from, to),
+    leave: (tenantId, from, to) => getActiveLeaveOverlapping(app.prisma, scope(tenantId), from, to),
+    absences: (tenantId, from, to) => getAbsencesOverlapping(app.prisma, scope(tenantId), from, to),
+    carryOverBase: (prev) => getCarryOverBase(app.prisma, employeeId, prev),
+    bsSlotOverrides: (referenceDate) => loadBsSlotOverrides(app.prisma, employeeId, referenceDate),
+  };
+}
+
+// ── Many persons of one tenant, every collection read once ───────────────────────────────────
+
+/** One (person, month) whose carry-in is asked for - the window the loader must cover. */
+export type ChainRequest = { employeeId: string; year: number; month: number };
+
+type ScheduleRow = Prisma.WorkScheduleGetPayload<object>;
+type SnapshotRow = { employeeId: string; periodStart: Date; periodEnd: Date; carryOver: number };
+
+/**
+ * Sources for `requests` of ONE tenant. A person whose bulk answer could differ from the single
+ * read's gets the query source instead (still correct, just not bulk). Returns an empty map for no
+ * request. Closed months are only READ (their stored carry), never rewritten.
+ */
+export async function loadChainSources(
+  app: FastifyInstance,
+  tenantId: string,
+  requests: readonly ChainRequest[],
+): Promise<Map<string, ChainSource>> {
+  const sources = new Map<string, ChainSource>();
+  if (requests.length === 0) return sources;
+  const employeeIds = [...new Set(requests.map((r) => r.employeeId))];
+  const tz = await getTenantTimezone(app.prisma, tenantId);
+  const todayStr = dateStrInTz(new Date(), tz);
+  const fallbackToQuery = (id: string) => sources.set(id, querySource(app, id));
+
+  const [employees, tenantConfig, schedules, snapshots, openingBalances] = await Promise.all([
+    app.prisma.employee.findMany({
+      where: { id: { in: employeeIds }, tenantId },
+      select: {
+        id: true,
+        tenantId: true,
+        hireDate: true,
+        exitDate: true,
+        isTimeTrackingExempt: true,
+        breakOver6hOverride: true,
+        breakOver9hOverride: true,
+      },
+    }),
+    app.prisma.tenantConfig.findUnique({ where: { tenantId } }),
+    app.prisma.workSchedule.findMany({
+      where: { employeeId: { in: employeeIds }, employee: { tenantId } },
+      orderBy: { validFrom: "desc" },
+    }),
+    app.prisma.saldoSnapshot.findMany({
+      where: {
+        employeeId: { in: employeeIds },
+        employee: { tenantId },
+        periodType: "MONTHLY",
+        superseded: false,
+      },
+      orderBy: { periodStart: "desc" },
+      select: { employeeId: true, periodStart: true, periodEnd: true, carryOver: true },
+    }),
+    app.prisma.openingBalance.findMany({
+      where: { employeeId: { in: employeeIds }, employee: { tenantId }, superseded: false },
+      select: { employeeId: true, minutes: true },
+    }),
+  ]);
+
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
+  const group = <T extends { employeeId: string }>(rows: readonly T[]) => {
+    const map = new Map<string, T[]>();
+    for (const row of rows) {
+      const list = map.get(row.employeeId) ?? [];
+      list.push(row);
+      map.set(row.employeeId, list);
+    }
+    return map;
+  };
+  const schedulesBy = group<ScheduleRow>(schedules);
+  const snapshotsBy = group<SnapshotRow>(snapshots);
+  const openingBy = group(openingBalances);
+
+  // Persons whose in-memory answer is not provably the single read's: query source.
+  const bulkIds: string[] = [];
+  for (const id of employeeIds) {
+    const emp = employeeById.get(id);
+    const list = schedulesBy.get(id) ?? [];
+    const tied = list.some(
+      (s, i) => i > 0 && s.validFrom.getTime() === list[i - 1]!.validFrom.getTime(),
+    );
+    const snapList = snapshotsBy.get(id) ?? [];
+    const tiedSnapshots = snapList.some(
+      (s, i) => i > 0 && s.periodStart.getTime() === snapList[i - 1]!.periodStart.getTime(),
+    );
+    if (!emp || tied || tiedSnapshots || (openingBy.get(id)?.length ?? 0) > 1) fallbackToQuery(id);
+    else bulkIds.push(id);
+  }
+  if (bulkIds.length === 0) return sources;
+
+  // The widest window any bulk person's chain can read: from the earliest chain start (the day after
+  // the closed month before the request's month, else the hire day) to the end of today's month
+  // (the roster/leave horizon of a chain at Stichtag today; later Stichtage are the same bound).
+  const startOf = (id: string, r: ChainRequest): Date => {
+    const emp = employeeById.get(id)!;
+    const monthFirst = `${r.year}-${String(r.month).padStart(2, "0")}-01`;
+    const virtualToday = monthFirst < todayStr ? monthFirst : todayStr;
+    const bound = monthRangeUtc(
+      Number(virtualToday.slice(0, 4)),
+      Number(virtualToday.slice(5, 7)),
+      tz,
+    ).start;
+    const closed = (snapshotsBy.get(id) ?? []).find((s) => s.periodStart < dayOf(bound));
+    return closed
+      ? new Date(dateStrInTz(new Date(closed.periodEnd.getTime() + 86400000), tz) + "T00:00:00Z")
+      : new Date(dateStrInTz(emp.hireDate, tz) + "T00:00:00Z");
+  };
+  let from = new Date(`${todayStr}T00:00:00Z`);
+  const bulkSet = new Set(bulkIds);
+  for (const r of requests) {
+    if (!bulkSet.has(r.employeeId)) continue;
+    const s = startOf(r.employeeId, r);
+    if (s < from) from = s;
+  }
+  const horizon = monthRangeUtc(Number(todayStr.slice(0, 4)), Number(todayStr.slice(5, 7)), tz).end;
+  // The month core (`computeMonthSaldo`) of a requested month reads from that month's first day and
+  // up to its end INSTANT (leave and absences compare instants, Issue #493), so the window covers it.
+  let horizonInstant = horizon;
+  for (const r of requests) {
+    if (!bulkSet.has(r.employeeId)) continue;
+    const { start, end } = monthRangeUtc(r.year, r.month, tz);
+    const firstDay = new Date(dateStrInTz(start, tz) + "T00:00:00Z");
+    if (firstDay < from) from = firstDay;
+    if (end > horizonInstant) horizonInstant = end;
+  }
+  const horizonDay = horizonInstant;
+  // Requests for months after today still chain through today only (virtualToday = today), so the
+  // horizon above covers them.
+  const scopeAll = { kind: "employees" as const, employeeIds: bulkIds, tenantId };
+
+  const [validEntries, workEntries, leave, absences, shifts, bsResolvers] = await Promise.all([
+    getValidWorkedEntriesInRange(app.prisma, scopeAll, from, horizonDay),
+    // The work-location rows start at Jan 1 of the window's first year, like the single chain's.
+    getWorkedEntriesInRange(
+      app.prisma,
+      scopeAll,
+      new Date(`${from.getUTCFullYear()}-01-01T00:00:00Z`),
+      horizonDay,
+    ),
+    getActiveLeaveOverlapping(app.prisma, scopeAll, from, horizonDay),
+    getAbsencesOverlapping(app.prisma, scopeAll, from, horizonDay),
+    // Every bulk person: the month core reads shifts whatever the schedule type is.
+    getShiftsInRange(app.prisma, scopeAll, from, horizonDay),
+    loadBsSlotOverridesForMany(app.prisma, bulkIds),
+  ]);
+
+  // Holidays at the work location of every day, ONE batched resolver call over the full calendar
+  // years of the window (the chain filters to its own months).
+  const fromDay = `${from.getUTCFullYear()}-01-01`;
+  const toDay = `${horizonDay.getUTCFullYear()}-12-31`;
+  let holidays: Awaited<ReturnType<typeof holidaysAtWorkLocation>>;
+  try {
+    holidays = await holidaysAtWorkLocation(
+      app.prisma,
+      tenantId,
+      bulkIds,
+      fromDay,
+      toDay,
+      workEntries,
+    );
+  } catch {
+    // The resolver refuses (a day without any resolvable salon). Which person it concerns, and
+    // whether the single read degrades or throws, is the single read's business: ask it per person.
+    for (const id of bulkIds) fallbackToQuery(id);
+    return sources;
+  }
+
+  const validBy = group(validEntries);
+  const leaveBy = group(leave);
+  const absencesBy = group(absences);
+  const shiftsBy = group(shifts);
+
+  for (const id of bulkIds) {
+    const emp = employeeById.get(id)!;
+    const scheduleList = schedulesBy.get(id) ?? [];
+    const snaps = snapshotsBy.get(id) ?? [];
+    const myValid = validBy.get(id) ?? [];
+    const myLeave = leaveBy.get(id) ?? [];
+    const myAbsences = absencesBy.get(id) ?? [];
+    const myShifts = shiftsBy.get(id) ?? [];
+    const bs = bsResolvers.get(id);
+    const opening = openingBy.get(id)?.[0]?.minutes ?? 0;
+    sources.set(id, {
+      employee: async () => emp,
+      timezone: async () => tz,
+      scheduleRowAt: async (date) => scheduleList.find((s) => s.validFrom <= date) ?? null,
+      holidayDatesBetween: async (_tenant, _id, _from, _to, fromDayStr, toDayStr) => {
+        const days = holidays.get(id);
+        return new Set<string>(
+          [...(days?.keys() ?? [])].filter((d) => d >= fromDayStr && d <= toDayStr),
+        );
+      },
+      scheduleAt: async (date) => {
+        const target = date ?? new Date();
+        return (
+          scheduleList.find((s) => s.validFrom <= target) ??
+          defaultScheduleFromTenantConfig(tenantConfig)
+        );
+      },
+      // Same rule as resolveMonthContract (Issue #780): no row valid by the month end = no contract.
+      monthContractAt: async (monthEnd) =>
+        scheduleList.find((s) => s.validFrom <= monthEnd) ?? NO_CONTRACT_SCHEDULE,
+      confirmedCarryOver: async (_tenant, options) => {
+        const before = options.periodStartBefore;
+        const hit = snaps.find((s) => (before ? s.periodStart < dayOf(before) : true));
+        return hit
+          ? { minutes: hit.carryOver, hasClosedMonth: true, periodEnd: hit.periodEnd }
+          : { minutes: 0, hasClosedMonth: false, periodEnd: null };
+      },
+      tenantConfig: async () => tenantConfig,
+      validEntries: async (_tenant, f, t) =>
+        myValid.filter((e) => e.date >= dayOf(f) && e.date <= dayOf(t)),
+      holidayDates: async () => new Set<string>(holidays.get(id)?.keys() ?? []),
+      shifts: async (_tenant, f, t) =>
+        myShifts.filter((s) => s.date >= dayOf(f) && s.date <= dayOf(t)),
+      leave: async (_tenant, f, t) =>
+        myLeave.filter((l) => l.startDate <= dayOf(t) && l.endDate >= dayOf(f)),
+      absences: async (_tenant, f, t) =>
+        myAbsences.filter((a) => a.startDate <= dayOf(t) && a.endDate >= dayOf(f)),
+      carryOverBase: async (prev) => (prev ? prev.carryOver : opening),
+      bsSlotOverrides: async (ref) =>
+        bs
+          ? bs(ref)
+          : { employeeSlots: null, patternSlots: null, patternUnterrichtsMinutenByDow: null },
+    });
+  }
+  return sources;
 }
