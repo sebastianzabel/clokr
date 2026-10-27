@@ -27,7 +27,14 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
+import {
+  getTenantTimezone,
+  dateStrInTz,
+  monthRangeUtc,
+  monthDayBounds,
+  addDaysUtc,
+  todayInTz,
+} from "./timezone";
 import { periodStartWindow, monthlySnapshotOrder, isPeriodStartInMonth } from "./snapshot-period";
 import {
   openMonthCarryInMinutes,
@@ -577,7 +584,8 @@ export async function computeMonthSaldo(
   // Days of the cumulative series: from month-start (or hireDate if later) through windowEnd =
   // yesterday or the month's last day, whichever is earlier (#438, see the series block below).
   const todayStr = dateStrInTz(new Date(), tz);
-  const yesterdayStr = dateStrInTz(new Date(Date.now() - 86400000), tz);
+  // Issue #771 — step back one tenant-local CALENDAR day; `now - 24 h` is wrong on a 23/25 h DST day.
+  const yesterdayStr = addDaysUtc(todayInTz(tz), -1).toISOString().slice(0, 10);
   const cutoffStr = yesterdayStr;
   const windowEnd =
     cutoffStr < dateStrInTz(monthLastDay, tz) ? cutoffStr : dateStrInTz(monthLastDay, tz);
