@@ -8,6 +8,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ClockEvent, ClockResolution, ClockState } from "./types";
 import { decide } from "./state-machine";
 import { emitClockAudit } from "./audit-actor";
+import { removeAutoBreaksOfEntry, auditRemovedAutoBreaks } from "./auto-break-replace"; // Issue #799
 import { consolidateSameDayEntries, calcBreakMinutesLocal } from "./consolidate";
 import { DOUBLE_TAP_DEBOUNCE_MS, CROSS_DAY_OPEN_ENTRY_FALLBACK_HOURS } from "./thresholds";
 import { hasApprovedLeaveOnDate } from "../../contexts/absence"; // Phase 100b Plan 14 (AC-1) — index is the public surface
@@ -376,6 +377,14 @@ export async function resolveClockEvent(
             endTime: closedEntry!.endTime,
             breakMinutes: closedEntry!.breakMinutes,
           });
+          // 0. Issue #799: a recorded gap replaces the automatic break of the earlier stop.
+          const removedAuto = await removeAutoBreaksOfEntry(tx, closedEntry!);
+          await auditRemovedAutoBreaks(tx, {
+            entryId: decision.entryId,
+            removed: removedAuto,
+            actor: event.actor,
+            req,
+          });
           // 1. Create Break for the gap (old endTime → new START timestamp)
           const breakRow = await tx.break.create({
             data: {
@@ -392,6 +401,7 @@ export async function resolveClockEvent(
             data: {
               endTime: null,
               breakMinutes: totalBreakMins,
+              ...(removedAuto.length > 0 && { breakStatus: "CONFIRMED" as const }),
               ...(materialized && {
                 activityKind: materialized.kind,
                 activityShares: activitySharesReplace(materialized.shares),
@@ -501,6 +511,12 @@ export async function resolveClockEvent(
               entityId: merge.targetEntryId,
               oldValue: merge.before,
               newValue: merge.after,
+              actor: event.actor,
+              req,
+            });
+            await auditRemovedAutoBreaks(tx, {
+              entryId: merge.targetEntryId,
+              removed: merge.removedAutoBreaks,
               actor: event.actor,
               req,
             });

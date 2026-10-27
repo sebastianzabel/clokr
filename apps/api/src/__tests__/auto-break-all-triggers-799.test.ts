@@ -217,4 +217,161 @@ describe("auto-break on every clock trigger (#799)", () => {
       });
     }
   });
+
+  // ── A recorded gap replaces the automatic break of the earlier stop (#799 extension) ──────────
+  async function seedClosedAutoEntry(
+    source: "MANUAL" | "NFC" | "WIFI",
+    startIso: string,
+    endIso: string,
+    date: Date,
+  ) {
+    const start = new Date(startIso);
+    const end = new Date(endIso);
+    const e = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: data.employee.id,
+        date,
+        startTime: start,
+        endTime: end,
+        source,
+        salonId: data.salonId,
+        breakMinutes: 30,
+        breakStatus: "AUTO",
+      },
+    });
+    await app.prisma.break.create({
+      data: {
+        timeEntryId: e.id,
+        startTime: new Date(start.getTime() + 3 * 3_600_000),
+        endTime: new Date(start.getTime() + 3 * 3_600_000 + 30 * 60_000),
+      },
+    });
+    return e;
+  }
+
+  async function expectGapOnly(entryId: string, gapMinutes: number) {
+    const e = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entryId } });
+    const breaks = await app.prisma.break.findMany({ where: { timeEntryId: entryId } });
+    expect(breaks).toHaveLength(1);
+    expect(Math.round((breaks[0].endTime.getTime() - breaks[0].startTime.getTime()) / 60_000)).toBe(
+      gapMinutes,
+    );
+    expect(e.breakMinutes).toBe(gapMinutes);
+    expect(e.breakStatus).toBe("CONFIRMED");
+    const audits = await app.prisma.auditLog.findMany({
+      where: {
+        entity: "Break",
+        action: "DELETE",
+        newValue: { path: ["reason"], equals: "Automatische Pause durch erfasste Pause ersetzt" },
+      },
+    });
+    expect(audits.length).toBeGreaterThanOrEqual(1);
+  }
+
+  it("web: re-clock-in after 20 min removes the auto break, the next stop adds no second one", async () => {
+    const now = Date.now();
+    const e = await seedClosedAutoEntry(
+      "MANUAL",
+      new Date(now - 7 * 3_600_000).toISOString(),
+      new Date(now - 20 * 60_000).toISOString(),
+      todayInTz("Europe/Berlin"),
+    );
+    const inRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/time-entries/clock-in",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { source: "MANUAL" },
+    });
+    expect(inRes.statusCode).toBe(200);
+    await expectGapOnly(e.id, 20);
+    const outRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/time-entries/${e.id}/clock-out`,
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: {},
+    });
+    expect(outRes.statusCode).toBe(200);
+    const breaks = await app.prisma.break.findMany({ where: { timeEntryId: e.id } });
+    expect(breaks).toHaveLength(1);
+  });
+
+  it("NFC: re-punch after 20 min removes the auto break, the next stop adds no second one", async () => {
+    const now = Date.now();
+    const e = await seedClosedAutoEntry(
+      "NFC",
+      new Date(now - 7 * 3_600_000).toISOString(),
+      new Date(now - 20 * 60_000).toISOString(),
+      todayInTz("Europe/Berlin"),
+    );
+    const punch = () =>
+      app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/nfc-punch",
+        headers: { authorization: `Bearer ${terminalKey}` },
+        payload: { nfcCardId: NFC_CARD_ID },
+      });
+    const inRes = await punch();
+    expect(inRes.statusCode).toBe(200);
+    expect(JSON.parse(inRes.body).action).toBe("IN");
+    await expectGapOnly(e.id, 20);
+    // A second punch inside the debounce window is a no-op; age the reopen out of it.
+    await app.prisma.timeEntry.update({
+      where: { id: e.id },
+      data: { startTime: new Date(now - 8 * 3_600_000) },
+    });
+    const outRes = await punch();
+    expect(outRes.statusCode).toBe(200);
+    const breaks = await app.prisma.break.findMany({ where: { timeEntryId: e.id } });
+    expect(breaks).toHaveLength(1);
+  });
+
+  it("WIFI: the presence disconnect after a re-open adds no second break (the adapter never re-opens itself)", async () => {
+    // A WIFI connected event on a day that has a WIFI row only confirms presence; the re-open
+    // comes from another trigger. The WIFI disconnect then stops the re-opened entry.
+    const e = await seedClosedAutoEntry(
+      "WIFI",
+      "2026-01-15T08:00:00.000Z",
+      "2026-01-15T15:40:00.000Z",
+      WIFI_DATE,
+    );
+    const { removeAutoBreaksOfEntry } = await import("../services/clock/auto-break-replace");
+    await app.prisma.$transaction(async (tx) => {
+      const removed = await removeAutoBreaksOfEntry(tx, e);
+      expect(removed).toHaveLength(1);
+      await tx.break.create({
+        data: {
+          timeEntryId: e.id,
+          startTime: new Date("2026-01-15T15:40:00.000Z"),
+          endTime: new Date("2026-01-15T15:55:00.000Z"),
+        },
+      });
+      await tx.timeEntry.update({
+        where: { id: e.id },
+        data: { endTime: null, breakMinutes: 15, breakStatus: "CONFIRMED" },
+      });
+    });
+    expect((await wifiEvent("disconnected", "2026-01-15T16:05:00.000Z")).statusCode).toBe(200);
+    const done = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: e.id } });
+    expect(done.endTime).not.toBeNull();
+    expect(await app.prisma.break.count({ where: { timeEntryId: e.id } })).toBe(1);
+  });
+
+  it("a manually confirmed break is never removed on reopen", async () => {
+    const now = Date.now();
+    const e = await seedClosedAutoEntry(
+      "MANUAL",
+      new Date(now - 7 * 3_600_000).toISOString(),
+      new Date(now - 20 * 60_000).toISOString(),
+      todayInTz("Europe/Berlin"),
+    );
+    await app.prisma.timeEntry.update({ where: { id: e.id }, data: { breakStatus: "CONFIRMED" } });
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/time-entries/clock-in",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { source: "MANUAL" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(await app.prisma.break.count({ where: { timeEntryId: e.id } })).toBe(2);
+  });
 });
