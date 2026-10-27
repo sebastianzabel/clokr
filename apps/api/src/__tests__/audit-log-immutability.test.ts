@@ -70,6 +70,14 @@ const ALLOWED_MUTATION_SITES: Record<string, { count: number; reason: string }> 
       "AuditLog rows, and redaction of Employee/User JSON in oldValue/newValue. The rows " +
       "themselves stay — only personal data is redacted, never the log entry itself.",
   },
+  "apps/api/src/contexts/platform/audit-freetext-redaction.ts": {
+    count: 1,
+    reason:
+      "Issue #512 (DSGVO Art. 17 / Art. 5(1)(c)): the one in-place redaction of person-authored " +
+      "free text in the old/new values of an anonymized person, by TYPE (numbers, ids, dates, " +
+      "codes and the actor stamp stay). Called only from the anonymization and its backfill; " +
+      "the row, its timestamp, action and entity are never changed or deleted.",
+  },
   "apps/api/src/composition/data-retention.ts": {
     count: 1,
     reason:
