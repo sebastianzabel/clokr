@@ -363,6 +363,9 @@ COPY --from=build /app/apps/api/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 ENV NODE_ENV=production
+# Issue #172: pin the process timezone so host-local Date methods behave as UTC, like the tests do.
+# Tenant-local days are always derived explicitly from Tenant.timezone, never from the process TZ.
+ENV TZ=UTC
 EXPOSE 4000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
