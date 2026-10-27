@@ -36,15 +36,15 @@ import {
   seedTestData,
   cleanupTestData,
   configureDatevKanzlei,
+  numericEmployeeNumber,
 } from "../../__tests__/setup";
 import { leaveTypeFields } from "../../contexts/absence/leave-type";
-import { DATEV_BWD_SATZ_ID } from "../reports";
+import { DATEV_STUNDEN_SATZ_ID, DATEV_TAGE_SATZ_ID } from "../reports";
 
-// Named offsets of a Bewegungsdaten row (Satz-ID + 12 values), as in datev-export.test.ts.
+// Named offsets of a Bewegungsdaten row (Satz-ID + pnr, Abrechnungszeitraum, Lohnart, quantity; #304), as in datev-export.test.ts.
 const F_PNR = 1;
-const F_LOHNART = 5;
-const F_STUNDEN = 6;
-const F_TAGE = 7;
+const F_LOHNART = 3;
+const F_MENGE = 4;
 
 describe("Issue #493 — DATEV month boundaries", () => {
   let app: FastifyInstance;
@@ -84,7 +84,7 @@ describe("Issue #493 — DATEV month boundaries", () => {
       data: {
         tenantId: d.tenant.id,
         userId: user.id,
-        employeeNumber: `N-${suffix}`,
+        employeeNumber: numericEmployeeNumber(),
         firstName: label,
         lastName: "Dmb493",
         hireDate: opts.hireDate ?? new Date("2025-01-01T00:00:00Z"),
@@ -185,6 +185,11 @@ describe("Issue #493 — DATEV month boundaries", () => {
       fixed: true,
       exitDate: new Date("2026-09-30T22:00:00Z"),
     });
+    // Issue #304: the file lists a person only with something to book. X2 has worked time on the
+    // exit day (DATEV sums it); X1 has a stray October entry before the hire - still not in the
+    // file, because the employment predicate (not an empty month) excludes them.
+    await entry(X2.id, "2026-10-01", "09:00", "10:00");
+    await entry(X1.id, "2026-10-15", "09:00", "10:00");
   });
 
   afterAll(async () => {
@@ -210,7 +215,7 @@ describe("Issue #493 — DATEV month boundaries", () => {
       .split("\r\n")
       .filter((l) => l.trim().length > 0)
       .map((l) => l.split(";"))
-      .filter((f) => f[0] === String(DATEV_BWD_SATZ_ID));
+      .filter((f) => [DATEV_STUNDEN_SATZ_ID, DATEV_TAGE_SATZ_ID].map(String).includes(f[0]!));
   }
 
   const companyRows = (year: number, month: number) =>
@@ -232,7 +237,7 @@ describe("Issue #493 — DATEV month boundaries", () => {
     ] as const)("%s %i-%i Normalstunden = %s", async (who, year, month, expected) => {
       const rows = await companyRows(year, month);
       const e = who === "U" ? U : U2;
-      expect(cell(rows, e.number, 100, F_STUNDEN)).toBe(expected);
+      expect(cell(rows, e.number, 100, F_MENGE)).toBe(expected);
     });
   });
 
@@ -242,7 +247,7 @@ describe("Issue #493 — DATEV month boundaries", () => {
       [2026, 9, "3,0"],
     ] as const)("%i-%i Krank Tage = %s", async (year, month, expected) => {
       const rows = await companyRows(year, month);
-      expect(cell(rows, d.employee.employeeNumber, 200, F_TAGE)).toBe(expected);
+      expect(cell(rows, d.employee.employeeNumber, 200, F_MENGE)).toBe(expected);
     });
   });
 
@@ -259,7 +264,7 @@ describe("Issue #493 — DATEV month boundaries", () => {
     ] as const)("%s %i-%i Normalstunden = %s", async (who, year, month, expected) => {
       const e = who === "U" ? U : U2;
       const rows = await employeeRows(e.id, year, month);
-      expect(cell(rows, e.number, 100, F_STUNDEN)).toBe(expected);
+      expect(cell(rows, e.number, 100, F_MENGE)).toBe(expected);
     });
 
     it.each([
@@ -267,7 +272,7 @@ describe("Issue #493 — DATEV month boundaries", () => {
       [2026, 9, "3,0"],
     ] as const)("%i-%i Krank Tage of T = %s", async (year, month, expected) => {
       const rows = await employeeRows(d.employee.id, year, month);
-      expect(cell(rows, d.employee.employeeNumber, 200, F_TAGE)).toBe(expected);
+      expect(cell(rows, d.employee.employeeNumber, 200, F_MENGE)).toBe(expected);
     });
 
     it("the DATEV_EMPLOYEE EXPORT audit row of the October call keeps its shape", async () => {

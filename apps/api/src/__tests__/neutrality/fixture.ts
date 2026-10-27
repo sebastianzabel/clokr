@@ -31,7 +31,12 @@
 import { randomBytes, createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Role } from "@clokr/db";
-import { configureDatevKanzlei, removeFixtureRoleAssignments, seedTestData } from "../setup";
+import {
+  configureDatevKanzlei,
+  numericEmployeeNumber,
+  removeFixtureRoleAssignments,
+  seedTestData,
+} from "../setup";
 import { leaveTypeFields } from "../../contexts/absence/leave-type";
 import { DEFAULT_SALON_OPENING_HOURS } from "../../contexts/platform";
 import type { JwtPayload } from "../../middleware/auth";
@@ -183,9 +188,10 @@ async function createPerson(
     data: {
       tenantId: t.tenantId,
       userId: user.id,
-      employeeNumber: opts.anonymized
-        ? anonymizedNumber
-        : `${opts.prefix.toUpperCase()}-${t.tenantSlug}`,
+      // Issue #304: numeric, because the DATEV routes of the matrix refuse a non-numeric number
+      // (LODAS pnr is numeric). The anonymized person's number is kept by the real anonymization
+      // too (#614); only its lastName carries the GELÖSCHT label.
+      employeeNumber: numericEmployeeNumber(),
       firstName: opts.anonymized ? "Gelöscht" : "Matrix",
       lastName: opts.anonymized ? anonymizedNumber : opts.lastName,
       hireDate: opts.hireDate ?? new Date("2024-01-01"),

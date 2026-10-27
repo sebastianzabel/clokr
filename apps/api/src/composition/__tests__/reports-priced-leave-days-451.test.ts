@@ -29,6 +29,7 @@ import {
   cleanupTestData,
   grantSystemRole,
   configureDatevKanzlei,
+  numericEmployeeNumber,
 } from "../../__tests__/setup";
 import * as pdfUtils from "../pdf";
 
@@ -79,7 +80,7 @@ async function createFixedScheduleEmployee(
   const user = await app.prisma.user.create({
     data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
   });
-  const employeeNumber = `${label}-${suffix}`;
+  const employeeNumber = numericEmployeeNumber();
   const employee = await app.prisma.employee.create({
     data: {
       tenantId,
@@ -287,9 +288,9 @@ describe("Issue #451 (D-02) — Monatsbericht leave counts come from the absence
     const uLine = datevBody
       .split("\r\n")
       .map((line) => line.split(";"))
-      .find((f) => f[1] === d.employee.employeeNumber && Number(f[5]) === 300);
+      .find((f) => f[1] === d.employee.employeeNumber && Number(f[3]) === 300);
     expect(uLine).toBeDefined();
-    expect(Number(uLine![7].replace(",", "."))).toBe(row!.absenceDays.vacation);
+    expect(Number(uLine![4].replace(",", "."))).toBe(row!.absenceDays.vacation);
   });
 
   it("GET /reports/monthly: SPECIAL Sat-Mon on a Tue-Sat contract (Monday not a workday) prices as 1 day, not 3", async () => {

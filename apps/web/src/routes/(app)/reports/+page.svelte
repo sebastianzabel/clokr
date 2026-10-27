@@ -713,7 +713,17 @@
           headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
         },
       );
-      if (!res.ok) throw new Error("Download fehlgeschlagen");
+      if (!res.ok) {
+        // Issue #304: a 422 names the personnel numbers LODAS cannot take; show that, not a generic text.
+        if (res.status === 422) {
+          const payload = (await res.json().catch(() => ({}))) as { error?: string };
+          if (payload.error) {
+            toasts.error(payload.error);
+            return;
+          }
+        }
+        throw new Error("Download fehlgeschlagen");
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

@@ -19,21 +19,22 @@ import {
   seedTestData,
   cleanupTestData,
   configureDatevKanzlei,
+  numericEmployeeNumber,
 } from "./setup";
 import { leaveTypeFields } from "../contexts/absence/leave-type";
-import { DATEV_BWD_SATZ_ID } from "../composition/reports";
+import { DATEV_STUNDEN_SATZ_ID, DATEV_TAGE_SATZ_ID } from "../composition/reports";
+import { parseDatevRows, datevSectionLines } from "./datev-rows";
 import type { FastifyInstance } from "fastify";
 
-// Issue #256 (Befund 1): a Bewegungsdaten row is the Satz-ID followed by the 12 values
-// declared in [Satzbeschreibung] — 13 fields in total. Named offsets instead of bare
-// indices, so the next shift of the row shape breaks a name, not a silent off-by-one.
+// Issue #304: a Bewegungsdaten row is the Satz-ID followed by the fields declared for its record
+// type in [Satzbeschreibung] (pnr, Abrechnungszeitraum, Lohnart, quantity). Named offsets instead
+// of bare indices, so the next shift of the row shape breaks a name, not a silent off-by-one.
 const F_SATZ_ID = 0;
 const F_PNR = 1;
-const F_AUSFALL = 4;
-const F_LOHNART = 5;
-const F_STUNDEN = 6;
-const F_TAGE = 7;
-const DATA_ROW_FIELDS = 13;
+const F_ZEITRAUM = 2;
+const F_LOHNART = 3;
+const F_MENGE = 4;
+const DATA_ROW_FIELDS = 5;
 
 describe("DATEV export — FIRST automated coverage in its own file (Phase 104)", () => {
   let app: FastifyInstance;
@@ -130,13 +131,13 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
         .split("\r\n")
         .filter((l) => l.trim().length > 0);
 
-      const urlaubRow = rows.find((r) => r.includes(";U;") && r.split(";")[F_LOHNART] === "300");
-      const krankRow = rows.find((r) => r.includes(";K;") && r.split(";")[F_LOHNART] === "200");
+      const urlaubRow = rows.find((r) => r.split(";")[F_LOHNART] === "300");
+      const krankRow = rows.find((r) => r.split(";")[F_LOHNART] === "200");
       expect(urlaubRow).toBeDefined();
       expect(krankRow).toBeDefined();
 
-      const urlaubTage = Number(urlaubRow!.split(";")[F_TAGE].replace(",", "."));
-      const krankTage = Number(krankRow!.split(";")[F_TAGE].replace(",", "."));
+      const urlaubTage = Number(urlaubRow!.split(";")[F_MENGE].replace(",", "."));
+      const krankTage = Number(krankRow!.split(";")[F_MENGE].replace(",", "."));
       // Without the fix: urlaubTage=5, krankTage=0 (the credited days double-booked
       // under Urlaub only). With the fix: 5-2=3 and 0+2=2 — the sum is conserved.
       expect(urlaubTage).toBe(3);
@@ -241,27 +242,32 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
       // Sections appear in this exact order.
       expect(body.indexOf("[Allgemein]")).toBeLessThan(body.indexOf("[Satzbeschreibung]"));
       expect(body.indexOf("[Satzbeschreibung]")).toBeLessThan(body.indexOf("[Bewegungsdaten]"));
-      expect(body).toContain("Abrechnungszeitraum=072026");
+      // Issue #304: no Abrechnungszeitraum header key; the period is a field of every data row.
+      expect(body).not.toContain("Abrechnungszeitraum=");
+      expect(body).not.toContain("Datumsangaben=");
 
       const rows = body
         .split("[Bewegungsdaten]")[1]
         .split("\r\n")
         .filter((l) => l.trim().length > 0);
 
-      // Every data row has exactly 13 semicolon-separated fields: Satz-ID + 12 values.
+      // Every data row has exactly 5 semicolon-separated fields: Satz-ID + 4 values.
       for (const r of rows) {
         expect(r.split(";").length).toBe(DATA_ROW_FIELDS);
+        expect(r.split(";")[F_ZEITRAUM]).toBe("01072026");
       }
 
       const normalRow = rows.find((r) => r.split(";")[F_LOHNART] === "111");
       const urlaubRow = rows.find((r) => r.split(";")[F_LOHNART] === "222");
       expect(normalRow).toBeDefined();
       expect(urlaubRow).toBeDefined();
-      expect(normalRow!.split(";")[F_STUNDEN]).toBe("8,50");
+      expect(normalRow!.split(";")[F_SATZ_ID]).toBe(String(DATEV_STUNDEN_SATZ_ID));
+      expect(normalRow!.split(";")[F_MENGE]).toBe("8,50");
       // Krankheit Lohnart 333 carries the half-day sick Absence (0.5 tage).
       const krankRow = rows.find((r) => r.split(";")[F_LOHNART] === "333");
       expect(krankRow).toBeDefined();
-      expect(krankRow!.split(";")[F_TAGE]).toBe("0,5");
+      expect(krankRow!.split(";")[F_SATZ_ID]).toBe(String(DATEV_TAGE_SATZ_ID));
+      expect(krankRow!.split(";")[F_MENGE]).toBe("0,5");
     });
 
     it("Test 5: an employee with no absences at all produces only the Normalstunden line", async () => {
@@ -292,8 +298,8 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
           .filter((l) => l.trim().length > 0);
 
         expect(rows.length).toBe(1);
-        expect(rows[0].split(";")[F_AUSFALL]).toBe(""); // no Ausfallkennzeichen
-        expect(rows[0].split(";")[F_TAGE]).toBe(""); // no tage
+        expect(rows[0].split(";")[F_SATZ_ID]).toBe(String(DATEV_STUNDEN_SATZ_ID)); // hours only, no tage row
+        expect(rows[0].split(";")[F_LOHNART]).toBe("100");
       } finally {
         await cleanupTestData(app, bare.tenant.id);
       }
@@ -314,17 +320,14 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
         .filter((l) => l.trim().length > 0);
       for (const r of rows) {
         const fields = r.split(";");
-        const stunden = fields[F_STUNDEN];
-        const tage = fields[F_TAGE];
-        if (stunden) expect(stunden).not.toContain(".");
-        if (tage) expect(tage).not.toContain(".");
+        expect(fields[F_MENGE]).not.toContain(".");
       }
       const krankRow = rows.find((r) => r.split(";")[F_LOHNART] === "333");
-      expect(krankRow!.split(";")[F_TAGE]).toBe("0,5");
+      expect(krankRow!.split(";")[F_MENGE]).toBe("0,5");
     });
 
     // ── Issue #256, Befund 1 ─────────────────────────────────────────────────
-    it("Test 7 (#256-01): every Bewegungsdaten row starts with the Satz-ID declared in [Satzbeschreibung]", async () => {
+    it("Test 7 (#256-01, #304): every Bewegungsdaten row starts with a Satz-ID declared in [Satzbeschreibung] and has as many values as declared", async () => {
       const res = await app.inject({
         method: "GET",
         url: `/api/v1/reports/datev/employee?employeeId=${d.employee.id}&year=2026&month=7`,
@@ -333,35 +336,28 @@ describe("DATEV export — FIRST automated coverage in its own file (Phase 104)"
       expect(res.statusCode).toBe(200);
       const body = iconv.decode(res.rawPayload, "win1252");
 
-      const satzLine = body
-        .split("[Satzbeschreibung]")[1]
-        .split("\r\n")
-        .find((l) => l.trim().length > 0);
-      expect(satzLine).toBeDefined();
-
       // The declaration is: <Satz-ID>;<Satzname>;<field name>… — everything after the
       // first two fields names ONE value of a data row of that record type.
-      const satzFields = satzLine!.split(";");
-      expect(satzFields[F_SATZ_ID]).toBe(String(DATEV_BWD_SATZ_ID));
-      const declaredValueCount = satzFields.length - 2;
+      const declared = new Map<string, number>();
+      for (const line of datevSectionLines(body, "Satzbeschreibung")) {
+        const f = line.split(";");
+        declared.set(f[F_SATZ_ID]!, f.length - 2);
+      }
+      expect([...declared.keys()].sort()).toEqual(
+        [String(DATEV_STUNDEN_SATZ_ID), String(DATEV_TAGE_SATZ_ID)].sort(),
+      );
 
-      const rows = body
-        .split("[Bewegungsdaten]")[1]
-        .split("\r\n")
-        .filter((l) => l.trim().length > 0);
+      const rows = datevSectionLines(body, "Bewegungsdaten");
       // Guard against a vacuous pass: this fixture has worked hours, Urlaub and Krank,
       // so it MUST produce rows. An empty export would otherwise satisfy every
       // assertion in the loop below without checking anything (Issues #235/#240/#245).
       expect(rows.length).toBeGreaterThan(0);
+      expect(new Set(rows.map((r) => r.split(";")[F_SATZ_ID])).size).toBe(2);
 
       for (const r of rows) {
         const fields = r.split(";");
-        // Before the fix the row began with the Personalnummer, so this was the
-        // employeeNumber, never "20".
-        expect(fields[F_SATZ_ID]).toBe(String(DATEV_BWD_SATZ_ID));
-        // …and the row carried 12 fields, one short of Satz-ID + 12 declared values,
-        // which is exactly why every value sat one column left of its own header.
-        expect(fields.length).toBe(1 + declaredValueCount);
+        expect(declared.has(fields[F_SATZ_ID]!)).toBe(true);
+        expect(fields.length).toBe(1 + declared.get(fields[F_SATZ_ID]!)!);
       }
     });
   });
@@ -397,7 +393,7 @@ describe("Personenkreis nach dem Abrechnungszeitraum (#256-02)", () => {
       data: {
         tenantId: d.tenant.id,
         userId: user.id,
-        employeeNumber: `P256-${opts.label}-${Date.now().toString(36)}`,
+        employeeNumber: numericEmployeeNumber(),
         firstName: "Test",
         lastName: `Fall ${opts.label}`,
         hireDate: opts.hireDate,
@@ -492,7 +488,7 @@ describe("Personenkreis nach dem Abrechnungszeitraum (#256-02)", () => {
 
     const mine = rowsFor(rows, exitedAfterPeriod.employeeNumber);
     expect(mine).toHaveLength(1);
-    expect(mine[0].split(";")[F_STUNDEN]).toBe("8,00");
+    expect(mine[0].split(";")[F_MENGE]).toBe("8,00");
   });
 
   it("#256-02b: an employee whose login is deactivated but who has no exit date is in the export", async () => {
@@ -501,7 +497,7 @@ describe("Personenkreis nach dem Abrechnungszeitraum (#256-02)", () => {
 
     const mine = rowsFor(rows, deactivatedLogin.employeeNumber);
     expect(mine).toHaveLength(1);
-    expect(mine[0].split(";")[F_STUNDEN]).toBe("8,00");
+    expect(mine[0].split(";")[F_MENGE]).toBe("8,00");
   });
 
   it("#256-02c (negative control): someone who left BEFORE the period is NOT in the export", async () => {

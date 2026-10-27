@@ -185,12 +185,19 @@ Ansicht öffnet.
 Die beiden PDF-Dokumente und die Datei für DATEV (Issue #617):
 
 - **Monatsexport** — ein PDF für alle Mitarbeitenden eines Monats, die lesbare Fassung des DATEV-Exports:
-  dieselben Personen und dieselben Abwesenheitstage wie in der DATEV-Datei, dazu Soll, Ist, Saldo, Status und
+  dieselben Abwesenheitstage wie in der DATEV-Datei und dieselbe Personengruppe (auch Personen ohne Buchung), dazu Soll, Ist, Saldo, Status und
   Gesamtsaldo aus dem Arbeitszeitkonto und ein Abschnitt „Urlaubsjahr" mit dem Stand zum Monatsende (im
   laufenden Monat bis gestern). „DATEV-Std." sind die Normalstunden der DATEV-Datei; sie können vom Ist
   abweichen (Beschäftigungszeitraum, Berufsschul-Anrechnung, nur Einträge der Art Arbeit, gespeicherter
   Stand abgeschlossener Monate) — die Legende im Dokument nennt die Gründe. Das Dokument enthält Krankheitstage,
   weil es der Vorbereitung der Lohnabrechnung dient; es setzt wie DATEV die Berechtigung „Berichte exportieren" voraus.
+- **DATEV-Datei (LODAS)** — baut auf der amtlichen Feldliste der Importschnittstelle auf (Issue #304): zwei Satztypen in einer
+  Datei, `u_lod_bwd_buchung_stunden` für Stunden und `u_lod_bwd_buchung_tage` für Tage, die Lohnart steht in
+  `la_eigene#bwd`, der Abrechnungszeitraum (erster Tag des Monats, `TTMMJJJJ`) in jeder Datenzeile. Es gibt keine Zeile
+  mit Menge 0: wer in dem Monat nichts zu buchen hat, steht nicht in der Datei (das Monatsexport-PDF führt ihn trotzdem
+  auf). Die Personalnummer muss rein numerisch sein; sonst bricht der Export mit einer Meldung ab, die die betroffenen
+  Mitarbeiternummern nennt, statt jemanden stillschweigend wegzulassen. Die Datei wurde noch nicht in einer LODAS-Umgebung
+  importiert; belegt ist sie durch einen Feldabgleich gegen die Feldliste (`datev-lodas-feldliste-304.test.ts`).
 - **Stundennachweis** — das PDF einer Person mit allen Einträgen des Monats sowie Abwesenheits- und Feiertagszeilen.
   Er ist das einzige Dokument mit einer Tagesliste.
 - Die früheren PDFs Firmenweiter Monatsbericht, Urlaubsliste, Urlaubsbericht und Urlaubsübersicht gibt es nicht mehr;

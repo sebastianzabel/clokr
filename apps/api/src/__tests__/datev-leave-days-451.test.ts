@@ -22,14 +22,15 @@ import {
   cleanupTestData,
   configureDatevKanzlei,
   grantSystemRole,
+  numericEmployeeNumber,
 } from "./setup";
 import { getHolidayMap } from "../contexts/absence";
 
-// Issue #256 (Befund 1): a Bewegungsdaten row is the Satz-ID followed by the 12 values declared
+// Issue #256 (Befund 1): a Bewegungsdaten row is the Satz-ID followed by the values declared
 // in [Satzbeschreibung] — named offsets, mirroring datev-export.test.ts's own convention.
 const F_PNR = 1;
-const F_LOHNART = 5;
-const F_TAGE = 7;
+const F_LOHNART = 3;
+const F_MENGE = 4;
 
 type FixedHours = {
   mon: number;
@@ -72,7 +73,7 @@ async function createFixedScheduleEmployee(
   const user = await app.prisma.user.create({
     data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
   });
-  const employeeNumber = `${label}-${suffix}`;
+  const employeeNumber = numericEmployeeNumber();
   const employee = await app.prisma.employee.create({
     data: {
       tenantId,
@@ -159,7 +160,7 @@ function tageFor(rows: string[], employeeNumber: string, lohnart: string): strin
   const row = rows.find(
     (r) => r.split(";")[F_PNR] === employeeNumber && r.split(";")[F_LOHNART] === lohnart,
   );
-  return row?.split(";")[F_TAGE];
+  return row?.split(";")[F_MENGE];
 }
 
 describe("Issue #451 (D-01) — DATEV VACATION day-count equals the absence context's priced days", () => {

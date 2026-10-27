@@ -12,7 +12,13 @@
  */
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import { seedTestData, grantSystemRole, configureDatevKanzlei, salonIdForEmployee } from "./setup";
+import {
+  seedTestData,
+  grantSystemRole,
+  configureDatevKanzlei,
+  salonIdForEmployee,
+  numericEmployeeNumber,
+} from "./setup";
 import { legacySaldoSnapshotPeriodBounds, saldoSnapshotPeriodBounds } from "./test-dates";
 import { leaveTypeFields, type RequestableCode } from "../contexts/absence/leave-type";
 
@@ -59,7 +65,7 @@ async function createPerson(
     },
   });
   // Deterministic: the DATEV file carries number and name.
-  const employeeNumber = `N617-${opts.key}`;
+  const employeeNumber = numericEmployeeNumber();
   const lastName = `P617${opts.key}`;
   const employee = await app.prisma.employee.create({
     data: {

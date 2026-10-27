@@ -34,6 +34,7 @@ import {
   createTestSalon,
   cleanupTestData,
   configureDatevKanzlei,
+  numericEmployeeNumber,
 } from "./setup";
 import { signOperatorToken } from "../contexts/platform/operator-auth";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
@@ -227,7 +228,7 @@ async function createClosedMonthEmployee(): Promise<string> {
     data: {
       tenantId: t.tenant.id,
       userId: user.id,
-      employeeNumber: `NR566-${randomUUID().slice(0, 6)}`,
+      employeeNumber: numericEmployeeNumber(),
       firstName: "Abschluss",
       lastName: "Monat",
       hireDate: new Date("2026-06-01T00:00:00Z"),
