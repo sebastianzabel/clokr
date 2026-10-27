@@ -1,0 +1,166 @@
+name: clokr-sim
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Simulation instance (Issue #715). Mirrors the structure of docker-compose.prod.yml (the demo and
+# production layout: pinned images, no build, MinIO credentials shared with the api) with:
+#   - its own project name and its own volumes, so it can never touch dev, demo, int or prod;
+#   - its own host ports, all bound to 127.0.0.1 (nothing is published on a public interface);
+#   - a mail catcher (mailpit) instead of a real SMTP relay: no mail ever leaves the host;
+#   - an optional `edge` profile with Caddy and Basic-Auth for a server install (docs/simulation.md);
+#   - the image tags as variables, so the instance always runs the current release image.
+# Never start this file on a developer's dev stack.
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: clokr
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in sim.env}"
+      POSTGRES_DB: clokr
+    volumes:
+      - sim_postgres:/var/lib/postgresql
+    # The read-only checker connects here from the host (role clokr_sim_ro, see sql/).
+    ports:
+      - "127.0.0.1:${SIM_PG_PORT:-15532}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clokr -d clokr"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - sim_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    # Same digest-pinned Chainguard image as docker-compose.prod.yml.
+    image: cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
+    user: "0:0"
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in sim.env}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in sim.env}"
+    volumes:
+      - sim_minio:/data
+
+  mailpit:
+    # Catches every mail of the simulation (invitations of the two tenant admins, notifications).
+    # The provisioning reads the invitation links from its HTTP API; nothing is relayed.
+    image: axllent/mailpit:v1.21.8
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+      MP_MAX_MESSAGES: "5000"
+    ports:
+      - "127.0.0.1:${SIM_MAIL_PORT:-18125}:8025"
+
+  api:
+    image: "${CLOKR_API_IMAGE:?CLOKR_API_IMAGE must be set in sim.env, e.g. ghcr.io/sebastianzabel/clokr-api:1.17.0}"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${SIM_API_PORT:-14100}:4000"
+    environment:
+      NODE_ENV: production
+      API_PORT: "4000"
+      API_HOST: "0.0.0.0"
+      DATABASE_URL: "postgresql://clokr:${POSTGRES_PASSWORD}@postgres:5432/clokr"
+      JWT_SECRET: "${JWT_SECRET:?JWT_SECRET must be set in sim.env}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET must be set in sim.env}"
+      OPERATOR_JWT_SECRET: "${OPERATOR_JWT_SECRET:?OPERATOR_JWT_SECRET must be set in sim.env}"
+      JWT_EXPIRES_IN: "15m"
+      JWT_REFRESH_EXPIRES_IN: "7d"
+      CORS_ORIGIN: "${CORS_ORIGIN:-http://127.0.0.1:13100}"
+      REDIS_URL: "redis://redis:6379"
+      APP_URL: "${APP_URL:-http://127.0.0.1:13100}"
+      ENCRYPTION_KEY: "${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in sim.env}"
+      SEED_DEMO_DATA: "false"
+      # One client IP (the bots) drives the whole population, so the per-IP limit is lifted. The
+      # endpoint-specific limits (login, OTP) stay in force.
+      RATE_LIMIT_MAX: "${RATE_LIMIT_MAX:-1000000}"
+      SMTP_HOST: "mailpit"
+      SMTP_PORT: "1025"
+      SMTP_USER: "sim"
+      SMTP_PASSWORD: "sim"
+      SMTP_FROM_EMAIL: "sim@sim.invalid"
+      SMTP_FROM_NAME: "Clokr Simulation"
+      MINIO_ENDPOINT: "minio"
+      MINIO_ACCESS_KEY: "${MINIO_ROOT_USER}"
+      MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD}"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://0.0.0.0:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    image: "${CLOKR_WEB_IMAGE:?CLOKR_WEB_IMAGE must be set in sim.env, e.g. ghcr.io/sebastianzabel/clokr-web:1.17.0}"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${SIM_WEB_PORT:-13100}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      ORIGIN: "${APP_URL:-http://127.0.0.1:13100}"
+      API_URL: "http://api:4000"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://0.0.0.0:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  edge:
+    # Server installs only: TLS plus Basic-Auth in front of the web app (the sim must never be
+    # reachable without a credential). Enable with `--profile edge`. See docs/simulation.md.
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    profiles: ["edge"]
+    ports:
+      - "${SIM_EDGE_BIND:-127.0.0.1}:${SIM_EDGE_PORT:-18180}:8080"
+    environment:
+      # Empty by default on purpose: compose evaluates `:?` even for an inactive profile. An empty
+      # credential makes the Caddyfile fail to load, so the edge refuses to start without one.
+      SIM_EDGE_USER: "${SIM_EDGE_USER:-}"
+      SIM_EDGE_HASH: "${SIM_EDGE_HASH:-}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - sim_caddy:/data
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  sim_postgres:
+  sim_redis:
+  sim_minio:
+  sim_caddy:
