@@ -705,7 +705,7 @@ FULL calendar month)` (Ø-Methode; a half day reduces by half; one `Math.round()
   - A VOCATIONAL_SCHOOL (Berufsschule) day is credited to worked minutes only, never also a Soll
     reduction (one day reduces Soll exactly once).
   - `TenantConfig.monthlyHoursHolidayDeduction` is retired — no code reads or writes it; the column
-    is dropped in a follow-up release (GitHub #470).
+    was dropped by the migration `*_drop_monthly_hours_holiday_deduction` (GitHub #470).
   - Closed months are never recalculated — `scripts/dry-run-433-monthly-hours-soll.ts` lists the
     affected stored months read-only; any correction is a deliberate correction booking.
 - `WorkSchedule.validFrom` MUST be the 1st of a calendar month for every contract CHANGE (PUT `/api/v1/settings/work/:employeeId` and tenant-config bulk apply). Non-1st dates are rejected with HTTP 400 + German message `"Vertragswechsel sind nur zum Monats-1. erlaubt."` (see `apps/api/src/contexts/platform/month-first-date.ts` for the canonical constant `MONTH_FIRST_ERROR`). The initial schedule on employee creation (POST `/api/v1/employees`) is exempt — `validFrom = hireDate` may be any day, because contract START is not a contract CHANGE. Existing non-1st rows (pre-Phase-60) are preserved for audit-trail purposes; surface them via `pnpm --filter @clokr/api exec tsx scripts/audit-workschedule-non-month1.ts`. See GitHub issue #220.

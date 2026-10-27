@@ -562,7 +562,7 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       expect(body).not.toHaveProperty("monthlyHoursHolidayDeduction");
     });
 
-    it("PUT /settings/work with the legacy key is accepted (200), the key is stripped from the response, and the retired column is never written", async () => {
+    it("PUT /settings/work with the legacy key is accepted (200), the key is stripped from the response, and nothing is stored", async () => {
       const putRes = await app.inject({
         method: "PUT",
         url: "/api/v1/settings/work",
@@ -573,14 +573,11 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       const putBody = JSON.parse(putRes.body);
       expect(putBody).not.toHaveProperty("monthlyHoursHolidayDeduction");
 
-      // Issue #433 (D-04): the ONE sanctioned direct-DB read of the retired column in this
-      // codebase outside the omit constant in settings.ts itself — proves the legacy PUT above
-      // never wrote it. The column stays for image-rollback safety until the follow-up release
-      // (GitHub #470) drops it.
+      // The column is gone (GitHub #470): the legacy key can neither be stored nor read back.
       const stored = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: data.tenant.id },
       });
-      expect(stored?.monthlyHoursHolidayDeduction).toBe(false);
+      expect(stored).not.toHaveProperty("monthlyHoursHolidayDeduction");
     });
   });
 });
