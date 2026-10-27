@@ -247,6 +247,11 @@ describe("Issue #696 - bulk carry-in and bulk month figures equal the per-person
     people.pF = await person("F", "2026-05-18", [{ kind: "FIXED", validFrom: "2026-05-18" }]);
     await entries(people.pF, "2026-05-18", "2026-07-14", 5);
 
+    // Hired before the first contract (Issue #780): the months without a contract owe no Soll on
+    // both paths - the bulk source must not fall back to the tenant default schedule.
+    people.pL = await person("L", "2026-02-10", [{ kind: "FIXED", validFrom: "2026-05-01" }]);
+    await entries(people.pL, "2026-02-10", "2026-07-14", 4);
+
     // OpeningBalance (#682), never closed.
     people.pG = await person("G", "2026-01-01", [{ kind: "FIXED", validFrom: "2026-01-01" }]);
     await app.prisma.openingBalance.create({

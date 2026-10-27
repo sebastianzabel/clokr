@@ -17,7 +17,11 @@
 import { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
-import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
+import {
+  closeEmployeeMonth,
+  toCloseMonthApprovedLeave,
+  resolveMonthContract,
+} from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
 import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
@@ -33,7 +37,6 @@ import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import {
   getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1; Phase 101B wave 8 merged in
   getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, feeds the holiday resolver below
-  getEffectiveSchedule,
 } from "../time-tracking";
 import {
   getAbsencesOverlapping, // Phase 100B Plan 12 — A4
@@ -375,7 +378,7 @@ export async function recalculateSnapshots(
     );
 
     // Get the effective schedule for the middle of this month
-    const schedule = await getEffectiveSchedule(app, employeeId, midMonth);
+    const schedule = await resolveMonthContract(app, employeeId, monthEnd, midMonth);
 
     // ── Phase 76.26-05: assemble CloseMonthInput and call the shared pure core ──
     //
