@@ -6518,3 +6518,13 @@ API: `travel-activity-kind-92`, `travel-entry-tracer-92`, `travel-migration-92`,
 `travel-clock-selectors-92`, `time-entries-travel-list-92`, `time-entries-travel-summary-92`,
 `travel-saldo-isolation-92`, `travel-saldo-equality-92`; Web: `travel-entry-form`, `today-entries-travel-92`,
 `time-entries-travel-wiring-92`; Playwright `travel-between-salons.spec.ts`.
+
+## U — Nachtrag Issue #470: Spalte `TenantConfig.monthlyHoursHolidayDeduction` gelöscht
+
+**Schwere: Entfernung eines Unterbau-Feldes (Semantikänderung nach ADR 0002, Entscheidung 7). Owner-Entscheidung = Issue #433 (Kommentar vom 03.10.2026), die das Folge-Issue #470 ausdrücklich vorsieht.**
+
+Eintrag U hatte die Spalte nur stillgelegt, damit ein Image-Rollback auf v1.13.x funktioniert. Voraussetzung der Löschung (int und prod laufen v1.16.1, also nach v1.14.0) ist erfüllt. Die Migration `*_drop_monthly_hours_holiday_deduction` enthält genau ein `ALTER TABLE "TenantConfig" DROP COLUMN "monthlyHoursHolidayDeduction"`; sie wurde nach dem Shadow-DB-Ablauf aus CLAUDE.md erzeugt, nicht mit `migrate dev`. `schema.prisma` kennt das Feld nicht mehr, der Eintrag verlässt `RETIRED_TENANT_CONFIG_COLUMNS` in `contexts/platform/api/settings.ts`. Ein alter Client, der den Schlüssel noch sendet, erhält weiter 200 (der Zod-Parser verwirft unbekannte Schlüssel).
+
+- **Rollback:** nach der Migration ist ein Image-Rollback auf v1.16.1 oder älter nicht möglich (deren Prisma-Client selektiert die Spalte); siehe `docs/migrations.md`, „Phase 470“.
+- **Auswirkung auf die Kontexte:** Unterbau: Feld entfernt. Zeiterfassung, Abwesenheiten, Schichtplanung, Arbeitszeitkonto, Kompositionsschicht: keine (lesen das Feld seit #433 nicht mehr).
+- **Kennungs-Gate:** `git grep monthlyHoursHolidayDeduction` findet nur noch Migrationen, diese Historie und drei Negativ-Assertions in Tests.
