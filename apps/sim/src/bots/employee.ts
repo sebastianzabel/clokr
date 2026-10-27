@@ -4,18 +4,23 @@
  * the WLAN presence source. Decisions come from seeded streams keyed by day and person.
  */
 import type { PersonSpec, SimTenantKey } from "../plan";
+import type { PendingNachtrag } from "./decisions";
 import { macFor } from "../provision/index";
 import { addDays, localIso, weekdayOf } from "../tz";
 import { BotContext } from "./context";
+import {
+  beyondRetroWindow,
+  cancellableLeave,
+  daysBetween,
+  forgetsToBook,
+  nachtragDue,
+  RETRO_WINDOW_DAYS,
+  replayFilesNachtrag,
+  wantsToCancel,
+} from "./decisions";
 import { blockedDay, minutesToHhmm, plannedDay, type PlannedDay } from "./schedule";
 
 const toMinutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
-
-const RETRO_WINDOW_DAYS = 10;
-
-function daysBetween(from: string, to: string): number {
-  return Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
-}
 
 interface EntryPlan {
   start: string;
@@ -65,11 +70,12 @@ async function recordSick(
   rng: ReturnType<BotContext["rng"]>,
 ) {
   const days = rng.int(1, 3);
-  const res = await ctx.call("leave.sick", async () =>
+  const type = rng.chance(0.2) ? "SICK_CHILD" : "SICK";
+  const res = await ctx.call(type === "SICK_CHILD" ? "leave.sick-child" : "leave.sick", async () =>
     ctx.api.post<{ id: string }>(
       "/api/v1/leave/requests",
       {
-        type: rng.chance(0.2) ? "SICK_CHILD" : "SICK",
+        type,
         startDate: ctx.day,
         endDate: addDays(ctx.day, days - 1),
       },
@@ -81,7 +87,7 @@ async function recordSick(
       id: res.body.id,
       start: ctx.day,
       end: addDays(ctx.day, days - 1),
-      type: "SICK",
+      type,
       status: "PENDING",
     });
   }
@@ -164,8 +170,21 @@ async function bookEntry(
   }
 
   // The product refuses a manual entry older than its retro window (10 days; older ones need a
-  // Zeitnachtrag). A replay of older days therefore has no web entries; this is counted, not hidden.
-  if (daysBetween(day, ctx.realToday) > RETRO_WINDOW_DAYS - 1) {
+  // Zeitnachtrag). A replay of older days files about half of them as a Zeitnachtrag (the manager
+  // bot reviews it) and counts the rest as skipped, never hides them.
+  if (beyondRetroWindow(day, ctx.realToday)) {
+    if (replayFilesNachtrag(rng)) {
+      await fileNachtrag(ctx, person, tenantKey, {
+        person: person.key,
+        day,
+        start: entry.start,
+        end: entry.end,
+        breaks: entry.breaks,
+        intent: entry.intent,
+        salonIndex: salonIndexOf(ctx, tenantKey, salonId),
+      });
+      return;
+    }
     const skipped = (ctx.log.actions["entry.skipped-retro"] ??= {
       ok: 0,
       refused: 0,
@@ -174,6 +193,19 @@ async function bookEntry(
       maxMs: 0,
     });
     skipped.ok += 1;
+    return;
+  }
+  // Now and then somebody simply forgets to book; the entry is filed as a Zeitnachtrag later.
+  if (forgetsToBook(rng, person.channel)) {
+    ctx.progress.nachtraege.push({
+      person: person.key,
+      day,
+      start: entry.start,
+      end: entry.end,
+      breaks: entry.breaks,
+      intent: entry.intent,
+      salonIndex: salonIndexOf(ctx, tenantKey, salonId),
+    });
     return;
   }
   const session = await ctx.personSession(person);
@@ -204,6 +236,70 @@ async function bookEntry(
       }
       ctx.createdEntries.push({ id, endTime: localIso(day, entry.end, tz), tenant: tenantKey });
     }
+  }
+}
+
+function salonIndexOf(ctx: BotContext, tenantKey: SimTenantKey, salonId: string): number {
+  return Math.max(0, ctx.tenant(tenantKey).state.salonIds.indexOf(salonId));
+}
+
+/** A Zeitnachtrag the entry-first way: a manual entry beyond the window, with a reason. */
+async function fileNachtrag(
+  ctx: BotContext,
+  person: PersonSpec,
+  tenantKey: SimTenantKey,
+  n: PendingNachtrag,
+): Promise<number> {
+  const tz = ctx.config.tz;
+  const session = await ctx.personSession(person);
+  const res = await ctx.call("nachtrag.file", () =>
+    ctx.api.post(
+      "/api/v1/time-entries",
+      {
+        date: n.day,
+        startTime: localIso(n.day, n.start, tz),
+        endTime: localIso(n.day, n.end, tz),
+        breaks: n.breaks.map((b) => ({
+          startTime: localIso(n.day, b.start, tz),
+          endTime: localIso(n.day, b.end, tz),
+        })),
+        salonId: ctx.tenant(tenantKey).state.salonIds[n.salonIndex],
+        source: "MANUAL",
+        reason: "Bot: Buchung vergessen, nachgetragen",
+      },
+      session.token,
+    ),
+  );
+  if (res?.status === 201 && n.intent) {
+    ctx.intend({ tenant: tenantKey, person: person.key, kind: n.intent });
+  }
+  return res?.status ?? 0;
+}
+
+/** Withdraws a future vacation request: at once while pending, via a cancellation request once approved. */
+async function maybeCancelLeave(
+  ctx: BotContext,
+  person: PersonSpec,
+  rng: ReturnType<BotContext["rng"]>,
+) {
+  const records = ctx.progress.leave[person.key] ?? [];
+  if (records.length === 0 || !wantsToCancel(rng)) return;
+  const target = cancellableLeave(records, ctx.day, (month) =>
+    Boolean(ctx.progress.closedMonths[`${person.tenant}|${person.key}|${month}`]),
+  );
+  if (!target) return;
+  const session = await ctx.personSession(person);
+  const wasApproved = target.status === "APPROVED";
+  const res = await ctx.call(
+    wasApproved ? "leave.cancel-request" : "leave.withdraw",
+    () =>
+      ctx.api.delete(`/api/v1/leave/requests/${target.id}`, session.token, {
+        reason: "Bot: Urlaub nicht mehr nötig",
+      }),
+    [200, 204],
+  );
+  if (res && (res.status === 200 || res.status === 204)) {
+    target.status = wasApproved ? "CANCELLATION_REQUESTED" : "CANCELLED";
   }
 }
 
@@ -259,6 +355,16 @@ export async function employeeDay(
   const ids = state.persons[person.key];
   if (!ids?.created || ids.exited) return;
   const rng = ctx.rng("employee", person.key);
+  // Zeitnachträge whose retro window is over are filed now.
+  const due = nachtragDue(ctx.progress.nachtraege, person.key, ctx.realToday);
+  for (const n of due) {
+    const status = await fileNachtrag(ctx, person, tenantKey, n);
+    // A definite answer (done or a business refusal) is not retried; a server error is.
+    if (status > 0 && status < 500) {
+      ctx.progress.nachtraege.splice(ctx.progress.nachtraege.indexOf(n), 1);
+    }
+  }
+  await maybeCancelLeave(ctx, person, rng);
   const leave = ctx.progress.leave[person.key] ?? [];
   const blocked = blockedDay(person, ctx.day, leave);
 

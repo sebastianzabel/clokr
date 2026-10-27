@@ -8,7 +8,15 @@ import { adminDay } from "./admin";
 import { BotContext, loadProgress, saveProgress, writeDayLog, type DayLog } from "./context";
 import { employeeDay } from "./employee";
 import { isolationDay } from "./isolation";
-import { closeMonths, correctEntries, planShifts, reviewLeave } from "./manager";
+import {
+  closeMonths,
+  correctEntries,
+  editShifts,
+  planShifts,
+  reviewLeave,
+  reviewRetro,
+  unlockMonths,
+} from "./manager";
 
 export interface DayOptions {
   date?: string;
@@ -43,6 +51,9 @@ export async function runDay(config: SimConfig, options: DayOptions = {}): Promi
     log(`${key}: employees done`);
     await correctEntries(ctx, key);
     await reviewLeave(ctx, key);
+    await reviewRetro(ctx, key);
+    await editShifts(ctx, key);
+    await unlockMonths(ctx, key);
     await closeMonths(ctx, key);
   }
   await isolationDay(ctx);

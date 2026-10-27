@@ -98,6 +98,17 @@ interface ChecksumRow {
   hash: string;
 }
 
+/**
+ * A closed month the admin bot deliberately unlocked (and the manager bot closed again) changes its
+ * entries and snapshots on purpose; such a finding is explained, any other one is not.
+ */
+export function isDeliberateUnlock(
+  unlocks: readonly { employeeId: string; month: string }[],
+  findingKey: string,
+): boolean {
+  return unlocks.some((u) => findingKey.endsWith(`/${u.employeeId}/${u.month}`));
+}
+
 export function compareChecksums(
   kind: "entries" | "snapshots",
   previous: Record<string, string>,
@@ -139,7 +150,7 @@ export const closedMonthsUnchanged: Invariant = {
     const findings = [
       ...compareChecksums("entries", ctx.checksums.entries, entries),
       ...compareChecksums("snapshots", ctx.checksums.snapshots, snapshots),
-    ];
+    ].filter((f) => !isDeliberateUnlock(ctx.progress.unlocks, f.key));
     // The baseline for the next run is what this run saw. The caller persists it.
     ctx.nextChecksums = { entries, snapshots };
     return result(
