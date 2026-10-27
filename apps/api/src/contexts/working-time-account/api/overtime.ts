@@ -37,6 +37,7 @@ import {
   selectMonthlySnapshotPerMonth,
   yearlySnapshotYearOf,
 } from "../snapshot-period";
+import { resolveMonthContract } from "../month-contract"; // Issue #780
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared saldo core
 import { findMissingWorkdays } from "../find-missing-workdays"; // Phase 76.26 — gap detector
 import { getDeferredMonthCloseState } from "../deferred-month-close"; // Phase 292 (#292)
@@ -1465,7 +1466,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // after a contract change must use the historical schedule (parity with
       // recalculate-snapshots.ts, which already selects by mid-month).
       const closeMidMonth = new Date((monthStart.getTime() + monthEnd.getTime()) / 2);
-      const schedule = await getEffectiveSchedule(app, employeeId, closeMidMonth);
+      const schedule = await resolveMonthContract(app, employeeId, monthEnd, closeMidMonth);
       const scheduleType = String(schedule.type ?? "");
 
       // Tenant-local day bounds for @db.Date column filters: the monthStart/monthEnd

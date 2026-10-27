@@ -29,6 +29,7 @@ import { getShiftsInRange } from "../scheduling"; // Phase 100B Plan 05 — S1
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "./close-employee-month"; // SNAP-03 — Phase 76.27
 import { getConfirmedCarryOver } from "./confirmed-saldo"; // Phase 97-06
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — chain-head seed, Issue #681
+import { resolveMonthContract } from "./month-contract"; // Issue #780
 import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
 import {
   getTenantTimezone,
@@ -417,7 +418,7 @@ async function computeAccountChain(
   // at all — the SAME `effectiveEnd >= currentMonthOpenStart` condition the partial-month block
   // itself gates on.
   const completeMonthSchedules = await Promise.all(
-    completeOpenMonths.map((cm) => getEffectiveSchedule(app, employeeId, cm.monthEnd)),
+    completeOpenMonths.map((cm) => resolveMonthContract(app, employeeId, cm.monthEnd)),
   );
 
   const currentMonthOpenStart =
@@ -428,7 +429,7 @@ async function computeAccountChain(
   // the SHIFT_BASED prefetch gate below.
   const partialMonthSchedule =
     effectiveEnd >= currentMonthOpenStart
-      ? await getEffectiveSchedule(app, employeeId, currentMonthRange.end)
+      ? await resolveMonthContract(app, employeeId, currentMonthRange.end)
       : null;
   const partialMonthScheduleType = partialMonthSchedule
     ? String(partialMonthSchedule.type ?? "")

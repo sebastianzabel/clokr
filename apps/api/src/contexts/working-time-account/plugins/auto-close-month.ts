@@ -22,6 +22,7 @@ import {
   decideGapMonth,
 } from "../month-close-population"; // Issue #668
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
+import { resolveMonthContract } from "../month-contract"; // Issue #780
 import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { detectMonthGaps } from "../month-gap-check"; // Phase 292 (#292) — the shared gap definition
 import {
@@ -44,7 +45,6 @@ import {
   getValidWorkedEntriesInRange,
   getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, fed into the holiday resolver
   lockEntriesForMonth,
-  getEffectiveSchedule,
   findUnconfirmedBreakDays, // Phase 92 Plan 04 — BREAK-05 single source of truth
   findUnacknowledgedBreakFindingDaysForEmployee, // Issue #511 (D-12) — break-finding defer
 } from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7; Phase 101B wave 8 merged in
@@ -447,7 +447,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
 
               // ── Schedule valid FOR this month (historical schedule awareness) ──
               const midMonth = new Date((monthStart.getTime() + monthEnd.getTime()) / 2);
-              const schedule = await getEffectiveSchedule(app, emp.id, midMonth);
+              const schedule = await resolveMonthContract(app, emp.id, monthEnd, midMonth);
 
               // Build holiday set for this month
               const empHireDateNorm = emp.hireDate

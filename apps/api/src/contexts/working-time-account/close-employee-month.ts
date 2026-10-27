@@ -65,12 +65,12 @@
 import type { FastifyInstance } from "fastify";
 import { findMissingWorkdays, type WorkdayGap } from "./find-missing-workdays";
 import { calcShiftBasedSaldo } from "./shift-based-saldo";
+import { isNoContractSchedule, resolveMonthContract } from "./month-contract"; // Issue #780
 import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
 import {
   getEffectiveBreakDuration, // Phase 101B (Issue #101, wave 8)
   getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1; THE SALDO INPUT (computeWeekProgress)
   getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, feeds the holiday resolver (computeWeekProgress)
-  getEffectiveSchedule, // computeWeekProgress's per-piece contract resolution
   entryDurations, // Phase 79 (Issue #79), D-03/D-05 — presence/working-time kernel
 } from "../time-tracking";
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver (computeWeekProgress)
@@ -1238,7 +1238,11 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   // `snapshotExpectedMinutes` exactly as before — the Ausgleichstag remains a paid,
   // Soll-free day — and moves only the balance.
   const withdrawalMinutes = Math.round(overtimeCompensationMinutes);
-  const balanceMinutes = grossBalanceMinutes - withdrawalMinutes;
+  // Issue #780: a month without an agreed contract (`month-contract.ts`) owes nothing and moves no
+  // balance - Ist stays reported in `workedMinutes`, the carry passes through unchanged.
+  const balanceMinutes = isNoContractSchedule(schedule)
+    ? 0
+    : grossBalanceMinutes - withdrawalMinutes;
 
   const carryOverOut = carryOverIn + balanceMinutes;
 
@@ -1393,7 +1397,7 @@ export async function computeWeekProgress(
     pieces.map(async (piece) => {
       const [y, m] = piece.start.split("-").map(Number) as [number, number];
       const { start: calMonthStart, end: calMonthEnd } = monthRangeUtc(y, m, tz);
-      const schedule = await getEffectiveSchedule(app, employeeId, calMonthEnd);
+      const schedule = await resolveMonthContract(app, employeeId, calMonthEnd);
       return { piece, calMonthStart, schedule };
     }),
   );
