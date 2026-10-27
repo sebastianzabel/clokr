@@ -1874,12 +1874,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
       });
       const missingEntriesDays = resolveMissingEntriesDays(openItemsConfig);
       const windowStart = new Date(today);
-      windowStart.setDate(windowStart.getDate() - missingEntriesDays);
+      // UTC arithmetic: `today` is a tenant-local calendar day held as UTC midnight (todayInTz); a
+      // process-local setDate would cross a DST change and land on 23:00Z of the day before.
+      windowStart.setUTCDate(windowStart.getUTCDate() - missingEntriesDays);
       // findMissingWorkdays' effectiveEnd is INCLUSIVE; the replaced loop ran `cursor < today`,
       // so the last day of the window is yesterday. The window's SIZE is now configured
       // (missingEntriesDays); its bounds (windowStart..yesterday, inclusive) are unchanged.
       const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
+      yesterday.setUTCDate(yesterday.getUTCDate() - 1);
       // The last instant of yesterday (tenant-local): contracts valid up to then apply to the
       // window's days.
       const yesterdayEnd = dayRangeUtc(yesterday.toISOString().slice(0, 10), tz).end;
