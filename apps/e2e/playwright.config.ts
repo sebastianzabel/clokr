@@ -220,6 +220,12 @@ export default defineConfig({
       //     not clipped, KPI values inside their tiles, sticky header below the period bar); tenant
       //     fixture only, no seed, dates from the current day or the installed browser clock
       //
+      // Issue #710 added an eleventh file:
+      //   - the Sichtbarkeits-Durchlauf for the role editor (`Ansehen` on /admin/roles opens the
+      //     editor IN the viewport, `toBeInViewport()`, 1280/390/360 px x light/dark, through the
+      //     reusable helper helpers/visibility-walkthrough.ts); tenant fixture only, no seed, no
+      //     date dependency
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -236,6 +242,7 @@ export default defineConfig({
         /multi-entry-day\.spec\.ts/,
         /travel-between-salons\.spec\.ts/,
         /reports-period\.spec\.ts/,
+        /role-editor-visibility-710\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],
