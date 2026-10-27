@@ -7,7 +7,8 @@
   import Spinner from "$components/ui/Spinner.svelte";
   import type { YearMonth } from "$lib/reports/period-report";
   import {
-    activePresets,
+    activePreset,
+    type PresetKey,
     arrowLabels,
     canStepNext,
     clampToToday,
@@ -71,18 +72,22 @@
   const eyebrow = $derived(periodEyebrow(from, to, today));
   const nextDisabled = $derived(!canStepNext(from, to, today));
   const presets = $derived(presetPeriods(today));
-  const pressed = $derived(activePresets(from, to, today));
+  // Issue #781: the clicked preset only lives in page state, never in the URL.
+  let clickedPreset: PresetKey | null = $state(null);
+  const pressed = $derived(activePreset(from, to, today, clickedPreset));
   // Display only: MonthBar derives its picker cursor from a Date (local time, first of month).
   const cursor = $derived(new Date(from.year, from.month - 1, 1));
 
   function step(dir: 1 | -1) {
     const next = stepPeriod(from, to, dir, today);
+    clickedPreset = null;
     if (next) onChange(next.from, next.to);
   }
 
   // P-16: a month chosen in the future is clamped to the current month.
   function selectMonth(month: number, year: number) {
     const picked = clampToToday({ year, month }, today);
+    clickedPreset = null;
     onChange(picked, { ...picked });
   }
 </script>
@@ -108,9 +113,12 @@
         <button
           type="button"
           class="btn btn-ghost sm"
-          class:is-active={pressed.includes(preset.key)}
-          aria-pressed={pressed.includes(preset.key)}
-          onclick={() => onChange(preset.from, preset.to)}>{preset.label}</button
+          class:is-active={pressed === preset.key}
+          aria-pressed={pressed === preset.key}
+          onclick={() => {
+            clickedPreset = preset.key;
+            onChange(preset.from, preset.to);
+          }}>{preset.label}</button
         >
       {/each}
     </div>
