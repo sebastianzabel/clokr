@@ -8,7 +8,14 @@ import type { FastifyInstance } from "fastify";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import iconv from "iconv-lite";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, cleanupTestData, soleAuditRow, auditRowsFor } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  cleanupTestData,
+  soleAuditRow,
+  auditRowsFor,
+  numericEmployeeNumber,
+} from "./setup";
 import {
   seedMonthlyExportFixture,
   FAKE_NOW,
@@ -42,7 +49,15 @@ function parseDatev(
     .filter((line) => line.trim() !== "")
     .map((line) => {
       const f = line.split(";");
-      return { pnr: f[1], lna: Number(f[5]), hours: decimal(f[6]), days: decimal(f[7]) };
+      // Issue #304: Satz 20 (u_lod_bwd_buchung_stunden) carries hours, Satz 21 (..._tage) days;
+      // the quantity is the 5th field of both (Satz-ID, pnr, Abrechnungszeitraum, Lohnart, quantity).
+      const isHours = f[0] === "20";
+      return {
+        pnr: f[1],
+        lna: Number(f[3]),
+        hours: isHours ? decimal(f[4]) : 0,
+        days: isHours ? 0 : decimal(f[4]),
+      };
     });
 }
 
@@ -74,7 +89,7 @@ describe("Issue #617 - Monatsexport", () => {
       data: {
         tenantId: fx.tenantId,
         userId: hrUser.id,
-        employeeNumber: "HR-617",
+        employeeNumber: numericEmployeeNumber(),
         firstName: "Hr",
         lastName: "P617hr",
         hireDate: new Date("2025-06-01T00:00:00Z"),
@@ -123,7 +138,7 @@ describe("Issue #617 - Monatsexport", () => {
     );
   });
 
-  it("lists exactly the persons of the DATEV file of the same month, in last-name order", async () => {
+  it("lists the whole DATEV population of the same month, in last-name order", async () => {
     const spy = vi.mocked(pdfUtils.generateMonthlyExportPdf);
     spy.mockClear();
     const res = await get(fx.adminToken);
@@ -140,14 +155,21 @@ describe("Issue #617 - Monatsexport", () => {
     const datevRows = parseDatev(iconv.decode(datevRes.rawPayload, "win1252"));
     const datevPnrs = [...new Set(datevRows.map((r) => r.pnr))];
 
-    expect(datevPnrs.length).toBeGreaterThanOrEqual(9);
-    expect(
-      data.rows
-        .map((r) => r.employeeNumber)
-        .slice()
-        .sort((a, b) => a.localeCompare(b)),
-    ).toEqual(datevPnrs.slice().sort((a, b) => a.localeCompare(b)));
-    expect(data.rows.length).toBe(datevPnrs.length);
+    expect(datevPnrs.length).toBeGreaterThanOrEqual(8);
+    // Issue #304: the DATEV file has no zero lines, so a person with nothing to book is not in it.
+    // The Monatsexport lists the whole DATEV population: every DATEV person is a row, and a row the
+    // file does not carry is exactly a person whose DATEV figures are all zero.
+    const exported = data.rows.map((r) => r.employeeNumber);
+    for (const pnr of datevPnrs) expect(exported).toContain(pnr);
+    const absentFromFile = data.rows.filter((r) => !datevPnrs.includes(r.employeeNumber));
+    expect(absentFromFile.length).toBeGreaterThan(0); // negative control: the rule is exercised
+    for (const r of absentFromFile) {
+      expect(r.datevWorkedMinutes, r.employeeNumber).toBe(0);
+      expect(
+        Object.values(r.absenceDays).every((days) => days === 0),
+        r.employeeNumber,
+      ).toBe(true);
+    }
 
     const lastNames = data.rows.map((r) => r.employeeName);
     const sorted = lastNames.slice().sort((a, b) => a.localeCompare(b, "de"));
@@ -429,7 +451,7 @@ describe("Issue #617 - Monatsexport", () => {
           isActive: true,
         },
       });
-      const employeeNumber = `N617-${key}`;
+      const employeeNumber = numericEmployeeNumber();
       const hire = new Date("2025-06-01T00:00:00Z");
       const employee = await app.prisma.employee.create({
         data: {

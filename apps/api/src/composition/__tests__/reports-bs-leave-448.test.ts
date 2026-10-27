@@ -23,7 +23,7 @@ import {
   configureDatevKanzlei,
 } from "../../__tests__/setup";
 import * as pdfUtils from "../pdf";
-import { DATEV_BWD_SATZ_ID } from "../reports";
+import { DATEV_TAGE_SATZ_ID } from "../reports";
 
 vi.mock("../pdf", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../pdf")>();
@@ -150,11 +150,11 @@ describe("Issue #448 — Berichte, DATEV und Monatsexport zählen Berufsschultag
     const lines = body.split(/\r\n/);
     const vacationLine = lines.find(
       (l) =>
-        l.startsWith(`${DATEV_BWD_SATZ_ID};${data.employee.employeeNumber};`) &&
-        l.includes(";U;300;"),
+        l.startsWith(`${DATEV_TAGE_SATZ_ID};${data.employee.employeeNumber};`) &&
+        l.includes(";300;"),
     );
     expect(vacationLine).toBeDefined();
-    expect(vacationLine).toContain(";4,0;");
+    expect(vacationLine!.endsWith(";300;4,0")).toBe(true);
 
     const controlRes = await app.inject({
       method: "GET",
@@ -166,11 +166,11 @@ describe("Issue #448 — Berichte, DATEV und Monatsexport zählen Berufsschultag
     const controlLines = controlBody.split(/\r\n/);
     const controlVacationLine = controlLines.find(
       (l) =>
-        l.startsWith(`${DATEV_BWD_SATZ_ID};${controlData.employee.employeeNumber};`) &&
-        l.includes(";U;300;"),
+        l.startsWith(`${DATEV_TAGE_SATZ_ID};${controlData.employee.employeeNumber};`) &&
+        l.includes(";300;"),
     );
     expect(controlVacationLine).toBeDefined();
-    expect(controlVacationLine).toContain(";5,0;");
+    expect(controlVacationLine!.endsWith(";300;5,0")).toBe(true);
   });
 
   // Issue #617: the Urlaubsliste PDF was replaced by the Monatsexport; the Berufsschule exclusion

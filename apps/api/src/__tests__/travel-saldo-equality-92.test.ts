@@ -47,6 +47,7 @@ import {
   createTestSalon,
   configureDatevKanzlei,
   grantSystemRole,
+  numericEmployeeNumber,
 } from "./setup";
 import { TEST_TZ } from "./test-dates";
 import * as pdfUtils from "../composition/pdf";
@@ -135,7 +136,7 @@ describe("Issue #92 (AC-92-2) — a travel entry equals an ordinary entry of the
       data: {
         tenantId,
         userId: user.id,
-        employeeNumber: `EQ92-${label}-${suffix}`.slice(0, 30),
+        employeeNumber: numericEmployeeNumber(),
         firstName: `Zwilling${label}`,
         lastName: `Prufling${label}`,
         hireDate,

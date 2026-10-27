@@ -31,19 +31,19 @@ import {
   seedEntitlementYears,
   grantSystemRole,
   soleAuditRow,
+  numericEmployeeNumber,
 } from "./setup";
 import {
   computeMonthReportFigures,
   getTenantTimezone,
   todayInTz,
 } from "../contexts/working-time-account";
-import { DATEV_BWD_SATZ_ID } from "../composition/reports";
+import { DATEV_STUNDEN_SATZ_ID, DATEV_TAGE_SATZ_ID } from "../composition/reports";
 
-// Named offsets of a Bewegungsdaten row (Satz-ID + 12 values), as in datev-month-boundary-493.
+// Named offsets of a Bewegungsdaten row (Satz-ID + pnr, Abrechnungszeitraum, Lohnart, quantity; #304), as in datev-month-boundary-493.
 const F_PNR = 1;
-const F_LOHNART = 5;
-const F_STUNDEN = 6;
-const F_TAGE = 7;
+const F_LOHNART = 3;
+const F_MENGE = 4;
 
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86_400_000);
@@ -103,14 +103,14 @@ describe("Issue #614 — closed months are sum-identical through the anonymizati
       .split("\r\n")
       .filter((l) => l.trim().length > 0)
       .map((l) => l.split(";"))
-      .filter((f) => f[0] === String(DATEV_BWD_SATZ_ID));
+      .filter((f) => [DATEV_STUNDEN_SATZ_ID, DATEV_TAGE_SATZ_ID].map(String).includes(f[0]!));
   }
 
-  /** The person's cells, sorted by Lohnart: `[lohnart, stunden, tage]`. */
+  /** The person's cells, sorted by Lohnart: `[lohnart, quantity]`. */
   async function datevCells(pnr: string) {
     return (await datevRows(lastYear, lastMonth))
       .filter((r) => r[F_PNR] === pnr)
-      .map((r) => [Number(r[F_LOHNART]), r[F_STUNDEN], r[F_TAGE]] as const)
+      .map((r) => [Number(r[F_LOHNART]), r[F_MENGE]] as const)
       .sort((a, b) => a[0] - b[0]);
   }
 
@@ -136,7 +136,7 @@ describe("Issue #614 — closed months are sum-identical through the anonymizati
         userId: user.id,
         firstName: FIRST_NAME,
         lastName: LAST_NAME,
-        employeeNumber: `C614-${suffix}`,
+        employeeNumber: numericEmployeeNumber(),
         hireDate,
       },
     });

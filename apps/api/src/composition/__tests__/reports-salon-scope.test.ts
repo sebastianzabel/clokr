@@ -17,6 +17,7 @@ import {
   cleanupTestData,
   createTestSalon,
   soleAuditRowOrNull,
+  numericEmployeeNumber,
 } from "../../__tests__/setup";
 import { normalizeRolePermissions, roleNameKey } from "../../contexts/platform";
 import * as pdfUtils from "../pdf";
@@ -53,7 +54,7 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
       data: {
         tenantId: data.tenant.id,
         userId: user.id,
-        employeeNumber: s.toUpperCase().slice(0, 20),
+        employeeNumber: numericEmployeeNumber(),
         firstName: label,
         lastName: "ReportsScopeTest",
         hireDate: new Date("2020-01-01"),
@@ -86,7 +87,7 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
       data: {
         tenantId: data.tenant.id,
         userId: user.id,
-        employeeNumber: s.toUpperCase().slice(0, 20),
+        employeeNumber: numericEmployeeNumber(),
         firstName: label,
         lastName: "ReportsScopeManager",
         hireDate: new Date("2020-01-01"),
@@ -345,6 +346,25 @@ describe("Issue #91 (Phase 91b Plan 07) — reports.ts / activity.ts salon/perso
     await createHome(inScope.employee.id, salonA.id);
     const outOfScope = await createEmployee("outscope-datev");
     await createHome(outOfScope.employee.id, salonB.id);
+    // Issue #304: the file lists only persons with something to book, so both have worked time in
+    // June; the out-of-scope person is excluded by scope, not by an empty month.
+    for (const [who, salon] of [
+      [inScope, salonA],
+      [outOfScope, salonB],
+    ] as const) {
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: who.employee.id,
+          date: new Date("2026-06-02T00:00:00.000Z"),
+          startTime: new Date("2026-06-02T07:00:00.000Z"),
+          endTime: new Date("2026-06-02T15:00:00.000Z"),
+          breakMinutes: 30,
+          type: "WORK",
+          source: "MANUAL",
+          salonId: salon.id,
+        },
+      });
+    }
 
     const manager = await createScopedManager("mgr-datev", ["report:export:ZUGEWIESEN"], {
       scopeType: "SALONS",

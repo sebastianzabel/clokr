@@ -383,12 +383,29 @@ export function resolveDatevKanzlei(
 }
 
 // ── buildDatevLodas ───────────────────────────────────────────────────────────
-// Issue #256 (Befund 1): the LODAS record id of the Bewegungsdaten record type. It is
-// declared once in [Satzbeschreibung] and repeated as the FIRST field of every data row
-// that belongs to that record type — a LODAS data row starts with the id of its record,
-// not with its first payload value. Exported here for the regression test that pins the
-// declaration and the data rows to the same value.
-export const DATEV_BWD_SATZ_ID = 20;
+// Issue #304: the file carries TWO record types of the official LODAS field list (DATEV
+// Dok.-Nr. 1080789), each declared once in [Satzbeschreibung] and repeated as the FIRST field
+// of every data row that belongs to it (Issue #256, Befund 1). Hours go to `stunden`, day
+// counts to `tage`; the Lohnart is `la_eigene#bwd` in both. The Satz-IDs are exported for the
+// regression tests that pin declaration and data rows to the same value.
+export const DATEV_STUNDEN_SATZ_ID = 20;
+export const DATEV_TAGE_SATZ_ID = 21;
+export const DATEV_STUNDEN_TABLE = "u_lod_bwd_buchung_stunden";
+export const DATEV_TAGE_TABLE = "u_lod_bwd_buchung_tage";
+// The field order of a data row (after the Satz-ID) is the order of this declaration.
+const DATEV_STUNDEN_FIELDS = ["pnr#bwd", "abrechnung_zeitraum#bwd", "la_eigene#bwd", "stunden#bwd"];
+const DATEV_TAGE_FIELDS = ["pnr#bwd", "abrechnung_zeitraum#bwd", "la_eigene#bwd", "tage#bwd"];
+
+// Issue #304: LODAS personnel numbers are numeric. An employee whose number cannot be one must
+// never be dropped silently (§ 41 EStG completeness), so the callers refuse the export with a
+// 422 that lists the affected employee NUMBERS (never names).
+export const DATEV_PNR_INVALID_ERROR =
+  "Der DATEV-Export ist nicht möglich: Mindestens eine Personalnummer besteht nicht nur aus Ziffern, LODAS erwartet numerische Personalnummern. Bitte die betroffenen Nummern anpassen.";
+export const DATEV_PNR_INVALID_CODE = "DATEV_PNR_INVALID";
+
+export function datevInvalidPnrs(employees: Array<{ employeeNumber: string }>): string[] {
+  return employees.map((e) => e.employeeNumber).filter((n) => !/^\d+$/.test(n));
+}
 
 // Shared utility — produces a CP1252-encoded Buffer containing a valid DATEV LODAS
 // TXT file (three INI sections: [Allgemein], [Satzbeschreibung], [Bewegungsdaten]).
@@ -632,35 +649,22 @@ function buildDatevLodas(params: {
     return n.toFixed(digits).replace(".", ",");
   }
 
-  /**
-   * DATEV-Zeile: Satz-ID + 12 Werte, leere Felder = Semikolon.
-   *
-   * Issue #256 (Befund 1): the leading Satz-ID is what binds a data row to its record
-   * declaration in [Satzbeschreibung]. Without it the row still carried the right NUMBER
-   * of values (12 names / 12 values), so nothing ever complained -- the values were simply
-   * anchored one field too far left, which only becomes visible when the file is opened as
-   * a table next to its own header. Declaration and data rows are now emitted from the ONE
-   * DATEV_BWD_SATZ_ID constant, so the two cannot drift apart again.
-   */
-  function datevLine(
-    pn: string,
-    name: string,
-    datum: string,
-    ausfall: string,
-    lohnart: number,
-    stunden: number,
-    tage: number,
-  ): string {
-    return `${DATEV_BWD_SATZ_ID};${pn};${name};${datum};${ausfall};${lohnart};${stunden > 0 ? dec(stunden) : ""};${tage > 0 ? dec(tage, 1) : ""};;;;;`;
+  // Issue #304: the Abrechnungszeitraum is a field of EVERY data row (first day of the exported
+  // month, in the Datumsformat declared in [Allgemein]) -- there is no header key for it.
+  const zeitraum = `01${String(m).padStart(2, "0")}${y}`;
+
+  /** Stunden record: Satz-ID, pnr, Abrechnungszeitraum, Lohnart, hours. */
+  function stundenLine(pn: string, lohnart: number, stunden: number): string {
+    return [DATEV_STUNDEN_SATZ_ID, pn, zeitraum, lohnart, dec(stunden)].join(";");
+  }
+
+  /** Tage record: Satz-ID, pnr, Abrechnungszeitraum, Lohnart, days. */
+  function tageLine(pn: string, lohnart: number, tage: number): string {
+    return [DATEV_TAGE_SATZ_ID, pn, zeitraum, lohnart, dec(tage, 1)].join(";");
   }
 
   for (const emp of employees) {
     const pn = emp.employeeNumber;
-    // Employee name for DATEV identification
-    const name = `${emp.lastName} ${emp.firstName}`;
-    // Kalendertag = letzter Tag des Monats im DDMMJJJJ-Format (DATEV-Konvention)
-    const lastDayOfMonth = new Date(y, m, 0).getDate();
-    const datum = `${String(lastDayOfMonth).padStart(2, "0")}${String(m).padStart(2, "0")}${y}`;
 
     // Issue #617: the per-person numbers come from the one shared function.
     const figures = datevPersonFigures(emp, {
@@ -670,53 +674,47 @@ function buildDatevLodas(params: {
       leaveDaysByEmployee,
     });
     const workedHours = figures.workedMinutes / 60;
-    const sickDaysDatev = figures.sickDays;
-    const sickChildDays = figures.sickChildDays;
-    const vacationDaysDatev = figures.vacationDays;
-    const overtimeCompDays = figures.overtimeCompDays;
-    const specialDays = figures.specialDays;
-    const educationDays = figures.educationDays;
-    const unpaidDays = figures.unpaidDays;
-    const maternityDays = figures.maternityDays;
-    const parentalDays = figures.parentalDays;
 
-    // DATEV-Zeilen (Format: Satz-ID + 12 Werte, Semikolon-getrennt) — datevLine()'s own body is
-    // untouched by Phase 104; only the values fed into the Urlaub/Krank calls changed.
-    lines.push(datevLine(pn, name, datum, "", lna.normal, workedHours, 0));
-    if (sickDaysDatev > 0) lines.push(datevLine(pn, name, datum, "K", lna.krank, 0, sickDaysDatev));
-    if (sickChildDays > 0) lines.push(datevLine(pn, name, datum, "K", 201, 0, sickChildDays));
-    if (vacationDaysDatev > 0)
-      lines.push(datevLine(pn, name, datum, "U", lna.urlaub, 0, vacationDaysDatev));
-    if (overtimeCompDays > 0) lines.push(datevLine(pn, name, datum, "U", 301, 0, overtimeCompDays));
-    if (specialDays > 0)
-      lines.push(datevLine(pn, name, datum, "S", lna.sonderurlaub, 0, specialDays));
-    if (educationDays > 0) lines.push(datevLine(pn, name, datum, "S", 303, 0, educationDays));
-    if (unpaidDays > 0) lines.push(datevLine(pn, name, datum, "", 304, 0, unpaidDays));
-    if (maternityDays > 0) lines.push(datevLine(pn, name, datum, "", 310, 0, maternityDays));
-    if (parentalDays > 0) lines.push(datevLine(pn, name, datum, "", 320, 0, parentalDays));
+    // Issue #304: a booking exists only with a quantity -- no zero lines, Normalstunden included.
+    if (workedHours > 0) lines.push(stundenLine(pn, lna.normal, workedHours));
+    const dayBookings: Array<[number, number]> = [
+      [lna.krank, figures.sickDays],
+      [201, figures.sickChildDays],
+      [lna.urlaub, figures.vacationDays],
+      [301, figures.overtimeCompDays],
+      [lna.sonderurlaub, figures.specialDays],
+      [303, figures.educationDays],
+      [304, figures.unpaidDays],
+      [310, figures.maternityDays],
+      [320, figures.parentalDays],
+    ];
+    for (const [lohnart, days] of dayBookings) {
+      if (days > 0) lines.push(tageLine(pn, lohnart, days));
+    }
   }
 
   // ── DATEV LODAS ASCII-Import Format ──────────────────────────────────────
   // Produces a CP1252-encoded .txt file with three INI sections:
-  //   [Allgemein]        – Ziel=LODAS, Version_SST=1.0, BeraterNr/MandantenNr (TenantConfig,
-  //                          Issue #256), Datumsangaben=DDMMJJJJ
-  //   [Satzbeschreibung] – declares the Satz-ID and the 12 fields of a Bewegungsdaten row
-  //   [Bewegungsdaten]   – actual employee rows
-  //
-  // Each data row: the Satz-ID (Issue #256) followed by 12 values, semicolon-separated,
-  // decimal comma, CRLF line endings.
-  // Ausfallschlüssel: U=Urlaub, K=Krank, S=Sonderurlaub, (leer)=Arbeit
+  //   [Allgemein]        – Ziel=LODAS, Version_SST=1.0, Version_DB=15.70, BeraterNr/MandantenNr
+  //                          (TenantConfig, Issue #256), Datumsformat=TTMMJJJJ, Stringbegrenzer='
+  //   [Satzbeschreibung] – declares the two record types (Stunden, Tage) and their fields
+  //   [Bewegungsdaten]   – actual rows: Satz-ID followed by the declared fields, semicolon-
+  //                          separated, decimal comma, CRLF line endings
+  // Every value of the rows is numeric, so the Stringbegrenzer (declared for alphanumeric
+  // values) wraps nothing -- the pnr is checked to be numeric by the callers.
   const iniHeader = [
     "[Allgemein]",
     "Ziel=LODAS",
     "Version_SST=1.0",
+    "Version_DB=15.70",
     `BeraterNr=${kanzlei.beraterNr}`,
     `MandantenNr=${kanzlei.mandantenNr}`,
-    "Datumsangaben=DDMMJJJJ",
-    `Abrechnungszeitraum=${String(m).padStart(2, "0")}${y}`,
+    "Datumsformat=TTMMJJJJ",
+    "Stringbegrenzer='",
     "",
     "[Satzbeschreibung]",
-    `${DATEV_BWD_SATZ_ID};u_lod_bwd_buchung_kst;pnr#bwd;name#bwd;datum#bwd;ausfallkennzeichen#bwd;u_lod_lna_nr#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd`,
+    [DATEV_STUNDEN_SATZ_ID, DATEV_STUNDEN_TABLE, ...DATEV_STUNDEN_FIELDS].join(";"),
+    [DATEV_TAGE_SATZ_ID, DATEV_TAGE_TABLE, ...DATEV_TAGE_FIELDS].join(";"),
     "",
     "[Bewegungsdaten]",
   ].join(CRLF);
@@ -1807,6 +1805,16 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: DATEV_KANZLEI_MISSING_ERROR });
       }
 
+      // Issue #304: LODAS personnel numbers are numeric; never drop a person silently (§ 41 EStG).
+      const invalidPnrs = datevInvalidPnrs(employees);
+      if (invalidPnrs.length > 0) {
+        return reply.code(422).send({
+          error: `${DATEV_PNR_INVALID_ERROR} Betroffen: ${invalidPnrs.join(", ")}`,
+          code: DATEV_PNR_INVALID_CODE,
+          employeeNumbers: invalidPnrs,
+        });
+      }
+
       const buf = buildDatevLodas({
         employees,
         year: y,
@@ -1984,6 +1992,16 @@ export async function reportRoutes(app: FastifyInstance) {
         y,
         m,
       );
+
+      // Issue #304: LODAS personnel numbers are numeric; never drop a person silently (§ 41 EStG).
+      const invalidPnrs = datevInvalidPnrs([emp]);
+      if (invalidPnrs.length > 0) {
+        return reply.code(422).send({
+          error: `${DATEV_PNR_INVALID_ERROR} Betroffen: ${invalidPnrs.join(", ")}`,
+          code: DATEV_PNR_INVALID_CODE,
+          employeeNumbers: invalidPnrs,
+        });
+      }
 
       const buf = buildDatevLodas({
         employees: [emp],
