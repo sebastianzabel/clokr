@@ -517,7 +517,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // facade (`contexts/time-tracking/facade/time-entries.ts`, retention archive of DayBreak /
   // DayBreakAck, same shape as `archiveEntriesBefore`) — passes F1/F2/F3 directly, no new
   // exception; exceptions unchanged at 17.
-  it("the real tree has exactly 145 exported facade functions today, 17 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  it("the real tree has exactly 150 exported facade functions today, 19 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -598,7 +598,9 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // the recorded-time fact of the team saldo figures — 146 -> 147; passes F1/F2/F3 directly,
     // exceptions unchanged at 17.
     // Issue #388: + deletePresenceDevicesOfEmployee (tenant-scoped, no exception) — 147 -> 148.
-    expect(functions).toHaveLength(148);
+    // Issue #718: + clearOvertimePlanNotesForEmployee, clearSchedulingNotesForEmployee (DSGVO
+    // anonymisation, no tenantId by design) — 148 -> 150; two new named F3 exceptions, 17 -> 19.
+    expect(functions).toHaveLength(150);
 
     const rawExceptions = JSON.parse(
       readFileSync(
@@ -609,7 +611,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     const validated = validateExceptionsDocument(rawExceptions, functions);
     expect(validated.ok).toBe(true);
     if (validated.ok) {
-      expect(validated.entries).toHaveLength(17);
+      expect(validated.entries).toHaveLength(19);
       const findings = computeFindings(functions, validated.entries);
       expect(findings).toEqual([]);
     }

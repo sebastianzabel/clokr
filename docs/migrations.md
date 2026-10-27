@@ -1285,6 +1285,15 @@ einem Abschluss stecken (unverändert).
 **3. Rollback.** Das vorige Image zeigt wieder den Saldo ohne Eröffnungssaldo; ein inzwischen gespeicherter Wert wird bei der
 nächsten Änderung der Person wieder ohne ihn geschrieben. Keine Daten zurückzunehmen.
 
+## Phase 718 — Anonymisierung leert weitere Freitexte (Issue #718)
+
+Kein Schema-Change, keine Migration. Neue Anonymisierungen leeren zusätzlich `LeaveRequest.reviewNote`,
+`RetroEntryRequest.reviewNote` und `OvertimePlan`/`Shift`/`EmployeeAvailability`-`note`; `RetroEntryRequest.reason` (Pflichtfeld)
+wird durch „Gelöscht (Anonymisierung)“ ersetzt. `SaldoSnapshot.note` und die `OpeningBalance`-Texte bleiben bewusst stehen (§ 147 AO).
+Bereits anonymisierte Personen (Bestand) bleiben unverändert; sichtbar macht sie das schreibfreie
+`audit-388-anonymized-leftovers.ts` (neue Kategorien `LEAVE_REVIEW_NOTE`, `RETRO_REASON`, `RETRO_REVIEW_NOTE`,
+`OVERTIME_PLAN_NOTE`, `SHIFT_NOTE`, `AVAILABILITY_NOTE`; nur IDs und Zahlen). Ein Backfill ist ein eigenes Folge-Issue.
+
 ## Phase 388 — Anonymisierung löscht WLAN-Kennungen und Pausen-Verzicht-Freitext (Issues #388, #508)
 
 **Was sich ändert.** Es gibt **keine Migration und keinen Schemawechsel**. Die DSGVO-Anonymisierung

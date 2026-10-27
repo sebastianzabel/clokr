@@ -679,11 +679,18 @@ export async function getPendingLeaveForShiftProtection(
 export async function anonymizeLeaveRequestsForEmployee(
   db: Prisma.TransactionClient,
   employeeId: string,
-): Promise<void> {
+): Promise<number> {
   await db.leaveRequest.updateMany({
     where: { employeeId, note: { not: null } },
     data: { note: null },
   });
+  // Issue #718: the approver's free-text `reviewNote` is the same class as `note`; status,
+  // reviewer and review timestamp stay (they are the approval record). Reaches soft-deleted rows.
+  const cleared = await db.leaveRequest.updateMany({
+    where: { employeeId, reviewNote: { not: null } },
+    data: { reviewNote: null },
+  });
+  return cleared.count; // Issue #718: row count for the ANONYMIZE audit, never text
 }
 
 /**

@@ -100,5 +100,17 @@
     "function": "shiftScopeWhere",
     "rules": ["F1"],
     "reason": "Plan 91b-02 (D-11): a pure, side-effect-free scope-predicate helper (AccessReach -> a Prisma 'where' fragment) — no Prisma call, nothing to bind a transaction client to. Same shape and reasoning as employeeScopeWhere's own exception above and as isShiftInScope's sibling entry: F1 is checked mechanically against every exported function declaration under contexts/*/facade/ (and this file, named in KNOWN_FACADE_FILES) regardless of whether it touches Prisma at all."
+  },
+  {
+    "file": "apps/api/src/contexts/working-time-account/facade/overtime-account.ts",
+    "function": "clearOvertimePlanNotesForEmployee",
+    "rules": ["F3"],
+    "reason": "Issue #718 (DSGVO Art. 17): nulls OvertimePlan.note for employeeId inside anonymize.ts's own $transaction, deliberately with no deletedAt guard and no tenantId parameter. Its sole caller is anonymizeEmployeeData(), reached only after platform/api/employees.ts's DELETE /:id handler validated 'id' against req.user.tenantId before opening the transaction this function runs inside. Same shape and reasoning as clearEntryNotesForEmployee/anonymizeLeaveRequestsForEmployee above: a tenantId parameter here would be decorative, not a real boundary."
+  },
+  {
+    "file": "apps/api/src/contexts/scheduling/facade/shifts.ts",
+    "function": "clearSchedulingNotesForEmployee",
+    "rules": ["F3"],
+    "reason": "Issue #718 (DSGVO Art. 17): nulls Shift.note and EmployeeAvailability.note for employeeId inside anonymize.ts's own $transaction, deliberately with no deletedAt guard and no tenantId parameter. Its sole caller is anonymizeEmployeeData(), reached only after platform/api/employees.ts's DELETE /:id handler validated 'id' against req.user.tenantId before opening the transaction this function runs inside. Same shape and reasoning as clearEntryNotesForEmployee/anonymizeLeaveRequestsForEmployee above: a tenantId parameter here would be decorative, not a real boundary."
   }
 ]

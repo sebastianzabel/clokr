@@ -37,6 +37,7 @@ import { PrismaClient } from "@clokr/db";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { describeTarget } from "../src/utils/test-database";
+import { RETRO_REASON_ANONYMIZED } from "../src/contexts/time-tracking";
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");
@@ -102,7 +103,33 @@ async function checkLeftoverNotes() {
   const waivedReasons = await prisma.timeEntry.count({
     where: { breakWaivedReason: { not: null } },
   });
-  const total = timeEntryNotes + leaveRequestNotes + absenceNotes + waivedReasons;
+  // Issue #718: further person-authored free text. Whole-DB scan, like the counts above (the batch
+  // anonymizer processes every employee). Kept on purpose: SaldoSnapshot.note, OpeningBalance texts.
+  const leaveReviewNotes = await prisma.leaveRequest.count({
+    where: { reviewNote: { not: null } },
+  });
+  const retroReasons = await prisma.retroEntryRequest.count({
+    where: { reason: { not: RETRO_REASON_ANONYMIZED } },
+  });
+  const retroReviewNotes = await prisma.retroEntryRequest.count({
+    where: { reviewNote: { not: null } },
+  });
+  const planNotes = await prisma.overtimePlan.count({ where: { note: { not: null } } });
+  const shiftNotes = await prisma.shift.count({ where: { note: { not: null } } });
+  const availabilityNotes = await prisma.employeeAvailability.count({
+    where: { note: { not: null } },
+  });
+  const total =
+    timeEntryNotes +
+    leaveRequestNotes +
+    absenceNotes +
+    waivedReasons +
+    leaveReviewNotes +
+    retroReasons +
+    retroReviewNotes +
+    planNotes +
+    shiftNotes +
+    availabilityNotes;
   if (total > 0) {
     findings.push({
       rule: "leftover-free-text-notes",
@@ -113,6 +140,12 @@ async function checkLeftoverNotes() {
         `LeaveRequest.note: ${leaveRequestNotes}`,
         `Absence.note: ${absenceNotes}`,
         `TimeEntry.breakWaivedReason: ${waivedReasons}`,
+        `LeaveRequest.reviewNote: ${leaveReviewNotes}`,
+        `RetroEntryRequest.reason (not neutral): ${retroReasons}`,
+        `RetroEntryRequest.reviewNote: ${retroReviewNotes}`,
+        `OvertimePlan.note: ${planNotes}`,
+        `Shift.note: ${shiftNotes}`,
+        `EmployeeAvailability.note: ${availabilityNotes}`,
       ],
     });
   }
@@ -259,7 +292,10 @@ async function main() {
   const checks: Array<[string, () => Promise<void>]> = [
     ["Employee firstName === 'Gelöscht'", checkEmployeesNotAnonymized],
     ["User email matches *@anonymized.local", checkUserEmails],
-    ["Free-text notes cleared (TimeEntry/LeaveRequest/Absence)", checkLeftoverNotes],
+    [
+      "Free-text notes cleared (TimeEntry/LeaveRequest/Absence/Zeitnachtrag/Plan/Shift/Availability)",
+      checkLeftoverNotes,
+    ],
     ["Absence documentPath cleared", checkAbsenceDocuments],
     ["WLAN identifiers cleared (wifiMacs, PresenceDevice)", checkWifiIdentifiers],
     ["AuditLog userId nulled for anonymized users", checkAuditLogUserIds],
