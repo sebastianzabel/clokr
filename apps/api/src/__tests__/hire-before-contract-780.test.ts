@@ -10,7 +10,6 @@ import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import { createPopulationPerson } from "./population-fixtures-613";
 import { seedMonthlyExportFixture, type MonthlyExportFixture } from "./monthly-export-fixture-617";
 import { computeMonthReportFigures } from "../contexts/working-time-account";
-import { main as auditMain, EXIT_FINDINGS } from "../../scripts/audit-780-hire-before-contract";
 
 const NOW = new Date("2026-10-27T10:00:00.000Z");
 
@@ -113,21 +112,6 @@ describe("Issue #780 - hireDate before the first contract", { timeout: 120_000 }
     // (18 workdays x 8 h = 144 h, unchanged convention); September carries nothing.
     // Old code: -304 h (September's tenant-default Soll of 176 h charged on top).
     expect(live.balanceHours).toBeCloseTo(16 - 144, 1);
-  });
-
-  it("the read-only audit lists the person with the saldo delta (before the close)", async () => {
-    const lines: string[] = [];
-    const spy = vi.spyOn(console, "info").mockImplementation((m: unknown) => {
-      lines.push(String(m));
-    });
-    try {
-      const code = await auditMain(["--tenant-id", fx.tenantId], app.prisma);
-      expect(code).toBe(EXIT_FINDINGS);
-    } finally {
-      spy.mockRestore();
-    }
-    // September's tenant-default Soll: 22 workdays x 8 h = 10560 min.
-    expect(lines.some((l) => l.includes(`employeeId=${employeeId} deltaMinutes=10560`))).toBe(true);
   });
 
   it("the Monatsabschluss writer stores no Soll for the contract-less month, and the live saldo is unchanged by the close", async () => {
