@@ -74,7 +74,9 @@ export function futureDateStr(daysAhead: number, tz: string = TEST_TZ): string {
  * .test.ts`'s `FROZEN_NOW`) rather than reading the live clock.
  */
 export function daysAgoStrInTz(now: Date, n: number, tz: string = TEST_TZ): string {
-  return dateStrInTz(new Date(now.getTime() - n * DAY_MS), tz);
+  // Calendar subtraction on the tenant-local DAY string (UTC-midnight representation), never
+  // `now - n * 24 h`: on a 25 h day (DST end) that lands on the same local day (Issue #172).
+  return dbDateStr(new Date(utcMidnight(dateStrInTz(now, tz)).getTime() - n * DAY_MS));
 }
 
 /**

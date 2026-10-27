@@ -35,6 +35,8 @@ jobs:
           --health-retries 5
 
     env:
+      # Issue #172: behaviour must not depend on the runner's host timezone.
+      TZ: UTC
       DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr
       # apps/api tests connect to a separate `clokr_test` DATABASE (not a schema — D-01, Phase 101:
       # `?schema=` is a Prisma-only parameter that `pg.Pool` silently ignored, so every run was
