@@ -47,6 +47,28 @@ export function todayInTz(tz: string): Date {
 }
 
 /**
+ * Add `n` whole CALENDAR days (negative = subtract) to `date` using UTC calendar fields, so the
+ * result never depends on the host timezone or on DST (Issue #172). The time of day is preserved.
+ *
+ * Use it on UTC-midnight `@db.Date` values and on `todayInTz()` results, and to step an instant by
+ * calendar days. Never write `d.setDate(d.getDate() + n)` or `d.setHours(0, 0, 0, 0)` for this: those
+ * are host-local and drift by an hour across a DST switch. Never subtract `n * 24 h` from a real
+ * instant and then derive the tenant day from it either - on a 25 h day that lands on the same day.
+ */
+export function addDaysUtc(date: Date, n: number): Date {
+  const d = new Date(date.getTime());
+  d.setUTCDate(d.getUTCDate() + n);
+  return d;
+}
+
+/** Start (00:00 UTC) of the UTC calendar day containing `date` - the host-TZ-free `setHours(0,0,0,0)`. */
+export function startOfDayUtc(date: Date): Date {
+  const d = new Date(date.getTime());
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
  * Format a UTC date as "YYYY-MM-DD" in the given timezone.
  */
 export function dateStrInTz(utcDate: Date, tz: string): string {
@@ -252,6 +274,40 @@ function explicitWorkDaysOf(schedule: Record<string, unknown>): number[] {
 }
 
 /**
+ * Internal (Issue #323): Soll-bearing days of a SHIFT_BASED range whose contractual count `c`
+ * differs from the workDays cardinality `m`. Counted per ISO week-part (Mon..Sun, clipped to the
+ * range) and capped at `c`, so a full week is exactly `c` days x (weeklyHours / c) = weeklyHours:
+ * the contract guarantee (§ 615 BGB) is never exceeded however many weekdays workDays names.
+ * Candidate days: the workDays members when they cover the contract (m >= c); when workDays names
+ * fewer days than the contract (m < c) it cannot carry the contractual truth (the roster decides
+ * the weekdays), so every non-excluded calendar day of the part is a candidate. Excluded
+ * (holiday) days never count.
+ */
+function shiftBasedSollDaysInRange(
+  isWorkday: (dow: number) => boolean,
+  m: number,
+  c: number,
+  from: Date,
+  to: Date,
+  tz: string,
+  excludeHolidays?: Set<string>,
+): number {
+  let total = 0;
+  let part = 0;
+  const flush = () => {
+    total += Math.min(c, part);
+    part = 0;
+  };
+  iterateDaysInTz(from, to, tz, (dow, dateStr) => {
+    if (dow === 1) flush();
+    if (excludeHolidays?.has(dateStr)) return;
+    if (m < c || isWorkday(dow)) part++;
+  });
+  flush();
+  return total;
+}
+
+/**
  * Internal: Ø-Methode math used for SHIFT_BASED + FLEXTIME schedules.
  *
  * Returns weeklyHours / workDaysPerWeek × workdaysInRange × 60, rounded to integer minutes.
@@ -333,6 +389,35 @@ function avgWorkMinutesCore(
     if (isWorkday(dow)) workDaysPerWeek++;
   }
   if (workDaysPerWeek === 0) return 0;
+
+  // Issue #323: a SHIFT_BASED row whose stored contractual count (`contractWorkDaysPerWeek`, Phase
+  // 107 D-01) differs from the workDays cardinality takes its Ø-day from that count, never from
+  // workDays (a placeholder for this type). This reads only tier 1 of the chain that
+  // `contractWorkDaysPerWeekFrom()` (contexts/absence/leave-days.ts) owns: a null column defers to
+  // the legacy path below, so the lower tiers are never rebuilt here. timezone.ts stays a leaf on
+  // purpose - importing the absence index would pull it into the measured import cycle (22 -> 29
+  // modules); a test pins the equality with the chain function. Rows where count and workDays
+  // agree keep the path below byte-identical.
+  if (String(schedule.type ?? "") === "SHIFT_BASED" && schedule.contractWorkDaysPerWeek != null) {
+    const contractDays = Number(schedule.contractWorkDaysPerWeek);
+    if (contractDays <= 0) return 0;
+    if (contractDays !== workDaysPerWeek) {
+      return Math.round(
+        (wh *
+          60 *
+          shiftBasedSollDaysInRange(
+            isWorkday,
+            workDaysPerWeek,
+            contractDays,
+            from,
+            to,
+            tz,
+            excludeHolidays,
+          )) /
+          contractDays,
+      );
+    }
+  }
 
   // workdaysInRange = count of calendar days in [from, to] that are
   // contracted workdays per isWorkday(). D-06: a holiday inside the range is
@@ -488,6 +573,30 @@ export function calcMonthlyHoursHolidayMinutesTz(
   return monthlyHoursMinutesCore(schedule, from, to, tz, defaultWorkDays, (dateStr) =>
     holidayDateStrings.has(dateStr),
   );
+}
+
+/**
+ * Issue #473: the Ø-day value of ONE tenant-local day of a MONTHLY_HOURS contract,
+ * `monthlyHours x 60 / (contractual workdays of the FULL calendar month)` (same
+ * denominator and rounding as a one-day `monthlyHoursMinutesCore` range, i.e. the value
+ * a leave day or holiday is priced at). Returns 0 when `monthlyHours` is null/0/negative
+ * (pure tracking) or when `dateStr` is not a contractual workday (D-05 chain), so a
+ * Berufsschule day on a non-workday credits nothing that no Soll ever carried.
+ */
+export function calcMonthlyHoursDayMinutesTz(
+  schedule: Record<string, unknown>,
+  dateStr: string,
+  tz: string,
+  defaultWorkDays?: readonly number[] | null,
+): number {
+  const mh = Number(schedule.monthlyHours ?? 0);
+  if (mh <= 0) return 0;
+  const workdaySet = monthlyHoursWorkDays(schedule, defaultWorkDays);
+  const dow = getDayOfWeekInTz(fromZonedTime(`${dateStr}T12:00:00`, tz), tz);
+  if (!workdaySet.has(dow)) return 0;
+  const fullMonthWorkdays = monthlyHoursFullMonthWorkdays(dateStr.slice(0, 7), tz, workdaySet);
+  if (fullMonthWorkdays === 0) return 0;
+  return Math.round((mh * 60) / fullMonthWorkdays);
 }
 
 /**

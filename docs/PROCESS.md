@@ -132,6 +132,31 @@ specified, and the same class could be hiding in every other reader of approved 
 outside the migration history on prod (#733) was only caught in the rehearsal. Fixing the one
 instance leaves the class alone.
 
+### Visibility walkthrough at the end of every UI change (Issue #710)
+
+Every phase or quick task that changes UI ends with a **Sichtbarkeits-Durchlauf** (visibility
+walkthrough). It is mandatory: the executor runs it before reporting done, the verifier reads its
+screenshots before reporting "passed".
+
+1. **A Playwright run drives the changed flows on a stack with real data**: the demo seed or a
+   throwaway tenant on the acceptance stack (`docker-compose.test.yml`), never the dev database.
+2. **After every click it asserts the expected target is IN THE VIEWPORT** (`toBeInViewport()`),
+   not merely in the DOM. `toBeVisible()` and mounted component tests do not catch a target that
+   sits below the fold.
+3. **Widths 1280, 390 and 360 px, each in light and dark.**
+4. **Screenshots are the acceptance attachment**: set `VISIBILITY_SHOTS_DIR`, keep the files in
+   the phase folder and link them in the PR. The verifier reads them.
+
+The helper is `apps/e2e/helpers/visibility-walkthrough.ts`: `defineVisibilityWalkthrough({ title,
+path, ready, steps: [{ name, act, target }] })` registers the six width x theme tests. Example and
+retroactive proof: `apps/e2e/tests/role-editor-visibility-710.spec.ts` (fails on the state before
+the #692 fix, passes on main). Run a walkthrough with
+`pnpm --filter e2e exec playwright test --project=e2e-ci <spec>`; a new spec needs an entry in
+`apps/api/scripts/lint-e2e-spec-registry.json` and, for category `in-ci`, in the `e2e-ci`
+`testMatch`. Together with `svelte-check` as a gate (#699) this closes the gap between "the code
+is right" and "the user can see it". No checked-in executor or verifier template exists (the GSD
+agent definitions live outside the repo), so this section is the single written rule.
+
 ### Owner acceptance for risky changes
 
 A PR that touches the saldo / working-time account, leave or absence entitlement,

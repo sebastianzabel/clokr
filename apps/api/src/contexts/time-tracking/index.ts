@@ -74,7 +74,7 @@ export {
 // getEffectiveSchedule is DEFINED in ./entry-invariants (the leaf plan 04 lifted it into) —
 // sourced from there, never from ./api/time-entries, so this index never has to publish a route
 // module's whole import set.
-export { getEffectiveSchedule } from "./entry-invariants";
+export { getEffectiveSchedule, defaultScheduleFromTenantConfig } from "./entry-invariants"; // Issue #696 — the fallback, shared with the bulk chain loader
 export { getEffectiveBreakDuration } from "./break-effective";
 export type { BreakEmployeeShape, BreakTenantConfigShape } from "./break-effective";
 // Issue #587 — `resolveDayStatus` is the one day-status function (obligation + timing + presence state).
