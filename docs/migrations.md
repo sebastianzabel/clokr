@@ -1415,6 +1415,15 @@ Release korrigiert keine Bestandszeile:** Die Befunde vor dem Deploy sind das Be
 noch um nichts wachsen. Eine bestätigte Gutschrift hat eine Kontowirkung, deren Rücknahme eine eigene, auditierte Korrekturbuchung
 wäre — Entscheidung beim Betreiber, nichts still korrigieren.
 
+## Phase 470 — Spalte `TenantConfig.monthlyHoursHolidayDeduction` entfällt (Issue #470)
+
+**Hinweis für die Release Notes.** Eine Migration, `*_drop_monthly_hours_holiday_deduction`: genau ein
+`ALTER TABLE "TenantConfig" DROP COLUMN "monthlyHoursHolidayDeduction"`. Die Spalte war seit v1.14.0 (#433) stillgelegt; kein Code liest oder
+schreibt sie. Es gibt keinen Datenverlust im fachlichen Sinn (der Wert war wirkungslos). **Rollback:** Ein Image-Rollback auf eine Version, deren
+Prisma-Client die Spalte kennt (v1.16.1 und älter), ist nach der Migration NICHT möglich, weil der Client jede Spalte beim Lesen von
+`TenantConfig` explizit anfordert; die Migration vorher zurückzusetzen heißt, die Spalte mit `ADD COLUMN ... BOOLEAN NOT NULL DEFAULT false` neu anzulegen.
+Der Standard-Einstiegspunkt führt `prisma migrate deploy` selbst aus, es ist kein manueller Schritt nötig.
+
 ## Phase 512 — Bestandskorrektur: Freitext im AuditLog anonymisierter Personen (Issue #512)
 
 **Hinweis für die Release Notes.** Es gibt **keine Migration und keinen Schemawechsel.** Seit #512 ersetzt die Anonymisierung

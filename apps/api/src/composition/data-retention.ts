@@ -2,6 +2,7 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
 import { countSnapshotsBefore } from "../contexts/working-time-account"; // Phase 100B Plan 07 — W7
+import { addDaysUtc } from "../contexts/working-time-account"; // Issue #172
 import { archiveEntriesBefore, archiveDayBreakDataBefore } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T9; Issue #80 — T9b
 import { archiveAbsencesBefore, archiveLeaveRequestsBefore } from "../contexts/absence"; // Phase 100B Plan 12; Plan 13
 import { purgeExpiredOperatorAudit, purgeExpiredSupportAccess } from "../contexts/platform"; // Phase 88 (D-07a), Issue #93 (D-25)
@@ -187,8 +188,7 @@ export const dataRetentionPlugin = fp(async (app) => {
       }, 90),
     );
 
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - minRetentionDays);
+    const cutoff = addDaysUtc(new Date(), -minRetentionDays);
 
     const result = await app.prisma.auditLog.deleteMany({
       where: {

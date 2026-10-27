@@ -83,6 +83,8 @@ export { DEFAULT_MISSING_ENTRIES_DAYS, resolveMissingEntriesDays } from "./missi
 export {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
+  addDaysUtc, // Issue #172
+  calcMonthlyHoursDayMinutesTz, // Issue #473
   dateStrInTz,
   dayRangeUtc, // Issue #613
   getDayHoursFromSchedule,
@@ -92,6 +94,7 @@ export {
   monthDayBounds,
   monthDateRange, // Issue #493 (D-10)
   monthRangeUtc,
+  startOfDayUtc, // Issue #172
   timeStrInTz,
   todayInTz,
   weekRangeUtc,

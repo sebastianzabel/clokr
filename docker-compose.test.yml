@@ -59,6 +59,12 @@ services:
       API_PORT: "4000"
       API_HOST: "0.0.0.0"
       SEED_DEMO_DATA: "${SEED_DEMO_DATA:-false}"
+      # The image runs NODE_ENV=production, which refuses to start without MINIO_* (Issue #184).
+      # This stack has no object store on purpose: the host does not resolve, so /health reports
+      # storage "unavailable" and uploads answer 503, as before.
+      MINIO_ENDPOINT: "minio-absent"
+      MINIO_ACCESS_KEY: "test-no-object-store"
+      MINIO_SECRET_KEY: "test-no-object-store"
     ports:
       - "4001:4000"
     depends_on:

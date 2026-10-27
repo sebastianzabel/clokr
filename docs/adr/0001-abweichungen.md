@@ -4385,7 +4385,7 @@ pnpm --filter @clokr/api exec tsx scripts/recalculate-shift-based-leave-days.ts 
   weiterhin als belegt (kein Rückfluss in den Wochen-Union-Pool).
 - Werden zwei Anträge derselben Woche gleichzeitig angelegt, entscheidet die Reihenfolgeregel über
   `createdAt`/Id — eine echte Gleichzeitigkeit zweier Schreibtransaktionen ist nicht gesondert
-  gesperrt.
+  gesperrt (seit Issue #467 gesperrt: Employee-Zeilensperre, siehe WR-01 unten).
 - **(Code Review 436, WR-01, 02.10.2026)** `PATCH /requests/:id/correct` kann einen früher
   angelegten, bereits genehmigten Antrag per Datumsänderung so AUSWEITEN, dass die neue
   Tagesmenge zusammen mit einem später angelegten, bereits genehmigten Geschwisterantrag über die
@@ -4410,6 +4410,12 @@ pnpm --filter @clokr/api exec tsx scripts/recalculate-shift-based-leave-days.ts 
   FRÜHEREN Antrags statt durch Ablehnung/Stornierung des Geschwisterantrags selbst. Gepinnt (als
   bekannte Grenze, nicht als Spezifikation eines zukünftigen Fixes) in
   `apps/api/src/__tests__/leave-week-union-436.test.ts` ("[KNOWN LIMITATION, 436-REVIEW WR-01]").
+  **Behoben mit Issue #467:** Anlage (`POST /requests`) und Korrektur (`/correct`) nehmen als erstes
+  die Employee-Zeilensperre `lockEmployeeForLeavePricing()` (`contexts/absence/employee-leave-lock.ts`,
+  `FOR NO KEY UPDATE`) und bepreisen unter ihr; die Korrektur berechnet danach später angelegte,
+  überlappende VACATION-Anträge derselben Wochen neu (`later-request-reprice.ts`) — nur günstiger,
+  nie in gesperrten Monaten, Entitlement-Delta und `LEAVE_DAYS_ADJUSTED`-Audit
+  (`triggerSource: "CORRECTION"`) in derselben Transaktion. Der obige Test wurde bewusst geändert.
 - **(Code Review 436, WR-02, 02.10.2026)** `scripts/recalculate-shift-based-leave-days.ts
 --confirm` ist, seit dieser Phase, AUCH der Weg, einen genehmigten SHIFT_BASED-VACATION-Antrag
   unter der NEUEN Wochen-Union-Regel neu zu bepreisen — das ist ein zusätzlicher Effekt
@@ -6512,6 +6518,16 @@ API: `travel-activity-kind-92`, `travel-entry-tracer-92`, `travel-migration-92`,
 `travel-clock-selectors-92`, `time-entries-travel-list-92`, `time-entries-travel-summary-92`,
 `travel-saldo-isolation-92`, `travel-saldo-equality-92`; Web: `travel-entry-form`, `today-entries-travel-92`,
 `time-entries-travel-wiring-92`; Playwright `travel-between-salons.spec.ts`.
+
+## U — Nachtrag Issue #470: Spalte `TenantConfig.monthlyHoursHolidayDeduction` gelöscht
+
+**Schwere: Entfernung eines Unterbau-Feldes (Semantikänderung nach ADR 0002, Entscheidung 7). Owner-Entscheidung = Issue #433 (Kommentar vom 03.10.2026), die das Folge-Issue #470 ausdrücklich vorsieht.**
+
+Eintrag U hatte die Spalte nur stillgelegt, damit ein Image-Rollback auf v1.13.x funktioniert. Voraussetzung der Löschung (int und prod laufen v1.16.1, also nach v1.14.0) ist erfüllt. Die Migration `*_drop_monthly_hours_holiday_deduction` enthält genau ein `ALTER TABLE "TenantConfig" DROP COLUMN "monthlyHoursHolidayDeduction"`; sie wurde nach dem Shadow-DB-Ablauf aus CLAUDE.md erzeugt, nicht mit `migrate dev`. `schema.prisma` kennt das Feld nicht mehr, der Eintrag verlässt `RETIRED_TENANT_CONFIG_COLUMNS` in `contexts/platform/api/settings.ts`. Ein alter Client, der den Schlüssel noch sendet, erhält weiter 200 (der Zod-Parser verwirft unbekannte Schlüssel).
+
+- **Rollback:** nach der Migration ist ein Image-Rollback auf v1.16.1 oder älter nicht möglich (deren Prisma-Client selektiert die Spalte); siehe `docs/migrations.md`, „Phase 470“.
+- **Auswirkung auf die Kontexte:** Unterbau: Feld entfernt. Zeiterfassung, Abwesenheiten, Schichtplanung, Arbeitszeitkonto, Kompositionsschicht: keine (lesen das Feld seit #433 nicht mehr).
+- **Kennungs-Gate:** `git grep monthlyHoursHolidayDeduction` findet nur noch Migrationen, diese Historie und drei Negativ-Assertions in Tests.
 
 ## AC — Freitext im AuditLog anonymisierter Personen (Issue #512)
 

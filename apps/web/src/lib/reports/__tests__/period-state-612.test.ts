@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  activePresets,
+  activePreset,
   arrowLabels,
   canStepNext,
   clampToToday,
@@ -309,18 +309,33 @@ describe("presets", () => {
     expect(presetPeriods(ym(2026, 3))[2]).toMatchObject({ from: ym(2026, 1), to: ym(2026, 3) });
   });
 
-  it("marks every matching preset at once", () => {
-    expect(activePresets(TODAY, TODAY, TODAY)).toEqual(["this-month", "quarter"]);
-    expect(activePresets(ym(2026, 9), ym(2026, 9), TODAY)).toEqual(["previous-month"]);
-    expect(activePresets(ym(2026, 1), ym(2026, 10), TODAY)).toEqual(["year"]);
-    expect(activePresets(ym(2026, 8), ym(2026, 10), TODAY)).toEqual(["last-3-months"]);
-    expect(activePresets(ym(2026, 2), ym(2026, 4), TODAY)).toEqual([]);
-    // January: this month, quarter and year are all the same single month
-    expect(activePresets(ym(2026, 1), ym(2026, 1), ym(2026, 1))).toEqual([
-      "this-month",
-      "quarter",
-      "year",
-    ]);
+  // Issue #781, owner decision 27.10.2026 (replaces P-20 of #612, which marked every equal preset
+  // at once): exactly ONE preset is pressed - the clicked one, else the first in display order.
+  it("presses exactly one preset, the first matching one without a click", () => {
+    // October: "Dieser Monat" and "Quartal" are the same single month
+    expect(activePreset(TODAY, TODAY, TODAY)).toBe("this-month");
+    expect(activePreset(ym(2026, 9), ym(2026, 9), TODAY)).toBe("previous-month");
+    expect(activePreset(ym(2026, 1), ym(2026, 10), TODAY)).toBe("year");
+    expect(activePreset(ym(2026, 8), ym(2026, 10), TODAY)).toBe("last-3-months");
+    // a custom range matching no preset presses none
+    expect(activePreset(ym(2026, 2), ym(2026, 4), TODAY)).toBeNull();
+  });
+
+  it("presses the clicked preset in October (month vs quarter)", () => {
+    expect(activePreset(TODAY, TODAY, TODAY, "quarter")).toBe("quarter");
+    expect(activePreset(TODAY, TODAY, TODAY, "this-month")).toBe("this-month");
+  });
+
+  it("presses exactly one of month, quarter and year in January", () => {
+    const jan = ym(2026, 1);
+    expect(activePreset(jan, jan, jan)).toBe("this-month");
+    expect(activePreset(jan, jan, jan, "quarter")).toBe("quarter");
+    expect(activePreset(jan, jan, jan, "year")).toBe("year");
+  });
+
+  it("ignores a clicked preset that no longer equals the period", () => {
+    expect(activePreset(ym(2026, 9), ym(2026, 9), TODAY, "quarter")).toBe("previous-month");
+    expect(activePreset(ym(2026, 2), ym(2026, 4), TODAY, "year")).toBeNull();
   });
 });
 

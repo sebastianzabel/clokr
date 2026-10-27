@@ -253,7 +253,12 @@ Current: recalculated from hire date on every request (does not scale). Target a
   `GET /overtime/month-saldo`) starts at `openMonthCarryInMinutes()` (`contexts/working-time-account/overtime-balance.ts`):
   the last close before the month plus every unclosed month since then (track-only resets, #494), from the
   same chain the live saldo runs, so both agree at the same Stichtag; a month that is track-only on its own
-  contract shows 0. No reader adds a carry of its own; closed months are only read. Known gap: without any
+  contract shows 0. No reader adds a carry of its own; closed months are only read. Many persons at once (Issue #696): `openMonthCarryInMinutesForMany` and
+  `computeMonthReportFiguresForMany` run the SAME chain and month core, only their inputs come from
+  `contexts/working-time-account/overtime-balance.ts` (`ChainSource`: `querySource` for one person, `loadChainSources`
+  with every collection read once for many) - a bulk answer is never a second computation, and
+  `open-month-carry-bulk-696.test.ts` pins it equal to the per-person function. A `@db.Date` bound inside a
+  `ChainSource` filter is cast to its UTC date part (`dayOf`), exactly as Prisma casts it. Known gap: without any
   closed month the live saldo ignores the OpeningBalance (#682).
 - **Sick days are counted in one place (Issue #84, D-14).** `sickLeaveDayCounts()`
   (`contexts/absence/sick-leave-days.ts`, exported via `contexts/absence/index.ts`) is the ONLY
@@ -703,7 +708,7 @@ FULL calendar month)` (Ø-Methode; a half day reduces by half; one `Math.round()
   - A VOCATIONAL_SCHOOL (Berufsschule) day is credited to worked minutes only, never also a Soll
     reduction (one day reduces Soll exactly once).
   - `TenantConfig.monthlyHoursHolidayDeduction` is retired — no code reads or writes it; the column
-    is dropped in a follow-up release (GitHub #470).
+    was dropped by the migration `*_drop_monthly_hours_holiday_deduction` (GitHub #470).
   - Closed months are never recalculated — `scripts/dry-run-433-monthly-hours-soll.ts` lists the
     affected stored months read-only; any correction is a deliberate correction booking.
 - `WorkSchedule.validFrom` MUST be the 1st of a calendar month for every contract CHANGE (PUT `/api/v1/settings/work/:employeeId` and tenant-config bulk apply). Non-1st dates are rejected with HTTP 400 + German message `"Vertragswechsel sind nur zum Monats-1. erlaubt."` (see `apps/api/src/contexts/platform/month-first-date.ts` for the canonical constant `MONTH_FIRST_ERROR`). The initial schedule on employee creation (POST `/api/v1/employees`) is exempt — `validFrom = hireDate` may be any day, because contract START is not a contract CHANGE. Existing non-1st rows (pre-Phase-60) are preserved for audit-trail purposes; surface them via `pnpm --filter @clokr/api exec tsx scripts/audit-workschedule-non-month1.ts`. See GitHub issue #220.

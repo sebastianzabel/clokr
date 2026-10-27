@@ -88,14 +88,12 @@ const decimalFromApi = (schema: z.ZodType<number>) =>
  * follow-up release drops them; no code path may read or write them any more. Delete an entry
  * together with its column.
  *
- * - `monthlyHoursHolidayDeduction`: Issue #433 (D-04), dropped by GitHub #470.
  * - `storeHours`: Issue #563 (D-13) retires the tenant-level opening hours the same way. Opening
  *   hours live only on `Salon.openingHours`; the settings schema no longer knows the key (a stale
  *   client's value is stripped, 200, nothing written) and every read and the upsert omit the
  *   column. The column is dropped by GitHub #638 (follow-up, pattern of #470).
  */
 const RETIRED_TENANT_CONFIG_COLUMNS: Prisma.TenantConfigOmit = {
-  monthlyHoursHolidayDeduction: true,
   storeHours: true,
 };
 
@@ -921,7 +919,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         : undefined;
       const applied: { employeeId: string }[] = [];
       let skippedModelSwitch = 0;
-      let config: Omit<TenantConfig, "monthlyHoursHolidayDeduction" | "storeHours">;
+      let config: Omit<TenantConfig, "storeHours">;
       try {
         config = await app.prisma.$transaction(
           async (tx) => {

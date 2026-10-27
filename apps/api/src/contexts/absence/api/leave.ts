@@ -30,6 +30,7 @@ import { BS_ONLY_LEAVE_ERROR, BS_ONLY_LEAVE_ERROR_CODE } from "../bs-leave-days"
 import { vocationalSchoolDatesForLeaveRequests } from "../bs-leave-days"; // Issue #448 (D-05, plan 03)
 import { formatMinutesHM } from "../format-hm"; // Phase 100
 import { ensureLeaveType } from "../ensure-leave-type"; // Issue #614 — moved out of this route
+import { lockEmployeeForLeavePricing } from "../employee-leave-lock"; // Issue #467
 import {
   prepareLeaveCorrection,
   applyLeaveCorrection,
@@ -794,22 +795,51 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
-      const request = await app.prisma.leaveRequest.create({
-        data: {
+      // Issue #467: price + insert are serialised per employee. The estimate above was read
+      // without a lock, so two concurrent requests for the same ISO week each priced the week in
+      // full. Under the Employee row lock the price is read AGAIN (it now sees every request the
+      // previous writer committed) and that price is the one stored. A price that went UP in
+      // between (an earlier request was withdrawn meanwhile) is not silently stored — it was
+      // validated against the lower estimate — the caller retries.
+      const created = await app.prisma.$transaction(async (tx) => {
+        await lockEmployeeForLeavePricing(tx, tenantId, employeeId);
+        const locked = await resolveLeaveDays(
+          tx,
           employeeId,
-          leaveTypeId,
-          specialLeaveRuleId: body.specialLeaveRuleId ?? null,
-          startDate: start,
-          endDate: end,
-          days,
-          halfDay: body.halfDay,
-          note: body.note,
-        },
-        include: {
-          leaveType: true,
-          employee: { select: { firstName: true, lastName: true } },
-        },
+          tenantId,
+          start,
+          end,
+          body.halfDay,
+          holidays,
+          { mode: "request", leaveTypeCode: body.type },
+        );
+        if (locked.days > days) return null;
+        const row = await tx.leaveRequest.create({
+          data: {
+            employeeId,
+            leaveTypeId,
+            specialLeaveRuleId: body.specialLeaveRuleId ?? null,
+            startDate: start,
+            endDate: end,
+            days: locked.days,
+            halfDay: body.halfDay,
+            note: body.note,
+          },
+          include: {
+            leaveType: true,
+            employee: { select: { firstName: true, lastName: true } },
+          },
+        });
+        return { row, days: locked.days };
       });
+      if (!created) {
+        return reply.code(409).send({
+          error: "Die Urlaubstage haben sich gerade geändert — bitte erneut versuchen.",
+          code: "LEAVE_PRICE_CHANGED",
+        });
+      }
+      const request = created.row;
+      const pricedDays = created.days;
 
       await app.audit({
         userId: req.user.sub,
@@ -820,7 +850,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           type: body.type,
           startDate: body.startDate,
           endDate: body.endDate,
-          days,
+          days: pricedDays,
           ...(isOnBehalfOf && {
             source: "MANAGER_CREATED",
             // Issue #539 (D-13): no actorRole on new rows (the actor is the row's userId); existing
