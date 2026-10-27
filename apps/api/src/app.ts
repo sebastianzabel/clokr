@@ -510,11 +510,7 @@ export async function buildApp() {
       app.storage.refresh();
       return {
         status: "ok",
-        storage: app.storage.status().unconfigured
-          ? "unconfigured"
-          : app.storage.status().available
-            ? "ok"
-            : "unavailable",
+        storage: app.storage.status().available ? "ok" : "unavailable",
         timestamp: new Date().toISOString(),
       };
     } catch {
