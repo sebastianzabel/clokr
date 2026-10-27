@@ -229,6 +229,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/break-regime.ts": "zeiterfassung", // Issue #511 (D-01/D-02/D-05) — the one home of the § 4 ArbZG / § 11 JArbSchG break thresholds; pure, no model access
   "src/contexts/time-tracking/day-break-placement.ts": "zeiterfassung", // Issue #511 — pure Satz 2/3 and § 11 evaluation on the D-22 view; no model access
   "src/contexts/time-tracking/place-auto-break.ts": "zeiterfassung", // Issue #511 (AK-4, D-17/D-19/D-20) — pure placement of the automatic break; no model access
+  "src/contexts/time-tracking/auto-break-write.ts": "zeiterfassung", // Issue #799 — the one automatic-break write and the post-STOP step every clock trigger (web, NFC, WIFI) runs
   "src/contexts/time-tracking/auto-break-plan.ts": "zeiterfassung", // Issue #511 (AK-4) — the one automatic-break decision (regime, amount, placement) shared by the save paths and the entry-form preview; pure, no model access
   "src/contexts/time-tracking/day-break-store.ts": "zeiterfassung", // Issue #80 (D-03/D-06) — reads DayBreak/DayBreakAck and the day's closed WORK rows
   "src/contexts/time-tracking/api/day-breaks.ts": "zeiterfassung", // Issue #80 — writes DayBreak (and from 80-06 DayBreakAck)

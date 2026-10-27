@@ -650,6 +650,9 @@ model Break {
   startTime   DateTime @db.Timestamptz
   endTime     DateTime @db.Timestamptz
   createdAt   DateTime @default(now()) @db.Timestamptz
+  // Issue #799 — true only for rows `autoInsertBreak` wrote (the automatic break). Existing rows are
+  // false and are never removed by the clock reopen/merge replacement.
+  isAuto      Boolean  @default(false)
 
   timeEntry TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
 

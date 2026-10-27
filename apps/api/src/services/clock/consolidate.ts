@@ -7,6 +7,7 @@
 // Fix: add `endTime: { lte: openEntry.startTime }` to the lookup.
 import type { Prisma, TimeEntry } from "@clokr/db";
 import type { FastifyBaseLogger } from "fastify";
+import { removeAutoBreaksOfEntry, type RemovedAutoBreak } from "./auto-break-replace"; // Issue #799
 import { MIN_MERGE_PREDECESSOR_DURATION_MS } from "./thresholds";
 import { findEntriesOfDay, latestEndingClosed } from "../../contexts/time-tracking/day-entries"; // Phase 69b, Issue #70 (selector)
 import type { ActivityShareInput } from "../../contexts/time-tracking/activity-minutes"; // Issue #81
@@ -31,6 +32,8 @@ export type ConsolidateResult =
       after: TimeEntry & { activityShares: ActivityShareInput[] };
       deletedEntryId: string;
       deletedEntryBefore: TimeEntry;
+      // Issue #799: automatic breaks of the target removed before the gap break was added.
+      removedAutoBreaks: RemovedAutoBreak[];
     };
 
 export async function consolidateSameDayEntries(
@@ -213,6 +216,9 @@ export async function consolidateSameDayEntries(
       data: { deletedAt: new Date() },
     });
 
+    // 1b. Issue #799: a recorded gap replaces the target's automatic break.
+    const removedAutoBreaks = await removeAutoBreaksOfEntry(tx, previousEntry);
+
     // 2. Create Break row for the gap
     const breakRow = await tx.break.create({
       data: {
@@ -234,6 +240,7 @@ export async function consolidateSameDayEntries(
       data: {
         endTime: openEntry.endTime,
         breakMinutes: totalBreakMins,
+        ...(removedAutoBreaks.length > 0 && { breakStatus: "CONFIRMED" as const }),
         ...(materialized && {
           activityKind: materialized.kind,
           activityShares: activitySharesReplace(materialized.shares),
@@ -252,6 +259,7 @@ export async function consolidateSameDayEntries(
       after,
       deletedEntryId: openEntry.id,
       deletedEntryBefore: openEntry,
+      removedAutoBreaks,
     };
   } catch (err) {
     log.error(
