@@ -23,16 +23,17 @@ import {
   seedTestData,
   cleanupTestData,
   configureDatevKanzlei,
+  numericEmployeeNumber,
 } from "./setup";
 import { getTenantTimezone, todayInTz } from "../contexts/working-time-account";
 import { isAnonymizedEmployee } from "../contexts/platform";
 import { EMPLOYEE_NUMBER_RESERVED_MESSAGE } from "../contexts/platform/employee-creation";
-import { DATEV_BWD_SATZ_ID } from "../composition/reports";
+import { DATEV_STUNDEN_SATZ_ID, DATEV_TAGE_SATZ_ID } from "../composition/reports";
 
 const F_PNR = 1;
-const F_LOHNART = 5;
-const F_STUNDEN = 6;
-const F_TAGE = 7;
+// Issue #304: Satz-ID, pnr, Abrechnungszeitraum, Lohnart, quantity.
+const F_LOHNART = 3;
+const F_MENGE = 4;
 
 describe("Issue #614 D-03 — the employee number survives the anonymization", () => {
   let app: FastifyInstance;
@@ -60,7 +61,7 @@ describe("Issue #614 D-03 — the employee number survives the anonymization", (
       data: {
         tenantId: data.tenant.id,
         userId: user.id,
-        employeeNumber: `N614-${s}`.toUpperCase().slice(0, 24),
+        employeeNumber: numericEmployeeNumber(),
         firstName: label,
         lastName: "Fixture",
         hireDate: new Date("2025-01-01T00:00:00Z"),
@@ -115,8 +116,12 @@ describe("Issue #614 D-03 — the employee number survives the anonymization", (
       .split("\r\n")
       .filter((l) => l.trim().length > 0)
       .map((l) => l.split(";"))
-      .filter((f) => f[0] === String(DATEV_BWD_SATZ_ID) && f[F_PNR] === pnr)
-      .map((f) => [f[F_LOHNART]!, f[F_STUNDEN]!, f[F_TAGE]!]);
+      .filter(
+        (f) =>
+          [DATEV_STUNDEN_SATZ_ID, DATEV_TAGE_SATZ_ID].map(String).includes(f[0]!) &&
+          f[F_PNR] === pnr,
+      )
+      .map((f) => [f[F_LOHNART]!, f[F_MENGE]!]);
   }
 
   const del = (id: string) =>

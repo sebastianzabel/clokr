@@ -42,6 +42,7 @@ import {
   createTestSalon,
   configureDatevKanzlei,
   grantSystemRole,
+  numericEmployeeNumber,
 } from "./setup";
 import { TEST_TZ } from "./test-dates";
 import * as pdfUtils from "../composition/pdf";
@@ -213,7 +214,7 @@ describe.each(SCHEDULE_TYPES)(
         data: {
           tenantId,
           userId: user.id,
-          employeeNumber: `EQ70-${label}-${suffix}`.slice(0, 30),
+          employeeNumber: numericEmployeeNumber(),
           firstName: `Zwilling${label}`,
           lastName: `Prufling${label}`,
           hireDate,

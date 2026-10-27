@@ -23,9 +23,10 @@ import {
   grantSystemRole,
   auditRowsFor,
   soleAuditRow,
+  numericEmployeeNumber,
 } from "./setup";
 import { getTenantTimezone, todayInTz } from "../contexts/working-time-account";
-import { DATEV_BWD_SATZ_ID } from "../composition/reports";
+import { DATEV_STUNDEN_SATZ_ID, DATEV_TAGE_SATZ_ID } from "../composition/reports";
 
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 const utcMidnight = (iso: string) => new Date(`${iso}T00:00:00Z`);
@@ -58,7 +59,7 @@ describe("Issue #614 — anonymization ends the employment", () => {
         userId: user.id,
         firstName: "Exit614",
         lastName: "Fixture",
-        employeeNumber: `E614-${suffix}`,
+        employeeNumber: numericEmployeeNumber(),
         hireDate: utcMidnight(`${today.getUTCFullYear() - 2}-01-01`),
         exitDate: extra.exitDate ?? null,
       },
@@ -145,7 +146,7 @@ describe("Issue #614 — anonymization ends the employment", () => {
             email,
             firstName: "Twin614",
             lastName: "Fixture",
-            employeeNumber: `T614-${crypto.randomUUID().slice(0, 8)}`,
+            employeeNumber: numericEmployeeNumber(),
             hireDate: hire.toISOString(),
             role: "EMPLOYEE",
             weeklyHours: 40,
@@ -196,7 +197,7 @@ describe("Issue #614 — anonymization ends the employment", () => {
   // ── Tracer: an approved vacation after the exit ──────────────────────────────────────────────
   describe("tracer: absence after the exit", () => {
     const F_PNR = 1;
-    const F_LOHNART = 5;
+    const F_LOHNART = 3;
 
     /** Employee with a fixed contract, a login and entitlement rows for every year touched. */
     async function createWorker(
@@ -219,7 +220,7 @@ describe("Issue #614 — anonymization ends the employment", () => {
           userId: user.id,
           firstName: "Exit614",
           lastName: "Fixture",
-          employeeNumber: `W614-${suffix}`,
+          employeeNumber: numericEmployeeNumber(),
           hireDate: utcMidnight(`${today.getUTCFullYear() - 2}-01-01`),
           exitDate: opts.exitDate ?? null,
         },
@@ -312,12 +313,41 @@ describe("Issue #614 — anonymization ends the employment", () => {
         .split("\r\n")
         .filter((l) => l.trim().length > 0)
         .map((l) => l.split(";"))
-        .filter((f) => f[0] === String(DATEV_BWD_SATZ_ID));
+        .filter((f) => [DATEV_STUNDEN_SATZ_ID, DATEV_TAGE_SATZ_ID].map(String).includes(f[0]!));
     }
 
     it("cancels the approved vacation after the exit, books it back, audits it without free text, and drops the person from next month's DATEV export", async () => {
       const worker = await createWorker(data.tenant.id, "tracer");
+      // Issue #304: the DATEV file lists a person only with something to book, so the exit month
+      // needs one worked entry for the person to appear in it (closed, today's UTC date).
+      const workedDay = isoDay(today);
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: worker.employee.id,
+          date: new Date(`${workedDay}T00:00:00.000Z`),
+          startTime: new Date(`${workedDay}T05:00:00.000Z`),
+          endTime: new Date(`${workedDay}T06:00:00.000Z`),
+          breakMinutes: 0,
+          type: "WORK",
+          source: "MANUAL",
+          salonId: data.salonId,
+        },
+      });
       const nextMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1));
+      // Issue #304: next month's file must still list somebody (the seeded employee has worked time).
+      const nextDay = isoDay(nextMonth);
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date(`${nextDay}T00:00:00.000Z`),
+          startTime: new Date(`${nextDay}T05:00:00.000Z`),
+          endTime: new Date(`${nextDay}T06:00:00.000Z`),
+          breakMinutes: 0,
+          type: "WORK",
+          source: "MANUAL",
+          salonId: data.salonId,
+        },
+      });
       const start = onOrAfter(addDays(nextMonth, 7), 1); // first Monday on or after the 8th
       const vacation = await approvedVacation(worker, start, addDays(start, 2));
       expect(vacation.status).toBe("APPROVED");

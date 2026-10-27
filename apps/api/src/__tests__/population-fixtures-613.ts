@@ -8,7 +8,7 @@
  */
 import { randomBytes } from "crypto";
 import type { FastifyInstance } from "fastify";
-import { grantSystemRole } from "./setup";
+import { grantSystemRole, numericEmployeeNumber } from "./setup";
 
 export interface PopulationPersonOptions {
   tenantId: string;
@@ -45,7 +45,9 @@ export async function createPopulationPerson(
   const random = randomBytes(3).toString("hex");
   const tag = opts.tag.toUpperCase();
   const email = `613-${opts.tag}-${random}@example.invalid`;
-  const employeeNumber = opts.anonymized ? `GELÖSCHT-${tag}-${random}` : `P613-${tag}-${random}`;
+  // Issue #304: numeric in both cases (the real anonymization keeps the number, #614; LODAS pnr is numeric).
+  const employeeNumber = numericEmployeeNumber();
+  const anonymizedLabel = `GELÖSCHT-${tag}-${random}`;
 
   const user = await prisma.user.create({
     data: {
@@ -61,7 +63,7 @@ export async function createPopulationPerson(
       userId: user.id,
       employeeNumber,
       firstName: opts.anonymized ? "Gelöscht" : "Pop",
-      lastName: opts.anonymized ? employeeNumber : `P613${opts.tag}`,
+      lastName: opts.anonymized ? anonymizedLabel : `P613${opts.tag}`,
       hireDate: opts.hireDate,
       exitDate: opts.exitDate ?? null,
     },

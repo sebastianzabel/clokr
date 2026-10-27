@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
+import { datevSectionLines } from "../../__tests__/datev-rows";
 import {
   getTestApp,
   closeTestApp,
@@ -8,10 +9,10 @@ import {
   cleanupTestData,
   configureDatevKanzlei,
   grantSystemRole,
+  numericEmployeeNumber,
 } from "../../__tests__/setup";
 import { computeOvertimeBalanceHours } from "../../contexts/time-tracking/api/time-entries";
 import * as pdfUtils from "../pdf";
-import { DATEV_BWD_SATZ_ID } from "../reports";
 import { leaveTypeFields } from "../../contexts/absence/leave-type";
 
 // Phase 97 (D-11, Task 3): the PDF handlers only expose their aggregated data by feeding it
@@ -175,34 +176,49 @@ describe("Reports API", () => {
       // configureDatevKanzlei() call, not the old hardcoded 0/0.
       expect(body).toContain("BeraterNr=28547");
       expect(body).toContain("MandantenNr=90909");
-      expect(body).toContain("Datumsangaben=DDMMJJJJ");
+      // Issue #304: Version_DB, the German Datumsformat and the Stringbegrenzer are declared;
+      // the unknown key Datumsangaben is gone.
+      expect(body).toContain("Version_DB=15.70");
+      expect(body).toContain("Datumsformat=TTMMJJJJ");
+      expect(body).toContain("Stringbegrenzer='");
+      expect(body).not.toContain("Datumsangaben=");
     });
 
-    it("DATEV-01d: [Allgemein] contains Abrechnungszeitraum=MMYYYY for the export period", async () => {
+    it("DATEV-01d: no Abrechnungszeitraum header key; every data row carries the first day of the export period", async () => {
       const res = await app.inject({
         method: "GET",
         url: "/api/v1/reports/datev?year=2026&month=4",
         headers: { authorization: `Bearer ${datevData.adminToken}` },
       });
       const body = iconv.decode(res.rawPayload, "win1252");
-      expect(body).toContain("Abrechnungszeitraum=042026");
-      // Verify position: Abrechnungszeitraum line must appear inside [Allgemein] block,
-      // i.e. before [Satzbeschreibung].
-      const lines = body.split(/\r\n/);
-      const periodIdx = lines.findIndex((l: string) => l.startsWith("Abrechnungszeitraum="));
-      const satzIdx = lines.findIndex((l: string) => l === "[Satzbeschreibung]");
-      expect(periodIdx).toBeGreaterThan(0);
-      expect(satzIdx).toBeGreaterThan(periodIdx);
+      expect(body).not.toContain("Abrechnungszeitraum=");
+      const rows = datevSectionLines(body, "Bewegungsdaten");
+      expect(rows.length).toBeGreaterThan(0);
+      for (const r of rows) expect(r.split(";")[2]).toBe("01042026");
     });
 
-    it("DATEV-01e: Abrechnungszeitraum zero-pads single-digit months", async () => {
+    it("DATEV-01e: the period of the data rows zero-pads single-digit months", async () => {
+      // A January entry gives the export a row to read (no booking, no row, #304).
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: datevData.employee.id,
+          date: new Date("2026-01-12"),
+          startTime: new Date("2026-01-12T08:00:00Z"),
+          endTime: new Date("2026-01-12T12:00:00Z"),
+          breakMinutes: 0,
+          type: "WORK",
+          source: "MANUAL",
+          salonId: datevData.salonId,
+        },
+      });
       const res = await app.inject({
         method: "GET",
         url: "/api/v1/reports/datev?year=2026&month=1",
         headers: { authorization: `Bearer ${datevData.adminToken}` },
       });
-      const body = iconv.decode(res.rawPayload, "win1252");
-      expect(body).toContain("Abrechnungszeitraum=012026");
+      const rows = datevSectionLines(iconv.decode(res.rawPayload, "win1252"), "Bewegungsdaten");
+      expect(rows.length).toBeGreaterThan(0);
+      for (const r of rows) expect(r.split(";")[2]).toBe("01012026");
     });
 
     it("DATEV-01c: [Satzbeschreibung] contains a row starting with '20;'", async () => {
@@ -216,6 +232,7 @@ describe("Reports API", () => {
       const satzIdx = lines.findIndex((l: string) => l === "[Satzbeschreibung]");
       expect(satzIdx).toBeGreaterThanOrEqual(0);
       expect(lines.slice(satzIdx + 1).some((l: string) => l.startsWith("20;"))).toBe(true);
+      expect(lines.slice(satzIdx + 1).some((l: string) => l.startsWith("21;"))).toBe(true);
     });
 
     it("DATEV-02a: response body uses CRLF line endings", async () => {
@@ -269,12 +286,12 @@ describe("Reports API", () => {
           headers: { authorization: `Bearer ${datevData.adminToken}` },
         });
         const body = iconv.decode(res.rawPayload, "win1252");
-        expect(body).toContain(";777;");
-        expect(body).toContain(";888;");
-        expect(body).toContain(";999;");
+        expect(body).toContain(";01042026;777;");
+        expect(body).toContain(";01042026;888;");
+        expect(body).toContain(";01042026;999;");
         // Issue #210: the 2 workdays now come from the LeaveRequest fixture added to
         // the `dv` beforeAll above, not from the kept-but-dead Absence row.
-        expect(body).toContain(";K;999;;2,0;");
+        expect(body).toContain(`21;${datevData.employee.employeeNumber};01042026;999;2,0`);
       } finally {
         await app.prisma.tenantConfig.update({
           where: { tenantId: datevData.tenant.id },
@@ -295,7 +312,7 @@ describe("Reports API", () => {
         headers: { authorization: `Bearer ${datevData.adminToken}` },
       });
       const body = iconv.decode(res.rawPayload, "win1252");
-      expect(body).toContain(";100;");
+      expect(body).toContain(";01042026;100;");
     });
 
     it("DATEV-03c: hardcoded Lohnartennummer 301 (Überstundenausgleich) not overridden by config", async () => {
@@ -319,7 +336,7 @@ describe("Reports API", () => {
         data: {
           tenantId: datevData.tenant.id,
           userId: mgrUser.id,
-          employeeNumber: `M-${Date.now()}`,
+          employeeNumber: numericEmployeeNumber(),
           firstName: "Manager",
           lastName: "Perm",
           hireDate: new Date("2024-01-01"),
@@ -402,12 +419,10 @@ describe("Reports API", () => {
       const body = await datevBody("/api/v1/reports/datev?year=2026&month=4", d13Data.adminToken);
       const lines = body.split(/\r\n/);
       const vacationLine = lines.find(
-        (l) =>
-          l.startsWith(`${DATEV_BWD_SATZ_ID};${d13Data.employee.employeeNumber};`) &&
-          l.includes(";U;300;"),
+        (l) => l.split(";")[1] === d13Data.employee.employeeNumber && l.includes(";300;"),
       );
       expect(vacationLine).toBeDefined();
-      expect(vacationLine).toContain(";3,0;");
+      expect(vacationLine).toMatch(/;3,0$/);
     });
 
     it("D13-2: a SPECIAL-code row writes the Sonderurlaubs-Lohnart, not the Urlaubs-Lohnart, despite both names containing 'Urlaub'", async () => {
@@ -435,19 +450,15 @@ describe("Reports API", () => {
       const body = await datevBody("/api/v1/reports/datev?year=2026&month=4", d13Data.adminToken);
       const lines = body.split(/\r\n/);
       const specialLine = lines.find(
-        (l) =>
-          l.startsWith(`${DATEV_BWD_SATZ_ID};${d13Data.employee.employeeNumber};`) &&
-          l.includes(";S;302;"),
+        (l) => l.split(";")[1] === d13Data.employee.employeeNumber && l.includes(";302;"),
       );
       expect(specialLine).toBeDefined();
-      expect(specialLine).toContain(";2,0;");
+      expect(specialLine).toMatch(/;2,0$/);
       // Not merged into the Urlaub Lohnart line from D13-1.
       const vacationLine = lines.find(
-        (l) =>
-          l.startsWith(`${DATEV_BWD_SATZ_ID};${d13Data.employee.employeeNumber};`) &&
-          l.includes(";U;300;"),
+        (l) => l.split(";")[1] === d13Data.employee.employeeNumber && l.includes(";300;"),
       );
-      expect(vacationLine).toContain(";3,0;");
+      expect(vacationLine).toMatch(/;3,0$/);
     });
 
     it("D13-3: a request on an OTHER-coded row (outside every Lohnart mapping) produces no Ausfall-Lohnart line and leaves the other rows unchanged", async () => {
@@ -464,7 +475,7 @@ describe("Reports API", () => {
               },
             })
           ).id,
-          employeeNumber: `DV13-N-${Date.now()}`,
+          employeeNumber: numericEmployeeNumber(),
           firstName: "Null",
           lastName: "CodeTest",
           hireDate: new Date("2024-01-01"),
@@ -502,20 +513,17 @@ describe("Reports API", () => {
       });
 
       const body = await datevBody("/api/v1/reports/datev?year=2026&month=4", d13Data.adminToken);
-      const lines = body
-        .split(/\r\n/)
-        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${employee2.employeeNumber};`));
-      // Exactly one line for this employee: the unconditional "normal hours" row with
-      // an empty Ausfallschlüssel — no U/S/K row was written for the OTHER-coded request.
-      expect(lines.length).toBe(1);
-      expect(lines[0]).not.toMatch(/;U;|;S;|;K;/);
+      const lines = body.split(/\r\n/).filter((l) => l.split(";")[1] === employee2.employeeNumber);
+      // Issue #304: no booking, no row. This employee has no worked hours (no zero Normalstunden
+      // line any more) and the OTHER-coded request maps to no Lohnart, so nothing is written.
+      expect(lines.length).toBe(0);
 
       // The D13-1/D13-2 employee's rows are unaffected by this new, unrelated employee.
       const otherBody = body
         .split(/\r\n/)
-        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${d13Data.employee.employeeNumber};`));
-      expect(otherBody.some((l) => l.includes(";U;300;") && l.includes(";3,0;"))).toBe(true);
-      expect(otherBody.some((l) => l.includes(";S;302;") && l.includes(";2,0;"))).toBe(true);
+        .filter((l) => l.split(";")[1] === d13Data.employee.employeeNumber);
+      expect(otherBody.some((l) => l.includes(";300;") && l.endsWith(";3,0"))).toBe(true);
+      expect(otherBody.some((l) => l.includes(";302;") && l.endsWith(";2,0"))).toBe(true);
     });
 
     it("D13-4 (AC-5): the § 9 Urlaub->Krank rebooking value and field order are unchanged by the code-based selection", async () => {
@@ -532,7 +540,7 @@ describe("Reports API", () => {
               },
             })
           ).id,
-          employeeNumber: `DV13-S9-${Date.now()}`,
+          employeeNumber: numericEmployeeNumber(),
           firstName: "S9",
           lastName: "CodeTest",
           hireDate: new Date("2024-01-01"),
@@ -592,15 +600,13 @@ describe("Reports API", () => {
       });
 
       const body = await datevBody("/api/v1/reports/datev?year=2026&month=5", d13Data.adminToken);
-      const lines = body
-        .split(/\r\n/)
-        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${employee3.employeeNumber};`));
+      const lines = body.split(/\r\n/).filter((l) => l.split(";")[1] === employee3.employeeNumber);
       // 5-day vacation minus the 2 credited days -> 3 remain as Urlaub.
-      const vacationLine = lines.find((l) => l.includes(";U;300;"));
-      expect(vacationLine).toContain(";3,0;");
+      const vacationLine = lines.find((l) => l.includes(";300;"));
+      expect(vacationLine).toMatch(/;3,0$/);
       // The 2 credited days move to Krank (field order: Ausfall, Lohnart, Stunden, Tage).
-      const krankLine = lines.find((l) => l.includes(";K;200;"));
-      expect(krankLine).toContain(";K;200;;2,0;");
+      const krankLine = lines.find((l) => l.includes(";200;"));
+      expect(krankLine).toMatch(/;200;2,0$/);
     });
   });
 
@@ -711,11 +717,11 @@ describe("Reports API", () => {
       );
       const lines = body
         .split(/\r\n/)
-        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${d210Data.employee.employeeNumber};`));
-      const krankLines = lines.filter((l) => l.includes(";K;"));
+        .filter((l) => l.split(";")[1] === d210Data.employee.employeeNumber);
+      const krankLines = lines.filter((l) => /;20[01];/.test(l));
       expect(krankLines.length).toBe(1);
-      expect(krankLines[0]).toContain(";K;200;;3,0;");
-      expect(lines.some((l) => l.includes(";K;201;"))).toBe(false);
+      expect(krankLines[0]).toMatch(/;200;3,0$/);
+      expect(lines.some((l) => l.includes(";201;"))).toBe(false);
     });
 
     it("S210-2: an APPROVED SICK_CHILD request produces the Lohnart 201 line, which today is never emitted at all", async () => {
@@ -732,7 +738,7 @@ describe("Reports API", () => {
               },
             })
           ).id,
-          employeeNumber: `D210-E2-${Date.now()}`,
+          employeeNumber: numericEmployeeNumber(),
           firstName: "S210",
           lastName: "E2",
           hireDate: new Date("2024-01-01"),
@@ -758,10 +764,8 @@ describe("Reports API", () => {
         "/api/v1/reports/datev?year=2026&month=6",
         d210Data.adminToken,
       );
-      const lines = body
-        .split(/\r\n/)
-        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${employee2.employeeNumber};`));
-      expect(lines.some((l) => l.includes(";K;201;;2,0;"))).toBe(true);
+      const lines = body.split(/\r\n/).filter((l) => l.split(";")[1] === employee2.employeeNumber);
+      expect(lines.some((l) => l.endsWith(";201;2,0"))).toBe(true);
     });
 
     it("S210-3: a § 9-credited day is reported once via union, never added on top of the sickness request (naive addition would double-count to 8,0)", async () => {
@@ -778,7 +782,7 @@ describe("Reports API", () => {
               },
             })
           ).id,
-          employeeNumber: `D210-E3-${Date.now()}`,
+          employeeNumber: numericEmployeeNumber(),
           firstName: "S210",
           lastName: "E3",
           hireDate: new Date("2024-01-01"),
@@ -831,14 +835,12 @@ describe("Reports API", () => {
         "/api/v1/reports/datev?year=2026&month=6",
         d210Data.adminToken,
       );
-      const lines = body
-        .split(/\r\n/)
-        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${employee3.employeeNumber};`));
+      const lines = body.split(/\r\n/).filter((l) => l.split(";")[1] === employee3.employeeNumber);
       // 5 workdays sick, 3 of them credited back out of Urlaub — total Ausfalltage 5,
       // exactly the number of workdays in the period. Not 8,0 (double count via naive
       // addition), not 3,0 (loss of the two un-credited sick days).
-      expect(lines.some((l) => l.includes(";K;200;;5,0;"))).toBe(true);
-      expect(lines.some((l) => l.includes(";U;300;"))).toBe(false);
+      expect(lines.some((l) => l.endsWith(";200;5,0"))).toBe(true);
+      expect(lines.some((l) => l.includes(";300;"))).toBe(false);
     });
 
     it("S210-4: a CONFIRMED § 9 credit whose sickness request is invisible (soft-deleted) still reports its days — the orphan fallback", async () => {
@@ -855,7 +857,7 @@ describe("Reports API", () => {
               },
             })
           ).id,
-          employeeNumber: `D210-E4-${Date.now()}`,
+          employeeNumber: numericEmployeeNumber(),
           firstName: "S210",
           lastName: "E4",
           hireDate: new Date("2024-01-01"),
@@ -909,11 +911,9 @@ describe("Reports API", () => {
         "/api/v1/reports/datev?year=2026&month=6",
         d210Data.adminToken,
       );
-      const lines = body
-        .split(/\r\n/)
-        .filter((l) => l.startsWith(`${DATEV_BWD_SATZ_ID};${employee4.employeeNumber};`));
-      expect(lines.some((l) => l.includes(";K;200;;2,0;"))).toBe(true);
-      expect(lines.some((l) => l.includes(";U;300;"))).toBe(false);
+      const lines = body.split(/\r\n/).filter((l) => l.split(";")[1] === employee4.employeeNumber);
+      expect(lines.some((l) => l.endsWith(";200;2,0"))).toBe(true);
+      expect(lines.some((l) => l.includes(";300;"))).toBe(false);
     });
   });
 
