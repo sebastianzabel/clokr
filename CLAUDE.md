@@ -200,6 +200,7 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount, `ParentalLeaveReduction` rows (no free text, nothing to anonymize — Issue #468) (for retention compliance)
 - **Employment ends (Issue #614)**: `exitDate` ← the tenant-local day of the anonymization when it was empty (an existing one, past or future, stays) plus the #447 exit-year entitlement sync. Absences after the exit day: requests starting after it are cancelled with the reversals of a cancellation approval, requests spanning it are shortened to it through the `/correct` core (`contexts/absence/leave-correction.ts`), pending ones are re-priced, Berufsschule rows are soft-deleted. Closed months, active § 17 BEEG reductions, active § 9 credits and corrections the core refuses are skipped and listed (ids and codes) in the ANONYMIZE audit. The rule lives only in `contexts/absence/employment-exit.ts`, reached through the `app.absenceExit` decoration; per-row audits carry `auditReason` "Anonymisierung", `trigger: "ANONYMIZATION"` and no free text. "Bevorstehende Urlaube" never lists an anonymized person. Persons anonymized before #614 are listed by `scripts/audit-614-anonymized-employment.ts` (read-only, ids only) and corrected by `scripts/backfill-666-anonymized-employment.ts` (Issue #666, owner decision 17.10.2026: dry run by default, `--confirm` writes; sets the missing exit date from the tenant-local day of the ANONYMIZE audit, runs the same `app.absenceExit` rule with the marker `trigger: "BACKFILL_666"` / `auditReason` „Bestandskorrektur #666“, restores the employee number from the audit `oldValue` unless it is missing or taken by another employee — those are only reported; runbook `docs/migrations.md` „Phase 666“).
 - **Free texts of persons anonymized before #718 (Issue #774)**: `scripts/backfill-774-anonymized-freetext.ts` clears them with the same helpers `anonymizeEmployeeData()` uses (dry run by default = the helpers rolled back, `--confirm` writes; one audit row per person, counts only, `trigger: "BACKFILL_774"` / `auditReason` „Bestandskorrektur #774“; runbook `docs/migrations.md` „Phase 774“).
+- **AuditLog free text (Issue #512, decision delegated by the owner 27.10.2026)**: `anonymizeEmployeeData()` redacts, in its own transaction, the person-authored free text inside the `AuditLog` old/new values of the person (rows authored by the user, and rows whose payload names the `employeeId`) by TYPE through `redactAuditFreeTextOfPerson()` (`contexts/platform/audit-freetext-redaction.ts`, reusing `redactSupportAuditValue()` with `keepTimeOfDay`): numbers, ids, dates, UPPER_SNAKE codes, "HH:MM" and the `actor` stamp stay, any other string becomes "[ausgeblendet]". Who/when/what stay complete (§ 147 AO, GoBD, § 16 Abs. 2 ArbZG, Art. 17 Abs. 3 lit. b DSGVO cover no free text); the rest is Art. 5 Abs. 1 lit. c/e. Rows are never deleted; the ANONYMIZE audit carries `auditRowsRedacted` (count). Never a key-name deny-list. Bestand: `scripts/backfill-512-anonymized-audit-freetext.ts` (dry run by default, `--confirm` writes, `trigger: "BACKFILL_512"`; runbook `docs/migrations.md` „Phase 512“). ADR `docs/adr/0001-abweichungen.md` Eintrag AC.
 - **AuditLog**: userId → null (anonymized, not deleted)
 
 ## Data Retention (Aufbewahrungsfristen)
@@ -832,14 +833,14 @@ FULL calendar month)` (Ø-Methode; a half day reduces by half; one `Math.round()
 Read these before modifying any page in `apps/web` — they are checked in, unlike anything under
 `.planning/`, which is gitignored and therefore unreadable for anyone else:
 
-| Source                                 | What it governs                                                                                                                                   |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web/src/tokens.css`              | The canonical v1.5 token set — every colour, radius and surface variable                                                                          |
-| `apps/web/.lintrc-tokens.txt`          | The banned legacy patterns (`--color-*` / `--glass-*` / `--radius-*` / `--gray-*`) plus a replacement cheat sheet                                 |
-| `apps/web/src/app.css`                 | The shared class recipes — card surfaces, `.badge`, `.callout`, calendar cells, page wrapper, section stacking, summary bars, entrance animations |
-| `apps/web/scripts/lint-ui-classes.mjs` | Which class names are allowed in the scoped primitive directories, and where that scope ends                                                      |
-| `docs/ADMIN_STRUCTURE.md §3.2.1`       | When a control saves instantly and when it waits for the section button (Phase 109, D-01/D-02)                                                    |
-| `apps/web/src/lib/utils/chart-theme.ts` | The one chart style source — colours from tokens, tension 0, unit axis titles, zero line, chart kinds and their aria-labels (Issue #591) |
+| Source                                  | What it governs                                                                                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/tokens.css`               | The canonical v1.5 token set — every colour, radius and surface variable                                                                          |
+| `apps/web/.lintrc-tokens.txt`           | The banned legacy patterns (`--color-*` / `--glass-*` / `--radius-*` / `--gray-*`) plus a replacement cheat sheet                                 |
+| `apps/web/src/app.css`                  | The shared class recipes — card surfaces, `.badge`, `.callout`, calendar cells, page wrapper, section stacking, summary bars, entrance animations |
+| `apps/web/scripts/lint-ui-classes.mjs`  | Which class names are allowed in the scoped primitive directories, and where that scope ends                                                      |
+| `docs/ADMIN_STRUCTURE.md §3.2.1`        | When a control saves instantly and when it waits for the section button (Phase 109, D-01/D-02)                                                    |
+| `apps/web/src/lib/utils/chart-theme.ts` | The one chart style source — colours from tokens, tension 0, unit axis titles, zero line, chart kinds and their aria-labels (Issue #591)          |
 
 Reuse an existing recipe from `app.css` before inventing a class or a token.
 
@@ -854,7 +855,7 @@ elsewhere (`lib/components/saldo/`, `calendar/`, `breaks/`, …) are outside tha
 own mounted test instead.
 
 - **Charts are built in one way (Issue #591).** Every chart.js chart is created as `new Chart(<canvas>,
-  <builder>(…))` with a builder of `apps/web/src/lib/dashboard/team-charts.ts`. A builder draws from a
+<builder>(…))` with a builder of `apps/web/src/lib/dashboard/team-charts.ts`. A builder draws from a
   descriptor (kind, unit, subject) that also yields the canvas aria-label through `chartAriaLabel()`, so
   the label names the drawn type and unit. Counts are columns, a signed series is a line with tension 0
   and an emphasised zero line, Soll/Ist are grouped columns. Every value axis carries `CHART_UNIT_TITLE`

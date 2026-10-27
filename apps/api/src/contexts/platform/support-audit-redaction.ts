@@ -32,8 +32,20 @@ const isIsoTimestamp = (value: string): boolean => ISO_TIMESTAMP.test(value);
 const isUuid = (value: string): boolean => UUID.test(value);
 const isUpperSnake = (value: string): boolean => UPPER_SNAKE.test(value);
 
-function isAllowedString(value: string): boolean {
+const TIME_OF_DAY = /^\d{2}:\d{2}(?::\d{2})?$/;
+
+/** Options of {@link redactSupportAuditValue}. */
+export interface RedactAuditValueOptions {
+  /**
+   * Keep "HH:MM" / "HH:MM:SS" strings. Off for the support view (D-17, unchanged); on for the
+   * anonymization redaction (Issue #512), where a clock time is a figure of the booking, not text.
+   */
+  keepTimeOfDay?: boolean;
+}
+
+function isAllowedString(value: string, opts: RedactAuditValueOptions): boolean {
   return (
+    (opts.keepTimeOfDay === true && TIME_OF_DAY.test(value)) ||
     isNumericString(value) ||
     isIsoDate(value) ||
     isIsoTimestamp(value) ||
@@ -42,13 +54,13 @@ function isAllowedString(value: string): boolean {
   );
 }
 
-function redactNode(node: unknown): unknown {
-  if (typeof node === "string") return isAllowedString(node) ? node : SUPPORT_AUDIT_REDACTED;
-  if (Array.isArray(node)) return node.map(redactNode);
+function redactNode(node: unknown, opts: RedactAuditValueOptions): unknown {
+  if (typeof node === "string") return isAllowedString(node, opts) ? node : SUPPORT_AUDIT_REDACTED;
+  if (Array.isArray(node)) return node.map((child) => redactNode(child, opts));
   if (node !== null && typeof node === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
-      out[key] = redactNode(child);
+      out[key] = redactNode(child, opts);
     }
     return out;
   }
@@ -60,14 +72,17 @@ function redactNode(node: unknown): unknown {
  * Redacts one stored old/new value by type (D-17). Returns a new value; the input is never mutated.
  * `undefined` stays `undefined`. An `actor` object at the top level of `value` is kept as stored.
  */
-export function redactSupportAuditValue(value: unknown): unknown {
+export function redactSupportAuditValue(
+  value: unknown,
+  opts: RedactAuditValueOptions = {},
+): unknown {
   if (value === undefined) return undefined;
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
     const out: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = key === "actor" ? child : redactNode(child);
+      out[key] = key === "actor" ? child : redactNode(child, opts);
     }
     return out;
   }
-  return redactNode(value);
+  return redactNode(value, opts);
 }

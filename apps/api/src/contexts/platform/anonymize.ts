@@ -44,6 +44,9 @@
  *   - AuditLog.userId          → null (for rows owned by that user)
  *   - AuditLog.oldValue/newValue → redacted for Employee + User audit rows
  *     (prevents name/email from surviving in historical JSON — COMP-V1814-01)
+ *   - AuditLog old/new value free text → "[ausgeblendet]" by TYPE for rows authored by the user or
+ *     naming the employee (Issue #512, `audit-freetext-redaction.ts`; who/when/what and every
+ *     figure stay, rows are never deleted)
  *   - Notification.title/message → "ANONYMIZED" (for the user's own notifications)
  *   - RoleAssignment: every row of the user is hard-deleted (Phase 74b, D-22 — an anonymized
  *     person must not hold rights, and a leftover row would block deleting its role). The
@@ -60,7 +63,7 @@
  *   business itself writes to document a booking - SaldoSnapshot.note / supersededReason and
  *   OpeningBalance.reason / evidenceRef / supersededReason. They are not person-authored, they are
  *   Buchungsbeleg material (§ 147 AO, GoBD, Art. 17 Abs. 3 lit. b DSGVO). AuditLog free texts
- *   are a separate question (#512).
+ *   are redacted by type, see the AuditLog bullet above (#512).
  *   OpeningBalance (Phase 99, OB-05): likewise preserved by omission — the row IS the
  *   Nachweis that a migrated Alt-Überstunden value existed and why. It carries no PII of
  *   its own (employeeId reference only; reason/evidenceRef are operational text, and MUST
@@ -95,6 +98,7 @@ import { anonymizeAbsencesForEmployee } from "../absence"; // Phase 100B Plan 12
 import { anonymizeLeaveRequestsForEmployee } from "../absence"; // Phase 100B Plan 13 — F3
 import { clearSchedulingNotesForEmployee } from "../scheduling"; // Issue #718
 import { clearOvertimePlanNotesForEmployee } from "../working-time-account"; // Issue #718
+import { redactAuditFreeTextOfPerson, type AuditRedactionResult } from "./audit-freetext-redaction"; // Issue #512
 import { removeRoleAssignmentsOfUser, type RemovedRoleAssignment } from "./facade/role-assignments";
 // Phase 101B (Issue #101, Nachtrag 2026-09-17): the two sentinel `where` fragments lifted out of
 // this file into ./employee-anonymization-filter.ts — re-exported below (unchanged) so
@@ -122,6 +126,8 @@ export interface AnonymizeEmployeeResult {
   exitDate: { before: Date | null; after: Date };
   /** Issue #388: counts only of the cleared device identifiers; the addresses are never returned. */
   clearedDeviceIdentifiers: { wifiMacs: number; presenceDevices: number };
+  /** Issue #512: AuditLog rows whose free text was redacted; counts only, never text. */
+  auditRedaction: AuditRedactionResult;
   /** Issue #718: row counts of the cleared free-text fields; counts only, never text. */
   clearedFreeText: {
     leaveReviewNotes: number;
@@ -159,6 +165,10 @@ export async function anonymizeEmployeeData(
   }
   const { userId } = employee;
   const anonymizedLabel = `GELÖSCHT-${employee.employeeNumber || employeeId.slice(0, 8)}`;
+
+  // Issue #512: person-authored free text inside the person's audit values is redacted by type
+  // (rows stay). MUST run before the userId -> null step: rows authored by the user are found by it.
+  const auditRedaction = await redactAuditFreeTextOfPerson(tx, { employeeId, userId });
 
   // AuditLog anonymisieren (userId → null)
   await tx.auditLog.updateMany({ where: { userId }, data: { userId: null } });
@@ -261,6 +271,7 @@ export async function anonymizeEmployeeData(
     removedRoleAssignments,
     exitDate: { before: employee.exitDate, after: employee.exitDate ?? exitDayIfUnset },
     clearedDeviceIdentifiers: { wifiMacs: employee.wifiMacs.length, presenceDevices },
+    auditRedaction,
     clearedFreeText: { leaveReviewNotes, ...retro, overtimePlanNotes, ...scheduling },
   };
 }

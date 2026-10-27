@@ -1616,12 +1616,17 @@ export async function employeeRoutes(app: FastifyInstance) {
                 ...requestAuditFields(req, entry.newValue),
               }),
             );
-            const { removedRoleAssignments, exitDate, clearedDeviceIdentifiers, clearedFreeText } =
-              await anonymizeEmployeeData({
-                tx,
-                employeeId: id,
-                exitDayIfUnset,
-              });
+            const {
+              removedRoleAssignments,
+              exitDate,
+              clearedDeviceIdentifiers,
+              clearedFreeText,
+              auditRedaction,
+            } = await anonymizeEmployeeData({
+              tx,
+              employeeId: id,
+              exitDayIfUnset,
+            });
             // Issue #614 (D-01): when the anonymization itself set the exit date, bring the
             // exit-year VACATION row to its § 5 BUrlG value exactly as PATCH /:id/deactivate does
             // (Issue #447 invariant; never past years, never a human-written row).
@@ -1680,6 +1685,8 @@ export async function employeeRoutes(app: FastifyInstance) {
                 ],
                 // Issue #718: row counts per free-text field, never the text.
                 clearedFreeText,
+                // Issue #512: how many AuditLog rows had free text redacted (count only).
+                auditRowsRedacted: auditRedaction.rowsRedacted,
               }),
               tx,
             });

@@ -6528,3 +6528,56 @@ Eintrag U hatte die Spalte nur stillgelegt, damit ein Image-Rollback auf v1.13.x
 - **Rollback:** nach der Migration ist ein Image-Rollback auf v1.16.1 oder älter nicht möglich (deren Prisma-Client selektiert die Spalte); siehe `docs/migrations.md`, „Phase 470“.
 - **Auswirkung auf die Kontexte:** Unterbau: Feld entfernt. Zeiterfassung, Abwesenheiten, Schichtplanung, Arbeitszeitkonto, Kompositionsschicht: keine (lesen das Feld seit #433 nicht mehr).
 - **Kennungs-Gate:** `git grep monthlyHoursHolidayDeduction` findet nur noch Migrationen, diese Historie und drei Negativ-Assertions in Tests.
+
+## AC — Freitext im AuditLog anonymisierter Personen (Issue #512)
+
+### Ausgangslage
+
+Die Anonymisierung ersetzte bisher nur die Audit-Werte der Entitäten `Employee` und `User` (COMP-V1814-01). Freitext, den
+Menschen in andere Audit-Werte geschrieben haben (`auditReason` beim Löschen einer Tagespause, Korrektur- und
+Stornobegründungen, Prüfnotizen), blieb stehen und konnte über „Kundentermin bei Frau X“ wieder auf eine Person verweisen.
+
+### Rechtslage
+
+- Art. 5 Abs. 1 lit. c, e DSGVO (Datenminimierung, Speicherbegrenzung) und Art. 17 DSGVO verlangen, dass Personenbezug
+  verschwindet, sobald er nicht mehr gebraucht wird.
+- Art. 17 Abs. 3 lit. b DSGVO (rechtliche Verpflichtung) und lit. e (Rechtsansprüche) tragen die Aufbewahrung nur so weit, wie
+  die Pflicht reicht: § 147 Abs. 1 AO / § 257 HGB (10 Jahre, Buchungsbelege), § 16 Abs. 2 ArbZG (2 Jahre, Nachweis der
+  Arbeitszeit), GoBD (BMF-Schreiben vom 28.11.2019): Nachvollziehbarkeit und Unveränderbarkeit verlangen, dass erkennbar
+  bleibt WER WANN WAS geändert hat und dass der ursprüngliche Inhalt der BUCHUNG feststellbar bleibt.
+- Beides zusammen ergibt: aufbewahrungspflichtig sind Akteur, Zeitpunkt, Vorgang und alle Zahlen- und Kennwerte. Ein von einer
+  Person frei formulierter Text ist kein Wert der Buchung; die Begründung als Kategorie steht als Kennwert (UPPER_SNAKE-Code)
+  oder in der Zeile der Fachtabelle. Eine DSK-Orientierungshilfe, die Freitext in Protokolldaten über die Löschung der Person
+  hinaus verlangt, gibt es nicht; Protokolldaten unterliegen der Zweckbindung (§ 31 BDSG) und der Speicherbegrenzung.
+
+### Entscheidung (Owner delegiert, 27.10.2026)
+
+Sofort, bei der Anonymisierung, in derselben Transaktion: Der Freitext der Audit-Werte der Person wird TYPBASIERT durch
+„[ausgeblendet]“ ersetzt (`redactSupportAuditValue()`, D-17: bleibt Zahlen, Booleans, `null`, Zahlenstrings, ISO-Daten und
+-Zeitpunkte, UUIDs, UPPER_SNAKE-Kennwerte, dazu „HH:MM“ und die ganze Struktur samt `actor`-Stempel). Keine Schlüsselnamen-Liste,
+damit das nächste Freitextfeld ohne Codeänderung erfasst ist. Zeilen werden nie gelöscht, Zeitpunkt/Aktion/Entität/Id bleiben;
+eine Zeile ohne Änderung wird nicht geschrieben. Erfasst werden Zeilen, die der Benutzer der Person verfasst hat (`userId`,
+vor dem Nullsetzen), und Zeilen, deren Wert `employeeId` der Person nennt. Der Zählwert `auditRowsRedacted` steht im
+ANONYMIZE-Audit, nie ein Text. Eine nachträgliche Frist („nach Ablauf der Aufbewahrung“) entfällt: für den Text gibt es keine
+Aufbewahrungspflicht, die eine Frist rechtfertigte.
+
+Der AuditLog hat keinen Trigger und ist nicht append-only (anders als `OperatorAuditLog`/`SupportAccess`); die Aktualisierung in
+place ist dieselbe Art Eingriff wie die bestehende Schwärzung der Employee/User-Zeilen. Die Alternative „nur beim Lesen
+schwärzen“ wurde verworfen: der Text bliebe in der Datenbank und in jedem Dump, die Löschpflicht wäre nicht erfüllt.
+
+### Akzeptierte Restrisiken
+
+- Eine Zeile über die Person, die weder `employeeId` im Wert trägt noch von ihrem Benutzer verfasst wurde, behält ihren Text.
+- Ein einzelnes GROSSgeschriebenes Wort ohne Leerzeichen ist von einem Kennwert nicht zu unterscheiden und bleibt (wie D-17).
+- Bestand: Zeilen, die die Person selbst verfasst hat, sind bei vor #512 Anonymisierten nicht mehr auffindbar (`userId` ist
+  null); der Backfill erreicht nur die Zeilen mit `employeeId`.
+
+### Auswirkung auf die Kontexte
+
+Unterbau: neue Funktion `audit-freetext-redaction.ts`, kein Export von `index.ts`, keine Spalte. Zeiterfassung,
+Abwesenheiten, Schichtplanung, Arbeitszeitkonto, Kompositionsschicht: keine.
+
+### Bestand und Nachweis
+
+`scripts/backfill-512-anonymized-audit-freetext.ts` (Probelauf als Voreinstellung, `--confirm`, Marker `BACKFILL_512`;
+`docs/migrations.md` „Phase 512“). Tests: `anonymization-audit-freetext-512`, `backfill-512-anonymized-audit-freetext`.
