@@ -4385,7 +4385,7 @@ pnpm --filter @clokr/api exec tsx scripts/recalculate-shift-based-leave-days.ts 
   weiterhin als belegt (kein Rückfluss in den Wochen-Union-Pool).
 - Werden zwei Anträge derselben Woche gleichzeitig angelegt, entscheidet die Reihenfolgeregel über
   `createdAt`/Id — eine echte Gleichzeitigkeit zweier Schreibtransaktionen ist nicht gesondert
-  gesperrt.
+  gesperrt (seit Issue #467 gesperrt: Employee-Zeilensperre, siehe WR-01 unten).
 - **(Code Review 436, WR-01, 02.10.2026)** `PATCH /requests/:id/correct` kann einen früher
   angelegten, bereits genehmigten Antrag per Datumsänderung so AUSWEITEN, dass die neue
   Tagesmenge zusammen mit einem später angelegten, bereits genehmigten Geschwisterantrag über die
@@ -4410,6 +4410,12 @@ pnpm --filter @clokr/api exec tsx scripts/recalculate-shift-based-leave-days.ts 
   FRÜHEREN Antrags statt durch Ablehnung/Stornierung des Geschwisterantrags selbst. Gepinnt (als
   bekannte Grenze, nicht als Spezifikation eines zukünftigen Fixes) in
   `apps/api/src/__tests__/leave-week-union-436.test.ts` ("[KNOWN LIMITATION, 436-REVIEW WR-01]").
+  **Behoben mit Issue #467:** Anlage (`POST /requests`) und Korrektur (`/correct`) nehmen als erstes
+  die Employee-Zeilensperre `lockEmployeeForLeavePricing()` (`contexts/absence/employee-leave-lock.ts`,
+  `FOR NO KEY UPDATE`) und bepreisen unter ihr; die Korrektur berechnet danach später angelegte,
+  überlappende VACATION-Anträge derselben Wochen neu (`later-request-reprice.ts`) — nur günstiger,
+  nie in gesperrten Monaten, Entitlement-Delta und `LEAVE_DAYS_ADJUSTED`-Audit
+  (`triggerSource: "CORRECTION"`) in derselben Transaktion. Der obige Test wurde bewusst geändert.
 - **(Code Review 436, WR-02, 02.10.2026)** `scripts/recalculate-shift-based-leave-days.ts
 --confirm` ist, seit dieser Phase, AUCH der Weg, einen genehmigten SHIFT_BASED-VACATION-Antrag
   unter der NEUEN Wochen-Union-Regel neu zu bepreisen — das ist ein zusätzlicher Effekt
