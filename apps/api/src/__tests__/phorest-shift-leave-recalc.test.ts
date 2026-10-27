@@ -57,6 +57,17 @@ function addDaysIso(iso: string, days: number): string {
  * contain ZERO NIEDERSACHSEN public holidays, so no real calendar holiday silently changes an
  * expected day count anywhere in this file.
  */
+/**
+ * Weeks (Monday ISO) already handed out by `nextHolidayFreeMonday`, each with one buffer week on
+ * both sides (the sync windows reach one day before and eight days after the Monday, so they touch
+ * the neighbouring week). Holiday skipping makes two different `daysOut` values collapse onto the
+ * same calendar week depending on today's date (Issue #782: around the Christmas/New-Year holiday
+ * block both the 42-day and 56-day anchors land on the same Monday), and a leftover PHOREST shift
+ * of an earlier test then gets soft-cancelled by a later test's sync. Claiming weeks keeps every
+ * test in its own week by construction instead of by luck of the date.
+ */
+const claimedWeekMondays = new Set<string>();
+
 function nextHolidayFreeMonday(daysOut: number, weekSpan = 1): string {
   const anchor = utcMidnight(todayStr());
   let candidateIso = dbDateStr(new Date(anchor.getTime() + daysOut * DAY_MS));
@@ -74,7 +85,15 @@ function nextHolidayFreeMonday(daysOut: number, weekSpan = 1): string {
     for (const y of years) {
       for (const h of getHolidays(y, STATE_MAP.NIEDERSACHSEN)) holidayDates.add(h.date);
     }
-    if (!spanDates.some((iso) => holidayDates.has(iso))) return candidateIso;
+    const footprint: string[] = [];
+    for (let w = -1; w <= weekSpan; w++) footprint.push(addDaysIso(candidateIso, w * 7));
+    if (
+      !spanDates.some((iso) => holidayDates.has(iso)) &&
+      !footprint.some((monday) => claimedWeekMondays.has(monday))
+    ) {
+      for (const monday of footprint) claimedWeekMondays.add(monday);
+      return candidateIso;
+    }
     candidateIso = addDaysIso(candidateIso, 7);
   }
   throw new Error(
@@ -537,7 +556,7 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
   // ── Notification de-dup (Issue #417: now proven via the one-way daysProvisional transition
   //    instead of the old roster-exact/flat split — see the file's updated header note) ──────
   it("Issue #417: two mutation-site calls touching the same (employee, week) in one run still send exactly one notification per recipient — the first call already converges the row out of candidacy", async () => {
-    const monday = nextHolidayFreeMonday(84);
+    const monday = nextHolidayFreeMonday(84, 2); // spans Monday + following Wednesday (two ISO weeks)
     const thursday = addDaysIso(monday, 3);
     const friday = addDaysIso(monday, 4);
     const followingWed = addDaysIso(monday, 9);
