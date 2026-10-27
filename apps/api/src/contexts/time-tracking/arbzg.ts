@@ -318,6 +318,8 @@ export async function checkArbZG(
         select: {
           type: true,
           weeklyHours: true,
+          monthlyHours: true, // Issue #787 — MONTHLY_HOURS Ø-day for the BS amount
+          workDays: true, // Issue #787
           mondayHours: true,
           tuesdayHours: true,
           wednesdayHours: true,

@@ -30,7 +30,7 @@ import {
 import { resolveBsTagSlot, buildSlotOverrideHierarchy } from "./bs-slot-resolver";
 import {
   sortedBsDatesInIsoWeek,
-  computeDailySollMinutes,
+  resolveBsDailySollMinutes,
   bsUnterrichtsMinutesByDateForIsoWeek,
 } from "../working-time-account"; // Phase 101B
 import { BS_PATTERN_ORDER_BY } from "./vocational-school-pattern-order.js";
@@ -275,6 +275,7 @@ async function classifyBsSlotFromAbsence(
     prisma.employee.findUnique({
       where: { id: employeeId },
       select: {
+        tenantId: true,
         bsSlotFirstLongDayMinutes: true,
         bsSlotSecondLongDayMinutes: true,
         bsSlotShortDayMinutes: true,
@@ -302,6 +303,8 @@ async function classifyBsSlotFromAbsence(
       select: {
         type: true,
         weeklyHours: true,
+        monthlyHours: true, // Issue #787
+        workDays: true, // Issue #787
         mondayHours: true,
         tuesdayHours: true,
         wednesdayHours: true,
@@ -315,7 +318,15 @@ async function classifyBsSlotFromAbsence(
 
   // dailySollMinutes only matters for the FIRST_LONG_DAY amount, and FIRST_LONG_DAY is
   // long regardless of amount. When no schedule is loaded → BS_DAILY_DEFAULT_MIN (480).
-  const dailySollMinutes = schedule ? computeDailySollMinutes(schedule) : BS_DAILY_DEFAULT_MIN;
+  const dailySollMinutes = schedule
+    ? await resolveBsDailySollMinutes(
+        prisma,
+        employeeSlots?.tenantId ?? "",
+        schedule,
+        schedule.type,
+        dayStart,
+      )
+    : BS_DAILY_DEFAULT_MIN;
 
   const hierarchy = buildSlotOverrideHierarchy({
     employee: employeeSlots ?? null,

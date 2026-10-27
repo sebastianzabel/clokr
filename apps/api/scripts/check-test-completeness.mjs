@@ -975,7 +975,8 @@ import { readFileSync } from "node:fs";
 // Issue #696: +1 file (open-month-carry-bulk-696, 3 cases); measured full run 733 files, 11019 tests.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
-const MIN_FILES = 735;
+// Issue #787: +1 file (monthly-hours-bs-daily-soll-787.test.ts).
+const MIN_FILES = 736;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1065,7 +1066,8 @@ const MIN_FILES = 735;
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #771: +1 file, +4 tests (yesterday-dst-771.test.ts) on the base 11021.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
-const MIN_TESTS = 11025;
+// Issue #787: +2 cases (same file) on the base 11025.
+const MIN_TESTS = 11027;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

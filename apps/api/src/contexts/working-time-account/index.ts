@@ -105,6 +105,7 @@ export {
   computeDailySollMinutes,
   countBsDaysInIsoWeek,
   getVocationalSchoolMinutesForDate,
+  resolveBsDailySollMinutes, // Issue #787
   sortedBsDatesInIsoWeek,
 } from "./vocational-school-saldo";
 export { findMissingWorkdays } from "./find-missing-workdays";
