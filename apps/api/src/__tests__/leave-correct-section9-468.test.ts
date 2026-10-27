@@ -918,20 +918,38 @@ describe("Leave correction and § 9 credits (Issue #468, D-04/A-3)", () => {
     const lockHeld = new Promise<void>((resolve) => {
       releaseLock = resolve;
     });
-    const concurrentWriterTx = app.prisma.$transaction(async (tx) => {
-      await tx.section9Credit.update({ where: { id: creditId }, data: { status: "SUPERSEDED" } });
-      await lockHeld; // hold the row lock open until released below
+    let signalLockTaken: () => void;
+    const lockTaken = new Promise<void>((resolve) => {
+      signalLockTaken = resolve;
     });
+    const concurrentWriterTx = app.prisma.$transaction(
+      async (tx) => {
+        await tx.section9Credit.update({ where: { id: creditId }, data: { status: "SUPERSEDED" } });
+        signalLockTaken!();
+        await lockHeld; // hold the row lock open until released below
+      },
+      { timeout: 30_000 },
+    );
 
-    // Give the concurrent writer's UPDATE time to acquire the row lock before /correct's own
-    // pre-transaction read runs.
-    await new Promise((r) => setTimeout(r, 50));
+    // Issue #793: wait for observable states, never for a fixed delay - a slow runner used to
+    // release the lock before /correct had read, which then saw SUPERSEDED and answered 200.
+    // 1. The concurrent writer holds the row lock before /correct's pre-transaction read runs.
+    await lockTaken;
 
     const correctPromise = correct(sickId, { startDate: "2029-08-20", endDate: "2029-08-20" });
 
-    // Give /correct time to run its pre-transaction read and reach (and block on) the same
-    // row's UPDATE inside its own transaction.
-    await new Promise((r) => setTimeout(r, 50));
+    // 2. /correct has run its pre-transaction read and is blocked on the same row's UPDATE inside
+    // its own transaction. The worker database is this file's alone, so a backend of it waiting
+    // on a lock is /correct.
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const [{ waiting }] = await app.prisma.$queryRaw<Array<{ waiting: number }>>`
+        SELECT count(*)::int AS waiting FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+      if (waiting > 0) break;
+      if (Date.now() > deadline) throw new Error("/correct never blocked on the credit row lock");
+      await new Promise((r) => setTimeout(r, 20));
+    }
 
     releaseLock!();
     await concurrentWriterTx;
