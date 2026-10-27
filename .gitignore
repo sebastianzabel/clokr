@@ -82,3 +82,7 @@ apps/nfc-client/src-tauri/target/
 
 # Process setup — local board/node IDs, never committed
 .process-setup.local.json
+
+# Simulation instance (Issue #715): generated state, credentials and logs of a local/server run
+apps/sim/.sim/
+apps/sim/sim.env
