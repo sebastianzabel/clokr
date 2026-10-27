@@ -33,6 +33,10 @@
  *   - TimeEntry.note           → null (for that employee)
  *   - TimeEntry.breakWaivedReason → null (Issue #508; breakStatus and the entry stay)
  *   - LeaveRequest.note        → null (for that employee)
+ *   - LeaveRequest.reviewNote  → null (Issue #718; status, reviewer and timestamp stay)
+ *   - RetroEntryRequest.reason → "Gelöscht (Anonymisierung)" (required column, neutral text) AND
+ *     RetroEntryRequest.reviewNote → null (Issue #718; the row, its status and times stay)
+ *   - OvertimePlan.note, Shift.note, EmployeeAvailability.note → null (Issue #718)
  *   - Absence.note             → null AND Absence.documentPath → null
  *   - Section9Credit.documentPath → null AND Section9Credit.reason → null (Phase 104,
  *     D-26 — Art. 9 DSGVO health datum + free text; rows preserved, see below)
@@ -52,6 +56,11 @@
  * Preserved (for retention compliance §147 AO / §257 HGB / § 16 ArbZG):
  *   TimeEntry, LeaveRequest, Absence, Schedule, OvertimeAccount row counts
  *   stay unchanged — rows are mutated in place, never deleted.
+ *   Deliberately KEPT free texts (Issue #718, owner decision delegated 26.10.2026): the texts the
+ *   business itself writes to document a booking - SaldoSnapshot.note / supersededReason and
+ *   OpeningBalance.reason / evidenceRef / supersededReason. They are not person-authored, they are
+ *   Buchungsbeleg material (§ 147 AO, GoBD, Art. 17 Abs. 3 lit. b DSGVO). AuditLog free texts
+ *   are a separate question (#512).
  *   OpeningBalance (Phase 99, OB-05): likewise preserved by omission — the row IS the
  *   Nachweis that a migrated Alt-Überstunden value existed and why. It carries no PII of
  *   its own (employeeId reference only; reason/evidenceRef are operational text, and MUST
@@ -84,6 +93,8 @@ import { clearEntryNotesForEmployee, deletePresenceDevicesOfEmployee } from "../
 import { anonymizeSection9CreditsForEmployee } from "../absence"; // Phase 100B Plan 11 — T-100B-48
 import { anonymizeAbsencesForEmployee } from "../absence"; // Phase 100B Plan 12 — F3
 import { anonymizeLeaveRequestsForEmployee } from "../absence"; // Phase 100B Plan 13 — F3
+import { clearSchedulingNotesForEmployee } from "../scheduling"; // Issue #718
+import { clearOvertimePlanNotesForEmployee } from "../working-time-account"; // Issue #718
 import { removeRoleAssignmentsOfUser, type RemovedRoleAssignment } from "./facade/role-assignments";
 // Phase 101B (Issue #101, Nachtrag 2026-09-17): the two sentinel `where` fragments lifted out of
 // this file into ./employee-anonymization-filter.ts — re-exported below (unchanged) so
@@ -111,6 +122,15 @@ export interface AnonymizeEmployeeResult {
   exitDate: { before: Date | null; after: Date };
   /** Issue #388: counts only of the cleared device identifiers; the addresses are never returned. */
   clearedDeviceIdentifiers: { wifiMacs: number; presenceDevices: number };
+  /** Issue #718: row counts of the cleared free-text fields; counts only, never text. */
+  clearedFreeText: {
+    leaveReviewNotes: number;
+    retroReasons: number;
+    retroReviewNotes: number;
+    overtimePlanNotes: number;
+    shiftNotes: number;
+    availabilityNotes: number;
+  };
 }
 
 /**
@@ -188,11 +208,16 @@ export async function anonymizeEmployeeData(
 
   // Notizen in Zeiteinträgen anonymisieren (können persönliche Daten enthalten)
   // Phase 100B Plan 08 — T10, contexts/time-tracking facade (reaches soft-deleted rows too).
-  await clearEntryNotesForEmployee(tx, employeeId);
+  const retro = await clearEntryNotesForEmployee(tx, employeeId);
 
   // Notizen in Urlaubsanträgen anonymisieren
   // Phase 100B Plan 13 — F3, contexts/absence facade.
-  await anonymizeLeaveRequestsForEmployee(tx, employeeId);
+  // Issue #718: also reviewNote.
+  const leaveReviewNotes = await anonymizeLeaveRequestsForEmployee(tx, employeeId);
+
+  // Issue #718: Überstundenplan-, Schicht- and Verfügbarkeitsnotizen (person-authored free text).
+  const overtimePlanNotes = await clearOvertimePlanNotesForEmployee(tx, employeeId);
+  const scheduling = await clearSchedulingNotesForEmployee(tx, employeeId);
 
   // Notizen in Abwesenheiten anonymisieren + Dokument-Pfad entfernen
   // Phase 100B Plan 12 — F3, contexts/absence facade.
@@ -236,5 +261,6 @@ export async function anonymizeEmployeeData(
     removedRoleAssignments,
     exitDate: { before: employee.exitDate, after: employee.exitDate ?? exitDayIfUnset },
     clearedDeviceIdentifiers: { wifiMacs: employee.wifiMacs.length, presenceDevices },
+    clearedFreeText: { leaveReviewNotes, ...retro, overtimePlanNotes, ...scheduling },
   };
 }

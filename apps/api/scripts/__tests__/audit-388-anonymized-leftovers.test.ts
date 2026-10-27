@@ -38,6 +38,7 @@ describe("audit-388-anonymized-leftovers (Issues #388, #508)", () => {
   let clean: Awaited<ReturnType<typeof seedTestData>>;
   const MAC = "aa:bb:cc:00:03:88";
   const WAIVER = "Geheimer Freitext 508";
+  const FREE = "Geheimer Freitext 718";
   let dirty = "";
   let tidy = "";
   let live = "";
@@ -93,6 +94,25 @@ describe("audit-388-anonymized-leftovers (Issues #388, #508)", () => {
         salonId: fixture.salonId,
       },
     });
+    // Issue #718: free-text leftovers of the same person (counts only, never the text).
+    await app.prisma.retroEntryRequest.create({
+      data: {
+        employeeId: dirty,
+        targetDate: new Date("2025-06-15"),
+        reason: FREE,
+        reviewNote: FREE,
+        status: "APPROVED",
+      },
+    });
+    await app.prisma.overtimePlan.create({
+      data: {
+        employeeId: dirty,
+        hoursToReduce: 2,
+        deadline: new Date("2026-12-31T00:00:00Z"),
+        note: FREE,
+        createdBy: dirty,
+      },
+    });
     tidy = (await createEmployee(fixture.tenant.id, "tidy", true)).id;
     live = (await createEmployee(fixture.tenant.id, "live", false, { wifiMacs: [MAC] })).id;
     await createEmployee(clean.tenant.id, "tidy2", true);
@@ -111,6 +131,9 @@ describe("audit-388-anonymized-leftovers (Issues #388, #508)", () => {
     expect(text).toContain("findings=WIFI_MACS,PRESENCE_DEVICES,BREAK_WAIVED_REASON");
     expect(text).toContain("wifiMacs=2 presenceDevices=1 breakWaivedReasons=1");
     expect(text).toContain("Totals: employees=1 wifiMacs=2 presenceDevices=1 breakWaivedReasons=1");
+    expect(text).toContain("RETRO_REASON,RETRO_REVIEW_NOTE,OVERTIME_PLAN_NOTE");
+    expect(text).toContain("retroReasons=1 retroReviewNotes=1 overtimePlanNotes=1");
+    expect(text).not.toContain(FREE);
     expect(text).not.toContain(tidy);
     expect(text).not.toContain(live);
     for (const secret of [MAC, WAIVER, "aa:bb:cc:00:03:90"]) expect(text).not.toContain(secret);

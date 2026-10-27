@@ -289,3 +289,22 @@ export async function hardDeleteOvertimeDataForEmployee(
 ): Promise<void> {
   await db.overtimeAccount.deleteMany({ where: { employeeId } });
 }
+
+/**
+ * Issue #718 (DSGVO Art. 17): nulls the free-text `OvertimePlan.note` of every plan of
+ * `employeeId`; the plan rows stay. Deliberately NO tenant parameter (named F3 exception): its sole
+ * caller is `platform/anonymize.ts`'s `anonymizeEmployeeData()`, reached only after the route
+ * validated the id against the caller's tenant. `SaldoSnapshot.note` and the `OpeningBalance`
+ * texts are NOT touched here on purpose: the business writes them to document a booking
+ * (§ 147 AO), they are not person-authored.
+ */
+export async function clearOvertimePlanNotesForEmployee(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+): Promise<number> {
+  const cleared = await db.overtimePlan.updateMany({
+    where: { employeeId, note: { not: null } },
+    data: { note: null },
+  });
+  return cleared.count;
+}

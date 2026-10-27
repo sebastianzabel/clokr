@@ -48,6 +48,7 @@ export {
   createOvertimeAccount,
   setOvertimeAccountBalance,
   hardDeleteOvertimeDataForEmployee,
+  clearOvertimePlanNotesForEmployee,
 } from "./facade/overtime-account";
 export {
   isMonthClosed,
