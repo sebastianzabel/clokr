@@ -24,7 +24,7 @@
  * shared `test-dates.ts` helpers — hardcoded calendar dates are a known time
  * bomb in this repo (`shifts.test.ts` expired exactly that way).
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
   getTestApp,
   closeTestApp,
@@ -37,6 +37,12 @@ import type { FastifyInstance } from "fastify";
 import { getHolidays, STATE_MAP } from "../contexts/platform/holidays";
 import { resolveMissingEntriesDays } from "../contexts/working-time-account/missing-entries-window";
 import { TEST_TZ as TZ, pastDateStr, dowOf } from "./test-dates";
+
+// Fixed clock (Issue #776): 00:30 Europe/Berlin on 2026-10-27, when the UTC date is still the
+// previous day and a DST change (25 Oct) lies inside the 7-day window. Only Date is faked so
+// DB I/O keeps working; module level because the fixtures below derive their days at collection.
+vi.useFakeTimers({ toFake: ["Date"] });
+vi.setSystemTime(new Date("2026-10-26T23:30:00Z"));
 
 const FEDERAL_STATE = "NIEDERSACHSEN";
 
@@ -147,6 +153,7 @@ describe("GET /api/v1/dashboard/open-items — configured window (issue #141)", 
   });
 
   afterAll(async () => {
+    vi.useRealTimers();
     try {
       await cleanupTestData(app, tenantId);
       await app.prisma.tenantConfig.deleteMany({ where: { tenantId } });
