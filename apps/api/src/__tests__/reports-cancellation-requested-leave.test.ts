@@ -21,11 +21,13 @@ import {
   cleanupTestData,
   closeTestApp,
   configureDatevKanzlei,
+  numericEmployeeNumber,
 } from "./setup";
 
 // Issue #256 (Befund 1) field offsets — copied from datev-export.test.ts.
-const F_LOHNART = 5;
-const F_TAGE = 7;
+// Issue #304: Satz-ID, pnr, Abrechnungszeitraum, Lohnart, quantity.
+const F_LOHNART = 3;
+const F_TAGE = 4;
 
 describe("Issue #446 (D-04) — Monatsbericht + DATEV count CANCELLATION_REQUESTED leave like APPROVED", () => {
   let app: FastifyInstance;
@@ -48,7 +50,7 @@ describe("Issue #446 (D-04) — Monatsbericht + DATEV count CANCELLATION_REQUEST
       data: {
         tenantId: data.tenant.id,
         userId: user.id,
-        employeeNumber: `RCR446-${label}-${suffix}`,
+        employeeNumber: numericEmployeeNumber(),
         firstName: label,
         lastName: "ReportsCancellation",
         hireDate: new Date("2026-06-01"),
@@ -153,7 +155,7 @@ describe("Issue #446 (D-04) — Monatsbericht + DATEV count CANCELLATION_REQUEST
       .split("[Bewegungsdaten]")[1]
       .split("\r\n")
       .filter((l) => l.trim().length > 0);
-    const urlaubRowC = rowsC.find((r) => r.includes(";U;") && r.split(";")[F_LOHNART] === "300");
+    const urlaubRowC = rowsC.find((r) => r.split(";")[F_LOHNART] === "300");
 
     const resA = await app.inject({
       method: "GET",
@@ -166,7 +168,7 @@ describe("Issue #446 (D-04) — Monatsbericht + DATEV count CANCELLATION_REQUEST
       .split("[Bewegungsdaten]")[1]
       .split("\r\n")
       .filter((l) => l.trim().length > 0);
-    const urlaubRowA = rowsA.find((r) => r.includes(";U;") && r.split(";")[F_LOHNART] === "300");
+    const urlaubRowA = rowsA.find((r) => r.split(";")[F_LOHNART] === "300");
 
     expect(urlaubRowC).toBeDefined();
     expect(urlaubRowA).toBeDefined();

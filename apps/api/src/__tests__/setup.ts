@@ -450,6 +450,9 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
   const s =
     (suffix ? suffix + "-" : "") + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const prisma = testApp.prisma;
+  // Issue #304: the DATEV export refuses non-numeric personnel numbers (LODAS pnr is numeric), and
+  // these fixtures feed it, so their numbers are numeric (unique per tenant: two consecutive values).
+  const numberBase = Math.floor(Math.random() * 40_000_000) * 2 + 10_000_000;
 
   // Create tenant + tenant config through the one provisioning rule (Phase 88, D-04a). Only L1:
   // the default salon is NOT created here, it comes afterwards from the withDefaultSalon wrapper
@@ -487,7 +490,7 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
     data: {
       tenantId: tenant.id,
       userId: adminUser.id,
-      employeeNumber: `A-${s}`,
+      employeeNumber: String(numberBase),
       firstName: "Admin",
       lastName: "Test",
       hireDate: new Date("2024-01-01"),
@@ -531,7 +534,7 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
     data: {
       tenantId: tenant.id,
       userId: empUser.id,
-      employeeNumber: `E-${s}`,
+      employeeNumber: String(numberBase + 1),
       firstName: "Max",
       lastName: "Test",
       hireDate: new Date("2024-01-01"),
@@ -674,6 +677,14 @@ export async function seedGrundversionTenant(testApp: FastifyInstance, suffix = 
  * guard impossible to test. Every fixture that wants a SUCCESSFUL export therefore says
  * so explicitly, through this helper.
  */
+/**
+ * Issue #304: a numeric, practically unique employee number for fixtures whose person is part of
+ * a DATEV export (LODAS `pnr#bwd` is numeric; the export refuses anything else with a 422).
+ */
+export function numericEmployeeNumber(): string {
+  return String(10_000_000 + Math.floor(Math.random() * 900_000_000));
+}
+
 export async function configureDatevKanzlei(
   testApp: FastifyInstance,
   tenantId: string,

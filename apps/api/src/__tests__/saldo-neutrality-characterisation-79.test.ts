@@ -45,6 +45,7 @@ import {
   salonIdForEmployee,
   configureDatevKanzlei,
   grantSystemRole,
+  numericEmployeeNumber,
 } from "./setup";
 import * as pdfUtils from "../composition/pdf";
 import { checkArbZG } from "../contexts/time-tracking/arbzg";
@@ -91,7 +92,7 @@ async function createFixedEmployee(
     data: {
       tenantId,
       userId: user.id,
-      employeeNumber: `${label}-${suffix}`,
+      employeeNumber: numericEmployeeNumber(),
       firstName: label,
       lastName: "Snc79",
       hireDate: new Date("2026-01-01T00:00:00Z"),
@@ -146,7 +147,7 @@ async function createUntrackedMonthlyHoursEmployee(
     data: {
       tenantId,
       userId: user.id,
-      employeeNumber: `${label}-${suffix}`,
+      employeeNumber: numericEmployeeNumber(),
       firstName: label,
       lastName: "Snc79MH",
       hireDate: new Date("2026-01-01T00:00:00Z"),
@@ -578,11 +579,11 @@ describe("Phase 79 D-10 — saldo-neutrality characterisation (frozen on the unt
       await configureDatevKanzlei(app, tenantId);
       await app.prisma.employee.update({
         where: { id: a.id },
-        data: { employeeNumber: "SNC79-A" },
+        data: { employeeNumber: "9100791" },
       });
       await app.prisma.employee.update({
         where: { id: b.id },
-        data: { employeeNumber: "SNC79-B" },
+        data: { employeeNumber: "9100792" },
       });
     });
 
@@ -617,10 +618,11 @@ describe("Phase 79 D-10 — saldo-neutrality characterisation (frozen on the unt
         .split("\r\n")
         .filter((l) => l.trim().length > 0)
         .map((l) => l.split(";"));
-      // Field offsets: 1 = Personalnummer, 4 = Ausfallschluessel (empty on a worked-hours line), 6 = Stunden.
-      const hoursOf = (pn: string) => rows.find((r) => r[1] === pn && r[4] === "")?.[6];
-      expect(hoursOf("SNC79-A")).toBe("45,56");
-      expect(hoursOf("SNC79-B")).toBe("45,56");
+      // Issue #304 field offsets: 0 = Satz-ID (20 = u_lod_bwd_buchung_stunden), 1 = Personalnummer,
+      // 3 = Lohnart, 4 = Stunden.
+      const hoursOf = (pn: string) => rows.find((r) => r[0] === "20" && r[1] === pn)?.[4];
+      expect(hoursOf("9100791")).toBe("45,56");
+      expect(hoursOf("9100792")).toBe("45,56");
     });
   });
 

@@ -433,12 +433,19 @@
           <Section title="Vorschau" sub="DATEV-LODAS · {selectedPeriod.label}">
             <pre class="csv-preview"><span class="csv-section">[Allgemein]</span>
 Ziel=LODAS
+Version_SST=1.0
+Version_DB=15.70
 BeraterNr={datevBeraterNr ?? "— nicht hinterlegt —"}
 MandantenNr={datevMandantenNr ?? "— nicht hinterlegt —"}
-Abrechnungszeitraum={String(selectedPeriod.month).padStart(2, "0")}{selectedPeriod.year}
+Datumsformat=TTMMJJJJ
+Stringbegrenzer='
+
+<span class="csv-section">[Satzbeschreibung]</span>
+20;u_lod_bwd_buchung_stunden;pnr#bwd;abrechnung_zeitraum#bwd;la_eigene#bwd;stunden#bwd
+21;u_lod_bwd_buchung_tage;pnr#bwd;abrechnung_zeitraum#bwd;la_eigene#bwd;tage#bwd
 
 <span class="csv-section">[Bewegungsdaten]</span>
-20;PersNr;Name;Datum;Ausfall;Lohnart;Stunden;Tage;…
+20;PersNr;01{String(selectedPeriod.month).padStart(2, "0")}{selectedPeriod.year};Lohnart;Stunden
 … wird beim Export erzeugt</pre>
             <p class="foot-meta preview-note">
               Schreibgeschützte Vorschau — Signatur wird beim Export erzeugt.
