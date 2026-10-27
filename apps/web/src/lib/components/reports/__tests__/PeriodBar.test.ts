@@ -102,15 +102,27 @@ describe("PeriodBar — presets", () => {
     }
   });
 
-  it("presses every matching preset: this month and quarter at once (P-20)", () => {
+  // Issue #781 (owner decision 27.10.2026, replaces P-20): exactly one preset is pressed.
+  it("presses only the first matching preset: this month, not quarter", () => {
     renderWithTheme(PeriodBar, props());
     const group = screen.getByRole("group", { name: "Schnellauswahl Zeitraum" });
     const pressed = within(group)
       .getAllByRole("button")
       .filter((b) => b.getAttribute("aria-pressed") === "true")
       .map((b) => b.textContent?.trim());
-    expect(pressed).toEqual(["Dieser Monat", "Quartal"]);
+    expect(pressed).toEqual(["Dieser Monat"]);
     expect(within(group).getByRole("button", { name: "Dieser Monat" })).toHaveClass("is-active");
+  });
+
+  it("presses only the clicked preset when two presets are the same period (#781)", async () => {
+    renderWithTheme(PeriodBar, props());
+    await fireEvent.click(screen.getByRole("button", { name: "Quartal" }));
+    const group = screen.getByRole("group", { name: "Schnellauswahl Zeitraum" });
+    const pressed = within(group)
+      .getAllByRole("button")
+      .filter((b) => b.getAttribute("aria-pressed") === "true")
+      .map((b) => b.textContent?.trim());
+    expect(pressed).toEqual(["Quartal"]);
   });
 
   it("presses no preset when the period matches none", () => {
