@@ -160,6 +160,11 @@
       "file": "apps/e2e/tests/vacation-carryover.spec.ts",
       "category": "später-datum",
       "reason": "getByTestId('urlaub-balance-current'/'urlaub-balance-carryover') not found across all 4 tests (3 date references measured, 0/4 pass, 275-03 measurement) — the only file in the group that already uses X-Test-Now, so the migration tool is proven; only its selectors need repair."
+    },
+    {
+      "file": "apps/e2e/tests/role-editor-visibility-710.spec.ts",
+      "category": "in-ci",
+      "reason": "Issue #710 Sichtbarkeits-Durchlauf for \"Ansehen\" on /admin/roles, built on helpers/visibility-walkthrough.ts: after the click the editor form (#role-editor-form) must pass toBeInViewport() at 1280/390/360 px, light and dark (6 tests). Tenant fixture only (API login of the throwaway tenant admin, mode stored in localStorage and the server preference), no seed, no date dependency. Measured on the test stack: 6/6 pass in ~3 s on main, and 6/6 fail (viewport ratio 0) against the web build of the parent of the #692 fix (d2377bfe13^)."
     }
   ]
 }
