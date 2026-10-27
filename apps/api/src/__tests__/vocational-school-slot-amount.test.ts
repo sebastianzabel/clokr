@@ -322,8 +322,10 @@ describe("closeEmployeeMonth — slot-resolved BS amount (daily Soll for LONG da
     const result = closeEmployeeMonth(input);
     const baseline = closeEmployeeMonth({ ...input, absences: [] });
 
-    // worked rises by the resolved amount; expected does NOT (D-04).
-    expect(result.workedMinutes).toBe(baseline.workedMinutes + 570);
+    // worked rises by the resolved amount; expected does NOT (D-04). Issue #473: the amount is
+    // the MONTHLY_HOURS Ø-day value, not weeklyHours/day-markers (the 570 of the FIXED rule):
+    // 60 h = 3600 min over the 16 Mo-Do workdays of February 2026 -> 225.
+    expect(result.workedMinutes).toBe(baseline.workedMinutes + 225);
     expect(result.expectedMinutes).toBe(baseline.expectedMinutes);
   });
 
