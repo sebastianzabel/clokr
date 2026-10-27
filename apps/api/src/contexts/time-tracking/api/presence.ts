@@ -6,6 +6,7 @@ import { getCurrentShift } from "../../scheduling"; // Phase 101B (Issue #101, w
 import { getTenantTimezone, dateStrInTz } from "../../working-time-account"; // Phase 101B
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import type { ClockEvent } from "../../../services/clock/types";
+import { applyAutoBreakAfterClockStop } from "../auto-break-write"; // Issue #799
 import { findEntriesOfDay, openEntryOf } from "../day-entries"; // Phase 69b — the single day lookup
 
 // ── Zod schema ────────────────────────────────────────────
@@ -402,6 +403,17 @@ export async function presenceRoutes(app: FastifyInstance) {
       }
 
       // CLOCKED_OUT or CONSOLIDATED — resolver already emitted CLOCK_OUT audit.
+      // Issue #799: the same shared automatic-break step the web and NFC clock-outs run.
+      if (
+        disconnectResolution.kind === "CLOCKED_OUT" ||
+        disconnectResolution.kind === "CONSOLIDATED"
+      ) {
+        await applyAutoBreakAfterClockStop(app, {
+          entryId: disconnectResolution.entry.id,
+          employeeId: employee.id,
+          tz: await getTenantTimezone(app.prisma, tenantId),
+        });
+      }
       return reply.code(200).send({ ok: true });
     },
   });

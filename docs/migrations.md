@@ -1285,6 +1285,25 @@ einem Abschluss stecken (unverändert).
 **3. Rollback.** Das vorige Image zeigt wieder den Saldo ohne Eröffnungssaldo; ein inzwischen gespeicherter Wert wird bei der
 nächsten Änderung der Person wieder ohne ihn geschrieben. Keine Daten zurückzunehmen.
 
+## Phase 799 — Auto-Pause bei jedem Stempel-Auslöser (Issue #799)
+
+Kein Schema-Change, keine Migration. Das Ausstempeln über eine WLAN-Präsenzquelle setzt jetzt wie Web und NFC-Terminal die
+automatische Pause (`TenantConfig.autoBreakEnabled`), über denselben Schritt `applyAutoBreakAfterClockStop`. Neu geschlossene
+WLAN-Einträge haben dadurch weniger Ist (um die Pause) als bisher; bereits gespeicherte Einträge ändern sich **nicht** und
+werden **nie** nachträglich korrigiert (kein Backfill).
+
+**Vor dem Deploy prüfen (lesend, int UND prod).** `apps/api/scripts/audit-799-clock-entries-without-auto-break.ts` schreibt
+nichts (`--apply`/`--confirm` werden abgelehnt) und nennt nur Mandanten-Id, Eintrags-Id und Quelle der geschlossenen NFC-/WLAN-Einträge
+ohne Pause (länger als 6 h, Monat nicht abgeschlossen, Mandant mit aktiver Auto-Pause). Exit-Code `0`: nichts gefunden; `2`: Liste
+gedruckt; `1`: Aufruf- oder Verbindungsfehler.
+
+```bash
+DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx scripts/audit-799-clock-entries-without-auto-break.ts --all-tenants | tee "799-bestand-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+Die Liste ist Information für die Freigabe; ein einzelner Eintrag wird bei Bedarf durch die Führungskraft als normale Korrektur
+mit Begründung erfasst. **Rollback:** das vorige Image; bereits geschriebene Auto-Pausen bleiben als Pausen-Zeilen erhalten.
+
 ## Phase 718 — Anonymisierung leert weitere Freitexte (Issue #718)
 
 Kein Schema-Change, keine Migration. Neue Anonymisierungen leeren zusätzlich `LeaveRequest.reviewNote`,
