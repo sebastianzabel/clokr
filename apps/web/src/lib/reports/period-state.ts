@@ -314,11 +314,24 @@ export function presetPeriods(today: YearMonth): PeriodPreset[] {
   ];
 }
 
-/** Every preset equal to `from..to` — several can match at once (P-20). */
-export function activePresets(from: YearMonth, to: YearMonth, today: YearMonth): PresetKey[] {
-  return presetPeriods(today)
-    .filter((p) => sameMonth(p.from, from) && sameMonth(p.to, to))
-    .map((p) => p.key);
+/**
+ * The ONE pressed preset (Issue #781, owner decision 27.10.2026, replaces P-20 of #612): equal
+ * periods are common (October: "Dieser Monat" = "Quartal"; January: also "Jahr"), yet exactly one
+ * button is pressed. The clicked preset wins while it still equals `from..to`; without a click
+ * (URL load, reload) or after the period moved on, the first matching preset in display order
+ * is pressed. A custom range matching no preset presses none.
+ */
+export function activePreset(
+  from: YearMonth,
+  to: YearMonth,
+  today: YearMonth,
+  clicked?: PresetKey | null,
+): PresetKey | null {
+  const matching = presetPeriods(today).filter(
+    (p) => sameMonth(p.from, from) && sameMonth(p.to, to),
+  );
+  if (clicked && matching.some((p) => p.key === clicked)) return clicked;
+  return matching[0]?.key ?? null;
 }
 
 // ── Range validation ─────────────────────────────────────────────────────────

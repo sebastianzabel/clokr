@@ -6,7 +6,8 @@
   import Modal from "$components/ui/Modal.svelte";
   import type { YearMonth } from "$lib/reports/period-report";
   import {
-    activePresets,
+    activePreset,
+    type PresetKey,
     MONTH_NAMES_DE,
     presetPeriods,
     RANGE_ERROR_TEXT,
@@ -34,8 +35,10 @@
   let narrow = $state(false);
 
   const presets = $derived(presetPeriods(today));
-  const pressed = $derived(activePresets(from, to, today));
-  const autofocusPreset = $derived(pressed[0] ?? presets[0].key);
+  // Issue #781: exactly one preset is pressed; the clicked one wins while it still matches.
+  let clickedPreset: PresetKey | null = $state(null);
+  const pressed = $derived(activePreset(from, to, today, clickedPreset));
+  const autofocusPreset = $derived(pressed ?? presets[0].key);
   const years = $derived(Array.from({ length: 11 }, (_, i) => today.year - 10 + i));
   const error = $derived(
     validateRange({ year: fromYear, month: fromMonth }, { year: toYear, month: toMonth }, today),
@@ -58,11 +61,13 @@
 
   function apply() {
     if (error) return;
+    clickedPreset = null;
     onApply({ year: fromYear, month: fromMonth }, { year: toYear, month: toMonth });
     open = false;
   }
 
-  function applyPreset(start: YearMonth, end: YearMonth) {
+  function applyPreset(key: PresetKey, start: YearMonth, end: YearMonth) {
+    clickedPreset = key;
     onApply(start, end);
     open = false;
   }
@@ -76,10 +81,10 @@
         <button
           type="button"
           class="btn btn-outline"
-          class:is-active={pressed.includes(preset.key)}
-          aria-pressed={pressed.includes(preset.key)}
+          class:is-active={pressed === preset.key}
+          aria-pressed={pressed === preset.key}
           data-autofocus={narrow && preset.key === autofocusPreset ? "" : undefined}
-          onclick={() => applyPreset(preset.from, preset.to)}>{preset.label}</button
+          onclick={() => applyPreset(preset.key, preset.from, preset.to)}>{preset.label}</button
         >
       {/each}
     </div>
