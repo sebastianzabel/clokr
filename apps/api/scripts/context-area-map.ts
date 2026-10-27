@@ -304,6 +304,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/parental-leave-reduction.ts": "abwesenheiten", // Issue #468 (D-08) — pure month/rounding functions + read-only preview builder for the Elternzeit-Kürzung (§ 17 Abs. 1 BEEG)
   "src/contexts/absence/section9-credit-days.ts": "abwesenheiten", // Section9Credit day counting
   "src/contexts/absence/section9-detect.ts": "abwesenheiten", // § 9 BUrlG "krank im Urlaub" detection
+  "src/contexts/absence/employee-leave-lock.ts": "abwesenheiten", // Employee row lock that serialises leave pricing writers (Issue #467); takes the Unterbau row lock inside the absence context, no cross-context import
+  "src/contexts/absence/later-request-reprice.ts": "abwesenheiten", // re-prices later VACATION requests after a /correct (Issue #467) — LeaveRequest days and entitlement ledger are Abwesenheiten's own
   "src/contexts/absence/shift-leave-recalc-resolver.ts": "abwesenheiten", // writes LeaveRequest.daysProvisional when a roster change triggers recalculation (Phase 107) — LeaveRequest is the written model even though the trigger originates in Schichtplanung
   "src/contexts/absence/leave-overlap.ts": "abwesenheiten", // Issue #478 — create-side overlap and yearly-quota guards shared by POST, the PENDING edit and the approval; reads LeaveRequest only
   "src/contexts/absence/sick-leave-days.ts": "abwesenheiten", // Issue #84 (D-14) — the one sick-day counting rule (calendar days, half day, clip, attest split, § 9 shift), moved out of composition/reports.ts
