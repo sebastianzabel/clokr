@@ -10,6 +10,7 @@ import type { PersonSpec, SimTenantKey, TenantPlan } from "../plan";
 import { tenantState, type SimState, type TenantState } from "../state";
 import { rngFor, type Rng } from "../rng";
 import { dayInTz } from "../tz";
+import type { PendingNachtrag } from "./decisions";
 
 /** A deliberate rule violation a bot introduced; the checker expects exactly these findings. */
 export interface Intent {
@@ -23,7 +24,9 @@ export interface LeaveRecord {
   id: string;
   start: string;
   end: string;
-  type: "VACATION" | "SICK";
+  type: "VACATION" | "SICK" | "SICK_CHILD";
+  /** User id of the manager who approved it (a cancellation needs somebody else). */
+  approvedBy?: string;
   status: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLATION_REQUESTED" | "CANCELLED";
 }
 
@@ -46,6 +49,10 @@ export interface Progress {
   /** A bounded sample of foreign ids the isolation bot probes with. */
   sampleEntryIds: string[];
   daysSimulated: string[];
+  /** Bookings left out on purpose that are filed as a Zeitnachtrag once the retro window is over. */
+  nachtraege: PendingNachtrag[];
+  /** Months the admin bot deliberately unlocked (and the manager bot closed again). */
+  unlocks: { tenant: SimTenantKey; employeeId: string; month: string; date: string }[];
 }
 
 export function emptyProgress(): Progress {
@@ -59,6 +66,8 @@ export function emptyProgress(): Progress {
     intents: [],
     sampleEntryIds: [],
     daysSimulated: [],
+    nachtraege: [],
+    unlocks: [],
   };
 }
 

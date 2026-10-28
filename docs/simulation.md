@@ -120,100 +120,29 @@ green, 2 findings, 1 a check itself failed (also red).
 
 ## What the bots do
 
-| Who                   | Does                                                                                                                                                                                                                                         | Through                                                       |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Employee              | books the contract day (late arrival, jitter, breaks; a few deliberate long days or missing breaks, recorded as intents), sick days (SICK, SICK_CHILD), vacation requests, WLAN connect/disconnect events, NFC taps that forget to clock out | web API with own login, presence source key, NFC terminal key |
-| Manager               | plans the next 14 days of shifts, approves or rejects leave (never their own), corrects an end time with a reason, closes last month from a seeded day (sometimes late, with gaps confirmed)                                                 | web API                                                       |
-| Admin                 | hires on the hire day, contract change on the 1st, company holiday, exit, anonymization three days later                                                                                                                                     | web API                                                       |
-| Second tenant's admin | asks for the chain's employees, salons, entries and leave with a foreign id and with an unknown id and records both answers                                                                                                                  | web API                                                       |
+| Who                   | Does                                                                                                                                                                                                                                                                                  | Through                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Employee              | books the contract day (late arrival, jitter, breaks; a few deliberate long days or missing breaks, recorded as intents), sick days (SICK, SICK_CHILD), vacation requests and their withdrawal, late Zeitnachträge, WLAN connect/disconnect events, NFC taps that forget to clock out | web API with own login, presence source key, NFC terminal key |
+| Manager               | plans the next 14 days of shifts, approves or rejects leave (never their own), corrects an end time with a reason, closes last month from a seeded day (sometimes late, with gaps confirmed)                                                                                          | web API                                                       |
+| Admin                 | hires on the hire day, contract change on the 1st, company holiday, exit, anonymization three days later                                                                                                                                                                              | web API                                                       |
+| Second tenant's admin | asks for the chain's employees, salons, entries and leave with a foreign id and with an unknown id and records both answers                                                                                                                                                           | web API                                                       |
 
 All decisions come from `rngFor(seed, "day", date, person)`: a stream is addressed by its keys, never
 by order, so one person's day is reproducible alone.
 
-Known gaps (follow-ups, not blockers): cancellation of approved leave, Zeitnachträge, shift changes of
-existing shifts and unlocking a month are not simulated yet; a forgotten NFC clock-out is left to the
-API's cron and is not corrected by a manager.
+The bot extension of Issue #715 adds: withdrawing a future vacation (pending: at once; approved: a
+cancellation request that a DIFFERENT manager than the original approver decides, approved or
+rejected), Kinderkrank (`SICK_CHILD`, counted as `leave.sick-child`), Zeitnachträge (entry-first: a
+manual entry beyond the 10-day window with a reason; an employee sometimes "forgets" to book and files
+it once the window is over, a replayed day beyond the window files about half of its entries late; the
+manager approves or rejects with the mandatory note), shift edits (the manager moves or withdraws a few
+shifts of next week; the product refuses past edits) and the month unlock (admin, with a reason; the
+manager bot closes the month again the same day). The WLAN break workaround (`entry.break`) stays until
+Issue #799 is on main.
 
-## Nightly checker
+Deliberate cases the checker knows: `intents` (long day, missing break, open entry) and `unlocks`
+(`progress.json`). An unlock changes the closed month's entries and snapshots on purpose, so
+`months.closed-unchanged` drops findings for exactly that person and month; any other change is still red.
 
-`pnpm sim check [--create-issues] [--repo owner/name] [--skip-perf] [--rebaseline]` connects with
-`SIM_DB_URL` (read-only), logs in as the chain admin for the API reads, writes
-`.sim/reports/YYYY-MM-DD.json` and prints it. Without `--create-issues` it is a dry run that only
-lists what it would file. An issue carries the label `simulation`, ids and dates only, a stable
-`sim-key` (one open issue per key) and the seed. The checker's database access is read-only three
-times over: the role has only SELECT (and no credential tables), every session starts read-only, and
-every unit of work is `BEGIN READ ONLY`.
-
-| Invariant                                                                                                                                         | Decided by                                | Proof (red on an injected violation, green on clean data)                                                                         |
-| ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `entries.no-overlap` no two closed entries of one person overlap                                                                                  | SQL                                       | `sim-invariants-715.test.ts`: the exclusion constraint is dropped in a rolled-back transaction, two overlapping rows are inserted |
-| `entries.single-open-per-day` at most one open entry per person and day                                                                           | SQL                                       | same, with the partial unique index dropped                                                                                       |
-| `months.closed-unchanged` checksums of locked entries and monthly snapshots equal yesterday's                                                     | SQL + baseline in `.sim/check-state.json` | locked entry changed and snapshot deleted after taking the baseline                                                               |
-| `audit.coverage` every created or changed entry and leave request has an `AuditLog` row                                                           | SQL                                       | entry without audit row, then with, then changed without a matching row                                                           |
-| `tenant.references` entries and shifts reference salons of their own tenant only                                                                  | SQL                                       | entry pointing at a salon of the other tenant                                                                                     |
-| `saldo.consistent` live saldo = carry + open months; overtime account, leave surface, overview and period report agree                            | API reads of a seeded sample of 25        | `checker.test.ts` with a fake API (agreeing and drifting surfaces)                                                                |
-| `arbzg.only-intended` days over 10 h and entries over 6 h with under 30 min break exist only where a bot caused them (that day or the day before) | SQL + bot intents                         | 11 h entry without intent is red, with intent green, a normal day green                                                           |
-| `tenant.isolation` the second tenant gets the identical 404 for foreign and unknown ids                                                           | probe results of the bot days             | `checker.test.ts` (identical / differing / non-404 answers)                                                                       |
-| `api.no-server-errors` the bots never met a 5xx                                                                                                   | bot day logs                              | `checker.test.ts`                                                                                                                 |
-| `perf.response-times` see below                                                                                                                   | measured by the checker                   | `checker.test.ts` (limits, hard limit, trend, non-200)                                                                            |
-
-Anti-vacuity: a check that throws is reported as an error (exit 1), and a check that examined nothing
-although at least two days were simulated becomes a finding of its own (`vacuous:<id>`), so a check
-that silently stopped seeing anything cannot stay green. `months.closed-unchanged` is exempt until the
-first month is closed. An operator-run unlock of a month is reported by design (the bots never
-unlock); acknowledge it with `--rebaseline`.
-
-### Response times and trend
-
-Each run measures `GET /reports/period` for 1, 3 and 12 months, `GET /dashboard`, the Monatsabschluss
-status read and the slowest bot-side `close-month` of the last day, and appends one line to
-`.sim/trend.jsonl`. Limits:
-
-| Metric                               | Limit                                                     | Source                                      |
-| ------------------------------------ | --------------------------------------------------------- | ------------------------------------------- |
-| period 12 months at 300 people       | 15 s; scaled down linearly with person-months (floor 2 s) | #688, #696 acceptance criteria              |
-| any period call                      | 30 s hard limit                                           | #696 (web proxy gives up)                   |
-| dashboard                            | 3 s                                                       | proposed in #715, not from an earlier issue |
-| month close (status read, one close) | 10 s                                                      | proposed in #715                            |
-| trend                                | above 2x the median of the last 7 runs and above 1 s      | proposed in #715                            |
-
-A non-200 answer is a finding. A persistent breach is one issue (`perf:<metric>:limit`), not one per
-night.
-
-## Reproduce a failure from a seed
-
-Every issue names the seed and the date. On a fresh instance (`bin/sim.sh destroy`, `up`, `operator`,
-`ro-role`) run `pnpm sim provision --size full --backfill-days <N>` with `SIM_SEED=<seed>` so that
-the epoch matches, then `pnpm sim backfill` up to the date of the finding and `pnpm sim check`. One
-person's day alone: the bot decisions of person `c0042` on `2026-11-03` come from
-`rngFor(seed, "day", "2026-11-03", "employee", "c0042")` and do not depend on anyone else. The per-day
-logs (`.sim/logs/`) list every action with counts and the deliberate intents.
-
-## Upgrading the release under test
-
-Set the new image tags in `sim.env` and `bin/sim.sh up`. The API applies its migrations on start; the
-volumes keep the data, so a new release is tested against weeks of history. `bin/sim.sh destroy`
-deletes everything (`down -v`) and the generated state.
-
-## 4-week report (template)
-
-After four weeks of daily runs write the report into the issue:
-
-```
-## Simulation report <from> to <to>, release <x.y.z>, seed <seed>
-- Days simulated / skipped (with reason):
-- People / salons / months closed:
-- Findings by invariant (count, issue links):
-- Findings that were bot or checker bugs (fixed in sim):
-- Response times: table of period 1/3/12 m, dashboard, month close: first week vs last week, max
-- Trend verdict (stable / growing, which metric)
-- Follow-up tickets (one line each, with severity)
-- What the simulation did NOT cover (gaps list above) and what to add next
-```
-
-## Open for the owner
-
-- The host (where the server runs) and its network exposure (VPN or allow-listed addresses).
-- Whether the time-travel clock (issue section 4) is needed after the first four weeks.
-- Provisioning the server, the first `provision --size full` and the four-week run are not part of the
-  repository change that introduced this setup.
+Known gaps (follow-ups, not blockers): withdrawing a Zeitnachtrag and cancelling sick leave are not
+simulated; a forgotten NFC clock-out is left to the API's cron and is not corrected by a manager.

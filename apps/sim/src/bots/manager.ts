@@ -5,6 +5,13 @@
 import type { PersonSpec, SimTenantKey } from "../plan";
 import { addDays, dayOfMonth, localIso, previousMonth } from "../tz";
 import { BotContext } from "./context";
+import {
+  pickReviewer,
+  planShiftEdits,
+  planUnlocks,
+  reviewVerdict,
+  statusAfterReview,
+} from "./decisions";
 import { rosterFor } from "./schedule";
 
 const PLAN_HORIZON_DAYS = 13;
@@ -86,7 +93,11 @@ interface ListedRequest {
   employeeId?: string;
 }
 
-/** Approves or rejects what is pending. The request filer is never the reviewer. */
+/**
+ * Approves or rejects what is pending, cancellation requests included (they sit in the same
+ * list). Four eyes: nobody reviews a request they filed, and a cancellation is decided by neither
+ * its filer nor the manager who approved the leave.
+ */
 export async function reviewLeave(ctx: BotContext, tenantKey: SimTenantKey): Promise<void> {
   const { plan } = ctx.tenant(tenantKey);
   const candidates = await reviewers(ctx, tenantKey);
@@ -107,22 +118,143 @@ export async function reviewLeave(ctx: BotContext, tenantKey: SimTenantKey): Pro
     );
   }
   for (const row of rows) {
-    const approve = rng.chance(0.85);
-    // Four eyes: the reviewer is never the person who filed the request.
-    const reviewer = candidates.find((c) => c.employeeId !== row.employeeId) ?? candidates[0];
-    const res = await ctx.call("leave.review", () =>
+    const known = records.get(row.id);
+    const record = known ? ctx.progress.leave[known.personKey][known.index] : undefined;
+    const cancellation = row.status === "CANCELLATION_REQUESTED";
+    const verdict = reviewVerdict(rng, cancellation);
+    const reviewer = pickReviewer(candidates, {
+      employeeIds: [row.employeeId],
+      userIds: cancellation ? [record?.approvedBy] : [],
+    });
+    // Nobody may decide it (a small tenant): it stays open until somebody else is on duty.
+    if (!reviewer) continue;
+    const action = cancellation ? "leave.review-cancellation" : "leave.review";
+    const res = await ctx.call(action, () =>
       ctx.api.patch(
         `/api/v1/leave/requests/${row.id}/review`,
         {
-          status: approve ? "APPROVED" : "REJECTED",
-          reviewNote: approve ? null : "Bot: Besetzung nicht möglich",
+          status: verdict,
+          reviewNote: verdict === "APPROVED" ? null : "Bot: Besetzung nicht möglich",
         },
         reviewer.token,
       ),
     );
-    const known = records.get(row.id);
-    if (known && res && res.status === 200) {
-      ctx.progress.leave[known.personKey][known.index].status = approve ? "APPROVED" : "REJECTED";
+    if (record && res && res.status === 200) {
+      record.status = statusAfterReview(record.status, verdict);
+      if (!cancellation && verdict === "APPROVED") record.approvedBy = reviewer.userId;
+    }
+  }
+}
+
+interface ListedRetro {
+  id: string;
+  employeeId: string;
+}
+
+/** Reviews the Zeitnachträge: approved mostly, sometimes rejected with the mandatory note. */
+export async function reviewRetro(ctx: BotContext, tenantKey: SimTenantKey): Promise<void> {
+  const candidates = await reviewers(ctx, tenantKey);
+  const rng = ctx.rng("review-retro", tenantKey);
+  const listed = await ctx.call("nachtrag.list", () =>
+    ctx.api.get<ListedRetro[]>("/api/v1/retro-entry-requests?status=PENDING", candidates[0].token),
+  );
+  if (!listed || listed.status !== 200 || !Array.isArray(listed.body)) return;
+  for (const row of listed.body) {
+    const reviewer = pickReviewer(candidates, { employeeIds: [row.employeeId] });
+    if (!reviewer) continue;
+    const verdict = rng.chance(0.8) ? "APPROVED" : "REJECTED";
+    await ctx.call(verdict === "APPROVED" ? "nachtrag.approve" : "nachtrag.reject", () =>
+      ctx.api.patch(
+        `/api/v1/retro-entry-requests/${row.id}/review`,
+        {
+          status: verdict,
+          reviewNote: verdict === "REJECTED" ? "Bot: Zeiten nicht nachvollziehbar" : null,
+        },
+        reviewer.token,
+      ),
+    );
+  }
+}
+
+interface WeekShift {
+  id: string;
+  employeeId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+}
+
+/** Moves or withdraws a few shifts of next week (the product refuses edits in the past). */
+export async function editShifts(ctx: BotContext, tenantKey: SimTenantKey): Promise<void> {
+  const { plan, state } = ctx.tenant(tenantKey);
+  const token = await managerToken(ctx, tenantKey);
+  const week = await ctx.call("shift.week", () =>
+    ctx.api.get<{ shifts?: WeekShift[] }>(
+      `/api/v1/shifts/week?date=${addDays(ctx.realToday, 7)}`,
+      token,
+    ),
+  );
+  if (!week || week.status !== 200 || !Array.isArray(week.body.shifts)) return;
+  const personOf = new Map<string, string>();
+  for (const person of plan.persons) {
+    const id = state.persons[person.key]?.employeeId;
+    if (id) personOf.set(id, person.key);
+  }
+  const shifts = week.body.shifts
+    .map((s) => ({ ...s, date: String(s.date).slice(0, 10) }))
+    .filter((s) => s.date > ctx.realToday && personOf.has(s.employeeId));
+  for (const edit of planShiftEdits(shifts, ctx.rng("shift-edit", tenantKey))) {
+    const key = personOf.get(edit.shift.employeeId)!;
+    if (edit.kind === "MOVE") {
+      const res = await ctx.call("shift.edit", () =>
+        ctx.api.put(
+          `/api/v1/shifts/${edit.shift.id}`,
+          { startTime: edit.startTime, endTime: edit.endTime },
+          token,
+        ),
+      );
+      const known = ctx.progress.shifts[key]?.[edit.shift.date];
+      if (res?.status === 200 && known) {
+        known.start = edit.startTime;
+        known.end = edit.endTime;
+      }
+    } else {
+      const res = await ctx.call("shift.withdraw", () =>
+        ctx.api.delete(`/api/v1/shifts/${edit.shift.id}`, token),
+      );
+      if (res && res.status < 300 && ctx.progress.shifts[key]) {
+        delete ctx.progress.shifts[key][edit.shift.date];
+      }
+    }
+  }
+}
+
+/**
+ * The admin unlocks a closed previous month now and then (an unlock needs a reason); the month is
+ * closed again right away by `closeMonths`. The checker is told which months were touched.
+ */
+export async function unlockMonths(ctx: BotContext, tenantKey: SimTenantKey): Promise<void> {
+  const { plan, state } = ctx.tenant(tenantKey);
+  const { year, month } = previousMonth(ctx.day);
+  const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+  const candidates = plan.persons
+    .filter((p) => ctx.progress.closedMonths[`${tenantKey}|${p.key}|${monthKey}`])
+    .map((p) => p.key);
+  const chosen = planUnlocks(candidates, ctx.rng("unlock", tenantKey));
+  if (chosen.length === 0) return;
+  const admin = await ctx.sessionFor(state.adminEmail, state.adminPassword);
+  for (const personKey of chosen) {
+    const employeeId = state.persons[personKey].employeeId;
+    const res = await ctx.call("month.unlock", () =>
+      ctx.api.post(
+        "/api/v1/overtime/unlock-month",
+        { employeeId, year, month, reason: "Bot: Korrektur nach Rückfrage" },
+        admin.token,
+      ),
+    );
+    if (res?.status === 200) {
+      ctx.progress.unlocks.push({ tenant: tenantKey, employeeId, month: monthKey, date: ctx.day });
+      delete ctx.progress.closedMonths[`${tenantKey}|${personKey}|${monthKey}`];
     }
   }
 }

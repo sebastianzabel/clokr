@@ -141,6 +141,8 @@ describe("sim invariants (#715) - database checks prove themselves", () => {
         holidayMonths: [],
         intents: [],
         sampleEntryIds: [],
+        nachtraege: [],
+        unlocks: [],
         daysSimulated: ["2026-04-08", "2026-04-09"],
       },
       dayLogs: [],
