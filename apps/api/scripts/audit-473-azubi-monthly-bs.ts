@@ -76,14 +76,14 @@ export type Finding = {
   bsWorkdays: number;
   creditNowMinutes: number;
   storedBalanceMinutes: number;
-  locked: boolean;
+  closedAt: string; // ISO instant of the close that wrote the row
 };
 
 export function formatFindingLine(f: Finding): string {
   return (
     `finding tenantId=${f.tenantId} employeeId=${f.employeeId} snapshotId=${f.snapshotId} ` +
     `month=${f.month} bsWorkdays=${f.bsWorkdays} creditNowMinutes=${f.creditNowMinutes} ` +
-    `storedBalanceMinutes=${f.storedBalanceMinutes} locked=${f.locked}`
+    `storedBalanceMinutes=${f.storedBalanceMinutes} closedAt=${f.closedAt}`
   );
 }
 
@@ -146,7 +146,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
           periodStart: true,
           periodEnd: true,
           balanceMinutes: true,
-          isLocked: true,
+          closedAt: true,
         },
       });
 
@@ -217,7 +217,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
             bsWorkdays: workdays,
             creditNowMinutes: credit,
             storedBalanceMinutes: snap.balanceMinutes,
-            locked: snap.isLocked,
+            closedAt: snap.closedAt.toISOString(),
           }),
         );
       }

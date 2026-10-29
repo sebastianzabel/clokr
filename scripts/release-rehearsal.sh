@@ -136,8 +136,11 @@ restore() {
 }
 api() { # run a command inside the new api image against the throwaway DB (never the image's migrating entrypoint)
   # The config module validates these at import; the values are throwaway and only live in this container.
+  # MINIO_* are required in production since #184; the endpoint is unresolvable on purpose, so a step
+  # that really touches the object store fails loudly instead of reaching a real bucket.
   docker run --rm --network "$NET" -e DATABASE_URL="$DSN" -e NODE_ENV=production \
     -e JWT_SECRET="$RUNSECRET-jwt" -e JWT_REFRESH_SECRET="$RUNSECRET-refresh" -e ENCRYPTION_KEY="$RUNSECRET-enc" \
+    -e MINIO_ENDPOINT=rehearsal.invalid -e MINIO_ACCESS_KEY="$RUNSECRET-minio" -e MINIO_SECRET_KEY="$RUNSECRET-minio-secret" \
     --entrypoint sh "$IMAGE" -c "$1"
 }
 migrate() {
