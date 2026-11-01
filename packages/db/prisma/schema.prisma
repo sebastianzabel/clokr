@@ -118,6 +118,9 @@ model Salon {
   phorestSyncRuns     PhorestSyncRun[]
   // Phase 71b (issue #71): Prisma-only back-relation — manual holidays are now salon-scoped.
   publicHolidays      PublicHoliday[]
+  // Issue #541: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung, approved by
+  // #541 reaching Ready) — the NFC terminal keys bound to this salon.
+  terminalApiKeys     TerminalApiKey[]
 
   @@index([tenantId])
 }
@@ -1372,9 +1375,16 @@ model TerminalApiKey {
   lastUsedAt DateTime?
   revokedAt  DateTime?
   createdAt  DateTime  @default(now())
+  // Issue #541: optional binding of the terminal to ONE salon of its tenant. Nullable, no backfill
+  // (an unbound terminal keeps the salon rule of today). Tenant sameness is checked by the
+  // application because the database cannot express it; Restrict because revision-relevant
+  // references onto the Unterbau use Restrict.
+  salonId    String?
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  salon      Salon?    @relation(fields: [salonId], references: [id], onDelete: Restrict)
 
   @@index([tenantId])
+  @@index([salonId])
 }
 
 // ─────────────────────────────────────────────
