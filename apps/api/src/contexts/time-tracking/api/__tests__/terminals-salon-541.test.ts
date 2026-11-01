@@ -241,4 +241,135 @@ describe("Issue #541 — terminal key salon binding over HTTP", () => {
       expect(res.statusCode).toBe(403);
     });
   });
+
+  describe("GET /", () => {
+    function list(token: string) {
+      return app.inject({ method: "GET", url: "/api/v1/terminals", headers: auth(token) });
+    }
+
+    it("carries the flattened salon fields, null/null/null when unbound, no nested salon", async () => {
+      const unbound = await makeKey(own.tenant.id);
+      const bound = await makeKey(own.tenant.id, { salonId: salonA.id });
+      const res = await list(own.adminToken);
+      expect(res.statusCode).toBe(200);
+      const keys = JSON.parse(res.body).keys as Array<Record<string, unknown>>;
+      const u = keys.find((k) => k.id === unbound.id)!;
+      const b = keys.find((k) => k.id === bound.id)!;
+      expect([u.salonId, u.salonName, u.salonActive]).toEqual([null, null, null]);
+      expect([b.salonId, b.salonName, b.salonActive]).toEqual([salonA.id, salonA.name, true]);
+      for (const k of keys) expect(k).not.toHaveProperty("salon");
+      expect(Object.keys(b).sort()).toEqual(
+        [
+          "createdAt",
+          "id",
+          "keyPrefix",
+          "lastUsedAt",
+          "name",
+          "revokedAt",
+          "salonActive",
+          "salonId",
+          "salonName",
+        ].sort(),
+      );
+    });
+
+    it("shows salonActive false after the bound salon was deactivated, binding kept", async () => {
+      const salon = await createTestSalon(app.prisma, own.tenant.id, { name: "Hint 541" });
+      const key = await makeKey(own.tenant.id, { salonId: salon.id });
+      const off = await app.inject({
+        method: "POST",
+        url: `/api/v1/salons/${salon.id}/deactivate`,
+        headers: auth(own.adminToken),
+      });
+      expect(off.statusCode).toBe(200);
+      const keys = JSON.parse((await list(own.adminToken)).body).keys as Array<{
+        id: string;
+        salonId: string;
+        salonActive: boolean;
+      }>;
+      const item = keys.find((k) => k.id === key.id)!;
+      expect(item.salonId).toBe(salon.id);
+      expect(item.salonActive).toBe(false);
+    });
+  });
+
+  describe("POST /", () => {
+    function create(token: string, payload?: unknown) {
+      return app.inject({
+        method: "POST",
+        url: "/api/v1/terminals",
+        headers: auth(token),
+        payload: payload as Record<string, unknown> | undefined,
+      });
+    }
+    const keyCount = (tenantId: string) => app.prisma.terminalApiKey.count({ where: { tenantId } });
+
+    it("binds at once with salonId; the CREATE audit carries it", async () => {
+      const res = await create(own.adminToken, { name: "Bound 541", salonId: salonA.id });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.salonId).toBe(salonA.id);
+      expect(
+        (await app.prisma.terminalApiKey.findUniqueOrThrow({ where: { id: body.id } })).salonId,
+      ).toBe(salonA.id);
+      const row = await soleAuditRow(app.prisma, {
+        where: { entity: "TerminalApiKey", entityId: body.id, action: "CREATE" },
+      });
+      expect(row.newValue).toEqual({
+        name: "Bound 541",
+        keyPrefix: body.keyPrefix,
+        salonId: salonA.id,
+      });
+    });
+
+    it("an absent or null salonId creates an unbound key with today's audit shape", async () => {
+      for (const payload of [{ name: "Free 541" }, { name: "Free 541", salonId: null }]) {
+        const res = await create(own.adminToken, payload);
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.salonId).toBeNull();
+        const row = await soleAuditRow(app.prisma, {
+          where: { entity: "TerminalApiKey", entityId: body.id, action: "CREATE" },
+        });
+        expect(row.newValue).toEqual({ name: "Free 541", keyPrefix: body.keyPrefix });
+      }
+    });
+
+    it("a foreign and an unknown salon answer a byte-identical 404, no key created", async () => {
+      const before = await keyCount(own.tenant.id);
+      const f = await create(own.adminToken, { name: "X 541", salonId: foreignSalon.id });
+      const u = await create(own.adminToken, { name: "X 541", salonId: randomUUID() });
+      expect(f.statusCode).toBe(404);
+      expect(u.statusCode).toBe(404);
+      expect(f.body).toBe(u.body);
+      expect(f.body).toBe(NOT_FOUND_SALON);
+      expect(await keyCount(own.tenant.id)).toBe(before);
+    });
+
+    it("an inactive salon answers 400 SALON_INACTIVE, no key created", async () => {
+      const before = await keyCount(own.tenant.id);
+      const res = await create(own.adminToken, { name: "X 541", salonId: salonZ.id });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({
+        error: "Salon ist deaktiviert",
+        code: "SALON_INACTIVE",
+      });
+      expect(await keyCount(own.tenant.id)).toBe(before);
+    });
+
+    it("the module gate answers first for a Grundversion tenant", async () => {
+      const grundSalon = await createTestSalon(app.prisma, grund.tenant.id, { name: "G2 541" });
+      const before = await keyCount(grund.tenant.id);
+      const res = await create(grund.adminToken, { name: "X 541", salonId: grundSalon.id });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body).code).toBe("MODULE_NOT_BOOKED");
+      expect(await keyCount(grund.tenant.id)).toBe(before);
+    });
+
+    it("a missing body is a 400 Validierungsfehler", async () => {
+      const res = await create(own.adminToken);
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toBe("Validierungsfehler");
+    });
+  });
 });
