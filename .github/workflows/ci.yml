@@ -426,6 +426,13 @@ jobs:
         # in an operator script (a missing field handed to closeEmployeeMonth) was invisible.
         run: pnpm --filter @clokr/api typecheck:scripts
 
+      - name: Lint unknown Prisma keys (scripts and src)
+        # Issue #804: tsc accepts a nonexistent field in a Prisma select/include/where/orderBy/data
+        # as soon as one sibling key is valid (SelectSubset only maps top-level keys).
+        run: |
+          pnpm --filter @clokr/api run lint:prisma-unknown-keys
+          pnpm --filter @clokr/api run lint:prisma-unknown-keys -- -p tsconfig.json
+
       - name: Type check Web
         run: pnpm --filter @clokr/web typecheck
 
