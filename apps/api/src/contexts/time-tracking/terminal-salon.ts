@@ -80,7 +80,8 @@ export async function resolveTerminalPunch(
     "terminal_salon_retry_without_salon",
   );
   // Destructure the salon away: the retry event must have no `salonId` key, never `undefined`.
-  const { salonId: _terminalSalon, ...withoutSalon } = event;
+  const withoutSalon: ClockEvent = { ...event };
+  delete withoutSalon.salonId;
   return resolve(withoutSalon);
 }
 
