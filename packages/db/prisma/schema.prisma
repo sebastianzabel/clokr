@@ -29,6 +29,8 @@ model Tenant {
   // Issue #93 (Phase 93b) — support access grants of the operator for this tenant. Plural name on
   // purpose: the tenant-scoping model graph skips plural collections.
   supportAccesses SupportAccess[]
+  // Issue #608 — Prisma-only back-relation, push devices of this tenant's users.
+  pushSubscriptions PushSubscription[]
 
   // Phase 566 (#566) — booked packages per tenant. Unterbau-Erweiterung: additive, no existing reader
   // has to change. Written only by the operator and read only through
@@ -386,6 +388,8 @@ model User {
   notifications Notification[]
   // Phase 74b (issue #74) — role assignments held by this user
   roleAssignments RoleAssignment[]
+  // Issue #608 — Prisma-only back-relation, the devices this user opted into push on
+  pushSubscriptions PushSubscription[]
 }
 
 model RefreshToken {
@@ -398,6 +402,33 @@ model RefreshToken {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
+}
+
+// Issue #608 (Phase 608-01, D-03) — a web-push delivery address owned by a user (Unterbau-Erweiterung:
+// additive, no existing reader has to change). One row per browser subscription: the endpoint is the
+// push service's capability URL and p256dh/auth are the keys the payload is encrypted to, so none of the
+// three is ever returned, logged or audited. A row exists only after an explicit opt-in on that device
+// (consentedAt) and is hard-deleted on revoke, on a 404/410 from the push service and on DSGVO
+// anonymization - it is a transport address, not a retention-relevant record. The tenant FK is Restrict
+// (a tenant is deactivated, never deleted); the user FK is Cascade so a removed user takes the address
+// with it. No @updatedAt on purpose: nothing reads a modification time, lastSuccessAt is the signal.
+model PushSubscription {
+  id            String    @id @default(uuid())
+  tenantId      String
+  userId        String
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  deviceLabel   String
+  consentedAt   DateTime  @db.Timestamptz
+  lastSuccessAt DateTime? @db.Timestamptz
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
   @@index([userId])
 }
 

@@ -89,6 +89,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/__tests__/entry-lock-race-helpers.ts": "rahmen", // Issue #70 (Phase 70b-04) — test infra: holds the Employee writer lock while a request under test queues on it; no model of its own
   "src/__tests__/bulk-apply-helpers.ts": "rahmen", // Issue #568 — shared two-step bulk-apply test helper, no model
   "src/__tests__/population-fixtures-613.ts": "rahmen", // Issue #613 — shared fixture of the population tests (exited / login-deactivated / anonymised / late-hired persons); test infra, no model of its own
+  "src/__tests__/push-fixtures-608.ts": "rahmen", // Issue #608 — shared fixture of the web-push tests (test VAPID pair, push-enabled app builder, fake device subscription); test infra, no model of its own
   "src/__tests__/monthly-export-fixture-617.ts": "rahmen", // Issue #617 — shared nine-person fixture of the Monatsexport tests (closed/open months, every leave kind, § 9, exit, Azubi); test infra, no model of its own
   "src/__tests__/datev-rows.ts": "rahmen", // Issue #304 — shared parser of the DATEV LODAS file for tests; test infra, no model of its own
   "src/__tests__/legacy-role-migration-sql.ts": "rahmen", // Phase 75b (Issue #75) — test infra that runs the checked-in legacy-role data migration verbatim; no model of its own
@@ -131,6 +132,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/invitations.ts": "unterbau", // writes Invitation/User
   "src/contexts/platform/api/me.ts": "unterbau", // writes User only
   "src/contexts/platform/api/notifications.ts": "unterbau", // writes Notification only
+  "src/contexts/platform/api/me-push.ts": "unterbau", // Issue #608 (D-06): own-data routes for the person's push devices; PushSubscription is an Unterbau model, the route holds no Prisma call
   "src/contexts/platform/api/release-notes.ts": "unterbau", // app-wide, tenant-agnostic feature with no model; under src/routes/ so cannot be rahmen (#99: no route may be a fallthrough) — Unterbau is the closest fit as the shared, context-agnostic substrate
   "src/contexts/platform/api/role-assignments.ts": "unterbau", // Phase 74b (#74): role assignment with scope — reads/writes RoleAssignment and reads AccessRole/Salon/Employee/User, all Unterbau models
   "src/contexts/platform/api/roles.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
@@ -169,6 +171,12 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/month-first-date.ts": "unterbau", // WorkSchedule.validFrom month-1 rule — Unterbau's own model
   "src/contexts/platform/bulk-apply-defaults.ts": "unterbau", // Issue #568 — pure bulk-apply classifier over WorkSchedule/TenantConfig/Employee, Unterbau models
   "src/contexts/platform/notification-email-policy.ts": "unterbau", // per-type email-toggle registry for Notification — Unterbau's own model
+  "src/contexts/platform/notification-push-policy.ts": "unterbau", // Issue #608 (D-08, D-10): the push payload contract and per-type registry beside notification-email-policy.ts; no Prisma call
+  "src/contexts/platform/push-device-label.ts": "unterbau", // Issue #608 (D-03): closed-vocabulary device label from the User-Agent; pure module, no model
+  "src/contexts/platform/push-dispatch.ts": "unterbau", // Issue #608 (D-10): sends a push to a person's PushSubscription rows, an Unterbau model
+  "src/contexts/platform/push-endpoint-guard.ts": "unterbau", // Issue #608 (D-17): the push-service host allow-list; pure module, no model
+  "src/contexts/platform/push-sender.ts": "unterbau", // Issue #608 (D-10): the only importer of web-push; reads config, no model
+  "src/contexts/platform/push-subscriptions.ts": "unterbau", // Issue #608 (D-03, D-04): creates/audits PushSubscription rows, an Unterbau model
   "src/contexts/platform/password-policy.ts": "unterbau", // User/auth password rules
   "src/contexts/platform/permission-catalog.ts": "unterbau", // Phase 72b (Issue #72) — the permission catalog; ADR 0001 names permissions as part of the shared substrate, and the catalog has no model of its own
   "src/contexts/platform/permission-labels.ts": "unterbau", // Phase 83 (Issue #83) — the German labels of the permission catalog, the one place a permission is named for end users; no model, no Prisma call; served only by api/roles.ts (GET /roles/permission-catalog)
