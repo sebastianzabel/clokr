@@ -9,12 +9,13 @@
  *
  * This file is the ONE place of the rule. It holds the punch-side pre-check
  * ({@link terminalPunchSalon}) and the deactivation-race retry ({@link resolveTerminalPunch}); a
- * later plan of #541 adds the write-side check here. It reads the Unterbau only through `contexts/platform/index.ts`.
+ * write-side check ({@link validateTerminalSalon}) lives here too. It reads the Unterbau only through `contexts/platform/index.ts`.
  */
 import type { Prisma, TerminalApiKey } from "@clokr/db";
 import type { FastifyBaseLogger } from "fastify";
 import { findSalon } from "../platform";
 import type { ClockEvent, ClockResolution } from "../../services/clock/types";
+import { SALON_INACTIVE_BODY, SALON_NOT_FOUND_BODY } from "./entry-salon";
 
 /**
  * The salon the punch at `apiKey` must start its entry in, as a spreadable fragment of the
@@ -81,4 +82,32 @@ export async function resolveTerminalPunch(
   // Destructure the salon away: the retry event must have no `salonId` key, never `undefined`.
   const { salonId: _terminalSalon, ...withoutSalon } = event;
   return resolve(withoutSalon);
+}
+
+/** Outcome of {@link validateTerminalSalon}: the salon to bind, or the refusal to answer with. */
+export type TerminalSalonValidation =
+  | { ok: true; salonId: string; salonName: string }
+  | { ok: false; status: 404; body: typeof SALON_NOT_FOUND_BODY }
+  | { ok: false; status: 400; body: typeof SALON_INACTIVE_BODY };
+
+/**
+ * The write-side check of a terminal binding (Issue #541, D-02 revised): the salon must exist in
+ * the caller's tenant and be active.
+ *
+ * A foreign tenant's salon id and an id that exists nowhere take the same tenant-scoped
+ * {@link findSalon} path and answer the byte-identical 404 (no tenant-membership oracle); a
+ * deactivated salon of the own tenant answers 400 `SALON_INACTIVE`. There is deliberately no reach
+ * check: `terminal` is a MANDANT-relation resource, so its `ZUGEWIESEN` permission key is only ever
+ * held tenant-wide (`permission-catalog.ts`, `request-permissions.ts`) and a salon-narrowed caller
+ * cannot exist. The bodies are the ones of every other salon lookup (`entry-salon.ts`).
+ */
+export async function validateTerminalSalon(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  salonId: string,
+): Promise<TerminalSalonValidation> {
+  const salon = await findSalon(db, tenantId, salonId);
+  if (!salon) return { ok: false, status: 404, body: SALON_NOT_FOUND_BODY };
+  if (!salon.isActive) return { ok: false, status: 400, body: SALON_INACTIVE_BODY };
+  return { ok: true, salonId: salon.id, salonName: salon.name };
 }
