@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
  * `minio` calls `stringify` and nothing else — this file proves both halves, so a `minio`
  * upgrade that starts parsing turns the run red instead of breaking object storage at runtime.
  */
-const requireFromApi = createRequire(import.meta.url);
+const requireFromApi = createRequire(__filename);
 const minioEntry = requireFromApi.resolve("minio");
 const requireFromMinio = createRequire(minioEntry);
 
