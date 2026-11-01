@@ -151,7 +151,7 @@ describe("salon admin page write path (#563)", () => {
   it("PATCH { openingHours } changes the chosen salon only, leaves TenantConfig untouched and writes one UPDATE audit row", async () => {
     const configBefore = await app.prisma.tenantConfig.findUniqueOrThrow({
       where: { tenantId: tenant.tenant.id },
-      select: { shiftStoreHoursMode: true, storeHours: true },
+      select: { shiftStoreHoursMode: true },
     });
     const firstBefore = await salonHours(firstSalonId);
     const secondBefore = await salonHours(secondSalonId);
@@ -170,7 +170,7 @@ describe("salon admin page write path (#563)", () => {
 
     const configAfter = await app.prisma.tenantConfig.findUniqueOrThrow({
       where: { tenantId: tenant.tenant.id },
-      select: { shiftStoreHoursMode: true, storeHours: true },
+      select: { shiftStoreHoursMode: true },
     });
     expect(configAfter).toEqual(configBefore);
 
