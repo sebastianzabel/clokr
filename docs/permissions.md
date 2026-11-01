@@ -735,9 +735,9 @@ schlägt fehl, wenn er oder ein Rollenvergleich zurückkommt (D-19).
 | `contexts/time-tracking/api/day-breaks.ts:692`             | `DELETE /acks/:id`                              | A, M    | `time-entry:update`            | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/retro-entry-requests.ts:190`   | `GET /`                                         | A, M    | `retro-request:read`           | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/terminals.ts:33`               | `GET /`                                         | A       | `terminal:manage`              | ZUGEWIESEN                                   |
-| `contexts/time-tracking/api/terminals.ts:54`               | `POST /`                                        | A       | `terminal:manage`              | ZUGEWIESEN                                   |
-| `contexts/time-tracking/api/terminals.ts:158`              | `PATCH /:id`                                    | A       | `terminal:manage`              | ZUGEWIESEN                                   |
-| `contexts/time-tracking/api/terminals.ts:214`              | `DELETE /:id`                                   | A       | `terminal:manage`              | ZUGEWIESEN                                   |
+| `contexts/time-tracking/api/terminals.ts:49`               | `POST /`                                        | A       | `terminal:manage`              | ZUGEWIESEN                                   |
+| `contexts/time-tracking/api/terminals.ts:179`              | `PATCH /:id`                                    | A       | `terminal:manage`              | ZUGEWIESEN                                   |
+| `contexts/time-tracking/api/terminals.ts:235`              | `DELETE /:id`                                   | A       | `terminal:manage`              | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/time-entries.ts:1982`          | `PATCH /:id/revalidate`                         | A, M    | `time-entry:revalidate`        | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/time-entries.ts:2934`          | `GET /clock-salon`                              | A, M, E | `time-entry:create`            | ZUGEWIESEN oder EIGENE; eigene Uhr (#87)     |
 | `contexts/working-time-account/api/overtime.ts:245`        | `POST /plans`                                   | A, M    | `overtime:settle`              | ZUGEWIESEN                                   |
@@ -956,7 +956,7 @@ Genehmigungs-Permission hat, bleibt an sie gebunden:
   übrigen Scopes haben weiterhin keine Wirkung; ein Permission-System für API-Schlüssel ist nicht
   Teil von #75.
 - **Anmeldung der NFC-Terminals** mit einem eigenen Terminal-Schlüssel
-  (`contexts/time-tracking/api/terminals.ts:95`). Das ist Geräte-Authentifizierung, keine
+  (`contexts/time-tracking/api/terminals.ts:136`). Das ist Geräte-Authentifizierung, keine
   Berechtigung einer Person; verwaltet werden die Schlüssel über `terminal:manage`.
 - **Die Abfragen, die Benachrichtigungsempfänger auswählen.** Sie treffen keine
   Zugriffsentscheidung über den Aufrufer — sie wählen aus, wer eine Nachricht bekommt. Bis zu ihrer

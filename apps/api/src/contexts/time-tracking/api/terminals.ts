@@ -37,16 +37,11 @@ export async function terminalRoutes(app: FastifyInstance) {
       const keys = await app.prisma.terminalApiKey.findMany({
         where: { tenantId: req.user.tenantId },
         orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          name: true,
-          keyPrefix: true,
-          lastUsedAt: true,
-          revokedAt: true,
-          createdAt: true,
-        },
+        select: TERMINAL_LIST_SELECT,
       });
-      return { keys };
+      // Issue #541 (D-04): flattened salon fields; `salonActive: false` is the list hint for a
+      // binding that points to a since-deactivated salon.
+      return { keys: keys.map(toTerminalListItem) };
     },
   });
 
@@ -54,10 +49,23 @@ export async function terminalRoutes(app: FastifyInstance) {
   app.post("/", {
     schema: { tags: ["Terminals"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("terminal:manage:ZUGEWIESEN"),
-    handler: async (req) => {
-      const body = z.object({ name: z.string().min(1).max(100) }).parse(req.body);
+    handler: async (req, reply) => {
+      const body = z
+        .object({
+          name: z.string().min(1).max(100),
+          // Issue #541 (D-03): optional binding at creation; absent and null both mean unbound.
+          salonId: z.string().uuid().nullable().optional(),
+        })
+        .parse(req.body);
       // D-05: setting up a NEW terminal needs the module; existing keys, revoke and punching stay free (Issue #566).
       await assertModuleBooked(app.prisma, req.user.tenantId, "HARDWARE_CLOCK");
+      // Issue #541 (D-03): validated after the module gate and before the create.
+      let boundSalonId: string | null = null;
+      if (typeof body.salonId === "string") {
+        const validation = await validateTerminalSalon(app.prisma, req.user.tenantId, body.salonId);
+        if (!validation.ok) return reply.code(validation.status).send(validation.body);
+        boundSalonId = validation.salonId;
+      }
       const rawKey = `clk_${randomBytes(32).toString("hex")}`;
       const keyHash = hashKey(rawKey);
       const keyPrefix = rawKey.substring(0, 12) + "...";
@@ -68,6 +76,7 @@ export async function terminalRoutes(app: FastifyInstance) {
           name: body.name,
           keyHash,
           keyPrefix,
+          ...(boundSalonId !== null ? { salonId: boundSalonId } : {}),
         },
       });
 
@@ -79,11 +88,23 @@ export async function terminalRoutes(app: FastifyInstance) {
         action: "CREATE",
         entity: "TerminalApiKey",
         entityId: key.id,
-        newValue: { name: body.name, keyPrefix },
+        // The salon appears only when bound, so an unbound create keeps its pre-#541 audit shape.
+        newValue: {
+          name: body.name,
+          keyPrefix,
+          ...(boundSalonId !== null ? { salonId: boundSalonId } : {}),
+        },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
-      return { id: key.id, name: key.name, keyPrefix, rawKey, createdAt: key.createdAt };
+      return {
+        id: key.id,
+        name: key.name,
+        keyPrefix,
+        rawKey,
+        createdAt: key.createdAt,
+        salonId: key.salonId,
+      };
     },
   });
 
