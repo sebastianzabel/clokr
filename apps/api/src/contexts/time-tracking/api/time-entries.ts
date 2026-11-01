@@ -31,7 +31,7 @@ import {
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
 import { resolveEntrySalon, SALON_NOT_FOUND_BODY, SALON_INACTIVE_BODY } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
-import { terminalPunchSalon } from "../terminal-salon"; // Issue #541 (D-05) — the terminal's bound salon
+import { resolveTerminalPunch, terminalPunchSalon } from "../terminal-salon"; // Issue #541 (D-05) — the terminal's bound salon
 import { clockSalonChoice } from "../clock-salon-choice"; // Issue #87 (Phase 87b-03), D-02/D-11 — the one clock-salon decision
 import { entryDurations } from "../entry-durations"; // Phase 79 (Issue #79), D-06/D-14 — per-entry presence/working time
 import { activityKindSchema, activitySharesSchema } from "../activity-kind"; // Issue #81 (D-06)
@@ -486,7 +486,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         ...terminalSalon,
       };
 
-      const resolution = await resolveClockEvent(app, event, req);
+      const resolution = await resolveTerminalPunch(
+        event,
+        (e) => resolveClockEvent(app, e, req),
+        app.log,
+        apiKey.id,
+      );
 
       if (resolution.kind === "CONFLICT") {
         if (resolution.reason === "LEAVE_APPROVED") {
