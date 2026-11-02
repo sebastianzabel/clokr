@@ -19,6 +19,7 @@ import { leaveTypeFields } from "../contexts/absence/leave-type";
 import {
   DEFAULT_SALON_OPENING_HOURS,
   findDefaultSalon,
+  isAnonymizedEmployee,
   SYSTEM_ROLE_IDS,
   type SalonOpeningHours,
 } from "../contexts/platform";
@@ -364,6 +365,34 @@ export async function grantSystemRole(
     select: { id: true },
   });
   return row.id;
+}
+
+/**
+ * Release B (#641, D-16): reproduces the eligibility of the 75b data migration
+ * (`..._system_roles_and_legacy_role_assignments`) for exactly the listed fixture users, with the
+ * role the fixture DECLARES (the value it used to write into the dropped role column), so the
+ * neutrality fixtures no longer execute SQL that reads that column. A listed user receives one
+ * stored TENANT assignment only when it has an Employee, that Employee is not DSGVO-anonymized
+ * and the user holds no assignment row at all - rule by rule what the migration's INSERT selected.
+ * Unlike the migration it writes no SYSTEM audit row: no neutrality recording names one
+ * (measured). Returns the ids of the rows it created, in the order of `users`.
+ */
+export async function grantLegacyMigrationRoles(
+  prisma: Prisma.TransactionClient,
+  users: readonly { userId: string; role: LegacySystemRoleName }[],
+): Promise<string[]> {
+  const created: string[] = [];
+  for (const { userId, role } of users) {
+    const employee = await prisma.employee.findUnique({
+      where: { userId },
+      select: { tenantId: true, firstName: true, lastName: true },
+    });
+    if (employee === null || isAnonymizedEmployee(employee)) continue;
+    const existing = await prisma.roleAssignment.count({ where: { userId } });
+    if (existing > 0) continue;
+    created.push(await grantSystemRole(prisma, { tenantId: employee.tenantId, userId, role }));
+  }
+  return created;
 }
 
 /**
