@@ -82,4 +82,36 @@ describe("Issue #608: push surface off (VAPID unset)", () => {
       expect(res.statusCode, url).toBe(200);
     }
   });
+
+  it("sends nothing from notify() even when a device row exists (no keys, no push)", async () => {
+    sendNotificationMock.mockReset();
+    const sub = fakeDeviceSubscription();
+    await app.prisma.pushSubscription.create({
+      data: {
+        tenantId: seed.tenant.id,
+        userId: seed.empUser.id,
+        endpoint: sub.endpoint,
+        p256dh: sub.keys.p256dh,
+        auth: sub.keys.auth,
+        deviceLabel: "Chrome auf Android",
+        consentedAt: new Date(),
+      },
+    });
+    await app.notify({
+      userId: seed.empUser.id,
+      type: "LEAVE_REQUEST",
+      title: "t",
+      message: "m",
+      tenantId: seed.tenant.id,
+    });
+    await app.settlePushDispatch();
+    expect(sendNotificationMock).not.toHaveBeenCalled();
+    // The in-app notification is created regardless.
+    expect(
+      await app.prisma.notification.count({
+        where: { userId: seed.empUser.id, type: "LEAVE_REQUEST" },
+      }),
+    ).toBeGreaterThan(0);
+    await app.prisma.pushSubscription.deleteMany({ where: { tenantId: seed.tenant.id } });
+  });
 });

@@ -352,4 +352,60 @@ describe("Issue #608 tracer: subscribe a device, send the neutral test push", ()
     });
     expect(res.statusCode).toBe(400);
   });
+
+  it("POST /test reports SENT, REMOVED (410, row gone) and FAILED (403, row kept) per device", async () => {
+    await app.prisma.pushSubscription.deleteMany({ where: { userId: seed.empUser.id } });
+    const make = async (label: string) => {
+      const sub = fakeDeviceSubscription();
+      const row = await app.prisma.pushSubscription.create({
+        data: {
+          tenantId: seed.tenant.id,
+          userId: seed.empUser.id,
+          endpoint: sub.endpoint,
+          p256dh: sub.keys.p256dh,
+          auth: sub.keys.auth,
+          deviceLabel: label,
+          consentedAt: new Date(),
+        },
+      });
+      return { row, sub };
+    };
+    const ok = await make("Chrome auf Android");
+    const gone = await make("Firefox auf Android");
+    const refused = await make("Safari auf iPhone");
+    sendNotificationMock.mockImplementation(async (target: { endpoint: string }) => {
+      if (target.endpoint === gone.sub.endpoint) {
+        throw Object.assign(new Error("gone"), { statusCode: 410, endpoint: target.endpoint });
+      }
+      if (target.endpoint === refused.sub.endpoint) {
+        throw Object.assign(new Error("forbidden"), { statusCode: 403, endpoint: target.endpoint });
+      }
+      return { statusCode: 201 };
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/me/push/test",
+      headers: auth(seed.empToken),
+      remoteAddress: nextIp(),
+    });
+    expect(res.statusCode).toBe(200);
+    const outcomes = Object.fromEntries(
+      (res.json().devices as Array<{ id: string; outcome: string }>).map((d) => [d.id, d.outcome]),
+    );
+    expect(outcomes).toEqual({
+      [ok.row.id]: "SENT",
+      [gone.row.id]: "REMOVED",
+      [refused.row.id]: "FAILED",
+    });
+    expect(await app.prisma.pushSubscription.findUnique({ where: { id: gone.row.id } })).toBeNull();
+    expect(
+      await app.prisma.pushSubscription.findUnique({ where: { id: refused.row.id } }),
+    ).not.toBeNull();
+    const audit = await soleAuditRow(app.prisma, {
+      where: { entity: "PushSubscription", entityId: gone.row.id, action: "DELETE" },
+    });
+    expect(audit.newValue).toMatchObject({ reason: "EXPIRED_BY_PUSH_SERVICE" });
+    expect(JSON.stringify(res.json())).not.toContain(gone.sub.endpoint);
+  });
 });
