@@ -6,7 +6,7 @@
 
 1. **Admin → Mitarbeiter → + Mitarbeiter anlegen**
 2. Pflichtfelder: Vorname, Nachname, E-Mail, Rolle, Eintrittsdatum
-3. Optional: Personalnummer, Bundesland (für Feiertage), Arbeitszeitmodell
+3. Optional: Personalnummer, Arbeitszeitmodell
 4. Nach dem Speichern wird automatisch eine Einladungs-E-Mail versandt
 
 ### Arbeitszeitmodelle
@@ -253,13 +253,13 @@ Details zu rechtlichen Aufbewahrungsfristen, Anonymisierungs-Verhalten, ArbZG-Pr
 
 **Admin → Allgemein**:
 
-| Einstellung     | Beschreibung                                      |
-| --------------- | ------------------------------------------------- |
-| Theme           | Erscheinungsbild (Pflaume, Nacht, Wald, Schiefer) |
-| Bundesland      | Bestimmt gesetzliche Feiertage                    |
-| Zeitzone        | Zuordnung von Zeitstempeln                        |
-| 2FA             | E-Mail-OTP bei Login aktivieren                   |
-| Session-Timeout | Automatische Abmeldung nach Inaktivität           |
-| Account-Lockout | Sperrung nach X Fehlversuchen                     |
-| SMTP            | E-Mail-Versand konfigurieren                      |
-| API-Schlüssel   | Programmatischer Zugriff für externe Tools        |
+| Einstellung     | Beschreibung                                                                             |
+| --------------- | ---------------------------------------------------------------------------------------- |
+| Theme           | Erscheinungsbild (Pflaume, Nacht, Wald, Schiefer)                                        |
+| Bundesland      | Vorgabe für neu angelegte Salons (Feiertage richten sich nach dem Bundesland des Salons) |
+| Zeitzone        | Zuordnung von Zeitstempeln                                                               |
+| 2FA             | E-Mail-OTP bei Login aktivieren                                                          |
+| Session-Timeout | Automatische Abmeldung nach Inaktivität                                                  |
+| Account-Lockout | Sperrung nach X Fehlversuchen                                                            |
+| SMTP            | E-Mail-Versand konfigurieren                                                             |
+| API-Schlüssel   | Programmatischer Zugriff für externe Tools                                               |
