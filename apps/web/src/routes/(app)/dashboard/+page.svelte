@@ -18,7 +18,8 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick, untrack } from "svelte";
-  import { goto } from "$app/navigation"; // Issue #588 (P-11): a bar of the saldo card opens a person
+  import { goto, afterNavigate, replaceState } from "$app/navigation"; // Issue #588 (P-11): a bar of the saldo card opens a person; #609: reminder arrival
+  import { page } from "$app/stores"; // Issue #609: the ?clock=1 reminder parameter
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
@@ -85,6 +86,12 @@
     type ClockInAction,
     type ClockSalonChoice,
   } from "$lib/dashboard/clock-salon"; // Issue #87, #70
+  import {
+    clockReminderAction,
+    clockReminderDialog,
+    stripClockParam,
+    type ClockReminderAction,
+  } from "$lib/dashboard/clock-reminder"; // Issue #609 (D-09, D-14)
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
   import { salonContext } from "$stores/salon-context"; // Issue #84 (D-01)
@@ -265,12 +272,16 @@
   let clockSalonId = $state<string | null>(null);
   let dayKind = $derived(day.kind);
   let clockSalonViewState = $derived(clockSalonView(clockSalon, dayKind));
+  // Issue #609: true once the first salon-choice load has answered (also with null on a failure),
+  // so a reminder arrival never judges "salon choice required" before it is known.
+  let clockSalonLoaded = $state(false);
   $effect(() => {
     void dayKind;
     untrack(() => {
       void loadClockSalonChoice().then((choice) => {
         clockSalon = choice;
         clockSalonId = initialClockSalonSelection(choice);
+        clockSalonLoaded = true;
       });
     });
   });
@@ -1036,6 +1047,85 @@
     }
   }
 
+  // ── Shift reminder arrival (Issue #609, D-09/D-14, AC-4) ───────────────────
+  // A tap on a start/end reminder (push or bell) navigates to /dashboard?clock=1. That parameter
+  // only OPENS a confirmation: nothing is sent before the person confirms, and the stamp is the
+  // unchanged handleClock() above. `afterNavigate` counts every arrival, including a goto() on an
+  // already mounted dashboard (the service worker's navigate message, the bell), and it only
+  // fires once the router is ready - which is what makes the replaceState below safe.
+  let clockArrival = $state(0);
+  let clockHandledArrival = $state(-1);
+  let clockReminderOpen = $state(false);
+  let clockReminderPending = $state<"confirm-in" | "confirm-out" | null>(null);
+  afterNavigate(() => {
+    clockArrival += 1;
+  });
+
+  // `loading` here means "the page cannot decide yet": data, salon choice or router not ready.
+  let clockReminderWaiting = $derived(loading || !clockSalonLoaded || clockArrival === 0);
+  let clockReminderTexts = $derived(
+    clockReminderPending ? clockReminderDialog(clockReminderPending, currentTime) : null,
+  );
+
+  function bringClockCardIntoView() {
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    document
+      .querySelector(".timer-card")
+      ?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    document
+      .querySelector<HTMLSelectElement>(".clock-salon-select")
+      ?.focus({ preventScroll: true });
+  }
+
+  async function settleClockReminder(action: ClockReminderAction, url: URL) {
+    if (action === "confirm-in" || action === "confirm-out") {
+      clockReminderPending = action;
+      clockReminderOpen = true;
+    } else if (action === "focus-card") {
+      await tick();
+      bringClockCardIntoView();
+    }
+    // Deferred past the current update: never a synchronous router call from the effect itself.
+    await tick();
+    replaceState(stripClockParam(url), $page.state);
+  }
+
+  $effect(() => {
+    const param = $page.url.searchParams.get("clock");
+    const arrival = clockArrival;
+    const action = clockReminderAction({
+      param,
+      loading: clockReminderWaiting,
+      isExempt,
+      dayKind: day.kind,
+      clockInBlocked: clockInBlocked(clockSalonViewState, clockSalonId),
+    });
+    // Without the parameter this is not a reminder arrival; "wait" re-runs when the page is ready.
+    if (param !== "1" || action === "wait") return;
+    untrack(() => {
+      if (arrival === clockHandledArrival) return;
+      clockHandledArrival = arrival;
+      void settleClockReminder(action, $page.url);
+    });
+  });
+
+  // The confirmation re-derives the action from the LIVE state: a state change between opening
+  // and confirming (clocked out elsewhere, day finished) never stamps the opposite (P-609-21).
+  async function confirmClockReminder() {
+    const live = clockReminderAction({
+      param: "1",
+      loading: false,
+      isExempt,
+      dayKind: day.kind,
+      clockInBlocked: clockInBlocked(clockSalonViewState, clockSalonId),
+    });
+    if (live !== clockReminderPending) {
+      toasts.info("Dein Stempelstatus hat sich inzwischen geändert.");
+      return;
+    }
+    await handleClock();
+  }
+
   // ── Deliberate re-clock-in on a finished day (Phase 115, issue #118) ──────
   // The server maps this to REOPEN (state-machine.ts:18-22) — the gap since the recorded
   // clock-out becomes a Break row. That consequence is named in the dialog before anything
@@ -1675,6 +1765,16 @@
           confirmLabel="Erneut einstempeln"
           cancelLabel="Abbrechen"
           onConfirm={confirmReopen}
+        />
+        <!-- Issue #609 (AC-4): the confirmation behind a shift reminder tap. Inside {#if !isExempt} for
+             the same reason as the reopen dialog; it stamps only through the unchanged handleClock(). -->
+        <ConfirmDialog
+          bind:open={clockReminderOpen}
+          title={clockReminderTexts?.title ?? ""}
+          description={clockReminderTexts?.description}
+          confirmLabel={clockReminderTexts?.confirmLabel ?? "Bestätigen"}
+          cancelLabel="Abbrechen"
+          onConfirm={confirmClockReminder}
         />
       {/if}
       <!-- /timer-card (Phase 76.7: wrapped in {#if !isExempt}) -->
