@@ -5,12 +5,12 @@
  * A row is a delivery address owned by a user and exists only after an explicit opt-in on that
  * device. The endpoint (a capability URL) and both keys are never returned, logged or audited: the
  * API shows a device by `endpointHash`, the audit row names `deviceLabel` and `consentedAt` only.
- * Tenant and user come from the caller's token, never from the body. Plan 02 adds the
- * existing-endpoint branches, list, delete and the per-person cap.
+ * Tenant and user come from the caller's token, never from the body.
  */
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { PushSubscription } from "@clokr/db";
+import { uniqueViolationTarget } from "../../utils/prisma-unique-violation";
 import { deviceLabelFromUserAgent } from "./push-device-label";
 
 export type ApiPushDevice = {
@@ -51,21 +51,121 @@ export type SubscribeInput = {
   request: AuditRequest;
 };
 
-export type SubscribeResult = { kind: "CREATED"; device: ApiPushDevice } | { kind: "CONFLICT" };
+export type SubscribeResult =
+  | { kind: "CREATED"; device: ApiPushDevice }
+  | { kind: "UPDATED"; device: ApiPushDevice }
+  | { kind: "REFUSED"; code: PushSubscribeRefusal };
 
+/** The two refusals of a registration; the route words them, the service decides them. */
+export type PushSubscribeRefusal = "PUSH_ENDPOINT_CONFLICT" | "PUSH_DEVICE_LIMIT";
+
+/** At most this many devices per person (P-608-08, anti-abuse). */
+export const MAX_PUSH_DEVICES_PER_USER = 10;
+
+/** Thrown inside the transaction when a concurrent writer changed the endpoint's row under us. */
+class EndpointRaceError extends Error {}
+
+/** Constant-time equality of two key strings (the auth secret is compared here). */
+function sameKey(a: string, b: string): boolean {
+  return timingSafeEqual(
+    createHash("sha256").update(a).digest(),
+    createHash("sha256").update(b).digest(),
+  );
+}
+
+function isEndpointRace(err: unknown): boolean {
+  if (err instanceof EndpointRaceError) return true;
+  const target = uniqueViolationTarget(err);
+  return target !== null && target.includes("PushSubscription_endpoint_key");
+}
+
+/**
+ * Registers a device. The endpoint is unique in the table, so there are never two rows per browser
+ * subscription (D-05, P-608-07):
+ *  - unknown endpoint: a new row (subject to the per-person cap);
+ *  - same person again: the one row is updated (keys, label, consent date);
+ *  - another person on the same browser: re-assigned, but only when the presented keys equal the
+ *    stored ones;
+ *  - another person with different keys: refused, nothing written.
+ * A unique-violation race with a concurrent writer re-runs the whole transaction once.
+ */
 export async function subscribeDevice(
   app: FastifyInstance,
   input: SubscribeInput,
 ): Promise<SubscribeResult> {
-  const existing = await app.prisma.pushSubscription.findUnique({
-    where: { endpoint: input.endpoint },
-    select: { id: true },
-  });
-  if (existing) return { kind: "CONFLICT" };
+  try {
+    return await subscribeOnce(app, input);
+  } catch (err) {
+    if (!isEndpointRace(err)) throw err;
+    return subscribeOnce(app, input); // a second race is rethrown to the caller
+  }
+}
 
+async function subscribeOnce(
+  app: FastifyInstance,
+  input: SubscribeInput,
+): Promise<SubscribeResult> {
   const deviceLabel = deviceLabelFromUserAgent(input.userAgent);
   const consentedAt = new Date();
-  const row = await app.prisma.$transaction(async (tx) => {
+  const auditValue = { deviceLabel, consentedAt: consentedAt.toISOString() };
+
+  return app.prisma.$transaction(async (tx): Promise<SubscribeResult> => {
+    const existing = await tx.pushSubscription.findUnique({ where: { endpoint: input.endpoint } });
+
+    // (b) The same person registers the same browser again: one row, refreshed.
+    if (existing && existing.userId === input.userId) {
+      const updated = await tx.pushSubscription.update({
+        where: { id: existing.id },
+        data: { p256dh: input.p256dh, auth: input.auth, deviceLabel, consentedAt },
+      });
+      await app.audit({
+        userId: input.userId,
+        action: "UPDATE",
+        entity: "PushSubscription",
+        entityId: updated.id,
+        newValue: auditValue,
+        request: input.request,
+        tx,
+      });
+      return { kind: "UPDATED", device: toApiDevice(updated) };
+    }
+
+    // (d) Another person's endpoint. Knowing the URL is not enough to take it over: a browser
+    // subscription is the endpoint together with its key pair, so a caller who really holds this
+    // subscription (a shared phone, a second login in the same browser) presents the same
+    // p256dh and auth. Anyone who only learned the URL cannot, and is refused without any write.
+    if (
+      existing &&
+      !(sameKey(existing.p256dh, input.p256dh) && sameKey(existing.auth, input.auth))
+    ) {
+      return { kind: "REFUSED", code: "PUSH_ENDPOINT_CONFLICT" };
+    }
+
+    // (a) and (c): a new row for this person, so the cap applies before anything is written.
+    const owned = await tx.pushSubscription.count({ where: { userId: input.userId } });
+    if (owned >= MAX_PUSH_DEVICES_PER_USER) return { kind: "REFUSED", code: "PUSH_DEVICE_LIMIT" };
+
+    // (c) Re-assignment: the old owner's row goes, traceable in the old owner's tenant.
+    if (existing) {
+      const { count } = await tx.pushSubscription.deleteMany({ where: { id: existing.id } });
+      if (count === 0) throw new EndpointRaceError();
+      await app.audit({
+        action: "DELETE",
+        entity: "PushSubscription",
+        entityId: existing.id,
+        oldValue: {
+          deviceLabel: existing.deviceLabel,
+          consentedAt: existing.consentedAt.toISOString(),
+        },
+        newValue: {
+          reason: "REASSIGNED",
+          actor: { type: "SYSTEM", tenantId: existing.tenantId },
+        },
+        request: input.request,
+        tx,
+      });
+    }
+
     const created = await tx.pushSubscription.create({
       data: {
         tenantId: input.tenantId,
@@ -82,13 +182,12 @@ export async function subscribeDevice(
       action: "CREATE",
       entity: "PushSubscription",
       entityId: created.id,
-      newValue: { deviceLabel, consentedAt: consentedAt.toISOString() },
+      newValue: auditValue,
       request: input.request,
       tx,
     });
-    return created;
+    return { kind: "CREATED", device: toApiDevice(created) };
   });
-  return { kind: "CREATED", device: toApiDevice(row) };
 }
 
 // ── List and remove (own devices only) ───────────────────────────────────────

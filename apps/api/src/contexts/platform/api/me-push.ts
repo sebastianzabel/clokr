@@ -15,7 +15,12 @@ import { API_KEY_SUBJECT_PREFIX } from "../access-context";
 import { isAllowedPushEndpoint, pushEndpointHost } from "../push-endpoint-guard";
 import { sendTestPush } from "../push-dispatch";
 import { pushConfiguration } from "../push-sender";
-import { listOwnDevices, removeOwnDevice, subscribeDevice } from "../push-subscriptions";
+import {
+  listOwnDevices,
+  removeOwnDevice,
+  subscribeDevice,
+  type PushSubscribeRefusal,
+} from "../push-subscriptions";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -44,6 +49,11 @@ const removeBodySchema = z.union([
   z.object({ endpoint: z.string().min(1).max(2048) }).strict(),
   z.object({ id: z.string().uuid() }).strict(),
 ]);
+
+const REFUSAL_TEXT: Record<PushSubscribeRefusal, string> = {
+  PUSH_ENDPOINT_CONFLICT: "Dieses Gerät ist bereits für ein anderes Konto eingerichtet.",
+  PUSH_DEVICE_LIMIT: "Du hast bereits 10 Geräte für Push eingerichtet. Entferne zuerst ein Gerät.",
+};
 
 const NO_DEVICES_FOR_API_KEYS = "API-Keys haben keine Push-Geräte";
 
@@ -107,13 +117,10 @@ export async function mePushRoutes(app: FastifyInstance) {
         userAgent: req.headers["user-agent"],
         request: req,
       });
-      if (result.kind === "CONFLICT") {
-        return reply.code(409).send({
-          error: "Dieses Gerät ist bereits für Push eingerichtet.",
-          code: "PUSH_ENDPOINT_CONFLICT",
-        });
+      if (result.kind === "REFUSED") {
+        return reply.code(409).send({ error: REFUSAL_TEXT[result.code], code: result.code });
       }
-      return reply.code(201).send(result.device);
+      return reply.code(result.kind === "CREATED" ? 201 : 200).send(result.device);
     },
   });
 
