@@ -906,8 +906,9 @@ delegate reached through a variable. Production `findFirst` (dedupe lookups) is 
 Since Phase 75b every access decision in the API asks for a catalog permission —
 `requirePermission` / `requireAnyPermission` (route guards), `hasPermission` / `permissionReach`
 (handler checks) and `userIdsHoldingPermission` (notification recipients), all from
-`contexts/platform`. The legacy role (`User.role`, the JWT claim `role`) survives only as a compat
-field for the frontend until #539. This gate keeps role checks from coming back (D-19, AC-75-2).
+`contexts/platform`. The legacy role column `User.role`, the Prisma enum `Role` and the JWT claim `role`
+no longer exist (#539 Release A, #641 Release B); the role of a person lives only in stored role
+assignments. This gate keeps role checks from coming back (D-19, AC-75-2).
 
 **What is flagged** (AST via `ts.createSourceFile` — comments and string literals never count), in
 every `.ts` file under `apps/api/src` outside `__tests__/` and `*.test.ts`:

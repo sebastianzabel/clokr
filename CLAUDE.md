@@ -196,7 +196,7 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **Documents**: Absence documentPath → null
 - **§ 9-Vorgänge**: Section9Credit documentPath → null, reason → null (Zeilen bleiben erhalten — Korrektureintrag nach R7)
 - **Auth tokens**: Invitations, OTP, RefreshTokens are hard-deleted (not retention-relevant)
-- **Role assignments** (Phase 74b, #74): the user's `RoleAssignment` rows are hard-deleted inside the anonymization transaction, each with a `DELETE` audit entry (`newValue.reason` "Anonymisierung"); person-scope lists that contain the employee's id stay unchanged (ids only — the resolution ignores anonymized targets). `User.role` IS rewritten to EMPLOYEE in the same update as `isActive: false` (Issue #357 sub-fix C, revises Phase 75b D-14, #75) and stays so while the column exists: it used to be the legacy-role fallback a still-valid access token resolved through, which handed a self-anonymizing MANAGER/ADMIN's live token full rights for the rest of its lifetime — the exact gap #357's security review reported. Since #539 (Release A) a user without a stored assignment holds nothing anyway, so the rewrite is defence in depth for a rollback to the previous image. Two neutrality cells changed on purpose (`DELETE /api/v1/employees/:id | foreign` for ADMIN and FALLBACK_ADMIN, 204→403) and are recorded as an amendment (`contexts/platform/anonymize.ts`, `apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json`, ADR 0001-abweichungen Eintrag N).
+- **Role assignments** (Phase 74b, #74): the user's `RoleAssignment` rows are hard-deleted inside the anonymization transaction, each with a `DELETE` audit entry (`newValue.reason` "Anonymisierung"); person-scope lists that contain the employee's id stay unchanged (ids only — the resolution ignores anonymized targets). Since Release B (#641) there is no `User.role` column to rewrite: the person holds nothing after anonymization because the `RoleAssignment` rows are gone (hard-deleted in the anonymization transaction, each with a `DELETE` audit) and `isActive` is `false` (the #357 sub-fix C rewrite of the column to EMPLOYEE went with the column). Two neutrality cells changed on purpose (`DELETE /api/v1/employees/:id | foreign` for ADMIN and FALLBACK_ADMIN, 204→403) and are recorded as an amendment (`contexts/platform/anonymize.ts`, `apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json`, ADR 0001-abweichungen Eintrag N).
 - **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount, `ParentalLeaveReduction` rows (no free text, nothing to anonymize — Issue #468) (for retention compliance)
 - **Employment ends (Issue #614)**: `exitDate` ← the tenant-local day of the anonymization when it was empty (an existing one, past or future, stays) plus the #447 exit-year entitlement sync. Absences after the exit day: requests starting after it are cancelled with the reversals of a cancellation approval, requests spanning it are shortened to it through the `/correct` core (`contexts/absence/leave-correction.ts`), pending ones are re-priced, Berufsschule rows are soft-deleted. Closed months, active § 17 BEEG reductions, active § 9 credits and corrections the core refuses are skipped and listed (ids and codes) in the ANONYMIZE audit. The rule lives only in `contexts/absence/employment-exit.ts`, reached through the `app.absenceExit` decoration; per-row audits carry `auditReason` "Anonymisierung", `trigger: "ANONYMIZATION"` and no free text. "Bevorstehende Urlaube" never lists an anonymized person. Persons anonymized before #614 are listed by `scripts/audit-614-anonymized-employment.ts` (read-only, ids only) and corrected by `scripts/backfill-666-anonymized-employment.ts` (Issue #666, owner decision 17.10.2026: dry run by default, `--confirm` writes; sets the missing exit date from the tenant-local day of the ANONYMIZE audit, runs the same `app.absenceExit` rule with the marker `trigger: "BACKFILL_666"` / `auditReason` „Bestandskorrektur #666“, restores the employee number from the audit `oldValue` unless it is missing or taken by another employee — those are only reported; runbook `docs/migrations.md` „Phase 666“).
 - **Free texts of persons anonymized before #718 (Issue #774)**: `scripts/backfill-774-anonymized-freetext.ts` clears them with the same helpers `anonymizeEmployeeData()` uses (dry run by default = the helpers rolled back, `--confirm` writes; one audit row per person, counts only, `trigger: "BACKFILL_774"` / `auditReason` „Bestandskorrektur #774“; runbook `docs/migrations.md` „Phase 774“).
@@ -1140,7 +1140,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - Plugin files: single named export — `export const fooPlugin = fp(async (app) => { ... })`
 - Store files: single named export — `export const authStore = createAuthStore()`
 - `@clokr/db`: Prisma client + generated types — imported as `import { PrismaClient } from "@clokr/db"`
-- `@clokr/types`: Shared TypeScript interfaces — imported as `import { Role } from "@clokr/types"`
+- `@clokr/types`: Shared TypeScript interfaces — imported as `import type { FederalState } from "@clokr/types"`
 
 ## Configuration Pattern
 
@@ -1545,24 +1545,24 @@ without a stored assignment holds nothing, and an active account whose effective
 empty is refused at sign-in with 403 `NO_ROLE_ASSIGNED` (login, verify-otp and refresh). No token
 carries a `role` claim any more (an old token that still has one is ignored — proven by
 `token-claims-539.test.ts`), the login body has no `user.role`, and `actorRole` is no longer written
-to new leave audit rows. `User.role` is only a **rollback-safety column derived from the user's role
-assignments** — written back by `deriveCompatRole()` in
-`apps/api/src/contexts/platform/compat-role.ts` after every assignment change (so a rollback to the
-previous image finds consistent values), and read by exactly two documented readers, pinned by
-`legacy-role-reads-539.test.ts`: the write-back comparison of
-`syncCompatRoleColumn` (D-06) and the takeover script. (The third reader, the company-PDF role
-filter D-12, is gone since #617 removed that PDF; `parseCompatRoleFilter` and `compatRoleUserWhere`
-stay exported without a caller until Release B, #641. The guard's `ALLOWED_READERS` never counted D-12, so
-its pin needed no change.) The employee form's role is derived from the
-stored assignments (`null` shows „Keine Rolle zugewiesen“). Before deploying Release A to any
-instance, run `apps/api/scripts/backfill-539-role-assignments.ts` (dry run, then `--confirm` when it
-lists users; runbook: `docs/migrations.md` „Phase 539“). Column and enum go with Release B
-(#641). A role comparison, a `requireRole(` call or a Prisma `where` on a role value in
-non-test `apps/api/src` fails CI and `.husky/pre-commit`:
+to new leave audit rows. Since Release B (#641) the column `User.role` and the Prisma enum `Role` no
+longer exist (migration `*_drop_user_role`, one-way; rollback only by restoring a backup, see
+`docs/migrations.md` „Phase 641“): the role lives only in stored role assignments. The requested role
+of the employee form, `POST /employees` and the CSV import (the API contract stays
+`"ADMIN" | "MANAGER" | "EMPLOYEE"`) is the type `SystemRoleName` of
+`apps/api/src/contexts/platform/system-role-assignment.ts` and only ever becomes a stored TENANT
+assignment; the employee responses serve the DERIVED `user.role` (`deriveFormRole()`, `null` without an
+assignment, shown as „Keine Rolle zugewiesen“). Nothing is written back to a column any more, so a role
+change writes its `RoleAssignment` audit rows without `compatRole` and no UPDATE row on `User`; audit
+rows written before Release B keep theirs (append-only). `legacy-role-reads-539.test.ts` keeps its
+reader allowlist asserted EMPTY. A role comparison, a `requireRole(` call or a Prisma `where` on a role
+value in non-test `apps/api/src` fails CI and `.husky/pre-commit` — in every file, there is no
+allowlisted file and no exceptions file; a comparison of a request payload's role lives in a helper typed
+`SystemRoleName` and is classified in `docs/permissions.md` („Nicht gezählte Treffer“):
 
 | Source                                                                                                | What it governs                                                                                                                                 |
 | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api/scripts/lint-role-checks.ts`                                                                | The gate itself — AST scan, the single allowlisted file `contexts/platform/compat-role.ts`, no exceptions file                                  |
+| `apps/api/scripts/lint-role-checks.ts`                                                                | The gate itself — AST scan over every non-test API file, no allowlisted file, no exceptions file                                                |
 | `docs/permissions.md`                                                                                 | Every guard, handler check and recipient lookup with its permission; `permission-site-mapping.test.ts` compares counts and permissions per file |
 | `apps/api/src/__tests__/permission-neutrality-matrix.test.ts` + `neutrality/recorded/matrix.json`     | Every route × eight actors, recorded on the code BEFORE the switch                                                                              |
 | `notification-recipients-neutrality.test.ts` / `activity-auth-neutrality.test.ts` + `recorded/*.json` | The 17 recipient lookups; activity feed and login role, same rule                                                                               |
@@ -1603,7 +1603,7 @@ a hit is converted, never excepted.
   (`admin-route-permissions.test.ts` fails otherwise). Page-internal role checks that change content
   are #538; the fallback is gone since #539 Release A (owner decision, Unterbau Semantikänderung), the web session
   carries no role and the employee screen shows „Keine Rolle zugewiesen“ for a person without an assignment;
-  dropping the column and the enum is Release B (#641).
+  the column and the enum are gone (Release B, #641).
 - **System-role templates change only through a NEW data-only migration plus the constant (Issue
   #86).** Never edit the migration that created a template: add a migration (`UPDATE "AccessRole"`,
   `IS DISTINCT FROM` guard) and change `SYSTEM_ROLE_PERMISSIONS` in
