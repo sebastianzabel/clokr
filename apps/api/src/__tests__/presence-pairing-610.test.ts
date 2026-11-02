@@ -98,7 +98,7 @@ describe("WLAN pairing tracer (Issue #610)", () => {
     expect(listBody.devices).toHaveLength(1);
     expect(listBody.devices[0]).toMatchObject({
       mac,
-      label: "iPhone von Test",
+      label: expect.stringMatching(/^Handy \(QR-Kopplung, \d{2}\.\d{2}\.\d{4}\)$/),
       pairedVia: "QR",
       lastSeenAt: null,
     });
@@ -133,6 +133,21 @@ describe("WLAN pairing tracer (Issue #610)", () => {
       pairedVia: "QR",
       presenceSourceId: sourceId,
     });
+
+    // WR-05: the DHCP hostname is preview-only; it is in no device label and in no audit value.
+    const storedDevice = await app.prisma.presenceDevice.findUniqueOrThrow({
+      where: { id: confirmedBody.device.id },
+    });
+    expect(storedDevice.label).toMatch(/^Handy \(QR-Kopplung, \d{2}\.\d{2}\.\d{4}\)$/);
+    expect(JSON.stringify(deviceAudits)).not.toContain("iPhone von Test");
+    expect(confirmed.body).not.toContain("iPhone von Test");
+    const allAudits = await app.prisma.auditLog.findMany({
+      where: {
+        entity: { in: ["PresenceDevice", "Employee"] },
+        entityId: { in: [confirmedBody.device.id, data.employee.id] },
+      },
+    });
+    expect(JSON.stringify(allAudits)).not.toContain("iPhone von Test");
 
     // ── the stored row: consumed, attributed, and never holding the raw code ─
     const row = await app.prisma.presencePairingCode.findFirstOrThrow({

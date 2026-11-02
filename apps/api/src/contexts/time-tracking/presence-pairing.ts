@@ -15,6 +15,7 @@ import { Prisma } from "@clokr/db";
 import type { PrismaClient } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
 import { uniqueViolationTarget } from "../../utils/prisma-unique-violation";
+import { getTenantTimezone } from "../working-time-account";
 import {
   PAIRING_CODE_PATTERN,
   PAIRING_CODE_TTL_MS,
@@ -223,7 +224,6 @@ interface LockedCodeRow {
   id: string;
   presenceSourceId: string;
   mac: string;
-  hostname: string | null;
   expiresAt: Date;
   consumedAt: Date | null;
 }
@@ -253,12 +253,29 @@ export async function confirmPairing(
   }
 }
 
+/**
+ * The label of a QR-paired device: neutral and date-only. The DHCP hostname a phone announces
+ * ("Annas-iPhone") often carries the owner's first name and is machine-supplied, so it is never copied
+ * into `PresenceDevice.label` or an audit value (review WR-05). It stays on the short-lived pairing-code
+ * row for the preview only.
+ */
+export function neutralQrDeviceLabel(at: Date, timeZone: string): string {
+  const date = new Intl.DateTimeFormat("de-DE", {
+    timeZone,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(at);
+  return `Handy (QR-Kopplung, ${date})`;
+}
+
 async function confirmInTransaction(
   app: FastifyInstance,
   input: ConfirmPairingInput,
   codeHash: string,
 ): Promise<ConfirmPairingResult> {
   const { tenantId, employeeId, userId, request } = input;
+  const timeZone = await getTenantTimezone(app.prisma, tenantId);
   return app.prisma.$transaction(async (tx): Promise<ConfirmPairingResult> => {
     const now = input.now ?? new Date();
 
@@ -268,7 +285,7 @@ async function confirmInTransaction(
 
     // (2) the code row, locked for the claim
     const rows = await tx.$queryRaw<LockedCodeRow[]>(
-      Prisma.sql`SELECT id, "presenceSourceId", mac, hostname, "expiresAt", "consumedAt"
+      Prisma.sql`SELECT id, "presenceSourceId", mac, "expiresAt", "consumedAt"
         FROM "PresencePairingCode"
         WHERE "codeHash" = ${codeHash} AND "tenantId" = ${tenantId}
         FOR UPDATE`,
@@ -340,7 +357,11 @@ async function confirmInTransaction(
       if (existing) {
         device = await tx.presenceDevice.update({
           where: { id: existing.id, tenantId, employeeId },
-          data: { pairedVia: "QR", addedAt: now, label: existing.label ?? row.hostname },
+          data: {
+            pairedVia: "QR",
+            addedAt: now,
+            label: existing.label ?? neutralQrDeviceLabel(now, timeZone),
+          },
           select: deviceSelect,
         });
         status = 200;
@@ -360,7 +381,7 @@ async function confirmInTransaction(
             tenantId,
             employeeId,
             mac: row.mac,
-            label: row.hostname,
+            label: neutralQrDeviceLabel(now, timeZone),
             addedByUserId: userId,
             pairedVia: "QR",
           },

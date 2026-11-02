@@ -6754,6 +6754,11 @@ die aufgezeichneten Neutralitätsmatrizen und die festgenagelten WLAN-Tests sind
   ihn protokollieren. Die API-Anfrageprotokolle nie, weil Vorschau und Bestätigung den Code im Körper nehmen.
 - **Netzwerk (D-15, P-610-23):** Ein Gast-WLAN mit Geräteisolation, ein offenes WLAN (rotierende private Adresse) und Docker-
   Aufbauten, die die Quelladresse verdecken, funktionieren nicht; das Laufbuch führt die Prüfung auf dem echten Host.
+- **Gerätename nur in der Vorschau (Review WR-05):** Der vom Handy gemeldete DHCP-Name („Annas-iPhone“) steht nur in der
+  kurzlebigen Codezeile (nach einem Tag gelöscht) und in der Vorschau. `PresenceDevice.label` und alle Audit-Werte der Kopplung
+  tragen den neutralen Namen „Handy (QR-Kopplung, TT.MM.JJJJ)“. Bekannte Grenze, kein neuer Umfang: Die Audit-Zeilen der
+  Entität `PresenceDevice` tragen die MAC-Adresse (gleich wie bei der manuellen Zuordnung) und werden bei der Anonymisierung
+  nicht geschwärzt (nur `Employee` und `User`, COMP-V1814-01); nur `userId` wird auf null gesetzt.
 - **IP-, ARP- und MAC-Fälschung im Salon-LAN (Review WR-04):** Wer im Salon-LAN eine fremde feste IP-Adresse setzt oder per
   ARP-Fälschung auftritt, wird von der Box unter dieser IP aufgelöst; wer seine eigene MAC fälscht, koppelt die gefälschte
   Adresse. Das ist der Weg für „eine MAC meiner Wahl“ durch einen Innentäter und lässt sich ohne Netzwerkauthentifizierung
