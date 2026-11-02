@@ -125,7 +125,20 @@ describe("shift start reminder - the registries (D-08)", () => {
 });
 
 describe("shift start reminder - entries around the shift (AC-1, D-04, D-07)", () => {
-  it("sends nothing when a valid closed entry started at 08:30", async () => {
+  it("sends nothing when a valid closed entry was still running at the shift start (08:30-09:20)", async () => {
+    const p = await personWithShift();
+    await createEntry(
+      app,
+      tenant,
+      p.employeeId,
+      localInstant(TEST_DAY, "08:30"),
+      localInstant(TEST_DAY, "09:10"),
+    );
+    await tick(TEST_DAY, "09:15");
+    expect(await remindersOf(app, p.userId)).toHaveLength(0);
+  });
+
+  it("sends when the only valid closed entry ended before the shift start (08:30-08:50, WR-04)", async () => {
     const p = await personWithShift();
     await createEntry(
       app,
@@ -135,10 +148,10 @@ describe("shift start reminder - entries around the shift (AC-1, D-04, D-07)", (
       localInstant(TEST_DAY, "08:50"),
     );
     await tick(TEST_DAY, "09:15");
-    expect(await remindersOf(app, p.userId)).toHaveLength(0);
+    expect(await remindersOf(app, p.userId, START)).toHaveLength(1);
   });
 
-  it("sends when the only valid entry started at 06:30, more than two hours before", async () => {
+  it("sends when the only valid entry is the early one of 06:30-06:50", async () => {
     const p = await personWithShift();
     await createEntry(
       app,
@@ -317,5 +330,38 @@ describe("an open entry of an earlier day is not 'clocked in' (WR-03)", () => {
     await createEntry(app, tenant, p.employeeId, localInstant(TEST_DAY, "06:00"), null);
     await tick(TEST_DAY, "09:15");
     expect(await remindersOf(app, p.userId)).toHaveLength(0);
+  });
+});
+
+describe("split shifts: an earlier closed entry does not silence the second shift (WR-04)", () => {
+  it("sends the start reminder of shift B (13:00) although the entry of shift A (11:30-12:30) is closed", async () => {
+    const p = await addPerson(app, tenant);
+    await createShift(app, tenant, p.employeeId, TEST_DAY, "11:30", "12:30");
+    const b = await createShift(app, tenant, p.employeeId, TEST_DAY, "13:00", "17:00");
+    await createEntry(
+      app,
+      tenant,
+      p.employeeId,
+      localInstant(TEST_DAY, "11:30"),
+      localInstant(TEST_DAY, "12:30"),
+    );
+    await tick(TEST_DAY, "13:15");
+    const notice = await soleNotification(app.prisma, { where: { userId: p.userId, type: START } });
+    expect(notice.relatedId).toBe(b.id);
+  });
+
+  it("control: an entry that is still running at the start of B silences it", async () => {
+    const p = await addPerson(app, tenant);
+    await createShift(app, tenant, p.employeeId, TEST_DAY, "11:30", "12:30");
+    await createShift(app, tenant, p.employeeId, TEST_DAY, "13:00", "17:00");
+    await createEntry(
+      app,
+      tenant,
+      p.employeeId,
+      localInstant(TEST_DAY, "11:30"),
+      localInstant(TEST_DAY, "13:05"),
+    );
+    await tick(TEST_DAY, "13:15");
+    expect(await remindersOf(app, p.userId, START)).toHaveLength(0);
   });
 });

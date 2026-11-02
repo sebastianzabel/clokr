@@ -262,3 +262,40 @@ describe("an open entry of an earlier day does not trigger the end reminder (WR-
     expect(await remindersOf(app, p.userId, END)).toHaveLength(1);
   });
 });
+
+describe("split shifts: a gap of up to 60 minutes means the first shift's end stays silent (WR-04)", () => {
+  it("sends no end reminder for shift A (ends 13:00) when B starts at 13:30, but one for B at its end", async () => {
+    const p = await addPerson(app, tenant);
+    await createShift(app, tenant, p.employeeId, TEST_DAY, "09:00", "13:00");
+    const b = await createShift(app, tenant, p.employeeId, TEST_DAY, "13:30", "17:00");
+    await createEntry(app, tenant, p.employeeId, localInstant(TEST_DAY, "08:58"), null);
+    await tick(TEST_DAY, "13:15");
+    expect(await remindersOf(app, p.userId, END)).toHaveLength(0);
+
+    await tick(TEST_DAY, "17:15");
+    const notice = await soleNotification(app.prisma, { where: { userId: p.userId, type: END } });
+    expect(notice.relatedId).toBe(b.id);
+  });
+
+  it("control: B starting 90 minutes after A's end does not silence A's end reminder", async () => {
+    const p = await addPerson(app, tenant);
+    const a = await createShift(app, tenant, p.employeeId, TEST_DAY, "09:00", "13:00");
+    await createShift(app, tenant, p.employeeId, TEST_DAY, "14:30", "18:00");
+    await createEntry(app, tenant, p.employeeId, localInstant(TEST_DAY, "08:58"), null);
+    await tick(TEST_DAY, "13:15");
+    const notice = await soleNotification(app.prisma, { where: { userId: p.userId, type: END } });
+    expect(notice.relatedId).toBe(a.id);
+  });
+
+  it("a following shift that is flagged as a leave conflict does not silence it", async () => {
+    const p = await addPerson(app, tenant);
+    const a = await createShift(app, tenant, p.employeeId, TEST_DAY, "09:00", "13:00");
+    await createShift(app, tenant, p.employeeId, TEST_DAY, "13:30", "17:00", {
+      conflictsWithLeave: true,
+    });
+    await createEntry(app, tenant, p.employeeId, localInstant(TEST_DAY, "08:58"), null);
+    await tick(TEST_DAY, "13:15");
+    const notice = await soleNotification(app.prisma, { where: { userId: p.userId, type: END } });
+    expect(notice.relatedId).toBe(a.id);
+  });
+});

@@ -420,8 +420,16 @@ async function runTenant(
       offsetMinutes: offset,
       now,
       entries: entriesOf.get(shift.employeeId) ?? [],
+      // A shift that is not worked (flagged as a leave conflict, or silent that day) cannot follow
+      // this one: the person is not expected to keep working for it (WR-04).
       otherShifts: parsed
-        .filter((o) => o.shift.employeeId === shift.employeeId && o.shift.id !== shift.id)
+        .filter(
+          (o) =>
+            o.shift.employeeId === shift.employeeId &&
+            o.shift.id !== shift.id &&
+            !o.shift.conflictsWithLeave &&
+            exclusionOf(o) === null,
+        )
         .map((o) => ({ startUtc: o.startUtc, endUtc: o.endUtc })),
       exclusion: exclusionOf(candidate),
     });

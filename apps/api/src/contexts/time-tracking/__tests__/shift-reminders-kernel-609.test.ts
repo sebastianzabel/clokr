@@ -7,7 +7,6 @@
 import { describe, it, expect } from "vitest";
 import { fromZonedTime } from "date-fns-tz";
 import {
-  START_LOOKBACK_MINUTES,
   clampReminderOffset,
   dayCloseInstant,
   dayCloseLink,
@@ -232,17 +231,44 @@ describe("decideShiftStart (AC-1, D-04, D-07)", () => {
     });
   });
 
-  it("does not send when a valid entry started within the two hours before the shift", () => {
-    const entries = [entry(minutesBefore(90), minutesBefore(60))];
-    expect(decideShiftStart({ ...base, entries })).toEqual({
-      send: false,
-      reason: "ENTRY_STARTED",
+  describe("a closed entry silences the start only while it was running at the shift start (WR-04)", () => {
+    it("an entry clocked in early and still running at the start silences it", () => {
+      const entries = [entry(minutesBefore(10), at("2026-11-10", "12:00"))];
+      expect(decideShiftStart({ ...base, entries })).toEqual({
+        send: false,
+        reason: "ENTRY_STARTED",
+      });
     });
-  });
 
-  it("counts the exact look-back bound as started", () => {
-    const entries = [entry(minutesBefore(START_LOOKBACK_MINUTES), minutesBefore(100))];
-    expect(decideShiftStart({ ...base, entries }).send).toBe(false);
+    it("a late clock-in that was already clocked out again silences it", () => {
+      const entries = [entry(at("2026-11-10", "09:05"), at("2026-11-10", "09:10"))];
+      expect(decideShiftStart({ ...base, entries })).toEqual({
+        send: false,
+        reason: "ENTRY_STARTED",
+      });
+    });
+
+    it("an entry that ended after start - 5 min counts, one ending exactly at start - 5 min does not", () => {
+      const ended = (m: number) => [entry(minutesBefore(90), minutesBefore(m))];
+      expect(decideShiftStart({ ...base, entries: ended(4) }).send).toBe(false);
+      expect(decideShiftStart({ ...base, entries: ended(5) })).toEqual({ send: true });
+    });
+
+    it("the reviewer's split shift: A 11:30-12:30 worked, B 13:00 is not silenced by A's entry", () => {
+      const b = {
+        startUtc: at("2026-11-10", "13:00"),
+        shiftDays: ["2026-11-10"],
+        offsetMinutes: 15,
+        now: at("2026-11-10", "13:15"),
+      };
+      const entries = [entry(at("2026-11-10", "11:30"), at("2026-11-10", "12:30"))];
+      expect(decideShiftStart({ ...b, entries })).toEqual({ send: true });
+    });
+
+    it("a closed entry that ended well before the shift does not silence it", () => {
+      const entries = [entry(minutesBefore(90), minutesBefore(60))];
+      expect(decideShiftStart({ ...base, entries })).toEqual({ send: true });
+    });
   });
 
   it("sends when the only entry started more than two hours before the shift", () => {
@@ -370,9 +396,42 @@ describe("decideShiftEnd (AC-2, D-04, D-07, P-609-06)", () => {
         reason: "NEXT_SHIFT_ADJACENT",
       });
     });
-    it("starting one minute after end + N is not adjacent", () => {
+    it("starting one minute after end + N but within 60 minutes after the end is still followed (WR-04)", () => {
       const otherShifts = [other("17:16", "21:00")];
-      expect(decideShiftEnd({ ...base, entries, otherShifts })).toEqual({ send: true });
+      expect(decideShiftEnd({ ...base, entries, otherShifts })).toEqual({
+        send: false,
+        reason: "NEXT_SHIFT_ADJACENT",
+      });
+    });
+    it("starting exactly 60 minutes after the end is followed, 61 minutes is not (WR-04)", () => {
+      expect(
+        decideShiftEnd({ ...base, entries, otherShifts: [other("18:00", "21:00")] }).send,
+      ).toBe(false);
+      expect(decideShiftEnd({ ...base, entries, otherShifts: [other("18:01", "21:00")] })).toEqual({
+        send: true,
+      });
+    });
+    it("the reviewer's split shift: A ends 13:00, B starts 13:30, A's end at 13:15 stays silent (WR-04)", () => {
+      const a = {
+        startUtc: at("2026-11-10", "09:00"),
+        endUtc: at("2026-11-10", "13:00"),
+        shiftDays: ["2026-11-10"],
+        offsetMinutes: N,
+        now: at("2026-11-10", "13:15"),
+      };
+      const open = [entry(at("2026-11-10", "08:58"), null)];
+      expect(
+        decideShiftEnd({ ...a, entries: open, otherShifts: [other("13:30", "17:00")] }),
+      ).toEqual({ send: false, reason: "NEXT_SHIFT_ADJACENT" });
+    });
+    it("with a large offset the end window start still decides (N = 120)", () => {
+      const wide = { ...base, offsetMinutes: 120, now: at("2026-11-10", "19:00") };
+      expect(
+        decideShiftEnd({ ...wide, entries, otherShifts: [other("18:59", "22:00")] }).send,
+      ).toBe(false);
+      expect(decideShiftEnd({ ...wide, entries, otherShifts: [other("19:01", "22:00")] })).toEqual({
+        send: true,
+      });
     });
     it("an overlapping shift (starts before the end, ends after) is adjacent", () => {
       const otherShifts = [other("16:00", "20:00")];

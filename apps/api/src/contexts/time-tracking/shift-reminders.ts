@@ -16,8 +16,22 @@ import { fromZonedTime } from "date-fns-tz";
 export const REMINDER_WINDOW_MINUTES = 60;
 /** The evening reminder is due for this long after the tenant's evening time (D-04). */
 export const DAY_CLOSE_WINDOW_MINUTES = 30;
-/** An entry that started up to this long before the shift start counts as "already clocked in" (D-04). */
+/**
+ * An OPEN entry that started up to this long before the shift start counts as clocked in for that
+ * shift even when it belongs to the previous calendar day (an early clock-in across midnight, WR-03).
+ */
 export const START_LOOKBACK_MINUTES = 120;
+/**
+ * A CLOSED entry silences the START reminder only if it was still running within this long before
+ * the shift start (it ended after `start - 5 min`): the person is working or has just worked. An
+ * earlier entry, e.g. of a previous split shift, says nothing about this one (WR-04).
+ */
+export const START_RUNNING_GRACE_MINUTES = 5;
+/**
+ * The END reminder is silent when another shift of the same person starts within this long after
+ * this shift's end: a split shift whose gap is spent clocked in (WR-04).
+ */
+export const END_FOLLOWED_GAP_MINUTES = 60;
 
 export const DEFAULT_REMINDER_OFFSET_MINUTES = 15;
 export const MIN_REMINDER_OFFSET_MINUTES = 5;
@@ -247,8 +261,9 @@ export interface StartDecisionInput {
  *
  * Due in `[start + N, start + N + 60 min)`. Not sent while a valid OPEN entry of the shift's day
  * exists (this also covers an open entry of an adjacent earlier shift; one from an earlier day does
- * not count, WR-03), nor when a valid entry started within
- * `[start - 2 h, now]` - the person clocked in early or has already worked and left.
+ * not count, WR-03), nor when a valid CLOSED entry was still running at the shift start (it ended
+ * after `start - 5 min`) - the person clocked in early and left, or clocked in late and left again.
+ * A closed entry that ended before that (an earlier split shift) does not count (WR-04).
  */
 export function decideShiftStart(input: StartDecisionInput): ReminderDecision {
   const opens = new Date(input.startUtc.getTime() + input.offsetMinutes * MINUTE_MS);
@@ -261,13 +276,13 @@ export function decideShiftStart(input: StartDecisionInput): ReminderDecision {
   if (valid.some((e) => e.endTime === null && openEntryBelongsToShift(e, shift))) {
     return { send: false, reason: "CLOCKED_IN" };
   }
-  const lookbackFrom = input.startUtc.getTime() - START_LOOKBACK_MINUTES * MINUTE_MS;
+  const runningFrom = input.startUtc.getTime() - START_RUNNING_GRACE_MINUTES * MINUTE_MS;
   const nowMs = input.now.getTime();
-  const started = valid.some((e) => {
-    const t = e.startTime.getTime();
-    return t >= lookbackFrom && t <= nowMs;
-  });
-  if (started) return { send: false, reason: "ENTRY_STARTED" };
+  const worked = valid.some(
+    (e) =>
+      e.endTime !== null && e.endTime.getTime() > runningFrom && e.startTime.getTime() <= nowMs,
+  );
+  if (worked) return { send: false, reason: "ENTRY_STARTED" };
   return { send: true };
 }
 
@@ -297,9 +312,10 @@ export interface EndDecisionInput {
  *
  * Due in `[end + N, end + N + 60 min)`. Sent only while a valid OPEN entry of the shift's day that
  * started before the shift end exists (an open entry of an earlier day is a forgotten clock-out and
- * does not trigger it, WR-03) - an entry opened after the end is not nagged, a closed day is done. A shift that
- * is directly followed (the other starts at or before `end + N` and ends after this end) gets none:
- * the person is expected to keep working and the last shift's notice covers the evening.
+ * does not trigger it, WR-03) - an entry opened after the end is not nagged, a closed day is done.
+ * A shift that is followed (another shift of the person starts at or before `end + N`, or within
+ * 60 minutes after this end, and ends after this end) gets none: the person is expected to keep
+ * working and the last shift's notice covers the evening (WR-04).
  */
 export function decideShiftEnd(input: EndDecisionInput): ReminderDecision {
   const opens = new Date(input.endUtc.getTime() + input.offsetMinutes * MINUTE_MS);
@@ -317,9 +333,11 @@ export function decideShiftEnd(input: EndDecisionInput): ReminderDecision {
       openEntryBelongsToShift(e, shift),
   );
   if (!stillIn) return { send: false, reason: "NO_OPEN_ENTRY" };
-  const opensMs = opens.getTime();
+  // Followed: another shift starts at or before the end window opens, or within 60 minutes after
+  // this end (a split shift with a gap the person spends clocked in), and runs past this end.
+  const followedUntil = Math.max(opens.getTime(), endMs + END_FOLLOWED_GAP_MINUTES * MINUTE_MS);
   const followed = input.otherShifts.some(
-    (o) => o.startUtc.getTime() <= opensMs && o.endUtc.getTime() > endMs,
+    (o) => o.startUtc.getTime() <= followedUntil && o.endUtc.getTime() > endMs,
   );
   if (followed) return { send: false, reason: "NEXT_SHIFT_ADJACENT" };
   return { send: true };
