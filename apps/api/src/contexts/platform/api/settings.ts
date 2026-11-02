@@ -222,6 +222,16 @@ const tenantConfigSchema = z
     reminderUpcomingAbsenceDays: z.number().int().min(1).max(30).optional(),
     reminderPendingLeaveEnabled: z.boolean().optional(),
     reminderUpcomingAbsenceEnabled: z.boolean().optional(),
+    // Shift reminders (Issue #609, D-01): three occasions, all off by default (existing tenants
+    // keep their behaviour). The offset is bounded to 5-120 minutes, the evening time is HH:MM.
+    reminderShiftStartEnabled: z.boolean().optional(),
+    reminderShiftEndEnabled: z.boolean().optional(),
+    reminderDayCloseEnabled: z.boolean().optional(),
+    reminderOffsetMinutes: z.number().int().min(5).max(120).optional(),
+    reminderDayCloseTime: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .optional(),
     // DATEV Lohnartennummern (Phase 4 — DATEV-03)
     datevNormalstundenNr: z.number().int().min(1).max(9999).optional(),
     datevUrlaubNr: z.number().int().min(1).max(9999).optional(),
@@ -762,6 +772,11 @@ export async function settingsRoutes(app: FastifyInstance) {
         reminderUpcomingAbsenceDays: 3,
         reminderPendingLeaveEnabled: true,
         reminderUpcomingAbsenceEnabled: true,
+        reminderShiftStartEnabled: false,
+        reminderShiftEndEnabled: false,
+        reminderDayCloseEnabled: false,
+        reminderOffsetMinutes: 15,
+        reminderDayCloseTime: "20:00",
         datevNormalstundenNr: 100,
         datevUrlaubNr: 300,
         datevKrankNr: 200,
