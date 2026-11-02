@@ -983,7 +983,8 @@ import { readFileSync } from "node:fs";
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #715: +1 file (sim-invariants-715.test.ts, 8 cases), source-counted on the base 736/11029.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
-const MIN_FILES = 750;
+// Issue #820: +3 files (anonymization-audit-mac-820, audit-mac-writers-820, audit-820-anonymized-audit-macs), +13 cases; source-counted on the base 750/11081.
+const MIN_FILES = 753;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1082,7 +1083,7 @@ const MIN_FILES = 750;
 // Issue #638: tests removed with the dropped storeHours column (salon-migration -2, operator-salons-89 -1,
 // settings-store-hours-retired-563 -4); full run measured 753 files / 11091 tests, still above both floors, so no
 // floor is lowered.
-const MIN_TESTS = 11081;
+const MIN_TESTS = 11094;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

@@ -47,6 +47,8 @@
  *   - AuditLog old/new value free text → "[ausgeblendet]" by TYPE for rows authored by the user or
  *     naming the employee (Issue #512, `audit-freetext-redaction.ts`; who/when/what and every
  *     figure stay, rows are never deleted)
+ *   - AuditLog old/new value device MAC addresses → "[ausgeblendet]" for the person's rows (Issue #820,
+ *     `audit-mac-redaction.ts`, by key/shape, rows stay)
  *   - Notification.title/message → "ANONYMIZED" (for the user's own notifications)
  *   - RoleAssignment: every row of the user is hard-deleted (Phase 74b, D-22 — an anonymized
  *     person must not hold rights, and a leftover row would block deleting its role). The
@@ -92,13 +94,19 @@
  * are expected to validate that before opening the transaction.
  */
 import type { Prisma } from "@clokr/db";
-import { clearEntryNotesForEmployee, deletePresenceDevicesOfEmployee } from "../time-tracking"; // Phase 100B Plan 08 — T10
+import {
+  clearEntryNotesForEmployee,
+  deletePresenceDevicesOfEmployee,
+  listPresenceDevices,
+  timeEntryIdsOfEmployee,
+} from "../time-tracking"; // Phase 100B Plan 08 — T10; Issue #820
 import { anonymizeSection9CreditsForEmployee } from "../absence"; // Phase 100B Plan 11 — T-100B-48
 import { anonymizeAbsencesForEmployee } from "../absence"; // Phase 100B Plan 12 — F3
 import { anonymizeLeaveRequestsForEmployee } from "../absence"; // Phase 100B Plan 13 — F3
 import { clearSchedulingNotesForEmployee } from "../scheduling"; // Issue #718
 import { clearOvertimePlanNotesForEmployee } from "../working-time-account"; // Issue #718
 import { redactAuditFreeTextOfPerson, type AuditRedactionResult } from "./audit-freetext-redaction"; // Issue #512
+import { redactMacAuditOfPerson, type MacAuditResult } from "./audit-mac-redaction"; // Issue #820
 import { removeRoleAssignmentsOfUser, type RemovedRoleAssignment } from "./facade/role-assignments";
 // Phase 101B (Issue #101, Nachtrag 2026-09-17): the two sentinel `where` fragments lifted out of
 // this file into ./employee-anonymization-filter.ts — re-exported below (unchanged) so
@@ -128,6 +136,8 @@ export interface AnonymizeEmployeeResult {
   clearedDeviceIdentifiers: { wifiMacs: number; presenceDevices: number };
   /** Issue #512: AuditLog rows whose free text was redacted; counts only, never text. */
   auditRedaction: AuditRedactionResult;
+  /** Issue #820: AuditLog rows whose MAC address was redacted; counts only, never an address. */
+  macAuditRedaction: MacAuditResult;
   /** Issue #718: row counts of the cleared free-text fields; counts only, never text. */
   clearedFreeText: {
     leaveReviewNotes: number;
@@ -165,6 +175,23 @@ export async function anonymizeEmployeeData(
   }
   const { userId } = employee;
   const anonymizedLabel = `GELÖSCHT-${employee.employeeNumber || employeeId.slice(0, 8)}`;
+
+  // Issue #820: device MAC addresses inside the person's audit values are replaced (rows stay). MUST
+  // run first: before the #512 pass below (it reads the MACs that rows naming the person still hold),
+  // before the PresenceDevice delete (the live device ids/MACs are read here) and before the
+  // userId -> null step (rows authored by the user are found by it).
+  const liveDevices = await listPresenceDevices(tx, employeeId, employee.tenantId);
+  const macAuditRedaction = await redactMacAuditOfPerson(
+    tx,
+    {
+      employeeId,
+      userId,
+      deviceIds: liveDevices.map((d) => d.id),
+      macs: [...liveDevices.map((d) => d.mac), ...employee.wifiMacs],
+      timeEntryIds: await timeEntryIdsOfEmployee(tx, employeeId, employee.tenantId),
+    },
+    { write: true },
+  );
 
   // Issue #512: person-authored free text inside the person's audit values is redacted by type
   // (rows stay). MUST run before the userId -> null step: rows authored by the user are found by it.
@@ -272,6 +299,7 @@ export async function anonymizeEmployeeData(
     exitDate: { before: employee.exitDate, after: employee.exitDate ?? exitDayIfUnset },
     clearedDeviceIdentifiers: { wifiMacs: employee.wifiMacs.length, presenceDevices },
     auditRedaction,
+    macAuditRedaction,
     clearedFreeText: { leaveReviewNotes, ...retro, overtimePlanNotes, ...scheduling },
   };
 }
