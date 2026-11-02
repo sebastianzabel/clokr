@@ -1437,6 +1437,8 @@ Salonangabe entgegen; die Bindung eines Terminals an einen Salon ist #541. Kein 
 Mitarbeiter: ein erneutes Stempeln öffnet den Eintrag des Tages und lässt dessen Salon unverändert, ein
 ausdrücklich abweichender Salon ist 409 `SALON_DIFFERS_FROM_DAY_ENTRY` (#70).
 
+_(Nachtrag Phase 541: umgesetzt, siehe Eintrag AA, Nachtrag Phase 541.)_
+
 ### Nachtrag 2026-10-16 (Phase 70b, Issue #70): Ein ausdrücklich anderer Salon beginnt einen neuen Eintrag
 
 Der letzte Satz oben („Kein zweiter Salon je Tag und Mitarbeiter … 409 `SALON_DIFFERS_FROM_DAY_ENTRY`“) gilt nicht mehr.
@@ -1449,6 +1451,8 @@ Eintrags („Zuletzt erfasst in …“) und bietet in einem Mandanten mit mehrer
 (Ausnahme: nennen die aktuellen und künftigen Zuordnungen genau diesen einen Salon); an einem laufenden Tag bietet es
 nichts an. Unverändert: NFC und WLAN nehmen weiter keine Salonangabe entgegen (#541). Begründung, Sicherung und Grenzen:
 Eintrag AA.
+
+_(Nachtrag Phase 541: umgesetzt, siehe Eintrag AA, Nachtrag Phase 541.)_
 
 ---
 
@@ -6122,6 +6126,8 @@ das Überspringen von Fahrzeiteinträgen):
 | Fremder / unbekannter Salon                                     | identische 404, inaktiver Salon 400 `SALON_INACTIVE`                                                  |
 | NFC / WLAN                                                      | nehmen keine Salonangabe entgegen: setzen den letzten Eintrag fort (Salonbindung des Terminals: #541) |
 
+_(Nachtrag Phase 541: umgesetzt, siehe Eintrag AA, Nachtrag Phase 541.)_
+
 Vor **jedem** START prüft der Resolver Monatssperre und Überschneidung, bevor er etwas schreibt: ein Tag mit einem
 gesperrten Eintrag oder ein Tag in einem abgeschlossenen Monat ergibt `MONTH_LOCKED` (auch bei einem anderen Salon);
 ein Zeitpunkt innerhalb eines abgeschlossenen Eintrags — oder **vor einem späteren abgeschlossenen Eintrag desselben
@@ -6242,6 +6248,7 @@ INDEX`. Das `DROP INDEX` des alten Index steht daher von Hand als erste Anweisun
 - **Die automatische Pause bleibt je Eintrag** (`placeAutoBreak`, #81); die Pause zwischen Salons ist weiter eine
   erfasste Tagespause (`DayBreak`) oder Quittung.
 - **Kein Zeitnachtrag je Eintrag** (siehe oben), **keine Fahrzeit** (#92), **keine Salonbindung von NFC und WLAN** (#541).
+  _(Nachtrag Phase 541: umgesetzt, siehe Eintrag AA, Nachtrag Phase 541.)_
 - **Keine Neuberechnung und kein Backfill:** geschlossene Monate werden nie neu bewertet.
 - **Entfallen sind** `checkOneEntryPerDay`, `SALON_DIFFERS_FROM_DAY_ENTRY`, das Bereinigungsskript
   `cleanup-time-entry-duplicates.ts` (es hätte rechtmäßige zweite Einträge weich gelöscht) und alle
@@ -6306,6 +6313,84 @@ den Stand vor #92 und gelten nicht mehr (Eintrag AB). Für die Regeln dieses Ein
   eines Tages.
 - Der Zeitnachtrag bleibt ein Antrag je Tag; eine Fahrt ist als Zeitnachtrag nicht beantragbar (409
   `TRAVEL_NOT_AS_RETRO_REQUEST`, Hinweis am Folge-Issue #657).
+
+### Nachtrag 2026-11-02 (Phase 541, Issue #541) — NFC-Terminal an einen Salon gebunden
+
+Die Aussagen „NFC und WLAN nehmen keine Salonangabe entgegen“ und „keine Salonbindung von NFC und WLAN (#541)“ beschreiben
+den Stand vor #541. Für NFC gelten sie nicht mehr; für WLAN gelten sie unverändert.
+
+**Schwere: Neue Abhängigkeit der Zeiterfassung auf den Unterbau (Fremdschlüssel `TerminalApiKey.salonId → Salon`), nach
+ADR 0002, Entscheidung 7 eine Erweiterung: additiv, kein bestehender Leser muss sich ändern, genehmigt dadurch, dass Issue
+#541 mit dem Abschnitt „Auswirkung auf die Kontexte“ auf `Ready` stand. Keine Semantikänderung des Unterbaus, kein Eingriff
+in den Resolver (`services/clock/resolver.ts`), in den Zeitkern oder in die Kompositionsschicht.**
+
+### Neue Shared-Kernel-Abhängigkeit
+
+`TerminalApiKey.salonId → Salon` (Fremdschlüssel, `ON DELETE RESTRICT`, nullable, Index `TerminalApiKey_salonId_idx`,
+kein Backfill: bestehende Terminals bleiben ungebunden). Die Mandantengleichheit sichert die Anwendung beim Schreiben
+(`validateTerminalSalon`) und beim Stempeln (`terminalPunchSalon`), nicht die Datenbank. Am Unterbau entsteht nur die
+Prisma-Rückrelation `Salon.terminalApiKeys` (keine Spalte); kein Export von `contexts/platform/index.ts` ändert sich, und
+`Salon` wird nie hart gelöscht. Migration: `20261102003032_terminal_api_key_salon` (drei additive Anweisungen).
+
+### Was sich geändert hat
+
+- **Stempeln.** `POST /nfc-punch` reicht den gebundenen Salon nur dann als ausdrücklichen Salon (`ClockEvent.salonId`)
+  weiter, wenn er aktiv ist. Damit gelten die Regeln von #70 unverändert: ein abgeschlossener Tag in einem anderen Salon
+  beginnt einen neuen Eintrag, derselbe Salon öffnet den Eintrag wieder, ein offener Eintrag wird beendet. Ein ungebundener
+  Schlüssel, eine Bindung an einen inzwischen deaktivierten Salon und WLAN nehmen keine Salonangabe entgegen (Regel wie
+  bisher, nur eine Warnzeile im Log, nie eine Ablehnung). Verliert die Prüfung gegen eine gleichzeitige Deaktivierung, wiederholt
+  der Adapter den Stempel genau einmal ohne Salon, damit kein Stempel verloren geht (§ 16 Abs. 2 ArbZG).
+- **Eine Stelle.** Die Regel steht nur in `contexts/time-tracking/terminal-salon.ts` (`terminalPunchSalon`,
+  `resolveTerminalPunch`, `validateTerminalSalon`); der Resolver liest die Bindung nie.
+- **Schreiben.** Gesetzt wird die Bindung bei `POST /terminals`, geändert oder entfernt durch `PATCH /terminals/:id`
+  (`terminal:manage`, Audit `UPDATE TerminalApiKey` mit altem und neuem `salonId`). Ein fremder und ein unbekannter Salon
+  antworten mit derselben 404, ein deaktivierter Salon mit 400 `SALON_INACTIVE`, ein widerrufener Schlüssel mit 409
+  `KEY_REVOKED`, ein unveränderter Wert mit 200 ohne Audit. Das Ändern ist nicht durch das Modul `HARDWARE_CLOCK`
+  geschützt (es richtet nichts Neues ein, #566); das Anlegen bleibt geschützt.
+- **Liste und Oberfläche.** `GET /terminals` liefert je Schlüssel `salonId`, `salonName`, `salonActive`. Unter
+  Admin → System → Integration zeigt „NFC-Terminals“ die Spalte „Salon“ (Auswahl mit sofortigem Speichern) nur in
+  Mandanten mit Salonwahl (#64) oder bei einem Schlüssel mit Bindung; ein deaktivierter Salon wird markiert und bleibt
+  entfernbar.
+
+### Auswirkung auf die Kontexte
+
+- **Unterbau:** neue eingehende Beziehung `Salon` ← `TerminalApiKey.salonId` (Erweiterung, additiv).
+- **Zeiterfassung:** `terminal-salon.ts`, der Adapter `/nfc-punch`, `terminals.ts` samt Liste, Audit und Oberfläche.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** keine. Der Salon eines Eintrags geht in kein Soll, Ist oder Saldo ein.
+- **Kompositionsschicht:** keine Regel.
+
+### Was bewusst NICHT geschah
+
+- **Kein Lesen der Bindung im Resolver.** Er bleibt unverändert; der Adapter übersetzt die Bindung in die bestehende
+  Salonangabe.
+- **Keine Salonangabe im Body des Terminals.** Der Vertrag des Geräts (`{ nfcCardId }` hinein, unveränderte Antwort heraus)
+  bleibt; ein mitgesendeter `salonId` wird ignoriert.
+- **Keine Bindung für WLAN** und **keine Anzeige des gebundenen Salons am Gerät** (offene Ideen).
+- **Kein Backfill und keine geratene Bindung.**
+- **Keine Sperre der Deaktivierung:** ein Salon lässt sich trotz Bindung deaktivieren; die Bindung bleibt gespeichert und
+  wird in der Liste markiert.
+- **Kein Modul-Gate für die Änderung** einer Bindung.
+
+### Grenzen
+
+- Die Mandantengleichheit ist keine Datenbankbedingung (die Datenbank kann sie nicht ausdrücken); sie hängt an den beiden
+  Prüfungen der Anwendung.
+- Wiederholt wird nur bei `SALON_INACTIVE`. Jede andere Ablehnung (`LEAVE_APPROVED`, `MONTH_LOCKED`, `RETRO_PENDING`,
+  `ENTRY_OVERLAP`) bleibt wie bisher; ein Salon wird nie gelöscht, daher wird `SALON_NOT_FOUND` nicht wiederholt.
+- Die Bindung entscheidet nur über neue Einträge, nie über bestehende: ein wieder geöffneter Eintrag behält seinen Salon.
+- Bekannte Lücke außerhalb dieser Phase: `POST /nfc-punch` antwortet 500, wenn der Zustandsautomat `CONFIRMED` liefert
+  (bestätigt eine Anwesenheit, im Resolver nur für andere Quellen vorgesehen); #541 verändert das nicht.
+
+### Gemessen
+
+Fünf neue API-Testdateien: `nfc-punch-salon-binding-541` (13 Fälle, Abdeckung gebunden/ungebunden/Sperren/Deaktivierung),
+`terminal-salon-migration-541` (4), `contexts/time-tracking/__tests__/terminal-salon` (12), `nfc-punch-salon-race-541` (2),
+`api/__tests__/terminals-salon-541` (17); Web: `TerminalSalonCell` (7 Fälle, Einhängetest) und
+`admin-system-terminal-salon-541` (5). Die Neutralitätsmatrix (1680 Fälle) ist unverändert, `git diff origin/main` über
+`neutrality/recorded` und `presence.ts` ist leer, der CI-Driftcheck (`migrate diff --exit-code`) meldet keinen Unterschied.
+Laufbuch: `docs/migrations.md`, „Phase 541“.
 
 ## AB — Fahrzeit zwischen Salons als eigener Zeiteintrag (Phase 92b, Issue #92)
 

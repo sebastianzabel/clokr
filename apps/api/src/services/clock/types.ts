@@ -43,8 +43,9 @@ export type ClockEvent = {
   note?: string;
   actor: Actor;
   interactive?: boolean;
-  // Issue #87 (D-01/D-07): an explicitly chosen salon for a NEW entry. Set ONLY by the `/clock-in`
-  // adapter (the web clock-in); NFC, WIFI and clock-out never set it, so their START keeps the
+  // Issue #87 (D-01/D-07), #541: an explicitly chosen salon for a NEW entry. Set by the `/clock-in`
+  // adapter (the web choice) and, since Issue #541, by the `/nfc-punch` adapter when the terminal
+  // key is bound to an active salon; WIFI and clock-out never set it, so their START keeps the
   // pattern derivation. Optional for the same reason as `interactive`: future-source.test.ts
   // builds a ClockEvent literal without it.
   salonId?: string;
