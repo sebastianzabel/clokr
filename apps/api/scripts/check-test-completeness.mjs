@@ -1081,8 +1081,8 @@ const MIN_FILES = 759;
 // Issue #715: +8 cases (sim-invariants-715.test.ts) on the base 11029.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #541: +48 cases (13 + 4 + 12 + 2 + 17); measured full run 11149 tests collected (11146 passed, 3 skipped).
-// Issue #818: +3 cases (state-machine.test.ts +2, nfc-punch.test.ts +1) on the base 11149.
-const MIN_TESTS = 11152;
+// Issue #818: +3 cases (state-machine.test.ts +2, nfc-punch.test.ts +1); measured full run 11157 tests collected (11153 passed + 1 since fixed, 3 skipped).
+const MIN_TESTS = 11157;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
