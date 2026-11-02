@@ -110,6 +110,13 @@ async function subscribeOnce(
   const auditValue = { deviceLabel, consentedAt: consentedAt.toISOString() };
 
   return app.prisma.$transaction(async (tx): Promise<SubscribeResult> => {
+    // Serialises this person's registrations (review IN-01): without the lock two parallel
+    // subscribes can both count 9 devices and both insert. The count below is a new statement
+    // after the lock, so it sees the winner's committed row. NO KEY UPDATE conflicts with itself
+    // but not with the FOR KEY SHARE that inserting a row referencing the user takes. The user id
+    // comes from the verified token.
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${input.userId} FOR NO KEY UPDATE`;
+
     const existing = await tx.pushSubscription.findUnique({ where: { endpoint: input.endpoint } });
 
     // (b) The same person registers the same browser again: one row, refreshed.

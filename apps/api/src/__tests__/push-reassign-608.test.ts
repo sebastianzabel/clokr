@@ -177,6 +177,39 @@ describe("Issue #608: re-registering a browser, device cap and rate limits", () 
     );
   });
 
+  it("IN-01: two parallel registrations at 9 devices end at exactly 10", async () => {
+    await app.prisma.pushSubscription.createMany({
+      data: Array.from({ length: 9 }, () => fakeDeviceSubscription()).map((s) => ({
+        tenantId: a.tenant.id,
+        userId: a.empUser.id,
+        endpoint: s.endpoint,
+        p256dh: s.keys.p256dh,
+        auth: s.keys.auth,
+        deviceLabel: "Chrome auf Android",
+        consentedAt: new Date(),
+      })),
+    });
+    for (let round = 0; round < 3; round++) {
+      // Reset to 9 for every round so the race is exercised more than once.
+      const extra = await app.prisma.pushSubscription.findMany({
+        where: { userId: a.empUser.id },
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+      });
+      if (extra.length > 9) {
+        await app.prisma.pushSubscription.deleteMany({
+          where: { id: { in: extra.slice(0, extra.length - 9).map((r) => r.id) } },
+        });
+      }
+      const results = await Promise.all([
+        subscribe(a.empToken, fakeDeviceSubscription()),
+        subscribe(a.empToken, fakeDeviceSubscription()),
+      ]);
+      expect(results.map((r) => r.statusCode).sort((x, y) => x - y)).toEqual([201, 409]);
+      expect(results.find((r) => r.statusCode === 409)?.json().code).toBe("PUSH_DEVICE_LIMIT");
+      expect(await app.prisma.pushSubscription.count({ where: { userId: a.empUser.id } })).toBe(10);
+    }
+  });
+
   it("caps a person at 10 devices; re-registering one of them still works", async () => {
     const own = Array.from({ length: 10 }, () => fakeDeviceSubscription());
     await app.prisma.pushSubscription.createMany({
