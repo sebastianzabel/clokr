@@ -212,10 +212,24 @@ export async function terminalRoutes(app: FastifyInstance) {
         if (!validation.ok) return reply.code(validation.status).send(validation.body);
       }
 
-      await app.prisma.terminalApiKey.update({
-        where: { id },
+      // The write is conditional on the snapshot read above (not revoked, binding unchanged), so
+      // the audit `oldValue` is always the value that was really replaced. A concurrent revoke or a
+      // concurrent PATCH makes the condition miss: count 0, nothing written, nothing audited.
+      const { count } = await app.prisma.terminalApiKey.updateMany({
+        where: { id, tenantId, revokedAt: null, salonId: key.salonId },
         data: { salonId: body.salonId },
       });
+      if (count === 0) {
+        const current = await app.prisma.terminalApiKey.findFirst({ where: { id, tenantId } });
+        if (!current) return reply.code(404).send({ error: "Schlüssel nicht gefunden" });
+        if (current.revokedAt) {
+          return reply.code(409).send({ error: "Schlüssel ist widerrufen", code: "KEY_REVOKED" });
+        }
+        return reply.code(409).send({
+          error: "Der Schlüssel wurde zwischenzeitlich geändert. Bitte lade die Liste neu.",
+          code: "TERMINAL_CHANGED_CONCURRENTLY",
+        });
+      }
 
       await app.audit({
         userId: req.user.sub,

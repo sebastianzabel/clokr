@@ -737,7 +737,7 @@ schlägt fehl, wenn er oder ein Rollenvergleich zurückkommt (D-19).
 | `contexts/time-tracking/api/terminals.ts:33`               | `GET /`                                         | A       | `terminal:manage`              | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/terminals.ts:49`               | `POST /`                                        | A       | `terminal:manage`              | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/terminals.ts:179`              | `PATCH /:id`                                    | A       | `terminal:manage`              | ZUGEWIESEN                                   |
-| `contexts/time-tracking/api/terminals.ts:235`              | `DELETE /:id`                                   | A       | `terminal:manage`              | ZUGEWIESEN                                   |
+| `contexts/time-tracking/api/terminals.ts:249`              | `DELETE /:id`                                   | A       | `terminal:manage`              | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/time-entries.ts:1982`          | `PATCH /:id/revalidate`                         | A, M    | `time-entry:revalidate`        | ZUGEWIESEN                                   |
 | `contexts/time-tracking/api/time-entries.ts:2934`          | `GET /clock-salon`                              | A, M, E | `time-entry:create`            | ZUGEWIESEN oder EIGENE; eigene Uhr (#87)     |
 | `contexts/working-time-account/api/overtime.ts:245`        | `POST /plans`                                   | A, M    | `overtime:settle`              | ZUGEWIESEN                                   |

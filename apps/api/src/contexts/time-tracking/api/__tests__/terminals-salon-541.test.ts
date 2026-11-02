@@ -17,7 +17,7 @@
  *
  * No person names in fixtures. Every fixture id is a UUID.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import {
@@ -212,6 +212,72 @@ describe("Issue #541 — terminal key salon binding over HTTP", () => {
         (await app.prisma.terminalApiKey.findUniqueOrThrow({ where: { id: key.id } })).salonId,
       ).toBeNull();
       expect(await auditRowsFor(app, "TerminalApiKey", key.id)).toHaveLength(0);
+    });
+
+    it("a revoke landing between the read and the write answers 409 KEY_REVOKED, binding and audit untouched", async () => {
+      const key = await makeKey(own.tenant.id);
+      // Fire the revoke right after the handler's snapshot read: the PATCH then holds a stale
+      // "not revoked" snapshot when it reaches its write.
+      const realFindFirst = app.prisma.terminalApiKey.findFirst.bind(app.prisma.terminalApiKey);
+      const spy = vi.spyOn(app.prisma.terminalApiKey, "findFirst").mockImplementationOnce(((
+        args: never,
+      ) => {
+        const snapshot = realFindFirst(args);
+        return snapshot.then(async (row) => {
+          await app.prisma.terminalApiKey.update({
+            where: { id: key.id },
+            data: { revokedAt: new Date() },
+          });
+          return row;
+        });
+      }) as never);
+      try {
+        const res = await patch(own.adminToken, key.id, { salonId: salonA.id });
+        expect(res.statusCode).toBe(409);
+        expect(JSON.parse(res.body)).toEqual({
+          error: "Schlüssel ist widerrufen",
+          code: "KEY_REVOKED",
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      expect(
+        (await app.prisma.terminalApiKey.findUniqueOrThrow({ where: { id: key.id } })).salonId,
+      ).toBeNull();
+      expect(await auditRowsFor(app, "TerminalApiKey", key.id)).toHaveLength(0);
+    });
+
+    it("a PATCH with a stale snapshot answers 409 TERMINAL_CHANGED_CONCURRENTLY; the audit oldValue stays correct", async () => {
+      const key = await makeKey(own.tenant.id);
+      // Two requests read the unbound key; the first one's write lands before the second one's.
+      const realFindFirst = app.prisma.terminalApiKey.findFirst.bind(app.prisma.terminalApiKey);
+      const spy = vi.spyOn(app.prisma.terminalApiKey, "findFirst").mockImplementationOnce(((
+        args: never,
+      ) => {
+        const snapshot = realFindFirst(args);
+        return snapshot.then(async (row) => {
+          const first = await patch(own.adminToken, key.id, { salonId: salonA.id });
+          expect(first.statusCode).toBe(200);
+          return row;
+        });
+      }) as never);
+      try {
+        const second = await patch(own.adminToken, key.id, { salonId: salonB.id });
+        expect(second.statusCode).toBe(409);
+        expect(JSON.parse(second.body)).toEqual({
+          error: "Der Schlüssel wurde zwischenzeitlich geändert. Bitte lade die Liste neu.",
+          code: "TERMINAL_CHANGED_CONCURRENTLY",
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      expect(
+        (await app.prisma.terminalApiKey.findUniqueOrThrow({ where: { id: key.id } })).salonId,
+      ).toBe(salonA.id);
+      const rows = await auditRowsFor(app, "TerminalApiKey", key.id);
+      expect(rows.map((r) => [r.action, r.oldValue, r.newValue])).toEqual([
+        ["UPDATE", { salonId: null }, { salonId: salonA.id }],
+      ]);
     });
 
     it("rejects a malformed body: empty, non-uuid, unknown key", async () => {
