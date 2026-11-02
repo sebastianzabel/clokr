@@ -16,8 +16,9 @@ import {
   ACTIVE_TENANT_WHERE, // Phase 88 (D-05a): a deactivated tenant is a suspended customer - no notices
   accessContextForJob,
   employeeScopeFor,
+  reportPopulationWhere, // Issue #613: employed on the day and never anonymised
 } from "../platform";
-import { dateStrInTz } from "../working-time-account";
+import { dateStrInTz, dayRangeUtc } from "../working-time-account";
 import { getShiftsInRange } from "../scheduling";
 import { getRecordedWorkEntriesInRange } from "./facade/time-entries";
 import {
@@ -131,11 +132,29 @@ async function runTenant(
 
   // Stage 2: reads for the candidate persons only.
   const employeeIds = [...new Set(candidates.map((c) => c.shift.employeeId))];
-  const people = await app.prisma.employee.findMany({
-    where: { tenantId, id: { in: employeeIds } },
-    select: { id: true, userId: true },
-  });
-  const userOf = new Map(people.map((p) => [p.id, p.userId]));
+
+  // Population (D-05, P-609-09): one read per distinct candidate day. The recipient must be able to
+  // log in (`user.isActive` is used here as a recipient lookup, not as a report population), be
+  // employed on that day and never anonymised, and not exempt from time tracking. The recipient is
+  // always the shift's own person.
+  const people = new Map<string, Map<string, { userId: string; startOff: boolean }>>();
+  for (const day of new Set(candidates.map((c) => c.day))) {
+    const range = dayRangeUtc(day, tz);
+    const rows = await app.prisma.employee.findMany({
+      where: {
+        tenantId,
+        id: { in: employeeIds },
+        isTimeTrackingExempt: false,
+        user: { isActive: true },
+        AND: [reportPopulationWhere(range.start, range.end)],
+      },
+      select: { id: true, userId: true, reminderShiftStartOff: true },
+    });
+    people.set(
+      day,
+      new Map(rows.map((r) => [r.id, { userId: r.userId, startOff: r.reminderShiftStartOff }])),
+    );
+  }
 
   // One day further back than the shifts: an entry started before midnight belongs to the day before.
   const entryFrom = new Date(`${dayKey(2)}T00:00:00Z`);
@@ -153,7 +172,9 @@ async function runTenant(
   }
 
   // Every earlier START notice of these shifts, in any dismissal state (the dedupe key, D-06).
-  const userIds = [...userOf.values()];
+  const userIds = [
+    ...new Set([...people.values()].flatMap((m) => [...m.values()].map((p) => p.userId))),
+  ];
   const notified = await app.prisma.notification.findMany({
     where: {
       userId: { in: userIds },
@@ -176,11 +197,16 @@ async function runTenant(
 
   for (const candidate of candidates) {
     const { shift } = candidate;
-    const userId = userOf.get(shift.employeeId);
-    if (userId === undefined) {
+    const person = people.get(candidate.day)?.get(shift.employeeId);
+    if (person === undefined) {
       skip("NOT_IN_POPULATION");
       continue;
     }
+    if (person.startOff) {
+      skip("PERSON_OFF");
+      continue;
+    }
+    const { userId } = person;
     const decision = decideShiftStart({
       startUtc: candidate.startUtc,
       offsetMinutes: offset,

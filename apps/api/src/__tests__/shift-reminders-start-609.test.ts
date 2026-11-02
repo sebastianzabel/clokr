@@ -13,6 +13,7 @@ import { resolveEmailPolicy } from "../contexts/platform/notification-email-poli
 import { resolvePushPolicy } from "../contexts/platform/notification-push-policy";
 import {
   TEST_DAY,
+  nextDay,
   addPerson,
   createEntry,
   createShift,
@@ -120,5 +121,182 @@ describe("shift start reminder - the registries (D-08)", () => {
       body: "Deine Schicht hat begonnen. Jetzt einstempeln?",
       ttlSeconds: 3600,
     });
+  });
+});
+
+describe("shift start reminder - entries around the shift (AC-1, D-04, D-07)", () => {
+  it("sends nothing when a valid closed entry started at 08:30", async () => {
+    const p = await personWithShift();
+    await createEntry(
+      app,
+      tenant,
+      p.employeeId,
+      localInstant(TEST_DAY, "08:30"),
+      localInstant(TEST_DAY, "08:50"),
+    );
+    await tick(TEST_DAY, "09:15");
+    expect(await remindersOf(app, p.userId)).toHaveLength(0);
+  });
+
+  it("sends when the only valid entry started at 06:30, more than two hours before", async () => {
+    const p = await personWithShift();
+    await createEntry(
+      app,
+      tenant,
+      p.employeeId,
+      localInstant(TEST_DAY, "06:30"),
+      localInstant(TEST_DAY, "06:50"),
+    );
+    await tick(TEST_DAY, "09:15");
+    expect(await remindersOf(app, p.userId, START)).toHaveLength(1);
+  });
+
+  it("ignores an invalid open entry", async () => {
+    const p = await personWithShift();
+    await createEntry(app, tenant, p.employeeId, localInstant(TEST_DAY, "08:58"), null, {
+      isInvalid: true,
+    });
+    await tick(TEST_DAY, "09:15");
+    expect(await remindersOf(app, p.userId, START)).toHaveLength(1);
+  });
+
+  it("two shifts of one day each get their own notice, with distinct shift ids", async () => {
+    const person = await addPerson(app, tenant);
+    const a = await createShift(app, tenant, person.employeeId, TEST_DAY, "09:00", "12:00");
+    const b = await createShift(app, tenant, person.employeeId, TEST_DAY, "13:00", "17:00");
+    await tick(TEST_DAY, "09:15");
+    expect(await remindersOf(app, person.userId, START)).toHaveLength(1);
+    await tick(TEST_DAY, "13:15");
+    const rows = await remindersOf(app, person.userId, START);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.relatedId).sort((x, y) => (x ?? "").localeCompare(y ?? ""))).toEqual(
+      [a.id, b.id].sort((x, y) => x.localeCompare(y)),
+    );
+  });
+
+  it("a person clocked in since 09:05 gets no notice for the adjacent 13:00 shift (D-07)", async () => {
+    const person = await addPerson(app, tenant);
+    await createShift(app, tenant, person.employeeId, TEST_DAY, "09:00", "12:00");
+    await createShift(app, tenant, person.employeeId, TEST_DAY, "13:00", "17:00");
+    await createEntry(app, tenant, person.employeeId, localInstant(TEST_DAY, "09:05"), null);
+    await tick(TEST_DAY, "09:15");
+    await tick(TEST_DAY, "13:15");
+    expect(await remindersOf(app, person.userId)).toHaveLength(0);
+  });
+});
+
+describe("shift start reminder - the window (D-04)", () => {
+  it("is still due at 10:14 and gone at 10:15", async () => {
+    const early = await personWithShift();
+    await tick(TEST_DAY, "10:14");
+    expect(await remindersOf(app, early.userId, START)).toHaveLength(1);
+
+    const late = await personWithShift("09:00", "17:00", nextDay(TEST_DAY));
+    const nextDayTenantTick = nextDay(TEST_DAY);
+    await tick(nextDayTenantTick, "10:15");
+    expect(await remindersOf(app, late.userId)).toHaveLength(0);
+  });
+
+  it("uses the tenant offset: N = 30 sends nothing at 09:29 and one at 09:30", async () => {
+    const t = await seedReminderTenant(app, "start-n30", { startEnabled: true, offsetMinutes: 30 });
+    tenantIds.push(t.tenantId);
+    await createShift(app, t, t.employeeId, TEST_DAY, "09:00", "17:00");
+    await app.tryShiftReminders(localInstant(TEST_DAY, "09:29", t.tz));
+    expect(await remindersOf(app, t.userId)).toHaveLength(0);
+    await app.tryShiftReminders(localInstant(TEST_DAY, "09:30", t.tz));
+    await app.settlePushDispatch();
+    expect(await remindersOf(app, t.userId, START)).toHaveLength(1);
+  });
+
+  it("treats a stored offset of 3 like 5", async () => {
+    const t = await seedReminderTenant(app, "start-n3", { startEnabled: true, offsetMinutes: 3 });
+    tenantIds.push(t.tenantId);
+    await createShift(app, t, t.employeeId, TEST_DAY, "09:00", "17:00");
+    await app.tryShiftReminders(localInstant(TEST_DAY, "09:04", t.tz));
+    expect(await remindersOf(app, t.userId)).toHaveLength(0);
+    await app.tryShiftReminders(localInstant(TEST_DAY, "09:05", t.tz));
+    await app.settlePushDispatch();
+    expect(await remindersOf(app, t.userId, START)).toHaveLength(1);
+  });
+});
+
+describe("shift start reminder - overnight, DST and time zone (AC-5, D-03)", () => {
+  it("a 23:30 shift is reminded at 00:10 of the next local day", async () => {
+    const p = await personWithShift("23:30", "07:30");
+    await tick(TEST_DAY, "23:44");
+    expect(await remindersOf(app, p.userId)).toHaveLength(0);
+    await tick(nextDay(TEST_DAY), "00:10");
+    const notice = await soleNotification(app.prisma, { where: { userId: p.userId, type: START } });
+    expect(notice.relatedId).toBe(p.shiftId);
+    expect(notice.message).toBe("Deine Schicht hat um 23:30 begonnen. Jetzt einstempeln?");
+  });
+
+  it("a 09:00 shift on the spring-forward day is reminded at 09:15 local, not at 08:15", async () => {
+    const day = "2027-03-28";
+    const p = await personWithShift("09:00", "17:00", day);
+    await tick(day, "08:15");
+    expect(await remindersOf(app, p.userId)).toHaveLength(0);
+    await tick(day, "09:15");
+    expect(await remindersOf(app, p.userId, START)).toHaveLength(1);
+  });
+
+  it("a 09:00 shift on the fall-back day is reminded at 09:15 local", async () => {
+    const day = "2026-10-25";
+    const p = await personWithShift("09:00", "17:00", day);
+    await tick(day, "09:14");
+    expect(await remindersOf(app, p.userId)).toHaveLength(0);
+    await tick(day, "09:15");
+    expect(await remindersOf(app, p.userId, START)).toHaveLength(1);
+  });
+
+  it("follows the tenant time zone: Lisbon sends at 09:15 Lisbon time, not at 09:15 Berlin time", async () => {
+    const t = await seedReminderTenant(app, "start-lisbon", {
+      startEnabled: true,
+      timezone: "Europe/Lisbon",
+    });
+    tenantIds.push(t.tenantId);
+    await createShift(app, t, t.employeeId, TEST_DAY, "09:00", "17:00");
+    await app.tryShiftReminders(localInstant(TEST_DAY, "09:15", "Europe/Berlin"));
+    expect(await remindersOf(app, t.userId)).toHaveLength(0);
+    await app.tryShiftReminders(localInstant(TEST_DAY, "09:15", "Europe/Lisbon"));
+    await app.settlePushDispatch();
+    expect(await remindersOf(app, t.userId, START)).toHaveLength(1);
+  });
+});
+
+describe("shift start reminder - only the right persons (D-05)", () => {
+  async function dueOrNot(overrides: Parameters<typeof addPerson>[2]) {
+    const person = await addPerson(app, tenant, overrides);
+    await createShift(app, tenant, person.employeeId, TEST_DAY, "09:00", "17:00");
+    await tick(TEST_DAY, "09:15");
+    return remindersOf(app, person.userId);
+  }
+
+  it("an exited person (exit day before the shift) gets nothing", async () => {
+    expect(await dueOrNot({ exitDate: new Date("2026-11-09T00:00:00Z") })).toHaveLength(0);
+  });
+
+  it("an anonymised person gets nothing", async () => {
+    expect(await dueOrNot({ anonymized: true })).toHaveLength(0);
+  });
+
+  it("a person whose login is deactivated gets nothing", async () => {
+    expect(await dueOrNot({ userActive: false })).toHaveLength(0);
+  });
+
+  it("a person exempt from time tracking (section 18 ArbZG) gets nothing", async () => {
+    expect(await dueOrNot({ isTimeTrackingExempt: true })).toHaveLength(0);
+  });
+
+  it("a person who switched the start reminder off gets nothing while a colleague still does", async () => {
+    const off = await dueOrNot({ reminderShiftStartOff: true });
+    expect(off).toHaveLength(0);
+    const on = await dueOrNot({});
+    expect(on.map((r) => r.type)).toEqual([START]);
+  });
+
+  it("an opt-out of another occasion does not stop the start reminder", async () => {
+    const rows = await dueOrNot({ reminderShiftEndOff: true, reminderDayCloseOff: true });
+    expect(rows.map((r) => r.type)).toEqual([START]);
   });
 });
