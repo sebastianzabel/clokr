@@ -114,6 +114,9 @@ secrets:
   seedDemoData: "false"
   postgresPassword: "" # used by Postgres StatefulSet AND should match databaseUrl password
   operatorJwtSecret: "" # optional (Phase 88) — empty = operator interface off; min. 32 chars, distinct from the other secrets; set via ArgoCD parameter, never commit
+  vapidPublicKey: "" # optional (Issue #608) — all three or none; empty = push off; set via ArgoCD parameter, never commit
+  vapidPrivateKey: "" # optional (Issue #608) — secret; all three or none; set via ArgoCD parameter, never commit
+  vapidSubject: "" # optional (Issue #608) — mailto: or https:, never localhost; set via ArgoCD parameter
   redisUrl: "" # optional — if set, API connects to shared-infrastructure Redis
 
 # Anonymization pipeline (Phase 72). The CronJob runs `pnpm tsx scripts/anonymize-dump.ts`
