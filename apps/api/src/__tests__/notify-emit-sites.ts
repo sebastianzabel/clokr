@@ -30,6 +30,10 @@ function collectTsFiles(dir: string, out: string[] = []): string[] {
  * (the index of the `{` of `notify({`), up to the property's top-level comma or the closing brace.
  * String literals and nesting are tracked, so a multi-line ternary is read completely and a comma
  * inside a string or a call never ends the expression. Null when the object has no `type:` key.
+ *
+ * Known limit (review 2, IN-04): comments are not skipped, so an apostrophe inside a comment within a
+ * `notify({ ... })` object reads as the start of a string and the call site then fails loudly with
+ * "no readable type property". Keep such comments apostrophe-free or above the call.
  */
 function readTypeExpression(content: string, openBrace: number): string | null {
   let depth = 0;

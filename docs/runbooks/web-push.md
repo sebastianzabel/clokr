@@ -144,6 +144,15 @@ the Berufsschul leave correction (`bs-leave-correction.ts`) and the vocational-s
 (`vocational-school-generator.ts`). Those notifications appear in the bell (and wherever their e-mail path
 applies) but not on the lock screen. Routing them through `notify()` is a separate change.
 
+## Known edge cases
+
+- **Tap on a window without the app shell.** A notification tap focuses an already open app window and asks it
+  to navigate. A window that is on `/`, a legal or error page outside the signed-in app, or a tab that is still
+  loading has not mounted the app layout and has no listener, so the tap only focuses it and nothing else
+  happens; a second tap once the app has loaded works.
+- **Registration of a deactivated or anonymised person** is refused with 403 `PUSH_ACCOUNT_INACTIVE`, so
+  anonymisation can never be followed by a new delivery address.
+
 ## Troubleshooting
 
 | Symptom                                                        | Check                                                                                                                                                       |
