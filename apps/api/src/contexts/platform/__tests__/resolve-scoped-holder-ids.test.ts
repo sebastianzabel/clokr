@@ -16,13 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import {
-  getTestApp,
-  closeTestApp,
-  seedTestData,
-  cleanupTestData,
-  type LegacySystemRoleName,
-} from "../../../__tests__/setup";
+import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { resolveScopedHolderIds } from "../facade/role-assignments";
 import { SYSTEM_ROLE_IDS } from "../system-roles";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
@@ -39,7 +33,7 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
   let tA: Seed;
   const createdUserIds: string[] = [];
 
-  async function createUser(tenantId: string, role: LegacySystemRoleName, label: string) {
+  async function createUser(tenantId: string, label: string) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({
@@ -114,7 +108,7 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
   });
 
   it("keeps a TENANT-scope holder regardless of the isInScope callback", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "tenant");
+    const { user } = await createUser(tA.tenant.id, "tenant");
     await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, { scopeType: "TENANT" });
 
     const kept = await resolveScopedHolderIds(
@@ -129,7 +123,7 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
   });
 
   it("keeps a SALONS-scope holder when isInScope matches their reach", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "salons-in");
+    const { user } = await createUser(tA.tenant.id, "salons-in");
     await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, {
       scopeType: "SALONS",
       salonIds: [salonA1.id],
@@ -147,7 +141,7 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
   });
 
   it("excludes a SALONS-scope holder whose reach does not cover the affected salon", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "salons-out");
+    const { user } = await createUser(tA.tenant.id, "salons-out");
     await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, {
       scopeType: "SALONS",
       salonIds: [salonA2.id],
@@ -165,16 +159,16 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
   });
 
   it("mixed candidate list: keeps TENANT + in-scope SALONS, drops out-of-scope SALONS, preserves input order", async () => {
-    const { user: tenantHolder } = await createUser(tA.tenant.id, "EMPLOYEE", "mix-tenant");
+    const { user: tenantHolder } = await createUser(tA.tenant.id, "mix-tenant");
     await assign(tA.tenant.id, tenantHolder.id, SYSTEM_ROLE_IDS.MANAGER, { scopeType: "TENANT" });
 
-    const { user: inScopeHolder } = await createUser(tA.tenant.id, "EMPLOYEE", "mix-in");
+    const { user: inScopeHolder } = await createUser(tA.tenant.id, "mix-in");
     await assign(tA.tenant.id, inScopeHolder.id, SYSTEM_ROLE_IDS.MANAGER, {
       scopeType: "SALONS",
       salonIds: [salonA1.id],
     });
 
-    const { user: outOfScopeHolder } = await createUser(tA.tenant.id, "EMPLOYEE", "mix-out");
+    const { user: outOfScopeHolder } = await createUser(tA.tenant.id, "mix-out");
     await assign(tA.tenant.id, outOfScopeHolder.id, SYSTEM_ROLE_IDS.MANAGER, {
       scopeType: "SALONS",
       salonIds: [salonA2.id],
@@ -193,8 +187,8 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
   });
 
   it("a candidate holding nothing at all for the permission resolves without throwing and is excluded", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "no-grant");
-    // No RoleAssignment at all (#539: there is no legacy-role fallback any more) — resolves to a
+    const { user } = await createUser(tA.tenant.id, "no-grant");
+    // No RoleAssignment at all (#539: there is no role fallback) — resolves to a
     // scoped reach with both arrays empty.
 
     const kept = await resolveScopedHolderIds(
@@ -209,8 +203,8 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
     expect(kept).toEqual([user.id]);
   });
 
-  it("a candidate with no stored row is never kept by wholeTenant, even with the MANAGER column (#539)", async () => {
-    const { user } = await createUser(tA.tenant.id, "MANAGER", "no-row-manager");
+  it("a candidate with no stored row is never kept by wholeTenant (#539)", async () => {
+    const { user } = await createUser(tA.tenant.id, "no-row");
 
     const kept = await resolveScopedHolderIds(
       app.prisma,
@@ -220,12 +214,12 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
       (reach: AccessReach) => reach.kind === "scoped" && reach.salonIds.length > 0,
     );
 
-    // Before #539 the column made this user `wholeTenant`, which is always kept.
+    // Before #539 a role fallback made such a user `wholeTenant`, which is always kept.
     expect(kept).toEqual([]);
   });
 
   it("supports a synchronous (non-Promise) isInScope callback", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "sync-cb");
+    const { user } = await createUser(tA.tenant.id, "sync-cb");
     await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, { scopeType: "TENANT" });
 
     const kept = await resolveScopedHolderIds(

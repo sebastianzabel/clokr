@@ -146,7 +146,7 @@ describe("system-role assignment — pure derivation (D-14)", () => {
   });
 
   it.each(["ADMIN", "MANAGER", "EMPLOYEE"] as const)(
-    "deriving over the implicit fallback assignment of a legacy %s yields exactly that value",
+    "deriving over the stored system-role row of %s yields exactly that value",
     (role: SystemRoleName) => {
       const slot = (Object.keys(SYSTEM_ROLE_IDS) as SystemRoleSlot[]).find(
         (s) => SYSTEM_ROLE_IDS[s] === systemRoleIdForLegacyRole(role),
@@ -254,7 +254,7 @@ describe("Phase 76b — templates in the system-role assignment module (P-01, D-
   });
 });
 
-describe("system-role assignment — sign-in refusals do not depend on the column (D-14, #539 D-05)", () => {
+describe("system-role assignment — sign-in refusals for accounts without a stored assignment (D-14, #539 D-05)", () => {
   let app: FastifyInstance;
   let seed: Awaited<ReturnType<typeof seedTestData>>;
   let otpSeed: Awaited<ReturnType<typeof seedTestData>>;
@@ -268,7 +268,7 @@ describe("system-role assignment — sign-in refusals do not depend on the colum
     return `10.75.6.${ipCounter}`;
   }
 
-  async function createUser(tenantId: string | null, role: SystemRoleName, label: string) {
+  async function createUser(tenantId: string | null, label: string) {
     const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const user = await app.prisma.user.create({
       data: {
@@ -339,10 +339,10 @@ describe("system-role assignment — sign-in refusals do not depend on the colum
   });
 
   it("a user without Employee (tenant '') cannot sign in any more — 403 TENANT_REQUIRED, no token (#551)", async () => {
-    // Before Issue #551 this user logged in with the User.role column as its role (AC-75-5) and a
+    // Before Issue #551 this user logged in with a role derived from the account (AC-75-5) and a
     // refresh kept it. Such a principal has no tenant and gets no token now; the derivation for an
     // derivation is gone with the claim (#539 D-05).
-    const user = await createUser(null, "ADMIN", "no-emp");
+    const user = await createUser(null, "no-emp");
     try {
       const res = await login(user.email);
       expect(res.status).toBe(403);
@@ -359,30 +359,26 @@ describe("system-role assignment — sign-in refusals do not depend on the colum
     }
   });
 
-  it.each(["ADMIN", "MANAGER", "EMPLOYEE"] as const)(
-    "a user with column %s and no stored rows is refused at login with 403 NO_ROLE_ASSIGNED, whatever the column says (D-14)",
-    async (role) => {
-      // Since #539 the column grants nothing and the sign-in of an account without any effective
-      // permission is refused (verify-otp and refresh: no-role-assigned-539.test.ts). The column is
-      // therefore never published as a claim for such a user.
-      const user = await createUser(seed.tenant.id, role, `fb-${role}`);
-      const res = await login(user.email);
-      expect(res.status).toBe(403);
-      expect(res.body).toEqual(NO_ROLE_ASSIGNED_ERROR);
-      expect(res.body.accessToken).toBeUndefined();
-      expect(res.body.refreshToken).toBeUndefined();
-      expect(await app.prisma.refreshToken.count({ where: { userId: user.id } })).toBe(0);
+  it("a user without any stored assignment is refused at login with 403 NO_ROLE_ASSIGNED (D-14)", async () => {
+    // Since #539 only stored assignments grant anything and the sign-in of an account without any
+    // effective permission is refused (verify-otp and refresh: no-role-assigned-539.test.ts).
+    const user = await createUser(seed.tenant.id, "no-assignment");
+    const res = await login(user.email);
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual(NO_ROLE_ASSIGNED_ERROR);
+    expect(res.body.accessToken).toBeUndefined();
+    expect(res.body.refreshToken).toBeUndefined();
+    expect(await app.prisma.refreshToken.count({ where: { userId: user.id } })).toBe(0);
 
-      // In a two-factor tenant the refusal comes before any code is created.
-      const otpUser = await createUser(otpSeed.tenant.id, role, `fb-otp-${role}`);
-      const codesBefore = otpCodes.length;
-      const otpRes = await login(otpUser.email);
-      expect(otpRes.status).toBe(403);
-      expect(otpRes.body).toEqual(NO_ROLE_ASSIGNED_ERROR);
-      expect(otpCodes.length).toBe(codesBefore);
-      expect(await app.prisma.otpToken.count({ where: { userId: otpUser.id } })).toBe(0);
-    },
-  );
+    // In a two-factor tenant the refusal comes before any code is created.
+    const otpUser = await createUser(otpSeed.tenant.id, "no-assignment-otp");
+    const codesBefore = otpCodes.length;
+    const otpRes = await login(otpUser.email);
+    expect(otpRes.status).toBe(403);
+    expect(otpRes.body).toEqual(NO_ROLE_ASSIGNED_ERROR);
+    expect(otpCodes.length).toBe(codesBefore);
+    expect(await app.prisma.otpToken.count({ where: { userId: otpUser.id } })).toBe(0);
+  });
 });
 
 describe("system-role assignment — write half against the database (D-14, D-15, #539)", () => {
@@ -390,7 +386,7 @@ describe("system-role assignment — write half against the database (D-14, D-15
   let seed: Awaited<ReturnType<typeof seedTestData>>;
   let other: Awaited<ReturnType<typeof seedTestData>>;
 
-  async function createUser(tenantId: string, role: SystemRoleName, label: string) {
+  async function createUser(tenantId: string, label: string) {
     const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const user = await app.prisma.user.create({
       data: {
@@ -458,7 +454,7 @@ describe("system-role assignment — write half against the database (D-14, D-15
     // The D-26 function is gone: with the fallback removed it would be an implicit grant.
     expect("materializeLegacyRoleAssignment" in systemRoleAssignmentModule).toBe(false);
 
-    const user = await createUser(seed.tenant.id, "MANAGER", "mat");
+    const user = await createUser(seed.tenant.id, "mat");
     expect(await rowsOf(user.id)).toEqual([]);
     const { removed, created } = await replaceSystemRoleAssignment(
       app.prisma,
@@ -472,15 +468,15 @@ describe("system-role assignment — write half against the database (D-14, D-15
       accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE,
       scopeType: "TENANT",
     });
-    // The MANAGER column is not stored as a row: exactly the requested Mitarbeiter row exists.
+    // Exactly the requested Mitarbeiter row exists, nothing else is stored.
     expect((await rowsOf(user.id)).map((row) => row.accessRoleId)).toEqual([
       SYSTEM_ROLE_IDS.EMPLOYEE,
     ]);
   });
 
   it("requestedRoleUnchanged compares with the role DERIVED from the stored rows; no row means no role (#539 D-11)", async () => {
-    // No stored row: the person holds no role, so even the column's own value is a change.
-    const unassigned = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged");
+    // No stored row: the person holds no role, so every requested role is a change.
+    const unassigned = await createUser(seed.tenant.id, "unchanged");
     const yields = (userId: string, role: SystemRoleName) =>
       requestedRoleUnchanged(app.prisma, seed.tenant.id, userId, role);
     expect(await yields(unassigned.id, "EMPLOYEE")).toBe(false);
@@ -491,7 +487,7 @@ describe("system-role assignment — write half against the database (D-14, D-15
     expect(await yields(unassigned.id, "EMPLOYEE")).toBe(true);
     expect(await yields(unassigned.id, "MANAGER")).toBe(false);
 
-    const hrHolder = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged-hr");
+    const hrHolder = await createUser(seed.tenant.id, "unchanged-hr");
     await assign(hrHolder.id, SYSTEM_ROLE_IDS.HR);
     await assign(hrHolder.id, SYSTEM_ROLE_IDS.EMPLOYEE);
     expect(await yields(hrHolder.id, "MANAGER")).toBe(true);
@@ -500,19 +496,19 @@ describe("system-role assignment — write half against the database (D-14, D-15
 
     // The derived role is what counts: the stored HR row derives MANAGER, so echoing EMPLOYEE is a
     // change and echoing MANAGER is not.
-    const stale = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged-stale");
+    const stale = await createUser(seed.tenant.id, "unchanged-stale");
     await assign(stale.id, SYSTEM_ROLE_IDS.HR);
     expect(await yields(stale.id, "MANAGER")).toBe(true);
     expect(await yields(stale.id, "EMPLOYEE")).toBe(false);
 
-    const foreign = await createUser(other.tenant.id, "EMPLOYEE", "unchanged-foreign");
+    const foreign = await createUser(other.tenant.id, "unchanged-foreign");
     expect(await yields(foreign.id, "EMPLOYEE")).toBe(false);
     expect(await yields(foreign.id, "MANAGER")).toBe(false);
     expect(await yields(foreign.id, "ADMIN")).toBe(false);
   });
 
   it("replaceSystemRoleAssignment swaps only the TENANT system row; customer and SALONS rows stay", async () => {
-    const user = await createUser(seed.tenant.id, "ADMIN", "replace");
+    const user = await createUser(seed.tenant.id, "replace");
     const name = `Schreibhaelfte ${user.id.slice(0, 8)}`;
     const customerRole = await app.prisma.accessRole.create({
       data: {
@@ -555,7 +551,7 @@ describe("system-role assignment — write half against the database (D-14, D-15
   // must survive a demotion to Mitarbeiter exactly like a customer-role row does, and it must be
   // named by `assignmentsBlockingDemotionToEmployee` beforehand.
   it("replaceSystemRoleAssignment leaves a TENANT Personalabteilung (HR) template row untouched; the guard names it first", async () => {
-    const user = await createUser(seed.tenant.id, "MANAGER", "template-replace");
+    const user = await createUser(seed.tenant.id, "template-replace");
     const hrRow = await assign(user.id, SYSTEM_ROLE_IDS.HR);
     const managerRow = await assign(user.id, SYSTEM_ROLE_IDS.MANAGER);
 
@@ -587,7 +583,7 @@ describe("system-role assignment — write half against the database (D-14, D-15
   // PREVIOUS test above, which asserts exactly that survival) — the form showed "Mitarbeiter", the
   // rights stayed. `assignmentsBlockingDemotionToEmployee` is the guard the handler now runs FIRST.
   it("assignmentsBlockingDemotionToEmployee finds the customer-role and salon-scoped assignments a demotion would leave behind", async () => {
-    const user = await createUser(seed.tenant.id, "ADMIN", "blocking");
+    const user = await createUser(seed.tenant.id, "blocking");
     const name = `Blockierend ${user.id.slice(0, 8)}`;
     const customerRole = await app.prisma.accessRole.create({
       data: {
@@ -622,7 +618,7 @@ describe("system-role assignment — write half against the database (D-14, D-15
   });
 
   it("assignmentsBlockingDemotionToEmployee is empty for a user with only the TENANT system row", async () => {
-    const user = await createUser(seed.tenant.id, "ADMIN", "unblocked");
+    const user = await createUser(seed.tenant.id, "unblocked");
     await assign(user.id, SYSTEM_ROLE_IDS.ADMIN);
     expect(
       await assignmentsBlockingDemotionToEmployee(app.prisma, seed.tenant.id, user.id),
@@ -646,7 +642,7 @@ describe("system-role assignment — write half against the database (D-14, D-15
   });
 
   it("replaceSystemRoleAssignment replaces a malformed TENANT row on the target role", async () => {
-    const user = await createUser(seed.tenant.id, "EMPLOYEE", "malformed");
+    const user = await createUser(seed.tenant.id, "malformed");
     // A TENANT row carrying a salon list violates the D-03 shape and grants nothing (IN-02).
     const malformed = await assign(user.id, SYSTEM_ROLE_IDS.EMPLOYEE, {
       scopeType: "TENANT",
