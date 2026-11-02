@@ -79,10 +79,10 @@ describe("withAdvisoryLock", () => {
   // Issue #610 (D-10) added ATTENDANCE_WIFI_DEVICE_NOT_SEEN (1019n) for the daily WLAN
   // re-couple hint — 19. Issue #609 added ATTENDANCE_SHIFT_REMINDER (1020n) for the shift
   // reminders — 20.
-  it("registry exposes 19 distinct keys and tenantAdvisoryKey derives a bigint", () => {
+  it("registry exposes 20 distinct keys and tenantAdvisoryKey derives a bigint", () => {
     const values = Object.values(ADVISORY_LOCK_KEYS);
-    expect(values).toHaveLength(19);
-    expect(new Set(values).size).toBe(19);
+    expect(values).toHaveLength(20);
+    expect(new Set(values).size).toBe(20);
     const key = tenantAdvisoryKey("123e4567-e89b-12d3-a456-426614174000");
     expect(typeof key).toBe("bigint");
     // Deterministic + stable across calls.
