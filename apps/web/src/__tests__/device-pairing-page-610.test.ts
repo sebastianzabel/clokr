@@ -45,6 +45,12 @@ describe("pairing route (source pins)", () => {
     expect(ROUTE).toContain('replaceState("/settings/geraet-koppeln", {})');
   });
 
+  it("calls replaceState only through stripCodeFromAddress (WR-06), never directly from onMount", () => {
+    expect(ROUTE).toContain('from "$lib/presence/strip-code"');
+    expect((ROUTE.match(/replaceState\(/g) ?? []).length).toBe(1);
+    expect(ROUTE).toMatch(/stripCodeFromAddress\(\{[^}]*strip: \(\) => replaceState\(/s);
+  });
+
   it("does not use the browser History API directly", () => {
     expect(ROUTE).not.toMatch(/history\./);
     expect(ROUTE).not.toContain("window.history");
