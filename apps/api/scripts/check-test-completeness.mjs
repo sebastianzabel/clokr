@@ -1079,6 +1079,9 @@ const MIN_FILES = 750;
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #715: +8 cases (sim-invariants-715.test.ts) on the base 11029.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #638: tests removed with the dropped storeHours column (salon-migration -2, operator-salons-89 -1,
+// settings-store-hours-retired-563 -4); full run measured 753 files / 11091 tests, still above both floors, so no
+// floor is lowered.
 const MIN_TESTS = 11081;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 

@@ -78,8 +78,8 @@ enum TenantModule {
 }
 
 // Phase 64b (issue #64) — Unterbau level below Tenant (ADR 0001): a Salon is never hard-deleted,
-// only deactivated (isActive/deactivatedAt). openingHours has the shape of the retired
-// TenantConfig.storeHours column:
+// only deactivated (isActive/deactivatedAt). openingHours has the shape of the former
+// tenant-level opening hours column (dropped in #638):
 // Array<{ day: 0..6 (Mo..So), open: "HH:MM", close: "HH:MM", closed?: boolean }>.
 model Salon {
   id             String    @id @default(uuid())
@@ -336,14 +336,6 @@ model TenantConfig {
   defaultCoreDays                   Int[]    @default([]) // 0=Sun..6=Sat day-of-week (same encoding as WorkSchedule.coreDays)
   // WiFi-Presence
   wifiPresenceWindowMinutes         Int      @default(15) // Shift-window gate: ±N minutes around shift start/end
-  // Ladenöffnungszeiten (Phase 42) — JSON array, one entry per weekday.
-  // Shape: Array<{ day: 0..6 (Mo..So), open: "HH:MM", close: "HH:MM", closed?: boolean }>
-  // Default: Mo-Sa 08:00-20:00, So closed
-  /// RETIRED (Issue #563): no code reads or writes this column. Opening hours live only on
-  /// `Salon.openingHours`; `PUT /api/v1/settings/work` strips the key and every read omits it
-  /// (`RETIRED_TENANT_CONFIG_COLUMNS`). Dropped in a follow-up release (GitHub #638,
-  /// „storeHours-Spalte entfernen“).
-  storeHours                        Json     @default("[{\"day\":0,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":1,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":2,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":3,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":4,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":5,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":6,\"open\":\"08:00\",\"close\":\"20:00\",\"closed\":true}]")
   // Phase 47.5 — How tightly to bind shifts to store hours.
   //   DAY_ONLY (default): block only on closed days (lets MAs prep before / clean after)
   //   STRICT:             shift time must be within [open, close]
