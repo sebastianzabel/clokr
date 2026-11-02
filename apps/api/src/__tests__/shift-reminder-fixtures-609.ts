@@ -204,7 +204,7 @@ export async function createEntry(
   employeeId: string,
   start: Date,
   end: Date | null,
-  options: { isInvalid?: boolean; dayOverride?: string } = {},
+  options: { isInvalid?: boolean; dayOverride?: string; updatedAt?: Date } = {},
 ): Promise<{ id: string }> {
   const day =
     options.dayOverride ?? new Intl.DateTimeFormat("en-CA", { timeZone: tenant.tz }).format(start); // YYYY-MM-DD
@@ -218,6 +218,8 @@ export async function createEntry(
       type: "WORK",
       source: "MANUAL",
       isInvalid: options.isInvalid ?? false,
+      // An untouched open entry carries its creation instant; tests that fix the clock pass it.
+      ...(options.updatedAt !== undefined && { updatedAt: options.updatedAt }),
     },
     select: { id: true },
   });

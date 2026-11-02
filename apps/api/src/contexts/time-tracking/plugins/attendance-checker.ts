@@ -34,7 +34,7 @@ import {
 } from "../../working-time-account"; // Phase 101B
 import { invalidReasonFields } from "../invalid-reason";
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
-import { runShiftReminders } from "../shift-reminder-job"; // Issue #609 (Feature 12)
+import { runShiftReminders, shiftEndNoticeCoversEntry } from "../shift-reminder-job"; // Issue #609 (Feature 12)
 import {
   isMinorAtDate, // Issue #511 (D-05) — the age decision of the § 11 JArbSchG break regime
   getVacationEntitlementsForYearByCode, // Phase 205 Plan 02 (Issue #205, finding 1) — code-based
@@ -126,17 +126,15 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           });
 
           for (const entry of openEntries) {
-            // Issue #609 (D-06): the shift-end reminder already told this person to clock out. A
-            // person has at most one open entry per day, so an end notice created at or after this
-            // entry's start was sent while this very entry was open - a second nudge would only nag.
-            // A notice older than the start belongs to an earlier entry and does not count.
-            const coveredByShiftEnd = await app.prisma.notification.findFirst({
-              where: {
-                userId: entry.employee.userId,
-                type: "REMINDER_SHIFT_END",
-                createdAt: { gte: entry.startTime },
-              },
-              select: { id: true },
+            // Issue #609 (D-06, WR-01): the shift-end reminder already told this person to clock out
+            // of THIS open period (a notice after the entry's last re-open, about a shift of the
+            // entry's own day) - a second nudge would only nag. Any other end notice does not count.
+            const coveredByShiftEnd = await shiftEndNoticeCoversEntry(app, tenant.id, {
+              employeeId: entry.employeeId,
+              userId: entry.employee.userId,
+              date: entry.date,
+              startTime: entry.startTime,
+              updatedAt: entry.updatedAt,
             });
             if (coveredByShiftEnd) {
               app.log.debug(

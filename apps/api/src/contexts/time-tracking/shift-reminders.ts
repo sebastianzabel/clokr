@@ -223,6 +223,18 @@ export interface ReminderEntry {
   day?: string;
 }
 
+/**
+ * The start of an open entry's CURRENT open period (WR-01): the later of its first start and its
+ * last write. A re-clock-in on the same day re-opens the SAME row (`startTime` unchanged) with an
+ * update that bumps `updatedAt` (the resolver's REOPEN branch; a form correction that re-opens a
+ * row does too), so an end notice older than that belongs to the earlier period and covers nothing
+ * of the new one. A later unrelated write only moves the instant forward, which can send a
+ * duplicate reminder but never suppresses a needed one.
+ */
+export function currentOpenPeriodStart(entry: { startTime: Date; updatedAt: Date }): Date {
+  return entry.updatedAt.getTime() > entry.startTime.getTime() ? entry.updatedAt : entry.startTime;
+}
+
 /** The calendar days a shift occupies: its day, plus the next day for an overnight shift. */
 export function shiftDaysOf(instants: { day: string; endDay: string }): string[] {
   return instants.endDay === instants.day ? [instants.day] : [instants.day, instants.endDay];

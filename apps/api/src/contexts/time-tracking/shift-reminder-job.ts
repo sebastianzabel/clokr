@@ -43,6 +43,7 @@ import {
   type DayRange,
   type ExclusionKind,
   type ReminderEntry,
+  currentOpenPeriodStart,
   windowContains,
   type ReminderSkipReason,
 } from "./shift-reminders";
@@ -54,6 +55,42 @@ const END_TYPE = "REMINDER_SHIFT_END";
 const DAY_CLOSE_TYPE = "REMINDER_DAY_CLOSE";
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
+
+/**
+ * Whether a shift-end reminder already told the person to clock out of THIS open period of the entry
+ * (D-06, WR-01): the 10-hour `CLOCK_OUT_REMINDER` then stays silent. All of these must hold:
+ * the notice is a `REMINDER_SHIFT_END` of the entry's person, created at or after the start of the
+ * entry's current open period (a re-open starts a new one), and about a shift of the entry's own day
+ * (an end notice for another day's shift says nothing about this entry). Any doubt answers false: a
+ * duplicate reminder is acceptable, a suppressed one is not.
+ */
+export async function shiftEndNoticeCoversEntry(
+  app: FastifyInstance,
+  tenantId: string,
+  entry: { employeeId: string; userId: string; date: Date; startTime: Date; updatedAt: Date },
+): Promise<boolean> {
+  const notices = await app.prisma.notification.findMany({
+    where: {
+      userId: entry.userId,
+      type: END_TYPE,
+      relatedType: "Shift",
+      createdAt: { gte: currentOpenPeriodStart(entry) },
+    },
+    select: { relatedId: true },
+  });
+  const noticeShiftIds = new Set(
+    notices.flatMap((n) => (n.relatedId === null ? [] : [n.relatedId])),
+  );
+  if (noticeShiftIds.size === 0) return false;
+  const scope = accessContextForJob(tenantId, "clock-out-reminder");
+  const shiftsOfDay = await getShiftsInRange(
+    app.prisma,
+    employeeScopeFor(scope, { employeeIds: [entry.employeeId] }),
+    entry.date,
+    entry.date,
+  );
+  return shiftsOfDay.some((shift) => noticeShiftIds.has(shift.id));
+}
 
 /** Counts of the skip reasons of one tenant tick, for the debug log (ids never, only totals). */
 type SkipCounts = Partial<Record<ReminderSkipReason, number>>;
