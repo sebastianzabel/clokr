@@ -9,14 +9,13 @@
  * the remaining routes that audit `req.user.sub` directly are tracked in #333.
  *
  * `auditRoleAssignmentChange` (Phase 75b Plan 11) writes the rows of one assignment change in
- * order and puts the compat-column change on the last of them (D-29); the entry builders give the
- * taken-over legacy role (the takeover script of #539), a created and a removed row their exact
- * values.
+ * order, nothing else (Issue #641: the stored assignments are the only place a role lives); the
+ * entry builders give the taken-over legacy role (the takeover script of #539), a created and a
+ * removed row their exact values.
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Prisma } from "@clokr/db";
 import { accessContextFromRequest } from "./access-context";
-import { requestAuditFields } from "./request-audit-fields";
 import type { NormalizedRoleAssignmentScope } from "./role-assignment";
 
 /** The fields of a stored role assignment that its audit value records. */
@@ -78,7 +77,7 @@ export async function auditRoleAssignment(
   });
 }
 
-// ── Assignment changes with a compat-role write-back (Phase 75b Plan 11, D-26/D-29) ────────────
+// ── Assignment changes (Phase 75b Plan 11, D-26) ────────────────────────────────────────────────
 
 /**
  * The `reason` of the CREATE audit row of a legacy-role assignment stored on behalf of a user (the
@@ -141,12 +140,9 @@ export function removedAssignmentAuditEntry(row: WrittenAssignment): RoleAssignm
 }
 
 /**
- * Writes the audit rows of one assignment change of `userId`, in order, on `tx` — and records the
- * compat-column change the change caused (D-29): `compatRole: { from, to }` is merged into the
- * `newValue` of the LAST row, so the column is never rewritten without an audit trace and without
- * a second row for the same change. When the change wrote no assignment row but still rewrote the
- * column (a column that disagreed with its stored rows, e.g. after a 74b-era assignment write that
- * did not sync it), one UPDATE row on entity `User` records `{ compatRole }` instead.
+ * Writes the audit rows of one assignment change of `userId`, in order, on `tx`. The rows are the
+ * whole trace of the change: the stored assignments are the only place a role lives, so no
+ * derived value rides on them and no row is written for any other entity.
  */
 export async function auditRoleAssignmentChange(
   app: FastifyInstance,
@@ -155,29 +151,14 @@ export async function auditRoleAssignmentChange(
   change: {
     userId: string;
     entries: RoleAssignmentAuditEntry[];
-    compatRole: { from: string; to: string } | null;
   },
 ): Promise<void> {
-  const { entries, compatRole } = change;
-  if (compatRole !== null && entries.length === 0) {
-    await app.audit({
-      action: "UPDATE",
-      entity: "User",
-      entityId: change.userId,
-      ...requestAuditFields(req, { compatRole }),
-      tx,
-    });
-    return;
-  }
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-    const isLast = i === entries.length - 1;
+  for (const entry of change.entries) {
     await auditRoleAssignment(app, req, {
       action: entry.action,
       entityId: entry.entityId,
       oldValue: entry.oldValue,
-      newValue:
-        isLast && compatRole !== null ? { ...(entry.newValue ?? {}), compatRole } : entry.newValue,
+      newValue: entry.newValue,
       tx,
     });
   }

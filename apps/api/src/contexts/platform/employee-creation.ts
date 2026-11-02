@@ -26,7 +26,7 @@ import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
 import { DEFAULT_PASSWORD_POLICY, validatePassword, type PasswordPolicy } from "./password-policy";
 import { normalizeWorkDays, type PerDayHours } from "./calculate-work-days";
-import { replaceSystemRoleAssignment, syncCompatRoleColumn } from "./compat-role";
+import { replaceSystemRoleAssignment } from "./compat-role";
 import { lockTenantForRoleChanges } from "./facade/role-assignments";
 import {
   createdAssignmentAuditEntry,
@@ -292,7 +292,6 @@ export interface EmployeeCreationAudit {
     change: {
       userId: string;
       entries: RoleAssignmentAuditEntry[];
-      compatRole: { from: string; to: string } | null;
     },
     tx: Prisma.TransactionClient,
   ): Promise<void>;
@@ -663,8 +662,7 @@ export async function createEmployeeInTransaction(
 
   // Phase 75b (D-15): the new user's system-role assignment and its audit row, in this same
   // transaction. A grant cannot lower any holder count, so it takes the tenant lock (which
-  // serialises it with every guarded role change) but needs no before/after count. The
-  // column already holds `body.role`, so the write-back is a no-op kept for one uniform path.
+  // serialises it with every guarded role change) but needs no before/after count.
   await lockTenantForRoleChanges(tx, tenantId);
   const { created: roleAssignment } = await replaceSystemRoleAssignment(
     tx,
@@ -676,7 +674,6 @@ export async function createEmployeeInTransaction(
     {
       userId: user.id,
       entries: roleAssignment !== null ? [createdAssignmentAuditEntry(roleAssignment)] : [],
-      compatRole: await syncCompatRoleColumn(tx, tenantId, user.id),
     },
     tx,
   );

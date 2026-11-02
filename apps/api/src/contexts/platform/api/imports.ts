@@ -30,7 +30,6 @@ import { lockTenantForRoleChanges } from "../facade/role-assignments";
 import {
   replaceSystemRoleAssignment,
   requestedRoleNeedsRoleAssignmentManage,
-  syncCompatRoleColumn,
 } from "../compat-role";
 import { auditRoleAssignmentChange, createdAssignmentAuditEntry } from "../role-assignment-audit";
 import { tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
@@ -279,8 +278,7 @@ export async function importRoutes(app: FastifyInstance) {
             // Phase 75b (D-15): the imported user's system-role assignment and its audit row, in
             // this row's transaction — a failing row leaves no assignment behind. A grant takes
             // the tenant lock but needs no holder count; the actor is resolved API-key safe
-            // (never `req.user.sub` as userId, #333). The column already holds the role, so the
-            // write-back is a no-op kept for one uniform path.
+            // (never `req.user.sub` as userId, #333).
             await lockTenantForRoleChanges(tx, req.user.tenantId);
             const { created: roleAssignment } = await replaceSystemRoleAssignment(
               tx,
@@ -291,7 +289,6 @@ export async function importRoutes(app: FastifyInstance) {
             await auditRoleAssignmentChange(app, req, tx, {
               userId: user.id,
               entries: roleAssignment !== null ? [createdAssignmentAuditEntry(roleAssignment)] : [],
-              compatRole: await syncCompatRoleColumn(tx, req.user.tenantId, user.id),
             });
 
             // D-23: the imported employee's Stammsalon (HOME) row, open-ended from its

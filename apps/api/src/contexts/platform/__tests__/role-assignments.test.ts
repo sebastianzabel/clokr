@@ -255,8 +255,8 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
     const auditRow = await soleAuditRowOrNull(app.prisma, {
       where: { entity: "RoleAssignment", action: "CREATE", entityId: body.id },
     });
-    // Phase 75b (D-14/D-29): roleA grants a ZUGEWIESEN permission, so the derived compat role
-    // moves from EMPLOYEE to MANAGER, recorded on the grant's CREATE row (the change's last row).
+    // The CREATE row carries exactly the D-12 value shape; a role change writes no derived value
+    // (Issue #641: `toEqual` fails on any extra key such as a compat value).
     expect(auditRow?.newValue).toEqual({
       userId: granteeTenant.user.id,
       accessRoleId: roleA.id,
@@ -264,7 +264,6 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
       scopeType: "TENANT",
       salonIds: [],
       employeeIds: [],
-      compatRole: { from: "EMPLOYEE", to: "MANAGER" },
     });
 
     const listRes = await app.inject({
@@ -611,12 +610,8 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
       salonIds: before!.salonIds,
       employeeIds: before!.employeeIds,
     });
-    // Issue #357 sub-fix A: deriveCompatRole now only considers TENANT-scoped assignments, so
-    // moving this assignment's scope from TENANT (Task2-1's create) to SALONS drops it out of
-    // compat-role consideration — the user's only assignment no longer grants a tenant-wide
-    // compat role, and User.role is rewritten from MANAGER to EMPLOYEE alongside the scope
-    // change, which the same audit-write records as an additional `compatRole` delta (D-29's
-    // "column change on the last write" — same audit row, not a separate one).
+    // The scope move from TENANT (Task2-1's create) to SALONS is recorded as the assignment's
+    // own D-12 value shape and nothing else: no derived value rides on the row (Issue #641).
     expect(auditRow?.newValue).toEqual({
       userId: before!.userId,
       accessRoleId: before!.accessRoleId,
@@ -624,7 +619,6 @@ describe("Role assignment maintenance API (Phase 74b, Issue #74)", () => {
       scopeType: "SALONS",
       salonIds: expectedSalonIds,
       employeeIds: [],
-      compatRole: { from: "MANAGER", to: "EMPLOYEE" },
     });
   });
 

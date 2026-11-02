@@ -24,7 +24,6 @@ import {
   replaceSystemRoleAssignment,
   requestedRoleUnchanged,
   RoleDemotionBlockedError,
-  syncCompatRoleColumn,
   systemRoleIdForLegacyRole,
   type CompatRoleAssignmentRow,
 } from "../compat-role";
@@ -516,17 +515,12 @@ describe("compat role — write half against the database (D-14, D-15, #539)", (
     const hrHolder = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged-hr");
     await assign(hrHolder.id, SYSTEM_ROLE_IDS.HR);
     await assign(hrHolder.id, SYSTEM_ROLE_IDS.EMPLOYEE);
-    expect(await syncCompatRoleColumn(app.prisma, seed.tenant.id, hrHolder.id)).toEqual({
-      from: "EMPLOYEE",
-      to: "MANAGER",
-    });
     expect(await yields(hrHolder.id, "MANAGER")).toBe(true);
     expect(await yields(hrHolder.id, "EMPLOYEE")).toBe(false);
     expect(await yields(hrHolder.id, "ADMIN")).toBe(false);
 
-    // The derived role wins over a stale column: the column stays EMPLOYEE (never synced) while
-    // the stored HR row derives MANAGER. Echoing the stale column value is therefore a change,
-    // echoing the derived one is not.
+    // The derived role is what counts: the stored HR row derives MANAGER, so echoing EMPLOYEE is a
+    // change and echoing MANAGER is not.
     const stale = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged-stale");
     await assign(stale.id, SYSTEM_ROLE_IDS.HR);
     expect(await yields(stale.id, "MANAGER")).toBe(true);
@@ -687,24 +681,5 @@ describe("compat role — write half against the database (D-14, D-15, #539)", (
     );
     expect(removed.map((row) => row.id)).toEqual([malformed.id]);
     expect(created).toMatchObject({ accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE, salonIds: [] });
-  });
-
-  it("syncCompatRoleColumn writes the derived value only on a change and reports it", async () => {
-    const user = await createUser(seed.tenant.id, "MANAGER", "sync");
-    const adminRow = await assign(user.id, SYSTEM_ROLE_IDS.ADMIN);
-    expect(await syncCompatRoleColumn(app.prisma, seed.tenant.id, user.id)).toEqual({
-      from: "MANAGER",
-      to: "ADMIN",
-    });
-    expect(await syncCompatRoleColumn(app.prisma, seed.tenant.id, user.id)).toBeNull();
-
-    // D-08: no stored row left → EMPLOYEE, never a lingering ADMIN.
-    await app.prisma.roleAssignment.delete({ where: { id: adminRow.id } });
-    expect(await syncCompatRoleColumn(app.prisma, seed.tenant.id, user.id)).toEqual({
-      from: "ADMIN",
-      to: "EMPLOYEE",
-    });
-    const stored = await app.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(stored.role).toBe("EMPLOYEE");
   });
 });

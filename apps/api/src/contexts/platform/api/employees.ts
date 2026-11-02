@@ -30,7 +30,6 @@ import {
   requestedRoleUnchanged,
   ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX,
   RoleDemotionBlockedError,
-  syncCompatRoleColumn,
 } from "../compat-role";
 import {
   auditRoleAssignmentChange,
@@ -246,9 +245,8 @@ function userWithFormRole<U extends { email: string; isActive: boolean }>(
  * {@link RoleDemotionBlockedError} before any write, so the whole request (this role change AND
  * every other field on the same PATCH) rolls back atomically rather than silently applying a
  * partial demotion. Otherwise the system-role
- * assignment is replaced (customer roles untouched), the column is rewritten to the derived value,
- * and the audit rows are written in the order of the writes with the column change on the last one
- * (D-29).
+ * assignment is replaced (customer roles untouched) and the audit rows are written in the order of
+ * the writes. The stored assignments are the only thing a role change writes.
  */
 async function applyRoleFromEmployeeForm(
   app: FastifyInstance,
@@ -264,14 +262,12 @@ async function applyRoleFromEmployeeForm(
     if (blocking.length > 0) throw new RoleDemotionBlockedError(blocking);
   }
   const { removed, created } = await replaceSystemRoleAssignment(tx, tenantId, userId, role);
-  const compatRole = await syncCompatRoleColumn(tx, tenantId, userId);
   await auditRoleAssignmentChange(app, req, tx, {
     userId,
     entries: [
       ...removed.map((row) => removedAssignmentAuditEntry(row)),
       ...(created !== null ? [createdAssignmentAuditEntry(created)] : []),
     ],
-    compatRole,
   });
 }
 
@@ -983,8 +979,8 @@ export async function employeeRoutes(app: FastifyInstance) {
             }
           }
 
-          // D-15/D-26/D-29: the role is no longer written into the column directly — it replaces
-          // the system-role assignment, and the column follows the stored assignments.
+          // D-15/D-26: the requested role replaces the system-role assignment; it is stored
+          // nowhere else.
           if (requestedRole !== undefined) {
             await withRoleLockoutGuard(tx, req.user.tenantId, () =>
               applyRoleFromEmployeeForm(app, req, tx, employee.userId, requestedRole),
