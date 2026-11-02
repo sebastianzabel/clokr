@@ -987,7 +987,16 @@ import { readFileSync } from "node:fs";
 // files me-push-608, push-config-608, push-surface-off-608, push-endpoint-guard-608, push-device-label-608,
 // push-reassign-608, anonymization-push-608, notification-push-policy-608, notification-push-dispatch-608 and
 // generate-vapid-keys-608; extended: notification-email-policy (+1). Nothing removed, skipped or loosened. MIN_FILES 750 -> 765, never lowered.
-const MIN_FILES = 765;
+// Phase 609 (2026-11-02): measured with a full API run on `feat/609-erinnerungen` @ 54644ca0 (stacked on `feat/608-web-push`; later commits touch web tests only) -
+// 780 test files, 11605 tests (11602 passed, 3 skipped, 0 failed). The phase adds 13 API test files (shift-reminders-kernel-609,
+// shift-reminders-start-609, shift-reminders-end-609, shift-reminders-day-close-609, shift-reminders-exclusions-609,
+// shift-reminders-same-instant-609, shift-reminders-recipients-609, shift-reminders-no-stamp-609, shift-reminders-perf-609,
+// clock-out-reminder-coordination-609, settings-reminders-609, me-reminders-609, employee-reminder-columns-hidden-609) and
+// extends facade-shifts, the push-policy, advisory-lock, cron-88 and employee-creation tests; the rest of the rise over the
+// previous floor comes from the stacked base (608 plus main merged into it). Nothing removed, skipped or loosened. MIN_FILES
+// 765 -> 780, never lowered. The open PRs for #541, #610 and #641 (and #608 itself) raise the same floors: whoever merges
+// later re-measures with a full run (lower-bound convention, never a sum).
+const MIN_FILES = 780;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1090,7 +1099,8 @@ const MIN_FILES = 765;
 // generate-vapid-keys-608 14) and one case in notification-email-policy; nothing removed, skipped or loosened.
 // MIN_TESTS 11081 -> 11279, never lowered. Another open PR (#812, Issue #541) raises the same floors: whoever merges second
 // re-measures with a full run (lower-bound convention, never a sum).
-const MIN_TESTS = 11279;
+// Phase 609 (2026-11-02): MIN_TESTS 11279 -> 11605, the measured total of the full run named at MIN_FILES. Never lowered.
+const MIN_TESTS = 11605;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
