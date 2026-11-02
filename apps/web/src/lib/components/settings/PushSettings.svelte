@@ -110,13 +110,38 @@
     }
   }
 
+  function deviceWord(count: number): string {
+    return count === 1 ? "Gerät" : "Geräte";
+  }
+
   async function sendTest() {
     if (busy) return;
     busy = true;
     try {
       const result = await sendTestPush();
-      const count = result.devices.length;
-      toasts.success(`Testnachricht an ${count} ${count === 1 ? "Gerät" : "Geräte"} gesendet.`);
+      const count = (outcome: "SENT" | "REMOVED" | "FAILED") =>
+        result.devices.filter((d) => d.outcome === outcome).length;
+      const sent = count("SENT");
+      const removed = count("REMOVED");
+      const failed = count("FAILED");
+
+      // Success only for devices that really received it (review WR-04).
+      if (sent > 0) {
+        toasts.success(`Testnachricht an ${sent} ${deviceWord(sent)} gesendet.`);
+      }
+      if (failed > 0) {
+        toasts.error(
+          `Die Testnachricht konnte an ${failed} ${deviceWord(failed)} nicht zugestellt werden. Versuche es später erneut.`,
+        );
+      }
+      if (removed > 0) {
+        // The push service reported the subscription gone and the server dropped the row.
+        toasts.info(
+          `${removed} ${deviceWord(removed)} ${removed === 1 ? "ist" : "sind"} beim Push-Dienst nicht mehr bekannt und wurde${removed === 1 ? "" : "n"} entfernt. Aktiviere Push dort erneut.`,
+        );
+        await refreshDevices();
+      }
+      if (sent + failed + removed === 0) toasts.info("Es ist noch kein Gerät eingerichtet.");
     } catch (error) {
       toasts.error(pushErrorMessage(error));
     } finally {

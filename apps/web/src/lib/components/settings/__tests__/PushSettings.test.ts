@@ -210,6 +210,68 @@ describe("PushSettings", () => {
     );
   });
 
+  it("WR-04: reports only delivered devices as sent and the failed ones as an error", async () => {
+    serverDevices = [device("d1", "Chrome auf Android"), device("d2", "Safari auf iPhone")];
+    thisState = { state: "on", deviceId: "d1" };
+    api.sendTestPush.mockResolvedValue({
+      devices: [
+        { id: "d1", deviceLabel: "Chrome auf Android", outcome: "SENT" },
+        { id: "d2", deviceLabel: "Safari auf iPhone", outcome: "FAILED" },
+      ],
+    });
+    await mounted();
+    await fireEvent.click(await screen.findByRole("button", { name: "Test senden" }));
+    await waitFor(() =>
+      expect(toast.toasts.success).toHaveBeenCalledWith("Testnachricht an 1 Gerät gesendet."),
+    );
+    expect(toast.toasts.error).toHaveBeenCalledWith(
+      "Die Testnachricht konnte an 1 Gerät nicht zugestellt werden. Versuche es später erneut.",
+    );
+  });
+
+  it("WR-04: when every device FAILED there is no success toast at all", async () => {
+    serverDevices = [device("d1", "Chrome auf Android"), device("d2", "Safari auf iPhone")];
+    thisState = { state: "on", deviceId: "d1" };
+    api.sendTestPush.mockResolvedValue({
+      devices: [
+        { id: "d1", deviceLabel: "Chrome auf Android", outcome: "FAILED" },
+        { id: "d2", deviceLabel: "Safari auf iPhone", outcome: "FAILED" },
+      ],
+    });
+    await mounted();
+    await fireEvent.click(await screen.findByRole("button", { name: "Test senden" }));
+    await waitFor(() =>
+      expect(toast.toasts.error).toHaveBeenCalledWith(
+        "Die Testnachricht konnte an 2 Geräte nicht zugestellt werden. Versuche es später erneut.",
+      ),
+    );
+    expect(toast.toasts.success).not.toHaveBeenCalled();
+  });
+
+  it("WR-04: a REMOVED device refreshes the list and tells the person to enable push again", async () => {
+    serverDevices = [device("d1", "Chrome auf Android"), device("d2", "Safari auf iPhone")];
+    thisState = { state: "on", deviceId: "d1" };
+    await mounted();
+    expect(await screen.findByText("Safari auf iPhone")).toBeInTheDocument();
+    const listCalls = api.listPushDevices.mock.calls.length;
+    api.sendTestPush.mockImplementation(async () => {
+      serverDevices = [device("d1", "Chrome auf Android")]; // the server deleted d2
+      return {
+        devices: [
+          { id: "d1", deviceLabel: "Chrome auf Android", outcome: "SENT" },
+          { id: "d2", deviceLabel: "Safari auf iPhone", outcome: "REMOVED" },
+        ],
+      };
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Test senden" }));
+    await waitFor(() => expect(screen.queryByText("Safari auf iPhone")).toBeNull());
+    expect(api.listPushDevices.mock.calls.length).toBeGreaterThan(listCalls);
+    expect(toast.toasts.info).toHaveBeenCalledWith(
+      "1 Gerät ist beim Push-Dienst nicht mehr bekannt und wurde entfernt. Aktiviere Push dort erneut.",
+    );
+    expect(toast.toasts.success).toHaveBeenCalledWith("Testnachricht an 1 Gerät gesendet.");
+  });
+
   it("says Gerät for exactly one device", async () => {
     serverDevices = [device("d1", "Chrome auf Android")];
     thisState = { state: "on", deviceId: "d1" };

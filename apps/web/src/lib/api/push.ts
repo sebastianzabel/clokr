@@ -20,8 +20,11 @@ export interface PushDevice {
   endpointHash: string;
 }
 
+/** What happened to one device of a test push: delivered, removed by the push service, or failed. */
+export type PushTestOutcome = "SENT" | "REMOVED" | "FAILED";
+
 export interface PushTestResult {
-  devices: { id: string; deviceLabel: string; outcome: string }[];
+  devices: { id: string; deviceLabel: string; outcome: PushTestOutcome }[];
 }
 
 /** `PushSubscription.toJSON()` as the API expects it. */
