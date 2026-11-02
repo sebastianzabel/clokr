@@ -561,8 +561,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Phase 307 Plan 02: deliberately UNCHANGED by the DEBOUNCE_NOOP -> 409 flip on
       // `/:id/clock-out` below. A terminal double-tap is not a user error and must not surface
       // one; this route is the one genuinely non-interactive caller of `resolveClockEvent`
-      // (Phase 307 Plan 01 Task 1 proved no NFC-terminal path reaches `/:id/clock-out` at all).
-      if (resolution.kind === "DEBOUNCE_NOOP") {
+      // (Phase 307 Plan 01 Task 1 proved no NFC-terminal path reaches `/:id/clock-out` at all). Issue #818: CONFIRMED (passive presence, never produced here) answers the same, no 500.
+      if (resolution.kind === "DEBOUNCE_NOOP" || resolution.kind === "CONFIRMED") {
         return reply.code(200).send({
           action: "NOOP" as const,
           employee: employeeBlock,

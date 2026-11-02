@@ -294,6 +294,8 @@ export async function presenceRoutes(app: FastifyInstance) {
           // Phase 307 (D-01): not interactive — a router presence event has no human action at
           // the moment it fires; `actor: { type: "SYSTEM" }` above says the same thing.
           interactive: false,
+          // Issue #818: a router presence event is a passive signal (confirms, never closes).
+          presenceOnly: true,
         };
 
         const resolution = await resolveClockEvent(app, event);
@@ -362,6 +364,7 @@ export async function presenceRoutes(app: FastifyInstance) {
         actor: { type: "SYSTEM" },
         // Phase 307 (D-01): not interactive — see the connected-event construction above.
         interactive: false,
+        presenceOnly: true,
       };
 
       const disconnectResolution = await resolveClockEvent(app, disconnectEvent);
