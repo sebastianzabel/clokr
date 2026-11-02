@@ -47,7 +47,7 @@
     "iconv-lite": "^0.7.3",
     "minio": "^8.0.7",
     "node-cron": "^4.6.0",
-    "nodemailer": "^10.0.16",
+    "nodemailer": "^10.3.1",
     "otpauth": "^9.5.2",
     "pdfkit": "^0.20.2",
     "pg": "^8.23.1",
@@ -59,7 +59,7 @@
   },
   "devDependencies": {
     "@types/node-cron": "^3.0.11",
-    "@types/pdfkit": "^0.17.6",
+    "@types/pdfkit": "^0.17.7",
     "@types/pg": "^8.23.1",
     "@types/web-push": "3.6.4",
     "dotenv": "^17.4.2",
