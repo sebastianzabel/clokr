@@ -32,6 +32,37 @@ function isSafeRelativeUrl(raw: unknown): raw is string {
   return !raw.split(/[?#]/)[0].split("/").includes("..");
 }
 
+/** Message type the worker posts to an open app window to navigate it (review WR-05). */
+export const PUSH_NAVIGATE_MESSAGE = "clokr:navigate";
+
+const AUTH_PATHS = ["/login", "/otp", "/forgot-password", "/invitation", "/reset-password"];
+
+/**
+ * True when an open window can receive a push navigation: it is neither the operator console (a
+ * different application) nor a signed-out auth page (those pages mount no navigation listener).
+ */
+export function isAppWindowPath(pathname: string): boolean {
+  if (pathname === "/betreiber" || pathname.startsWith("/betreiber/")) return false;
+  return !AUTH_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
+/**
+ * The normalised same-origin path (path, query, hash) for `raw`, or the dashboard when `raw` is not
+ * a safe relative path. The worker posts it and the app re-applies this very rule before `goto()`.
+ */
+export function safePushPath(raw: unknown): string {
+  if (!isSafeRelativeUrl(raw)) return FALLBACK_URL;
+  try {
+    const base = "https://push.invalid";
+    const target = new URL(raw, base);
+    return target.origin === base
+      ? `${target.pathname}${target.search}${target.hash}`
+      : FALLBACK_URL;
+  } catch {
+    return FALLBACK_URL;
+  }
+}
+
 /** The same-origin absolute URL of `raw`, or the dashboard when `raw` is not a safe relative path. */
 export function targetUrlFor(raw: unknown, origin: string): string {
   const fallback = `${origin}${FALLBACK_URL}`;

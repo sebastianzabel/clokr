@@ -6,16 +6,19 @@
 // Push-only service worker (Issue #608, D-12 / D-19).
 //
 // It does exactly two things: show a notification when a push arrives and open the matching page
-// when the notification is tapped. It never touches network requests and keeps no offline copy of
-// anything, so it can never serve a stale bundle of the application.
+// when the notification is tapped (an open window is focused and told where to go, never navigated
+// by the worker). It never touches network requests and keeps no offline copy of anything, so it
+// can never serve a stale bundle of the application.
 
-import { parsePushPayload, targetUrlFor } from "$lib/push/payload";
+import {
+  PUSH_NAVIGATE_MESSAGE,
+  isAppWindowPath,
+  parsePushPayload,
+  safePushPath,
+  targetUrlFor,
+} from "$lib/push/payload";
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
-
-function isOperatorPath(pathname: string): boolean {
-  return pathname === "/betreiber" || pathname.startsWith("/betreiber/");
-}
 
 // Nothing is stored, so a new worker can take over at once without mixing generations.
 sw.addEventListener("install", () => {
@@ -48,12 +51,15 @@ sw.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     (async () => {
       const windows = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });
-      // A window of the operator console is a different application; never navigate it.
-      const client = windows.find((w) => !isOperatorPath(new URL(w.url).pathname));
+      // Never the operator console (a different application) and never a signed-out auth page
+      // (it mounts no listener, so the message would be lost).
+      const client = windows.find((w) => isAppWindowPath(new URL(w.url).pathname));
       if (client) {
         try {
+          // No client.navigate(): a hard navigation would bypass the app's unsaved-changes guard.
+          // The app receives the target and navigates through its router (review WR-05).
           await client.focus();
-          await client.navigate(target);
+          client.postMessage({ type: PUSH_NAVIGATE_MESSAGE, url: safePushPath(data?.url) });
           return;
         } catch {
           // fall through: open a new window instead

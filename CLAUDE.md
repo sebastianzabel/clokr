@@ -1515,7 +1515,9 @@ operator runbook `docs/runbooks/web-push.md`. Rules, as built:
 - **The service worker (`apps/web/src/service-worker.ts`) is push-only.** It registers `push`, `notificationclick` and the
   lifecycle events; it has no network-request handler and no cache, so the app can never serve a stale bundle, and it ALWAYS
   shows a notification (an unreadable payload shows a fallback; silent pushes get a subscription revoked on iOS). A tap
-  focuses an open Clokr window or opens one, never an operator window; a tap while signed out lands on its page after sign-in
+  focuses an open Clokr window and posts it the target (`clokr:navigate`; the `(app)` layout validates it and calls `goto()`, so
+  the unsaved-changes guard applies - the worker never navigates a window itself) or opens a new one, never an operator or
+  signed-out auth window; a tap while signed out lands on its page after sign-in
   (`safeAppNext()`, `?next=`). The CSP names `worker-src 'self'`; the manifest declares only icon sizes that exist.
 - **Explicit logout removes this device's registration first** (Sidebar and Topbar, deadline 3 s). The inactivity timeout and a
   forced 401 logout cannot (no valid token): the device stays registered until the next explicit logout or a manual removal.

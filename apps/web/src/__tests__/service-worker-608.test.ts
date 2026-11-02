@@ -12,14 +12,17 @@ type Handler = (event: unknown) => void;
 interface FakeClient {
   url: string;
   focus: ReturnType<typeof vi.fn>;
+  postMessage: ReturnType<typeof vi.fn>;
   navigate: ReturnType<typeof vi.fn>;
 }
 
-function fakeClient(path: string, navigateImpl?: () => Promise<unknown>): FakeClient {
+function fakeClient(path: string, focusImpl?: () => Promise<unknown>): FakeClient {
   return {
     url: `${ORIGIN}${path}`,
-    focus: vi.fn().mockResolvedValue(undefined),
-    navigate: vi.fn(navigateImpl ?? (() => Promise.resolve(undefined))),
+    focus: vi.fn(focusImpl ?? (() => Promise.resolve(undefined))),
+    postMessage: vi.fn(),
+    // The worker must never call it (review WR-05); the spy proves that.
+    navigate: vi.fn(),
   };
 }
 
@@ -139,7 +142,7 @@ describe("push", () => {
 });
 
 describe("notificationclick", () => {
-  it("closes, focuses the app window and navigates it; skips the operator window", async () => {
+  it("closes, focuses the app window and asks it to navigate; skips the operator window", async () => {
     const operator = fakeClient("/betreiber/mandanten");
     const app = fakeClient("/dashboard");
     matchAll.mockResolvedValue([operator, app]);
@@ -149,20 +152,48 @@ describe("notificationclick", () => {
     expect(close).toHaveBeenCalledTimes(1);
     expect(matchAll).toHaveBeenCalledWith({ type: "window", includeUncontrolled: true });
     expect(app.focus).toHaveBeenCalledTimes(1);
-    expect(app.navigate).toHaveBeenCalledWith(`${ORIGIN}/team/leave?request=1`);
+    expect(app.postMessage).toHaveBeenCalledWith({
+      type: "clokr:navigate",
+      url: "/team/leave?request=1",
+    });
+    // WR-05: a hard navigation would bypass the app's unsaved-changes guard.
+    expect(app.navigate).not.toHaveBeenCalled();
     expect(operator.focus).not.toHaveBeenCalled();
-    expect(operator.navigate).not.toHaveBeenCalled();
+    expect(operator.postMessage).not.toHaveBeenCalled();
     expect(openWindow).not.toHaveBeenCalled();
   });
 
-  it("opens a window when navigate rejects", async () => {
-    const app = fakeClient("/dashboard", () => Promise.reject(new Error("no navigate")));
+  it("posts the dashboard path for an unsafe target, never the foreign URL", async () => {
+    const app = fakeClient("/dashboard");
+    matchAll.mockResolvedValue([app]);
+    const { event, settled } = clickEvent("//evil.example/x");
+    handlers.notificationclick(event);
+    await settled();
+    expect(app.postMessage).toHaveBeenCalledWith({ type: "clokr:navigate", url: "/dashboard" });
+  });
+
+  it("opens a window when focusing the app window fails", async () => {
+    const app = fakeClient("/dashboard", () => Promise.reject(new Error("no focus")));
     matchAll.mockResolvedValue([app]);
     const { event, settled } = clickEvent("/inbox");
     handlers.notificationclick(event);
     await settled();
+    expect(app.postMessage).not.toHaveBeenCalled();
     expect(openWindow).toHaveBeenCalledWith(`${ORIGIN}/inbox`);
   });
+
+  it.each(["/login", "/otp", "/login?reason=timeout"])(
+    "does not use a signed-out auth window (%s): it has no listener, so a new window opens",
+    async (path) => {
+      const auth = fakeClient(path);
+      matchAll.mockResolvedValue([auth]);
+      const { event, settled } = clickEvent("/inbox");
+      handlers.notificationclick(event);
+      await settled();
+      expect(auth.postMessage).not.toHaveBeenCalled();
+      expect(openWindow).toHaveBeenCalledWith(`${ORIGIN}/inbox`);
+    },
+  );
 
   it("opens a window when there is none", async () => {
     const { event, settled } = clickEvent("/inbox");
@@ -178,6 +209,7 @@ describe("notificationclick", () => {
     handlers.notificationclick(event);
     await settled();
     expect(operator.navigate).not.toHaveBeenCalled();
+    expect(operator.postMessage).not.toHaveBeenCalled();
     expect(openWindow).toHaveBeenCalledWith(`${ORIGIN}/inbox`);
   });
 
@@ -209,6 +241,11 @@ describe("source pins", () => {
       "push",
     ]);
     expect(code.match(/addEventListener\(/g)).toHaveLength(4);
+  });
+
+  it("never navigates a window itself (WR-05): no client.navigate, the app navigates via goto", () => {
+    expect(code).not.toMatch(/\.navigate\(/);
+    expect(code).toMatch(/postMessage\(/);
   });
 
   it("never handles network requests, uses the Cache Storage or loads scripts at runtime", () => {
