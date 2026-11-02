@@ -5,11 +5,14 @@
  * role DERIVED from the stored assignments under `user.role`.
  *
  * The file reads behaviour only (HTTP, RoleAssignment, AuditLog) - it never selects or filters a
- * role column, so it stays valid after the column is dropped. Plan 641-05 extends it with the
- * migration and catalog cases.
+ * role column, so it stays valid after the column is dropped. The migration cases read the
+ * migration file and the live catalog of the worker database: they prove the column and the enum
+ * are gone, and the admin sign-in case runs on that dropped schema.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 import type { FastifyInstance } from "fastify";
 import {
   getTestApp,
@@ -91,6 +94,61 @@ describe("Issue #641 - the role lives only in stored assignments", () => {
       console.error("Cleanup failed:", err);
     }
     await closeTestApp();
+  });
+
+  describe("the drop migration and the live catalog", () => {
+    // The directory is found by its suffix; only the lower bound of its timestamp is pinned.
+    const MIGRATIONS_DIR = path.resolve(__dirname, "../../../../packages/db/prisma/migrations");
+    const DROP_SUFFIX = "_drop_user_role";
+    const FIRST_ALLOWED_TIMESTAMP = "20261103000000";
+
+    function dropMigrationDir(): string {
+      const entries = fs.readdirSync(MIGRATIONS_DIR);
+      const matches = entries.filter((name) => name.endsWith(DROP_SUFFIX));
+      if (matches.length !== 1) {
+        throw new Error(
+          `expected exactly one migration directory ending in ${DROP_SUFFIX}, found ${matches.length} ` +
+            `(${matches.join(", ") || "none"}) among ${entries.length} entries of ${MIGRATIONS_DIR}`,
+        );
+      }
+      return matches[0];
+    }
+
+    it("walks a non-empty migration history", () => {
+      const entries = fs.readdirSync(MIGRATIONS_DIR);
+      expect(entries.length).toBeGreaterThan(0);
+      expect(entries.filter((entry) => /^\d{14}_/.test(entry)).length).toBeGreaterThan(0);
+    });
+
+    it("is a single migration dated after the migrations pending on other branches", () => {
+      const name = dropMigrationDir();
+      const timestamp = name.slice(0, name.length - DROP_SUFFIX.length);
+      expect(timestamp).toMatch(/^\d{14}$/);
+      expect(timestamp >= FIRST_ALLOWED_TIMESTAMP).toBe(true);
+    });
+
+    it("consists of exactly the column drop followed by the enum drop", () => {
+      const sql = fs.readFileSync(
+        path.join(MIGRATIONS_DIR, dropMigrationDir(), "migration.sql"),
+        "utf8",
+      );
+      const statements = sql
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line !== "" && !line.startsWith("--"));
+      expect(statements).toEqual(['ALTER TABLE "User" DROP COLUMN "role";', 'DROP TYPE "Role";']);
+    });
+
+    it("leaves neither a role column on User nor a Role type in the worker database", async () => {
+      const columns = await app.prisma.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*) AS n FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'User' AND column_name = 'role'`;
+      expect(Number(columns[0].n)).toBe(0);
+      const types = await app.prisma.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*) AS n FROM pg_type t JOIN pg_namespace ns ON ns.oid = t.typnamespace
+        WHERE ns.nspname = 'public' AND t.typname = 'Role'`;
+      expect(Number(types[0].n)).toBe(0);
+    });
   });
 
   describe("role change and revoke", () => {
@@ -240,7 +298,7 @@ imp641-${uid}@example.invalid;Test;Person;I6-${uid};01.01.2026;MANAGER`;
   });
 
   describe("admin sign-in (ISSUE-641-AC6)", () => {
-    it("the seeded admin signs in with a non-empty permission list and no role key", async () => {
+    it("the seeded admin signs in after the drop with a non-empty permission list and no role key", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/auth/login",
