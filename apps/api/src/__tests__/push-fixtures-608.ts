@@ -5,7 +5,7 @@
  * ever reaches the network. A push-enabled test builds its OWN app through `buildPushEnabledApp()`
  * because the VAPID set is read once, when `config.ts` loads; the suite default stays "push off".
  */
-import { randomBytes } from "node:crypto";
+import { createECDH, randomBytes } from "node:crypto";
 import { vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 
@@ -45,13 +45,16 @@ export function restorePushEnv(): void {
   vi.resetModules();
 }
 
-/** A browser PushSubscription.toJSON() body with random endpoint path and correctly shaped keys. */
+/** A browser PushSubscription.toJSON() body with random endpoint path and valid keys. */
 export function fakeDeviceSubscription(host = "fcm.googleapis.com"): {
   endpoint: string;
   expirationTime: null;
   keys: { p256dh: string; auth: string };
 } {
-  const p256dh = Buffer.concat([Buffer.from([0x04]), randomBytes(64)]).toString("base64url");
+  // A real P-256 public key: the API refuses a value that is not a point on the curve.
+  const ecdh = createECDH("prime256v1");
+  ecdh.generateKeys();
+  const p256dh = ecdh.getPublicKey().toString("base64url");
   return {
     endpoint: `https://${host}/fcm/send/${randomBytes(24).toString("base64url")}`,
     expirationTime: null,

@@ -8,6 +8,7 @@
  * tenant and the user come from `req.user`, never from the body, and the route file holds no
  * Prisma call - reads and writes live in the services.
  */
+import { createECDH } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
@@ -24,13 +25,31 @@ import {
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
-/** A base64url string that decodes to exactly `bytes` bytes (optionally with a fixed first byte). */
-function base64UrlBytes(bytes: number, firstByte?: number) {
+/** True when `point` is a valid uncompressed point of the P-256 curve (the browser's p256dh). */
+function isP256Point(point: Buffer): boolean {
+  try {
+    // The same operation web-push performs when it encrypts to the key: it throws for any value
+    // that is not on the curve, so a bad key is refused here instead of failing every send later.
+    const ecdh = createECDH("prime256v1");
+    ecdh.generateKeys();
+    ecdh.computeSecret(point);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A base64url string that decodes to exactly `bytes` bytes, optionally with a fixed first byte and
+ * optionally required to be a point on the P-256 curve.
+ */
+function base64UrlBytes(bytes: number, options: { firstByte?: number; p256Point?: boolean } = {}) {
   return z.string().refine((value) => {
     if (!/^[A-Za-z0-9_-]+$/.test(value)) return false;
     const decoded = Buffer.from(value, "base64url");
     if (decoded.length !== bytes) return false;
-    return firstByte === undefined || decoded[0] === firstByte;
+    if (options.firstByte !== undefined && decoded[0] !== options.firstByte) return false;
+    return options.p256Point !== true || isP256Point(decoded);
   }, "Ungültiger Schlüssel");
 }
 
@@ -39,7 +58,7 @@ const subscribeBodySchema = z.object({
   endpoint: z.string().min(1).max(2048),
   expirationTime: z.number().nullable().optional(), // accepted and ignored
   keys: z.object({
-    p256dh: base64UrlBytes(65, 0x04),
+    p256dh: base64UrlBytes(65, { firstByte: 0x04, p256Point: true }),
     auth: base64UrlBytes(16),
   }),
 });

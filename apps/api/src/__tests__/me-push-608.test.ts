@@ -252,6 +252,46 @@ describe("Issue #608 tracer: subscribe a device, send the neutral test push", ()
     expect(removed.statusCode).toBe(204);
   });
 
+  it("IN-05: refuses malformed keys - wrong length, wrong prefix, off-curve point, short auth", async () => {
+    const before = await app.prisma.pushSubscription.count({ where: { tenantId: seed.tenant.id } });
+    const good = fakeDeviceSubscription();
+    const offCurve = Buffer.concat([Buffer.from([0x04]), randomBytes(64)]).toString("base64url");
+    const compressed = Buffer.concat([Buffer.from([0x02]), randomBytes(32)]).toString("base64url");
+    const badPrefix = Buffer.concat([
+      Buffer.from([0x05]),
+      Buffer.from(good.keys.p256dh, "base64url").subarray(1),
+    ]).toString("base64url");
+    const bad = [
+      { ...good, keys: { ...good.keys, p256dh: offCurve } },
+      { ...good, keys: { ...good.keys, p256dh: compressed } },
+      { ...good, keys: { ...good.keys, p256dh: badPrefix } },
+      { ...good, keys: { ...good.keys, auth: randomBytes(15).toString("base64url") } },
+      { ...good, keys: { ...good.keys, auth: randomBytes(17).toString("base64url") } },
+    ];
+    for (const payload of bad) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/me/push/subscriptions",
+        headers: auth(seed.empToken),
+        payload,
+        remoteAddress: nextIp(),
+      });
+      expect(res.statusCode, JSON.stringify(payload.keys)).toBe(400);
+    }
+    expect(await app.prisma.pushSubscription.count({ where: { tenantId: seed.tenant.id } })).toBe(
+      before,
+    );
+    // The untouched valid body is accepted (the table above is not refusing everything).
+    const ok = await app.inject({
+      method: "POST",
+      url: "/api/v1/me/push/subscriptions",
+      headers: auth(seed.empToken),
+      payload: good,
+      remoteAddress: nextIp(),
+    });
+    expect(ok.statusCode).toBe(201);
+  });
+
   it("answers an API key with 400 on every push route", async () => {
     for (const [method, url] of [
       ["GET", "/api/v1/me/push/config"],
