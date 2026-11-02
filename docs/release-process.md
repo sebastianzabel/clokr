@@ -54,7 +54,7 @@ Zeitüberschreitung`). Only then does `promote` `crane copy` the `:sha-{SHA}` im
 ### Release rehearsal (Issue #709)
 
 **Why.** v1.16.0 was the first time its pre- and post-deploy steps ran together, and that happened on
-demo during the rollout: `backfill-539` cannot run before the migration (#707), and the rehearsal
+demo during the rollout: `backfill-539` (retired with #641) cannot run before the migration (#707), and the rehearsal
 added a second find of the same kind, `audit-511` reads a table the release creates. int and prod would
 have hit both. The rehearsal finds them before the merge.
 
@@ -104,7 +104,7 @@ is tight) and only reads the live DB; the running stack, volumes, networks and e
 The new image must be pulled to the host first (`docker pull`, an image only, no stack change). Afterwards
 check `docker ps -a`, `docker network ls`, `docker volume ls` and `df -h /` for leftovers. A read-only smoke
 list for the current version is `scripts/rehearsal-fixtures/smoke-readonly.steps` (proof of 25.10.2026 on
-1.16.1: all steps PASS, `migrate deploy` applied nothing, no leftovers).
+1.16.1: all steps PASS, `migrate deploy` applied nothing, no leftovers; the `backfill-539` step was removed with #641).
 
 ### Why the notes moved in front of the build
 

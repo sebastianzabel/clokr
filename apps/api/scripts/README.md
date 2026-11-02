@@ -934,10 +934,10 @@ in another.
 (`data: { role: "ADMIN" }` in `test-bootstrap.ts` — no `where` ancestor); Zod enums
 (`z.enum(["ADMIN", "MANAGER", "EMPLOYEE"])`); type literals (report data types); a property merely
 named like a role (`data.roleFilter === "EMPLOYEE"`, the PDF label); a query parameter
-(`const { role } = req.query`); the `data: { role }` write payloads of the compat column
-(the former column write-back). Since #539 Release A no token, principal, report row or audit value carries
+(`const { role } = req.query`); the `data: { role }` write payloads of the former compat column
+(gone with the column, #641). Since #539 Release A no token, principal, report row or audit value carries
 a role (no `role` claim, no `actorRole`, no `emp.user.role`), so none of those shapes is tolerated any
-more; `src/__tests__/legacy-role-reads-539.test.ts` additionally pins the three documented readers of the column.
+more; `src/__tests__/legacy-role-reads-539.test.ts` additionally pins its reader allowlist, which is empty since #641.
 
 **No allowlist, no exceptions file (since #641).** Every non-test `.ts` file under `apps/api/src`
 is gated, `contexts/platform/system-role-assignment.ts` (the module that turns a requested system
