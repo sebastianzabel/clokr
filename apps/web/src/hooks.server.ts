@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Handle, HandleServerError } from "@sveltejs/kit";
+import { sendsNoReferrer } from "$lib/security/no-referrer-paths";
 
 const API_BACKEND = process.env.API_URL || "http://localhost:4000";
 const LOG_LEVEL = process.env.LOG_LEVEL || "info"; // debug | info | warn | error
@@ -100,6 +101,10 @@ export const handle: Handle = async ({ event, resolve }) => {
   // in report-only mode (which ignores the framing directive) is still protected.
   if (operatorPath) {
     response.headers.set("X-Frame-Options", "DENY");
+  }
+
+  if (sendsNoReferrer(event.url.pathname)) {
+    response.headers.set("Referrer-Policy", "no-referrer");
   }
 
   // Content Security Policy

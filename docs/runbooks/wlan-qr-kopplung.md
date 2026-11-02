@@ -164,7 +164,7 @@ act (no retroactive cleanup; without consent a device does nothing).
 - **Plain HTTP in the LAN (D-14).** The adapter page is not encrypted; somebody sniffing the salon LAN could see the redirect
   and its code within the five minutes. Limited by single use, the preview and the audit.
 - **Code in an access log (P-610-24).** The page URL carries the code once. A reverse proxy in front of the **web app** may
-  log it; the API's request logs never carry it, because preview and confirm take the code in the body, and the client error log (`POST /api/v1/logs/client`) stores the page path only (the browser sends `location.pathname`, the API strips any query or fragment as well). Single use and five
+  log it; the API's request logs never carry it, because preview and confirm take the code in the body, and the web app sends `Referrer-Policy: no-referrer` for the pairing page and the `/login` and `/otp` pages that hold the code in `?next=`, so the code is not a `Referer` in ingress access logs; the client error log (`POST /api/v1/logs/client`) stores the page path only (the browser sends `location.pathname`, the API strips any query or fragment as well). Single use and five
   minutes limit the value of such a log line. Do not put a proxy in front of the adapter (see the network recipe).
 - **IP/ARP/MAC spoofing by a LAN insider (review WR-04).** The box resolves the peer **by IP**. Somebody on the salon LAN who
   sets a colleague's static IP, spoofs ARP, or spoofs a MAC can choose which address gets coupled to them. This cannot be
