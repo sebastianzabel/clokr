@@ -1557,13 +1557,15 @@ assignment, shown as „Keine Rolle zugewiesen“). Nothing is written back to a
 change writes its `RoleAssignment` audit rows without `compatRole` and no UPDATE row on `User`; audit
 rows written before Release B keep theirs (append-only). `legacy-role-reads-539.test.ts` keeps its
 reader allowlist asserted EMPTY. A role comparison, a `requireRole(` call or a Prisma `where` on a role
-value in non-test `apps/api/src` fails CI and `.husky/pre-commit` — in every file, there is no
-allowlisted file and no exceptions file; a comparison of a request payload's role lives in a helper typed
-`SystemRoleName` and is classified in `docs/permissions.md` („Nicht gezählte Treffer“):
+value in non-test `apps/api/src` fails CI and `.husky/pre-commit` — in every file, with one named
+exemption for the assignment logic (`contexts/platform/system-role-assignment.ts` may compare identifiers
+typed `SystemRoleName`; it is no reader of a legacy column) and no exceptions file; a comparison of a
+request payload's role lives in a helper of that file and is classified in `docs/permissions.md`
+(„Nicht gezählte Treffer“):
 
 | Source                                                                                                | What it governs                                                                                                                                 |
 | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api/scripts/lint-role-checks.ts`                                                                | The gate itself — AST scan over every non-test API file, no allowlisted file, no exceptions file                                                |
+| `apps/api/scripts/lint-role-checks.ts`                                                                | The gate itself — AST scan over every non-test API file, one named exemption (`SystemRoleName` in `system-role-assignment.ts`), no exceptions file                           |
 | `docs/permissions.md`                                                                                 | Every guard, handler check and recipient lookup with its permission; `permission-site-mapping.test.ts` compares counts and permissions per file |
 | `apps/api/src/__tests__/permission-neutrality-matrix.test.ts` + `neutrality/recorded/matrix.json`     | Every route × eight actors, recorded on the code BEFORE the switch                                                                              |
 | `notification-recipients-neutrality.test.ts` / `activity-auth-neutrality.test.ts` + `recorded/*.json` | The 17 recipient lookups; activity feed and login role, same rule                                                                               |

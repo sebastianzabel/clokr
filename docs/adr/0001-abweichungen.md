@@ -2041,9 +2041,12 @@ Zuweisungen, die Spalte wurde bis jetzt nur noch für ein Image-Rollback mitgef�
   (`git grep -n -E "pdf/all|COMPANY_MONTHLY_PDF" -- apps/api/src ':!**/__tests__/**'` ist leer).
 - **`backfill-539-role-assignments.ts` ist entfernt** (samt Test und der Zeile in `smoke-readonly.steps`): Er las die Spalte,
   die es nicht mehr gibt. Die Vorab-Prüfung ersetzt ihn rein lesend (`docs/migrations.md`).
-- **`lint:role-checks` hat keine erlaubte Datei mehr.** Jede Nicht-Test-Datei unter `apps/api/src` wird geprüft; ein Vergleich
-  auf einem Parameter vom Typ `SystemRoleName` bleibt dem Detektor bewusst unsichtbar und ist in `docs/permissions.md`
-  („Nicht gezählte Treffer“) eingeordnet. `body.role !== "EMPLOYEE"` auf einer Anfrage bleibt ein Fund.
+- **`lint:role-checks` hat keine Ausnahme-Datei und keinen Altspalten-Leser mehr, aber eine benannte Ausnahme für die
+  Zuweisungslogik.** Jede Nicht-Test-Datei unter `apps/api/src` wird geprüft; Bezeichner vom Typ `SystemRoleName` /
+  `LegacySystemRoleName` gelten als rollenwertig, ausgenommen allein `contexts/platform/system-role-assignment.ts`
+  (benannt mit Begründung im Gate, bei fehlender Datei bricht der Lauf ab; die Vergleiche dort sind in
+  `docs/permissions.md` „Nicht gezählte Treffer“ eingeordnet). Ein Vergleich auf einem solchen Parameter in jeder anderen
+  Datei und `body.role !== "EMPLOYEE"` auf einer Anfrage sind Funde (Review-Befund WR-02).
 - **`legacy-role-reads-539.test.ts`** behält ihre Leser-Erlaubnisliste als bewusst leere Liste (`toHaveLength(0)`); der Wächter
   läuft über 363 Quelldateien und verbietet weiter `select: { role: true }`, `role` unter einem `where`, `req.user.role`, ein
   `role`-Feld im `JwtPayload` und die Namen der gelöschten Funktionen.

@@ -1103,9 +1103,10 @@ Dieses Dokument wird von drei Tests und einem Lint-Gate gegen den Code gehalten:
   `FOUR_EYES_CONFIRMATION_REQUIRED` und die Namen der Ausnahmeliste `FOUR_EYES_EXCEPTIONS`.
 - `lint:role-checks` (`apps/api/scripts/lint-role-checks.ts`, in CI und im Pre-Commit-Hook) schlägt
   fehl, wenn der Rollen-Guard oder ein Rollenvergleich in irgendeiner Nicht-Test-Datei unter
-  `apps/api/src` zurückkommt (seit #641 gibt es keine Ausnahme-Datei mehr; ein Vergleich auf einem
-  Parameter vom Typ `SystemRoleName` in `contexts/platform/system-role-assignment.ts` bleibt dem
-  Detektor bewusst unsichtbar und steht unter „Nicht gezählte Treffer“). Zusätzlich fällt `legacy-role-reads-539.test.ts` durch bei `select: { role: true }`, `role` unter einem `where`,
+  `apps/api/src` zurückkommt (seit #641 gibt es keine Ausnahme-Datei und keinen Altspalten-Leser mehr, aber eine
+  benannte Ausnahme für die Zuweisungslogik: nur `contexts/platform/system-role-assignment.ts` darf Bezeichner vom
+  Typ `SystemRoleName` / `LegacySystemRoleName` vergleichen, in jeder anderen Datei ist das ein Fund; die Vergleiche
+  stehen unter „Nicht gezählte Treffer“). Zusätzlich fällt `legacy-role-reads-539.test.ts` durch bei `select: { role: true }`, `role` unter einem `where`,
   `req.user.role`, einem `role`-Claim im `JwtPayload` und den Namen der gelöschten Funktionen; seine Leser-Erlaubnisliste ist leer.
 
 Ausführen:
