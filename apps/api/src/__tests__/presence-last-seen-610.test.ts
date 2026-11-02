@@ -5,7 +5,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { auditRowsFor, getTestApp, seedTestData, cleanupTestData } from "./setup";
 import { createPresenceSourceWithKey, randomTestMac } from "./presence-pairing-fixtures-610";
 
 describe("POST /api/v1/presence/events - lastSeenAt (Issue #610)", () => {
@@ -19,6 +19,11 @@ describe("POST /api/v1/presence/events - lastSeenAt (Issue #610)", () => {
     data = await seedTestData(app, "pls610");
     foreign = await seedTestData(app, "pls610f");
     ({ rawKey } = await createPresenceSourceWithKey(app, data.tenant.id));
+    // The lastSeenAt write only happens for a consenting, active person (review WR-03).
+    await app.prisma.employee.update({
+      where: { id: data.employee.id },
+      data: { wifiPresenceEnabled: true },
+    });
   });
 
   afterAll(async () => {
@@ -109,5 +114,44 @@ describe("POST /api/v1/presence/events - lastSeenAt (Issue #610)", () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toBe('{"ok":true}');
     expect(await lastSeen(other.id)).toBeNull();
+  });
+
+  // ── Review WR-03: no lastSeenAt for a person without consent or without an active user ──────────
+
+  it("WR-03: an opted-out person's leftover device gets no lastSeenAt (and the answer is unchanged)", async () => {
+    await app.prisma.employee.update({
+      where: { id: data.employee.id },
+      data: { wifiPresenceEnabled: false },
+    });
+    try {
+      const { mac, id } = await newDevice(data.employee.id);
+      const res = await post(mac, new Date(Date.now() - 60_000));
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toBe('{"ok":true}');
+      expect(await lastSeen(id)).toBeNull();
+      const audits = await auditRowsFor(app, "PresenceEvent", data.employee.id, "WIFI_OPT_OUT");
+      expect(audits.length).toBeGreaterThan(0);
+    } finally {
+      await app.prisma.employee.update({
+        where: { id: data.employee.id },
+        data: { wifiPresenceEnabled: true },
+      });
+    }
+  });
+
+  it("WR-03: the device of a deactivated user gets no lastSeenAt", async () => {
+    const { mac, id } = await newDevice(data.employee.id);
+    const user = await app.prisma.user.findFirstOrThrow({
+      where: { employee: { is: { id: data.employee.id } } },
+    });
+    await app.prisma.user.update({ where: { id: user.id }, data: { isActive: false } });
+    try {
+      const res = await post(mac, new Date(Date.now() - 60_000));
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toBe('{"ok":true}');
+      expect(await lastSeen(id)).toBeNull();
+    } finally {
+      await app.prisma.user.update({ where: { id: user.id }, data: { isActive: true } });
+    }
   });
 });
