@@ -1184,8 +1184,8 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   tenant-side salon admin (`/admin/salons`, Issue #563) calls `salonContext.load(…, { force: true })`
   after every successful create, edit, deactivate and activate.
 - **Opening hours live only on the salon (Issue #563).** `Salon.openingHours` is the only source.
-  `TenantConfig.storeHours` is retired (strip on write, omit on read via `RETIRED_TENANT_CONFIG_COLUMNS`
-  in `contexts/platform/api/settings.ts`; the column is dropped by #638) and the mirror
+  the tenant-level column `TenantConfig.storeHours` was dropped by the migration `*_drop_store_hours`
+  (#638; `RETIRED_TENANT_CONFIG_COLUMNS` in `contexts/platform/api/settings.ts` is empty) and the mirror
   `syncSoleActiveSalonOpeningHours()` is gone. `admin/system` keeps only `shiftStoreHoursMode` (a tenant
   policy, minimal payload `{ shiftStoreHoursMode }`). `/admin/salons` (list and detail, create at
   `/admin/salons/neu` with an explicit Bundesland) uses the tenant API `/api/v1/salons` and the facade

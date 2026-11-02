@@ -1456,6 +1456,31 @@ _(Nachtrag Phase 541: umgesetzt, siehe Eintrag AA, Nachtrag Phase 541.)_
 
 ---
 
+Nachtrag Issue #638 (01.11.2026): Die Spalte `TenantConfig.storeHours` ist gelöscht. Das ist die
+Entfernung eines Unterbau-Feldes (Semantikänderung nach ADR 0002, Entscheidung 7); die Owner-Entscheidung
+steht als Kommentar auf #563, #638 ist das dort vorgesehene Folge-Issue. Voraussetzung (ein Release nach
+dem, das #563 ausliefert, auf int und prod) ist erfüllt: v1.16.0 lieferte #563, int und prod laufen v1.17.0.
+
+- **Migration.** `*_drop_store_hours` enthält genau ein `ALTER TABLE "TenantConfig" DROP COLUMN "storeHours"`;
+  sie wurde nach dem Shadow-DB-Ablauf aus CLAUDE.md erzeugt (kein `migrate dev`, kein `db push`).
+  `schema.prisma` kennt das Feld nicht mehr, `RETIRED_TENANT_CONFIG_COLUMNS` in
+  `contexts/platform/api/settings.ts` ist jetzt leer (der Omit-Typ der Antwort entfällt). Ein alter Client,
+  der den Schlüssel noch sendet, erhält weiter 200 (der Zod-Parser verwirft unbekannte Schlüssel).
+- **Rollback.** Nach der Migration ist ein Image-Rollback auf v1.16.x oder älter nicht möglich (deren
+  Prisma-Client selektiert die Spalte); siehe `docs/migrations.md`, „Phase 638“.
+- **Tests.** Die Prüfungen, die die Spalte lasen (`salon-migration.test.ts`, `operator-salons-89.test.ts`,
+  `settings-store-hours-retired-563.test.ts`, `salon-admin-563.test.ts`), sind entfernt oder umgeschrieben.
+  Die Beweise von Phase 64b, die den Datenteil der Migration `20260924071637_add_salon` ausführten, entfallen:
+  dieser Datenteil liest die Spalte und kann gegen das neue Schema nicht mehr laufen; die Migration selbst
+  bleibt unverändert in der Historie. `store-hours-readers.test.ts` erwartet jetzt null Vorkommen (die eine
+  erlaubte Stelle entfällt).
+- **Auswirkung auf die Kontexte:** Unterbau: Feld entfernt. Zeiterfassung, Abwesenheiten, Schichtplanung,
+  Arbeitszeitkonto, Kompositionsschicht: keine (lesen die Spalte seit #563 nicht mehr).
+- **Kennungs-Gate:** `git grep storeHours` findet nur noch Migrationen, Doku-Historie, die Negativ-Assertions
+  der Wächter-Tests und die Begründungstexte der Ausnahmeliste `lint-tenant-scoping-exceptions.json`.
+
+---
+
 ## M — Phorest-Filiale je Salon: `SalonCoupling` löst `TenantConfig.phorestBranchId` ab (Phase 65b, Issue #65)
 
 **Schwere: informativ. Nachtrag 2026-09-25 — Semantikänderung des Unterbaus nach ADR 0002,
