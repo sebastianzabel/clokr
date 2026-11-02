@@ -453,6 +453,10 @@ bei einer `TENANT`-Zuweisung auf die Admin-Systemrolle, sonst Manager bei mindes
 ZUGEWIESEN-Permission, sonst Mitarbeiter), weicht von `User.role` ab. Nutzer ohne Zuweisung
 fehlen darin absichtlich — für sie gilt `User.role` unverändert.
 
+> **Historisch — nach „Phase 641“ nicht mehr ausführbar.** Die Abfrage unten liest die Spalte `User.role`, die Release B
+> (#641) entfernt hat; gegen eine Datenbank ab v1.18.0 bricht sie mit „column u.role does not exist“ ab. Sie gilt nur noch
+> für Datenbanken im Stand vor v1.18.0 (siehe „Phase 641“).
+
 <!-- 75b-consistency-select:begin -->
 
 ```sql
@@ -744,6 +748,10 @@ SELECT tgname FROM pg_trigger WHERE tgrelid = '"SupportAccess"'::regclass AND NO
 Mandanten-Auffrischung int: siehe `docs/data-refresh-process.md` (`SupportAccess` bleibt unverändert erhalten).
 
 ## Phase 539 — Altrollen-Rückfall entfernt (Release A, Issue #539)
+
+**Status: erledigt.** Release B (#641) hat die Spalte `User.role` und den Enum `Role` entfernt (Migration
+`*_drop_user_role`), und das Übernahmeskript `backfill-539-role-assignments.ts` gibt es nicht mehr — siehe „Phase 641“.
+Der Abschnitt bleibt als Verlauf stehen; die Schritte darin sind für neue Rollouts nicht mehr auszuführen.
 
 **Hinweis für die Release Notes.** Dieser Abschnitt ist der Release-Hinweis zu Release A von #539. Das Skript liest
 `Tenant.deactivatedAt`, und diese Spalte legt erst die Migration von #88 im selben Release an. Gegen eine Datenbank im
@@ -1467,3 +1475,56 @@ docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/script
 
 Eine Zeile je Person: `tenant=<id> employee=<id> auditRowsScanned=<n> auditRowsRedacted=<n> result=<planned|written|unchanged|failed:CODE>`,
 dann `Totals:`. Nur Ids und Zahlen.
+
+## Phase 641 — Spalte `User.role` und Enum `Role` entfallen (Release B, Issue #641)
+
+**Hinweis für die Release Notes.** Release B von #539. Eine Migration, `*_drop_user_role`, mit genau zwei Anweisungen, in
+dieser Reihenfolge: `ALTER TABLE "User" DROP COLUMN "role";` und `DROP TYPE "Role";`. Sie wurde gegen eine Wegwerf-Shadow-
+Datenbank erzeugt und gelesen; nichts anderes hängt vom Typ `"Role"` ab. Die Rolle einer Person steht seit Release A
+(#539) nur noch in den gespeicherten Zuweisungen (`RoleAssignment`); die Spalte war nur noch eine abgeleitete Rückfallebene
+für ein Image-Rollback. Der Standard-Einstiegspunkt führt `prisma migrate deploy` selbst aus, es ist kein manueller Schritt
+nötig.
+
+**Die Migration ist einweg.** Es gibt keine Rückwärtsmigration. Die Werte der Spalte gehen verloren, fachlich ohne Folgen,
+weil keine Zugriffsentscheidung sie liest und die Zuweisungen unverändert bleiben. Ein Image-Rollback auf v1.17.x oder
+älter ist nach der Migration nur mit einer **Wiederherstellung der Datenbank** möglich: das ältere Image fordert die Spalte
+bei jedem Lesen von `User` explizit an.
+
+**1. Vor dem Deploy — Sicherung (Pflicht).** `pg_dump` der Datenbank der Stage (auf prod und auf int).
+Ohne diese Sicherung gibt es keinen Weg zurück.
+
+**2. Vor dem Deploy — lesende Vorab-Prüfung (auf int UND prod).** Aktive, nicht anonymisierte Personen mit
+Mitarbeiterdatensatz, die in ihrem Mandanten keine Rollenzuweisung haben. Erwartet: **0**. Eine Zahl größer 0 nennt
+Personen, die sich seit v1.16.0 nicht mehr anmelden können (403 `NO_ROLE_ASSIGNED`); das ist eine Information über den
+Bestand, die Migration ändert für sie nichts, und die Prüfung schreibt und blockiert nichts. Die Zahl wird notiert.
+
+```sql
+select count(*) from "User" u join "Employee" e on e."userId"=u.id where u."isActive" and not (e."firstName" = U&'Gel\00F6scht' and e."lastName" like U&'GEL\00D6SCHT-%') and not exists (select 1 from "RoleAssignment" ra where ra."userId"=u.id and ra."tenantId"=e."tenantId");
+```
+
+(Dieselbe Zeile steht als `pre|0|role-gap-sql-641|sql|…` in `docs/release-notes/v1.18.0.steps`.)
+
+**3. Deploy.** `prisma migrate deploy` im Entrypoint des neuen Containers.
+
+**Fehlerfenster beim Rolling Update.** Der Entrypoint des NEUEN Pods migriert, während der ALTE Pod noch Anfragen
+bedient. Das alte Image liest die Spalte bei jedem Zugriff auf `User` (Login, Token-Prüfung, Mitarbeiterliste), deshalb
+schlagen zwischen dem Ende der Migration und dem Ende des alten Pods dessen Anfragen fehl. Bei `replicas: 1`
+(`charts/clokr-app/values.yaml`) sind das Sekunden. Es wird nichts falsch geschrieben: die Anfragen scheitern, sie
+schreiben keine halben Daten.
+
+**4. Nach dem Deploy — Katalogprüfung (lesend).** Beide Zahlen müssen **0** sein:
+
+```sql
+select count(*) from information_schema.columns where table_schema='public' and table_name='User' and column_name='role';
+select count(*) from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typname='Role';
+```
+
+**5. Rollback.** Nur durch Wiederherstellung des `pg_dump` aus Schritt 1 zusammen mit dem vorherigen Image. Die Migration
+vorher von Hand umzukehren heißt, Typ und Spalte neu anzulegen und jede Zeile zu befüllen — nicht vorgesehen.
+
+**dev.** Die lokale Entwicklungsdatenbank bekommt die Migration mit dem nächsten Neubau nach dem Merge
+(`docker compose up --build -d`); in diesem Phase-Lauf wurde sie nicht migriert.
+
+**Daten und Protokoll.** Keine Übernahme nötig, die Zuweisungen bestehen seit #539 und #707. Das Protokoll (`AuditLog`)
+bleibt unverändert: alte Zeilen behalten ihre Felder `compatRole`, `legacyRole` und `actorRole`; neue Zeilen zu
+Rollenzuweisungen tragen kein `compatRole` mehr. Das Skript `backfill-539-role-assignments.ts` entfällt.
