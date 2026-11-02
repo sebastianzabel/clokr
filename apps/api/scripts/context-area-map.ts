@@ -268,6 +268,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization
   "src/contexts/time-tracking/presence-source-auth.ts": "zeiterfassung", // Issue #610 (D-16) — the one presence-source key check shared by the webhook and the pairing-code issuer; reads PresenceSource
   "src/contexts/time-tracking/pairing-code.ts": "zeiterfassung", // Issue #610 — pairing-code constants and pure helpers (TTL, format, hashing, hostname hygiene); no model access
+  "src/contexts/time-tracking/wifi-device-not-seen.ts": "zeiterfassung", // Issue #610 (D-10) - the daily WLAN re-couple hint: pure decision plus the job over PresenceDevice, Shift (facade) and TimeEntry; writes notices only
   "src/contexts/time-tracking/presence-pairing.ts": "zeiterfassung", // Issue #610 — issue/preview/confirm service of the one-time WLAN pairing code; writes PresencePairingCode/PresenceDevice
   "src/contexts/time-tracking/presence.ts": "zeiterfassung", // WiFi-presence detection helper feeding routes/presence.ts and the missing-entries gap detector
   "src/contexts/time-tracking/retro-config.ts": "zeiterfassung", // RetroEntryRequest tenant-config toggle

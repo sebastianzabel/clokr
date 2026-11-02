@@ -17,6 +17,15 @@
  * but notices.
  */
 
+import type { FastifyInstance } from "fastify";
+import {
+  ACTIVE_TENANT_WHERE, // Phase 88 (D-05a): a deactivated tenant is a suspended customer - no notices
+  accessContextForJob,
+  employeeScopeFor,
+} from "../platform";
+import { dateStrInTz, dayRangeUtc, getTenantTimezone } from "../working-time-account";
+import { getShiftsInRange } from "../scheduling";
+
 /** Number of recent qualifying shift days the phone must have been missing on. */
 export const WIFI_HINT_SHIFT_DAYS = 3;
 /** How far back (calendar days before today) a qualifying day may lie. */
@@ -93,4 +102,194 @@ export function decideRecoupleHint(input: RecoupleHintInput): RecoupleHintDecisi
     return { hint: false, reason: "ALREADY_NOTIFIED" };
   }
   return { hint: true, sinceDay };
+}
+
+// ── The daily job (Feature 11 of the attendance checker) ──────────────────────────────────────
+
+const NOTICE_TYPE = "WIFI_DEVICE_NOT_SEEN";
+const DAY_MS = 86_400_000;
+
+/**
+ * Tells every person with a QR-coupled phone that went silent on their recent manually clocked
+ * shift days to couple it again, and dismisses the open notice of a phone that showed up since.
+ *
+ * Read-only apart from notify/dismiss, and deliberately unaudited: a notice is no business mutation
+ * (the Feature 9/10 precedent). The only recipient is the person's own user, never a manager.
+ */
+export async function checkWifiDevicesNotSeen(
+  app: FastifyInstance,
+  now: Date = new Date(),
+): Promise<void> {
+  app.log.info("Attendance checker: checking WLAN devices that were not seen (Feature 11)");
+  try {
+    const tenants = await app.prisma.tenant.findMany({
+      where: ACTIVE_TENANT_WHERE,
+      select: { id: true },
+    });
+    for (const tenant of tenants) {
+      try {
+        await checkTenant(app, tenant.id, now);
+      } catch (err) {
+        app.log.error({ err, tenantId: tenant.id }, "WLAN not-seen check failed for a tenant");
+      }
+    }
+  } catch (err) {
+    app.log.error({ err }, "WLAN not-seen check failed");
+  }
+}
+
+async function checkTenant(app: FastifyInstance, tenantId: string, now: Date): Promise<void> {
+  const prisma = app.prisma;
+  const tz = await getTenantTimezone(prisma, tenantId);
+
+  // Day keys by calendar arithmetic on the tenant-local today at 12:00 UTC (the Feature 10 idiom),
+  // never the ISO rendering of a raw instant near midnight.
+  const today = dateStrInTz(now, tz);
+  const todayNoon = new Date(`${today}T12:00:00Z`);
+  const dayKey = (daysAgo: number) =>
+    new Date(todayNoon.getTime() - daysAgo * DAY_MS).toISOString().slice(0, 10);
+  const yesterday = dayKey(1);
+  const lookbackStart = dayKey(WIFI_HINT_LOOKBACK_DAYS);
+  const fromDate = new Date(`${lookbackStart}T00:00:00Z`); // @db.Date columns: calendar-day bounds
+  const toDate = new Date(`${yesterday}T00:00:00Z`);
+
+  // QR devices of consenting, active, still employed people.
+  const devices = await prisma.presenceDevice.findMany({
+    where: {
+      tenantId,
+      pairedVia: "QR",
+      employee: {
+        tenantId,
+        wifiPresenceEnabled: true,
+        user: { isActive: true },
+        OR: [{ exitDate: null }, { exitDate: { gte: dayRangeUtc(lookbackStart, tz).start } }],
+      },
+    },
+    select: {
+      id: true,
+      employeeId: true,
+      addedAt: true,
+      lastSeenAt: true,
+      employee: { select: { userId: true } },
+    },
+  });
+  if (devices.length === 0) return;
+
+  // The adapter-outage guard: the newest event signal of the whole tenant.
+  const [sourceSignal, deviceSignal] = await Promise.all([
+    prisma.presenceSource.aggregate({
+      where: { tenantId, isActive: true, revokedAt: null, deletedAt: null },
+      _max: { lastUsedAt: true },
+    }),
+    prisma.presenceDevice.aggregate({ where: { tenantId }, _max: { lastSeenAt: true } }),
+  ]);
+  const signals = [sourceSignal._max.lastUsedAt, deviceSignal._max.lastSeenAt].filter(
+    (d): d is Date => d !== null,
+  );
+  const tenantSignalAt =
+    signals.length === 0 ? null : new Date(Math.max(...signals.map((d) => d.getTime())));
+
+  // Shift days and manually clocked days per person.
+  const employeeIds = [...new Set(devices.map((d) => d.employeeId))];
+  const shifts = await getShiftsInRange(
+    prisma,
+    employeeScopeFor(accessContextForJob(tenantId, "wifi-device-not-seen"), { employeeIds }),
+    fromDate,
+    toDate,
+  );
+  const entries = await prisma.timeEntry.findMany({
+    where: {
+      employeeId: { in: employeeIds },
+      employee: { tenantId },
+      deletedAt: null,
+      type: "WORK",
+      endTime: { not: null },
+      source: { not: "WIFI" },
+      date: { gte: fromDate, lte: toDate },
+    },
+    select: { employeeId: true, date: true },
+  });
+  const shiftDays = new Map<string, Set<string>>();
+  for (const shift of shifts) {
+    const set = shiftDays.get(shift.employeeId) ?? new Set<string>();
+    set.add(shift.date.toISOString().slice(0, 10));
+    shiftDays.set(shift.employeeId, set);
+  }
+  const entryDays = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    const set = entryDays.get(entry.employeeId) ?? new Set<string>();
+    set.add(entry.date.toISOString().slice(0, 10));
+    entryDays.set(entry.employeeId, set);
+  }
+
+  // Every earlier notice of these devices, in any dismissal state (the dedupe key).
+  const notices = await prisma.notification.findMany({
+    where: {
+      type: NOTICE_TYPE,
+      relatedType: "PresenceDevice",
+      relatedId: { in: devices.map((d) => d.id) },
+    },
+    select: { relatedId: true, createdAt: true, dismissedAt: true },
+  });
+  const noticeState = new Map<string, { newest: Date; open: boolean }>();
+  for (const n of notices) {
+    if (n.relatedId === null) continue;
+    const state = noticeState.get(n.relatedId) ?? { newest: n.createdAt, open: false };
+    if (n.createdAt > state.newest) state.newest = n.createdAt;
+    if (n.dismissedAt === null) state.open = true;
+    noticeState.set(n.relatedId, state);
+  }
+
+  const counts: Record<string, number> = {};
+  const count = (key: string) => {
+    counts[key] = (counts[key] ?? 0) + 1;
+  };
+
+  for (const device of devices) {
+    const notice = noticeState.get(device.id) ?? null;
+    const lastSign =
+      device.lastSeenAt !== null && device.lastSeenAt > device.addedAt
+        ? device.lastSeenAt
+        : device.addedAt;
+
+    // A sign of life after the open notice makes it obsolete.
+    if (notice !== null && notice.open && lastSign > notice.newest) {
+      await app.dismissByRelated("PresenceDevice", device.id, NOTICE_TYPE);
+      count("DISMISSED");
+    }
+
+    const decision = decideRecoupleHint({
+      lastSeenAt: device.lastSeenAt,
+      addedAt: device.addedAt,
+      qualifyingDaysDesc: qualifyingDays({
+        shiftDays: shiftDays.get(device.employeeId) ?? [],
+        entryDays: entryDays.get(device.employeeId) ?? [],
+        today,
+        lookbackStart,
+      }),
+      dayStart: (day) => dayRangeUtc(day, tz).start,
+      lastNoticeAt: notice?.newest ?? null,
+      tenantSignalAt,
+    });
+    if (!decision.hint) {
+      count(decision.reason);
+      continue;
+    }
+
+    await app.notify({
+      userId: device.employee.userId,
+      type: "WIFI_DEVICE_NOT_SEEN",
+      title: "Handy neu koppeln",
+      message:
+        "Dein Handy wurde an deinen letzten Arbeitstagen im Salon-WLAN nicht erkannt. Bitte koppel es über den QR-Code im Salon neu.",
+      link: "/settings",
+      tenantId,
+      relatedType: "PresenceDevice",
+      relatedId: device.id,
+    });
+    count("NOTIFIED");
+  }
+
+  // Counts per reason only: no names, no MAC addresses.
+  app.log.info({ tenantId, counts }, "WLAN not-seen check finished for a tenant");
 }

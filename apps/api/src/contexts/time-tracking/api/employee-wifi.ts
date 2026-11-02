@@ -305,6 +305,16 @@ export async function employeeWifiRoutes(app: FastifyInstance) {
       });
       if (result.kind === "INVALID") return reply.code(404).send(PAIRING_CODE_INVALID_ERROR);
       if (result.kind === "TAKEN") return reply.code(409).send(PRESENCE_DEVICE_TAKEN_ERROR);
+      // Issue #610 (D-10): a re-couple makes the "phone not seen" notice of the replaced devices (and
+      // of the refreshed one) obsolete. Reactive, after commit: a failure is logged and never
+      // changes the answer (ADR 0002, Entscheidung 10).
+      try {
+        for (const deviceId of [...result.replacedDeviceIds, result.body.device.id]) {
+          await app.dismissByRelated("PresenceDevice", deviceId, "WIFI_DEVICE_NOT_SEEN");
+        }
+      } catch (err) {
+        app.log.error({ err }, "Failed to dismiss the re-couple notice after a pairing");
+      }
       return reply.code(result.status).send(result.body);
     },
   });
