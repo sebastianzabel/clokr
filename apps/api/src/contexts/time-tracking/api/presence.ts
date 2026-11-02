@@ -89,6 +89,26 @@ export async function presenceRoutes(app: FastifyInstance) {
         return reply.code(200).send({ ok: true });
       }
 
+      // Issue #610 (D-07, P-610-11): remember when this device was last seen. The time is the event's
+      // own, clamped to now (a key holder cannot post the future) and the guarded update never moves it
+      // backwards. Nothing below reads it - it only feeds the re-couple hint (wifi-device-not-seen.ts).
+      if (device) {
+        const now = new Date();
+        const seenAt = eventTime > now ? now : eventTime;
+        try {
+          await app.prisma.presenceDevice.updateMany({
+            where: {
+              id: device.id,
+              tenantId,
+              OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: seenAt } }],
+            },
+            data: { lastSeenAt: seenAt },
+          });
+        } catch (err) {
+          app.log.error({ err }, "Failed to update PresenceDevice.lastSeenAt");
+        }
+      }
+
       let employee = device && device.employee.user?.isActive ? device.employee : null;
 
       if (!employee) {
