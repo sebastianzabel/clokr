@@ -9,7 +9,7 @@
  */
 import webpush from "web-push";
 import { config } from "../../config";
-import { pushEndpointHost } from "./push-endpoint-guard";
+import { canonicalPushEndpoint, pushEndpointHost } from "./push-endpoint-guard";
 import type { PushPayload } from "./notification-push-policy";
 
 export type PushTarget = { endpoint: string; p256dh: string; auth: string };
@@ -52,10 +52,14 @@ export async function sendWebPush(
 ): Promise<PushSendOutcome> {
   const vapid = pushConfiguration();
   if (!vapid) return { outcome: "FAILED", statusCode: null };
+  // Re-checked at send time (CR-01): whatever reached the table, only the canonical allow-listed
+  // string is ever handed to the library; anything else is refused without a network call.
+  const endpoint = canonicalPushEndpoint(target.endpoint);
+  if (endpoint === null) return { outcome: "FAILED", statusCode: null };
   const body = JSON.stringify({ title: payload.title, body: payload.body, url: payload.url });
   try {
     await webpush.sendNotification(
-      { endpoint: target.endpoint, keys: { p256dh: target.p256dh, auth: target.auth } },
+      { endpoint, keys: { p256dh: target.p256dh, auth: target.auth } },
       body,
       {
         vapidDetails: {

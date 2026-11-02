@@ -12,7 +12,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
 import { API_KEY_SUBJECT_PREFIX } from "../access-context";
-import { isAllowedPushEndpoint, pushEndpointHost } from "../push-endpoint-guard";
+import { canonicalPushEndpoint, pushEndpointHost } from "../push-endpoint-guard";
 import { sendTestPush } from "../push-dispatch";
 import { pushConfiguration } from "../push-sender";
 import {
@@ -100,7 +100,9 @@ export async function mePushRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: NO_DEVICES_FOR_API_KEYS });
       }
       const body = subscribeBodySchema.parse(req.body);
-      if (!isAllowedPushEndpoint(body.endpoint)) {
+      // Canonicalised ONCE here (CR-01, WR-01): the stored, compared and sent string is `url.href`.
+      const endpoint = canonicalPushEndpoint(body.endpoint);
+      if (endpoint === null) {
         // The host only: the full URL is a capability and must not reach a log.
         req.log.warn({ host: pushEndpointHost(body.endpoint) }, "Push endpoint refused");
         return reply.code(400).send({
@@ -111,7 +113,7 @@ export async function mePushRoutes(app: FastifyInstance) {
       const result = await subscribeDevice(app, {
         tenantId: req.user.tenantId,
         userId: req.user.sub,
-        endpoint: body.endpoint,
+        endpoint,
         p256dh: body.keys.p256dh,
         auth: body.keys.auth,
         userAgent: req.headers["user-agent"],
@@ -157,7 +159,12 @@ export async function mePushRoutes(app: FastifyInstance) {
       if (isApiKeyCaller(req.user.sub)) {
         return reply.code(400).send({ error: NO_DEVICES_FOR_API_KEYS });
       }
-      const by = removeBodySchema.parse(req.body);
+      const parsed = removeBodySchema.parse(req.body);
+      // Same canonical form as the stored one; a string the guard refuses matches no row (404).
+      const by =
+        "endpoint" in parsed
+          ? { endpoint: canonicalPushEndpoint(parsed.endpoint) ?? parsed.endpoint }
+          : parsed;
       const removed = await removeOwnDevice(app, {
         tenantId: req.user.tenantId,
         userId: req.user.sub,

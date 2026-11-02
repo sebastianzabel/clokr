@@ -189,6 +189,69 @@ describe("Issue #608 tracer: subscribe a device, send the neutral test push", ()
     expect(sendNotificationMock).not.toHaveBeenCalled();
   });
 
+  it("refuses the parser-differential variants and stores only the canonical endpoint (CR-01, WR-01)", async () => {
+    const before = await app.prisma.pushSubscription.count({ where: { tenantId: seed.tenant.id } });
+    const base = fakeDeviceSubscription();
+    const path = new URL(base.endpoint).pathname;
+    for (const endpoint of [
+      `https:/fcm.googleapis.com${path}`,
+      `https:fcm.googleapis.com${path}`,
+      `https://fcm.googleapis.com\t.evil${path}`,
+    ]) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/me/push/subscriptions",
+        headers: auth(seed.empToken),
+        payload: { ...base, endpoint },
+        remoteAddress: nextIp(),
+      });
+      expect(res.statusCode, endpoint).toBe(400);
+      expect(res.json().code).toBe("PUSH_ENDPOINT_NOT_ALLOWED");
+    }
+    expect(await app.prisma.pushSubscription.count({ where: { tenantId: seed.tenant.id } })).toBe(
+      before,
+    );
+
+    // A case / port variant is stored in its canonical form, so it is the SAME row as the plain one.
+    const variant = await app.inject({
+      method: "POST",
+      url: "/api/v1/me/push/subscriptions",
+      headers: auth(seed.empToken),
+      payload: { ...base, endpoint: `HTTPS://FCM.googleapis.com:443${path}` },
+      remoteAddress: nextIp(),
+    });
+    expect(variant.statusCode).toBe(201);
+    const row = await app.prisma.pushSubscription.findUniqueOrThrow({
+      where: { id: variant.json().id },
+    });
+    expect(row.endpoint).toBe(base.endpoint);
+    expect(variant.json().endpointHash).toBe(
+      createHash("sha256").update(base.endpoint).digest("hex"),
+    );
+    const plain = await app.inject({
+      method: "POST",
+      url: "/api/v1/me/push/subscriptions",
+      headers: auth(seed.empToken),
+      payload: base,
+      remoteAddress: nextIp(),
+    });
+    expect(plain.statusCode).toBe(200);
+    expect(plain.json().id).toBe(row.id);
+    expect(await app.prisma.pushSubscription.count({ where: { tenantId: seed.tenant.id } })).toBe(
+      before + 1,
+    );
+
+    // Removing by the non-canonical spelling finds the one row.
+    const removed = await app.inject({
+      method: "DELETE",
+      url: "/api/v1/me/push/subscriptions",
+      headers: auth(seed.empToken),
+      payload: { endpoint: `HTTPS://FCM.googleapis.com:443${path}` },
+      remoteAddress: nextIp(),
+    });
+    expect(removed.statusCode).toBe(204);
+  });
+
   it("answers an API key with 400 on every push route", async () => {
     for (const [method, url] of [
       ["GET", "/api/v1/me/push/config"],

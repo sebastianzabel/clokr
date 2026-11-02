@@ -7,7 +7,15 @@
  * endpoint is accepted only when it is a plain https URL on port 443 whose host is one of the four
  * push services of the supported browsers (or a sub-domain of one). Everything else is refused
  * before any write.
+ *
+ * Parser differential (review CR-01): the guard judges the string with WHATWG `new URL()`, but the
+ * `web-push` library re-parses the same string with the legacy `url.parse()`. The two disagree on
+ * inputs such as `https:/host/x` or `https:host/x` (WHATWG repairs the missing authority, legacy
+ * leaves the host null and Node then connects to localhost:443). The guard therefore returns ONE
+ * canonical string (`url.href`), accepts it only when both parsers resolve the same protocol and
+ * host, and the caller stores and sends nothing but that string.
  */
+import { parse as legacyParse } from "node:url";
 
 /** The four push-service host suffixes (D-17): FCM, Mozilla autopush, WNS and APNs for Web Push. */
 export const PUSH_SERVICE_HOST_SUFFIXES = [
@@ -30,17 +38,36 @@ function isIpLiteral(hostname: string): boolean {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(":");
 }
 
-export function isAllowedPushEndpoint(raw: string): boolean {
+/** True when the legacy parser (the one `web-push` uses) resolves the same protocol and host. */
+function legacyAgrees(candidate: string, url: URL): boolean {
+  // The legacy parser has no throwing mode that matters here; a null host simply never equals a name.
+  const legacy = legacyParse(candidate);
+  return legacy.protocol === url.protocol && legacy.hostname === url.hostname;
+}
+
+/**
+ * The canonical form of an allowed push endpoint (`url.href`), or null when the endpoint is not
+ * allowed. Every later step (storage, lookup, sending) must use this string and never the raw input.
+ */
+export function canonicalPushEndpoint(raw: string): string | null {
   const url = parseEndpoint(raw);
-  if (!url) return false;
-  if (url.protocol !== "https:") return false;
-  if (url.username !== "" || url.password !== "") return false;
-  if (url.port !== "" && url.port !== "443") return false;
+  if (!url) return null;
+  if (url.protocol !== "https:") return null;
+  if (url.username !== "" || url.password !== "") return null;
+  if (url.port !== "" && url.port !== "443") return null;
   const host = url.hostname.toLowerCase();
-  if (host === "" || host.endsWith(".") || isIpLiteral(host)) return false;
-  return PUSH_SERVICE_HOST_SUFFIXES.some(
+  if (host === "" || host.endsWith(".") || isIpLiteral(host)) return null;
+  const allowed = PUSH_SERVICE_HOST_SUFFIXES.some(
     (suffix) => host === suffix || host.endsWith(`.${suffix}`),
   );
+  if (!allowed) return null;
+  // Both parsers must agree on the raw input AND on the canonical string we would actually send.
+  if (!legacyAgrees(raw, url) || !legacyAgrees(url.href, url)) return null;
+  return url.href;
+}
+
+export function isAllowedPushEndpoint(raw: string): boolean {
+  return canonicalPushEndpoint(raw) !== null;
 }
 
 /** The host of an endpoint for log lines (never the path: it is a capability), null if unparsable. */
