@@ -486,7 +486,9 @@ _that_ commit, and only then tag it.
 
 **Never** restore a raw prod dump to int: int is internet-reachable and the dump carries employee
 names, emails and NFC card ids. The pseudonymizer replaces those while preserving ids, employee
-numbers and all time/leave/saldo data, so reports stay meaningful.
+numbers and all time/leave/saldo data, so reports stay meaningful. DSGVO-anonymized persons (the app's
+own rule, `isAnonymizedEmployee()`) are left exactly as they are, so int still recognises them as
+anonymized; the inline check fails the run if their count differs before and after (Issue #805).
 
 After a refresh **nobody can log in to int** — every `passwordHash` becomes `ANONYMIZED`. Create one
 fresh admin; do not resurrect an existing account.
@@ -503,6 +505,8 @@ carries prod's real shape (drifted indexes, odd rows). Lessons of the refresh of
 - Use the pseudonymizer **of prod's schema version**: check out a worktree at prod's tag
   (`git worktree add ../clokr-worktrees/pseudo-<tag> v<prod version>`) and run its
   `apps/api/scripts/pseudonymize-dump.ts` against the staging DB; the newer one expects columns prod lacks.
+- A pseudonymizer older than #805 renames anonymized persons too; run the current script, or restore the
+  anonymized persons' names from the staging copy of the dump before dumping.
 - If that older pseudonymizer does not clear WLAN MACs / `PresenceDevice` rows, run the clean-up SQL on the
   staging DB yourself before dumping (empty the MAC addresses and delete the device rows) and verify zero
   remain, in addition to the 0 emails / 0 NFC ids / 0 usable hashes check.
