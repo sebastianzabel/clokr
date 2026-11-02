@@ -1,7 +1,7 @@
 /**
  * Issue #609 (D-16) - a manager never learns a colleague's reminder opt-outs. The three opt-out
  * columns of Employee are omitted from every employee response (list, single, create, update (PATCH /:id),
- * reactivate) and from the Employee audit rows of an update; only the own-data route returns them.
+ * reactivate) and from the Employee audit rows of a create and an update; only the own-data route returns them.
  *
  * The colleague's columns are set to true through Prisma first, so an absent key can only mean the
  * route omitted it. The check runs on the raw response text, which also covers nested objects.
@@ -94,6 +94,15 @@ describe("the employee API omits the reminder opt-out columns (D-16)", () => {
     expect(res.statusCode).toBe(201);
     expect(JSON.parse(res.body).firstName).toBe("Neu");
     expectNoColumns(res.body);
+
+    // The creation audit row spreads the created row: it must not list the columns either (the
+    // values are only the defaults, but an auditor-readable row carries no opt-out at all).
+    const created = JSON.parse(res.body) as { id: string };
+    const rows = await auditRowsFor(app, "Employee", created.id, "CREATE");
+    // anti-vacuity: the creation was audited, and the audited value is a full row
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows[0]!.newValue)).toContain("employeeNumber");
+    expectNoColumns(JSON.stringify([rows[0]!.oldValue, rows[0]!.newValue]));
   });
 
   it("PATCH /employees/:id answers the update and audits it without the columns", async () => {

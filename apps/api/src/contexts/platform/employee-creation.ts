@@ -304,9 +304,20 @@ export interface EmployeeCreationAudit {
   employeeCreated(entry: EmployeeCreationAuditEntry, tx?: Prisma.TransactionClient): Promise<void>;
 }
 
+/** The Employee columns that hold a person's own reminder opt-outs (Issue #609, D-02); never audited. */
+const REMINDER_OPT_OUT_KEYS = [
+  "reminderShiftStartOff",
+  "reminderShiftEndOff",
+  "reminderDayCloseOff",
+] as const satisfies readonly (keyof Prisma.EmployeeOmit)[];
+
 /**
  * The `newValue` of the Employee CREATE audit row — one place, so the route and the operator path
  * record the identical shape.
+ *
+ * Issue #609 (D-16): the three per-person reminder opt-out columns are left out. A created row only
+ * carries their default, but an audit value readable by auditors names no person's reminder choice
+ * at all (the same omission `contexts/platform/api/employees.ts` applies to its reads).
  */
 export function employeeCreatedAuditValue(
   employee: {
@@ -321,8 +332,10 @@ export function employeeCreatedAuditValue(
   },
   directPassword: boolean,
 ): object {
+  const row: Record<string, unknown> = { ...employee };
+  for (const key of REMINDER_OPT_OUT_KEYS) delete row[key];
   return {
-    ...employee,
+    ...row,
     email: body.email,
     directPassword,
     // Personalstruktur (Phase 41) — Decimal → string for stable JSON
