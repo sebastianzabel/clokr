@@ -80,8 +80,8 @@ enum TenantModule {
 }
 
 // Phase 64b (issue #64) — Unterbau level below Tenant (ADR 0001): a Salon is never hard-deleted,
-// only deactivated (isActive/deactivatedAt). openingHours has the shape of the retired
-// TenantConfig.storeHours column:
+// only deactivated (isActive/deactivatedAt). openingHours has the shape of the former
+// tenant-level opening hours column (dropped in #638):
 // Array<{ day: 0..6 (Mo..So), open: "HH:MM", close: "HH:MM", closed?: boolean }>.
 model Salon {
   id             String    @id @default(uuid())
@@ -120,6 +120,9 @@ model Salon {
   phorestSyncRuns     PhorestSyncRun[]
   // Phase 71b (issue #71): Prisma-only back-relation — manual holidays are now salon-scoped.
   publicHolidays      PublicHoliday[]
+  // Issue #541: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung, approved by
+  // #541 reaching Ready) — the NFC terminal keys bound to this salon.
+  terminalApiKeys     TerminalApiKey[]
 
   @@index([tenantId])
 }
@@ -345,14 +348,6 @@ model TenantConfig {
   defaultCoreDays                   Int[]    @default([]) // 0=Sun..6=Sat day-of-week (same encoding as WorkSchedule.coreDays)
   // WiFi-Presence
   wifiPresenceWindowMinutes         Int      @default(15) // Shift-window gate: ±N minutes around shift start/end
-  // Ladenöffnungszeiten (Phase 42) — JSON array, one entry per weekday.
-  // Shape: Array<{ day: 0..6 (Mo..So), open: "HH:MM", close: "HH:MM", closed?: boolean }>
-  // Default: Mo-Sa 08:00-20:00, So closed
-  /// RETIRED (Issue #563): no code reads or writes this column. Opening hours live only on
-  /// `Salon.openingHours`; `PUT /api/v1/settings/work` strips the key and every read omits it
-  /// (`RETIRED_TENANT_CONFIG_COLUMNS`). Dropped in a follow-up release (GitHub #638,
-  /// „storeHours-Spalte entfernen“).
-  storeHours                        Json     @default("[{\"day\":0,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":1,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":2,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":3,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":4,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":5,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":6,\"open\":\"08:00\",\"close\":\"20:00\",\"closed\":true}]")
   // Phase 47.5 — How tightly to bind shifts to store hours.
   //   DAY_ONLY (default): block only on closed days (lets MAs prep before / clean after)
   //   STRICT:             shift time must be within [open, close]
@@ -1415,9 +1410,16 @@ model TerminalApiKey {
   lastUsedAt DateTime?
   revokedAt  DateTime?
   createdAt  DateTime  @default(now())
+  // Issue #541: optional binding of the terminal to ONE salon of its tenant. Nullable, no backfill
+  // (an unbound terminal keeps the salon rule of today). Tenant sameness is checked by the
+  // application because the database cannot express it; Restrict because revision-relevant
+  // references onto the Unterbau use Restrict.
+  salonId    String?
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  salon      Salon?    @relation(fields: [salonId], references: [id], onDelete: Restrict)
 
   @@index([tenantId])
+  @@index([salonId])
 }
 
 // ─────────────────────────────────────────────

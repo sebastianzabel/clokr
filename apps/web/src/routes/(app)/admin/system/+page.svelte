@@ -2,8 +2,10 @@
   import { onMount } from "svelte";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
-  import { salonContext, moduleBooked } from "$stores/salon-context";
+  import { salonContext, moduleBooked, showSalonOptions } from "$stores/salon-context";
   import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
+  import TerminalSalonCell from "$lib/components/admin/TerminalSalonCell.svelte";
+  import { saveTerminalSalon } from "$lib/admin/terminal-salon-save";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
@@ -365,6 +367,10 @@
     lastUsedAt: string | null;
     revokedAt: string | null;
     createdAt: string;
+    // Issue #541: the salon the terminal is bound to (null = salon from the weekly pattern)
+    salonId: string | null;
+    salonName: string | null;
+    salonActive: boolean | null;
   }
 
   let terminalKeys: TerminalKey[] = $state([]);
@@ -375,6 +381,7 @@
   );
   let terminalLoading = $state(false);
   let newKeyName = $state("");
+  let newKeySalonId = $state("");
   let newKeyRaw = $state(""); // shown once after creation
   let showNewKey = $state(false);
 
@@ -512,6 +519,14 @@
   // `=== false` only: an unknown state never hides the create row.
   const hardwareBooked = $derived(moduleBooked($salonContext, "HARDWARE_CLOCK"));
   const integrationsBooked = $derived(moduleBooked($salonContext, "INTEGRATIONS"));
+
+  // Issue #541 (D-08, D-11): the terminal salon choice follows the #64 rule (showSalonOptions is
+  // its one place); the column also shows whenever a key is bound, so a binding stays visible
+  // and removable.
+  const salonOptionsShown = $derived(showSalonOptions($salonContext));
+  const showTerminalSalonColumn = $derived(
+    salonOptionsShown || terminalKeys.some((k) => k.salonId !== null),
+  );
 
   onMount(async () => {
     // Forced, so a freshly booked module shows without waiting for the navigation throttle.
@@ -1310,10 +1325,14 @@
     if (!newKeyName.trim()) return;
     terminalLoading = true;
     try {
-      const res = await api.post<{ rawKey: string }>("/terminals", { name: newKeyName.trim() });
+      const res = await api.post<{ rawKey: string }>("/terminals", {
+        name: newKeyName.trim(),
+        ...(newKeySalonId !== "" && { salonId: newKeySalonId }),
+      });
       newKeyRaw = res.rawKey;
       showNewKey = true;
       newKeyName = "";
+      newKeySalonId = "";
       // Refresh list
       const list = await api.get<{ keys: TerminalKey[] }>("/terminals");
       terminalKeys = list.keys;
@@ -1325,6 +1344,26 @@
     } finally {
       terminalLoading = false;
     }
+  }
+
+  // Issue #541 (D-03, D-08): instant save of the salon select. The optimistic update and the
+  // revert-before-toast rollback live in `$lib/admin/terminal-salon-save` (unit-tested).
+  function setTerminalSalon(id: string, salonId: string | null): Promise<boolean> {
+    return saveTerminalSalon<TerminalKey>({
+      id,
+      salonId,
+      getRows: () => terminalKeys,
+      setRows: (rows) => (terminalKeys = rows),
+      salons: $salonContext.salons,
+      patch: (keyId, salon) => api.patch<TerminalKey>(`/terminals/${keyId}`, { salonId: salon }),
+      onSaved: () => toasts.success("Salon-Bindung gespeichert."),
+      onFailed: (err) => {
+        console.error("Failed to set terminal salon:", err);
+        toasts.error(
+          err instanceof ApiError ? err.message : "Salon-Bindung konnte nicht gespeichert werden.",
+        );
+      },
+    });
   }
 
   async function revokeTerminalKey(id: string) {
@@ -2734,6 +2773,18 @@
                 bind:value={newKeyName}
                 placeholder="Terminal-Name (z.B. Kasse 1)"
               />
+              {#if salonOptionsShown}
+                <select
+                  class="form-input"
+                  bind:value={newKeySalonId}
+                  aria-label="Salon des neuen Terminals"
+                >
+                  <option value="">Kein Salon – Salon aus dem Wochenmuster</option>
+                  {#each $salonContext.salons as salon (salon.id)}
+                    <option value={salon.id}>{salon.name}</option>
+                  {/each}
+                </select>
+              {/if}
               <button
                 class="btn btn-primary"
                 onclick={createTerminalKey}
@@ -2750,6 +2801,9 @@
                 <thead>
                   <tr>
                     <th>Name</th>
+                    {#if showTerminalSalonColumn}
+                      <th>Salon</th>
+                    {/if}
                     <th>Schlüssel</th>
                     <th>Zuletzt verwendet</th>
                     <th>Status</th>
@@ -2760,6 +2814,16 @@
                   {#each pagedTerminalKeys as key (key.id)}
                     <tr class:row-revoked={key.revokedAt}>
                       <td>{key.name}</td>
+                      {#if showTerminalSalonColumn}
+                        <td>
+                          <TerminalSalonCell
+                            terminal={key}
+                            salons={$salonContext.salons}
+                            showOptions={salonOptionsShown}
+                            onchange={(salonId) => setTerminalSalon(key.id, salonId)}
+                          />
+                        </td>
+                      {/if}
                       <td><code class="inline-code">{key.keyPrefix}</code></td>
                       <td
                         >{key.lastUsedAt

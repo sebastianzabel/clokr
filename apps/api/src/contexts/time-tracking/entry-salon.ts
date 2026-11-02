@@ -1,8 +1,8 @@
 /**
  * Phase 68b (issue #68), D-06/D-07/D-08/D-16 — the ONE place the entry-salon rule lives.
  *
- * Every TimeEntry creation path (the clock resolver's START branch for NFC/MOBILE/WIFI — only the web clock-in, MOBILE, may pass an
- * explicit salon (Issue #87), NFC and WIFI never do — the three
+ * Every TimeEntry creation path (the clock resolver's START branch for NFC/MOBILE/WIFI — the web clock-in, MOBILE, may pass an
+ * explicit salon (Issue #87), and so may a bound NFC terminal (Issue #541); WIFI never does — the three
  * `POST /time-entries` branches, the CSV importer) calls {@link resolveEntrySalon}; none rebuilds
  * the rule inline.
  *
@@ -36,7 +36,7 @@ export type ResolveEntrySalonInput = {
   employeeId: string;
   /** The entry's start instant — never the day-only `date`. */
   startTime: Date;
-  /** An explicitly requested salon (manual / Zeitnachtrag / grant / CSV paths and, since Issue #87, the web clock-in; never NFC or WIFI). */
+  /** An explicitly requested salon (manual / Zeitnachtrag / grant / CSV paths and, since Issue #87, the web clock-in and, since Issue #541, a bound NFC terminal; never WIFI). */
   explicitSalonId?: string;
 };
 

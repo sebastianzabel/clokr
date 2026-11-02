@@ -27,3 +27,10 @@
 # password of a synthetic test user in a disposable tenant, no secret. The spec now generates it at runtime; this
 # fingerprint covers the already-pushed commit.
 2d595b883277096987764da431b87ca7863a891e:apps/e2e/tests/hr-view-86.spec.ts:generic-api-key:32
+
+# Issue #608, 2026-11-02: false positive (generic-api-key) — throwaway TEST-ONLY VAPID key pairs that
+# were committed in the two commits below and never configured on any stage. Since d708f9d8 the
+# tests generate the pairs at runtime, so no key material remains in the tree; these fingerprints
+# only cover the historical PR commits (squash merge does not carry them onto main).
+8547d23127528ea98ca751e56801ff7850a4910b:apps/api/src/__tests__/push-fixtures-608.ts:generic-api-key:17
+fb3c45bedec0dd75bc44d5762afb6a60c44c1f40:apps/api/src/__tests__/push-config-608.test.ts:generic-api-key:23
