@@ -16,6 +16,7 @@
  *   - User.email                    → int-{employeeNumber-or-id8}@example.invalid
  *   - User.passwordHash             → "ANONYMIZED" (no real login possible)
  *   - Auth tokens (Invitation/OtpToken/RefreshToken) → hard-deleted (not needed on int)
+ *   - PushSubscription (Issue #608, D-22): EVERY row → hard-deleted (a real device push address of prod)
  *   - OperatorAccount (Phase 88, D-11): EVERY operator account is neutralised — email →
  *     operator-{id8}@example.invalid, passwordHash → "ANONYMIZED", isActive → false, TOTP secret /
  *     enrolment / replay step → null, recovery-code hashes → empty, lockout state reset. Prod operator
@@ -169,6 +170,11 @@ async function main() {
     processed++;
   }
 
+  // Real device push addresses of prod must never reach int (Issue #608, D-22). One statement per
+  // run, not per employee: every row is a prod device, whoever owns it.
+  const removedPushDevices = await prisma.pushSubscription.deleteMany({});
+  console.log(`[pseudonymize] removed ${removedPushDevices.count} push device(s)`);
+
   // Operator accounts (Phase 88, D-11): neutralise every one. Per-row because the pseudonymous
   // email derives from the id; no delete, audit rows reference the accounts with onDelete Restrict.
   const operators = await prisma.operatorAccount.findMany({
@@ -207,6 +213,8 @@ async function main() {
     where: { NOT: { passwordHash: "ANONYMIZED" } },
   });
 
+  const residualPushDevices = await prisma.pushSubscription.count();
+
   const durationMs = Date.now() - startedAt;
   await prisma.auditLog.create({
     data: {
@@ -223,6 +231,7 @@ async function main() {
           residualNfc: withNfc,
           residualOperatorEmails: realOperatorEmails,
           residualOperatorPasswords: liveOperatorPasswords,
+          residualPushDevices,
         },
       } as unknown as object,
     },
@@ -245,7 +254,8 @@ async function main() {
     livePw > 0 ||
     withNfc > 0 ||
     realOperatorEmails > 0 ||
-    liveOperatorPasswords > 0
+    liveOperatorPasswords > 0 ||
+    residualPushDevices > 0
   ) {
     console.error("[pseudonymize] VERIFICATION FAILED — residual identifiers remain. Do NOT swap.");
     process.exitCode = 1;

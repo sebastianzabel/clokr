@@ -168,6 +168,23 @@ async function checkWifiIdentifiers() {
   }
 }
 
+async function checkPushSubscriptions() {
+  // Issue #608: a push device is a delivery address of a person. The anonymization deletes it, so a
+  // row that still belongs to an anonymized user (passwordHash "ANONYMIZED", the same predicate as
+  // checkAuditLogUserIds) is a leftover.
+  const devices = await prisma.pushSubscription.count({
+    where: { user: { passwordHash: "ANONYMIZED" } },
+  });
+  if (devices > 0) {
+    findings.push({
+      rule: "push-subscriptions-not-cleared",
+      severity: "blocking",
+      count: devices,
+      sample: [`PushSubscription: ${devices}`],
+    });
+  }
+}
+
 async function checkAbsenceDocuments() {
   const docs = await prisma.absence.count({ where: { documentPath: { not: null } } });
   if (docs > 0) {
@@ -298,6 +315,7 @@ async function main() {
     ],
     ["Absence documentPath cleared", checkAbsenceDocuments],
     ["WLAN identifiers cleared (wifiMacs, PresenceDevice)", checkWifiIdentifiers],
+    ["Push devices cleared (PushSubscription)", checkPushSubscriptions],
     ["AuditLog userId nulled for anonymized users", checkAuditLogUserIds],
     ["Employee.nfcCardId cleared + phone scan", checkPhoneFormatColumns],
     ["Row counts preserved per ANONYMIZATION_RUN log", checkVolumePreservation],

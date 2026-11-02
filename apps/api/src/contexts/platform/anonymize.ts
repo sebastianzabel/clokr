@@ -256,16 +256,19 @@ export async function anonymizeEmployeeData(
     },
   });
 
-  // Benachrichtigungen des Nutzers anonymisieren (können Namen/Informationen enthalten)
+  // Anonymize the user's notifications (they can contain names and other information)
   await tx.notification.updateMany({
     where: { userId },
     data: { title: "ANONYMIZED", message: "ANONYMIZED" },
   });
 
-  // Auth-Tokens löschen (nicht aufbewahrungspflichtig)
+  // Delete auth tokens (not retention-relevant). The person's push devices (Issue #608, D-04) go
+  // with them: a delivery address is no retention record, so no per-row audit is written here; the
+  // ANONYMIZE audit of the caller stays the one trace.
   await tx.invitation.deleteMany({ where: { employeeId } });
   await tx.otpToken.deleteMany({ where: { userId } });
   await tx.refreshToken.deleteMany({ where: { userId } });
+  await tx.pushSubscription.deleteMany({ where: { userId } });
 
   return {
     removedRoleAssignments,
