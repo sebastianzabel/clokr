@@ -983,7 +983,11 @@ import { readFileSync } from "node:fs";
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #715: +1 file (sim-invariants-715.test.ts, 8 cases), source-counted on the base 736/11029.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
-const MIN_FILES = 750;
+// Phase 608 (2026-11-02): measured with a full run on `feat/608-web-push` @ 67f489eb — 765 test files, 11279 tests; new
+// files me-push-608, push-config-608, push-surface-off-608, push-endpoint-guard-608, push-device-label-608,
+// push-reassign-608, anonymization-push-608, notification-push-policy-608, notification-push-dispatch-608 and
+// generate-vapid-keys-608; extended: notification-email-policy (+1). Nothing removed, skipped or loosened. MIN_FILES 750 -> 765, never lowered.
+const MIN_FILES = 765;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1079,7 +1083,14 @@ const MIN_FILES = 750;
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #715: +8 cases (sim-invariants-715.test.ts) on the base 11029.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
-const MIN_TESTS = 11081;
+// Phase 608 (2026-11-02): measured with a full run on `feat/608-web-push` @ 67f489eb (merged onto origin/main @ c1228258,
+// #807 included) — 765 test files, 11279 tests (11276 passed, 3 skipped, 0 failed). The phase adds 10 files with 174
+// cases (me-push-608 12, push-config-608 15, push-surface-off-608 4, push-endpoint-guard-608 22, push-device-label-608 15,
+// push-reassign-608 7, anonymization-push-608 5, notification-push-policy-608 65, notification-push-dispatch-608 15,
+// generate-vapid-keys-608 14) and one case in notification-email-policy; nothing removed, skipped or loosened.
+// MIN_TESTS 11081 -> 11279, never lowered. Another open PR (#812, Issue #541) raises the same floors: whoever merges second
+// re-measures with a full run (lower-bound convention, never a sum).
+const MIN_TESTS = 11279;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
