@@ -12,7 +12,9 @@
  * `apps/api/src/__tests__/notification-push-policy-608.test.ts` scans every `app.notify()` call site
  * under apps/api/src, so a new notification type without an entry turns that test red - nobody has
  * to remember AC-4 ("no health or saldo data in plain text on the lock screen"). A type whose e-mail
- * policy is `never` is `never` here too (parity, tested).
+ * policy is `never` is `never` here too (parity, tested) - with ONE named, reasoned exception:
+ * WIFI_DEVICE_NOT_SEEN (Issue #610, D-10), listed in `PUSH_WITHOUT_EMAIL` of that test, which also
+ * proves every entry of that list is really e-mail `never` and push `send`.
  *
  * Exception to the parity (Issue #609, D-08): a type may be e-mail `never` AND pushed when its text is a
  * neutral nudge without personal content (the shift reminders). The exceptions are the named list
@@ -98,6 +100,9 @@ export const NOTIFICATION_PUSH_POLICY: Record<string, PushPolicy> = {
   UPCOMING_ABSENCE:       { push: "send", body: "Es gibt einen neuen Hinweis in Clokr.", ttlSeconds: TTL_24H },
   VACATION_EXPIRY:        { push: "send", body: "Es gibt einen Hinweis zu deinem Urlaub.", ttlSeconds: TTL_3D },
   CARRYOVER_EXPIRING:     { push: "send", body: "Es gibt einen Hinweis zu deinem Urlaub.", ttlSeconds: TTL_3D },
+
+  // WLAN pairing (Issue #610, D-10): the one type that is pushed although its e-mail policy is `never`
+  WIFI_DEVICE_NOT_SEEN:   { push: "send", body: "Dein Handy wird im Salon nicht mehr erkannt. Bitte koppel es neu.", ttlSeconds: TTL_3D },
 
   // Shift planning
   SHIFT_LEAVE_CONFLICT:   { push: "send", body: "Es gibt einen Hinweis zur Schichtplanung.", ttlSeconds: TTL_24H },

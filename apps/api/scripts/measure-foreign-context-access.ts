@@ -136,6 +136,7 @@ export type PrismaModelName =
   | "terminalApiKey"
   | "presenceSource"
   | "presenceDevice"
+  | "presencePairingCode" // Issue #610 — one-time WLAN pairing code (Zeiterfassung)
   | "apiKey"
   | "phorestStaffMapping"
   | "phorestSyncRun"
@@ -186,6 +187,7 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   dayBreakAck: "time-tracking", // Issue #80 — cross-salon acknowledgement
   timeEntryActivityShare: "time-tracking", // Issue #81 — activity allocation of an entry (D-01)
   presenceDevice: "time-tracking",
+  presencePairingCode: "time-tracking", // Issue #610 (Phase 610-01) — one-time WLAN pairing code
   presenceSource: "time-tracking",
   terminalApiKey: "time-tracking",
   retroEntryRequest: "time-tracking",

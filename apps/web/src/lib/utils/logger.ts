@@ -85,6 +85,19 @@ function onOperatorPath(): boolean {
   return path === "/betreiber" || path.startsWith("/betreiber/");
 }
 
+/**
+ * The only form in which a URL is logged: the path, never the query string or the fragment. A
+ * query can carry a one-time pairing code (`?code=` of the device pairing page, or `?next=` of the
+ * sign-in leg that leads to it) and has no value for a log reader (review WR-02).
+ */
+export function pathOnly(raw: string): string {
+  try {
+    return new URL(raw, "https://clokr.invalid").pathname;
+  } catch {
+    return raw.split(/[?#]/)[0];
+  }
+}
+
 function scheduleFlush(delayMs: number) {
   if (flushTimer) return;
   flushTimer = setTimeout(() => {
@@ -149,6 +162,11 @@ function flush() {
 
 function enqueue(entry: Record<string, unknown>) {
   if (onOperatorPath()) return;
+  // One choke point for every URL field, whatever a caller put into `extra` (review WR-02).
+  for (const key of ["url", "filename"]) {
+    const value = entry[key];
+    if (typeof value === "string") entry[key] = pathOnly(value);
+  }
   queue.push(entry);
   // Bounded buffer: an error storm must not grow the queue without limit.
   while (queue.length > MAX_QUEUE) queue.shift();
@@ -162,7 +180,7 @@ export const clientLogger = {
     enqueue({
       level: "error",
       message,
-      url: window.location.href,
+      url: window.location.pathname,
       userAgent: navigator.userAgent,
       userId,
       ...extra,
@@ -175,7 +193,7 @@ export const clientLogger = {
     enqueue({
       level: "warn",
       message,
-      url: window.location.href,
+      url: window.location.pathname,
       userAgent: navigator.userAgent,
       userId,
       ...extra,

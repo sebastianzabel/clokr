@@ -52,6 +52,8 @@ model Tenant {
   specialLeaveRules    SpecialLeaveRule[]
   presenceSources      PresenceSource[]
   presenceDevices      PresenceDevice[]
+  // Issue #610 — one-time WLAN pairing codes (Prisma-only back-relation; an Unterbau Erweiterung)
+  presencePairingCodes PresencePairingCode[]
   // Phase 67.2 — Schulferien-Cache pro Tenant pro Bundesland
   schoolHolidayPeriods SchoolHolidayPeriod[]
   // Phase 85 — Phorest staff mapping + sync run history
@@ -1443,6 +1445,9 @@ model PresenceSource {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  // Issue #610 — Prisma-only back-relation of the one-time pairing codes issued through this key
+  pairingCodes PresencePairingCode[]
+
   @@index([tenantId])
   @@index([keyHash])
 }
@@ -1459,6 +1464,11 @@ model PresenceDevice {
   label         String? // Optional human-readable label (e.g. "iPhone the operator", "Tablet")
   addedByUserId String? // userId of the person who created the mapping (null = system)
   addedAt       DateTime @default(now()) @db.Timestamptz
+  // Issue #610 (D-07): how the mapping was made. Existing rows stay MANUAL - no classification is guessed.
+  pairedVia PresencePairedVia @default(MANUAL)
+  // Issue #610 (D-07, P-610-11): last presence event (connected or disconnected) of this MAC, written by the
+  // webhook. NULL until the first event after the mapping; no backfill.
+  lastSeenAt DateTime? @db.Timestamptz
 
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
@@ -1466,6 +1476,38 @@ model PresenceDevice {
   @@unique([tenantId, mac]) // One MAC maps to exactly one employee per tenant
   @@index([tenantId])
   @@index([employeeId])
+}
+
+// Issue #610 (D-07) - how a PresenceDevice mapping came into being.
+enum PresencePairedVia {
+  MANUAL
+  QR
+}
+
+// Issue #610 (Phase 610-01, D-04 revised) - Zeiterfassung model: a one-time WLAN pairing token. The adapter
+// registers it for a MAC (presence-source key) and the signed-in person confirms it. Only the SHA-256 of the
+// 32-byte code is stored (never the code), it lives at most 5 minutes, is single use (consumedAt), is hard-deleted
+// after one day and on anonymization and is not retention-relevant. Both FKs are onDelete: Cascade for that
+// reason. consumedByUserId is deliberately a plain column without a relation: no new Shared-Kernel
+// dependency on User.
+model PresencePairingCode {
+  id               String    @id @default(uuid())
+  tenantId         String
+  presenceSourceId String
+  codeHash         String    @unique // SHA-256 hex of the raw code
+  mac              String // Normalized lowercase colon-separated
+  hostname         String? // Display only, sanitised and truncated by the writer
+  expiresAt        DateTime  @db.Timestamptz // createdAt + 5 minutes, never longer
+  consumedAt       DateTime? @db.Timestamptz
+  consumedByUserId String? // Plain column on purpose (no FK)
+  createdAt        DateTime  @default(now()) @db.Timestamptz
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  presenceSource PresenceSource @relation(fields: [presenceSourceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, mac])
+  @@index([createdAt])
+  @@index([consumedByUserId])
 }
 
 model ApiKey {

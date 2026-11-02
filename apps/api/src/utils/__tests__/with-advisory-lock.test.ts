@@ -75,8 +75,10 @@ describe("withAdvisoryLock", () => {
   // ATTENDANCE_BREAK_UNCONFIRMED (1016n), bringing it to 16. Phase 292 (GitHub issue #292)
   // added MONTH_CLOSE_DEFERRAL_REMINDER (1017n) for the weekly deferral escalation — 17.
   // Phase 80 (Issue #80, D-10) added ATTENDANCE_BREAK_CROSS_SALON (1018n) for the next-day
-  // cross-salon break check — 18. Issue #609 added ATTENDANCE_SHIFT_REMINDER (1020n; 1019n is
-  // reserved by Issue #610) for the shift reminders — 19.
+  // cross-salon break check — 18.
+  // Issue #610 (D-10) added ATTENDANCE_WIFI_DEVICE_NOT_SEEN (1019n) for the daily WLAN
+  // re-couple hint — 19. Issue #609 added ATTENDANCE_SHIFT_REMINDER (1020n) for the shift
+  // reminders — 20.
   it("registry exposes 19 distinct keys and tenantAdvisoryKey derives a bigint", () => {
     const values = Object.values(ADVISORY_LOCK_KEYS);
     expect(values).toHaveLength(19);

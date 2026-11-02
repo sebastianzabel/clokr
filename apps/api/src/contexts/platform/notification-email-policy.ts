@@ -128,7 +128,7 @@ const ALWAYS_ENTRIES: Record<string, EmailPolicy> = {
   },
 };
 
-// ── D. never — the SECTION9_* types and in-app-only notices, reason mandatory ──
+// ── D. never — the SECTION9_* types, the in-app notices and the push-only hint, reason mandatory ──
 // Art. 9 DSGVO health-adjacent payloads (§ 9 BUrlG Krank-im-Urlaub). Phase 104 CR-02's
 // decision is preserved verbatim, now expressed as a first-class policy instead of a
 // side-car deny-list (deleted by this change).
@@ -151,6 +151,14 @@ const NEVER_ENTRIES: Record<string, EmailPolicy> = {
   SUPPORT_ACCESS_STARTED: {
     email: "never",
     reason: "In-app only; a mail notification is out of scope of Issue #93 (D-14).",
+  },
+  // Issue #610 (D-10): the one type that is pushed although it is never e-mailed - see
+  // PUSH_WITHOUT_EMAIL in notification-push-policy-608.test.ts.
+  WIFI_DEVICE_NOT_SEEN: {
+    email: "never",
+    reason:
+      "In-app and push only (Issue #610, D-10): a re-coupling hint without personal data; e-mail " +
+      "deliberately not used.",
   },
 };
 

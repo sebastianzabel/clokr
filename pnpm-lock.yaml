@@ -279,6 +279,9 @@ importers:
       svelte-dnd-action:
         specifier: ^0.9.79
         version: 0.9.79(svelte@5.57.1(@typescript-eslint/types@8.72.1))
+      uqr:
+        specifier: 0.1.3
+        version: 0.1.3
     devDependencies:
       '@sveltejs/adapter-node':
         specifier: ^5.5.7
@@ -3730,6 +3733,9 @@ packages:
     hasBin: true
     peerDependencies:
       browserslist: '>= 4.21.0'
+
+  uqr@0.1.3:
+    resolution: {integrity: sha512-0rjE8iEJe4YmT9TOhwsZtqCMRLc5DXZUI2UEYUUg63ikBkqqE5EYWaI0etFe/5KUcmcYwLih2RND1kq+hrUJXA==}
 
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
@@ -7197,6 +7203,8 @@ snapshots:
       browserslist: 4.29.5
       escalade: 3.2.0
       picocolors: 1.1.1
+
+  uqr@0.1.3: {}
 
   uri-js@4.4.1:
     dependencies:

@@ -360,10 +360,13 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
           employeeId: body.employeeId,
           mac,
           addedByUserId: req.user.sub,
+          // Issue #610 (D-16): an admin mapping is a manual mapping - a later QR pairing never replaces it
+          pairedVia: "MANUAL",
         },
         update: {
           employeeId: body.employeeId,
           addedByUserId: req.user.sub,
+          pairedVia: "MANUAL",
         },
       });
 

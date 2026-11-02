@@ -50,9 +50,9 @@ const NEVER_PUSH_TYPES = [
   "SUPPORT_ACCESS_STARTED",
 ];
 
-// Issue #609 (D-08): the named exception to the parity rule below - a type that is pushed although its
-// e-mail policy is `never`. A new entry needs a written reason; the stale-list case proves every entry
-// really is e-mail `never` AND push `send`, so the list cannot go stale or hide a `never` type.
+// Issues #609 (D-08) and #610 (D-10): the named exceptions to the parity rule below - types that are pushed
+// although their e-mail policy is `never`. A new entry needs a written reason; the stale-list case proves every
+// entry really is e-mail `never` AND push `send`, so the list cannot go stale or hide a `never` type.
 const PUSH_WITHOUT_EMAIL: Record<string, string> = {
   REMINDER_SHIFT_START:
     "Erinnerung ohne personenbezogenen Inhalt; E-Mail bewusst nicht (Issue #609, D-08)",
@@ -60,6 +60,8 @@ const PUSH_WITHOUT_EMAIL: Record<string, string> = {
     "Erinnerung ohne personenbezogenen Inhalt; E-Mail bewusst nicht (Issue #609, D-08)",
   REMINDER_DAY_CLOSE:
     "Erinnerung ohne personenbezogenen Inhalt; E-Mail bewusst nicht (Issue #609, D-08)",
+  WIFI_DEVICE_NOT_SEEN:
+    "no personal data, re-coupling hint only; e-mail deliberately not used (Issue #610, D-10)",
 };
 
 describe("NOTIFICATION_PUSH_POLICY exhaustiveness (Issue #608, D-08)", () => {
@@ -154,8 +156,8 @@ describe("NOTIFICATION_PUSH_POLICY text rules (AC-4)", () => {
     policy.push === "send" ? [{ type, policy }] : [],
   );
 
-  it("30 types are sent", () => {
-    expect(sends.length).toBe(30);
+  it("31 types are sent", () => {
+    expect(sends.length).toBe(31);
   });
 
   it.each(sends.map((s) => [s.type, s.policy.body, s.policy.ttlSeconds] as const))(

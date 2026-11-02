@@ -6781,6 +6781,120 @@ Symbole, Profilseite ohne Schlüssel). Geänderte Prüfwerte: Modellzahlen (`mea
 `lint-tenant-scoping-model-graph`), Routenoberfläche (`route-surface.txt`), `pinnedTenantCsp` (`worker-src 'self'`),
 Ausschlüsse der Neutralitätsmatrix für die fünf Push-Routen.
 
+## AE — WLAN-Kopplung per QR-Code: Einmal-Codes in der Zeiterfassung (Phase 610, Issue #610)
+
+### Ausgangslage
+
+Die WLAN-Anwesenheit (Phasen 388 ff.) ordnet einer Person Geräte über deren MAC-Adresse zu. Die Adresse musste bisher von Hand
+eingetragen werden — fehleranfällig, und für Beschäftigte ohne Technikwissen kaum machbar. Phase 610 lässt eine Person ihr
+Handy im Salon selbst koppeln: QR-Code scannen, die vom FRITZ!Box-Adapter bereitgestellte lokale Seite öffnet sich, der
+Adapter ermittelt über TR-064, welches Gerät die Adresse des Handys im Netz trägt, und die angemeldete Person bestätigt in
+Clokr mit einem Tipp. Die Uhrenlogik (Anwesenheitsereignis → Stempelereignis) bleibt unverändert.
+
+### Rechtslage
+
+- Art. 6 Abs. 1 lit. a DSGVO, § 26 BDSG: Einwilligung. Sie entsteht durch den Tipp auf „Das ist mein Handy – koppeln“ mit
+  sichtbarem Zweck (einschließlich der Angabe, dass der Zeitpunkt der letzten Erkennung gespeichert wird, Review IN-03) und
+  Hinweis auf den Widerruf; `wifiOptInAt` wird auf den Bestätigungszeitpunkt gesetzt und im AuditLog mit
+  altem und neuem Wert festgehalten.
+- Art. 7 Abs. 3 DSGVO: Der Widerruf (Schalter im Profil) entfernt **alle** Geräte der Person und die alte Adressliste, jedes
+  mit eigenem `DELETE`-Eintrag („Einwilligung widerrufen“).
+- Art. 5 Abs. 1 lit. c DSGVO: Die Vorschau zeigt nur die letzten zwei Adressteile; der Hinweis auf dem Sperrbildschirm ist
+  ein neutraler Satz ohne Angabe zur Person.
+- Art. 17 DSGVO: Ein Kopplungscode ist ein flüchtiges Token, kein aufbewahrungspflichtiger Beleg.
+
+### Entscheidung
+
+- **Die Geräteadresse kommt nie vom Browser.** Der Adapter nimmt allein die TCP-Gegenstelle der Verbindung, fragt die Box
+  (`X_AVM-DE_GetSpecificHostEntryByIP`; nur die Live-Antwort zählt, eine veraltete Hostliste wird nie befragt) und meldet `{ mac, hostname }` mit dem Schlüssel der
+  Präsenzquelle an `POST /api/v1/presence/pairing-codes`. Er liest keinen Weiterleitungs-Header und keinen Parameter. Daraus
+  folgt: Ein weitergeleiteter Link koppelt höchstens das Gerät, das die QR-Seite geöffnet hat.
+- **Neues Modell `PresencePairingCode` (Zeiterfassung).** `codeHash` (SHA-256 eines 32-Byte-Zufallscodes; der Klartext wird
+  nie gespeichert), `mac`, `hostname` (nur Anzeige), `expiresAt` (jetzt + 5 Minuten, nie länger), `consumedAt`,
+  `consumedByUserId`, `createdAt`. Ein Code ist einmal verwendbar, an Mandant, Quelle und Gerät gebunden; jeder ungültige
+  Zustand antwortet mit derselben 404.
+- **Zwei Fremdschlüssel, beide `onDelete: Cascade`.** `presenceSourceId` auf `PresenceSource` (innerhalb der Zeiterfassung)
+  und `tenantId` auf `Tenant` (eine Abhängigkeit des Shared Kernel). Cascade statt `Restrict`, weil die Zeile flüchtig und
+  nicht aufbewahrungspflichtig ist (D-04, überarbeitet): Sie darf eine Quelle oder einen Mandanten nie am Löschen hindern.
+  `consumedByUserId` ist eine einfache Spalte ohne Fremdschlüssel — keine zusätzliche Abhängigkeit vom Unterbau.
+- **Zwei neue Spalten an `PresenceDevice`.** `pairedVia` (`MANUAL` | `QR`, Standard `MANUAL`, kein Rückfüllen geraten) und
+  `lastSeenAt` (Zeitpunkt des letzten Anwesenheitsereignisses, geklammert auf `min(Ereignis, jetzt)` und nur vorwärts).
+- **Eine Codequelle, eine Bestätigungstransaktion.** `pairing-code.ts` ist die einzige Stelle für Format, Laufzeit und
+  Hash; `presence-pairing.ts` bestätigt in einer Transaktion unter der Personensperre (`lockPresenceOwner`: Employee + User),
+  danach Code-Zeile `FOR UPDATE`. Ein Gerät, das einer anderen Person gehört, ergibt 409 `PRESENCE_DEVICE_TAKEN` und der Code
+  bleibt gültig. Vorherige `QR`-Geräte derselben Person werden ersetzt, `MANUAL`-Geräte bleiben; ein Admin-Zuordnen setzt
+  `MANUAL`.
+- **D-08 Verhaltensänderung.** Der Widerruf der Einwilligung entfernt jetzt alle Geräte (bisher blieben sie stehen). Wer vor
+  dieser Version widerrufen hat, behält inaktive Restzeilen bis zur nächsten Aktion; es gibt keine rückwirkende Bereinigung.
+- **Hinweis zum erneuten Koppeln.** Ein Tagesjob (Funktion 11 des Anwesenheitsprüfers, 09:20 Mandantenzeit) benachrichtigt die
+  Person einmal in der App und per neutralem Push, wenn ihr `QR`-Handy seit dem dritten jüngsten Schichttag mit Stempelung
+  über eine Nicht-WLAN-Quelle kein Lebenszeichen zeigte; ein Mandant ohne jedes Ereignis im Fenster (Adapterausfall) bekommt
+  nichts. E-Mail ist ausgeschaltet.
+- **Ausnahme von der #608-Paritätsregel (D-16).** Dort gilt „E-Mail `never` ⇒ Push `never`“. `WIFI_DEVICE_NOT_SEEN` ist
+  ausdrücklich benannt (`PUSH_WITHOUT_EMAIL`, mit Begründung): kein Personenbezug, nur der Hinweis zum erneuten Koppeln; die
+  Zahl der gesendeten Typen steigt von 27 auf 28.
+- **Der Adapter-Listener ist standardmäßig aus.** `PAIRING_ENABLED=true` und ein https-Ursprung in `CLOKR_APP_URL`; die
+  Compose-Dateien veröffentlichen den Port nur auf der Loopback-Adresse, solange `PAIRING_HOST_BIND` nicht die LAN-Adresse des
+  Hosts nennt. Das Laufbuch `docs/runbooks/wlan-qr-kopplung.md` beschreibt die Netzwerkvoraussetzungen und die Prüfung der
+  Quelladresse (Docker kann sie verdecken).
+- **Aufräumen.** Zeilen älter als ein Tag löscht der tägliche Token-Bereinigungsjob; die Anonymisierung entfernt die Codes der
+  Person, der int-Abzug alle.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** Eigentümer des neuen Modells, der Routen (`POST /presence/pairing-codes`, `POST /employees/me/wifi/pairing`
+  und `…/preview`), des Tagesjobs und der Fassade `facade/presence-pairing.ts`.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine (der Job liest Schichttage ausschließlich über `getShiftsInRange`).
+- **Arbeitszeitkonto:** keine (nur die Zeitzonenhilfen werden gelesen).
+- **Kompositionsschicht:** keine.
+- **Unterbau:** Rückbeziehung `Tenant.presencePairingCodes` — eine **Erweiterung** nach ADR 0002, Entscheidung 7 (rein additiv,
+  kein bestehender Leser ändert sich), freigegeben mit dem Status `Ready` des Issues. Die Token-Bereinigung und die
+  Anonymisierung rufen die Zeiterfassungs-Fassade auf; der Unterbau importiert keine Fachregel.
+
+Belegt durch `610-untouched.sh`: die Kontexte Abwesenheiten, Schichtplanung und Arbeitszeitkonto, `composition/`, `services/`,
+die aufgezeichneten Neutralitätsmatrizen und die festgenagelten WLAN-Tests sind gegenüber dem Basisstand unverändert.
+
+### Grenzen
+
+- **Weitergeleiteter Link (D-09):** Innerhalb von fünf Minuten kann der Link an eine Kollegin geschickt werden, die damit das Handy
+  der scannenden Person an ihr Konto koppelt. Begrenzt durch Einmalcode, Vorschau des Geräts und AuditLog.
+- **Klartext-HTTP im LAN (D-14):** Die Adapterseite ist unverschlüsselt; ein Mitschnitt im Salon-LAN zeigt die Weiterleitung mit
+  dem Code. Begrenzt durch Einmalcode und fünf Minuten.
+- **Code in einem Zugriffsprotokoll (P-610-24):** Die Seiten-URL trägt den Code einmal; ein Reverse-Proxy vor der Web-App kann
+  ihn protokollieren. Die API-Anfrageprotokolle nie, weil Vorschau und Bestätigung den Code im Körper nehmen. Die Web-App sendet für die Kopplungsseite und für `/login` und `/otp` (dort steckt der Code in `?next=`) `Referrer-Policy: no-referrer`, damit der Code nicht als `Referer` in Zugriffsprotokollen eines Ingress landet (Review WR-01). Auch das Client-Fehlerprotokoll (`POST /api/v1/logs/client`) kennt nur den Pfad: Der Browser sendet `location.pathname`, die API schneidet Query und Fragment zusätzlich ab (Review WR-02).
+- **Netzwerk (D-15, P-610-23):** Ein Gast-WLAN mit Geräteisolation, ein offenes WLAN (rotierende private Adresse) und Docker-
+  Aufbauten, die die Quelladresse verdecken, funktionieren nicht; das Laufbuch führt die Prüfung auf dem echten Host.
+- **Gerätename nur in der Vorschau (Review WR-05):** Der vom Handy gemeldete DHCP-Name („Annas-iPhone“) steht nur in der
+  kurzlebigen Codezeile (nach einem Tag gelöscht) und in der Vorschau. `PresenceDevice.label` und alle Audit-Werte der Kopplung
+  tragen den neutralen Namen „Handy (QR-Kopplung, TT.MM.JJJJ)“. Bekannte Grenze, kein neuer Umfang: Die Audit-Zeilen der
+  Entität `PresenceDevice` tragen die MAC-Adresse (gleich wie bei der manuellen Zuordnung) und werden bei der Anonymisierung
+  nicht geschwärzt (nur `Employee` und `User`, COMP-V1814-01); nur `userId` wird auf null gesetzt.
+- **IP-, ARP- und MAC-Fälschung im Salon-LAN (Review WR-04):** Wer im Salon-LAN eine fremde feste IP-Adresse setzt oder per
+  ARP-Fälschung auftritt, wird von der Box unter dieser IP aufgelöst; wer seine eigene MAC fälscht, koppelt die gefälschte
+  Adresse. Das ist der Weg für „eine MAC meiner Wahl“ durch einen Innentäter und lässt sich ohne Netzwerkauthentifizierung
+  (802.1X) nicht schließen. Begrenzt durch: Kopplung nur aus dem Salon-WLAN, Einmalcode, Vorschau, AuditLog mit Person und
+  Gerät. Ein Host hinter NAT (Router, NAS, Docker-Host) wird nur abgelehnt, wenn die Box ihn als kabelgebunden meldet.
+- Die Feldnamen der TR-064-Antwort der Abfrage nach IP sind aus der Dokumentation und aus Testdaten abgeleitet und erst auf
+  einer echten FRITZ!Box bestätigt (`probe-host.js`); bis dahin lehnt die Seite bei einer Abweichung ab (es gibt keinen Rückfall auf die Hostliste). Das Feld `NewInterfaceType` ist dabei besonders ungeprüft: Meldet die Box für ein Gerät eindeutig eine kabelgebundene Schnittstelle (z. B. „Ethernet“), lehnt der Adapter ab; fehlt der Wert oder ist er unbekannt, wird gekoppelt und eine Warnung protokolliert („auf der echten Box prüfen“).
+- `lastSeenAt` heißt „letztes Anwesenheitsereignis“, nicht „zuletzt im Netz gesehen“: Der Adapter meldet nur Wechsel.
+- Die Hostlisten-Abfrage des Adapters (`GetHostListPath` statt AVMs `X_AVM-DE_GetHostListPath`) blieb bewusst unverändert.
+- AC-1 und AC-6 (ein echtes iPhone und Android in einem echten FRITZ!Box-WLAN, Gast-WLAN-Ablehnung) lassen sich nicht
+  automatisieren: Sie werden als Abnahme-Checkliste im Pull Request vom Owner abgenommen.
+
+### Nachweise
+
+Tests (API): `presence-pairing-610`, `presence-pairing-contract-610`, `presence-pairing-replace-610`,
+`presence-pairing-race-610`, `presence-withdrawal-610`, `presence-last-seen-610`, `pairing-no-client-mac-610`,
+`presence-pairing-lifecycle-610`, `wifi-device-not-seen-610` (Einheit), `wifi-device-not-seen-job-610`; erweitert:
+`notification-push-policy-608`, `cron-deactivated-tenants-88`, `with-advisory-lock`. Adapter: `tr064-host-by-ip`,
+`pairing-config`, `pairing`, `index-wiring`. Web: `pairing-view`, `device-labels`, `DevicePairing`, `WifiPresenceSettings`,
+`pairing-url`, `qr-svg`, `PairingGuide`, `device-pairing-page-610`, `admin-integrations-pairing-guide-610`. Geänderte
+Prüfwerte (jeweils „Issue #610“): Modellzahlen (`measure-foreign-context-access` 54 → 55, Zeiterfassung 9 → 10;
+`lint-tenant-scoping-model-graph`), Routenoberfläche (`route-surface.txt`), Ausschlüsse der Neutralitätsmatrix, die
+#608-Paritätsliste und 27 → 28 gesendete Typen, Läuferliste und Untergrenze von `cron-deactivated-tenants-88` (16 → 17),
+Advisory-Schlüssel (18 → 19), die Untergrenzen von `check-test-completeness.mjs`.
+
 ## AF — Schicht-Erinnerungen an Beginn, Ende und Tagesabschluss (Phase 609, Issue #609)
 
 ### Ausgangslage

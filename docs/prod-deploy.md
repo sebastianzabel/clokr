@@ -73,6 +73,12 @@ FRITZBOX_USER=<user>
 FRITZBOX_PASS=<pass>
 CLOKR_PRESENCE_KEY=<key>
 POLL_INTERVAL_SECONDS=60
+# Optional: QR pairing of phones (Issue #610; off unless PAIRING_ENABLED=true).
+# CLOKR_APP_URL is the https web origin; PAIRING_HOST_BIND the host's LAN IPv4 (default 127.0.0.1 = unreachable from the WLAN).
+# Network recipe and source-address check: docs/runbooks/wlan-qr-kopplung.md
+PAIRING_ENABLED=false
+CLOKR_APP_URL=https://clokr.example.com
+PAIRING_HOST_BIND=<host LAN IPv4>
 ```
 
 ### GHCR access

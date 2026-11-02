@@ -990,6 +990,15 @@ import { readFileSync } from "node:fs";
 // push-reassign-608, anonymization-push-608, notification-push-policy-608, notification-push-dispatch-608 and
 // generate-vapid-keys-608; extended: notification-email-policy (+1). Nothing removed, skipped or loosened. MIN_FILES 750 -> 765, never lowered.
 // Merge of #608 onto main after #541/#638: full run measured 772 files / 11393 tests (incl. 3 skipped).
+// Phase 610 (2026-11-02): measured with a full run on `feat/610-wlan-qr-kopplung` @ ac4cbde4 (stacked on
+// `feat/608-web-push`) — 777 test files, 11455 tests (11452 passed, 3 skipped, 0 failed); new files
+// presence-pairing-610 (1 case), presence-pairing-contract-610 (28), presence-pairing-replace-610 (7),
+// presence-pairing-race-610 (3), presence-withdrawal-610 (7), presence-last-seen-610 (6), pairing-no-client-mac-610 (13),
+// presence-pairing-lifecycle-610 (6), wifi-device-not-seen-610 (16), wifi-device-not-seen-job-610 (15); extended:
+// notification-push-policy-608, cron-deactivated-tenants-88, with-advisory-lock; nothing removed, skipped or loosened.
+// MIN_FILES 765 -> 777, never lowered. #541, #608 and #641 also raise these floors: whoever merges later re-measures.
+// 2026-11-02 (#610 review fixes): +2 API test files, measured full run 779 files / 11465 tests.
+// Merge of #610 onto main after #608: full run measured 784 files / 11508 tests (incl. 3 skipped).
 // Phase 609 (2026-11-02): measured with a full API run on `feat/609-erinnerungen` @ 54644ca0 (stacked on `feat/608-web-push`; later commits touch web tests only) -
 // 780 test files, 11605 tests (11602 passed, 3 skipped, 0 failed). The phase adds 13 API test files (shift-reminders-kernel-609,
 // shift-reminders-start-609, shift-reminders-end-609, shift-reminders-day-close-609, shift-reminders-exclusions-609,
@@ -1000,8 +1009,8 @@ import { readFileSync } from "node:fs";
 // 765 -> 780, never lowered. The open PRs for #541, #610 and #641 (and #608 itself) raise the same floors: whoever merges
 // later re-measures with a full run (lower-bound convention, never a sum).
 // 2026-11-02 (#609 review fixes): measured full run 781 files / 11636 tests.
-// Merge of #609 onto main: MEASURED_F
-const MIN_FILES = 781;
+// Merge of #609 onto main after #610: MEASURED_F
+const MIN_FILES = 784;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1110,9 +1119,12 @@ const MIN_FILES = 781;
 // MIN_TESTS 11081 -> 11279, never lowered. Another open PR (#812, Issue #541) raises the same floors: whoever merges second
 // re-measures with a full run (lower-bound convention, never a sum).
 // Merge of #608 onto main after #541/#638: full run measured 772 files / 11393 tests (incl. 3 skipped).
+// Phase 610 (2026-11-02): MIN_TESTS 11279 -> 11455, the measured total of the full run named at MIN_FILES (the ten
+// new files add 102 cases). Never lowered.
+// Merge of #610 onto main after #608: full run measured 784 files / 11508 tests (incl. 3 skipped).
 // Phase 609 (2026-11-02): MIN_TESTS 11279 -> 11605, the measured total of the full run named at MIN_FILES. Never lowered.
 // Merge of #609 onto main: MEASURED_T
-const MIN_TESTS = 11636;
+const MIN_TESTS = 11508;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

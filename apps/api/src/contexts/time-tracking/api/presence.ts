@@ -1,7 +1,9 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { createHash } from "crypto";
 import { normalizeMac } from "../normalize-mac";
+import { authenticatePresenceSource } from "../presence-source-auth"; // Issue #610 (D-16)
+import { sanitizeHostname } from "../pairing-code"; // Issue #610
+import { issuePairingCode } from "../presence-pairing"; // Issue #610
 import { getCurrentShift } from "../../scheduling"; // Phase 101B (Issue #101, wave 9)
 import { getTenantTimezone, dateStrInTz } from "../../working-time-account"; // Phase 101B
 import { resolveClockEvent } from "../../../services/clock/resolver";
@@ -18,34 +20,29 @@ const presenceEventSchema = z.object({
   adapter: z.string().default("fritzbox"),
 });
 
+// Issue #610 (D-05, P-610-05): the adapter registers a one-time pairing code for the MAC it saw.
+// `.strict()` — the MAC and hostname come only from this key-authenticated body.
+const pairingCodeIssueSchema = z
+  .object({
+    mac: z.string().min(1).max(64),
+    hostname: z.string().max(255).nullish(),
+  })
+  .strict();
+
 export async function presenceRoutes(app: FastifyInstance) {
   // POST /events — receive normalized presence event from an adapter (FritzBox etc.)
   const isTest = process.env.NODE_ENV === "test";
+
   app.post("/events", {
     schema: { tags: ["WiFi-Presence"] },
     config: { rateLimit: { max: isTest ? 5000 : 300, timeWindow: "1 minute" } },
     handler: async (req, reply) => {
       // ── 1. Auth: extract Bearer key → SHA256 → PresenceSource lookup ──────
-      const authHeader = req.headers.authorization;
-      if (!authHeader?.startsWith("Bearer ")) {
-        return reply.code(401).send({ error: "Presence-Key erforderlich" });
-      }
-      const rawKey = authHeader.slice(7);
-      const keyHash = createHash("sha256").update(rawKey).digest("hex");
-
-      const source = await app.prisma.presenceSource.findUnique({
-        where: { keyHash },
-      });
-      if (!source || source.revokedAt || !source.isActive) {
-        return reply.code(401).send({ error: "Ungültiger oder widerrufener Presence-Key" });
-      }
-
+      // Issue #610 (D-16): the check lives in presence-source-auth.ts, shared with POST /pairing-codes.
+      const auth = await authenticatePresenceSource(app, req.headers.authorization);
+      if (!auth.ok) return reply.code(auth.status).send(auth.body);
+      const source = auth.source;
       const tenantId = source.tenantId;
-
-      // Phase 88 (D-05): the device key stays valid for reactivation, but a deactivated tenant gets nothing.
-      if (!(await app.tenantIsActive(tenantId))) {
-        return reply.code(403).send(app.tenantDeactivatedError);
-      }
 
       // Fire-and-forget: update lastUsedAt on PresenceSource (adapter health signal)
       app.prisma.presenceSource
@@ -135,6 +132,29 @@ export async function presenceRoutes(app: FastifyInstance) {
           },
         });
         return reply.code(200).send({ ok: true });
+      }
+
+      // Issue #610 (D-07, P-610-11): remember when this device was last seen. It is written only here,
+      // after the checks above decided that this device belongs to a person who has consented and is
+      // active (review WR-03): a leftover device of an opted-out or deactivated person must not gain a
+      // standing "last seen in the salon" timestamp. The time is the event's own, clamped to now (a key
+      // holder cannot post the future) and the guarded update never moves it backwards. Nothing below
+      // reads it - it only feeds the re-couple hint (wifi-device-not-seen.ts).
+      if (device && device.employee.id === employee.id) {
+        const now = new Date();
+        const seenAt = eventTime > now ? now : eventTime;
+        try {
+          await app.prisma.presenceDevice.updateMany({
+            where: {
+              id: device.id,
+              tenantId,
+              OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: seenAt } }],
+            },
+            data: { lastSeenAt: seenAt },
+          });
+        } catch (err) {
+          app.log.error({ err }, "Failed to update PresenceDevice.lastSeenAt");
+        }
       }
 
       // ── 4. Tenant config: shift window ────────────────────────────────────
@@ -423,6 +443,38 @@ export async function presenceRoutes(app: FastifyInstance) {
         await dismissShiftReminderNotices(app, employee.userId, "OUT");
       }
       return reply.code(200).send({ ok: true });
+    },
+  });
+
+  // POST /pairing-codes — issue a one-time WLAN pairing code for a MAC (Issue #610)
+  // Device-authenticated (presence-source key), no user auth. It does NOT touch
+  // PresenceSource.lastUsedAt (that stays the webhook's health signal) and writes no audit: the code
+  // is a token, like an OTP. The raw code is returned exactly once, in this response.
+  app.post("/pairing-codes", {
+    schema: { tags: ["WiFi-Presence"] },
+    config: { rateLimit: { max: isTest ? 5000 : 30, timeWindow: "1 minute" } },
+    handler: async (req, reply) => {
+      const auth = await authenticatePresenceSource(app, req.headers.authorization);
+      if (!auth.ok) return reply.code(auth.status).send(auth.body);
+      const tenantId = auth.source.tenantId;
+
+      const body = pairingCodeIssueSchema.parse(req.body);
+      // Fixed text, never echoes the input (issue #332 precedent: a MAC is a personal identifier).
+      let mac: string;
+      try {
+        mac = normalizeMac(body.mac);
+      } catch {
+        return reply.code(400).send({ error: "Ungültige MAC-Adresse" });
+      }
+
+      const issued = await issuePairingCode(app.prisma, {
+        tenantId,
+        presenceSourceId: auth.source.id,
+        mac,
+        hostname: sanitizeHostname(body.hostname),
+        now: new Date(),
+      });
+      return reply.code(201).send({ code: issued.code, expiresAt: issued.expiresAt.toISOString() });
     },
   });
 }
