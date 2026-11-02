@@ -156,11 +156,14 @@ describe("enableThisDevice", () => {
     expect(log).toEqual(["permission", "ready", "subscribe", "post"]);
   });
 
-  it.each(["denied", "default"] as const)(
-    "a %s permission subscribes and posts nothing",
-    async (permission) => {
+  it.each([
+    ["denied", "denied"],
+    ["default", "dismissed"],
+  ] as const)(
+    "a %s permission is %s and subscribes and posts nothing",
+    async (permission, status) => {
       const s = setup({ permission });
-      expect(await enableThisDevice(PUBLIC_KEY)).toEqual({ status: "denied" });
+      expect(await enableThisDevice(PUBLIC_KEY)).toEqual({ status });
       expect(s.subscribe).not.toHaveBeenCalled();
       expect(api.subscribePushDevice).not.toHaveBeenCalled();
       expect(log).toEqual(["permission"]);

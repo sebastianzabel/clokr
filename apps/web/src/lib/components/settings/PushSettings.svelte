@@ -34,6 +34,8 @@
   let devices = $state<PushDevice[]>([]);
   let thisDevice = $state<ThisDeviceState>({ state: "off", deviceId: null });
   let denied = $state(false);
+  // The permission prompt was closed without an answer: calm hint, the enable button stays.
+  let dismissed = $state(false);
   let loadFailed = $state(false);
   let busy = $state(false);
 
@@ -72,10 +74,14 @@
       const result = await enableThisDevice(publicKey);
       if (result.status === "denied") {
         denied = true;
+        dismissed = false;
+      } else if (result.status === "dismissed") {
+        dismissed = true;
       } else if (result.status === "error") {
         toasts.error(result.message);
       } else {
         denied = false;
+        dismissed = false;
         toasts.success("Push ist auf diesem Gerät aktiviert.");
         await refreshDevices();
       }
@@ -176,6 +182,12 @@
             Push aktivieren
           </button>
         </div>
+        {#if dismissed}
+          <p class="text-muted push-note" role="status" data-testid="push-dismissed">
+            Benachrichtigungen wurden nicht erlaubt. Tippe auf „Push aktivieren“ und erlaube sie, um
+            es erneut zu versuchen.
+          </p>
+        {/if}
         <p class="form-hint">
           Mit dem Aktivieren erlaubst du Clokr, diesem Gerät Benachrichtigungen zu senden. Du kannst
           das hier jederzeit wieder abschalten.

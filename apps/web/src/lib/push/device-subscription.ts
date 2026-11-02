@@ -20,7 +20,8 @@ const READY_TIMEOUT_MS = 10_000;
 
 export type EnableResult =
   | { status: "enabled"; device: PushDevice }
-  | { status: "denied" }
+  | { status: "denied" } // blocked in the browser settings (permission "denied")
+  | { status: "dismissed" } // the prompt was closed without an answer (permission "default")
   | { status: "error"; message: string };
 
 export type DisableResult = { status: "disabled" } | { status: "error"; message: string };
@@ -102,7 +103,9 @@ export async function enableThisDevice(publicKey: string): Promise<EnableResult>
   // iOS and Chrome require the permission request in the direct user gesture; nothing may be
   // awaited before it.
   const permission = await Notification.requestPermission();
-  if (permission !== "granted") return { status: "denied" };
+  // "default" is a dismissed prompt, not a block: the person can simply try again (review WR-03).
+  if (permission === "denied") return { status: "denied" };
+  if (permission !== "granted") return { status: "dismissed" };
 
   let subscription: PushSubscription | null = null;
   let created = false;

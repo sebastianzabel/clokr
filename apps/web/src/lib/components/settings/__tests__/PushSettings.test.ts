@@ -135,6 +135,32 @@ describe("PushSettings", () => {
     expect(screen.queryByRole("button", { name: "Push aktivieren" })).toBeNull();
   });
 
+  it("WR-03: a dismissed prompt shows a calm retry hint, keeps the button and is not 'blocked'", async () => {
+    await mounted();
+    const button = await screen.findByRole("button", { name: "Push aktivieren" });
+    sub.enableThisDevice.mockResolvedValue({ status: "dismissed" });
+    await fireEvent.click(button);
+    expect(await screen.findByTestId("push-dismissed")).toHaveTextContent(
+      "Benachrichtigungen wurden nicht erlaubt",
+    );
+    expect(screen.getByRole("button", { name: "Push aktivieren" })).toBeEnabled();
+    expect(screen.queryByText(/in den Browser-Einstellungen blockiert/)).toBeNull();
+    expect(toast.toasts.error).not.toHaveBeenCalled();
+
+    // A second attempt that is granted clears the hint.
+    const mine = device("d1", "Chrome auf Android");
+    sub.enableThisDevice.mockImplementation(async () => {
+      serverDevices = [mine];
+      thisState = { state: "on", deviceId: "d1" };
+      return { status: "enabled", device: mine };
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Push aktivieren" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("push-state")).toHaveTextContent("Auf diesem Gerät: an"),
+    );
+    expect(screen.queryByTestId("push-dismissed")).toBeNull();
+  });
+
   it("toasts the message of a failed enable and stays off", async () => {
     await mounted();
     const button = await screen.findByRole("button", { name: "Push aktivieren" });
