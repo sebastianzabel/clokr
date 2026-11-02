@@ -6,6 +6,7 @@
  */
 import { createHash, randomBytes } from "crypto";
 import type { FastifyInstance } from "fastify";
+import { grantSystemRole, tokenWithoutSignIn } from "./setup";
 
 /** A random locally-administered MAC ("02:" + five random octets) so no two test files collide. */
 export function randomTestMac(): string {
@@ -90,4 +91,32 @@ export async function confirmCode(
       ...(options.extraBody ?? {}),
     },
   });
+}
+
+/**
+ * A second EMPLOYEE of the same tenant (user, employee, stored role) with a token that needs no
+ * sign-in. Cleaned up with the rest of the tenant by `cleanupTestData`.
+ */
+export async function createPeerEmployee(
+  app: FastifyInstance,
+  tenantId: string,
+  tag: string,
+): Promise<{ userId: string; employeeId: string; token: string }> {
+  const email = `peer-${tag}-${randomBytes(4).toString("hex")}@example.invalid`;
+  const user = await app.prisma.user.create({
+    data: { email, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+  });
+  const employee = await app.prisma.employee.create({
+    data: {
+      tenantId,
+      userId: user.id,
+      employeeNumber: String(900000 + Math.floor(Math.random() * 99999)),
+      firstName: "Peer",
+      lastName: "Test",
+      hireDate: new Date("2024-01-01"),
+    },
+  });
+  await grantSystemRole(app.prisma, { tenantId, userId: user.id, role: "EMPLOYEE" });
+  const token = await tokenWithoutSignIn(app, email);
+  return { userId: user.id, employeeId: employee.id, token };
 }

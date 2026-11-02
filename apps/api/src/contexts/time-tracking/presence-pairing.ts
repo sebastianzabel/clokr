@@ -14,6 +14,7 @@
 import { Prisma } from "@clokr/db";
 import type { PrismaClient } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
+import { uniqueViolationTarget } from "../../utils/prisma-unique-violation";
 import {
   PAIRING_CODE_PATTERN,
   PAIRING_CODE_TTL_MS,
@@ -165,6 +166,25 @@ export async function previewPairing(
 
 // ── confirm ──────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * True for a Prisma unique violation on `PresenceDevice` `[tenantId, mac]` (a concurrent manual or admin
+ * mapping of the same MAC), read from structured error metadata only (`uniqueViolationTarget`).
+ */
+export function isPresenceDeviceMacConflict(err: unknown): boolean {
+  const target = uniqueViolationTarget(err);
+  if (target === null) return false;
+  return (
+    target.includes("PresenceDevice_tenantId_mac_key") ||
+    /(^|[\s,])tenantId[\s,]+mac([\s,]|$)/.test(target)
+  );
+}
+
+class PairingTakenRefusal extends Error {
+  constructor() {
+    super("presence device taken");
+  }
+}
+
 export interface ConfirmPairingInput {
   tenantId: string;
   employeeId: string;
@@ -211,18 +231,34 @@ interface LockedCodeRow {
 /**
  * Claims a code and couples the device with consent, in ONE transaction (P-610-07):
  * (1) lock the caller's Employee and User rows; (2) lock the code row and check it is unconsumed,
- * unexpired and from an active source; (3) refuse a MAC that is already mapped; (4) mark the code
- * consumed; (6) create the device; (7) record the consent. Refusals return before anything is
- * written, so a refused code stays unconsumed.
+ * unexpired and from an active source; (3) refuse a MAC mapped to ANOTHER person; (4) mark the code
+ * consumed; (5) delete the caller's other QR devices (MANUAL ones stay); (6) create the device, or
+ * refresh the caller's own mapping of this MAC; (7) record the consent. Refusals return (or throw)
+ * before the transaction commits, so a refused code stays unconsumed. A unique violation on
+ * `[tenantId, mac]` (a concurrent manual or admin mapping) is the same TAKEN refusal.
  */
 export async function confirmPairing(
   app: FastifyInstance,
   input: ConfirmPairingInput,
 ): Promise<ConfirmPairingResult> {
-  const { tenantId, employeeId, userId, code, request } = input;
-  if (!PAIRING_CODE_PATTERN.test(code)) return { kind: "INVALID" };
-  const codeHash = hashPairingCode(code);
+  if (!PAIRING_CODE_PATTERN.test(input.code)) return { kind: "INVALID" };
+  const codeHash = hashPairingCode(input.code);
 
+  try {
+    return await confirmInTransaction(app, input, codeHash);
+  } catch (err) {
+    // A unique violation on [tenantId, mac] rolled the whole transaction back, so the code is unconsumed.
+    if (err instanceof PairingTakenRefusal) return { kind: "TAKEN" };
+    throw err;
+  }
+}
+
+async function confirmInTransaction(
+  app: FastifyInstance,
+  input: ConfirmPairingInput,
+  codeHash: string,
+): Promise<ConfirmPairingResult> {
+  const { tenantId, employeeId, userId, request } = input;
   return app.prisma.$transaction(async (tx): Promise<ConfirmPairingResult> => {
     const now = input.now ?? new Date();
 
@@ -253,12 +289,12 @@ export async function confirmPairing(
     });
     if (!source) return { kind: "INVALID" };
 
-    // (3) the MAC must not be mapped to anyone yet (plan 02 turns "mapped to the caller" into a refresh)
+    // (3) the MAC must not be mapped to ANOTHER person; the caller's own mapping is refreshed in (6)
     const existing = await tx.presenceDevice.findUnique({
       where: { tenantId_mac: { tenantId, mac: row.mac } },
-      select: { id: true },
+      select: { id: true, employeeId: true, label: true, pairedVia: true, addedAt: true },
     });
-    if (existing) return { kind: "TAKEN" };
+    if (existing && existing.employeeId !== employeeId) return { kind: "TAKEN" };
 
     // (4) consume the code (guarded: the row lock already serialises, the predicate keeps it honest)
     const claimed = await tx.presencePairingCode.updateMany({
@@ -267,25 +303,89 @@ export async function confirmPairing(
     });
     if (claimed.count !== 1) return { kind: "INVALID" };
 
-    // (6) the device
-    const device = await tx.presenceDevice.create({
-      data: {
-        tenantId,
-        employeeId,
-        mac: row.mac,
-        label: row.hostname,
-        addedByUserId: userId,
-        pairedVia: "QR",
-      },
-      select: {
-        id: true,
-        mac: true,
-        label: true,
-        pairedVia: true,
-        addedAt: true,
-        lastSeenAt: true,
-      },
+    // (5) the caller's OTHER QR devices are replaced, never accumulated; MANUAL devices stay
+    const previousQr = await tx.presenceDevice.findMany({
+      where: { tenantId, employeeId, pairedVia: "QR", mac: { not: row.mac } },
+      select: { id: true, mac: true, label: true, pairedVia: true },
+      orderBy: [{ addedAt: "asc" }, { id: "asc" }],
     });
+    const replacedDeviceIds: string[] = [];
+    for (const old of previousQr) {
+      await tx.presenceDevice.delete({ where: { id: old.id, employeeId, tenantId } });
+      replacedDeviceIds.push(old.id);
+      await app.audit({
+        userId,
+        action: "DELETE",
+        entity: "PresenceDevice",
+        entityId: old.id,
+        oldValue: { mac: old.mac, label: old.label, pairedVia: old.pairedVia },
+        newValue: { reason: "Neu gekoppelt", trigger: "REPLACED_BY_QR_PAIRING" },
+        request,
+        tx,
+      });
+    }
+
+    // (6) create the device, or refresh the caller's own mapping of this MAC
+    const deviceSelect = {
+      id: true,
+      mac: true,
+      label: true,
+      pairedVia: true,
+      addedAt: true,
+      lastSeenAt: true,
+    } as const;
+    let device: ConfirmedDevice;
+    let status: 200 | 201;
+    try {
+      if (existing) {
+        device = await tx.presenceDevice.update({
+          where: { id: existing.id, tenantId, employeeId },
+          data: { pairedVia: "QR", addedAt: now, label: existing.label ?? row.hostname },
+          select: deviceSelect,
+        });
+        status = 200;
+        await app.audit({
+          userId,
+          action: "UPDATE",
+          entity: "PresenceDevice",
+          entityId: device.id,
+          oldValue: { pairedVia: existing.pairedVia, addedAt: existing.addedAt },
+          newValue: { pairedVia: "QR", addedAt: now },
+          request,
+          tx,
+        });
+      } else {
+        device = await tx.presenceDevice.create({
+          data: {
+            tenantId,
+            employeeId,
+            mac: row.mac,
+            label: row.hostname,
+            addedByUserId: userId,
+            pairedVia: "QR",
+          },
+          select: deviceSelect,
+        });
+        status = 201;
+        await app.audit({
+          userId,
+          action: "CREATE",
+          entity: "PresenceDevice",
+          entityId: device.id,
+          newValue: {
+            mac: device.mac,
+            label: device.label,
+            pairedVia: "QR",
+            presenceSourceId: row.presenceSourceId,
+          },
+          request,
+          tx,
+        });
+      }
+    } catch (err) {
+      if (isPresenceDeviceMacConflict(err)) throw new PairingTakenRefusal();
+      throw err;
+    }
 
     // (7) consent — the explicit tap on the confirm button is the consent act
     await tx.employee.update({
@@ -308,26 +408,17 @@ export async function confirmPairing(
       request,
       tx,
     });
-    await app.audit({
-      userId,
-      action: "CREATE",
-      entity: "PresenceDevice",
-      entityId: device.id,
-      newValue: {
-        mac: device.mac,
-        label: device.label,
-        pairedVia: "QR",
-        presenceSourceId: row.presenceSourceId,
-      },
-      request,
-      tx,
-    });
 
     return {
       kind: "OK",
-      status: 201,
-      body: { device, replacedDevices: 0, wifiPresenceEnabled: true, wifiOptInAt: now },
-      replacedDeviceIds: [],
+      status,
+      body: {
+        device,
+        replacedDevices: replacedDeviceIds.length,
+        wifiPresenceEnabled: true,
+        wifiOptInAt: now,
+      },
+      replacedDeviceIds,
     };
   });
 }
