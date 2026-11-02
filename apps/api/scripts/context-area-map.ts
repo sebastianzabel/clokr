@@ -269,6 +269,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/retro-config.ts": "zeiterfassung", // RetroEntryRequest tenant-config toggle
   "src/contexts/time-tracking/shift-reminders.ts": "zeiterfassung", // Issue #609 (D-04, D-17) — pure kernel of the shift reminders (instants, windows, start decision, dedupe keys, links); no model access, no clock read
   "src/contexts/time-tracking/shift-reminder-job.ts": "zeiterfassung", // Issue #609 (D-03, D-17) — the 5-minute shift reminder job; reads shifts, leave and absences through their facades, writes only notices
+  "src/contexts/time-tracking/api/employee-reminders.ts": "zeiterfassung", // Issue #609 (D-02) — GET/PATCH /employees/me/reminders, the person's own reminder opt-outs; the reminders are a Zeiterfassung feature, the /employees prefix is a namespace, not an owner
 
   // ── abwesenheiten — LeaveRequest/LeaveType/LeaveEntitlement/SpecialLeaveRule/Section9Credit/
   //    Absence/EmployeeVocationalSchoolPattern/CompanyShutdown/CompanyShutdownException ───────

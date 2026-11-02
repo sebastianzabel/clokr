@@ -500,6 +500,24 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "RECORD/MERGE mode refuses to run once the role guard is gone.",
   },
   {
+    route: "GET /api/v1/employees/me/reminders",
+    reason:
+      "New route of Phase 609 (Issue #609, D-02), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it reads the tenant's enabled shift reminder occasions and the caller's own reminder opt-outs, takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "400). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "PATCH /api/v1/employees/me/reminders",
+    reason:
+      "New route of Phase 609 (Issue #609, D-02), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it switches one of the caller's own shift reminders off or on (only the caller's own Employee row, audited), takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "400). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
     route: "GET /api/v1/roles/permission-catalog",
     reason:
       "New route added in Phase 83 (Issue #83, D-02), long after the role guard (`requireRole`) " +

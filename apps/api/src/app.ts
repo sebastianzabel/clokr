@@ -22,6 +22,7 @@ import { operatorSalonPorts } from "./composition/operator-salon-ports"; // Phas
 import { operatorSupportPorts } from "./composition/operator-support-ports"; // Issue #93
 import { employeeRoutes } from "./contexts/platform/api/employees";
 import { employeeWifiRoutes } from "./contexts/time-tracking/api/employee-wifi"; // Phase 243 Plan 02 (B2)
+import { employeeReminderRoutes } from "./contexts/time-tracking/api/employee-reminders"; // Issue #609 (D-02)
 import { timeEntryRoutes } from "./contexts/time-tracking/api/time-entries";
 import { dayBreakRoutes } from "./contexts/time-tracking/api/day-breaks"; // Issue #80 (D-02..D-06, D-21)
 import { leaveRoutes } from "./contexts/absence/api/leave";
@@ -423,6 +424,7 @@ export async function buildApp() {
   // under the employees namespace (GET/PATCH /api/v1/employees/me/wifi, POST
   // /api/v1/employees/me/wifi/devices, DELETE /api/v1/employees/me/wifi/devices/:id)
   await app.register(employeeWifiRoutes, { prefix: "/api/v1/employees" });
+  await app.register(employeeReminderRoutes, { prefix: "/api/v1/employees" });
   // Phase 67b — salon assignments live under the employees namespace (GET/POST
   // /api/v1/employees/:id/salon-assignments…)
   await app.register(salonAssignmentRoutes, { prefix: "/api/v1/employees" });

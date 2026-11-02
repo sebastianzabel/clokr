@@ -102,6 +102,7 @@
 │   ├── /dismiss-all (DELETE)
 │   ├── /generate-week (POST)
 │   ├── /json (GET, HEAD)
+│   ├── /me/reminders (GET, HEAD, PATCH)
 │   ├── /me/wifi (GET, HEAD, PATCH)
 │   ├── /my-week (GET, HEAD)
 │   ├── /nfc-punch (POST)
