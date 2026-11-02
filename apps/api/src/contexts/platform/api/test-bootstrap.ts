@@ -149,7 +149,6 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         data: {
           email: `admin@${tenantId}.test`,
           passwordHash,
-          role: "ADMIN",
           isActive: true,
         },
       });
@@ -412,7 +411,6 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         data: {
           email: `terminal-${empSuffix}@${body.tenantId}.test`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

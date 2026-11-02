@@ -22,13 +22,13 @@
  * has no such side effect.
  */
 
-/** Demo/e2e admin login — seeded with ADMIN role. */
+/** Demo/e2e admin login — seeded with the Admin system role (a stored role assignment). */
 export const ADMIN_EMAIL = "admin@clokr.de";
 
 /** Demo/e2e admin login password (already-public demo credential — see threat T-275-06). */
 export const ADMIN_PASSWORD = "admin1234";
 
-/** Demo/e2e employee login — seeded with EMPLOYEE role. */
+/** Demo/e2e employee login — seeded with the Mitarbeiter system role (a stored role assignment). */
 export const EMPLOYEE_EMAIL = "max@clokr.de";
 
 /** Demo/e2e employee login password (already-public demo credential — see threat T-275-06). */

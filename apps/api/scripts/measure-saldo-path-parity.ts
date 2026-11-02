@@ -375,7 +375,6 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
     data: {
       email: `admin-${s}@t22.test`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "ADMIN",
       isActive: true,
     },
   });
@@ -424,7 +423,6 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
     data: {
       email: `azubi-${s}@t22.test`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

@@ -11,8 +11,7 @@
  *  2. Isolation (D-04) — each test gets a different tenantId. Combined with
  *     the first test, the annotations on the run prove the two ids differ.
  *  3. Admin token validity — the returned bearer token authenticates against
- *     `/api/v1/me` and resolves to an ADMIN user inside the freshly-created
- *     tenant.
+ *     `/api/v1/me/context` and resolves to the freshly-created tenant.
  *
  * Per-test scope (D-04) means teardown of all three tenants runs inside the
  * fixture afterEach phase. A separate Plan 73-02 verification step in the
@@ -56,12 +55,11 @@ test.describe("tenant fixture", () => {
   });
 
   test("admin token authenticates against the API", async ({ tenant }) => {
-    const res = await fetch(`${API_BASE}/api/v1/me`, {
+    const res = await fetch(`${API_BASE}/api/v1/me/context`, {
       headers: { authorization: `Bearer ${tenant.adminToken}` },
     });
     expect(res.status).toBe(200);
-    const me = (await res.json()) as { tenantId: string; role: string };
-    expect(me.tenantId).toBe(tenant.tenantId);
-    expect(me.role).toBe("ADMIN");
+    const context = (await res.json()) as { tenant: { id: string } };
+    expect(context.tenant.id).toBe(tenant.tenantId);
   });
 });

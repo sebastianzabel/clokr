@@ -380,7 +380,6 @@ async function main() {
             ? ADMIN_EMAIL
             : `${s.first.toLowerCase()}.${s.last.toLowerCase()}@${EMAIL_DOMAIN}`,
         passwordHash,
-        role: s.role,
         isActive: true,
         lastLoginAt: addDays(todayUTC, -1),
       },
@@ -405,7 +404,7 @@ async function main() {
     bump("employee");
 
     // Issue #539 (D-09): permissions come only from stored role assignments, so every demo
-    // user holds its seeded role's system role as one (the `role` column is still written).
+    // user holds its seeded role's system role as one - the role lives only in the stored assignment.
     await ensureSystemRoleAssignment(prisma, {
       tenantId: tenant.id,
       userId: user.id,
