@@ -97,6 +97,13 @@ describe("WifiPresenceSettings - device list", () => {
     expect(text).toContain("Deine Geräteadresse");
   });
 
+  it("names the stored last-detection time in the data note (review IN-03)", async () => {
+    await mounted();
+    expect((document.body.textContent ?? "").replace(/\s+/g, " ")).toContain(
+      "Zeitpunkt der letzten Erkennung gespeichert",
+    );
+  });
+
   it("a load failure shows the callout and disables the switch", async () => {
     api.getMyWifi.mockRejectedValue(new Error("boom"));
     renderWithTheme(WifiPresenceSettings, {});

@@ -56,6 +56,8 @@ describe("labels", () => {
     expect(CONSENT_TEXT).toContain("Art. 6 Abs. 1 lit. a DSGVO");
     expect(CONSENT_TEXT).toContain("§ 26 BDSG");
     expect(CONSENT_TEXT).toContain("im Profil widerrufen");
+    // Review IN-03: the persisted last-detection time is named in the consent text.
+    expect(CONSENT_TEXT).toContain("Zeitpunkt, zu dem es zuletzt erkannt wurde");
   });
 });
 

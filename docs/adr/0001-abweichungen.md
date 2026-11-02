@@ -6684,7 +6684,8 @@ Clokr mit einem Tipp. Die Uhrenlogik (Anwesenheitsereignis → Stempelereignis) 
 ### Rechtslage
 
 - Art. 6 Abs. 1 lit. a DSGVO, § 26 BDSG: Einwilligung. Sie entsteht durch den Tipp auf „Das ist mein Handy – koppeln“ mit
-  sichtbarem Zweck und Hinweis auf den Widerruf; `wifiOptInAt` wird auf den Bestätigungszeitpunkt gesetzt und im AuditLog mit
+  sichtbarem Zweck (einschließlich der Angabe, dass der Zeitpunkt der letzten Erkennung gespeichert wird, Review IN-03) und
+  Hinweis auf den Widerruf; `wifiOptInAt` wird auf den Bestätigungszeitpunkt gesetzt und im AuditLog mit
   altem und neuem Wert festgehalten.
 - Art. 7 Abs. 3 DSGVO: Der Widerruf (Schalter im Profil) entfernt **alle** Geräte der Person und die alte Adressliste, jedes
   mit eigenem `DELETE`-Eintrag („Einwilligung widerrufen“).

@@ -18,7 +18,8 @@ export const UNKNOWN_DEVICE_TEXT = "Unbekanntes Gerät";
 /** Purpose, legal basis and the way out, shown above the one button (one tap = consent). */
 export const CONSENT_TEXT =
   "Mit dem Koppeln willigst du ein, dass Clokr dein Handy im Salon-WLAN erkennt, damit dein " +
-  "Kommen und Gehen automatisch erfasst wird. Grundlage ist deine Einwilligung " +
+  "Kommen und Gehen automatisch erfasst wird. Dafür speichern wir die Adresse deines Handys und " +
+  "den Zeitpunkt, zu dem es zuletzt erkannt wurde. Grundlage ist deine Einwilligung " +
   "(Art. 6 Abs. 1 lit. a DSGVO, § 26 BDSG). Du kannst sie jederzeit im Profil widerrufen; " +
   "dann werden alle deine Geräte entfernt.";
 

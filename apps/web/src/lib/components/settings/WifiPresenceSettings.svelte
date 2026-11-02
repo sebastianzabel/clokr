@@ -149,7 +149,8 @@
     <span
       >Deine Geräteadresse wird nur für die Anwesenheitserkennung im Salon-WLAN gespeichert.
       Verbindungs- und Trennungszeitpunkte werden 90 Tage protokolliert und danach automatisch
-      gelöscht.</span
+      gelöscht. Pro gekoppeltem Gerät wird zusätzlich der Zeitpunkt der letzten Erkennung
+      gespeichert, solange das Gerät gekoppelt ist.</span
     >
   </div>
 
