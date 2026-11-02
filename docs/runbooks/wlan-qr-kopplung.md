@@ -129,7 +129,8 @@ docker compose --profile fritzbox exec fritzbox-adapter node dist/probe-host.js 
 ```
 
 Expect `found: yes`, a masked MAC, the hostname, `active: yes` and `response elements:` listing `NewMACAddress`,
-`NewHostName`, `NewActive`, `NewInterfaceType`. Exit code 0 = found, 2 = not found, 1 = error. If a name differs, or the box
+`NewHostName`, `NewActive`, `NewInterfaceType`. For a Wi-Fi phone `interface type` must read `802.11` (a wired value such as
+„Ethernet“ makes the page refuse; a missing value only logs a warning — „auf der echten Box prüfen“). Exit code 0 = found, 2 = not found, 1 = error. If a name differs, or the box
 answers with another fault, the pairing page shows the refusal page (there is deliberately no fallback to the polled host list); send the printed element names back so
 the parser can be corrected — the probe prints names only, never values. The phone's IP is on the phone (Wi-Fi details) or in
 the box's „Heimnetz → Netzwerk“.
@@ -163,6 +164,11 @@ act (no retroactive cleanup; without consent a device does nothing).
 - **Code in an access log (P-610-24).** The page URL carries the code once. A reverse proxy in front of the **web app** may
   log it; the API's request logs never carry it, because preview and confirm take the code in the body. Single use and five
   minutes limit the value of such a log line. Do not put a proxy in front of the adapter (see the network recipe).
+- **IP/ARP/MAC spoofing by a LAN insider (review WR-04).** The box resolves the peer **by IP**. Somebody on the salon LAN who
+  sets a colleague's static IP, spoofs ARP, or spoofs a MAC can choose which address gets coupled to them. This cannot be
+  closed without network authentication (802.1X); it is limited by the salon-WLAN-only page, the single-use code, the
+  preview and the audit. A host behind NAT (router, NAS, Docker host) is refused only when the box reports its interface as
+  wired (`NewInterfaceType` such as „Ethernet“); an absent or unknown type pairs and logs a warning.
 - **Address rotation (P-610-23).** If a phone changes its private address setting, the pairing stops matching and the hint
   tells the person to couple again.
 

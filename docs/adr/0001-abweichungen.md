@@ -6754,8 +6754,13 @@ die aufgezeichneten Neutralitätsmatrizen und die festgenagelten WLAN-Tests sind
   ihn protokollieren. Die API-Anfrageprotokolle nie, weil Vorschau und Bestätigung den Code im Körper nehmen.
 - **Netzwerk (D-15, P-610-23):** Ein Gast-WLAN mit Geräteisolation, ein offenes WLAN (rotierende private Adresse) und Docker-
   Aufbauten, die die Quelladresse verdecken, funktionieren nicht; das Laufbuch führt die Prüfung auf dem echten Host.
+- **IP-, ARP- und MAC-Fälschung im Salon-LAN (Review WR-04):** Wer im Salon-LAN eine fremde feste IP-Adresse setzt oder per
+  ARP-Fälschung auftritt, wird von der Box unter dieser IP aufgelöst; wer seine eigene MAC fälscht, koppelt die gefälschte
+  Adresse. Das ist der Weg für „eine MAC meiner Wahl“ durch einen Innentäter und lässt sich ohne Netzwerkauthentifizierung
+  (802.1X) nicht schließen. Begrenzt durch: Kopplung nur aus dem Salon-WLAN, Einmalcode, Vorschau, AuditLog mit Person und
+  Gerät. Ein Host hinter NAT (Router, NAS, Docker-Host) wird nur abgelehnt, wenn die Box ihn als kabelgebunden meldet.
 - Die Feldnamen der TR-064-Antwort der Abfrage nach IP sind aus der Dokumentation und aus Testdaten abgeleitet und erst auf
-  einer echten FRITZ!Box bestätigt (`probe-host.js`); bis dahin fällt die Seite auf die Hostliste zurück.
+  einer echten FRITZ!Box bestätigt (`probe-host.js`); bis dahin lehnt die Seite bei einer Abweichung ab (es gibt keinen Rückfall auf die Hostliste). Das Feld `NewInterfaceType` ist dabei besonders ungeprüft: Meldet die Box für ein Gerät eindeutig eine kabelgebundene Schnittstelle (z. B. „Ethernet“), lehnt der Adapter ab; fehlt der Wert oder ist er unbekannt, wird gekoppelt und eine Warnung protokolliert („auf der echten Box prüfen“).
 - `lastSeenAt` heißt „letztes Anwesenheitsereignis“, nicht „zuletzt im Netz gesehen“: Der Adapter meldet nur Wechsel.
 - Die Hostlisten-Abfrage des Adapters (`GetHostListPath` statt AVMs `X_AVM-DE_GetHostListPath`) blieb bewusst unverändert.
 - AC-1 und AC-6 (ein echtes iPhone und Android in einem echten FRITZ!Box-WLAN, Gast-WLAN-Ablehnung) lassen sich nicht

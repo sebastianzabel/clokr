@@ -159,12 +159,17 @@ export function createRateLimiter(
 
 // ── Pages ─────────────────────────────────────────────────────────────────────
 
-export type PageKind = "NOT_IN_LAN" | "DEVICE_NOT_FOUND" | "RATE_LIMITED" | "UNAVAILABLE";
+export type PageKind =
+  "NOT_IN_LAN" | "NOT_WLAN" | "DEVICE_NOT_FOUND" | "RATE_LIMITED" | "UNAVAILABLE";
 
 const PAGES: Record<PageKind, { title: string; text: string }> = {
   NOT_IN_LAN: {
     title: "Bitte im Salon-WLAN öffnen",
     text: "Diese Seite funktioniert nur, wenn dein Handy mit dem WLAN des Salons verbunden ist. Verbinde dich mit dem Salon-WLAN und scanne den QR-Code erneut.",
+  },
+  NOT_WLAN: {
+    title: "Bitte über das Salon-WLAN verbinden",
+    text: "Dein Gerät ist nicht per WLAN mit dem Salon verbunden. Verbinde dein Handy mit dem Salon-WLAN und scanne den QR-Code erneut.",
   },
   DEVICE_NOT_FOUND: {
     title: "Gerät nicht gefunden",
@@ -308,6 +313,18 @@ function sendEmpty(res: ServerResponse, status: number, extra: Record<string, st
   res.end();
 }
 
+/**
+ * What the box says about the interface a host hangs on. Only a clearly wired spelling is
+ * "wired"; "802.11" (and WLAN spellings) are "wlan"; absent or any other text is "unknown" and
+ * does not refuse (the field is unverified on a real box, see the runbook probe).
+ */
+export function interfaceKind(type: string | null): "wlan" | "wired" | "unknown" {
+  if (type === null || type.trim() === "") return "unknown";
+  if (/802\.11|wlan|wi-?fi|wireless/i.test(type)) return "wlan";
+  if (/ethernet|\busb\b|\blan\b|powerline|\beth\d*\b/i.test(type)) return "wired";
+  return "unknown";
+}
+
 function reasonOf(err: unknown): string {
   if (err instanceof Tr064HttpError) return `tr064-http-${err.status}`;
   return err instanceof Error ? err.name : "unknown";
@@ -366,11 +383,21 @@ export function createPairingHandler(
       lookupFailed = true;
       note(`lookup-failed reason=${reasonOf(err)}`);
     }
-    if (entry && entry.interfaceType !== null && entry.interfaceType !== "802.11") {
-      // Not a refusal: the field is an assumption of the by-IP action and unconfirmed on a real box.
-      deps.log(
-        `[fritzbox-adapter] pairing peer=${ip} warning=interface-type interface=${entry.interfaceType}`,
-      );
+    if (entry && entry.active && entry.mac !== "") {
+      const kind = interfaceKind(entry.interfaceType);
+      if (kind === "wired") {
+        // A host the box lists on a wired interface is not a phone in the WLAN (a NAT-ing router,
+        // a NAS, the Docker host): refuse instead of coupling an always-on device.
+        note(`not-wlan interface=${entry.interfaceType}`, entry.mac);
+        sendPage(res, 403, "NOT_WLAN");
+        return;
+      }
+      if (kind === "unknown" && entry.interfaceType !== null) {
+        // The field is unverified on a real box: an unknown spelling does not refuse, it is logged.
+        deps.log(
+          `[fritzbox-adapter] pairing peer=${ip} warning=interface-type interface=${entry.interfaceType}`,
+        );
+      }
     }
     const device: { mac: string; hostname: string } | null =
       entry && entry.active && entry.mac !== ""

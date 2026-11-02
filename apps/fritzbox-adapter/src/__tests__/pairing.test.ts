@@ -193,9 +193,10 @@ describe("createRateLimiter", () => {
 // ── pages ─────────────────────────────────────────────────────────────────────
 
 describe("renderPage / maskMac", () => {
-  it("renders the four fixed German pages", () => {
+  it("renders the five fixed German pages", () => {
     const titles = {
       NOT_IN_LAN: "Bitte im Salon-WLAN öffnen",
+      NOT_WLAN: "Bitte über das Salon-WLAN verbinden",
       DEVICE_NOT_FOUND: "Gerät nicht gefunden",
       RATE_LIMITED: "Zu viele Versuche",
       UNAVAILABLE: "Kopplung gerade nicht möglich",
@@ -377,14 +378,40 @@ describe("createPairingHandler", () => {
     expect(text).not.toContain(KEY);
   });
 
-  it("warns about a non-Wi-Fi interface type but still pairs", async () => {
+  it("WR-04: refuses a host on a wired interface with the German page and issues no code", async () => {
+    for (const interfaceType of ["Ethernet", "ethernet", "USB", "LAN", "Powerline"]) {
+      const { deps, logs, issueCode } = makeDeps();
+      (deps.resolveHost as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...ENTRY,
+        interfaceType,
+      });
+      const sent = await run(deps, fakeReq({}));
+      expect(sent.status, interfaceType).toBe(403);
+      expect(sent.body).toContain("Bitte über das Salon-WLAN verbinden");
+      expect(sent.headers.Location).toBeUndefined();
+      expect(issueCode).not.toHaveBeenCalled();
+      expect(logs.join("\n")).toContain("outcome=not-wlan");
+      expectNoIdentifiers(sent.body);
+    }
+  });
+
+  it("pairs for 802.11 and WLAN spellings, and for an absent type without a warning", async () => {
+    for (const interfaceType of ["802.11", "WLAN", "Wi-Fi", null]) {
+      const { deps, logs } = makeDeps();
+      (deps.resolveHost as ReturnType<typeof vi.fn>).mockResolvedValue({ ...ENTRY, interfaceType });
+      expect((await run(deps, fakeReq({}))).status, String(interfaceType)).toBe(302);
+      expect(logs.join("\n")).not.toContain("warning=");
+    }
+  });
+
+  it("an unrecognised interface type still pairs but is logged as a warning", async () => {
     const { deps, logs } = makeDeps();
     (deps.resolveHost as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...ENTRY,
-      interfaceType: "Ethernet",
+      interfaceType: "Mystery-9000",
     });
     expect((await run(deps, fakeReq({}))).status).toBe(302);
-    expect(logs.join("\n")).toContain("interface=Ethernet");
+    expect(logs.join("\n")).toContain("warning=interface-type interface=Mystery-9000");
   });
 });
 
