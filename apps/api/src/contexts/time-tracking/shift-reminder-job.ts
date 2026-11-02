@@ -103,7 +103,8 @@ export async function runShiftReminders(
   app: FastifyInstance,
   now: Date = new Date(),
 ): Promise<void> {
-  app.log.info("Attendance checker: evaluating shift reminders (Feature 12)");
+  // debug, not info: the job runs every five minutes on every pod (288 lines a day each)
+  app.log.debug("Attendance checker: evaluating shift reminders (Feature 12)");
   try {
     const tenants = await app.prisma.tenant.findMany({
       where: {
@@ -281,8 +282,10 @@ async function runTenant(
     );
   }
 
-  // Two days further back than the shifts' first day: an entry started before midnight belongs to
-  // the day before.
+  // Entries from two days before today through today: one day further back than the shifts' first
+  // day (yesterday), so an entry clocked in before midnight (it carries the day before) is read,
+  // and so is a still-open forgotten entry of an earlier day, which the decisions recognise and
+  // ignore (WR-03).
   const entryFrom = new Date(`${dayKey(2)}T00:00:00Z`);
   const entries = await getRecordedWorkEntriesInRange(
     app.prisma,
