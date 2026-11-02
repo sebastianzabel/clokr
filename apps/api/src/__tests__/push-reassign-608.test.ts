@@ -274,6 +274,44 @@ describe("Issue #608: re-registering a browser, device cap and rate limits", () 
     expect((await rowsOf(foreign.endpoint))[0].userId).toBe(b.empUser.id);
   });
 
+  it("review 2 IN-02: a deactivated or anonymised person cannot register a device", async () => {
+    const userId = a.empUser.id;
+    const employee = await app.prisma.employee.findUniqueOrThrow({
+      where: { userId },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    const sub = fakeDeviceSubscription();
+    try {
+      // A deactivated account (the state anonymisation commits before it deletes the push rows).
+      await app.prisma.user.update({ where: { id: userId }, data: { isActive: false } });
+      const inactive = await subscribe(a.empToken, sub);
+      expect(inactive.statusCode).toBe(403);
+      expect(inactive.json().code).toBe("PUSH_ACCOUNT_INACTIVE");
+      expect(await rowsOf(sub.endpoint)).toHaveLength(0);
+
+      // An active user whose employee carries the anonymisation sentinel is refused as well.
+      await app.prisma.user.update({ where: { id: userId }, data: { isActive: true } });
+      await app.prisma.employee.update({
+        where: { id: employee.id },
+        data: { firstName: "Gelöscht", lastName: "GELÖSCHT-608" },
+      });
+      const anonymised = await subscribe(a.empToken, sub);
+      expect(anonymised.statusCode).toBe(403);
+      expect(anonymised.json().code).toBe("PUSH_ACCOUNT_INACTIVE");
+      expect(await rowsOf(sub.endpoint)).toHaveLength(0);
+    } finally {
+      await app.prisma.user.update({ where: { id: userId }, data: { isActive: true } });
+      await app.prisma.employee.update({
+        where: { id: employee.id },
+        data: { firstName: employee.firstName, lastName: employee.lastName },
+      });
+    }
+
+    // Restored: the same person registers normally again.
+    const ok = await subscribe(a.empToken, sub);
+    expect(ok.statusCode).toBe(201);
+  });
+
   it("two simultaneous registrations of one new endpoint leave exactly one row", async () => {
     const sub = fakeDeviceSubscription();
     const [x, y] = await Promise.all([subscribe(a.empToken, sub), subscribe(a.empToken, sub)]);

@@ -72,6 +72,14 @@ const removeBodySchema = z.union([
 const REFUSAL_TEXT: Record<PushSubscribeRefusal, string> = {
   PUSH_ENDPOINT_CONFLICT: "Dieses Gerät ist bereits für ein anderes Konto eingerichtet.",
   PUSH_DEVICE_LIMIT: "Du hast bereits 10 Geräte für Push eingerichtet. Entferne zuerst ein Gerät.",
+  PUSH_ACCOUNT_INACTIVE: "Dieses Konto ist nicht aktiv.",
+};
+
+/** 403 for a deactivated or anonymised account, 409 for the two state conflicts. */
+const REFUSAL_STATUS: Record<PushSubscribeRefusal, number> = {
+  PUSH_ENDPOINT_CONFLICT: 409,
+  PUSH_DEVICE_LIMIT: 409,
+  PUSH_ACCOUNT_INACTIVE: 403,
 };
 
 const NO_DEVICES_FOR_API_KEYS = "API-Keys haben keine Push-Geräte";
@@ -139,7 +147,9 @@ export async function mePushRoutes(app: FastifyInstance) {
         request: req,
       });
       if (result.kind === "REFUSED") {
-        return reply.code(409).send({ error: REFUSAL_TEXT[result.code], code: result.code });
+        return reply
+          .code(REFUSAL_STATUS[result.code])
+          .send({ error: REFUSAL_TEXT[result.code], code: result.code });
       }
       return reply.code(result.kind === "CREATED" ? 201 : 200).send(result.device);
     },

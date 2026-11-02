@@ -11,6 +11,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { PushSubscription } from "@clokr/db";
 import { uniqueViolationTarget } from "../../utils/prisma-unique-violation";
+import { isAnonymizedEmployee } from "./employee-anonymization-filter";
 import { deviceLabelFromUserAgent } from "./push-device-label";
 
 export type ApiPushDevice = {
@@ -57,7 +58,8 @@ export type SubscribeResult =
   | { kind: "REFUSED"; code: PushSubscribeRefusal };
 
 /** The two refusals of a registration; the route words them, the service decides them. */
-export type PushSubscribeRefusal = "PUSH_ENDPOINT_CONFLICT" | "PUSH_DEVICE_LIMIT";
+export type PushSubscribeRefusal =
+  "PUSH_ENDPOINT_CONFLICT" | "PUSH_DEVICE_LIMIT" | "PUSH_ACCOUNT_INACTIVE";
 
 /** At most this many devices per person (P-608-08, anti-abuse). */
 export const MAX_PUSH_DEVICES_PER_USER = 10;
@@ -115,7 +117,24 @@ async function subscribeOnce(
     // after the lock, so it sees the winner's committed row. NO KEY UPDATE conflicts with itself
     // but not with the FOR KEY SHARE that inserting a row referencing the user takes. The user id
     // comes from the verified token.
-    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${input.userId} FOR NO KEY UPDATE`;
+    const locked = await tx.$queryRaw<
+      Array<{ isActive: boolean }>
+    >`SELECT "isActive" FROM "User" WHERE id = ${input.userId} FOR NO KEY UPDATE`;
+
+    // Review 2, IN-02: anonymisation deactivates the user and then deletes the push rows. A
+    // subscribe that passed `requireAuth` before that commit waits on the lock above and would
+    // otherwise create a NEW delivery address for an anonymised or deactivated person afterwards.
+    // The state is read after the lock, so it is the committed state of the winner.
+    if (locked.length === 0 || locked[0].isActive !== true) {
+      return { kind: "REFUSED", code: "PUSH_ACCOUNT_INACTIVE" };
+    }
+    const employee = await tx.employee.findUnique({
+      where: { userId: input.userId, tenantId: input.tenantId },
+      select: { firstName: true, lastName: true },
+    });
+    if (employee && isAnonymizedEmployee(employee)) {
+      return { kind: "REFUSED", code: "PUSH_ACCOUNT_INACTIVE" };
+    }
 
     const existing = await tx.pushSubscription.findUnique({ where: { endpoint: input.endpoint } });
 
