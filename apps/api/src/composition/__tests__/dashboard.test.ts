@@ -37,7 +37,7 @@ describe("GET /api/v1/dashboard - scheduleType field (Phase 49.1-03)", () => {
 
     // ── Employee A: FIXED_SCHEDULE ────────────────────────────────────────
     const userFixed = await prisma.user.create({
-      data: { email: `fixed-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `fixed-${suffix}@test.de`, passwordHash, isActive: true },
     });
     const empFixed = await prisma.employee.create({
       data: {
@@ -69,7 +69,7 @@ describe("GET /api/v1/dashboard - scheduleType field (Phase 49.1-03)", () => {
 
     // ── Employee B: FLEXTIME ──────────────────────────────────────────────
     const userFlex = await prisma.user.create({
-      data: { email: `flex-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `flex-${suffix}@test.de`, passwordHash, isActive: true },
     });
     const empFlex = await prisma.employee.create({
       data: {
@@ -101,7 +101,7 @@ describe("GET /api/v1/dashboard - scheduleType field (Phase 49.1-03)", () => {
 
     // ── Employee C: MONTHLY_HOURS ─────────────────────────────────────────
     const userMonthly = await prisma.user.create({
-      data: { email: `monthly-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `monthly-${suffix}@test.de`, passwordHash, isActive: true },
     });
     const empMonthly = await prisma.employee.create({
       data: {
@@ -134,7 +134,7 @@ describe("GET /api/v1/dashboard - scheduleType field (Phase 49.1-03)", () => {
 
     // ── Employee D: SHIFT_BASED ───────────────────────────────────────────
     const userShift = await prisma.user.create({
-      data: { email: `shift-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `shift-${suffix}@test.de`, passwordHash, isActive: true },
     });
     const empShift = await prisma.employee.create({
       data: {
@@ -274,7 +274,6 @@ describe("GET /api/v1/dashboard - overtime KPI is live (v1.8.24)", () => {
       data: {
         email: `livefixed-${suffix}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -315,7 +314,6 @@ describe("GET /api/v1/dashboard - overtime KPI is live (v1.8.24)", () => {
       data: {
         email: `livetrack-${suffix}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -607,7 +605,6 @@ describe("dashboard /team-week leaveTypeCode/absenceType (Issue #205, finding 3)
       data: {
         email: `maternity-${suffix}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -848,7 +848,6 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         data: {
           email: `t10009-scope-target-${randomBytes(4).toString("hex")}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -915,7 +914,6 @@ describe("T-100-09 oracle probe — every `probe`-classified route, twice, byte-
         data: {
           email: `t10009-scope-actor-${randomBytes(4).toString("hex")}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

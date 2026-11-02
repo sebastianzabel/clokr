@@ -385,7 +385,6 @@ describe("Personenkreis nach dem Abrechnungszeitraum (#256-02)", () => {
       data: {
         email: `datev-256-${opts.label}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@test.de`,
         passwordHash: "DUMMY",
-        role: "EMPLOYEE",
         isActive: opts.userActive,
       },
     });

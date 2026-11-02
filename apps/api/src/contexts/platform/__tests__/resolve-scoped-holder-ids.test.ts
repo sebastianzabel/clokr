@@ -38,7 +38,7 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({
-      data: { email: `rsh-${s}@test.de`, passwordHash, role, isActive: true },
+      data: { email: `rsh-${s}@test.de`, passwordHash, isActive: true },
     });
     createdUserIds.push(user.id);
     const employee = await app.prisma.employee.create({

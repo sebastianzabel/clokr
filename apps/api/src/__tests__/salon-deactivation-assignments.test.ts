@@ -63,7 +63,7 @@ describe("POST /api/v1/salons/:id/deactivate — Stammsalon in use, Einsatzsalon
     empCounter += 1;
     const s = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}-${empCounter}`;
     const user = await app.prisma.user.create({
-      data: { email: `sda-${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `sda-${s}@test.de`, passwordHash: "x", isActive: true },
     });
     return app.prisma.employee.create({
       data: {

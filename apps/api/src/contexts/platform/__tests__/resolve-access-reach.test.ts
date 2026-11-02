@@ -68,7 +68,7 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({
-      data: { email: `rar-${s}@test.de`, passwordHash, role, isActive: true },
+      data: { email: `rar-${s}@test.de`, passwordHash, isActive: true },
     });
     createdUserIds.push(user.id);
     const employee = await app.prisma.employee.create({

@@ -34,7 +34,6 @@ describe("PUT /api/v1/settings/work(/:employeeId) — remaining D-06 write paths
       data: {
         email: `cc450p-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

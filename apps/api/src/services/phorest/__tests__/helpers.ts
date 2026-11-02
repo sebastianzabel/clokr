@@ -90,7 +90,7 @@ export async function seedPhorestTenant(app: FastifyInstance, suffix = ""): Prom
 
   // Mapped employee — matches staff.json "ph-staff-mapped".
   const erikaUser = await prisma.user.create({
-    data: { email: `erika@salon.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+    data: { email: `erika@salon.de`, passwordHash: "x", isActive: true },
   });
   const erika = await prisma.employee.create({
     data: {
@@ -105,7 +105,7 @@ export async function seedPhorestTenant(app: FastifyInstance, suffix = ""): Prom
 
   // Unmapped-but-name/email-matchable employee — matches staff.json "ph-staff-unmapped".
   const maxUser = await prisma.user.create({
-    data: { email: `max.beispiel@salon.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+    data: { email: `max.beispiel@salon.de`, passwordHash: "x", isActive: true },
   });
   const max = await prisma.employee.create({
     data: {
@@ -121,7 +121,7 @@ export async function seedPhorestTenant(app: FastifyInstance, suffix = ""): Prom
   // Second genuinely-mapped employee (85.1.1) — no static fixture email needed, this staffId is
   // only ever exercised via the per-test worktimetables-two-mapped.json fixture, not staff.json.
   const beaUser = await prisma.user.create({
-    data: { email: `bea@salon.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+    data: { email: `bea@salon.de`, passwordHash: "x", isActive: true },
   });
   const bea = await prisma.employee.create({
     data: {

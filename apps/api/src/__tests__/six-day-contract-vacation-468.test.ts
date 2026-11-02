@@ -33,7 +33,6 @@ describe("Issue #468 (D-06): 6-day contract scales proportionally instead of cap
       data: {
         email: `sd468-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

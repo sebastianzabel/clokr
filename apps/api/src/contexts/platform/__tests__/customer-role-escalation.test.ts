@@ -74,7 +74,7 @@ describe("Customer-role escalation guards (Issue #354, pre-merge review of #75)"
     const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash, isActive: true },
     });
     actorUserIds.push(user.id);
     const role = await app.prisma.accessRole.create({

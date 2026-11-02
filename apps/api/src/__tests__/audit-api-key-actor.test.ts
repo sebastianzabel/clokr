@@ -101,7 +101,6 @@ describe("Issue #333 — API-key audit actor", () => {
       data: {
         email: `deleted-${uid}@anonymized.local`,
         passwordHash: "ANONYMIZED",
-        role: "EMPLOYEE",
         isActive: false,
       },
     });

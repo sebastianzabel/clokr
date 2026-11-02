@@ -74,7 +74,6 @@ describe("Issue #614 — anonymization shortens requests that span the exit day"
       data: {
         email: `${label}-${suffix}@example.invalid`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

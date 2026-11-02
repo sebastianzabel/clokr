@@ -202,7 +202,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     // We achieve this by setting the adminUser's role to MANAGER and re-logging in.
     await app.prisma.user.update({
       where: { id: data.adminUser.id },
-      data: { role: "MANAGER" },
+      data: {},
     });
     const login = await app.inject({
       method: "POST",
@@ -221,7 +221,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     // Restore role for following tests.
     await app.prisma.user.update({
       where: { id: data.adminUser.id },
-      data: { role: "ADMIN" },
+      data: {},
     });
   });
 

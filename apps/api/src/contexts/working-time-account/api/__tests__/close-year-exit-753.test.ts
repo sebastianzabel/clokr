@@ -55,7 +55,6 @@ describe("POST /overtime/close-year for a leaver (Issue #753)", () => {
       data: {
         email: `cy753-${s}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

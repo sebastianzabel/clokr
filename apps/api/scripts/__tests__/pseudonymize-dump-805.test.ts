@@ -46,7 +46,6 @@ describe("pseudonymize-dump keeps anonymized persons anonymized (Issue #805)", (
           ? `deleted-${suffix}@anonymized.local`
           : `real-${suffix}@example.com`,
         passwordHash: opts.anonymized ? "ANONYMIZED" : "not-a-real-hash",
-        role: "EMPLOYEE",
         isActive: !opts.anonymized,
       },
     });

@@ -160,7 +160,6 @@ describe("PUT .../:employeeId cancelOrphanShifts write site — maxNegativeBalan
       data: {
         email: `swpu-osh-emp-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

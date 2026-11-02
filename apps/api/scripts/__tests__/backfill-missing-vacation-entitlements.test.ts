@@ -51,7 +51,6 @@ describe("backfill-missing-vacation-entitlements (Issue #416)", () => {
         data: {
           email: `bfve-${label}-${uid}@test.de`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

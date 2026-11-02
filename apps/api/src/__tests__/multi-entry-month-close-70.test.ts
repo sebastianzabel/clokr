@@ -78,7 +78,6 @@ describe("Issue #70 — the month-close gate on a real two-salon day (AC-70-4)",
       data: {
         email: `mec70-${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -208,7 +207,6 @@ describe("Issue #70 — the month-close gate on a real two-salon day (AC-70-4)",
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "ADMIN",
         isActive: true,
       },
     });

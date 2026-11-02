@@ -121,7 +121,6 @@ describe("salonForDay / listSalonAssignments (Phase 67b Plan 01 Task 2, issue #6
       data: {
         email: `sfd-sunday-${Date.now().toString(36)}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -320,7 +319,6 @@ describe("salonForDay / listSalonAssignments (Phase 67b Plan 01 Task 2, issue #6
       data: {
         email: `sfd-late-${Date.now().toString(36)}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -405,7 +403,6 @@ describe("salonForDay / listSalonAssignments (Phase 67b Plan 01 Task 2, issue #6
         data: {
           email: `mgr-sfd-${s}@test.de`,
           passwordHash,
-          role: "MANAGER",
           isActive: true,
         },
       });

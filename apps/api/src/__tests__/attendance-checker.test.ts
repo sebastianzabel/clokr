@@ -44,7 +44,7 @@ async function seedIsolatedTenant(app: FastifyInstance, suffix: string) {
   // Manager user
   const mgrPw = await bcrypt.hash("test1234", 10);
   const mgrUser = await prisma.user.create({
-    data: { email: `mgr-${s}@test.de`, passwordHash: mgrPw, role: "MANAGER", isActive: true },
+    data: { email: `mgr-${s}@test.de`, passwordHash: mgrPw, isActive: true },
   });
   const mgrEmployee = await prisma.employee.create({
     data: {
@@ -78,7 +78,7 @@ async function seedIsolatedTenant(app: FastifyInstance, suffix: string) {
   // Regular employee
   const empPw = await bcrypt.hash("test1234", 10);
   const empUser = await prisma.user.create({
-    data: { email: `emp-${s}@test.de`, passwordHash: empPw, role: "EMPLOYEE", isActive: true },
+    data: { email: `emp-${s}@test.de`, passwordHash: empPw, isActive: true },
   });
   const employee = await prisma.employee.create({
     data: {

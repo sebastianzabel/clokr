@@ -111,7 +111,7 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({
-      data: { email: `rp-${s}@test.de`, passwordHash, role, isActive: true },
+      data: { email: `rp-${s}@test.de`, passwordHash, isActive: true },
     });
     createdUserIds.push(user.id);
     const employee = await app.prisma.employee.create({
@@ -409,7 +409,7 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
     async (_name, tenantId) => {
       const s = uniqueSuffix("no-emp");
       const user = await app.prisma.user.create({
-        data: { email: `rp-${s}@test.de`, passwordHash: "x", role: "MANAGER", isActive: true },
+        data: { email: `rp-${s}@test.de`, passwordHash: "x", isActive: true },
       });
       createdUserIds.push(user.id);
       try {

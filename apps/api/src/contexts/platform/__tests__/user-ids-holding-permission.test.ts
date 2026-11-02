@@ -51,7 +51,6 @@ async function createUserWithEmployee(
     data: {
       email: `uihp-${s}@test.de`,
       passwordHash,
-      role: options.role ?? "EMPLOYEE",
       isActive: options.isActive ?? true,
     },
   });

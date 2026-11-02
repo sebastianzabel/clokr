@@ -37,7 +37,6 @@ describe("Issue #445 finding 1 — next-year VACATION entitlement (D-04/D-05/D-0
       data: {
         email: `nyve-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

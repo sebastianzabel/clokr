@@ -77,7 +77,6 @@ describe("open-items vs close-month/status parity on a divergent workDays/{day}H
       data: {
         email,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

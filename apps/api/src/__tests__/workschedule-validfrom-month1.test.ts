@@ -63,7 +63,6 @@ describe("WorkSchedule.validFrom month-1st enforcement (Phase 60, #220)", () => 
       data: {
         email: `emp2-${slug}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

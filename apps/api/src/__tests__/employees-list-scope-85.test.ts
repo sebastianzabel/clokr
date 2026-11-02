@@ -82,7 +82,7 @@ describe("Issue #547 (Phase 85b Plan 01) — employee list scope and balance mas
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const email = `${s}@test.de`;
     const user = await app.prisma.user.create({
-      data: { email, passwordHash, role: "EMPLOYEE", isActive: !opts.anonymized },
+      data: { email, passwordHash, isActive: !opts.anonymized },
     });
     const employee = await app.prisma.employee.create({
       data: {

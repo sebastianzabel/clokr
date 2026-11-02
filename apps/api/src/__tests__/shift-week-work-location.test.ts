@@ -50,7 +50,6 @@ describe("GET /shifts/week — legal holidays by work location (Phase 71b Plan 0
       data: {
         email: `swwl-${label}-${suffix}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

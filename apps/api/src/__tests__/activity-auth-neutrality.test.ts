@@ -276,7 +276,7 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
     const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const email = `${slug}-${suffix}@activity-auth.test`;
     const user = await app.prisma.user.create({
-      data: { email, passwordHash, role, isActive: true },
+      data: { email, passwordHash, isActive: true },
     });
     declaredRoles.push({ userId: user.id, role });
     registry.register(`${label}.user`, user.id);

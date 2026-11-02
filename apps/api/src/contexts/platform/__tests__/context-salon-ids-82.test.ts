@@ -58,7 +58,7 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({
-      data: { email: `csi-${s}@test.de`, passwordHash, role, isActive: true },
+      data: { email: `csi-${s}@test.de`, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {

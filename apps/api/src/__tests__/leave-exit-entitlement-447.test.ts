@@ -57,7 +57,6 @@ describe("Exit-year VACATION booking/GET/approval (Issue #447, D-06/D-08/D-09)",
       data: {
         email: `lee-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

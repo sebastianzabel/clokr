@@ -709,7 +709,6 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
         data: {
           email: `te-hd-rollback-${Date.now()}@test.de`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -902,7 +901,6 @@ describe("Zeiterfassung facade — TimeEntry/Break (Phase 100B Plan 08)", () => 
         data: {
           email: `${s}@example.invalid`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

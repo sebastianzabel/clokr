@@ -34,7 +34,6 @@ describe("PUT /api/v1/settings/work/:employeeId — the D-06 recompute's own fai
       data: {
         email: `cc450r-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

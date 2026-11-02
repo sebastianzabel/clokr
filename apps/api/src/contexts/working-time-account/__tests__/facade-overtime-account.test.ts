@@ -258,7 +258,6 @@ describe("Arbeitszeitkonto facade — OvertimeAccount/OvertimeTransaction (Phase
         data: {
           email: `otc-lifecycle-${Date.now()}@test.de`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

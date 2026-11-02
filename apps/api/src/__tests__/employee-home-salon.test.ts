@@ -246,7 +246,6 @@ describe("PATCH /api/v1/employees/:id — Stammsalon-Lücke bei früherem Eintri
       data: {
         email: `${prefix}-${s}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -454,7 +453,6 @@ describe("DELETE /:id/hard-delete removes salon assignment rows first (Phase 67b
       data: {
         email: `deleted-${uid}@anonymized.local`,
         passwordHash: "ANONYMIZED",
-        role: "EMPLOYEE",
         isActive: false,
       },
     });

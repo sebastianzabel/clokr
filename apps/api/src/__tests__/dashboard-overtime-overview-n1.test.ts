@@ -48,7 +48,6 @@ async function createExtraEmployee(app: FastifyInstance, tenantId: string, idx: 
     data: {
       email: `dov1-${s}@test.de`,
       passwordHash: "x",
-      role: "EMPLOYEE",
       isActive: true,
     },
   });
@@ -100,7 +99,6 @@ async function createLongTenureExemptEmployee(app: FastifyInstance, tenantId: st
     data: {
       email: `dov1-lt-${s}@test.de`,
       passwordHash: "x",
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

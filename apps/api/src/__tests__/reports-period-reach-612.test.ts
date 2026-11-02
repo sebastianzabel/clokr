@@ -140,7 +140,6 @@ describe("Issue #612 — the period report's reach (AC-612-5)", () => {
         data: {
           email: `rpr612-${suffix}@example.invalid`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

@@ -60,7 +60,6 @@ async function createPerson(
     data: {
       email: `${opts.key}-${unique}@example.invalid`,
       passwordHash,
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

@@ -47,7 +47,6 @@ describe("Issue #539 - the employee form role is derived from stored assignments
       data: {
         email: `form539-${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: column,
         isActive: true,
       },
     });

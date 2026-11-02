@@ -57,7 +57,6 @@ describe("Issue #696 - bulk carry-in and bulk month figures equal the per-person
       data: {
         email: `c696-${key}-${unique}@example.invalid`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

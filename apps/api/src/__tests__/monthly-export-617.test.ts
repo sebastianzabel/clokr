@@ -81,7 +81,6 @@ describe("Issue #617 - Monatsexport", () => {
       data: {
         email: hrEmail,
         passwordHash: await bcrypt.hash("test1234", 4),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -447,7 +446,6 @@ describe("Issue #617 - Monatsexport", () => {
         data: {
           email: `${key}-${unique}@example.invalid`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

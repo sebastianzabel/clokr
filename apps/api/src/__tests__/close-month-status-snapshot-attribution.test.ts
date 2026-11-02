@@ -90,7 +90,6 @@ describe("close-month/status — snapshot month attribution (month-detail-shows-
       data: {
         email: `admin-snapattr-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -127,7 +126,6 @@ describe("close-month/status — snapshot month attribution (month-detail-shows-
       data: {
         email: `bug-snapattr-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -186,7 +184,6 @@ describe("close-month/status — snapshot month attribution (month-detail-shows-
       data: {
         email: `closed-snapattr-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

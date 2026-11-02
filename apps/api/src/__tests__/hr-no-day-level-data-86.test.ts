@@ -107,7 +107,6 @@ describe("Issue #86 (Phase 86b), D-02 — day lists only within time-entry:read 
       data: {
         email: `${label}-${suffix}@example.invalid`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

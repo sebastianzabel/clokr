@@ -1201,7 +1201,6 @@ describe("Phase 430 — Type-1 leave conflict on Phorest import", () => {
         data: {
           email: `mgr-phorest-lc-${Date.now()}@test.de`,
           passwordHash: mgrPasswordHash,
-          role: "MANAGER",
           isActive: true,
         },
       });
@@ -1382,7 +1381,6 @@ describe("Phase 430 — Type-2 week-capacity conflict on Phorest import", () => 
         data: {
           email: `mgr-phorest-wc-${Date.now()}@test.de`,
           passwordHash: mgrPasswordHash,
-          role: "MANAGER",
           isActive: true,
         },
       });

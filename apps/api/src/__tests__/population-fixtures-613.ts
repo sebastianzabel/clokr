@@ -53,7 +53,6 @@ export async function createPopulationPerson(
     data: {
       email,
       passwordHash: opts.anonymized ? "ANONYMIZED" : (opts.passwordHash ?? UNUSABLE_PASSWORD_HASH),
-      role: opts.userRole ?? "EMPLOYEE",
       isActive: opts.anonymized ? false : (opts.loginActive ?? true),
     },
   });

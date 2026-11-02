@@ -127,7 +127,6 @@ describe("Issue #92 (AC-92-2) — a travel entry equals an ordinary entry of the
       data: {
         email,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

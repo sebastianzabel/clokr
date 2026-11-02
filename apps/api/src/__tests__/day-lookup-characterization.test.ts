@@ -100,7 +100,6 @@ describe("Phase 69b — day-lookup characterization (pinned before the refactor)
       data: {
         email: `dlc-${label}-${RUN_ID}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

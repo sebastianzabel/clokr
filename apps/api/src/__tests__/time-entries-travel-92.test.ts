@@ -61,7 +61,6 @@ describe("Issue #92 — creating a travel entry: salons, reach, day breaks, gran
       data: {
         email: `${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

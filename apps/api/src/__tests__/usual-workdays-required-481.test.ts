@@ -50,7 +50,6 @@ describe("Issue #481 R5 — übliche Arbeitstage are required for SHIFT_BASED co
       data: {
         email: `uwr481-${tag}-${Date.now()}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -280,7 +279,6 @@ describe("D-08 write-path audit (Issue #481) — paths without a validator call 
       data: {
         email: `uwr481d-${tag}-${Date.now()}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -524,7 +524,7 @@ describe("cross-tenant same branch (Phase 65b, AC-2/AC-5)", () => {
       },
     });
     const user = await app.prisma.user.create({
-      data: { email: `t2-${s}@example.test`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `t2-${s}@example.test`, passwordHash: "x", isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {

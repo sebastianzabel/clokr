@@ -440,7 +440,6 @@ describe("Phase 493 R5 — month-boundary saldo neutrality (frozen on the unfixe
         data: {
           email: `${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

@@ -509,7 +509,6 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
     data: {
       email: `admin-${s}@test.de`,
       passwordHash: adminPasswordHash,
-      role: "ADMIN",
       isActive: true,
     },
   });
@@ -554,7 +553,6 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
     data: {
       email: `emp-${s}@test.de`,
       passwordHash: empPasswordHash,
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

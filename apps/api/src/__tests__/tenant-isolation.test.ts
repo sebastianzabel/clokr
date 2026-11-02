@@ -317,7 +317,6 @@ describe("Tenant Isolation", () => {
         data: {
           email: `mgr-sec01-${s}@test.de`,
           passwordHash,
-          role: "MANAGER",
           isActive: true,
         },
       });
@@ -474,7 +473,6 @@ describe("Tenant Isolation", () => {
         data: {
           email: `pending-sec02-${s}@test.de`,
           passwordHash: "PENDING",
-          role: "EMPLOYEE",
           isActive: false,
         },
       });

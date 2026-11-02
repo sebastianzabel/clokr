@@ -24,7 +24,6 @@ describe("Issue #451 (D-07) — the Resturlaub facade", () => {
       data: {
         email: `vb451-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -26,7 +26,7 @@ async function createUserWithEmployee(app: FastifyInstance, tenantId: string, la
   const s = label + "-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const passwordHash = await bcrypt.hash("test1234", 10);
   const user = await app.prisma.user.create({
-    data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+    data: { email: `${s}@test.de`, passwordHash, isActive: true },
   });
   const employee = await app.prisma.employee.create({
     data: {
@@ -45,7 +45,7 @@ async function createBareUser(app: FastifyInstance) {
   const s = "Bare-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const passwordHash = await bcrypt.hash("test1234", 10);
   return app.prisma.user.create({
-    data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+    data: { email: `${s}@test.de`, passwordHash, isActive: true },
   });
 }
 
@@ -54,7 +54,7 @@ async function createAnonymizedEmployee(app: FastifyInstance, tenantId: string) 
   const s = "Anon-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const passwordHash = await bcrypt.hash("test1234", 10);
   const user = await app.prisma.user.create({
-    data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: false },
+    data: { email: `${s}@test.de`, passwordHash, isActive: false },
   });
   const employee = await app.prisma.employee.create({
     data: {

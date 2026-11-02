@@ -359,7 +359,6 @@ describe("Issue #84 — team-week frozen pre-84 response (one-salon tenant)", ()
       data: {
         email: `fixed-tw84f-${stamp}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

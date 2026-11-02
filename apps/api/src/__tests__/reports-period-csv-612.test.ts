@@ -190,7 +190,6 @@ describe("Issue #612 - GET /reports/period/csv", () => {
         data: {
           email: `pc612-${suffix}@example.invalid`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

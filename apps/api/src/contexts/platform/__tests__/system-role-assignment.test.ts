@@ -274,7 +274,6 @@ describe("system-role assignment — sign-in refusals do not depend on the colum
       data: {
         email: `ct-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role,
         isActive: true,
       },
     });
@@ -397,7 +396,6 @@ describe("system-role assignment — write half against the database (D-14, D-15
       data: {
         email: `cw-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role,
         isActive: true,
       },
     });

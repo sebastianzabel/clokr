@@ -36,7 +36,6 @@ describe("Issue #446 — leave under CANCELLATION_REQUESTED still reduces Soll (
       data: {
         email: `lcs446-${label}-${suffix}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

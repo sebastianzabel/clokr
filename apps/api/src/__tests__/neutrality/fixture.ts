@@ -195,7 +195,6 @@ async function createPerson(
         ? `geloescht-${opts.prefix}-${t.tenantSlug}@anonymized.invalid`
         : `${opts.prefix}-${t.tenantSlug}@matrix.test`,
       passwordHash: opts.anonymized ? "ANONYMIZED" : UNUSED_PASSWORD_HASH,
-      role: opts.role,
       isActive: !opts.anonymized,
     },
   });

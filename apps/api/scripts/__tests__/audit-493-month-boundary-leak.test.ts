@@ -127,7 +127,6 @@ describe("audit-493-month-boundary-leak — category A (Issue #493)", () => {
       data: {
         email: `audit493-e1-${suffix}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -212,7 +211,6 @@ describe("audit-493-month-boundary-leak — category A (Issue #493)", () => {
         data: {
           email: `audit493-${sfx}@test.de`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: opts.isActive ?? true,
         },
       });

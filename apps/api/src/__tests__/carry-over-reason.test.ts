@@ -30,7 +30,6 @@ describe("Issue #445 finding 5 — protected carry-over deadline with a document
       data: {
         email: `cors-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -316,7 +315,6 @@ describe("GET /settings/vacation returns carryOverReason/carryOverNote (Issue #4
       data: {
         email: `cors-d09-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

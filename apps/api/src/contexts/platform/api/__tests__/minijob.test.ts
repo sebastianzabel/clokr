@@ -401,7 +401,6 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
           data: {
             email: `${label}-${s}@test.de`,
             passwordHash: await bcrypt.hash("test1234", 10),
-            role: "EMPLOYEE",
             isActive: true,
           },
         });
@@ -500,7 +499,6 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
         data: {
           email: `null-${s}@test.de`,
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

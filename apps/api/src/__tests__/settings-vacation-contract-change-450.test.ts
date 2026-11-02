@@ -27,7 +27,6 @@ describe("GET/PUT /api/v1/settings/vacation/:employeeId — segment-aware (Issue
       data: {
         email: `svcc450-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

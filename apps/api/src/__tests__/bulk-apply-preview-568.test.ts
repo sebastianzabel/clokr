@@ -78,7 +78,6 @@ describe("Issue #568 — bulk apply preview and guarded apply", () => {
       data: {
         email: `bulk568-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

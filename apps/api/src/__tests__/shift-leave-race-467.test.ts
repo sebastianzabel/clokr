@@ -106,7 +106,7 @@ describe("Issue #467 — concurrent SHIFT_BASED vacation requests never deduct a
     async function makeUser(label: string, role: "EMPLOYEE" | "ADMIN") {
       const email = `u467-${label}-${suffix}@test.de`;
       const user = await prisma.user.create({
-        data: { email, passwordHash, role, isActive: true },
+        data: { email, passwordHash, isActive: true },
       });
       const employee = await prisma.employee.create({
         data: {

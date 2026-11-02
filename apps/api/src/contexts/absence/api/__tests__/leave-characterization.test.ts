@@ -43,7 +43,6 @@ describe("leave.ts characterization — cancellation-approval Rückbuchung (Phas
       data: {
         email: `char-mgr2-${Date.now().toString(36)}@test.de`,
         passwordHash: data.adminUser.passwordHash,
-        role: "MANAGER",
         isActive: true,
       },
     });

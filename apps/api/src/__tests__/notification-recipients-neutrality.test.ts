@@ -281,7 +281,6 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
       data: {
         email: `${slug}-${suffix}@recipients.test`,
         passwordHash,
-        role: opts.role,
         isActive: opts.isActive ?? true,
       },
     });

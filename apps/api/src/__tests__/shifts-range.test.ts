@@ -50,7 +50,6 @@ describe("GET /api/v1/shifts/range", () => {
       data: {
         email: `other-admin-sr-${Date.now()}@test.de`,
         passwordHash: await bcryptMod.default.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });

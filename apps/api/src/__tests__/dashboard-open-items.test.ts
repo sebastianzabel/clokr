@@ -94,7 +94,6 @@ describe("GET /api/v1/dashboard/open-items — work obligation per schedule type
       data: {
         email,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -126,7 +126,7 @@ describe("Schedule type-switch guard (Phase 76.24-01)", () => {
   async function mkNoContractEmployee(label: string): Promise<string> {
     const uid = `${label}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const user = await app.prisma.user.create({
-      data: { email: `stsg-${uid}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `stsg-${uid}@test.de`, passwordHash: "x", isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {

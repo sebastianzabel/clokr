@@ -187,7 +187,6 @@ describe("Phorest sync — shift-leave-recalc cron-path wiring (Phase 107 Plan 0
       data: {
         email: `phorest-recalc-mgr-${suffix}@test.de`,
         passwordHash: "x",
-        role: "MANAGER",
         isActive: true,
       },
     });

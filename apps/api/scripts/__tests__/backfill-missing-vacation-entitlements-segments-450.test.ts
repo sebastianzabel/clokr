@@ -26,7 +26,7 @@ describe("backfill-missing-vacation-entitlements — per-segment computation (Is
     data = await seedTestData(app, "bfve450");
 
     const user = await app.prisma.user.create({
-      data: { email: `bfve450@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `bfve450@test.de`, passwordHash: "x", isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {

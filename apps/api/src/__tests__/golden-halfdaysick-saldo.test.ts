@@ -174,7 +174,6 @@ async function seedFixedSick(app: FastifyInstance): Promise<SeededContext> {
     data: {
       email: `emp-${s}@hds.test`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });
@@ -318,7 +317,6 @@ async function seedShiftSick(app: FastifyInstance): Promise<SeededContext> {
     data: {
       email: `emp-${s}@hds.test`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

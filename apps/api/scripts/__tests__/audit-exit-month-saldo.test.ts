@@ -68,7 +68,6 @@ describe("audit-exit-month-saldo (Phase 447 Plan 02, D-04)", () => {
       data: {
         email: `a-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: false, // exited — would also never auto-close again, see 447-02-SUMMARY.md finding
       },
     });
@@ -145,7 +144,6 @@ describe("audit-exit-month-saldo (Phase 447 Plan 02, D-04)", () => {
       data: {
         email: `b-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: false,
       },
     });
@@ -185,7 +183,6 @@ describe("audit-exit-month-saldo (Phase 447 Plan 02, D-04)", () => {
       data: {
         email: `c-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

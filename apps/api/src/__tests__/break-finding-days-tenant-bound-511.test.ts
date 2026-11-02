@@ -95,7 +95,6 @@ describe("Issue #511 T-511-27 — the single-employee break-finding detector is 
       data: {
         email: `bfd-tb-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 4),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -67,7 +67,7 @@ describe("Issue #558 — GET /employees?salonId narrows the people list", () => 
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const email = `${s}@example.invalid`;
     const user = await app.prisma.user.create({
-      data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {

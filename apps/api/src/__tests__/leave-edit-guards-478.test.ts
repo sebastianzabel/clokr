@@ -35,7 +35,6 @@ describe("Leave edit, approve, correct and § 9 confirm guards (Issue #478)", ()
       data: {
         email: `second-admin-478-${Date.now().toString(36)}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
