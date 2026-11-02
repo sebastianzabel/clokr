@@ -16,8 +16,9 @@ import {
   createPresenceDevice,
   getPresenceDevice,
   deletePresenceDevice,
+  deletePresenceDevicesForWithdrawal, // Issue #610
 } from "../facade/presence-devices";
-import { confirmPairing, previewPairing } from "../presence-pairing"; // Issue #610
+import { confirmPairing, lockPresenceOwner, previewPairing } from "../presence-pairing"; // Issue #610
 import { PAIRING_CODE_INVALID_ERROR, PRESENCE_DEVICE_TAKEN_ERROR } from "../pairing-code"; // Issue #610
 
 export async function employeeWifiRoutes(app: FastifyInstance) {
@@ -95,9 +96,60 @@ export async function employeeWifiRoutes(app: FastifyInstance) {
 
       const oldVal = employee.wifiPresenceEnabled;
       const newVal = body.wifiPresenceEnabled;
+      const request = { ip: req.ip, headers: req.headers as Record<string, string> };
+
+      // Issue #610 (D-08, P-610-10): an explicit withdrawal removes EVERY device of the person and the
+      // legacy wifiMacs in one transaction. The first statement is the same owner lock the QR confirm
+      // takes first, so a concurrent confirm and a withdrawal serialise instead of interleaving.
+      if (newVal === false) {
+        const result = await app.prisma.$transaction(async (tx) => {
+          const owner = await lockPresenceOwner(tx, employeeId, tenantId);
+          if (!owner) return null;
+          const current = await tx.employee.findUniqueOrThrow({
+            where: { id: employeeId, tenantId },
+            select: { wifiMacs: true },
+          });
+          // wifiOptInAt stays untouched as the GDPR consent withdrawal trace
+          const updated = await tx.employee.update({
+            where: { id: employeeId, tenantId },
+            data: { wifiPresenceEnabled: false, wifiMacs: [] },
+            select: { wifiPresenceEnabled: true, wifiOptInAt: true },
+          });
+          // Consent changes are permanently retained — purgeable MUST NOT be set true
+          await app.audit({
+            userId: req.user.sub,
+            action: "UPDATE",
+            entity: "Employee",
+            entityId: employeeId,
+            oldValue: { wifiPresenceEnabled: owner.wifiPresenceEnabled },
+            newValue: { wifiPresenceEnabled: false, wifiMacsCleared: current.wifiMacs.length },
+            request,
+            tx,
+          });
+          const removed = await deletePresenceDevicesForWithdrawal(tx, employeeId, tenantId);
+          for (const device of removed) {
+            await app.audit({
+              userId: req.user.sub,
+              action: "DELETE",
+              entity: "PresenceDevice",
+              entityId: device.id,
+              oldValue: { mac: device.mac, label: device.label, pairedVia: device.pairedVia },
+              newValue: { reason: "Einwilligung widerrufen", trigger: "CONSENT_WITHDRAWN" },
+              request,
+              tx,
+            });
+          }
+          return { updated, devicesRemoved: removed.length };
+        });
+        if (!result) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        return reply.send({
+          wifiPresenceEnabled: result.updated.wifiPresenceEnabled,
+          wifiOptInAt: result.updated.wifiOptInAt,
+          devicesRemoved: result.devicesRemoved,
+        });
+      }
 
       // When enabling for the first time (or re-enabling), stamp wifiOptInAt
-      // When disabling, preserve wifiOptInAt as GDPR consent withdrawal trace
       const updateData: { wifiPresenceEnabled: boolean; wifiOptInAt?: Date } = {
         wifiPresenceEnabled: newVal,
       };
@@ -119,7 +171,7 @@ export async function employeeWifiRoutes(app: FastifyInstance) {
         entityId: employeeId,
         oldValue: { wifiPresenceEnabled: oldVal },
         newValue: { wifiPresenceEnabled: newVal },
-        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        request,
       });
 
       return reply.send({
