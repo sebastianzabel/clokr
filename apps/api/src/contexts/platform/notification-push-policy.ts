@@ -14,6 +14,11 @@
  * to remember AC-4 ("no health or saldo data in plain text on the lock screen"). A type whose e-mail
  * policy is `never` is `never` here too (parity, tested).
  *
+ * Exception to the parity (Issue #609, D-08): a type may be e-mail `never` AND pushed when its text is a
+ * neutral nudge without personal content (the shift reminders). The exceptions are the named list
+ * `PUSH_WITHOUT_EMAIL` in the policy test, each with a written reason; the test proves the list holds
+ * no stale entry and no `never` type.
+ *
  * Known limitation (D-16): `contexts/absence/bs-leave-correction.ts` and
  * `contexts/absence/vocational-school-generator.ts` insert notification rows directly instead of
  * calling `notify()`; those types never push (nor e-mail). They are out of scope of this registry.
@@ -40,11 +45,12 @@ export type PushPolicy =
   { push: "send"; body: string; ttlSeconds: number } | { push: "never"; reason: string };
 
 /** How long the push service may hold a message for an offline device before it drops it. */
+const TTL_1H = 60 * 60;
 const TTL_12H = 12 * 60 * 60;
 const TTL_24H = 24 * 60 * 60;
 const TTL_3D = 3 * 24 * 60 * 60;
 /** The only TTL classes an entry may use (the policy test pins the set). */
-export const PUSH_TTL_CLASSES: readonly number[] = [TTL_12H, TTL_24H, TTL_3D];
+export const PUSH_TTL_CLASSES: readonly number[] = [TTL_1H, TTL_12H, TTL_24H, TTL_3D];
 
 const NEVER_HEALTH_REASON =
   "Art. 9 DSGVO health-adjacent payload (§ 9 BUrlG Krank-im-Urlaub): not even a neutral text may " +
@@ -82,6 +88,9 @@ export const NOTIFICATION_PUSH_POLICY: Record<string, PushPolicy> = {
   BREAK_COMPLIANCE_ALERT: { push: "send", body: "Es gibt einen Hinweis zur Arbeitszeiterfassung.", ttlSeconds: TTL_24H },
   BREAK_CROSS_SALON_VIOLATION: { push: "send", body: "Es gibt einen Hinweis zur Arbeitszeiterfassung.", ttlSeconds: TTL_24H },
   BREAK_PLACEMENT_VIOLATION:   { push: "send", body: "Es gibt einen Hinweis zur Arbeitszeiterfassung.", ttlSeconds: TTL_24H },
+
+  // Shift reminders (Issue #609): a time-bound nudge, a late delivery would be wrong, so TTL_1H
+  REMINDER_SHIFT_START:   { push: "send", body: "Deine Schicht hat begonnen. Jetzt einstempeln?", ttlSeconds: TTL_1H },
 
   // Absence reminders
   UPCOMING_ABSENCE:       { push: "send", body: "Es gibt einen neuen Hinweis in Clokr.", ttlSeconds: TTL_24H },

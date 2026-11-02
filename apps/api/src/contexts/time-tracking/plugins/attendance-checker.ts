@@ -34,6 +34,7 @@ import {
 } from "../../working-time-account"; // Phase 101B
 import { invalidReasonFields } from "../invalid-reason";
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
+import { runShiftReminders } from "../shift-reminder-job"; // Issue #609 (Feature 12)
 import {
   isMinorAtDate, // Issue #511 (D-05) — the age decision of the § 11 JArbSchG break regime
   getVacationEntitlementsForYearByCode, // Phase 205 Plan 02 (Issue #205, finding 1) — code-based
@@ -65,6 +66,9 @@ declare module "fastify" {
     /** Issue #80 (80-09, D-10) / #511 (D-13): exposed for integration tests — invokes the next-day
      *  break-finding notification scan (Feature 10) without cron/advisory-lock. */
     tryBreakFindingCheck: () => Promise<void>;
+    /** Issue #609: exposed for integration tests - evaluates the shift reminders (Feature 12) at
+     *  `now` without cron/advisory-lock. */
+    tryShiftReminders: (now?: Date) => Promise<void>;
   }
 }
 
@@ -75,6 +79,8 @@ declare module "fastify" {
  * 3. Auto-invalidate stale open entries: hourly invalidation of entries without clock-out
  * 10. Break findings (Issue #80, #511): daily 09:00 manager notification about unacknowledged
  *     § 4 ArbZG / § 11 JArbSchG break findings of the previous days (Feature 10)
+ * 12. Shift reminders (Issue #609): every five minutes, a neutral notice when a planned shift has
+ *     started without a clock-in (Feature 12; the end and evening occasions follow in the same job)
  */
 export const attendanceCheckerPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
@@ -1418,6 +1424,9 @@ export const attendanceCheckerPlugin = fp(async (app) => {
   // Issue #80 (80-09, D-10) / #511 (D-13): expose the break-finding next-day scan for test invocability.
   app.decorate("tryBreakFindingCheck", checkBreakFindings);
 
+  // Issue #609: expose the shift reminder evaluation for test invocability, with a fixed clock.
+  app.decorate("tryShiftReminders", (now?: Date) => runShiftReminders(app, now));
+
   app.addHook("onReady", async () => {
     try {
       // Clock-out check: every hour at minute 0
@@ -1593,6 +1602,24 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       );
       tasks.push(breakFindingTask);
       app.log.info("Reminder: Pausenverstoß-Prüfung geplant (täglich 09:00)");
+
+      // Feature 12 (Issue #609): shift start/end and day-close reminders - every five minutes under
+      // its own advisory-lock key. The job itself skips deactivated tenants and tenants with every
+      // switch off, so a tick of an untouched installation is one cheap tenant query.
+      const shiftReminderTask = cron.schedule(
+        "*/5 * * * *",
+        () => {
+          withAdvisoryLock(
+            app.prisma,
+            ADVISORY_LOCK_KEYS.ATTENDANCE_SHIFT_REMINDER,
+            () => runShiftReminders(app),
+            app.log,
+          ).catch((err) => app.log.error({ err }, "Reminder: Schicht-Erinnerungen fehlgeschlagen"));
+        },
+        { timezone: "Europe/Berlin", noOverlap: true },
+      );
+      tasks.push(shiftReminderTask);
+      app.log.info("Reminder: Schicht-Erinnerungen geplant (alle 5 Minuten)");
     } catch (err) {
       app.log.error({ err }, "Attendance-Checker konnte nicht gestartet werden");
     }

@@ -50,6 +50,14 @@ const NEVER_PUSH_TYPES = [
   "SUPPORT_ACCESS_STARTED",
 ];
 
+// Issue #609 (D-08): the named exception to the parity rule below - a type that is pushed although its
+// e-mail policy is `never`. A new entry needs a written reason; the stale-list case proves every entry
+// really is e-mail `never` AND push `send`, so the list cannot go stale or hide a `never` type.
+const PUSH_WITHOUT_EMAIL: Record<string, string> = {
+  REMINDER_SHIFT_START:
+    "Erinnerung ohne personenbezogenen Inhalt; E-Mail bewusst nicht (Issue #609, D-08)",
+};
+
 describe("NOTIFICATION_PUSH_POLICY exhaustiveness (Issue #608, D-08)", () => {
   const scan = scanNotifyEmitSites();
   const found = scan.types;
@@ -103,12 +111,23 @@ describe("NOTIFICATION_PUSH_POLICY never entries (AC-4, D-16)", () => {
     }
   });
 
-  it("every type whose e-mail policy is never is never pushed (parity)", () => {
+  it("every type whose e-mail policy is never is never pushed (parity), bar PUSH_WITHOUT_EMAIL", () => {
     for (const [type, email] of Object.entries(NOTIFICATION_EMAIL_POLICY)) {
       if (email.email !== "never") continue;
+      if (Object.prototype.hasOwnProperty.call(PUSH_WITHOUT_EMAIL, type)) continue;
       expect(resolvePushPolicy(type)?.push, `${type} is e-mail never but not push never`).toBe(
         "never",
       );
+    }
+  });
+
+  it("every PUSH_WITHOUT_EMAIL entry is e-mail never AND push send, with a written reason", () => {
+    const entries = Object.entries(PUSH_WITHOUT_EMAIL);
+    expect(entries.length).toBeGreaterThanOrEqual(1);
+    for (const [type, reason] of entries) {
+      expect(reason.length, `${type} has an empty reason`).toBeGreaterThan(0);
+      expect(resolveEmailPolicy(type)?.email, `${type} is not e-mail never`).toBe("never");
+      expect(resolvePushPolicy(type)?.push, `${type} is not pushed`).toBe("send");
     }
   });
 
@@ -131,8 +150,8 @@ describe("NOTIFICATION_PUSH_POLICY text rules (AC-4)", () => {
     policy.push === "send" ? [{ type, policy }] : [],
   );
 
-  it("27 types are sent", () => {
-    expect(sends.length).toBe(27);
+  it("28 types are sent", () => {
+    expect(sends.length).toBe(28);
   });
 
   it.each(sends.map((s) => [s.type, s.policy.body, s.policy.ttlSeconds] as const))(
