@@ -116,8 +116,14 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "newYearsEveRule",
     "overtimeThreshold",
     "previewFingerprint",
+    // Issue #609 (D-01): +5 shift reminder keys (41 -> 46)
+    "reminderDayCloseEnabled",
+    "reminderDayCloseTime",
+    "reminderOffsetMinutes",
     "reminderPendingLeaveEnabled",
     "reminderPendingLeaveHours",
+    "reminderShiftEndEnabled",
+    "reminderShiftStartEnabled",
     "reminderUpcomingAbsenceDays",
     "reminderUpcomingAbsenceEnabled",
     "sickNoteRequiredAfterDays",
@@ -127,7 +133,7 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "vacationReminderStartMonth",
   ] as const;
 
-  it("PUT /settings/work carries exactly the 41 known keys, no more, no fewer", () => {
+  it("PUT /settings/work carries exactly the 46 known keys, no more, no fewer", () => {
     const saveGlobalBody = fnBody("async function saveGlobal");
     const bodyStart = saveGlobalBody.indexOf('api.put("/settings/work", {');
     expect(bodyStart, 'api.put("/settings/work", {...}) call not found').toBeGreaterThan(-1);
@@ -237,7 +243,16 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/vacation"
   // Function names/keywords that appear inside a value expression but are not the underlying
   // state variable itself, e.g. `clampKarenzDays(sickNoteRequiredAfterDays)` or
   // `Math.round(maxNegHours * 60)`.
-  const STOPWORDS = new Set(["Math", "round", "null", "clampKarenzDays", "parseThresholdsInput"]);
+  const STOPWORDS = new Set([
+    "Math",
+    "round",
+    "null",
+    "clampKarenzDays",
+    "parseThresholdsInput",
+    // Issue #609: value helpers of the shift reminder keys
+    "clampReminderOffsetInput",
+    "normalizeDayCloseTimeInput",
+  ]);
 
   function valueIdentifiers(objectLiteralBody: string): string[] {
     const ids: string[] = [];
@@ -412,5 +427,57 @@ describe("AK-02 — no text/number input writes inline on this page", () => {
 
   it("no text/number input on admin/vacation carries an inline write handler", () => {
     expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
+  });
+});
+
+describe("Issue #609 (D-01/D-15) — shift reminders on the Erinnerungen tab", () => {
+  const REMINDER_STATE = [
+    "reminderShiftStartEnabled",
+    "reminderShiftEndEnabled",
+    "reminderDayCloseEnabled",
+    "reminderOffsetMinutes",
+    "reminderDayCloseTime",
+  ];
+
+  it("the offset and the evening time reach the wire only through the clamp helpers", () => {
+    const body = fnBody("async function saveGlobal");
+    expect(body).toContain(
+      "reminderOffsetMinutes: clampReminderOffsetInput(reminderOffsetMinutes)",
+    );
+    expect(body).toContain(
+      "reminderDayCloseTime: normalizeDayCloseTimeInput(reminderDayCloseTime)",
+    );
+  });
+
+  it("each state variable sits in all three snapshot tuples (dirty check, load-time, post-save)", () => {
+    // A tuple is the run of lines from `snap(` to its closing `)`; the three are the
+    // globalDirty derivation, the onMount snapshot and the post-save snapshot.
+    const tuples: string[] = [];
+    let from = 0;
+    for (;;) {
+      const idx = PAGE.indexOf("snap(\n", from);
+      if (idx === -1) break;
+      const end = PAGE.indexOf("\n      )", idx);
+      const end2 = PAGE.indexOf("\n        )", idx);
+      const stop = [end, end2].filter((n) => n > -1).sort((a, b) => a - b)[0];
+      tuples.push(PAGE.slice(idx, stop));
+      from = idx + 5;
+    }
+    const full = tuples.filter((t) => t.includes("maxNegHours"));
+    expect(full.length, "expected the three full snapshot tuples").toBe(3);
+    for (const tuple of full) {
+      for (const name of REMINDER_STATE) {
+        expect(tuple, `a snapshot tuple is missing ${name}`).toContain(`${name},`);
+      }
+    }
+  });
+
+  it("the Erinnerungen tab carries the section and the D-15 hint", () => {
+    expect(PAGE).toContain('title="Schicht-Erinnerungen"');
+    expect(PAGE).toContain("Erinnerungen an die Person mit geplanter Schicht");
+    expect(PAGE).toContain(
+      "Schichten, die nach dieser Uhrzeit enden, bekommen an diesem Tag keine",
+    );
+    expect(PAGE).toContain("Clokr stempelt nie selbst");
   });
 });
