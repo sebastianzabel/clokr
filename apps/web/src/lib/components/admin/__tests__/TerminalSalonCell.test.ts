@@ -105,19 +105,29 @@ describe("TerminalSalonCell", () => {
     second.unmount();
   });
 
-  it("is disabled while saving and writes the previous value back when the save fails", async () => {
+  it("stays focusable while saving, ignores changes meanwhile and writes the previous value back when the save fails", async () => {
     let resolve!: (ok: boolean) => void;
     const onchange = vi.fn(() => new Promise<boolean>((r) => (resolve = r)));
     mount(terminal({ salonId: "s1", salonName: "Salon Nord", salonActive: true }), true, onchange);
     const select = screen.getByTestId("terminal-salon-select") as HTMLSelectElement;
+    select.focus();
     await fireEvent.change(select, { target: { value: "s2" } });
     await tick();
-    expect(select.disabled).toBe(true);
+    // Keyboard focus is kept: the control is busy, not `disabled`.
+    expect(select.disabled).toBe(false);
+    expect(select.getAttribute("aria-busy")).toBe("true");
+    expect(select.getAttribute("aria-disabled")).toBe("true");
+    expect(document.activeElement).toBe(select);
+    // A second change during the save is put back and never reaches the caller.
+    await fireEvent.change(select, { target: { value: "" } });
+    expect(select.value).toBe("s2");
+    expect(onchange).toHaveBeenCalledTimes(1);
     resolve(false);
     await tick();
     await tick();
-    expect(select.disabled).toBe(false);
+    expect(select.getAttribute("aria-busy")).toBe("false");
     expect(select.value).toBe("s1");
+    expect(document.activeElement).toBe(select);
   });
 
   it("is a calm cell: no alert, no button, no link", () => {

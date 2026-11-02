@@ -8,6 +8,9 @@
   - plain text otherwise (revoked key, or an unbound key in a single-salon tenant);
   - the badge „Salon deaktiviert" whenever the bound salon is deactivated.
 
+  While a save is in flight the select stays focusable (aria-busy / aria-disabled, no `disabled`,
+  so keyboard focus is kept) and further changes are ignored.
+
   A failed save is reported by the caller (`onchange` resolves false); the cell then writes the
   previous value back into the DOM select, so no stale choice stays on screen (WR-03).
 
@@ -37,6 +40,8 @@
   const NONE_LABEL = "Kein Salon – Salon aus dem Wochenmuster";
 
   let saving = $state(false);
+  // The value of the save in flight; a change made while saving is put back to it.
+  let pending = "";
 
   const bound = $derived(terminal.salonId !== null);
   const inactive = $derived(bound && terminal.salonActive === false);
@@ -49,8 +54,15 @@
 
   async function handleChange(ev: Event & { currentTarget: HTMLSelectElement }) {
     const el = ev.currentTarget;
+    // Not `disabled` while saving: disabling the focused select would drop keyboard focus to the
+    // body (WCAG 2.4.3). It stays focusable and a change during the save is ignored instead.
+    if (saving) {
+      el.value = pending;
+      return;
+    }
     const previous = terminal.salonId ?? "";
     const next = el.value === "" ? null : el.value;
+    pending = el.value;
     saving = true;
     let ok: boolean;
     try {
@@ -69,7 +81,8 @@
       data-testid="terminal-salon-select"
       aria-label="Salon für {terminal.name}"
       value={terminal.salonId ?? ""}
-      disabled={saving}
+      aria-busy={saving}
+      aria-disabled={saving}
       onchange={handleChange}
     >
       <option value="">{NONE_LABEL}</option>
