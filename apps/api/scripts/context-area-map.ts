@@ -219,6 +219,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────
   "src/contexts/time-tracking/facade/time-entries.ts": "zeiterfassung", // Phase 100B Plan 08 — T1-T12, TimeEntry/Break's only external access path
   "src/contexts/time-tracking/facade/presence-devices.ts": "zeiterfassung", // Phase 100B Plan 09 (Wave 4, closing) — PresenceDevice's only external access path
+  "src/contexts/time-tracking/facade/presence-pairing.ts": "zeiterfassung", // Issue #610 (D-04) — PresencePairingCode's only external access path: the token-cleanup purge and the anonymization delete
   "src/contexts/time-tracking/api/admin-presence-sources.ts": "zeiterfassung", // writes PresenceDevice/PresenceSource
   "src/contexts/time-tracking/api/employee-wifi.ts": "zeiterfassung", // Phase 243 Plan 02 (B2) — moved from contexts/platform/api/employees.ts: PresenceDevice is a Zeiterfassung model; the /employees URL prefix is a namespace, not an owner
   "src/contexts/time-tracking/api/presence.ts": "zeiterfassung", // WiFi-presence-based clocking; reads PresenceDevice/PresenceSource, writes AuditLog as a side effect
