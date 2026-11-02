@@ -14,7 +14,14 @@ vi.mock("$stores/auth", () => ({
   },
 }));
 
-import { getMyWifi, updateMyWifi, addMyDevice, removeMyDevice } from "../presence";
+import {
+  getMyWifi,
+  updateMyWifi,
+  addMyDevice,
+  removeMyDevice,
+  previewPairing,
+  confirmPairing,
+} from "../presence";
 
 // #238: the four self-service WiFi calls addressed `/me/wifi` from Phase 25
 // onward, while the routes have always been registered under the EMPLOYEE
@@ -99,5 +106,52 @@ describe("#238 — WiFi self-service addresses the employee routes, not /me", ()
       // answers with Fastify's generic "Route not found".
       expect(requestedPath(i)).not.toMatch(/^\/api\/v1\/me\//);
     }
+  });
+});
+
+// Issue #610 (D-06 as amended on 02.11.2026): the pairing code is a one-time secret. It travels only in
+// the JSON body of the two POSTs, so it never reaches an API URL and with it never an API request log.
+describe("#610 - pairing calls carry the code only in the JSON body", () => {
+  const CODE = "a".repeat(64);
+
+  function requestedBody(call: number): unknown {
+    const init = fetchMock.mock.calls[call][1] as RequestInit;
+    return JSON.parse(init.body as string);
+  }
+
+  it("previewPairing() POSTs the preview path with the body { code } and no query string", async () => {
+    fetchMock.mockReturnValue(
+      jsonResponse({
+        deviceLabel: "Pixel",
+        macTail: "ab:cd",
+        replacesDevice: false,
+        alreadyPaired: false,
+        expiresAt: "2026-11-02T10:00:00.000Z",
+      }),
+    );
+    await previewPairing(CODE);
+    expect(requestedPath(0)).toBe("/api/v1/employees/me/wifi/pairing/preview");
+    expect(requestedMethod(0)).toBe("POST");
+    expect(requestedBody(0)).toEqual({ code: CODE });
+    expect(fetchMock.mock.calls[0][0] as string).not.toContain("?");
+    expect(fetchMock.mock.calls[0][0] as string).not.toContain(CODE);
+  });
+
+  it("confirmPairing() POSTs the pairing path with the body { code, consent: true }", async () => {
+    fetchMock.mockReturnValue(jsonResponse({ device: {}, replacedDevices: 0 }));
+    await confirmPairing(CODE);
+    expect(requestedPath(0)).toBe("/api/v1/employees/me/wifi/pairing");
+    expect(requestedMethod(0)).toBe("POST");
+    expect(requestedBody(0)).toEqual({ code: CODE, consent: true });
+    expect(fetchMock.mock.calls[0][0] as string).not.toContain("?");
+    expect(fetchMock.mock.calls[0][0] as string).not.toContain(CODE);
+  });
+
+  it("updateMyWifi(false) passes the number of removed devices through", async () => {
+    fetchMock.mockReturnValue(
+      jsonResponse({ wifiPresenceEnabled: false, wifiOptInAt: null, devicesRemoved: 2 }),
+    );
+    const result = await updateMyWifi(false);
+    expect(result.devicesRemoved).toBe(2);
   });
 });
