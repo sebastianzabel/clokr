@@ -22,9 +22,14 @@ import { dateStrInTz, dayRangeUtc } from "../working-time-account";
 import { getShiftsInRange } from "../scheduling";
 import { getRecordedWorkEntriesInRange } from "./facade/time-entries";
 import {
+  DAY_CLOSE_WINDOW_MINUTES,
   REMINDER_CLOCK_LINK,
   REMINDER_WINDOW_MINUTES,
   clampReminderOffset,
+  dayCloseInstant,
+  dayCloseLink,
+  dayCloseReminderKey,
+  decideDayClose,
   decideShiftEnd,
   decideShiftStart,
   formatShiftTime,
@@ -38,6 +43,7 @@ const JOB = "shift-reminders";
 /** The types of the dedupe read; each emit site below keeps its own literal (the registry scanner reads it). */
 const START_TYPE = "REMINDER_SHIFT_START";
 const END_TYPE = "REMINDER_SHIFT_END";
+const DAY_CLOSE_TYPE = "REMINDER_DAY_CLOSE";
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
 
@@ -71,6 +77,7 @@ export async function runShiftReminders(
           select: {
             timezone: true,
             reminderOffsetMinutes: true,
+            reminderDayCloseTime: true,
             reminderShiftStartEnabled: true,
             reminderShiftEndEnabled: true,
             reminderDayCloseEnabled: true,
@@ -94,6 +101,7 @@ export async function runShiftReminders(
 interface TenantReminderConfig {
   timezone: string;
   reminderOffsetMinutes: number;
+  reminderDayCloseTime: string;
   reminderShiftStartEnabled: boolean;
   reminderShiftEndEnabled: boolean;
   reminderDayCloseEnabled: boolean;
@@ -139,11 +147,46 @@ async function runTenant(
         windowContains(new Date(c.endUtc.getTime() + offsetMs), REMINDER_WINDOW_MINUTES, now),
       )
     : [];
-  const candidates = [...startCandidates, ...endCandidates];
+  // DAY_CLOSE: per (person, day) for each read day whose evening window contains `now` and that has
+  // at least one shift ended by the evening time. The entry-dependent rules follow in stage 2.
+  const dayCloseCandidates: {
+    employeeId: string;
+    day: string;
+    closeUtc: Date;
+    shifts: typeof parsed;
+  }[] = [];
+  if (config.reminderDayCloseEnabled) {
+    for (const day of [yesterday, today]) {
+      const closeUtc = dayCloseInstant(day, config.reminderDayCloseTime, tz);
+      if (!windowContains(closeUtc, DAY_CLOSE_WINDOW_MINUTES, now)) continue;
+      const byPerson = new Map<string, typeof parsed>();
+      for (const c of parsed.filter((p) => p.day === day)) {
+        const list = byPerson.get(c.shift.employeeId) ?? [];
+        list.push(c);
+        byPerson.set(c.shift.employeeId, list);
+      }
+      for (const [employeeId, personShifts] of byPerson) {
+        // Pure pre-filter on the shifts alone; the entry rules run in stage 2.
+        const pre = decideDayClose({
+          day,
+          closeUtc,
+          now,
+          shifts: personShifts.map((c) => ({ endUtc: c.endUtc, conflictsWithLeave: false })),
+          entries: [],
+        });
+        if (pre.send) dayCloseCandidates.push({ employeeId, day, closeUtc, shifts: personShifts });
+      }
+    }
+  }
+  const candidates = [
+    ...startCandidates.map((c) => ({ employeeId: c.shift.employeeId, day: c.day })),
+    ...endCandidates.map((c) => ({ employeeId: c.shift.employeeId, day: c.day })),
+    ...dayCloseCandidates.map((c) => ({ employeeId: c.employeeId, day: c.day })),
+  ];
   if (candidates.length === 0) return;
 
   // Stage 2: reads for the candidate persons only.
-  const employeeIds = [...new Set(candidates.map((c) => c.shift.employeeId))];
+  const employeeIds = [...new Set(candidates.map((c) => c.employeeId))];
 
   // Population (D-05, P-609-09): one read per distinct candidate day. The recipient must be able to
   // log in (`user.isActive` is used here as a recipient lookup, not as a report population), be
@@ -153,6 +196,7 @@ async function runTenant(
     userId: string;
     startOff: boolean;
     endOff: boolean;
+    dayCloseOff: boolean;
   }
   const people = new Map<string, Map<string, Person>>();
   for (const day of new Set(candidates.map((c) => c.day))) {
@@ -170,6 +214,7 @@ async function runTenant(
         userId: true,
         reminderShiftStartOff: true,
         reminderShiftEndOff: true,
+        reminderDayCloseOff: true,
       },
     });
     people.set(
@@ -181,6 +226,7 @@ async function runTenant(
             userId: r.userId,
             startOff: r.reminderShiftStartOff,
             endOff: r.reminderShiftEndOff,
+            dayCloseOff: r.reminderDayCloseOff,
           },
         ]),
       ),
@@ -207,19 +253,27 @@ async function runTenant(
   const userIds = [
     ...new Set([...people.values()].flatMap((m) => [...m.values()].map((p) => p.userId))),
   ];
+  const shiftIds = [...startCandidates, ...endCandidates].map((c) => c.shift.id);
+  const dayRelatedIds = dayCloseCandidates.map((c) => `${c.employeeId}:${c.day}`);
   const notified = await app.prisma.notification.findMany({
     where: {
       userId: { in: userIds },
-      type: { in: [START_TYPE, END_TYPE] },
-      relatedType: "Shift",
-      relatedId: { in: candidates.map((c) => c.shift.id) },
+      OR: [
+        { type: { in: [START_TYPE, END_TYPE] }, relatedType: "Shift", relatedId: { in: shiftIds } },
+        { type: DAY_CLOSE_TYPE, relatedType: "EmployeeDay", relatedId: { in: dayRelatedIds } },
+      ],
     },
     select: { userId: true, type: true, relatedId: true },
   });
   const sent = new Set(
-    notified.flatMap((n) =>
-      n.relatedId === null ? [] : [shiftReminderKey(n.userId, n.type, n.relatedId)],
-    ),
+    notified.flatMap((n) => {
+      if (n.relatedId === null) return [];
+      if (n.type === DAY_CLOSE_TYPE) {
+        const [employeeId = "", day = ""] = n.relatedId.split(":");
+        return [dayCloseReminderKey(n.userId, employeeId, day)];
+      }
+      return [shiftReminderKey(n.userId, n.type, n.relatedId)];
+    }),
   );
 
   const skipped: SkipCounts = {};
@@ -306,6 +360,51 @@ async function runTenant(
       link: REMINDER_CLOCK_LINK,
       relatedType: "Shift",
       relatedId: shift.id,
+    });
+    sent.add(key);
+  }
+  for (const candidate of dayCloseCandidates) {
+    const { employeeId, day } = candidate;
+    const person = people.get(day)?.get(employeeId);
+    if (person === undefined) {
+      skip("NOT_IN_POPULATION");
+      continue;
+    }
+    if (person.dayCloseOff) {
+      skip("PERSON_OFF");
+      continue;
+    }
+    const { userId } = person;
+    const decision = decideDayClose({
+      day,
+      closeUtc: candidate.closeUtc,
+      now,
+      shifts: candidate.shifts.map((c) => ({ endUtc: c.endUtc, conflictsWithLeave: false })),
+      entries: (entriesOf.get(employeeId) ?? []).map((e) => ({
+        startTime: e.startTime,
+        endTime: e.endTime,
+        isInvalid: e.isInvalid,
+        day: e.date.toISOString().slice(0, 10),
+      })),
+    });
+    if (!decision.send) {
+      skip(decision.reason);
+      continue;
+    }
+    const key = dayCloseReminderKey(userId, employeeId, day);
+    if (sent.has(key)) {
+      skip("ALREADY_NOTIFIED");
+      continue;
+    }
+    await app.notify({
+      userId,
+      tenantId,
+      type: "REMINDER_DAY_CLOSE",
+      title: "Zeit fehlt",
+      message: "Heute fehlt noch deine Zeit. Trag sie jetzt ein.",
+      link: dayCloseLink(day),
+      relatedType: "EmployeeDay",
+      relatedId: `${employeeId}:${day}`,
     });
     sent.add(key);
   }

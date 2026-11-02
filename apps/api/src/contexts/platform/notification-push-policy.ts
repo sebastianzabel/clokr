@@ -92,6 +92,7 @@ export const NOTIFICATION_PUSH_POLICY: Record<string, PushPolicy> = {
   // Shift reminders (Issue #609): a time-bound nudge, a late delivery would be wrong, so TTL_1H
   REMINDER_SHIFT_START:   { push: "send", body: "Deine Schicht hat begonnen. Jetzt einstempeln?", ttlSeconds: TTL_1H },
   REMINDER_SHIFT_END:     { push: "send", body: "Feierabend? Jetzt ausstempeln.", ttlSeconds: TTL_1H },
+  REMINDER_DAY_CLOSE:     { push: "send", body: "Heute fehlt noch deine Zeit.", ttlSeconds: TTL_1H },
 
   // Absence reminders
   UPCOMING_ABSENCE:       { push: "send", body: "Es gibt einen neuen Hinweis in Clokr.", ttlSeconds: TTL_24H },

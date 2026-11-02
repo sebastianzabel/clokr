@@ -146,6 +146,7 @@ const NEVER_ENTRIES: Record<string, EmailPolicy> = {
   // Issue #609: shift reminders are a nudge without personal content, in-app and push only.
   REMINDER_SHIFT_START: { email: "never", reason: REMINDER_NEVER_REASON },
   REMINDER_SHIFT_END: { email: "never", reason: REMINDER_NEVER_REASON },
+  REMINDER_DAY_CLOSE: { email: "never", reason: REMINDER_NEVER_REASON },
   // Issue #93: the tenant's in-app notice that a support access started; never mailed.
   SUPPORT_ACCESS_STARTED: {
     email: "never",

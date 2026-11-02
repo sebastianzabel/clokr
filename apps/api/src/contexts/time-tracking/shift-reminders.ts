@@ -127,6 +127,24 @@ export function formatShiftTime(hhmm: string): string {
   return `${Number(padded.slice(0, 2))}:${padded.slice(3)}`;
 }
 
+/**
+ * The instant of the tenant's evening time on `day` (an unparsable stored time falls back to
+ * 20:00). Built in the tenant time zone, so a DST day moves the wall clock, never the rule.
+ */
+export function dayCloseInstant(day: string, hhmm: string | null | undefined, tz: string): Date {
+  return fromZonedTime(`${day}T${parseDayCloseTime(hhmm)}:00`, tz);
+}
+
+/** The evening reminder leads to the list view of the shift day, not to the dashboard (D-09). */
+export function dayCloseLink(day: string): string {
+  return `/time-entries?view=list&date=${day}`;
+}
+
+/** The dedupe key of an evening notice: one per person and day (the `EmployeeDay` convention of #80). */
+export function dayCloseReminderKey(userId: string, employeeId: string, day: string): string {
+  return `${userId}|REMINDER_DAY_CLOSE|EmployeeDay|${employeeId}:${day}`;
+}
+
 /** The dedupe key of a START or END notice: one per person, type and shift (D-06, P-609-10). */
 export function shiftReminderKey(userId: string, type: string, shiftId: string): string {
   return `${userId}|${type}|Shift|${shiftId}`;
@@ -212,5 +230,48 @@ export function decideShiftEnd(input: EndDecisionInput): ReminderDecision {
     (o) => o.startUtc.getTime() <= opensMs && o.endUtc.getTime() > endMs,
   );
   if (followed) return { send: false, reason: "NEXT_SHIFT_ADJACENT" };
+  return { send: true };
+}
+
+/** A shift of the person on the day in question, for the evening reminder. */
+export interface DayCloseShift {
+  endUtc: Date;
+  /** The shift is flagged as conflicting with approved leave (it is not worked). */
+  conflictsWithLeave: boolean;
+}
+
+export interface DayCloseDecisionInput {
+  /** The tenant-local day under judgement ("YYYY-MM-DD"). */
+  day: string;
+  /** The tenant's evening time on that day. */
+  closeUtc: Date;
+  now: Date;
+  /** The person's shifts of that day. */
+  shifts: readonly DayCloseShift[];
+  /** The person's recorded WORK entries; each carries its own `day`. */
+  entries: readonly ReminderEntry[];
+}
+
+/**
+ * Whether the person gets the evening notice for `day` (AC-3, D-04, D-13, D-15, P-609-07).
+ *
+ * Due in `[evening, evening + 30 min)`. Needs at least one shift of the day that is not flagged as
+ * conflicting with leave and ended by the evening time (a shift that ends later gives no notice that
+ * day, D-15). Not sent while a valid OPEN entry exists (D-13) or when any CLOSED entry, valid or
+ * not, is dated that day - any recorded time means the day is not empty.
+ */
+export function decideDayClose(input: DayCloseDecisionInput): ReminderDecision {
+  if (!windowContains(input.closeUtc, DAY_CLOSE_WINDOW_MINUTES, input.now)) {
+    return { send: false, reason: "OUTSIDE_WINDOW" };
+  }
+  const closeMs = input.closeUtc.getTime();
+  const eligible = input.shifts.some((s) => !s.conflictsWithLeave && s.endUtc.getTime() <= closeMs);
+  if (!eligible) return { send: false, reason: "NO_ELIGIBLE_SHIFT" };
+  if (input.entries.some((e) => !e.isInvalid && e.endTime === null)) {
+    return { send: false, reason: "OPEN_ENTRY_PRESENT" };
+  }
+  if (input.entries.some((e) => e.endTime !== null && e.day === input.day)) {
+    return { send: false, reason: "HAS_CLOSED_ENTRY" };
+  }
   return { send: true };
 }

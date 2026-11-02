@@ -9,6 +9,10 @@ import { fromZonedTime } from "date-fns-tz";
 import {
   START_LOOKBACK_MINUTES,
   clampReminderOffset,
+  dayCloseInstant,
+  dayCloseLink,
+  dayCloseReminderKey,
+  decideDayClose,
   decideShiftEnd,
   decideShiftStart,
   formatShiftTime,
@@ -293,5 +297,105 @@ describe("decideShiftEnd (AC-2, D-04, D-07, P-609-06)", () => {
     expect(decideShiftEnd({ ...input, now: at("2026-10-25", "06:15") })).toEqual({ send: true });
     // 05:15 local (04:15Z) lies before the shift end 06:00 local (05:00Z): not yet due
     expect(decideShiftEnd({ ...input, now: at("2026-10-25", "05:15") }).send).toBe(false);
+  });
+});
+
+describe("decideDayClose (AC-3, D-04, D-13, D-15, P-609-07)", () => {
+  const day = "2026-11-10";
+  const closeUtc = dayCloseInstant(day, "20:00", TZ);
+  const now = at(day, "20:00");
+  const sh = (end: string, conflictsWithLeave = false) => ({
+    endUtc: at(day, end),
+    conflictsWithLeave,
+  });
+  const e = (
+    start: Date,
+    end: Date | null,
+    options: { isInvalid?: boolean; day?: string } = {},
+  ): ReminderEntry => ({
+    startTime: start,
+    endTime: end,
+    isInvalid: options.isInvalid ?? false,
+    day: options.day ?? day,
+  });
+  const base = { day, closeUtc, now };
+
+  it("builds the instant of the evening time in the tenant time zone", () => {
+    expect(closeUtc.toISOString()).toBe("2026-11-10T19:00:00.000Z");
+    expect(dayCloseInstant(day, "garbage", TZ).toISOString()).toBe("2026-11-10T19:00:00.000Z");
+  });
+
+  it("sends for one shift that ended by the evening time and no entries", () => {
+    expect(decideDayClose({ ...base, shifts: [sh("17:00")], entries: [] })).toEqual({ send: true });
+  });
+
+  it("counts a shift ending exactly at the evening time as ended", () => {
+    expect(decideDayClose({ ...base, shifts: [sh("20:00")], entries: [] })).toEqual({ send: true });
+  });
+
+  it("gives no notice for a shift that ends after the evening time (D-15)", () => {
+    expect(decideDayClose({ ...base, shifts: [sh("21:00")], entries: [] })).toEqual({
+      send: false,
+      reason: "NO_ELIGIBLE_SHIFT",
+    });
+  });
+
+  it("sends for an early and a late shift when the early one ended by the evening time", () => {
+    const shifts = [sh("12:00"), sh("22:00")];
+    expect(decideDayClose({ ...base, shifts, entries: [] })).toEqual({ send: true });
+  });
+
+  it("does not send while a valid open entry exists (D-13)", () => {
+    const entries = [e(at(day, "13:00"), null)];
+    expect(decideDayClose({ ...base, shifts: [sh("17:00")], entries })).toEqual({
+      send: false,
+      reason: "OPEN_ENTRY_PRESENT",
+    });
+  });
+
+  it("does not send when a closed entry of that day exists, valid or invalid", () => {
+    for (const isInvalid of [false, true]) {
+      const entries = [e(at(day, "09:00"), at(day, "12:00"), { isInvalid })];
+      expect(decideDayClose({ ...base, shifts: [sh("17:00")], entries })).toEqual({
+        send: false,
+        reason: "HAS_CLOSED_ENTRY",
+      });
+    }
+  });
+
+  it("sends when the only closed entry belongs to the previous day", () => {
+    const entries = [
+      e(at("2026-11-09", "09:00"), at("2026-11-09", "17:00"), { day: "2026-11-09" }),
+    ];
+    expect(decideDayClose({ ...base, shifts: [sh("17:00")], entries })).toEqual({ send: true });
+  });
+
+  it("ignores an invalid open entry", () => {
+    const entries = [e(at(day, "13:00"), null, { isInvalid: true })];
+    expect(decideDayClose({ ...base, shifts: [sh("17:00")], entries })).toEqual({ send: true });
+  });
+
+  it("gives no notice for a day whose only shift is flagged as conflicting with leave", () => {
+    expect(decideDayClose({ ...base, shifts: [sh("17:00", true)], entries: [] })).toEqual({
+      send: false,
+      reason: "NO_ELIGIBLE_SHIFT",
+    });
+  });
+
+  it("is due in [evening, evening + 30 min) only", () => {
+    const shifts = [sh("17:00")];
+    const at2 = (hhmm: string) =>
+      decideDayClose({ ...base, now: at(day, hhmm), shifts, entries: [] });
+    expect(at2("19:59")).toEqual({ send: false, reason: "OUTSIDE_WINDOW" });
+    expect(at2("20:25")).toEqual({ send: true });
+    expect(at2("20:29")).toEqual({ send: true });
+    expect(at2("20:30")).toEqual({ send: false, reason: "OUTSIDE_WINDOW" });
+  });
+
+  it("links to the list view of the day and keys the notice per person and day", () => {
+    expect(dayCloseLink("2026-11-10")).toBe("/time-entries?view=list&date=2026-11-10");
+    expect(dayCloseReminderKey("u1", "e1", "2026-11-10")).toBe(
+      "u1|REMINDER_DAY_CLOSE|EmployeeDay|e1:2026-11-10",
+    );
   });
 });
