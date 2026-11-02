@@ -90,6 +90,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/__tests__/bulk-apply-helpers.ts": "rahmen", // Issue #568 — shared two-step bulk-apply test helper, no model
   "src/__tests__/population-fixtures-613.ts": "rahmen", // Issue #613 — shared fixture of the population tests (exited / login-deactivated / anonymised / late-hired persons); test infra, no model of its own
   "src/__tests__/push-fixtures-608.ts": "rahmen", // Issue #608 — shared fixture of the web-push tests (test VAPID pair, push-enabled app builder, fake device subscription); test infra, no model of its own
+  "src/__tests__/notify-emit-sites.ts": "rahmen", // Issue #608 — the one notify() call-site scanner shared by the e-mail and push registry tests; test infra, no model of its own
   "src/__tests__/monthly-export-fixture-617.ts": "rahmen", // Issue #617 — shared nine-person fixture of the Monatsexport tests (closed/open months, every leave kind, § 9, exit, Azubi); test infra, no model of its own
   "src/__tests__/datev-rows.ts": "rahmen", // Issue #304 — shared parser of the DATEV LODAS file for tests; test infra, no model of its own
   "src/__tests__/legacy-role-migration-sql.ts": "rahmen", // Phase 75b (Issue #75) — test infra that runs the checked-in legacy-role data migration verbatim; no model of its own
