@@ -983,10 +983,13 @@ import { readFileSync } from "node:fs";
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #715: +1 file (sim-invariants-715.test.ts, 8 cases), source-counted on the base 736/11029.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #541: +5 files (nfc-punch-salon-binding-541, terminal-salon-migration-541, terminal-salon, nfc-punch-salon-race-541, terminals-salon-541), +48 cases; measured full run 759 files, 11149 tests (includes the merged origin/main test minio-query-string-override).
+
 // Phase 608 (2026-11-02): measured with a full run on `feat/608-web-push` @ 67f489eb — 765 test files, 11279 tests; new
 // files me-push-608, push-config-608, push-surface-off-608, push-endpoint-guard-608, push-device-label-608,
 // push-reassign-608, anonymization-push-608, notification-push-policy-608, notification-push-dispatch-608 and
 // generate-vapid-keys-608; extended: notification-email-policy (+1). Nothing removed, skipped or loosened. MIN_FILES 750 -> 765, never lowered.
+// Merge of #608 onto main after #541/#638: full run measured 772 files / 11393 tests (incl. 3 skipped).
 // Phase 610 (2026-11-02): measured with a full run on `feat/610-wlan-qr-kopplung` @ ac4cbde4 (stacked on
 // `feat/608-web-push`) — 777 test files, 11455 tests (11452 passed, 3 skipped, 0 failed); new files
 // presence-pairing-610 (1 case), presence-pairing-contract-610 (28), presence-pairing-replace-610 (7),
@@ -995,6 +998,7 @@ import { readFileSync } from "node:fs";
 // notification-push-policy-608, cron-deactivated-tenants-88, with-advisory-lock; nothing removed, skipped or loosened.
 // MIN_FILES 765 -> 777, never lowered. #541, #608 and #641 also raise these floors: whoever merges later re-measures.
 // 2026-11-02 (#610 review fixes): +2 API test files, measured full run 779 files / 11465 tests.
+// Merge of #610 onto main after #608: MEASURED_F
 const MIN_FILES = 779;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
@@ -1091,6 +1095,11 @@ const MIN_FILES = 779;
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #715: +8 cases (sim-invariants-715.test.ts) on the base 11029.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #541: +48 cases (13 + 4 + 12 + 2 + 17); measured full run 11149 tests collected (11146 passed, 3 skipped).
+// Issue #638: tests removed with the dropped storeHours column (salon-migration -2, operator-salons-89 -1,
+// settings-store-hours-retired-563 -4).
+// Merge of #541 onto main after #638: full run measured 760 files / 11147 tests (incl. 3 skipped).
+
 // Phase 608 (2026-11-02): measured with a full run on `feat/608-web-push` @ 67f489eb (merged onto origin/main @ c1228258,
 // #807 included) — 765 test files, 11279 tests (11276 passed, 3 skipped, 0 failed). The phase adds 10 files with 174
 // cases (me-push-608 12, push-config-608 15, push-surface-off-608 4, push-endpoint-guard-608 22, push-device-label-608 15,
@@ -1098,6 +1107,8 @@ const MIN_FILES = 779;
 // generate-vapid-keys-608 14) and one case in notification-email-policy; nothing removed, skipped or loosened.
 // MIN_TESTS 11081 -> 11279, never lowered. Another open PR (#812, Issue #541) raises the same floors: whoever merges second
 // re-measures with a full run (lower-bound convention, never a sum).
+// Merge of #608 onto main after #541/#638: full run measured 772 files / 11393 tests (incl. 3 skipped).
+const MIN_TESTS = 11393;
 // Phase 610 (2026-11-02): MIN_TESTS 11279 -> 11455, the measured total of the full run named at MIN_FILES (the ten
 // new files add 102 cases). Never lowered.
 const MIN_TESTS = 11465;

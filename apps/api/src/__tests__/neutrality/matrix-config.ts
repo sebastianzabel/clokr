@@ -330,6 +330,15 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "role guard is gone. Proven by `leave-sick-days-595.test.ts`.",
   },
   {
+    route: "PATCH /api/v1/terminals/:id",
+    reason:
+      "New route added in Issue #541, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) — built permission-gated (`terminal:manage:ZUGEWIESEN`) from " +
+      "its very first commit and never had role-based access behavior to compare. Same " +
+      "vacuous-satisfaction reasoning as the Phase 430, 468 and 481 entries: RECORD/MERGE mode " +
+      "refuses to run once the role guard is gone. Proven by terminals-salon-541.test.ts.",
+  },
+  {
     route: "PATCH /api/v1/settings/work/:employeeId/usual-work-days",
     reason:
       "New route added in Phase 481 (Issue #481, R6), long after the role guard (`requireRole`) " +

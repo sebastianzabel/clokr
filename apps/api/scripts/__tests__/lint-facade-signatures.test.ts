@@ -386,7 +386,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // deactivateSalon, activateSalon — both pass F1/F2/F3 directly, no new exception needed.
   //
   // 91 -> 92 in Phase 64b Plan 04 (Issue #64, Task 1): same file, 1 more exported function —
-  // syncSoleActiveSalonOpeningHours (D-16 storeHours<->salon mirror) — passes F1/F2/F3 directly
+  // syncSoleActiveSalonOpeningHours (D-16 tenant-hours<->salon mirror) — passes F1/F2/F3 directly
   // (`db: Prisma.TransactionClient` first, `tenantId` present alongside `openingHours` which does
   // not match the `*Ids?` trigger pattern), no new exception needed. The module-private
   // `normalizeOpeningHoursForCompare` helper is not exported and is not counted here.
@@ -590,7 +590,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // getEntriesForSupportMonth, getDayBreaksForSupportMonth (time-tracking/facade/time-entries.ts)
     // and getLeaveRequestsForSupportMonth (absence/facade/leave-requests.ts) — 145 -> 148 after the
     // merge with #538; all three pass F1/F2/F3 directly, exceptions unchanged at 17.
-    // Phase 563 (Issue #563, 2026-10-15): the storeHours mirror was removed from facade/salons.ts
+    // Phase 563 (Issue #563, 2026-10-15): the tenant-hours mirror was removed from facade/salons.ts
     // (-1, syncSoleActiveSalonOpeningHours) — 148 -> 147; exceptions unchanged at 17.
     // Issue #595 (2026-10-16): -1, the dead W4 closing-balance reader of
     // working-time-account/facade/saldo-snapshot.ts (no caller, exact periodStart match) —
