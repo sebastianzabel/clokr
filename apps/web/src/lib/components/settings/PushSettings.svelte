@@ -38,6 +38,8 @@
   let dismissed = $state(false);
   let loadFailed = $state(false);
   let busy = $state(false);
+  // A reload after a SUCCESSFUL action failed: the list may be stale, but the action did succeed.
+  let listStale = $state(false);
 
   const isOn = $derived(thisDevice.state === "on");
 
@@ -48,6 +50,19 @@
   async function refreshDevices() {
     devices = await listPushDevices();
     thisDevice = await thisDeviceState(devices);
+  }
+
+  /**
+   * Reloads the list after an action that already succeeded. A failing reload must not turn that
+   * success into an error toast (review IN-05): the list just says it may be out of date.
+   */
+  async function refreshQuietly() {
+    try {
+      await refreshDevices();
+      listStale = false;
+    } catch {
+      listStale = true;
+    }
   }
 
   onMount(async () => {
@@ -83,7 +98,10 @@
         denied = false;
         dismissed = false;
         toasts.success("Push ist auf diesem Gerät aktiviert.");
-        await refreshDevices();
+        // Show the new device even if the reload below fails.
+        devices = [...devices.filter((d) => d.id !== result.device.id), result.device];
+        thisDevice = { state: "on", deviceId: result.device.id };
+        await refreshQuietly();
       }
     } catch (error) {
       toasts.error(pushErrorMessage(error));
@@ -102,7 +120,7 @@
         return;
       }
       toasts.success("Push ist auf diesem Gerät deaktiviert.");
-      await refreshDevices();
+      await refreshQuietly();
     } catch (error) {
       toasts.error(pushErrorMessage(error));
     } finally {
@@ -139,7 +157,7 @@
         toasts.info(
           `${removed} ${deviceWord(removed)} ${removed === 1 ? "ist" : "sind"} beim Push-Dienst nicht mehr bekannt und wurde${removed === 1 ? "" : "n"} entfernt. Aktiviere Push dort erneut.`,
         );
-        await refreshDevices();
+        await refreshQuietly();
       }
       if (sent + failed + removed === 0) toasts.info("Es ist noch kein Gerät eingerichtet.");
     } catch (error) {
@@ -159,7 +177,7 @@
     try {
       await removePushDevice({ id: device.id });
       toasts.success("Gerät entfernt.");
-      await refreshDevices();
+      await refreshQuietly();
     } catch (error) {
       toasts.error(pushErrorMessage(error));
     } finally {
@@ -225,13 +243,18 @@
       </p>
     {/if}
 
+    {#if listStale}
+      <p class="text-muted push-note" role="status" data-testid="push-list-stale">
+        Die Geräteliste konnte nicht aktualisiert werden. Lade die Seite neu, um sie zu prüfen.
+      </p>
+    {/if}
     {#if loadFailed}
       <p class="text-muted push-note">Deine Geräte konnten nicht geladen werden.</p>
     {:else if devices.length === 0}
       <p class="text-muted push-note">Noch kein Gerät eingerichtet.</p>
     {:else}
       <ul class="push-devices">
-        {#each devices as device (device.id)}
+        {#each devices as device, index (device.id)}
           <li class="push-device">
             <span class="push-device-label">{device.deviceLabel}</span>
             {#if thisDevice.state === "on" && thisDevice.deviceId === device.id}
@@ -241,7 +264,7 @@
             <button
               type="button"
               class="btn btn-ghost btn-sm"
-              aria-label={`Entfernen: ${device.deviceLabel}`}
+              aria-label={`Entfernen: ${device.deviceLabel}, Gerät ${index + 1} von ${devices.length}, seit ${since(device.consentedAt)}`}
               onclick={() => removeDevice(device)}
               disabled={busy}
             >

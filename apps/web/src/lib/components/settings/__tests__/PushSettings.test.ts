@@ -272,6 +272,39 @@ describe("PushSettings", () => {
     expect(toast.toasts.success).toHaveBeenCalledWith("Testnachricht an 1 Gerät gesendet.");
   });
 
+  it("IN-05: two devices with the same label get distinct remove names", async () => {
+    serverDevices = [
+      { ...device("d1", "Chrome auf Windows"), consentedAt: "2026-10-01T09:00:00.000Z" },
+      { ...device("d2", "Chrome auf Windows"), consentedAt: "2026-10-20T09:00:00.000Z" },
+    ];
+    await mounted();
+    const buttons = await screen.findAllByRole("button", {
+      name: /^Entfernen: Chrome auf Windows/,
+    });
+    expect(buttons).toHaveLength(2);
+    const names = buttons.map((b) => b.getAttribute("aria-label"));
+    expect(new Set(names).size).toBe(2);
+    expect(names[0]).toContain("Gerät 1 von 2");
+    expect(names[1]).toContain("Gerät 2 von 2");
+    expect(names[0]).toContain("1.10.2026");
+    expect(names[1]).toContain("20.10.2026");
+  });
+
+  it("IN-05: a failing reload right after a successful enable shows an inline hint, no error toast", async () => {
+    await mounted();
+    const button = await screen.findByRole("button", { name: "Push aktivieren" });
+    const mine = device("d1", "Chrome auf Android");
+    sub.enableThisDevice.mockResolvedValue({ status: "enabled", device: mine });
+    api.listPushDevices.mockRejectedValue(new Error("offline"));
+    await fireEvent.click(button);
+    expect(await screen.findByTestId("push-list-stale")).toBeInTheDocument();
+    expect(toast.toasts.success).toHaveBeenCalledWith("Push ist auf diesem Gerät aktiviert.");
+    expect(toast.toasts.error).not.toHaveBeenCalled();
+    // The device that was just registered is shown anyway.
+    expect(screen.getByText("Chrome auf Android")).toBeInTheDocument();
+    expect(screen.getByTestId("push-state")).toHaveTextContent("Auf diesem Gerät: an");
+  });
+
   it("says Gerät for exactly one device", async () => {
     serverDevices = [device("d1", "Chrome auf Android")];
     thisState = { state: "on", deviceId: "d1" };
@@ -293,7 +326,7 @@ describe("PushSettings", () => {
       serverDevices = [device("d1", "Chrome auf Android")];
     });
     await fireEvent.click(
-      await screen.findByRole("button", { name: "Entfernen: Safari auf iPhone" }),
+      await screen.findByRole("button", { name: /^Entfernen: Safari auf iPhone/ }),
     );
     await waitFor(() => expect(screen.queryByText("Safari auf iPhone")).toBeNull());
     expect(api.removePushDevice).toHaveBeenCalledWith({ id: "d2" });
@@ -311,7 +344,7 @@ describe("PushSettings", () => {
       return { status: "disabled" };
     });
     await fireEvent.click(
-      await screen.findByRole("button", { name: "Entfernen: Chrome auf Android" }),
+      await screen.findByRole("button", { name: /^Entfernen: Chrome auf Android/ }),
     );
     await waitFor(() => expect(sub.disableThisDevice).toHaveBeenCalledTimes(1));
     expect(api.removePushDevice).not.toHaveBeenCalled();
