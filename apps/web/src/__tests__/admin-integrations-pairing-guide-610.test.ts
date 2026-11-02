@@ -23,10 +23,15 @@ describe("integrations page - pairing guide (Issue #610)", () => {
     expect(source.match(/<PairingGuide\b/g)).toHaveLength(1);
   });
 
+  // prettier may wrap `<Section title=...>` over several lines, so the start tag is found by a
+  // whitespace-tolerant pattern, never by the literal one-line spelling.
+  const sectionStart = (title: string): number =>
+    source.search(new RegExp(`<Section\\s+title="${title}"`));
+
   it("renders it inside the Section 'Handys per QR-Code koppeln' after 'Presence-Quellen'", () => {
-    const sources = source.indexOf('<Section title="Presence-Quellen"');
-    const guide = source.indexOf('<Section title="Handys per QR-Code koppeln"');
-    const devices = source.indexOf('<Section title="WiFi-Geräteliste"');
+    const sources = sectionStart("Presence-Quellen");
+    const guide = sectionStart("Handys per QR-Code koppeln");
+    const devices = sectionStart("WiFi-Geräteliste");
     expect(sources).toBeGreaterThan(-1);
     expect(guide).toBeGreaterThan(sources);
     expect(devices).toBeGreaterThan(guide);
@@ -36,8 +41,11 @@ describe("integrations page - pairing guide (Issue #610)", () => {
   });
 
   it("adds no API call for the guide", () => {
-    const section = source.slice(source.indexOf('<Section title="Handys per QR-Code koppeln"'));
+    const guide = sectionStart("Handys per QR-Code koppeln");
+    expect(guide).toBeGreaterThan(-1);
+    const section = source.slice(guide);
     const guideBlock = section.slice(0, section.indexOf("</Section>"));
+    expect(guideBlock).toContain("<PairingGuide");
     expect(guideBlock).not.toMatch(/api\.|fetch\(|await /);
   });
 });
