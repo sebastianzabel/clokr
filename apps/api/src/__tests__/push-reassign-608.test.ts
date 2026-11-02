@@ -101,7 +101,8 @@ describe("Issue #608: re-registering a browser, device cap and rate limits", () 
     expect(first.statusCode).toBe(201);
     const oldId = first.json().id as string;
 
-    const taken = await subscribe(b.empToken, sub);
+    const takeoverAddress = nextIp();
+    const taken = await subscribe(b.empToken, sub, takeoverAddress);
     expect(taken.statusCode).toBe(201);
 
     const rows = await rowsOf(sub.endpoint);
@@ -120,10 +121,18 @@ describe("Issue #608: re-registering a browser, device cap and rate limits", () 
       actor: { type: "SYSTEM", tenantId: a.tenant.id },
     });
     expect(JSON.stringify(del)).not.toContain(sub.endpoint);
+    // WR-02: the row the OLD owner's tenant can read carries nothing of the person who took over.
+    expect(del.ipAddress).toBeNull();
+    expect(del.userAgent).toBeNull();
+    expect(JSON.stringify(del)).not.toContain(b.empUser.id);
+    expect(JSON.stringify(del)).not.toContain(b.tenant.id);
     const create = await soleAuditRow(app.prisma, {
       where: { entity: "PushSubscription", entityId: rows[0].id, action: "CREATE" },
     });
     expect(create.userId).toBe(b.empUser.id);
+    // The new owner's own CREATE audit keeps the request data.
+    expect(create.ipAddress).toBe(takeoverAddress);
+    expect(create.userAgent).toBe(CHROME_ANDROID_UA);
 
     // A's tenant audit list shows the displaced device's deletion, B's does not.
     const listFor = async (token: string) => {

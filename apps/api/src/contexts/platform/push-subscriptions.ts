@@ -161,7 +161,9 @@ async function subscribeOnce(
           reason: "REASSIGNED",
           actor: { type: "SYSTEM", tenantId: existing.tenantId },
         },
-        request: input.request,
+        // No `request` and no `userId` on purpose (review WR-02): this row is shown to the OLD
+        // owner's tenant, so it must not carry the new owner's IP address, User-Agent or id - they
+        // may belong to another tenant. The new owner's own CREATE audit keeps the request data.
         tx,
       });
     }
