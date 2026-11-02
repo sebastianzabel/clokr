@@ -309,7 +309,9 @@ async function runTenant(
   // Exclusions (AC-3, D-05, D-12): effective leave and imposed absences of the candidate persons
   // around the candidate days, and the holidays of the candidate shifts' salons - each read through
   // the owning context's facade. A PENDING request is not effective leave and does not silence.
-  const candidateDays = [...new Set(candidates.map((c) => c.day))].sort();
+  const candidateDays = [...new Set(candidates.map((c) => c.day))].sort((a, b) =>
+    a.localeCompare(b),
+  );
   const exclusionFrom = new Date(`${candidateDays[0]}T00:00:00Z`);
   const exclusionTo = new Date(`${candidateDays[candidateDays.length - 1]}T00:00:00Z`);
   const exclusionScope = employeeScopeFor(scope, { employeeIds });
