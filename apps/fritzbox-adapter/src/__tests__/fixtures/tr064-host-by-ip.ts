@@ -65,6 +65,37 @@ export const HOST_BAD_MAC = envelope({
   NewInterfaceType: "802.11",
 });
 
+// IN-02 (review): device-chosen hostnames. An escaped one is data; a raw one that closes the element
+// and opens a fake MAC element is an attack, whichever side of the real MAC element it sits on.
+export const HOST_ESCAPED_NAME = envelope({
+  NewHostName:
+    "A&amp;B &lt;/NewHostName&gt;&lt;NewMACAddress&gt;02:00:00:00:00:66&lt;/NewMACAddress&gt; &#65;&#x42;",
+  NewMACAddress: "AA:BB:CC:00:11:22",
+  NewActive: "1",
+  NewInterfaceType: "802.11",
+});
+
+export const HOST_RAW_INJECTION_AFTER_MAC = envelope({
+  NewMACAddress: "AA:BB:CC:00:11:22",
+  NewHostName: "x</NewHostName><NewMACAddress>02:00:00:00:00:66</NewMACAddress><NewHostName>y",
+  NewActive: "1",
+  NewInterfaceType: "802.11",
+});
+
+export const HOST_RAW_INJECTION_BEFORE_MAC = envelope({
+  NewHostName: "x</NewHostName><NewMACAddress>02:00:00:00:00:66</NewMACAddress><NewHostName>y",
+  NewMACAddress: "AA:BB:CC:00:11:22",
+  NewActive: "1",
+  NewInterfaceType: "802.11",
+});
+
+export const HOST_MAC_AFTER_NAME = envelope({
+  NewHostName: "iPhone",
+  NewActive: "1",
+  NewInterfaceType: "802.11",
+  NewMACAddress: "AA:BB:CC:00:11:22",
+});
+
 export const FAULT_714 = fault(714, "NoSuchEntryInArray");
 
 // A fault body longer than the 200 characters an error message keeps, so a test can tell the

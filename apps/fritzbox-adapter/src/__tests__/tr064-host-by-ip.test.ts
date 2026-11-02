@@ -6,10 +6,14 @@ import {
   FAULT_402,
   FAULT_714,
   HOST_BAD_MAC,
+  HOST_ESCAPED_NAME,
   HOST_ETHERNET,
   HOST_FOUND_WIFI,
   HOST_INACTIVE,
+  HOST_MAC_AFTER_NAME,
   HOST_NO_INTERFACE_TYPE,
+  HOST_RAW_INJECTION_AFTER_MAC,
+  HOST_RAW_INJECTION_BEFORE_MAC,
   SOAP_ACTION,
 } from "./fixtures/tr064-host-by-ip.js";
 
@@ -65,6 +69,28 @@ describe("Tr064Client.getHostByIp", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     fetchMock.mockResolvedValueOnce(respond(200, HOST_BAD_MAC));
     await expect(client.getHostByIp(IP)).resolves.toBeNull();
+  });
+
+  it("IN-02: reads each element on its own - entities decoded, element order irrelevant", async () => {
+    fetchMock.mockResolvedValueOnce(respond(200, HOST_ESCAPED_NAME));
+    const entry = await client.getHostByIp(IP);
+    expect(entry?.mac).toBe("aa:bb:cc:00:11:22");
+    expect(entry?.hostname).toBe(
+      "A&B </NewHostName><NewMACAddress>02:00:00:00:00:66</NewMACAddress> AB",
+    );
+    expect(entry?.active).toBe(true);
+    expect(entry?.interfaceType).toBe("802.11");
+
+    fetchMock.mockResolvedValueOnce(respond(200, HOST_MAC_AFTER_NAME));
+    expect((await client.getHostByIp(IP))?.mac).toBe("aa:bb:cc:00:11:22");
+  });
+
+  it("IN-02: rejects an answer whose hostname injects a second MAC element, in either order", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    for (const xml of [HOST_RAW_INJECTION_AFTER_MAC, HOST_RAW_INJECTION_BEFORE_MAC]) {
+      fetchMock.mockResolvedValueOnce(respond(200, xml));
+      await expect(client.getHostByIp(IP)).resolves.toBeNull();
+    }
   });
 
   it("treats a 500 fault with errorCode 714 as not found", async () => {

@@ -18,6 +18,38 @@ export interface HostEntry {
   interfaceType: string | null;
 }
 
+const XML_ENTITIES: Record<string, string> = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'" };
+
+/** Decode the five predefined XML entities and numeric references, in one pass (no double decoding). */
+export function decodeXmlEntities(text: string): string {
+  return text.replace(
+    /&(?:#x([0-9a-f]+)|#(\d+)|(lt|gt|amp|quot|apos));/gi,
+    (whole, hex, dec, name) => {
+      if (name) return XML_ENTITIES[name.toLowerCase()];
+      const code = hex !== undefined ? parseInt(hex, 16) : parseInt(dec, 10);
+      return Number.isInteger(code) && code > 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : whole;
+    },
+  );
+}
+
+/**
+ * Read the `<NewX>text</NewX>` leaf elements of a SOAP answer one element at a time. Each value is
+ * the text between exactly its own tags (no `<` inside, entities decoded), so the order of the
+ * elements and a device-chosen hostname cannot move one field into another. Returns null when an
+ * element name occurs more than once: that is what a hostname carrying a closing tag and a fake
+ * `<NewMACAddress>` would look like.
+ */
+export function parseHostEntryFields(xml: string): Record<string, string> | null {
+  const fields: Record<string, string> = {};
+  for (const match of xml.matchAll(/<(New[A-Za-z0-9]+)>([^<]*)<\/\1>/g)) {
+    if (match[1] in fields) return null;
+    fields[match[1]] = decodeXmlEntities(match[2]);
+  }
+  return fields;
+}
+
 /**
  * A TR-064 request the box answered with an unusable HTTP status. `message` is built exactly as
  * before (status and the first 200 characters), `body` keeps the full text so a caller can read
@@ -225,16 +257,21 @@ export class Tr064Client {
 
     options.onRawResponse?.(xml);
 
-    const macRaw = /<NewMACAddress>(.*?)<\/NewMACAddress>/i.exec(xml)?.[1];
-    const mac = macRaw ? normalizeMac(macRaw) : "";
+    const fields = parseHostEntryFields(xml);
+    if (!fields) {
+      // An element name that occurs twice cannot be told apart from a hostname that carries markup.
+      console.warn("[tr064] getHostByIp: answer has a repeated element, ignored");
+      return null;
+    }
+    const mac = fields.NewMACAddress ? normalizeMac(fields.NewMACAddress) : "";
     if (!mac) {
       return null;
     }
     return {
       mac,
-      hostname: /<NewHostName>(.*?)<\/NewHostName>/i.exec(xml)?.[1] ?? "",
-      active: (/<NewActive>(.*?)<\/NewActive>/i.exec(xml)?.[1] ?? "0") === "1",
-      interfaceType: /<NewInterfaceType>(.*?)<\/NewInterfaceType>/i.exec(xml)?.[1] || null,
+      hostname: fields.NewHostName ?? "",
+      active: (fields.NewActive ?? "0") === "1",
+      interfaceType: fields.NewInterfaceType || null,
     };
   }
 
