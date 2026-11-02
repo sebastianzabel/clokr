@@ -130,7 +130,7 @@ docker compose --profile fritzbox exec fritzbox-adapter node dist/probe-host.js 
 
 Expect `found: yes`, a masked MAC, the hostname, `active: yes` and `response elements:` listing `NewMACAddress`,
 `NewHostName`, `NewActive`, `NewInterfaceType`. Exit code 0 = found, 2 = not found, 1 = error. If a name differs, or the box
-answers with another fault, the pairing page falls back to the 60-second host list; send the printed element names back so
+answers with another fault, the pairing page shows the refusal page (there is deliberately no fallback to the polled host list); send the printed element names back so
 the parser can be corrected — the probe prints names only, never values. The phone's IP is on the phone (Wi-Fi details) or in
 the box's „Heimnetz → Netzwerk“.
 

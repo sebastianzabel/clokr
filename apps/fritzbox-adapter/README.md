@@ -32,7 +32,7 @@ Compose also takes `PAIRING_HOST_BIND` (host side of the pairing port, default `
 - `GET /devices` — on `DEVICES_BIND` (loopback by default), `Authorization: Bearer <presence key>`. Lists the currently
   known hosts for the admin UI. Unchanged by #610.
 - `GET /koppeln` — on the pairing listener only. Takes **no input** except the TCP peer address of the connection: it asks
-  the box (`X_AVM-DE_GetSpecificHostEntryByIP`, host list as fallback) which device holds that address, registers a one-time
+  the box (`X_AVM-DE_GetSpecificHostEntryByIP`, the live answer is the only source: no cached host list) which device holds that address, registers a one-time
   code at `POST {CLOKR_API_URL}/api/v1/presence/pairing-codes` and answers `302` to
   `{CLOKR_APP_URL}/settings/geraet-koppeln?code=<code>`. Failures show a small German page (no stack, no full MAC). Requests
   from the adapter's own, a loopback or a link-local address are refused; a per-address rate limit applies.

@@ -167,11 +167,10 @@ server.listen(devicesPort, devicesBind, () => {
 
 // ── Pairing listener (Issue #610) ─────────────────────────────────────────────
 // Off unless PAIRING_ENABLED=true. The device is resolved for the phone's own connection through
-// the by-IP lookup (the last polled host list is the fallback); see pairing.ts.
+// the live by-IP lookup only - no cached host list ever decides a pairing; see pairing.ts.
 
 const pairingServer = startPairingServer(pairingConfig.value, {
   resolveHost: (ip) => client.getHostByIp(ip),
-  listHosts: () => lastHosts,
   issueCode: createCodeIssuer({ apiUrl: CLOKR_API_URL, presenceKey: CLOKR_PRESENCE_KEY }),
   rateLimiter: createRateLimiter(),
   ownAddresses: ownInterfaceAddresses(),

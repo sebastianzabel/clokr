@@ -6695,7 +6695,7 @@ Clokr mit einem Tipp. Die Uhrenlogik (Anwesenheitsereignis → Stempelereignis) 
 ### Entscheidung
 
 - **Die Geräteadresse kommt nie vom Browser.** Der Adapter nimmt allein die TCP-Gegenstelle der Verbindung, fragt die Box
-  (`X_AVM-DE_GetSpecificHostEntryByIP`, Hostliste als Rückfall) und meldet `{ mac, hostname }` mit dem Schlüssel der
+  (`X_AVM-DE_GetSpecificHostEntryByIP`; nur die Live-Antwort zählt, eine veraltete Hostliste wird nie befragt) und meldet `{ mac, hostname }` mit dem Schlüssel der
   Präsenzquelle an `POST /api/v1/presence/pairing-codes`. Er liest keinen Weiterleitungs-Header und keinen Parameter. Daraus
   folgt: Ein weitergeleiteter Link koppelt höchstens das Gerät, das die QR-Seite geöffnet hat.
 - **Neues Modell `PresencePairingCode` (Zeiterfassung).** `codeHash` (SHA-256 eines 32-Byte-Zufallscodes; der Klartext wird

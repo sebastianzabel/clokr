@@ -71,18 +71,16 @@ function makeDeps(overrides: Partial<PairingDeps> = {}) {
   const logs: string[] = [];
   const resolveHost = vi.fn<PairingDeps["resolveHost"]>().mockResolvedValue(ENTRY);
   const issueCode = vi.fn<PairingDeps["issueCode"]>().mockResolvedValue(CODE);
-  const listHosts = vi.fn<PairingDeps["listHosts"]>().mockReturnValue([]);
   const deps: PairingDeps = {
     appOrigin: APP,
     resolveHost,
-    listHosts,
     issueCode,
     rateLimiter: createRateLimiter({ now: () => 1_000 }),
     ownAddresses: new Set(["192.168.178.2"]),
     log: (line) => logs.push(line),
     ...overrides,
   };
-  return { deps, logs, resolveHost, issueCode, listHosts };
+  return { deps, logs, resolveHost, issueCode };
 }
 
 async function run(deps: PairingDeps, req: IncomingMessage): Promise<Sent> {
@@ -263,40 +261,50 @@ describe("createPairingHandler", () => {
     }
   });
 
-  it("uses the polled host list for an inactive or missing entry, and only for an active entry of the peer", async () => {
-    const fromList: FritzDevice = { mac: MAC, hostname: "Listed", active: true, ip: PEER };
-    const others: FritzDevice[] = [
-      { mac: "02:00:00:00:00:01", hostname: "Other", active: true, ip: "192.168.178.43" },
-      { mac: "02:00:00:00:00:02", hostname: "Gone", active: false, ip: PEER },
+  it("CR-01: a stale host list never produces a code - the live lookup alone decides", async () => {
+    // Reviewer's reproducer: the poll once saw .42 = Anna's phone; now the lookup for .42 fails or
+    // has no answer for the peer (Bea got the lease). The handler has no host list to consult.
+    const annaMac = "02:00:00:00:00:01";
+    const stale: FritzDevice[] = [{ mac: annaMac, hostname: "Anna", active: true, ip: PEER }];
+    const cases: Array<[string, (setup: ReturnType<typeof makeDeps>) => void, number]> = [
+      ["lookup throws", (d) => d.resolveHost.mockRejectedValue(new Error("box down")), 503],
+      ["lookup answers fault 714 (null)", (d) => d.resolveHost.mockResolvedValue(null), 404],
+      [
+        "lookup answers an inactive entry",
+        (d) => d.resolveHost.mockResolvedValue({ ...ENTRY, active: false }),
+        404,
+      ],
+      [
+        "lookup answers an entry without a MAC",
+        (d) => d.resolveHost.mockResolvedValue({ ...ENTRY, mac: "" }),
+        404,
+      ],
     ];
-    for (const entry of [null, { ...ENTRY, active: false }]) {
-      const ok = makeDeps();
-      ok.resolveHost.mockResolvedValue(entry);
-      ok.listHosts.mockReturnValue([...others, fromList]);
-      const sent = await run(ok.deps, fakeReq({}));
-      expect(sent.status).toBe(302);
-      expect(ok.issueCode).toHaveBeenCalledWith(MAC, "Listed");
-
-      const miss = makeDeps();
-      miss.resolveHost.mockResolvedValue(entry);
-      miss.listHosts.mockReturnValue(others);
-      const none = await run(miss.deps, fakeReq({}));
-      expect(none.status).toBe(404);
-      expect(none.body).toContain("Gerät nicht gefunden");
-      expect(miss.issueCode).not.toHaveBeenCalled();
-      expectNoIdentifiers(none.body);
+    for (const [name, arrange, status] of cases) {
+      const setup = makeDeps();
+      // A stale list is offered through every channel the old code read, to prove none is used.
+      (setup.deps as unknown as { listHosts: () => FritzDevice[] }).listHosts = () => stale;
+      arrange(setup);
+      const sent = await run(setup.deps, fakeReq({}));
+      expect(sent.status, name).toBe(status);
+      expect(setup.issueCode, name).not.toHaveBeenCalled();
+      expect(sent.headers.Location, name).toBeUndefined();
+      expect(sent.body, name).toMatch(/Gerät nicht gefunden|Kopplung gerade nicht möglich/);
+      expectNoIdentifiers(sent.body);
+      expect(sent.body, name).not.toContain("Anna");
     }
   });
 
-  it("falls back to the list when the lookup throws, and answers 503 when the list has no such device", async () => {
-    const withList = makeDeps();
-    withList.resolveHost.mockRejectedValue(new Error("box down"));
-    withList.listHosts.mockReturnValue([{ mac: MAC, hostname: "Listed", active: true, ip: PEER }]);
-    expect((await run(withList.deps, fakeReq({}))).status).toBe(302);
+  it("answers 404 for a miss and 503 for a failed lookup, each with the German page", async () => {
+    const miss = makeDeps();
+    miss.resolveHost.mockResolvedValue(null);
+    const missSent = await run(miss.deps, fakeReq({}));
+    expect(missSent.status).toBe(404);
+    expect(missSent.body).toContain("Gerät nicht gefunden");
 
-    const without = makeDeps();
-    without.resolveHost.mockRejectedValue(new Error("box down"));
-    const sent = await run(without.deps, fakeReq({}));
+    const down = makeDeps();
+    down.resolveHost.mockRejectedValue(new Error("box down"));
+    const sent = await run(down.deps, fakeReq({}));
     expect(sent.status).toBe(503);
     expect(sent.body).toContain("Kopplung gerade nicht möglich");
     expect(sent.headers.Location).toBeUndefined();

@@ -1533,8 +1533,8 @@ operator runbook `docs/runbooks/wlan-qr-kopplung.md`, adapter notes `apps/fritzb
 (presence event → clock event) is unchanged and stays pinned by the existing WLAN tests. Rules, as built:
 
 - **The MAC address comes only from the adapter's TCP peer, resolved through TR-064 - never from a request.** The adapter
-  (`apps/fritzbox-adapter/src/pairing.ts`) reads `req.socket.remoteAddress`, asks the box (`X_AVM-DE_GetSpecificHostEntryByIP`,
-  host list as fallback) and registers `{ mac, hostname }` at `POST /api/v1/presence/pairing-codes` (presence-source key, the
+  (`apps/fritzbox-adapter/src/pairing.ts`) reads `req.socket.remoteAddress`, asks the box (`X_AVM-DE_GetSpecificHostEntryByIP`;
+  only the live answer counts, a stale host list is never consulted) and registers `{ mac, hostname }` at `POST /api/v1/presence/pairing-codes` (presence-source key, the
   one shared check `authenticatePresenceSource` of the webhook and the issuer). It ignores `X-Forwarded-For`, every query and
   every body, and refuses its own, loopback and link-local peers. No API route in the confirm flow accepts a MAC or an IP from
   the client (`pairing-no-client-mac-610.test.ts`). The consequence is a fixed property: a forwarded link can only couple the

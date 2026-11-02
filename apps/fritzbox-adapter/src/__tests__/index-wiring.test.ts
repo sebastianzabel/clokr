@@ -46,7 +46,9 @@ describe("index.ts wiring of the pairing listener", () => {
     expect(source).toContain("await client.getHostList()");
     const wiring = between("const pairingServer = startPairingServer(", "// ── Graceful shutdown");
     expect(wiring).toContain("client.getHostByIp(ip)");
-    expect(wiring).toContain("listHosts: () => lastHosts");
+    // CR-01 (review): the stale polled list is never a source for a pairing.
+    expect(wiring).not.toContain("lastHosts");
+    expect(wiring).not.toContain("listHosts");
   });
 
   it("never prints the presence key", () => {

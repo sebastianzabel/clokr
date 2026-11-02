@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { isIP } from "node:net";
 import { networkInterfaces } from "node:os";
 import type { PairingConfig } from "./pairing-config.js";
-import { Tr064HttpError, type FritzDevice, type HostEntry } from "./tr064.js";
+import { Tr064HttpError, type HostEntry } from "./tr064.js";
 
 /**
  * The opt-in pairing listener (Issue #610): a phone that scans the salon QR code opens
@@ -276,9 +276,12 @@ export function createCodeIssuer(options: {
 export interface PairingDeps {
   /** Origin of the Clokr web app, already validated by parsePairingConfig. */
   appOrigin: string;
+  /**
+   * The live by-IP lookup. Its answer is the only thing that may produce a code: a throw, a miss,
+   * an inactive entry or an entry without a MAC all end in a refusal page (no cached host list is
+   * ever consulted, a stale lease must not be able to couple somebody else's device).
+   */
   resolveHost: (ip: string) => Promise<HostEntry | null>;
-  /** The last polled host list: the fallback when the by-IP lookup fails or misses. */
-  listHosts: () => FritzDevice[];
   issueCode: CodeIssuer;
   rateLimiter: RateLimiter;
   ownAddresses: ReadonlySet<string>;
@@ -369,12 +372,10 @@ export function createPairingHandler(
         `[fritzbox-adapter] pairing peer=${ip} warning=interface-type interface=${entry.interfaceType}`,
       );
     }
-    let device: { mac: string; hostname: string } | null =
-      entry && entry.active ? { mac: entry.mac, hostname: entry.hostname } : null;
-    if (!device) {
-      const listed = deps.listHosts().find((h) => h.active && h.ip === ip && h.mac !== "");
-      if (listed) device = { mac: listed.mac, hostname: listed.hostname };
-    }
+    const device: { mac: string; hostname: string } | null =
+      entry && entry.active && entry.mac !== ""
+        ? { mac: entry.mac, hostname: entry.hostname }
+        : null;
     if (!device) {
       if (lookupFailed) {
         note("unavailable");
