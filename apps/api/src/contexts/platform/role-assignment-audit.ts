@@ -10,8 +10,7 @@
  *
  * `auditRoleAssignmentChange` (Phase 75b Plan 11) writes the rows of one assignment change in
  * order, nothing else (Issue #641: the stored assignments are the only place a role lives); the
- * entry builders give the taken-over legacy role (the takeover script of #539), a created and a
- * removed row their exact values.
+ * entry builders give a created and a removed row their exact values.
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Prisma } from "@clokr/db";
@@ -79,13 +78,6 @@ export async function auditRoleAssignment(
 
 // ── Assignment changes (Phase 75b Plan 11, D-26) ────────────────────────────────────────────────
 
-/**
- * The `reason` of the CREATE audit row of a legacy-role assignment stored on behalf of a user (the
- * text the 75b data migration wrote). Since #539 the only writer is the takeover script
- * `scripts/backfill-539-role-assignments.ts`; no request path stores a role implicitly any more.
- */
-export const LEGACY_ROLE_MATERIALIZATION_REASON = "Übernahme der Alt-Rolle (#75)";
-
 /** One pending RoleAssignment audit row of an assignment change, not yet written. */
 export interface RoleAssignmentAuditEntry {
   action: "CREATE" | "UPDATE" | "DELETE";
@@ -96,30 +88,6 @@ export interface RoleAssignmentAuditEntry {
 
 /** A stored assignment as a write-half function of `compat-role.ts` returns it. */
 type WrittenAssignment = RoleAssignmentAuditSource & { id: string; roleName: string };
-
-/**
- * The CREATE row of a legacy role stored by the takeover script `scripts/backfill-539-role-
- * assignments.ts` (#539) — the D-12 value plus `origin: "SYSTEM"` (the row was not requested, the
- * operator stored what the `User.role` column named), the reason and the legacy role it came from,
- * the same one RoleAssignment audit shape the 75b data migration records (D-05). The name is kept
- * from #75 D-26, whose request-path caller was deleted by #539 D-11.
- */
-export function materializedAssignmentAuditEntry(materialized: {
-  assignment: WrittenAssignment;
-  legacyRole: string;
-}): RoleAssignmentAuditEntry {
-  const { assignment, legacyRole } = materialized;
-  return {
-    action: "CREATE",
-    entityId: assignment.id,
-    newValue: {
-      ...roleAssignmentAuditValue(assignment, assignment.roleName),
-      origin: "SYSTEM",
-      reason: LEGACY_ROLE_MATERIALIZATION_REASON,
-      legacyRole,
-    },
-  };
-}
 
 /** The CREATE row of a created assignment, in the D-12 shape. */
 export function createdAssignmentAuditEntry(row: WrittenAssignment): RoleAssignmentAuditEntry {
