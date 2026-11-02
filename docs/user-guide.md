@@ -123,7 +123,8 @@ wenn an einem Schichttag noch keine Zeit eingetragen ist. Die Erinnerung erschei
 Handy eingerichtet hast, auf dem Sperrbildschirm. An Urlaubs-, Krankheits- und Feiertagen erinnert dich Clokr nie.
 
 - Unter **Mein Profil → Erinnerungen** schaltest du jede Erinnerung einzeln ab oder wieder an. Der Abschnitt erscheint nur, wenn dein
-  Betrieb mindestens eine Erinnerung eingeschaltet hat. Deine Auswahl sieht nur du.
+  Betrieb mindestens eine Erinnerung eingeschaltet hat. Deine Auswahl steht in keiner Mitarbeiterliste. Die Änderung selbst wird,
+  wie jede Änderung an Personendaten, im Prüfprotokoll festgehalten, das nur dafür berechtigte Personen einsehen.
 - Ein Tipp auf die Erinnerung öffnet die Startseite mit einer Rückfrage („Jetzt einstempeln?" bzw. „Jetzt ausstempeln?"). **Gestempelt
   wird erst, wenn du bestätigst**, und zwar mit der aktuellen Uhrzeit. Bei „Abbrechen" passiert nichts. Die Abend-Erinnerung öffnet
   den Tag in deiner Zeitenliste, damit du die fehlende Zeit eintragen kannst.

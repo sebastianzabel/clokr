@@ -1,7 +1,14 @@
 /**
- * Issue #609 (D-16) - a manager never learns a colleague's reminder opt-outs. The three opt-out
- * columns of Employee are omitted from every employee response (list, single, create, update (PATCH /:id),
- * reactivate) and from the Employee audit rows of a create and an update; only the own-data route returns them.
+ * Issue #609 (D-16, WR-02) - the employee API does not disclose a colleague's reminder opt-outs. The
+ * three opt-out columns of Employee are omitted from every employee response (list, single, create,
+ * update (PATCH /:id), reactivate) and from the Employee audit rows of a create and an update; only
+ * the own-data route returns them.
+ *
+ * One place is deliberately NOT hidden (WR-02, ADR 0001-abweichungen entry AF): the person's own
+ * change through PATCH /employees/me/reminders is audited with the changed keys, as every change of
+ * a person's data is, so holders of `audit-log:read` can read it (and an operator under an active
+ * support access, redacted by type). The last describe pins that, so the claim never drifts back to
+ * "nobody else sees it".
  *
  * The colleague's columns are set to true through Prisma first, so an absent key can only mean the
  * route omitted it. The check runs on the raw response text, which also covers nested objects.
@@ -141,5 +148,43 @@ describe("the employee API omits the reminder opt-out columns (D-16)", () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body).id).toBe(data.employee.id);
     expectNoColumns(res.body);
+  });
+});
+
+describe("the own-data change is audited and readable by audit-log readers (WR-02)", () => {
+  it("an admin with audit-log:read sees the person's own opt-out change, the generic routes still do not carry it", async () => {
+    const res = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/employees/me/reminders",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { shiftStartOff: false },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const logs = await app.inject({
+      method: "GET",
+      url: `/api/v1/audit-logs?entity=Employee&action=UPDATE&userId=${data.empUser.id}`,
+      headers: admin(),
+    });
+    expect(logs.statusCode).toBe(200);
+    const rows = (
+      JSON.parse(logs.body) as {
+        logs: { entityId: string; oldValue: unknown; newValue: unknown }[];
+      }
+    ).logs.filter((l) => l.entityId === data.employee.id);
+    // anti-vacuity: the audited own-data change is in the page the admin reads
+    const own = rows.filter((l) => JSON.stringify(l.newValue).includes("reminderShiftStartOff"));
+    expect(own).toHaveLength(1);
+    expect(own[0]!.oldValue).toEqual({ reminderShiftStartOff: true });
+    expect(own[0]!.newValue).toEqual({ reminderShiftStartOff: false });
+
+    // the employee read of the same admin still omits the column
+    const read = await app.inject({
+      method: "GET",
+      url: `/api/v1/employees/${data.employee.id}`,
+      headers: admin(),
+    });
+    expect(read.statusCode).toBe(200);
+    expectNoColumns(read.body);
   });
 });

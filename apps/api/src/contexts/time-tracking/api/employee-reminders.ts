@@ -4,7 +4,10 @@
 // sit on Employee (an Unterbau-Erweiterung) and the `/employees` prefix is a namespace, not an
 // owner - the same reasoning as employee-wifi.ts (Phase 243 Plan 02). Only the caller's own row is
 // ever read or written: the employee id comes from the token, never from the path or the body.
-// A manager never sees a colleague's opt-outs (D-16: the employee reads omit the columns).
+// The employee reads and the create/update audit values omit the columns (D-16), so the employee
+// API does not disclose a colleague's opt-outs. The change made HERE is audited with the changed
+// keys like every change of a person's data (traceability), so holders of `audit-log:read` can read
+// it, and an operator under an active support access sees it redacted by type (WR-02, ADR AF).
 
 import { FastifyInstance } from "fastify";
 import { z } from "zod";

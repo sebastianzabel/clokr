@@ -1558,7 +1558,16 @@ ride on the Web-Push channel of #608 (above). Rules, as built:
 - **Dedupe on ANY existing row, dismissed or not.** START and END: `(userId, type, relatedType "Shift", shift id)`, plus one
   notice per person, occasion and instant (two shifts at the identical start give one); DAY_CLOSE: `relatedType "EmployeeDay"`,
   `employeeId:day` (the #80 convention). The 10-hour `CLOCK_OUT_REMINDER` skips an open entry a `REMINDER_SHIFT_END` notice
-  already covers (`checkOpenClockEntries`, `createdAt >= entry.startTime`); the 09:00 `MISSING_ENTRIES` job is unchanged.
+  already covers: a notice created at or after the entry's CURRENT open period (the later of `startTime` and `updatedAt`, which
+  a re-open bumps) AND about a shift of the entry's own day (`shiftEndNoticeCoversEntry`, WR-01; a re-opened, forgotten entry
+  and a stale entry of an earlier day still get their 10-hour reminder); the 09:00 `MISSING_ENTRIES` job is unchanged.
+- **"Clocked in" for a shift (WR-03/WR-04).** Only an OPEN entry of the shift's own day (overnight: its start or end day, or
+  an early clock-in inside the 2 h look-back) silences START and triggers END; a forgotten open entry of an earlier day does
+  neither. START is also silenced by a closed entry still running at the shift start (ended after `start - 5 min`), never by an
+  earlier closed entry (a previous split shift). END stays silent when another worked shift of the person starts within 60
+  minutes after this end (a flagged or silent following shift does not count). A successful clock-in soft-dismisses the
+  person's open `REMINDER_SHIFT_START` notices, a clock-out the open `REMINDER_SHIFT_END` ones (web, NFC and WLAN paths,
+  `shift-reminder-dismiss.ts`, reactive, never fails the clock; IN-03).
 - **Channels.** The three types are e-mail `never` and push `send` with the neutral registry texts („Deine Schicht hat begonnen.
   Jetzt einstempeln?“, „Feierabend? Jetzt ausstempeln.“, „Heute fehlt noch deine Zeit.“, no time, salon or name) and the new
   `TTL_1H` class (a late „begonnen“ would be wrong); they are the entries of `PUSH_WITHOUT_EMAIL`. The in-app message may name
@@ -1569,7 +1578,10 @@ ride on the Web-Push channel of #608 (above). Rules, as built:
   `GET`/`PATCH /api/v1/employees/me/reminders` (`.strict()` body, own Employee row only, audited with the changed keys; a
   caller without an employee, e.g. an API key, gets 400, never 401). The opt-outs are a person's own choice: `employees.ts`
   `omit`s them on every read or update whose row reaches a response or an audit value and `employeeCreatedAuditValue()` leaves
-  them out of the creation audit (D-16); managers never see a colleague's opt-outs.
+  them out of the creation audit (D-16), so the employee list, the single view and the create/update audits never carry a
+  colleague's opt-outs. The ONE place they appear is the own-data change itself: its audit row (`UPDATE Employee`, the changed
+  keys with old and new value) is readable by holders of `audit-log:read` and, redacted by type, by an operator under an active
+  support access (traceability beats hiding it, WR-02); `employee-reminder-columns-hidden-609` pins both halves.
 - **A reminder never stamps (AC-4).** The start and end link is `/dashboard?clock=1`; the dashboard opens a `ConfirmDialog` that
   names the action and the current time from the LIVE clock state and calls the unchanged `handleClock()` only after the
   person confirms (`lib/dashboard/clock-reminder.ts`; the reminder code issues no request of its own, the param is stripped

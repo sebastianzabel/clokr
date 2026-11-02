@@ -104,7 +104,8 @@ Was du wissen solltest:
   eurem spätesten Schichtende. Wer abends noch eingestempelt ist, bekommt ebenfalls keine Abend-Erinnerung.
 - Jede Erinnerung kommt **höchstens einmal** je Person und Schicht (der Abend: einmal je Person und Tag). Die bestehende Erinnerung
   nach zehn Stunden und die Meldung um 09:00 am nächsten Morgen bleiben; die Zehn-Stunden-Erinnerung entfällt, wenn schon die
-  Schichtende-Erinnerung kam.
+  Schichtende-Erinnerung für denselben offenen Eintrag kam (wer danach erneut einstempelt und wieder vergisst, wird nach zehn
+  Stunden trotzdem erinnert). Ein Ein- oder Ausstempeln erledigt die offene Beginn- bzw. Ende-Mitteilung in der Glocke.
 - Die Erinnerung erscheint in der Glocke und, wenn die Person Push auf dem Handy eingerichtet hat, auf dem Sperrbildschirm mit einem
   neutralen Text ohne Uhrzeit und Namen. **E-Mails gibt es dafür nicht.**
 - **Clokr stempelt nie automatisch.** Ein Tipp auf die Erinnerung öffnet die Startseite mit einer Rückfrage („Jetzt einstempeln?"

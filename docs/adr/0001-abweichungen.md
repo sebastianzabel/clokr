@@ -6691,8 +6691,10 @@ wenn die Person Push eingerichtet hat, über den Kanal aus Phase 608.
 - Art. 9 DSGVO: An einem Krankheitstag (und an jedem anderen Tag mit wirksamem Urlaub, Abwesenheit oder Feiertag) wird still
   nichts gesendet. Kein Text erklärt je, warum eine Erinnerung fehlt, und der Empfänger ist immer die Person der Schicht selbst,
   nie eine Führungskraft.
-- Art. 5 Abs. 1 lit. c und Art. 25 DSGVO: Die Abwahl einer Erinnerung ist die eigene Entscheidung der Person. Führungskräfte
-  sehen sie nicht (weder in der Mitarbeiterliste noch in einem Prüfprotokoll).
+- Art. 5 Abs. 1 lit. c und Art. 25 DSGVO: Die Abwahl einer Erinnerung ist die eigene Entscheidung der Person. Die Mitarbeiter-
+  Routen (Liste, Einzelansicht, Anlegen, Ändern) und deren Prüfprotokollwerte nennen sie nicht. Die Änderung selbst wird
+  nachvollziehbar protokolliert (Revisionssicherheit) und ist deshalb für Inhaber von `audit-log:read` sichtbar, für einen
+  Betreiber unter einem aktiven Support-Zugriff nach Typ geschwärzt (Zahlen und Wahrheitswerte bleiben erhalten); siehe D-16.
 
 ### Entscheidung
 
@@ -6713,7 +6715,21 @@ wenn die Person Push eingerichtet hat, über den Kanal aus Phase 608.
   Schicht keine Beginn-Erinnerung (D-07, ein gültiger offener Eintrag); umgekehrt gibt es keine Ende-Erinnerung, solange eine
   weitere Schicht der Person nahtlos anschließt (P-609-06: das Ende der letzten Schicht deckt den Abend ab).
 - **D-06 Abstimmung.** Hat die Ende-Erinnerung einen offenen Eintrag schon abgedeckt, schweigt die 10-Stunden-Erinnerung für
-  diesen Eintrag; die Meldung um 09:00 am Folgetag bleibt unverändert.
+  diesen Eintrag; die Meldung um 09:00 am Folgetag bleibt unverändert. „Abgedeckt“ heißt: eine Ende-Mitteilung, die ab dem
+  Beginn der aktuellen offenen Phase des Eintrags entstand (der spätere Zeitpunkt aus `startTime` und `updatedAt`; ein erneutes
+  Einstempeln am selben Tag öffnet dieselbe Zeile und setzt `updatedAt` neu) und zu einer Schicht des Tages dieses Eintrags
+  gehört. Ein wieder geöffneter, erneut vergessener Eintrag und ein alter offener Eintrag eines früheren Tages bekommen die
+  10-Stunden-Erinnerung. Im Zweifel kommt sie lieber doppelt als gar nicht (WR-01).
+- **D-07 „Eingestempelt“ (WR-03, WR-04).** Nur ein offener Eintrag des Schichttages (Nachtschicht: Beginn- oder Endtag; ein
+  frühes Einstempeln bis 2 Stunden vor dem Beginn zählt auch über Mitternacht) unterdrückt die Beginn-Erinnerung und löst die
+  Ende-Erinnerung aus; ein vergessener offener Eintrag eines früheren Tages tut keines von beidem. Die Beginn-Erinnerung
+  unterdrückt außerdem ein geschlossener Eintrag, der zum Schichtbeginn noch lief (Ende nach Beginn minus 5 Minuten), nie ein
+  früherer geschlossener Eintrag (etwa einer vorherigen Teilschicht). Die Ende-Erinnerung schweigt, wenn eine weitere gearbeitete
+  Schicht der Person innerhalb von 60 Minuten nach diesem Ende beginnt (eine als Konflikt markierte oder an dem Tag stumme
+  Folgeschicht zählt nicht).
+- **Beantwortet (IN-03).** Ein erfolgreiches Einstempeln (Web, NFC, WLAN) verwirft die offenen Beginn-Mitteilungen der Person,
+  ein Ausstempeln die offenen Ende-Mitteilungen (weich verworfen, die Zeilen bleiben und zählen weiter für die Doppelungsprüfung);
+  nachgelagert, ein Fehler dabei lässt das Stempeln nie scheitern.
 - **D-13/D-15 Abend.** Wer noch eingestempelt ist, bekommt keine Abend-Erinnerung (die Ende-Erinnerung und die 10-Stunden-
   Erinnerung decken das ab); eine Schicht, die nach der Abend-Uhrzeit endet, löst an dem Tag keine Abend-Erinnerung aus. Der
   Hinweistext in den Einstellungen sagt es.
@@ -6725,7 +6741,11 @@ wenn die Person Push eingerichtet hat, über den Kanal aus Phase 608.
   der Parameter wird danach entfernt. Ist der Stand inzwischen ein anderer, stempelt nichts, es erscheint ein Hinweis.
 - **D-16 Datensparsamkeit.** Die drei Abwahl-Spalten fehlen in jeder Antwort und in jedem Prüfprotokollwert der Mitarbeiter-
   Routen (Liste, Einzelansicht, Anlegen, Ändern, Reaktivieren) und im Anlege-Eintrag der gemeinsamen Funktion
-  `employeeCreatedAuditValue()`; nur die Eigene-Daten-Route liefert sie.
+  `employeeCreatedAuditValue()`; nur die Eigene-Daten-Route liefert sie. **Ausnahme, bewusst (WR-02):** die Änderung über
+  `PATCH /api/v1/employees/me/reminders` schreibt ihren eigenen Prüfprotokolleintrag (`UPDATE Employee`, geänderte Schlüssel mit
+  altem und neuem Wert), weil jede Änderung an Personendaten nachvollziehbar sein muss. Diesen Eintrag lesen Inhaber von
+  `audit-log:read` (Mandanten-Administration) und, nach Typ geschwärzt, ein Betreiber unter einem aktiven Support-Zugriff;
+  Führungskräfte ohne diese Berechtigung sehen ihn nicht. Der Test `employee-reminder-columns-hidden-609` hält beide Hälften fest.
 - **Aus der Planung.** 400 statt 401 für eine Person ohne Mitarbeiterprofil (ein 401 würde im Web eine Anmelde-Schleife
   auslösen); der Eintrag `AE` ist für #610 reserviert.
 
@@ -6748,7 +6768,13 @@ ihr Test.
 ### Grenzen
 
 - Eine neu angelegte Schicht hat eine neue Kennung und kann deshalb erneut erinnern, auch wenn für den Termin schon eine
-  Mitteilung stand (der gemeinsame Schlüssel über den Zeitpunkt fängt gleichzeitige Schichten, nicht jede Neuanlage).
+  Mitteilung stand (der gemeinsame Schlüssel über den Zeitpunkt fängt gleichzeitige Schichten, nicht jede Neuanlage). Wird eine
+  Schicht nach der Erinnerung verschoben (gleiche Kennung, neue Zeit), erinnert sie für die neue Zeit nicht noch einmal (IN-01).
+- Eine Uhrzeit in der übersprungenen Stunde der Umstellung auf Sommerzeit (etwa 02:30 am 28.03.2027) wird nicht nach vorn
+  normalisiert: der Zeitpunkt kann vor dem der Stunde davor liegen. Für einen Salonbetrieb ohne Schichtbeginn um diese Zeit
+  folgenlos; der Test prüft nur, dass kein Fehler auftritt (IN-02).
+- Der Bestätigungstext des Dashboards nennt die Uhrzeit in der Zeitzone des Geräts, nicht des Mandanten; der Server stempelt
+  mit seiner eigenen Uhr (IN-04).
 - Der Feiertag wird am Salon der Schicht beurteilt, nicht am Stammsalon.
 - Ein Tipp auf eine veraltete Mitteilung bietet die aktuell mögliche Handlung an (nicht die in der Mitteilung gemeinte), nach
   Bestätigung mit der jetzigen Uhrzeit.
@@ -6765,7 +6791,7 @@ ihr Test.
 Tests (API): `shift-reminders-kernel-609`, `shift-reminders-start-609`, `shift-reminders-end-609`,
 `shift-reminders-day-close-609`, `shift-reminders-exclusions-609`, `shift-reminders-same-instant-609`,
 `shift-reminders-recipients-609`, `shift-reminders-no-stamp-609`, `shift-reminders-perf-609`,
-`clock-out-reminder-coordination-609`, `settings-reminders-609`, `me-reminders-609`,
+`clock-out-reminder-coordination-609`, `shift-reminders-clock-dismiss-609`, `settings-reminders-609`, `me-reminders-609`,
 `employee-reminder-columns-hidden-609`; geänderte Prüfwerte: `notification-push-policy-608` (Ausnahmeliste, Anzahl der
 Push-Typen), `with-advisory-lock` (Schlüsselzahl), `cron-deactivated-tenants-88` (Untergrenze, Läuferliste), Routenoberfläche
 (`route-surface.txt`), Ausschlüsse der Neutralitätsmatrix für die zwei Routen. Tests (Web): `shift-reminder-settings`,
