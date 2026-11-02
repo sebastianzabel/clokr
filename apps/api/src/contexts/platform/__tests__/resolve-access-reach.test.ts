@@ -12,8 +12,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import type { Role } from "@clokr/db";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  type LegacySystemRoleName,
+} from "../../../__tests__/setup";
 import { resolveAccessReach } from "../facade/role-assignments";
 import type { AccessContext } from "../access-context";
 import { roleNameKey } from "../access-role";
@@ -64,7 +69,7 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
   const createdUserIds: string[] = [];
 
   /** A user with an Employee in `tenantId`, legacy column `role`, no stored assignment. */
-  async function createUser(tenantId: string, role: Role, label: string) {
+  async function createUser(tenantId: string, role: LegacySystemRoleName, label: string) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({

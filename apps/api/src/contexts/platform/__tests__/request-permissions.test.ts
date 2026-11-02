@@ -19,8 +19,13 @@ import { createHash, randomBytes } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { Role } from "@clokr/db";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  type LegacySystemRoleName,
+} from "../../../__tests__/setup";
 import {
   effectiveGrants,
   effectivePermissionKeysForUser,
@@ -59,7 +64,8 @@ function setsOf(grants: EffectiveGrants): { zugewiesen: string[]; eigene: string
 
 interface FakeUser {
   sub: string;
-  role: Role;
+  /** A forged legacy JWT `role` claim; the resolver must never read it (D-12). */
+  role?: string;
   tenantId: string;
   employeeId?: string;
 }
@@ -106,8 +112,8 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
   let tB: Seed;
   const createdUserIds: string[] = [];
 
-  /** A user with an Employee in `tenantId`, legacy column `role`, no stored assignment (holds nothing, #539). */
-  async function createUser(tenantId: string, role: Role, label: string) {
+  /** A user with an Employee in `tenantId`, no stored assignment (holds nothing, #539). */
+  async function createUser(tenantId: string, role: LegacySystemRoleName, label: string) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({
@@ -157,13 +163,13 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
   }
 
   function requestFor(
-    user: { id: string; role: Role },
+    user: { id: string },
     employee: { id: string; tenantId: string },
-    claimRole: Role = user.role,
+    claimRole?: LegacySystemRoleName,
   ): FastifyRequest {
     return fakeRequest(app, {
       sub: user.id,
-      role: claimRole,
+      ...(claimRole === undefined ? {} : { role: claimRole }),
       tenantId: employee.tenantId,
       employeeId: employee.id,
     });
@@ -500,7 +506,7 @@ describe("request-permissions — resolver, guards and checks (Phase 75b, D-08..
     };
     const claims = {
       sub: user.id,
-      role: "EMPLOYEE" as Role,
+      role: "EMPLOYEE",
       tenantId: employee.tenantId,
       employeeId: employee.id,
     };

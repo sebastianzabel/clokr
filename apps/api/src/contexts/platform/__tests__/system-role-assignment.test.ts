@@ -11,7 +11,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import type { Role } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import {
   assignmentExceedsEmployee,
@@ -24,6 +23,7 @@ import {
   RoleDemotionBlockedError,
   systemRoleIdForLegacyRole,
   type FormRoleAssignmentRow,
+  type SystemRoleName,
 } from "../system-role-assignment";
 import * as systemRoleAssignmentModule from "../system-role-assignment";
 import { SYSTEM_ROLE_IDS, SYSTEM_ROLE_PERMISSIONS, type SystemRoleSlot } from "../system-roles";
@@ -147,7 +147,7 @@ describe("system-role assignment — pure derivation (D-14)", () => {
 
   it.each(["ADMIN", "MANAGER", "EMPLOYEE"] as const)(
     "deriving over the implicit fallback assignment of a legacy %s yields exactly that value",
-    (role: Role) => {
+    (role: SystemRoleName) => {
       const slot = (Object.keys(SYSTEM_ROLE_IDS) as SystemRoleSlot[]).find(
         (s) => SYSTEM_ROLE_IDS[s] === systemRoleIdForLegacyRole(role),
       );
@@ -268,7 +268,7 @@ describe("system-role assignment — sign-in refusals do not depend on the colum
     return `10.75.6.${ipCounter}`;
   }
 
-  async function createUser(tenantId: string | null, role: Role, label: string) {
+  async function createUser(tenantId: string | null, role: SystemRoleName, label: string) {
     const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const user = await app.prisma.user.create({
       data: {
@@ -390,7 +390,7 @@ describe("system-role assignment — write half against the database (D-14, D-15
   let seed: Awaited<ReturnType<typeof seedTestData>>;
   let other: Awaited<ReturnType<typeof seedTestData>>;
 
-  async function createUser(tenantId: string, role: Role, label: string) {
+  async function createUser(tenantId: string, role: SystemRoleName, label: string) {
     const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const user = await app.prisma.user.create({
       data: {
@@ -481,7 +481,7 @@ describe("system-role assignment — write half against the database (D-14, D-15
   it("requestedRoleUnchanged compares with the role DERIVED from the stored rows; no row means no role (#539 D-11)", async () => {
     // No stored row: the person holds no role, so even the column's own value is a change.
     const unassigned = await createUser(seed.tenant.id, "EMPLOYEE", "unchanged");
-    const yields = (userId: string, role: Role) =>
+    const yields = (userId: string, role: SystemRoleName) =>
       requestedRoleUnchanged(app.prisma, seed.tenant.id, userId, role);
     expect(await yields(unassigned.id, "EMPLOYEE")).toBe(false);
     expect(await yields(unassigned.id, "MANAGER")).toBe(false);

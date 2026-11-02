@@ -403,11 +403,7 @@ describe("Issue #451 (D-03) — page identity Ist - Soll + Verrechnung = Ueberst
     const salon = await createTestSalon(app.prisma, tenantId, { federalState: "NIEDERSACHSEN" });
     salonId = salon.id;
 
-    const adminEmployee = await app.prisma.employee.findFirst({
-      where: { tenantId, user: { role: "ADMIN" } },
-      select: { userId: true },
-    });
-    adminUserId = adminEmployee?.userId ?? "";
+    adminUserId = seed.adminUser.id;
 
     // ── Case 1/2: FIXED 40h, every other May workday fully worked (8h/day), one approved
     // OVERTIME_COMP day on AUSGLEICHSTAG. "Every other workday" = 18 contract workdays minus the

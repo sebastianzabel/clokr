@@ -86,7 +86,6 @@ describe("access context missing -> 403 / 500 (Phase 77b, Issue #77; Issue #551)
     it(`outer gate: answers 403 TENANT_REQUIRED without any query (${name})`, async () => {
       const token = signToken({
         sub: data.empUser.id,
-        role: data.empUser.role,
         employeeId: data.employee.id,
         ...tenant,
       });
@@ -108,7 +107,6 @@ describe("access context missing -> 403 / 500 (Phase 77b, Issue #77; Issue #551)
     it(`inner layer (outer gate simulated off): answers 500 without any query and logs the route (${name})`, async () => {
       const token = signToken({
         sub: data.empUser.id,
-        role: data.empUser.role,
         employeeId: data.employee.id,
         ...tenant,
       });
@@ -144,7 +142,7 @@ describe("access context missing -> 403 / 500 (Phase 77b, Issue #77; Issue #551)
   }
 
   it("a blank-tenant token without employeeId is refused with 403 TENANT_REQUIRED (#551)", async () => {
-    const token = signToken({ sub: data.adminUser.id, role: data.adminUser.role, tenantId: "" });
+    const token = signToken({ sub: data.adminUser.id, tenantId: "" });
     const spies = spyOnQueries();
 
     const res = await app.inject({

@@ -23,8 +23,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import type { Prisma, Role } from "@clokr/db";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import type { Prisma } from "@clokr/db";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  type LegacySystemRoleName,
+} from "../../../__tests__/setup";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
 import { userIdsHoldingPermission } from "../facade/role-assignments";
@@ -43,7 +49,7 @@ async function createUserWithEmployee(
   app: FastifyInstance,
   tenantId: string,
   label: string,
-  options: { role?: Role; isActive?: boolean; exitDate?: Date } = {},
+  options: { role?: LegacySystemRoleName; isActive?: boolean; exitDate?: Date } = {},
 ) {
   const s = uniqueSuffix(label);
   const passwordHash = await bcrypt.hash("test1234", 10);

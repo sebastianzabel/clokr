@@ -20,6 +20,8 @@ import {
   seedTestData,
   cleanupTestData,
   soleAuditRowOrNull,
+  grantSystemRole,
+  removeFixtureRoleAssignments,
 } from "./setup";
 import { saldoSnapshotPeriodBounds } from "./test-dates";
 import type { FastifyInstance } from "fastify";
@@ -197,32 +199,30 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
   });
 
   it("GET /upcoming as MANAGER returns tenant rows (200, not 403)", async () => {
-    // Promote admin user to MANAGER role for the test by minting a token via DB swap.
-    // Easier: use the existing admin token but verify the route accepts MANAGER too.
-    // We achieve this by setting the adminUser's role to MANAGER and re-logging in.
-    await app.prisma.user.update({
-      where: { id: data.adminUser.id },
-      data: {},
-    });
-    const login = await app.inject({
-      method: "POST",
-      url: "/api/v1/auth/login",
-      payload: { email: data.adminUser.email, password: "test1234" },
-    });
-    const { accessToken: managerToken } = JSON.parse(login.body);
+    // Give the admin user the Manager system role as its only stored assignment, re-login, and
+    // restore the Admin assignment afterwards for the following tests.
+    const tenantId = data.tenant.id;
+    const userId = data.adminUser.id;
+    await removeFixtureRoleAssignments(app.prisma, [userId]);
+    await grantSystemRole(app.prisma, { tenantId, userId, role: "MANAGER" });
+    try {
+      const login = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: data.adminUser.email, password: "test1234" },
+      });
+      const { accessToken: managerToken } = JSON.parse(login.body);
 
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/vocational-school/upcoming?from=2026-07-01&to=2026-07-31",
-      headers: { authorization: `Bearer ${managerToken}` },
-    });
-    expect(res.statusCode).toBe(200);
-
-    // Restore role for following tests.
-    await app.prisma.user.update({
-      where: { id: data.adminUser.id },
-      data: {},
-    });
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/vocational-school/upcoming?from=2026-07-01&to=2026-07-31",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+    } finally {
+      await removeFixtureRoleAssignments(app.prisma, [userId]);
+      await grantSystemRole(app.prisma, { tenantId, userId, role: "ADMIN" });
+    }
   });
 
   // 260611-ly6 — GET /upcoming now accepts EMPLOYEE role with server-enforced self-scope.

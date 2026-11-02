@@ -15,9 +15,14 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import type { Role } from "@clokr/db";
 import bcrypt from "bcryptjs";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  type LegacySystemRoleName,
+} from "../../../__tests__/setup";
 import { resolveScopedHolderIds } from "../facade/role-assignments";
 import { SYSTEM_ROLE_IDS } from "../system-roles";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
@@ -34,7 +39,7 @@ describe("resolveScopedHolderIds (Phase 91b Plan 09, Issue #91, D-17)", () => {
   let tA: Seed;
   const createdUserIds: string[] = [];
 
-  async function createUser(tenantId: string, role: Role, label: string) {
+  async function createUser(tenantId: string, role: LegacySystemRoleName, label: string) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({

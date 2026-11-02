@@ -20,8 +20,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import type { Role } from "@clokr/db";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  cleanupTestData,
+  type LegacySystemRoleName,
+} from "../../../__tests__/setup";
 import { contextSalonIds, resolveAccessReach } from "../facade/role-assignments";
 import type { AccessContext } from "../access-context";
 import { normalizeRolePermissions, roleNameKey } from "../access-role";
@@ -54,7 +59,7 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
   let allActive: string[];
   const actors: { label: string; ctx: AccessContext }[] = [];
 
-  async function createUser(role: Role, label: string, tenantId = tA.tenant.id) {
+  async function createUser(role: LegacySystemRoleName, label: string, tenantId = tA.tenant.id) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({

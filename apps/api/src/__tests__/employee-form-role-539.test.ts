@@ -9,15 +9,15 @@
  * - `PATCH /employees/:id` with the derived role writes nothing, with another role it replaces and
  *   audits, and for a person without a role it assigns one (created and audited).
  *
- * The column is deliberately made stale in several cases (it says MANAGER while the stored row says
- * Mitarbeiter, or while no row exists): that is the input that distinguishes the new behaviour from
- * the old column read. No person names (CLAUDE.md PII rule).
+ * Since Release B (#641) the column no longer exists, so a fixture person is only ever described by
+ * its stored row (or by having none); the derived role is the single source of the response value.
+ * No person names (CLAUDE.md PII rule).
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import type { Prisma, Role } from "@clokr/db";
+import type { Prisma } from "@clokr/db";
 import {
   getTestApp,
   closeTestApp,
@@ -25,6 +25,7 @@ import {
   cleanupTestData,
   grantSystemRole,
   auditRowsFor,
+  type LegacySystemRoleName,
 } from "./setup";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
 import { formRolesByUserId } from "../contexts/platform/system-role-assignment";
@@ -37,11 +38,7 @@ describe("Issue #539 - the employee form role is derived from stored assignments
   let tenant: Awaited<ReturnType<typeof seedTestData>>;
   let foreign: Awaited<ReturnType<typeof seedTestData>>;
 
-  async function createPerson(
-    label: string,
-    column: Role,
-    stored?: "ADMIN" | "MANAGER" | "EMPLOYEE",
-  ) {
+  async function createPerson(label: string, stored?: LegacySystemRoleName) {
     const s = `${Date.now().toString(36)}${crypto.randomBytes(4).toString("hex")}`;
     const user = await app.prisma.user.create({
       data: {
@@ -135,10 +132,10 @@ describe("Issue #539 - the employee form role is derived from stored assignments
 
   describe("formRolesByUserId", () => {
     it("derives ADMIN / MANAGER / EMPLOYEE from stored TENANT rows, EMPLOYEE for a SALONS-only row, null without a well-formed row - in ONE query", async () => {
-      const admin = await createPerson("Rolle Admin", "EMPLOYEE", "ADMIN");
-      const manager = await createPerson("Rolle Manager", "EMPLOYEE", "MANAGER");
-      const staff = await createPerson("Rolle Mitarbeiter", "ADMIN", "EMPLOYEE");
-      const salonOnly = await createPerson("Rolle Salon", "MANAGER");
+      const admin = await createPerson("Rolle Admin", "ADMIN");
+      const manager = await createPerson("Rolle Manager", "MANAGER");
+      const staff = await createPerson("Rolle Mitarbeiter", "EMPLOYEE");
+      const salonOnly = await createPerson("Rolle Salon");
       await app.prisma.roleAssignment.create({
         data: {
           tenantId: tenant.tenant.id,
@@ -149,8 +146,8 @@ describe("Issue #539 - the employee form role is derived from stored assignments
           employeeIds: [],
         },
       });
-      const none = await createPerson("Rolle Keine", "ADMIN");
-      const malformed = await createPerson("Rolle Defekt", "ADMIN");
+      const none = await createPerson("Rolle Keine");
+      const malformed = await createPerson("Rolle Defekt");
       // A TENANT row must carry no ids - a row with ids is malformed and counts as no role.
       await app.prisma.roleAssignment.create({
         data: {
@@ -162,7 +159,7 @@ describe("Issue #539 - the employee form role is derived from stored assignments
           employeeIds: [],
         },
       });
-      const foreignRole = await createPerson("Rolle Fremd", "ADMIN");
+      const foreignRole = await createPerson("Rolle Fremd");
       const alien = await app.prisma.accessRole.create({
         data: {
           tenantId: foreign.tenant.id,
@@ -214,9 +211,9 @@ describe("Issue #539 - the employee form role is derived from stored assignments
 
   describe("the employee responses serve the derived role under user.role", () => {
     it("GET /employees and GET /employees/:id: null without a row, the stored role over a stale column", async () => {
-      const unassigned = await createPerson("Antwort Ohne", "MANAGER");
-      const stale = await createPerson("Antwort Veraltet", "MANAGER", "EMPLOYEE");
-      const admin = await createPerson("Antwort Admin", "EMPLOYEE", "ADMIN");
+      const unassigned = await createPerson("Antwort Ohne");
+      const stale = await createPerson("Antwort Veraltet", "EMPLOYEE");
+      const admin = await createPerson("Antwort Admin", "ADMIN");
 
       expect(await listedRole(unassigned.employee.id)).toBeNull();
       expect(await listedRole(stale.employee.id)).toBe("EMPLOYEE");
@@ -276,7 +273,7 @@ describe("Issue #539 - the employee form role is derived from stored assignments
     });
 
     it("the reactivate reply serves the derived role", async () => {
-      const person = await createPerson("Antwort Reaktiviert", "ADMIN", "MANAGER");
+      const person = await createPerson("Antwort Reaktiviert", "MANAGER");
       await app.prisma.employee.update({
         where: { id: person.employee.id },
         data: { exitDate: new Date("2025-01-01") },
@@ -296,7 +293,7 @@ describe("Issue #539 - the employee form role is derived from stored assignments
 
   describe("PATCH /employees/:id compares with the derived role (D-11)", () => {
     it("the derived role echoed back writes nothing - even when the column says otherwise", async () => {
-      const person = await createPerson("Form Gleich", "MANAGER", "EMPLOYEE");
+      const person = await createPerson("Form Gleich", "EMPLOYEE");
       const rowsBefore = await storedRows(person.user.id);
       const auditsBefore = await assignmentAudits(person.user.id);
 
@@ -312,7 +309,7 @@ describe("Issue #539 - the employee form role is derived from stored assignments
     });
 
     it("the stale column value is NOT unchanged: requesting it is a role change (stored Mitarbeiter -> Manager), audited", async () => {
-      const person = await createPerson("Form Veraltet", "MANAGER", "EMPLOYEE");
+      const person = await createPerson("Form Veraltet", "EMPLOYEE");
 
       const res = await patch(person.employee.id, { role: "MANAGER" });
       expect(res.statusCode).toBe(200);
@@ -324,7 +321,7 @@ describe("Issue #539 - the employee form role is derived from stored assignments
     });
 
     it("a person without any role gets exactly the requested one through the form: one Manager row, audited, nothing implicit", async () => {
-      const person = await createPerson("Form Ohne Rolle", "MANAGER");
+      const person = await createPerson("Form Ohne Rolle");
       expect(await storedRows(person.user.id)).toEqual([]);
 
       // The form shows "no role" for this person, so the column's MANAGER is no "unchanged".
