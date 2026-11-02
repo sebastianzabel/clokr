@@ -37,11 +37,19 @@
  * Neither audits: this module has no `app`. Each returns what it wrote, and the caller (a route
  * with the request's actor) writes the audit rows inside the same transaction.
  */
-import type { Prisma, Role, RoleAssignmentScopeType } from "@clokr/db";
+import type { Prisma, RoleAssignmentScopeType } from "@clokr/db";
 import { roleGrants } from "./access-role";
 import { PERMISSIONS, permissionKey, type PermissionKey } from "./permission-catalog";
 import { storedRoleAssignmentScope } from "./role-assignment";
 import { SYSTEM_ROLE_IDS } from "./system-roles";
+
+/**
+ * The vocabulary of a REQUESTED system role: the employee form's "Wunschrolle", `POST /employees`
+ * and the CSV import (the three values of their Zod enums). Its own union because the Prisma
+ * `Role` enum is removed by Release B (#641); it names a request value that only feeds a stored
+ * TENANT assignment, never an access decision.
+ */
+export type SystemRoleName = "ADMIN" | "MANAGER" | "EMPLOYEE";
 
 /** A stored role assignment with the fields the derivation reads. */
 export interface FormRoleAssignmentRow {
@@ -64,7 +72,7 @@ const ZUGEWIESEN_KEYS: readonly PermissionKey[] = PERMISSIONS.filter(
  * The system role a legacy role value stands for. The switch is
  * exhaustive: a new enum value fails the typecheck here instead of silently mapping somewhere.
  */
-export function systemRoleIdForLegacyRole(role: Role): string {
+export function systemRoleIdForLegacyRole(role: SystemRoleName): string {
   switch (role) {
     case "ADMIN":
       return SYSTEM_ROLE_IDS.ADMIN;
@@ -89,11 +97,14 @@ export function systemRoleIdForLegacyRole(role: Role): string {
  * customer-role assignment — untouched, and counting as blocking on a demotion. Templates are
  * assigned and removed only through #74's audited role-assignment API.
  *
- * The role-value tuple is typed `satisfies readonly Role[]`, so a future `Role` enum value that
- * is not spelled out here fails the typecheck rather than silently widening or narrowing the set
- * at runtime.
+ * The role-value tuple is typed `satisfies readonly SystemRoleName[]`, so a value outside the
+ * `SystemRoleName` union fails the typecheck rather than silently widening the set at runtime.
  */
-const LEGACY_ROLE_VALUES = ["ADMIN", "MANAGER", "EMPLOYEE"] as const satisfies readonly Role[];
+const LEGACY_ROLE_VALUES = [
+  "ADMIN",
+  "MANAGER",
+  "EMPLOYEE",
+] as const satisfies readonly SystemRoleName[];
 
 const LEGACY_SYSTEM_ROLE_ID_SET: ReadonlySet<string> = new Set(
   LEGACY_ROLE_VALUES.map(systemRoleIdForLegacyRole),
@@ -113,13 +124,14 @@ export function isLegacySystemRoleId(id: string): boolean {
  * other than the schema default EMPLOYEE? `employee:create` (`POST /employees`) and
  * `employee:import` (`POST /imports/employees`) cover the new hire's profile, never handing out a
  * system role — a value other than EMPLOYEE additionally needs `role-assignment:manage`, the same
- * rule `PATCH /employees/:id` already applies. The comparison lives here, the allowlisted module
- * (D-19/D-14): a plain `body.role !== "EMPLOYEE"` at the call site is a role check the gate rejects
- * regardless of the fact that the compared value describes a request payload, not the caller's own
- * role — this is the sanctioned way to move it behind a helper instead of converting it to a
- * permission (there is nothing to ask a permission FOR here; the decision is what the value IS).
+ * rule `PATCH /employees/:id` already applies. The comparison lives here (D-14): a plain
+ * `body.role !== "EMPLOYEE"` at the call site is a role check `lint:role-checks` rejects regardless
+ * of the fact that the compared value describes a request payload, not the caller's own role —
+ * the sanctioned way is a helper whose parameter is typed {@link SystemRoleName}, classified in
+ * `docs/permissions.md` (there is nothing to ask a permission FOR here; the decision is what the
+ * value IS).
  */
-export function requestedRoleNeedsRoleAssignmentManage(role: Role): boolean {
+export function requestedRoleNeedsRoleAssignmentManage(role: SystemRoleName): boolean {
   return role !== "EMPLOYEE";
 }
 
@@ -127,11 +139,11 @@ export function requestedRoleNeedsRoleAssignmentManage(role: Role): boolean {
  * Issue #357 sub-fix B: does the employee form's requested `role` demote its target TO Mitarbeiter
  * — the case {@link assignmentsBlockingDemotionToEmployee} must guard? Same shape and same reason
  * as {@link requestedRoleNeedsRoleAssignmentManage} just above: the compared value is a REQUEST
- * field, not the caller's own role, but `lint-role-checks.ts` flags any `role`-named comparison
- * regardless — so the comparison lives here, the allowlisted module, instead of a bare
- * `role === "EMPLOYEE"` at the call site in `employees.ts`.
+ * field, not the caller's own role, but `lint-role-checks.ts` flags a comparison on a `.role`
+ * property regardless — so the comparison lives here, on a {@link SystemRoleName} parameter,
+ * instead of a bare `body.role === "EMPLOYEE"` at the call site in `employees.ts`.
  */
-export function isDemotionToEmployee(role: Role): boolean {
+export function isDemotionToEmployee(role: SystemRoleName): boolean {
   return role === "EMPLOYEE";
 }
 
@@ -141,7 +153,10 @@ export function isDemotionToEmployee(role: Role): boolean {
  * (Issue #357 sub-fix A — only a TENANT-scope assignment grants anything tenant-wide, D-09)
  * contribute nothing. An empty (or fully filtered) input yields EMPLOYEE.
  */
-export function deriveFormRole(tenantId: string, rows: readonly FormRoleAssignmentRow[]): Role {
+export function deriveFormRole(
+  tenantId: string,
+  rows: readonly FormRoleAssignmentRow[],
+): SystemRoleName {
   const effective = rows.filter((row) => {
     const roleBelongsHere =
       row.accessRole.tenantId === null || row.accessRole.tenantId === tenantId;
@@ -210,8 +225,8 @@ export async function formRolesByUserId(
   db: Prisma.TransactionClient,
   tenantId: string,
   userIds: readonly string[],
-): Promise<Map<string, Role | null>> {
-  const result = new Map<string, Role | null>();
+): Promise<Map<string, SystemRoleName | null>> {
+  const result = new Map<string, SystemRoleName | null>();
   if (userIds.length === 0) return result;
   const rows = await db.roleAssignment.findMany({
     where: { tenantId, userId: { in: [...userIds] } },
@@ -254,14 +269,13 @@ export async function formRolesByUserId(
  * (74b D-07/D-12). Returns false when `userId` does not belong to an employee of `tenantId` (no
  * stored row there), so that case always runs the ordinary path below.
  *
- * Lives here, not in employees.ts, because this module is the role-check gate's single allowlisted
- * file (D-19).
+ * Lives here, not in employees.ts, next to the derivation it compares against.
  */
 export async function requestedRoleUnchanged(
   db: Prisma.TransactionClient,
   tenantId: string,
   userId: string,
-  role: Role,
+  role: SystemRoleName,
 ): Promise<boolean> {
   return (await formRolesByUserId(db, tenantId, [userId])).get(userId) === role;
 }
@@ -284,7 +298,7 @@ export async function replaceSystemRoleAssignment(
   db: Prisma.TransactionClient,
   tenantId: string,
   userId: string,
-  role: Role,
+  role: SystemRoleName,
 ): Promise<{ removed: WrittenRoleAssignment[]; created: WrittenRoleAssignment | null }> {
   const targetRoleId = systemRoleIdForLegacyRole(role);
   const systemRows = (

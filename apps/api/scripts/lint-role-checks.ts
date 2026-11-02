@@ -5,12 +5,12 @@
  * Since #75 every access decision in the API asks for a catalog permission
  * (`requirePermission` / `requireAnyPermission` / `hasPermission` / `permissionReach` /
  * `userIdsHoldingPermission`, all from `contexts/platform`). Since #539 Release A there is no JWT
- * `role` claim, no `actorRole` audit value and no fallback from the column to permissions: the
- * legacy role column (`User.role`) is only WRITTEN from the stored assignments (`compat-role.ts`)
- * and READ by the documented readers alone (the company-PDF role filter, the takeover script, the
- * write-back comparison), pinned by `legacy-role-reads-539.test.ts`; Release B drops the column.
- * This gate keeps it that way: a role check that comes back — in a guard, in a handler, or in a
- * Prisma predicate — fails CI and `.husky/pre-commit`, not just review.
+ * `role` claim, no `actorRole` audit value and no fallback from the column to permissions, and
+ * since #641 Release B the legacy `User.role` column and the Prisma `Role` enum are gone: the
+ * requested role of the employee form is a plain `SystemRoleName` that only feeds a stored
+ * assignment (`contexts/platform/system-role-assignment.ts`). This gate keeps it that way: a role
+ * check that comes back — in a guard, in a handler, or in a Prisma predicate — fails CI and
+ * `.husky/pre-commit`, not just review.
  *
  * ── What is flagged (in every non-test `.ts` file under `apps/api/src`) ─────────────────────────
  * A "role literal" is a string literal `"ADMIN"`, `"MANAGER"` or `"EMPLOYEE"`. A "role-valued"
@@ -50,14 +50,16 @@
  *     exists any more; the shape is still not a finding);
  *   - everything in `__tests__/` and `*.test.ts` (fixtures create users with legacy roles).
  *
- * ── The single allowlist, and why there is no exceptions file ────────────────────────────────────
- * Exactly one file may compare role values: `contexts/platform/compat-role.ts` (D-14), the ONE
- * place where legacy values are derived from assignments and mapped back onto system roles. It is
- * a constant here, not an entry in a JSON register: a second allowlisted file would be a second
- * derivation, which is precisely what D-14 forbids. A finding on a clean tree is a role check to
- * convert to a permission (or a role-literal read to move behind a `compat-role.ts` helper, like
- * the report's role filter `compatRoleUserWhere`), never a reason to widen this list. If the
- * allowlisted file disappears, the gate fails instead of silently allowlisting nothing.
+ * ── No allowlist, no exceptions file ─────────────────────────────────────────────────────────────
+ * Every non-test `.ts` file under `apps/api/src` is gated, the system-role assignment module
+ * included (#641, D-15). A finding on a clean tree is a role check to convert to a permission. The
+ * one tolerated shape that is NOT a finding is a comparison of a parameter typed `SystemRoleName`
+ * (a REQUEST payload's requested role, which decides nothing about the caller): the detector only
+ * treats `.role` property reads, bindings derived from them and `Role`-typed identifiers as
+ * role-valued, so such a helper is invisible to it by design. Those helpers live only in
+ * `contexts/platform/system-role-assignment.ts` and are classified in `docs/permissions.md`
+ * „Nicht gezählte Treffer“, where `permission-site-mapping.test.ts` counts every `role ===/!==`
+ * hit per file. A property access like `body.role !== "EMPLOYEE"` is still a finding.
  *
  * ── AST, not regex ───────────────────────────────────────────────────────────────────────────────
  * The file is parsed with `ts.createSourceFile`, so comments are trivia the walk never visits and a
@@ -86,16 +88,15 @@
  *
  * Exit codes:
  *   0 — the walk found files and none of them has a finding;
- *   1 — the walk found no file, the allowlisted file is missing, or at least one finding (listed as
- *       `path:line: shape — source text`, sorted).
+ *   1 — the walk found no file, or at least one finding (listed as `path:line: shape — source text`,
+ *       sorted).
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as ts from "typescript";
 
 export const SRC_DIR = "apps/api/src";
-export const ALLOWLISTED_FILE = "apps/api/src/contexts/platform/system-role-assignment.ts";
 
 const ROLE_LITERALS: ReadonlySet<string> = new Set(["ADMIN", "MANAGER", "EMPLOYEE"]);
 const EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
@@ -352,7 +353,7 @@ function isRoleLiteralCollection(expr: ts.Expression): boolean {
 
 /**
  * Every role check in `sourceText`, one finding per (line, shape), sorted by line. Pure: no file
- * I/O, no knowledge of the allowlist — `isGatedFile` decides which files are read at all.
+ * I/O — `isGatedFile` decides which files are read at all.
  */
 export function findRoleChecks(fileName: string, sourceText: string): RoleCheckFinding[] {
   const sf = ts.createSourceFile(
@@ -420,14 +421,14 @@ export function findRoleChecks(fileName: string, sourceText: string): RoleCheckF
 
 /**
  * Whether the gate reads `repoRelativePath` at all: a `.ts` file under `apps/api/src`, not in a
- * `__tests__` directory, not a `*.test.ts` file, and not the single allowlisted compat module.
+ * `__tests__` directory and not a `*.test.ts` file. No file is exempt (#641).
  */
 export function isGatedFile(repoRelativePath: string): boolean {
   const p = repoRelativePath.split("\\").join("/");
   if (!p.startsWith(`${SRC_DIR}/`)) return false;
   if (!p.endsWith(".ts") || p.endsWith(".test.ts")) return false;
   if (p.split("/").includes("__tests__")) return false;
-  return p !== ALLOWLISTED_FILE;
+  return true;
 }
 
 // ── Walk ────────────────────────────────────────────────────────────────────────────────────────
@@ -483,13 +484,6 @@ export function run(repoRoot: string): number {
     process.exit(1);
   }
 
-  if (!existsSync(join(repoRoot, ALLOWLISTED_FILE))) {
-    console.error(
-      `lint-role-checks: the allowlisted compat module ${ALLOWLISTED_FILE} does not exist. Moving or renaming it needs this gate's ALLOWLISTED_FILE updated in the same change — never a second allowlisted file.`,
-    );
-    return 1;
-  }
-
   const findings = files.flatMap((file) =>
     findRoleChecks(file, readFileSync(join(repoRoot, file), "utf8")).map((f) => ({ file, ...f })),
   );
@@ -497,21 +491,21 @@ export function run(repoRoot: string): number {
 
   if (findings.length > 0) {
     console.error(
-      `lint-role-checks: FAILED — ${findings.length} role check(s) outside ${ALLOWLISTED_FILE} (Issue #75, D-19):`,
+      `lint-role-checks: FAILED — ${findings.length} role check(s) in ${SRC_DIR}/ (Issue #75, D-19):`,
     );
     for (const f of findings) console.error(`  ${f.file}:${f.line}: ${f.shape} — ${f.text}`);
     console.error(
       "Convert each access decision to a catalog permission (requirePermission / hasPermission / " +
         "permissionReach / userIdsHoldingPermission from contexts/platform) and map it in " +
-        "docs/permissions.md; move a role-literal read that decides nothing behind a helper in " +
-        "contexts/platform/compat-role.ts. There is no exceptions file.",
+        "docs/permissions.md. A comparison of a REQUEST payload's requested role that decides " +
+        "nothing belongs in a helper of contexts/platform/system-role-assignment.ts whose " +
+        "parameter is typed SystemRoleName, classified in docs/permissions.md under " +
+        "'Nicht gezählte Treffer'. There is no exceptions file and no allowlisted file.",
     );
     return 1;
   }
 
-  console.log(
-    `lint-role-checks: OK — 0 finding(s) in ${files.length} file(s) under ${SRC_DIR}/ (allowlisted: ${ALLOWLISTED_FILE})`,
-  );
+  console.log(`lint-role-checks: OK — 0 finding(s) in ${files.length} file(s) under ${SRC_DIR}/`);
   return 0;
 }
 

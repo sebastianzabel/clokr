@@ -50,7 +50,7 @@ classified by lifecycle.
 | lint-guard-vacuity.ts                          | 2026-09-18 | CI/local/pre-commit gate: fails a file that walks the source tree and asserts on the result without proving the walked set non-empty (see § Lint gates below). AST classification lives in the sibling `lint-guard-vacuity-detect.ts`; exceptions in `lint-guard-vacuity-exceptions.json`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Lint gate (Phase 235, Issues #235/#240/#245) |
 | lint-e2e-spec-registry.ts                      | 2026-09-21 | CI/local/pre-commit gate: fails unless every `apps/e2e/tests/*.spec.ts` file has exactly one entry in `lint-e2e-spec-registry.json` (category `in-ci`/`später-datum`/`später-seed` plus a mandatory reason) — see § Lint gates below. Pure validation/diff/extraction lives in the sibling `lint-e2e-spec-registry-validate.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Lint gate (Phase 275, Issue #275, D-07)      |
 | lint-t100-09-routes.ts                         | 2026-09-22 | CI/local/pre-commit gate: fails unless every path-parameter route in `apps/api/src/contexts/*/api/**/*.ts` has exactly one entry in `lint-t100-09-routes.json` (category `probe`/`nicht anwendbar`/`bekannt-abweichend` plus a mandatory reason) — see § Lint gates below. The behavioral half — hitting every `probe` route twice and byte-comparing — runs inside the `apps/api` integration suite as `src/__tests__/t100-09-oracle-probe.test.ts`, not as its own CI job. Pure validation/diff/extraction lives in the sibling `lint-t100-09-routes-validate.ts`                                                                                                                                                                                                                       | Lint gate (Phase 259, Issue #259, D-01/D-07) |
-| lint-role-checks.ts                            | 2026-09-25 | CI/local/pre-commit gate: fails on any call of the removed role guard (`requireRole`) and on any comparison of a role value (`.role`, or an identifier bound to one) with `ADMIN`/`MANAGER`/`EMPLOYEE` — equality, `switch` cases, `.includes`/`.indexOf`/`.has`, and role-literal Prisma predicates under `where` — in non-test `apps/api/src`; exactly one allowlisted file (`contexts/platform/compat-role.ts`), no exceptions file — see § Lint gates below                                                                                                                                                                                                                                                                                                                           | Lint gate (Phase 75b, Issue #75, D-19)       |
+| lint-role-checks.ts                            | 2026-09-25 | CI/local/pre-commit gate: fails on any call of the removed role guard (`requireRole`) and on any comparison of a role value (`.role`, or an identifier bound to one) with `ADMIN`/`MANAGER`/`EMPLOYEE` — equality, `switch` cases, `.includes`/`.indexOf`/`.has`, and role-literal Prisma predicates under `where` — in non-test `apps/api/src`; no allowlisted file and no exceptions file (since #641) — see § Lint gates below                                                                                                                                                                                                                                                                                                                                                         | Lint gate (Phase 75b, Issue #75, D-19)       |
 | lint-unordered-test-reads.ts                   | 2026-10-15 | CI/local/pre-commit gate: fails on an unordered `auditLog`/`notification` `findFirst` in any test file under `apps/api/src`, and on an unordered `findMany` of those delegates that is indexed by position; fix with `auditRowsFor()` from `__tests__/setup.ts`, no exceptions file — see § Lint gates below                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Lint gate (Issue #561)                       |
 | lint-prisma-unknown-keys.ts                    | 2026-11-01 | CI/local gate: fails on a nonexistent key in the object literal handed to a Prisma delegate call (`select`, `include`, `where`, `orderBy`, `data`, nested at any depth) in `scripts/` (`tsconfig.scripts.json`) and `src/` (`-p tsconfig.json`) — a hole `tsc` leaves open (see § Lint gates below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Lint gate (Issue #804)                       |
 
@@ -934,20 +934,21 @@ in another.
 (`z.enum(["ADMIN", "MANAGER", "EMPLOYEE"])`); type literals (report data types); a property merely
 named like a role (`data.roleFilter === "EMPLOYEE"`, the PDF label); a query parameter
 (`const { role } = req.query`); the `data: { role }` write payloads of the compat column
-(`syncCompatRoleColumn`). Since #539 Release A no token, principal, report row or audit value carries
+(the former column write-back). Since #539 Release A no token, principal, report row or audit value carries
 a role (no `role` claim, no `actorRole`, no `emp.user.role`), so none of those shapes is tolerated any
 more; `src/__tests__/legacy-role-reads-539.test.ts` additionally pins the three documented readers of the column.
 
-**The single allowlist, and why there is no exceptions file.** Exactly one file may compare role
-values: `contexts/platform/compat-role.ts` (D-14), the one place that derives the compat role from
-assignments and maps legacy values back onto system roles. It stays the single exception until Release B
-of #539 because it still writes the column `User.role` (rollback safety, D-06); Release B removes the column
-and with it this allowlist entry. It is a constant in the script
-(`ALLOWLISTED_FILE`), not a JSON register: a second allowlisted file would be a second derivation,
-which D-14 forbids. A role-literal read that decides nothing moves behind a helper there — the
-company PDF's role filter did exactly that (`parseCompatRoleFilter` / `compatRoleUserWhere`). If
-the allowlisted file is renamed or moved without updating the constant, the gate fails rather than
-silently allowlisting nothing.
+**No allowlist, no exceptions file (since #641).** Every non-test `.ts` file under `apps/api/src`
+is gated, `contexts/platform/system-role-assignment.ts` (the module that turns a requested system
+role into a stored assignment and derives the form role) included. The one tolerated shape is a
+comparison on a parameter typed `SystemRoleName` (a REQUEST payload's requested role, which decides
+nothing about the caller): the detector treats `.role` property reads, bindings derived from them
+and `Role`-typed identifiers as role-valued, so such a helper is invisible to it by design — a
+conscious boundary, pinned by two cases in `lint-role-checks.test.ts`, with the property-access
+form (`body.role !== "EMPLOYEE"`) still a finding. Those helpers live only in
+`system-role-assignment.ts` and are classified in `docs/permissions.md` „Nicht gezählte Treffer“;
+`permission-site-mapping.test.ts` counts every `role ===/!==` hit per file, so a new comparison must
+be classified there.
 
 - **Run locally:** `pnpm --filter @clokr/api run lint:role-checks` — prints
   `OK — 0 finding(s) in N file(s)` or one `path:line: shape — source` line per finding, exit 1
@@ -978,7 +979,7 @@ text detector (`user.role`, `role ===`) forces every such line to be classified 
 
 **A hit on a clean tree is a FINDING, not an allowlist candidate** — convert the access decision to
 a catalog permission and map it in `docs/permissions.md` (Pflege section), or move a role-literal
-read that decides nothing behind a helper in `compat-role.ts`.
+read that decides nothing behind a `SystemRoleName` helper in `system-role-assignment.ts`.
 
 ### `permission-neutrality-matrix.test.ts` amendments register (Issue #360)
 

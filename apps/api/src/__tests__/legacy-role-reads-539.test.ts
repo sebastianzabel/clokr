@@ -41,7 +41,7 @@ const DELETED_IDENTIFIERS: readonly string[] = [
   "loadLegacyFallbackRole",
   "materializeLegacyRoleAssignment",
   "compatRoleForUser",
-  // Deleted by #641 (Release B): the private column reader and the column write-back of the former compat-role.ts.
+  // Deleted by #641 (Release B): the private column reader and the column write-back of the former compat module.
   "legacyRoleColumn",
   "syncCompatRoleColumn",
   // Deleted by #641 (Release B): the unused company-PDF role filter helpers (route removed by #617).

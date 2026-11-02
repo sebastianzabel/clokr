@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { Prisma, type Role, type RoleAssignmentScopeType } from "@clokr/db";
+import { Prisma, type RoleAssignmentScopeType } from "@clokr/db";
 import { requireAuth } from "../../../middleware/auth";
 import { hasPermission, permissionReach, requirePermission } from "../request-permissions";
 import { loadPasswordPolicy } from "../password-policy";
@@ -30,6 +30,7 @@ import {
   requestedRoleUnchanged,
   ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX,
   RoleDemotionBlockedError,
+  type SystemRoleName,
 } from "../system-role-assignment";
 import {
   auditRoleAssignmentChange,
@@ -224,7 +225,7 @@ async function auditRemovedRoleAssignments(
  */
 function userWithFormRole<U extends { email: string; isActive: boolean }>(
   user: U,
-  role: Role | null,
+  role: SystemRoleName | null,
 ) {
   const { email, isActive, ...rest } = user;
   return { email, role, isActive, ...rest };
@@ -253,7 +254,7 @@ async function applyRoleFromEmployeeForm(
   req: FastifyRequest,
   tx: Prisma.TransactionClient,
   userId: string,
-  role: Role,
+  role: SystemRoleName,
 ): Promise<void> {
   const tenantId = req.user.tenantId;
   if (await requestedRoleUnchanged(tx, tenantId, userId, role)) return;

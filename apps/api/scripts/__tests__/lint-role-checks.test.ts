@@ -5,7 +5,7 @@
  * against fixture TEXT through the pure `findRoleChecks(fileName, sourceText)` — never against
  * the live tree alone: on a clean tree the gate reports nothing, and "nothing found" proves nothing
  * about a detector (the same reasoning as `lint-facade-signatures.test.ts`). The file selection
- * (`isGatedFile`: allowlist, test files) is tested separately, because it is a property of the
+ * (`isGatedFile`: test files only, no allowlisted file) is tested separately, because it is a property of the
  * PATH, not of the text. A small live-tree suite at the bottom pins that the real walk is
  * non-empty and the real tree is clean.
  *
@@ -14,7 +14,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  ALLOWLISTED_FILE,
   discoverGatedFiles,
   findRoleChecks,
   isGatedFile,
@@ -248,14 +247,40 @@ describe("findRoleChecks — tolerated shapes", () => {
     `;
     expect(shapes(src)).toEqual([]);
   });
+
+  // The documented boundary of D-15 (#641): a requested role carried by a `SystemRoleName`
+  // parameter is a request-payload value, not the caller's own role, and the detector does not
+  // see it. Such comparisons live only in helpers of `system-role-assignment.ts`, classified in
+  // `docs/permissions.md` "Nicht gezählte Treffer"; `permission-site-mapping.test.ts` counts them.
+  it("a parameter typed SystemRoleName compared against a literal is not a finding (D-15)", () => {
+    expect(
+      shapes(`function isDemotion(role: SystemRoleName) { return role === "EMPLOYEE"; }`),
+    ).toEqual([]);
+  });
+
+  it("a switch over a SystemRoleName parameter is not a finding (D-15)", () => {
+    const src = `
+      function idFor(role: SystemRoleName): string {
+        switch (role) {
+          case "ADMIN": return "a";
+          case "MANAGER": return "m";
+          default: return "e";
+        }
+      }
+    `;
+    expect(shapes(src)).toEqual([]);
+  });
+
+  it('body.role !== "EMPLOYEE" — a property access on a request body is still a finding', () => {
+    expect(shapes(`if (body.role !== "EMPLOYEE") { needManage(); }`)).toEqual(["role-comparison"]);
+  });
 });
 
-// ── File selection: the single allowlist and the test-file skip ─────────────────────────────────
+// ── File selection: every non-test file, no allowlist ─────────────────────────────────────────
 
 describe("isGatedFile — which files the gate reads", () => {
-  it("any flagged shape inside system-role-assignment.ts is allowlisted (transitional, removed in the next commit)", () => {
-    expect(ALLOWLISTED_FILE).toBe("apps/api/src/contexts/platform/system-role-assignment.ts");
-    expect(isGatedFile("apps/api/src/contexts/platform/system-role-assignment.ts")).toBe(false);
+  it("the system-role assignment module is gated like every other file (no allowlist, #641)", () => {
+    expect(isGatedFile("apps/api/src/contexts/platform/system-role-assignment.ts")).toBe(true);
   });
 
   it("a file inside a __tests__ directory is not gated", () => {
@@ -282,15 +307,15 @@ describe("isGatedFile — which files the gate reads", () => {
 // ── Live tree ────────────────────────────────────────────────────────────────────────────────────
 
 describe("live tree", () => {
-  it("the walk over apps/api/src is non-empty and excludes the allowlisted file", () => {
+  it("the walk over apps/api/src is non-empty and includes the system-role assignment module", () => {
     const files = discoverGatedFiles(REPO_ROOT);
     expect(files.length).toBeGreaterThan(100);
     expect(files).toContain("apps/api/src/middleware/auth.ts");
-    expect(files).not.toContain(ALLOWLISTED_FILE);
+    expect(files).toContain("apps/api/src/contexts/platform/system-role-assignment.ts");
     expect(files.some((f) => f.includes("/__tests__/") || f.endsWith(".test.ts"))).toBe(false);
   });
 
-  it("the real tree has no role check outside the allowlisted file", () => {
+  it("the real tree has no role check in any gated file", () => {
     const result = scanRepository(REPO_ROOT);
     expect(result.findings).toEqual([]);
   });
