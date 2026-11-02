@@ -6751,7 +6751,7 @@ die aufgezeichneten Neutralitätsmatrizen und die festgenagelten WLAN-Tests sind
 - **Klartext-HTTP im LAN (D-14):** Die Adapterseite ist unverschlüsselt; ein Mitschnitt im Salon-LAN zeigt die Weiterleitung mit
   dem Code. Begrenzt durch Einmalcode und fünf Minuten.
 - **Code in einem Zugriffsprotokoll (P-610-24):** Die Seiten-URL trägt den Code einmal; ein Reverse-Proxy vor der Web-App kann
-  ihn protokollieren. Die API-Anfrageprotokolle nie, weil Vorschau und Bestätigung den Code im Körper nehmen.
+  ihn protokollieren. Die API-Anfrageprotokolle nie, weil Vorschau und Bestätigung den Code im Körper nehmen. Auch das Client-Fehlerprotokoll (`POST /api/v1/logs/client`) kennt nur den Pfad: Der Browser sendet `location.pathname`, die API schneidet Query und Fragment zusätzlich ab (Review WR-02).
 - **Netzwerk (D-15, P-610-23):** Ein Gast-WLAN mit Geräteisolation, ein offenes WLAN (rotierende private Adresse) und Docker-
   Aufbauten, die die Quelladresse verdecken, funktionieren nicht; das Laufbuch führt die Prüfung auf dem echten Host.
 - **Gerätename nur in der Vorschau (Review WR-05):** Der vom Handy gemeldete DHCP-Name („Annas-iPhone“) steht nur in der

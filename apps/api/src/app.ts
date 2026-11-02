@@ -86,6 +86,7 @@ import { releaseNotesRoutes } from "./contexts/platform/api/release-notes";
 import { testBootstrapRoutes } from "./contexts/platform/api/test-bootstrap";
 import { retroEntryRequestRoutes } from "./contexts/time-tracking/api/retro-entry-requests";
 import { requireAuth } from "./middleware/auth";
+import { clientLogUrl } from "./utils/client-log-url"; // Issue #610 (WR-02): no query/fragment in the client log
 
 // Phase 69 (DEVOPS-V8-02): bake version from package.json at module init.
 // Image content is the source of truth per Memory feedback_image_content_is_source_of_truth.
@@ -483,7 +484,7 @@ export async function buildApp() {
         client: {
           ...body.extra,
           stack: typeof body.stack === "string" ? body.stack.slice(0, 2000) : undefined,
-          url: typeof body.url === "string" ? body.url.slice(0, 500) : undefined,
+          url: clientLogUrl(body.url),
           userAgent: typeof body.userAgent === "string" ? body.userAgent.slice(0, 500) : undefined,
           userId: req.user.sub, // JWT-bound; wins over any body.extra.userId to prevent attribution forgery
         },
