@@ -15,7 +15,9 @@ import {
   decideDayClose,
   decideShiftEnd,
   decideShiftStart,
+  exclusionFor,
   formatShiftTime,
+  shiftInstantKey,
   parseDayCloseTime,
   shiftInstants,
   shiftReminderKey,
@@ -396,6 +398,102 @@ describe("decideDayClose (AC-3, D-04, D-13, D-15, P-609-07)", () => {
     expect(dayCloseLink("2026-11-10")).toBe("/time-entries?view=list&date=2026-11-10");
     expect(dayCloseReminderKey("u1", "e1", "2026-11-10")).toBe(
       "u1|REMINDER_DAY_CLOSE|EmployeeDay|e1:2026-11-10",
+    );
+  });
+});
+
+describe("exclusionFor (AC-3, D-05, D-12, P-609-08)", () => {
+  const day = "2026-11-10";
+  const none = { leave: [], absences: [], holidayDays: [], flagged: false };
+
+  it("returns null when nothing applies", () => {
+    expect(exclusionFor(day, none)).toBeNull();
+  });
+
+  it("names a leave range that contains the day, bounds inclusive", () => {
+    expect(exclusionFor(day, { ...none, leave: [{ startDay: day, endDay: day }] })).toBe("LEAVE");
+    expect(
+      exclusionFor(day, { ...none, leave: [{ startDay: "2026-11-03", endDay: "2026-11-10" }] }),
+    ).toBe("LEAVE");
+    expect(
+      exclusionFor(day, { ...none, leave: [{ startDay: "2026-11-10", endDay: "2026-11-14" }] }),
+    ).toBe("LEAVE");
+  });
+
+  it("ignores a leave range that ended the day before or starts the day after", () => {
+    expect(
+      exclusionFor(day, { ...none, leave: [{ startDay: "2026-11-02", endDay: "2026-11-09" }] }),
+    ).toBeNull();
+    expect(
+      exclusionFor(day, { ...none, leave: [{ startDay: "2026-11-11", endDay: "2026-11-12" }] }),
+    ).toBeNull();
+  });
+
+  it("names an absence, a holiday and a flagged shift", () => {
+    expect(exclusionFor(day, { ...none, absences: [{ startDay: day, endDay: day }] })).toBe(
+      "ABSENCE",
+    );
+    expect(exclusionFor(day, { ...none, holidayDays: [day] })).toBe("HOLIDAY");
+    expect(exclusionFor(day, { ...none, holidayDays: ["2026-11-11"] })).toBeNull();
+    expect(exclusionFor(day, { ...none, flagged: true })).toBe("FLAGGED");
+  });
+});
+
+describe("the exclusion silences every decision (AC-3)", () => {
+  const day = "2026-11-10";
+  const N = 15;
+
+  it("silences the start decision inside its window", () => {
+    const input = {
+      startUtc: at(day, "09:00"),
+      offsetMinutes: N,
+      now: at(day, "09:15"),
+      entries: [],
+    };
+    expect(decideShiftStart(input)).toEqual({ send: true });
+    expect(decideShiftStart({ ...input, exclusion: "LEAVE" })).toEqual({
+      send: false,
+      reason: "LEAVE",
+    });
+  });
+
+  it("silences the end decision inside its window", () => {
+    const input = {
+      endUtc: at(day, "17:00"),
+      offsetMinutes: N,
+      now: at(day, "17:15"),
+      entries: [{ startTime: at(day, "09:00"), endTime: null, isInvalid: false }],
+      otherShifts: [],
+    };
+    expect(decideShiftEnd(input)).toEqual({ send: true });
+    expect(decideShiftEnd({ ...input, exclusion: "HOLIDAY" })).toEqual({
+      send: false,
+      reason: "HOLIDAY",
+    });
+  });
+
+  it("silences the day-close decision, and a second unexcluded shift still sends", () => {
+    const closeUtc = dayCloseInstant(day, "20:00", TZ);
+    const base = { day, closeUtc, now: at(day, "20:00"), entries: [] };
+    const excluded = {
+      endUtc: at(day, "17:00"),
+      conflictsWithLeave: false,
+      exclusion: "ABSENCE" as const,
+    };
+    const free = { endUtc: at(day, "12:00"), conflictsWithLeave: false };
+    expect(decideDayClose({ ...base, shifts: [excluded] })).toEqual({
+      send: false,
+      reason: "ABSENCE",
+    });
+    expect(decideDayClose({ ...base, shifts: [excluded, free] })).toEqual({ send: true });
+  });
+
+  it("keys a notice by person, occasion and instant", () => {
+    expect(shiftInstantKey("u1", "REMINDER_SHIFT_START", at(day, "09:00"))).toBe(
+      `u1|REMINDER_SHIFT_START|At|${at(day, "09:00").getTime()}`,
+    );
+    expect(shiftInstantKey("u1", "REMINDER_SHIFT_START", at(day, "09:00"))).not.toBe(
+      shiftInstantKey("u1", "REMINDER_SHIFT_END", at(day, "09:00")),
     );
   });
 });

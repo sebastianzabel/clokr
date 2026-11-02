@@ -150,6 +150,49 @@ export function shiftReminderKey(userId: string, type: string, shiftId: string):
   return `${userId}|${type}|Shift|${shiftId}`;
 }
 
+/**
+ * The second dedupe key of a START or END notice: one per person, type and INSTANT (the "exactly one
+ * reminder" criterion). Two shifts of one person that start (or end) at the identical instant, in
+ * whichever salon, are one occasion for the person and give one notice.
+ */
+export function shiftInstantKey(userId: string, type: string, instant: Date): string {
+  return `${userId}|${type}|At|${instant.getTime()}`;
+}
+
+/** Why a shift day is silent although a reminder would be due (AC-3, D-05, D-12). */
+export type ExclusionKind = "LEAVE" | "ABSENCE" | "HOLIDAY" | "FLAGGED";
+
+/** An inclusive range of calendar days ("YYYY-MM-DD"), the stored `@db.Date` read as a UTC day. */
+export interface DayRange {
+  startDay: string;
+  endDay: string;
+}
+
+export interface ExclusionFacts {
+  /** The person's effective leave (approved, cancellation requested; half days included) - never PENDING. */
+  leave: readonly DayRange[];
+  /** The person's imposed absences (Berufsschule, Mutterschutz, Elternzeit, ...). */
+  absences: readonly DayRange[];
+  /** The holidays of the shift's salon in the read range ("YYYY-MM-DD"). */
+  holidayDays: readonly string[];
+  /** The shift is flagged as conflicting with leave. */
+  flagged: boolean;
+}
+
+/**
+ * Whether the shift day `day` is excluded from every reminder, and why (P-609-08). A day inside a
+ * leave or absence range (bounds inclusive; a half day counts like a whole one, D-12), a holiday of
+ * the shift's salon and a shift flagged as conflicting with leave are silent. Pure: day strings only.
+ */
+export function exclusionFor(day: string, facts: ExclusionFacts): ExclusionKind | null {
+  if (facts.flagged) return "FLAGGED";
+  const inside = (r: DayRange) => r.startDay <= day && day <= r.endDay;
+  if (facts.leave.some(inside)) return "LEAVE";
+  if (facts.absences.some(inside)) return "ABSENCE";
+  if (facts.holidayDays.includes(day)) return "HOLIDAY";
+  return null;
+}
+
 /** The minimal shape of a recorded entry the decisions read. */
 export interface ReminderEntry {
   startTime: Date;
@@ -165,6 +208,8 @@ export interface StartDecisionInput {
   now: Date;
   /** The person's recorded WORK entries around the shift (any validity; invalid rows are ignored). */
   entries: readonly ReminderEntry[];
+  /** Why the shift day is excluded (leave, absence, holiday, flag); the job computes it, null when none. */
+  exclusion?: ExclusionKind | null;
 }
 
 /**
@@ -179,6 +224,7 @@ export function decideShiftStart(input: StartDecisionInput): ReminderDecision {
   if (!windowContains(opens, REMINDER_WINDOW_MINUTES, input.now)) {
     return { send: false, reason: "OUTSIDE_WINDOW" };
   }
+  if (input.exclusion) return { send: false, reason: input.exclusion };
   const valid = input.entries.filter((e) => !e.isInvalid);
   if (valid.some((e) => e.endTime === null)) return { send: false, reason: "CLOCKED_IN" };
   const lookbackFrom = input.startUtc.getTime() - START_LOOKBACK_MINUTES * MINUTE_MS;
@@ -205,6 +251,8 @@ export interface EndDecisionInput {
   entries: readonly ReminderEntry[];
   /** The person's OTHER non-deleted shifts in the read range (never the shift being decided). */
   otherShifts: readonly OtherShiftInstants[];
+  /** Why the shift day is excluded (leave, absence, holiday, flag); the job computes it, null when none. */
+  exclusion?: ExclusionKind | null;
 }
 
 /**
@@ -220,6 +268,7 @@ export function decideShiftEnd(input: EndDecisionInput): ReminderDecision {
   if (!windowContains(opens, REMINDER_WINDOW_MINUTES, input.now)) {
     return { send: false, reason: "OUTSIDE_WINDOW" };
   }
+  if (input.exclusion) return { send: false, reason: input.exclusion };
   const endMs = input.endUtc.getTime();
   const stillIn = input.entries.some(
     (e) => !e.isInvalid && e.endTime === null && e.startTime.getTime() < endMs,
@@ -238,6 +287,8 @@ export interface DayCloseShift {
   endUtc: Date;
   /** The shift is flagged as conflicting with approved leave (it is not worked). */
   conflictsWithLeave: boolean;
+  /** Why the shift's day is excluded for the person (leave, absence, holiday); null when none. */
+  exclusion?: ExclusionKind | null;
 }
 
 export interface DayCloseDecisionInput {
@@ -265,8 +316,12 @@ export function decideDayClose(input: DayCloseDecisionInput): ReminderDecision {
     return { send: false, reason: "OUTSIDE_WINDOW" };
   }
   const closeMs = input.closeUtc.getTime();
-  const eligible = input.shifts.some((s) => !s.conflictsWithLeave && s.endUtc.getTime() <= closeMs);
-  if (!eligible) return { send: false, reason: "NO_ELIGIBLE_SHIFT" };
+  const ended = input.shifts.filter((s) => s.endUtc.getTime() <= closeMs);
+  const eligible = ended.some((s) => !s.conflictsWithLeave && !s.exclusion);
+  if (!eligible) {
+    const excluded = ended.find((s) => s.exclusion);
+    return { send: false, reason: excluded?.exclusion ?? "NO_ELIGIBLE_SHIFT" };
+  }
   if (input.entries.some((e) => !e.isInvalid && e.endTime === null)) {
     return { send: false, reason: "OPEN_ENTRY_PRESENT" };
   }

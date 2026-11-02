@@ -8,7 +8,9 @@
 import crypto from "node:crypto";
 import { fromZonedTime } from "date-fns-tz";
 import type { FastifyInstance } from "fastify";
-import { grantSystemRole, seedTestData } from "./setup";
+import type { FederalState, LeaveRequestStatus } from "@clokr/db";
+import { leaveTypeFields } from "../contexts/absence/leave-type";
+import { createTestSalon, grantSystemRole, seedTestData } from "./setup";
 
 export const DEFAULT_TZ = "Europe/Berlin";
 /** Default test week: a Tuesday away from every DST change. */
@@ -227,4 +229,101 @@ export async function remindersOf(app: FastifyInstance, userId: string, type?: s
     where: { userId, type: type ?? { startsWith: "REMINDER_" } },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
+}
+
+type RequestableCode = Parameters<typeof leaveTypeFields>[0];
+
+/** The tenant's leave type of `code` (created on first use). */
+async function leaveTypeOf(app: FastifyInstance, tenantId: string, code: RequestableCode) {
+  const existing = await app.prisma.leaveType.findFirst({
+    where: { tenantId, code },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+  const created = await app.prisma.leaveType.create({
+    data: { tenantId, ...leaveTypeFields(code) },
+    select: { id: true },
+  });
+  return created.id;
+}
+
+/** A leave request of `employeeId` for the inclusive tenant-local days `from`..`to`. */
+export async function createLeave(
+  app: FastifyInstance,
+  tenant: ReminderTenant,
+  employeeId: string,
+  from: string,
+  to: string,
+  options: { status?: LeaveRequestStatus; code?: RequestableCode; halfDay?: boolean } = {},
+): Promise<{ id: string }> {
+  return app.prisma.leaveRequest.create({
+    data: {
+      employeeId,
+      leaveTypeId: await leaveTypeOf(app, tenant.tenantId, options.code ?? "VACATION"),
+      startDate: new Date(`${from}T00:00:00Z`),
+      endDate: new Date(`${to}T00:00:00Z`),
+      days: options.halfDay ? 0.5 : 1,
+      halfDay: options.halfDay ?? false,
+      status: options.status ?? "APPROVED",
+    },
+    select: { id: true },
+  });
+}
+
+/** An imposed absence (Berufsschule by default) covering the inclusive days `from`..`to`. */
+export async function createAbsence(
+  app: FastifyInstance,
+  employeeId: string,
+  from: string,
+  to: string,
+  type: "VOCATIONAL_SCHOOL" | "MATERNITY" | "PARENTAL" = "VOCATIONAL_SCHOOL",
+): Promise<{ id: string }> {
+  return app.prisma.absence.create({
+    data: {
+      employeeId,
+      type,
+      startDate: new Date(`${from}T00:00:00Z`),
+      endDate: new Date(`${to}T00:00:00Z`),
+      days: 1,
+      createdBy: "rem609-fixture",
+    },
+    select: { id: true },
+  });
+}
+
+/** A manual holiday row of ONE salon on `day`. */
+export async function createManualHoliday(
+  app: FastifyInstance,
+  tenant: ReminderTenant,
+  salonId: string,
+  day: string,
+): Promise<{ id: string }> {
+  const salon = await app.prisma.salon.findUniqueOrThrow({
+    where: { id: salonId },
+    select: { federalState: true },
+  });
+  return app.prisma.publicHoliday.create({
+    data: {
+      tenantId: tenant.tenantId,
+      salonId,
+      date: new Date(`${day}T00:00:00Z`),
+      name: "Betriebsfeiertag",
+      federalState: salon.federalState,
+      year: Number(day.slice(0, 4)),
+    },
+    select: { id: true },
+  });
+}
+
+/** A second active salon of the tenant; returns its id. */
+export async function addSalon(
+  app: FastifyInstance,
+  tenant: ReminderTenant,
+  federalState?: FederalState,
+): Promise<string> {
+  const salon = await createTestSalon(app.prisma, tenant.tenantId, {
+    name: "Zweiter Salon",
+    ...(federalState !== undefined && { federalState }),
+  });
+  return salon.id;
 }

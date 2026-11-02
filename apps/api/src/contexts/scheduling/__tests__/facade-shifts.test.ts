@@ -279,4 +279,41 @@ describe("Schichtplanung facade — getShiftsInRange / flagShiftsConflictingWith
       expect(reloadedOther.conflictsWithLeave).toBe(false);
     });
   });
+
+  // Issue #609 (D-05): the additive field the shift-reminder job reads. Last in the file on
+  // purpose - the rows below sit on a day no other case reads.
+  describe("getShiftsInRange - conflictsWithLeave (Issue #609)", () => {
+    it("carries the flag on a flagged and an unflagged row, false by default", async () => {
+      const day = "2026-12-15";
+      await app.prisma.shift.createMany({
+        data: [
+          {
+            employeeId: data.employee.id,
+            salonId: data.salonId,
+            date: new Date(`${day}T00:00:00Z`),
+            startTime: "08:00",
+            endTime: "12:00",
+            conflictsWithLeave: true,
+          },
+          {
+            employeeId: data.employee.id,
+            salonId: data.salonId,
+            date: new Date(`${day}T00:00:00Z`),
+            startTime: "13:00",
+            endTime: "17:00",
+          },
+        ],
+      });
+      const rows = await getShiftsInRange(
+        app.prisma,
+        { kind: "employee", employeeId: data.employee.id, tenantId: data.tenant.id },
+        new Date(`${day}T00:00:00Z`),
+        new Date(`${day}T00:00:00Z`),
+      );
+      expect(rows.map((r) => ({ start: r.startTime, flagged: r.conflictsWithLeave }))).toEqual([
+        { start: "08:00", flagged: true },
+        { start: "13:00", flagged: false },
+      ]);
+    });
+  });
 });

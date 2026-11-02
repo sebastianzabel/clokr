@@ -16,9 +16,11 @@ import {
   ACTIVE_TENANT_WHERE, // Phase 88 (D-05a): a deactivated tenant is a suspended customer - no notices
   accessContextForJob,
   employeeScopeFor,
+  holidaysForSalon,
   reportPopulationWhere, // Issue #613: employed on the day and never anonymised
 } from "../platform";
 import { dateStrInTz, dayRangeUtc } from "../working-time-account";
+import { getActiveLeaveOverlapping, getAbsencesOverlapping } from "../absence";
 import { getShiftsInRange } from "../scheduling";
 import { getRecordedWorkEntriesInRange } from "./facade/time-entries";
 import {
@@ -32,9 +34,13 @@ import {
   decideDayClose,
   decideShiftEnd,
   decideShiftStart,
+  exclusionFor,
   formatShiftTime,
+  shiftInstantKey,
   shiftInstants,
   shiftReminderKey,
+  type DayRange,
+  type ExclusionKind,
   windowContains,
   type ReminderSkipReason,
 } from "./shift-reminders";
@@ -171,7 +177,10 @@ async function runTenant(
           day,
           closeUtc,
           now,
-          shifts: personShifts.map((c) => ({ endUtc: c.endUtc, conflictsWithLeave: false })),
+          shifts: personShifts.map((c) => ({
+            endUtc: c.endUtc,
+            conflictsWithLeave: c.shift.conflictsWithLeave,
+          })),
           entries: [],
         });
         if (pre.send) dayCloseCandidates.push({ employeeId, day, closeUtc, shifts: personShifts });
@@ -249,6 +258,58 @@ async function runTenant(
     entriesOf.set(entry.employeeId, list);
   }
 
+  // Exclusions (AC-3, D-05, D-12): effective leave and imposed absences of the candidate persons
+  // around the candidate days, and the holidays of the candidate shifts' salons - each read through
+  // the owning context's facade. A PENDING request is not effective leave and does not silence.
+  const candidateDays = [...new Set(candidates.map((c) => c.day))].sort();
+  const exclusionFrom = new Date(`${candidateDays[0]}T00:00:00Z`);
+  const exclusionTo = new Date(`${candidateDays[candidateDays.length - 1]}T00:00:00Z`);
+  const exclusionScope = employeeScopeFor(scope, { employeeIds });
+  const [leaveRows, absenceRows] = await Promise.all([
+    getActiveLeaveOverlapping(app.prisma, exclusionScope, exclusionFrom, exclusionTo),
+    getAbsencesOverlapping(app.prisma, exclusionScope, exclusionFrom, exclusionTo),
+  ]);
+  const toRanges = (rows: { employeeId: string; startDate: Date; endDate: Date }[]) => {
+    const byPerson = new Map<string, DayRange[]>();
+    for (const r of rows) {
+      const list = byPerson.get(r.employeeId) ?? [];
+      list.push({
+        startDay: r.startDate.toISOString().slice(0, 10),
+        endDay: r.endDate.toISOString().slice(0, 10),
+      });
+      byPerson.set(r.employeeId, list);
+    }
+    return byPerson;
+  };
+  const leaveOf = toRanges(leaveRows);
+  const absenceOf = toRanges(absenceRows);
+  const holidaySalonDays = new Map<string, boolean>();
+  const salonDayPairs = [
+    ...startCandidates.map((c) => ({ salonId: c.shift.salonId, day: c.day })),
+    ...endCandidates.map((c) => ({ salonId: c.shift.salonId, day: c.day })),
+    ...dayCloseCandidates.flatMap((c) =>
+      c.shifts.map((o) => ({ salonId: o.shift.salonId, day: c.day })),
+    ),
+  ];
+  for (const { salonId, day } of salonDayPairs) {
+    const key = `${salonId}|${day}`;
+    if (holidaySalonDays.has(key)) continue;
+    holidaySalonDays.set(
+      key,
+      (await holidaysForSalon(app.prisma, tenantId, salonId, day, day)).length > 0,
+    );
+  }
+  const exclusionOf = (c: {
+    shift: { employeeId: string; salonId: string; conflictsWithLeave: boolean };
+    day: string;
+  }): ExclusionKind | null =>
+    exclusionFor(c.day, {
+      leave: leaveOf.get(c.shift.employeeId) ?? [],
+      absences: absenceOf.get(c.shift.employeeId) ?? [],
+      holidayDays: holidaySalonDays.get(`${c.shift.salonId}|${c.day}`) === true ? [c.day] : [],
+      flagged: c.shift.conflictsWithLeave,
+    });
+
   // Every earlier START/END notice of these shifts, in any dismissal state (the dedupe key, D-06).
   const userIds = [
     ...new Set([...people.values()].flatMap((m) => [...m.values()].map((p) => p.userId))),
@@ -265,6 +326,10 @@ async function runTenant(
     },
     select: { userId: true, type: true, relatedId: true },
   });
+  // The instant of every candidate shift per occasion: a notice of one shift also covers a second
+  // shift of the same person that starts (or ends) at the identical instant ("exactly one reminder").
+  const startInstantOf = new Map(startCandidates.map((c) => [c.shift.id, c.startUtc]));
+  const endInstantOf = new Map(endCandidates.map((c) => [c.shift.id, c.endUtc]));
   const sent = new Set(
     notified.flatMap((n) => {
       if (n.relatedId === null) return [];
@@ -272,7 +337,10 @@ async function runTenant(
         const [employeeId = "", day = ""] = n.relatedId.split(":");
         return [dayCloseReminderKey(n.userId, employeeId, day)];
       }
-      return [shiftReminderKey(n.userId, n.type, n.relatedId)];
+      const keys = [shiftReminderKey(n.userId, n.type, n.relatedId)];
+      const instant = (n.type === START_TYPE ? startInstantOf : endInstantOf).get(n.relatedId);
+      if (instant !== undefined) keys.push(shiftInstantKey(n.userId, n.type, instant));
+      return keys;
     }),
   );
 
@@ -298,13 +366,15 @@ async function runTenant(
       offsetMinutes: offset,
       now,
       entries: entriesOf.get(shift.employeeId) ?? [],
+      exclusion: exclusionOf(candidate),
     });
     if (!decision.send) {
       skip(decision.reason);
       continue;
     }
     const key = shiftReminderKey(userId, START_TYPE, shift.id);
-    if (sent.has(key)) {
+    const instantKey = shiftInstantKey(userId, START_TYPE, candidate.startUtc);
+    if (sent.has(key) || sent.has(instantKey)) {
       skip("ALREADY_NOTIFIED");
       continue;
     }
@@ -319,6 +389,7 @@ async function runTenant(
       relatedId: shift.id,
     });
     sent.add(key);
+    sent.add(instantKey);
   }
 
   for (const candidate of endCandidates) {
@@ -341,13 +412,15 @@ async function runTenant(
       otherShifts: parsed
         .filter((o) => o.shift.employeeId === shift.employeeId && o.shift.id !== shift.id)
         .map((o) => ({ startUtc: o.startUtc, endUtc: o.endUtc })),
+      exclusion: exclusionOf(candidate),
     });
     if (!decision.send) {
       skip(decision.reason);
       continue;
     }
     const key = shiftReminderKey(userId, END_TYPE, shift.id);
-    if (sent.has(key)) {
+    const instantKey = shiftInstantKey(userId, END_TYPE, candidate.endUtc);
+    if (sent.has(key) || sent.has(instantKey)) {
       skip("ALREADY_NOTIFIED");
       continue;
     }
@@ -362,6 +435,7 @@ async function runTenant(
       relatedId: shift.id,
     });
     sent.add(key);
+    sent.add(instantKey);
   }
   for (const candidate of dayCloseCandidates) {
     const { employeeId, day } = candidate;
@@ -379,7 +453,11 @@ async function runTenant(
       day,
       closeUtc: candidate.closeUtc,
       now,
-      shifts: candidate.shifts.map((c) => ({ endUtc: c.endUtc, conflictsWithLeave: false })),
+      shifts: candidate.shifts.map((c) => ({
+        endUtc: c.endUtc,
+        conflictsWithLeave: c.shift.conflictsWithLeave,
+        exclusion: exclusionOf(c),
+      })),
       entries: (entriesOf.get(employeeId) ?? []).map((e) => ({
         startTime: e.startTime,
         endTime: e.endTime,
