@@ -1083,8 +1083,8 @@ const MIN_FILES = 759;
 // Issue #541: +48 cases (13 + 4 + 12 + 2 + 17); measured full run 11149 tests collected (11146 passed, 3 skipped).
 // Issue #638: tests removed with the dropped storeHours column (salon-migration -2, operator-salons-89 -1,
 // settings-store-hours-retired-563 -4).
-// Merge of #541 onto main after #638: 11149 - 7 = 11142 (confirmed by the full run of the merge).
-const MIN_TESTS = 11142;
+// Merge of #541 onto main after #638: full run measured 760 files / 11147 tests (incl. 3 skipped).
+const MIN_TESTS = 11147;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
