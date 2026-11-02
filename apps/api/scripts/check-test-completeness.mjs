@@ -994,7 +994,8 @@ import { readFileSync } from "node:fs";
 // presence-pairing-lifecycle-610 (6), wifi-device-not-seen-610 (16), wifi-device-not-seen-job-610 (15); extended:
 // notification-push-policy-608, cron-deactivated-tenants-88, with-advisory-lock; nothing removed, skipped or loosened.
 // MIN_FILES 765 -> 777, never lowered. #541, #608 and #641 also raise these floors: whoever merges later re-measures.
-const MIN_FILES = 777;
+// 2026-11-02 (#610 review fixes): +2 API test files, measured full run 779 files / 11465 tests.
+const MIN_FILES = 779;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1099,7 +1100,7 @@ const MIN_FILES = 777;
 // re-measures with a full run (lower-bound convention, never a sum).
 // Phase 610 (2026-11-02): MIN_TESTS 11279 -> 11455, the measured total of the full run named at MIN_FILES (the ten
 // new files add 102 cases). Never lowered.
-const MIN_TESTS = 11455;
+const MIN_TESTS = 11465;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
