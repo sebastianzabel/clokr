@@ -146,6 +146,8 @@ third-newest day on which they worked a shift and clocked by a **non-WLAN** sour
   clocked by another source count.
 - **Outage guard:** if no source or device of the tenant produced an event in the window, nobody gets a hint (the adapter or
   the box was probably down).
+- Only people who are employed today and never anonymised are considered (the one report population rule), and only valid,
+  closed WORK entries of another source count as „was at work“. One failing notification does not stop the other devices.
 - One hint per unseen episode; it disappears when the phone is seen again or re-coupled. Managers are never notified.
 
 ## Withdrawal

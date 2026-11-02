@@ -6,7 +6,7 @@
  * start of the test), never from a literal. The qualifying days are the three tenant-local days
  * before today; the phone was last seen ten days ago.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { fromZonedTime } from "date-fns-tz";
 import {
@@ -262,6 +262,33 @@ describe("Issue #610 - the daily WLAN re-couple hint (Feature 11)", () => {
       await expectNoNotice({ addedDaysAgo: 1, lastSeenDaysAgo: null });
     });
 
+    it("IN-04: for an exited person (the exit day lies before today)", async () => {
+      await expectNoNotice({}, async (w) => {
+        await app.prisma.employee.update({
+          where: { id: w.data.employee.id },
+          data: { exitDate: new Date(Date.now() - 2 * DAY) },
+        });
+      });
+    });
+
+    it("IN-04: for an anonymized person", async () => {
+      await expectNoNotice({}, async (w) => {
+        await app.prisma.employee.update({
+          where: { id: w.data.employee.id },
+          data: { firstName: "Gelöscht", lastName: `GELÖSCHT-${w.data.employee.id.slice(0, 8)}` },
+        });
+      });
+    });
+
+    it("IN-04: when the manually clocked days are invalid entries", async () => {
+      await expectNoNotice({}, async (w) => {
+        await app.prisma.timeEntry.updateMany({
+          where: { employeeId: w.data.employee.id },
+          data: { isInvalid: true },
+        });
+      });
+    });
+
     it("for a deactivated tenant", async () => {
       await expectNoNotice({}, async (w) => {
         await app.prisma.tenant.update({
@@ -296,5 +323,78 @@ describe("Issue #610 - the daily WLAN re-couple hint (Feature 11)", () => {
     expect(after.dismissedAt).not.toBeNull();
     // The replaced device is gone, the new one is coupled and has no notice of its own.
     expect(await app.prisma.presenceDevice.findUnique({ where: { id: w.device.id } })).toBeNull();
+  });
+
+  it("IN-04: a person whose exit day is still ahead keeps getting the hint", async () => {
+    const now = new Date();
+    const w = await buildWorld(now);
+    await app.prisma.employee.update({
+      where: { id: w.data.employee.id },
+      data: { exitDate: new Date(now.getTime() + 10 * DAY) },
+    });
+    await app.tryWifiDeviceNotSeen(now);
+    await soleNotification(app.prisma, { where: { userId: w.data.empUser.id, type: TYPE } });
+  });
+
+  it("IN-04: one failing notification does not stop the other devices of the tenant", async () => {
+    const now = new Date();
+    const w = await buildWorld(now);
+    // A second eligible person in the same tenant: the admin employee, same shift and entry days.
+    const other = w.data.adminEmployee;
+    await app.prisma.employee.update({
+      where: { id: other.id },
+      data: { wifiPresenceEnabled: true },
+    });
+    await app.prisma.presenceDevice.create({
+      data: {
+        tenantId: w.data.tenant.id,
+        employeeId: other.id,
+        mac: randomTestMac(),
+        pairedVia: "QR",
+        addedAt: new Date(now.getTime() - 10 * DAY),
+        lastSeenAt: new Date(now.getTime() - 10 * DAY),
+      },
+    });
+    for (const ago of [1, 2, 3]) {
+      const day = daysAgoStrInTz(now, ago, TZ);
+      await app.prisma.shift.create({
+        data: {
+          employeeId: other.id,
+          salonId: w.data.salonId,
+          date: new Date(`${day}T00:00:00.000Z`),
+          startTime: "09:00",
+          endTime: "13:00",
+          label: "Testschicht",
+        },
+      });
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: other.id,
+          salonId: w.data.salonId,
+          date: new Date(`${day}T00:00:00.000Z`),
+          startTime: local(day, "09:00"),
+          endTime: local(day, "13:00"),
+          type: "WORK",
+          source: "MANUAL",
+        },
+      });
+    }
+
+    const realNotify = app.notify.bind(app);
+    let calls = 0;
+    const spy = vi.spyOn(app, "notify").mockImplementation(async (input) => {
+      calls += 1;
+      if (calls === 1) throw new Error("notify exploded");
+      return realNotify(input);
+    });
+    try {
+      await app.tryWifiDeviceNotSeen(now);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(calls).toBe(2);
+    const delivered = await noticesOf([w.data.empUser.id, w.data.adminUser.id]);
+    expect(delivered).toHaveLength(1);
   });
 });

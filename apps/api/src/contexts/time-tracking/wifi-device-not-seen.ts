@@ -22,6 +22,7 @@ import {
   ACTIVE_TENANT_WHERE, // Phase 88 (D-05a): a deactivated tenant is a suspended customer - no notices
   accessContextForJob,
   employeeScopeFor,
+  reportPopulationWhere,
 } from "../platform";
 import { dateStrInTz, dayRangeUtc, getTenantTimezone } from "../working-time-account";
 import { getShiftsInRange } from "../scheduling";
@@ -153,7 +154,9 @@ async function checkTenant(app: FastifyInstance, tenantId: string, now: Date): P
   const fromDate = new Date(`${lookbackStart}T00:00:00Z`); // @db.Date columns: calendar-day bounds
   const toDate = new Date(`${yesterday}T00:00:00Z`);
 
-  // QR devices of consenting, active, still employed people.
+  // QR devices of consenting, active people who are employed today and were never anonymised
+  // (review IN-04: the one population rule of #613 - an exited person gets no hint).
+  const todayRange = dayRangeUtc(today, tz);
   const devices = await prisma.presenceDevice.findMany({
     where: {
       tenantId,
@@ -162,7 +165,7 @@ async function checkTenant(app: FastifyInstance, tenantId: string, now: Date): P
         tenantId,
         wifiPresenceEnabled: true,
         user: { isActive: true },
-        OR: [{ exitDate: null }, { exitDate: { gte: dayRangeUtc(lookbackStart, tz).start } }],
+        ...reportPopulationWhere(todayRange.start, todayRange.end),
       },
     },
     select: {
@@ -203,6 +206,7 @@ async function checkTenant(app: FastifyInstance, tenantId: string, now: Date): P
       employee: { tenantId },
       deletedAt: null,
       type: "WORK",
+      isInvalid: false, // review IN-04: only valid closed entries show that the person was at work
       endTime: { not: null },
       source: { not: "WIFI" },
       date: { gte: fromDate, lte: toDate },
@@ -246,48 +250,58 @@ async function checkTenant(app: FastifyInstance, tenantId: string, now: Date): P
   };
 
   for (const device of devices) {
-    const notice = noticeState.get(device.id) ?? null;
-    const lastSign =
-      device.lastSeenAt !== null && device.lastSeenAt > device.addedAt
-        ? device.lastSeenAt
-        : device.addedAt;
+    // One failing person (a notify error, a dismiss error) must not abort the other devices of the
+    // tenant for the day (review IN-04).
+    try {
+      const notice = noticeState.get(device.id) ?? null;
+      const lastSign =
+        device.lastSeenAt !== null && device.lastSeenAt > device.addedAt
+          ? device.lastSeenAt
+          : device.addedAt;
 
-    // A sign of life after the open notice makes it obsolete.
-    if (notice !== null && notice.open && lastSign > notice.newest) {
-      await app.dismissByRelated("PresenceDevice", device.id, NOTICE_TYPE);
-      count("DISMISSED");
+      // A sign of life after the open notice makes it obsolete.
+      if (notice !== null && notice.open && lastSign > notice.newest) {
+        await app.dismissByRelated("PresenceDevice", device.id, NOTICE_TYPE);
+        count("DISMISSED");
+      }
+
+      const decision = decideRecoupleHint({
+        lastSeenAt: device.lastSeenAt,
+        addedAt: device.addedAt,
+        qualifyingDaysDesc: qualifyingDays({
+          shiftDays: shiftDays.get(device.employeeId) ?? [],
+          entryDays: entryDays.get(device.employeeId) ?? [],
+          today,
+          lookbackStart,
+        }),
+        dayStart: (day) => dayRangeUtc(day, tz).start,
+        lastNoticeAt: notice?.newest ?? null,
+        tenantSignalAt,
+      });
+      if (!decision.hint) {
+        count(decision.reason);
+        continue;
+      }
+
+      await app.notify({
+        userId: device.employee.userId,
+        type: "WIFI_DEVICE_NOT_SEEN",
+        title: "Handy neu koppeln",
+        message:
+          "Dein Handy wurde an deinen letzten Arbeitstagen im Salon-WLAN nicht erkannt. Bitte koppel es über den QR-Code im Salon neu.",
+        link: "/settings",
+        tenantId,
+        relatedType: "PresenceDevice",
+        relatedId: device.id,
+      });
+      count("NOTIFIED");
+    } catch (err) {
+      count("FAILED");
+      app.log.error(
+        { err, tenantId, deviceId: device.id },
+        "WLAN not-seen check failed for a device",
+      );
     }
-
-    const decision = decideRecoupleHint({
-      lastSeenAt: device.lastSeenAt,
-      addedAt: device.addedAt,
-      qualifyingDaysDesc: qualifyingDays({
-        shiftDays: shiftDays.get(device.employeeId) ?? [],
-        entryDays: entryDays.get(device.employeeId) ?? [],
-        today,
-        lookbackStart,
-      }),
-      dayStart: (day) => dayRangeUtc(day, tz).start,
-      lastNoticeAt: notice?.newest ?? null,
-      tenantSignalAt,
-    });
-    if (!decision.hint) {
-      count(decision.reason);
-      continue;
-    }
-
-    await app.notify({
-      userId: device.employee.userId,
-      type: "WIFI_DEVICE_NOT_SEEN",
-      title: "Handy neu koppeln",
-      message:
-        "Dein Handy wurde an deinen letzten Arbeitstagen im Salon-WLAN nicht erkannt. Bitte koppel es über den QR-Code im Salon neu.",
-      link: "/settings",
-      tenantId,
-      relatedType: "PresenceDevice",
-      relatedId: device.id,
-    });
-    count("NOTIFIED");
   }
 
   // Counts per reason only: no names, no MAC addresses.
