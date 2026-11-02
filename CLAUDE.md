@@ -195,7 +195,7 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **WLAN identifiers** (Issue #388): `Employee.wifiMacs` → `[]`, `wifiPresenceEnabled` → false, `wifiOptInAt` → null; `PresenceDevice` rows (MAC + label) are hard-deleted. The `ANONYMIZE` audit carries counts only (`clearedDeviceIdentifiers`); Bestand is listed read-only by `scripts/audit-388-anonymized-leftovers.ts` (`docs/migrations.md` „Phase 388“)
 - **Documents**: Absence documentPath → null
 - **§ 9-Vorgänge**: Section9Credit documentPath → null, reason → null (Zeilen bleiben erhalten — Korrektureintrag nach R7)
-- **Auth tokens**: Invitations, OTP, RefreshTokens and push subscriptions (Issue #608) are hard-deleted (not retention-relevant)
+- **Auth tokens**: Invitations, OTP, RefreshTokens, push subscriptions (Issue #608) and WLAN pairing codes (`PresencePairingCode`, Issue #610 - the rows naming the person through `consumedByUserId` go with the anonymization, stale ones with the daily token cleanup) are hard-deleted (not retention-relevant)
 - **Role assignments** (Phase 74b, #74): the user's `RoleAssignment` rows are hard-deleted inside the anonymization transaction, each with a `DELETE` audit entry (`newValue.reason` "Anonymisierung"); person-scope lists that contain the employee's id stay unchanged (ids only — the resolution ignores anonymized targets). `User.role` IS rewritten to EMPLOYEE in the same update as `isActive: false` (Issue #357 sub-fix C, revises Phase 75b D-14, #75) and stays so while the column exists: it used to be the legacy-role fallback a still-valid access token resolved through, which handed a self-anonymizing MANAGER/ADMIN's live token full rights for the rest of its lifetime — the exact gap #357's security review reported. Since #539 (Release A) a user without a stored assignment holds nothing anyway, so the rewrite is defence in depth for a rollback to the previous image. Two neutrality cells changed on purpose (`DELETE /api/v1/employees/:id | foreign` for ADMIN and FALLBACK_ADMIN, 204→403) and are recorded as an amendment (`contexts/platform/anonymize.ts`, `apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json`, ADR 0001-abweichungen Eintrag N).
 - **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount, `ParentalLeaveReduction` rows (no free text, nothing to anonymize — Issue #468) (for retention compliance)
 - **Employment ends (Issue #614)**: `exitDate` ← the tenant-local day of the anonymization when it was empty (an existing one, past or future, stays) plus the #447 exit-year entitlement sync. Absences after the exit day: requests starting after it are cancelled with the reversals of a cancellation approval, requests spanning it are shortened to it through the `/correct` core (`contexts/absence/leave-correction.ts`), pending ones are re-priced, Berufsschule rows are soft-deleted. Closed months, active § 17 BEEG reductions, active § 9 credits and corrections the core refuses are skipped and listed (ids and codes) in the ANONYMIZE audit. The rule lives only in `contexts/absence/employment-exit.ts`, reached through the `app.absenceExit` decoration; per-row audits carry `auditReason` "Anonymisierung", `trigger: "ANONYMIZATION"` and no free text. "Bevorstehende Urlaube" never lists an anonymized person. Persons anonymized before #614 are listed by `scripts/audit-614-anonymized-employment.ts` (read-only, ids only) and corrected by `scripts/backfill-666-anonymized-employment.ts` (Issue #666, owner decision 17.10.2026: dry run by default, `--confirm` writes; sets the missing exit date from the tenant-local day of the ANONYMIZE audit, runs the same `app.absenceExit` rule with the marker `trigger: "BACKFILL_666"` / `auditReason` „Bestandskorrektur #666“, restores the employee number from the audit `oldValue` unless it is missing or taken by another employee — those are only reported; runbook `docs/migrations.md` „Phase 666“).
@@ -1525,6 +1525,57 @@ operator runbook `docs/runbooks/web-push.md`. Rules, as built:
   `vocational-school-generator.ts`). Moving them onto `notify()` is a deliberate follow-up, not a fix to slip into another change.
 - A new notification type needs its push entry in the same commit (the scan fails otherwise); a new `notify()` call site needs
   none beyond that. Rotating the VAPID pair invalidates every subscription (each device enables push again).
+
+### WLAN pairing by QR code (Issue #610)
+
+A person couples their phone to WLAN presence by scanning a QR code in the salon; ADR `docs/adr/0001-abweichungen.md` Eintrag AE,
+operator runbook `docs/runbooks/wlan-qr-kopplung.md`, adapter notes `apps/fritzbox-adapter/README.md`. The WLAN clock logic
+(presence event → clock event) is unchanged and stays pinned by the existing WLAN tests. Rules, as built:
+
+- **The MAC address comes only from the adapter's TCP peer, resolved through TR-064 - never from a request.** The adapter
+  (`apps/fritzbox-adapter/src/pairing.ts`) reads `req.socket.remoteAddress`, asks the box (`X_AVM-DE_GetSpecificHostEntryByIP`,
+  host list as fallback) and registers `{ mac, hostname }` at `POST /api/v1/presence/pairing-codes` (presence-source key, the
+  one shared check `authenticatePresenceSource` of the webhook and the issuer). It ignores `X-Forwarded-For`, every query and
+  every body, and refuses its own, loopback and link-local peers. No API route in the confirm flow accepts a MAC or an IP from
+  the client (`pairing-no-client-mac-610.test.ts`). The consequence is a fixed property: a forwarded link can only couple the
+  device that opened the QR page.
+- **The code has one module.** `contexts/time-tracking/pairing-code.ts` is the ONLY place of the format (32 random bytes, 64
+  lowercase hex), the 5-minute TTL (`expiresAt = now + TTL`, never longer) and the hash (SHA-256; only the hash is stored in
+  `PresencePairingCode.codeHash`). Preview and confirm are `POST`s that take the code in the JSON body, never in an API URL
+  (there is no `GET`; any query parameter answers 400 and the code stays usable); `presence-pairing-contract-610.test.ts` captures the request log (with a positive
+  control) and proves no code or hash reaches a log line. Every invalid state (unknown, expired, consumed, foreign tenant,
+  malformed) answers ONE identical 404 body (`PAIRING_CODE_INVALID_ERROR`) - no oracle.
+- **The confirm is one transaction** (`confirmPairing()` in `presence-pairing.ts`): the owner lock `lockPresenceOwner()`
+  (Employee + User, `FOR NO KEY UPDATE`, the FIRST statement of every presence-device writer), then the code row `FOR UPDATE`,
+  unconsumed and unexpired, consumed, consent set (`wifiPresenceEnabled`, `wifiOptInAt = now`, audited old/new), the device
+  attached with `pairedVia = QR`. A MAC mapped to ANOTHER person answers 409 `PRESENCE_DEVICE_TAKEN` and the code stays
+  unconsumed; a `[tenantId, mac]` unique race rolls back and answers the same 409. An inactive person is refused. The caller's
+  own MAC is refreshed (200), not duplicated.
+- **Replace, not accumulate.** A QR confirm deletes the person's other `QR` devices (audited); `MANUAL` devices stay; an admin
+  reassign through `POST /admin/presence-sources/:id/devices/:mac/assign` writes `pairedVia = MANUAL`. A concurrent second pairing
+  has exactly one winner (`presence-pairing-race-610.test.ts`).
+- **Withdrawal removes every device.** `PATCH /me/wifi { wifiPresenceEnabled: false }` deletes all of the person's
+  `PresenceDevice` rows and clears `wifiMacs` under `lockPresenceOwner()`, each deletion audited with the reason „Einwilligung
+  widerrufen“, and answers `devicesRemoved`. This changed existing behaviour (devices used to stay); persons who opted out
+  before #610 keep inert leftover rows until they act - no retroactive cleanup.
+- **`PresenceDevice.lastSeenAt` means "last presence event", not "last seen on the network".** The webhook writes
+  `min(eventTime, now)` monotonically (a guarded `updateMany`, no extra audit); the adapter posts on transitions only.
+- **The re-couple hint has one rule** (`wifi-device-not-seen.ts`, Feature 11 of the attendance checker, cron `20 9 * * *`,
+  advisory key `ATTENDANCE_WIFI_DEVICE_NOT_SEEN`): a person with consent and a `QR` device gets ONE `WIFI_DEVICE_NOT_SEEN`
+  notice (in-app plus a neutral push, e-mail `never`, only to the person themself) when the device showed no sign of life since
+  the start of their third-newest shift day with a closed non-WIFI WORK entry (look-back 28 days). A tenant without any event
+  signal in the window gets nothing (adapter-outage guard); a seen or re-coupled device dismisses the notice. The hint is the
+  ONE named exception of the #608 parity rule (`PUSH_WITHOUT_EMAIL` in `notification-push-policy-608.test.ts`: e-mail `never`
+  normally implies push `never`); a second exception needs its own entry and reason there.
+- **The adapter listener is off by default** (`PAIRING_ENABLED=true`, `CLOKR_APP_URL` an https origin) and compose publishes its
+  port on loopback unless `PAIRING_HOST_BIND` names the host's LAN address. The existing `/devices` endpoint, `getHostList()` and
+  the poll are untouched. Docker can hide the phone's source address (userland proxy, Docker Desktop, rootless, `"iptables":
+  false`): the runbook's network recipe and the adapter log's `peer=` line are the check on a real host.
+- **Pairing codes are tokens, not records.** Ephemeral and not retention-relevant: FKs `tenantId` and `presenceSourceId` are
+  `onDelete: Cascade`, `consumedByUserId` is a plain column without FK; rows older than a day are purged by the token cleanup
+  and a person's rows go with the anonymization; the int refresh deletes them all (`pseudonymize-dump.ts`).
+- The pinned WLAN tests (`presence-webhook`, `presence`, `me-wifi`, `auto-break-all-triggers-799`, `presence-resolver`, the
+  adapter's `state.test.ts`) must stay unedited and green; `610-untouched.sh` of the phase proved it.
 
 ### Tenant-scoping gate (Issue #204)
 
