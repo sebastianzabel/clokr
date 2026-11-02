@@ -155,6 +155,58 @@ describe("Issue #608: notify() pushes to the recipient's devices", () => {
     expect(after.lastSuccessAt).toBeInstanceOf(Date);
   });
 
+  it("WR-06: a notification goes to all of a person's devices in parallel", async () => {
+    const devices = await Promise.all([
+      addDevice(seed, seed.empUser.id),
+      addDevice(seed, seed.empUser.id),
+      addDevice(seed, seed.empUser.id),
+    ]);
+    sendNotificationMock.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ statusCode: 201 }), 300)),
+    );
+    const startedAt = Date.now();
+    await notifyAndSettle({
+      userId: seed.empUser.id,
+      type: "CLOCK_OUT_REMINDER",
+      title: "t",
+      message: "m",
+      tenantId: seed.tenant.id,
+    });
+    const elapsed = Date.now() - startedAt;
+    for (const d of devices) expect(callsFor(d.sub.endpoint)).toHaveLength(1);
+    // Sequential would take at least 3 x 300 ms.
+    expect(elapsed).toBeLessThan(800);
+  });
+
+  it("WR-06: the test action sends in parallel and reports a device past the deadline as FAILED", async () => {
+    const quick = await addDevice(seed, seed.empUser.id, "Schnell");
+    const hanging = await addDevice(seed, seed.empUser.id, "Haengt");
+    sendNotificationMock.mockImplementation((subscription: { endpoint: string }) =>
+      subscription.endpoint === hanging.sub.endpoint
+        ? new Promise(() => undefined) // never answers
+        : Promise.resolve({ statusCode: 201 }),
+    );
+    // Imported after the push-enabled app was built: buildPushEnabledApp() resets the module
+    // registry, and only a fresh import sees the VAPID set.
+    const { sendTestPush } = await import("../contexts/platform/push-dispatch");
+    const startedAt = Date.now();
+    const results = await sendTestPush(
+      app,
+      { tenantId: seed.tenant.id, userId: seed.empUser.id },
+      { deadlineMs: 250 },
+    );
+    const elapsed = Date.now() - startedAt;
+    expect(results).toHaveLength(2);
+    const byId = Object.fromEntries(results.map((r) => [r.id, r.outcome]));
+    expect(byId[quick.row.id]).toBe("SENT");
+    expect(byId[hanging.row.id]).toBe("FAILED");
+    expect(elapsed).toBeLessThan(2000);
+    // The hanging device row is untouched (a missed deadline is no evidence the device is gone).
+    expect(
+      await app.prisma.pushSubscription.findUnique({ where: { id: hanging.row.id } }),
+    ).not.toBeNull();
+  });
+
   it("AC-4: the in-app title and message never appear in any payload", async () => {
     const d = await addDevice(seed, seed.empUser.id);
     const title = "Krankmeldung von Testperson Muster";

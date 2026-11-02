@@ -79,26 +79,56 @@ export async function handleSendOutcome(
   return "FAILED";
 }
 
+/**
+ * Overall deadline of the "send a test" action (review WR-06). Each device keeps its own socket
+ * timeout in `push-sender.ts`; this bound is on top of it, so a person with several dead devices
+ * never holds the HTTP request for the sum of the per-device timeouts.
+ */
+export const TEST_PUSH_DEADLINE_MS = 15_000;
+
 export async function sendTestPush(
   app: FastifyInstance,
   scope: { tenantId: string; userId: string },
+  options: { deadlineMs?: number } = {},
 ): Promise<TestPushDeviceResult[]> {
   const rows = await app.prisma.pushSubscription.findMany({
     where: { userId: scope.userId, tenantId: scope.tenantId },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
-  const results: TestPushDeviceResult[] = [];
-  // One device after the other: a person owns at most a handful and the sends stay bounded.
-  for (const row of rows) {
-    const sent = await sendWebPush(
-      { endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth },
-      PUSH_TEST_PAYLOAD,
-      PUSH_TEST_TTL_SECONDS,
+  const deadlineMs = options.deadlineMs ?? TEST_PUSH_DEADLINE_MS;
+
+  // Every device is sent to in parallel. A device that has not answered when the deadline passes is
+  // reported as FAILED; its send keeps running in the background and its outcome is still applied.
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<"DEADLINE">((resolve) => {
+    timer = setTimeout(() => resolve("DEADLINE"), deadlineMs);
+  });
+  try {
+    const settled = await Promise.allSettled(
+      rows.map(async (row): Promise<TestPushDeviceResult> => {
+        const send = sendWebPush(
+          { endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth },
+          PUSH_TEST_PAYLOAD,
+          PUSH_TEST_TTL_SECONDS,
+        ).then((sent) => handleSendOutcome(app, row, sent));
+        // Keep a late rejection from becoming an unhandled one once the race is over.
+        send.catch(() => undefined);
+        const outcome = await Promise.race([send, deadline]);
+        return {
+          id: row.id,
+          deviceLabel: row.deviceLabel,
+          outcome: outcome === "DEADLINE" ? "FAILED" : outcome,
+        };
+      }),
     );
-    const outcome = await handleSendOutcome(app, row, sent);
-    results.push({ id: row.id, deviceLabel: row.deviceLabel, outcome });
+    return settled.map((result, index) =>
+      result.status === "fulfilled"
+        ? result.value
+        : { id: rows[index].id, deviceLabel: rows[index].deviceLabel, outcome: "FAILED" },
+    );
+  } finally {
+    clearTimeout(timer);
   }
-  return results;
 }
 
 /**
@@ -154,18 +184,20 @@ export async function dispatchNotificationPush(
 
   // Built once from the registry and the validated link; the in-app title/message never get here.
   const payload = { title: PUSH_TITLE, body: policy.body, url: safePushUrl(link) };
-  for (const row of rows) {
-    try {
-      const sent = await sendWebPush(
-        { endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth },
-        payload,
-        policy.ttlSeconds,
-      );
-      await handleSendOutcome(app, row, sent);
-    } catch {
-      // One broken device must not stop the others; the error object is never logged (it may
-      // carry a database detail or the endpoint).
-      app.log.warn({ type, tenantId: row.tenantId }, "Push dispatch failed for one device");
-    }
-  }
+  // In parallel: one dead device must not delay the others. A failure of one device is contained
+  // and logged without the error object (it may carry a database detail or the endpoint).
+  await Promise.allSettled(
+    rows.map(async (row) => {
+      try {
+        const sent = await sendWebPush(
+          { endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth },
+          payload,
+          policy.ttlSeconds,
+        );
+        await handleSendOutcome(app, row, sent);
+      } catch {
+        app.log.warn({ type, tenantId: row.tenantId }, "Push dispatch failed for one device");
+      }
+    }),
+  );
 }
