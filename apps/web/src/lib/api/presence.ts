@@ -93,6 +93,11 @@ export interface MyWifiDevice {
   id: string;
   mac: string;
   label: string | null;
+  /** How the mapping was made (Issue #610): by QR pairing or typed in by hand. */
+  pairedVia: "MANUAL" | "QR";
+  addedAt: string;
+  /** The last presence event of this device, null while none was seen. */
+  lastSeenAt: string | null;
 }
 
 export interface MyWifiData {
@@ -106,8 +111,41 @@ export async function getMyWifi(): Promise<MyWifiData> {
 
 export async function updateMyWifi(
   wifiPresenceEnabled: boolean,
-): Promise<{ wifiPresenceEnabled: boolean }> {
-  return api.patch<{ wifiPresenceEnabled: boolean }>("/employees/me/wifi", { wifiPresenceEnabled });
+): Promise<{ wifiPresenceEnabled: boolean; wifiOptInAt?: string | null; devicesRemoved?: number }> {
+  return api.patch<{
+    wifiPresenceEnabled: boolean;
+    wifiOptInAt?: string | null;
+    devicesRemoved?: number;
+  }>("/employees/me/wifi", { wifiPresenceEnabled });
+}
+
+// ── QR pairing (Issue #610) ────────────────────────────────────────────────
+// The pairing code travels ONLY in the JSON body of these two POSTs - never in an API URL, so it
+// never reaches an API request log. The preview is read-only despite its method.
+
+export interface PairingPreview {
+  deviceLabel: string | null;
+  /** The last two bytes of the device address, "ab:cd". */
+  macTail: string;
+  replacesDevice: boolean;
+  alreadyPaired: boolean;
+  expiresAt: string;
+}
+
+export interface PairingConfirmResult {
+  device: MyWifiDevice;
+  replacedDevices: number;
+  wifiPresenceEnabled: boolean;
+  wifiOptInAt: string | null;
+}
+
+export async function previewPairing(code: string): Promise<PairingPreview> {
+  return api.post<PairingPreview>("/employees/me/wifi/pairing/preview", { code });
+}
+
+/** Couples the phone. `consent: true` is sent only from the person's deliberate tap. */
+export async function confirmPairing(code: string): Promise<PairingConfirmResult> {
+  return api.post<PairingConfirmResult>("/employees/me/wifi/pairing", { code, consent: true });
 }
 
 export async function addMyDevice(mac: string, label?: string): Promise<MyWifiDevice> {

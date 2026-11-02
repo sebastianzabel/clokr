@@ -84,12 +84,14 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/crypto.ts": "rahmen", // generic crypto helper (hashing/encryption), no model, no single owning context
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
   "src/utils/audit-diff.ts": "rahmen", // generic before/after diff for settings audit rows (Issue #285); pure, no model, imported by the platform and absence settings routes
+  "src/utils/client-log-url.ts": "rahmen", // strips query/fragment from client-reported URLs before logging (Issue #610 review WR-02); pure, no model
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
   "src/__tests__/entry-lock-race-helpers.ts": "rahmen", // Issue #70 (Phase 70b-04) — test infra: holds the Employee writer lock while a request under test queues on it; no model of its own
   "src/__tests__/bulk-apply-helpers.ts": "rahmen", // Issue #568 — shared two-step bulk-apply test helper, no model
   "src/__tests__/population-fixtures-613.ts": "rahmen", // Issue #613 — shared fixture of the population tests (exited / login-deactivated / anonymised / late-hired persons); test infra, no model of its own
   "src/__tests__/push-fixtures-608.ts": "rahmen", // Issue #608 — shared fixture of the web-push tests (test VAPID pair, push-enabled app builder, fake device subscription); test infra, no model of its own
+  "src/__tests__/presence-pairing-fixtures-610.ts": "rahmen", // Issue #610 — shared fixture of the WLAN pairing tests (presence source with a raw key, random MAC, issue/preview/confirm injectors); test infra, no model of its own
   "src/__tests__/notify-emit-sites.ts": "rahmen", // Issue #608 — the one notify() call-site scanner shared by the e-mail and push registry tests; test infra, no model of its own
   "src/__tests__/monthly-export-fixture-617.ts": "rahmen", // Issue #617 — shared nine-person fixture of the Monatsexport tests (closed/open months, every leave kind, § 9, exit, Azubi); test infra, no model of its own
   "src/__tests__/datev-rows.ts": "rahmen", // Issue #304 — shared parser of the DATEV LODAS file for tests; test infra, no model of its own
@@ -218,6 +220,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────
   "src/contexts/time-tracking/facade/time-entries.ts": "zeiterfassung", // Phase 100B Plan 08 — T1-T12, TimeEntry/Break's only external access path
   "src/contexts/time-tracking/facade/presence-devices.ts": "zeiterfassung", // Phase 100B Plan 09 (Wave 4, closing) — PresenceDevice's only external access path
+  "src/contexts/time-tracking/facade/presence-pairing.ts": "zeiterfassung", // Issue #610 (D-04) — PresencePairingCode's only external access path: the token-cleanup purge and the anonymization delete
   "src/contexts/time-tracking/api/admin-presence-sources.ts": "zeiterfassung", // writes PresenceDevice/PresenceSource
   "src/contexts/time-tracking/api/employee-wifi.ts": "zeiterfassung", // Phase 243 Plan 02 (B2) — moved from contexts/platform/api/employees.ts: PresenceDevice is a Zeiterfassung model; the /employees URL prefix is a namespace, not an owner
   "src/contexts/time-tracking/api/presence.ts": "zeiterfassung", // WiFi-presence-based clocking; reads PresenceDevice/PresenceSource, writes AuditLog as a side effect
@@ -265,6 +268,10 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry
   "src/contexts/time-tracking/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
   "src/contexts/time-tracking/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization
+  "src/contexts/time-tracking/presence-source-auth.ts": "zeiterfassung", // Issue #610 (D-16) — the one presence-source key check shared by the webhook and the pairing-code issuer; reads PresenceSource
+  "src/contexts/time-tracking/pairing-code.ts": "zeiterfassung", // Issue #610 — pairing-code constants and pure helpers (TTL, format, hashing, hostname hygiene); no model access
+  "src/contexts/time-tracking/wifi-device-not-seen.ts": "zeiterfassung", // Issue #610 (D-10) - the daily WLAN re-couple hint: pure decision plus the job over PresenceDevice, Shift (facade) and TimeEntry; writes notices only
+  "src/contexts/time-tracking/presence-pairing.ts": "zeiterfassung", // Issue #610 — issue/preview/confirm service of the one-time WLAN pairing code; writes PresencePairingCode/PresenceDevice
   "src/contexts/time-tracking/presence.ts": "zeiterfassung", // WiFi-presence detection helper feeding routes/presence.ts and the missing-entries gap detector
   "src/contexts/time-tracking/retro-config.ts": "zeiterfassung", // RetroEntryRequest tenant-config toggle
 

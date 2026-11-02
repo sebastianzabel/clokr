@@ -76,10 +76,12 @@ describe("withAdvisoryLock", () => {
   // added MONTH_CLOSE_DEFERRAL_REMINDER (1017n) for the weekly deferral escalation — 17.
   // Phase 80 (Issue #80, D-10) added ATTENDANCE_BREAK_CROSS_SALON (1018n) for the next-day
   // cross-salon break check — 18.
-  it("registry exposes 18 distinct keys and tenantAdvisoryKey derives a bigint", () => {
+  // Issue #610 (D-10) added ATTENDANCE_WIFI_DEVICE_NOT_SEEN (1019n) for the daily WLAN
+  // re-couple hint — 19.
+  it("registry exposes 19 distinct keys and tenantAdvisoryKey derives a bigint", () => {
     const values = Object.values(ADVISORY_LOCK_KEYS);
-    expect(values).toHaveLength(18);
-    expect(new Set(values).size).toBe(18);
+    expect(values).toHaveLength(19);
+    expect(new Set(values).size).toBe(19);
     const key = tenantAdvisoryKey("123e4567-e89b-12d3-a456-426614174000");
     expect(typeof key).toBe("bigint");
     // Deterministic + stable across calls.

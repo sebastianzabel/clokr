@@ -2,6 +2,13 @@ import "dotenv/config";
 import { createServer } from "http";
 import { Tr064Client } from "./tr064.js";
 import { PresenceStateManager } from "./state.js";
+import { parsePairingConfig } from "./pairing-config.js";
+import {
+  createCodeIssuer,
+  createRateLimiter,
+  ownInterfaceAddresses,
+  startPairingServer,
+} from "./pairing.js";
 import type { FritzDevice } from "./tr064.js";
 import type { PresenceEvent } from "./state.js";
 
@@ -36,6 +43,16 @@ const pollIntervalMs = pollIntervalSeconds * 1_000;
 const devicesPort = parseInt(process.env.DEVICES_PORT ?? "8765", 10);
 // T-25-09-03: default to loopback only — never expose to public internet
 const devicesBind = process.env.DEVICES_BIND ?? "127.0.0.1";
+
+// Issue #610: the opt-in pairing listener. An enabled but misconfigured listener must not start
+// half-way (a bad CLOKR_APP_URL is a redirect target), so a problem stops the adapter here.
+const pairingConfig = parsePairingConfig(process.env);
+if (!pairingConfig.ok) {
+  for (const problem of pairingConfig.errors) {
+    console.error(`[fritzbox-adapter] ERROR: ${problem}`);
+  }
+  process.exit(1);
+}
 
 // ── Initialization ─────────────────────────────────────────────────────────────
 
@@ -111,6 +128,12 @@ async function pollOnce(): Promise<void> {
 console.warn(
   `[fritzbox-adapter] Starting. Poll interval: ${pollIntervalSeconds}s, devices on ${devicesBind}:${devicesPort}`,
 );
+// Never prints the presence key (T-25-09-02); the redirect origin is configuration, not a secret.
+console.warn(
+  pairingConfig.value.enabled
+    ? `[fritzbox-adapter] Pairing enabled on ${pairingConfig.value.bind}:${pairingConfig.value.port}, redirects to ${pairingConfig.value.appOrigin}`
+    : "[fritzbox-adapter] Pairing disabled",
+);
 
 // Initial poll immediately — don't wait for first interval tick
 void pollOnce();
@@ -142,11 +165,24 @@ server.listen(devicesPort, devicesBind, () => {
   console.warn(`[fritzbox-adapter] Devices endpoint listening on ${devicesBind}:${devicesPort}`);
 });
 
+// ── Pairing listener (Issue #610) ─────────────────────────────────────────────
+// Off unless PAIRING_ENABLED=true. The device is resolved for the phone's own connection through
+// the live by-IP lookup only - no cached host list ever decides a pairing; see pairing.ts.
+
+const pairingServer = startPairingServer(pairingConfig.value, {
+  resolveHost: (ip) => client.getHostByIp(ip),
+  issueCode: createCodeIssuer({ apiUrl: CLOKR_API_URL, presenceKey: CLOKR_PRESENCE_KEY }),
+  rateLimiter: createRateLimiter(),
+  ownAddresses: ownInterfaceAddresses(),
+  log: (line) => console.warn(line),
+});
+
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 
 function shutdown(): void {
   console.warn("[fritzbox-adapter] Shutting down...");
   clearInterval(pollTimer);
+  pairingServer?.close();
   server.close(() => {
     process.exit(0);
   });

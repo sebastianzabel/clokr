@@ -59,6 +59,7 @@
     "/admin/salons": "Salons",
     "/admin/phorest": "Phorest",
     "/admin": "Administration",
+    "/settings/geraet-koppeln": "Handy koppeln",
     "/settings": "Mein Profil",
   };
   const PAGE_LABEL_KEYS = Object.keys(PAGE_LABELS);

@@ -61,6 +61,23 @@ describe("loginPathWithNext", () => {
   });
 });
 
+describe("pairing round trip (Issue #610, P-610-20)", () => {
+  const CODE = "0123456789abcdef".repeat(4);
+  const loc = { pathname: "/settings/geraet-koppeln", search: `?code=${CODE}` };
+
+  it("a signed-out scan is sent to sign-in with the pairing page and its code as the target", () => {
+    expect(loginPathWithNext(loc)).toBe(
+      `/login?next=${encodeURIComponent(`/settings/geraet-koppeln?code=${CODE}`)}`,
+    );
+  });
+
+  it("the sign-in target survives the decoding and is accepted unchanged", () => {
+    const next = new URL(loginPathWithNext(loc), "https://clokr.test").searchParams.get("next");
+    expect(next).toBe(`/settings/geraet-koppeln?code=${CODE}`);
+    expect(safeAppNext(next)).toBe(next);
+  });
+});
+
 describe("authPathWithNext", () => {
   it("adds the target to the OTP page and leaves it out when there is none", () => {
     expect(authPathWithNext("/otp", "/inbox?x=1")).toBe("/otp?next=%2Finbox%3Fx%3D1");
