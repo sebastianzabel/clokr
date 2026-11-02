@@ -1,26 +1,25 @@
 /**
- * Phase 75b Plan 11 (Issue #75) — the role bridge: every path that sets a legacy role writes a
- * system-role assignment, every assignment change rewrites `User.role` to the derived value with
- * an audit trace. Since Issue #539 nothing is stored on a user's behalf first: a write adds or
- * replaces exactly what was requested, and a user without a stored assignment holds nothing.
+ * Phase 75b Plan 11 (Issue #75) - the role bridge: every path that sets a requested role writes a
+ * system-role assignment with an audit trace. Since Issue #539 nothing is stored on a user's behalf
+ * first: a write adds or replaces exactly what was requested, and a user without a stored
+ * assignment holds nothing. Since Issue #641 (Release B) the stored assignments are the only place
+ * a role lives: no column is written back and no audit row carries a derived compat value.
  *
- * AC-75-16: a role change in the employee form takes effect on the target's very next request —
- * the permission resolver reads the stored assignments per request, not the JWT claim — and the
- * next refresh carries the new compat role. D-15 (the bridge, role-assignment:manage), D-26
- * (no implicit materialization since #539), D-29 (compatRole on the triggering audit row), D-31 (one transaction
- * with the lockout guard).
+ * AC-75-16: a role change in the employee form takes effect on the target's very next request -
+ * the permission resolver reads the stored assignments per request, not the JWT claim - and the
+ * next refresh carries no role claim. D-15 (the bridge, role-assignment:manage), D-26 (no implicit
+ * materialization since #539), D-31 (one transaction with the lockout guard).
  *
- * Fixture: the checked-in legacy-role migration is executed after seeding, so the seed admin holds
- * a STORED Admin assignment — the anchor that keeps the lockout guard from firing where a test
- * does not intend it. A "migrated" person is created before a migration run, an "unassigned"
- * person after the last one (no stored assignment — it holds nothing, #539). No person names
- * (CLAUDE.md PII rule).
+ * Fixture: a person that must hold a role gets its stored system-role row through
+ * `grantSystemRole`; a person created without that call holds nothing (#539). The seed admins hold
+ * a stored Admin assignment from the fixture - the anchor that keeps the lockout guard from firing
+ * where a test does not intend it. The role the employee screen shows is the one DERIVED from the
+ * stored rows, read through `GET /employees/:id`. No person names (CLAUDE.md PII rule).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto, { createHash, randomBytes } from "crypto";
 import type { FastifyInstance } from "fastify";
-import type { Role } from "@clokr/db";
 import {
   getTestApp,
   closeTestApp,
@@ -30,7 +29,6 @@ import {
   grantSystemRole,
   removeFixtureApiKeys,
 } from "./setup";
-import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
 import { SYSTEM_ROLE_IDS, normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import { effectivePermissionKeysForUser } from "../contexts/platform/request-permissions";
 import { ROLE_LOCKOUT_MESSAGE } from "../contexts/platform/role-assignment";
@@ -50,7 +48,7 @@ type AuditRow = {
   newValue: Record<string, unknown> | null;
 };
 
-describe("Role bridge: employee form, compat column and role-assignment writes (75b-11, #539)", () => {
+describe("Role bridge: employee form and role-assignment writes (75b-11, #539, #641)", () => {
   let app: FastifyInstance;
   let tenant: Awaited<ReturnType<typeof seedTestData>>;
   let lockTenant: Awaited<ReturnType<typeof seedTestData>>;
@@ -61,11 +59,13 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     return `10.211.${Math.floor(n / 250) % 250}.${(n % 250) + 1}`;
   }
 
-  async function createPerson(tenantId: string, label: string, role: Role) {
+  type RequestedRole = "ADMIN" | "MANAGER" | "EMPLOYEE";
+
+  async function createPerson(tenantId: string, label: string) {
     const s = `${Date.now().toString(36)}${crypto.randomBytes(4).toString("hex")}`;
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const user = await app.prisma.user.create({
-      data: { email: `bridge-${s}@test.de`, passwordHash, role, isActive: true },
+      data: { email: `bridge-${s}@test.de`, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {
@@ -139,17 +139,33 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     });
   }
 
-  async function columnRole(userId: string): Promise<Role> {
-    const user = await app.prisma.user.findUniqueOrThrow({ where: { id: userId } });
-    return user.role;
+  /** The role the employee screen shows, derived from the stored assignments (`null` without one). */
+  async function servedRole(employeeId: string): Promise<unknown> {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/employees/${employeeId}`,
+      headers: { authorization: `Bearer ${tenant.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    return (JSON.parse(res.body) as { user: { role: unknown } }).user.role;
+  }
+
+  /** A person that holds exactly the stored system-role row of `role`, as production creates one. */
+  async function holdRole(tenantId: string, label: string, role: RequestedRole) {
+    const person = await createPerson(tenantId, label);
+    await grantSystemRole(app.prisma, { tenantId, userId: person.user.id, role });
+    return person;
   }
 
   beforeAll(async () => {
     app = await getTestApp();
     tenant = await seedTestData(app, "75b-bridge");
     lockTenant = await seedTestData(app, "75b-bridge-lock");
-    // Anchor: the seed admins become STORED Admin holders.
-    await executeLegacyRoleMigration(app.prisma);
+    // Input proof: the seed admins are STORED Admin holders (the fixture grants it).
+    for (const seeded of [tenant, lockTenant]) {
+      const rows = await storedAssignments(seeded.tenant.id, seeded.adminUser.id);
+      expect(rows.map((row) => row.accessRoleId)).toContain(SYSTEM_ROLE_IDS.ADMIN);
+    }
   });
 
   afterAll(async () => {
@@ -161,9 +177,8 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     }
   });
 
-  it("MANAGER → EMPLOYEE on a migrated manager: replaced, audited, column rewritten, effective on the next request", async () => {
-    const target = await createPerson(tenant.tenant.id, "Wechsel Manager", "MANAGER");
-    await executeLegacyRoleMigration(app.prisma);
+  it("MANAGER → EMPLOYEE on a stored manager: replaced, audited, effective on the next request", async () => {
+    const target = await holdRole(tenant.tenant.id, "Wechsel Manager", "MANAGER");
     const [managerRow] = await storedAssignments(tenant.tenant.id, target.user.id);
     expect(managerRow.accessRoleId).toBe(SYSTEM_ROLE_IDS.MANAGER);
 
@@ -185,7 +200,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       roleName: "Manager",
       scopeType: "TENANT",
     });
-    // D-29: the compat change sits on the LAST row of the change only.
+    // The rows are the whole trace: `toEqual` below fails on any extra key (no derived value).
     expect(deleted.newValue).toBeNull();
     expect(created.newValue).toEqual({
       userId: target.user.id,
@@ -194,7 +209,6 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       scopeType: "TENANT",
       salonIds: [],
       employeeIds: [],
-      compatRole: { from: "MANAGER", to: "EMPLOYEE" },
     });
     for (const row of audits) expect(row.userId).toBe(tenant.adminUser.id);
 
@@ -203,7 +217,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       [SYSTEM_ROLE_IDS.EMPLOYEE, "TENANT"],
     ]);
     expect(rows[0].id).toBe(created.entityId);
-    expect(await columnRole(target.user.id)).toBe("EMPLOYEE");
+    expect(await servedRole(target.employee.id)).toBe("EMPLOYEE");
 
     // AC-75-16: the OLD access token loses the right on its very next request.
     const after = await listEmployees(tokens.accessToken);
@@ -221,9 +235,8 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     expect(Object.keys(claimsOf(JSON.parse(refresh.body).accessToken))).not.toContain("role");
   });
 
-  it("EMPLOYEE → MANAGER on a migrated employee: the old token gains the right on the next request", async () => {
-    const target = await createPerson(tenant.tenant.id, "Wechsel Mitarbeiter", "EMPLOYEE");
-    await executeLegacyRoleMigration(app.prisma);
+  it("EMPLOYEE → MANAGER on a stored employee: the old token gains the right on the next request", async () => {
+    const target = await holdRole(tenant.tenant.id, "Wechsel Mitarbeiter", "EMPLOYEE");
     const tokens = await login(target.email);
     expect((await listEmployees(tokens.accessToken)).statusCode).toBe(403);
 
@@ -231,13 +244,13 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     expect(res.statusCode).toBe(200);
 
     expect((await listEmployees(tokens.accessToken)).statusCode).toBe(200);
-    expect(await columnRole(target.user.id)).toBe("MANAGER");
+    expect(await servedRole(target.employee.id)).toBe("MANAGER");
     const rows = await storedAssignments(tenant.tenant.id, target.user.id);
     expect(rows.map((row) => row.accessRoleId)).toEqual([SYSTEM_ROLE_IDS.MANAGER]);
   });
 
   it("a user without a stored assignment gets exactly the requested role through the form: one audited CREATE, no implicit row (#539 D-11)", async () => {
-    const target = await createPerson(tenant.tenant.id, "Ohne Rolle Formular", "EMPLOYEE");
+    const target = await createPerson(tenant.tenant.id, "Ohne Rolle Formular");
     expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
 
     const res = await patchEmployee(tenant.adminToken, target.employee.id, { role: "MANAGER" });
@@ -251,35 +264,34 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     expect(granted.newValue).toMatchObject({
       accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
       roleName: "Manager",
-      compatRole: { from: "EMPLOYEE", to: "MANAGER" },
     });
+    expect(Object.keys(granted.newValue ?? {})).not.toContain("compatRole");
 
     const rows = await storedAssignments(tenant.tenant.id, target.user.id);
     expect(rows.map((row) => row.id)).toEqual([granted.entityId]);
     expect(rows.map((row) => row.accessRoleId)).toEqual([SYSTEM_ROLE_IDS.MANAGER]);
-    expect(await columnRole(target.user.id)).toBe("MANAGER");
+    expect(await servedRole(target.employee.id)).toBe("MANAGER");
   });
 
   it("an unchanged role writes nothing for a user with a stored row; a user without one gets the requested role (#539 D-11)", async () => {
-    const migrated = await createPerson(tenant.tenant.id, "Gleich Manager", "MANAGER");
-    await executeLegacyRoleMigration(app.prisma);
-    // The column says MANAGER, but no row is stored: the person holds no role, so the echoed
-    // column value is no "unchanged" - the form assigns it (it used to be silently skipped).
-    const unassigned = await createPerson(tenant.tenant.id, "Gleich Ohne Rolle", "MANAGER");
-    const migratedRowsBefore = await storedAssignments(tenant.tenant.id, migrated.user.id);
-    const migratedAuditsBefore = await roleAssignmentAudits(migrated.user.id);
+    const holder = await holdRole(tenant.tenant.id, "Gleich Manager", "MANAGER");
+    // The form echoes MANAGER, but no row is stored: the person holds no role, so the echoed
+    // value is no "unchanged" - the form assigns it (it used to be silently skipped).
+    const unassigned = await createPerson(tenant.tenant.id, "Gleich Ohne Rolle");
+    const storedRowsBefore = await storedAssignments(tenant.tenant.id, holder.user.id);
+    const storedAuditsBefore = await roleAssignmentAudits(holder.user.id);
 
-    for (const person of [migrated, unassigned]) {
+    for (const person of [holder, unassigned]) {
       const res = await patchEmployee(tenant.adminToken, person.employee.id, {
         role: "MANAGER",
         firstName: "Gleich Geaendert",
       });
       expect(res.statusCode).toBe(200);
-      expect(await columnRole(person.user.id)).toBe("MANAGER");
+      expect(await servedRole(person.employee.id)).toBe("MANAGER");
     }
 
-    expect(await storedAssignments(tenant.tenant.id, migrated.user.id)).toEqual(migratedRowsBefore);
-    expect(await newAuditsSince(migrated.user.id, migratedAuditsBefore)).toEqual([]);
+    expect(await storedAssignments(tenant.tenant.id, holder.user.id)).toEqual(storedRowsBefore);
+    expect(await newAuditsSince(holder.user.id, storedAuditsBefore)).toEqual([]);
     const unassignedRows = await storedAssignments(tenant.tenant.id, unassigned.user.id);
     expect(unassignedRows.map((row) => row.accessRoleId)).toEqual([SYSTEM_ROLE_IDS.MANAGER]);
     expect(await roleAssignmentAudits(unassigned.user.id)).toHaveLength(1);
@@ -291,8 +303,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
   // (see the issue's comment): the API rejects the whole demotion with 409 and names the surviving
   // assignment, rather than silently deleting a customer-role assignment on the caller's behalf.
   it("a demotion to Mitarbeiter is rejected with 409 when a customer-role assignment would survive it (Issue #357 sub-fix B)", async () => {
-    const target = await createPerson(tenant.tenant.id, "Kunde Manager", "MANAGER");
-    await executeLegacyRoleMigration(app.prisma);
+    const target = await holdRole(tenant.tenant.id, "Kunde Manager", "MANAGER");
     const name = `Bruecke Kundenrolle ${crypto.randomBytes(3).toString("hex")}`;
     const customerRole = await app.prisma.accessRole.create({
       data: {
@@ -334,27 +345,25 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     const rows = await storedAssignments(tenant.tenant.id, target.user.id);
     expect(rows).toEqual(rowsBefore);
     expect(rows.find((row) => row.id === customerRow.id)).toEqual(customerRow);
-    // The customer role still grants a ZUGEWIESEN permission, so the derived compat role is still
-    // MANAGER — no column change, since nothing was written.
-    expect(await columnRole(target.user.id)).toBe("MANAGER");
+    // The customer role still grants a ZUGEWIESEN permission, so the derived role is still
+    // MANAGER - nothing was written.
+    expect(await servedRole(target.employee.id)).toBe("MANAGER");
     expect(await newAuditsSince(target.user.id, before)).toEqual([]);
   });
 
   it("a demotion to Mitarbeiter succeeds when only the system-role assignment exists (no other rights left behind)", async () => {
-    const target = await createPerson(tenant.tenant.id, "Nur Systemrolle Manager", "MANAGER");
-    await executeLegacyRoleMigration(app.prisma);
+    const target = await holdRole(tenant.tenant.id, "Nur Systemrolle Manager", "MANAGER");
 
     const res = await patchEmployee(tenant.adminToken, target.employee.id, { role: "EMPLOYEE" });
     expect(res.statusCode).toBe(200);
 
     const rows = await storedAssignments(tenant.tenant.id, target.user.id);
     expect(rows.map((row) => row.accessRoleId)).toEqual([SYSTEM_ROLE_IDS.EMPLOYEE]);
-    expect(await columnRole(target.user.id)).toBe("EMPLOYEE");
+    expect(await servedRole(target.employee.id)).toBe("EMPLOYEE");
   });
 
   it("demoting the last stored Admin holder answers 409 and commits nothing — not the field update either (D-31)", async () => {
-    const target = await createPerson(lockTenant.tenant.id, "Letzter Admin", "ADMIN");
-    await executeLegacyRoleMigration(app.prisma);
+    const target = await holdRole(lockTenant.tenant.id, "Letzter Admin", "ADMIN");
     // The seed admin's stored row goes, so the target is the ONLY stored holder. The acting principal
     // is an admin-scope API key instead (#539: without the fallback the seed admin would hold nothing
     // and the call would be a 403, not the lockout 409 this case is about); a key is never a holder.
@@ -386,7 +395,6 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }),
     ).toEqual(employeeBefore);
     expect(await storedAssignments(lockTenant.tenant.id, target.user.id)).toEqual(rowsBefore);
-    expect(await columnRole(target.user.id)).toBe("ADMIN");
     expect(await newAuditsSince(target.user.id, auditsBefore)).toEqual([]);
     expect(
       await app.prisma.auditLog.count({
@@ -396,8 +404,8 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
   });
 
   it("a caller with employee:update but without role-assignment:manage may not set the role (D-15)", async () => {
-    const caller = await createPerson(tenant.tenant.id, "Stammdaten Pflege", "EMPLOYEE");
-    const target = await createPerson(tenant.tenant.id, "Stammdaten Ziel", "EMPLOYEE");
+    const caller = await createPerson(tenant.tenant.id, "Stammdaten Pflege");
+    const target = await createPerson(tenant.tenant.id, "Stammdaten Ziel");
     const name = `Bruecke Stammdaten ${crypto.randomBytes(3).toString("hex")}`;
     const updateOnly = await app.prisma.accessRole.create({
       data: {
@@ -434,13 +442,12 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       (await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }))
         .firstName,
     ).toBe("Stammdaten Neu");
-    expect(await columnRole(target.user.id)).toBe("EMPLOYEE");
+    expect(await servedRole(target.employee.id)).toBeNull();
     expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
   });
 
   it("an admin-scope API key as actor: audit rows carry no userId and name the key (#333 not widened)", async () => {
-    const target = await createPerson(tenant.tenant.id, "Schluessel Manager", "MANAGER");
-    await executeLegacyRoleMigration(app.prisma);
+    const target = await holdRole(tenant.tenant.id, "Schluessel Manager", "MANAGER");
     const raw = `clk_${randomBytes(24).toString("hex")}`;
     const apiKey = await app.prisma.apiKey.create({
       data: {
@@ -463,7 +470,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       expect(row.userId).toBeNull();
       expect(row.newValue?.actor).toEqual({ type: "API_KEY", apiKeyId: apiKey.id });
     }
-    expect(await columnRole(target.user.id)).toBe("EMPLOYEE");
+    expect(await servedRole(target.employee.id)).toBe("EMPLOYEE");
   });
 
   describe("creation paths and the anonymization (D-15, D-14/D-29)", () => {
@@ -507,9 +514,10 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
           employeeIds: [],
         },
       });
-      // The column already holds the created role — no compat change to record.
-      expect(audits[0].newValue?.compatRole).toBeUndefined();
-      expect(user.role).toBe("MANAGER");
+      // The CREATE row carries no derived value; the served role is the derived one.
+      expect(Object.keys(audits[0].newValue ?? {})).not.toContain("compatRole");
+      const created = await app.prisma.employee.findFirstOrThrow({ where: { userId: user.id } });
+      expect(await servedRole(created.id)).toBe("MANAGER");
 
       const loginRes = await app.inject({
         method: "POST",
@@ -557,7 +565,8 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
         const user = await app.prisma.user.findUniqueOrThrow({
           where: { email: `bridge-imp${n}-${uid}@test.de` },
         });
-        expect(user.role).toBe(role);
+        const imported = await app.prisma.employee.findFirstOrThrow({ where: { userId: user.id } });
+        expect(await servedRole(imported.id)).toBe(role);
         const rows = await storedAssignments(tenant.tenant.id, user.id);
         expect(rows.map((row) => [row.accessRoleId, row.scopeType])).toEqual([[roleId, "TENANT"]]);
         const audits = await roleAssignmentAudits(user.id);
@@ -576,26 +585,20 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       expect(await adminRoleAssignmentAuditCount()).toBe(auditsBefore + 2);
     });
 
-    it("the anonymization now also rewrites the column to EMPLOYEE (Issue #357 sub-fix C, revises AC-75-11)", async () => {
-      // Phase 75b removed every stored assignment (74b D-22) but deliberately left `User.role`
-      // standing: with no stored row left the column is the fallback (D-08) a still-valid access
-      // token resolves through, and rewriting it would have flipped two neutrality cells ("ADMIN |
-      // DELETE /api/v1/employees/:id | foreign" and the same for FALLBACK_ADMIN) from 204 to 403 —
-      // a self-anonymizing admin's live token would lose its rights mid-run.
-      //
-      // Issue #357's security review named exactly this as the bug: the SAME still-valid token of
-      // an anonymized MANAGER/ADMIN keeps full rights for the rest of its lifetime, because nothing
-      // re-checks `isActive` per request either (D-10). The fix (anonymize.ts) now rewrites the
-      // column to EMPLOYEE in the same update as `isActive: false` — the two neutrality cells DO
-      // flip from 204 to 403 (a self-anonymizing admin loses tenant-wide rights immediately, which
-      // is the point of the fix), and matrix-amendments.json records that flip.
-      const migrated = await createPerson(tenant.tenant.id, "Anonym Manager", "MANAGER");
-      await executeLegacyRoleMigration(app.prisma);
-      const fallback = await createPerson(tenant.tenant.id, "Anonym Rueckfall", "ADMIN");
-      const [managerRow] = await storedAssignments(tenant.tenant.id, migrated.user.id);
-      const before = await roleAssignmentAudits(migrated.user.id);
+    it("the anonymization removes every role assignment and leaves the person holding nothing (Issue #357 sub-fix C, #641)", async () => {
+      // Phase 74b D-22 removes every stored assignment on anonymization; permissions come only from
+      // stored rows, so the person holds nothing afterwards. Issue #357's security review named the
+      // opposite as the bug - a still-valid token of an anonymized MANAGER/ADMIN keeping rights for
+      // the rest of its lifetime - and the next case proves that token holds no right any more.
+      // The two neutrality cells "ADMIN | DELETE /api/v1/employees/:id | foreign" (and the same for
+      // FALLBACK_ADMIN) flipped from 204 to 403 for this reason; matrix-amendments.json records it.
+      const holder = await holdRole(tenant.tenant.id, "Anonym Manager", "MANAGER");
+      // A person that never held a stored row is anonymized the same way.
+      const fallback = await createPerson(tenant.tenant.id, "Anonym Ohne Rolle");
+      const [managerRow] = await storedAssignments(tenant.tenant.id, holder.user.id);
+      const before = await roleAssignmentAudits(holder.user.id);
 
-      for (const person of [migrated, fallback]) {
+      for (const person of [holder, fallback]) {
         const res = await app.inject({
           method: "DELETE",
           url: `/api/v1/employees/${person.employee.id}`,
@@ -605,12 +608,10 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
         expect(await storedAssignments(tenant.tenant.id, person.user.id)).toEqual([]);
       }
 
-      // Both actors held a MANAGER-or-higher role before anonymization; both are EMPLOYEE now, no
-      // matter which system role they started from — the Altrollen-Rückfall (D-08) can therefore
-      // never again hand an anonymized user's still-valid token anything above Mitarbeiter.
-      expect(await columnRole(migrated.user.id)).toBe("EMPLOYEE");
-      expect(await columnRole(fallback.user.id)).toBe("EMPLOYEE");
-      const audits = await newAuditsSince(migrated.user.id, before);
+      // Both persons hold no role afterwards: the served role is derived from stored rows only.
+      expect(await servedRole(holder.employee.id)).toBeNull();
+      expect(await servedRole(fallback.employee.id)).toBeNull();
+      const audits = await newAuditsSince(holder.user.id, before);
       expect(audits).toHaveLength(1);
       expect(audits[0]).toMatchObject({
         action: "DELETE",
@@ -621,7 +622,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       expect(await roleAssignmentAudits(fallback.user.id)).toEqual([]);
       expect(
         await app.prisma.auditLog.count({
-          where: { entity: "User", entityId: { in: [migrated.user.id, fallback.user.id] } },
+          where: { entity: "User", entityId: { in: [holder.user.id, fallback.user.id] } },
         }),
       ).toBe(0);
     });
@@ -629,12 +630,11 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     // Issue #357 AC 3: a test with a token minted BEFORE anonymization, seen red once, that
     // proves a MANAGER's access token — still within its lifetime — must not resolve to any
     // right afterwards. Before the fix this token kept full MANAGER access through the legacy-role
-    // fallback (D-08) because `User.role` was left standing once the assignment was gone; RED
-    // against the pre-#357 code (`columnRole` stayed MANAGER, so `GET /employees` answered 200
-    // for this very token after the DELETE below).
+    // fallback (D-08) because `User.role` was left standing once the assignment was gone; since
+    // #539/#641 the permission set comes only from stored rows, so the token resolves to nothing
+    // once the anonymization has deleted them (`GET /employees` answers 403 for this very token).
     it("a MANAGER's pre-anonymization access token holds no rights afterwards (Issue #357 sub-fix C)", async () => {
-      const target = await createPerson(tenant.tenant.id, "Anonym Vorher-Token", "MANAGER");
-      await executeLegacyRoleMigration(app.prisma);
+      const target = await holdRole(tenant.tenant.id, "Anonym Vorher-Token", "MANAGER");
       const { accessToken } = await login(target.email);
       // Sanity: the token actually carries MANAGER-level access before anonymization.
       expect((await listEmployees(accessToken)).statusCode).toBe(200);
@@ -646,15 +646,14 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       });
       expect(del.statusCode).toBe(204);
 
-      // The SAME still-valid JWT, unrefreshed, now resolves through the Altrollen-Rückfall over
-      // the rewritten EMPLOYEE column — no stored assignment, no rights above Mitarbeiter.
+      // The SAME still-valid JWT, unrefreshed, now resolves to no stored assignment: no right.
       const after = await listEmployees(accessToken);
       expect(after.statusCode).toBe(403);
       expect(JSON.parse(after.body)).toEqual({ error: "Forbidden" });
     });
   });
 
-  describe("the role-assignment API grants exactly what is requested and writes the column back (#539 D-11, D-14/D-29)", () => {
+  describe("the role-assignment API grants exactly what is requested and writes nothing else (#539 D-11, #641)", () => {
     function assignmentRequest(
       method: "POST" | "PATCH" | "DELETE",
       path: string,
@@ -680,10 +679,10 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       });
     }
 
-    // Research Pitfall 2 (#539): with the fallback gone, storing the column's role on the first
-    // grant would hand the user a right nobody requested. The user holds exactly the granted role.
-    it("a first customer role for a user without stored rows grants exactly that role - nothing of the column role (Pitfall 2, T-539-27)", async () => {
-      const target = await createPerson(tenant.tenant.id, "Erste Kundenrolle", "MANAGER");
+    // Research Pitfall 2 (#539): storing a role on the user's behalf on the first grant would hand
+    // the user a right nobody requested. The user holds exactly the granted role.
+    it("a first customer role for a user without stored rows grants exactly that role and nothing else (Pitfall 2, T-539-27)", async () => {
+      const target = await createPerson(tenant.tenant.id, "Erste Kundenrolle");
       const customerRole = await customerRoleWith(["time-entry:read:ZUGEWIESEN"]);
       expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
 
@@ -706,13 +705,14 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       expect(audits).toHaveLength(1);
       expect(audits[0].entityId).toBe(grantId);
       expect(audits.some((row) => row.newValue?.origin === "SYSTEM")).toBe(false);
-      // The column follows the stored rows (D-14/D-29) and the change is recorded on the grant.
-      expect(await columnRole(target.user.id)).toBe("MANAGER");
+      // The served role is derived from the stored row and the grant's audit row carries no derived value.
+      expect(await servedRole(target.employee.id)).toBe("MANAGER");
+      expect(Object.keys(audits[0].newValue ?? {})).not.toContain("compatRole");
       expect(audits[0].newValue).toMatchObject({ accessRoleId: customerRole.id });
     });
 
     it("the same grant to a user WITH a stored Manager row keeps both rows (unchanged behaviour)", async () => {
-      const target = await createPerson(tenant.tenant.id, "Kundenrolle Zusatz", "MANAGER");
+      const target = await createPerson(tenant.tenant.id, "Kundenrolle Zusatz");
       await grantSystemRole(app.prisma, {
         tenantId: tenant.tenant.id,
         userId: target.user.id,
@@ -734,7 +734,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     });
 
     it("granting Mitarbeiter to a user without stored rows is a plain grant (201, one row), a repeat is the 409 duplicate", async () => {
-      const target = await createPerson(tenant.tenant.id, "Doppelte Zuweisung", "EMPLOYEE");
+      const target = await createPerson(tenant.tenant.id, "Doppelte Zuweisung");
 
       const first = await assignmentRequest("POST", "", {
         userId: target.user.id,
@@ -758,12 +758,11 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       });
       expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual(rowsAfterFirst);
       expect(await roleAssignmentAudits(target.user.id)).toEqual(auditsAfterFirst);
-      expect(await columnRole(target.user.id)).toBe("EMPLOYEE");
+      expect(await servedRole(target.employee.id)).toBe("EMPLOYEE");
     });
 
-    it("PATCH switching a stored row's role rewrites the column, recorded on the UPDATE row", async () => {
-      const target = await createPerson(tenant.tenant.id, "Zuweisung Wechsel", "EMPLOYEE");
-      await executeLegacyRoleMigration(app.prisma);
+    it("PATCH switching a stored row's role changes the derived role, recorded on the UPDATE row only", async () => {
+      const target = await holdRole(tenant.tenant.id, "Zuweisung Wechsel", "EMPLOYEE");
       const [employeeRow] = await storedAssignments(tenant.tenant.id, target.user.id);
       const before = await roleAssignmentAudits(target.user.id);
 
@@ -772,23 +771,20 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       });
       expect(res.statusCode).toBe(200);
 
-      expect(await columnRole(target.user.id)).toBe("MANAGER");
+      expect(await servedRole(target.employee.id)).toBe("MANAGER");
       const audits = await newAuditsSince(target.user.id, before);
       expect(audits).toHaveLength(1);
       expect(audits[0]).toMatchObject({
         action: "UPDATE",
         entityId: employeeRow.id,
         oldValue: { accessRoleId: SYSTEM_ROLE_IDS.EMPLOYEE },
-        newValue: {
-          accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
-          compatRole: { from: "EMPLOYEE", to: "MANAGER" },
-        },
+        newValue: { accessRoleId: SYSTEM_ROLE_IDS.MANAGER },
       });
+      expect(Object.keys(audits[0].newValue ?? {})).not.toContain("compatRole");
     });
 
-    it("revoking the last assignment writes EMPLOYEE (D-08): nothing keeps the old right (#539)", async () => {
-      const target = await createPerson(tenant.tenant.id, "Letzte Zuweisung", "MANAGER");
-      await executeLegacyRoleMigration(app.prisma);
+    it("revoking the last assignment leaves the user with no role: nothing keeps the old right (#539, #641)", async () => {
+      const target = await holdRole(tenant.tenant.id, "Letzte Zuweisung", "MANAGER");
       const [managerRow] = await storedAssignments(tenant.tenant.id, target.user.id);
       const tokens = await login(target.email);
       expect((await listEmployees(tokens.accessToken)).statusCode).toBe(200);
@@ -798,15 +794,15 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       expect(res.statusCode).toBe(204);
 
       expect(await storedAssignments(tenant.tenant.id, target.user.id)).toEqual([]);
-      expect(await columnRole(target.user.id)).toBe("EMPLOYEE");
+      expect(await servedRole(target.employee.id)).toBeNull();
       const audits = await newAuditsSince(target.user.id, before);
       expect(audits).toHaveLength(1);
       expect(audits[0]).toMatchObject({
         action: "DELETE",
         entityId: managerRow.id,
         oldValue: { accessRoleId: SYSTEM_ROLE_IDS.MANAGER },
-        newValue: { compatRole: { from: "MANAGER", to: "EMPLOYEE" } },
       });
+      expect(audits[0].newValue).toBeNull();
       expect((await listEmployees(tokens.accessToken)).statusCode).toBe(403);
     });
   });
@@ -820,7 +816,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
   // treated a template row as one of the bridge's own rows.
   describe("Phase 76b — the employee-form bridge leaves template assignments alone (P-01)", () => {
     it("a TENANT Inhaber (OWNER) assignment survives a role-bridge save; only the legacy Mitarbeiter row is replaced", async () => {
-      const target = await createPerson(tenant.tenant.id, "Vorlage Inhaber", "EMPLOYEE");
+      const target = await createPerson(tenant.tenant.id, "Vorlage Inhaber");
       const ownerRow = await app.prisma.roleAssignment.create({
         data: {
           tenantId: tenant.tenant.id,
@@ -872,8 +868,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     });
 
     it("a demotion to Mitarbeiter is rejected while a TENANT Personalabteilung (HR) assignment survives it, naming that row (P-01)", async () => {
-      const target = await createPerson(tenant.tenant.id, "Vorlage Personalabteilung", "MANAGER");
-      await executeLegacyRoleMigration(app.prisma);
+      const target = await holdRole(tenant.tenant.id, "Vorlage Personalabteilung", "MANAGER");
       const [managerRow] = await storedAssignments(tenant.tenant.id, target.user.id);
       expect(managerRow.accessRoleId).toBe(SYSTEM_ROLE_IDS.MANAGER);
       const hrRow = await app.prisma.roleAssignment.create({
@@ -905,8 +900,8 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     });
   });
 
-  // Phase 76b Plan 08 (Issue #76), D-16/P-05: the employee form always echoes back the compat
-  // column on every "Stammdaten speichern" (+page.svelte:602, :740). Before this fix, sending that
+  // Phase 76b Plan 08 (Issue #76), D-16/P-05: the employee form always echoes back the role it shows
+  // on every "Stammdaten speichern" (+page.svelte:602, :740). Before this fix, sending that
   // SAME value back still ran replaceSystemRoleAssignment on every save for a user WITH stored
   // rows — granting Manager to a Personalabteilung/customer-role holder (T-76b-28) and 409-ing a
   // SALONS/PERSONS template holder's Stammdaten save (T-76b-29).
@@ -923,8 +918,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       });
     }
 
-    /** Grants through the audited role-assignment API, as production does — never a direct insert,
-     * so the column stays in sync with the stored rows exactly as it would in production. */
+    /** Grants through the audited role-assignment API, as production does - never a direct insert. */
     async function grant(
       userId: string,
       accessRoleId: string,
@@ -942,7 +936,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
 
     /** A person holding exactly the stored Mitarbeiter system-role row, as production creates one. */
     async function templatePerson(label: string) {
-      const person = await createPerson(tenant.tenant.id, label, "EMPLOYEE");
+      const person = await createPerson(tenant.tenant.id, label);
       await grantSystemRole(app.prisma, {
         tenantId: tenant.tenant.id,
         userId: person.user.id,
@@ -958,7 +952,6 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
         userAudits: await app.prisma.auditLog.count({
           where: { entity: "User", entityId: userId },
         }),
-        column: await columnRole(userId),
       };
     }
 
@@ -992,7 +985,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
     });
 
     it.each(["alone", "with Mitarbeiter"] as const)(
-      "Personalabteilung (HR) %s: PATCH echoing the column changes no assignment, and P-02's 403/own-only holds",
+      "Personalabteilung (HR) %s: PATCH echoing the form role changes no assignment, and P-02's 403/own-only holds",
       async (variant) => {
         const target = await templatePerson(`Unveraendert HR ${variant}`);
         const mitarbeiterRow = (await storedAssignments(tenant.tenant.id, target.user.id)).find(
@@ -1003,7 +996,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
         if (variant === "alone") {
           await revoke(mitarbeiterRow!.id);
         }
-        expect(await columnRole(target.user.id)).toBe("MANAGER");
+        expect(await servedRole(target.employee.id)).toBe("MANAGER");
         const before = await snapshot(target.user.id);
 
         const res = await patchEmployee(tenant.adminToken, target.employee.id, {
@@ -1023,7 +1016,6 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
         ).toBeUndefined();
         expect(after.audits).toEqual(before.audits);
         expect(after.userAudits).toBe(before.userAudits);
-        expect(after.column).toBe("MANAGER");
 
         const { accessToken } = await login(target.email);
         const timeEntriesRes = await timeEntriesOf(accessToken, other.employee.id);
@@ -1038,7 +1030,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       },
     );
 
-    it("a TENANT customer role granting role:read:ZUGEWIESEN, plus Mitarbeiter: PATCH echoing the column changes no assignment (D-16)", async () => {
+    it("a TENANT customer role granting role:read:ZUGEWIESEN, plus Mitarbeiter: PATCH echoing the form role changes no assignment (D-16)", async () => {
       const target = await templatePerson("Unveraendert Kundenrolle");
       const name = `Unveraendert Kundenrolle ${crypto.randomBytes(3).toString("hex")}`;
       const customerRole = await app.prisma.accessRole.create({
@@ -1050,7 +1042,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
         },
       });
       await grant(target.user.id, customerRole.id);
-      expect(await columnRole(target.user.id)).toBe("MANAGER");
+      expect(await servedRole(target.employee.id)).toBe("MANAGER");
 
       const { accessToken } = await login(target.email);
       expect((await listEmployees(accessToken)).statusCode).toBe(403);
@@ -1083,7 +1075,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       async (label, accessRoleId, scope) => {
         const target = await templatePerson(`Unveraendert ${label}`);
         await grant(target.user.id, accessRoleId, scope());
-        expect(await columnRole(target.user.id)).toBe("EMPLOYEE");
+        expect(await servedRole(target.employee.id)).toBe("EMPLOYEE");
         const before = await snapshot(target.user.id);
 
         const res = await patchEmployee(tenant.adminToken, target.employee.id, {
@@ -1101,11 +1093,10 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       },
     );
 
-    // Phase 76b Plan 08, Task 2: a genuine role change (a value that DIFFERS from the column)
+    // Phase 76b Plan 08, Task 2: a genuine role change (a value that DIFFERS from the derived role)
     // still runs the bridge exactly as before D-16.
-    it("(c1) a genuine change on a migrated legacy user still runs the bridge: DELETE the Mitarbeiter row, CREATE Manager, compatRole recorded", async () => {
+    it("(c1) a genuine change on a stored Mitarbeiter user still runs the bridge: DELETE the Mitarbeiter row, CREATE Manager", async () => {
       const target = await templatePerson("Echt Migriert");
-      await executeLegacyRoleMigration(app.prisma);
       const before = await roleAssignmentAudits(target.user.id);
 
       const res = await patchEmployee(tenant.adminToken, target.employee.id, {
@@ -1126,15 +1117,17 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
         accessRoleId: SYSTEM_ROLE_IDS.MANAGER,
         roleName: "Manager",
         scopeType: "TENANT",
-        compatRole: { from: "EMPLOYEE", to: "MANAGER" },
       });
+      expect(Object.keys((created.newValue ?? {}) as Record<string, unknown>)).not.toContain(
+        "compatRole",
+      );
       for (const row of audits) expect(row.userId).toBe(tenant.adminUser.id);
 
       const rows = await storedAssignments(tenant.tenant.id, target.user.id);
       expect(rows.map((row) => [row.accessRoleId, row.scopeType])).toEqual([
         [SYSTEM_ROLE_IDS.MANAGER, "TENANT"],
       ]);
-      expect(await columnRole(target.user.id)).toBe("MANAGER");
+      expect(await servedRole(target.employee.id)).toBe("MANAGER");
       expect(
         (await app.prisma.employee.findUniqueOrThrow({ where: { id: target.employee.id } }))
           .firstName,
@@ -1149,7 +1142,7 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       const mitarbeiterRow = rowsAfterGrant.find(
         (row) => row.accessRoleId === SYSTEM_ROLE_IDS.EMPLOYEE,
       )!;
-      expect(await columnRole(target.user.id)).toBe("MANAGER");
+      expect(await servedRole(target.employee.id)).toBe("MANAGER");
       const before = await roleAssignmentAudits(target.user.id);
 
       const res = await patchEmployee(tenant.adminToken, target.employee.id, { role: "ADMIN" });
@@ -1163,8 +1156,10 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       expect(created.newValue).toMatchObject({
         accessRoleId: SYSTEM_ROLE_IDS.ADMIN,
         roleName: "Admin",
-        compatRole: { from: "MANAGER", to: "ADMIN" },
       });
+      expect(Object.keys((created.newValue ?? {}) as Record<string, unknown>)).not.toContain(
+        "compatRole",
+      );
       for (const audit of audits) {
         expect(audit.entityId).not.toBe(hrRow.id);
         expect(audit.oldValue?.accessRoleId).not.toBe(SYSTEM_ROLE_IDS.HR);
@@ -1176,11 +1171,11 @@ describe("Role bridge: employee form, compat column and role-assignment writes (
       expect(rows.map((row) => row.accessRoleId).sort()).toEqual(
         [SYSTEM_ROLE_IDS.ADMIN, SYSTEM_ROLE_IDS.HR].sort(),
       );
-      expect(await columnRole(target.user.id)).toBe("ADMIN");
+      expect(await servedRole(target.employee.id)).toBe("ADMIN");
     });
 
     it("(c3) the role-assignment:manage gate still fires for an unchanged role — D-16 does not relax it", async () => {
-      const caller = await createPerson(tenant.tenant.id, "Echt Stammdaten Pflege", "EMPLOYEE");
+      const caller = await createPerson(tenant.tenant.id, "Echt Stammdaten Pflege");
       const target = await templatePerson("Echt Stammdaten Ziel");
       const name = `Echt Bruecke Stammdaten ${crypto.randomBytes(3).toString("hex")}`;
       const updateOnly = await app.prisma.accessRole.create({
