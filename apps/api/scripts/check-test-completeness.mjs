@@ -983,7 +983,8 @@ import { readFileSync } from "node:fs";
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #715: +1 file (sim-invariants-715.test.ts, 8 cases), source-counted on the base 736/11029.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
-const MIN_FILES = 750;
+// Issue #541: +5 files (nfc-punch-salon-binding-541, terminal-salon-migration-541, terminal-salon, nfc-punch-salon-race-541, terminals-salon-541), +48 cases; measured full run 759 files, 11149 tests (includes the merged origin/main test minio-query-string-override).
+const MIN_FILES = 759;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1079,7 +1080,8 @@ const MIN_FILES = 750;
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
 // Issue #715: +8 cases (sim-invariants-715.test.ts) on the base 11029.
 // Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
-const MIN_TESTS = 11081;
+// Issue #541: +48 cases (13 + 4 + 12 + 2 + 17); measured full run 11149 tests collected (11146 passed, 3 skipped).
+const MIN_TESTS = 11149;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
