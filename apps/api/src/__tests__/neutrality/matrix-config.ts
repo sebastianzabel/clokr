@@ -218,6 +218,10 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
     reason: "Device-authenticated (presence-source key and MAC), no user role involved.",
   },
   {
+    route: "POST /api/v1/presence/pairing-codes",
+    reason: "Device-authenticated (presence-source key), no user role involved.",
+  },
+  {
     route: "GET /api/v1/terminals/allowed-cards",
     reason: "Device-authenticated (terminal API key), no user role involved.",
   },
@@ -497,6 +501,24 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it sends the neutral test message to the caller's own push devices (registered only with the VAPID set, D-01), takes no " +
       "permission decision and has no role-based access behavior to compare (an API key gets " +
       "400). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "POST /api/v1/employees/me/wifi/pairing/preview",
+    reason:
+      "New route of Phase 610 (Issue #610, D-06), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it shows (read-only) what a one-time pairing code would couple for the caller's own WLAN device pairing, takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "401). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "POST /api/v1/employees/me/wifi/pairing",
+    reason:
+      "New route of Phase 610 (Issue #610, D-06), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it confirms, with consent, the caller's own WLAN device pairing, takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "401). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
       "RECORD/MERGE mode refuses to run once the role guard is gone.",
   },
   {

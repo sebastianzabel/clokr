@@ -58,7 +58,7 @@ export async function listPresenceDevices(
 ) {
   return db.presenceDevice.findMany({
     where: { employeeId, tenantId },
-    select: { id: true, mac: true, label: true, addedAt: true },
+    select: { id: true, mac: true, label: true, addedAt: true, pairedVia: true, lastSeenAt: true }, // Issue #610 (D-07)
     orderBy: { addedAt: "asc" },
   });
 }
@@ -92,7 +92,7 @@ export async function createPresenceDevice(
 ) {
   return db.presenceDevice.create({
     data,
-    select: { id: true, mac: true, label: true, addedAt: true },
+    select: { id: true, mac: true, label: true, addedAt: true, pairedVia: true, lastSeenAt: true }, // Issue #610 (D-07)
   });
 }
 

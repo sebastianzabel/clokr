@@ -17,6 +17,8 @@ import {
   getPresenceDevice,
   deletePresenceDevice,
 } from "../facade/presence-devices";
+import { confirmPairing, previewPairing } from "../presence-pairing"; // Issue #610
+import { PAIRING_CODE_INVALID_ERROR, PRESENCE_DEVICE_TAKEN_ERROR } from "../pairing-code"; // Issue #610
 
 export async function employeeWifiRoutes(app: FastifyInstance) {
   // ── WiFi self-service schemas ───────────────────────────────────────────────
@@ -30,6 +32,16 @@ export async function employeeWifiRoutes(app: FastifyInstance) {
   });
 
   const deviceIdParamSchema = z.object({ id: z.string().uuid() });
+
+  // Issue #610 (D-06, D-09): the pairing code travels ONLY in the JSON body - never in an API URL, so it
+  // never reaches an API request log - and a client can never name a MAC or an IP. Both bodies are
+  // strict (an unknown key is a 400) and both routes parse an EMPTY strict query first.
+  const pairingQuerySchema = z.object({}).strict();
+  const pairingPreviewBodySchema = z.object({ code: z.string().max(256) }).strict();
+  const pairingConfirmBodySchema = z
+    .object({ code: z.string().max(256), consent: z.literal(true) })
+    .strict();
+  const isTest = process.env.NODE_ENV === "test";
 
   // ── WiFi self-service routes (GDPR opt-in + MAC enrollment) ────────────────
 
@@ -193,6 +205,55 @@ export async function employeeWifiRoutes(app: FastifyInstance) {
       });
 
       return reply.code(204).send();
+    },
+  });
+
+  // POST /api/v1/employees/me/wifi/pairing/preview - what would this QR pairing code couple? (Issue #610)
+  // Read-only despite the method: the code is sent in the body so it stays out of every API URL.
+  app.post("/me/wifi/pairing/preview", {
+    schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    config: { rateLimit: { max: isTest ? 5000 : 30, timeWindow: "1 minute" } },
+    handler: async (req, reply) => {
+      const employeeId = req.user.employeeId;
+      const tenantId = req.user.tenantId;
+      if (!employeeId) return reply.code(401).send({ error: "Nicht authentifiziert" });
+      pairingQuerySchema.parse(req.query);
+      const body = pairingPreviewBodySchema.parse(req.body);
+
+      const preview = await previewPairing(app.prisma, {
+        tenantId,
+        employeeId,
+        code: body.code,
+        now: new Date(),
+      });
+      if (!preview) return reply.code(404).send(PAIRING_CODE_INVALID_ERROR);
+      return reply.send(preview);
+    },
+  });
+
+  // POST /api/v1/employees/me/wifi/pairing - confirm a QR pairing code with consent (Issue #610)
+  app.post("/me/wifi/pairing", {
+    schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    config: { rateLimit: { max: isTest ? 5000 : 10, timeWindow: "1 minute" } },
+    handler: async (req, reply) => {
+      const employeeId = req.user.employeeId;
+      const tenantId = req.user.tenantId;
+      if (!employeeId) return reply.code(401).send({ error: "Nicht authentifiziert" });
+      pairingQuerySchema.parse(req.query);
+      const body = pairingConfirmBodySchema.parse(req.body);
+
+      const result = await confirmPairing(app, {
+        tenantId,
+        employeeId,
+        userId: req.user.sub,
+        code: body.code,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+      if (result.kind === "INVALID") return reply.code(404).send(PAIRING_CODE_INVALID_ERROR);
+      if (result.kind === "TAKEN") return reply.code(409).send(PRESENCE_DEVICE_TAKEN_ERROR);
+      return reply.code(result.status).send(result.body);
     },
   });
 }
