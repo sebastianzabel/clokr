@@ -1457,7 +1457,10 @@
                   <option value={s.prisma}>{s.label}</option>
                 {/each}
               </select>
-              <p class="form-hint text-muted">Bestimmt gesetzliche Feiertage.</p>
+              <p class="form-hint text-muted">
+                Vorgabe für neu angelegte Salons. Feiertage richten sich nach dem Bundesland des
+                jeweiligen Salons (Admin → Salons).
+              </p>
             </div>
             <div class="form-group">
               <label class="form-label" for="g-timezone">Zeitzone</label>
