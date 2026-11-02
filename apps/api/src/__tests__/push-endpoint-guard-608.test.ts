@@ -51,6 +51,25 @@ describe("isAllowedPushEndpoint (D-17)", () => {
   ])("refuses %s", (endpoint) => {
     expect(isAllowedPushEndpoint(endpoint)).toBe(false);
   });
+
+  // Review 2, WR-01: WHATWG accepts these (soft hyphen / zero width characters vanish, `%2e` is
+  // decoded) and resolves an allow-listed host, while the legacy `url.parse()` THROWS on them. The
+  // guard must answer "not allowed", never throw.
+  it.each([
+    "https://\u00ad%2efcm.googleapis.com/x",
+    "https://\u00ad%2epush.apple.com/x",
+    "https://\u00ad%2eupdates.push.services.mozilla.com/x",
+    "https://\u00ad%2enotify.windows.com/x",
+    "https://\u00ad%2e%2efcm.googleapis.com/x",
+    "https://\u200b%2efcm.googleapis.com/x",
+    "https://\u200b\u00ad%2efcm.googleapis.com",
+    "https://\n\u00ad%2efcm.googleapis.com/x",
+    "https://\n\u00ad%443%2efcm.googleapis.com",
+  ])("refuses without throwing: %j", (endpoint) => {
+    expect(() => canonicalPushEndpoint(endpoint)).not.toThrow();
+    expect(canonicalPushEndpoint(endpoint)).toBeNull();
+    expect(isAllowedPushEndpoint(endpoint)).toBe(false);
+  });
 });
 
 describe("canonicalPushEndpoint (CR-01, WR-01)", () => {
@@ -65,6 +84,14 @@ describe("canonicalPushEndpoint (CR-01, WR-01)", () => {
     ["https://fcm.googleapis.com\\@evil.example/x", "https://fcm.googleapis.com/@evil.example/x"],
     ["https://fcm.googleapis.com/x\t", "https://fcm.googleapis.com/x"],
     ["https://fcm.googleapis.com/x\n", "https://fcm.googleapis.com/x"],
+    // Review 2, WR-02: the fragment is never sent to the push service, so it is not part of the
+    // identity; the query is kept (a push service may carry the subscription token in it).
+    ["https://fcm.googleapis.com/fcm/send/abc#a", "https://fcm.googleapis.com/fcm/send/abc"],
+    ["https://fcm.googleapis.com/fcm/send/abc#", "https://fcm.googleapis.com/fcm/send/abc"],
+    [
+      "https://wns2-am3p.notify.windows.com/w/?token=x#y",
+      "https://wns2-am3p.notify.windows.com/w/?token=x",
+    ],
   ])("canonicalises %j to %s", (raw, expected) => {
     expect(canonicalPushEndpoint(raw)).toBe(expected);
   });
@@ -72,6 +99,14 @@ describe("canonicalPushEndpoint (CR-01, WR-01)", () => {
   it("returns null for every refused input", () => {
     expect(canonicalPushEndpoint("https:/fcm.googleapis.com/x")).toBeNull();
     expect(canonicalPushEndpoint("https://127.0.0.1/x")).toBeNull();
+  });
+
+  it("maps fragment variants of one endpoint to the same string", () => {
+    const a = canonicalPushEndpoint("https://fcm.googleapis.com/fcm/send/abc#a");
+    const b = canonicalPushEndpoint("https://fcm.googleapis.com/fcm/send/abc#b");
+    expect(a).not.toBeNull();
+    expect(a).toBe(b);
+    expect(a).toBe(canonicalPushEndpoint("https://fcm.googleapis.com/fcm/send/abc"));
   });
 
   it("is idempotent: the canonical form canonicalises to itself", () => {

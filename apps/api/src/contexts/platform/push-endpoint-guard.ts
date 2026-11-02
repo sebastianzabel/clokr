@@ -38,16 +38,28 @@ function isIpLiteral(hostname: string): boolean {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(":");
 }
 
-/** True when the legacy parser (the one `web-push` uses) resolves the same protocol and host. */
+/**
+ * True when the legacy parser (the one `web-push` uses) resolves the same protocol and host. The
+ * legacy `url.parse()` DOES throw (`ERR_INVALID_URL`) for a host it cannot IDNA-convert while WHATWG
+ * accepts the same string (it drops soft hyphens / zero width characters and percent-decodes the
+ * host; review 2, WR-01), so a throw means "the parsers disagree" and the endpoint is refused: the
+ * guard's contract is `string | null` and it never throws.
+ */
 function legacyAgrees(candidate: string, url: URL): boolean {
-  // The legacy parser has no throwing mode that matters here; a null host simply never equals a name.
-  const legacy = legacyParse(candidate);
-  return legacy.protocol === url.protocol && legacy.hostname === url.hostname;
+  try {
+    const legacy = legacyParse(candidate);
+    return legacy.protocol === url.protocol && legacy.hostname === url.hostname;
+  } catch {
+    return false;
+  }
 }
 
 /**
- * The canonical form of an allowed push endpoint (`url.href`), or null when the endpoint is not
- * allowed. Every later step (storage, lookup, sending) must use this string and never the raw input.
+ * The canonical form of an allowed push endpoint, or null when the endpoint is not allowed. Every
+ * later step (storage, lookup, sending) must use this string and never the raw input. The fragment
+ * is dropped: a push service never sees it (`web-push` sends path and query only), so `...#a` and
+ * `...#b` are the SAME subscription and must be one stored string (review 2, WR-02). The query is
+ * kept on purpose - push services may carry the subscription token in it (WNS does).
  */
 export function canonicalPushEndpoint(raw: string): string | null {
   const url = parseEndpoint(raw);
@@ -61,6 +73,7 @@ export function canonicalPushEndpoint(raw: string): string | null {
     (suffix) => host === suffix || host.endsWith(`.${suffix}`),
   );
   if (!allowed) return null;
+  url.hash = "";
   // Both parsers must agree on the raw input AND on the canonical string we would actually send.
   if (!legacyAgrees(raw, url) || !legacyAgrees(url.href, url)) return null;
   return url.href;

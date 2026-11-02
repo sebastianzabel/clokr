@@ -252,6 +252,33 @@ describe("Issue #608 tracer: subscribe a device, send the neutral test push", ()
     expect(removed.statusCode).toBe(204);
   });
 
+  it("answers 400, never 500, for a host WHATWG accepts and the legacy parser throws on (review 2, WR-01)", async () => {
+    const before = await app.prisma.pushSubscription.count({ where: { tenantId: seed.tenant.id } });
+    const base = fakeDeviceSubscription();
+    // Soft hyphen + percent-encoded dot: WHATWG resolves fcm.googleapis.com, url.parse() throws.
+    const endpoint = "https://\u00ad%2efcm.googleapis.com/fcm/send/abc";
+    const post = await app.inject({
+      method: "POST",
+      url: "/api/v1/me/push/subscriptions",
+      headers: auth(seed.empToken),
+      payload: { ...base, endpoint },
+      remoteAddress: nextIp(),
+    });
+    expect(post.statusCode).toBe(400);
+    expect(post.json().code).toBe("PUSH_ENDPOINT_NOT_ALLOWED");
+    const del = await app.inject({
+      method: "DELETE",
+      url: "/api/v1/me/push/subscriptions",
+      headers: auth(seed.empToken),
+      payload: { endpoint },
+      remoteAddress: nextIp(),
+    });
+    expect(del.statusCode).toBe(404);
+    expect(await app.prisma.pushSubscription.count({ where: { tenantId: seed.tenant.id } })).toBe(
+      before,
+    );
+  });
+
   it("IN-05: refuses malformed keys - wrong length, wrong prefix, off-curve point, short auth", async () => {
     const before = await app.prisma.pushSubscription.count({ where: { tenantId: seed.tenant.id } });
     const good = fakeDeviceSubscription();

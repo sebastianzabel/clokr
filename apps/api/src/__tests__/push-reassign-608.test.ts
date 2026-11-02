@@ -177,6 +177,28 @@ describe("Issue #608: re-registering a browser, device cap and rate limits", () 
     );
   });
 
+  it("review 2 WR-02: a fragment variant of a foreign endpoint is the same endpoint and is refused", async () => {
+    const sub = fakeDeviceSubscription();
+    expect((await subscribe(a.empToken, sub)).statusCode).toBe(201);
+
+    // The attacker learned the URL and appends a fragment, with fresh keys of their own.
+    const attacker = { ...fakeDeviceSubscription(), endpoint: `${sub.endpoint}#x` };
+    const res = await subscribe(b.empToken, attacker);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe("PUSH_ENDPOINT_CONFLICT");
+
+    // The owner's row is untouched, nothing was created for the attacker.
+    const rows = await rowsOf(sub.endpoint);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].userId).toBe(a.empUser.id);
+    expect(await app.prisma.pushSubscription.count({ where: { userId: b.empUser.id } })).toBe(0);
+
+    // The same person with a fragment variant refreshes the one row instead of adding a second.
+    const same = await subscribe(a.empToken, { ...sub, endpoint: `${sub.endpoint}#other` });
+    expect(same.statusCode).toBe(200);
+    expect(await rowsOf(sub.endpoint)).toHaveLength(1);
+  });
+
   it("IN-01: two parallel registrations at 9 devices end at exactly 10", async () => {
     await app.prisma.pushSubscription.createMany({
       data: Array.from({ length: 9 }, () => fakeDeviceSubscription()).map((s) => ({
