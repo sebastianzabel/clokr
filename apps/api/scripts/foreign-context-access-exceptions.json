@@ -8,6 +8,7 @@
     "timeEntry",
     "break",
     "presenceDevice",
+    "presencePairingCode",
     "leaveType",
     "leaveEntitlement",
     "employeeVocationalSchoolPattern",
