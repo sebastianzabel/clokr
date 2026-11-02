@@ -2092,12 +2092,28 @@ Katalog und Anmeldung des Admins auf dem Schema ohne Spalte.
 
 **Grenzen.**
 
-- **Ein Rollback ist nur per Wiederherstellung möglich.** Ein Image von v1.17.x oder älter fordert die Spalte bei jedem Lesen
-  von `User` an und fällt nach der Migration aus; es gibt keine Rückwärtsmigration. Vor dem Deploy ist ein `pg_dump` Pflicht.
+- **Der Rollback ist datenerhaltend, aber keine Rückwärtsmigration (Review-Befund WR-01).** Ein Image von v1.17.x oder älter
+  fordert die Spalte bei jedem Lesen von `User` an, liest ihren Wert aber für keine Entscheidung (Beleg am Quelltext des Tags
+  `v1.17.0`: nur `syncCompatRoleColumn` vergleicht und schreibt zurück, das Übernahmeskript liest sie von Hand). Der Rollback
+  legt Typ und Spalte mit dem Standardwert `EMPLOYEE` neu an und löscht die Zeile der Migration aus `_prisma_migrations`
+  (`docs/migrations.md`, „Phase 641“, Schritt 5, am 02.11.2026 auf einer Wegwerf-Datenbank geprobt: `migrate status` und
+  `migrate diff --exit-code` gegen das Schema von v1.17.0 ohne Unterschied). Es geht nichts verloren, was nach dem Deploy
+  geschrieben wurde; die alten Spaltenwerte sind weg und laufen bei der nächsten Zuweisungsänderung von allein auf den
+  abgeleiteten Wert zurück. Der `pg_dump` vor dem Deploy bleibt Pflicht als Rückfall, falls die Umkehr scheitert.
 - **Fehlerfenster beim Rolling Update.** Solange ein altes Pod-Exemplar neben einem neuen läuft, kann das alte Pod an der
   fehlenden Spalte scheitern; die Migration läuft im Einstiegspunkt des neuen Images.
-- **Die `SystemRoleName`-Grenze des Gates.** Der Detektor sieht einen Vergleich auf einem Parameter dieses Typs nicht; die
-  Einordnung steht in `docs/permissions.md`, und `permission-site-mapping.test.ts` zählt die Treffer je Datei.
+- **Die `SystemRoleName`-Grenze des Gates ist eine benannte Ausnahme.** Bezeichner dieses Typs (und `LegacySystemRoleName`)
+  gelten als rollenwertig; allein `system-role-assignment.ts` ist davon ausgenommen (Review-Befund WR-02, siehe oben). Die
+  Einordnung der Vergleiche steht in `docs/permissions.md`, und `permission-site-mapping.test.ts` zählt die Treffer je Datei.
+- **Drei Kopien der Rollenmenge (Review-Befund IN-01, bewusst nicht geändert).** `SystemRoleName`, das testseitige
+  `LegacySystemRoleName` und das gepinnte `SeedSystemRoleName` in `packages/db` führen dieselben drei Werte, und die drei
+  `z.enum([...])` der Anforderungsfelder werden nur in einer Richtung geprüft (ihre Werte müssen in `SystemRoleName`
+  passen). Ein vierter Wert im Typ würde kompilieren und von keiner API angenommen. Eine gemeinsame Tupel-Konstante wäre
+  die Abhilfe; der Vertrag der Anforderungen bleibt in diesem Release byte-gleich (D-04).
+- **`newValue.role` im Mitarbeiter-UPDATE ist die Anforderung (Review-Befund IN-04, bewusst nicht geändert).** Die
+  Protokollzeile `UPDATE` auf `Employee` trägt `role: body.role`, den angeforderten Wert (auch bei einer unveränderten
+  Anforderung, sonst `undefined`), nicht das Ergebnis. Maßgeblich für den Verlauf einer Rolle sind die lückenlosen
+  `RoleAssignment`-Zeilen (CREATE/UPDATE/DELETE); der Mitarbeiter-UPDATE belegt nur, was angefragt wurde.
 
 ---
 

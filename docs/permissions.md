@@ -535,7 +535,7 @@ Spalte zurückgeschrieben wurde).
 
 **Das Mitarbeiterformular (P-01).** Die Rollen-Brücke im Mitarbeiterformular
 (`PATCH /employees/:id` mit `role`) ersetzt seit Phase 76b nur noch eine gespeicherte Zuweisung
-auf Admin, Manager oder Mitarbeiter (`isLegacySystemRoleId()`) — eine Template-Zuweisung
+auf Admin, Manager oder Mitarbeiter (`isFormSystemRoleId()`) — eine Template-Zuweisung
 (Inhaber, Salonmanager, Personalabteilung, Ausbilder) übersteht einen Formular-Speichervorgang
 unverändert und zählt weiterhin als Sperre gegen eine Herabstufung auf Mitarbeiter (409). Eine
 angeforderte Rolle, die der aus den gespeicherten Zuweisungen des Ziels abgeleiteten Rolle gleicht

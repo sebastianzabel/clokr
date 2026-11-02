@@ -11,7 +11,7 @@
  * the `user.role` key of the employee responses.
  *
  * Two directions:
- * - {@link systemRoleIdForLegacyRole}: a requested role value -> the system role it stands for.
+ * - {@link systemRoleIdFor}: a requested role value -> the system role it stands for.
  * - {@link deriveFormRole}: stored assignments -> the form role to publish. ADMIN only for a
  *   well-formed TENANT assignment on the Admin system role (identified by id, D-01 - never by the
  *   display name); MANAGER when any well-formed TENANT assignment's role grants at least one
@@ -69,10 +69,10 @@ const ZUGEWIESEN_KEYS: readonly PermissionKey[] = PERMISSIONS.filter(
 ).map(permissionKey);
 
 /**
- * The system role a legacy role value stands for. The switch is
+ * The system role a form role value stands for. The switch is
  * exhaustive: a new enum value fails the typecheck here instead of silently mapping somewhere.
  */
-export function systemRoleIdForLegacyRole(role: SystemRoleName): string {
+export function systemRoleIdFor(role: SystemRoleName): string {
   switch (role) {
     case "ADMIN":
       return SYSTEM_ROLE_IDS.ADMIN;
@@ -82,16 +82,16 @@ export function systemRoleIdForLegacyRole(role: SystemRoleName): string {
       return SYSTEM_ROLE_IDS.EMPLOYEE;
     default: {
       const unreachable: never = role;
-      throw new Error(`systemRoleIdForLegacyRole: unknown role ${String(unreachable)}`);
+      throw new Error(`systemRoleIdFor: unknown role ${String(unreachable)}`);
     }
   }
 }
 
 /**
- * Phase 76b (Issue #76), P-01: the three legacy system-role ids a role value can stand for — Admin,
- * Manager and Mitarbeiter, exactly the ids {@link systemRoleIdForLegacyRole} can return. The
+ * Phase 76b (Issue #76), P-01: the three form system-role ids a role value can stand for — Admin,
+ * Manager and Mitarbeiter, exactly the ids {@link systemRoleIdFor} can return. The
  * Phase 76b templates (Inhaber, Salonmanager, Personalabteilung, Ausbilder) are deliberately NOT
- * legacy roles: the employee-form bridge below ({@link replaceSystemRoleAssignment},
+ * form roles: the employee-form bridge below ({@link replaceSystemRoleAssignment},
  * {@link assignmentsBlockingDemotionToEmployee}) uses this predicate, not the seven-id
  * `isSystemRoleId` from `system-roles.ts`, so it treats a template assignment like any other
  * customer-role assignment — untouched, and counting as blocking on a demotion. Templates are
@@ -100,23 +100,21 @@ export function systemRoleIdForLegacyRole(role: SystemRoleName): string {
  * The role-value tuple is typed `satisfies readonly SystemRoleName[]`, so a value outside the
  * `SystemRoleName` union fails the typecheck rather than silently widening the set at runtime.
  */
-const LEGACY_ROLE_VALUES = [
+const FORM_ROLE_VALUES = [
   "ADMIN",
   "MANAGER",
   "EMPLOYEE",
 ] as const satisfies readonly SystemRoleName[];
 
-const LEGACY_SYSTEM_ROLE_ID_SET: ReadonlySet<string> = new Set(
-  LEGACY_ROLE_VALUES.map(systemRoleIdForLegacyRole),
-);
+const FORM_SYSTEM_ROLE_ID_SET: ReadonlySet<string> = new Set(FORM_ROLE_VALUES.map(systemRoleIdFor));
 
 /**
- * True when `id` is one of the three legacy system-role ids (Admin, Manager, Mitarbeiter) the
- * legacy role values can stand for. See {@link LEGACY_SYSTEM_ROLE_ID_SET} for why this,
+ * True when `id` is one of the three form system-role ids (Admin, Manager, Mitarbeiter) the
+ * form role values can stand for. See {@link FORM_SYSTEM_ROLE_ID_SET} for why this,
  * not `isSystemRoleId`, is what the employee-form bridge narrows itself to (P-01).
  */
-export function isLegacySystemRoleId(id: string): boolean {
-  return LEGACY_SYSTEM_ROLE_ID_SET.has(id);
+export function isFormSystemRoleId(id: string): boolean {
+  return FORM_SYSTEM_ROLE_ID_SET.has(id);
 }
 
 /**
@@ -281,10 +279,10 @@ export async function requestedRoleUnchanged(
 }
 
 /**
- * D-15: makes the system role of `role` the user's only tenant-wide LEGACY system-role assignment
+ * D-15: makes the system role of `role` the user's only tenant-wide FORM system-role assignment
  * in `tenantId` (Phase 76b P-01: only Admin, Manager and Mitarbeiter — never a template). Among
- * the user's TENANT rows on a LEGACY system role (Admin, Manager, Mitarbeiter, by id — D-01,
- * {@link isLegacySystemRoleId}), every row that is not a well-formed row on the target role is
+ * the user's TENANT rows on a FORM system role (Admin, Manager, Mitarbeiter, by id — D-01,
+ * {@link isFormSystemRoleId}), every row that is not a well-formed row on the target role is
  * deleted, and the target row is created when none remains. Customer-role rows, Phase 76b template
  * rows (Inhaber, Salonmanager, Personalabteilung, Ausbilder) and SALONS/PERSONS rows are left
  * untouched — they count as blocking on a demotion (see
@@ -300,14 +298,14 @@ export async function replaceSystemRoleAssignment(
   userId: string,
   role: SystemRoleName,
 ): Promise<{ removed: WrittenRoleAssignment[]; created: WrittenRoleAssignment | null }> {
-  const targetRoleId = systemRoleIdForLegacyRole(role);
+  const targetRoleId = systemRoleIdFor(role);
   const systemRows = (
     await db.roleAssignment.findMany({
       where: { tenantId, userId, scopeType: "TENANT" },
       include: WRITTEN_ASSIGNMENT_INCLUDE,
       orderBy: { createdAt: "asc" },
     })
-  ).filter((row) => isLegacySystemRoleId(row.accessRoleId));
+  ).filter((row) => isFormSystemRoleId(row.accessRoleId));
 
   const keep = systemRows.filter(
     (row) => row.accessRoleId === targetRoleId && storedRoleAssignmentScope(row) !== null,
@@ -373,12 +371,12 @@ export function assignmentExceedsEmployee(tenantId: string, row: FormRoleAssignm
 
 /**
  * Issue #357 sub-fix B: the assignments that would still grant `userId` more than the Mitarbeiter
- * system role even AFTER {@link replaceSystemRoleAssignment} replaces the user's TENANT LEGACY
+ * system role even AFTER {@link replaceSystemRoleAssignment} replaces the user's TENANT FORM
  * system-role row with Mitarbeiter — every OTHER stored assignment (a customer role at any scope,
  * a Phase 76b template — Inhaber, Salonmanager, Personalabteilung, Ausbilder — at any scope
- * (P-01), or a legacy system role kept at SALONS/PERSONS scope, since
- * `replaceSystemRoleAssignment` only ever touches TENANT-scope LEGACY system-role rows,
- * {@link isLegacySystemRoleId}) for which {@link assignmentExceedsEmployee} holds.
+ * (P-01), or a form system role kept at SALONS/PERSONS scope, since
+ * `replaceSystemRoleAssignment` only ever touches TENANT-scope FORM system-role rows,
+ * {@link isFormSystemRoleId}) for which {@link assignmentExceedsEmployee} holds.
  *
  * Called by the employee-form PATCH handler BEFORE any write, when the requested role is
  * Mitarbeiter: a non-empty result means the whole request must be rejected (409, naming these
@@ -396,7 +394,7 @@ export async function assignmentsBlockingDemotionToEmployee(
     include: BLOCKING_ASSIGNMENT_INCLUDE,
   });
   return rows
-    .filter((row) => !(row.scopeType === "TENANT" && isLegacySystemRoleId(row.accessRoleId)))
+    .filter((row) => !(row.scopeType === "TENANT" && isFormSystemRoleId(row.accessRoleId)))
     .filter((row) => assignmentExceedsEmployee(tenantId, row))
     .map((row) => ({
       id: row.id,

@@ -17,11 +17,11 @@ import {
   assignmentsBlockingDemotionToEmployee,
   deriveFormRole,
   isDemotionToEmployee,
-  isLegacySystemRoleId,
+  isFormSystemRoleId,
   replaceSystemRoleAssignment,
   requestedRoleUnchanged,
   RoleDemotionBlockedError,
-  systemRoleIdForLegacyRole,
+  systemRoleIdFor,
   type FormRoleAssignmentRow,
   type SystemRoleName,
 } from "../system-role-assignment";
@@ -66,10 +66,10 @@ function customerRow(
 }
 
 describe("system-role assignment — pure derivation (D-14)", () => {
-  it("systemRoleIdForLegacyRole maps each legacy value onto its system role id", () => {
-    expect(systemRoleIdForLegacyRole("ADMIN")).toBe(SYSTEM_ROLE_IDS.ADMIN);
-    expect(systemRoleIdForLegacyRole("MANAGER")).toBe(SYSTEM_ROLE_IDS.MANAGER);
-    expect(systemRoleIdForLegacyRole("EMPLOYEE")).toBe(SYSTEM_ROLE_IDS.EMPLOYEE);
+  it("systemRoleIdFor maps each requested role value onto its system role id", () => {
+    expect(systemRoleIdFor("ADMIN")).toBe(SYSTEM_ROLE_IDS.ADMIN);
+    expect(systemRoleIdFor("MANAGER")).toBe(SYSTEM_ROLE_IDS.MANAGER);
+    expect(systemRoleIdFor("EMPLOYEE")).toBe(SYSTEM_ROLE_IDS.EMPLOYEE);
   });
 
   it("isDemotionToEmployee is true only for a requested role of EMPLOYEE (Issue #357 sub-fix B)", () => {
@@ -149,7 +149,7 @@ describe("system-role assignment — pure derivation (D-14)", () => {
     "deriving over the stored system-role row of %s yields exactly that value",
     (role: SystemRoleName) => {
       const slot = (Object.keys(SYSTEM_ROLE_IDS) as SystemRoleSlot[]).find(
-        (s) => SYSTEM_ROLE_IDS[s] === systemRoleIdForLegacyRole(role),
+        (s) => SYSTEM_ROLE_IDS[s] === systemRoleIdFor(role),
       );
       expect(slot).toBeDefined();
       expect(deriveFormRole(TENANT, [systemRow(slot as SystemRoleSlot)])).toBe(role);
@@ -220,21 +220,21 @@ describe("system-role assignment — assignmentExceedsEmployee (Issue #357 sub-f
 
 // Phase 76b (Issue #76), P-01: `isSystemRoleId()` covers all seven system roles once Plan 76b-01
 // lands (D-03), but the employee-form bridge (`replaceSystemRoleAssignment`,
-// `assignmentsBlockingDemotionToEmployee`) must keep narrowing itself to the THREE legacy ids
+// `assignmentsBlockingDemotionToEmployee`) must keep narrowing itself to the THREE form-role ids
 // (Admin, Manager, Mitarbeiter). D-10 is a locked decision, pinned here unmodified: a TENANT
 // Inhaber or Personalabteilung assignment derives MANAGER (never ADMIN, never a new value); a
 // SALONS/PERSONS-scoped Salonmanager or Ausbilder assignment contributes nothing.
 describe("Phase 76b — templates in the system-role assignment module (P-01, D-10)", () => {
-  it("isLegacySystemRoleId is true only for Admin, Manager and Mitarbeiter", () => {
-    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.ADMIN)).toBe(true);
-    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.MANAGER)).toBe(true);
-    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.EMPLOYEE)).toBe(true);
-    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.OWNER)).toBe(false);
-    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.SALON_MANAGER)).toBe(false);
-    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.HR)).toBe(false);
-    expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.TRAINER)).toBe(false);
-    expect(isLegacySystemRoleId("00000000-0000-4000-8000-000000000000")).toBe(false);
-    expect(isLegacySystemRoleId("")).toBe(false);
+  it("isFormSystemRoleId is true only for Admin, Manager and Mitarbeiter", () => {
+    expect(isFormSystemRoleId(SYSTEM_ROLE_IDS.ADMIN)).toBe(true);
+    expect(isFormSystemRoleId(SYSTEM_ROLE_IDS.MANAGER)).toBe(true);
+    expect(isFormSystemRoleId(SYSTEM_ROLE_IDS.EMPLOYEE)).toBe(true);
+    expect(isFormSystemRoleId(SYSTEM_ROLE_IDS.OWNER)).toBe(false);
+    expect(isFormSystemRoleId(SYSTEM_ROLE_IDS.SALON_MANAGER)).toBe(false);
+    expect(isFormSystemRoleId(SYSTEM_ROLE_IDS.HR)).toBe(false);
+    expect(isFormSystemRoleId(SYSTEM_ROLE_IDS.TRAINER)).toBe(false);
+    expect(isFormSystemRoleId("00000000-0000-4000-8000-000000000000")).toBe(false);
+    expect(isFormSystemRoleId("")).toBe(false);
   });
 
   it("D-10 pinned: TENANT Inhaber and TENANT Personalabteilung derive MANAGER; SALONS Salonmanager and PERSONS Ausbilder contribute nothing", () => {
@@ -547,7 +547,7 @@ describe("system-role assignment — write half against the database (D-14, D-15
   });
 
   // Phase 76b (Issue #76), P-01: a Phase 76b template (here Personalabteilung/HR) held at TENANT
-  // scope is NOT one of the three legacy system roles `replaceSystemRoleAssignment` swaps — it
+  // scope is NOT one of the three form system roles `replaceSystemRoleAssignment` swaps — it
   // must survive a demotion to Mitarbeiter exactly like a customer-role row does, and it must be
   // named by `assignmentsBlockingDemotionToEmployee` beforehand.
   it("replaceSystemRoleAssignment leaves a TENANT Personalabteilung (HR) template row untouched; the guard names it first", async () => {
