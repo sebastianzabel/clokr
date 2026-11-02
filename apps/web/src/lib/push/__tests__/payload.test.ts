@@ -73,6 +73,8 @@ describe("targetUrlFor", () => {
     ["encoded slashes", "/x%2F%2Fy"],
     ["encoded traversal", "/a/%2e%2e/b"],
     ["plain traversal", "/a/../b"],
+    ["a dot segment before a host", "/.//evil.example"],
+    ["dot segments before a host", "/.///evil.example/x"],
     ["control character", "/a\nb"],
     ["whitespace", "/a b"],
     ["no leading slash", "dashboard"],

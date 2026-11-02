@@ -20,7 +20,13 @@ export function installPushNavigateListener(navigate: Navigate): () => void {
     if (data === null || typeof data !== "object") return;
     const { type, url } = data as { type?: unknown; url?: unknown };
     if (type !== PUSH_NAVIGATE_MESSAGE) return;
-    void navigate(safePushPath(url));
+    // A refused navigation (the router rejects the target) must not become an unhandled rejection
+    // that the client logger would forward to the API.
+    try {
+      Promise.resolve(navigate(safePushPath(url))).catch(() => {});
+    } catch {
+      /* a synchronous throw of the router is ignored the same way */
+    }
   };
 
   container.addEventListener("message", onMessage);

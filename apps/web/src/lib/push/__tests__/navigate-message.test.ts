@@ -45,6 +45,10 @@ describe("installPushNavigateListener", () => {
     ["a protocol-relative URL", "//evil.example/x"],
     ["a backslash path", "/\\evil.example"],
     ["a traversal", "/a/../../x"],
+    // Review 2, WR-03: a `.` segment is removed by normalisation and leaves a protocol-relative path.
+    ["a dot segment before a host", "/.//evil.example"],
+    ["dot segments before a host", "/.///evil.example/x"],
+    ["a dot segment before a backslash host", "/./\\evil.example"],
     ["a non-string", 42],
     ["nothing", undefined],
   ])("falls back to the dashboard for %s", (_name, url) => {
@@ -52,6 +56,22 @@ describe("installPushNavigateListener", () => {
     installPushNavigateListener(navigate);
     deliver({ type: "clokr:navigate", url });
     expect(navigate).toHaveBeenCalledExactlyOnceWith("/dashboard");
+  });
+
+  it("swallows a rejected or throwing navigation instead of leaving an unhandled rejection", async () => {
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      installPushNavigateListener(() => Promise.reject(new Error("goto: invalid URL")));
+      installPushNavigateListener(() => {
+        throw new Error("router not ready");
+      });
+      expect(() => deliver({ type: "clokr:navigate", url: "/inbox" })).not.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
   });
 
   it("ignores other message types, non-objects and foreign origins", () => {
@@ -85,6 +105,20 @@ describe("installPushNavigateListener", () => {
 describe("safePushPath / isAppWindowPath", () => {
   it("normalises a safe relative path and keeps query and hash", () => {
     expect(safePushPath("/a/./b?x=1#y")).toBe("/a/b?x=1#y");
+  });
+
+  it.each(["/.//evil.example", "/.///evil.example/x", "/./\\evil.example"])(
+    "never returns a protocol-relative path: %s",
+    (raw) => {
+      const path = safePushPath(raw);
+      expect(path).toBe("/dashboard");
+      expect(new URL(path, "https://clokr.example/x").origin).toBe("https://clokr.example");
+    },
+  );
+
+  it("keeps a dot segment that stays a normal path", () => {
+    expect(safePushPath("/.")).toBe("/");
+    expect(safePushPath("/./team/leave")).toBe("/team/leave");
   });
 
   it("refuses the operator console and the auth pages as navigation windows", () => {

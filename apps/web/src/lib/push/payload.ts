@@ -25,11 +25,33 @@ const FORBIDDEN_CHARS = /[\u0000-\u001f\u007f\s]/;
 // Percent-encoded dots, slashes and backslashes could smuggle a traversal past the plain checks.
 const ENCODED_SEPARATORS = /%(2e|2f|5c)/i;
 
+const NORMALISE_BASE = "https://push.invalid";
+
+/**
+ * The path, query and hash of `raw` AFTER dot-segment normalisation, or null when `raw` is not a
+ * safe same-origin path. Normalising first matters (review 2, WR-03): `/.//evil.example` passes
+ * every textual check, but WHATWG removes the `.` segment and leaves `//evil.example`, which a
+ * router or a browser resolves against ANOTHER origin. The normalised result must therefore again
+ * start with exactly one `/`.
+ */
+function normalisedPath(raw: unknown): string | null {
+  if (typeof raw !== "string" || raw === "" || raw.length > MAX_URL) return null;
+  if (!raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return null;
+  if (raw.includes("\\") || FORBIDDEN_CHARS.test(raw) || ENCODED_SEPARATORS.test(raw)) return null;
+  if (raw.split(/[?#]/)[0].split("/").includes("..")) return null;
+  try {
+    const target = new URL(raw, NORMALISE_BASE);
+    if (target.origin !== NORMALISE_BASE) return null;
+    const path = `${target.pathname}${target.search}${target.hash}`;
+    if (!path.startsWith("/") || path.startsWith("//") || path.startsWith("/\\")) return null;
+    return path;
+  } catch {
+    return null;
+  }
+}
+
 function isSafeRelativeUrl(raw: unknown): raw is string {
-  if (typeof raw !== "string" || raw === "" || raw.length > MAX_URL) return false;
-  if (!raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return false;
-  if (raw.includes("\\") || FORBIDDEN_CHARS.test(raw) || ENCODED_SEPARATORS.test(raw)) return false;
-  return !raw.split(/[?#]/)[0].split("/").includes("..");
+  return normalisedPath(raw) !== null;
 }
 
 /** Message type the worker posts to an open app window to navigate it (review WR-05). */
@@ -51,24 +73,16 @@ export function isAppWindowPath(pathname: string): boolean {
  * a safe relative path. The worker posts it and the app re-applies this very rule before `goto()`.
  */
 export function safePushPath(raw: unknown): string {
-  if (!isSafeRelativeUrl(raw)) return FALLBACK_URL;
-  try {
-    const base = "https://push.invalid";
-    const target = new URL(raw, base);
-    return target.origin === base
-      ? `${target.pathname}${target.search}${target.hash}`
-      : FALLBACK_URL;
-  } catch {
-    return FALLBACK_URL;
-  }
+  return normalisedPath(raw) ?? FALLBACK_URL;
 }
 
 /** The same-origin absolute URL of `raw`, or the dashboard when `raw` is not a safe relative path. */
 export function targetUrlFor(raw: unknown, origin: string): string {
   const fallback = `${origin}${FALLBACK_URL}`;
-  if (!isSafeRelativeUrl(raw)) return fallback;
+  const path = normalisedPath(raw);
+  if (path === null) return fallback;
   try {
-    const target = new URL(raw, origin);
+    const target = new URL(path, origin);
     return target.origin === new URL(origin).origin ? target.href : fallback;
   } catch {
     return fallback;
