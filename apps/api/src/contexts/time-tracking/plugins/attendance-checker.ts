@@ -69,6 +69,9 @@ declare module "fastify" {
     /** Issue #609: exposed for integration tests - evaluates the shift reminders (Feature 12) at
      *  `now` without cron/advisory-lock. */
     tryShiftReminders: (now?: Date) => Promise<void>;
+    /** Issue #609 (D-06): exposed for integration tests - invokes the 10-hour clock-out reminder
+     *  scan (Feature 1) without cron/advisory-lock. It reads the wall clock. */
+    tryClockOutReminder: () => Promise<void>;
   }
 }
 
@@ -123,6 +126,26 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           });
 
           for (const entry of openEntries) {
+            // Issue #609 (D-06): the shift-end reminder already told this person to clock out. A
+            // person has at most one open entry per day, so an end notice created at or after this
+            // entry's start was sent while this very entry was open - a second nudge would only nag.
+            // A notice older than the start belongs to an earlier entry and does not count.
+            const coveredByShiftEnd = await app.prisma.notification.findFirst({
+              where: {
+                userId: entry.employee.userId,
+                type: "REMINDER_SHIFT_END",
+                createdAt: { gte: entry.startTime },
+              },
+              select: { id: true },
+            });
+            if (coveredByShiftEnd) {
+              app.log.debug(
+                { userId: entry.employee.userId, timeEntryId: entry.id },
+                "Clock-out Erinnerung uebersprungen: Schichtende-Hinweis liegt vor",
+              );
+              continue;
+            }
+
             // Deduplicate: check if notification already exists for this time entry
             const existing = await app.prisma.notification.findFirst({
               where: {
@@ -1423,6 +1446,9 @@ export const attendanceCheckerPlugin = fp(async (app) => {
 
   // Issue #80 (80-09, D-10) / #511 (D-13): expose the break-finding next-day scan for test invocability.
   app.decorate("tryBreakFindingCheck", checkBreakFindings);
+
+  // Issue #609 (D-06): expose the 10-hour clock-out reminder scan for test invocability.
+  app.decorate("tryClockOutReminder", checkOpenClockEntries);
 
   // Issue #609: expose the shift reminder evaluation for test invocability, with a fixed clock.
   app.decorate("tryShiftReminders", (now?: Date) => runShiftReminders(app, now));

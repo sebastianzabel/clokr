@@ -66,6 +66,7 @@ describe("Phase 88 tracer — auto-close-month and the attendance checker skip d
     "tryPendingLeaveReminder",
     "tryBreakFindingCheck",
     "tryShiftReminders", // Issue #609
+    "tryClockOutReminder", // Issue #609 (D-06): the 10-hour reminder now has a test entry point
   ] as const;
 
   for (const name of attendanceRunners) {
