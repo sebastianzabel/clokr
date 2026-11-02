@@ -114,3 +114,16 @@ Unter **Mein Profil** (Profilmenü oben rechts → Mein Profil):
 - Passwort ändern
 - Benachrichtigungseinstellungen
 - Aktive Sessions verwalten (andere Geräte abmelden)
+
+### Erinnerungen
+
+Wenn dein Betrieb es eingeschaltet hat und du eine geplante Schicht hast, erinnert dich Clokr an drei Stellen: nach dem
+**Schichtbeginn**, wenn du noch nicht eingestempelt bist, nach dem **Schichtende**, wenn du noch eingestempelt bist, und **abends**,
+wenn an einem Schichttag noch keine Zeit eingetragen ist. Die Erinnerung erscheint in der Glocke und, wenn du Push auf deinem
+Handy eingerichtet hast, auf dem Sperrbildschirm. An Urlaubs-, Krankheits- und Feiertagen erinnert dich Clokr nie.
+
+- Unter **Mein Profil → Erinnerungen** schaltest du jede Erinnerung einzeln ab oder wieder an. Der Abschnitt erscheint nur, wenn dein
+  Betrieb mindestens eine Erinnerung eingeschaltet hat. Deine Auswahl sieht nur du.
+- Ein Tipp auf die Erinnerung öffnet die Startseite mit einer Rückfrage („Jetzt einstempeln?" bzw. „Jetzt ausstempeln?"). **Gestempelt
+  wird erst, wenn du bestätigst**, und zwar mit der aktuellen Uhrzeit. Bei „Abbrechen" passiert nichts. Die Abend-Erinnerung öffnet
+  den Tag in deiner Zeitenliste, damit du die fehlende Zeit eintragen kannst.

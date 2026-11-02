@@ -6670,3 +6670,104 @@ Tests: `me-push-608`, `push-config-608`, `push-surface-off-608`, `push-endpoint-
 Symbole, Profilseite ohne Schlüssel). Geänderte Prüfwerte: Modellzahlen (`measure-foreign-context-access`,
 `lint-tenant-scoping-model-graph`), Routenoberfläche (`route-surface.txt`), `pinnedTenantCsp` (`worker-src 'self'`),
 Ausschlüsse der Neutralitätsmatrix für die fünf Push-Routen.
+
+## AF — Schicht-Erinnerungen an Beginn, Ende und Tagesabschluss (Phase 609, Issue #609)
+
+### Ausgangslage
+
+Wer seine Zeit nicht stempelt, merkt es oft erst am Folgetag: Die bestehende Erinnerung nach zehn Stunden und die Meldung um 09:00
+am nächsten Morgen kommen zu spät, um einen Zeiteintrag noch am selben Tag zu retten. Phase 609 erinnert Personen mit einer
+geplanten Schicht an drei Anlässen: nach dem Schichtbeginn, wenn noch nicht eingestempelt ist; nach dem Schichtende, wenn noch
+eingestempelt ist; am Abend, wenn an einem Schichttag keine Zeit erfasst wurde. Die Mitteilung läuft über die In-App-Glocke und,
+wenn die Person Push eingerichtet hat, über den Kanal aus Phase 608.
+
+### Rechtslage
+
+- § 16 Abs. 2 ArbZG: Die Aufzeichnungspflicht trifft den Arbeitgeber; eine Erinnerung hilft, sie am selben Tag zu erfüllen. Sie
+  ersetzt keine Aufzeichnung: Clokr stempelt nie selbst. Ein Tipp auf die Mitteilung öffnet nur eine Bestätigung, gestempelt wird
+  erst nach der ausdrücklichen Bestätigung der Person, mit der aktuellen Uhrzeit und über den unveränderten Stempelweg.
+- Art. 5 Abs. 1 lit. c DSGVO: Datenminimierung auf dem Sperrbildschirm. Die drei Texte sind feste, neutrale Sätze ohne Uhrzeit,
+  Salon oder Namen; die Uhrzeit der Schicht steht nur in der In-App-Meldung (eigene Daten).
+- Art. 9 DSGVO: An einem Krankheitstag (und an jedem anderen Tag mit wirksamem Urlaub, Abwesenheit oder Feiertag) wird still
+  nichts gesendet. Kein Text erklärt je, warum eine Erinnerung fehlt, und der Empfänger ist immer die Person der Schicht selbst,
+  nie eine Führungskraft.
+- Art. 5 Abs. 1 lit. c und Art. 25 DSGVO: Die Abwahl einer Erinnerung ist die eigene Entscheidung der Person. Führungskräfte
+  sehen sie nicht (weder in der Mitarbeiterliste noch in einem Prüfprotokoll).
+
+### Entscheidung
+
+- **D-01/D-02 Daten.** Fünf Spalten in `TenantConfig` (drei Schalter, Standard aus; `reminderOffsetMinutes`, Standard 15, erlaubt
+  5 bis 120; `reminderDayCloseTime`, Standard 20:00) und drei Spalten in `Employee` (`reminderShiftStartOff`,
+  `reminderShiftEndOff`, `reminderDayCloseOff`, Standard `false`). Eine additive Migration (`20261103020000_shift_reminders`),
+  keine Datenmigration, kein Skript. Die Mandantenwerte laufen über das bestehende `PUT /settings/work` (Prüfprotokoll der
+  geänderten Schlüssel, #285), die Abwahl über die Eigene-Daten-Route `GET`/`PATCH /api/v1/employees/me/reminders`.
+- **D-03/D-04 Auftrag.** Ein Cron alle fünf Minuten unter dem Advisory-Lock `ATTENDANCE_SHIFT_REMINDER` (`1020n`), je aktivem
+  Mandanten mit mindestens einem Schalter; alle Zeiten in der Mandantenzeitzone. Fenster: Beginn und Ende je 60 Minuten ab
+  Beginn/Ende + N, Abend 30 Minuten ab der Uhrzeit, damit ein Neustart nach einer Pause nicht überschwemmt.
+- **D-05/D-12 Ausschlüsse.** Wirksamer Urlaub jeder Art (Krankheit und halbe Tage eingeschlossen; ein offener Antrag zählt nicht),
+  auferlegte Abwesenheit, Feiertag am Salon der Schicht, eine als Konflikt markierte Schicht; ausgeschiedene, anonymisierte,
+  gesperrte und von der Zeiterfassung befreite Personen; eine Abwahl; ein deaktivierter Mandant.
+- **D-06/D-07 Doppelungen.** Eine Mitteilung je Person, Schicht und Anlass, geprüft gegen jede vorhandene Zeile (auch eine
+  gelesene oder verworfene); ein gemeinsamer Schlüssel für zwei Schichten mit identischem Beginn oder Ende; eine Abend-Mitteilung
+  je Person und Tag. Eine Person, die aus einer früheren Schicht noch eingestempelt ist, bekommt für die direkt anschließende
+  Schicht keine Beginn-Erinnerung (D-07, ein gültiger offener Eintrag); umgekehrt gibt es keine Ende-Erinnerung, solange eine
+  weitere Schicht der Person nahtlos anschließt (P-609-06: das Ende der letzten Schicht deckt den Abend ab).
+- **D-06 Abstimmung.** Hat die Ende-Erinnerung einen offenen Eintrag schon abgedeckt, schweigt die 10-Stunden-Erinnerung für
+  diesen Eintrag; die Meldung um 09:00 am Folgetag bleibt unverändert.
+- **D-13/D-15 Abend.** Wer noch eingestempelt ist, bekommt keine Abend-Erinnerung (die Ende-Erinnerung und die 10-Stunden-
+  Erinnerung decken das ab); eine Schicht, die nach der Abend-Uhrzeit endet, löst an dem Tag keine Abend-Erinnerung aus. Der
+  Hinweistext in den Einstellungen sagt es.
+- **D-08 Kanal.** Drei neue Typen, E-Mail `never`, Push `send` mit neutralem Text und der neuen Lebensdauer `TTL_1H` (eine
+  verspätete Mitteilung „begonnen“ wäre falsch). Sie sind die Einträge der benannten Ausnahmeliste `PUSH_WITHOUT_EMAIL`; die
+  Regel „E-Mail `never` heißt Push `never`“ gilt für alle anderen Typen unverändert.
+- **D-09/D-14 Tippziel.** Beginn und Ende führen auf `/dashboard?clock=1`, der Abend auf die Listenansicht des Tages. Das
+  Dashboard öffnet eine Bestätigung, deren Text aus dem aktuellen Stempelstand abgeleitet ist und die Handlung nennt;
+  der Parameter wird danach entfernt. Ist der Stand inzwischen ein anderer, stempelt nichts, es erscheint ein Hinweis.
+- **D-16 Datensparsamkeit.** Die drei Abwahl-Spalten fehlen in jeder Antwort und in jedem Prüfprotokollwert der Mitarbeiter-
+  Routen (Liste, Einzelansicht, Anlegen, Ändern, Reaktivieren) und im Anlege-Eintrag der gemeinsamen Funktion
+  `employeeCreatedAuditValue()`; nur die Eigene-Daten-Route liefert sie.
+- **Aus der Planung.** 400 statt 401 für eine Person ohne Mitarbeiterprofil (ein 401 würde im Web eine Anmelde-Schleife
+  auslösen); der Eintrag `AE` ist für #610 reserviert.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** der Auftrag (`shift-reminders.ts`, `shift-reminder-job.ts`), die Eigene-Daten-Route
+  (`api/employee-reminders.ts`) und die Auslassung der 10-Stunden-Erinnerung für einen schon abgedeckten Eintrag.
+- **Abwesenheiten:** keine. Urlaub, Krankheit und Abwesenheit werden nur lesend über die Fassade geprüft.
+- **Schichtplanung:** eine additive Auswahl (`conflictsWithLeave`) in der Fassade `getShiftsInRange`; sonst nur lesend.
+- **Arbeitszeitkonto:** keine.
+- **Kompositionsschicht:** keine.
+- **Unterbau:** **Erweiterung** nach ADR 0002, Entscheidung 7: fünf `TenantConfig`- und drei `Employee`-Spalten mit Standard
+  aus/`false`, die Registerzeilen von `notify()` (E-Mail und Push) und die Push-Lebensdauer `TTL_1H`. Kein bestehender Leser
+  ändert sich; freigegeben mit dem Status `Ready` des Issues. Kein neues Modell, keine neue Berechtigung.
+
+Belegt durch `609-untouched.sh`: Abwesenheiten, Arbeitszeitkonto, die Kompositionsschicht, `services/` und die aufgezeichneten
+Neutralitätsmatrizen sind gegenüber dem Basisstand unverändert; unter Schichtplanung ändern sich nur `facade/shifts.ts` und
+ihr Test.
+
+### Grenzen
+
+- Eine neu angelegte Schicht hat eine neue Kennung und kann deshalb erneut erinnern, auch wenn für den Termin schon eine
+  Mitteilung stand (der gemeinsame Schlüssel über den Zeitpunkt fängt gleichzeitige Schichten, nicht jede Neuanlage).
+- Der Feiertag wird am Salon der Schicht beurteilt, nicht am Stammsalon.
+- Ein Tipp auf eine veraltete Mitteilung bietet die aktuell mögliche Handlung an (nicht die in der Mitteilung gemeinte), nach
+  Bestätigung mit der jetzigen Uhrzeit.
+- Die Abend-Uhrzeit gilt je Mandant, nicht je Salon oder Person.
+- Personen ohne Schicht (feste Arbeitszeit ohne Beginn) werden nicht erinnert; das braucht eine vertragliche Beginnzeit und ist
+  ein eigenes Ticket. E-Mail-Erinnerungen gibt es bewusst nicht.
+- Die Abwahl-Spalten bleiben bei der Anonymisierung stehen (eine Einstellung ohne Personenbezug im Sinne von Art. 17; die
+  anonymisierte Person gehört ohnehin nicht zur Empfängermenge).
+- Zustellung auf ein echtes Telefon, Sperrbildschirmtext und Tippziel lassen sich nicht automatisieren und werden vom Owner
+  mit der Abnahme-Checkliste im Pull Request abgenommen.
+
+### Nachweise
+
+Tests (API): `shift-reminders-kernel-609`, `shift-reminders-start-609`, `shift-reminders-end-609`,
+`shift-reminders-day-close-609`, `shift-reminders-exclusions-609`, `shift-reminders-same-instant-609`,
+`shift-reminders-recipients-609`, `shift-reminders-no-stamp-609`, `shift-reminders-perf-609`,
+`clock-out-reminder-coordination-609`, `settings-reminders-609`, `me-reminders-609`,
+`employee-reminder-columns-hidden-609`; geänderte Prüfwerte: `notification-push-policy-608` (Ausnahmeliste, Anzahl der
+Push-Typen), `with-advisory-lock` (Schlüsselzahl), `cron-deactivated-tenants-88` (Untergrenze, Läuferliste), Routenoberfläche
+(`route-surface.txt`), Ausschlüsse der Neutralitätsmatrix für die zwei Routen. Tests (Web): `shift-reminder-settings`,
+`reminders`, `ReminderSettings`, `clock-reminder`, `dashboard-clock-reminder-wiring-609`, `admin-vacation-save-wiring`
+(Schlüsselzahl 41 auf 46).
