@@ -9,6 +9,7 @@ import { fromZonedTime } from "date-fns-tz";
 import {
   START_LOOKBACK_MINUTES,
   clampReminderOffset,
+  decideShiftEnd,
   decideShiftStart,
   formatShiftTime,
   parseDayCloseTime,
@@ -200,5 +201,97 @@ describe("decideShiftStart (AC-1, D-04, D-07)", () => {
   it("ignores an invalid closed entry that would otherwise count as started", () => {
     const entries = [entry(minutesBefore(30), minutesBefore(10), true)];
     expect(decideShiftStart({ ...base, entries })).toEqual({ send: true });
+  });
+});
+
+describe("decideShiftEnd (AC-2, D-04, D-07, P-609-06)", () => {
+  const entry = (start: Date, end: Date | null, isInvalid = false): ReminderEntry => ({
+    startTime: start,
+    endTime: end,
+    isInvalid,
+  });
+  const endUtc = at("2026-11-10", "17:00");
+  const N = 15;
+  const base = { endUtc, offsetMinutes: N, now: at("2026-11-10", "17:15") };
+  const other = (start: string, end: string, day = "2026-11-10") => ({
+    startUtc: at(day, start),
+    endUtc: at(day, end),
+  });
+
+  it("sends for a valid open entry that started before the shift end", () => {
+    const entries = [entry(at("2026-11-10", "08:58"), null)];
+    expect(decideShiftEnd({ ...base, entries, otherShifts: [] })).toEqual({ send: true });
+  });
+
+  it("does not send outside the window (17:14 and 18:15)", () => {
+    const entries = [entry(at("2026-11-10", "08:58"), null)];
+    for (const hhmm of ["17:14", "18:15"]) {
+      expect(
+        decideShiftEnd({ ...base, now: at("2026-11-10", hhmm), entries, otherShifts: [] }),
+      ).toEqual({ send: false, reason: "OUTSIDE_WINDOW" });
+    }
+  });
+
+  it("is due until 18:14 inclusive", () => {
+    const entries = [entry(at("2026-11-10", "08:58"), null)];
+    const r = decideShiftEnd({ ...base, now: at("2026-11-10", "18:14"), entries, otherShifts: [] });
+    expect(r).toEqual({ send: true });
+  });
+
+  it("does not send for an open entry opened after the shift end", () => {
+    const entries = [entry(at("2026-11-10", "17:05"), null)];
+    expect(decideShiftEnd({ ...base, entries, otherShifts: [] })).toEqual({
+      send: false,
+      reason: "NO_OPEN_ENTRY",
+    });
+  });
+
+  it("does not send for closed entries only or without entries", () => {
+    const closed = [entry(at("2026-11-10", "08:58"), at("2026-11-10", "17:02"))];
+    expect(decideShiftEnd({ ...base, entries: closed, otherShifts: [] }).send).toBe(false);
+    expect(decideShiftEnd({ ...base, entries: [], otherShifts: [] })).toEqual({
+      send: false,
+      reason: "NO_OPEN_ENTRY",
+    });
+  });
+
+  it("ignores an invalid open entry", () => {
+    const entries = [entry(at("2026-11-10", "08:58"), null, true)];
+    expect(decideShiftEnd({ ...base, entries, otherShifts: [] })).toEqual({
+      send: false,
+      reason: "NO_OPEN_ENTRY",
+    });
+  });
+
+  describe("an adjacent shift of the same person (D-07)", () => {
+    const entries = [entry(at("2026-11-10", "08:58"), null)];
+    it("starting exactly at end + N is adjacent", () => {
+      const otherShifts = [other("17:15", "21:00")];
+      expect(decideShiftEnd({ ...base, entries, otherShifts })).toEqual({
+        send: false,
+        reason: "NEXT_SHIFT_ADJACENT",
+      });
+    });
+    it("starting one minute after end + N is not adjacent", () => {
+      const otherShifts = [other("17:16", "21:00")];
+      expect(decideShiftEnd({ ...base, entries, otherShifts })).toEqual({ send: true });
+    });
+    it("an overlapping shift (starts before the end, ends after) is adjacent", () => {
+      const otherShifts = [other("16:00", "20:00")];
+      expect(decideShiftEnd({ ...base, entries, otherShifts }).send).toBe(false);
+    });
+    it("a shift that ended before this one ended does not count", () => {
+      const otherShifts = [other("08:00", "12:00"), other("13:00", "17:00")];
+      expect(decideShiftEnd({ ...base, entries, otherShifts })).toEqual({ send: true });
+    });
+  });
+
+  it("an overnight shift ends on the next calendar day and the DST day keeps the wall clock", () => {
+    const night = shiftInstants(shift("2026-10-24", "22:00", "06:00"), TZ);
+    const entries = [entry(at("2026-10-24", "21:58"), null)];
+    const input = { endUtc: night.endUtc, offsetMinutes: N, entries, otherShifts: [] };
+    expect(decideShiftEnd({ ...input, now: at("2026-10-25", "06:15") })).toEqual({ send: true });
+    // 05:15 local (04:15Z) lies before the shift end 06:00 local (05:00Z): not yet due
+    expect(decideShiftEnd({ ...input, now: at("2026-10-25", "05:15") }).send).toBe(false);
   });
 });

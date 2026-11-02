@@ -23,17 +23,22 @@ import { getShiftsInRange } from "../scheduling";
 import { getRecordedWorkEntriesInRange } from "./facade/time-entries";
 import {
   REMINDER_CLOCK_LINK,
+  REMINDER_WINDOW_MINUTES,
   clampReminderOffset,
+  decideShiftEnd,
   decideShiftStart,
   formatShiftTime,
   shiftInstants,
   shiftReminderKey,
+  windowContains,
   type ReminderSkipReason,
 } from "./shift-reminders";
 
 const JOB = "shift-reminders";
-/** The type of the dedupe read; the emit site below keeps its own literal (the registry scanner reads it). */
+/** The types of the dedupe read; each emit site below keeps its own literal (the registry scanner reads it). */
 const START_TYPE = "REMINDER_SHIFT_START";
+const END_TYPE = "REMINDER_SHIFT_END";
+const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
 
 /** Counts of the skip reasons of one tenant tick, for the debug log (ids never, only totals). */
@@ -103,8 +108,10 @@ async function runTenant(
   const tz = config.timezone;
   const offset = clampReminderOffset(config.reminderOffsetMinutes);
 
-  // Tenant-local days {today - 1, today}: an overnight shift of yesterday and a window that crosses
-  // midnight are both seen. Day keys by calendar arithmetic on noon UTC, never a 24 h step.
+  // Tenant-local days {today - 1, today, today + 1}: an overnight shift of yesterday, a window that
+  // crosses midnight and the next shift of an end that falls just before midnight are all seen. Day
+  // keys by calendar arithmetic on noon UTC, never a 24 h step. A shift of tomorrow is read only as a
+  // neighbour: its own windows are not open yet, so it is never a candidate.
   const today = dateStrInTz(now, tz);
   const dayKey = (daysAgo: number) =>
     new Date(new Date(`${today}T12:00:00Z`).getTime() - daysAgo * DAY_MS)
@@ -112,22 +119,27 @@ async function runTenant(
       .slice(0, 10);
   const yesterday = dayKey(1);
   const shiftFrom = new Date(`${yesterday}T00:00:00Z`); // @db.Date: calendar-day bounds (#493)
-  const shiftTo = new Date(`${today}T00:00:00Z`);
+  const shiftTo = new Date(`${dayKey(-1)}T00:00:00Z`);
 
   const scope = accessContextForJob(tenantId, JOB);
   const shifts = await getShiftsInRange(app.prisma, employeeScopeFor(scope), shiftFrom, shiftTo);
 
-  // Stage 1 (pure): the START candidates.
-  const candidates = config.reminderShiftStartEnabled
-    ? shifts
-        .map((shift) => ({ shift, ...shiftInstants(shift, tz) }))
-        .filter(
-          (c) =>
-            !Number.isNaN(c.startUtc.getTime()) &&
-            decideShiftStart({ startUtc: c.startUtc, offsetMinutes: offset, now, entries: [] })
-              .send,
-        )
+  // Stage 1 (pure): the candidates per occasion, from the shifts alone.
+  const parsed = shifts
+    .map((shift) => ({ shift, ...shiftInstants(shift, tz) }))
+    .filter((c) => !Number.isNaN(c.startUtc.getTime()) && !Number.isNaN(c.endUtc.getTime()));
+  const offsetMs = offset * MINUTE_MS;
+  const startCandidates = config.reminderShiftStartEnabled
+    ? parsed.filter((c) =>
+        windowContains(new Date(c.startUtc.getTime() + offsetMs), REMINDER_WINDOW_MINUTES, now),
+      )
     : [];
+  const endCandidates = config.reminderShiftEndEnabled
+    ? parsed.filter((c) =>
+        windowContains(new Date(c.endUtc.getTime() + offsetMs), REMINDER_WINDOW_MINUTES, now),
+      )
+    : [];
+  const candidates = [...startCandidates, ...endCandidates];
   if (candidates.length === 0) return;
 
   // Stage 2: reads for the candidate persons only.
@@ -137,7 +149,12 @@ async function runTenant(
   // log in (`user.isActive` is used here as a recipient lookup, not as a report population), be
   // employed on that day and never anonymised, and not exempt from time tracking. The recipient is
   // always the shift's own person.
-  const people = new Map<string, Map<string, { userId: string; startOff: boolean }>>();
+  interface Person {
+    userId: string;
+    startOff: boolean;
+    endOff: boolean;
+  }
+  const people = new Map<string, Map<string, Person>>();
   for (const day of new Set(candidates.map((c) => c.day))) {
     const range = dayRangeUtc(day, tz);
     const rows = await app.prisma.employee.findMany({
@@ -148,21 +165,36 @@ async function runTenant(
         user: { isActive: true },
         AND: [reportPopulationWhere(range.start, range.end)],
       },
-      select: { id: true, userId: true, reminderShiftStartOff: true },
+      select: {
+        id: true,
+        userId: true,
+        reminderShiftStartOff: true,
+        reminderShiftEndOff: true,
+      },
     });
     people.set(
       day,
-      new Map(rows.map((r) => [r.id, { userId: r.userId, startOff: r.reminderShiftStartOff }])),
+      new Map(
+        rows.map((r) => [
+          r.id,
+          {
+            userId: r.userId,
+            startOff: r.reminderShiftStartOff,
+            endOff: r.reminderShiftEndOff,
+          },
+        ]),
+      ),
     );
   }
 
-  // One day further back than the shifts: an entry started before midnight belongs to the day before.
+  // Two days further back than the shifts' first day: an entry started before midnight belongs to
+  // the day before.
   const entryFrom = new Date(`${dayKey(2)}T00:00:00Z`);
   const entries = await getRecordedWorkEntriesInRange(
     app.prisma,
     employeeScopeFor(scope, { employeeIds }),
     entryFrom,
-    shiftTo,
+    new Date(`${today}T00:00:00Z`),
   );
   const entriesOf = new Map<string, typeof entries>();
   for (const entry of entries) {
@@ -171,14 +203,14 @@ async function runTenant(
     entriesOf.set(entry.employeeId, list);
   }
 
-  // Every earlier START notice of these shifts, in any dismissal state (the dedupe key, D-06).
+  // Every earlier START/END notice of these shifts, in any dismissal state (the dedupe key, D-06).
   const userIds = [
     ...new Set([...people.values()].flatMap((m) => [...m.values()].map((p) => p.userId))),
   ];
   const notified = await app.prisma.notification.findMany({
     where: {
       userId: { in: userIds },
-      type: START_TYPE,
+      type: { in: [START_TYPE, END_TYPE] },
       relatedType: "Shift",
       relatedId: { in: candidates.map((c) => c.shift.id) },
     },
@@ -195,7 +227,7 @@ async function runTenant(
     skipped[reason] = (skipped[reason] ?? 0) + 1;
   };
 
-  for (const candidate of candidates) {
+  for (const candidate of startCandidates) {
     const { shift } = candidate;
     const person = people.get(candidate.day)?.get(shift.employeeId);
     if (person === undefined) {
@@ -234,5 +266,48 @@ async function runTenant(
     });
     sent.add(key);
   }
-  app.log.debug({ tenantId, skipped }, "Shift reminders: start occasion evaluated");
+
+  for (const candidate of endCandidates) {
+    const { shift } = candidate;
+    const person = people.get(candidate.day)?.get(shift.employeeId);
+    if (person === undefined) {
+      skip("NOT_IN_POPULATION");
+      continue;
+    }
+    if (person.endOff) {
+      skip("PERSON_OFF");
+      continue;
+    }
+    const { userId } = person;
+    const decision = decideShiftEnd({
+      endUtc: candidate.endUtc,
+      offsetMinutes: offset,
+      now,
+      entries: entriesOf.get(shift.employeeId) ?? [],
+      otherShifts: parsed
+        .filter((o) => o.shift.employeeId === shift.employeeId && o.shift.id !== shift.id)
+        .map((o) => ({ startUtc: o.startUtc, endUtc: o.endUtc })),
+    });
+    if (!decision.send) {
+      skip(decision.reason);
+      continue;
+    }
+    const key = shiftReminderKey(userId, END_TYPE, shift.id);
+    if (sent.has(key)) {
+      skip("ALREADY_NOTIFIED");
+      continue;
+    }
+    await app.notify({
+      userId,
+      tenantId,
+      type: "REMINDER_SHIFT_END",
+      title: "Schichtende",
+      message: `Deine Schicht endete um ${formatShiftTime(shift.endTime)}. Feierabend? Jetzt ausstempeln.`,
+      link: REMINDER_CLOCK_LINK,
+      relatedType: "Shift",
+      relatedId: shift.id,
+    });
+    sent.add(key);
+  }
+  app.log.debug({ tenantId, skipped }, "Shift reminders: occasions evaluated");
 }

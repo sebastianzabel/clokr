@@ -137,6 +137,8 @@ export interface ReminderEntry {
   startTime: Date;
   endTime: Date | null;
   isInvalid: boolean;
+  /** The entry's own day ("YYYY-MM-DD", the stored `@db.Date`); only the day-close rule reads it. */
+  day?: string;
 }
 
 export interface StartDecisionInput {
@@ -168,5 +170,47 @@ export function decideShiftStart(input: StartDecisionInput): ReminderDecision {
     return t >= lookbackFrom && t <= nowMs;
   });
   if (started) return { send: false, reason: "ENTRY_STARTED" };
+  return { send: true };
+}
+
+/** The instants of another shift of the same person, for the adjacency rule of the end reminder. */
+export interface OtherShiftInstants {
+  startUtc: Date;
+  endUtc: Date;
+}
+
+export interface EndDecisionInput {
+  endUtc: Date;
+  offsetMinutes: number;
+  now: Date;
+  /** The person's recorded WORK entries around the shift (any validity; invalid rows are ignored). */
+  entries: readonly ReminderEntry[];
+  /** The person's OTHER non-deleted shifts in the read range (never the shift being decided). */
+  otherShifts: readonly OtherShiftInstants[];
+}
+
+/**
+ * Whether the person gets the END notice for this shift (AC-2, D-04, D-07, P-609-06).
+ *
+ * Due in `[end + N, end + N + 60 min)`. Sent only while a valid OPEN entry that started before the
+ * shift end exists - an entry opened after the end is not nagged, a closed day is done. A shift that
+ * is directly followed (the other starts at or before `end + N` and ends after this end) gets none:
+ * the person is expected to keep working and the last shift's notice covers the evening.
+ */
+export function decideShiftEnd(input: EndDecisionInput): ReminderDecision {
+  const opens = new Date(input.endUtc.getTime() + input.offsetMinutes * MINUTE_MS);
+  if (!windowContains(opens, REMINDER_WINDOW_MINUTES, input.now)) {
+    return { send: false, reason: "OUTSIDE_WINDOW" };
+  }
+  const endMs = input.endUtc.getTime();
+  const stillIn = input.entries.some(
+    (e) => !e.isInvalid && e.endTime === null && e.startTime.getTime() < endMs,
+  );
+  if (!stillIn) return { send: false, reason: "NO_OPEN_ENTRY" };
+  const opensMs = opens.getTime();
+  const followed = input.otherShifts.some(
+    (o) => o.startUtc.getTime() <= opensMs && o.endUtc.getTime() > endMs,
+  );
+  if (followed) return { send: false, reason: "NEXT_SHIFT_ADJACENT" };
   return { send: true };
 }

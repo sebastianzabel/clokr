@@ -56,6 +56,8 @@ const NEVER_PUSH_TYPES = [
 const PUSH_WITHOUT_EMAIL: Record<string, string> = {
   REMINDER_SHIFT_START:
     "Erinnerung ohne personenbezogenen Inhalt; E-Mail bewusst nicht (Issue #609, D-08)",
+  REMINDER_SHIFT_END:
+    "Erinnerung ohne personenbezogenen Inhalt; E-Mail bewusst nicht (Issue #609, D-08)",
 };
 
 describe("NOTIFICATION_PUSH_POLICY exhaustiveness (Issue #608, D-08)", () => {
@@ -150,8 +152,8 @@ describe("NOTIFICATION_PUSH_POLICY text rules (AC-4)", () => {
     policy.push === "send" ? [{ type, policy }] : [],
   );
 
-  it("28 types are sent", () => {
-    expect(sends.length).toBe(28);
+  it("29 types are sent", () => {
+    expect(sends.length).toBe(29);
   });
 
   it.each(sends.map((s) => [s.type, s.policy.body, s.policy.ttlSeconds] as const))(
