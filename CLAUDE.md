@@ -117,7 +117,7 @@ Clokr has **four business contexts**, a shared substrate (**Unterbau**, the Shar
 - **Abwesenheiten** (`contexts/absence/`) — request, approval, entitlement, carry-over. A workflow with status, not a recording. Date ranges in days.
 - **Schichtplanung** (`contexts/scheduling/` + `services/phorest/`) — shifts, templates, coverage, availability, Phorest sync. Plans the future. Since Phase 107 it feeds Arbeitszeitkonto (SHIFT_BASED Soll) and Abwesenheiten (SHIFT_BASED leave-day count).
 - **Arbeitszeitkonto** (`contexts/working-time-account/`) — Soll vs. Ist, saldo, Monatsabschluss. Reads from the others. Owns the once-per-day rule.
-- **Unterbau** (Shared Kernel, `contexts/platform/`) — the 20 `platform` models of `MODEL_OWNER` in `apps/api/scripts/measure-foreign-context-access.ts` (Tenant, TenantConfig, Employee, User, WorkSchedule, OperatorAccount, OperatorAuditLog, SupportAccess, …) and permissions. Salon (#64), RoleAssignment (#74) and Salonzuordnung (#67) land here; Beschäftigung (#66) is backlog and has no entity.
+- **Unterbau** (Shared Kernel, `contexts/platform/`) — the 21 `platform` models of `MODEL_OWNER` in `apps/api/scripts/measure-foreign-context-access.ts` (Tenant, TenantConfig, Employee, User, WorkSchedule, OperatorAccount, OperatorAuditLog, SupportAccess, PushSubscription, …) and permissions. Salon (#64), RoleAssignment (#74) and Salonzuordnung (#67) land here; Beschäftigung (#66) is backlog and has no entity.
 - **Composition layer** (`apps/api/src/composition/` + composition root `apps/api/src/app.ts`) — owns no model, carries no business rule, reads contexts only through their `index.ts`, and no context imports from `composition/`. A business rule found there moves into the owning context (ADR 0002, Entscheidung 9).
 
 Rules — these are directives, not preferences:
@@ -195,7 +195,7 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **WLAN identifiers** (Issue #388): `Employee.wifiMacs` → `[]`, `wifiPresenceEnabled` → false, `wifiOptInAt` → null; `PresenceDevice` rows (MAC + label) are hard-deleted. The `ANONYMIZE` audit carries counts only (`clearedDeviceIdentifiers`); Bestand is listed read-only by `scripts/audit-388-anonymized-leftovers.ts` (`docs/migrations.md` „Phase 388“)
 - **Documents**: Absence documentPath → null
 - **§ 9-Vorgänge**: Section9Credit documentPath → null, reason → null (Zeilen bleiben erhalten — Korrektureintrag nach R7)
-- **Auth tokens**: Invitations, OTP, RefreshTokens are hard-deleted (not retention-relevant)
+- **Auth tokens**: Invitations, OTP, RefreshTokens and push subscriptions (Issue #608) are hard-deleted (not retention-relevant)
 - **Role assignments** (Phase 74b, #74): the user's `RoleAssignment` rows are hard-deleted inside the anonymization transaction, each with a `DELETE` audit entry (`newValue.reason` "Anonymisierung"); person-scope lists that contain the employee's id stay unchanged (ids only — the resolution ignores anonymized targets). `User.role` IS rewritten to EMPLOYEE in the same update as `isActive: false` (Issue #357 sub-fix C, revises Phase 75b D-14, #75) and stays so while the column exists: it used to be the legacy-role fallback a still-valid access token resolved through, which handed a self-anonymizing MANAGER/ADMIN's live token full rights for the rest of its lifetime — the exact gap #357's security review reported. Since #539 (Release A) a user without a stored assignment holds nothing anyway, so the rewrite is defence in depth for a rollback to the previous image. Two neutrality cells changed on purpose (`DELETE /api/v1/employees/:id | foreign` for ADMIN and FALLBACK_ADMIN, 204→403) and are recorded as an amendment (`contexts/platform/anonymize.ts`, `apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json`, ADR 0001-abweichungen Eintrag N).
 - **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount, `ParentalLeaveReduction` rows (no free text, nothing to anonymize — Issue #468) (for retention compliance)
 - **Employment ends (Issue #614)**: `exitDate` ← the tenant-local day of the anonymization when it was empty (an existing one, past or future, stays) plus the #447 exit-year entitlement sync. Absences after the exit day: requests starting after it are cancelled with the reversals of a cancellation approval, requests spanning it are shortened to it through the `/correct` core (`contexts/absence/leave-correction.ts`), pending ones are re-priced, Berufsschule rows are soft-deleted. Closed months, active § 17 BEEG reductions, active § 9 credits and corrections the core refuses are skipped and listed (ids and codes) in the ANONYMIZE audit. The rule lives only in `contexts/absence/employment-exit.ts`, reached through the `app.absenceExit` decoration; per-row audits carry `auditReason` "Anonymisierung", `trigger: "ANONYMIZATION"` and no free text. "Bevorstehende Urlaube" never lists an anonymized person. Persons anonymized before #614 are listed by `scripts/audit-614-anonymized-employment.ts` (read-only, ids only) and corrected by `scripts/backfill-666-anonymized-employment.ts` (Issue #666, owner decision 17.10.2026: dry run by default, `--confirm` writes; sets the missing exit date from the tenant-local day of the ANONYMIZE audit, runs the same `app.absenceExit` rule with the marker `trigger: "BACKFILL_666"` / `auditReason` „Bestandskorrektur #666“, restores the employee number from the audit `oldValue` unless it is missing or taken by another employee — those are only reported; runbook `docs/migrations.md` „Phase 666“).
@@ -1478,6 +1478,53 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   defined in `contexts/platform/request-permissions.ts`, applied in `api/auth.ts`) when
   `effectivePermissionKeysForUser()` is empty; a wrong password keeps its 401. The code is the control
   value, the German text only display (the web shows the server's message and branches on neither).
+
+### Web-Push on devices (Issue #608)
+
+A person can opt a phone or browser in to push notifications per device; ADR `docs/adr/0001-abweichungen.md` Eintrag AD,
+operator runbook `docs/runbooks/web-push.md`. Rules, as built:
+
+- **VAPID is an optional set, like `OPERATOR_JWT_SECRET`.** `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` are all
+  set or all unset (`config.ts`, `superRefine`: the public key must belong to the private key, the subject is `mailto:` or an
+  https URL whose host is not localhost; a part-set or mismatching set fails at boot). Unset = push is off: `GET /api/v1/me/push/config` answers
+  `{ enabled: false, publicKey: null }`, the other four `/api/v1/me/push` routes do not exist (404), nothing is ever sent and
+  the profile section is not rendered (`push-surface-off-608.test.ts`). Never a default, never derived from another secret;
+  the e2e and CI stacks run without keys.
+- **A subscription is a delivery address in the Unterbau.** `PushSubscription` (`tenantId` FK `Restrict`, `userId` FK `Cascade`,
+  unique `endpoint`) is hard-deleted on revoke, on a 404/410 from the push service, on anonymization and by the int refresh
+  (`pseudonymize-dump.ts`), and removed by test cleanup. Create, update and delete are audited (`CREATE`/`UPDATE`/`DELETE`,
+  entity `PushSubscription`) without the endpoint or the keys; rows written by the system carry the stamp
+  `actor: { type: "SYSTEM", tenantId }` with the tenant of the ROW. Several devices per person (at most 10). An endpoint that
+  is registered again is updated for the same person; another person takes it over only with the same key pair (same keys prove
+  the same browser, P-608-07) — the old row is deleted and audited, never two rows per endpoint.
+- **Lock-screen text lives in ONE place.** `contexts/platform/notification-push-policy.ts` holds, per `notify()` type, one neutral
+  German du-form text or `never` — fail-closed: a type without an entry is not pushed, and `notification-push-policy-608.test.ts`
+  scans every emit site and pins the registry keys equal to the e-mail registry. An e-mail policy of `never` implies a push
+  `never` (the four `SECTION9_*` types and `SUPPORT_ACCESS_STARTED`). The payload is exactly `{ title, body, url }`: title
+  „Clokr“, body from the registry, `url` the notification's own link after `safePushUrl()` (same-origin relative, else
+  `/dashboard`). The in-app title and message are NEVER sent (name, minutes, saldo, health or § 9 content would reach the lock
+  screen, Art. 5 Abs. 1 lit. c and Art. 9 DSGVO). Never add a second text source and never a per-call text.
+- **One sender, one allow-list.** `push-sender.ts` is the only file that imports `web-push`; the VAPID details are passed per
+  call and never set globally. An error object is never logged — only `{ statusCode, host }` (the endpoint path is a capability).
+  `PUSH_SERVICE_HOST_SUFFIXES` (`push-endpoint-guard.ts`) is the one endpoint allow-list (SSRF: https only, host equal to or a
+  subdomain of one of four push-service families; anything else answers 400 `PUSH_ENDPOINT_NOT_ALLOWED` before any write).
+  Never add a second allow-list or a host without a reason in the ADR.
+- **`notify()` dispatches fire-and-forget for EVERY call**, after the in-app row, with the tenant taken from the subscription
+  row (several emit sites pass no `tenantId`); a deactivated tenant (`ACTIVE_TENANT_WHERE`) and an inactive user receive
+  nothing. A push failure never fails `notify()`; `app.settlePushDispatch()` drains the in-flight sends (shutdown, tests).
+- **The service worker (`apps/web/src/service-worker.ts`) is push-only.** It registers `push`, `notificationclick` and the
+  lifecycle events; it has no network-request handler and no cache, so the app can never serve a stale bundle, and it ALWAYS
+  shows a notification (an unreadable payload shows a fallback; silent pushes get a subscription revoked on iOS). A tap
+  focuses an open Clokr window and posts it the target (`clokr:navigate`; the `(app)` layout validates it and calls `goto()`, so
+  the unsaved-changes guard applies - the worker never navigates a window itself) or opens a new one, never an operator or
+  signed-out auth window; a tap while signed out lands on its page after sign-in
+  (`safeAppNext()`, `?next=`). The CSP names `worker-src 'self'`; the manifest declares only icon sizes that exist.
+- **Explicit logout removes this device's registration first** (Sidebar and Topbar, deadline 3 s). The inactivity timeout and a
+  forced 401 logout cannot (no valid token): the device stays registered until the next explicit logout or a manual removal.
+- **Known limit (D-16).** Direct `notification.create` sites that bypass `notify()` never push (`bs-leave-correction.ts`,
+  `vocational-school-generator.ts`). Moving them onto `notify()` is a deliberate follow-up, not a fix to slip into another change.
+- A new notification type needs its push entry in the same commit (the scan fails otherwise); a new `notify()` call site needs
+  none beyond that. Rotating the VAPID pair invalidates every subscription (each device enables push again).
 
 ### Tenant-scoping gate (Issue #204)
 

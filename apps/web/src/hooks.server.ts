@@ -112,6 +112,9 @@ export const handle: Handle = async ({ event, resolve }) => {
       "font-src 'self'",
       "img-src 'self' data: blob:",
       "connect-src 'self'",
+      // Issue #608 (D-12): the push service worker is named explicitly. It would fall back to
+      // script-src 'self' anyway - this documents the intent and loosens nothing.
+      "worker-src 'self'",
       "frame-src 'none'",
       "object-src 'none'",
       "base-uri 'self'",

@@ -16,6 +16,8 @@
   import { hasUnreadReleaseNotes, whatsNewOpen } from "$stores/release-notes";
   import { isMobileViewport } from "$lib/utils/viewport";
   import { activeNavHref } from "$lib/nav/active-route";
+  import { loginPathWithNext } from "$lib/nav/login-next";
+  import { installPushNavigateListener } from "$lib/push/navigate-message";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -144,9 +146,12 @@
     whatsNewOpen.set(true);
   });
 
+  let removePushNavigateListener: (() => void) | undefined;
+
   onMount(() => {
     if (!$authStore.accessToken) {
-      goto("/login");
+      // Issue #608 (D-20): keep the page the person was heading to through sign-in.
+      goto(loginPathWithNext($page.url));
       return;
     }
 
@@ -167,6 +172,10 @@
     // store fails closed for presentation and never gates data — the server decides every request.
     void salonContext.load($authStore.user?.id ?? null, { force: true });
 
+    // Issue #608 (review WR-05): a tapped push notification asks this window to navigate; it goes
+    // through the router, so the unsaved-changes guard above applies.
+    removePushNavigateListener = installPushNavigateListener((path) => goto(path));
+
     // Start inactivity timer
     resetInactivityTimer();
     for (const evt of ACTIVITY_EVENTS) {
@@ -184,6 +193,7 @@
   });
 
   onDestroy(() => {
+    removePushNavigateListener?.();
     if (inactivityTimer) clearTimeout(inactivityTimer);
     if (typeof document !== "undefined") {
       for (const evt of ACTIVITY_EVENTS) {

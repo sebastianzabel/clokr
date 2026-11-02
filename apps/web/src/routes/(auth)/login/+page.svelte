@@ -2,8 +2,13 @@
   import { preventDefault } from "svelte/legacy";
 
   import { goto } from "$app/navigation";
+  import { page } from "$app/stores";
   import { authStore } from "$stores/auth";
   import { api } from "$api/client";
+  import { authPathWithNext, safeAppNext } from "$lib/nav/login-next";
+
+  // Issue #608 (D-20): the page a notification tap (or a lost session) was heading to.
+  const next = safeAppNext($page.url.searchParams.get("next"));
 
   let email = $state("");
   let password = $state("");
@@ -34,7 +39,7 @@
 
       if ("requiresOtp" in res && res.requiresOtp) {
         sessionStorage.setItem("otp_userId", res.userId);
-        goto("/otp");
+        goto(authPathWithNext("/otp", next));
         return;
       }
 
@@ -47,7 +52,7 @@
             String(res.sessionConfig.sessionTimeoutMinutes),
           );
         }
-        goto("/dashboard");
+        goto(next ?? "/dashboard");
       }
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Anmeldung fehlgeschlagen";

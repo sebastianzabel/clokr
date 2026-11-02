@@ -67,6 +67,11 @@ services:
       JWT_REFRESH_SECRET: "clokr-dev-refresh-secret-min-32-chars!"
       # Phase 88: separate operator signing secret (dev value; distinct from the tenant secrets).
       OPERATOR_JWT_SECRET: "clokr-dev-operator-secret-min-32-characters!"
+      # Optional (Issue #608). Empty means Web-Push is off. A developer sets all three in the untracked
+      # env file (docs/runbooks/web-push.md). Never commit a key pair: a committed one could reach prod by copy.
+      VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY:-}"
+      VAPID_PRIVATE_KEY: "${VAPID_PRIVATE_KEY:-}"
+      VAPID_SUBJECT: "${VAPID_SUBJECT:-}"
       JWT_EXPIRES_IN: "15m"
       JWT_REFRESH_EXPIRES_IN: "7d"
       CORS_ORIGIN: "http://localhost:3000"

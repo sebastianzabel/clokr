@@ -50,6 +50,12 @@ ENCRYPTION_KEY=<32+ char random>
 # are created with scripts/operator-account.ts (see docs/runbooks/operator-accounts.md).
 OPERATOR_JWT_SECRET=<32+ char random, optional>
 
+# Optional: Web-Push (Issue #608). All three or none; unset or empty keeps Web-Push off.
+# Generate the pair with scripts/generate-vapid-keys.ts (see docs/runbooks/web-push.md).
+VAPID_PUBLIC_KEY=<optional>
+VAPID_PRIVATE_KEY=<optional, secret>
+VAPID_SUBJECT=<optional, mailto:<contact> or https: URL>
+
 # Required: app URLs (must match HAProxy frontend hostname)
 CORS_ORIGIN=https://clokr.example.com
 APP_URL=https://clokr.example.com

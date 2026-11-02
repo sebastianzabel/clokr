@@ -8,6 +8,7 @@
   import PageHead from "$components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
   import PasswordStrength from "$components/ui/PasswordStrength.svelte";
+  import PushSettings from "$components/settings/PushSettings.svelte";
   import { onMount } from "svelte";
   import {
     getMyWifi,
@@ -446,6 +447,9 @@
       <p class="form-error" role="alert">{macError}</p>
     {/if}
   </Card>
+
+  <!-- Push notifications: per device, only offered when the instance has VAPID keys -->
+  <PushSettings />
 
   <div class="settings-info">
     <p class="text-muted"><strong>E-Mail:</strong> {$authStore.user?.email}</p>

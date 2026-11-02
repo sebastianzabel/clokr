@@ -6691,3 +6691,92 @@ Abwesenheiten, Schichtplanung, Arbeitszeitkonto, Kompositionsschicht: keine.
 
 `scripts/backfill-512-anonymized-audit-freetext.ts` (Probelauf als Voreinstellung, `--confirm`, Marker `BACKFILL_512`;
 `docs/migrations.md` „Phase 512“). Tests: `anonymization-audit-freetext-512`, `backfill-512-anonymized-audit-freetext`.
+
+## AD — Web-Push-Abos als Zustelladresse im Unterbau (Phase 608, Issue #608)
+
+### Ausgangslage
+
+Benachrichtigungen erreichten eine Person nur in der App (Glocke) und, je nach Einstellung, per E-Mail. Wer die Seite nicht
+geöffnet hat, erfährt von einem neuen Antrag oder einer fehlenden Ausstempelung erst später. Phase 608 ergänzt Web-Push auf
+dem Handy: pro Gerät einwilligen, eine neutrale Mitteilung auf dem Sperrbildschirm, ein Tipp öffnet die passende Seite; die
+App ist dazu als Web-App installierbar (Android Chrome; iPhone ab iOS 16.4 nur als Home-Bildschirm-App).
+
+### Rechtslage
+
+- Art. 6 Abs. 1 lit. a DSGVO: Einwilligung. Sie wird je Gerät erteilt, durch das aktive Einschalten im Browser (die
+  Berechtigungsabfrage des Browsers erscheint erst beim Tippen, nie beim Seitenaufruf) und mit `consentedAt` festgehalten.
+- Art. 7 Abs. 3 DSGVO: Der Widerruf ist so einfach wie die Erteilung: „Push deaktivieren“ auf demselben Bildschirm, „Entfernen“
+  je Gerät in der Geräteliste, und die ausdrückliche Abmeldung auf einem geteilten Telefon entfernt dessen Registrierung zuerst.
+- Art. 5 Abs. 1 lit. c DSGVO: Datenminimierung auf dem Sperrbildschirm. Der Text ist je Benachrichtigungstyp ein neutraler,
+  fest hinterlegter Satz ohne Namen, Zahlen, Zeiten, Saldo oder Entscheidung; der Titel der In-App-Mitteilung und ihre Meldung
+  verlassen den Server nie.
+- Art. 9 DSGVO: Eine Krankmeldung ist ein Gesundheitsdatum. Ihr Push hat denselben neutralen Text wie jeder andere Antrag
+  („Es gibt einen neuen Antrag zur Prüfung.“), und die vier `SECTION9_*`-Typen (§ 9 BUrlG, Erkrankung im Urlaub) werden nie
+  gepusht.
+- Art. 17 DSGVO: Eine Zustelladresse ist kein aufbewahrungspflichtiger Beleg. Die Anonymisierung einer Person löscht ihre
+  Geräte; der Abzug für int (`pseudonymize-dump.ts`) löscht alle, damit keine echte Zustelladresse ein Produktivsystem verlässt.
+
+### Entscheidung
+
+- **D-01 Schlüssel optional je Instanz.** `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` nur als vollständiger Satz
+  oder gar nicht (Prüfung beim Start, auch ob der öffentliche zum privaten Schlüssel gehört). Ohne Satz gibt es die vier
+  Schreib- und Leseroutinen unter `/api/v1/me/push` nicht, `GET /api/v1/me/push/config` meldet `enabled: false`, nichts wird
+  gesendet und die Profilseite zeigt keinen Abschnitt. Wie `OPERATOR_JWT_SECRET`: nie ein Standardwert.
+- **D-03 Modell.** `PushSubscription` im Unterbau: `tenantId` (FK `Restrict`), `userId` (FK `Cascade`), eindeutiger `endpoint`,
+  `p256dh`, `auth`, `deviceLabel` (nur Anzeige, aus dem User-Agent abgeleitet), `consentedAt`, `lastSuccessAt`. Keine neue
+  Berechtigung: Die fünf Routen sind Eigene-Daten-Routen hinter `requireAuth` (JWT; ein API-Schlüssel erhält 400).
+- **D-04 Löschen statt Sperren.** Abmelden, ein 404/410 des Push-Dienstes, die Anonymisierung und der int-Abzug löschen die
+  Zeile hart. Erteilung, Aktualisierung und Löschung stehen im AuditLog (`CREATE`/`UPDATE`/`DELETE`) ohne Endpunkt und
+  Schlüssel; Systemzeilen tragen den Mandanten der Zeile als Akteurstempel.
+- **D-05 / P-608-07 Mehrere Geräte, ein Endpunkt eine Zeile.** Höchstens 10 Geräte je Person. Wird ein Endpunkt erneut
+  registriert, wird er für dieselbe Person aktualisiert; eine andere Person (geteiltes Telefon) übernimmt ihn nur mit
+  demselben Schlüsselpaar `p256dh` und `auth` (das beweist denselben Browser), sonst 409 und nichts wird geändert. Die alte
+  Zeile wird gelöscht und im Mandanten der alten Zeile protokolliert.
+- **D-08 Eine Textquelle, ein Sender.** `notification-push-policy.ts` (fail-closed, je `notify()`-Typ ein Eintrag oder
+  `never`, scan-getestet, E-Mail `never` ⇒ Push `never`) ist die einzige Stelle für Sperrbildschirmtexte;
+  `push-sender.ts` ist der einzige Importeur von `web-push`. Die Nutzlast ist genau `{ title, body, url }`.
+- **D-17 Zieladressen-Allowlist (SSRF).** Ein Endpunkt ist nur https mit einem Host aus vier Familien erlaubt
+  (`fcm.googleapis.com`, `push.services.mozilla.com`, `notify.windows.com`, `push.apple.com`, jeweils der Host selbst oder
+  eine Subdomain), geprüft vor jeder Schreibung und vor jedem Senden; `PUSH_SERVICE_HOST_SUFFIXES` ist die eine Konstante.
+- **Dienst-Worker.** `service-worker.ts` hat nur `push` und `notificationclick` (plus die Lebenszyklusereignisse), keinen
+  Netzwerk-Handler und keinen Cache; er zeigt immer eine Mitteilung. Die CSP nennt `worker-src 'self'`, sonst bleibt sie
+  unverändert. Ein Tipp bei abgelaufener Sitzung führt nach der Anmeldung auf die Zielseite (`?next=`, nur relative Pfade).
+
+### Auswirkung auf die Kontexte
+
+- **Unterbau:** neues Modell `PushSubscription` (21 `platform`-Modelle statt 20), neue Dateien `push-*.ts` und
+  `notification-push-policy.ts`; `notify()` liegt im Unterbau. Eine **Erweiterung** nach ADR 0002, Entscheidung 7 (rein
+  additiv, kein bestehender Leser ändert sich): freigegeben mit dem Status `Ready` des Issues.
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** keine.
+- **Kompositionsschicht:** keine (ein Eintrag in der Routenregistrierung von `app.ts`, keine Fachregel).
+
+Belegt durch `608-untouched.sh`: die vier Fachkontexte, `composition/`, `services/` und die aufgezeichneten
+Neutralitätsmatrizen sind gegenüber dem Basisstand unverändert.
+
+### Grenzen
+
+- **D-16:** Direkte `notification.create`-Stellen, die `notify()` umgehen (`bs-leave-correction.ts`,
+  `vocational-school-generator.ts`), senden keinen Push. Sie auf `notify()` umzustellen ist ein eigener Schritt.
+- Die Inaktivitäts-Abmeldung und eine erzwungene Abmeldung nach abgelaufener Sitzung (401) entfernen das Gerät nicht (es gibt
+  kein gültiges Token); erst die ausdrückliche Abmeldung oder das manuelle Entfernen tut es.
+- iPhone und iPad: Push gibt es nur in der zum Home-Bildschirm hinzugefügten App (ab iOS 16.4); im Safari-Tab zeigt die Seite
+  eine Anleitung statt des Schalters.
+- Ein Schlüsselwechsel macht alle Geräte ungültig; jedes Gerät schaltet Push neu ein (Laufbuch `docs/runbooks/web-push.md`).
+- Die 10-Geräte-Grenze ist eine Missbrauchsgrenze, keine Datenbankinvariante: zwei gleichzeitige Registrierungen
+  verschiedener Endpunkte bei neun vorhandenen Geräten können beide durchgehen.
+- Das 512-Pixel-Symbol ist eine hochskalierte Übergangslösung (Quelle 256 Pixel); echte Grafik folgt.
+- AC-2 und AC-3 (Zustellung auf ein echtes Telefon, Tipp-Ziel, Sperrbildschirm) lassen sich nicht automatisieren: Sie werden
+  als Abnahme-Checkliste im Pull Request vom Owner auf Android Chrome und einem iPhone abgenommen.
+
+### Nachweise
+
+Tests: `me-push-608`, `push-config-608`, `push-surface-off-608`, `push-endpoint-guard-608`, `push-device-label-608`,
+`push-reassign-608`, `anonymization-push-608`, `notification-push-policy-608`, `notification-push-dispatch-608`,
+`generate-vapid-keys-608` (API); `service-worker-608`, `manifest-608`, `payload`, `login-next`, `support`,
+`device-subscription`, `logout`, `PushSettings` (Web); `push-pwa.spec.ts` (Browser: Worker unter der echten CSP, Manifest,
+Symbole, Profilseite ohne Schlüssel). Geänderte Prüfwerte: Modellzahlen (`measure-foreign-context-access`,
+`lint-tenant-scoping-model-graph`), Routenoberfläche (`route-surface.txt`), `pinnedTenantCsp` (`worker-src 'self'`),
+Ausschlüsse der Neutralitätsmatrix für die fünf Push-Routen.

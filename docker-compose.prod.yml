@@ -93,6 +93,11 @@ services:
       # Optional (Phase 88). Empty means the operator interface is off; set a separate value of
       # at least 32 characters, different from the secrets above, to switch it on.
       OPERATOR_JWT_SECRET: "${OPERATOR_JWT_SECRET:-}"
+      # Optional (Issue #608). All three or none; empty means Web-Push is off.
+      # Generate with scripts/generate-vapid-keys.ts - docs/runbooks/web-push.md
+      VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY:-}"
+      VAPID_PRIVATE_KEY: "${VAPID_PRIVATE_KEY:-}"
+      VAPID_SUBJECT: "${VAPID_SUBJECT:-}"
       JWT_EXPIRES_IN: "15m"
       JWT_REFRESH_EXPIRES_IN: "7d"
       CORS_ORIGIN: "${CORS_ORIGIN}"
