@@ -7,7 +7,7 @@
  * on an invalid one, so each case resets the module graph and re-imports it (operator-config-88).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { TEST_VAPID } from "./push-fixtures-608";
+import { TEST_VAPID, generateTestVapidPair } from "./push-fixtures-608";
 
 const BASE_ENV: Record<string, string> = {
   DATABASE_URL: "postgresql://clokr:password@localhost:5432/clokr_test",
@@ -17,11 +17,7 @@ const BASE_ENV: Record<string, string> = {
 };
 
 // TEST ONLY - a second, valid pair whose public half does not belong to TEST_VAPID's private key.
-const OTHER_PAIR = {
-  publicKey:
-    "BMkz7_uKXouLjR9Def1YeyxxcnMUlSE9F7zSm6RKg09dCbPRZ9pT8Wd7YcoMkkqgZchB5lyXEDTnXId2MnjIvaQ",
-  privateKey: "kilq3UFqGt7vwhXDm6gbpooGGmJweyAXBHODsLoQt7s",
-};
+const OTHER_PAIR = generateTestVapidPair();
 
 const VAPID_KEYS = ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"];
 const MANAGED_KEYS = [...Object.keys(BASE_ENV), ...VAPID_KEYS];
