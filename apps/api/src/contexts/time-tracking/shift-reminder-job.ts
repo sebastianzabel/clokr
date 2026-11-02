@@ -37,10 +37,12 @@ import {
   exclusionFor,
   formatShiftTime,
   shiftInstantKey,
+  shiftDaysOf,
   shiftInstants,
   shiftReminderKey,
   type DayRange,
   type ExclusionKind,
+  type ReminderEntry,
   windowContains,
   type ReminderSkipReason,
 } from "./shift-reminders";
@@ -251,10 +253,16 @@ async function runTenant(
     entryFrom,
     new Date(`${today}T00:00:00Z`),
   );
-  const entriesOf = new Map<string, typeof entries>();
+  // The entries as the kernel reads them: each carries its own tenant-local day (WR-03).
+  const entriesOf = new Map<string, ReminderEntry[]>();
   for (const entry of entries) {
     const list = entriesOf.get(entry.employeeId) ?? [];
-    list.push(entry);
+    list.push({
+      startTime: entry.startTime,
+      endTime: entry.endTime,
+      isInvalid: entry.isInvalid,
+      day: entry.date.toISOString().slice(0, 10),
+    });
     entriesOf.set(entry.employeeId, list);
   }
 
@@ -363,6 +371,7 @@ async function runTenant(
     const { userId } = person;
     const decision = decideShiftStart({
       startUtc: candidate.startUtc,
+      shiftDays: shiftDaysOf(candidate),
       offsetMinutes: offset,
       now,
       entries: entriesOf.get(shift.employeeId) ?? [],
@@ -405,7 +414,9 @@ async function runTenant(
     }
     const { userId } = person;
     const decision = decideShiftEnd({
+      startUtc: candidate.startUtc,
       endUtc: candidate.endUtc,
+      shiftDays: shiftDaysOf(candidate),
       offsetMinutes: offset,
       now,
       entries: entriesOf.get(shift.employeeId) ?? [],
@@ -458,12 +469,7 @@ async function runTenant(
         conflictsWithLeave: c.shift.conflictsWithLeave,
         exclusion: exclusionOf(c),
       })),
-      entries: (entriesOf.get(employeeId) ?? []).map((e) => ({
-        startTime: e.startTime,
-        endTime: e.endTime,
-        isInvalid: e.isInvalid,
-        day: e.date.toISOString().slice(0, 10),
-      })),
+      entries: entriesOf.get(employeeId) ?? [],
     });
     if (!decision.send) {
       skip(decision.reason);

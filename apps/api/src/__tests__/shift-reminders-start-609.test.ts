@@ -300,3 +300,22 @@ describe("shift start reminder - only the right persons (D-05)", () => {
     expect(rows.map((r) => r.type)).toEqual([START]);
   });
 });
+
+describe("an open entry of an earlier day is not 'clocked in' (WR-03)", () => {
+  const YESTERDAY = "2026-11-09";
+
+  it("still sends the start reminder to a person whose entry from yesterday was never closed", async () => {
+    const p = await personWithShift();
+    await createEntry(app, tenant, p.employeeId, localInstant(YESTERDAY, "09:00"), null);
+    await tick(TEST_DAY, "09:15");
+    const notice = await soleNotification(app.prisma, { where: { userId: p.userId, type: START } });
+    expect(notice.relatedId).toBe(p.shiftId);
+  });
+
+  it("control: an open entry of the shift's own day still silences it", async () => {
+    const p = await personWithShift();
+    await createEntry(app, tenant, p.employeeId, localInstant(TEST_DAY, "06:00"), null);
+    await tick(TEST_DAY, "09:15");
+    expect(await remindersOf(app, p.userId)).toHaveLength(0);
+  });
+});

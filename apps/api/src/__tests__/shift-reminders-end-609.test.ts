@@ -244,3 +244,21 @@ describe("shift end reminder - the registries (D-08)", () => {
     });
   });
 });
+
+describe("an open entry of an earlier day does not trigger the end reminder (WR-03)", () => {
+  const YESTERDAY = "2026-11-09";
+
+  it("sends nothing to a person who did not come in today but left yesterday's entry open", async () => {
+    const p = await personWithShift();
+    await createEntry(app, tenant, p.employeeId, localInstant(YESTERDAY, "09:00"), null);
+    await tick(TEST_DAY, "17:15");
+    expect(await remindersOf(app, p.userId)).toHaveLength(0);
+  });
+
+  it("control: an open entry of the shift's own day does", async () => {
+    const p = await personWithShift();
+    await createEntry(app, tenant, p.employeeId, localInstant(TEST_DAY, "09:02"), null);
+    await tick(TEST_DAY, "17:15");
+    expect(await remindersOf(app, p.userId, END)).toHaveLength(1);
+  });
+});

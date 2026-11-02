@@ -86,6 +86,8 @@ function padTime(hhmm: string): string | null {
 export interface ShiftInstants {
   /** The shift's calendar day, `@db.Date` read as a UTC day (CLAUDE.md, #493). */
   day: string;
+  /** The calendar day the shift ends on: `day`, or the next day for an overnight shift. */
+  endDay: string;
   startUtc: Date;
   endUtc: Date;
 }
@@ -102,14 +104,16 @@ export function shiftInstants(
   const start = padTime(shift.startTime);
   const end = padTime(shift.endTime);
   if (start === null || end === null) {
-    return { day, startUtc: new Date(NaN), endUtc: new Date(NaN) };
+    return { day, endDay: day, startUtc: new Date(NaN), endUtc: new Date(NaN) };
   }
   const startUtc = fromZonedTime(`${day}T${start}:00`, tz);
   let endUtc = fromZonedTime(`${day}T${end}:00`, tz);
+  let endDay = day;
   if (endUtc.getTime() <= startUtc.getTime()) {
-    endUtc = fromZonedTime(`${nextCalendarDay(day)}T${end}:00`, tz);
+    endDay = nextCalendarDay(day);
+    endUtc = fromZonedTime(`${endDay}T${end}:00`, tz);
   }
-  return { day, startUtc, endUtc };
+  return { day, endDay, startUtc, endUtc };
 }
 
 /** True for `from <= now < from + minutes` (inclusive start, exclusive end). */
@@ -198,12 +202,38 @@ export interface ReminderEntry {
   startTime: Date;
   endTime: Date | null;
   isInvalid: boolean;
-  /** The entry's own day ("YYYY-MM-DD", the stored `@db.Date`); only the day-close rule reads it. */
+  /**
+   * The entry's own tenant-local day ("YYYY-MM-DD", the stored `@db.Date`). The day-close rule and
+   * the START/END "does this open entry belong to the shift" rule read it.
+   */
   day?: string;
+}
+
+/** The calendar days a shift occupies: its day, plus the next day for an overnight shift. */
+export function shiftDaysOf(instants: { day: string; endDay: string }): string[] {
+  return instants.endDay === instants.day ? [instants.day] : [instants.day, instants.endDay];
+}
+
+/**
+ * Whether an OPEN entry counts as "clocked in for this shift" (WR-03). Only an entry of the shift's
+ * own day (an overnight shift: its start or its end day) does. An open entry of an earlier day is a
+ * forgotten clock-out, not the person being at work: it neither silences the START reminder nor
+ * makes the END reminder fire. One exception keeps an early clock-in across midnight (23:30 for a
+ * 00:30 shift): an open entry that started within the look-back before the shift start belongs.
+ */
+function openEntryBelongsToShift(
+  entry: ReminderEntry,
+  shift: { days: readonly string[]; startUtc: Date },
+): boolean {
+  if (entry.day !== undefined && shift.days.includes(entry.day)) return true;
+  const lookbackFrom = shift.startUtc.getTime() - START_LOOKBACK_MINUTES * MINUTE_MS;
+  return entry.startTime.getTime() >= lookbackFrom;
 }
 
 export interface StartDecisionInput {
   startUtc: Date;
+  /** The calendar days of the shift (`shiftDaysOf`); an open entry counts only on one of them (WR-03). */
+  shiftDays: readonly string[];
   offsetMinutes: number;
   now: Date;
   /** The person's recorded WORK entries around the shift (any validity; invalid rows are ignored). */
@@ -215,8 +245,9 @@ export interface StartDecisionInput {
 /**
  * Whether the person gets the START notice for this shift (AC-1, D-04, D-07).
  *
- * Due in `[start + N, start + N + 60 min)`. Not sent while a valid OPEN entry exists (this also covers
- * an open entry of an adjacent earlier shift), nor when a valid entry started within
+ * Due in `[start + N, start + N + 60 min)`. Not sent while a valid OPEN entry of the shift's day
+ * exists (this also covers an open entry of an adjacent earlier shift; one from an earlier day does
+ * not count, WR-03), nor when a valid entry started within
  * `[start - 2 h, now]` - the person clocked in early or has already worked and left.
  */
 export function decideShiftStart(input: StartDecisionInput): ReminderDecision {
@@ -226,7 +257,10 @@ export function decideShiftStart(input: StartDecisionInput): ReminderDecision {
   }
   if (input.exclusion) return { send: false, reason: input.exclusion };
   const valid = input.entries.filter((e) => !e.isInvalid);
-  if (valid.some((e) => e.endTime === null)) return { send: false, reason: "CLOCKED_IN" };
+  const shift = { days: input.shiftDays, startUtc: input.startUtc };
+  if (valid.some((e) => e.endTime === null && openEntryBelongsToShift(e, shift))) {
+    return { send: false, reason: "CLOCKED_IN" };
+  }
   const lookbackFrom = input.startUtc.getTime() - START_LOOKBACK_MINUTES * MINUTE_MS;
   const nowMs = input.now.getTime();
   const started = valid.some((e) => {
@@ -244,7 +278,10 @@ export interface OtherShiftInstants {
 }
 
 export interface EndDecisionInput {
+  startUtc: Date;
   endUtc: Date;
+  /** The calendar days of the shift (`shiftDaysOf`); an open entry counts only on one of them (WR-03). */
+  shiftDays: readonly string[];
   offsetMinutes: number;
   now: Date;
   /** The person's recorded WORK entries around the shift (any validity; invalid rows are ignored). */
@@ -258,8 +295,9 @@ export interface EndDecisionInput {
 /**
  * Whether the person gets the END notice for this shift (AC-2, D-04, D-07, P-609-06).
  *
- * Due in `[end + N, end + N + 60 min)`. Sent only while a valid OPEN entry that started before the
- * shift end exists - an entry opened after the end is not nagged, a closed day is done. A shift that
+ * Due in `[end + N, end + N + 60 min)`. Sent only while a valid OPEN entry of the shift's day that
+ * started before the shift end exists (an open entry of an earlier day is a forgotten clock-out and
+ * does not trigger it, WR-03) - an entry opened after the end is not nagged, a closed day is done. A shift that
  * is directly followed (the other starts at or before `end + N` and ends after this end) gets none:
  * the person is expected to keep working and the last shift's notice covers the evening.
  */
@@ -270,8 +308,13 @@ export function decideShiftEnd(input: EndDecisionInput): ReminderDecision {
   }
   if (input.exclusion) return { send: false, reason: input.exclusion };
   const endMs = input.endUtc.getTime();
+  const shift = { days: input.shiftDays, startUtc: input.startUtc };
   const stillIn = input.entries.some(
-    (e) => !e.isInvalid && e.endTime === null && e.startTime.getTime() < endMs,
+    (e) =>
+      !e.isInvalid &&
+      e.endTime === null &&
+      e.startTime.getTime() < endMs &&
+      openEntryBelongsToShift(e, shift),
   );
   if (!stillIn) return { send: false, reason: "NO_OPEN_ENTRY" };
   const opensMs = opens.getTime();

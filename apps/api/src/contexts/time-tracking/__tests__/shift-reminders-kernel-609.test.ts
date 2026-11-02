@@ -17,6 +17,7 @@ import {
   decideShiftStart,
   exclusionFor,
   formatShiftTime,
+  shiftDaysOf,
   shiftInstantKey,
   parseDayCloseTime,
   shiftInstants,
@@ -41,12 +42,16 @@ describe("shiftInstants (D-03, P-609-03)", () => {
     expect(i.day).toBe("2026-11-10");
     expect(iso(i.startUtc)).toBe("2026-11-10T08:00:00.000Z");
     expect(iso(i.endUtc)).toBe("2026-11-10T16:00:00.000Z");
+    expect(i.endDay).toBe("2026-11-10");
+    expect(shiftDaysOf(i)).toEqual(["2026-11-10"]);
   });
 
   it("lets an overnight shift end on the next calendar day", () => {
     const i = shiftInstants(shift("2026-11-10", "22:00", "06:00"), TZ);
     expect(iso(i.startUtc)).toBe("2026-11-10T21:00:00.000Z");
     expect(iso(i.endUtc)).toBe("2026-11-11T05:00:00.000Z");
+    expect(i.endDay).toBe("2026-11-11");
+    expect(shiftDaysOf(i)).toEqual(["2026-11-10", "2026-11-11"]);
   });
 
   it("reads the wall clock after the spring-forward change (2027-03-28 09:00 is CEST)", () => {
@@ -147,11 +152,17 @@ describe("formatShiftTime and shiftReminderKey", () => {
 describe("decideShiftStart (AC-1, D-04, D-07)", () => {
   const startUtc = at("2026-11-10", "09:00");
   const now = at("2026-11-10", "09:15");
-  const base = { startUtc, offsetMinutes: 15, now };
-  const entry = (start: Date, end: Date | null, isInvalid = false): ReminderEntry => ({
+  const base = { startUtc, shiftDays: ["2026-11-10"], offsetMinutes: 15, now };
+  const entry = (
+    start: Date,
+    end: Date | null,
+    isInvalid = false,
+    day = "2026-11-10",
+  ): ReminderEntry => ({
     startTime: start,
     endTime: end,
     isInvalid,
+    day,
   });
   const minutesBefore = (m: number) => new Date(startUtc.getTime() - m * 60_000);
 
@@ -179,6 +190,46 @@ describe("decideShiftStart (AC-1, D-04, D-07)", () => {
   it("ignores an invalid open entry", () => {
     const entries = [entry(at("2026-11-10", "08:58"), null, true)];
     expect(decideShiftStart({ ...base, entries })).toEqual({ send: true });
+  });
+
+  describe("an open entry of an earlier day is a forgotten clock-out, not 'clocked in' (WR-03)", () => {
+    it("does not silence the start reminder", () => {
+      const stale = [entry(at("2026-11-09", "09:00"), null, false, "2026-11-09")];
+      expect(decideShiftStart({ ...base, entries: stale })).toEqual({ send: true });
+    });
+
+    it("an open entry of the shift's own day still silences it", () => {
+      const today = [entry(at("2026-11-10", "06:00"), null)];
+      expect(decideShiftStart({ ...base, entries: today })).toEqual({
+        send: false,
+        reason: "CLOCKED_IN",
+      });
+    });
+
+    it("an early clock-in across midnight (23:30 for a 00:30 shift) still counts", () => {
+      const night = {
+        startUtc: at("2026-11-10", "00:30"),
+        shiftDays: ["2026-11-10"],
+        offsetMinutes: 15,
+        now: at("2026-11-10", "00:45"),
+      };
+      const early = [entry(at("2026-11-09", "23:30"), null, false, "2026-11-09")];
+      expect(decideShiftStart({ ...night, entries: early })).toEqual({
+        send: false,
+        reason: "CLOCKED_IN",
+      });
+    });
+
+    it("an overnight shift counts an open entry of its end day too", () => {
+      const overnight = {
+        startUtc: at("2026-11-10", "22:00"),
+        shiftDays: ["2026-11-10", "2026-11-11"],
+        offsetMinutes: 15,
+        now: at("2026-11-10", "22:15"),
+      };
+      const open = [entry(at("2026-11-10", "21:55"), null, false, "2026-11-11")];
+      expect(decideShiftStart({ ...overnight, entries: open }).send).toBe(false);
+    });
   });
 
   it("does not send when a valid entry started within the two hours before the shift", () => {
@@ -211,14 +262,26 @@ describe("decideShiftStart (AC-1, D-04, D-07)", () => {
 });
 
 describe("decideShiftEnd (AC-2, D-04, D-07, P-609-06)", () => {
-  const entry = (start: Date, end: Date | null, isInvalid = false): ReminderEntry => ({
+  const entry = (
+    start: Date,
+    end: Date | null,
+    isInvalid = false,
+    day = "2026-11-10",
+  ): ReminderEntry => ({
     startTime: start,
     endTime: end,
     isInvalid,
+    day,
   });
   const endUtc = at("2026-11-10", "17:00");
   const N = 15;
-  const base = { endUtc, offsetMinutes: N, now: at("2026-11-10", "17:15") };
+  const base = {
+    startUtc: at("2026-11-10", "09:00"),
+    endUtc,
+    shiftDays: ["2026-11-10"],
+    offsetMinutes: N,
+    now: at("2026-11-10", "17:15"),
+  };
   const other = (start: string, end: string, day = "2026-11-10") => ({
     startUtc: at(day, start),
     endUtc: at(day, end),
@@ -249,6 +312,35 @@ describe("decideShiftEnd (AC-2, D-04, D-07, P-609-06)", () => {
     expect(decideShiftEnd({ ...base, entries, otherShifts: [] })).toEqual({
       send: false,
       reason: "NO_OPEN_ENTRY",
+    });
+  });
+
+  describe("an open entry of an earlier day does not trigger the end reminder (WR-03)", () => {
+    it("sends nothing for a forgotten entry of yesterday", () => {
+      const stale = [entry(at("2026-11-09", "09:00"), null, false, "2026-11-09")];
+      expect(decideShiftEnd({ ...base, entries: stale, otherShifts: [] })).toEqual({
+        send: false,
+        reason: "NO_OPEN_ENTRY",
+      });
+    });
+
+    it("an open entry of the shift's own day still triggers it", () => {
+      const today = [entry(at("2026-11-10", "09:02"), null)];
+      expect(decideShiftEnd({ ...base, entries: today, otherShifts: [] })).toEqual({ send: true });
+    });
+
+    it("an early clock-in across midnight still triggers it", () => {
+      const night = shiftInstants(shift("2026-11-10", "00:30", "08:00"), TZ);
+      const input = {
+        startUtc: night.startUtc,
+        endUtc: night.endUtc,
+        shiftDays: shiftDaysOf(night),
+        offsetMinutes: N,
+        now: at("2026-11-10", "08:15"),
+        otherShifts: [],
+      };
+      const early = [entry(at("2026-11-09", "23:30"), null, false, "2026-11-09")];
+      expect(decideShiftEnd({ ...input, entries: early })).toEqual({ send: true });
     });
   });
 
@@ -294,8 +386,15 @@ describe("decideShiftEnd (AC-2, D-04, D-07, P-609-06)", () => {
 
   it("an overnight shift ends on the next calendar day and the DST day keeps the wall clock", () => {
     const night = shiftInstants(shift("2026-10-24", "22:00", "06:00"), TZ);
-    const entries = [entry(at("2026-10-24", "21:58"), null)];
-    const input = { endUtc: night.endUtc, offsetMinutes: N, entries, otherShifts: [] };
+    const entries = [entry(at("2026-10-24", "21:58"), null, false, "2026-10-24")];
+    const input = {
+      startUtc: night.startUtc,
+      endUtc: night.endUtc,
+      shiftDays: shiftDaysOf(night),
+      offsetMinutes: N,
+      entries,
+      otherShifts: [],
+    };
     expect(decideShiftEnd({ ...input, now: at("2026-10-25", "06:15") })).toEqual({ send: true });
     // 05:15 local (04:15Z) lies before the shift end 06:00 local (05:00Z): not yet due
     expect(decideShiftEnd({ ...input, now: at("2026-10-25", "05:15") }).send).toBe(false);
@@ -446,6 +545,7 @@ describe("the exclusion silences every decision (AC-3)", () => {
   it("silences the start decision inside its window", () => {
     const input = {
       startUtc: at(day, "09:00"),
+      shiftDays: [day],
       offsetMinutes: N,
       now: at(day, "09:15"),
       entries: [],
@@ -459,10 +559,12 @@ describe("the exclusion silences every decision (AC-3)", () => {
 
   it("silences the end decision inside its window", () => {
     const input = {
+      startUtc: at(day, "09:00"),
       endUtc: at(day, "17:00"),
+      shiftDays: [day],
       offsetMinutes: N,
       now: at(day, "17:15"),
-      entries: [{ startTime: at(day, "09:00"), endTime: null, isInvalid: false }],
+      entries: [{ startTime: at(day, "09:00"), endTime: null, isInvalid: false, day }],
       otherShifts: [],
     };
     expect(decideShiftEnd(input)).toEqual({ send: true });
