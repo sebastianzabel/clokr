@@ -53,6 +53,7 @@ classified by lifecycle.
 | lint-t100-09-routes.ts                         | 2026-09-22 | CI/local/pre-commit gate: fails unless every path-parameter route in `apps/api/src/contexts/*/api/**/*.ts` has exactly one entry in `lint-t100-09-routes.json` (category `probe`/`nicht anwendbar`/`bekannt-abweichend` plus a mandatory reason) — see § Lint gates below. The behavioral half — hitting every `probe` route twice and byte-comparing — runs inside the `apps/api` integration suite as `src/__tests__/t100-09-oracle-probe.test.ts`, not as its own CI job. Pure validation/diff/extraction lives in the sibling `lint-t100-09-routes-validate.ts`                                                                                                                                                                                                                       | Lint gate (Phase 259, Issue #259, D-01/D-07) |
 | lint-role-checks.ts                            | 2026-09-25 | CI/local/pre-commit gate: fails on any call of the removed role guard (`requireRole`) and on any comparison of a role value (`.role`, or an identifier bound to one) with `ADMIN`/`MANAGER`/`EMPLOYEE` — equality, `switch` cases, `.includes`/`.indexOf`/`.has`, and role-literal Prisma predicates under `where` — in non-test `apps/api/src`; exactly one allowlisted file (`contexts/platform/compat-role.ts`), no exceptions file — see § Lint gates below                                                                                                                                                                                                                                                                                                                           | Lint gate (Phase 75b, Issue #75, D-19)       |
 | lint-unordered-test-reads.ts                   | 2026-10-15 | CI/local/pre-commit gate: fails on an unordered `auditLog`/`notification` `findFirst` in any test file under `apps/api/src`, and on an unordered `findMany` of those delegates that is indexed by position; fix with `auditRowsFor()` from `__tests__/setup.ts`, no exceptions file — see § Lint gates below                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Lint gate (Issue #561)                       |
+| lint-prisma-unknown-keys.ts                    | 2026-11-01 | CI/local gate: fails on a nonexistent key in the object literal handed to a Prisma delegate call (`select`, `include`, `where`, `orderBy`, `data`, nested at any depth) in `scripts/` (`tsconfig.scripts.json`) and `src/` (`-p tsconfig.json`) — a hole `tsc` leaves open (see § Lint gates below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Lint gate (Issue #804)                       |
 
 ## Migration artifacts
 
@@ -1054,3 +1055,21 @@ typecheck. The baseline is ZERO errors - the step fails on any new one, so there
 `module: esnext` / `moduleResolution: bundler` (the scripts are ESM under `tsx` and use `import.meta`), which the
 src project does not. Fix a hit in the script; do not cast it away. Run `prisma generate` first in a fresh checkout,
 as for the API typecheck.
+
+### `lint-prisma-unknown-keys.ts` (Issue #804)
+
+`tsc` does not reject a nonexistent field in a Prisma call as soon as one sibling key is valid.
+The delegate methods are `findMany<T extends XFindManyArgs>(args?: SelectSubset<T, XFindManyArgs>)`:
+`T` is inferred from the argument, `SelectSubset` maps only the top-level keys (`select`, `where`,
+`orderBy`, …), and everything nested is checked by plain assignability of the inferred (no longer
+fresh) type, which ignores extra properties. Only TypeScript's weak-type check still fires, which is
+why `select: { bogus: true }` alone gives TS2353 while `select: { id: true, isLocked: true }` on a
+model without `isLocked` compiles. It holds for `select`, `include`, `where`, `orderBy` and `data`,
+in `src/` as much as in `scripts/`; no tsconfig flag changes it.
+
+The gate walks every call whose delegate method is declared `SelectSubset<T, U>` / `Subset<T, U>`
+and checks each key of the argument literal against the concrete args type `U`, recursively
+(spreads and non-literal values are skipped; JSON values accept any key). It is vacuity-proof (exit
+1 when it saw no Prisma call). Run: `pnpm --filter @clokr/api run lint:prisma-unknown-keys`
+(scripts) and `... -- -p tsconfig.json` (src). A hit is a bug in the query (Prisma would throw at
+runtime) — fix the query, there is no exceptions file.
