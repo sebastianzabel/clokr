@@ -63,7 +63,11 @@ function readDataSection(): string {
   expect(section, "the data section must not write TenantConfig").not.toContain(
     'UPDATE "TenantConfig"',
   );
-  return section;
+  // Issue #638 dropped TenantConfig.storeHours, which this historical data section still selects
+  // (`tc."storeHours"`) as the first COALESCE operand of a default salon's opening hours. The
+  // fixtures never set a custom week, so the old read always fell through to the COALESCE fallback
+  // literal; substituting NULL keeps exactly that path and leaves every other statement unchanged.
+  return section.replaceAll('tc."storeHours"', "NULL::jsonb");
 }
 
 /**
