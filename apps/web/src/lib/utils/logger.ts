@@ -92,7 +92,7 @@ function onOperatorPath(): boolean {
  */
 export function pathOnly(raw: string): string {
   try {
-    return new URL(raw, "http://clokr.invalid").pathname;
+    return new URL(raw, "https://clokr.invalid").pathname;
   } catch {
     return raw.split(/[?#]/)[0];
   }

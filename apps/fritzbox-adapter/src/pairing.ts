@@ -362,7 +362,7 @@ export function createPairingHandler(
   return async (req, res) => {
     let pathname: string;
     try {
-      pathname = new URL(req.url ?? "/", "http://pairing.invalid").pathname;
+      pathname = new URL(req.url ?? "/", "https://pairing.invalid").pathname;
     } catch {
       pathname = "";
     }
