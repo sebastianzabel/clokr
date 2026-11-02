@@ -8,8 +8,10 @@
  * `salonId` key at all, so its event is byte-identical to the one built before #541.
  *
  * This file is the ONE place of the rule. It holds the punch-side pre-check
- * ({@link terminalPunchSalon}) and the deactivation-race retry ({@link resolveTerminalPunch}); a
- * write-side check ({@link validateTerminalSalon}) lives here too. It reads the Unterbau only through `contexts/platform/index.ts`.
+ * ({@link terminalPunchSalon}), the deactivation-race retry ({@link resolveTerminalPunch}) and the
+ * write-side check of an admin binding ({@link validateTerminalSalon}).
+ *
+ * The module reads the Unterbau only through `contexts/platform/index.ts`.
  */
 import type { Prisma, TerminalApiKey } from "@clokr/db";
 import type { FastifyBaseLogger } from "fastify";
@@ -101,6 +103,12 @@ export type TerminalSalonValidation =
  * check: `terminal` is a MANDANT-relation resource, so its `ZUGEWIESEN` permission key is only ever
  * held tenant-wide (`permission-catalog.ts`, `request-permissions.ts`) and a salon-narrowed caller
  * cannot exist. The bodies are the ones of every other salon lookup (`entry-salon.ts`).
+ *
+ * The check is deliberately not atomic with the create/update that follows: a salon deactivated in
+ * between can still end up bound. That is harmless, because the punch path already tolerates a
+ * binding to a deactivated salon (it ignores it, D-05/D-09) and the list flags it with
+ * `salonActive: false`. Do not close the gap with a Salon lock: it would invert the lock order
+ * (Tenant, then Salon).
  */
 export async function validateTerminalSalon(
   db: Prisma.TransactionClient,
