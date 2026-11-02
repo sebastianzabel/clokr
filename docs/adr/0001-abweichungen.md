@@ -2083,8 +2083,8 @@ Zuweisungen, die Spalte wurde bis jetzt nur noch für ein Image-Rollback mitgef�
 **Gemessen.** Gelöscht wurden Tests, deren Gegenstand mit der Spalte entfiel: 11 Fälle in `system-roles-migration.test.ts`
 (sie führten die Migration von #75b gegen Fixture-Nutzer aus; der Drift-Fall bleibt), die 23 Fälle von
 `backfill-539-role-assignments.test.ts` samt Skript und der Wiedergabe-Helfer `legacy-role-migration-sql.ts` samt seinen
-Nutzern. Die Suite lief nach dem Entfernen der Spalte vollständig grün (Zahlen und Untergrenzen: siehe
-`check-test-completeness.mjs`, Abschnitt Release B #641); `drop-user-role-641.test.ts` (11 Fälle) prüft Migrationsdatei,
+Nutzern. Die Suite lief nach dem Entfernen der Spalte vollständig grün (755 Dateien, 11 078 Tests, davon 3 übersprungen; die
+Untergrenzen in `check-test-completeness.mjs` sind auf diese Summen gesetzt, `MIN_TESTS` sank dabei um 3 gegenüber `main`); `drop-user-role-641.test.ts` (11 Fälle) prüft Migrationsdatei,
 Katalog und Anmeldung des Admins auf dem Schema ohne Spalte.
 
 **Grenzen.**
