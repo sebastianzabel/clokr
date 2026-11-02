@@ -3,8 +3,13 @@
 
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
+  import { page } from "$app/stores";
   import { authStore } from "$stores/auth";
   import { api } from "$api/client";
+  import { authPathWithNext, safeAppNext } from "$lib/nav/login-next";
+
+  // Issue #608 (D-20): handed over by the login page, validated again here.
+  const next = safeAppNext($page.url.searchParams.get("next"));
 
   let code = $state("");
   let error = $state("");
@@ -15,7 +20,7 @@
 
   onMount(() => {
     userId = sessionStorage.getItem("otp_userId") ?? "";
-    if (!userId) goto("/login");
+    if (!userId) goto(authPathWithNext("/login", next));
   });
 
   async function handleVerify() {
@@ -37,12 +42,12 @@
 
       sessionStorage.removeItem("otp_userId");
       authStore.login(res.accessToken, res.refreshToken, res.user);
-      goto("/dashboard");
+      goto(next ?? "/dashboard");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Ungültiger Code";
       if (msg.includes("abgelaufen")) {
         error = "Der Code ist abgelaufen. Bitte melden Sie sich erneut an.";
-        setTimeout(() => goto("/login"), 3000);
+        setTimeout(() => goto(authPathWithNext("/login", next)), 3000);
       } else {
         error = msg;
       }

@@ -16,6 +16,7 @@
   import { hasUnreadReleaseNotes, whatsNewOpen } from "$stores/release-notes";
   import { isMobileViewport } from "$lib/utils/viewport";
   import { activeNavHref } from "$lib/nav/active-route";
+  import { loginPathWithNext } from "$lib/nav/login-next";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -146,7 +147,8 @@
 
   onMount(() => {
     if (!$authStore.accessToken) {
-      goto("/login");
+      // Issue #608 (D-20): keep the page the person was heading to through sign-in.
+      goto(loginPathWithNext($page.url));
       return;
     }
 
