@@ -9,12 +9,22 @@ import { createECDH, randomBytes } from "node:crypto";
 import { vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 
-// TEST ONLY - never configure this pair on any stage. It exists to satisfy the boot-time pair check
-// of config.ts; the private half is public knowledge by being in the repository.
+/** A fresh P-256 VAPID pair (base64url), generated per test process — no key material in the repo. */
+export function generateTestVapidPair(): { publicKey: string; privateKey: string } {
+  const ecdh = createECDH("prime256v1");
+  ecdh.generateKeys();
+  const raw = ecdh.getPrivateKey();
+  // A private scalar with leading zero bytes comes back shorter than 32 bytes; VAPID needs exactly 32.
+  const privateKey = Buffer.concat([Buffer.alloc(32 - raw.length), raw]);
+  return {
+    publicKey: ecdh.getPublicKey().toString("base64url"),
+    privateKey: privateKey.toString("base64url"),
+  };
+}
+
+// TEST ONLY - generated at load time so no private key is committed (gitleaks generic-api-key).
 export const TEST_VAPID = {
-  publicKey:
-    "BAu57iP39TQJuPIh_AVkodlSC-gxZD376ztBgX4J8u6bbe-zzEc5nmdxHgb7uosPB6M5VPIS9Dx4LSzRWdW2Q7Q",
-  privateKey: "gZCaBgvibUKLRBFXDMQ4z2KKZ42OTAn3VzC9YQOxPr0",
+  ...generateTestVapidPair(),
   subject: "mailto:push-test@example.invalid",
 } as const;
 
