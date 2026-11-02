@@ -80,6 +80,10 @@ with. After rotating:
 - old rows disappear on the first send that the push service answers with 404/410, or when the device is
   re-enabled.
 
+A push service answering **401/403** (typical right after a rotation, for every older subscription) never deletes
+the row, on purpose: a wrong server key would otherwise wipe every device. Such a device keeps showing „Auf diesem
+Gerät: an“ while nothing arrives; the person switches push off and on again on that device (review IN-03).
+
 Rotate only on suspected key exposure. Do not rotate between stages' secret stores as a routine.
 
 ## Subject rule
