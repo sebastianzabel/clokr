@@ -1485,18 +1485,24 @@ Datenbank erzeugt und gelesen; nichts anderes hängt vom Typ `"Role"` ab. Die Ro
 für ein Image-Rollback. Der Standard-Einstiegspunkt führt `prisma migrate deploy` selbst aus, es ist kein manueller Schritt
 nötig.
 
-**Die Migration ist einweg.** Es gibt keine Rückwärtsmigration. Die Werte der Spalte gehen verloren, fachlich ohne Folgen,
-weil keine Zugriffsentscheidung sie liest und die Zuweisungen unverändert bleiben. Ein Image-Rollback auf v1.17.x oder
-älter ist nach der Migration nur mit einer **Wiederherstellung der Datenbank** möglich: das ältere Image fordert die Spalte
-bei jedem Lesen von `User` explizit an.
+**Die Migration ist ohne Datenverlust umkehrbar.** Es gibt keine Rückwärtsmigration im Verzeichnis, aber eine
+dokumentierte, datenerhaltende Umkehr (Schritt 5): Typ und Spalte werden neu angelegt, die Spalte bekommt den Standardwert
+`EMPLOYEE`. Die alten Werte der Spalte gehen verloren, fachlich ohne Folgen: Seit Release A (#539) liest kein Codepfad
+von v1.16.x/v1.17.0 den Wert der Spalte für eine Entscheidung (Beleg in Schritt 5), die Zuweisungen bleiben unverändert.
+Ein Image-Rollback auf v1.17.x oder älter braucht deshalb **keine** Wiederherstellung der Datenbank; das ältere Image
+fordert die Spalte nur bei jedem Lesen von `User` explizit an, sie muss also existieren.
 
-**1. Vor dem Deploy — Sicherung (Pflicht).** `pg_dump` der Datenbank der Stage (auf prod und auf int).
-Ohne diese Sicherung gibt es keinen Weg zurück.
+**1. Vor dem Deploy — Sicherung (Pflicht).** `pg_dump` der Datenbank der Stage (auf prod und auf int). Sie ist der
+Rückfall, falls die datenerhaltende Umkehr aus Schritt 5 selbst scheitert; sie ist nicht der empfohlene Weg zurück, weil
+eine Wiederherstellung alles verwirft, was seit dem Deploy geschrieben wurde (Zeiteinträge, Korrekturen, Urlaubsanträge,
+`AuditLog`).
 
 **2. Vor dem Deploy — lesende Vorab-Prüfung (auf int UND prod).** Aktive, nicht anonymisierte Personen mit
-Mitarbeiterdatensatz, die in ihrem Mandanten keine Rollenzuweisung haben. Erwartet: **0**. Eine Zahl größer 0 nennt
-Personen, die sich seit v1.16.0 nicht mehr anmelden können (403 `NO_ROLE_ASSIGNED`); das ist eine Information über den
-Bestand, die Migration ändert für sie nichts, und die Prüfung schreibt und blockiert nichts. Die Zahl wird notiert.
+Mitarbeiterdatensatz, die in ihrem Mandanten **gar keine** Rollenzuweisung haben. Erwartet: **0**. Eine Zahl größer 0 nennt
+Personen, die sich seit v1.16.0 nicht mehr anmelden können (403 `NO_ROLE_ASSIGNED`). Die Zahl ist eine Untergrenze: wer nur
+Zuweisungen hat, die zusammen keine Berechtigung ergeben (leere Berechtigungsmenge oder fehlerhafter Geltungsbereich), wird
+beim Anmelden ebenfalls abgewiesen, aber hier nicht gezählt. Es ist eine Information über den Bestand, die Migration ändert
+für diese Personen nichts, und die Prüfung schreibt und blockiert nichts. Die Zahl wird notiert.
 
 ```sql
 select count(*) from "User" u join "Employee" e on e."userId"=u.id where u."isActive" and not (e."firstName" = U&'Gel\00F6scht' and e."lastName" like U&'GEL\00D6SCHT-%') and not exists (select 1 from "RoleAssignment" ra where ra."userId"=u.id and ra."tenantId"=e."tenantId");
@@ -1519,8 +1525,61 @@ select count(*) from information_schema.columns where table_schema='public' and 
 select count(*) from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typname='Role';
 ```
 
-**5. Rollback.** Nur durch Wiederherstellung des `pg_dump` aus Schritt 1 zusammen mit dem vorherigen Image. Die Migration
-vorher von Hand umzukehren heißt, Typ und Spalte neu anzulegen und jede Zeile zu befüllen — nicht vorgesehen.
+**5. Rollback (datenerhaltend, empfohlen).** Kein `pg_dump`-Restore nötig, es geht nichts verloren, was nach dem Deploy
+geschrieben wurde. Erst die Datenbank auf den Stand von v1.17.x bringen, dann das vorherige Image ausrollen:
+
+```sql
+-- Rollback auf ein Image unter v1.18.0, OHNE ein Dump einzuspielen (eine Transaktion)
+BEGIN;
+CREATE TYPE "Role" AS ENUM ('ADMIN', 'MANAGER', 'EMPLOYEE');
+ALTER TABLE "User" ADD COLUMN "role" "Role" NOT NULL DEFAULT 'EMPLOYEE';
+DELETE FROM "_prisma_migrations" WHERE migration_name = '20261103000000_drop_user_role';
+COMMIT;
+```
+
+Die Zeile in `_prisma_migrations` muss weg, damit ein späteres erneutes `migrate deploy` von v1.18.0 die Migration wieder
+ausführt, statt sie als erledigt zu überspringen und die Spalte stehen zu lassen. Die Spalte hat danach bei allen
+Personen den Wert `EMPLOYEE`. Das ist unschädlich, weil der Wert nur eine Rückfallebene für genau diesen Rollback war und
+nirgends entscheidet; er läuft bei der nächsten Zuweisungsänderung der Person von allein wieder auf den abgeleiteten Wert
+(`syncCompatRoleColumn` vergleicht und schreibt zurück), und das Mitarbeiterformular leitet die Rolle ohnehin aus den
+Zuweisungen ab. Danach das Image von v1.17.x deployen. Das Übernahmeskript `backfill-539-role-assignments.ts` dort nicht
+erneut ausführen: es würde Personen ohne Zuweisung anhand des Standardwerts `EMPLOYEE` übernehmen statt anhand ihres alten
+Spaltenwerts.
+
+_Beleg, dass das ältere Image den Spaltenwert nicht für Entscheidungen liest_ (Quelltext des Tags `v1.17.0`, `git grep` auf
+`role` in `apps/api/src`, `apps/api/scripts` und `packages/db/src`, ohne Tests): Lesezugriffe auf `User.role` gibt es nur in
+`legacyRoleColumn()` in `contexts/platform/compat-role.ts` (aufgerufen allein von `syncCompatRoleColumn()`, das den Wert mit
+dem aus den Zuweisungen abgeleiteten vergleicht und zurückschreibt) und im Übernahmeskript `backfill-539-role-assignments.ts`
+(nur vom Betreiber von Hand gestartet). `compatRoleUserWhere()` ist exportiert, hat aber keinen Aufrufer. Alles andere
+schreibt die Spalte nur (Anlegen von Benutzern in `employee-creation.ts`, `imports.ts`, Seeds). Berechtigungen kommen
+ausschließlich aus `RoleAssignment`, Token tragen keinen `role`-Claim.
+
+_Geprobt am 02.11.2026_ auf einer Wegwerf-Datenbank, geklont aus dem Testtemplate dieses Zweigs (nach `test:setup`, also mit
+angewendeter Migration `20261103000000_drop_user_role`, 62 Einträge in `_prisma_migrations`). Eine Benutzerzeile angelegt, die
+Umkehr oben ausgeführt, dann gegen Schema und Migrationen von `v1.17.0` geprüft (`git archive v1.17.0 packages/db/prisma
+packages/db/prisma.config.ts` in ein temporäres Verzeichnis, `--config` darauf):
+
+```text
+$ docker exec clokr-postgres-1 psql -U clokr -d postgres -c 'CREATE DATABASE clokr_test_rb641 TEMPLATE clokr_test_549b37e6'
+$ docker exec -i clokr-postgres-1 psql -U clokr -d clokr_test_rb641 -v ON_ERROR_STOP=1    # die vier Anweisungen von oben
+BEGIN / CREATE TYPE / ALTER TABLE / DELETE 1 / COMMIT
+$ psql … -c 'select id, role from "User"'
+ rb641-user-1 | EMPLOYEE                                  (Zeile erhalten, Standardwert)
+$ DATABASE_URL=…/clokr_test_rb641 prisma migrate status --config <v1.17.0>/prisma.config.ts
+61 migrations found in prisma/migrations
+Database schema is up to date!
+$ DATABASE_URL=…/clokr_test_rb641 prisma migrate diff --config <v1.17.0>/prisma.config.ts \
+    --from-config-datasource --to-schema <v1.17.0>/prisma/schema.prisma --exit-code
+No difference detected.
+```
+
+Gegenprobe: dieselbe `migrate diff`-Abfrage gegen die Datenbank OHNE Umkehr erzeugt als Skript genau `CREATE TYPE "Role" …`
+und `ALTER TABLE "User" ADD COLUMN "role" "Role" NOT NULL DEFAULT 'EMPLOYEE';`, also die Umkehr oben. Vorwärts führte ein
+erneutes `prisma migrate deploy` (Stand dieses Zweigs) `20261103000000_drop_user_role` wieder aus; die Benutzerzeile blieb,
+Spalte und Typ waren danach wieder weg. Die Wegwerf-Datenbank wurde anschließend gelöscht.
+
+_Rückfall:_ scheitert die Umkehr (etwa weil jemand den Typ `"Role"` von Hand angelegt hat), bleibt die Wiederherstellung des
+`pg_dump` aus Schritt 1 zusammen mit dem vorherigen Image; sie verwirft alle Schreibvorgänge seit dem Dump.
 
 **dev.** Die lokale Entwicklungsdatenbank bekommt die Migration mit dem nächsten Neubau nach dem Merge
 (`docker compose up --build -d`); in diesem Phase-Lauf wurde sie nicht migriert.

@@ -1546,8 +1546,9 @@ empty is refused at sign-in with 403 `NO_ROLE_ASSIGNED` (login, verify-otp and r
 carries a `role` claim any more (an old token that still has one is ignored — proven by
 `token-claims-539.test.ts`), the login body has no `user.role`, and `actorRole` is no longer written
 to new leave audit rows. Since Release B (#641) the column `User.role` and the Prisma enum `Role` no
-longer exist (migration `*_drop_user_role`, one-way; rollback only by restoring a backup, see
-`docs/migrations.md` „Phase 641“): the role lives only in stored role assignments. The requested role
+longer exist (migration `*_drop_user_role`; the rollback to an image below v1.18.0 is data-preserving and rehearsed —
+recreate type and column with the default, delete the `_prisma_migrations` row, see
+`docs/migrations.md` „Phase 641“, step 5; a `pg_dump` restore is only the fallback): the role lives only in stored role assignments. The requested role
 of the employee form, `POST /employees` and the CSV import (the API contract stays
 `"ADMIN" | "MANAGER" | "EMPLOYEE"`) is the type `SystemRoleName` of
 `apps/api/src/contexts/platform/system-role-assignment.ts` and only ever becomes a stored TENANT
