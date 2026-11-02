@@ -31,6 +31,7 @@ import {
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
 import { resolveEntrySalon, SALON_NOT_FOUND_BODY, SALON_INACTIVE_BODY } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
+import { dismissShiftReminderNotices } from "../shift-reminder-dismiss"; // Issue #609 (IN-03)
 import { clockSalonChoice } from "../clock-salon-choice"; // Issue #87 (Phase 87b-03), D-02/D-11 — the one clock-salon decision
 import { entryDurations } from "../entry-durations"; // Phase 79 (Issue #79), D-06/D-14 — per-entry presence/working time
 import { activityKindSchema, activitySharesSchema } from "../activity-kind"; // Issue #81 (D-06)
@@ -538,6 +539,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       };
 
       if (resolution.kind === "CLOCKED_IN") {
+        await dismissShiftReminderNotices(app, employee.userId, "IN"); // Issue #609 (IN-03)
         const balanceHours = await getBalance();
         return reply.code(200).send({
           action: "IN" as const,
@@ -575,6 +577,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       });
 
       await updateOvertimeAccount(app, employee.id);
+      await dismissShiftReminderNotices(app, employee.userId, "OUT"); // Issue #609 (IN-03)
       const balanceHours = await getBalance();
       return reply.code(200).send({
         action: "OUT" as const,
@@ -681,6 +684,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       };
       const resolution = await resolveClockEvent(app, event, req);
       if (resolution.kind === "CLOCKED_IN") {
+        // Issue #609 (IN-03): the open "Schicht begonnen" notice of this person is answered.
+        await dismissShiftReminderNotices(app, employeeRecord.userId, "IN");
         return reply.code(200).send({ resolution, audit: resolution.audit });
       }
       if (resolution.kind === "CONFLICT") {
@@ -931,6 +936,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           "Failed to auto-dismiss CLOCK_OUT_REMINDER on clock-out",
         );
       }
+      // Issue #609 (IN-03): the open "Schichtende" notice of this person is answered.
+      await dismissShiftReminderNotices(app, entry.employee.userId, "OUT");
 
       // Re-fetch with breaks for response (auto-break may have added one). Issue #396: the write is
       // committed here, so a failing read answers from the resolver's entry, never with a 500.
