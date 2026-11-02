@@ -128,6 +128,7 @@ const MAX_PUSH_URL_LENGTH = 512;
  * path, else {@link PUSH_FALLBACK_URL}. Same rule family as the web's `safeNext`: starts with a
  * single `/`, no backslash, no control character or whitespace, no percent-encoded `/`, `\` or
  * `.` (any case), at most 512 characters, and a parse against a dummy origin stays on that origin.
+ * The returned value is the dot-segment-normalised path, never the raw input.
  * The service worker re-validates the origin on its side (plan 04).
  */
 export function safePushUrl(link: string | null | undefined): string {
@@ -143,9 +144,17 @@ export function safePushUrl(link: string | null | undefined): string {
     if (code < 0x20 || code === 0x7f) return PUSH_FALLBACK_URL;
   }
   try {
-    if (new URL(link, "http://x").origin !== "http://x") return PUSH_FALLBACK_URL;
+    // Normalise dot segments FIRST (review 2, WR-03): `/.//evil.example` passes every textual check
+    // above, but WHATWG removes the `.` segment and leaves the protocol-relative `//evil.example`.
+    // The value sent is the normalised path, and it must again start with exactly one `/`.
+    const target = new URL(link, "http://x");
+    if (target.origin !== "http://x") return PUSH_FALLBACK_URL;
+    const path = `${target.pathname}${target.search}${target.hash}`;
+    if (!path.startsWith("/") || path.startsWith("//") || path.startsWith("/\\")) {
+      return PUSH_FALLBACK_URL;
+    }
+    return path;
   } catch {
     return PUSH_FALLBACK_URL;
   }
-  return link;
 }

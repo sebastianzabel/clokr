@@ -201,10 +201,22 @@ describe("safePushUrl (D-09, T-608-19)", () => {
     ["encoded backslash", "/%5cevil.example"],
     ["tab", "/a\tb"],
     ["relative without slash", "dashboard"],
+    // Review 2, WR-03: normalisation of a `.` segment would leave a protocol-relative path.
+    ["dot segment before a host", "/.//evil.example"],
+    ["dot segments before a host", "/.///evil.example/x"],
+    ["parent segment before a host", "/..//evil.example"],
+    ["dot segment before a backslash", "/./\\evil.example"],
   ];
   it.each(unsafe)("falls back to /dashboard for %s", (_label, link) => {
     expect(safePushUrl(link)).toBe(PUSH_FALLBACK_URL);
     expect(PUSH_FALLBACK_URL).toBe("/dashboard");
+  });
+
+  it("sends the dot-segment-normalised path, never the raw input", () => {
+    expect(safePushUrl("/./team/leave?request=abc#x")).toBe("/team/leave?request=abc#x");
+    expect(safePushUrl("/a/./b")).toBe("/a/b");
+    expect(safePushUrl("/a/../b")).toBe("/b");
+    expect(safePushUrl("/.")).toBe("/");
   });
 
   it("accepts a path of exactly 512 characters", () => {
