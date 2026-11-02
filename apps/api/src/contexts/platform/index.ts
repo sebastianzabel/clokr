@@ -201,10 +201,8 @@ export {
   requireAnyPermission,
 } from "./request-permissions";
 export type { EffectiveGrants } from "./request-permissions";
-// Issue #539 (D-16): `systemRoleIdForLegacyRole`, `deriveCompatRole` and `compatRoleForUser` are no
-// longer exported - Unterbau export removal announced on the issue; the module's own writers use them.
-export { parseCompatRoleFilter, compatRoleUserWhere } from "./compat-role";
-export type { CompatRoleAssignmentRow, CompatRoleFilter } from "./compat-role";
+// Issue #539 (D-16) and #641: no export of `./compat-role` is part of the barrel - the module's own
+// writers and the employee routes import it directly (Unterbau export removal, owner-approved).
 // Issue #450 (D-04) — Erweiterung, additive; consumed by contexts/absence/leave-days.ts
 export { snapToMonthFirstUtc } from "./month-first-date";
 // Phase 88 (#88, D-05/D-05a): the ONE spelling of "active tenant" for background jobs, so a

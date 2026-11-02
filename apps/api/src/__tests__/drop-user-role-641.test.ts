@@ -11,8 +11,19 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, closeTestApp, seedTestData, cleanupTestData, soleAuditRow } from "./setup";
+import {
+  getTestApp,
+  closeTestApp,
+  seedTestData,
+  seedOperator,
+  cleanupTestData,
+  soleAuditRow,
+} from "./setup";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
+import {
+  operatorEmployeeCreationAudit,
+  provisionTenantWithAdmin,
+} from "../contexts/platform/tenant-provisioning";
 
 // POST /employees validates the tenant password policy; the seeded admin bypasses it.
 const POLICY_PASSWORD = "Test@1234567!";
@@ -20,6 +31,7 @@ const POLICY_PASSWORD = "Test@1234567!";
 describe("Issue #641 - the role lives only in stored assignments", () => {
   let app: FastifyInstance;
   let tenant: Awaited<ReturnType<typeof seedTestData>>;
+  const provisionedTenantIds: string[] = [];
 
   function auth() {
     return { authorization: `Bearer ${tenant.adminToken}` };
@@ -74,6 +86,7 @@ describe("Issue #641 - the role lives only in stored assignments", () => {
   afterAll(async () => {
     try {
       await cleanupTestData(app, tenant.tenant.id);
+      for (const id of provisionedTenantIds) await cleanupTestData(app, id);
     } catch (err) {
       console.error("Cleanup failed:", err);
     }
@@ -148,6 +161,81 @@ describe("Issue #641 - the role lives only in stored assignments", () => {
         where: { entity: "User", entityId: person.userId, createdAt: { gte: startedAt } },
       });
       expect(userRows).toBe(0);
+    });
+  });
+
+  describe("creation, import, anonymization and provisioning", () => {
+    it("POST /employees stores the requested role only as an assignment", async () => {
+      const person = await createPerson("MANAGER");
+      expect(person.createdRole).toBe("MANAGER");
+      const rows = await storedRows(person.userId);
+      expect(rows.map((row) => [row.accessRoleId, row.scopeType])).toEqual([
+        [SYSTEM_ROLE_IDS.MANAGER, "TENANT"],
+      ]);
+      const createRow = await soleAuditRow(app.prisma, {
+        where: { entity: "RoleAssignment", entityId: rows[0].id, action: "CREATE" },
+      });
+      expect(Object.keys((createRow.newValue ?? {}) as Record<string, unknown>)).not.toContain(
+        "compatRole",
+      );
+    });
+
+    it("a CSV import row with Rolle MANAGER stores one TENANT assignment and serves the derived role", async () => {
+      const uid = crypto.randomBytes(4).toString("hex");
+      const csv = `email;vorname;nachname;nr;eintrittsdatum;Rolle
+imp641-${uid}@example.invalid;Test;Person;I6-${uid};01.01.2026;MANAGER`;
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/imports/employees",
+        headers: auth(),
+        payload: { csv },
+      });
+      expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+      expect((JSON.parse(res.body) as { imported: number }).imported).toBe(1);
+      const employee = await app.prisma.employee.findFirstOrThrow({
+        where: { tenantId: tenant.tenant.id, employeeNumber: `I6-${uid}` },
+      });
+      const rows = await storedRows(employee.userId);
+      expect(rows.map((row) => [row.accessRoleId, row.scopeType])).toEqual([
+        [SYSTEM_ROLE_IDS.MANAGER, "TENANT"],
+      ]);
+      expect(await servedRole(employee.id)).toBe("MANAGER");
+    });
+
+    it("anonymizing a person who holds an assignment leaves no RoleAssignment row", async () => {
+      const person = await createPerson("MANAGER");
+      expect(await storedRows(person.userId)).toHaveLength(1);
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${person.employeeId}`,
+        headers: auth(),
+      });
+      expect(res.statusCode).toBe(204);
+      expect(await storedRows(person.userId)).toHaveLength(0);
+    });
+
+    it("tenant provisioning creates the first admin with exactly one TENANT assignment on Admin", async () => {
+      const operatorId = (await seedOperator(app)).id;
+      const slug = `p641-${crypto.randomBytes(4).toString("hex")}`;
+      const result = await app.prisma.$transaction((tx) =>
+        provisionTenantWithAdmin(
+          tx,
+          {
+            tenant: { name: `Tenant ${slug}`, slug, federalState: "HESSEN" },
+            admin: { email: `${slug}@example.invalid`, firstName: "Erste", lastName: "Leitung" },
+          },
+          (tenantId) => operatorEmployeeCreationAudit(app, { operatorId, tenantId }),
+        ),
+      );
+      expect(result.status).toBe("OK");
+      if (result.status !== "OK") return;
+      provisionedTenantIds.push(result.tenant.id);
+      const rows = await app.prisma.roleAssignment.findMany({
+        where: { tenantId: result.tenant.id, userId: result.user.id },
+      });
+      expect(rows.map((row) => [row.accessRoleId, row.scopeType])).toEqual([
+        [SYSTEM_ROLE_IDS.ADMIN, "TENANT"],
+      ]);
     });
   });
 

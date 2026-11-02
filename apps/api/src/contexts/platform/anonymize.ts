@@ -28,8 +28,6 @@
  *   - User.email               → "deleted-{id-prefix}@anonymized.local"
  *   - User.passwordHash        → "ANONYMIZED"
  *   - User.isActive            → false
- *   - User.role                → EMPLOYEE (Issue #357 sub-fix C, revises Phase 75b D-14 — see
- *     below and CLAUDE.md "DSGVO Employee Deletion = Anonymization")
  *   - TimeEntry.note           → null (for that employee)
  *   - TimeEntry.breakWaivedReason → null (Issue #508; breakStatus and the entry stay)
  *   - LeaveRequest.note        → null (for that employee)
@@ -191,22 +189,16 @@ export async function anonymizeEmployeeData(
   });
 
   // User: deaktivieren + anonymisieren (kein Login mehr möglich)
-  // Issue #357 sub-fix C (revises Phase 75b D-14 / ADR 0001-abweichungen Eintrag N): `role` is
-  // rewritten to EMPLOYEE here too. Phase 75b deliberately left it standing so a still-valid
-  // access token of a self-anonymizing admin would not lose its rights mid-request-sequence — but
-  // that is exactly the security-review finding of #357: with the role assignments removed below
-  // and the column left at MANAGER/ADMIN, the Altrollen-Rückfall (D-08, `request-permissions.ts`)
-  // hands that still-valid token FULL Manager/Admin rights for the rest of its lifetime (up to the
-  // access-token TTL), even though the person is anonymized and `isActive: false` (which nothing
-  // re-checks per request, D-10). Anonymization must not leave a live grant behind, so the column
-  // is reset in the SAME update as `isActive`.
+  // The person holds nothing afterwards: every RoleAssignment row is hard-deleted below (Phase 74b
+  // D-22), in this same transaction, and permissions come only from stored assignments - a
+  // still-valid access token of a self-anonymizing admin resolves to no right at all. The former
+  // role-column rewrite of Issue #357 sub-fix C went with the column (Release B, #641).
   await tx.user.update({
     where: { id: userId },
     data: {
       email: `deleted-${employeeId.slice(0, 8)}@anonymized.local`,
       passwordHash: "ANONYMIZED",
       isActive: false,
-      role: "EMPLOYEE",
     },
   });
 

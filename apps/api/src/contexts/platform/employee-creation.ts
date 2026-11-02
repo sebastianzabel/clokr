@@ -551,7 +551,6 @@ export async function createEmployeeInTransaction(
     data: {
       email: body.email,
       passwordHash,
-      role: body.role,
       isActive: directPassword, // active immediately when a password was given
     },
   });

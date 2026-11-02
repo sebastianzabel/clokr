@@ -23,17 +23,14 @@
  * Exactly the readers in `ALLOWED_READERS` stay: the takeover script `backfill-539-role-assignments.ts` (D-01, kind 2: it reads the legacy
  * role once to store the assignment the old fallback used to grant). Each entry must match at least one
  * occurrence — a stale entry turns the guard red, like an unlisted finding does. The former company-PDF
- * role filter (D-12, route removed by #617) was never a finding: `compatRoleUserWhere()` returns `{ role }`
- * outside any `where` literal, and a caller spreads that return value; a case below pins this for the
- * function, which stays exported until Release B (#641).
+ * role filter helpers (D-12, route removed by #617) are deleted by #641 and registered as deleted identifiers.
  *
  * Non-vacuity: the scan asserts it walked more than 270 files (an inline literal, 318 measured) and found each allowlisted
  * reader (the floor is an inline literal, measured when the guard was written).
  *
  * What the guard cannot see (stated, not hidden — same limits as `scripts/lint-role-checks.ts`): a read
  * through a renamed alias, a dynamic property name, a `select` object built outside an object literal,
- * raw SQL, and a `where` predicate that reaches Prisma through a helper's return value (which is how
- * the D-12 filter legitimately travels). The role-comparison shapes are the job of `lint:role-checks`.
+ * raw SQL, and a `where` predicate that reaches Prisma through a helper's return value. The role-comparison shapes are the job of `lint:role-checks`.
  * Release B removes the column and with it the allowlist and kinds 2 and 3.
  */
 import { readdirSync, readFileSync } from "node:fs";
@@ -52,6 +49,9 @@ const DELETED_IDENTIFIERS: readonly string[] = [
   // Deleted by #641 (Release B): the private column reader and the column write-back of compat-role.ts.
   "legacyRoleColumn",
   "syncCompatRoleColumn",
+  // Deleted by #641 (Release B): the unused company-PDF role filter helpers (route removed by #617).
+  "parseCompatRoleFilter",
+  "compatRoleUserWhere",
 ];
 
 type FindingKind =
@@ -293,17 +293,6 @@ describe("#539 AC-539-3 — the scanner flags each kind and tolerates the docume
       kinds(
         "export interface JwtPayload { sub: string; tenantId: string; }",
         "src/middleware/auth.ts",
-      ),
-    ).toEqual([]);
-  });
-
-  it("does not flag the D-12 company-PDF filter (compatRoleUserWhere returns { role } outside a where literal)", () => {
-    const helper =
-      "export function compatRoleUserWhere(filter?: string) { return filter ? { role: filter } : {}; }";
-    expect(kinds(helper)).toEqual([]);
-    expect(
-      kinds(
-        "db.employee.findMany({ where: { user: { isActive: true, ...compatRoleUserWhere(f) } } });",
       ),
     ).toEqual([]);
   });

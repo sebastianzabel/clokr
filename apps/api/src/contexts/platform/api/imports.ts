@@ -247,7 +247,6 @@ export async function importRoutes(app: FastifyInstance) {
               data: {
                 email: data.email,
                 passwordHash,
-                role: data.role as Prisma.UserCreateInput["role"],
                 isActive: hasPassword,
               },
             });

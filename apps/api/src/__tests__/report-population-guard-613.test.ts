@@ -31,7 +31,7 @@
  *
  * Why the TypeScript AST and not a regex: a comment or a string mentioning the text is trivia or a
  * token to the parser, never a property. Stated blind spots: a filter assembled from a variable or
- * a spread (for example `...compatRoleUserWhere(...)`) is not a literal and is not seen; a `where`
+ * a spread (a helper's spread return value) is not a literal and is not seen; a `where`
  * held in a variable is not seen. Review, not this test, has to catch a creative workaround.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
