@@ -1,7 +1,8 @@
 // Issue #541 (D-03, D-08, D-11) — source-read pin of the terminal salon wiring on
 // `admin/system/+page.svelte`. A route page cannot be mounted (`apps/web/vitest.config.ts` has no
 // `$app` alias; see admin-system-save-wiring.test.ts for the precedent), so the wiring is pinned by
-// reading the source; the cell itself is proven by its mount test.
+// reading the source; the cell is proven by its mount test and the save logic (optimistic update,
+// revert before the toast) by the unit test of `$lib/admin/terminal-salon-save`.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,20 +51,11 @@ describe("Issue #541 — terminal salon wiring on /admin/system", () => {
     expect(section).toContain("onchange={(salonId) => setTerminalSalon(key.id, salonId)}");
   });
 
-  it("setTerminalSalon patches /terminals/:id and reverts before the error toast", () => {
-    const body = fnBody("async function setTerminalSalon(");
-    expect(body).toContain("api.patch");
-    expect(body).toContain("`/terminals/${id}`");
-    const catchAt = body.indexOf("catch (err)");
-    expect(catchAt).toBeGreaterThan(-1);
-    const revert = body.indexOf(
-      "terminalKeys = terminalKeys.map((k) => (k.id === id ? previous : k))",
-      catchAt,
-    );
-    const toast = body.indexOf("toasts.error", catchAt);
-    expect(revert, "revert statement missing in the catch").toBeGreaterThan(-1);
-    expect(toast).toBeGreaterThan(-1);
-    expect(revert).toBeLessThan(toast);
+  it("setTerminalSalon delegates to saveTerminalSalon (behaviour: terminal-salon-save.test.ts)", () => {
+    expect(PAGE).toContain('from "$lib/admin/terminal-salon-save"');
+    const body = fnBody("function setTerminalSalon(");
+    expect(body).toContain("saveTerminalSalon<TerminalKey>(");
+    expect(body).toContain("`/terminals/${keyId}`");
   });
 
   it("the salon column follows showSalonOptions and shows whenever a key is bound", () => {

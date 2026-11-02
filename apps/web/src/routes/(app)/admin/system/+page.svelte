@@ -5,6 +5,7 @@
   import { salonContext, moduleBooked, showSalonOptions } from "$stores/salon-context";
   import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
   import TerminalSalonCell from "$lib/components/admin/TerminalSalonCell.svelte";
+  import { saveTerminalSalon } from "$lib/admin/terminal-salon-save";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
@@ -1345,35 +1346,24 @@
     }
   }
 
-  // Issue #541 (D-03, D-08): instant save of the salon select. A failure puts the previous row
-  // back BEFORE the error toast; the cell writes the DOM value back (ADMIN_STRUCTURE §3.2.1).
-  async function setTerminalSalon(id: string, salonId: string | null): Promise<boolean> {
-    const previous = terminalKeys.find((k) => k.id === id);
-    if (!previous) return false;
-    const salon = salonId === null ? null : $salonContext.salons.find((s) => s.id === salonId);
-    terminalKeys = terminalKeys.map((k) =>
-      k.id === id
-        ? {
-            ...k,
-            salonId,
-            salonName: salon?.name ?? null,
-            salonActive: salonId === null ? null : true,
-          }
-        : k,
-    );
-    try {
-      const updated = await api.patch<TerminalKey>(`/terminals/${id}`, { salonId });
-      terminalKeys = terminalKeys.map((k) => (k.id === id ? updated : k));
-      toasts.success("Salon-Bindung gespeichert.");
-      return true;
-    } catch (err) {
-      terminalKeys = terminalKeys.map((k) => (k.id === id ? previous : k));
-      console.error("Failed to set terminal salon:", err);
-      toasts.error(
-        err instanceof ApiError ? err.message : "Salon-Bindung konnte nicht gespeichert werden.",
-      );
-      return false;
-    }
+  // Issue #541 (D-03, D-08): instant save of the salon select. The optimistic update and the
+  // revert-before-toast rollback live in `$lib/admin/terminal-salon-save` (unit-tested).
+  function setTerminalSalon(id: string, salonId: string | null): Promise<boolean> {
+    return saveTerminalSalon<TerminalKey>({
+      id,
+      salonId,
+      getRows: () => terminalKeys,
+      setRows: (rows) => (terminalKeys = rows),
+      salons: $salonContext.salons,
+      patch: (keyId, salon) => api.patch<TerminalKey>(`/terminals/${keyId}`, { salonId: salon }),
+      onSaved: () => toasts.success("Salon-Bindung gespeichert."),
+      onFailed: (err) => {
+        console.error("Failed to set terminal salon:", err);
+        toasts.error(
+          err instanceof ApiError ? err.message : "Salon-Bindung konnte nicht gespeichert werden.",
+        );
+      },
+    });
   }
 
   async function revokeTerminalKey(id: string) {
