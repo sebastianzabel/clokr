@@ -473,6 +473,24 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "RECORD/MERGE mode refuses to run once the role guard is gone.",
   },
   {
+    route: "GET /api/v1/me/push/subscriptions",
+    reason:
+      "New route of Phase 608 (Issue #608, D-06), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it lists the caller's own push devices (registered only with the VAPID set, D-01), takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "400). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "DELETE /api/v1/me/push/subscriptions",
+    reason:
+      "New route of Phase 608 (Issue #608, D-06), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it removes one of the caller's own push devices (registered only with the VAPID set, D-01), takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "400). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
     route: "POST /api/v1/me/push/test",
     reason:
       "New route of Phase 608 (Issue #608, D-06), long after the role guard (`requireRole`) was " +

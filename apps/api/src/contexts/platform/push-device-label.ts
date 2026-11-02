@@ -28,6 +28,12 @@ const SYSTEMS: Array<{ label: string; test: RegExp }> = [
 
 export const UNKNOWN_DEVICE_LABEL = "Unbekanntes Gerät";
 
+/** Every value `deviceLabelFromUserAgent` can return: the closed vocabulary (also pinned by tests). */
+export const DEVICE_LABEL_VOCABULARY: readonly string[] = [
+  ...BROWSERS.flatMap((b) => SYSTEMS.map((s) => `${b.label} auf ${s.label}`)),
+  UNKNOWN_DEVICE_LABEL,
+];
+
 export function deviceLabelFromUserAgent(ua: string | undefined): string {
   if (!ua) return UNKNOWN_DEVICE_LABEL;
   const browser = BROWSERS.find((b) => b.test.test(ua));

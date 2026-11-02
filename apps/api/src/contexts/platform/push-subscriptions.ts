@@ -90,3 +90,55 @@ export async function subscribeDevice(
   });
   return { kind: "CREATED", device: toApiDevice(row) };
 }
+
+// ── List and remove (own devices only) ───────────────────────────────────────
+
+/** The caller's own devices, oldest first. Tenant and user come from the token, never the body. */
+export async function listOwnDevices(
+  app: FastifyInstance,
+  scope: { tenantId: string; userId: string },
+): Promise<ApiPushDevice[]> {
+  const rows = await app.prisma.pushSubscription.findMany({
+    where: { tenantId: scope.tenantId, userId: scope.userId },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+  return rows.map(toApiDevice);
+}
+
+export type DeviceSelector = { endpoint: string } | { id: string };
+
+export type RemoveOwnDeviceInput = {
+  tenantId: string;
+  userId: string;
+  by: DeviceSelector;
+  request: AuditRequest;
+};
+
+/**
+ * Removes one of the caller's own devices and audits it (D-04: a hard delete, the audit row is the
+ * trace). The lookup always carries `userId` AND `tenantId`, never the endpoint or the id alone, so
+ * a foreign device is indistinguishable from an unknown one: both return `false`.
+ */
+export async function removeOwnDevice(
+  app: FastifyInstance,
+  input: RemoveOwnDeviceInput,
+): Promise<boolean> {
+  return app.prisma.$transaction(async (tx) => {
+    const row = await tx.pushSubscription.findFirst({
+      where: { userId: input.userId, tenantId: input.tenantId, ...input.by },
+    });
+    if (!row) return false;
+    await tx.pushSubscription.delete({ where: { id: row.id } });
+    await app.audit({
+      userId: input.userId,
+      action: "DELETE",
+      entity: "PushSubscription",
+      entityId: row.id,
+      oldValue: { deviceLabel: row.deviceLabel, consentedAt: row.consentedAt.toISOString() },
+      newValue: { reason: "USER_REMOVED" },
+      request: input.request,
+      tx,
+    });
+    return true;
+  });
+}
