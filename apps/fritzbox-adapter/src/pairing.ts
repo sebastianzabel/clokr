@@ -112,12 +112,30 @@ export function ownInterfaceAddresses(
 
 export interface RateLimiter {
   check(peer: string): "ok" | "peer" | "global";
+  /** Number of peers currently remembered (for the memory-bound test). */
+  size(): number;
 }
 
 /**
- * Sliding-window limits: per peer and over all peers. Only admitted requests are counted, so a
- * refused flood does not push the window out and the limiter's memory stays bounded by the global
- * maximum.
+ * The key a peer is limited under: an IPv4 address as is, an IPv6 address by its /64 (a client
+ * rotating privacy addresses inside its prefix is one client, not many).
+ */
+export function rateLimitKey(peer: string): string {
+  if (isIP(peer) !== 6) return peer;
+  const groups = expandIpv6(peer);
+  return groups
+    ? `${groups
+        .slice(0, 4)
+        .map((g) => g.toString(16))
+        .join(":")}::/64`
+    : peer;
+}
+
+/**
+ * Sliding-window limits: per peer (per /64 for IPv6) and over all peers. Only admitted requests
+ * are counted, so a refused flood does not push the window out. Every call sweeps the peers whose
+ * newest admitted request left the window, so the map never holds more than the admitted requests
+ * of one window (at most the global maximum), however many distinct peers have come and gone.
  */
 export function createRateLimiter(
   options: {
@@ -135,12 +153,15 @@ export function createRateLimiter(
   let all: number[] = [];
 
   return {
-    check(peer) {
+    check(rawPeer) {
+      const peer = rateLimitKey(rawPeer);
       const t = now();
       const cutoff = t - windowMs;
       all = all.filter((stamp) => stamp > cutoff);
+      for (const [key, stamps] of peers) {
+        if (stamps[stamps.length - 1] <= cutoff) peers.delete(key);
+      }
       const mine = (peers.get(peer) ?? []).filter((stamp) => stamp > cutoff);
-      if (mine.length === 0) peers.delete(peer);
       if (mine.length >= perPeerMax) {
         peers.set(peer, mine);
         return "peer";
@@ -154,6 +175,7 @@ export function createRateLimiter(
       peers.set(peer, mine);
       return "ok";
     },
+    size: () => peers.size,
   };
 }
 

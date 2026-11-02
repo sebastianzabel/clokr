@@ -10,6 +10,7 @@ import {
   createRateLimiter,
   maskMac,
   ownInterfaceAddresses,
+  rateLimitKey,
   renderPage,
   startPairingServer,
   type PairingDeps,
@@ -177,6 +178,30 @@ describe("createRateLimiter", () => {
     }
     expect(admitted).toBe(60);
     expect(limiter.check("10.0.9.9")).toBe("global");
+  });
+
+  it("IN-01: forgets peers that left the window and never holds more than one window's admissions", () => {
+    let now = 0;
+    const limiter = createRateLimiter({ now: () => now });
+    // 500 distinct one-shot peers, spread over many windows: the map must not grow with them.
+    for (let i = 0; i < 500; i++) {
+      now = i * 10_000;
+      limiter.check(`10.1.${Math.floor(i / 250)}.${i % 250}`);
+      expect(limiter.size()).toBeLessThanOrEqual(7);
+    }
+    now += 61_000;
+    limiter.check("10.9.9.9");
+    expect(limiter.size()).toBe(1);
+  });
+
+  it("IN-01: limits an IPv6 client by its /64, however it rotates its address", () => {
+    expect(rateLimitKey("2001:db8:1:2:aaaa::1")).toBe(rateLimitKey("2001:db8:1:2:bbbb:cccc::9"));
+    expect(rateLimitKey("2001:db8:1:2::1")).not.toBe(rateLimitKey("2001:db8:1:3::1"));
+    expect(rateLimitKey("192.168.178.42")).toBe("192.168.178.42");
+    const limiter = createRateLimiter({ now: () => 0 });
+    for (let i = 0; i < 5; i++) expect(limiter.check(`2001:db8:1:2::${i + 1}`)).toBe("ok");
+    expect(limiter.check("2001:db8:1:2:dead:beef::7")).toBe("peer");
+    expect(limiter.check("2001:db8:1:3::1")).toBe("ok");
   });
 
   it("does not count a refused request toward the window", () => {
