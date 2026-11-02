@@ -86,7 +86,7 @@ export interface RoleAssignmentAuditEntry {
   newValue?: object;
 }
 
-/** A stored assignment as a write-half function of `compat-role.ts` returns it. */
+/** A stored assignment as a write-half function of `system-role-assignment.ts` returns it. */
 type WrittenAssignment = RoleAssignmentAuditSource & { id: string; roleName: string };
 
 /** The CREATE row of a created assignment, in the D-12 shape. */

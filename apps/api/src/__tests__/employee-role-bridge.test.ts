@@ -32,7 +32,7 @@ import {
 import { SYSTEM_ROLE_IDS, normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 import { effectivePermissionKeysForUser } from "../contexts/platform/request-permissions";
 import { ROLE_LOCKOUT_MESSAGE } from "../contexts/platform/role-assignment";
-import { ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX } from "../contexts/platform/compat-role";
+import { ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX } from "../contexts/platform/system-role-assignment";
 
 const PASSWORD = "test1234";
 // POST /employees validates the tenant password policy; the fixture users bypass it.

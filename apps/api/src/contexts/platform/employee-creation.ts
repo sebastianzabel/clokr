@@ -26,7 +26,7 @@ import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
 import { DEFAULT_PASSWORD_POLICY, validatePassword, type PasswordPolicy } from "./password-policy";
 import { normalizeWorkDays, type PerDayHours } from "./calculate-work-days";
-import { replaceSystemRoleAssignment } from "./compat-role";
+import { replaceSystemRoleAssignment } from "./system-role-assignment";
 import { lockTenantForRoleChanges } from "./facade/role-assignments";
 import {
   createdAssignmentAuditEntry,

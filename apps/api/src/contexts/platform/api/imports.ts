@@ -30,7 +30,7 @@ import { lockTenantForRoleChanges } from "../facade/role-assignments";
 import {
   replaceSystemRoleAssignment,
   requestedRoleNeedsRoleAssignmentManage,
-} from "../compat-role";
+} from "../system-role-assignment";
 import { auditRoleAssignmentChange, createdAssignmentAuditEntry } from "../role-assignment-audit";
 import { tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
 

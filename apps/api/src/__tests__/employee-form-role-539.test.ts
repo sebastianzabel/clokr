@@ -2,7 +2,7 @@
  * Issue #539 (Release A), D-10/D-11 — the role the employee screen shows and the form's "unchanged"
  * check come from the STORED role assignments, never from the `User.role` column:
  *
- * - `formRolesByUserId` derives the role (`deriveCompatRole`) and answers `null` for a person who
+ * - `formRolesByUserId` derives the role (`deriveFormRole`) and answers `null` for a person who
  *   holds no well-formed assignment in the tenant;
  * - the five employee responses serve that value under the existing `user.role` key (list, single
  *   view, the 201 of the creation incl. its post-commit fallback branch, the reactivate reply);
@@ -27,7 +27,7 @@ import {
   auditRowsFor,
 } from "./setup";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
-import { formRolesByUserId } from "../contexts/platform/compat-role";
+import { formRolesByUserId } from "../contexts/platform/system-role-assignment";
 
 const PASSWORD = "test1234";
 const POLICY_PASSWORD = "Test@1234567!";

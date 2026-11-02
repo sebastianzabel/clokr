@@ -1,18 +1,18 @@
 /**
- * Phase 75b (Issue #75), D-14 - the compat role: THE one place where legacy `Role` values
- * (`ADMIN` / `MANAGER` / `EMPLOYEE`) are produced from, or mapped onto, role assignments.
+ * Phase 75b (Issue #75) - the one place where a REQUESTED system role (`ADMIN` / `MANAGER` /
+ * `EMPLOYEE`: the employee form's "Wunschrolle", `POST /employees`, the CSV import, provisioning,
+ * the e2e bootstrap) becomes a stored TENANT role assignment, and where the role the employee
+ * form shows is derived back from the stored assignments.
  *
- * Since #75 no access decision reads a role value any more (D-12): guards and handler checks ask
- * `request-permissions.ts` for catalog permissions. Since #539 Release A the legacy value is no
- * longer published at all (no JWT claim, no sign-in body field - D-05). Since #641 Release B no
- * column stores it either: the value exists only DERIVED from the stored assignments, for the
- * employee form and the `user.role` key of the employee responses. This module is the allowlisted
- * exception of the role-check gate (D-19): every comparison of a role value, in either direction,
- * lives here.
+ * Since #75 no access decision reads a role value (D-12): guards and handler checks ask
+ * `request-permissions.ts` for catalog permissions. Since #539 Release A the value is not
+ * published in a token or a sign-in body any more. Since #641 Release B no column stores it
+ * either: the value exists only DERIVED from the stored assignments, for the employee form and
+ * the `user.role` key of the employee responses.
  *
  * Two directions:
  * - {@link systemRoleIdForLegacyRole}: a requested role value -> the system role it stands for.
- * - {@link deriveCompatRole}: stored assignments -> the legacy value to publish. ADMIN only for a
+ * - {@link deriveFormRole}: stored assignments -> the form role to publish. ADMIN only for a
  *   well-formed TENANT assignment on the Admin system role (identified by id, D-01 - never by the
  *   display name); MANAGER when any well-formed TENANT assignment's role grants at least one
  *   ZUGEWIESEN permission; EMPLOYEE otherwise. Every row passes the same filters the 74b
@@ -20,10 +20,8 @@
  *   that tenant) and the stored scope must be well-formed (`storedRoleAssignmentScope`, fail
  *   closed). A row at SALONS or PERSONS scope contributes nothing here - the live resolver
  *   (`request-permissions.ts`) grants ZUGEWIESEN permissions from a TENANT-scope source only
- *   (D-09), so a compat role derived over a wider scope would overstate what the caller can
- *   actually do at the API (Issue #357 sub-fix A; before the fix a SALONS/PERSONS assignment
- *   holding a ZUGEWIESEN key wrongly derived MANAGER). A role grants through `roleGrants` only
- *   (AK-73-7).
+ *   (D-09), so a role derived over a wider scope would overstate what the caller can actually do
+ *   at the API (Issue #357 sub-fix A). A role grants through `roleGrants` only (AK-73-7).
  *
  * The write half (Phase 75b Plan 11, D-15/D-29) keeps the stored assignments consistent on the
  * employee form, the CSV import, the role-assignment API and the anonymization. There is no
@@ -46,7 +44,7 @@ import { storedRoleAssignmentScope } from "./role-assignment";
 import { SYSTEM_ROLE_IDS } from "./system-roles";
 
 /** A stored role assignment with the fields the derivation reads. */
-export interface CompatRoleAssignmentRow {
+export interface FormRoleAssignmentRow {
   readonly scopeType: RoleAssignmentScopeType;
   readonly salonIds: readonly string[];
   readonly employeeIds: readonly string[];
@@ -138,12 +136,12 @@ export function isDemotionToEmployee(role: Role): boolean {
 }
 
 /**
- * The compat role derived from a user's stored assignments in `tenantId` (D-14). Rows whose role
+ * The form role derived from a user's stored assignments in `tenantId` (D-14). Rows whose role
  * belongs to another tenant, rows with a malformed scope, and rows at SALONS or PERSONS scope
  * (Issue #357 sub-fix A — only a TENANT-scope assignment grants anything tenant-wide, D-09)
  * contribute nothing. An empty (or fully filtered) input yields EMPLOYEE.
  */
-export function deriveCompatRole(tenantId: string, rows: readonly CompatRoleAssignmentRow[]): Role {
+export function deriveFormRole(tenantId: string, rows: readonly FormRoleAssignmentRow[]): Role {
   const effective = rows.filter((row) => {
     const roleBelongsHere =
       row.accessRole.tenantId === null || row.accessRole.tenantId === tenantId;
@@ -199,14 +197,14 @@ function toWrittenAssignment(row: {
 
 /**
  * Issue #539 (D-10): the role the employee screen shows and preselects for each of `userIds` in
- * `tenantId`, DERIVED from the stored assignments ({@link deriveCompatRole}), the only place a
+ * `tenantId`, DERIVED from the stored assignments ({@link deriveFormRole}), the only place a
  * role lives (#641). `null` when a user holds no well-formed assignment
  * of the tenant (no row at all, or only rows of another tenant's role or with a malformed scope):
  * the person holds no role, which drives the „Keine Rolle zugewiesen“ hint (D-14). A row at SALONS
  * or PERSONS scope counts as "has a role" but derives EMPLOYEE, exactly like the token claim.
  * One query for any number of users. Lives here because this module is the one place that
- * produces legacy role values (D-14, D-19); the value is served under the existing `user.role`
- * key of the employee responses.
+ * derives the role value (D-14); it is served under the existing `user.role` key of the employee
+ * responses.
  */
 export async function formRolesByUserId(
   db: Prisma.TransactionClient,
@@ -225,7 +223,7 @@ export async function formRolesByUserId(
       accessRole: { select: { id: true, tenantId: true, permissions: true } },
     },
   });
-  const byUser = new Map<string, CompatRoleAssignmentRow[]>();
+  const byUser = new Map<string, FormRoleAssignmentRow[]>();
   for (const row of rows) {
     const belongsHere = row.accessRole.tenantId === null || row.accessRole.tenantId === tenantId;
     if (!belongsHere || storedRoleAssignmentScope(row) === null) continue;
@@ -235,7 +233,7 @@ export async function formRolesByUserId(
   }
   for (const userId of userIds) {
     const own = byUser.get(userId);
-    result.set(userId, own === undefined ? null : deriveCompatRole(tenantId, own));
+    result.set(userId, own === undefined ? null : deriveFormRole(tenantId, own));
   }
   return result;
 }
@@ -348,12 +346,12 @@ const BLOCKING_ASSIGNMENT_INCLUDE = {
  * tenant-relevant row that grants at least one ZUGEWIESEN key is strictly more — Admin included,
  * since the Admin system role's permission set grants ZUGEWIESEN keys too.
  *
- * Deliberately does NOT restrict itself to TENANT scope the way {@link deriveCompatRole} does
+ * Deliberately does NOT restrict itself to TENANT scope the way {@link deriveFormRole} does
  * (Issue #357 sub-fix A): a SALONS or PERSONS assignment on such a role still hands out real, if
  * scoped, power (`decideUserMayApply` in `role-assignment.ts`) — exactly the kind of leftover
  * right Issue #357 sub-fix B must catch before a demotion to Mitarbeiter in the employee form.
  */
-export function assignmentExceedsEmployee(tenantId: string, row: CompatRoleAssignmentRow): boolean {
+export function assignmentExceedsEmployee(tenantId: string, row: FormRoleAssignmentRow): boolean {
   const roleBelongsHere = row.accessRole.tenantId === null || row.accessRole.tenantId === tenantId;
   if (!roleBelongsHere || storedRoleAssignmentScope(row) === null) return false;
   return ZUGEWIESEN_KEYS.some((key) => roleGrants(row.accessRole, key));

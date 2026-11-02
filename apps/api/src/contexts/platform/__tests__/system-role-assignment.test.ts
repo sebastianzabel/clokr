@@ -1,10 +1,10 @@
 /**
- * Phase 75b (Issue #75), D-14 — the compat role is DERIVED from role assignments at one place.
+ * Phase 75b (Issue #75), D-14 — the form role is DERIVED from role assignments at one place.
  *
- * `deriveCompatRole` is pure: ADMIN for a well-formed TENANT assignment on the Admin system role
+ * `deriveFormRole` is pure: ADMIN for a well-formed TENANT assignment on the Admin system role
  * (by id), MANAGER when any effective assignment's role grants a ZUGEWIESEN permission, EMPLOYEE
  * otherwise. Since #539 the derived value is no longer published in a token or a sign-in body
- * (`token-claims-539.test.ts`); it is written to the column only (D-06).
+ * (`token-claims-539.test.ts`); no column stores it any more (#641, Release B).
  *
  * No person names in fixtures (CLAUDE.md PII rule).
  */
@@ -16,16 +16,16 @@ import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../.
 import {
   assignmentExceedsEmployee,
   assignmentsBlockingDemotionToEmployee,
-  deriveCompatRole,
+  deriveFormRole,
   isDemotionToEmployee,
   isLegacySystemRoleId,
   replaceSystemRoleAssignment,
   requestedRoleUnchanged,
   RoleDemotionBlockedError,
   systemRoleIdForLegacyRole,
-  type CompatRoleAssignmentRow,
-} from "../compat-role";
-import * as compatRoleModule from "../compat-role";
+  type FormRoleAssignmentRow,
+} from "../system-role-assignment";
+import * as systemRoleAssignmentModule from "../system-role-assignment";
 import { SYSTEM_ROLE_IDS, SYSTEM_ROLE_PERMISSIONS, type SystemRoleSlot } from "../system-roles";
 import { roleNameKey } from "../access-role";
 import { TENANT_REQUIRED_ERROR } from "../tenant-status";
@@ -36,12 +36,12 @@ const OTHER_TENANT = "another-tenant";
 
 function systemRow(
   slot: SystemRoleSlot,
-  scope: Pick<CompatRoleAssignmentRow, "scopeType" | "salonIds" | "employeeIds"> = {
+  scope: Pick<FormRoleAssignmentRow, "scopeType" | "salonIds" | "employeeIds"> = {
     scopeType: "TENANT",
     salonIds: [],
     employeeIds: [],
   },
-): CompatRoleAssignmentRow {
+): FormRoleAssignmentRow {
   return {
     ...scope,
     accessRole: {
@@ -55,7 +55,7 @@ function systemRow(
 function customerRow(
   permissions: string[],
   opts: { tenantId?: string; scopeType?: "TENANT" | "SALONS" | "PERSONS" } = {},
-): CompatRoleAssignmentRow {
+): FormRoleAssignmentRow {
   const scopeType = opts.scopeType ?? "TENANT";
   return {
     scopeType,
@@ -65,7 +65,7 @@ function customerRow(
   };
 }
 
-describe("compat role — pure derivation (D-14)", () => {
+describe("system-role assignment — pure derivation (D-14)", () => {
   it("systemRoleIdForLegacyRole maps each legacy value onto its system role id", () => {
     expect(systemRoleIdForLegacyRole("ADMIN")).toBe(SYSTEM_ROLE_IDS.ADMIN);
     expect(systemRoleIdForLegacyRole("MANAGER")).toBe(SYSTEM_ROLE_IDS.MANAGER);
@@ -79,25 +79,25 @@ describe("compat role — pure derivation (D-14)", () => {
   });
 
   it("Admin system role at TENANT scope → ADMIN", () => {
-    expect(deriveCompatRole(TENANT, [systemRow("ADMIN")])).toBe("ADMIN");
+    expect(deriveFormRole(TENANT, [systemRow("ADMIN")])).toBe("ADMIN");
   });
 
   it("Admin system role via SALONS scope → EMPLOYEE (Issue #357 sub-fix A: never below TENANT scope, not even MANAGER)", () => {
     expect(
-      deriveCompatRole(TENANT, [
+      deriveFormRole(TENANT, [
         systemRow("ADMIN", { scopeType: "SALONS", salonIds: ["salon-1"], employeeIds: [] }),
       ]),
     ).toBe("EMPLOYEE");
   });
 
   it("Manager → MANAGER; Mitarbeiter → EMPLOYEE", () => {
-    expect(deriveCompatRole(TENANT, [systemRow("MANAGER")])).toBe("MANAGER");
-    expect(deriveCompatRole(TENANT, [systemRow("EMPLOYEE")])).toBe("EMPLOYEE");
+    expect(deriveFormRole(TENANT, [systemRow("MANAGER")])).toBe("MANAGER");
+    expect(deriveFormRole(TENANT, [systemRow("EMPLOYEE")])).toBe("EMPLOYEE");
   });
 
   it("a customer role with a ZUGEWIESEN key at TENANT scope → MANAGER", () => {
     expect(
-      deriveCompatRole(TENANT, [
+      deriveFormRole(TENANT, [
         customerRow(["time-entry:read:EIGENE", "audit-log:read:ZUGEWIESEN"], {
           scopeType: "TENANT",
         }),
@@ -105,7 +105,7 @@ describe("compat role — pure derivation (D-14)", () => {
     ).toBe("MANAGER");
   });
 
-  // Issue #357 sub-fix A: before the fix `deriveCompatRole` ignored scope entirely for the
+  // Issue #357 sub-fix A: before the fix `deriveFormRole` ignored scope entirely for the
   // MANAGER check, so a SALONS/PERSONS-scoped customer role holding a ZUGEWIESEN key wrongly
   // derived MANAGER even though `request-permissions.ts` grants that key tenant-wide from a
   // TENANT-scope source only (D-09) — the assignment holder could do NOTHING tenant-wide at the
@@ -114,7 +114,7 @@ describe("compat role — pure derivation (D-14)", () => {
     "a customer role with a ZUGEWIESEN key at %s scope → EMPLOYEE (grants nothing tenant-wide)",
     (scopeType) => {
       expect(
-        deriveCompatRole(TENANT, [
+        deriveFormRole(TENANT, [
           customerRow(["time-entry:read:EIGENE", "audit-log:read:ZUGEWIESEN"], { scopeType }),
         ]),
       ).toBe("EMPLOYEE");
@@ -123,26 +123,26 @@ describe("compat role — pure derivation (D-14)", () => {
 
   it("a customer role with EIGENE keys only → EMPLOYEE", () => {
     expect(
-      deriveCompatRole(TENANT, [customerRow(["time-entry:read:EIGENE", "overtime:read:EIGENE"])]),
+      deriveFormRole(TENANT, [customerRow(["time-entry:read:EIGENE", "overtime:read:EIGENE"])]),
     ).toBe("EMPLOYEE");
   });
 
   it("a foreign tenant's customer role and a malformed row contribute nothing", () => {
     expect(
-      deriveCompatRole(TENANT, [
+      deriveFormRole(TENANT, [
         customerRow(["audit-log:read:ZUGEWIESEN"], { tenantId: OTHER_TENANT }),
       ]),
     ).toBe("EMPLOYEE");
     expect(
-      deriveCompatRole(TENANT, [
+      deriveFormRole(TENANT, [
         systemRow("ADMIN", { scopeType: "TENANT", salonIds: ["salon-1"], employeeIds: [] }),
       ]),
     ).toBe("EMPLOYEE");
   });
 
   it("the union decides: Mitarbeiter plus Admin at TENANT → ADMIN; empty → EMPLOYEE", () => {
-    expect(deriveCompatRole(TENANT, [systemRow("EMPLOYEE"), systemRow("ADMIN")])).toBe("ADMIN");
-    expect(deriveCompatRole(TENANT, [])).toBe("EMPLOYEE");
+    expect(deriveFormRole(TENANT, [systemRow("EMPLOYEE"), systemRow("ADMIN")])).toBe("ADMIN");
+    expect(deriveFormRole(TENANT, [])).toBe("EMPLOYEE");
   });
 
   it.each(["ADMIN", "MANAGER", "EMPLOYEE"] as const)(
@@ -152,12 +152,12 @@ describe("compat role — pure derivation (D-14)", () => {
         (s) => SYSTEM_ROLE_IDS[s] === systemRoleIdForLegacyRole(role),
       );
       expect(slot).toBeDefined();
-      expect(deriveCompatRole(TENANT, [systemRow(slot as SystemRoleSlot)])).toBe(role);
+      expect(deriveFormRole(TENANT, [systemRow(slot as SystemRoleSlot)])).toBe(role);
     },
   );
 });
 
-describe("compat role — assignmentExceedsEmployee (Issue #357 sub-fix B)", () => {
+describe("system-role assignment — assignmentExceedsEmployee (Issue #357 sub-fix B)", () => {
   it("a TENANT customer role with a ZUGEWIESEN key exceeds Mitarbeiter", () => {
     expect(
       assignmentExceedsEmployee(
@@ -169,7 +169,7 @@ describe("compat role — assignmentExceedsEmployee (Issue #357 sub-fix B)", () 
     ).toBe(true);
   });
 
-  // Unlike deriveCompatRole (sub-fix A), this check does NOT restrict itself to TENANT scope: a
+  // Unlike deriveFormRole (sub-fix A), this check does NOT restrict itself to TENANT scope: a
   // salon- or person-scoped assignment still hands out real, if scoped, power that a demotion to
   // Mitarbeiter in the employee form must not leave behind unnoticed.
   it.each(["SALONS", "PERSONS"] as const)(
@@ -224,7 +224,7 @@ describe("compat role — assignmentExceedsEmployee (Issue #357 sub-fix B)", () 
 // (Admin, Manager, Mitarbeiter). D-10 is a locked decision, pinned here unmodified: a TENANT
 // Inhaber or Personalabteilung assignment derives MANAGER (never ADMIN, never a new value); a
 // SALONS/PERSONS-scoped Salonmanager or Ausbilder assignment contributes nothing.
-describe("Phase 76b — templates in the compat module (P-01, D-10)", () => {
+describe("Phase 76b — templates in the system-role assignment module (P-01, D-10)", () => {
   it("isLegacySystemRoleId is true only for Admin, Manager and Mitarbeiter", () => {
     expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.ADMIN)).toBe(true);
     expect(isLegacySystemRoleId(SYSTEM_ROLE_IDS.MANAGER)).toBe(true);
@@ -238,23 +238,23 @@ describe("Phase 76b — templates in the compat module (P-01, D-10)", () => {
   });
 
   it("D-10 pinned: TENANT Inhaber and TENANT Personalabteilung derive MANAGER; SALONS Salonmanager and PERSONS Ausbilder contribute nothing", () => {
-    expect(deriveCompatRole(TENANT, [systemRow("OWNER")])).toBe("MANAGER");
-    expect(deriveCompatRole(TENANT, [systemRow("HR")])).toBe("MANAGER");
+    expect(deriveFormRole(TENANT, [systemRow("OWNER")])).toBe("MANAGER");
+    expect(deriveFormRole(TENANT, [systemRow("HR")])).toBe("MANAGER");
     expect(
-      deriveCompatRole(TENANT, [
+      deriveFormRole(TENANT, [
         systemRow("SALON_MANAGER", { scopeType: "SALONS", salonIds: ["salon-1"], employeeIds: [] }),
       ]),
     ).toBe("EMPLOYEE");
     expect(
-      deriveCompatRole(TENANT, [
+      deriveFormRole(TENANT, [
         systemRow("TRAINER", { scopeType: "PERSONS", salonIds: [], employeeIds: ["employee-1"] }),
       ]),
     ).toBe("EMPLOYEE");
-    expect(deriveCompatRole(TENANT, [systemRow("ADMIN"), systemRow("OWNER")])).toBe("ADMIN");
+    expect(deriveFormRole(TENANT, [systemRow("ADMIN"), systemRow("OWNER")])).toBe("ADMIN");
   });
 });
 
-describe("compat role — sign-in refusals do not depend on the column (D-14, #539 D-05)", () => {
+describe("system-role assignment — sign-in refusals do not depend on the column (D-14, #539 D-05)", () => {
   let app: FastifyInstance;
   let seed: Awaited<ReturnType<typeof seedTestData>>;
   let otpSeed: Awaited<ReturnType<typeof seedTestData>>;
@@ -386,7 +386,7 @@ describe("compat role — sign-in refusals do not depend on the column (D-14, #5
   );
 });
 
-describe("compat role — write half against the database (D-14, D-15, #539)", () => {
+describe("system-role assignment — write half against the database (D-14, D-15, #539)", () => {
   let app: FastifyInstance;
   let seed: Awaited<ReturnType<typeof seedTestData>>;
   let other: Awaited<ReturnType<typeof seedTestData>>;
@@ -458,7 +458,7 @@ describe("compat role — write half against the database (D-14, D-15, #539)", (
 
   it("nothing is stored on a user's behalf (#539 D-11): the module has no materialization, a replacement writes exactly the requested row", async () => {
     // The D-26 function is gone: with the fallback removed it would be an implicit grant.
-    expect("materializeLegacyRoleAssignment" in compatRoleModule).toBe(false);
+    expect("materializeLegacyRoleAssignment" in systemRoleAssignmentModule).toBe(false);
 
     const user = await createUser(seed.tenant.id, "MANAGER", "mat");
     expect(await rowsOf(user.id)).toEqual([]);

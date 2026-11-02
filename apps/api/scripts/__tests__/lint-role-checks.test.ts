@@ -253,9 +253,9 @@ describe("findRoleChecks — tolerated shapes", () => {
 // ── File selection: the single allowlist and the test-file skip ─────────────────────────────────
 
 describe("isGatedFile — which files the gate reads", () => {
-  it("any flagged shape inside compat-role.ts is allowlisted (the one compat derivation, D-14)", () => {
-    expect(ALLOWLISTED_FILE).toBe("apps/api/src/contexts/platform/compat-role.ts");
-    expect(isGatedFile("apps/api/src/contexts/platform/compat-role.ts")).toBe(false);
+  it("any flagged shape inside system-role-assignment.ts is allowlisted (transitional, removed in the next commit)", () => {
+    expect(ALLOWLISTED_FILE).toBe("apps/api/src/contexts/platform/system-role-assignment.ts");
+    expect(isGatedFile("apps/api/src/contexts/platform/system-role-assignment.ts")).toBe(false);
   });
 
   it("a file inside a __tests__ directory is not gated", () => {
@@ -267,10 +267,10 @@ describe("isGatedFile — which files the gate reads", () => {
     expect(isGatedFile("apps/api/src/utils/foo.test.ts")).toBe(false);
   });
 
-  it("every other .ts file under apps/api/src is gated — including another compat-role.ts elsewhere", () => {
+  it("every other .ts file under apps/api/src is gated — including another system-role-assignment.ts elsewhere", () => {
     expect(isGatedFile("apps/api/src/middleware/auth.ts")).toBe(true);
     expect(isGatedFile("apps/api/src/composition/reports.ts")).toBe(true);
-    expect(isGatedFile("apps/api/src/contexts/absence/compat-role.ts")).toBe(true);
+    expect(isGatedFile("apps/api/src/contexts/absence/system-role-assignment.ts")).toBe(true);
   });
 
   it("files outside apps/api/src and non-.ts files are not gated", () => {

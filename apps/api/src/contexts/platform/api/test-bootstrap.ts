@@ -45,7 +45,7 @@ import { listSalons } from "../facade/salons.js";
 import { readTenantTimezone } from "../facade/salon-assignments.js";
 import { dayToDate, tenantLocalDay } from "../salon-assignment-rules.js";
 import { provisionTenant } from "../tenant-provisioning.js";
-import { replaceSystemRoleAssignment } from "../compat-role.js";
+import { replaceSystemRoleAssignment } from "../system-role-assignment.js";
 import { TENANT_MODULES, changeTenantPackages } from "../tenant-packages.js";
 
 declare module "fastify" {

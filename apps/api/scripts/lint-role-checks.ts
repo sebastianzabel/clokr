@@ -95,7 +95,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import * as ts from "typescript";
 
 export const SRC_DIR = "apps/api/src";
-export const ALLOWLISTED_FILE = "apps/api/src/contexts/platform/compat-role.ts";
+export const ALLOWLISTED_FILE = "apps/api/src/contexts/platform/system-role-assignment.ts";
 
 const ROLE_LITERALS: ReadonlySet<string> = new Set(["ADMIN", "MANAGER", "EMPLOYEE"]);
 const EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([

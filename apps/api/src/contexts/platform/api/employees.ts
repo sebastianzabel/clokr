@@ -30,7 +30,7 @@ import {
   requestedRoleUnchanged,
   ROLE_DEMOTION_BLOCKED_MESSAGE_PREFIX,
   RoleDemotionBlockedError,
-} from "../compat-role";
+} from "../system-role-assignment";
 import {
   auditRoleAssignmentChange,
   createdAssignmentAuditEntry,
