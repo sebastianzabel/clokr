@@ -17,3 +17,6 @@
 pre|0|role-gap-sql-641|sql|select count(*) from "User" u join "Employee" e on e."userId"=u.id where u."isActive" and not (e."firstName" = U&'Gel\00F6scht' and e."lastName" like U&'GEL\00D6SCHT-%') and not exists (select 1 from "RoleAssignment" ra where ra."userId"=u.id and ra."tenantId"=e."tenantId");
 # Deploy: the migration of #641 (drop User.role and the enum Role; pg_dump first as the fallback, the data-preserving reverse is in docs/migrations.md Phase 641 step 5)
 migrate|0|migrate-deploy|migrate|
+# After the deploy (read-only, #820): already anonymized persons whose audit rows still carry a device MAC address.
+# Ids and counts only; exit 2 lists findings, which is information, not a failure.
+post|0,2|audit-820-anonymized-macs|script|audit-820-anonymized-audit-macs.ts
