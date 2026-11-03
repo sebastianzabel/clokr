@@ -1124,7 +1124,8 @@ const MIN_FILES = 798;
 // Merge of #610 onto main after #608: full run measured 784 files / 11508 tests (incl. 3 skipped).
 // Phase 609 (2026-11-02): MIN_TESTS 11279 -> 11605, the measured total of the full run named at MIN_FILES. Never lowered.
 // Merge of #609 onto main after #610: full run measured 798 files / 11793 tests (incl. 3 skipped).
-const MIN_TESTS = 11793;
+// Issue #818: +3 cases (state-machine.test.ts +2, nfc-punch.test.ts +1) on the merged base 11793.
+const MIN_TESTS = 11796;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
