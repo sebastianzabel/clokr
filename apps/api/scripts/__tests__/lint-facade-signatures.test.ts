@@ -517,7 +517,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // facade (`contexts/time-tracking/facade/time-entries.ts`, retention archive of DayBreak /
   // DayBreakAck, same shape as `archiveEntriesBefore`) — passes F1/F2/F3 directly, no new
   // exception; exceptions unchanged at 17.
-  it("the real tree has exactly 151 exported facade functions today, 19 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  it("the real tree has exactly 154 exported facade functions today, 19 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -533,6 +533,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/scheduling/facade/availability.ts",
         "apps/api/src/contexts/scheduling/facade/couplings.ts",
         "apps/api/src/contexts/time-tracking/facade/presence-devices.ts",
+        "apps/api/src/contexts/time-tracking/facade/presence-pairing.ts",
         "apps/api/src/contexts/time-tracking/facade/time-entries.ts",
         "apps/api/src/contexts/working-time-account/facade/overtime-account.ts",
         "apps/api/src/contexts/working-time-account/facade/saldo-snapshot.ts",
@@ -600,8 +601,12 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // Issue #388: + deletePresenceDevicesOfEmployee (tenant-scoped, no exception) — 147 -> 148.
     // Issue #718: + clearOvertimePlanNotesForEmployee, clearSchedulingNotesForEmployee (DSGVO
     // anonymisation, no tenantId by design) — 148 -> 150; two new named F3 exceptions, 17 -> 19.
-    // Issue #820: +1 (`timeEntryIdsOfEmployee`, tenant-scoped, no exception) — 150 -> 151.
-    expect(functions).toHaveLength(151);
+    // Issue #610 (plan 02): new file contexts/time-tracking/facade/presence-pairing.ts adds
+    // purgeStalePairingCodes, deletePairingCodesOfUser and the module-private helper
+    // purgeTenantPairingCodes (the analyzer counts every function of a facade file) - 150 -> 153;
+    // all three pass F1/F2/F3 directly (db first, tenant-scoped), exceptions unchanged at 19.
+    // Issue #820: +1 (`timeEntryIdsOfEmployee`, tenant-scoped, no exception) — 153 -> 154.
+    expect(functions).toHaveLength(154);
 
     const rawExceptions = JSON.parse(
       readFileSync(

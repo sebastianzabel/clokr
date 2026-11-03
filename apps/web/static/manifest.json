@@ -1,7 +1,10 @@
 {
+  "id": "/",
   "name": "Clokr",
   "short_name": "Clokr",
-  "description": "Clokr – Time tracking & team management",
+  "description": "Clokr – Zeiterfassung und Teamverwaltung",
+  "lang": "de",
+  "scope": "/",
   "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#f9fafb",
@@ -9,10 +12,22 @@
   "orientation": "portrait",
   "icons": [
     {
-      "src": "/clokr-icon.png",
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ],
   "categories": ["business", "productivity"]

@@ -14,9 +14,20 @@ describe("services/clock/state-machine — decide()", () => {
       expect(decide(state, "AUTO", "NFC")).toEqual({ kind: "STOP", entryId: "entry-1" });
     });
 
-    it("OPEN_ENTRY cross source + AUTO → CONFIRM (WIFI re-detects NFC entry)", () => {
+    it("OPEN_ENTRY cross source + AUTO, presence-only → CONFIRM (WIFI re-detects NFC entry)", () => {
       const state: ClockState = { kind: "OPEN_ENTRY", entryId: "entry-1", source: "NFC" };
-      expect(decide(state, "AUTO", "WIFI")).toEqual({ kind: "CONFIRM", entryId: "entry-1" });
+      expect(decide(state, "AUTO", "WIFI", true)).toEqual({ kind: "CONFIRM", entryId: "entry-1" });
+    });
+
+    it("OPEN_ENTRY cross source + AUTO, human act → STOP (Issue #818: NFC tap on a MOBILE entry)", () => {
+      const state: ClockState = { kind: "OPEN_ENTRY", entryId: "entry-1", source: "MOBILE" };
+      expect(decide(state, "AUTO", "NFC")).toEqual({ kind: "STOP", entryId: "entry-1" });
+      expect(decide(state, "AUTO", "NFC", false)).toEqual({ kind: "STOP", entryId: "entry-1" });
+    });
+
+    it("OPEN_ENTRY same source + AUTO, presence-only → STOP (toggle unchanged)", () => {
+      const state: ClockState = { kind: "OPEN_ENTRY", entryId: "entry-1", source: "WIFI" };
+      expect(decide(state, "AUTO", "WIFI", true)).toEqual({ kind: "STOP", entryId: "entry-1" });
     });
   });
 

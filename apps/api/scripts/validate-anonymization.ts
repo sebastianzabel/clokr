@@ -168,6 +168,50 @@ async function checkWifiIdentifiers() {
   }
 }
 
+async function checkPushSubscriptions() {
+  // Issue #608: a push device is a delivery address of a person. The anonymization deletes it, so a
+  // row that still belongs to an anonymized user (passwordHash "ANONYMIZED", the same predicate as
+  // checkAuditLogUserIds) is a leftover.
+  const devices = await prisma.pushSubscription.count({
+    where: { user: { passwordHash: "ANONYMIZED" } },
+  });
+  if (devices > 0) {
+    findings.push({
+      rule: "push-subscriptions-not-cleared",
+      severity: "blocking",
+      count: devices,
+      sample: [`PushSubscription: ${devices}`],
+    });
+  }
+}
+
+async function checkPairingCodes() {
+  // Issue #610 (D-04): a WLAN pairing code names a device address. The anonymization deletes the
+  // codes the person consumed (there is no relation, only the plain consumedByUserId column), so a
+  // code whose consumer is an anonymized user (passwordHash "ANONYMIZED", the same predicate as
+  // checkAuditLogUserIds) is a leftover. Chunked so a large list of anonymized users stays bounded.
+  const anonymizedUsers = await prisma.user.findMany({
+    where: { passwordHash: "ANONYMIZED" },
+    select: { id: true },
+    orderBy: { id: "asc" },
+  });
+  const CHUNK = 1000;
+  let codes = 0;
+  for (let i = 0; i < anonymizedUsers.length; i += CHUNK) {
+    codes += await prisma.presencePairingCode.count({
+      where: { consumedByUserId: { in: anonymizedUsers.slice(i, i + CHUNK).map((u) => u.id) } },
+    });
+  }
+  if (codes > 0) {
+    findings.push({
+      rule: "pairing-codes-not-cleared",
+      severity: "blocking",
+      count: codes,
+      sample: [`PresencePairingCode: ${codes}`],
+    });
+  }
+}
+
 async function checkAbsenceDocuments() {
   const docs = await prisma.absence.count({ where: { documentPath: { not: null } } });
   if (docs > 0) {
@@ -298,6 +342,8 @@ async function main() {
     ],
     ["Absence documentPath cleared", checkAbsenceDocuments],
     ["WLAN identifiers cleared (wifiMacs, PresenceDevice)", checkWifiIdentifiers],
+    ["Push devices cleared (PushSubscription)", checkPushSubscriptions],
+    ["WLAN pairing codes cleared (PresencePairingCode)", checkPairingCodes],
     ["AuditLog userId nulled for anonymized users", checkAuditLogUserIds],
     ["Employee.nfcCardId cleared + phone scan", checkPhoneFormatColumns],
     ["Row counts preserved per ANONYMIZATION_RUN log", checkVolumePreservation],

@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Handle, HandleServerError } from "@sveltejs/kit";
+import { sendsNoReferrer } from "$lib/security/no-referrer-paths";
 
 const API_BACKEND = process.env.API_URL || "http://localhost:4000";
 const LOG_LEVEL = process.env.LOG_LEVEL || "info"; // debug | info | warn | error
@@ -102,6 +103,10 @@ export const handle: Handle = async ({ event, resolve }) => {
     response.headers.set("X-Frame-Options", "DENY");
   }
 
+  if (sendsNoReferrer(event.url.pathname)) {
+    response.headers.set("Referrer-Policy", "no-referrer");
+  }
+
   // Content Security Policy
   const cspMode = process.env.CSP_MODE || "enforce"; // "off", "report-only", "enforce"
   if (cspMode !== "off") {
@@ -112,6 +117,9 @@ export const handle: Handle = async ({ event, resolve }) => {
       "font-src 'self'",
       "img-src 'self' data: blob:",
       "connect-src 'self'",
+      // Issue #608 (D-12): the push service worker is named explicitly. It would fall back to
+      // script-src 'self' anyway - this documents the intent and loosens nothing.
+      "worker-src 'self'",
       "frame-src 'none'",
       "object-src 'none'",
       "base-uri 'self'",

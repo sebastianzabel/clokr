@@ -29,6 +29,8 @@ model Tenant {
   // Issue #93 (Phase 93b) — support access grants of the operator for this tenant. Plural name on
   // purpose: the tenant-scoping model graph skips plural collections.
   supportAccesses SupportAccess[]
+  // Issue #608 — Prisma-only back-relation, push devices of this tenant's users.
+  pushSubscriptions PushSubscription[]
 
   // Phase 566 (#566) — booked packages per tenant. Unterbau-Erweiterung: additive, no existing reader
   // has to change. Written only by the operator and read only through
@@ -50,6 +52,8 @@ model Tenant {
   specialLeaveRules    SpecialLeaveRule[]
   presenceSources      PresenceSource[]
   presenceDevices      PresenceDevice[]
+  // Issue #610 — one-time WLAN pairing codes (Prisma-only back-relation; an Unterbau Erweiterung)
+  presencePairingCodes PresencePairingCode[]
   // Phase 67.2 — Schulferien-Cache pro Tenant pro Bundesland
   schoolHolidayPeriods SchoolHolidayPeriod[]
   // Phase 85 — Phorest staff mapping + sync run history
@@ -118,6 +122,9 @@ model Salon {
   phorestSyncRuns     PhorestSyncRun[]
   // Phase 71b (issue #71): Prisma-only back-relation — manual holidays are now salon-scoped.
   publicHolidays      PublicHoliday[]
+  // Issue #541: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung, approved by
+  // #541 reaching Ready) — the NFC terminal keys bound to this salon.
+  terminalApiKeys     TerminalApiKey[]
 
   @@index([tenantId])
 }
@@ -291,6 +298,13 @@ model TenantConfig {
   reminderUpcomingAbsenceDays       Int      @default(3) // MA erinnern X Tage vor Abwesenheit
   reminderPendingLeaveEnabled       Boolean  @default(true)
   reminderUpcomingAbsenceEnabled    Boolean  @default(true)
+  // Shift reminders (Issue #609, D-01; Unterbau-Erweiterung). All three occasions default OFF, so an
+  // existing tenant sees no behaviour change until an admin switches one on.
+  reminderShiftStartEnabled         Boolean  @default(false) // remind a person who has not clocked in N minutes after shift start
+  reminderShiftEndEnabled           Boolean  @default(false) // remind a person who is still clocked in N minutes after shift end
+  reminderDayCloseEnabled           Boolean  @default(false) // evening reminder when a shift day has no recorded time
+  reminderOffsetMinutes             Int      @default(15) // N for start and end reminders, bounds 5-120 live in Zod and the kernel
+  reminderDayCloseTime              String   @default("20:00") @db.VarChar(5) // tenant-local HH:MM of the evening reminder
   // Benachrichtigungen
   clockOutReminderHours             Int      @default(10) // Stunden nach denen an offene Stempelung erinnert wird
   missingEntriesDays                Int      @default(7) // Tage ohne Einträge bevor erinnert wird — mirrors DEFAULT_MISSING_ENTRIES_DAYS in apps/api/src/utils/missing-entries-window.ts (issue #141); change both together.
@@ -378,6 +392,8 @@ model User {
   notifications Notification[]
   // Phase 74b (issue #74) — role assignments held by this user
   roleAssignments RoleAssignment[]
+  // Issue #608 — Prisma-only back-relation, the devices this user opted into push on
+  pushSubscriptions PushSubscription[]
 }
 
 model RefreshToken {
@@ -390,6 +406,33 @@ model RefreshToken {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
+}
+
+// Issue #608 (Phase 608-01, D-03) — a web-push delivery address owned by a user (Unterbau-Erweiterung:
+// additive, no existing reader has to change). One row per browser subscription: the endpoint is the
+// push service's capability URL and p256dh/auth are the keys the payload is encrypted to, so none of the
+// three is ever returned, logged or audited. A row exists only after an explicit opt-in on that device
+// (consentedAt) and is hard-deleted on revoke, on a 404/410 from the push service and on DSGVO
+// anonymization - it is a transport address, not a retention-relevant record. The tenant FK is Restrict
+// (a tenant is deactivated, never deleted); the user FK is Cascade so a removed user takes the address
+// with it. No @updatedAt on purpose: nothing reads a modification time, lastSuccessAt is the signal.
+model PushSubscription {
+  id            String    @id @default(uuid())
+  tenantId      String
+  userId        String
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  deviceLabel   String
+  consentedAt   DateTime  @db.Timestamptz
+  lastSuccessAt DateTime? @db.Timestamptz
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
   @@index([userId])
 }
 
@@ -433,6 +476,11 @@ model Employee {
   wifiMacs                     String[]               @default([]) // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
   wifiPresenceEnabled          Boolean                @default(false) // GDPR opt-in required — false until employee explicitly opts in
   wifiOptInAt                  DateTime?              @db.Timestamptz // timestamp when employee opted in (null = not opted in)
+  // Per-person opt-out of the shift reminders (Issue #609, D-02; Unterbau-Erweiterung). Written only by the
+  // own-data route PATCH /api/v1/employees/me/reminders; never returned in a raw employee read (D-16).
+  reminderShiftStartOff        Boolean                @default(false)
+  reminderShiftEndOff          Boolean                @default(false)
+  reminderDayCloseOff          Boolean                @default(false)
   avatarPath                   String? // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
   // Personalstruktur (Phase 41): classification + Coverage-Gewicht + Aufsichtspflicht
   classification               EmployeeClassification @default(VOLLZEIT)
@@ -1364,9 +1412,16 @@ model TerminalApiKey {
   lastUsedAt DateTime?
   revokedAt  DateTime?
   createdAt  DateTime  @default(now())
+  // Issue #541: optional binding of the terminal to ONE salon of its tenant. Nullable, no backfill
+  // (an unbound terminal keeps the salon rule of today). Tenant sameness is checked by the
+  // application because the database cannot express it; Restrict because revision-relevant
+  // references onto the Unterbau use Restrict.
+  salonId    String?
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  salon      Salon?    @relation(fields: [salonId], references: [id], onDelete: Restrict)
 
   @@index([tenantId])
+  @@index([salonId])
 }
 
 // ─────────────────────────────────────────────
@@ -1390,6 +1445,9 @@ model PresenceSource {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  // Issue #610 — Prisma-only back-relation of the one-time pairing codes issued through this key
+  pairingCodes PresencePairingCode[]
+
   @@index([tenantId])
   @@index([keyHash])
 }
@@ -1406,6 +1464,11 @@ model PresenceDevice {
   label         String? // Optional human-readable label (e.g. "iPhone the operator", "Tablet")
   addedByUserId String? // userId of the person who created the mapping (null = system)
   addedAt       DateTime @default(now()) @db.Timestamptz
+  // Issue #610 (D-07): how the mapping was made. Existing rows stay MANUAL - no classification is guessed.
+  pairedVia PresencePairedVia @default(MANUAL)
+  // Issue #610 (D-07, P-610-11): last presence event (connected or disconnected) of this MAC, written by the
+  // webhook. NULL until the first event after the mapping; no backfill.
+  lastSeenAt DateTime? @db.Timestamptz
 
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
@@ -1413,6 +1476,38 @@ model PresenceDevice {
   @@unique([tenantId, mac]) // One MAC maps to exactly one employee per tenant
   @@index([tenantId])
   @@index([employeeId])
+}
+
+// Issue #610 (D-07) - how a PresenceDevice mapping came into being.
+enum PresencePairedVia {
+  MANUAL
+  QR
+}
+
+// Issue #610 (Phase 610-01, D-04 revised) - Zeiterfassung model: a one-time WLAN pairing token. The adapter
+// registers it for a MAC (presence-source key) and the signed-in person confirms it. Only the SHA-256 of the
+// 32-byte code is stored (never the code), it lives at most 5 minutes, is single use (consumedAt), is hard-deleted
+// after one day and on anonymization and is not retention-relevant. Both FKs are onDelete: Cascade for that
+// reason. consumedByUserId is deliberately a plain column without a relation: no new Shared-Kernel
+// dependency on User.
+model PresencePairingCode {
+  id               String    @id @default(uuid())
+  tenantId         String
+  presenceSourceId String
+  codeHash         String    @unique // SHA-256 hex of the raw code
+  mac              String // Normalized lowercase colon-separated
+  hostname         String? // Display only, sanitised and truncated by the writer
+  expiresAt        DateTime  @db.Timestamptz // createdAt + 5 minutes, never longer
+  consumedAt       DateTime? @db.Timestamptz
+  consumedByUserId String? // Plain column on purpose (no FK)
+  createdAt        DateTime  @default(now()) @db.Timestamptz
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  presenceSource PresenceSource @relation(fields: [presenceSourceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, mac])
+  @@index([createdAt])
+  @@index([consumedByUserId])
 }
 
 model ApiKey {

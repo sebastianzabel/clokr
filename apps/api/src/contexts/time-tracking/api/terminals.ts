@@ -2,9 +2,30 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
 import { assertModuleBooked, requirePermission } from "../../platform";
+import { validateTerminalSalon } from "../terminal-salon";
 
 function hashKey(key: string): string {
   return createHash("sha256").update(key).digest("hex");
+}
+
+// Issue #541 (D-04): the list item carries the bound salon flattened to `salonName` / `salonActive`
+// (both null when unbound), never a nested `salon` object.
+const TERMINAL_LIST_SELECT = {
+  id: true,
+  name: true,
+  keyPrefix: true,
+  lastUsedAt: true,
+  revokedAt: true,
+  createdAt: true,
+  salonId: true,
+  salon: { select: { name: true, isActive: true } },
+} as const;
+
+function toTerminalListItem<T extends { salon: { name: string; isActive: boolean } | null }>(
+  row: T,
+) {
+  const { salon, ...rest } = row;
+  return { ...rest, salonName: salon?.name ?? null, salonActive: salon?.isActive ?? null };
 }
 
 export async function terminalRoutes(app: FastifyInstance) {
@@ -16,16 +37,11 @@ export async function terminalRoutes(app: FastifyInstance) {
       const keys = await app.prisma.terminalApiKey.findMany({
         where: { tenantId: req.user.tenantId },
         orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          name: true,
-          keyPrefix: true,
-          lastUsedAt: true,
-          revokedAt: true,
-          createdAt: true,
-        },
+        select: TERMINAL_LIST_SELECT,
       });
-      return { keys };
+      // Issue #541 (D-04): flattened salon fields; `salonActive: false` is the list hint for a
+      // binding that points to a since-deactivated salon.
+      return { keys: keys.map(toTerminalListItem) };
     },
   });
 
@@ -33,10 +49,23 @@ export async function terminalRoutes(app: FastifyInstance) {
   app.post("/", {
     schema: { tags: ["Terminals"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("terminal:manage:ZUGEWIESEN"),
-    handler: async (req) => {
-      const body = z.object({ name: z.string().min(1).max(100) }).parse(req.body);
+    handler: async (req, reply) => {
+      const body = z
+        .object({
+          name: z.string().min(1).max(100),
+          // Issue #541 (D-03): optional binding at creation; absent and null both mean unbound.
+          salonId: z.string().uuid().nullable().optional(),
+        })
+        .parse(req.body);
       // D-05: setting up a NEW terminal needs the module; existing keys, revoke and punching stay free (Issue #566).
       await assertModuleBooked(app.prisma, req.user.tenantId, "HARDWARE_CLOCK");
+      // Issue #541 (D-03): validated after the module gate and before the create.
+      let boundSalonId: string | null = null;
+      if (typeof body.salonId === "string") {
+        const validation = await validateTerminalSalon(app.prisma, req.user.tenantId, body.salonId);
+        if (!validation.ok) return reply.code(validation.status).send(validation.body);
+        boundSalonId = validation.salonId;
+      }
       const rawKey = `clk_${randomBytes(32).toString("hex")}`;
       const keyHash = hashKey(rawKey);
       const keyPrefix = rawKey.substring(0, 12) + "...";
@@ -47,6 +76,7 @@ export async function terminalRoutes(app: FastifyInstance) {
           name: body.name,
           keyHash,
           keyPrefix,
+          ...(boundSalonId !== null ? { salonId: boundSalonId } : {}),
         },
       });
 
@@ -58,11 +88,23 @@ export async function terminalRoutes(app: FastifyInstance) {
         action: "CREATE",
         entity: "TerminalApiKey",
         entityId: key.id,
-        newValue: { name: body.name, keyPrefix },
+        // The salon appears only when bound, so an unbound create keeps its pre-#541 audit shape.
+        newValue: {
+          name: body.name,
+          keyPrefix,
+          ...(boundSalonId !== null ? { salonId: boundSalonId } : {}),
+        },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
-      return { id: key.id, name: key.name, keyPrefix, rawKey, createdAt: key.createdAt };
+      return {
+        id: key.id,
+        name: key.name,
+        keyPrefix,
+        rawKey,
+        createdAt: key.createdAt,
+        salonId: key.salonId,
+      };
     },
   });
 
@@ -128,6 +170,78 @@ export async function terminalRoutes(app: FastifyInstance) {
       const cards = employees.map((e) => e.nfcCardId).filter((id): id is string => id !== null);
 
       return { cards };
+    },
+  });
+
+  // PATCH /:id — bind, change or remove the salon of a terminal key (Issue #541, D-03).
+  // Deliberately NOT module-gated: changing an existing setup is not setting up something new
+  // (#566 "never retroactive"); only creating a key needs the module.
+  app.patch("/:id", {
+    schema: {
+      tags: ["Terminals"],
+      summary: "Bind, change or remove the salon of a terminal key",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requirePermission("terminal:manage:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+      const body = z.object({ salonId: z.string().uuid().nullable() }).strict().parse(req.body);
+      const tenantId = req.user.tenantId;
+
+      const key = await app.prisma.terminalApiKey.findFirst({ where: { id, tenantId } });
+      if (!key) return reply.code(404).send({ error: "Schlüssel nicht gefunden" });
+      // D-10: a revoked key is not edited.
+      if (key.revokedAt) {
+        return reply.code(409).send({ error: "Schlüssel ist widerrufen", code: "KEY_REVOKED" });
+      }
+
+      const readItem = async () =>
+        toTerminalListItem(
+          await app.prisma.terminalApiKey.findFirstOrThrow({
+            where: { id, tenantId },
+            select: TERMINAL_LIST_SELECT,
+          }),
+        );
+
+      // D-10: an unchanged value is a no-op, checked BEFORE the salon validation so re-sending the
+      // current id of a since-deactivated salon is a 200 and writes no audit noise.
+      if (body.salonId === key.salonId) return readItem();
+
+      if (body.salonId !== null) {
+        const validation = await validateTerminalSalon(app.prisma, tenantId, body.salonId);
+        if (!validation.ok) return reply.code(validation.status).send(validation.body);
+      }
+
+      // The write is conditional on the snapshot read above (not revoked, binding unchanged), so
+      // the audit `oldValue` is always the value that was really replaced. A concurrent revoke or a
+      // concurrent PATCH makes the condition miss: count 0, nothing written, nothing audited.
+      const { count } = await app.prisma.terminalApiKey.updateMany({
+        where: { id, tenantId, revokedAt: null, salonId: key.salonId },
+        data: { salonId: body.salonId },
+      });
+      if (count === 0) {
+        const current = await app.prisma.terminalApiKey.findFirst({ where: { id, tenantId } });
+        if (!current) return reply.code(404).send({ error: "Schlüssel nicht gefunden" });
+        if (current.revokedAt) {
+          return reply.code(409).send({ error: "Schlüssel ist widerrufen", code: "KEY_REVOKED" });
+        }
+        return reply.code(409).send({
+          error: "Der Schlüssel wurde zwischenzeitlich geändert. Bitte lade die Liste neu.",
+          code: "TERMINAL_CHANGED_CONCURRENTLY",
+        });
+      }
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "TerminalApiKey",
+        entityId: id,
+        oldValue: { salonId: key.salonId },
+        newValue: { salonId: body.salonId },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return readItem();
     },
   });
 

@@ -132,9 +132,11 @@ export type PrismaModelName =
   | "operatorAccount"
   | "operatorAuditLog"
   | "supportAccess" // Issue #93 — time-boxed operator support grant
+  | "pushSubscription" // Issue #608 — a user's web-push delivery address
   | "terminalApiKey"
   | "presenceSource"
   | "presenceDevice"
+  | "presencePairingCode" // Issue #610 — one-time WLAN pairing code (Zeiterfassung)
   | "apiKey"
   | "phorestStaffMapping"
   | "phorestSyncRun"
@@ -167,6 +169,7 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   operatorAccount: "platform",
   operatorAuditLog: "platform",
   supportAccess: "platform", // Issue #93 (Phase 93b-01) — SupportAccess, a time-boxed operator support grant, an Unterbau model
+  pushSubscription: "platform", // Issue #608 (Phase 608-01) — PushSubscription, a device push address, an Unterbau model
   apiKey: "platform",
   invitation: "platform",
   otpToken: "platform",
@@ -184,6 +187,7 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   dayBreakAck: "time-tracking", // Issue #80 — cross-salon acknowledgement
   timeEntryActivityShare: "time-tracking", // Issue #81 — activity allocation of an entry (D-01)
   presenceDevice: "time-tracking",
+  presencePairingCode: "time-tracking", // Issue #610 (Phase 610-01) — one-time WLAN pairing code
   presenceSource: "time-tracking",
   terminalApiKey: "time-tracking",
   retroEntryRequest: "time-tracking",

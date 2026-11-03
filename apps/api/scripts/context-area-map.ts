@@ -84,11 +84,16 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/crypto.ts": "rahmen", // generic crypto helper (hashing/encryption), no model, no single owning context
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
   "src/utils/audit-diff.ts": "rahmen", // generic before/after diff for settings audit rows (Issue #285); pure, no model, imported by the platform and absence settings routes
+  "src/utils/client-log-url.ts": "rahmen", // strips query/fragment from client-reported URLs before logging (Issue #610 review WR-02); pure, no model
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
   "src/__tests__/entry-lock-race-helpers.ts": "rahmen", // Issue #70 (Phase 70b-04) — test infra: holds the Employee writer lock while a request under test queues on it; no model of its own
   "src/__tests__/bulk-apply-helpers.ts": "rahmen", // Issue #568 — shared two-step bulk-apply test helper, no model
   "src/__tests__/population-fixtures-613.ts": "rahmen", // Issue #613 — shared fixture of the population tests (exited / login-deactivated / anonymised / late-hired persons); test infra, no model of its own
+  "src/__tests__/push-fixtures-608.ts": "rahmen", // Issue #608 — shared fixture of the web-push tests (test VAPID pair, push-enabled app builder, fake device subscription); test infra, no model of its own
+  "src/__tests__/presence-pairing-fixtures-610.ts": "rahmen", // Issue #610 — shared fixture of the WLAN pairing tests (presence source with a raw key, random MAC, issue/preview/confirm injectors); test infra, no model of its own
+  "src/__tests__/notify-emit-sites.ts": "rahmen", // Issue #608 — the one notify() call-site scanner shared by the e-mail and push registry tests; test infra, no model of its own
+  "src/__tests__/shift-reminder-fixtures-609.ts": "rahmen", // Issue #609 — shared fixture of the shift-reminder tests (tenant with the switches, persons, shifts, entries, tenant-local instants); test infra, no model of its own
   "src/__tests__/monthly-export-fixture-617.ts": "rahmen", // Issue #617 — shared nine-person fixture of the Monatsexport tests (closed/open months, every leave kind, § 9, exit, Azubi); test infra, no model of its own
   "src/__tests__/datev-rows.ts": "rahmen", // Issue #304 — shared parser of the DATEV LODAS file for tests; test infra, no model of its own
   "src/__tests__/legacy-role-migration-sql.ts": "rahmen", // Phase 75b (Issue #75) — test infra that runs the checked-in legacy-role data migration verbatim; no model of its own
@@ -131,6 +136,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/invitations.ts": "unterbau", // writes Invitation/User
   "src/contexts/platform/api/me.ts": "unterbau", // writes User only
   "src/contexts/platform/api/notifications.ts": "unterbau", // writes Notification only
+  "src/contexts/platform/api/me-push.ts": "unterbau", // Issue #608 (D-06): own-data routes for the person's push devices; PushSubscription is an Unterbau model, the route holds no Prisma call
   "src/contexts/platform/api/release-notes.ts": "unterbau", // app-wide, tenant-agnostic feature with no model; under src/routes/ so cannot be rahmen (#99: no route may be a fallthrough) — Unterbau is the closest fit as the shared, context-agnostic substrate
   "src/contexts/platform/api/role-assignments.ts": "unterbau", // Phase 74b (#74): role assignment with scope — reads/writes RoleAssignment and reads AccessRole/Salon/Employee/User, all Unterbau models
   "src/contexts/platform/api/roles.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
@@ -169,6 +175,12 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/month-first-date.ts": "unterbau", // WorkSchedule.validFrom month-1 rule — Unterbau's own model
   "src/contexts/platform/bulk-apply-defaults.ts": "unterbau", // Issue #568 — pure bulk-apply classifier over WorkSchedule/TenantConfig/Employee, Unterbau models
   "src/contexts/platform/notification-email-policy.ts": "unterbau", // per-type email-toggle registry for Notification — Unterbau's own model
+  "src/contexts/platform/notification-push-policy.ts": "unterbau", // Issue #608 (D-08, D-10): the push payload contract and per-type registry beside notification-email-policy.ts; no Prisma call
+  "src/contexts/platform/push-device-label.ts": "unterbau", // Issue #608 (D-03): closed-vocabulary device label from the User-Agent; pure module, no model
+  "src/contexts/platform/push-dispatch.ts": "unterbau", // Issue #608 (D-10): sends a push to a person's PushSubscription rows, an Unterbau model
+  "src/contexts/platform/push-endpoint-guard.ts": "unterbau", // Issue #608 (D-17): the push-service host allow-list; pure module, no model
+  "src/contexts/platform/push-sender.ts": "unterbau", // Issue #608 (D-10): the only importer of web-push; reads config, no model
+  "src/contexts/platform/push-subscriptions.ts": "unterbau", // Issue #608 (D-03, D-04): creates/audits PushSubscription rows, an Unterbau model
   "src/contexts/platform/password-policy.ts": "unterbau", // User/auth password rules
   "src/contexts/platform/permission-catalog.ts": "unterbau", // Phase 72b (Issue #72) — the permission catalog; ADR 0001 names permissions as part of the shared substrate, and the catalog has no model of its own
   "src/contexts/platform/permission-labels.ts": "unterbau", // Phase 83 (Issue #83) — the German labels of the permission catalog, the one place a permission is named for end users; no model, no Prisma call; served only by api/roles.ts (GET /roles/permission-catalog)
@@ -210,6 +222,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────
   "src/contexts/time-tracking/facade/time-entries.ts": "zeiterfassung", // Phase 100B Plan 08 — T1-T12, TimeEntry/Break's only external access path
   "src/contexts/time-tracking/facade/presence-devices.ts": "zeiterfassung", // Phase 100B Plan 09 (Wave 4, closing) — PresenceDevice's only external access path
+  "src/contexts/time-tracking/facade/presence-pairing.ts": "zeiterfassung", // Issue #610 (D-04) — PresencePairingCode's only external access path: the token-cleanup purge and the anonymization delete
   "src/contexts/time-tracking/api/admin-presence-sources.ts": "zeiterfassung", // writes PresenceDevice/PresenceSource
   "src/contexts/time-tracking/api/employee-wifi.ts": "zeiterfassung", // Phase 243 Plan 02 (B2) — moved from contexts/platform/api/employees.ts: PresenceDevice is a Zeiterfassung model; the /employees URL prefix is a namespace, not an owner
   "src/contexts/time-tracking/api/presence.ts": "zeiterfassung", // WiFi-presence-based clocking; reads PresenceDevice/PresenceSource, writes AuditLog as a side effect
@@ -247,6 +260,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/entry-write-lock.ts": "zeiterfassung", // Issue #70 (Phase 70b-02), D-10 — the one Employee row lock of every writer that creates or moves a TimeEntry interval
   "src/contexts/time-tracking/entry-overlap-error.ts": "zeiterfassung", // Issue #70 (Phase 70b-02), D-10/D-13 — recognises the database overlap/open-per-day refusals and words the overlap 409
   "src/contexts/time-tracking/entry-salon.ts": "zeiterfassung", // Phase 68b (issue #68) — resolveEntrySalon, the entry-salon rule; reads the Unterbau only through the platform index
+  "src/contexts/time-tracking/terminal-salon.ts": "zeiterfassung", // Issue #541 — the terminal→salon binding rule (punch side and write side); reads the Unterbau only through the platform index
   "src/contexts/time-tracking/travel-entry.ts": "zeiterfassung", // Issue #92 (Phase 92b-01), D-05/D-06 — the one travel-entry write rule (classify, neighbour anchors, arrival salon through resolveEntrySalon); reads only findEntriesOfDay and the entry-salon rule
   "src/contexts/time-tracking/clock-salon-choice.ts": "zeiterfassung", // Issue #87 (Phase 87b) — clockSalonChoice, the one clock-salon decision; reads the Unterbau only through the platform index
   "src/contexts/time-tracking/break-finding-days.ts": "zeiterfassung", // Issue #511 (D-12) — month-close / cron / dry-run detector over TimeEntry, Break, DayBreak and DayBreakAck
@@ -256,8 +270,16 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry
   "src/contexts/time-tracking/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
   "src/contexts/time-tracking/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization
+  "src/contexts/time-tracking/presence-source-auth.ts": "zeiterfassung", // Issue #610 (D-16) — the one presence-source key check shared by the webhook and the pairing-code issuer; reads PresenceSource
+  "src/contexts/time-tracking/pairing-code.ts": "zeiterfassung", // Issue #610 — pairing-code constants and pure helpers (TTL, format, hashing, hostname hygiene); no model access
+  "src/contexts/time-tracking/wifi-device-not-seen.ts": "zeiterfassung", // Issue #610 (D-10) - the daily WLAN re-couple hint: pure decision plus the job over PresenceDevice, Shift (facade) and TimeEntry; writes notices only
+  "src/contexts/time-tracking/presence-pairing.ts": "zeiterfassung", // Issue #610 — issue/preview/confirm service of the one-time WLAN pairing code; writes PresencePairingCode/PresenceDevice
   "src/contexts/time-tracking/presence.ts": "zeiterfassung", // WiFi-presence detection helper feeding routes/presence.ts and the missing-entries gap detector
   "src/contexts/time-tracking/retro-config.ts": "zeiterfassung", // RetroEntryRequest tenant-config toggle
+  "src/contexts/time-tracking/shift-reminders.ts": "zeiterfassung", // Issue #609 (D-04, D-17) — pure kernel of the shift reminders (instants, windows, start decision, dedupe keys, links); no model access, no clock read
+  "src/contexts/time-tracking/shift-reminder-job.ts": "zeiterfassung", // Issue #609 (D-03, D-17) — the 5-minute shift reminder job; reads shifts, leave and absences through their facades, writes only notices
+  "src/contexts/time-tracking/shift-reminder-dismiss.ts": "zeiterfassung", // Issue #609 review IN-03 — dismisses open start/end reminder notices after a successful clock-in/out; reactive, never fails the clock
+  "src/contexts/time-tracking/api/employee-reminders.ts": "zeiterfassung", // Issue #609 (D-02) — GET/PATCH /employees/me/reminders, the person's own reminder opt-outs; the reminders are a Zeiterfassung feature, the /employees prefix is a namespace, not an owner
 
   // ── abwesenheiten — LeaveRequest/LeaveType/LeaveEntitlement/SpecialLeaveRule/Section9Credit/
   //    Absence/EmployeeVocationalSchoolPattern/CompanyShutdown/CompanyShutdownException ───────

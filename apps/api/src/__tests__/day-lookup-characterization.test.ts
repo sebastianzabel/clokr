@@ -391,7 +391,12 @@ describe("Phase 69b — day-lookup characterization (pinned before the refactor)
       const breaks = await app.prisma.break.findMany({ where: { timeEntryId: id } });
       expect(breaks).toHaveLength(1);
 
-      const r4 = await resolveClockEvent(app, clockEvent(d, "13:00", "MOBILE", "AUTO"));
+      // Issue #818: only a passive presence signal confirms another source's open entry; the
+      // unflagged cross-source tap is a human act and closes it (state-machine.test.ts).
+      const r4 = await resolveClockEvent(app, {
+        ...clockEvent(d, "13:00", "MOBILE", "AUTO"),
+        presenceOnly: true,
+      });
       expect(r4).toMatchObject({ kind: "CONFIRMED", entryId: id });
 
       const r5 = await resolveClockEvent(app, clockEvent(d, "13:05", "MOBILE", "IN"));

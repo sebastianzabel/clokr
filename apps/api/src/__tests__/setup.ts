@@ -813,6 +813,9 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   // leaks fixture rows into the shared test database.
   await prisma.employeeSalonAssignment.deleteMany({ where: { tenantId } });
   await prisma.employee.deleteMany({ where: { tenantId } });
+  // Issue #608: PushSubscription.tenant is onDelete: Restrict - the rows must go before the user and
+  // tenant deletes below, or a fixture tenant with a device cannot be removed.
+  await prisma.pushSubscription.deleteMany({ where: { tenantId } });
   await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.otpToken.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });

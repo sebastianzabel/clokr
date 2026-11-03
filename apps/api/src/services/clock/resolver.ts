@@ -188,9 +188,9 @@ export async function resolveClockEvent(
       // the salon is validated FIRST — a foreign and an unknown id answer the identical 404 and an
       // inactive one 400 (T-100-09), before any state decision and before the locked guard — and a
       // validated salon that differs from `L`'s starts a NEW entry in that salon instead of
-      // re-opening `L` (the former differing-salon 409 no longer exists). Without a salon (NFC,
-      // WIFI, web without a choice) or with `L`'s own salon the latest entry is re-opened as
-      // before. The state machine stays pure: "start in another salon" is simply presented to
+      // re-opening `L` (the former differing-salon 409 no longer exists). Without a salon (WIFI, an
+      // unbound NFC terminal #541, web without a choice) or with `L`'s own salon the latest entry is
+      // re-opened as before. The state machine stays pure: "start in another salon" is simply presented to
       // `decide()` as a day without a re-openable entry. With an OPEN entry the answer stays
       // ALREADY_CLOCKED_IN whatever salon is named (identical for foreign and unknown ids).
       let startInOtherSalon = false;
@@ -227,15 +227,16 @@ export async function resolveClockEvent(
             }
           : { kind: "NO_OPEN_ENTRY" };
 
-      const decision = decide(state, event.intent, event.source);
+      const decision = decide(state, event.intent, event.source, event.presenceOnly);
 
       switch (decision.kind) {
         case "START": {
           // Phase 68b (issue #68, D-08/D-09): the salon of a NEW entry is resolved here, inside
           // the transaction, from the punch INSTANT (never `event.date`). The explicit salon of the
           // web clock-in (Issue #87, D-01) is validated by the same rule; without one the pattern
-          // -> default salon chain applies (D-07: NFC and WIFI never send one). REOPEN, STOP,
-          // CONFIRM and consolidation never re-derive the salon of an existing entry.
+          // -> default salon chain applies (NFC sends one only from a bound terminal key, #541;
+          // WIFI never does). REOPEN, STOP, CONFIRM and consolidation never re-derive the salon of
+          // an existing entry.
           const salon = await resolveEntrySalon(tx, {
             tenantId: event.tenantId,
             employeeId: event.employeeId,

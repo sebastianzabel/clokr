@@ -18,10 +18,10 @@ import {
 
 const liveModels = Prisma.dmmf.datamodel.models as unknown as readonly DmmfModel[];
 
-// The 21 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
+// The 23 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
 // D-19; AccessRole added Phase 73b, Issue #73; Salon added Phase 64b, Issue #64; RoleAssignment
 // added Phase 74b, Issue #74; SalonCoupling added Phase 65b, Issue #65; EmployeeSalonAssignment
-// added Phase 67b, Issue #67; SupportAccess added Issue #93) to carry their own `tenantId` scalar column.
+// added Phase 67b, Issue #67; SupportAccess added Issue #93; PushSubscription added Issue #608; PresencePairingCode added Issue #610) to carry their own `tenantId` scalar column.
 const EXPECTED_OWN_MODELS = [
   "TenantConfig",
   "Employee",
@@ -44,6 +44,8 @@ const EXPECTED_OWN_MODELS = [
   "SalonCoupling",
   "EmployeeSalonAssignment",
   "SupportAccess", // Issue #93 — carries its own tenantId scalar column
+  "PushSubscription", // Issue #608 — carries its own tenantId scalar column
+  "PresencePairingCode", // Issue #610 — carries its own tenantId scalar column
 ].sort();
 
 describe("delegateName", () => {
@@ -132,9 +134,11 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
   // models, own count unchanged — and Phase 88 (#88: + OperatorAccount, OperatorAuditLog, both
   // `none`: neither carries a tenant key nor reaches one) — 50 -> 52 models, own count unchanged —
   // and Issue #93 (+ SupportAccess, own: it carries a `tenantId` scalar) — 52 -> 53 models, own
-  // count 20 -> 21.
-  it("classifies exactly 53 models with no residual category (D-05)", () => {
-    expect(graph.size).toBe(53);
+  // count 20 -> 21 — and Issue #608 (+ PushSubscription, own: it carries a `tenantId` scalar) — 53 -> 54
+  // models, own count 21 -> 22 — and Issue #610 (+ PresencePairingCode, own: it carries a `tenantId`
+  // scalar) — 54 -> 55 models, own count 22 -> 23.
+  it("classifies exactly 55 models with no residual category (D-05)", () => {
+    expect(graph.size).toBe(55);
     for (const [, tenancy] of graph) {
       expect(["own", "relation", "none"]).toContain(tenancy.kind);
     }
@@ -146,7 +150,7 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
     expect(graph.has("apiKey")).toBe(true);
   });
 
-  it("marks exactly the 21 measured models as own, by NAME (not just count)", () => {
+  it("marks exactly the 23 measured models as own, by NAME (not just count)", () => {
     const ownDelegateNames = [...graph]
       .filter(([, v]) => v.kind === "own")
       .map(([k]) => k)

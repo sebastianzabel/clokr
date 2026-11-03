@@ -30,6 +30,12 @@ ENCRYPTION_KEY=<generierter-string>
 # von den drei Werten oben). Ohne Wert ist die Betreiber-Oberfläche aus.
 # OPERATOR_JWT_SECRET=<generierter-string>
 
+# Optional: Web-Push aufs Handy (alle drei Werte oder keiner; ohne Werte ist Push aus).
+# Das Schlüsselpaar erzeugt scripts/generate-vapid-keys.ts, siehe docs/runbooks/web-push.md.
+# VAPID_PUBLIC_KEY=
+# VAPID_PRIVATE_KEY=
+# VAPID_SUBJECT=
+
 # URL unter der Clokr erreichbar ist
 CORS_ORIGIN=http://deine-domain.de:3000
 APP_URL=http://deine-domain.de:3000

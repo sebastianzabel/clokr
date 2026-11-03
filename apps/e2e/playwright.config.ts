@@ -226,6 +226,12 @@ export default defineConfig({
       //     reusable helper helpers/visibility-walkthrough.ts); tenant fixture only, no seed, no
       //     date dependency
       //
+      // Issue #608 added a twelfth file:
+      //   - the Web-Push plumbing proof on the production build (manifest, worker and icon served
+      //     without a session; the service worker registers under the real CSP without a violation;
+      //     /settings shows no push section on the test stack, which carries no VAPID keys);
+      //     tenant fixture only, no seed, no date dependency
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -243,6 +249,7 @@ export default defineConfig({
         /travel-between-salons\.spec\.ts/,
         /reports-period\.spec\.ts/,
         /role-editor-visibility-710\.spec\.ts/,
+        /push-pwa\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],
