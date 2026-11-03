@@ -41,6 +41,7 @@ export {
   archiveEntriesBefore,
   archiveDayBreakDataBefore,
   clearEntryNotesForEmployee,
+  timeEntryIdsOfEmployee,
   RETRO_REASON_ANONYMIZED,
   hardDeleteTimeDataForEmployee,
   createImportedTimeEntry,

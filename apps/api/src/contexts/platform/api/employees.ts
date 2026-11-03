@@ -1645,6 +1645,7 @@ export async function employeeRoutes(app: FastifyInstance) {
               clearedDeviceIdentifiers,
               clearedFreeText,
               auditRedaction,
+              macAuditRedaction,
             } = await anonymizeEmployeeData({
               tx,
               employeeId: id,
@@ -1710,6 +1711,8 @@ export async function employeeRoutes(app: FastifyInstance) {
                 clearedFreeText,
                 // Issue #512: how many AuditLog rows had free text redacted (count only).
                 auditRowsRedacted: auditRedaction.rowsRedacted,
+                // Issue #820: AuditLog rows whose device MAC address was redacted (count only).
+                auditRowsMacRedacted: macAuditRedaction.rowsWithMac,
               }),
               tx,
             });

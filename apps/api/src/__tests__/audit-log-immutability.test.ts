@@ -78,6 +78,14 @@ const ALLOWED_MUTATION_SITES: Record<string, { count: number; reason: string }> 
       "codes and the actor stamp stay). Called only from the anonymization and its backfill; " +
       "the row, its timestamp, action and entity are never changed or deleted.",
   },
+  "apps/api/src/contexts/platform/audit-mac-redaction.ts": {
+    count: 1,
+    reason:
+      "Issue #820 (DSGVO Art. 17): the one in-place redaction of device MAC addresses in the " +
+      "old/new values of an anonymized person, by key and shape. Called only from the " +
+      "anonymization (the audit script runs it read-only); the row, its timestamp, action and " +
+      "entity are never changed or deleted.",
+  },
   "apps/api/src/composition/data-retention.ts": {
     count: 1,
     reason:

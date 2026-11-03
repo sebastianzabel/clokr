@@ -940,3 +940,20 @@ export async function getDayBreaksForSupportMonth(
     select: { id: true, date: true, startTime: true, endTime: true },
   });
 }
+
+/**
+ * Issue #820: ids of every TimeEntry of the employee, soft-deleted rows included. The anonymization
+ * uses them to find the audit rows that are written with `entityId` = entry (the WLAN presence
+ * confirmation carries the observed MAC). Ids only; tenant-scoped through the employee relation.
+ */
+export async function timeEntryIdsOfEmployee(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+  tenantId: string,
+): Promise<string[]> {
+  const rows = await db.timeEntry.findMany({
+    where: { employeeId, employee: { tenantId } },
+    select: { id: true },
+  });
+  return rows.map((r) => r.id);
+}
