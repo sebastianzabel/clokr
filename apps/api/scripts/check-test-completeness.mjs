@@ -999,7 +999,18 @@ import { readFileSync } from "node:fs";
 // MIN_FILES 765 -> 777, never lowered. #541, #608 and #641 also raise these floors: whoever merges later re-measures.
 // 2026-11-02 (#610 review fixes): +2 API test files, measured full run 779 files / 11465 tests.
 // Merge of #610 onto main after #608: full run measured 784 files / 11508 tests (incl. 3 skipped).
-const MIN_FILES = 784;
+// Phase 609 (2026-11-02): measured with a full API run on `feat/609-erinnerungen` @ 54644ca0 (stacked on `feat/608-web-push`; later commits touch web tests only) -
+// 780 test files, 11605 tests (11602 passed, 3 skipped, 0 failed). The phase adds 13 API test files (shift-reminders-kernel-609,
+// shift-reminders-start-609, shift-reminders-end-609, shift-reminders-day-close-609, shift-reminders-exclusions-609,
+// shift-reminders-same-instant-609, shift-reminders-recipients-609, shift-reminders-no-stamp-609, shift-reminders-perf-609,
+// clock-out-reminder-coordination-609, settings-reminders-609, me-reminders-609, employee-reminder-columns-hidden-609) and
+// extends facade-shifts, the push-policy, advisory-lock, cron-88 and employee-creation tests; the rest of the rise over the
+// previous floor comes from the stacked base (608 plus main merged into it). Nothing removed, skipped or loosened. MIN_FILES
+// 765 -> 780, never lowered. The open PRs for #541, #610 and #641 (and #608 itself) raise the same floors: whoever merges
+// later re-measures with a full run (lower-bound convention, never a sum).
+// 2026-11-02 (#609 review fixes): measured full run 781 files / 11636 tests.
+// Merge of #609 onto main after #610: full run measured 798 files / 11793 tests (incl. 3 skipped).
+const MIN_FILES = 798;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1111,7 +1122,9 @@ const MIN_FILES = 784;
 // Phase 610 (2026-11-02): MIN_TESTS 11279 -> 11455, the measured total of the full run named at MIN_FILES (the ten
 // new files add 102 cases). Never lowered.
 // Merge of #610 onto main after #608: full run measured 784 files / 11508 tests (incl. 3 skipped).
-const MIN_TESTS = 11508;
+// Phase 609 (2026-11-02): MIN_TESTS 11279 -> 11605, the measured total of the full run named at MIN_FILES. Never lowered.
+// Merge of #609 onto main after #610: full run measured 798 files / 11793 tests (incl. 3 skipped).
+const MIN_TESTS = 11793;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

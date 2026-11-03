@@ -93,6 +93,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/__tests__/push-fixtures-608.ts": "rahmen", // Issue #608 — shared fixture of the web-push tests (test VAPID pair, push-enabled app builder, fake device subscription); test infra, no model of its own
   "src/__tests__/presence-pairing-fixtures-610.ts": "rahmen", // Issue #610 — shared fixture of the WLAN pairing tests (presence source with a raw key, random MAC, issue/preview/confirm injectors); test infra, no model of its own
   "src/__tests__/notify-emit-sites.ts": "rahmen", // Issue #608 — the one notify() call-site scanner shared by the e-mail and push registry tests; test infra, no model of its own
+  "src/__tests__/shift-reminder-fixtures-609.ts": "rahmen", // Issue #609 — shared fixture of the shift-reminder tests (tenant with the switches, persons, shifts, entries, tenant-local instants); test infra, no model of its own
   "src/__tests__/monthly-export-fixture-617.ts": "rahmen", // Issue #617 — shared nine-person fixture of the Monatsexport tests (closed/open months, every leave kind, § 9, exit, Azubi); test infra, no model of its own
   "src/__tests__/datev-rows.ts": "rahmen", // Issue #304 — shared parser of the DATEV LODAS file for tests; test infra, no model of its own
   "src/__tests__/legacy-role-migration-sql.ts": "rahmen", // Phase 75b (Issue #75) — test infra that runs the checked-in legacy-role data migration verbatim; no model of its own
@@ -274,6 +275,10 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/presence-pairing.ts": "zeiterfassung", // Issue #610 — issue/preview/confirm service of the one-time WLAN pairing code; writes PresencePairingCode/PresenceDevice
   "src/contexts/time-tracking/presence.ts": "zeiterfassung", // WiFi-presence detection helper feeding routes/presence.ts and the missing-entries gap detector
   "src/contexts/time-tracking/retro-config.ts": "zeiterfassung", // RetroEntryRequest tenant-config toggle
+  "src/contexts/time-tracking/shift-reminders.ts": "zeiterfassung", // Issue #609 (D-04, D-17) — pure kernel of the shift reminders (instants, windows, start decision, dedupe keys, links); no model access, no clock read
+  "src/contexts/time-tracking/shift-reminder-job.ts": "zeiterfassung", // Issue #609 (D-03, D-17) — the 5-minute shift reminder job; reads shifts, leave and absences through their facades, writes only notices
+  "src/contexts/time-tracking/shift-reminder-dismiss.ts": "zeiterfassung", // Issue #609 review IN-03 — dismisses open start/end reminder notices after a successful clock-in/out; reactive, never fails the clock
+  "src/contexts/time-tracking/api/employee-reminders.ts": "zeiterfassung", // Issue #609 (D-02) — GET/PATCH /employees/me/reminders, the person's own reminder opt-outs; the reminders are a Zeiterfassung feature, the /employees prefix is a namespace, not an owner
 
   // ── abwesenheiten — LeaveRequest/LeaveType/LeaveEntitlement/SpecialLeaveRule/Section9Credit/
   //    Absence/EmployeeVocationalSchoolPattern/CompanyShutdown/CompanyShutdownException ───────

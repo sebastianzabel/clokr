@@ -298,6 +298,13 @@ model TenantConfig {
   reminderUpcomingAbsenceDays       Int      @default(3) // MA erinnern X Tage vor Abwesenheit
   reminderPendingLeaveEnabled       Boolean  @default(true)
   reminderUpcomingAbsenceEnabled    Boolean  @default(true)
+  // Shift reminders (Issue #609, D-01; Unterbau-Erweiterung). All three occasions default OFF, so an
+  // existing tenant sees no behaviour change until an admin switches one on.
+  reminderShiftStartEnabled         Boolean  @default(false) // remind a person who has not clocked in N minutes after shift start
+  reminderShiftEndEnabled           Boolean  @default(false) // remind a person who is still clocked in N minutes after shift end
+  reminderDayCloseEnabled           Boolean  @default(false) // evening reminder when a shift day has no recorded time
+  reminderOffsetMinutes             Int      @default(15) // N for start and end reminders, bounds 5-120 live in Zod and the kernel
+  reminderDayCloseTime              String   @default("20:00") @db.VarChar(5) // tenant-local HH:MM of the evening reminder
   // Benachrichtigungen
   clockOutReminderHours             Int      @default(10) // Stunden nach denen an offene Stempelung erinnert wird
   missingEntriesDays                Int      @default(7) // Tage ohne Einträge bevor erinnert wird — mirrors DEFAULT_MISSING_ENTRIES_DAYS in apps/api/src/utils/missing-entries-window.ts (issue #141); change both together.
@@ -469,6 +476,11 @@ model Employee {
   wifiMacs                     String[]               @default([]) // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
   wifiPresenceEnabled          Boolean                @default(false) // GDPR opt-in required — false until employee explicitly opts in
   wifiOptInAt                  DateTime?              @db.Timestamptz // timestamp when employee opted in (null = not opted in)
+  // Per-person opt-out of the shift reminders (Issue #609, D-02; Unterbau-Erweiterung). Written only by the
+  // own-data route PATCH /api/v1/employees/me/reminders; never returned in a raw employee read (D-16).
+  reminderShiftStartOff        Boolean                @default(false)
+  reminderShiftEndOff          Boolean                @default(false)
+  reminderDayCloseOff          Boolean                @default(false)
   avatarPath                   String? // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
   // Personalstruktur (Phase 41): classification + Coverage-Gewicht + Aufsichtspflicht
   classification               EmployeeClassification @default(VOLLZEIT)

@@ -9,6 +9,7 @@ import { getTenantTimezone, dateStrInTz } from "../../working-time-account"; // 
 import { resolveClockEvent } from "../../../services/clock/resolver";
 import type { ClockEvent } from "../../../services/clock/types";
 import { applyAutoBreakAfterClockStop } from "../auto-break-write"; // Issue #799
+import { dismissShiftReminderNotices } from "../shift-reminder-dismiss"; // Issue #609 (IN-03)
 import { findEntriesOfDay, openEntryOf } from "../day-entries"; // Phase 69b — the single day lookup
 
 // ── Zod schema ────────────────────────────────────────────
@@ -318,6 +319,11 @@ export async function presenceRoutes(app: FastifyInstance) {
 
         const resolution = await resolveClockEvent(app, event);
 
+        if (resolution.kind === "CLOCKED_IN") {
+          // Issue #609 (IN-03): the open "Schicht begonnen" notice of this person is answered.
+          await dismissShiftReminderNotices(app, employee.userId, "IN");
+        }
+
         if (resolution.kind === "CONFLICT") {
           if (resolution.reason === "ALREADY_CLOCKED_IN") {
             // Lost race: a concurrent connected request created the entry
@@ -433,6 +439,8 @@ export async function presenceRoutes(app: FastifyInstance) {
           employeeId: employee.id,
           tz: await getTenantTimezone(app.prisma, tenantId),
         });
+        // Issue #609 (IN-03): the open "Schichtende" notice of this person is answered.
+        await dismissShiftReminderNotices(app, employee.userId, "OUT");
       }
       return reply.code(200).send({ ok: true });
     },

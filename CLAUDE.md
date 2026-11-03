@@ -1500,7 +1500,9 @@ operator runbook `docs/runbooks/web-push.md`. Rules, as built:
 - **Lock-screen text lives in ONE place.** `contexts/platform/notification-push-policy.ts` holds, per `notify()` type, one neutral
   German du-form text or `never` — fail-closed: a type without an entry is not pushed, and `notification-push-policy-608.test.ts`
   scans every emit site and pins the registry keys equal to the e-mail registry. An e-mail policy of `never` implies a push
-  `never` (the four `SECTION9_*` types and `SUPPORT_ACCESS_STARTED`). The payload is exactly `{ title, body, url }`: title
+  `never` (the four `SECTION9_*` types and `SUPPORT_ACCESS_STARTED`), with one named exception: the types listed in
+  `PUSH_WITHOUT_EMAIL` of `notification-push-policy-608.test.ts`, each with a written reason (the three `REMINDER_*` types of
+  Issue #609: neutral nudge, e-mail deliberately not used; #610 adds its own entry on merge). The payload is exactly `{ title, body, url }`: title
   „Clokr“, body from the registry, `url` the notification's own link after `safePushUrl()` (same-origin relative, else
   `/dashboard`). The in-app title and message are NEVER sent (name, minutes, saldo, health or § 9 content would reach the lock
   screen, Art. 5 Abs. 1 lit. c and Art. 9 DSGVO). Never add a second text source and never a per-call text.
@@ -1525,6 +1527,69 @@ operator runbook `docs/runbooks/web-push.md`. Rules, as built:
   `vocational-school-generator.ts`). Moving them onto `notify()` is a deliberate follow-up, not a fix to slip into another change.
 - A new notification type needs its push entry in the same commit (the scan fails otherwise); a new `notify()` call site needs
   none beyond that. Rotating the VAPID pair invalidates every subscription (each device enables push again).
+
+### Shift reminders (Issue #609)
+
+A tenant can switch on three reminders for persons with a PLANNED shift; ADR `docs/adr/0001-abweichungen.md` Eintrag AF. They
+ride on the Web-Push channel of #608 (above). Rules, as built:
+
+- **Only a planned shift gives a reminder.** The three occasions — start (shift start + N, no valid entry), end (shift end + N,
+  still clocked in) and day close (the tenant's evening time, a shift day without any recorded time) — are derived from `Shift`
+  rows only. A person without a shift gets nothing and no start time is invented (the same reading as #587); a fixed
+  schedule has hours, not start times.
+- **One kernel, one job.** `contexts/time-tracking/shift-reminders.ts` is the ONLY place of the windows and decisions (pure: no
+  Prisma, no clock): N is `reminderOffsetMinutes` clamped to 5–120 (default 15), the evening time `reminderDayCloseTime`
+  (default 20:00, `HH:MM`, an invalid stored value falls back); START and END are due for 60 minutes after they open, DAY_CLOSE
+  for 30, so a restart never floods; every instant is built in the tenant time zone with `fromZonedTime` (DST and overnight
+  shifts follow the zone, never a 24 h step). `shift-reminder-job.ts` (`runShiftReminders(app, now)`) is the ONE job: cron
+  `*/5 * * * *` under `ADVISORY_LOCK_KEYS.ATTENDANCE_SHIFT_REMINDER` (`1020n`), decorator `tryShiftReminders`, active tenants
+  with at least one switch on (`ACTIVE_TENANT_WHERE` inside the first query), two stages (pure candidate selection first; the
+  population, entry, leave, absence, holiday and notice reads only for candidates, so an idle tick reads nothing). It reads
+  only through the Schichtplanung (`getShiftsInRange`, with the additive `conflictsWithLeave` select), Abwesenheiten
+  (`getActiveLeaveOverlapping`, `getAbsencesOverlapping`), Zeiterfassung (`getRecordedWorkEntriesInRange`) and Unterbau
+  (`holidaysForSalon`) facades and adds no caller of the #587 day-status primitives (`day-status-one-function-587`).
+- **The never-list.** No reminder on a day of effective leave (any `EFFECTIVE_LEAVE_STATUSES` row incl. sick and half days, D-12;
+  PENDING does not count), an imposed absence, a public holiday of the shift's OWN salon, or for a shift flagged
+  `conflictsWithLeave`; never for exited, anonymised, login-deactivated or § 18-exempt persons, a person who switched that
+  occasion off, or a deactivated tenant; never to a manager in their manager role — the recipient is always `employee.userId`
+  of the shift's own person. The skip is silent: no text ever says why a reminder is missing (Art. 9 DSGVO, sick days). A
+  person still clocked in gets no evening reminder (D-13), and a shift ending after the evening time gives none that day (D-15,
+  stated in the admin hint).
+- **Dedupe on ANY existing row, dismissed or not.** START and END: `(userId, type, relatedType "Shift", shift id)`, plus one
+  notice per person, occasion and instant (two shifts at the identical start give one); DAY_CLOSE: `relatedType "EmployeeDay"`,
+  `employeeId:day` (the #80 convention). The 10-hour `CLOCK_OUT_REMINDER` skips an open entry a `REMINDER_SHIFT_END` notice
+  already covers: a notice created at or after the entry's CURRENT open period (the later of `startTime` and `updatedAt`, which
+  a re-open bumps) AND about a shift of the entry's own day (`shiftEndNoticeCoversEntry`, WR-01; a re-opened, forgotten entry
+  and a stale entry of an earlier day still get their 10-hour reminder); the 09:00 `MISSING_ENTRIES` job is unchanged.
+- **"Clocked in" for a shift (WR-03/WR-04).** Only an OPEN entry of the shift's own day (overnight: its start or end day, or
+  an early clock-in inside the 2 h look-back) silences START and triggers END; a forgotten open entry of an earlier day does
+  neither. START is also silenced by a closed entry still running at the shift start (ended after `start - 5 min`), never by an
+  earlier closed entry (a previous split shift). END stays silent when another worked shift of the person starts within 60
+  minutes after this end (a flagged or silent following shift does not count). A successful clock-in soft-dismisses the
+  person's open `REMINDER_SHIFT_START` notices, a clock-out the open `REMINDER_SHIFT_END` ones (web, NFC and WLAN paths,
+  `shift-reminder-dismiss.ts`, reactive, never fails the clock; IN-03).
+- **Channels.** The three types are e-mail `never` and push `send` with the neutral registry texts („Deine Schicht hat begonnen.
+  Jetzt einstempeln?“, „Feierabend? Jetzt ausstempeln.“, „Heute fehlt noch deine Zeit.“, no time, salon or name) and the new
+  `TTL_1H` class (a late „begonnen“ would be wrong); they are the entries of `PUSH_WITHOUT_EMAIL`. The in-app message may name
+  the shift time (own data, never on a lock screen).
+- **Settings.** Five `TenantConfig` columns (three switches default off, offset, evening time) are written through the existing
+  `PUT /settings/work` (bounded by Zod, audited by the #285 diff audit); three `Employee` opt-out columns
+  (`reminderShiftStartOff`, `reminderShiftEndOff`, `reminderDayCloseOff`) are written only by the own-data route
+  `GET`/`PATCH /api/v1/employees/me/reminders` (`.strict()` body, own Employee row only, audited with the changed keys; a
+  caller without an employee, e.g. an API key, gets 400, never 401). The opt-outs are a person's own choice: `employees.ts`
+  `omit`s them on every read or update whose row reaches a response or an audit value and `employeeCreatedAuditValue()` leaves
+  them out of the creation audit (D-16), so the employee list, the single view and the create/update audits never carry a
+  colleague's opt-outs. The ONE place they appear is the own-data change itself: its audit row (`UPDATE Employee`, the changed
+  keys with old and new value) is readable by holders of `audit-log:read` and, redacted by type, by an operator under an active
+  support access (traceability beats hiding it, WR-02); `employee-reminder-columns-hidden-609` pins both halves.
+- **A reminder never stamps (AC-4).** The start and end link is `/dashboard?clock=1`; the dashboard opens a `ConfirmDialog` that
+  names the action and the current time from the LIVE clock state and calls the unchanged `handleClock()` only after the
+  person confirms (`lib/dashboard/clock-reminder.ts`; the reminder code issues no request of its own, the param is stripped
+  with `replaceState`). The day-close link is `/time-entries?view=list&date=<day>`. Never add a second reminder job, a second
+  window rule or a per-call push text; a new occasion is a new kernel decision plus a registry row.
+- **Unterbau-Erweiterung without a list to update.** The eight columns default to off/false, so no existing reader changes; no
+  maintained list of `TenantConfig`/`Employee` columns exists in this file (the DSGVO anonymisation list names identifying data
+  only, and an opt-out boolean is not one). The ADR entry carries „Auswirkung auf die Kontexte“.
 
 ### WLAN pairing by QR code (Issue #610)
 

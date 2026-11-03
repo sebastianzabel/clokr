@@ -9,6 +9,7 @@
   import Card from "$components/ui/Card.svelte";
   import PasswordStrength from "$components/ui/PasswordStrength.svelte";
   import PushSettings from "$components/settings/PushSettings.svelte";
+  import ReminderSettings from "$components/settings/ReminderSettings.svelte";
   import WifiPresenceSettings from "$components/settings/WifiPresenceSettings.svelte";
   import { onMount } from "svelte";
 
@@ -243,6 +244,9 @@
 
   <!-- Push notifications: per device, only offered when the instance has VAPID keys -->
   <PushSettings />
+
+  <!-- Shift reminders (Issue #609): one switch per occasion the tenant enabled -->
+  <ReminderSettings />
 
   <div class="settings-info">
     <p class="text-muted"><strong>E-Mail:</strong> {$authStore.user?.email}</p>
