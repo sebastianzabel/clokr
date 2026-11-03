@@ -141,7 +141,6 @@ describe("GET /employees/me/reminders", () => {
       data: {
         email: `mr609-${crypto.randomUUID()}@example.invalid`,
         passwordHash: "x",
-        role: "EMPLOYEE",
       },
     });
     const token = app.jwt.sign({ sub: user.id, tenantId: data.tenant.id } as never);

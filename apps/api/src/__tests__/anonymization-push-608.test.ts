@@ -32,7 +32,6 @@ describe("anonymization and data paths forget push devices (#608)", () => {
       data: {
         email: `${label}-${suffix}@test.local`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
