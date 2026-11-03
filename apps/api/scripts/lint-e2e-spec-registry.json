@@ -165,6 +165,11 @@
       "file": "apps/e2e/tests/role-editor-visibility-710.spec.ts",
       "category": "in-ci",
       "reason": "Issue #710 Sichtbarkeits-Durchlauf for \"Ansehen\" on /admin/roles, built on helpers/visibility-walkthrough.ts: after the click the editor form (#role-editor-form) must pass toBeInViewport() at 1280/390/360 px, light and dark (6 tests). Tenant fixture only (API login of the throwaway tenant admin, mode stored in localStorage and the server preference), no seed, no date dependency. Measured on the test stack: 6/6 pass in ~3 s on main, and 6/6 fail (viewport ratio 0) against the web build of the parent of the #692 fix (d2377bfe13^)."
+    },
+    {
+      "file": "apps/e2e/tests/push-pwa.spec.ts",
+      "category": "in-ci",
+      "reason": "Issue #608 Web-Push plumbing on the production build: manifest, service worker and icon served without a session and the push config route answering 401 (not 404); the worker becomes active on a signed-in /dashboard with no securitypolicyviolation event; /settings renders (control: heading Passwort ändern) with no push section on the key-less test stack (3 tests). Tenant fixture only, no seed, no date dependency. Measured on a fresh own test stack on 2026-11-02: 3/3 pass in ~3 s alone, and the whole e2e-ci selection 288 passed, 1 skipped (the designed empty-corpus self-skip of functional.spec.ts), 0 failed; no existing spec needed serviceWorkers block."
     }
   ]
 }

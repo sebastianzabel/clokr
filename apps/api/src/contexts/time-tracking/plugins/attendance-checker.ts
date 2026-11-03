@@ -11,6 +11,7 @@ import {
   ACTIVE_TENANT_WHERE, // Phase 88 (D-05a): a deactivated tenant is a suspended customer — no notifications
 } from "../../platform";
 import { findUnconfirmedBreakEntries } from "../find-unconfirmed-break-days";
+import { checkWifiDevicesNotSeen } from "../wifi-device-not-seen"; // Issue #610 (D-10), Feature 11
 import { findUnacknowledgedBreakFindingDays } from "../break-finding-days"; // Issue #511 (D-13)
 import { closedWorkRowsInRange } from "../day-break-store"; // Issue #80 (80-09)
 import { dayCoverage } from "../day-scope"; // Issue #80 (80-09)
@@ -34,6 +35,7 @@ import {
 } from "../../working-time-account"; // Phase 101B
 import { invalidReasonFields } from "../invalid-reason";
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
+import { runShiftReminders, shiftEndNoticeCoversEntry } from "../shift-reminder-job"; // Issue #609 (Feature 12)
 import {
   isMinorAtDate, // Issue #511 (D-05) — the age decision of the § 11 JArbSchG break regime
   getVacationEntitlementsForYearByCode, // Phase 205 Plan 02 (Issue #205, finding 1) — code-based
@@ -65,6 +67,16 @@ declare module "fastify" {
     /** Issue #80 (80-09, D-10) / #511 (D-13): exposed for integration tests — invokes the next-day
      *  break-finding notification scan (Feature 10) without cron/advisory-lock. */
     tryBreakFindingCheck: () => Promise<void>;
+    /** Issue #609: exposed for integration tests - evaluates the shift reminders (Feature 12) at
+     *  `now` without cron/advisory-lock. */
+    tryShiftReminders: (now?: Date) => Promise<void>;
+    /** Issue #609 (D-06): exposed for integration tests - invokes the 10-hour clock-out reminder
+     *  scan (Feature 1) without cron/advisory-lock. It reads the wall clock. */
+    tryClockOutReminder: () => Promise<void>;
+    /** Issue #610 (D-10): exposed for integration tests — invokes the daily WLAN re-couple hint
+     *  scan (Feature 11) without cron/advisory-lock. `now` is injectable so a test derives every
+     *  date from one instant. */
+    tryWifiDeviceNotSeen: (now?: Date) => Promise<void>;
   }
 }
 
@@ -75,6 +87,10 @@ declare module "fastify" {
  * 3. Auto-invalidate stale open entries: hourly invalidation of entries without clock-out
  * 10. Break findings (Issue #80, #511): daily 09:00 manager notification about unacknowledged
  *     § 4 ArbZG / § 11 JArbSchG break findings of the previous days (Feature 10)
+ * 11. WLAN re-couple hint (Issue #610): daily 09:20 in-app/push hint to a person whose QR-coupled
+ *     phone was not seen on their last three manually clocked shift days (Feature 11)
+ * 12. Shift reminders (Issue #609): every five minutes, a neutral notice when a planned shift has
+ *     started without a clock-in (Feature 12; the end and evening occasions follow in the same job)
  */
 export const attendanceCheckerPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
@@ -117,6 +133,24 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           });
 
           for (const entry of openEntries) {
+            // Issue #609 (D-06, WR-01): the shift-end reminder already told this person to clock out
+            // of THIS open period (a notice after the entry's last re-open, about a shift of the
+            // entry's own day) - a second nudge would only nag. Any other end notice does not count.
+            const coveredByShiftEnd = await shiftEndNoticeCoversEntry(app, tenant.id, {
+              employeeId: entry.employeeId,
+              userId: entry.employee.userId,
+              date: entry.date,
+              startTime: entry.startTime,
+              updatedAt: entry.updatedAt,
+            });
+            if (coveredByShiftEnd) {
+              app.log.debug(
+                { userId: entry.employee.userId, timeEntryId: entry.id },
+                "Clock-out Erinnerung uebersprungen: Schichtende-Hinweis liegt vor",
+              );
+              continue;
+            }
+
             // Deduplicate: check if notification already exists for this time entry
             const existing = await app.prisma.notification.findFirst({
               where: {
@@ -1418,6 +1452,15 @@ export const attendanceCheckerPlugin = fp(async (app) => {
   // Issue #80 (80-09, D-10) / #511 (D-13): expose the break-finding next-day scan for test invocability.
   app.decorate("tryBreakFindingCheck", checkBreakFindings);
 
+  // Issue #609 (D-06): expose the 10-hour clock-out reminder scan for test invocability.
+  app.decorate("tryClockOutReminder", checkOpenClockEntries);
+
+  // Issue #609: expose the shift reminder evaluation for test invocability, with a fixed clock.
+  app.decorate("tryShiftReminders", (now?: Date) => runShiftReminders(app, now));
+
+  // Issue #610 (D-10): expose the WLAN re-couple hint scan for test invocability.
+  app.decorate("tryWifiDeviceNotSeen", (now?: Date) => checkWifiDevicesNotSeen(app, now));
+
   app.addHook("onReady", async () => {
     try {
       // Clock-out check: every hour at minute 0
@@ -1593,6 +1636,41 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       );
       tasks.push(breakFindingTask);
       app.log.info("Reminder: Pausenverstoß-Prüfung geplant (täglich 09:00)");
+
+      // Feature 12 (Issue #609): shift start/end and day-close reminders - every five minutes under
+      // its own advisory-lock key. The job itself skips deactivated tenants and tenants with every
+      // switch off, so a tick of an untouched installation is one cheap tenant query.
+      const shiftReminderTask = cron.schedule(
+        "*/5 * * * *",
+        () => {
+          withAdvisoryLock(
+            app.prisma,
+            ADVISORY_LOCK_KEYS.ATTENDANCE_SHIFT_REMINDER,
+            () => runShiftReminders(app),
+            app.log,
+          ).catch((err) => app.log.error({ err }, "Reminder: Schicht-Erinnerungen fehlgeschlagen"));
+        },
+        { timezone: "Europe/Berlin", noOverlap: true },
+      );
+      tasks.push(shiftReminderTask);
+      app.log.info("Reminder: Schicht-Erinnerungen geplant (alle 5 Minuten)");
+
+      // Feature 11 (Issue #610, D-10): daily WLAN re-couple hint at 09:20, under its own
+      // advisory-lock key. The job does its tenant-local day arithmetic itself.
+      const wifiDeviceNotSeenTask = cron.schedule(
+        "20 9 * * *",
+        () => {
+          withAdvisoryLock(
+            app.prisma,
+            ADVISORY_LOCK_KEYS.ATTENDANCE_WIFI_DEVICE_NOT_SEEN,
+            () => checkWifiDevicesNotSeen(app),
+            app.log,
+          ).catch((err) => app.log.error({ err }, "Reminder: WLAN re-couple hint job failed"));
+        },
+        { timezone: "Europe/Berlin", noOverlap: true },
+      );
+      tasks.push(wifiDeviceNotSeenTask);
+      app.log.info("Reminder: WLAN re-couple hint scheduled (daily 09:20)");
     } catch (err) {
       app.log.error({ err }, "Attendance-Checker konnte nicht gestartet werden");
     }

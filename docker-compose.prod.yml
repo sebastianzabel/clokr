@@ -93,6 +93,11 @@ services:
       # Optional (Phase 88). Empty means the operator interface is off; set a separate value of
       # at least 32 characters, different from the secrets above, to switch it on.
       OPERATOR_JWT_SECRET: "${OPERATOR_JWT_SECRET:-}"
+      # Optional (Issue #608). All three or none; empty means Web-Push is off.
+      # Generate with scripts/generate-vapid-keys.ts - docs/runbooks/web-push.md
+      VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY:-}"
+      VAPID_PRIVATE_KEY: "${VAPID_PRIVATE_KEY:-}"
+      VAPID_SUBJECT: "${VAPID_SUBJECT:-}"
       JWT_EXPIRES_IN: "15m"
       JWT_REFRESH_EXPIRES_IN: "7d"
       CORS_ORIGIN: "${CORS_ORIGIN}"
@@ -185,8 +190,17 @@ services:
       CLOKR_PRESENCE_KEY: "${CLOKR_PRESENCE_KEY}"
       POLL_INTERVAL_SECONDS: "${POLL_INTERVAL_SECONDS:-60}"
       DEVICES_BIND: "0.0.0.0"
+      PAIRING_ENABLED: "${PAIRING_ENABLED:-false}"
+      PAIRING_PORT: "8766"
+      PAIRING_BIND: "0.0.0.0"
+      CLOKR_APP_URL: "${CLOKR_APP_URL:-}"
     ports:
       - "127.0.0.1:8765:8765"
+      # Issue #610: the pairing page must be reachable from the salon WLAN, so a phone can open it.
+      # It stays on loopback unless PAIRING_HOST_BIND is set to the host's LAN address (opt in).
+      # Docker can hide the phone's source address (userland proxy, Docker Desktop, rootless):
+      # the adapter then refuses the request - see docs/runbooks/wlan-qr-kopplung.md.
+      - "${PAIRING_HOST_BIND:-127.0.0.1}:8766:8766"
     depends_on:
       api:
         condition: service_healthy

@@ -16,7 +16,10 @@ import {
   createPresenceDevice,
   getPresenceDevice,
   deletePresenceDevice,
+  deletePresenceDevicesForWithdrawal, // Issue #610
 } from "../facade/presence-devices";
+import { confirmPairing, lockPresenceOwner, previewPairing } from "../presence-pairing"; // Issue #610
+import { PAIRING_CODE_INVALID_ERROR, PRESENCE_DEVICE_TAKEN_ERROR } from "../pairing-code"; // Issue #610
 
 export async function employeeWifiRoutes(app: FastifyInstance) {
   // ── WiFi self-service schemas ───────────────────────────────────────────────
@@ -30,6 +33,16 @@ export async function employeeWifiRoutes(app: FastifyInstance) {
   });
 
   const deviceIdParamSchema = z.object({ id: z.string().uuid() });
+
+  // Issue #610 (D-06, D-09): the pairing code travels ONLY in the JSON body - never in an API URL, so it
+  // never reaches an API request log - and a client can never name a MAC or an IP. Both bodies are
+  // strict (an unknown key is a 400) and both routes parse an EMPTY strict query first.
+  const pairingQuerySchema = z.object({}).strict();
+  const pairingPreviewBodySchema = z.object({ code: z.string().max(256) }).strict();
+  const pairingConfirmBodySchema = z
+    .object({ code: z.string().max(256), consent: z.literal(true) })
+    .strict();
+  const isTest = process.env.NODE_ENV === "test";
 
   // ── WiFi self-service routes (GDPR opt-in + MAC enrollment) ────────────────
 
@@ -83,9 +96,60 @@ export async function employeeWifiRoutes(app: FastifyInstance) {
 
       const oldVal = employee.wifiPresenceEnabled;
       const newVal = body.wifiPresenceEnabled;
+      const request = { ip: req.ip, headers: req.headers as Record<string, string> };
+
+      // Issue #610 (D-08, P-610-10): an explicit withdrawal removes EVERY device of the person and the
+      // legacy wifiMacs in one transaction. The first statement is the same owner lock the QR confirm
+      // takes first, so a concurrent confirm and a withdrawal serialise instead of interleaving.
+      if (newVal === false) {
+        const result = await app.prisma.$transaction(async (tx) => {
+          const owner = await lockPresenceOwner(tx, employeeId, tenantId);
+          if (!owner) return null;
+          const current = await tx.employee.findUniqueOrThrow({
+            where: { id: employeeId, tenantId },
+            select: { wifiMacs: true },
+          });
+          // wifiOptInAt stays untouched as the GDPR consent withdrawal trace
+          const updated = await tx.employee.update({
+            where: { id: employeeId, tenantId },
+            data: { wifiPresenceEnabled: false, wifiMacs: [] },
+            select: { wifiPresenceEnabled: true, wifiOptInAt: true },
+          });
+          // Consent changes are permanently retained — purgeable MUST NOT be set true
+          await app.audit({
+            userId: req.user.sub,
+            action: "UPDATE",
+            entity: "Employee",
+            entityId: employeeId,
+            oldValue: { wifiPresenceEnabled: owner.wifiPresenceEnabled },
+            newValue: { wifiPresenceEnabled: false, wifiMacsCleared: current.wifiMacs.length },
+            request,
+            tx,
+          });
+          const removed = await deletePresenceDevicesForWithdrawal(tx, employeeId, tenantId);
+          for (const device of removed) {
+            await app.audit({
+              userId: req.user.sub,
+              action: "DELETE",
+              entity: "PresenceDevice",
+              entityId: device.id,
+              oldValue: { mac: device.mac, label: device.label, pairedVia: device.pairedVia },
+              newValue: { reason: "Einwilligung widerrufen", trigger: "CONSENT_WITHDRAWN" },
+              request,
+              tx,
+            });
+          }
+          return { updated, devicesRemoved: removed.length };
+        });
+        if (!result) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        return reply.send({
+          wifiPresenceEnabled: result.updated.wifiPresenceEnabled,
+          wifiOptInAt: result.updated.wifiOptInAt,
+          devicesRemoved: result.devicesRemoved,
+        });
+      }
 
       // When enabling for the first time (or re-enabling), stamp wifiOptInAt
-      // When disabling, preserve wifiOptInAt as GDPR consent withdrawal trace
       const updateData: { wifiPresenceEnabled: boolean; wifiOptInAt?: Date } = {
         wifiPresenceEnabled: newVal,
       };
@@ -107,7 +171,7 @@ export async function employeeWifiRoutes(app: FastifyInstance) {
         entityId: employeeId,
         oldValue: { wifiPresenceEnabled: oldVal },
         newValue: { wifiPresenceEnabled: newVal },
-        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        request,
       });
 
       return reply.send({
@@ -193,6 +257,65 @@ export async function employeeWifiRoutes(app: FastifyInstance) {
       });
 
       return reply.code(204).send();
+    },
+  });
+
+  // POST /api/v1/employees/me/wifi/pairing/preview - what would this QR pairing code couple? (Issue #610)
+  // Read-only despite the method: the code is sent in the body so it stays out of every API URL.
+  app.post("/me/wifi/pairing/preview", {
+    schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    config: { rateLimit: { max: isTest ? 5000 : 30, timeWindow: "1 minute" } },
+    handler: async (req, reply) => {
+      const employeeId = req.user.employeeId;
+      const tenantId = req.user.tenantId;
+      if (!employeeId) return reply.code(401).send({ error: "Nicht authentifiziert" });
+      pairingQuerySchema.parse(req.query);
+      const body = pairingPreviewBodySchema.parse(req.body);
+
+      const preview = await previewPairing(app.prisma, {
+        tenantId,
+        employeeId,
+        code: body.code,
+        now: new Date(),
+      });
+      if (!preview) return reply.code(404).send(PAIRING_CODE_INVALID_ERROR);
+      return reply.send(preview);
+    },
+  });
+
+  // POST /api/v1/employees/me/wifi/pairing - confirm a QR pairing code with consent (Issue #610)
+  app.post("/me/wifi/pairing", {
+    schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    config: { rateLimit: { max: isTest ? 5000 : 10, timeWindow: "1 minute" } },
+    handler: async (req, reply) => {
+      const employeeId = req.user.employeeId;
+      const tenantId = req.user.tenantId;
+      if (!employeeId) return reply.code(401).send({ error: "Nicht authentifiziert" });
+      pairingQuerySchema.parse(req.query);
+      const body = pairingConfirmBodySchema.parse(req.body);
+
+      const result = await confirmPairing(app, {
+        tenantId,
+        employeeId,
+        userId: req.user.sub,
+        code: body.code,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+      if (result.kind === "INVALID") return reply.code(404).send(PAIRING_CODE_INVALID_ERROR);
+      if (result.kind === "TAKEN") return reply.code(409).send(PRESENCE_DEVICE_TAKEN_ERROR);
+      // Issue #610 (D-10): a re-couple makes the "phone not seen" notice of the replaced devices (and
+      // of the refreshed one) obsolete. Reactive, after commit: a failure is logged and never
+      // changes the answer (ADR 0002, Entscheidung 10).
+      try {
+        for (const deviceId of [...result.replacedDeviceIds, result.body.device.id]) {
+          await app.dismissByRelated("PresenceDevice", deviceId, "WIFI_DEVICE_NOT_SEEN");
+        }
+      } catch (err) {
+        app.log.error({ err }, "Failed to dismiss the re-couple notice after a pairing");
+      }
+      return reply.code(result.status).send(result.body);
     },
   });
 }

@@ -2,6 +2,7 @@ import { authStore } from "$stores/auth";
 import { clearUnsaved } from "$stores/unsaved";
 import { get } from "svelte/store";
 
+import { loginPathWithNext } from "../nav/login-next";
 import { errorMessage } from "./error-message";
 
 const BASE_URL = "/api/v1";
@@ -53,7 +54,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       authStore.logout();
       clearUnsaved(); // N-08 / A1: window.location.href bypasses SvelteKit's router, and it is not
       // settled whether beforeNavigate sees it — clearing here is correct either way
-      window.location.href = "/login";
+      window.location.href = loginPathWithNext(window.location);
     }
     throw new ApiError(401, errorMessage(data, "Unauthorized"), data);
   }
@@ -97,7 +98,7 @@ async function upload<T>(path: string, formData: FormData): Promise<T> {
     authStore.logout();
     clearUnsaved(); // N-08 / A1: window.location.href bypasses SvelteKit's router, and it is not
     // settled whether beforeNavigate sees it — clearing here is correct either way
-    window.location.href = "/login";
+    window.location.href = loginPathWithNext(window.location);
     throw new ApiError(401, errorMessage(data, "Unauthorized"), data);
   }
 

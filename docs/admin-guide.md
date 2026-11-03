@@ -82,6 +82,37 @@ Ausstehende Urlaubsanträge erscheinen im Posteingang unter **Team → Anträge*
 
 ---
 
+## Schicht-Erinnerungen
+
+**Admin → Urlaubsverwaltung → Tab „Erinnerungen" → Abschnitt „Schicht-Erinnerungen"** — Clokr kann Personen mit einer geplanten Schicht
+an das Stempeln erinnern. Alle drei Erinnerungen sind **standardmäßig aus** und gelten für den ganzen Mandanten; sie werden mit dem
+**Speichern**-Button des Tabs übernommen.
+
+- **Bei Schichtbeginn erinnern, wenn noch nicht eingestempelt** — „Erinnern nach" Minuten nach dem Schichtbeginn.
+- **Bei Schichtende erinnern, wenn noch eingestempelt** — „Erinnern nach" Minuten nach dem Schichtende.
+- **Abends erinnern, wenn an einem Schichttag keine Zeit erfasst ist** — zur eingestellten **Uhrzeit der Abend-Erinnerung** (Standard 20:00).
+- **Erinnern nach** — 5 bis 120 Minuten (Standard 15), gilt für Schichtbeginn und Schichtende.
+
+Was du wissen solltest:
+
+- Erinnert werden **nur Personen mit einer geplanten Schicht**. Wer keine Schicht hat (zum Beispiel feste Arbeitszeiten ohne
+  Schichtplan), bekommt nichts.
+- **Keine Erinnerung** gibt es an Tagen mit Urlaub, Krankheit (auch halbe Tage), Abwesenheit oder Feiertag, für Schichten mit
+  Urlaubskonflikt, für ausgeschiedene Personen und für Personen, die die Erinnerung selbst abgeschaltet haben. Führungskräfte werden
+  nie stellvertretend erinnert.
+- Schichten, die **nach der Abend-Uhrzeit enden**, lösen an diesem Tag keine Abend-Erinnerung aus. Wähle die Uhrzeit deshalb nach
+  eurem spätesten Schichtende. Wer abends noch eingestempelt ist, bekommt ebenfalls keine Abend-Erinnerung.
+- Jede Erinnerung kommt **höchstens einmal** je Person und Schicht (der Abend: einmal je Person und Tag). Die bestehende Erinnerung
+  nach zehn Stunden und die Meldung um 09:00 am nächsten Morgen bleiben; die Zehn-Stunden-Erinnerung entfällt, wenn schon die
+  Schichtende-Erinnerung für denselben offenen Eintrag kam (wer danach erneut einstempelt und wieder vergisst, wird nach zehn
+  Stunden trotzdem erinnert). Ein Ein- oder Ausstempeln erledigt die offene Beginn- bzw. Ende-Mitteilung in der Glocke.
+- Die Erinnerung erscheint in der Glocke und, wenn die Person Push auf dem Handy eingerichtet hat, auf dem Sperrbildschirm mit einem
+  neutralen Text ohne Uhrzeit und Namen. **E-Mails gibt es dafür nicht.**
+- **Clokr stempelt nie automatisch.** Ein Tipp auf die Erinnerung öffnet die Startseite mit einer Rückfrage („Jetzt einstempeln?"
+  bzw. „Jetzt ausstempeln?"); gestempelt wird erst nach der Bestätigung, mit der aktuellen Uhrzeit.
+
+---
+
 ## Sonderurlaub
 
 **Admin → Urlaubsverwaltung → Tab „Sonderurlaub"** — Konfiguration der Sonderurlaubstypen:

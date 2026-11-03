@@ -218,6 +218,10 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
     reason: "Device-authenticated (presence-source key and MAC), no user role involved.",
   },
   {
+    route: "POST /api/v1/presence/pairing-codes",
+    reason: "Device-authenticated (presence-source key), no user role involved.",
+  },
+  {
     route: "GET /api/v1/terminals/allowed-cards",
     reason: "Device-authenticated (terminal API key), no user role involved.",
   },
@@ -462,6 +466,87 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "caller's own salon context, takes no permission decision and has no role-based access " +
       "behavior to compare (an API key gets 400). Same vacuous-satisfaction reasoning as the " +
       "Phase 430 entry above: RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "GET /api/v1/me/push/config",
+    reason:
+      "New route of Phase 608 (Issue #608, D-06), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it answers whether the instance offers web push and the public VAPID key, to the caller's own session, takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "400). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "POST /api/v1/me/push/subscriptions",
+    reason:
+      "New route of Phase 608 (Issue #608, D-06), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it registers the caller's own push device (registered only with the VAPID set, D-01), takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "400). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "GET /api/v1/me/push/subscriptions",
+    reason:
+      "New route of Phase 608 (Issue #608, D-06), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it lists the caller's own push devices (registered only with the VAPID set, D-01), takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "400). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "DELETE /api/v1/me/push/subscriptions",
+    reason:
+      "New route of Phase 608 (Issue #608, D-06), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it removes one of the caller's own push devices (registered only with the VAPID set, D-01), takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "400). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "POST /api/v1/me/push/test",
+    reason:
+      "New route of Phase 608 (Issue #608, D-06), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it sends the neutral test message to the caller's own push devices (registered only with the VAPID set, D-01), takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "400). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "GET /api/v1/employees/me/reminders",
+    reason:
+      "New route of Phase 609 (Issue #609, D-02), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it reads the tenant's enabled shift reminder occasions and the caller's own reminder opt-outs, takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "400). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "PATCH /api/v1/employees/me/reminders",
+    reason:
+      "New route of Phase 609 (Issue #609, D-02), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it switches one of the caller's own shift reminders off or on (only the caller's own Employee row, audited), takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "400). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "POST /api/v1/employees/me/wifi/pairing/preview",
+    reason:
+      "New route of Phase 610 (Issue #610, D-06), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it shows (read-only) what a one-time pairing code would couple for the caller's own WLAN device pairing, takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "401). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
+  },
+  {
+    route: "POST /api/v1/employees/me/wifi/pairing",
+    reason:
+      "New route of Phase 610 (Issue #610, D-06), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — `requireAuth` only, it confirms, with consent, the caller's own WLAN device pairing, takes no " +
+      "permission decision and has no role-based access behavior to compare (an API key gets " +
+      "401). Same vacuous-satisfaction reasoning as the `GET /api/v1/me/context` entry above: " +
+      "RECORD/MERGE mode refuses to run once the role guard is gone.",
   },
   {
     route: "GET /api/v1/roles/permission-catalog",

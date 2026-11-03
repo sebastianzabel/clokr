@@ -10,6 +10,7 @@
   import { fetchAvatarObjectUrl } from "$api/avatar";
   import LanguageToggle from "$lib/components/ui/LanguageToggle.svelte";
   import SalonSwitcher from "./SalonSwitcher.svelte";
+  import { removeThisDevicePush } from "$lib/push/logout";
 
   interface Props {
     currentPath: string;
@@ -58,6 +59,9 @@
 
   async function handleLogout() {
     try {
+      // Issue #608 (D-18): stop this device's pushes while the token is still valid, so a shared
+      // phone does not keep notifying the previous person. Bounded and never throws.
+      await removeThisDevicePush();
       const refreshToken = $authStore.refreshToken;
       if (refreshToken) {
         await api.post("/auth/logout", { refreshToken });

@@ -22,6 +22,7 @@ import { operatorSalonPorts } from "./composition/operator-salon-ports"; // Phas
 import { operatorSupportPorts } from "./composition/operator-support-ports"; // Issue #93
 import { employeeRoutes } from "./contexts/platform/api/employees";
 import { employeeWifiRoutes } from "./contexts/time-tracking/api/employee-wifi"; // Phase 243 Plan 02 (B2)
+import { employeeReminderRoutes } from "./contexts/time-tracking/api/employee-reminders"; // Issue #609 (D-02)
 import { timeEntryRoutes } from "./contexts/time-tracking/api/time-entries";
 import { dayBreakRoutes } from "./contexts/time-tracking/api/day-breaks"; // Issue #80 (D-02..D-06, D-21)
 import { leaveRoutes } from "./contexts/absence/api/leave";
@@ -80,11 +81,13 @@ import { presenceRoutes } from "./contexts/time-tracking/api/presence";
 import { adminPresenceSourcesRoutes } from "./contexts/time-tracking/api/admin-presence-sources";
 import { adminSchoolHolidaysRoutes } from "./contexts/platform/api/admin/school-holidays";
 import { meRoutes } from "./contexts/platform/api/me";
+import { mePushRoutes } from "./contexts/platform/api/me-push";
 import { meAvailabilityRoutes } from "./contexts/scheduling/api/me-availability"; // Phase 243 Plan 02 (B3)
 import { releaseNotesRoutes } from "./contexts/platform/api/release-notes";
 import { testBootstrapRoutes } from "./contexts/platform/api/test-bootstrap";
 import { retroEntryRequestRoutes } from "./contexts/time-tracking/api/retro-entry-requests";
 import { requireAuth } from "./middleware/auth";
+import { clientLogUrl } from "./utils/client-log-url"; // Issue #610 (WR-02): no query/fragment in the client log
 
 // Phase 69 (DEVOPS-V8-02): bake version from package.json at module init.
 // Image content is the source of truth per Memory feedback_image_content_is_source_of_truth.
@@ -422,6 +425,7 @@ export async function buildApp() {
   // under the employees namespace (GET/PATCH /api/v1/employees/me/wifi, POST
   // /api/v1/employees/me/wifi/devices, DELETE /api/v1/employees/me/wifi/devices/:id)
   await app.register(employeeWifiRoutes, { prefix: "/api/v1/employees" });
+  await app.register(employeeReminderRoutes, { prefix: "/api/v1/employees" });
   // Phase 67b — salon assignments live under the employees namespace (GET/POST
   // /api/v1/employees/:id/salon-assignments…)
   await app.register(salonAssignmentRoutes, { prefix: "/api/v1/employees" });
@@ -445,6 +449,7 @@ export async function buildApp() {
   await app.register(adminPresenceSourcesRoutes, { prefix: "/api/v1/admin/presence-sources" });
   await app.register(adminSchoolHolidaysRoutes, { prefix: "/api/v1/admin/school-holidays" });
   await app.register(meRoutes, { prefix: "/api/v1/me" });
+  await app.register(mePushRoutes, { prefix: "/api/v1/me/push" });
   // Phase 243 Plan 02 (B3) — the caller's own availability, kept under the /me prefix
   // (GET/PUT /api/v1/me/availability); sibling to availabilityRoutes's
   // /employees/:id/availability above.
@@ -481,7 +486,7 @@ export async function buildApp() {
         client: {
           ...body.extra,
           stack: typeof body.stack === "string" ? body.stack.slice(0, 2000) : undefined,
-          url: typeof body.url === "string" ? body.url.slice(0, 500) : undefined,
+          url: clientLogUrl(body.url),
           userAgent: typeof body.userAgent === "string" ? body.userAgent.slice(0, 500) : undefined,
           userId: req.user.sub, // JWT-bound; wins over any body.extra.userId to prevent attribution forgery
         },

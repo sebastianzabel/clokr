@@ -43,6 +43,12 @@ export type ClockEvent = {
   note?: string;
   actor: Actor;
   interactive?: boolean;
+  // Issue #818: set by an adapter whose event is a PASSIVE presence signal (no human act, e.g. the
+  // router's WIFI event). On an open entry another source opened, such an AUTO event only
+  // confirms the presence (CONFIRM); without the flag the event is a human act and closes the
+  // entry (STOP). Optional for the same reason as `interactive`: a missing value is the
+  // conservative, never-500 branch, and future-source.test.ts builds a literal without it.
+  presenceOnly?: boolean;
   // Issue #87 (D-01/D-07), #541: an explicitly chosen salon for a NEW entry. Set by the `/clock-in`
   // adapter (the web choice) and, since Issue #541, by the `/nfc-punch` adapter when the terminal
   // key is bound to an active salon; WIFI and clock-out never set it, so their START keeps the

@@ -227,7 +227,7 @@ export async function resolveClockEvent(
             }
           : { kind: "NO_OPEN_ENTRY" };
 
-      const decision = decide(state, event.intent, event.source);
+      const decision = decide(state, event.intent, event.source, event.presenceOnly);
 
       switch (decision.kind) {
         case "START": {
