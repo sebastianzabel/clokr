@@ -36,6 +36,9 @@ const REGISTER: Record<string, string[]> = {
   "PresenceEvent|WIFI_OUTSIDE_WINDOW": ["ENTITY_ID_EMPLOYEE"],
   "PresenceEvent|WIFI_NO_OPEN_ENTRY": ["ENTITY_ID_EMPLOYEE"],
   "TimeEntry|WIFI_PRESENCE_CONFIRMED": ["TIME_ENTRY"],
+  // #610 consent withdrawal (`employee-wifi.ts`): `wifiMacsCleared` is a COUNT under a mac-token key, never an
+  // address; the row is written by the person themself, so the AUTHOR channel reaches it anyway.
+  "Employee|UPDATE": ["AUTHOR"],
 };
 
 function walk(dir: string, out: string[] = []): string[] {
