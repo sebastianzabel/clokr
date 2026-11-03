@@ -126,6 +126,8 @@ export async function getShiftsInRange(
       startTime: true,
       endTime: true,
       label: true,
+      // Issue #609 (D-05): the shift-reminder job skips a flagged shift. Additive; every caller maps explicit fields.
+      conflictsWithLeave: true,
       template: { select: { name: true, color: true } },
     },
   });

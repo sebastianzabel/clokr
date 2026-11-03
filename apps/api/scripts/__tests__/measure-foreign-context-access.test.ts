@@ -62,24 +62,26 @@ describe("MODEL_OWNER", () => {
   // DayBreakAck, time-tracking 6 -> 8) — 47 -> 49 models — and Issue #81 (+ TimeEntryActivityShare,
   // time-tracking 8 -> 9) — 49 -> 50 models — and Phase 88 (#88: + OperatorAccount,
   // OperatorAuditLog, platform 17 -> 19) — 50 -> 52 models — and Issue #93 (+ SupportAccess,
-  // platform 19 -> 20) — 52 -> 53 models. This is the new models' own schema change landing in the
+  // platform 19 -> 20) — 52 -> 53 models — and Issue #608 (+ PushSubscription,
+  // platform 20 -> 21) — 53 -> 54 models — and Issue #610 (+ PresencePairingCode, time-tracking
+  // 9 -> 10) — 54 -> 55 models. This is the new models' own schema change landing in the
   // count, not a correction of a prior miscount.
-  it("assigns exactly 53 models, every owner one of the five OWNER_AREAS", () => {
+  it("assigns exactly 55 models, every owner one of the five OWNER_AREAS", () => {
     const models = Object.keys(MODEL_OWNER);
-    expect(models).toHaveLength(53);
+    expect(models).toHaveLength(55);
     for (const owner of Object.values(MODEL_OWNER)) {
       expect(OWNER_AREAS).toContain(owner);
     }
   });
 
-  it("matches the measurement authority's per-owner model count (20/9/10/5/9)", () => {
+  it("matches the measurement authority's per-owner model count (21/10/10/5/9)", () => {
     const counts: Record<string, number> = {};
     for (const owner of Object.values(MODEL_OWNER)) {
       counts[owner] = (counts[owner] ?? 0) + 1;
     }
     expect(counts).toEqual({
-      platform: 20,
-      "time-tracking": 9,
+      platform: 21,
+      "time-tracking": 10,
       absence: 10,
       "working-time-account": 5,
       scheduling: 9,

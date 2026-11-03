@@ -67,6 +67,11 @@ services:
       JWT_REFRESH_SECRET: "clokr-dev-refresh-secret-min-32-chars!"
       # Phase 88: separate operator signing secret (dev value; distinct from the tenant secrets).
       OPERATOR_JWT_SECRET: "clokr-dev-operator-secret-min-32-characters!"
+      # Optional (Issue #608). Empty means Web-Push is off. A developer sets all three in the untracked
+      # env file (docs/runbooks/web-push.md). Never commit a key pair: a committed one could reach prod by copy.
+      VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY:-}"
+      VAPID_PRIVATE_KEY: "${VAPID_PRIVATE_KEY:-}"
+      VAPID_SUBJECT: "${VAPID_SUBJECT:-}"
       JWT_EXPIRES_IN: "15m"
       JWT_REFRESH_EXPIRES_IN: "7d"
       CORS_ORIGIN: "http://localhost:3000"
@@ -156,8 +161,17 @@ services:
       CLOKR_PRESENCE_KEY: "${CLOKR_PRESENCE_KEY:-}"
       POLL_INTERVAL_SECONDS: "${POLL_INTERVAL_SECONDS:-60}"
       DEVICES_BIND: "0.0.0.0"
+      PAIRING_ENABLED: "${PAIRING_ENABLED:-false}"
+      PAIRING_PORT: "8766"
+      PAIRING_BIND: "0.0.0.0"
+      CLOKR_APP_URL: "${CLOKR_APP_URL:-}"
     ports:
       - "127.0.0.1:8765:8765"
+      # Issue #610: the pairing page must be reachable from the salon WLAN, so a phone can open it.
+      # It stays on loopback unless PAIRING_HOST_BIND is set to the host's LAN address (opt in).
+      # Docker can hide the phone's source address (userland proxy, Docker Desktop, rootless):
+      # the adapter then refuses the request - see docs/runbooks/wlan-qr-kopplung.md.
+      - "${PAIRING_HOST_BIND:-127.0.0.1}:8766:8766"
     depends_on:
       api:
         condition: service_healthy

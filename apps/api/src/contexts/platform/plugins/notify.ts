@@ -1,5 +1,6 @@
 import fp from "fastify-plugin";
 import { resolveEmailPolicy } from "../notification-email-policy";
+import { dispatchNotificationPush } from "../push-dispatch";
 
 interface NotifyParams {
   userId: string;
@@ -46,11 +47,21 @@ declare module "fastify" {
   interface FastifyInstance {
     notify: (params: NotifyParams) => Promise<void>;
     dismissByRelated: (relatedType: string, relatedId: string, type?: string) => Promise<number>;
+    /** Resolves when every in-flight notification push has finished (tests and graceful shutdown). */
+    settlePushDispatch: () => Promise<void>;
   }
 }
 
 export const notifyPlugin = fp(async (app) => {
   const appUrl = (process.env.APP_URL ?? "http://localhost:5173").replace(/\/$/, "");
+
+  // Issue #608 (D-10): pushes run fire-and-forget; the in-flight ones are tracked so a test and
+  // a graceful shutdown can wait for them instead of sleeping or dropping them.
+  const inFlightPushes = new Set<Promise<void>>();
+
+  async function settlePushDispatch(): Promise<void> {
+    while (inFlightPushes.size > 0) await Promise.allSettled([...inFlightPushes]);
+  }
 
   async function notify({
     userId,
@@ -76,6 +87,20 @@ export const notifyPlugin = fp(async (app) => {
         },
       );
     }
+
+    // 3. Attempt web push (fire-and-forget, Issue #608 D-10/D-15). Runs for EVERY call: the
+    // tenant is deliberately not taken from `tenantId` above (the attendance-checker calls omit
+    // it) but from the recipient's subscription rows. Only userId, type and link go in - the
+    // in-app title and message never reach a lock screen. The error is not logged (it can carry
+    // an endpoint), only who and which type.
+    const push = dispatchNotificationPush(app, { userId, type, link })
+      .catch(() => {
+        app.log.warn({ userId, type }, "Failed to dispatch notification push");
+      })
+      .finally(() => {
+        inFlightPushes.delete(push);
+      });
+    inFlightPushes.add(push);
   }
 
   async function dismissByRelated(
@@ -186,4 +211,8 @@ export const notifyPlugin = fp(async (app) => {
 
   app.decorate("notify", notify);
   app.decorate("dismissByRelated", dismissByRelated);
+  app.decorate("settlePushDispatch", settlePushDispatch);
+  app.addHook("onClose", async () => {
+    await settlePushDispatch();
+  });
 });

@@ -314,6 +314,8 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         where: { employeeId: { in: employeeIds } },
       });
       await prisma.employee.deleteMany({ where: { tenantId: id } });
+      // PushSubscription.tenant is onDelete: Restrict (Issue #608) - delete the tenant's devices first.
+      await prisma.pushSubscription.deleteMany({ where: { tenantId: id } });
       await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.otpToken.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.user.deleteMany({ where: { id: { in: userIds } } });

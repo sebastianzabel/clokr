@@ -6691,3 +6691,333 @@ Abwesenheiten, Schichtplanung, Arbeitszeitkonto, Kompositionsschicht: keine.
 
 `scripts/backfill-512-anonymized-audit-freetext.ts` (Probelauf als Voreinstellung, `--confirm`, Marker `BACKFILL_512`;
 `docs/migrations.md` „Phase 512“). Tests: `anonymization-audit-freetext-512`, `backfill-512-anonymized-audit-freetext`.
+
+## AD — Web-Push-Abos als Zustelladresse im Unterbau (Phase 608, Issue #608)
+
+### Ausgangslage
+
+Benachrichtigungen erreichten eine Person nur in der App (Glocke) und, je nach Einstellung, per E-Mail. Wer die Seite nicht
+geöffnet hat, erfährt von einem neuen Antrag oder einer fehlenden Ausstempelung erst später. Phase 608 ergänzt Web-Push auf
+dem Handy: pro Gerät einwilligen, eine neutrale Mitteilung auf dem Sperrbildschirm, ein Tipp öffnet die passende Seite; die
+App ist dazu als Web-App installierbar (Android Chrome; iPhone ab iOS 16.4 nur als Home-Bildschirm-App).
+
+### Rechtslage
+
+- Art. 6 Abs. 1 lit. a DSGVO: Einwilligung. Sie wird je Gerät erteilt, durch das aktive Einschalten im Browser (die
+  Berechtigungsabfrage des Browsers erscheint erst beim Tippen, nie beim Seitenaufruf) und mit `consentedAt` festgehalten.
+- Art. 7 Abs. 3 DSGVO: Der Widerruf ist so einfach wie die Erteilung: „Push deaktivieren“ auf demselben Bildschirm, „Entfernen“
+  je Gerät in der Geräteliste, und die ausdrückliche Abmeldung auf einem geteilten Telefon entfernt dessen Registrierung zuerst.
+- Art. 5 Abs. 1 lit. c DSGVO: Datenminimierung auf dem Sperrbildschirm. Der Text ist je Benachrichtigungstyp ein neutraler,
+  fest hinterlegter Satz ohne Namen, Zahlen, Zeiten, Saldo oder Entscheidung; der Titel der In-App-Mitteilung und ihre Meldung
+  verlassen den Server nie.
+- Art. 9 DSGVO: Eine Krankmeldung ist ein Gesundheitsdatum. Ihr Push hat denselben neutralen Text wie jeder andere Antrag
+  („Es gibt einen neuen Antrag zur Prüfung.“), und die vier `SECTION9_*`-Typen (§ 9 BUrlG, Erkrankung im Urlaub) werden nie
+  gepusht.
+- Art. 17 DSGVO: Eine Zustelladresse ist kein aufbewahrungspflichtiger Beleg. Die Anonymisierung einer Person löscht ihre
+  Geräte; der Abzug für int (`pseudonymize-dump.ts`) löscht alle, damit keine echte Zustelladresse ein Produktivsystem verlässt.
+
+### Entscheidung
+
+- **D-01 Schlüssel optional je Instanz.** `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` nur als vollständiger Satz
+  oder gar nicht (Prüfung beim Start, auch ob der öffentliche zum privaten Schlüssel gehört). Ohne Satz gibt es die vier
+  Schreib- und Leseroutinen unter `/api/v1/me/push` nicht, `GET /api/v1/me/push/config` meldet `enabled: false`, nichts wird
+  gesendet und die Profilseite zeigt keinen Abschnitt. Wie `OPERATOR_JWT_SECRET`: nie ein Standardwert.
+- **D-03 Modell.** `PushSubscription` im Unterbau: `tenantId` (FK `Restrict`), `userId` (FK `Cascade`), eindeutiger `endpoint`,
+  `p256dh`, `auth`, `deviceLabel` (nur Anzeige, aus dem User-Agent abgeleitet), `consentedAt`, `lastSuccessAt`. Keine neue
+  Berechtigung: Die fünf Routen sind Eigene-Daten-Routen hinter `requireAuth` (JWT; ein API-Schlüssel erhält 400).
+- **D-04 Löschen statt Sperren.** Abmelden, ein 404/410 des Push-Dienstes, die Anonymisierung und der int-Abzug löschen die
+  Zeile hart. Erteilung, Aktualisierung und Löschung stehen im AuditLog (`CREATE`/`UPDATE`/`DELETE`) ohne Endpunkt und
+  Schlüssel; Systemzeilen tragen den Mandanten der Zeile als Akteurstempel.
+- **D-05 / P-608-07 Mehrere Geräte, ein Endpunkt eine Zeile.** Höchstens 10 Geräte je Person. Wird ein Endpunkt erneut
+  registriert, wird er für dieselbe Person aktualisiert; eine andere Person (geteiltes Telefon) übernimmt ihn nur mit
+  demselben Schlüsselpaar `p256dh` und `auth` (das beweist denselben Browser), sonst 409 und nichts wird geändert. Die alte
+  Zeile wird gelöscht und im Mandanten der alten Zeile protokolliert.
+- **D-08 Eine Textquelle, ein Sender.** `notification-push-policy.ts` (fail-closed, je `notify()`-Typ ein Eintrag oder
+  `never`, scan-getestet, E-Mail `never` ⇒ Push `never`) ist die einzige Stelle für Sperrbildschirmtexte;
+  `push-sender.ts` ist der einzige Importeur von `web-push`. Die Nutzlast ist genau `{ title, body, url }`.
+- **D-17 Zieladressen-Allowlist (SSRF).** Ein Endpunkt ist nur https mit einem Host aus vier Familien erlaubt
+  (`fcm.googleapis.com`, `push.services.mozilla.com`, `notify.windows.com`, `push.apple.com`, jeweils der Host selbst oder
+  eine Subdomain), geprüft vor jeder Schreibung und vor jedem Senden; `PUSH_SERVICE_HOST_SUFFIXES` ist die eine Konstante.
+- **Dienst-Worker.** `service-worker.ts` hat nur `push` und `notificationclick` (plus die Lebenszyklusereignisse), keinen
+  Netzwerk-Handler und keinen Cache; er zeigt immer eine Mitteilung. Die CSP nennt `worker-src 'self'`, sonst bleibt sie
+  unverändert. Ein Tipp bei abgelaufener Sitzung führt nach der Anmeldung auf die Zielseite (`?next=`, nur relative Pfade).
+
+### Auswirkung auf die Kontexte
+
+- **Unterbau:** neues Modell `PushSubscription` (21 `platform`-Modelle statt 20), neue Dateien `push-*.ts` und
+  `notification-push-policy.ts`; `notify()` liegt im Unterbau. Eine **Erweiterung** nach ADR 0002, Entscheidung 7 (rein
+  additiv, kein bestehender Leser ändert sich): freigegeben mit dem Status `Ready` des Issues.
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** keine.
+- **Kompositionsschicht:** keine (ein Eintrag in der Routenregistrierung von `app.ts`, keine Fachregel).
+
+Belegt durch `608-untouched.sh`: die vier Fachkontexte, `composition/`, `services/` und die aufgezeichneten
+Neutralitätsmatrizen sind gegenüber dem Basisstand unverändert.
+
+### Grenzen
+
+- **D-16:** Direkte `notification.create`-Stellen, die `notify()` umgehen (`bs-leave-correction.ts`,
+  `vocational-school-generator.ts`), senden keinen Push. Sie auf `notify()` umzustellen ist ein eigener Schritt.
+- Die Inaktivitäts-Abmeldung und eine erzwungene Abmeldung nach abgelaufener Sitzung (401) entfernen das Gerät nicht (es gibt
+  kein gültiges Token); erst die ausdrückliche Abmeldung oder das manuelle Entfernen tut es.
+- iPhone und iPad: Push gibt es nur in der zum Home-Bildschirm hinzugefügten App (ab iOS 16.4); im Safari-Tab zeigt die Seite
+  eine Anleitung statt des Schalters.
+- Ein Schlüsselwechsel macht alle Geräte ungültig; jedes Gerät schaltet Push neu ein (Laufbuch `docs/runbooks/web-push.md`).
+- Die 10-Geräte-Grenze ist eine Missbrauchsgrenze, keine Datenbankinvariante: zwei gleichzeitige Registrierungen
+  verschiedener Endpunkte bei neun vorhandenen Geräten können beide durchgehen.
+- Das 512-Pixel-Symbol ist eine hochskalierte Übergangslösung (Quelle 256 Pixel); echte Grafik folgt.
+- AC-2 und AC-3 (Zustellung auf ein echtes Telefon, Tipp-Ziel, Sperrbildschirm) lassen sich nicht automatisieren: Sie werden
+  als Abnahme-Checkliste im Pull Request vom Owner auf Android Chrome und einem iPhone abgenommen.
+
+### Nachweise
+
+Tests: `me-push-608`, `push-config-608`, `push-surface-off-608`, `push-endpoint-guard-608`, `push-device-label-608`,
+`push-reassign-608`, `anonymization-push-608`, `notification-push-policy-608`, `notification-push-dispatch-608`,
+`generate-vapid-keys-608` (API); `service-worker-608`, `manifest-608`, `payload`, `login-next`, `support`,
+`device-subscription`, `logout`, `PushSettings` (Web); `push-pwa.spec.ts` (Browser: Worker unter der echten CSP, Manifest,
+Symbole, Profilseite ohne Schlüssel). Geänderte Prüfwerte: Modellzahlen (`measure-foreign-context-access`,
+`lint-tenant-scoping-model-graph`), Routenoberfläche (`route-surface.txt`), `pinnedTenantCsp` (`worker-src 'self'`),
+Ausschlüsse der Neutralitätsmatrix für die fünf Push-Routen.
+
+## AE — WLAN-Kopplung per QR-Code: Einmal-Codes in der Zeiterfassung (Phase 610, Issue #610)
+
+### Ausgangslage
+
+Die WLAN-Anwesenheit (Phasen 388 ff.) ordnet einer Person Geräte über deren MAC-Adresse zu. Die Adresse musste bisher von Hand
+eingetragen werden — fehleranfällig, und für Beschäftigte ohne Technikwissen kaum machbar. Phase 610 lässt eine Person ihr
+Handy im Salon selbst koppeln: QR-Code scannen, die vom FRITZ!Box-Adapter bereitgestellte lokale Seite öffnet sich, der
+Adapter ermittelt über TR-064, welches Gerät die Adresse des Handys im Netz trägt, und die angemeldete Person bestätigt in
+Clokr mit einem Tipp. Die Uhrenlogik (Anwesenheitsereignis → Stempelereignis) bleibt unverändert.
+
+### Rechtslage
+
+- Art. 6 Abs. 1 lit. a DSGVO, § 26 BDSG: Einwilligung. Sie entsteht durch den Tipp auf „Das ist mein Handy – koppeln“ mit
+  sichtbarem Zweck (einschließlich der Angabe, dass der Zeitpunkt der letzten Erkennung gespeichert wird, Review IN-03) und
+  Hinweis auf den Widerruf; `wifiOptInAt` wird auf den Bestätigungszeitpunkt gesetzt und im AuditLog mit
+  altem und neuem Wert festgehalten.
+- Art. 7 Abs. 3 DSGVO: Der Widerruf (Schalter im Profil) entfernt **alle** Geräte der Person und die alte Adressliste, jedes
+  mit eigenem `DELETE`-Eintrag („Einwilligung widerrufen“).
+- Art. 5 Abs. 1 lit. c DSGVO: Die Vorschau zeigt nur die letzten zwei Adressteile; der Hinweis auf dem Sperrbildschirm ist
+  ein neutraler Satz ohne Angabe zur Person.
+- Art. 17 DSGVO: Ein Kopplungscode ist ein flüchtiges Token, kein aufbewahrungspflichtiger Beleg.
+
+### Entscheidung
+
+- **Die Geräteadresse kommt nie vom Browser.** Der Adapter nimmt allein die TCP-Gegenstelle der Verbindung, fragt die Box
+  (`X_AVM-DE_GetSpecificHostEntryByIP`; nur die Live-Antwort zählt, eine veraltete Hostliste wird nie befragt) und meldet `{ mac, hostname }` mit dem Schlüssel der
+  Präsenzquelle an `POST /api/v1/presence/pairing-codes`. Er liest keinen Weiterleitungs-Header und keinen Parameter. Daraus
+  folgt: Ein weitergeleiteter Link koppelt höchstens das Gerät, das die QR-Seite geöffnet hat.
+- **Neues Modell `PresencePairingCode` (Zeiterfassung).** `codeHash` (SHA-256 eines 32-Byte-Zufallscodes; der Klartext wird
+  nie gespeichert), `mac`, `hostname` (nur Anzeige), `expiresAt` (jetzt + 5 Minuten, nie länger), `consumedAt`,
+  `consumedByUserId`, `createdAt`. Ein Code ist einmal verwendbar, an Mandant, Quelle und Gerät gebunden; jeder ungültige
+  Zustand antwortet mit derselben 404.
+- **Zwei Fremdschlüssel, beide `onDelete: Cascade`.** `presenceSourceId` auf `PresenceSource` (innerhalb der Zeiterfassung)
+  und `tenantId` auf `Tenant` (eine Abhängigkeit des Shared Kernel). Cascade statt `Restrict`, weil die Zeile flüchtig und
+  nicht aufbewahrungspflichtig ist (D-04, überarbeitet): Sie darf eine Quelle oder einen Mandanten nie am Löschen hindern.
+  `consumedByUserId` ist eine einfache Spalte ohne Fremdschlüssel — keine zusätzliche Abhängigkeit vom Unterbau.
+- **Zwei neue Spalten an `PresenceDevice`.** `pairedVia` (`MANUAL` | `QR`, Standard `MANUAL`, kein Rückfüllen geraten) und
+  `lastSeenAt` (Zeitpunkt des letzten Anwesenheitsereignisses, geklammert auf `min(Ereignis, jetzt)` und nur vorwärts).
+- **Eine Codequelle, eine Bestätigungstransaktion.** `pairing-code.ts` ist die einzige Stelle für Format, Laufzeit und
+  Hash; `presence-pairing.ts` bestätigt in einer Transaktion unter der Personensperre (`lockPresenceOwner`: Employee + User),
+  danach Code-Zeile `FOR UPDATE`. Ein Gerät, das einer anderen Person gehört, ergibt 409 `PRESENCE_DEVICE_TAKEN` und der Code
+  bleibt gültig. Vorherige `QR`-Geräte derselben Person werden ersetzt, `MANUAL`-Geräte bleiben; ein Admin-Zuordnen setzt
+  `MANUAL`.
+- **D-08 Verhaltensänderung.** Der Widerruf der Einwilligung entfernt jetzt alle Geräte (bisher blieben sie stehen). Wer vor
+  dieser Version widerrufen hat, behält inaktive Restzeilen bis zur nächsten Aktion; es gibt keine rückwirkende Bereinigung.
+- **Hinweis zum erneuten Koppeln.** Ein Tagesjob (Funktion 11 des Anwesenheitsprüfers, 09:20 Mandantenzeit) benachrichtigt die
+  Person einmal in der App und per neutralem Push, wenn ihr `QR`-Handy seit dem dritten jüngsten Schichttag mit Stempelung
+  über eine Nicht-WLAN-Quelle kein Lebenszeichen zeigte; ein Mandant ohne jedes Ereignis im Fenster (Adapterausfall) bekommt
+  nichts. E-Mail ist ausgeschaltet.
+- **Ausnahme von der #608-Paritätsregel (D-16).** Dort gilt „E-Mail `never` ⇒ Push `never`“. `WIFI_DEVICE_NOT_SEEN` ist
+  ausdrücklich benannt (`PUSH_WITHOUT_EMAIL`, mit Begründung): kein Personenbezug, nur der Hinweis zum erneuten Koppeln; die
+  Zahl der gesendeten Typen steigt von 27 auf 28.
+- **Der Adapter-Listener ist standardmäßig aus.** `PAIRING_ENABLED=true` und ein https-Ursprung in `CLOKR_APP_URL`; die
+  Compose-Dateien veröffentlichen den Port nur auf der Loopback-Adresse, solange `PAIRING_HOST_BIND` nicht die LAN-Adresse des
+  Hosts nennt. Das Laufbuch `docs/runbooks/wlan-qr-kopplung.md` beschreibt die Netzwerkvoraussetzungen und die Prüfung der
+  Quelladresse (Docker kann sie verdecken).
+- **Aufräumen.** Zeilen älter als ein Tag löscht der tägliche Token-Bereinigungsjob; die Anonymisierung entfernt die Codes der
+  Person, der int-Abzug alle.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** Eigentümer des neuen Modells, der Routen (`POST /presence/pairing-codes`, `POST /employees/me/wifi/pairing`
+  und `…/preview`), des Tagesjobs und der Fassade `facade/presence-pairing.ts`.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine (der Job liest Schichttage ausschließlich über `getShiftsInRange`).
+- **Arbeitszeitkonto:** keine (nur die Zeitzonenhilfen werden gelesen).
+- **Kompositionsschicht:** keine.
+- **Unterbau:** Rückbeziehung `Tenant.presencePairingCodes` — eine **Erweiterung** nach ADR 0002, Entscheidung 7 (rein additiv,
+  kein bestehender Leser ändert sich), freigegeben mit dem Status `Ready` des Issues. Die Token-Bereinigung und die
+  Anonymisierung rufen die Zeiterfassungs-Fassade auf; der Unterbau importiert keine Fachregel.
+
+Belegt durch `610-untouched.sh`: die Kontexte Abwesenheiten, Schichtplanung und Arbeitszeitkonto, `composition/`, `services/`,
+die aufgezeichneten Neutralitätsmatrizen und die festgenagelten WLAN-Tests sind gegenüber dem Basisstand unverändert.
+
+### Grenzen
+
+- **Weitergeleiteter Link (D-09):** Innerhalb von fünf Minuten kann der Link an eine Kollegin geschickt werden, die damit das Handy
+  der scannenden Person an ihr Konto koppelt. Begrenzt durch Einmalcode, Vorschau des Geräts und AuditLog.
+- **Klartext-HTTP im LAN (D-14):** Die Adapterseite ist unverschlüsselt; ein Mitschnitt im Salon-LAN zeigt die Weiterleitung mit
+  dem Code. Begrenzt durch Einmalcode und fünf Minuten.
+- **Code in einem Zugriffsprotokoll (P-610-24):** Die Seiten-URL trägt den Code einmal; ein Reverse-Proxy vor der Web-App kann
+  ihn protokollieren. Die API-Anfrageprotokolle nie, weil Vorschau und Bestätigung den Code im Körper nehmen. Die Web-App sendet für die Kopplungsseite und für `/login` und `/otp` (dort steckt der Code in `?next=`) `Referrer-Policy: no-referrer`, damit der Code nicht als `Referer` in Zugriffsprotokollen eines Ingress landet (Review WR-01). Auch das Client-Fehlerprotokoll (`POST /api/v1/logs/client`) kennt nur den Pfad: Der Browser sendet `location.pathname`, die API schneidet Query und Fragment zusätzlich ab (Review WR-02).
+- **Netzwerk (D-15, P-610-23):** Ein Gast-WLAN mit Geräteisolation, ein offenes WLAN (rotierende private Adresse) und Docker-
+  Aufbauten, die die Quelladresse verdecken, funktionieren nicht; das Laufbuch führt die Prüfung auf dem echten Host.
+- **Gerätename nur in der Vorschau (Review WR-05):** Der vom Handy gemeldete DHCP-Name („Annas-iPhone“) steht nur in der
+  kurzlebigen Codezeile (nach einem Tag gelöscht) und in der Vorschau. `PresenceDevice.label` und alle Audit-Werte der Kopplung
+  tragen den neutralen Namen „Handy (QR-Kopplung, TT.MM.JJJJ)“. Bekannte Grenze, kein neuer Umfang: Die Audit-Zeilen der
+  Entität `PresenceDevice` tragen die MAC-Adresse (gleich wie bei der manuellen Zuordnung) und werden bei der Anonymisierung
+  nicht geschwärzt (nur `Employee` und `User`, COMP-V1814-01); nur `userId` wird auf null gesetzt.
+- **IP-, ARP- und MAC-Fälschung im Salon-LAN (Review WR-04):** Wer im Salon-LAN eine fremde feste IP-Adresse setzt oder per
+  ARP-Fälschung auftritt, wird von der Box unter dieser IP aufgelöst; wer seine eigene MAC fälscht, koppelt die gefälschte
+  Adresse. Das ist der Weg für „eine MAC meiner Wahl“ durch einen Innentäter und lässt sich ohne Netzwerkauthentifizierung
+  (802.1X) nicht schließen. Begrenzt durch: Kopplung nur aus dem Salon-WLAN, Einmalcode, Vorschau, AuditLog mit Person und
+  Gerät. Ein Host hinter NAT (Router, NAS, Docker-Host) wird nur abgelehnt, wenn die Box ihn als kabelgebunden meldet.
+- Die Feldnamen der TR-064-Antwort der Abfrage nach IP sind aus der Dokumentation und aus Testdaten abgeleitet und erst auf
+  einer echten FRITZ!Box bestätigt (`probe-host.js`); bis dahin lehnt die Seite bei einer Abweichung ab (es gibt keinen Rückfall auf die Hostliste). Das Feld `NewInterfaceType` ist dabei besonders ungeprüft: Meldet die Box für ein Gerät eindeutig eine kabelgebundene Schnittstelle (z. B. „Ethernet“), lehnt der Adapter ab; fehlt der Wert oder ist er unbekannt, wird gekoppelt und eine Warnung protokolliert („auf der echten Box prüfen“).
+- `lastSeenAt` heißt „letztes Anwesenheitsereignis“, nicht „zuletzt im Netz gesehen“: Der Adapter meldet nur Wechsel.
+- Die Hostlisten-Abfrage des Adapters (`GetHostListPath` statt AVMs `X_AVM-DE_GetHostListPath`) blieb bewusst unverändert.
+- AC-1 und AC-6 (ein echtes iPhone und Android in einem echten FRITZ!Box-WLAN, Gast-WLAN-Ablehnung) lassen sich nicht
+  automatisieren: Sie werden als Abnahme-Checkliste im Pull Request vom Owner abgenommen.
+
+### Nachweise
+
+Tests (API): `presence-pairing-610`, `presence-pairing-contract-610`, `presence-pairing-replace-610`,
+`presence-pairing-race-610`, `presence-withdrawal-610`, `presence-last-seen-610`, `pairing-no-client-mac-610`,
+`presence-pairing-lifecycle-610`, `wifi-device-not-seen-610` (Einheit), `wifi-device-not-seen-job-610`; erweitert:
+`notification-push-policy-608`, `cron-deactivated-tenants-88`, `with-advisory-lock`. Adapter: `tr064-host-by-ip`,
+`pairing-config`, `pairing`, `index-wiring`. Web: `pairing-view`, `device-labels`, `DevicePairing`, `WifiPresenceSettings`,
+`pairing-url`, `qr-svg`, `PairingGuide`, `device-pairing-page-610`, `admin-integrations-pairing-guide-610`. Geänderte
+Prüfwerte (jeweils „Issue #610“): Modellzahlen (`measure-foreign-context-access` 54 → 55, Zeiterfassung 9 → 10;
+`lint-tenant-scoping-model-graph`), Routenoberfläche (`route-surface.txt`), Ausschlüsse der Neutralitätsmatrix, die
+#608-Paritätsliste und 27 → 28 gesendete Typen, Läuferliste und Untergrenze von `cron-deactivated-tenants-88` (16 → 17),
+Advisory-Schlüssel (18 → 19), die Untergrenzen von `check-test-completeness.mjs`.
+
+## AF — Schicht-Erinnerungen an Beginn, Ende und Tagesabschluss (Phase 609, Issue #609)
+
+### Ausgangslage
+
+Wer seine Zeit nicht stempelt, merkt es oft erst am Folgetag: Die bestehende Erinnerung nach zehn Stunden und die Meldung um 09:00
+am nächsten Morgen kommen zu spät, um einen Zeiteintrag noch am selben Tag zu retten. Phase 609 erinnert Personen mit einer
+geplanten Schicht an drei Anlässen: nach dem Schichtbeginn, wenn noch nicht eingestempelt ist; nach dem Schichtende, wenn noch
+eingestempelt ist; am Abend, wenn an einem Schichttag keine Zeit erfasst wurde. Die Mitteilung läuft über die In-App-Glocke und,
+wenn die Person Push eingerichtet hat, über den Kanal aus Phase 608.
+
+### Rechtslage
+
+- § 16 Abs. 2 ArbZG: Die Aufzeichnungspflicht trifft den Arbeitgeber; eine Erinnerung hilft, sie am selben Tag zu erfüllen. Sie
+  ersetzt keine Aufzeichnung: Clokr stempelt nie selbst. Ein Tipp auf die Mitteilung öffnet nur eine Bestätigung, gestempelt wird
+  erst nach der ausdrücklichen Bestätigung der Person, mit der aktuellen Uhrzeit und über den unveränderten Stempelweg.
+- Art. 5 Abs. 1 lit. c DSGVO: Datenminimierung auf dem Sperrbildschirm. Die drei Texte sind feste, neutrale Sätze ohne Uhrzeit,
+  Salon oder Namen; die Uhrzeit der Schicht steht nur in der In-App-Meldung (eigene Daten).
+- Art. 9 DSGVO: An einem Krankheitstag (und an jedem anderen Tag mit wirksamem Urlaub, Abwesenheit oder Feiertag) wird still
+  nichts gesendet. Kein Text erklärt je, warum eine Erinnerung fehlt, und der Empfänger ist immer die Person der Schicht selbst,
+  nie eine Führungskraft.
+- Art. 5 Abs. 1 lit. c und Art. 25 DSGVO: Die Abwahl einer Erinnerung ist die eigene Entscheidung der Person. Die Mitarbeiter-
+  Routen (Liste, Einzelansicht, Anlegen, Ändern) und deren Prüfprotokollwerte nennen sie nicht. Die Änderung selbst wird
+  nachvollziehbar protokolliert (Revisionssicherheit) und ist deshalb für Inhaber von `audit-log:read` sichtbar, für einen
+  Betreiber unter einem aktiven Support-Zugriff nach Typ geschwärzt (Zahlen und Wahrheitswerte bleiben erhalten); siehe D-16.
+
+### Entscheidung
+
+- **D-01/D-02 Daten.** Fünf Spalten in `TenantConfig` (drei Schalter, Standard aus; `reminderOffsetMinutes`, Standard 15, erlaubt
+  5 bis 120; `reminderDayCloseTime`, Standard 20:00) und drei Spalten in `Employee` (`reminderShiftStartOff`,
+  `reminderShiftEndOff`, `reminderDayCloseOff`, Standard `false`). Eine additive Migration (`20261103020000_shift_reminders`),
+  keine Datenmigration, kein Skript. Die Mandantenwerte laufen über das bestehende `PUT /settings/work` (Prüfprotokoll der
+  geänderten Schlüssel, #285), die Abwahl über die Eigene-Daten-Route `GET`/`PATCH /api/v1/employees/me/reminders`.
+- **D-03/D-04 Auftrag.** Ein Cron alle fünf Minuten unter dem Advisory-Lock `ATTENDANCE_SHIFT_REMINDER` (`1020n`), je aktivem
+  Mandanten mit mindestens einem Schalter; alle Zeiten in der Mandantenzeitzone. Fenster: Beginn und Ende je 60 Minuten ab
+  Beginn/Ende + N, Abend 30 Minuten ab der Uhrzeit, damit ein Neustart nach einer Pause nicht überschwemmt.
+- **D-05/D-12 Ausschlüsse.** Wirksamer Urlaub jeder Art (Krankheit und halbe Tage eingeschlossen; ein offener Antrag zählt nicht),
+  auferlegte Abwesenheit, Feiertag am Salon der Schicht, eine als Konflikt markierte Schicht; ausgeschiedene, anonymisierte,
+  gesperrte und von der Zeiterfassung befreite Personen; eine Abwahl; ein deaktivierter Mandant.
+- **D-06/D-07 Doppelungen.** Eine Mitteilung je Person, Schicht und Anlass, geprüft gegen jede vorhandene Zeile (auch eine
+  gelesene oder verworfene); ein gemeinsamer Schlüssel für zwei Schichten mit identischem Beginn oder Ende; eine Abend-Mitteilung
+  je Person und Tag. Eine Person, die aus einer früheren Schicht noch eingestempelt ist, bekommt für die direkt anschließende
+  Schicht keine Beginn-Erinnerung (D-07, ein gültiger offener Eintrag); umgekehrt gibt es keine Ende-Erinnerung, solange eine
+  weitere Schicht der Person nahtlos anschließt (P-609-06: das Ende der letzten Schicht deckt den Abend ab).
+- **D-06 Abstimmung.** Hat die Ende-Erinnerung einen offenen Eintrag schon abgedeckt, schweigt die 10-Stunden-Erinnerung für
+  diesen Eintrag; die Meldung um 09:00 am Folgetag bleibt unverändert. „Abgedeckt“ heißt: eine Ende-Mitteilung, die ab dem
+  Beginn der aktuellen offenen Phase des Eintrags entstand (der spätere Zeitpunkt aus `startTime` und `updatedAt`; ein erneutes
+  Einstempeln am selben Tag öffnet dieselbe Zeile und setzt `updatedAt` neu) und zu einer Schicht des Tages dieses Eintrags
+  gehört. Ein wieder geöffneter, erneut vergessener Eintrag und ein alter offener Eintrag eines früheren Tages bekommen die
+  10-Stunden-Erinnerung. Im Zweifel kommt sie lieber doppelt als gar nicht (WR-01).
+- **D-07 „Eingestempelt“ (WR-03, WR-04).** Nur ein offener Eintrag des Schichttages (Nachtschicht: Beginn- oder Endtag; ein
+  frühes Einstempeln bis 2 Stunden vor dem Beginn zählt auch über Mitternacht) unterdrückt die Beginn-Erinnerung und löst die
+  Ende-Erinnerung aus; ein vergessener offener Eintrag eines früheren Tages tut keines von beidem. Die Beginn-Erinnerung
+  unterdrückt außerdem ein geschlossener Eintrag, der zum Schichtbeginn noch lief (Ende nach Beginn minus 5 Minuten), nie ein
+  früherer geschlossener Eintrag (etwa einer vorherigen Teilschicht). Die Ende-Erinnerung schweigt, wenn eine weitere gearbeitete
+  Schicht der Person innerhalb von 60 Minuten nach diesem Ende beginnt (eine als Konflikt markierte oder an dem Tag stumme
+  Folgeschicht zählt nicht).
+- **Beantwortet (IN-03).** Ein erfolgreiches Einstempeln (Web, NFC, WLAN) verwirft die offenen Beginn-Mitteilungen der Person,
+  ein Ausstempeln die offenen Ende-Mitteilungen (weich verworfen, die Zeilen bleiben und zählen weiter für die Doppelungsprüfung);
+  nachgelagert, ein Fehler dabei lässt das Stempeln nie scheitern.
+- **D-13/D-15 Abend.** Wer noch eingestempelt ist, bekommt keine Abend-Erinnerung (die Ende-Erinnerung und die 10-Stunden-
+  Erinnerung decken das ab); eine Schicht, die nach der Abend-Uhrzeit endet, löst an dem Tag keine Abend-Erinnerung aus. Der
+  Hinweistext in den Einstellungen sagt es.
+- **D-08 Kanal.** Drei neue Typen, E-Mail `never`, Push `send` mit neutralem Text und der neuen Lebensdauer `TTL_1H` (eine
+  verspätete Mitteilung „begonnen“ wäre falsch). Sie sind die Einträge der benannten Ausnahmeliste `PUSH_WITHOUT_EMAIL`; die
+  Regel „E-Mail `never` heißt Push `never`“ gilt für alle anderen Typen unverändert.
+- **D-09/D-14 Tippziel.** Beginn und Ende führen auf `/dashboard?clock=1`, der Abend auf die Listenansicht des Tages. Das
+  Dashboard öffnet eine Bestätigung, deren Text aus dem aktuellen Stempelstand abgeleitet ist und die Handlung nennt;
+  der Parameter wird danach entfernt. Ist der Stand inzwischen ein anderer, stempelt nichts, es erscheint ein Hinweis.
+- **D-16 Datensparsamkeit.** Die drei Abwahl-Spalten fehlen in jeder Antwort und in jedem Prüfprotokollwert der Mitarbeiter-
+  Routen (Liste, Einzelansicht, Anlegen, Ändern, Reaktivieren) und im Anlege-Eintrag der gemeinsamen Funktion
+  `employeeCreatedAuditValue()`; nur die Eigene-Daten-Route liefert sie. **Ausnahme, bewusst (WR-02):** die Änderung über
+  `PATCH /api/v1/employees/me/reminders` schreibt ihren eigenen Prüfprotokolleintrag (`UPDATE Employee`, geänderte Schlüssel mit
+  altem und neuem Wert), weil jede Änderung an Personendaten nachvollziehbar sein muss. Diesen Eintrag lesen Inhaber von
+  `audit-log:read` (Mandanten-Administration) und, nach Typ geschwärzt, ein Betreiber unter einem aktiven Support-Zugriff;
+  Führungskräfte ohne diese Berechtigung sehen ihn nicht. Der Test `employee-reminder-columns-hidden-609` hält beide Hälften fest.
+- **Aus der Planung.** 400 statt 401 für eine Person ohne Mitarbeiterprofil (ein 401 würde im Web eine Anmelde-Schleife
+  auslösen); der Eintrag `AE` ist für #610 reserviert.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** der Auftrag (`shift-reminders.ts`, `shift-reminder-job.ts`), die Eigene-Daten-Route
+  (`api/employee-reminders.ts`) und die Auslassung der 10-Stunden-Erinnerung für einen schon abgedeckten Eintrag.
+- **Abwesenheiten:** keine. Urlaub, Krankheit und Abwesenheit werden nur lesend über die Fassade geprüft.
+- **Schichtplanung:** eine additive Auswahl (`conflictsWithLeave`) in der Fassade `getShiftsInRange`; sonst nur lesend.
+- **Arbeitszeitkonto:** keine.
+- **Kompositionsschicht:** keine.
+- **Unterbau:** **Erweiterung** nach ADR 0002, Entscheidung 7: fünf `TenantConfig`- und drei `Employee`-Spalten mit Standard
+  aus/`false`, die Registerzeilen von `notify()` (E-Mail und Push) und die Push-Lebensdauer `TTL_1H`. Kein bestehender Leser
+  ändert sich; freigegeben mit dem Status `Ready` des Issues. Kein neues Modell, keine neue Berechtigung.
+
+Belegt durch `609-untouched.sh`: Abwesenheiten, Arbeitszeitkonto, die Kompositionsschicht, `services/` und die aufgezeichneten
+Neutralitätsmatrizen sind gegenüber dem Basisstand unverändert; unter Schichtplanung ändern sich nur `facade/shifts.ts` und
+ihr Test.
+
+### Grenzen
+
+- Eine neu angelegte Schicht hat eine neue Kennung und kann deshalb erneut erinnern, auch wenn für den Termin schon eine
+  Mitteilung stand (der gemeinsame Schlüssel über den Zeitpunkt fängt gleichzeitige Schichten, nicht jede Neuanlage). Wird eine
+  Schicht nach der Erinnerung verschoben (gleiche Kennung, neue Zeit), erinnert sie für die neue Zeit nicht noch einmal (IN-01).
+- Eine Uhrzeit in der übersprungenen Stunde der Umstellung auf Sommerzeit (etwa 02:30 am 28.03.2027) wird nicht nach vorn
+  normalisiert: der Zeitpunkt kann vor dem der Stunde davor liegen. Für einen Salonbetrieb ohne Schichtbeginn um diese Zeit
+  folgenlos; der Test prüft nur, dass kein Fehler auftritt (IN-02).
+- Der Bestätigungstext des Dashboards nennt die Uhrzeit in der Zeitzone des Geräts, nicht des Mandanten; der Server stempelt
+  mit seiner eigenen Uhr (IN-04).
+- Der Feiertag wird am Salon der Schicht beurteilt, nicht am Stammsalon.
+- Ein Tipp auf eine veraltete Mitteilung bietet die aktuell mögliche Handlung an (nicht die in der Mitteilung gemeinte), nach
+  Bestätigung mit der jetzigen Uhrzeit.
+- Die Abend-Uhrzeit gilt je Mandant, nicht je Salon oder Person.
+- Personen ohne Schicht (feste Arbeitszeit ohne Beginn) werden nicht erinnert; das braucht eine vertragliche Beginnzeit und ist
+  ein eigenes Ticket. E-Mail-Erinnerungen gibt es bewusst nicht.
+- Die Abwahl-Spalten bleiben bei der Anonymisierung stehen (eine Einstellung ohne Personenbezug im Sinne von Art. 17; die
+  anonymisierte Person gehört ohnehin nicht zur Empfängermenge).
+- Zustellung auf ein echtes Telefon, Sperrbildschirmtext und Tippziel lassen sich nicht automatisieren und werden vom Owner
+  mit der Abnahme-Checkliste im Pull Request abgenommen.
+
+### Nachweise
+
+Tests (API): `shift-reminders-kernel-609`, `shift-reminders-start-609`, `shift-reminders-end-609`,
+`shift-reminders-day-close-609`, `shift-reminders-exclusions-609`, `shift-reminders-same-instant-609`,
+`shift-reminders-recipients-609`, `shift-reminders-no-stamp-609`, `shift-reminders-perf-609`,
+`clock-out-reminder-coordination-609`, `shift-reminders-clock-dismiss-609`, `settings-reminders-609`, `me-reminders-609`,
+`employee-reminder-columns-hidden-609`; geänderte Prüfwerte: `notification-push-policy-608` (Ausnahmeliste, Anzahl der
+Push-Typen), `with-advisory-lock` (Schlüsselzahl), `cron-deactivated-tenants-88` (Untergrenze, Läuferliste), Routenoberfläche
+(`route-surface.txt`), Ausschlüsse der Neutralitätsmatrix für die zwei Routen. Tests (Web): `shift-reminder-settings`,
+`reminders`, `ReminderSettings`, `clock-reminder`, `dashboard-clock-reminder-wiring-609`, `admin-vacation-save-wiring`
+(Schlüsselzahl 41 auf 46).
