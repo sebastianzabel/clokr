@@ -58,8 +58,7 @@ async function main() {
       defaultSundayHours: 0,
       overtimeThreshold: 60,
       allowOvertimePayout: false,
-      // Issue #563: no opening hours here — `TenantConfig.storeHours` is retired and its column
-      // default fills it; the hours live only on the default salon created below.
+      // Issue #563: no opening hours on TenantConfig — the hours live only on the default salon created below.
     },
   });
   console.log("TenantConfig angelegt");

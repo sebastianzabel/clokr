@@ -22,6 +22,7 @@
   import { authStore } from "$stores/auth";
   import { salonContext, moduleBooked } from "$stores/salon-context";
   import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
+  import PairingGuide from "$lib/components/admin/PairingGuide.svelte";
 
   // ── Block 1: Presence-Quellen ─────────────────────────────────────────────
   let sources: PresenceSource[] = $state([]);
@@ -359,6 +360,14 @@
         Noch keine Presence-Quellen. Erstellen Sie einen Schlüssel für Ihren ersten Adapter.
       </p>
     {/if}
+  </Section>
+
+  <!-- ── Handys per QR-Code koppeln (Issue #610) ───────────────────────── -->
+  <Section
+    title="Handys per QR-Code koppeln"
+    sub="QR-Code für das Salon-WLAN erstellen und aushängen"
+  >
+    <PairingGuide />
   </Section>
 
   <!-- ── Block 2: WiFi-Geräteliste ────────────────────────────────────── -->

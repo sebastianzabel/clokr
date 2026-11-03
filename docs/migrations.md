@@ -1453,6 +1453,15 @@ Prisma-Client die Spalte kennt (v1.16.1 und älter), ist nach der Migration NICH
 `TenantConfig` explizit anfordert; die Migration vorher zurückzusetzen heißt, die Spalte mit `ADD COLUMN ... BOOLEAN NOT NULL DEFAULT false` neu anzulegen.
 Der Standard-Einstiegspunkt führt `prisma migrate deploy` selbst aus, es ist kein manueller Schritt nötig.
 
+## Phase 638 — Spalte `TenantConfig.storeHours` entfällt (Issue #638)
+
+**Hinweis für die Release Notes.** Eine Migration, `*_drop_store_hours`: genau ein
+`ALTER TABLE "TenantConfig" DROP COLUMN "storeHours"`. Seit #563 (v1.16.0) liest und schreibt kein Code die Spalte; die Öffnungszeiten
+gehören dem Salon (`Salon.openingHours`). Kein fachlicher Datenverlust. **Rollback:** Ein Image-Rollback auf eine Version, deren Prisma-Client die
+Spalte kennt (v1.16.x und älter), ist nach der Migration NICHT möglich, weil der Client jede Spalte beim Lesen von `TenantConfig` explizit anfordert; die
+Migration vorher zurückzusetzen heißt, die Spalte mit dem alten Standardwert (Mo–Sa 08:00–20:00, So geschlossen, als JSON) neu anzulegen. Der
+Standard-Einstiegspunkt führt `prisma migrate deploy` selbst aus, es ist kein manueller Schritt nötig.
+
 ## Phase 512 — Bestandskorrektur: Freitext im AuditLog anonymisierter Personen (Issue #512)
 
 **Hinweis für die Release Notes.** Es gibt **keine Migration und keinen Schemawechsel.** Seit #512 ersetzt die Anonymisierung
@@ -1587,3 +1596,34 @@ _Rückfall:_ scheitert die Umkehr (etwa weil jemand den Typ `"Role"` von Hand an
 **Daten und Protokoll.** Keine Übernahme nötig, die Zuweisungen bestehen seit #539 und #707. Das Protokoll (`AuditLog`)
 bleibt unverändert: alte Zeilen behalten ihre Felder `compatRole`, `legacyRole` und `actorRole`; neue Zeilen zu
 Rollenzuweisungen tragen kein `compatRole` mehr. Das Skript `backfill-539-role-assignments.ts` entfällt.
+
+## Phase 541 — Terminal an Salon binden (Issue #541)
+
+**Hinweis für die Release Notes.** NFC-Terminals lassen sich in Mandanten mit mehreren Salons optional einem Salon zuordnen
+(Admin → System → Integration → NFC-Terminals, Spalte „Salon“). Ein Stempel an einem gebundenen Terminal landet in diesem
+Salon, auch wenn das Wochenmuster der Person einen anderen nennt (wichtig für Springer). Ohne Zuordnung bleibt alles wie
+bisher. Ist der Salon später deaktiviert, wird das in der Liste markiert und gestempelt wird nach der üblichen Regel; kein
+Stempel geht verloren. WLAN ist nicht betroffen. Mandanten mit einem Salon sehen nichts Neues.
+
+**Was die Migration tut.** Ein Verzeichnis in `packages/db/prisma/migrations/`, rein additiv, keine Zeile wird geschrieben
+oder geändert (vom Generator erzeugt, drei Anweisungen):
+
+- `20261102003032_terminal_api_key_salon` — die Spalte `TerminalApiKey.salonId` (`TEXT`, nullable, ohne Vorgabe), der Index
+  `TerminalApiKey_salonId_idx` und der Fremdschlüssel `TerminalApiKey_salonId_fkey` auf `Salon` mit `ON DELETE RESTRICT`
+  (neue Abhängigkeit auf den Unterbau, genehmigt mit Issue #541 in `Ready`; ADR `docs/adr/0001-abweichungen.md`, Eintrag AA,
+  Nachtrag Phase 541). Bestehende Terminals lesen `NULL` und bleiben ungebunden; es gibt keinen Backfill und keine geratene
+  Bindung. Ein Test spielt die Anweisungen nach und prüft Katalog, `NULL`-Bestand und die Sperre (`terminal-salon-migration-541.test.ts`).
+
+**1. Vor dem Deploy.** Keine Datenprüfung nötig: jede vorhandene Zeile erfüllt die neue Spalte (nullable). Die CI-Driftprüfung
+(`prisma migrate diff --from-migrations … --to-schema … --exit-code`) bleibt leer, gemessen.
+
+**2. Deploy.** Der Einstiegspunkt des API-Containers führt `prisma migrate deploy` aus; ein zusätzlicher Schritt in der
+`.steps`-Datei des Release ist nicht nötig.
+
+**3. Rollback.** Ein Image-Rollback ist ohne Zurücksetzen der Migration möglich: das Schema von `origin/main` vor #541 kennt
+`salonId` an `TerminalApiKey` nicht, und der Prisma-Client wählt nur modellierte Spalten, liest und schreibt die Spalte also
+nicht. Gespeicherte Bindungen bleiben dabei liegen und wirken erst wieder mit dem neuen Image. Die Migration selbst
+zurückzunehmen heißt `ALTER TABLE "TerminalApiKey" DROP CONSTRAINT "TerminalApiKey_salonId_fkey"`,
+`DROP INDEX "TerminalApiKey_salonId_idx"` und `ALTER TABLE "TerminalApiKey" DROP COLUMN "salonId"` — das verliert jede
+gespeicherte Bindung (die Terminals stempeln danach nach dem Wochenmuster). Solange eine Bindung besteht, lässt sich der
+gebundene Salon nicht löschen (`RESTRICT`); Salons werden ohnehin nie gelöscht.

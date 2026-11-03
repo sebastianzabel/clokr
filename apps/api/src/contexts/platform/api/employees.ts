@@ -93,6 +93,23 @@ const SCOPE_LABEL: Record<RoleAssignmentScopeType, string> = {
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 
+// Issue #609 (D-16): a person's shift-reminder opt-outs are their own data - a manager has no
+// business seeing a colleague's choice. Every read or update of this file whose row reaches a
+// response (or an audit value) omits the three columns; the reminder job and the own-data route
+// (GET/PATCH /employees/me/reminders) select them explicitly.
+const REMINDER_OPT_OUT_OMIT = {
+  reminderShiftStartOff: true,
+  reminderShiftEndOff: true,
+  reminderDayCloseOff: true,
+} satisfies Prisma.EmployeeOmit;
+
+/** The same omission for a row that did not come from a Prisma read of this file (POST fallback). */
+function withoutReminderOptOuts<T extends object>(row: T): T {
+  const copy = { ...row } as Record<string, unknown>;
+  for (const key of Object.keys(REMINDER_OPT_OUT_OMIT)) delete copy[key];
+  return copy as T;
+}
+
 const updateEmployeeSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
@@ -499,6 +516,7 @@ export async function employeeRoutes(app: FastifyInstance) {
           overtimeAccount: { select: { balanceHours: true } },
           invitations: { orderBy: { createdAt: "desc" }, take: 1 },
         },
+        omit: REMINDER_OPT_OUT_OMIT,
         orderBy: { lastName: "asc" },
         // PERF-V1814-03: defense-in-depth cap (tenant scope already limits naturally)
         take: 1000,
@@ -555,6 +573,7 @@ export async function employeeRoutes(app: FastifyInstance) {
           leaveEntitlements: { include: { leaveType: true } },
           invitations: { orderBy: { createdAt: "desc" }, take: 1 },
         },
+        omit: REMINDER_OPT_OUT_OMIT,
       });
 
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
@@ -734,6 +753,7 @@ export async function employeeRoutes(app: FastifyInstance) {
             overtimeAccount: { select: { balanceHours: true } },
             invitations: { orderBy: { createdAt: "desc" }, take: 1 },
           },
+          omit: REMINDER_OPT_OUT_OMIT,
         });
         const createdRole = (
           await formRolesByUserId(app.prisma, req.user.tenantId, [fullEmployee.userId])
@@ -769,7 +789,7 @@ export async function employeeRoutes(app: FastifyInstance) {
           .catch(() => body.role);
 
         return reply.code(201).send({
-          ...employee,
+          ...withoutReminderOptOuts(employee),
           user: {
             email: user.email,
             role: derivedRole,
@@ -812,6 +832,7 @@ export async function employeeRoutes(app: FastifyInstance) {
 
       const employee = await app.prisma.employee.findUnique({
         where: { id, tenantId: req.user.tenantId },
+        omit: REMINDER_OPT_OUT_OMIT,
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
@@ -945,7 +966,11 @@ export async function employeeRoutes(app: FastifyInstance) {
       let updated;
       try {
         updated = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-          const updatedEmp = await tx.employee.update({ where: { id }, data: updates });
+          const updatedEmp = await tx.employee.update({
+            where: { id },
+            data: updates,
+            omit: REMINDER_OPT_OUT_OMIT,
+          });
 
           // Issue #447 (D-07) — invariant-carrying (ADR 0002 Entscheidung 10): when exitDate was
           // sent and the stored value actually changed (null-safe time-value compare), the
@@ -1436,6 +1461,7 @@ export async function employeeRoutes(app: FastifyInstance) {
           workSchedules: { orderBy: { validFrom: "desc" }, take: 1 },
           overtimeAccount: { select: { balanceHours: true } },
         },
+        omit: REMINDER_OPT_OUT_OMIT,
       });
       const reactivatedRole =
         updated === null

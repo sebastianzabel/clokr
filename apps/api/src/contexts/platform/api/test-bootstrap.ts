@@ -123,8 +123,7 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
       // path that creates a tenant for real use. No audit trail write here (research Pitfall 5) —
       // this handler has no request principal, same as every other seeding call in this test-only
       // route. The salon carries the requested state (Phase 71b, issue #71) and
-      // DEFAULT_SALON_OPENING_HOURS; nothing reads the retired TenantConfig.storeHours column
-      // (Issue #563), whose default equals it (pinned in salon-migration.test.ts).
+      // DEFAULT_SALON_OPENING_HOURS (Issue #563: opening hours live only on the salon).
       const { tenant, salon } = await provisionTenant(prisma, {
         id: tenantId,
         name: `Test ${tenantId}`,
@@ -314,6 +313,8 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         where: { employeeId: { in: employeeIds } },
       });
       await prisma.employee.deleteMany({ where: { tenantId: id } });
+      // PushSubscription.tenant is onDelete: Restrict (Issue #608) - delete the tenant's devices first.
+      await prisma.pushSubscription.deleteMany({ where: { tenantId: id } });
       await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.otpToken.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.user.deleteMany({ where: { id: { in: userIds } } });

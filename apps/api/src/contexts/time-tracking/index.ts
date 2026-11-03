@@ -55,6 +55,8 @@ export {
   deletePresenceDevicesOfEmployee,
   type CreatePresenceDeviceData,
 } from "./facade/presence-devices";
+// Issue #610 (D-04): pairing codes leave the system after a day and with the person who consumed them
+export { purgeStalePairingCodes, deletePairingCodesOfUser } from "./facade/presence-pairing";
 
 // ── ArbZG §4 break-constant values (issue #246, E-6) ─────────────────────────────────────────
 // Declared public: a constant carries no query semantics, no soft-delete guard, no tenant scope

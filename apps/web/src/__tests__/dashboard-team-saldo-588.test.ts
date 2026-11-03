@@ -151,6 +151,7 @@ describe("Issue #588 - the dashboard card Salden is wired into the Team block", 
     expect(DASHBOARD).toContain(
       'let canOpenTeamDay = $derived(mayOpenTeamPage("/team/time-entries", $authStore.user));',
     );
-    expect(DASHBOARD).toContain('import { goto } from "$app/navigation";');
+    // Issue #609: the same import also carries `afterNavigate` and `replaceState` (reminder arrival).
+    expect(DASHBOARD).toMatch(/import \{[^}]*\bgoto\b[^}]*\} from "\$app\/navigation";/);
   });
 });

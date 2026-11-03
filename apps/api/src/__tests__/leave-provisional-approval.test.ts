@@ -58,6 +58,12 @@ function addDaysIso(iso: string, days: number): string {
  * span for the whole-two-ISO-week fixture (Case 2) and built on test-dates.ts's `dbDateStr` /
  * `utcMidnight` rather than hand-rolled ISO slicing.
  */
+// Windows already handed out in this file. A holiday skip can slide one window onto another (from
+// 03.11.2026 the two-week window at day 126 skipped Easter 2027 and landed on the Monday of the day-154
+// window, so the same employee's second request answered 409 overlap). Skipping taken windows keeps every
+// window of the file disjoint whatever today is.
+const takenWindows: Array<{ from: string; to: string }> = [];
+
 function nextHolidayFreeMonday(daysOut: number, weekSpan = 1): string {
   const anchor = utcMidnight(todayStr());
   let candidateIso = dbDateStr(new Date(anchor.getTime() + daysOut * DAY_MS));
@@ -75,7 +81,12 @@ function nextHolidayFreeMonday(daysOut: number, weekSpan = 1): string {
     for (const y of years) {
       for (const h of getHolidays(y, STATE_MAP.NIEDERSACHSEN)) holidayDates.add(h.date);
     }
-    if (!spanDates.some((iso) => holidayDates.has(iso))) return candidateIso;
+    const spanEnd = spanDates[spanDates.length - 1];
+    const overlapsTaken = takenWindows.some((w) => candidateIso <= w.to && spanEnd >= w.from);
+    if (!overlapsTaken && !spanDates.some((iso) => holidayDates.has(iso))) {
+      takenWindows.push({ from: candidateIso, to: spanEnd });
+      return candidateIso;
+    }
     candidateIso = addDaysIso(candidateIso, 7);
   }
   throw new Error(

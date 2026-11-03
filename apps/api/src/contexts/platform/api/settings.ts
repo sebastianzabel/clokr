@@ -86,16 +86,11 @@ const decimalFromApi = (schema: z.ZodType<number>) =>
 /**
  * Retired `TenantConfig` columns — they stay in the schema for image-rollback safety until a
  * follow-up release drops them; no code path may read or write them any more. Delete an entry
- * together with its column.
- *
- * - `storeHours`: Issue #563 (D-13) retires the tenant-level opening hours the same way. Opening
- *   hours live only on `Salon.openingHours`; the settings schema no longer knows the key (a stale
- *   client's value is stripped, 200, nothing written) and every read and the upsert omit the
- *   column. The column is dropped by GitHub #638 (follow-up, pattern of #470).
+ * together with its column. Currently empty: `monthlyHoursHolidayDeduction` (#470) and
+ * `storeHours` (#563, dropped by #638) are gone; the omit call sites stay so the next retirement
+ * is a one-line entry again.
  */
-const RETIRED_TENANT_CONFIG_COLUMNS: Prisma.TenantConfigOmit = {
-  storeHours: true,
-};
+const RETIRED_TENANT_CONFIG_COLUMNS: Prisma.TenantConfigOmit = {};
 
 /**
  * The working-time part of the tenant defaults (Issue #568). Shared by `tenantConfigSchema` and the
@@ -222,6 +217,16 @@ const tenantConfigSchema = z
     reminderUpcomingAbsenceDays: z.number().int().min(1).max(30).optional(),
     reminderPendingLeaveEnabled: z.boolean().optional(),
     reminderUpcomingAbsenceEnabled: z.boolean().optional(),
+    // Shift reminders (Issue #609, D-01): three occasions, all off by default (existing tenants
+    // keep their behaviour). The offset is bounded to 5-120 minutes, the evening time is HH:MM.
+    reminderShiftStartEnabled: z.boolean().optional(),
+    reminderShiftEndEnabled: z.boolean().optional(),
+    reminderDayCloseEnabled: z.boolean().optional(),
+    reminderOffsetMinutes: z.number().int().min(5).max(120).optional(),
+    reminderDayCloseTime: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .optional(),
     // DATEV Lohnartennummern (Phase 4 — DATEV-03)
     datevNormalstundenNr: z.number().int().min(1).max(9999).optional(),
     datevUrlaubNr: z.number().int().min(1).max(9999).optional(),
@@ -237,7 +242,7 @@ const tenantConfigSchema = z
     // Mandantennummer 5 digits.
     datevBeraterNr: z.number().int().min(1).max(9999999).nullable().optional(),
     datevMandantenNr: z.number().int().min(1).max(99999).nullable().optional(),
-    // Issue #563 (D-13): the retired tenant-level `storeHours` key is deliberately absent. The schema
+    // Opening hours are per salon (Issue #563); the tenant-level key no longer exists. The schema
     // is not strict, so a stale client that still sends it is stripped here (200, nothing written).
     // Phase 47.5 — STRICT / DAY_ONLY / OFF
     shiftStoreHoursMode: z.enum(["STRICT", "DAY_ONLY", "OFF"]).optional(),
@@ -762,6 +767,11 @@ export async function settingsRoutes(app: FastifyInstance) {
         reminderUpcomingAbsenceDays: 3,
         reminderPendingLeaveEnabled: true,
         reminderUpcomingAbsenceEnabled: true,
+        reminderShiftStartEnabled: false,
+        reminderShiftEndEnabled: false,
+        reminderDayCloseEnabled: false,
+        reminderOffsetMinutes: 15,
+        reminderDayCloseTime: "20:00",
         datevNormalstundenNr: 100,
         datevUrlaubNr: 300,
         datevKrankNr: 200,
@@ -905,8 +915,8 @@ export async function settingsRoutes(app: FastifyInstance) {
       if (tenantName !== undefined) tenantUpdate.name = tenantName;
 
       // The tenantConfig upsert and the optional tenant update run in ONE transaction. Since
-      // Issue #563 (D-04) a settings write never touches a Salon row: the former storeHours
-      // mirror into the sole active salon is gone.
+      // Issue #563 (D-04) a settings write never touches a Salon row: there is no
+      // mirror into the sole active salon.
       //
       // Issue #568 (D-02, D-06): the guarded bulk apply joins this very transaction — the tenant
       // lock, the recomputation and fingerprint check, every new WorkSchedule row with its CREATE
@@ -919,7 +929,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         : undefined;
       const applied: { employeeId: string }[] = [];
       let skippedModelSwitch = 0;
-      let config: Omit<TenantConfig, "storeHours">;
+      let config: TenantConfig;
       try {
         config = await app.prisma.$transaction(
           async (tx) => {

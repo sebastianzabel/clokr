@@ -10,6 +10,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import { visibleNavSections } from "$lib/nav/app-nav";
   import { activeNavHref } from "$lib/nav/active-route";
+  import { removeThisDevicePush } from "$lib/push/logout";
   import { onMount } from "svelte";
 
   interface Props {
@@ -62,6 +63,9 @@
 
   async function handleLogout() {
     try {
+      // Issue #608 (D-18): stop this device's pushes while the token is still valid, so a shared
+      // phone does not keep notifying the previous person. Bounded and never throws.
+      await removeThisDevicePush();
       const state = $authStore;
       const refreshToken = state.refreshToken;
       if (refreshToken) {

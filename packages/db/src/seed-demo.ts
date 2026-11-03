@@ -334,16 +334,14 @@ async function main() {
       phorestPrepMinutes: 10,
       phorestWrapupMinutes: 5,
       phorestAppointmentHorizonDays: 90,
-      // Issue #563: no opening hours here — `TenantConfig.storeHours` is retired and its column
-      // default fills it; the hours live only on the default salon created below.
+      // Issue #563: no opening hours on TenantConfig — the hours live only on the default salon created below.
     },
   });
   bump("tenantConfig");
 
   // ── Salon (D-18, Phase 64b, issue #64) ─────────────────────────────────────
   // Every tenant this seed bootstraps also gets its default salon, in the same
-  // step, name = tenant name, hours = DEFAULT_SALON_OPENING_HOURS (Issue #563: the retired
-  // TenantConfig.storeHours column is no longer written). No audit-log write here (research Pitfall 5)
+  // step, name = tenant name, hours = DEFAULT_SALON_OPENING_HOURS (Issue #563: opening hours live only on the salon). No audit-log write here (research Pitfall 5)
   // — a seed script has no request principal. This seed only ever runs against
   // a fresh tenant (the early-return guard above bails when TENANT_SLUG already
   // exists), so no idempotency check is needed here unlike seed.ts.

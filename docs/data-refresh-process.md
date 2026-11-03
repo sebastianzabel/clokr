@@ -86,6 +86,8 @@ Applied to every employee in the staging DB (`apps/api/scripts/pseudonymize-dump
 | User                               | passwordHash        | `"ANONYMIZED"` (no login possible — see step 8)                                                                                                                              |
 | Invitation, OtpToken, RefreshToken | (whole row)         | hard-deleted                                                                                                                                                                 |
 | OperatorAccount                    | all credentials     | email `operator-{id8}@example.invalid`, `passwordHash` `"ANONYMIZED"`, `isActive` false, TOTP secret, enrolment, replay step null, recovery-code hashes empty, lockout reset |
+| PushSubscription                   | (whole row)         | hard-deleted (Issue #608, D-22): a real device push address of prod never reaches int; people re-enable push on int themselves                                               |
+| PresencePairingCode                | (whole row)         | hard-deleted (Issue #610): one-time pairing codes (hash, device address, hostname) of prod never reach int                                                                   |
 
 What is **preserved**: `Employee.id`, `Employee.employeeNumber`, `User.isActive`, `AuditLog`, `OperatorAuditLog`, `SupportAccess`, and all time/leave/absence/schedule/overtime rows **including their free-text notes**.
 

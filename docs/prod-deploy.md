@@ -50,6 +50,12 @@ ENCRYPTION_KEY=<32+ char random>
 # are created with scripts/operator-account.ts (see docs/runbooks/operator-accounts.md).
 OPERATOR_JWT_SECRET=<32+ char random, optional>
 
+# Optional: Web-Push (Issue #608). All three or none; unset or empty keeps Web-Push off.
+# Generate the pair with scripts/generate-vapid-keys.ts (see docs/runbooks/web-push.md).
+VAPID_PUBLIC_KEY=<optional>
+VAPID_PRIVATE_KEY=<optional, secret>
+VAPID_SUBJECT=<optional, mailto:<contact> or https: URL>
+
 # Required: app URLs (must match HAProxy frontend hostname)
 CORS_ORIGIN=https://clokr.example.com
 APP_URL=https://clokr.example.com
@@ -67,6 +73,12 @@ FRITZBOX_USER=<user>
 FRITZBOX_PASS=<pass>
 CLOKR_PRESENCE_KEY=<key>
 POLL_INTERVAL_SECONDS=60
+# Optional: QR pairing of phones (Issue #610; off unless PAIRING_ENABLED=true).
+# CLOKR_APP_URL is the https web origin; PAIRING_HOST_BIND the host's LAN IPv4 (default 127.0.0.1 = unreachable from the WLAN).
+# Network recipe and source-address check: docs/runbooks/wlan-qr-kopplung.md
+PAIRING_ENABLED=false
+CLOKR_APP_URL=https://clokr.example.com
+PAIRING_HOST_BIND=<host LAN IPv4>
 ```
 
 ### GHCR access

@@ -696,10 +696,10 @@ function assertShiftNotPast(iso: string): { code: "SHIFT_PAST_IMMUTABLE"; messag
  * `TenantConfig` here (unchanged). The tenant-level opening-hours column is retired (#563) and
  * nothing mirrors into salons any more — hours are edited per salon only.
  * D-11 preserves every OLD null-return exactly: no TenantConfig row -> null (mirrors the old
- * combined `!cfg?.storeHours` branch — a tenant whose config row does not exist gets no check at
+ * combined tenant-hours branch — a tenant whose config row does not exist gets no check at
  * all, regardless of what its salon's hours say); mode OFF -> null; hours not a real array -> null
  * (the old missing-value branch, now guarding a malformed/absent `openingHours` value instead of a
- * missing `storeHours` one); weekday entry missing -> null; closed-day and STRICT comparisons
+ * missing tenant-level one); weekday entry missing -> null; closed-day and STRICT comparisons
  * unchanged.
  * Returns null if inside or no config; otherwise a 409 payload for soft-warn override.
  * Cross-midnight shifts (end < start) are NOT supported by this check — they always

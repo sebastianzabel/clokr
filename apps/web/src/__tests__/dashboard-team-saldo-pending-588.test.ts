@@ -5,7 +5,12 @@
 const apiGet = vi.fn();
 const gotoMock = vi.fn();
 
-vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => gotoMock(...args) }));
+vi.mock("$app/navigation", () => ({
+  goto: (...args: unknown[]) => gotoMock(...args),
+  // Issue #609: the dashboard also registers a reminder arrival and strips ?clock=1 (inert here).
+  afterNavigate: vi.fn(),
+  replaceState: vi.fn(),
+}));
 
 vi.mock("$stores/auth", async () => {
   const { writable } = await import("svelte/store");

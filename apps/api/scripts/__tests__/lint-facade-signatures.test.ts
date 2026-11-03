@@ -386,7 +386,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // deactivateSalon, activateSalon — both pass F1/F2/F3 directly, no new exception needed.
   //
   // 91 -> 92 in Phase 64b Plan 04 (Issue #64, Task 1): same file, 1 more exported function —
-  // syncSoleActiveSalonOpeningHours (D-16 storeHours<->salon mirror) — passes F1/F2/F3 directly
+  // syncSoleActiveSalonOpeningHours (D-16 tenant-hours<->salon mirror) — passes F1/F2/F3 directly
   // (`db: Prisma.TransactionClient` first, `tenantId` present alongside `openingHours` which does
   // not match the `*Ids?` trigger pattern), no new exception needed. The module-private
   // `normalizeOpeningHoursForCompare` helper is not exported and is not counted here.
@@ -517,7 +517,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // facade (`contexts/time-tracking/facade/time-entries.ts`, retention archive of DayBreak /
   // DayBreakAck, same shape as `archiveEntriesBefore`) — passes F1/F2/F3 directly, no new
   // exception; exceptions unchanged at 17.
-  it("the real tree has exactly 150 exported facade functions today, 19 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  it("the real tree has exactly 153 exported facade functions today, 19 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -533,6 +533,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
         "apps/api/src/contexts/scheduling/facade/availability.ts",
         "apps/api/src/contexts/scheduling/facade/couplings.ts",
         "apps/api/src/contexts/time-tracking/facade/presence-devices.ts",
+        "apps/api/src/contexts/time-tracking/facade/presence-pairing.ts",
         "apps/api/src/contexts/time-tracking/facade/time-entries.ts",
         "apps/api/src/contexts/working-time-account/facade/overtime-account.ts",
         "apps/api/src/contexts/working-time-account/facade/saldo-snapshot.ts",
@@ -589,7 +590,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // getEntriesForSupportMonth, getDayBreaksForSupportMonth (time-tracking/facade/time-entries.ts)
     // and getLeaveRequestsForSupportMonth (absence/facade/leave-requests.ts) — 145 -> 148 after the
     // merge with #538; all three pass F1/F2/F3 directly, exceptions unchanged at 17.
-    // Phase 563 (Issue #563, 2026-10-15): the storeHours mirror was removed from facade/salons.ts
+    // Phase 563 (Issue #563, 2026-10-15): the tenant-hours mirror was removed from facade/salons.ts
     // (-1, syncSoleActiveSalonOpeningHours) — 148 -> 147; exceptions unchanged at 17.
     // Issue #595 (2026-10-16): -1, the dead W4 closing-balance reader of
     // working-time-account/facade/saldo-snapshot.ts (no caller, exact periodStart match) —
@@ -600,7 +601,11 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // Issue #388: + deletePresenceDevicesOfEmployee (tenant-scoped, no exception) — 147 -> 148.
     // Issue #718: + clearOvertimePlanNotesForEmployee, clearSchedulingNotesForEmployee (DSGVO
     // anonymisation, no tenantId by design) — 148 -> 150; two new named F3 exceptions, 17 -> 19.
-    expect(functions).toHaveLength(150);
+    // Issue #610 (plan 02): new file contexts/time-tracking/facade/presence-pairing.ts adds
+    // purgeStalePairingCodes, deletePairingCodesOfUser and the module-private helper
+    // purgeTenantPairingCodes (the analyzer counts every function of a facade file) - 150 -> 153;
+    // all three pass F1/F2/F3 directly (db first, tenant-scoped), exceptions unchanged at 19.
+    expect(functions).toHaveLength(153);
 
     const rawExceptions = JSON.parse(
       readFileSync(

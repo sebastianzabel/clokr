@@ -16,6 +16,8 @@
  *   - User.email                    → int-{employeeNumber-or-id8}@example.invalid
  *   - User.passwordHash             → "ANONYMIZED" (no real login possible)
  *   - Auth tokens (Invitation/OtpToken/RefreshToken) → hard-deleted (not needed on int)
+ *   - PushSubscription (Issue #608, D-22): EVERY row → hard-deleted (a real device push address of prod)
+ *   - PresencePairingCode (Issue #610, D-04): EVERY row → hard-deleted (a code names the MAC address of a real device of prod)
  *   - OperatorAccount (Phase 88, D-11): EVERY operator account is neutralised — email →
  *     operator-{id8}@example.invalid, passwordHash → "ANONYMIZED", isActive → false, TOTP secret /
  *     enrolment / replay step → null, recovery-code hashes → empty, lockout state reset. Prod operator
@@ -234,6 +236,15 @@ async function main(prisma: PrismaClient) {
 
   const { processed, preserved } = await pseudonymizeEmployees(prisma, employees);
 
+  // Real device push addresses of prod must never reach int (Issue #608, D-22). One statement per
+  // run, not per employee: every row is a prod device, whoever owns it.
+  const removedPushDevices = await prisma.pushSubscription.deleteMany({});
+  console.log(`[pseudonymize] removed ${removedPushDevices.count} push device(s)`);
+
+  // WLAN pairing codes name the MAC of a real prod device (Issue #610, D-04). One statement per run.
+  const removedPairingCodes = await prisma.presencePairingCode.deleteMany({});
+  console.log(`[pseudonymize] removed ${removedPairingCodes.count} pairing code(s)`);
+
   // Operator accounts (Phase 88, D-11): neutralise every one. Per-row because the pseudonymous
   // email derives from the id; no delete, audit rows reference the accounts with onDelete Restrict.
   const operators = await prisma.operatorAccount.findMany({
@@ -278,6 +289,9 @@ async function main(prisma: PrismaClient) {
     where: { NOT: { passwordHash: "ANONYMIZED" } },
   });
 
+  const residualPushDevices = await prisma.pushSubscription.count();
+  const residualPairingCodes = await prisma.presencePairingCode.count();
+
   const durationMs = Date.now() - startedAt;
   await prisma.auditLog.create({
     data: {
@@ -297,6 +311,8 @@ async function main(prisma: PrismaClient) {
           residualNfc: withNfc,
           residualOperatorEmails: realOperatorEmails,
           residualOperatorPasswords: liveOperatorPasswords,
+          residualPushDevices,
+          residualPairingCodes,
         },
       } as unknown as object,
     },
@@ -324,6 +340,8 @@ async function main(prisma: PrismaClient) {
     withNfc > 0 ||
     realOperatorEmails > 0 ||
     liveOperatorPasswords > 0 ||
+    residualPushDevices > 0 ||
+    residualPairingCodes > 0 ||
     anonymizedAfter !== anonymizedBefore ||
     preserved !== anonymizedBefore
   ) {

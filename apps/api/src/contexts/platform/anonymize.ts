@@ -39,6 +39,8 @@
  *   - Section9Credit.documentPath → null AND Section9Credit.reason → null (Phase 104,
  *     D-26 — Art. 9 DSGVO health datum + free text; rows preserved, see below)
  *   - Invitation, OtpToken, RefreshToken: hard-deleted (not retention-relevant)
+ *   - PresencePairingCode (Issue #610, D-04): the codes the user consumed are hard-deleted (a code
+ *     names a device address; not retention-relevant), through the time-tracking facade
  *   - AuditLog.userId          → null (for rows owned by that user)
  *   - AuditLog.oldValue/newValue → redacted for Employee + User audit rows
  *     (prevents name/email from surviving in historical JSON — COMP-V1814-01)
@@ -90,7 +92,11 @@
  * are expected to validate that before opening the transaction.
  */
 import type { Prisma } from "@clokr/db";
-import { clearEntryNotesForEmployee, deletePresenceDevicesOfEmployee } from "../time-tracking"; // Phase 100B Plan 08 — T10
+import {
+  clearEntryNotesForEmployee,
+  deletePairingCodesOfUser, // Issue #610
+  deletePresenceDevicesOfEmployee,
+} from "../time-tracking"; // Phase 100B Plan 08 — T10
 import { anonymizeSection9CreditsForEmployee } from "../absence"; // Phase 100B Plan 11 — T-100B-48
 import { anonymizeAbsencesForEmployee } from "../absence"; // Phase 100B Plan 12 — F3
 import { anonymizeLeaveRequestsForEmployee } from "../absence"; // Phase 100B Plan 13 — F3
@@ -248,16 +254,21 @@ export async function anonymizeEmployeeData(
     },
   });
 
-  // Benachrichtigungen des Nutzers anonymisieren (können Namen/Informationen enthalten)
+  // Anonymize the user's notifications (they can contain names and other information)
   await tx.notification.updateMany({
     where: { userId },
     data: { title: "ANONYMIZED", message: "ANONYMIZED" },
   });
 
-  // Auth-Tokens löschen (nicht aufbewahrungspflichtig)
+  // Delete auth tokens (not retention-relevant). The person's push devices (Issue #608, D-04) and the
+  // WLAN pairing codes they consumed (Issue #610, D-04; a code names a device address) go with them:
+  // neither is a retention record, so no per-row audit is written here; the ANONYMIZE audit of the
+  // caller stays the one trace. Unconsumed codes belong to nobody and expire on their own.
   await tx.invitation.deleteMany({ where: { employeeId } });
   await tx.otpToken.deleteMany({ where: { userId } });
   await tx.refreshToken.deleteMany({ where: { userId } });
+  await tx.pushSubscription.deleteMany({ where: { userId } });
+  await deletePairingCodesOfUser(tx, userId, employee.tenantId);
 
   return {
     removedRoleAssignments,

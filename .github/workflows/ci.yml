@@ -445,6 +445,13 @@ jobs:
           pnpm --filter @clokr/sim typecheck
           pnpm --filter @clokr/sim test
 
+      - name: Type check and test the FRITZ!Box adapter (Issue #610)
+        # The adapter never ran in CI before this step. Pure unit tests with a stubbed TR-064
+        # client and API; its own vitest config is what makes the tests findable at all.
+        run: |
+          pnpm --filter @clokr/fritzbox-adapter exec tsc --noEmit
+          pnpm --filter @clokr/fritzbox-adapter test
+
       - name: Run API tests with coverage
         id: tests
         if: steps.changes.outputs.api == 'true'
