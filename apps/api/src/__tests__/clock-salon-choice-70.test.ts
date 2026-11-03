@@ -95,7 +95,6 @@ describe("Issue #70 — GET /time-entries/clock-salon on a booked day", () => {
       data: {
         email: `csc70-${label}-${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

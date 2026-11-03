@@ -68,7 +68,6 @@ describe("Issue #682 — live saldo starts with the OpeningBalance when no month
       data: {
         email: `c682-${key}-${unique}@example.invalid`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

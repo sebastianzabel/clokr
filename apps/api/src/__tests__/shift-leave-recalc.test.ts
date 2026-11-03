@@ -181,7 +181,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     async function makeAdmin(label: string) {
       const email = `slr-${label}-${suffix}@test.de`;
       const user = await prisma.user.create({
-        data: { email, passwordHash, role: "ADMIN", isActive: true },
+        data: { email, passwordHash, isActive: true },
       });
       await prisma.employee.create({
         data: {
@@ -209,7 +209,7 @@ describe("Shift-leave-recalc resolver — D-14..D-21 (Phase 107 Plan 05)", () =>
     ) {
       const email = `slr-${label}-${suffix}@test.de`;
       const user = await prisma.user.create({
-        data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+        data: { email, passwordHash, isActive: true },
       });
       const employee = await prisma.employee.create({
         data: {

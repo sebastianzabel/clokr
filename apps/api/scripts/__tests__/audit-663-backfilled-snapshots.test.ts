@@ -100,7 +100,6 @@ describe("main (read-only)", () => {
       data: {
         email: `a663-${key}-${Date.now().toString(36)}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

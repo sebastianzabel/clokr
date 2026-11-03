@@ -81,7 +81,6 @@ describe("Monatsabschluss gap definition by work location (Phase 71b Plan 05, is
         data: {
           email: `hwlcm-${label}-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -337,7 +336,6 @@ describe("Monatsabschluss close paths by work location (Phase 71b Plan 05 Task 3
         data: {
           email: `hwlcm3-${label}-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

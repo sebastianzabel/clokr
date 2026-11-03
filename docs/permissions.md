@@ -222,20 +222,18 @@ reproduziert es exakt; `src/contexts/platform/__tests__/system-roles.test.ts` pr
 dieses Dokument, die Neutralitätsmatrix (`src/__tests__/permission-neutrality-matrix.test.ts`) jede
 Route. Jeder Nutzer mit Mitarbeiter hat seit der Migration von #75 eine Zuweisung mit Scope Mandant
 auf die Systemrolle seiner Alt-Rolle; ein Nutzer ganz ohne gespeicherte Zuweisung hält seit #539
-(Release A) nichts: der Altrollen-Rückfall, der sie implizit aus `User.role` ableitete, ist entfernt
+(Release A) nichts: der Altrollen-Rückfall, der sie implizit aus der Rollenspalte des Nutzers ableitete, ist entfernt
 und jede Auflösungsstelle (Berechtigungen, Reichweite, Salonkontext, Empfängersuche, Rollennamen)
 liest nur gespeicherte Zuweisungen (fail-closed; `GET /role-assignments/role-names` liefert für einen
 Nutzer ohne Zuweisung eine leere Liste). Ein Nutzer ohne Mitarbeiterdatensatz hat keinen Mandanten und hält seit #551 gar nichts: `requireAuth` weist ein Mandanten-Token ohne Mandanten (leer, nur Leerzeichen, fehlend) mit 403 `TENANT_REQUIRED` ab, bevor irgendeine Berechtigung geprüft wird. Ein aktiver Nutzer, dessen
 wirksame Permission-Menge leer ist, wird beim Anmelden, bei `verify-otp` und beim Token-Refresh mit 403
-`NO_ROLE_ASSIGNED` abgewiesen (seit #539; beim Login mit Audit `LOGIN_REFUSED`). `User.role` ist seit
-#539 (Release A) nur noch eine Rückfallsicherung für ein Zurückrollen auf das vorige Image: Die Spalte
-wird an genau einer Stelle aus den Zuweisungen abgeleitet (`contexts/platform/compat-role.ts`) und bei
-jeder Änderung über Mitarbeiterformular, Import und `/role-assignments` zurückgeschrieben (die
-Anonymisierung setzt sie auf EMPLOYEE, #357), aber kein Token trägt mehr einen `role`-Claim, und keine
-Zugriffsentscheidung liest die Spalte. Die einzigen Leser sind der Vergleich des Zurückschreibens und
-das Übernahme-Skript (`legacy-role-reads-539.test.ts`); der Rollenfilter des Firmen-PDF ist seit #617
-weg (`parseCompatRoleFilter` und `compatRoleUserWhere` bleiben ohne Aufrufer bis Release B bestehen);
-Spalte und Enum entfallen mit Release B.
+`NO_ROLE_ASSIGNED` abgewiesen (seit #539; beim Login mit Audit `LOGIN_REFUSED`). Die Spalte `User.role` und das Enum `Role`
+sind seit #641 (Release B) entfernt: Die Rolle lebt ausschließlich in gespeicherten Zuweisungen, nichts wird zurückgeschrieben,
+kein Token trägt einen `role`-Claim, und keine Zugriffsentscheidung liest einen Rollenwert. Die „Wunschrolle“ des
+Mitarbeiterformulars, von `POST /employees` und des CSV-Imports (Typ `SystemRoleName` in
+`contexts/platform/system-role-assignment.ts`) wird nur zu einer gespeicherten Mandanten-Zuweisung; der Schlüssel `user.role`
+der Mitarbeiter-Antworten ist ein ABGELEITETER Wert (`deriveFormRole()`, ohne Zuweisung `null`). Der Wächter
+`legacy-role-reads-539.test.ts` hält seine Leser-Erlaubnisliste leer.
 
 **Aussperrschutz (umgesetzt mit #74):** Halter einer Permission ist ein aktiver Nutzer mit
 mindestens einer Zuweisung mit Scope Mandant, deren Rolle die Permission gewährt. Geschützt sind
@@ -529,18 +527,19 @@ Paars `time-entry:update:EIGENE` (eigene Zeiten ändern) und `retro-request:appr
 Permission). Admin und Manager halten heute ebenfalls beide Hälften — das prüft #78, nicht diese
 Phase.
 
-**Kompatibilitätsrolle (D-10).** Eine Inhaber- oder Personalabteilung-Zuweisung mit Scope Mandant
-ergibt `User.role = MANAGER` (nur die Admin-Id ergibt `ADMIN`); eine Salonmanager- oder
-Ausbilder-Zuweisung mit Scope Salons oder Personen trägt nichts zur Kompatibilitätsrolle bei
-(`compat-role.ts`, unverändert).
+**Abgeleitete Formularrolle (D-10, seit #641 ohne Spalte).** Eine Inhaber- oder Personalabteilung-Zuweisung mit Scope Mandant
+ergibt die Formularrolle `MANAGER` (nur die Admin-Id ergibt `ADMIN`); eine Salonmanager- oder
+Ausbilder-Zuweisung mit Scope Salons oder Personen trägt nichts zur Formularrolle bei
+(`deriveFormRole()` in `system-role-assignment.ts`, Ableitung unverändert; früher „Kompatibilitätsrolle“, die auch in eine
+Spalte zurückgeschrieben wurde).
 
 **Das Mitarbeiterformular (P-01).** Die Rollen-Brücke im Mitarbeiterformular
 (`PATCH /employees/:id` mit `role`) ersetzt seit Phase 76b nur noch eine gespeicherte Zuweisung
-auf Admin, Manager oder Mitarbeiter (`isLegacySystemRoleId()`) — eine Template-Zuweisung
+auf Admin, Manager oder Mitarbeiter (`isFormSystemRoleId()`) — eine Template-Zuweisung
 (Inhaber, Salonmanager, Personalabteilung, Ausbilder) übersteht einen Formular-Speichervorgang
 unverändert und zählt weiterhin als Sperre gegen eine Herabstufung auf Mitarbeiter (409). Eine
 angeforderte Rolle, die der aus den gespeicherten Zuweisungen des Ziels abgeleiteten Rolle gleicht
-(der Rolle, die das Formular anzeigt, seit #539 nicht mehr die `User.role`-Spalte; ohne Zuweisung
+(der Rolle, die das Formular anzeigt, seit #539 nicht mehr aus der Rollenspalte und seit #641 gibt es sie nicht mehr; ohne Zuweisung
 ist sie leer und das Formular weist die angeforderte Rolle zu), ist außerdem seit
 Plan 76b-08 KEINE Rollenänderung (D-16): Ein unverändertes Speichern der Stammdaten löst die
 Brücke gar nicht erst aus, sodass ein Personalabteilung- oder Kundenrollen-Halter keine
@@ -549,7 +548,7 @@ kein unnötiges 409 mehr erhält.
 
 ## Effektive Permissions im Web (Phase 378, Issue #378; Phase 408, Issue #408)
 
-Die Weboberfläche kennt die effektiven Permissions eines Nutzers, nicht nur die Kompatibilitätsrolle:
+Die Weboberfläche kennt die effektiven Permissions eines Nutzers, nicht nur die abgeleitete Formularrolle:
 `effectivePermissionKeysForUser(prisma, userId, tenantId)`
 (`contexts/platform/request-permissions.ts`) liefert die flache, sortierte Liste aller
 Permission-Schlüssel, die ein Nutzer hält — dieselbe Auflösung wie `hasPermission()`, nur für
@@ -840,7 +839,7 @@ Permissions“. Phase 75b (#75, D-16) stellt jede der 17 Stellen auf eine Permis
 `userIdsHoldingPermission(db, tenantId, permission)` (`contexts/platform/facade/role-assignments.ts`)
 liefert die Nutzer-Ids, die eine ZUGEWIESEN-Permission über eine wohlgeformte TENANT-Zuweisung
 halten — ausschließlich über gespeicherte Zuweisungen (seit #539 entfällt der frühere implizite
-Rückfall auf die Systemrolle von `User.role`; ein Nutzer ohne gespeicherte Zuweisung ist nie Empfänger). Jede Stelle behält alle ihre übrigen
+Rückfall auf die Systemrolle der Rollenspalte; ein Nutzer ohne gespeicherte Zuweisung ist nie Empfänger). Jede Stelle behält alle ihre übrigen
 Filter (`isActive`, Mandant, `exitDate`, Akteur-/Ziel-Ausschluss, Auswahlform) und ersetzt nur die
 Rollenbedingung durch die Trefferliste dieser Fassade. Die Permission je Stelle ist so gewählt,
 dass die heutige Empfänger-Menge unverändert bleibt (D-16): A,M-Stellen fragen eine Permission, die
@@ -910,18 +909,17 @@ Für `SUPPORT_ACCESS_STARTED` (Issue #93, beide neuen Stellen: keine Vorgänger-
 Die Suche nach Handler-Prüfungen ist bewusst breit: Sie findet jede Zeile, die `hasPermission(` oder
 `permissionReach(` aufruft, `user.role` liest oder `role` vergleicht. Die folgenden Treffer treffen
 keine Zugriffsentscheidung — die Implementierung der Prüfungen selbst, die Ableitung der
-Kompatibilitätsrolle, Log-, Audit- und Berichtsdaten. Sie stehen trotzdem hier, damit jeder NEUE
+Formularrolle, Log-, Audit- und Berichtsdaten. Sie stehen trotzdem hier, damit jeder NEUE
 Treffer derselben Suche eingeordnet werden muss — als Handler-Prüfung oder hier, mit Begründung.
 
-| Stelle                                         | Grund                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `contexts/platform/compat-role.ts:96`          | `requestedRoleNeedsRoleAssignmentManage` (Issue #354): compares a REQUEST's `role` field — what `POST /employees`/`POST /imports/employees` is asked to assign to a new user — against the schema default, never the caller's own role; the actual access decision (whether the caller may do that) is the `hasPermission` call at each call site. Lives here because the gate (`lint-role-checks.ts`) flags any `role`-named property compared to a role literal regardless of which role it is; this is the sanctioned way to move it behind a `compat-role.ts` helper instead of a permission (there is nothing to ask a permission FOR — the decision is what the value IS). |
-| `contexts/platform/compat-role.ts:118`         | `isDemotionToEmployee` (Issue #357 sub-fix B): compares the employee form's REQUESTED `role` field to `"EMPLOYEE"` to decide whether `applyRoleFromEmployeeForm` (`employees.ts`) must run the demotion guard (`assignmentsBlockingDemotionToEmployee` — reject with 409 when another assignment would still grant more than Mitarbeiter). Same shape and reason as `requestedRoleNeedsRoleAssignmentManage` directly above: a request-payload comparison, not an access decision about the caller, moved behind a `compat-role.ts` helper because the gate flags the bare comparison regardless.                                                                                |
-| `contexts/platform/compat-role.ts:210`         | Schreibhälfte der Kompatibilitätsrolle (Phase 75b, D-14; seit #539 D-06): `legacyRoleColumn` liest die Spalte `User.role` nur noch, um sie vor dem Zurückschreiben des aus den Zuweisungen abgeleiteten Werts zu vergleichen (`syncCompatRoleColumn`). Weder der Rückfall noch das Mitarbeiterformular lesen die Spalte noch: die Rolle des Formulars kommt aus den gespeicherten Zuweisungen. Keine Zugriffsentscheidung.                                                                                                                                                                                                                                                       |
-| `contexts/platform/request-permissions.ts:200` | Implementierung der Permission-Prüfung: `permissionReach` fragt die ZUGEWIESEN-Permission über `hasPermission` ab; jede Aufrufstelle steht einzeln in ihrem Abschnitt.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `contexts/platform/request-permissions.ts:201` | Implementierung der Permission-Prüfung: `permissionReach` fragt die EIGENE-Permission über `hasPermission` ab; jede Aufrufstelle steht einzeln in ihrem Abschnitt.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `contexts/platform/request-permissions.ts:216` | Implementierung der Permission-Prüfung: der Guard `requirePermission` selbst; jede Aufrufstelle steht einzeln im Abschnitt zu den Guards.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `contexts/platform/request-permissions.ts:236` | Implementierung der Permission-Prüfung: der Guard `requireAnyPermission` selbst; jede Aufrufstelle steht einzeln im Abschnitt zu den Guards.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Stelle                                            | Grund                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `contexts/platform/system-role-assignment.ts:135` | `requestedRoleNeedsRoleAssignmentManage` (Issue #354): compares a REQUEST's `role` field — what `POST /employees`/`POST /imports/employees` is asked to assign to a new user — against the schema default, never the caller's own role; the actual access decision (whether the caller may do that) is the `hasPermission` call at each call site. Lives here because the gate (`lint-role-checks.ts`) flags any `.role` property compared to a role literal regardless of which role it is; this is the sanctioned way to move it behind a helper with a `SystemRoleName` parameter instead of a permission (there is nothing to ask a permission FOR — the decision is what the value IS). |
+| `contexts/platform/system-role-assignment.ts:147` | `isDemotionToEmployee` (Issue #357 sub-fix B): compares the employee form's REQUESTED `role` field to `"EMPLOYEE"` to decide whether `applyRoleFromEmployeeForm` (`employees.ts`) must run the demotion guard (`assignmentsBlockingDemotionToEmployee` — reject with 409 when another assignment would still grant more than Mitarbeiter). Same shape and reason as `requestedRoleNeedsRoleAssignmentManage` directly above: a request-payload comparison, not an access decision about the caller, moved behind a `SystemRoleName` helper of `system-role-assignment.ts` because the gate flags the bare property comparison regardless.                                                    |
+| `contexts/platform/request-permissions.ts:200`    | Implementierung der Permission-Prüfung: `permissionReach` fragt die ZUGEWIESEN-Permission über `hasPermission` ab; jede Aufrufstelle steht einzeln in ihrem Abschnitt.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `contexts/platform/request-permissions.ts:201`    | Implementierung der Permission-Prüfung: `permissionReach` fragt die EIGENE-Permission über `hasPermission` ab; jede Aufrufstelle steht einzeln in ihrem Abschnitt.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `contexts/platform/request-permissions.ts:216`    | Implementierung der Permission-Prüfung: der Guard `requirePermission` selbst; jede Aufrufstelle steht einzeln im Abschnitt zu den Guards.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `contexts/platform/request-permissions.ts:236`    | Implementierung der Permission-Prüfung: der Guard `requireAnyPermission` selbst; jede Aufrufstelle steht einzeln im Abschnitt zu den Guards.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ## Keine Permissions
 
@@ -952,7 +950,7 @@ Genehmigungs-Permission hat, bleibt an sie gebunden:
   #75 löst ein API-Schlüssel auf die Permissions einer Systemrolle auf (D-11, D-30): mit dem Scope
   `admin` auf die der Systemrolle Admin, jeder andere auf die von Manager — jeweils mandantenweit und
   ohne eigenen Mitarbeiter, sodass `EIGENE` nie greift (`contexts/platform/request-permissions.ts:115`).
-  `middleware/auth.ts:52-58` setzt dazu nur noch die Kompatibilitätsrolle für Log und Audit. Die
+  `middleware/auth.ts` setzt dazu keine Rolle (seit #539). Die
   übrigen Scopes haben weiterhin keine Wirkung; ein Permission-System für API-Schlüssel ist nicht
   Teil von #75.
 - **Anmeldung der NFC-Terminals** mit einem eigenen Terminal-Schlüssel
@@ -1105,11 +1103,12 @@ Dieses Dokument wird von drei Tests und einem Lint-Gate gegen den Code gehalten:
   „Vier-Augen-Kombination bei der Rollenzusammenstellung“ gegen `FOUR_EYES_COMBINATION`,
   `FOUR_EYES_CONFIRMATION_REQUIRED` und die Namen der Ausnahmeliste `FOUR_EYES_EXCEPTIONS`.
 - `lint:role-checks` (`apps/api/scripts/lint-role-checks.ts`, in CI und im Pre-Commit-Hook) schlägt
-  fehl, wenn der Rollen-Guard oder ein Rollenvergleich außerhalb von
-  `contexts/platform/compat-role.ts` zurückkommt (die einzige Ausnahme, weil das Modul die Spalte
-  `User.role` bis Release B noch schreibt, #539). Wer die Spalte außerhalb ihrer drei dokumentierten
-  Leser liest (`select: { role: true }`, `role` in einem `where`, `req.user.role`, ein `role`-Claim im
-  `JwtPayload`), fällt in `legacy-role-reads-539.test.ts` durch.
+  fehl, wenn der Rollen-Guard oder ein Rollenvergleich in irgendeiner Nicht-Test-Datei unter
+  `apps/api/src` zurückkommt (seit #641 gibt es keine Ausnahme-Datei und keinen Altspalten-Leser mehr, aber eine
+  benannte Ausnahme für die Zuweisungslogik: nur `contexts/platform/system-role-assignment.ts` darf Bezeichner vom
+  Typ `SystemRoleName` / `LegacySystemRoleName` vergleichen, in jeder anderen Datei ist das ein Fund; die Vergleiche
+  stehen unter „Nicht gezählte Treffer“). Zusätzlich fällt `legacy-role-reads-539.test.ts` durch bei `select: { role: true }`, `role` unter einem `where`,
+  `req.user.role`, einem `role`-Claim im `JwtPayload` und den Namen der gelöschten Funktionen; seine Leser-Erlaubnisliste ist leer.
 
 Ausführen:
 
@@ -1153,7 +1152,8 @@ Was eine rote Meldung bedeutet und was zu tun ist:
 - **`lint:role-checks` meldet eine Stelle** — dort steht eine Rollenprüfung. Auf eine Permission
   umstellen (`requirePermission` / `hasPermission` / `permissionReach` / `userIdsHoldingPermission`)
   und hier eintragen; ein Rollen-Literal, das nichts entscheidet (etwa ein Berichtsfilter), hinter
-  einen Helfer in `compat-role.ts` legen. Eine Ausnahmeliste gibt es nicht.
+  einen Helfer mit `SystemRoleName`-Parameter in `system-role-assignment.ts` legen und unter „Nicht
+  gezählte Treffer“ eintragen. Eine Ausnahmeliste gibt es nicht.
 - **„unparseable rows“** — eine Tabellenzeile hat das falsche Format (fehlende Backticks, falsche
   Spaltenzahl, zu kurzer oder leerer Text). Zeile reparieren, nie den Parser lockern.
 

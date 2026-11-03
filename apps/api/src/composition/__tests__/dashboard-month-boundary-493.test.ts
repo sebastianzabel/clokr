@@ -64,7 +64,7 @@ describe("Issue #493 — dashboard week/month boundaries", () => {
     const passwordHash = await bcrypt.hash("test1234", 10);
     const email = `monthly-dbm493-${Date.now().toString(36)}@test.de`;
     const user = await prisma.user.create({
-      data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email, passwordHash, isActive: true },
     });
     const employee = await prisma.employee.create({
       data: {

@@ -53,7 +53,6 @@ describe("Issue #614 D-03 — the employee number survives the anonymization", (
       data: {
         email,
         passwordHash: await bcrypt.hash("test1234", 4),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

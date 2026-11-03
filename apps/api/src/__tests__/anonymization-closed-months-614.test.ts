@@ -125,7 +125,6 @@ describe("Issue #614 — closed months are sum-identical through the anonymizati
       data: {
         email,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

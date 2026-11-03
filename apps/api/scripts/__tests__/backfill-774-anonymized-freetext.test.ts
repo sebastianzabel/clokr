@@ -24,7 +24,6 @@ describe("backfill 774: anonymized free texts (Bestand)", () => {
       data: {
         email: `${label}-${suffix}@test.local`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

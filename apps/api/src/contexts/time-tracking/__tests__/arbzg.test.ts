@@ -205,7 +205,6 @@ describe("ArbZG Compliance Checks", () => {
         data: {
           email: `avg-${s}@test.de`,
           passwordHash: "PLACEHOLDER",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -917,7 +916,6 @@ describe("ArbZG Compliance Checks", () => {
         data: {
           email: `monthly-arbzg-${s}@test.de`,
           passwordHash: "PLACEHOLDER",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

@@ -330,7 +330,7 @@ describe("Reports API", () => {
       const passwordHash = await bcrypt.hash("test1234", 10);
       const managerEmail = `mgr-perm-${Date.now()}@test.de`;
       const mgrUser = await app.prisma.user.create({
-        data: { email: managerEmail, passwordHash, role: "MANAGER", isActive: true },
+        data: { email: managerEmail, passwordHash, isActive: true },
       });
       await app.prisma.employee.create({
         data: {
@@ -470,7 +470,6 @@ describe("Reports API", () => {
               data: {
                 email: `d13-nullcode-${Date.now()}@test.de`,
                 passwordHash: "DUMMY",
-                role: "EMPLOYEE",
                 isActive: true,
               },
             })
@@ -535,7 +534,6 @@ describe("Reports API", () => {
               data: {
                 email: `d13-s9-${Date.now()}@test.de`,
                 passwordHash: "DUMMY",
-                role: "EMPLOYEE",
                 isActive: true,
               },
             })
@@ -733,7 +731,6 @@ describe("Reports API", () => {
               data: {
                 email: `d210-e2-${Date.now()}@test.de`,
                 passwordHash: "DUMMY",
-                role: "EMPLOYEE",
                 isActive: true,
               },
             })
@@ -777,7 +774,6 @@ describe("Reports API", () => {
               data: {
                 email: `d210-e3-${Date.now()}@test.de`,
                 passwordHash: "DUMMY",
-                role: "EMPLOYEE",
                 isActive: true,
               },
             })
@@ -852,7 +848,6 @@ describe("Reports API", () => {
               data: {
                 email: `d210-e4-${Date.now()}@test.de`,
                 passwordHash: "DUMMY",
-                role: "EMPLOYEE",
                 isActive: true,
               },
             })
@@ -1241,7 +1236,6 @@ describe("Reports API", () => {
         data: {
           email: `${suffix}@test.de`,
           passwordHash: pwHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -1328,7 +1322,6 @@ describe("Reports API", () => {
         data: {
           email: `mgr-att-${Date.now()}@test.de`,
           passwordHash: mgrPwHash,
-          role: "MANAGER",
           isActive: true,
         },
       });
@@ -1397,7 +1390,6 @@ describe("Reports API", () => {
         data: {
           email: `att-ci-${Date.now()}@test.de`,
           passwordHash: mgrPwHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -1438,7 +1430,6 @@ describe("Reports API", () => {
         data: {
           email: `att-pr-${Date.now()}@test.de`,
           passwordHash: mgrPwHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -1477,7 +1468,6 @@ describe("Reports API", () => {
         data: {
           email: `att-lv-${Date.now()}@test.de`,
           passwordHash: mgrPwHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -1515,7 +1505,6 @@ describe("Reports API", () => {
         data: {
           email: `att-sk-${Date.now()}@test.de`,
           passwordHash: mgrPwHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -1553,7 +1542,6 @@ describe("Reports API", () => {
         data: {
           email: `att-ms-${Date.now()}@test.de`,
           passwordHash: mgrPwHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -1581,7 +1569,6 @@ describe("Reports API", () => {
         data: {
           email: `att-nw-${Date.now()}@test.de`,
           passwordHash: mgrPwHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -2518,7 +2505,6 @@ describe("Reports API", () => {
         data: {
           email: `me416-active-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@test.de`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -2543,7 +2529,6 @@ describe("Reports API", () => {
         data: {
           email: `me416-inactive-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@test.de`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -2650,7 +2635,6 @@ describe("Reports API", () => {
         data: {
           email: `mgr-ot-${Date.now()}@test.de`,
           passwordHash: mgrPwHash,
-          role: "MANAGER",
           isActive: true,
         },
       });
@@ -2710,7 +2694,6 @@ describe("Reports API", () => {
         data: {
           email: `crit-ot-${Date.now()}@test.de`,
           passwordHash: mgrPwHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

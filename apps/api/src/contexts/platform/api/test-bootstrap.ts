@@ -45,7 +45,7 @@ import { listSalons } from "../facade/salons.js";
 import { readTenantTimezone } from "../facade/salon-assignments.js";
 import { dayToDate, tenantLocalDay } from "../salon-assignment-rules.js";
 import { provisionTenant } from "../tenant-provisioning.js";
-import { replaceSystemRoleAssignment } from "../compat-role.js";
+import { replaceSystemRoleAssignment } from "../system-role-assignment.js";
 import { TENANT_MODULES, changeTenantPackages } from "../tenant-packages.js";
 
 declare module "fastify" {
@@ -148,7 +148,6 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         data: {
           email: `admin@${tenantId}.test`,
           passwordHash,
-          role: "ADMIN",
           isActive: true,
         },
       });
@@ -413,7 +412,6 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         data: {
           email: `terminal-${empSuffix}@${body.tenantId}.test`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

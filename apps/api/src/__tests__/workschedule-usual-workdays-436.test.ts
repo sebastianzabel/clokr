@@ -64,7 +64,6 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
       data: {
         email: `w436w-shift1-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -99,7 +98,6 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
       data: {
         email: `w436w-switch-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

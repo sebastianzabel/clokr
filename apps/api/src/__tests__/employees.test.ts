@@ -937,7 +937,6 @@ describe("Employees API", () => {
         data: {
           email: `deleted-${uid}@anonymized.local`,
           passwordHash: "ANONYMIZED",
-          role: "EMPLOYEE",
           isActive: false,
         },
       });
@@ -1039,7 +1038,6 @@ describe("Employees API", () => {
         data: {
           email: `dsgvo-${duid}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -1136,7 +1134,6 @@ describe("Employees API", () => {
         data: {
           email: `ct-test-${uid}@test.local`,
           passwordHash: "test",
-          role: "EMPLOYEE",
         },
       });
       const emp = await app.prisma.employee.create({
@@ -1348,7 +1345,6 @@ describe("Employees API", () => {
         data: {
           email: `deleted-${uid}@anonymized.local`,
           passwordHash: "ANONYMIZED",
-          role: "EMPLOYEE",
           isActive: false,
         },
       });
@@ -1458,7 +1454,6 @@ describe("Employees API", () => {
         data: {
           email: `nonanon-${uid}@test.local`,
           passwordHash: "test",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -1513,7 +1508,6 @@ describe("Employees API", () => {
         data: {
           email: `deleted-${uid}@anonymized.local`,
           passwordHash: "ANONYMIZED",
-          role: "EMPLOYEE",
           isActive: false,
         },
       });
@@ -1544,7 +1538,6 @@ describe("Employees API", () => {
         data: {
           email: `admin2-${uid}@test.de`,
           passwordHash: pwHash,
-          role: "ADMIN",
           isActive: true,
         },
       });

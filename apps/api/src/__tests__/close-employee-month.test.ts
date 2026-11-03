@@ -184,7 +184,6 @@ describe("closeEmployeeMonth — case 1: FIXED gap month (CLOSE-05)", () => {
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -220,7 +219,6 @@ describe("closeEmployeeMonth — case 1: FIXED gap month (CLOSE-05)", () => {
       data: {
         email: `emp-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -362,7 +360,6 @@ describe("closeEmployeeMonth — case 2: FIXED four-path parity (CLOSE-05)", () 
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -398,7 +395,6 @@ describe("closeEmployeeMonth — case 2: FIXED four-path parity (CLOSE-05)", () 
       data: {
         email: `emp-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -554,7 +550,6 @@ describe("closeEmployeeMonth — case 3: SHIFT_BASED Model B + §615 (CLOSE-05)"
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -590,7 +585,6 @@ describe("closeEmployeeMonth — case 3: SHIFT_BASED Model B + §615 (CLOSE-05)"
       data: {
         email: `emp-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -756,7 +750,6 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
       data: {
         email: `emp-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -887,7 +880,6 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
       data: {
         email: `emp-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -1227,7 +1219,6 @@ describe("closeEmployeeMonth — case 9: SHIFT_BASED + VOCATIONAL_SCHOOL parity 
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -1263,7 +1254,6 @@ describe("closeEmployeeMonth — case 9: SHIFT_BASED + VOCATIONAL_SCHOOL parity 
       data: {
         email: `emp-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -1467,7 +1457,6 @@ describe("closeEmployeeMonth — case 8: four-path parity SHIFT_BASED + FIXED (C
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -1508,7 +1497,6 @@ describe("closeEmployeeMonth — case 8: four-path parity SHIFT_BASED + FIXED (C
         data: {
           email: `emp-${type}-${s}@test.de`,
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -1829,7 +1817,6 @@ describe("TC-CLOSE-01 — close with gaps values 0h against full Soll", () => {
       data: {
         email: `fixed-tc01-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -1874,7 +1861,6 @@ describe("TC-CLOSE-01 — close with gaps values 0h against full Soll", () => {
       data: {
         email: `shift-tc01-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

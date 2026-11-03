@@ -56,7 +56,6 @@ describe("Overtime Absence Saldo — pre-tracking absence coverage", () => {
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -98,7 +97,6 @@ describe("Overtime Absence Saldo — pre-tracking absence coverage", () => {
       data: {
         email: `emp-a-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -148,7 +146,6 @@ describe("Overtime Absence Saldo — pre-tracking absence coverage", () => {
       data: {
         email: `emp-b-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

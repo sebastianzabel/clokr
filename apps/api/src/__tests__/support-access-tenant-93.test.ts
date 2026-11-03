@@ -142,7 +142,7 @@ async function createUserWithRole(
   const s = `${label}-${randomBytes(4).toString("hex")}`;
   const passwordHash = await bcrypt.hash(PASSWORD, 10);
   const user = await app.prisma.user.create({
-    data: { email: `${s}@example.invalid`, passwordHash, role: "EMPLOYEE", isActive: true },
+    data: { email: `${s}@example.invalid`, passwordHash, isActive: true },
   });
   const employee = await app.prisma.employee.create({
     data: {

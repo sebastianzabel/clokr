@@ -49,7 +49,6 @@ describe("Issue #614 — anonymization ends the employment", () => {
       data: {
         email: `${label}-${suffix}@example.invalid`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -210,7 +209,6 @@ describe("Issue #614 — anonymization ends the employment", () => {
         data: {
           email: `${label}-${suffix}@example.invalid`,
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

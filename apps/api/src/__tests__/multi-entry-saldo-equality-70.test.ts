@@ -205,7 +205,6 @@ describe.each(SCHEDULE_TYPES)(
         data: {
           email,
           passwordHash: await bcrypt.hash(PASSWORD, 10),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

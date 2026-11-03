@@ -55,7 +55,6 @@ describe("anonymizeEmployeeData (helper)", () => {
       data: {
         email: `anon-target-${suffix}@test.local`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -259,7 +258,6 @@ describe("anonymizeEmployeeData (helper)", () => {
         data: {
           email: `exit-${suffix}@example.invalid`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -335,7 +333,6 @@ describe("anonymizeEmployeeData (helper)", () => {
         data: {
           email: piiRealEmail,
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

@@ -67,7 +67,6 @@ describe("Phase 76.7 — § 18 ArbZG tracking exemption", () => {
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -112,7 +111,6 @@ describe("Phase 76.7 — § 18 ArbZG tracking exemption", () => {
       data: {
         email: `exempt-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -155,7 +153,6 @@ describe("Phase 76.7 — § 18 ArbZG tracking exemption", () => {
       data: {
         email: `non-exempt-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -457,7 +454,6 @@ describe("Phase 76.7 — PATCH /employees/:id exemption toggle", () => {
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -495,7 +491,6 @@ describe("Phase 76.7 — PATCH /employees/:id exemption toggle", () => {
       data: {
         email: `manager-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "MANAGER",
         isActive: true,
       },
     });
@@ -532,7 +527,6 @@ describe("Phase 76.7 — PATCH /employees/:id exemption toggle", () => {
       data: {
         email: `emp-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

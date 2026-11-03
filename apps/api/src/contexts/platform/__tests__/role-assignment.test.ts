@@ -29,7 +29,7 @@ async function createUserWithEmployee(app: FastifyInstance, tenantId: string, la
   const s = label + "-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const passwordHash = await bcrypt.hash("test1234", 10);
   const user = await app.prisma.user.create({
-    data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+    data: { email: `${s}@test.de`, passwordHash, isActive: true },
   });
   const employee = await app.prisma.employee.create({
     data: {

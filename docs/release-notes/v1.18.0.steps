@@ -1,0 +1,19 @@
+# Machine-readable twin of "Betrieb & Migration" in v1.18.0.md (Issue #709). The release notes and
+# scripts/release-rehearsal.sh walk THIS list, in this order; a change to the steps in the notes
+# changes this file in the same commit.
+#
+# Format:  phase | expected exit | id | kind | argument
+#   expected exit: one code or a comma list; audits exit 2 when they list findings, which is information, not a failure
+#   phase   pre = before the deploy (read-only), migrate = prisma migrate deploy, post = after it
+#   kind    sql = psql -c on the throwaway DB, script = `pnpm tsx scripts/<arg>` in the new api image,
+#           migrate = `prisma migrate deploy` as the image entrypoint runs it
+# Operational steps with no exit code to prove (pg_dump, MINIO_* on every stage, the demo compose
+# update) stay in the notes only.
+#
+# Notes "Betrieb & Migration": Personen ohne Rollenzuweisung (#641, nur Information). The count is the
+# users with NO assignment at all in their tenant (a lower bound: users whose assignments grant
+# nothing are refused at login too but are not counted). The line is a count, so it always exits 0;
+# the rehearsal proves only that it runs, the number is for the operator.
+pre|0|role-gap-sql-641|sql|select count(*) from "User" u join "Employee" e on e."userId"=u.id where u."isActive" and not (e."firstName" = U&'Gel\00F6scht' and e."lastName" like U&'GEL\00D6SCHT-%') and not exists (select 1 from "RoleAssignment" ra where ra."userId"=u.id and ra."tenantId"=e."tenantId");
+# Deploy: the migration of #641 (drop User.role and the enum Role; pg_dump first as the fallback, the data-preserving reverse is in docs/migrations.md Phase 641 step 5)
+migrate|0|migrate-deploy|migrate|

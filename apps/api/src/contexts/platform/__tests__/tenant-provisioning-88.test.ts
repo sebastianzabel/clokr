@@ -29,6 +29,7 @@ import {
 } from "../tenant-provisioning";
 import { uniqueViolationTarget } from "../../../utils/prisma-unique-violation";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
+import { SYSTEM_ROLE_IDS } from "../system-roles";
 
 /**
  * Issue #567: a transaction client whose slug and e-mail PRE-CHECKS see nothing, so the insert
@@ -384,7 +385,6 @@ describe("provisionTenantWithAdmin (L3, Phase 88 plan 10)", () => {
     const [employee] = employees;
     expect(employee.employeeNumber).toBe("1");
     // Inactive until the invitation is accepted; no password was ever set by the operator.
-    expect(employee.user.role).toBe("ADMIN");
     expect(employee.user.isActive).toBe(false);
     expect(employee.user.email).toBe(email);
 
@@ -401,6 +401,8 @@ describe("provisionTenantWithAdmin (L3, Phase 88 plan 10)", () => {
       where: { userId: employee.userId },
     });
     expect(assignments).toHaveLength(1);
+    expect(assignments[0].accessRoleId).toBe(SYSTEM_ROLE_IDS.ADMIN);
+    expect(assignments[0].scopeType).toBe("TENANT");
     const homeRows = await app.prisma.employeeSalonAssignment.findMany({
       where: { tenantId, employeeId: employee.id },
     });

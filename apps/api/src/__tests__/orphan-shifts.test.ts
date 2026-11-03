@@ -43,7 +43,6 @@ describe("Orphan-Shift-Lifecycle (PUT /api/v1/settings/work/:employeeId)", () =>
       data: {
         email: `osh-emp-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

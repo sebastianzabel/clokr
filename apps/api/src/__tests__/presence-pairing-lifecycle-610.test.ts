@@ -64,7 +64,6 @@ describe("pairing codes leave the system (Issue #610, D-04)", () => {
       data: {
         email: `${label}-${suffix}@example.invalid`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

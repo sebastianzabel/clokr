@@ -5,12 +5,12 @@
  * Since #75 every access decision in the API asks for a catalog permission
  * (`requirePermission` / `requireAnyPermission` / `hasPermission` / `permissionReach` /
  * `userIdsHoldingPermission`, all from `contexts/platform`). Since #539 Release A there is no JWT
- * `role` claim, no `actorRole` audit value and no fallback from the column to permissions: the
- * legacy role column (`User.role`) is only WRITTEN from the stored assignments (`compat-role.ts`)
- * and READ by the documented readers alone (the company-PDF role filter, the takeover script, the
- * write-back comparison), pinned by `legacy-role-reads-539.test.ts`; Release B drops the column.
- * This gate keeps it that way: a role check that comes back — in a guard, in a handler, or in a
- * Prisma predicate — fails CI and `.husky/pre-commit`, not just review.
+ * `role` claim, no `actorRole` audit value and no fallback from the column to permissions, and
+ * since #641 Release B the legacy `User.role` column and the Prisma `Role` enum are gone: the
+ * requested role of the employee form is a plain `SystemRoleName` that only feeds a stored
+ * assignment (`contexts/platform/system-role-assignment.ts`). This gate keeps it that way: a role
+ * check that comes back — in a guard, in a handler, or in a Prisma predicate — fails CI and
+ * `.husky/pre-commit`, not just review.
  *
  * ── What is flagged (in every non-test `.ts` file under `apps/api/src`) ─────────────────────────
  * A "role literal" is a string literal `"ADMIN"`, `"MANAGER"` or `"EMPLOYEE"`. A "role-valued"
@@ -18,7 +18,8 @@
  *   - a property access named `role` on any receiver (`req.user.role`, `e.user.role`, `x["role"]`);
  *   - an identifier whose declaration is initialised from a role-valued expression
  *     (`const role = req.user.role`, also through `as`, `!`, parentheses and further aliases), or
- *     is annotated with the type `Role`;
+ *     is annotated with the type `SystemRoleName` or `LegacySystemRoleName` (`| null` / `|
+ *     undefined` allowed) — the only role vocabularies left after #641;
  *   - an identifier bound by destructuring `role` out of an expression whose text is `user` or
  *     ends with `.user` (`const { role } = req.user`, `const { role: r } = user`), or out of a
  *     parameter typed `JwtPayload`.
@@ -50,14 +51,19 @@
  *     exists any more; the shape is still not a finding);
  *   - everything in `__tests__/` and `*.test.ts` (fixtures create users with legacy roles).
  *
- * ── The single allowlist, and why there is no exceptions file ────────────────────────────────────
- * Exactly one file may compare role values: `contexts/platform/compat-role.ts` (D-14), the ONE
- * place where legacy values are derived from assignments and mapped back onto system roles. It is
- * a constant here, not an entry in a JSON register: a second allowlisted file would be a second
- * derivation, which is precisely what D-14 forbids. A finding on a clean tree is a role check to
- * convert to a permission (or a role-literal read to move behind a `compat-role.ts` helper, like
- * the report's role filter `compatRoleUserWhere`), never a reason to widen this list. If the
- * allowlisted file disappears, the gate fails instead of silently allowlisting nothing.
+ * ── One named exemption, no exceptions file ──────────────────────────────────────────────────────
+ * Every non-test `.ts` file under `apps/api/src` is gated. Exactly one file is exempt from ONE
+ * shape: `contexts/platform/system-role-assignment.ts` (`ROLE_TYPED_EXEMPT_FILE`) may compare and
+ * switch over identifiers typed `SystemRoleName` / `LegacySystemRoleName`. Reason: it holds the
+ * helpers that turn the REQUESTED role of the employee form, `POST /employees` and the CSV import
+ * (a request payload that decides nothing about the caller) into a stored assignment — the
+ * assignment logic itself, not a reader of a legacy column (the column is gone). In every other
+ * file such a typed identifier is role-valued, so `r === "ADMIN"` on a `SystemRoleName` parameter
+ * fails here. The exemption covers only typed identifiers: a `.role` property read
+ * (`body.role !== "EMPLOYEE"`) is a finding in that file too. `run()` aborts when the named file no
+ * longer exists, so a rename cannot leave a stale exemption behind. The helpers are classified in
+ * `docs/permissions.md` „Nicht gezählte Treffer“, where `permission-site-mapping.test.ts` counts
+ * every `role ===/!==` hit per file. A finding elsewhere is a role check to convert to a permission.
  *
  * ── AST, not regex ───────────────────────────────────────────────────────────────────────────────
  * The file is parsed with `ts.createSourceFile`, so comments are trivia the walk never visits and a
@@ -69,7 +75,10 @@
  *     (`getRole(req) === "ADMIN"`), a reassignment (`let r; r = req.user.role`), a conditional
  *     initialiser (`const r = a ? x.role : y.role`), nested destructuring
  *     (`const { user: { role } } = req` — caught only as the property path ends in `.user`), or a
- *     spread/rest binding;
+ *     spread/rest binding; a plain binding named `role` that is not typed `SystemRoleName` /
+ *     `LegacySystemRoleName` and not derived from a user (`const { role } = req.body;
+ *     role === "ADMIN"`) is invisible too — the line-based `\brole\s*[!=]==` detector of
+ *     `permission-site-mapping.test.ts` is the net for exactly that shape;
  *   - a lookup table indexed by the role (`LEVEL[req.user.role] > 1`) and comparisons against a
  *     role literal that is itself stored in a variable or a constant (`r === ADMIN_ROLE`);
  *   - a Prisma predicate on the role built outside a `where` property or a `…where` /
@@ -86,8 +95,8 @@
  *
  * Exit codes:
  *   0 — the walk found files and none of them has a finding;
- *   1 — the walk found no file, the allowlisted file is missing, or at least one finding (listed as
- *       `path:line: shape — source text`, sorted).
+ *   1 — the walk found no file, or at least one finding (listed as `path:line: shape — source text`,
+ *       sorted).
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -95,7 +104,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import * as ts from "typescript";
 
 export const SRC_DIR = "apps/api/src";
-export const ALLOWLISTED_FILE = "apps/api/src/contexts/platform/compat-role.ts";
 
 const ROLE_LITERALS: ReadonlySet<string> = new Set(["ADMIN", "MANAGER", "EMPLOYEE"]);
 const EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
@@ -112,6 +120,21 @@ const MEMBERSHIP_METHODS: ReadonlySet<string> = new Set([
 ]);
 const PRISMA_OPERATORS: ReadonlySet<string> = new Set(["in", "notIn", "equals", "not"]);
 const REMOVED_GUARD = "requireRole";
+
+/**
+ * The type names that mark an identifier as role-valued (#641): the form vocabulary
+ * `SystemRoleName` of `contexts/platform/system-role-assignment.ts` and the test-side
+ * `LegacySystemRoleName`. The Prisma `Role` enum no longer exists, so no `Role` entry.
+ */
+const ROLE_TYPE_NAMES: ReadonlySet<string> = new Set(["SystemRoleName", "LegacySystemRoleName"]);
+
+/**
+ * The ONE file allowed to compare identifiers typed {@link ROLE_TYPE_NAMES}: the stored-assignment
+ * logic that turns a REQUESTED role (a request payload, decides nothing about the caller) into an
+ * assignment. Named here with its reason; `run()` aborts when it no longer exists. It is exempt
+ * from typed identifiers only — `.role` property reads are findings in it as well.
+ */
+export const ROLE_TYPED_EXEMPT_FILE = "apps/api/src/contexts/platform/system-role-assignment.ts";
 
 export type RoleCheckShape =
   | "removed-role-guard-call"
@@ -157,6 +180,15 @@ function propertyNameText(name: ts.PropertyName | undefined): string | undefined
 
 function typeText(type: ts.TypeNode | undefined, sf: ts.SourceFile): string {
   return type ? type.getText(sf).trim() : "";
+}
+
+/** Whether `type` is a role vocabulary type, optionally `| null` / `| undefined`. */
+function isRoleTypeNode(type: ts.TypeNode | undefined, sf: ts.SourceFile): boolean {
+  const parts = typeText(type, sf)
+    .split("|")
+    .map((part) => part.trim())
+    .filter((part) => part !== "null" && part !== "undefined");
+  return parts.length === 1 && ROLE_TYPE_NAMES.has(parts[0]!);
 }
 
 // ── A light lexical binder: name → declaration, per scope node ──────────────────────────────────
@@ -240,7 +272,12 @@ class RoleAnalysis {
   private readonly scopes: Scopes;
   private readonly memo = new Map<ts.Identifier, boolean>();
 
-  constructor(private readonly sf: ts.SourceFile) {
+  /** `typedRolesExempt`: identifiers typed {@link ROLE_TYPE_NAMES} are not role-valued (the one
+   * exempt file only). */
+  constructor(
+    private readonly sf: ts.SourceFile,
+    private readonly typedRolesExempt: boolean,
+  ) {
     this.scopes = new Scopes(sf);
   }
 
@@ -272,11 +309,11 @@ class RoleAnalysis {
   private computeRoleBinding(nameNode: ts.Identifier): boolean {
     const decl = nameNode.parent;
     if (ts.isVariableDeclaration(decl) && decl.name === nameNode) {
-      if (typeText(decl.type, this.sf) === "Role") return true;
+      if (!this.typedRolesExempt && isRoleTypeNode(decl.type, this.sf)) return true;
       return decl.initializer ? this.isRoleValued(decl.initializer) : false;
     }
     if (ts.isParameter(decl) && decl.name === nameNode) {
-      return typeText(decl.type, this.sf) === "Role";
+      return !this.typedRolesExempt && isRoleTypeNode(decl.type, this.sf);
     }
     if (ts.isBindingElement(decl) && decl.name === nameNode) {
       const property = decl.propertyName ? propertyNameText(decl.propertyName) : nameNode.text;
@@ -352,7 +389,8 @@ function isRoleLiteralCollection(expr: ts.Expression): boolean {
 
 /**
  * Every role check in `sourceText`, one finding per (line, shape), sorted by line. Pure: no file
- * I/O, no knowledge of the allowlist — `isGatedFile` decides which files are read at all.
+ * I/O — `isGatedFile` decides which files are read at all. `fileName` is the repo-relative path; only
+ * {@link ROLE_TYPED_EXEMPT_FILE} is exempt from typed-identifier findings.
  */
 export function findRoleChecks(fileName: string, sourceText: string): RoleCheckFinding[] {
   const sf = ts.createSourceFile(
@@ -362,7 +400,7 @@ export function findRoleChecks(fileName: string, sourceText: string): RoleCheckF
     true,
     ts.ScriptKind.TS,
   );
-  const analysis = new RoleAnalysis(sf);
+  const analysis = new RoleAnalysis(sf, fileName.split("\\").join("/") === ROLE_TYPED_EXEMPT_FILE);
   const found = new Map<string, RoleCheckFinding>();
 
   const report = (node: ts.Node, shape: RoleCheckShape): void => {
@@ -420,14 +458,15 @@ export function findRoleChecks(fileName: string, sourceText: string): RoleCheckF
 
 /**
  * Whether the gate reads `repoRelativePath` at all: a `.ts` file under `apps/api/src`, not in a
- * `__tests__` directory, not a `*.test.ts` file, and not the single allowlisted compat module.
+ * `__tests__` directory and not a `*.test.ts` file. Every such file is read; the one named exemption
+ * ({@link ROLE_TYPED_EXEMPT_FILE}) narrows what is FLAGGED in it, not whether it is read.
  */
 export function isGatedFile(repoRelativePath: string): boolean {
   const p = repoRelativePath.split("\\").join("/");
   if (!p.startsWith(`${SRC_DIR}/`)) return false;
   if (!p.endsWith(".ts") || p.endsWith(".test.ts")) return false;
   if (p.split("/").includes("__tests__")) return false;
-  return p !== ALLOWLISTED_FILE;
+  return true;
 }
 
 // ── Walk ────────────────────────────────────────────────────────────────────────────────────────
@@ -473,6 +512,14 @@ export function scanRepository(repoRoot: string): ScanResult {
 // ── CLI ─────────────────────────────────────────────────────────────────────────────────────────
 
 export function run(repoRoot: string): number {
+  // The named exemption must still exist: a rename would otherwise leave a stale exemption.
+  if (!existsSync(join(repoRoot, ROLE_TYPED_EXEMPT_FILE))) {
+    console.error(
+      `lint-role-checks: the exempt file ${ROLE_TYPED_EXEMPT_FILE} no longer exists — update ROLE_TYPED_EXEMPT_FILE (and its reason) in this gate, do not leave a stale exemption.`,
+    );
+    process.exit(1);
+  }
+
   // Empty-abort: a gate that walked zero files and reported OK would be #229 verbatim. The proof is
   // on the WALKED set (`files`), never on the findings, which this gate wants empty.
   const files = discoverGatedFiles(repoRoot);
@@ -483,13 +530,6 @@ export function run(repoRoot: string): number {
     process.exit(1);
   }
 
-  if (!existsSync(join(repoRoot, ALLOWLISTED_FILE))) {
-    console.error(
-      `lint-role-checks: the allowlisted compat module ${ALLOWLISTED_FILE} does not exist. Moving or renaming it needs this gate's ALLOWLISTED_FILE updated in the same change — never a second allowlisted file.`,
-    );
-    return 1;
-  }
-
   const findings = files.flatMap((file) =>
     findRoleChecks(file, readFileSync(join(repoRoot, file), "utf8")).map((f) => ({ file, ...f })),
   );
@@ -497,21 +537,21 @@ export function run(repoRoot: string): number {
 
   if (findings.length > 0) {
     console.error(
-      `lint-role-checks: FAILED — ${findings.length} role check(s) outside ${ALLOWLISTED_FILE} (Issue #75, D-19):`,
+      `lint-role-checks: FAILED — ${findings.length} role check(s) in ${SRC_DIR}/ (Issue #75, D-19):`,
     );
     for (const f of findings) console.error(`  ${f.file}:${f.line}: ${f.shape} — ${f.text}`);
     console.error(
       "Convert each access decision to a catalog permission (requirePermission / hasPermission / " +
         "permissionReach / userIdsHoldingPermission from contexts/platform) and map it in " +
-        "docs/permissions.md; move a role-literal read that decides nothing behind a helper in " +
-        "contexts/platform/compat-role.ts. There is no exceptions file.",
+        "docs/permissions.md. A comparison of a REQUEST payload's requested role that decides " +
+        "nothing belongs in a helper of contexts/platform/system-role-assignment.ts (the one " +
+        "file exempt for identifiers typed SystemRoleName), classified in docs/permissions.md " +
+        "under 'Nicht gezählte Treffer'. There is no exceptions file.",
     );
     return 1;
   }
 
-  console.log(
-    `lint-role-checks: OK — 0 finding(s) in ${files.length} file(s) under ${SRC_DIR}/ (allowlisted: ${ALLOWLISTED_FILE})`,
-  );
+  console.log(`lint-role-checks: OK — 0 finding(s) in ${files.length} file(s) under ${SRC_DIR}/`);
   return 0;
 }
 

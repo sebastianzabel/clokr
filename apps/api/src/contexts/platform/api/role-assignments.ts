@@ -14,11 +14,10 @@
  * and answers the byte-identical 404 of its own kind (D-08) — the four "not found" messages below
  * are the entire vocabulary; a caller cannot distinguish "foreign tenant" from "does not exist".
  *
- * Phase 75b Plan 11 (Issue #75): every grant, change and revoke rewrites `User.role` to the role
- * derived from the stored assignments, recorded as `compatRole` on the change's audit row
- * (D-14/D-29). Since Issue #539 a grant adds exactly the requested row: the former step that first
- * stored the legacy-role fallback as an assignment (D-26) is gone, because with the fallback
- * removed it would have been an implicit grant of the column's role.
+ * Every grant, change and revoke writes the stored assignment and its audit row, nothing else: the
+ * stored assignments are the only place a role lives (Issue #641, Release B). Since Issue #539 a
+ * grant adds exactly the requested row: the former step that first stored the legacy-role fallback
+ * as an assignment (D-26) is gone, because it would have been an implicit grant.
  */
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
@@ -39,7 +38,6 @@ import {
 } from "../facade/role-assignments";
 import { foreignKeyConstraintOf } from "../prisma-foreign-key";
 import { auditRoleAssignmentChange, roleAssignmentAuditValue } from "../role-assignment-audit";
-import { syncCompatRoleColumn } from "../compat-role";
 
 // D-09: plain `z.string().min(1)`, NOT `.uuid()` — both T-100-09 probe arms (a real foreign id and
 // a shaped-but-nonexistent id) must pass the same validation, same idiom as `roles.ts`'s
@@ -310,8 +308,6 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
               },
               include: { accessRole: true },
             });
-            // D-14/D-29: the column follows the stored assignments; a change is recorded on this
-            // grant's CREATE row, the last row of the change.
             await auditRoleAssignmentChange(app, req, tx, {
               userId: body.userId,
               entries: [
@@ -321,7 +317,6 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
                   newValue: roleAssignmentAuditValue(row, resolution.accessRole.name),
                 },
               ],
-              compatRole: await syncCompatRoleColumn(tx, tenantId, body.userId),
             });
             return { kind: "CREATED", row };
           },
@@ -475,7 +470,6 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
               },
               include: { accessRole: true },
             });
-            // D-14/D-29: the column follows the stored assignments, recorded on this UPDATE row.
             await auditRoleAssignmentChange(app, req, tx, {
               userId: current.userId,
               entries: [
@@ -486,7 +480,6 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
                   newValue: roleAssignmentAuditValue(row, resolution.accessRole.name),
                 },
               ],
-              compatRole: await syncCompatRoleColumn(tx, tenantId, current.userId),
             });
             return { kind: "UPDATED", row };
           }),
@@ -548,9 +541,8 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             });
             if (!current) return false;
             await tx.roleAssignment.delete({ where: { id, tenantId } });
-            // D-14/D-29: the column follows the stored assignments — revoking the user's last one
-            // writes EMPLOYEE (D-08) as a display value only; since #539 the user then holds
-            // nothing (no fallback), never a lingering Admin.
+            // Revoking the user's last assignment leaves the user holding nothing (no fallback,
+            // #539), never a lingering Admin.
             await auditRoleAssignmentChange(app, req, tx, {
               userId: current.userId,
               entries: [
@@ -560,7 +552,6 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
                   oldValue: roleAssignmentAuditValue(current, current.accessRole.name),
                 },
               ],
-              compatRole: await syncCompatRoleColumn(tx, tenantId, current.userId),
             });
             return true;
           }),

@@ -5,7 +5,7 @@
  *
  * A holder is a well-formed stored assignment of ANY scope (TENANT, SALONS or PERSONS) whose role
  * belongs to the tenant and grants the permission — and nothing else: since #539 (Release A) a user
- * with NO stored assignment in the tenant is never a holder, whatever their `User.role` column says
+ * with NO stored assignment in the tenant is never a holder
  * (the former D-08 "Altrollen-Rückfall" no longer exists). Before Issue #367 (the
  * original D-09), a SALONS/PERSONS assignment never made a holder here — narrowing to the actual
  * scope is `resolveScopedHolderIds()`'s job (D-17); a malformed row (any scope) and a foreign
@@ -23,7 +23,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import type { Prisma, Role } from "@clokr/db";
+import type { Prisma } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
 import { DEFAULT_SALON_OPENING_HOURS } from "../facade/salons";
@@ -43,7 +43,7 @@ async function createUserWithEmployee(
   app: FastifyInstance,
   tenantId: string,
   label: string,
-  options: { role?: Role; isActive?: boolean; exitDate?: Date } = {},
+  options: { isActive?: boolean; exitDate?: Date } = {},
 ) {
   const s = uniqueSuffix(label);
   const passwordHash = await bcrypt.hash("test1234", 10);
@@ -51,7 +51,6 @@ async function createUserWithEmployee(
     data: {
       email: `uihp-${s}@test.de`,
       passwordHash,
-      role: options.role ?? "EMPLOYEE",
       isActive: options.isActive ?? true,
     },
   });
@@ -118,9 +117,7 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
   let storedManager: Awaited<ReturnType<typeof createUserWithEmployee>>;
   let storedEmployeeRole: Awaited<ReturnType<typeof createUserWithEmployee>>;
 
-  let fallbackAdmin: Awaited<ReturnType<typeof createUserWithEmployee>>;
-  let fallbackManager: Awaited<ReturnType<typeof createUserWithEmployee>>;
-  let fallbackEmployee: Awaited<ReturnType<typeof createUserWithEmployee>>;
+  let unassignedUser: Awaited<ReturnType<typeof createUserWithEmployee>>;
 
   let customerRoleGranting: Awaited<ReturnType<typeof createRole>>;
   let customerRoleHolder: Awaited<ReturnType<typeof createUserWithEmployee>>;
@@ -154,7 +151,7 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
   // Phase 355 (Issue #355): a departed ADMIN/MANAGER — active user, but `exitDate` in the past —
   // must not be returned (stored TENANT-scope assignment; a user without a row is never a holder since #539).
   let departedStoredAdmin: Awaited<ReturnType<typeof createUserWithEmployee>>;
-  let departedFallbackManager: Awaited<ReturnType<typeof createUserWithEmployee>>;
+  let departedUnassigned: Awaited<ReturnType<typeof createUserWithEmployee>>;
   let futureExitAdmin: Awaited<ReturnType<typeof createUserWithEmployee>>;
 
   beforeAll(async () => {
@@ -174,15 +171,7 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
       SYSTEM_ROLE_IDS.EMPLOYEE,
     );
 
-    fallbackAdmin = await createUserWithEmployee(app, tenantA.tenant.id, "FallbackAdmin", {
-      role: "ADMIN",
-    });
-    fallbackManager = await createUserWithEmployee(app, tenantA.tenant.id, "FallbackManager", {
-      role: "MANAGER",
-    });
-    fallbackEmployee = await createUserWithEmployee(app, tenantA.tenant.id, "FallbackEmployee", {
-      role: "EMPLOYEE",
-    });
+    unassignedUser = await createUserWithEmployee(app, tenantA.tenant.id, "UnassignedUser");
 
     customerRoleGranting = await createRole(app, tenantA.tenant.id, "CustomerGrant", [
       LEAVE_REQUEST_APPROVE,
@@ -296,11 +285,11 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
       },
     );
     await assignTenant(app, tenantA.tenant.id, departedStoredAdmin.user.id, SYSTEM_ROLE_IDS.ADMIN);
-    departedFallbackManager = await createUserWithEmployee(
+    departedUnassigned = await createUserWithEmployee(
       app,
       tenantA.tenant.id,
-      "DepartedFallbackManager",
-      { role: "MANAGER", exitDate: new Date("2020-01-01") },
+      "DepartedUnassigned",
+      { exitDate: new Date("2020-01-01") },
     );
     // A planned, not-yet-effective departure must still be a holder.
     futureExitAdmin = await createUserWithEmployee(app, tenantA.tenant.id, "FutureExitAdmin", {
@@ -334,15 +323,13 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
     expect(ids).not.toContain(storedEmployeeRole.user.id);
   });
 
-  it("a user with no stored assignment is never returned, whatever their User.role says (#539: no Altrollen-Rückfall)", async () => {
+  it("a user with no stored assignment is never returned (#539: no Altrollen-Rückfall)", async () => {
     const ids = await userIdsHoldingPermission(
       app.prisma,
       tenantA.tenant.id,
       LEAVE_REQUEST_APPROVE,
     );
-    expect(ids).not.toContain(fallbackAdmin.user.id);
-    expect(ids).not.toContain(fallbackManager.user.id);
-    expect(ids).not.toContain(fallbackEmployee.user.id);
+    expect(ids).not.toContain(unassignedUser.user.id);
   });
 
   it("Issue #367: a well-formed SALONS or PERSONS assignment granting the permission NOW makes a holder (revises D-09)", async () => {
@@ -424,7 +411,7 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
       tenantA.tenant.id,
       LEAVE_REQUEST_APPROVE,
     );
-    expect(ids).not.toContain(departedFallbackManager.user.id);
+    expect(ids).not.toContain(departedUnassigned.user.id);
   });
 
   it("a holder with a FUTURE exitDate (not yet departed) IS returned (Issue #355)", async () => {
@@ -453,7 +440,7 @@ describe("userIdsHoldingPermission (Phase 75b, Issue #75, D-16/D-17)", () => {
   });
 
   // ── Issue #359, as of #539 ───────────────────────────────────────────────────
-  // A fallback-eligible user's system role used to be looked up, and a missing system-role row made
+  // A user without a stored row used to fall back to a system role lookup, and a missing system-role row made
   // this function throw (Issue #359). Since #539 there is no fallback and no system-role lookup: the
   // facade reads stored rows only. A fake `db` (never `app.prisma`) WITHOUT an `accessRole` or `user`
   // delegate proves it — any such read would be a TypeError instead of the empty answer.

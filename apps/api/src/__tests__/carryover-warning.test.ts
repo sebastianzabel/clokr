@@ -301,7 +301,6 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
       data: {
         email: `cowarn451-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -85,7 +85,6 @@ describe("recalculateCarryOver / autoCarryOver — ILLNESS deadline protection (
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: adminPasswordHash,
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -134,7 +133,6 @@ describe("recalculateCarryOver / autoCarryOver — ILLNESS deadline protection (
       data: {
         email: `${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -438,7 +436,6 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: adminPasswordHash,
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -487,7 +484,6 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
       data: {
         email: `${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

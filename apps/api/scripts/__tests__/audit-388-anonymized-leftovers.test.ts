@@ -49,7 +49,6 @@ describe("audit-388-anonymized-leftovers (Issues #388, #508)", () => {
       data: {
         email: `${label}-${suffix}@test.local`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: !anonymized,
       },
     });

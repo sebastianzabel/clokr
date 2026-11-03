@@ -67,7 +67,7 @@ describe("fixture role assignments (#539, D-09)", () => {
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const email = `fx539-${label}-${s}@example.invalid`;
     const user = await app.prisma.user.create({
-      data: { email, passwordHash, role, isActive: true },
+      data: { email, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {

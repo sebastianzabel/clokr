@@ -87,7 +87,6 @@ describe("audit-614-anonymized-employment (Issue #614, D-04)", () => {
       data: {
         email,
         passwordHash: await bcrypt.hash("test1234", 4),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

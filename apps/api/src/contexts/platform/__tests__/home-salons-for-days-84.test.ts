@@ -71,7 +71,7 @@ describe("Issue #84 (D-13) — homeSalonsForDays agrees with homeSalonAt", () =>
   async function person(tenantId: string, label: string, hireDate = "2024-01-01") {
     const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash: "x", isActive: true },
     });
     return app.prisma.employee.create({
       data: {

@@ -49,7 +49,6 @@ describe("cancelOrphanShifts requires shift:plan over every affected shift (#650
       data: {
         email: `${suffix}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 4),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

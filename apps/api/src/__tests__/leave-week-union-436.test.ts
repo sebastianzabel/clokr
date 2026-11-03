@@ -126,7 +126,7 @@ describe("Issue #436 — per-ISO-week union pricing across sibling requests (D-0
     async function makeUser(label: string, role: "EMPLOYEE" | "ADMIN") {
       const email = `u436-${label}-${suffix}@test.de`;
       const user = await prisma.user.create({
-        data: { email, passwordHash, role, isActive: true },
+        data: { email, passwordHash, isActive: true },
       });
       const employee = await prisma.employee.create({
         data: {

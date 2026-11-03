@@ -1,7 +1,8 @@
 /**
  * Phase 76b (Issue #76) — the system-role-templates data migration, proven on REAL SQL execution
- * of the checked-in file (never a restatement of it), same discipline as
- * `legacy-role-migration-sql.ts` / `system-roles-migration.test.ts` for the 75b file.
+ * of the checked-in file (never a restatement of it). The 75b system-roles migration is covered by
+ * the drift case of `system-roles-migration.test.ts`; its former replay helper is gone since
+ * Release B (#641) because that SQL reads the dropped `User.role` column.
  *
  * - Static shape (AK-76b-8, D-02): the file contains an `AccessRole` insert and
  *   `ON CONFLICT ("id") DO NOTHING`; its non-comment lines contain no `RoleAssignment` or
@@ -36,7 +37,7 @@ import {
 } from "../contexts/platform";
 
 // __dirname is apps/api/src/__tests__ — four levels up is the repo root (same resolution as
-// legacy-role-migration-sql.ts).
+// salon-migration.test.ts and t100-09-oracle-probe.test.ts).
 const REPO_ROOT = join(__dirname, "..", "..", "..", "..");
 const MIGRATIONS_ROOT = join(REPO_ROOT, "packages", "db", "prisma", "migrations");
 const MIGRATION_DIR_SUFFIX = "_system_role_templates";
@@ -45,7 +46,7 @@ const MIGRATION_DIR_SUFFIX = "_system_role_templates";
  * Locates the migration directory by name SUFFIX (the timestamp prefix is not restated here) and
  * requires exactly one match: zero or several matches throw, naming what was found — an input
  * proof, so a renamed or duplicated migration can never make these tests run nothing
- * (mirrors `legacy-role-migration-sql.ts:31-44`).
+ * (the same lookup the 75b migration tests used before Release B, #641).
  */
 function locateMigrationDir(): string {
   const entries = readdirSync(MIGRATIONS_ROOT);

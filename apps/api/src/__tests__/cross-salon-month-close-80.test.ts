@@ -130,7 +130,6 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
       data: {
         email: `csmc-${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -224,7 +223,6 @@ describe("Issue #80 — cross-salon § 4 violation in the month close", () => {
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "ADMIN",
         isActive: true,
       },
     });

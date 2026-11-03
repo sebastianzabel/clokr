@@ -31,7 +31,6 @@ describe("loadVacationContractSegments / resolveRegularVacationDays (Issue #450,
       data: {
         email: `cs450-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -160,7 +159,6 @@ describe("ensureRegularVacationEntitlement create path (Issue #450, D-09)", () =
       data: {
         email: `cs450e-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

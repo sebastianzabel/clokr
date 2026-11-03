@@ -9,6 +9,7 @@ import {
 import type { FastifyInstance } from "fastify";
 import { holdEmployeeLockThen } from "./entry-lock-race-helpers";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
+import { SYSTEM_ROLE_IDS } from "../contexts/platform";
 
 describe("Bulk Import API", () => {
   let app: FastifyInstance;
@@ -193,12 +194,17 @@ role-${uid}@test.de;Role;Test;ROLE-${uid};01.01.2026;MANAGER`;
 
         const emp = await app.prisma.employee.findFirst({
           where: { employeeNumber: `ROLE-${uid}` },
-          include: { user: true },
         });
         expect(emp).not.toBeNull();
         // Before the fix, an unrecognized header (only exact "Rolle" matched) silently fell
-        // back to the schema default EMPLOYEE instead of the CSV's MANAGER value.
-        expect(emp!.user.role).toBe("MANAGER");
+        // back to the default EMPLOYEE instead of the CSV's MANAGER value. The role lives only in
+        // the stored assignment.
+        const assignments = await app.prisma.roleAssignment.findMany({
+          where: { userId: emp!.userId },
+        });
+        expect(assignments).toHaveLength(1);
+        expect(assignments[0].accessRoleId).toBe(SYSTEM_ROLE_IDS.MANAGER);
+        expect(assignments[0].scopeType).toBe("TENANT");
       });
     });
 

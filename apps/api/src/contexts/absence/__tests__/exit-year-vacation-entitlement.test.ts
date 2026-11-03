@@ -34,7 +34,6 @@ describe("exit-year VACATION entitlement sync (Issue #447, D-06/D-07/D-08/D-14)"
       data: {
         email: `eyv-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -190,7 +190,6 @@ describe("Schichtplanung — detectWeekCapacityConflict / notifyWeekCapacityConf
         data: {
           email: `mgr-week-cap-${Date.now()}@test.de`,
           passwordHash: mgrPasswordHash,
-          role: "MANAGER",
           isActive: true,
         },
       });

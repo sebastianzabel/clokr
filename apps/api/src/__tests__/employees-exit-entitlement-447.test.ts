@@ -30,7 +30,6 @@ describe("Employee exit-date writes recompute the exit-year VACATION row (Issue 
       data: {
         email: `eee-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

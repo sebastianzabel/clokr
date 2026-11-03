@@ -84,7 +84,6 @@ describe("Issue #70 — CSV time-entry import with several entries per day", () 
       data: {
         email: `${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

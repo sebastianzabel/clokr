@@ -205,7 +205,6 @@ describe("Phase 67b — migration data-section cases A-D (D-25) + idempotency, r
               data: {
                 email: `${empNo}-${s}@test.de`.toLowerCase(),
                 passwordHash: "x",
-                role: "EMPLOYEE",
                 isActive: true,
               },
             });

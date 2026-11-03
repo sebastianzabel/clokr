@@ -55,7 +55,6 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
       data: {
         email: `x-${suffix}@example.invalid`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -148,7 +147,6 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
       data: {
         email: `hr-${suffix}@example.invalid`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

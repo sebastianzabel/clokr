@@ -78,7 +78,7 @@ describe("Issue #493 — DATEV month boundaries", () => {
     const passwordHash = await bcrypt.hash("test1234", 10);
     const suffix = `${label}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const user = await prisma.user.create({
-      data: { email: `${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `${suffix}@test.de`, passwordHash, isActive: true },
     });
     const employee = await prisma.employee.create({
       data: {

@@ -62,7 +62,6 @@ describe("Issue #558 — leave reads follow the salon filter", () => {
       data: {
         email: `${s}@example.invalid`,
         passwordHash: await bcrypt.hash(PASSWORD, 4),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

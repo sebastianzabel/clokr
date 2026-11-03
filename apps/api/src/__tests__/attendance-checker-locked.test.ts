@@ -51,7 +51,6 @@ describe("attendance-checker — auto-invalidate locked-entry guard (COMP-V1814-
         data: {
           email: `achk-${s}@test.de`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

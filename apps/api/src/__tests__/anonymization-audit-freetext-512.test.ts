@@ -27,7 +27,6 @@ describe("anonymization redacts free text in the AuditLog values (#512)", () => 
       data: {
         email: `${label}-${suffix}@test.local`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

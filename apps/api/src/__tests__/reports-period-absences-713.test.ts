@@ -573,7 +573,6 @@ describe("Issue #713 — the per-person absence counts of the period report", ()
         data: {
           email: `rpa713-${suffix}@example.invalid`,
           passwordHash: await bcrypt.hash(password, 4),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

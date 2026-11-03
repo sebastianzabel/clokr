@@ -64,7 +64,6 @@ describe("anonymization redacts MAC addresses in the AuditLog (#820)", () => {
       data: {
         email: `${label}-${suffix}@test.local`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

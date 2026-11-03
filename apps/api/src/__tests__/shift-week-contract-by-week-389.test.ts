@@ -26,7 +26,6 @@ describe("shift plan contract by displayed week (#389)", () => {
       data: {
         email: `${label}-389-${Date.now()}@test.de`,
         passwordHash: "UNUSED",
-        role: "EMPLOYEE",
         isActive: false,
       },
     });

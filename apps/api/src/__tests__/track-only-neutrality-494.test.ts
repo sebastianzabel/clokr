@@ -158,7 +158,7 @@ describe("Issue #494 R2/R3 — non-affected contracts are frozen (captured on 7c
   ): Promise<void> {
     const s = `${key}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
     const user = await app.prisma.user.create({
-      data: { email: `${s}@tonp494.test`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@tonp494.test`, passwordHash: "x", isActive: true },
     });
     const emp = await app.prisma.employee.create({
       data: {

@@ -44,8 +44,8 @@
  * every measured entry to `<dir>/activity-auth.actual.json` (never into `neutrality/recorded/`,
  * which is refused) — the input of `scripts/neutrality-amendments-from-run.ts`.
  * RECORD refuses once the legacy role guard's definition is gone from `middleware/auth.ts` (same
- * guard as the matrix). Both modes build the fixture, run the checked-in migration SQL (D-25), then
- * create the fallback users (users without a stored assignment, who hold nothing since #539). Every run starts with `pnpm --filter @clokr/api run test:setup`.
+ * guard as the matrix). Both modes build the fixture, grant the migration's stored rows from the declared
+ * roles (D-25, #641 D-16), then create the fallback users (users without a stored assignment, who hold nothing since #539). Every run starts with `pnpm --filter @clokr/api run test:setup`.
  * Mailer, storage and `fetch` are stubbed in both modes; every request carries its own
  * `remoteAddress`, so no rate limit (verify-otp: 5 per 10 minutes) can interfere.
  */
@@ -54,9 +54,14 @@ import { dirname, join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import type { Role } from "@clokr/db";
-import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup";
-import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
+import {
+  getTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantLegacyMigrationRoles,
+  salonIdForEmployee,
+  type LegacySystemRoleName,
+} from "./setup";
 import { LabelRegistry, cleanupMatrixExtras, type ActorFixture } from "./neutrality/fixture";
 import {
   effectiveAmendmentLinks,
@@ -217,6 +222,8 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
   let passwordHash = "";
   let remoteCounter = 0;
   const userIdOf = new Map<string, string>();
+  /** The role the fixture declares for each created user (input of `grantLegacyMigrationRoles`). */
+  const declaredRoles: { userId: string; role: LegacySystemRoleName }[] = [];
   const employeeIdOf = new Map<string, string>();
   const emailOf = new Map<string, string>();
   /** Access tokens from the login step, used for the activity calls. */
@@ -263,14 +270,15 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
   async function createUser(
     tenantId: string | null,
     label: string,
-    role: Role,
+    role: LegacySystemRoleName,
   ): Promise<{ userId: string; employeeId?: string }> {
     const slug = label.replace(/\./g, "-").toLowerCase();
     const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const email = `${slug}-${suffix}@activity-auth.test`;
     const user = await app.prisma.user.create({
-      data: { email, passwordHash, role, isActive: true },
+      data: { email, passwordHash, isActive: true },
     });
+    declaredRoles.push({ userId: user.id, role });
     registry.register(`${label}.user`, user.id);
     userIdOf.set(label, user.id);
     emailOf.set(label, email);
@@ -417,8 +425,10 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
     await createUser(tenantF, "F.admin", "ADMIN");
     await createUser(tenantO, "O.manager", "MANAGER");
 
-    // D-25: the checked-in migration SQL runs before anything is measured.
-    await executeLegacyRoleMigration(app.prisma);
+    // D-25 (revised, #641 D-16): the users created so far receive the stored rows the 75b migration
+    // used to give them, from the roles the fixture declares (a user without an Employee gets none,
+    // exactly like under the migration); the SQL itself reads a column Release B drops.
+    await grantLegacyMigrationRoles(app.prisma, declaredRoles);
     const migrated = await app.prisma.roleAssignment.findMany({
       where: { userId: { in: [...userIdOf.values()] } },
       select: { id: true, userId: true },
@@ -428,7 +438,7 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
       registry.register(`${userLabel.replace(/\.user$/, "")}.roleAssignment`, assignment.id);
     }
 
-    // D-08: the fallback users exist only after the migration.
+    // D-08: the fallback users exist only after the rows were granted.
     await createUser(tenantA, "A.fallback.admin", "ADMIN");
     await createUser(tenantA, "A.fallback.manager", "MANAGER");
     await createUser(tenantA, "A.fallback.employee", "EMPLOYEE");
@@ -672,6 +682,7 @@ describe("activity feed and token role neutrality (Issue #75, AC-75-13, AC-75-14
           authorization: `Bearer ${token}`,
           actorUserId: userId(caller.label),
           registry,
+          declaredRoles: [],
         };
         const ctx: LabelContext = { self, others: [], global: new Map() };
         const result = await runCell({

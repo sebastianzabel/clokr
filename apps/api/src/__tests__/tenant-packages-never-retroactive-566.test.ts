@@ -220,7 +220,6 @@ async function createClosedMonthEmployee(): Promise<string> {
     data: {
       email: `nr566-${randomUUID().slice(0, 8)}@example.invalid`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

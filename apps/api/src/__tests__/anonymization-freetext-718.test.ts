@@ -26,7 +26,6 @@ describe("anonymization clears the remaining person-authored free texts (#718)",
       data: {
         email: `${label}-${suffix}@test.local`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

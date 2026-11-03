@@ -52,7 +52,6 @@ describe("anonymize-dump records removed role assignments (Phase 74b review, WR-
       data: {
         email: `anon-dump-${suffix}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

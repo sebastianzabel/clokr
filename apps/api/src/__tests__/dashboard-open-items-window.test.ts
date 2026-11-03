@@ -106,7 +106,6 @@ describe("GET /api/v1/dashboard/open-items — configured window (issue #141)", 
       data: {
         email,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -4,4 +4,3 @@
 pre|0|timeentry-count|sql|select count(*) from "TimeEntry"
 pre|0|audit-70-entry-overlaps|script|audit-70-entry-overlaps.ts
 migrate|0|migrate-deploy-noop|migrate|
-post|0|backfill-539-dry-run|script|backfill-539-role-assignments.ts

@@ -16,7 +16,8 @@
  *     of every tenant-level kind (`TENANT_LEVEL_KINDS`).
  *
  * The fallback actors (D-21) use the same builder; the matrix test simply builds their tenants
- * AFTER the migration SQL ran, so their users hold no stored role assignment.
+ * AFTER the main actors received their rows (`grantLegacyMigrationRoles`), so their users hold no
+ * stored role assignment.
  *
  * Every id the builder creates — including the rows `seedTestData` creates — is registered in a
  * label registry under an actor-relative label (`own.employee`, `foreign.leaveRequest.pending`,
@@ -30,12 +31,12 @@
  */
 import { randomBytes, createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import type { Role } from "@clokr/db";
 import {
   configureDatevKanzlei,
   numericEmployeeNumber,
   removeFixtureRoleAssignments,
   seedTestData,
+  type LegacySystemRoleName,
 } from "../setup";
 import { leaveTypeFields } from "../../contexts/absence/leave-type";
 import { DEFAULT_SALON_OPENING_HOURS } from "../../contexts/platform";
@@ -80,6 +81,12 @@ export class LabelRegistry {
   }
 }
 
+/** A fixture user together with the system role the fixture DECLARES for it (Release B, #641). */
+export interface DeclaredRole {
+  userId: string;
+  role: LegacySystemRoleName;
+}
+
 export interface ActorFixture {
   actor: ActorKind;
   tenantId: string;
@@ -88,10 +95,16 @@ export interface ActorFixture {
   /** The user id of a user actor; undefined for an API-key actor. */
   actorUserId?: string;
   registry: LabelRegistry;
+  /**
+   * Every user of the tenant with the role the fixture declares for it, in creation order. Input
+   * of `grantLegacyMigrationRoles` (which applies the 75b migration's eligibility), so the fixture
+   * needs no column that stores the role.
+   */
+  declaredRoles: readonly DeclaredRole[];
 }
 
-/** The legacy role of the actor's own person. API-key tenants get a plain employee. */
-function ownPersonRole(actor: ActorKind): Role {
+/** The declared role of the actor's own person. API-key tenants get a plain employee. */
+function ownPersonRole(actor: ActorKind): LegacySystemRoleName {
   if (actor === "MANAGER" || actor === "FALLBACK_MANAGER") return "MANAGER";
   if (actor === "ADMIN" || actor === "FALLBACK_ADMIN") return "ADMIN";
   return "EMPLOYEE";
@@ -153,6 +166,8 @@ interface TenantContext {
   tenantId: string;
   tenantSlug: string;
   anchorUserId: string;
+  /** Collected by `createPerson` and `buildActorTenant`; see `ActorFixture.declaredRoles`. */
+  declaredRoles: DeclaredRole[];
 }
 
 /** Creates a user + employee with a work schedule and an overtime account, and registers all four
@@ -161,7 +176,7 @@ async function createPerson(
   t: TenantContext,
   opts: {
     prefix: string;
-    role: Role;
+    role: LegacySystemRoleName;
     lastName: string;
     anonymized?: boolean;
     /** Distinguishes a second anonymized person's employee number (unique per tenant). */
@@ -180,7 +195,6 @@ async function createPerson(
         ? `geloescht-${opts.prefix}-${t.tenantSlug}@anonymized.invalid`
         : `${opts.prefix}-${t.tenantSlug}@matrix.test`,
       passwordHash: opts.anonymized ? "ANONYMIZED" : UNUSED_PASSWORD_HASH,
-      role: opts.role,
       isActive: !opts.anonymized,
     },
   });
@@ -219,6 +233,7 @@ async function createPerson(
   t.registry.register(`${opts.prefix}.employee`, employee.id);
   t.registry.register(`${opts.prefix}.workSchedule`, schedule.id);
   t.registry.register(`${opts.prefix}.overtimeAccount`, account.id);
+  t.declaredRoles.push({ userId: user.id, role: opts.role });
   return { userId: user.id, employeeId: employee.id };
 }
 
@@ -809,8 +824,8 @@ export async function buildActorTenant(
   const registry = new LabelRegistry();
   const seed = await seedTestData(app, `75b-matrix-${actor.toLowerCase()}`);
   // Issue #539 (D-04, D-15): the recordings were taken on seed users WITHOUT stored role rows.
-  // Main-actor tenants receive theirs from the checked-in migration SQL (D-25 of #75), fallback-
-  // actor tenants keep none (D-21). The logins inside seedTestData already ran while the rows
+  // Main-actor tenants receive theirs from `grantLegacyMigrationRoles` (the 75b migration's
+  // eligibility applied to the declared roles, #641 D-16), fallback-actor tenants keep none (D-21). The logins inside seedTestData already ran while the rows
   // existed, so the LOGIN audit rows registered below are unchanged.
   await removeFixtureRoleAssignments(app.prisma, [seed.adminUser.id, seed.empUser.id]);
   const tenantId = seed.tenant.id;
@@ -820,6 +835,11 @@ export async function buildActorTenant(
     tenantId,
     tenantSlug: seed.tenant.slug,
     anchorUserId: seed.adminUser.id,
+    // seedTestData's two users hold ADMIN (adminUser) and EMPLOYEE (empUser) - verified in setup.ts.
+    declaredRoles: [
+      { userId: seed.adminUser.id, role: "ADMIN" },
+      { userId: seed.empUser.id, role: "EMPLOYEE" },
+    ],
   };
   registry.register("tenant", tenantId);
   // A configured DATEV Kanzlei, so the DATEV export cells reach the export instead of the 409.
@@ -974,7 +994,7 @@ export async function buildActorTenant(
     vacationTypeId: seed.vacationType.id,
   });
 
-  return { actor, tenantId, authorization, actorUserId, registry };
+  return { actor, tenantId, authorization, actorUserId, registry, declaredRoles: t.declaredRoles };
 }
 
 /**

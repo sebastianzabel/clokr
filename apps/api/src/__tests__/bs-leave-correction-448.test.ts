@@ -60,7 +60,6 @@ describe("Issue #448 (D-04) — Berufsschultag über bestehendem Urlaub korrigie
       data: {
         email: `bscorr448-sb-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -416,7 +415,6 @@ describe("Issue #448 (D-04) — Berufsschultag über bestehendem Urlaub korrigie
       data: {
         email: `bscorr448-inactive-${Date.now()}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "MANAGER",
         isActive: false,
       },
     });
@@ -613,7 +611,6 @@ describe("Issue #448 (D-04) — Berufsschultag über bestehendem Urlaub korrigie
       data: {
         email: `${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

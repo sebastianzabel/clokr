@@ -72,7 +72,7 @@ describe("Issue #85 (Phase 85b-03) — GET /time-entries?salonId, the Salonansic
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 4);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {

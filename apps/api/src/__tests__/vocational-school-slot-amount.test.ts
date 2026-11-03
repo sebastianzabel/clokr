@@ -167,7 +167,6 @@ describe("closeEmployeeMonth — slot-resolved BS amount (daily Soll for LONG da
       data: {
         email: `emp-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -5,27 +5,28 @@
  * against fixture TEXT through the pure `findRoleChecks(fileName, sourceText)` — never against
  * the live tree alone: on a clean tree the gate reports nothing, and "nothing found" proves nothing
  * about a detector (the same reasoning as `lint-facade-signatures.test.ts`). The file selection
- * (`isGatedFile`: allowlist, test files) is tested separately, because it is a property of the
+ * (`isGatedFile`: which paths are read at all) is tested separately, because it is a property of the
  * PATH, not of the text. A small live-tree suite at the bottom pins that the real walk is
  * non-empty and the real tree is clean.
  *
  * DB-free, disk-write-free.
  */
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  ALLOWLISTED_FILE,
   discoverGatedFiles,
   findRoleChecks,
   isGatedFile,
+  ROLE_TYPED_EXEMPT_FILE,
   scanRepository,
   type RoleCheckShape,
 } from "../lint-role-checks";
 
 const REPO_ROOT = join(__dirname, "..", "..", "..", "..");
 
-function shapes(source: string): RoleCheckShape[] {
-  return findRoleChecks("fixture.ts", source).map((f) => f.shape);
+function shapes(source: string, fileName = "fixture.ts"): RoleCheckShape[] {
+  return findRoleChecks(fileName, source).map((f) => f.shape);
 }
 
 // ── Flagged: one case per shape (75b-12-PLAN.md Task 1 <behavior>) ─────────────────────────────
@@ -95,10 +96,44 @@ describe("findRoleChecks — flagged shapes", () => {
     expect(shapes(src)).toEqual(["role-comparison"]);
   });
 
-  it("a parameter typed Role compared against a role literal", () => {
-    expect(shapes(`function isAdmin(role: Role) { return role === "ADMIN"; }`)).toEqual([
-      "role-comparison",
+  it("a parameter typed SystemRoleName compared against a role literal, outside the exempt file", () => {
+    expect(
+      shapes(`function isAdmin(r: SystemRoleName) { return r === "ADMIN"; }`, "route.ts"),
+    ).toEqual(["role-comparison"]);
+  });
+
+  it("a parameter typed LegacySystemRoleName compared against a role literal", () => {
+    expect(
+      shapes(`function isAdmin(r: LegacySystemRoleName) { return "ADMIN" === r; }`, "route.ts"),
+    ).toEqual(["role-comparison"]);
+  });
+
+  it("a nullable SystemRoleName parameter and a typed variable are role-valued too", () => {
+    const src = `
+      function a(r: SystemRoleName | null) { return r !== "EMPLOYEE"; }
+      function b(r: string) { const typed: SystemRoleName = parse(r); return typed == "MANAGER"; }
+    `;
+    expect(shapes(src, "route.ts")).toEqual(["role-comparison", "role-comparison"]);
+  });
+
+  it("a switch and a membership test over a SystemRoleName parameter are flagged outside the exempt file", () => {
+    const src = `
+      function a(r: SystemRoleName) {
+        switch (r) {
+          case "ADMIN": return 1;
+          default: return 0;
+        }
+      }
+      function b(r: SystemRoleName) { return allowed.includes(r); }
+    `;
+    expect(shapes(src, "apps/api/src/contexts/platform/api/employees.ts")).toEqual([
+      "role-switch",
+      "role-membership",
     ]);
+  });
+
+  it("the Prisma Role type no longer exists, so a parameter typed Role is not a role vocabulary", () => {
+    expect(shapes(`function f(role: Role) { return role === "ADMIN"; }`)).toEqual([]);
   });
 
   it('["ADMIN", "MANAGER"].includes(user.role)', () => {
@@ -248,14 +283,59 @@ describe("findRoleChecks — tolerated shapes", () => {
     `;
     expect(shapes(src)).toEqual([]);
   });
+
+  // The one named exemption (#641, WR-02): the assignment logic of `system-role-assignment.ts`
+  // compares a REQUESTED role carried by a `SystemRoleName` parameter, which decides nothing about
+  // the caller. The same text is a finding in every other file (see the flagged shapes above).
+  it("a parameter typed SystemRoleName compared against a literal is not a finding inside the exempt file", () => {
+    expect(
+      shapes(
+        `function isDemotion(role: SystemRoleName) { return role === "EMPLOYEE"; }`,
+        ROLE_TYPED_EXEMPT_FILE,
+      ),
+    ).toEqual([]);
+  });
+
+  it("the same text IS a finding when the file name is any other path", () => {
+    const src = `function isDemotion(role: SystemRoleName) { return role === "EMPLOYEE"; }`;
+    expect(shapes(src, ROLE_TYPED_EXEMPT_FILE)).toEqual([]);
+    expect(shapes(src, "apps/api/src/contexts/absence/system-role-assignment.ts")).toEqual([
+      "role-comparison",
+    ]);
+    expect(shapes(src, "apps/api/src/contexts/platform/api/employees.ts")).toEqual([
+      "role-comparison",
+    ]);
+  });
+
+  it("a switch over a SystemRoleName parameter is not a finding inside the exempt file", () => {
+    const src = `
+      function idFor(role: SystemRoleName): string {
+        switch (role) {
+          case "ADMIN": return "a";
+          case "MANAGER": return "m";
+          default: return "e";
+        }
+      }
+    `;
+    expect(shapes(src, ROLE_TYPED_EXEMPT_FILE)).toEqual([]);
+  });
+
+  it("the exemption covers typed identifiers only: a .role property read is still a finding inside the exempt file", () => {
+    expect(
+      shapes(`if (body.role !== "EMPLOYEE") { needManage(); }`, ROLE_TYPED_EXEMPT_FILE),
+    ).toEqual(["role-comparison"]);
+  });
+
+  it('body.role !== "EMPLOYEE" — a property access on a request body is still a finding', () => {
+    expect(shapes(`if (body.role !== "EMPLOYEE") { needManage(); }`)).toEqual(["role-comparison"]);
+  });
 });
 
-// ── File selection: the single allowlist and the test-file skip ─────────────────────────────────
+// ── File selection: every non-test file, no allowlist ─────────────────────────────────────────
 
 describe("isGatedFile — which files the gate reads", () => {
-  it("any flagged shape inside compat-role.ts is allowlisted (the one compat derivation, D-14)", () => {
-    expect(ALLOWLISTED_FILE).toBe("apps/api/src/contexts/platform/compat-role.ts");
-    expect(isGatedFile("apps/api/src/contexts/platform/compat-role.ts")).toBe(false);
+  it("the exempt system-role assignment module is still READ by the gate (it narrows findings, not the walk)", () => {
+    expect(isGatedFile("apps/api/src/contexts/platform/system-role-assignment.ts")).toBe(true);
   });
 
   it("a file inside a __tests__ directory is not gated", () => {
@@ -267,10 +347,10 @@ describe("isGatedFile — which files the gate reads", () => {
     expect(isGatedFile("apps/api/src/utils/foo.test.ts")).toBe(false);
   });
 
-  it("every other .ts file under apps/api/src is gated — including another compat-role.ts elsewhere", () => {
+  it("every other .ts file under apps/api/src is gated — including another system-role-assignment.ts elsewhere", () => {
     expect(isGatedFile("apps/api/src/middleware/auth.ts")).toBe(true);
     expect(isGatedFile("apps/api/src/composition/reports.ts")).toBe(true);
-    expect(isGatedFile("apps/api/src/contexts/absence/compat-role.ts")).toBe(true);
+    expect(isGatedFile("apps/api/src/contexts/absence/system-role-assignment.ts")).toBe(true);
   });
 
   it("files outside apps/api/src and non-.ts files are not gated", () => {
@@ -282,15 +362,19 @@ describe("isGatedFile — which files the gate reads", () => {
 // ── Live tree ────────────────────────────────────────────────────────────────────────────────────
 
 describe("live tree", () => {
-  it("the walk over apps/api/src is non-empty and excludes the allowlisted file", () => {
+  it("the named exempt file exists, so the exemption cannot be stale", () => {
+    expect(existsSync(join(REPO_ROOT, ROLE_TYPED_EXEMPT_FILE))).toBe(true);
+  });
+
+  it("the walk over apps/api/src is non-empty and includes the system-role assignment module", () => {
     const files = discoverGatedFiles(REPO_ROOT);
     expect(files.length).toBeGreaterThan(100);
     expect(files).toContain("apps/api/src/middleware/auth.ts");
-    expect(files).not.toContain(ALLOWLISTED_FILE);
+    expect(files).toContain("apps/api/src/contexts/platform/system-role-assignment.ts");
     expect(files.some((f) => f.includes("/__tests__/") || f.endsWith(".test.ts"))).toBe(false);
   });
 
-  it("the real tree has no role check outside the allowlisted file", () => {
+  it("the real tree has no role check in any gated file", () => {
     const result = scanRepository(REPO_ROOT);
     expect(result.findings).toEqual([]);
   });

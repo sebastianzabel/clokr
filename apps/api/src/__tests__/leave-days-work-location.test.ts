@@ -50,7 +50,7 @@ describe("Leave days by work location (Phase 71b Plan 03, issue #71, AC-5/AC-7)"
       const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
       const email = `lwl-${label}-${suffix}@test.de`;
       const user = await app.prisma.user.create({
-        data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+        data: { email, passwordHash, isActive: true },
       });
       const employee = await app.prisma.employee.create({
         data: {
@@ -181,7 +181,7 @@ describe("Leave days by work location (Phase 71b Plan 03, issue #71, AC-5/AC-7)"
     // API key of the tenant, which carries no employeeId.
     const adminEmail = `lwl-admin-noprofile-${Date.now().toString(36)}@test.de`;
     const profileLessUser = await app.prisma.user.create({
-      data: { email: adminEmail, passwordHash, role: "ADMIN", isActive: true },
+      data: { email: adminEmail, passwordHash, isActive: true },
     });
     profileLessUserId = profileLessUser.id;
     const adminLoginRes = await app.inject({

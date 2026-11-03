@@ -42,7 +42,6 @@ describe("Issue #446 (D-04) — Monatsbericht + DATEV count CANCELLATION_REQUEST
       data: {
         email: `rcr446-${label}-${suffix}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

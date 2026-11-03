@@ -39,7 +39,6 @@ describe("Überstundenausgleich — stored booking / stored reversal (Issue #468
       data: {
         email: `ot468b-mgr2-${Date.now().toString(36)}@test.de`,
         passwordHash: data.adminUser.passwordHash,
-        role: "MANAGER",
         isActive: true,
       },
     });

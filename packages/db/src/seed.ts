@@ -91,7 +91,6 @@ async function main() {
     create: {
       email: ADMIN_EMAIL,
       passwordHash: adminPasswordHash,
-      role: "ADMIN",
     },
   });
 
@@ -110,7 +109,7 @@ async function main() {
   });
 
   // Issue #539 (D-09): permissions come only from stored role assignments, so the bootstrap
-  // admin holds its system role as one (the `role` column above is still written).
+  // admin holds its system role as one - the role lives only in the stored assignment.
   await ensureSystemRoleAssignment(prisma, {
     tenantId: tenant.id,
     userId: adminUser.id,
@@ -192,7 +191,6 @@ async function main() {
     create: {
       email: EMPLOYEE_EMAIL,
       passwordHash: employeePasswordHash,
-      role: "EMPLOYEE",
     },
   });
 

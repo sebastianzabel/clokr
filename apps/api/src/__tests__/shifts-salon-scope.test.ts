@@ -41,7 +41,7 @@ describe("Issue #91 (Phase 91b Plan 08) — shifts.ts salon/person scope", () =>
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {
@@ -97,7 +97,7 @@ describe("Issue #91 (Phase 91b Plan 08) — shifts.ts salon/person scope", () =>
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {

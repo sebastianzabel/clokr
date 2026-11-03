@@ -68,7 +68,6 @@ describe("Issue #658 — POST /time-entries is narrowed to the create reach", ()
       data: {
         email,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

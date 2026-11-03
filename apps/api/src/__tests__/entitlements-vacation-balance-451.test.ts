@@ -21,7 +21,6 @@ describe("Issue #451 (D-07) — GET /leave/entitlements exposes vacationBalance"
       data: {
         email: `evb451-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

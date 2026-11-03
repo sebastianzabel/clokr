@@ -78,7 +78,6 @@ describe("dry-run-433-monthly-hours-soll (Phase 433 Plan 07, D-12)", () => {
       data: {
         email: `a-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -153,7 +152,6 @@ describe("dry-run-433-monthly-hours-soll (Phase 433 Plan 07, D-12)", () => {
       data: {
         email: `b-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -199,7 +197,6 @@ describe("dry-run-433-monthly-hours-soll (Phase 433 Plan 07, D-12)", () => {
       data: {
         email: `c-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -252,7 +249,6 @@ describe("dry-run-433-monthly-hours-soll (Phase 433 Plan 07, D-12)", () => {
       data: {
         email: `d-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

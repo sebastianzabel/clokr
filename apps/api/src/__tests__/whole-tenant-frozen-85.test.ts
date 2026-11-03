@@ -1263,7 +1263,6 @@ describe("Issue #85 / #547 — frozen whole-tenant responses (tenant admin)", ()
       data: {
         email: `${label}-${stamp}@test.de`,
         passwordHash: opts.anonymized ? "ANONYMIZED" : passwordHash,
-        role: "EMPLOYEE",
         isActive: !opts.anonymized,
       },
     });

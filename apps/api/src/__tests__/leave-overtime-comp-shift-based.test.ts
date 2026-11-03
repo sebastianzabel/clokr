@@ -139,7 +139,6 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED schedu
       data: {
         email: `shb-shift-${suffix}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -282,7 +281,6 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED schedu
       data: {
         email: `shb-fixed-${suffix}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -543,7 +541,7 @@ describe("scheduledLeaveMinutes SHIFT_BASED == saldo credit (Issue #429, D-13)",
 
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await prisma.user.create({
-      data: { email: `d13-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `d13-${suffix}@test.de`, passwordHash, isActive: true },
     });
     const emp = await prisma.employee.create({
       data: {

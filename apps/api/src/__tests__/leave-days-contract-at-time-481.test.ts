@@ -38,7 +38,6 @@ describe("GET /leave/hours-preview priced by contract-at-time (Issue #481, R1)",
       data: {
         email,
         passwordHash: await (await import("bcryptjs")).default.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -211,7 +210,6 @@ describe("GET /leave/hours-preview priced by contract-at-time (Issue #481, R1)",
       data: {
         email,
         passwordHash: await (await import("bcryptjs")).default.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

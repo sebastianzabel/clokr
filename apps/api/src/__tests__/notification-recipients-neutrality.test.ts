@@ -19,12 +19,12 @@
  * writes answer "who is told" for the code that actually runs.
  *
  * ── The fixture (D-09, D-16) ────────────────────────────────────────────────────────────────────
- * Tenant R holds, built BEFORE the checked-in migration SQL runs (so they get migrated
- * assignments): an active and an inactive ADMIN, an active and an inactive MANAGER, two EMPLOYEEs
+ * Tenant R holds, built BEFORE `grantLegacyMigrationRoles` runs (so they get the migrated
+ * assignments the 75b migration used to create from their declared roles): an active and an inactive ADMIN, an active and an inactive MANAGER, two EMPLOYEEs
  * (the requester, whom most sites are about, and a colleague), an EMPLOYEE, an ADMIN and a MANAGER
  * with `exitDate` set, and a user whose only stored assignment is a SALONS-scope customer role that
- * holds every ZUGEWIESEN permission (the migration skips a user that already has an assignment).
- * After the migration: an ADMIN, MANAGER and EMPLOYEE with zero stored assignments (D-08). Since #539
+ * holds every ZUGEWIESEN permission (the grant skips a user that already has an assignment).
+ * After the grant: an ADMIN, MANAGER and EMPLOYEE with zero stored assignments (D-08). Since #539
  * (Release A) there is no legacy-role fallback, so these users hold nothing and are no recipient.
  * Tenant S holds an active ADMIN and MANAGER and nothing that could trigger a notification of its
  * own, so any row S receives is a cross-tenant leak.
@@ -88,9 +88,14 @@ import { dirname, join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import type { Role } from "@clokr/db";
-import { getTestApp, cleanupTestData, createTestSalon, salonIdForEmployee } from "./setup";
-import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
+import {
+  getTestApp,
+  cleanupTestData,
+  createTestSalon,
+  grantLegacyMigrationRoles,
+  salonIdForEmployee,
+  type LegacySystemRoleName,
+} from "./setup";
 import { LabelRegistry, cleanupMatrixExtras } from "./neutrality/fixture";
 import {
   effectiveAmendmentLinks,
@@ -236,6 +241,8 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
   let vacationTypeR = "";
   let sickTypeR = "";
   const persons = new Map<string, Person>();
+  /** The role the fixture declares for each created user (input of `grantLegacyMigrationRoles`). */
+  const declaredRoles: { userId: string; role: LegacySystemRoleName }[] = [];
   /** user id → label, tenant R. */
   const labelOfRUser = new Map<string, string>();
   /** user id → label, tenant S. */
@@ -266,7 +273,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
   async function createPerson(
     tenantId: string,
     label: string,
-    opts: { role: Role; isActive?: boolean; exitDate?: Date; exempt?: boolean },
+    opts: { role: LegacySystemRoleName; isActive?: boolean; exitDate?: Date; exempt?: boolean },
   ): Promise<Person> {
     const slug = label.replace(/\./g, "-").toLowerCase();
     const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -274,7 +281,6 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
       data: {
         email: `${slug}-${suffix}@recipients.test`,
         passwordHash,
-        role: opts.role,
         isActive: opts.isActive ?? true,
       },
     });
@@ -309,6 +315,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
     });
     registry.register(`${label}.user`, user.id);
     registry.register(`${label}.employee`, employee.id);
+    declaredRoles.push({ userId: user.id, role: opts.role });
     const p = { userId: user.id, employeeId: employee.id };
     persons.set(label, p);
     (tenantId === tenantS ? labelOfSUser : labelOfRUser).set(user.id, label);
@@ -504,7 +511,7 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
     const salonsScope = await createPerson(tenantR, "R.salonsScope", { role: "EMPLOYEE" });
 
     // D-09: a SALONS-scope customer role with every ZUGEWIESEN permission, stored before the
-    // migration runs — the migration skips a user who already has an assignment.
+    // rows are granted — the grant skips a user who already has an assignment.
     const everyAssigned = PERMISSIONS.filter((p) => p.reach === "ZUGEWIESEN").map(permissionKey);
     const salonsRole = await app.prisma.accessRole.create({
       data: {
@@ -541,10 +548,12 @@ describe("notification recipient neutrality (Issue #75, AC-75-12)", () => {
     await createRecentEntry(sAdmin, DAY.recentEntry);
     await createRecentEntry(sManager, DAY.recentEntry);
 
-    // D-25: the checked-in migration SQL runs on the fixture before any trigger.
-    await executeLegacyRoleMigration(app.prisma);
+    // D-25 (revised, #641 D-16): the persons created so far receive the stored rows the 75b
+    // migration used to give them, from the roles the fixture declares; the migration SQL itself
+    // reads a column Release B drops and is no longer executed. Runs before any trigger.
+    await grantLegacyMigrationRoles(app.prisma, declaredRoles);
 
-    // D-08: these users exist only after the migration, so they hold no stored assignment (since #539
+    // D-08: these users exist only after the rows were granted, so they hold no stored assignment (since #539
     // that means they hold nothing).
     await createPerson(tenantR, "R.fallback.admin", { role: "ADMIN" });
     await createPerson(tenantR, "R.fallback.manager", { role: "MANAGER" });

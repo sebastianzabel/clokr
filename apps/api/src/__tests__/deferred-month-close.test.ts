@@ -75,7 +75,6 @@ async function createEmployee(
     data: {
       email: `d292-${uniq}@test.de`,
       passwordHash: await bcrypt.hash(opts.password ?? "test1234", 10),
-      role: opts.role ?? "EMPLOYEE",
       isActive: true,
     },
   });

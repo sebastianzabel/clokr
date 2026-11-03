@@ -1026,7 +1026,7 @@ describe("Time Entries API", () => {
       // entries; the self-exclusion behavior is what we assert here, in isolation.
       const s = "put-" + Date.now().toString(36);
       const user = await app.prisma.user.create({
-        data: { email: `${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+        data: { email: `${s}@test.de`, passwordHash: "x", isActive: true },
       });
       const emp = await app.prisma.employee.create({
         data: {

@@ -49,7 +49,6 @@ describe("GET /dashboard/open-items — tenant-local window at 00:30 Berlin (iss
       data: {
         email,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

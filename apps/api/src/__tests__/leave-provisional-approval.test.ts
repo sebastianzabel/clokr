@@ -137,7 +137,7 @@ describe("Leave provisional approval — SHIFT_BASED roster-aware recompute (Pha
 
     async function makeEmployeeWithLogin(label: string, role: "EMPLOYEE" | "ADMIN") {
       const user = await prisma.user.create({
-        data: { email: `lpa-${label}-${suffix}@test.de`, passwordHash, role, isActive: true },
+        data: { email: `lpa-${label}-${suffix}@test.de`, passwordHash, isActive: true },
       });
       const employee = await prisma.employee.create({
         data: {

@@ -64,7 +64,6 @@ describe("PUT /api/v1/settings/work/:employeeId — WorkSchedule.contractWorkDay
       data: {
         email: `wcwd-shift1-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -96,7 +95,6 @@ describe("PUT /api/v1/settings/work/:employeeId — WorkSchedule.contractWorkDay
       data: {
         email: `wcwd-shift2-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -266,7 +264,6 @@ describe("PUT /api/v1/settings/work/:employeeId — WorkSchedule.contractWorkDay
       data: {
         email: `wcwd-bulk-${Date.now()}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -336,7 +333,6 @@ describe("PUT /api/v1/settings/work/:employeeId — cross-tenant guard with cont
       data: {
         email: `wcwd-victim-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -373,7 +373,6 @@ model User {
   id                     String    @id @default(uuid())
   email                  String    @unique
   passwordHash           String
-  role                   Role      @default(EMPLOYEE)
   isActive               Boolean   @default(true)
   emailNotifications     Boolean   @default(true) // Per-user email opt-out
   failedLoginAttempts    Int       @default(0)
@@ -1590,12 +1589,6 @@ model RoleAssignment {
 // ─────────────────────────────────────────────
 // ENUMS
 // ─────────────────────────────────────────────
-
-enum Role {
-  ADMIN
-  MANAGER
-  EMPLOYEE
-}
 
 enum FederalState {
   NIEDERSACHSEN

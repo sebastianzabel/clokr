@@ -54,7 +54,6 @@ describe("Issue #459 - recalculateSnapshots recomputes the start month", () => {
       data: {
         email: `rs459-${suffix}@example.invalid`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

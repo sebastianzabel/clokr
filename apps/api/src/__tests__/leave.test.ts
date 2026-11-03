@@ -732,7 +732,6 @@ describe("Leave / Absence API", () => {
         data: {
           email: `mgr2-${s}@test.de`,
           passwordHash: pwHash,
-          role: "MANAGER",
           isActive: true,
         },
       });
@@ -998,7 +997,7 @@ describe("Leave / Absence API", () => {
       const passwordHash = await bcrypt.hash("test1234", 10);
       const email = `mgr-leave-${Date.now()}@test.de`;
       const mgrUser = await app.prisma.user.create({
-        data: { email, passwordHash, role: "MANAGER", isActive: true },
+        data: { email, passwordHash, isActive: true },
       });
       const mgrEmp = await app.prisma.employee.create({
         data: {
@@ -1130,7 +1129,6 @@ describe("Leave / Absence API", () => {
         data: {
           email: `${s}@test.de`,
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -1296,7 +1294,6 @@ describe("Leave / Absence API", () => {
         data: {
           email: `mgr-a-${s}@test.de`,
           passwordHash: pwHash,
-          role: "MANAGER",
           isActive: true,
         },
       });
@@ -1323,7 +1320,6 @@ describe("Leave / Absence API", () => {
         data: {
           email: `mgr-b-${s}@test.de`,
           passwordHash: pwHash,
-          role: "MANAGER",
           isActive: true,
         },
       });
@@ -1350,7 +1346,6 @@ describe("Leave / Absence API", () => {
         data: {
           email: `mgr-c-${s}@test.de`,
           passwordHash: pwHash,
-          role: "MANAGER",
           isActive: true,
         },
       });
@@ -1592,7 +1587,6 @@ describe("Leave / Absence API", () => {
         data: {
           email: `mgr-b-${s}@test.de`,
           passwordHash: managerBPwHash,
-          role: "MANAGER",
           isActive: true,
         },
       });

@@ -76,7 +76,6 @@ describe("POST /overtime/unlock-month", () => {
       data: {
         email: `other-snap-${Date.now()}@test.de`,
         passwordHash: hash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

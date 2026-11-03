@@ -118,7 +118,6 @@ describe("Issue #87 — GET /time-entries/clock-salon (read path)", () => {
       data: {
         email: `csc87-${label}-${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role,
         isActive: true,
       },
     });

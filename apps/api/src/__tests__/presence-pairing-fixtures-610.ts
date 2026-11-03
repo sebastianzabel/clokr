@@ -104,7 +104,7 @@ export async function createPeerEmployee(
 ): Promise<{ userId: string; employeeId: string; token: string }> {
   const email = `peer-${tag}-${randomBytes(4).toString("hex")}@example.invalid`;
   const user = await app.prisma.user.create({
-    data: { email, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+    data: { email, passwordHash: "x", isActive: true },
   });
   const employee = await app.prisma.employee.create({
     data: {

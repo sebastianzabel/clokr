@@ -1,6 +1,5 @@
-// Shared Types zwischen API und Web
+// Shared types between the API and the web app
 
-export type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
 export type FederalState =
   | "NIEDERSACHSEN"
   | "BAYERN"

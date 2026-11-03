@@ -622,7 +622,7 @@ async function main() {
 
     // User account
     const user = await prisma.user.create({
-      data: { email: def.email, passwordHash: password, role: def.role },
+      data: { email: def.email, passwordHash: password },
     });
 
     // Employee profile
@@ -639,7 +639,7 @@ async function main() {
     });
 
     // Issue #539 (D-09): permissions come only from stored role assignments, so every
-    // re-created demo user holds its system role as one (the `role` column is still written).
+    // re-created demo user holds its system role as one - the role lives only in the stored assignment.
     await ensureSystemRoleAssignment(prisma, {
       tenantId: tenant.id,
       userId: user.id,

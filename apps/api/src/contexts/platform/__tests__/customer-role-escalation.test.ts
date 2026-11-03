@@ -24,6 +24,7 @@ import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { roleNameKey, normalizeRolePermissions } from "../access-role";
+import { SYSTEM_ROLE_IDS } from "../system-roles";
 import type { JwtPayload } from "../../../middleware/auth";
 
 describe("Customer-role escalation guards (Issue #354, pre-merge review of #75)", () => {
@@ -73,7 +74,7 @@ describe("Customer-role escalation guards (Issue #354, pre-merge review of #75)"
     const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash, isActive: true },
     });
     actorUserIds.push(user.id);
     const role = await app.prisma.accessRole.create({
@@ -151,7 +152,12 @@ describe("Customer-role escalation guards (Issue #354, pre-merge review of #75)"
       const createdUser = await app.prisma.user.findUniqueOrThrow({
         where: { email: `esc-b-${uid}@test.de` },
       });
-      expect(createdUser.role).toBe("EMPLOYEE");
+      const assignments = await app.prisma.roleAssignment.findMany({
+        where: { userId: createdUser.id },
+      });
+      expect(assignments.map((row) => [row.accessRoleId, row.scopeType])).toEqual([
+        [SYSTEM_ROLE_IDS.EMPLOYEE, "TENANT"],
+      ]);
     });
 
     it("(c) rejects only the CSV row asking for a non-EMPLOYEE role, for an actor holding only employee:import — the rest of the import still runs", async () => {

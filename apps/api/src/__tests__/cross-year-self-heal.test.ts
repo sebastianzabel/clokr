@@ -27,7 +27,6 @@ describe("Issue #445 finding 2 — per-year self-heal and cancellation (D-10/D-1
       data: {
         email: `cysh-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

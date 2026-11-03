@@ -140,29 +140,14 @@ export function operatorEmployeeCreationAudit(
         tx,
       ),
     roleAssignmentChange: async (change, tx) => {
-      const { entries, compatRole } = change;
-      // Same shape as auditRoleAssignmentChange: the compat-column change rides on the LAST row,
-      // or becomes one UPDATE row on `User` when no assignment row was written.
-      if (compatRole !== null && entries.length === 0) {
-        await write(
-          { action: "UPDATE", entity: "User", entityId: change.userId, newValue: { compatRole } },
-          tx,
-        );
-        return;
-      }
-      for (let i = 0; i < entries.length; i++) {
-        const entry = entries[i];
-        const isLast = i === entries.length - 1;
+      for (const entry of change.entries) {
         await write(
           {
             action: entry.action,
             entity: "RoleAssignment",
             entityId: entry.entityId,
             oldValue: entry.oldValue,
-            newValue:
-              isLast && compatRole !== null
-                ? { ...(entry.newValue ?? {}), compatRole }
-                : entry.newValue,
+            newValue: entry.newValue,
           },
           tx,
         );

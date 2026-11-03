@@ -12,7 +12,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import type { Role } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { resolveAccessReach } from "../facade/role-assignments";
 import type { AccessContext } from "../access-context";
@@ -63,12 +62,12 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
   let tB: Seed;
   const createdUserIds: string[] = [];
 
-  /** A user with an Employee in `tenantId`, legacy column `role`, no stored assignment. */
-  async function createUser(tenantId: string, role: Role, label: string) {
+  /** A user with an Employee in `tenantId` and no stored assignment. */
+  async function createUser(tenantId: string, label: string) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({
-      data: { email: `rar-${s}@test.de`, passwordHash, role, isActive: true },
+      data: { email: `rar-${s}@test.de`, passwordHash, isActive: true },
     });
     createdUserIds.push(user.id);
     const employee = await app.prisma.employee.create({
@@ -155,7 +154,7 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
   // ── D-03 union shape ─────────────────────────────────────────────────────────
 
   it("a TENANT-scope assignment whose role grants the permission resolves to wholeTenant", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "tenant");
+    const { user } = await createUser(tA.tenant.id, "tenant");
     await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, { scopeType: "TENANT" });
     const reach = await resolveAccessReach(
       app.prisma,
@@ -166,7 +165,7 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
   });
 
   it("a SALONS-scope assignment (2 active salons) resolves to their sorted ids, no employees", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "salons2");
+    const { user } = await createUser(tA.tenant.id, "salons2");
     await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, {
       scopeType: "SALONS",
       salonIds: [salonA2.id, salonA1.id],
@@ -184,9 +183,9 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
   });
 
   it("a PERSONS-scope assignment (2 employees) resolves to their sorted ids, no salons", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "persons2");
-    const personX = await createUser(tA.tenant.id, "EMPLOYEE", "persons2-x");
-    const personY = await createUser(tA.tenant.id, "EMPLOYEE", "persons2-y");
+    const { user } = await createUser(tA.tenant.id, "persons2");
+    const personX = await createUser(tA.tenant.id, "persons2-x");
+    const personY = await createUser(tA.tenant.id, "persons2-y");
     await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, {
       scopeType: "PERSONS",
       employeeIds: [personY.employee.id, personX.employee.id],
@@ -204,8 +203,8 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
   });
 
   it("two assignments (SALONS A + PERSONS on employee C) resolve to the UNION, never two separate reaches", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "union");
-    const personC = await createUser(tA.tenant.id, "EMPLOYEE", "union-c");
+    const { user } = await createUser(tA.tenant.id, "union");
+    const personC = await createUser(tA.tenant.id, "union-c");
     await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, {
       scopeType: "SALONS",
       salonIds: [salonA1.id],
@@ -229,7 +228,7 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
   // ── D-04 live salon-activity filter ─────────────────────────────────────────
 
   it("a SALONS assignment naming a currently INACTIVE salon excludes that salon id", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "inactive-salon");
+    const { user } = await createUser(tA.tenant.id, "inactive-salon");
     await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, {
       scopeType: "SALONS",
       salonIds: [salonA1.id, salonA3Inactive.id],
@@ -245,7 +244,7 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
   // ── fail closed ──────────────────────────────────────────────────────────────
 
   it("a malformed stored row (TENANT with salon ids) contributes nothing", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "malformed");
+    const { user } = await createUser(tA.tenant.id, "malformed");
     await assign(tA.tenant.id, user.id, SYSTEM_ROLE_IDS.MANAGER, {
       scopeType: "TENANT",
       salonIds: [salonA1.id],
@@ -259,7 +258,7 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
   });
 
   it("an assignment whose role does not grant the permission contributes nothing", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "non-granting");
+    const { user } = await createUser(tA.tenant.id, "non-granting");
     const role = await customerRole(tA.tenant.id, "non-granting", ["audit-log:read:ZUGEWIESEN"]);
     await assign(tA.tenant.id, user.id, role.id, { scopeType: "SALONS", salonIds: [salonA1.id] });
     const reach = await resolveAccessReach(
@@ -271,7 +270,7 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
   });
 
   it("an assignment on a role belonging to a FOREIGN tenant contributes nothing", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "foreign-role");
+    const { user } = await createUser(tA.tenant.id, "foreign-role");
     const foreignRole = await customerRole(tB.tenant.id, "foreign", ["time-entry:read:ZUGEWIESEN"]);
     await assign(tA.tenant.id, user.id, foreignRole.id, {
       scopeType: "SALONS",
@@ -285,10 +284,10 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
     expect(reach).toEqual({ kind: "scoped", salonIds: [], employeeIds: [] });
   });
 
-  // ── #539 (Release A): no legacy-role fallback — load-bearing, see mutation proof M2 ─────
+  // ── #539 (Release A): no role fallback — load-bearing, see mutation proof M2 ─────
 
-  it("a user with ZERO stored assignments whose legacy role WOULD have granted the permission resolves to scoped-empty (#539: no Altrollen-Rückfall)", async () => {
-    const { user } = await createUser(tA.tenant.id, "MANAGER", "fallback-grants");
+  it("a user with ZERO stored assignments resolves to scoped-empty (#539: no Altrollen-Rückfall)", async () => {
+    const { user } = await createUser(tA.tenant.id, "no-assignment");
     const reach = await resolveAccessReach(
       app.prisma,
       ctxForUser(tA.tenant.id, user.id),
@@ -297,22 +296,12 @@ describe("resolveAccessReach (Phase 91b Plan 01, Issue #91, D-03/D-04)", () => {
     expect(reach).toEqual({ kind: "scoped", salonIds: [], employeeIds: [] });
   });
 
-  it("a user with ZERO stored assignments and legacy column ADMIN also resolves to scoped-empty for a tenant-level permission", async () => {
-    const { user } = await createUser(tA.tenant.id, "ADMIN", "fallback-admin");
+  it("a user with ZERO stored assignments also resolves to scoped-empty for a tenant-level permission", async () => {
+    const { user } = await createUser(tA.tenant.id, "no-assignment-tenant-level");
     const reach = await resolveAccessReach(
       app.prisma,
       ctxForUser(tA.tenant.id, user.id),
       "role-assignment:manage:ZUGEWIESEN",
-    );
-    expect(reach).toEqual({ kind: "scoped", salonIds: [], employeeIds: [] });
-  });
-
-  it("a user with ZERO stored assignments whose legacy role does NOT grant the permission resolves to scoped-empty", async () => {
-    const { user } = await createUser(tA.tenant.id, "EMPLOYEE", "fallback-denies");
-    const reach = await resolveAccessReach(
-      app.prisma,
-      ctxForUser(tA.tenant.id, user.id),
-      "time-entry:read:ZUGEWIESEN",
     );
     expect(reach).toEqual({ kind: "scoped", salonIds: [], employeeIds: [] });
   });

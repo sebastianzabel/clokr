@@ -76,7 +76,6 @@ describe("Leave type visibility — /overlap and /calendar answer the same quest
       data: {
         email: managerEmail,
         passwordHash: managerPasswordHash,
-        role: "MANAGER",
         isActive: true,
       },
     });

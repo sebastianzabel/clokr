@@ -94,7 +94,7 @@ describe("Issue #436 — SHIFT_BASED usual workdays (D-01/D-02/D-03)", () => {
     async function makeUser(label: string, role: "EMPLOYEE" | "ADMIN") {
       const email = `i436-${label}-${suffix}@test.de`;
       const user = await prisma.user.create({
-        data: { email, passwordHash, role, isActive: true },
+        data: { email, passwordHash, isActive: true },
       });
       const employee = await prisma.employee.create({
         data: {

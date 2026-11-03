@@ -49,7 +49,6 @@ describe("repair-zero-vacation-entitlements (Issue #445, D-07)", () => {
       data: {
         email: `rzve-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -197,7 +197,7 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
     async function createShiftBasedEmployee(label: string, salonId: string) {
       const suffix = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
       const user = await app.prisma.user.create({
-        data: { email: `${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+        data: { email: `${suffix}@test.de`, passwordHash, isActive: true },
       });
       const employee = await app.prisma.employee.create({
         data: {
@@ -250,7 +250,6 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
       data: {
         email: `conflicts-scope-planner-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -322,7 +321,7 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
 
     async function createEmp(label: string) {
       const user = await app.prisma.user.create({
-        data: { email: `${label}-${tag}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+        data: { email: `${label}-${tag}@test.de`, passwordHash, isActive: true },
       });
       const employee = await app.prisma.employee.create({
         data: {
@@ -468,7 +467,6 @@ describe("Shift Conflicts API (Phase 67.2 Plan 05)", () => {
       data: {
         email: `other-${Date.now()}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

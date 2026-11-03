@@ -125,7 +125,7 @@ describe("Issue #80 — /api/v1/day-breaks/acks", () => {
     const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash, isActive: true },
     });
     await app.prisma.employee.create({
       data: {

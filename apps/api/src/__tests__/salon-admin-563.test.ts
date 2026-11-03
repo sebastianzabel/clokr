@@ -44,7 +44,6 @@ async function createManagerToken(app: FastifyInstance, tenantId: string): Promi
     data: {
       email: `mgr-salon-admin-${s}@example.invalid`,
       passwordHash,
-      role: "MANAGER",
       isActive: true,
     },
   });

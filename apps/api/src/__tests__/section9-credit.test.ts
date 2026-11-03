@@ -349,7 +349,6 @@ describe("Section9Credit notifications and listing — Phase 104-05 Task 3", () 
       data: {
         email: `mgr-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "MANAGER",
         isActive: true,
       },
     });
@@ -1416,7 +1415,6 @@ describe("display surface — Phase 104-10 Task 1", () => {
       data: {
         email: `col-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

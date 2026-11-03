@@ -25,7 +25,6 @@ describe("PUT /api/v1/settings/work/:employeeId — Vertragswechsel recomputes V
       data: {
         email: `cc450-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

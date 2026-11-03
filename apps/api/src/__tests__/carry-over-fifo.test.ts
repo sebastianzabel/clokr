@@ -22,7 +22,6 @@ describe("Issue #445 finding 4 — carry-over FIFO and expiry of the untaken par
       data: {
         email: `cofo-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

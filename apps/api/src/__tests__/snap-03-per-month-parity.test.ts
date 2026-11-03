@@ -143,7 +143,6 @@ async function createIsolatedTenant(
     data: {
       email: `admin-${s}@snap03.test`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "ADMIN",
       isActive: true,
     },
   });
@@ -179,7 +178,6 @@ async function createIsolatedTenant(
     data: {
       email: `emp-${s}@snap03.test`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

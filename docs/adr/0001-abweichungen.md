@@ -1949,7 +1949,7 @@ Namen der gelöschten Funktionen. `lint:role-checks` behält `compat-role.ts` al
 (Ablauf: `docs/migrations.md`, „Phase 539“). Ohne ihn können sich aktive Nutzer ohne Zuweisung nach dem Deploy nicht anmelden.
 
 **Release B.** Spalte `User.role` und Enum `Role` entfernen, `compat-role.ts` und die `lint:role-checks`-Ausnahme streichen,
-den Firmen-PDF-Filter über Zuweisungen ausdrücken, das Übernahme-Skript stilllegen: #641.
+den Firmen-PDF-Filter über Zuweisungen ausdrücken, das Übernahme-Skript stilllegen: #641. (Erledigt mit #641, siehe Nachtrag „Release B“.)
 
 ### Nachtrag 2026-10-17 (Issue #614) — Anonymisierung beendet die Beschäftigung, Personalnummer bleibt
 
@@ -2041,7 +2041,108 @@ D-12 der dritte dokumentierte Leser der Kompatibilitätsspalte `User.role` war. 
 Zurückschreiben (D-06) und das Übernahme-Skript (D-01). `legacy-role-reads-539.test.ts` zählte D-12 nie als Fund
 (`compatRoleUserWhere()` liefert `{ role }` außerhalb eines `where`-Literals), seine Allowlist braucht deshalb keine
 Änderung. `parseCompatRoleFilter` und `compatRoleUserWhere` bleiben ohne Aufrufer exportiert, bis Release B (#641) die
-Spalte und das Enum entfernt; ein Hinweis steht am Issue #641.
+Spalte und das Enum entfernt; ein Hinweis steht am Issue #641 (erledigt mit #641, siehe Nachtrag „Release B“).
+
+### Nachtrag 2026-11-02 (Issue #641, Release B) — Spalte `User.role` und Enum `Role` entfernt
+
+**Entscheidung.** Owner-Entscheidung vom 01.11.2026 (am Issue #641 dokumentiert): Release B von #539 entfernt die Spalte
+`User.role` und das Enum `Role` per einmaliger Migration. Es ist eine **Unterbau-Semantikänderung** im Sinn von ADR 0002,
+Entscheidung 7: ein Feld und ein Enum des Unterbaus entfallen, und Exporte von `contexts/platform/index.ts` ändern sich. Keine
+Systemrolle und keine Berechtigung ändert sich; die Rolle einer Person stand seit Release A nur noch in den gespeicherten
+Zuweisungen, die Spalte wurde bis jetzt nur noch für ein Image-Rollback mitgeführt.
+
+**Was sich geändert hat.**
+
+- **Migration** `20261103000000_drop_user_role` mit genau zwei Anweisungen, `ALTER TABLE "User" DROP COLUMN "role";` und
+  `DROP TYPE "Role";`. Sie wurde gegen eine Wegwerf-Shadow-Datenbank erzeugt, gelesen und nicht von Hand geändert; der CI-Drift-
+  Check (`migrate diff --exit-code`) liefert 0. Ablauf, Sicherung und Vorab-Prüfung: `docs/migrations.md`, „Phase 641“.
+- **Das Modul heißt `contexts/platform/system-role-assignment.ts`** (vorher `compat-role.ts`, per `git mv`). Die Ableitung heißt
+  `deriveFormRole()` (vorher `deriveCompatRole`), die angeforderte Rolle ist der Typ `SystemRoleName` (`"ADMIN" | "MANAGER" |
+"EMPLOYEE"`) statt des Prisma-Enums. Der Schreib-Vertrag der Anforderungen ist byte-gleich geblieben: die drei
+  `z.enum(["ADMIN", "MANAGER", "EMPLOYEE"])` im Mitarbeiterformular, in `POST /employees` und im CSV-Import.
+- **Es wird nichts mehr zurückgeschrieben.** `syncCompatRoleColumn` samt Änderungstyp ist gelöscht; Anlegen, Import,
+  Operator-Bereitstellung und Anonymisierung schreiben keinen `role`-Wert mehr. Folge für das Protokoll: neue
+  Rollenzuweisungs-Zeilen tragen kein `compatRole`, und eine Rollenänderung schreibt keine UPDATE-Zeile mehr auf die Entität
+  `User`. Bestehende Zeilen behalten ihre Werte (`compatRole`, `legacyRole`, `actorRole`); das Protokoll ist append-only.
+- **Filterhelfer entfernt, Akzeptanzkriterium 3 von #641 durch Entfernung erfüllt.** `parseCompatRoleFilter`,
+  `compatRoleUserWhere` und `CompatRoleFilter` sind gelöscht und aus `contexts/platform/index.ts` nicht mehr exportiert; der
+  Barrel exportiert nichts mehr aus dem Modul. Das Firmen-PDF, dessen Rollenfilter sie bedienten, gibt es seit #617 nicht mehr
+  (`git grep -n -E "pdf/all|COMPANY_MONTHLY_PDF" -- apps/api/src ':!**/__tests__/**'` ist leer).
+- **`backfill-539-role-assignments.ts` ist entfernt** (samt Test und der Zeile in `smoke-readonly.steps`): Er las die Spalte,
+  die es nicht mehr gibt. Die Vorab-Prüfung ersetzt ihn rein lesend (`docs/migrations.md`).
+- **`lint:role-checks` hat keine Ausnahme-Datei und keinen Altspalten-Leser mehr, aber eine benannte Ausnahme für die
+  Zuweisungslogik.** Jede Nicht-Test-Datei unter `apps/api/src` wird geprüft; Bezeichner vom Typ `SystemRoleName` /
+  `LegacySystemRoleName` gelten als rollenwertig, ausgenommen allein `contexts/platform/system-role-assignment.ts`
+  (benannt mit Begründung im Gate, bei fehlender Datei bricht der Lauf ab; die Vergleiche dort sind in
+  `docs/permissions.md` „Nicht gezählte Treffer“ eingeordnet). Ein Vergleich auf einem solchen Parameter in jeder anderen
+  Datei und `body.role !== "EMPLOYEE"` auf einer Anfrage sind Funde (Review-Befund WR-02).
+- **`legacy-role-reads-539.test.ts`** behält ihre Leser-Erlaubnisliste als bewusst leere Liste (`toHaveLength(0)`); der Wächter
+  läuft über 363 Quelldateien und verbietet weiter `select: { role: true }`, `role` unter einem `where`, `req.user.role`, ein
+  `role`-Feld im `JwtPayload` und die Namen der gelöschten Funktionen.
+- **Neutralitäts-Fixtures ohne Wiedergabe der Migration.** Die drei Neutralitäts-Suiten bekamen ihre gespeicherten Zuweisungen
+  bisher, indem sie die SQL der Migration von #75b gegen die Spalte ausführten. Sie leiten sie jetzt aus den Rollen ab, die
+  die Fixtures deklarieren (`grantLegacyMigrationRoles`, gleiche Auswahlregeln); ein Äquivalenz-Probelauf über alle drei
+  Aufbauten bestätigte Zeile für Zeile dieselben Zuweisungen. **Alle Aufzeichnungen und Ausnahmeregister unter
+  `neutrality/recorded/` sind byte-gleich zum Merge-Basisstand.**
+- **Fixture-Codemod über das Gate von #808.** Alle toten `role:`-Schlüssel in Prisma-Aufrufen (600 Schlüssel in 343 Dateien:
+  556 in 314 Dateien unter `apps/api/src`, 44 in 29 Dateien unter `apps/api/scripts`) entfernte ein geprüftes Codemod, das nur
+  die vom Compiler als unbekannt gemeldeten Schlüssel auf dem Pfad `data.` anfasste; danach meldet `lint:prisma-unknown-keys`
+  in allen Programmen (Quellen mit Tests, Skripte, Seeds, die beiden Demo-Skripte) null Funde.
+
+**Was bewusst nicht geschah.**
+
+- Alte Protokollzeilen werden nicht umgeschrieben; sie behalten `compatRole`, `legacyRole` und `actorRole`.
+- Die historische Migration von #75b bleibt unverändert, ebenso die Release-Notes und `.steps`-Dateien von v1.16.0.
+- Die `role`-Literale in den `EXPECTED_*`-Blöcken von `whole-tenant-frozen-85.test.ts` bleiben: Sie sind Pins der
+  ABGELEITETEN Antwortrolle, die die Mitarbeiter-Antworten (`GET /employees`, `GET /employees/:id`, `POST /employees`,
+  Reaktivieren) unter `user.role` weiter liefern (ohne Zuweisung `null`); das Mitarbeiterformular liest sie.
+- Berechtigungen, Systemrollen-Templates, `AccessRole`/`RoleAssignment` und der Rollen-Editor sind unverändert. Die beiden
+  Neutralitätszellen aus #357 (Anonymisierung) bleiben als Amendment aufgezeichnet; ihre Begründung nennt die Spalte als
+  historischen Grund.
+- `packages/mcp` hatte keinen Bezug zur Spalte (die Angabe im Issue war veraltet).
+
+**Auswirkung auf die Kontexte.**
+
+| Kontext             | Wirkung                                                                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Unterbau            | Feld `User.role` und Enum `Role` entfallen, `compat-role.ts` wird zu `system-role-assignment.ts`, der Barrel verliert die Filterhelfer, neue Rollenzuweisungs-Protokollzeilen tragen kein `compatRole`; Migration einweg |
+| Zeiterfassung       | keine                                                                                                                                                                                                                    |
+| Abwesenheiten       | keine                                                                                                                                                                                                                    |
+| Schichtplanung      | keine                                                                                                                                                                                                                    |
+| Arbeitszeitkonto    | keine                                                                                                                                                                                                                    |
+| Kompositionsschicht | keine                                                                                                                                                                                                                    |
+
+**Gemessen.** Gelöscht wurden Tests, deren Gegenstand mit der Spalte entfiel: 11 Fälle in `system-roles-migration.test.ts`
+(sie führten die Migration von #75b gegen Fixture-Nutzer aus; der Drift-Fall bleibt), die 23 Fälle von
+`backfill-539-role-assignments.test.ts` samt Skript und der Wiedergabe-Helfer `legacy-role-migration-sql.ts` samt seinen
+Nutzern. Die Suite lief nach dem Entfernen der Spalte vollständig grün (755 Dateien, 11 078 Tests, davon 3 übersprungen; die
+Untergrenzen in `check-test-completeness.mjs` sind auf diese Summen gesetzt, `MIN_TESTS` sank dabei um 3 gegenüber `main`); `drop-user-role-641.test.ts` (11 Fälle) prüft Migrationsdatei,
+Katalog und Anmeldung des Admins auf dem Schema ohne Spalte.
+
+**Grenzen.**
+
+- **Der Rollback ist datenerhaltend, aber keine Rückwärtsmigration (Review-Befund WR-01).** Ein Image von v1.17.x oder älter
+  fordert die Spalte bei jedem Lesen von `User` an, liest ihren Wert aber für keine Entscheidung (Beleg am Quelltext des Tags
+  `v1.17.0`: nur `syncCompatRoleColumn` vergleicht und schreibt zurück, das Übernahmeskript liest sie von Hand). Der Rollback
+  legt Typ und Spalte mit dem Standardwert `EMPLOYEE` neu an und löscht die Zeile der Migration aus `_prisma_migrations`
+  (`docs/migrations.md`, „Phase 641“, Schritt 5, am 02.11.2026 auf einer Wegwerf-Datenbank geprobt: `migrate status` und
+  `migrate diff --exit-code` gegen das Schema von v1.17.0 ohne Unterschied). Es geht nichts verloren, was nach dem Deploy
+  geschrieben wurde; die alten Spaltenwerte sind weg und laufen bei der nächsten Zuweisungsänderung von allein auf den
+  abgeleiteten Wert zurück. Der `pg_dump` vor dem Deploy bleibt Pflicht als Rückfall, falls die Umkehr scheitert.
+- **Fehlerfenster beim Rolling Update.** Solange ein altes Pod-Exemplar neben einem neuen läuft, kann das alte Pod an der
+  fehlenden Spalte scheitern; die Migration läuft im Einstiegspunkt des neuen Images.
+- **Die `SystemRoleName`-Grenze des Gates ist eine benannte Ausnahme.** Bezeichner dieses Typs (und `LegacySystemRoleName`)
+  gelten als rollenwertig; allein `system-role-assignment.ts` ist davon ausgenommen (Review-Befund WR-02, siehe oben). Die
+  Einordnung der Vergleiche steht in `docs/permissions.md`, und `permission-site-mapping.test.ts` zählt die Treffer je Datei.
+- **Drei Kopien der Rollenmenge (Review-Befund IN-01, bewusst nicht geändert).** `SystemRoleName`, das testseitige
+  `LegacySystemRoleName` und das gepinnte `SeedSystemRoleName` in `packages/db` führen dieselben drei Werte, und die drei
+  `z.enum([...])` der Anforderungsfelder werden nur in einer Richtung geprüft (ihre Werte müssen in `SystemRoleName`
+  passen). Ein vierter Wert im Typ würde kompilieren und von keiner API angenommen. Eine gemeinsame Tupel-Konstante wäre
+  die Abhilfe; der Vertrag der Anforderungen bleibt in diesem Release byte-gleich (D-04).
+- **`newValue.role` im Mitarbeiter-UPDATE ist die Anforderung (Review-Befund IN-04, bewusst nicht geändert).** Die
+  Protokollzeile `UPDATE` auf `Employee` trägt `role: body.role`, den angeforderten Wert (auch bei einer unveränderten
+  Anforderung, sonst `undefined`), nicht das Ergebnis. Maßgeblich für den Verlauf einer Rolle sind die lückenlosen
+  `RoleAssignment`-Zeilen (CREATE/UPDATE/DELETE); der Mitarbeiter-UPDATE belegt nur, was angefragt wurde.
 
 ---
 
@@ -3401,7 +3502,7 @@ Positivliste im Code auf Urlaub beschränkt. Eine künftige Abwesenheitsart gela
 - **Anonymisierte Personen.** Der Monatsexport folgt der DATEV-Population: Eine anonymisierte Person erscheint für ihre
   Beschäftigungsmonate (bis #666 auch ohne Austrittsdatum), ihr Anspruch wird nie geschrieben (kein Heilen, im Speicher
   ausgerichtet).
-- Die Kompatibilitätsfunktionen `parseCompatRoleFilter`/`compatRoleUserWhere` bleiben bis Release B (#641). Die Absence-Exporte
+- Die Kompatibilitätsfunktionen `parseCompatRoleFilter`/`compatRoleUserWhere` bleiben bis Release B (#641; erledigt, siehe Nachtrag „Release B“ in Eintrag N). Die Absence-Exporte
   ohne Produktivaufrufer sind mit #674 entfernt (`BS_NO_LEAVE_LABEL`, `leaveRequestDaysWithin`) bzw. nicht mehr aus
   `index.ts` exportiert (`vocationalSchoolDatesForLeaveRequests`, bleibt im Kontext).
 - Die Kachel „PDF-Bericht“ der Admin-Exportseite → #593; die Neugestaltung der Berichtsseite → #612.

@@ -96,7 +96,6 @@ describe("Phase 76.10 — ArbZG § 3 daily-max honors employee break override (A
       data: {
         email: `admin-${suiteSuffix}@test.de`,
         passwordHash: adminPasswordHash,
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -141,7 +140,6 @@ describe("Phase 76.10 — ArbZG § 3 daily-max honors employee break override (A
       data: {
         email: `emp-${label}-${suiteSuffix}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

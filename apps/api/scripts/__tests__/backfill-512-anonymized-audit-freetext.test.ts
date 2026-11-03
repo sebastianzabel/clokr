@@ -25,7 +25,6 @@ describe("backfill 512: AuditLog free text of anonymized persons (Bestand)", () 
       data: {
         email: `${label}-${suffix}@test.local`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -68,7 +68,6 @@ describe("filterLeaveRowsToHomeSalon (Issue #558)", () => {
       data: {
         email: `${s}@example.invalid`,
         passwordHash: await bcrypt.hash("test1234", 4),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

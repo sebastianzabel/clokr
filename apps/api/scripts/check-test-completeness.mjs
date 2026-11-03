@@ -1011,6 +1011,10 @@ import { readFileSync } from "node:fs";
 // 2026-11-02 (#609 review fixes): measured full run 781 files / 11636 tests.
 // Merge of #609 onto main after #610: full run measured 798 files / 11793 tests (incl. 3 skipped).
 // Issue #820 (+3 files, +13 cases) merged onto main after #818: full run measured 801 files / 11810 tests (incl. 3 skipped).
+// Issue #641 (Release B, 2026-11-02): floors set to the measured full run on the final tree — 755 files, 11078 tests
+// (incl. 3 skipped). Files: +1 drop-user-role-641.test.ts, -1 backfill-539-role-assignments.test.ts (script retired); the
+// base was already 755 files, so 750 had become a loose lower bound. The deleted cases are named at MIN_TESTS.
+// Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped).
 const MIN_FILES = 801;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
@@ -1128,7 +1132,18 @@ const MIN_FILES = 801;
 // Issue #818: +3 cases (state-machine.test.ts +2, nfc-punch.test.ts +1) on the merged base 11793.
 // Issue #819: +2 cases (terminals-salon-541.test.ts) on the merged base 11796.
 // Issue #820 (+3 files, +13 cases): measured 801 files / 11810 tests on main after #818; #819 adds 2 cases -> 11812.
-const MIN_TESTS = 11812;
+// Issue #641 (Release B, 2026-11-02): MIN_TESTS 11081 -> 11078, the measured total of the full run on the final tree. The
+// 3 fewer cases are deliberate: the column User.role and the enum Role are gone, so their tests went with them.
+// Deleted (source-counted on the merge base): the whole backfill-539-role-assignments.test.ts (23 cases; the takeover
+// script it covered is retired), 11 of the 12 cases of system-roles-migration.test.ts (each executed the #75b migration
+// SQL that reads the dropped column; the drift case stays), the column write-back cases of compat-role.test.ts (now
+// system-role-assignment.test.ts) and the stale-entry loop of legacy-role-reads-539.test.ts (an empty allowlist is one
+// asserted case). Added: drop-user-role-641.test.ts (11 cases: tracer, migration file, live catalog, admin sign-in).
+// The replay helper legacy-role-migration-sql.ts was no test file; its users (the three neutrality suites and
+// employee-role-bridge) kept every case.
+// Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped); the drop from 11812 is
+// exactly the deliberately deleted #539/#75b role-column cases named in the #641 comment above.
+const MIN_TESTS = 11788;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

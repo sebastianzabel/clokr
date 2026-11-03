@@ -110,7 +110,6 @@ export async function addPerson(
     data: {
       email: `rem609-${tag}@example.invalid`,
       passwordHash: "ANONYMIZED",
-      role: "EMPLOYEE",
       isActive: overrides.userActive ?? true,
     },
   });

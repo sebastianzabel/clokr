@@ -41,7 +41,6 @@ describe("GET /api/v1/salons", () => {
       data: {
         email: `mgr-salons-${s}@test.de`,
         passwordHash,
-        role: "MANAGER",
         isActive: true,
       },
     });
@@ -196,7 +195,7 @@ async function createManagerFor(app: FastifyInstance, tenantId: string, labelPre
   const s = labelPrefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const passwordHash = await bcrypt.hash("test1234", 10);
   const mgrUser = await app.prisma.user.create({
-    data: { email: `${s}@test.de`, passwordHash, role: "MANAGER", isActive: true },
+    data: { email: `${s}@test.de`, passwordHash, isActive: true },
   });
   const mgrEmployee = await app.prisma.employee.create({
     data: {

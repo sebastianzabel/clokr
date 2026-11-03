@@ -94,7 +94,7 @@ describe("§9 BUrlG (D-15) — day-based Soll dedup in closeEmployeeMonth", () =
   async function createEmployee(): Promise<string> {
     const s = `s9-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash: "x", isActive: true },
     });
     const emp = await app.prisma.employee.create({
       data: {

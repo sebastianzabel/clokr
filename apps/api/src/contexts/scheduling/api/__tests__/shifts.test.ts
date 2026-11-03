@@ -45,7 +45,6 @@ describe("GET /shifts/week — Ø-Methode leave/absence aggregation (Phase 76.12
       data: {
         email: `as-${data.tenant.id.slice(0, 8)}@test.de`,
         passwordHash: "test-only-hash",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -143,7 +142,6 @@ describe("GET /shifts/week — Ø-Methode leave/absence aggregation (Phase 76.12
       data: {
         email: `deleted-${uid}@anonymized.local`,
         passwordHash: "ANONYMIZED",
-        role: "EMPLOYEE",
         isActive: false,
       },
     });
@@ -311,7 +309,6 @@ describe("GET /shifts/week — day-based Soll dedup (Phase 104, D-15 Tier 2)", (
       data: {
         email: `${s}@test.de`,
         passwordHash: "test-only-hash",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
