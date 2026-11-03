@@ -257,10 +257,15 @@ export async function terminalRoutes(app: FastifyInstance) {
       });
       if (!key) return reply.code(404).send({ error: "Schlüssel nicht gefunden" });
 
-      await app.prisma.terminalApiKey.update({
-        where: { id },
+      // Issue #819: the revoke is conditional on the key still being unrevoked, so two concurrent
+      // revokes cannot both write: the loser sees count 0, overwrites nothing (the first
+      // `revokedAt` stays) and writes no second REVOKE audit row. It still answers success: the
+      // key is revoked, which is what the caller asked for (idempotent, as before).
+      const { count } = await app.prisma.terminalApiKey.updateMany({
+        where: { id, tenantId: req.user.tenantId, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+      if (count === 0) return { success: true };
 
       // Issue #333: routed through app.audit() — see the POST / handler's comment above.
       await app.audit({
