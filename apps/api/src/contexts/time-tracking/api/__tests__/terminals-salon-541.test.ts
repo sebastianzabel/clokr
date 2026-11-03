@@ -280,6 +280,62 @@ describe("Issue #541 — terminal key salon binding over HTTP", () => {
       ]);
     });
 
+    it("DELETE: a second revoke landing between the read and the write overwrites nothing and adds no audit row (Issue #819)", async () => {
+      const key = await makeKey(own.tenant.id);
+      const del = (token: string, id: string) =>
+        app.inject({ method: "DELETE", url: `/api/v1/terminals/${id}`, headers: auth(token) });
+      // Two revokes both read the unrevoked key; the first one's write lands before the second's.
+      const realFindFirst = app.prisma.terminalApiKey.findFirst.bind(app.prisma.terminalApiKey);
+      const spy = vi.spyOn(app.prisma.terminalApiKey, "findFirst").mockImplementationOnce(((
+        args: never,
+      ) => {
+        const snapshot = realFindFirst(args);
+        return snapshot.then(async (row) => {
+          const first = await del(own.adminToken, key.id);
+          expect(first.statusCode).toBe(200);
+          return row;
+        });
+      }) as never);
+      let second;
+      try {
+        second = await del(own.adminToken, key.id);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(second.statusCode).toBe(200);
+      expect(JSON.parse(second.body)).toEqual({ success: true });
+      const after = await app.prisma.terminalApiKey.findUniqueOrThrow({ where: { id: key.id } });
+      expect(after.revokedAt).not.toBeNull();
+      // Exactly one REVOKE row: the loser wrote and audited nothing.
+      const rows = await auditRowsFor(app, "TerminalApiKey", key.id);
+      expect(rows.map((r) => r.action)).toEqual(["REVOKE"]);
+      // A later revoke still leaves the first timestamp in place.
+      const third = await del(own.adminToken, key.id);
+      expect(third.statusCode).toBe(200);
+      expect(
+        (await app.prisma.terminalApiKey.findUniqueOrThrow({ where: { id: key.id } })).revokedAt,
+      ).toEqual(after.revokedAt);
+      expect(await auditRowsFor(app, "TerminalApiKey", key.id)).toHaveLength(1);
+    });
+
+    it("DELETE: a foreign and an unknown id answer the identical 404 (Issue #819)", async () => {
+      const foreignKey = await makeKey(foreign.tenant.id);
+      const call = (id: string) =>
+        app.inject({
+          method: "DELETE",
+          url: `/api/v1/terminals/${id}`,
+          headers: auth(own.adminToken),
+        });
+      const a = await call(foreignKey.id);
+      const b = await call(randomUUID());
+      expect([a.statusCode, a.body]).toEqual([404, NOT_FOUND_KEY]);
+      expect([b.statusCode, b.body]).toEqual([404, NOT_FOUND_KEY]);
+      expect(
+        (await app.prisma.terminalApiKey.findUniqueOrThrow({ where: { id: foreignKey.id } }))
+          .revokedAt,
+      ).toBeNull();
+    });
+
     it("rejects a malformed body: empty, non-uuid, unknown key", async () => {
       const key = await makeKey(own.tenant.id);
       for (const payload of [{}, { salonId: "x" }, { salonId: salonA.id, name: "n" }]) {
