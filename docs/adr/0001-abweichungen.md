@@ -3134,6 +3134,98 @@ grep -rn "resolveStammsalonScopedEmployeeIds(\|isStammsalonScopeMatch(" apps/api
 pnpm --filter @clokr/api exec vitest run src/composition/__tests__/reach-stichtag-679.test.ts
 ```
 
+### Nachtrag 2026-11-05 (Phase 647, Issue #647) — Mindestbesetzung je Salon: Besetzungsregeln mit Salonbezug
+
+Der Satz des Nachtrags zu #558, „Mindestbesetzung je Salon (Folge-Issue #647): `CoverageRule` hat keinen Salonbezug, unter
+einem Filter gelten die mandantenweiten Regeln für die Schichten des Salons“, beschreibt den Stand vor #647. Eine
+Besetzungsregel kann seitdem einen Salon nennen.
+
+**Schwere: Neue Abhängigkeit der Schichtplanung auf den Unterbau (Fremdschlüssel `CoverageRule.salonId → Salon`), nach ADR
+0002, Entscheidung 7 eine Erweiterung: additiv, kein bestehender Leser muss sich ändern, genehmigt dadurch, dass Issue #647
+mit dem Abschnitt „Auswirkung auf die Kontexte“ auf `Ready` stand. Keine Semantikänderung des Unterbaus. Am
+Besetzungsalgorithmus ändert sich nur die Kandidatenmenge.**
+
+### Neue Shared-Kernel-Abhängigkeit
+
+`CoverageRule.salonId → Salon` (Fremdschlüssel, `ON DELETE RESTRICT`, nullable, Index `CoverageRule_salonId_idx`, kein
+Backfill: jede bestehende Regel bleibt mandantenweit). Die Mandantengleichheit sichert die Anwendung beim Schreiben
+(`resolveSalonInReach`), nicht die Datenbank. Am Unterbau entsteht nur die Prisma-Rückrelation `Salon.coverageRules` (keine
+Spalte); kein Export von `contexts/platform/index.ts` ändert sich, und `Salon` wird nie hart gelöscht. Migration:
+`20261105075545_coverage_rule_salon` (drei additive Anweisungen).
+
+### Was sich geändert hat
+
+- **Auswertung.** `GET /shifts/week` rechnet die Besetzung mit den Regeln des Salons „in der Ansicht“ plus den
+  mandantenweiten (D-03 bis D-05). In der Ansicht ist: der geprüfte `salonId`-Filter; sonst der einzige Salon der
+  `shift:read`-Reichweite des Aufrufers, wenn die Reichweite genau ein Salon ohne Personenbezug ist (D-03a, ein
+  Salonmanager sendet nie einen Filter); sonst der einzige aktive Salon des Mandanten (D-03); sonst keiner. Die Stufenfolge
+  (Vorlage + Wochentag, alle Vorlagen + Wochentag, Vorlage + alle Tage, alle Vorlagen + alle Tage) bleibt; innerhalb einer
+  Stufe gewinnt die Regel des Salons. Die Regel steht nur in `contexts/scheduling/coverage-rule.ts`
+  (`coverageSalonInView`, `pickCoverageRule`). Die Antwort von `/week` bekommt keinen neuen Schlüssel.
+- **Schreiben.** `POST` und `PUT /shifts/coverage-rules` nehmen ein optionales `salonId` und prüfen es nur über
+  `resolveSalonInReach`: ein fremder, unbekannter oder deaktivierter Salon antwortet mit derselben 404. `PUT` prüft nur einen
+  geänderten Salon; eine Regel eines später deaktivierten Salons bleibt bearbeitbar und wird nicht verschoben (D-06, „ein
+  unveränderter Salon wird nicht neu geprüft“).
+- **Schließung eines Orakels (D-13).** `PUT /coverage-rules/:id` nahm bisher eine fremde `templateId` an und schrieb den Verweis
+  auf die Vorlage eines anderen Mandanten (gemessen im roten Lauf: 200). Eine geänderte `templateId` wird jetzt gegen den
+  Mandanten geprüft; fremd und unbekannt antworten mit derselben 404 „Vorlage nicht gefunden“, nichts wird geschrieben.
+- **Liste (D-09).** `GET /coverage-rules` liefert je Regel `salonId`, `salonName`, `salonActive` (Anzeige, serverseitig
+  zusammengesetzt wie bei den NFC-Terminals, #541).
+- **Oberfläche (D-10).** `/admin/shifts` zeigt im Regelformular die Auswahl „Salon“ nur unter `showSalonOptions()` (#64) und
+  sendet `salonId` nur, solange die Auswahl sichtbar ist; die Spalte „Salon“ erscheint bei Salonwahl oder sobald eine Regel
+  einen Salon trägt; ein deaktivierter Salon bleibt Auswahl (`<Name> (deaktiviert)`) und wird in der Liste markiert. Die Seite
+  bleibt vom Salonfilter der Kopfleiste ausgenommen (Tabelle in `salon-filter-exempt-pages-558.test.ts`, nur der Grundtext
+  geändert); `/shifts` ist unverändert.
+
+### Auswirkung auf die Kontexte
+
+- **Unterbau:** neue eingehende Beziehung `Salon` ← `CoverageRule.salonId` (Erweiterung, additiv).
+- **Schichtplanung:** Modell `CoverageRule`, Auswertung (`coverage-rule.ts`), die Routen `/shifts/coverage-rules` und
+  `/shifts/week`, Formular und Liste in `/admin/shifts`.
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** keine.
+- **Arbeitszeitkonto:** keine. Die Mindestbesetzung geht in kein Soll, Ist oder Saldo ein.
+- **Kompositionsschicht:** keine Regel.
+
+### Was bewusst NICHT geschah
+
+- **Kein Backfill und keine geratene Zuordnung** bestehender Regeln.
+- **Die Stufenfolge bleibt unverändert**; die Salonregel ist nur ein Vorrang innerhalb einer Stufe, nie eine Stufe darüber.
+- **Keine Zeile je Vorlage und Salon** (offene Idee), kein neuer Schlüssel in der `/week`-Antwort.
+- **Keine Reichweitenprüfung für mandantenweite Regeln** (D-07). Sie kann heute nicht eintreten: `shift-config:manage` ist ein
+  Mandanten-Schlüssel, nur eine Zuweisung mit Scope Mandant besteht die Prüfung; ein Salonmanager bekommt bei jedem Schreiben
+  403 (getestet). Die Leserechte von `GET /coverage-rules` bleiben unverändert.
+- **Kein `migrate deploy` gegen die Dev-Datenbank während der Phase.** Gemessen mit `prisma migrate status`: dort fehlte die
+  Migration `20261103000000_drop_user_role` (#641), und der laufende Dev-Stack ist auf einer Basis vor #641 gebaut und liest
+  `User.role`; ein Deploy hätte die Spalte entfernt. Dev erhält die Migration mit dem nächsten Neubau aus `main`.
+
+### Grenzen
+
+- Die Mandantengleichheit ist keine Datenbankbedingung; sie hängt an der Prüfung der Anwendung.
+- Ohne Filter rechnet die Ansicht eines Mandanten mit mehreren Salons nur mit den mandantenweiten Regeln — auch für einen
+  Aufrufer, der nur einen Salon erreicht, sofern dessen Reichweite Personen einschließt (D-03).
+- Die Regeln eines deaktivierten Salons bleiben gespeichert und wirken nie (der Salon ist nie „in der Ansicht“).
+
+### Gemessen
+
+Neue API-Testdateien: `contexts/scheduling/__tests__/coverage-rule` (12 Fälle, darunter ein Frozen-Copy-Vergleich des
+Auswählers über 672 Kombinationen), `coverage-rule-salon-647` (13), `coverage-rule-write-salon-647` (12),
+`coverage-rule-salon-migration-647` (4); Web: `coverage-rule-salon` (14 Fälle) und `admin-shifts-coverage-salon-647`
+(8 Quelltext-Prüfungen). Mutationsbeweise stehen in den Kopfzeilen der Testdateien (Migration 2, Schreibweg 4, Auswertung 5,
+Web 2), jeweils aus einer Sicherungskopie wiederhergestellt. Die drei Neutralitätssuiten (1720 Fälle) sind unverändert, `git
+diff origin/main` über `neutrality/recorded`, `route-surface.txt` und das T-100-09-Register ist leer, der Driftcheck
+(`migrate diff --exit-code`) meldet keinen Unterschied. Laufbuch: `docs/migrations.md`, „Phase 647“.
+
+### Nachrechnen (Nachtrag Phase 647)
+
+```
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/contexts/scheduling/__tests__/coverage-rule.test.ts src/__tests__/coverage-rule-salon-647.test.ts src/__tests__/coverage-rule-write-salon-647.test.ts src/__tests__/coverage-rule-salon-migration-647.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts
+pnpm --filter @clokr/web exec vitest run src/lib/shifts/__tests__/coverage-rule-salon.test.ts src/__tests__/admin-shifts-coverage-salon-647.test.ts
+grep -rn "pickCoverageRule(\|coverageSalonInView(" apps/api/src --include=*.ts | grep -v __tests__   # Definition und genau ein Aufruf je Funktion in shifts.ts
+```
+
 ## Q — Systemrollen-Templates und zwei Saldo-Gates (Phase 76b, Issue #76)
 
 **Schwere: informativ. Unterbau-Erweiterung nach ADR 0002, Entscheidung 7 (additiv, kein
