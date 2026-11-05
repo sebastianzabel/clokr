@@ -1015,7 +1015,12 @@ import { readFileSync } from "node:fs";
 // (incl. 3 skipped). Files: +1 drop-user-role-641.test.ts, -1 backfill-539-role-assignments.test.ts (script retired); the
 // base was already 755 files, so 750 had become a loose lower bound. The deleted cases are named at MIN_TESTS.
 // Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped).
-const MIN_FILES = 801;
+// Phase 647 (2026-11-05): measured with a full API run on `feat/647-coverage-per-salon` @ eeee287a (after merging #829) -
+// 805 test files, 11834 tests (11831 passed, 3 skipped, 0 failed); new files `coverage-rule` (12 cases),
+// `coverage-rule-salon-647` (13), `coverage-rule-write-salon-647` (12), `coverage-rule-salon-migration-647` (4); nothing
+// removed, skipped or loosened; never lowered. The open PRs of the same release (#531, #624, #657, ...) raise the same
+// floors - whoever merges later re-measures with a full run (lower-bound convention, never a sum).
+const MIN_FILES = 805;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1144,7 +1149,8 @@ const MIN_FILES = 801;
 // Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped); the drop from 11812 is
 // exactly the deliberately deleted #539/#75b role-column cases named in the #641 comment above.
 // Issue #531: imports.test.ts -1 (whole-import refusal replaced) +5 (Stammsalon per row); full run measured 801 files / 11793 tests (incl. 3 skipped).
-const MIN_TESTS = 11793;
+// Phase 647 (2026-11-05): 11793 -> 11834, measured by the full run named at MIN_FILES (the four new files add 41 cases).
+const MIN_TESTS = 11834;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
