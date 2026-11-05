@@ -3193,6 +3193,8 @@ Spalte); kein Export von `contexts/platform/index.ts` ändert sich, und `Salon` 
 - **Kein Backfill und keine geratene Zuordnung** bestehender Regeln.
 - **Die Stufenfolge bleibt unverändert**; die Salonregel ist nur ein Vorrang innerhalb einer Stufe, nie eine Stufe darüber.
 - **Keine Zeile je Vorlage und Salon** (offene Idee), kein neuer Schlüssel in der `/week`-Antwort.
+- **Doppelte Regeln** derselben Stufe werden beim Schreiben nicht abgelehnt (kein 409); die Wochenansicht nimmt die zuerst
+  angelegte (`createdAt`, dann `id`), damit die Wahl stabil ist (Review IN-02).
 - **Keine Reichweitenprüfung für mandantenweite Regeln** (D-07). Sie kann heute nicht eintreten: `shift-config:manage` ist ein
   Mandanten-Schlüssel, nur eine Zuweisung mit Scope Mandant besteht die Prüfung; ein Salonmanager bekommt bei jedem Schreiben
   403 (getestet). Der Wächter von `GET /coverage-rules` bleibt `requireAuth` (die Statuscodes der Neutralitätsaufnahmen sind

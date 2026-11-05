@@ -1510,6 +1510,9 @@ export async function shiftRoutes(app: FastifyInstance) {
         ),
         app.prisma.coverageRule.findMany({
           where: { tenantId },
+          // Issue #647 IN-02 — duplicates of one rung are not rejected on write, so the pick must be
+          // deterministic: the first-created rule wins (id breaks a createdAt tie).
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
           select: {
             salonId: true,
             templateId: true,

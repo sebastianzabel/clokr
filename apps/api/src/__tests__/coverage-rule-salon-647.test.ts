@@ -553,3 +553,58 @@ describe("Issue #647 AC 1–3 — the week view of a multi-salon tenant", () => 
     expect(minStaffByDay(body)).toEqual([3, 3, 3, 3, 5, 3, 3]);
   });
 });
+
+describe("Issue #647 IN-02 — duplicate rules of one rung give a deterministic pick", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+  const ALL = (n: number) => [n, n, n, n, n, n, n];
+
+  function duplicate(minStaff: number, createdAt: Date, id?: string) {
+    return app.prisma.coverageRule.create({
+      data: {
+        ...(id ? { id } : {}),
+        tenantId: data.tenant.id,
+        salonId: null,
+        templateId: null,
+        dayOfWeek: -1,
+        minStaff,
+        requiresNonSupervised: false,
+        createdAt,
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-15T10:00:00.000Z"));
+    app = await getTestApp();
+    data = await seedTestData(app, "cov647d");
+  });
+
+  afterAll(async () => {
+    vi.useRealTimers();
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("coverage-rule-salon-647 (IN-02) cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("the first-created of two duplicate rules wins, whatever order the database yields", async () => {
+    // The LATER rule is inserted first, so an unordered read yields it first.
+    await duplicate(5, new Date("2026-06-02T10:00:00.000Z"));
+    await duplicate(2, new Date("2026-06-01T10:00:00.000Z"));
+    expect(minStaffByDay(await weekAs(app, data.adminToken))).toEqual(ALL(2));
+  });
+
+  it("two duplicates with the same createdAt: the smaller id wins", async () => {
+    await app.prisma.coverageRule.deleteMany({ where: { tenantId: data.tenant.id } });
+    const same = new Date("2026-06-03T10:00:00.000Z");
+    const ids = ["00000000-0000-4000-8000-000000000b02", "00000000-0000-4000-8000-000000000a01"];
+    // inserted in descending id order, so an unordered read yields the larger id first
+    await duplicate(6, same, ids[0]);
+    await duplicate(4, same, ids[1]);
+    expect(minStaffByDay(await weekAs(app, data.adminToken))).toEqual(ALL(4));
+  });
+});
