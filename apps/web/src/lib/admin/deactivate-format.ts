@@ -12,7 +12,8 @@ import type {
 } from "$lib/api/deactivate-preview";
 import { LEAVE_TYPES } from "$lib/leave/team-calendar-visibility";
 import { fmtBalance } from "$lib/utils/format-minutes";
-import { fmtDateDe, fmtDaysDe } from "$lib/reports/period-format";
+import { fmtDateDe } from "$lib/reports/period-format";
+import { formatDays } from "$lib/leave/parental-reduction";
 
 /** The day the date field starts on: the stored exit date when it is not in the future, else today. */
 export function initialExitDay(preview: Pick<DeactivatePreview, "today" | "storedExitDate">) {
@@ -90,6 +91,14 @@ const VACATION_UNAVAILABLE: Record<string, string> = {
   UNAVAILABLE: "Der Resturlaub ist gerade nicht verfügbar.",
 };
 
+/**
+ * "1 Tag" / "2 Tage" / "2,33 Tage": German singular and plural, up to two decimals so a § 5 fraction is
+ * not rounded into a different day count (review IN-03).
+ */
+function daysText(days: number): string {
+  return days === 1 ? "1 Tag" : `${formatDays(days)} Tage`;
+}
+
 /** One or two lines: the Resturlaub of the exit year and, when it changes, the § 5 note. */
 export function vacationLines(
   p: Pick<DeactivatePreview, "vacation" | "vacationUnavailableReason">,
@@ -104,14 +113,14 @@ export function vacationLines(
   const lines: string[] = [];
   if (v.remainingAtExitDays < 0) {
     lines.push(
-      `${fmtDaysDe(Math.abs(v.remainingAtExitDays))} Tage mehr genommen als der Anspruch im Austrittsjahr ${v.year}`,
+      `${daysText(Math.abs(v.remainingAtExitDays))} mehr genommen als der Anspruch im Austrittsjahr ${v.year}`,
     );
   } else {
-    lines.push(`${fmtDaysDe(v.remainingAtExitDays)} Tage Resturlaub im Austrittsjahr ${v.year}`);
+    lines.push(`${daysText(v.remainingAtExitDays)} Resturlaub im Austrittsjahr ${v.year}`);
   }
   if (v.entitlementRecomputed) {
     lines.push(
-      `Der Anspruch ${v.year} wird nach § 5 BUrlG auf ${fmtDaysDe(v.entitlementDays)} Tage neu berechnet.`,
+      `Der Anspruch ${v.year} wird nach § 5 BUrlG auf ${daysText(v.entitlementDays)} neu berechnet.`,
     );
   }
   return lines;

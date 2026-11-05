@@ -128,6 +128,32 @@ describe("vacationLines", () => {
       "18 Tage Resturlaub im Austrittsjahr 2026",
     ]);
   });
+  it("uses the singular for exactly one day and keeps two decimals (review IN-03)", () => {
+    expect(
+      vacationLines({
+        vacation: vacation({ remainingAtExitDays: 1 }),
+        vacationUnavailableReason: null,
+      })[0],
+    ).toBe("1 Tag Resturlaub im Austrittsjahr 2026");
+    expect(
+      vacationLines({
+        vacation: vacation({ remainingAtExitDays: 2.33 }),
+        vacationUnavailableReason: null,
+      })[0],
+    ).toBe("2,33 Tage Resturlaub im Austrittsjahr 2026");
+    expect(
+      vacationLines({
+        vacation: vacation({ remainingAtExitDays: -1 }),
+        vacationUnavailableReason: null,
+      })[0],
+    ).toBe("1 Tag mehr genommen als der Anspruch im Austrittsjahr 2026");
+    expect(
+      vacationLines({
+        vacation: vacation({ entitlementRecomputed: true, entitlementDays: 1 }),
+        vacationUnavailableReason: null,
+      })[1],
+    ).toBe("Der Anspruch 2026 wird nach § 5 BUrlG auf 1 Tag neu berechnet.");
+  });
   it("words negative remaining days as days taken beyond the entitlement", () => {
     const lines = vacationLines({
       vacation: vacation({ remainingAtExitDays: -2.5 }),
