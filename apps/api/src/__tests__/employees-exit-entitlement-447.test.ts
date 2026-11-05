@@ -6,13 +6,14 @@
  * Relative years only (current UTC year + 1 / − 1) — no assertion depends on a fixed calendar
  * year expiring. Initials-only fixtures — no PII per CLAUDE.md.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
   getTestApp,
   closeTestApp,
   seedTestData,
   cleanupTestData,
   soleAuditRowOrNull,
+  reissueTokenNow,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -199,32 +200,70 @@ describe("Employee exit-date writes recompute the exit-year VACATION row (Issue 
     expect(Number(finalYPlus1.totalDays)).toBe(8);
   });
 
+  // Issue #615 (D-02) — deliberate behaviour change: this case used to deactivate with a FUTURE exit
+  // date (31 March of next year). A future last working day is now refused with 400; a future exit
+  // belongs in the master data (PATCH /:id). The case pins the clock to 15 August of the current year
+  // and deactivates on 30 June, a fixed past day of the first half-year: six full months, so § 5 BUrlG
+  // gives exactly 30 x 6 / 12 = 15 days of Teilurlaub on any day the suite runs. The twin parity with
+  // PATCH /:id { exitDate } lives in deactivate-exit-day-615.test.ts.
   it("deactivate recomputes the exit-year row to Teilurlaub; reactivate recomputes it back to the full value", async () => {
     const empId = await mkEmployee("deact-react");
+    const exitYear = new Date().getUTCFullYear();
+    const row = await machineOwnedRow(empId, exitYear, 30);
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(`${exitYear}-08-15T10:00:00Z`));
+    try {
+      const headers = { authorization: `Bearer ${reissueTokenNow(app, data.adminToken)}` };
+      const deactivateRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${empId}/deactivate`,
+        headers,
+        payload: { exitDate: `${exitYear}-06-30` },
+      });
+      expect(deactivateRes.statusCode, deactivateRes.body).toBe(200);
+      const afterDeactivate = await app.prisma.leaveEntitlement.findUniqueOrThrow({
+        where: { id: row.id },
+      });
+      expect(Number(afterDeactivate.totalDays)).toBe(15);
+
+      const reactivateRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${empId}/reactivate`,
+        headers,
+      });
+      expect(reactivateRes.statusCode, reactivateRes.body).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+    const afterReactivate = await app.prisma.leaveEntitlement.findUniqueOrThrow({
+      where: { id: row.id },
+    });
+    expect(Number(afterReactivate.totalDays)).toBe(30);
+  });
+
+  it("Issue #615 (D-02): a future last working day is refused and writes nothing", async () => {
+    const empId = await mkEmployee("deact-future");
     const row = await machineOwnedRow(empId, Y, 30);
 
-    const deactivateRes = await app.inject({
+    const res = await app.inject({
       method: "PATCH",
       url: `/api/v1/employees/${empId}/deactivate`,
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: { exitDate: new Date(Date.UTC(Y, 2, 31)).toISOString() },
     });
-    expect(deactivateRes.statusCode).toBe(200);
-    const afterDeactivate = await app.prisma.leaveEntitlement.findUniqueOrThrow({
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).code).toBe("EXIT_DATE_IN_FUTURE");
+    const unchanged = await app.prisma.leaveEntitlement.findUniqueOrThrow({
       where: { id: row.id },
     });
-    expect(Number(afterDeactivate.totalDays)).toBe(8);
-
-    const reactivateRes = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/employees/${empId}/reactivate`,
-      headers: { authorization: `Bearer ${data.adminToken}` },
+    expect(Number(unchanged.totalDays)).toBe(30);
+    const employee = await app.prisma.employee.findUniqueOrThrow({
+      where: { id: empId },
+      include: { user: true },
     });
-    expect(reactivateRes.statusCode).toBe(200);
-    const afterReactivate = await app.prisma.leaveEntitlement.findUniqueOrThrow({
-      where: { id: row.id },
-    });
-    expect(Number(afterReactivate.totalDays)).toBe(30);
+    expect(employee.exitDate).toBeNull();
+    expect(employee.user.isActive).toBe(true);
   });
 
   it("D-08: PATCH exitDate reports proRataWarning (neutral, no reclaim suggestion) when usedDays exceed the new entitlement", async () => {
