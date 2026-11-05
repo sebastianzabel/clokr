@@ -87,7 +87,10 @@ export function loadDeactivatePreview(
   );
 }
 
-/** Deactivates with the chosen last working day; a rejection is the server's own message. */
-export function deactivateEmployee(employeeId: string, exitDate: string): Promise<unknown> {
-  return api.patch(`/employees/${employeeId}/deactivate`, { exitDate });
+/**
+ * Deactivates with the chosen last working day; a rejection is the server's own message. Without a
+ * day (a person who has not started yet, `loginOnlyReason`) only the login is switched off.
+ */
+export function deactivateEmployee(employeeId: string, exitDate?: string): Promise<unknown> {
+  return api.patch(`/employees/${employeeId}/deactivate`, exitDate ? { exitDate } : {});
 }

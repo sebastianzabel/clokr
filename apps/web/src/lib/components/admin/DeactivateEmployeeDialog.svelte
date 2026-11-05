@@ -43,6 +43,8 @@
   // The server's tenant-local today, the upper bound of the field (null until the first answer).
   let today = $state<string | null>(null);
   let day = $state("");
+  // Review CR-02: a person who has not started yet has no last working day; only the login is switched off.
+  let loginOnly = $state(false);
   let loading = $state(false);
   let saving = $state(false);
   let errorText = $state<string | null>(null);
@@ -82,6 +84,13 @@
   async function start() {
     const first = await load(undefined, false);
     if (!first) return;
+    loginOnly = first.loginOnlyReason !== null;
+    if (loginOnly) {
+      day = "";
+      view = first;
+      today = first.today;
+      return;
+    }
     const startDay = initialExitDay(first);
     day = startDay;
     if (startDay === first.exitDate) {
@@ -99,6 +108,7 @@
       view = null;
       today = null;
       day = "";
+      loginOnly = false;
       saving = false;
       errorText = null;
       void start();
@@ -120,7 +130,11 @@
   }
 
   let canConfirm = $derived(
-    view !== null && view.refusal === null && view.exitDate === day && !loading && !saving,
+    view !== null &&
+      view.refusal === null &&
+      (loginOnly || view.exitDate === day) &&
+      !loading &&
+      !saving,
   );
 
   async function changeDay(value: string) {
@@ -140,7 +154,7 @@
     saving = true;
     errorText = null;
     try {
-      await deactivateEmployee(employee.id, day);
+      await deactivateEmployee(employee.id, loginOnly ? undefined : day);
     } catch (err) {
       errorText = messageOf(err);
       saving = false;
@@ -168,13 +182,20 @@
         {employee.firstName}
         {employee.lastName} kann sich danach nicht mehr anmelden. Die Zeitdaten bleiben erhalten.
       </p>
-      <p>
-        Abwesenheiten nach dem letzten Arbeitstag werden storniert oder gekürzt. Ein Reaktivieren
-        bringt sie nicht zurück.
-      </p>
+      {#if loginOnly}
+        <p>
+          Der Eintritt liegt in der Zukunft. Beim Deaktivieren wird nur der Zugang gesperrt. Es gibt
+          keinen letzten Arbeitstag, und Abwesenheiten bleiben unverändert.
+        </p>
+      {:else}
+        <p>
+          Abwesenheiten nach dem letzten Arbeitstag werden storniert oder gekürzt. Ein Reaktivieren
+          bringt sie nicht zurück.
+        </p>
+      {/if}
     </div>
 
-    {#if today !== null}
+    {#if today !== null && !loginOnly}
       <div class="form-group">
         <label class="form-label" for="deactivate-exit-day">Letzter Arbeitstag</label>
         <input
@@ -193,7 +214,7 @@
       <p class="form-hint" role="status">Vorschau wird geladen …</p>
     {/if}
 
-    {#if view !== null}
+    {#if view !== null && !loginOnly}
       {#if view.refusal}
         <div class="callout error" role="alert">{view.refusal.error}</div>
       {/if}

@@ -375,6 +375,29 @@ describe("DeactivateEmployeeDialog", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("a person who has not started yet gets a hint instead of a day field and is deactivated without a day (review CR-02)", async () => {
+    post.mockResolvedValue(
+      preview({
+        exitDate: null,
+        loginOnlyReason: "HIRE_IN_FUTURE",
+        absences: [],
+        vacation: null,
+        vacationUnavailableReason: "HIRE_IN_FUTURE",
+      }),
+    );
+    mount();
+    await screen.findByText(/Der Eintritt liegt in der Zukunft/);
+    expect(screen.queryByLabelText("Letzter Arbeitstag")).toBeNull();
+    expect(screen.queryByText(/Resturlaub/)).toBeNull();
+    // One question on open, no second one for a chosen day.
+    expect(post).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(confirmButton().disabled).toBe(false));
+    await fireEvent.click(confirmButton());
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith(DEACTIVATE_URL, {});
+    await waitFor(() => expect(onDeactivated).toHaveBeenCalledTimes(1));
+  });
+
   it("keeps a server rejection inside the open dialog", async () => {
     patch.mockRejectedValueOnce(new ApiError(409, "Der Monat ist bereits abgeschlossen."));
     mount();
