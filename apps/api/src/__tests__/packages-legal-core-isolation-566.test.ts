@@ -121,9 +121,30 @@ const SINGLE_FILES = [
   `${SRC}/composition/pdf.ts`,
   `${SRC}/composition/dashboard.ts`,
   `${SRC}/contexts/platform/api/audit-logs.ts`,
-  // D-07: extended roles and role assignments stay ungated in this phase.
+];
+
+/**
+ * Issue #624 (revises D-07): extended roles are bound to the Ketten-Paket, for NEW creations only.
+ * The two route files may name exactly the gate `assertModuleBooked` and nothing else; the reach
+ * resolution (`resolveAccessReach` and everything it calls) lives in other files that stay in the
+ * clean lists below and in the resolution test.
+ */
+const ROLE_GATE_FILES = [
   `${SRC}/contexts/platform/api/roles.ts`,
   `${SRC}/contexts/platform/api/role-assignments.ts`,
+];
+
+/**
+ * Issue #624: the permission resolution never reads a package — an existing role or assignment
+ * keeps working whatever is booked. Every file on the path from a request to its effective
+ * permissions and reach is listed and must be reached and clean.
+ */
+const RESOLUTION_FILES = [
+  `${SRC}/contexts/platform/request-permissions.ts`,
+  `${SRC}/contexts/platform/access-context.ts`,
+  `${SRC}/contexts/platform/facade/role-assignments.ts`,
+  `${SRC}/contexts/platform/role-assignment.ts`,
+  `${SRC}/contexts/platform/scope-filter.ts`,
 ];
 
 /**
@@ -407,6 +428,30 @@ const SITES: Site[] = [
     gate: "assertModuleBooked",
     module: "INTEGRATIONS",
     create: "apiKey.create",
+  }),
+  simpleSite({
+    id: "POST /roles",
+    file: `${SRC}/contexts/platform/api/roles.ts`,
+    scope: (sf) => routeCall(sf, "post", "/"),
+    gate: "assertModuleBooked",
+    module: "CHAIN",
+    create: "accessRole.create",
+  }),
+  simpleSite({
+    id: "POST /roles/:id/copy",
+    file: `${SRC}/contexts/platform/api/roles.ts`,
+    scope: (sf) => routeCall(sf, "post", "/:id/copy"),
+    gate: "assertModuleBooked",
+    module: "CHAIN",
+    create: "accessRole.create",
+  }),
+  simpleSite({
+    id: "POST /role-assignments",
+    file: `${SRC}/contexts/platform/api/role-assignments.ts`,
+    scope: (sf) => routeCall(sf, "post", "/"),
+    gate: "assertModuleBooked",
+    module: "CHAIN",
+    create: "roleAssignment.create",
   }),
   simpleSite({
     id: "POST /terminals",
@@ -760,6 +805,30 @@ describe("Issue #566 (AC-5, D-11) — no legally required path is bound to a pac
     }
   });
 
+  it("Issue #624: the role routes name only the gate; the resolution files name no package at all", () => {
+    for (const file of ROLE_GATE_FILES) {
+      expect(existsSync(join(REPO_ROOT, file)), `${file} does not exist`).toBe(true);
+      expect(referencesOf(file), `${file} must name exactly the gate`).toEqual([
+        "../tenant-packages",
+        "assertModuleBooked",
+      ]);
+    }
+    // The resolution (resolveAccessReach and its building blocks) is found by name, so a moved
+    // function cannot silently leave the list.
+    const resolutionHolders = RESOLUTION_FILES.filter(
+      (f) =>
+        existsSync(join(REPO_ROOT, f)) &&
+        /resolveAccessReach/.test(readFileSync(join(REPO_ROOT, f), "utf8")),
+    );
+    expect(resolutionHolders, "no listed file defines or calls resolveAccessReach").not.toEqual([]);
+    for (const file of RESOLUTION_FILES) {
+      expect(existsSync(join(REPO_ROOT, file)), `${file} does not exist (moved or renamed)`).toBe(
+        true,
+      );
+      expect(referencesOf(file), `${file} references a package`).toEqual([]);
+    }
+  });
+
   it("the Schichtplan tree is clean except the two coupling files", () => {
     const offenders = schedulingWalked
       .map(repoRel)
@@ -834,12 +903,15 @@ describe("Issue #566 (AC-5, D-11) — no legally required path is bound to a pac
 });
 
 describe("Issue #566 (D-03, D-05, D-11) — every set-up site calls its gate before its create call", () => {
-  it("the sites table covers all nine set-up sites", () => {
+  it("the sites table covers all twelve set-up sites", () => {
     expect(SITES.map((s) => s.id).sort((a, b) => a.localeCompare(b))).toEqual(
       [
         "GET /time-entries/summary",
         "POST /admin/presence-sources",
         "POST /api-keys",
+        "POST /role-assignments",
+        "POST /roles",
+        "POST /roles/:id/copy",
         "POST /terminals",
         "PUT /integrations/phorest/config",
         "activateSalon",
@@ -977,6 +1049,18 @@ describe("Issue #566 (D-03, D-05) — no third file creates a coupling, key, ter
     expect(filesWritingModel("presenceSource")).toEqual([
       `${TT_ROOT}/api/admin-presence-sources.ts`,
     ]);
+  }, 60_000);
+
+  it("Issue #624: accessRole and roleAssignment are created only by the gated routes and the system-role seeding", () => {
+    expect(filesWritingModel("accessRole")).toEqual([`${SRC}/contexts/platform/api/roles.ts`]);
+    // system-role-assignment.ts writes the stored system-role assignment of an employee (a
+    // tenant-wide, Grundversion grant) and is no tenant-facing custom reach.
+    expect(filesWritingModel("roleAssignment")).toEqual(
+      [
+        `${SRC}/contexts/platform/api/role-assignments.ts`,
+        `${SRC}/contexts/platform/system-role-assignment.ts`,
+      ].sort((a, b) => a.localeCompare(b)),
+    );
   }, 60_000);
 
   it("terminalApiKey is created only by the gated route and the test-only bootstrap route", () => {

@@ -260,7 +260,7 @@ Begründung „Anonymisierung“). Personenlisten anderer Zuweisungen, die den a
 Mitarbeiter enthalten, bleiben unverändert; die Auflösung ignoriert anonymisierte Ziele. Hat ein
 Nutzer beim endgültigen Löschen trotzdem noch Zuweisungen, werden sie vor dem Nutzer einzeln
 gelöscht, jede mit Audit-Eintrag (Begründung „Endgültige Löschung“); die Kaskade am Fremdschlüssel
-ist nur Rückfallsicherung. Eine neue Zuweisung (`POST /role-assignments`) nimmt dieselbe
+ist nur Rückfallsicherung. Seit Issue #624 binden das Anlegen und Kopieren einer Kundenrolle sowie eine neue Zuweisung mit Scope Salons oder Personen an das Ketten-Paket (409 `MODULE_NOT_BOOKED`; Ändern, Entziehen und die Auflösung bleiben frei und lesen nie ein Paket). Eine neue Zuweisung (`POST /role-assignments`) nimmt dieselbe
 Mandantensperre und prüft Nutzer und Rolle erst danach, sodass sie nicht an einer gleichzeitigen
 Anonymisierung vorbei angelegt werden kann. Eine gespeicherte Zuweisung, die die Form-Regel verletzt
 (etwa Scope Salons ohne Salon), gewährt nichts und zählt nicht als Halter. Hintergrundjobs (Aufbewahrung, `data-retention`) prüfen den Aussperrschutz nicht — sie betreffen

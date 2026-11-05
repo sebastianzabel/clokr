@@ -31,6 +31,7 @@ vi.mock("$api/client", () => {
 });
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createRawSnippet } from "svelte";
 import { screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import { ApiError } from "$api/client";
@@ -360,5 +361,28 @@ describe("RolesTab reveals the editor (Issue #692)", () => {
     await fireEvent.click(within(row("Teamleitung")).getByRole("button", { name: "Bearbeiten" }));
     await waitFor(() => expect(scrollSpy).toHaveBeenCalledTimes(1));
     expect(document.activeElement).toBe(screen.getByLabelText("Name der Rolle"));
+  });
+});
+
+describe("RolesTab without the Ketten-Paket (Issue #624)", () => {
+  it("the hint replaces „Neue Rolle“, copying is off, editing and deleting stay free", async () => {
+    const createHint = createRawSnippet(() => ({
+      render: () =>
+        '<p data-testid="module-hint">Eigene Rollen sind mit dem Ketten-Paket verfügbar.</p>',
+    }));
+    renderWithTheme(RolesTab, { canManage: true, draft: null, createHint });
+    await screen.findByText("Teamleitung");
+    expect(screen.getByTestId("module-hint")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Neue Rolle" })).toBeNull();
+    for (const copyButton of screen.getAllByRole("button", { name: "Kopieren" })) {
+      expect((copyButton as HTMLButtonElement).disabled).toBe(true);
+    }
+    const team = row("Teamleitung");
+    expect(
+      (within(team).getByRole("button", { name: "Bearbeiten" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(
+      (within(team).getByRole("button", { name: "Löschen" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 });
