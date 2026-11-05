@@ -144,14 +144,15 @@ describe("vacationLines", () => {
     expect(lines[1]).toBe("Der Anspruch 2026 wird nach § 5 BUrlG auf 25 Tage neu berechnet.");
   });
   it("shows one calm line per reason, and nothing for a refused day", () => {
-    for (const reason of ["NO_PERMISSION", "NO_ENTITLEMENT"] as const) {
+    for (const reason of ["NO_PERMISSION", "NO_ENTITLEMENT", "UNAVAILABLE"] as const) {
       const lines = vacationLines({ vacation: null, vacationUnavailableReason: reason });
       expect(lines).toHaveLength(1);
       expect(lines[0]).not.toMatch(/\d/);
     }
-    expect(
-      vacationLines({ vacation: null, vacationUnavailableReason: "EXIT_DATE_REFUSED" }),
-    ).toEqual([]);
+    // A refused day and a not-yet-hired person (no exit year) show nothing extra.
+    for (const reason of ["EXIT_DATE_REFUSED", "HIRE_IN_FUTURE"] as const) {
+      expect(vacationLines({ vacation: null, vacationUnavailableReason: reason })).toEqual([]);
+    }
   });
 });
 

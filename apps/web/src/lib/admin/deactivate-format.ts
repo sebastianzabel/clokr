@@ -87,6 +87,7 @@ export function saldoLine(p: Pick<DeactivatePreview, "saldo" | "saldoUnavailable
 const VACATION_UNAVAILABLE: Record<string, string> = {
   NO_PERMISSION: "Den Resturlaub kannst du mit deinen Rechten nicht einsehen.",
   NO_ENTITLEMENT: "Für das Austrittsjahr ist kein Urlaubsanspruch hinterlegt.",
+  UNAVAILABLE: "Der Resturlaub ist gerade nicht verfügbar.",
 };
 
 /** One or two lines: the Resturlaub of the exit year and, when it changes, the § 5 note. */

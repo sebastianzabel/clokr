@@ -522,6 +522,27 @@ describe("Issue #615 — deactivation preview", () => {
       expect(row.vacationBalance!.remainingDays).toBe(projected.remainingAtExitDays);
     });
 
+    it("a failing Resturlaub projection degrades to UNAVAILABLE and keeps the rest of the preview (review WR-06)", async () => {
+      const { worker, vacation } = await workerWithVacation("vacation-fails");
+      const spy = vi
+        .spyOn(app, "exitVacationBalance")
+        .mockRejectedValueOnce(new Error("fail-closed holiday resolution"));
+      try {
+        const res = await preview(worker.employee.id, { exitDate: isoDay(today) });
+        expect(res.statusCode, res.body).toBe(200);
+        const body = JSON.parse(res.body) as PreviewBody;
+        expect(body.vacation).toBeNull();
+        expect(body.vacationUnavailableReason).toBe("UNAVAILABLE");
+        expect(body.refusal).toBeNull();
+        expect(body.saldo).not.toBeNull();
+        expect(body.absences).toHaveLength(1);
+        expect(body.absences![0]).toMatchObject({ id: vacation.id, action: "CANCEL" });
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
     it("a person without a VACATION row has no Resturlaub: NO_ENTITLEMENT", async () => {
       const worker = await createWorker("no-entitlement");
       await app.prisma.leaveEntitlement.deleteMany({ where: { employeeId: worker.employee.id } });

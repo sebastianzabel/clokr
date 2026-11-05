@@ -1859,12 +1859,20 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
 
       // D-11/D-18/D-21: the exit-year Resturlaub, only with the right to read the entitlement.
       let vacation: Awaited<ReturnType<FastifyInstance["exitVacationBalance"]>> = null;
-      let vacationUnavailableReason: "NO_PERMISSION" | "NO_ENTITLEMENT" | null = null;
+      let vacationUnavailableReason: "NO_PERMISSION" | "NO_ENTITLEMENT" | "UNAVAILABLE" | null =
+        null;
       if (!(await canReadEntitlementOf(app, req, id, exitInstant))) {
         vacationUnavailableReason = "NO_PERMISSION";
       } else {
-        vacation = await app.exitVacationBalance(id, tenantId, day);
-        if (vacation === null) vacationUnavailableReason = "NO_ENTITLEMENT";
+        // Review WR-06: like the saldo, a failing projection (fail-closed contract or holiday
+        // resolution) must not take the whole preview down - the deactivation itself still works.
+        try {
+          vacation = await app.exitVacationBalance(id, tenantId, day);
+          if (vacation === null) vacationUnavailableReason = "NO_ENTITLEMENT";
+        } catch (err) {
+          app.log.warn({ err, employeeId: id }, "deactivate preview: exit vacation balance failed");
+          vacationUnavailableReason = "UNAVAILABLE";
+        }
       }
 
       return {
