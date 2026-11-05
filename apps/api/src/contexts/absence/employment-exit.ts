@@ -1030,18 +1030,25 @@ async function deleteAbsence(
  * Phase 3 — reactive, after the commit. Recomputes what the changed days feed (snapshots, the
  * persisted overtime balance) and dismisses the managers' open notices of the cancelled requests.
  * Every step logs its own failure; the anonymization is already committed and never fails here.
+ * With nothing changed it does nothing, unless `refreshBalance` asks for the balance refresh anyway
+ * (Issue #615: the deactivation).
  */
 export async function afterEmploymentExit(
   app: FastifyInstance,
   result: EmploymentExitResult,
+  opts: { refreshBalance?: boolean } = {},
 ): Promise<void> {
   const { employeeId } = result.input;
-  if (result.changedFrom === null) return;
+  // Issue #615 review WR-02: a deactivation moves the exit day even when no absence changed, and the
+  // live saldo clamps at the exit day, so the persisted balance is refreshed after EVERY deactivation.
+  if (result.changedFrom === null && !opts.refreshBalance) return;
 
-  try {
-    await recalculateSnapshots(app, employeeId, result.changedFrom);
-  } catch (err) {
-    app.log.error({ err, employeeId }, "Employment exit: snapshot recalculation failed");
+  if (result.changedFrom !== null) {
+    try {
+      await recalculateSnapshots(app, employeeId, result.changedFrom);
+    } catch (err) {
+      app.log.error({ err, employeeId }, "Employment exit: snapshot recalculation failed");
+    }
   }
 
   try {

@@ -59,6 +59,11 @@ export function absencePeriodText(row: Pick<PreviewAbsence, "startDate" | "endDa
   return `${fmtDateDe(row.startDate)} – ${fmtDateDe(row.endDate)}`;
 }
 
+/** Review WR-02: the figure is the live saldo, not the saldo after the exit. */
+export const SALDO_LABEL = "Aktueller Saldo";
+export const SALDO_FINAL_NOTE =
+  "Der Endsaldo steht mit dem Monatsabschluss des Austrittsmonats fest.";
+
 const SALDO_UNAVAILABLE: Record<string, string> = {
   NO_PERMISSION: "Das Saldo kannst du mit deinen Rechten nicht einsehen.",
   NOT_TRACKED: "Für diese Person wird kein Saldo geführt.",

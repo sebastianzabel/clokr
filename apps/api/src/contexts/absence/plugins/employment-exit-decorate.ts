@@ -42,7 +42,10 @@ declare module "fastify" {
         plan: EmploymentExitPlan,
         audit: EmploymentExitAuditPort,
       ) => Promise<EmploymentExitResult>;
-      afterCommit: (result: EmploymentExitResult) => Promise<void>;
+      afterCommit: (
+        result: EmploymentExitResult,
+        opts?: { refreshBalance?: boolean },
+      ) => Promise<void>;
       preview: (input: EmploymentExitInput) => Promise<EmploymentExitPreviewRow[]>;
     };
   }
@@ -56,7 +59,8 @@ export const employmentExitDecoratePlugin = fp(async (app) => {
       plan: EmploymentExitPlan,
       audit: EmploymentExitAuditPort,
     ) => applyEmploymentExit(tx, plan, audit),
-    afterCommit: (result: EmploymentExitResult) => afterEmploymentExit(app, result),
+    afterCommit: (result: EmploymentExitResult, opts?: { refreshBalance?: boolean }) =>
+      afterEmploymentExit(app, result, opts),
     preview: (input: EmploymentExitInput) => previewEmploymentExit(app, input),
   });
 });

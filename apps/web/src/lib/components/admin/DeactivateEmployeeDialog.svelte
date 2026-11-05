@@ -21,6 +21,8 @@
     absencePeriodText,
     absenceTypeLabel,
     initialExitDay,
+    SALDO_FINAL_NOTE,
+    SALDO_LABEL,
     saldoLine,
     skipReasonText,
     vacationLines,
@@ -178,8 +180,13 @@
 
       <dl class="dx-figures">
         <div class="dx-figure">
-          <dt>Saldo</dt>
-          <dd>{saldoLine(view)}</dd>
+          <dt>{SALDO_LABEL}</dt>
+          <dd>
+            <p>{saldoLine(view)}</p>
+            {#if view.saldo}
+              <p class="dx-note">{SALDO_FINAL_NOTE}</p>
+            {/if}
+          </dd>
         </div>
         {#if vacationLines(view).length > 0}
           <div class="dx-figure">
@@ -263,6 +270,11 @@
   }
   .dx-figure dd p {
     margin: 0;
+  }
+  .dx-figure dd .dx-note {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-muted);
   }
   .dx-absences {
     border-top: 1px solid var(--border);

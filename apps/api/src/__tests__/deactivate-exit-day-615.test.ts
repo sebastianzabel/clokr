@@ -653,6 +653,34 @@ describe("Issue #615 — deactivation takes the last working day", () => {
     });
   });
 
+  // ── The stored overtime balance follows every deactivation (review WR-02) ─────────────────────
+  describe("the persisted overtime balance", () => {
+    it("is refreshed after a backdated deactivation even when no absence changed", async () => {
+      const worker = await createWorker("balance", {
+        hireDate: utcMidnight(isoDay(addDays(today, -14))),
+      });
+      await app.prisma.overtimeAccount.update({
+        where: { employeeId: worker.employee.id },
+        data: { balanceHours: 999 },
+      });
+      const res = await deactivate(worker.employee.id, { exitDate: isoDay(addDays(today, -10)) });
+      expect(res.statusCode, res.body).toBe(200);
+      // No absence exists, so the exit rule changes nothing and only the balance refresh can run.
+      const stored = await app.prisma.overtimeAccount.findUniqueOrThrow({
+        where: { employeeId: worker.employee.id },
+      });
+      expect(Number(stored.balanceHours)).not.toBe(999);
+      const got = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${worker.employee.id}`,
+        headers: auth(),
+      });
+      expect(got.statusCode, got.body).toBe(200);
+      const live = (JSON.parse(got.body) as { balanceHours: number }).balanceHours;
+      expect(Number(stored.balanceHours)).toBeCloseTo(live, 1);
+    });
+  });
+
   // ── Europe/Berlin day boundary (AC-615-3) ────────────────────────────────────────────────────
   describe("the default and the bounds follow the tenant-local day, not the UTC day", () => {
     it("at 00:30 Europe/Berlin (the UTC day is still the previous one) no body stores the Berlin day, that day is accepted and the next one refused", async () => {

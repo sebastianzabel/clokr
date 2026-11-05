@@ -105,6 +105,11 @@ describe("DeactivateEmployeeDialog", () => {
     mount();
     await screen.findByText(/−200:00 h/);
     expect(screen.getByText(/Stand gestern, 04\.11\.2026/)).toBeTruthy();
+    // Review WR-02: the figure is labelled as the current saldo, not as the end saldo.
+    expect(screen.getByText("Aktueller Saldo")).toBeTruthy();
+    expect(
+      screen.getByText("Der Endsaldo steht mit dem Monatsabschluss des Austrittsmonats fest."),
+    ).toBeTruthy();
     expect(screen.getByText("18 Tage Resturlaub im Austrittsjahr 2026")).toBeTruthy();
     expect(screen.getByText("Keine Abwesenheiten nach dem letzten Arbeitstag.")).toBeTruthy();
     expect(confirmButton().disabled).toBe(false);

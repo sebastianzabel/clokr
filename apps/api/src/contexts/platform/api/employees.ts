@@ -1667,8 +1667,10 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
       }
 
       // Issue #614: reactive follow-up after the commit (snapshots, overtime balance, notices).
-      // Logs its own failures and never throws.
-      if (exitResult) await app.absenceExit.afterCommit(exitResult);
+      // Logs its own failures and never throws. Review WR-02: the persisted overtime balance is
+      // refreshed after EVERY deactivation - the live saldo clamps at the new exit day even when no
+      // absence changed.
+      if (exitResult) await app.absenceExit.afterCommit(exitResult, { refreshBalance: true });
 
       return { success: true };
     },
