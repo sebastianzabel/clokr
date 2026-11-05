@@ -4,9 +4,11 @@ import {
   afterEmploymentExit,
   applyEmploymentExit,
   planEmploymentExit,
+  previewEmploymentExit,
   type EmploymentExitAuditPort,
   type EmploymentExitInput,
   type EmploymentExitPlan,
+  type EmploymentExitPreviewRow,
   type EmploymentExitResult,
 } from "../employment-exit";
 
@@ -25,6 +27,9 @@ import {
  * `planEmploymentExit` takes the whole app: shortening a request that spans the exit day runs the
  * leave correction core (`prepareLeaveCorrection`), whose pure reads need `app.prisma` and `app.log`.
  *
+ * Issue #615: the deactivation is the second caller of the rule, and `preview` is the read-only view
+ * of the plan its dialog shows before the admin confirms (ids, codes, dates and day counts only).
+ *
  * The three functions are the three phases of the contract in `employment-exit.ts`: `plan` before
  * the anonymization transaction, `apply` inside it, `afterCommit` after it (reactive, never throws).
  */
@@ -38,6 +43,7 @@ declare module "fastify" {
         audit: EmploymentExitAuditPort,
       ) => Promise<EmploymentExitResult>;
       afterCommit: (result: EmploymentExitResult) => Promise<void>;
+      preview: (input: EmploymentExitInput) => Promise<EmploymentExitPreviewRow[]>;
     };
   }
 }
@@ -51,5 +57,6 @@ export const employmentExitDecoratePlugin = fp(async (app) => {
       audit: EmploymentExitAuditPort,
     ) => applyEmploymentExit(tx, plan, audit),
     afterCommit: (result: EmploymentExitResult) => afterEmploymentExit(app, result),
+    preview: (input: EmploymentExitInput) => previewEmploymentExit(app, input),
   });
 });

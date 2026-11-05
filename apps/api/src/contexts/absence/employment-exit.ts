@@ -529,6 +529,193 @@ export async function planEmploymentExit(
   return { input, actions, skipped };
 }
 
+/**
+ * Issue #615 (D-09) — one row of the preview the deactivate dialog shows before the admin confirms.
+ * Ids, codes, `YYYY-MM-DD` dates and day counts only: no note, name, e-mail or attest path.
+ */
+export interface EmploymentExitPreviewRow {
+  entity: "LeaveRequest" | "Absence";
+  id: string;
+  action: "CANCEL" | "SHORTEN" | "DELETE" | "SKIP";
+  /**
+   * UPPER_SNAKE code: `AFTER_EXIT` (the row lies wholly after the exit day), `SPANS_EXIT` (shortened
+   * to the exit day), `NO_DAY_LEFT` (a spanning request with no leave day up to the exit, cancelled
+   * instead) or, for SKIP, the reason the plan reports (`CLOSED_MONTH`, `SPANNING_ABSENCE`, …).
+   */
+  reason: string;
+  /** Leave type code of a request, `Absence.type` of an imposed absence. */
+  typeCode: string;
+  /** Request status; null for an imposed absence (it has none). */
+  status: string | null;
+  startDate: string;
+  endDate: string;
+  /** The exit day, for SHORTEN only. */
+  newEndDate: string | null;
+  days: number;
+  /** The re-priced day count, for SHORTEN only. */
+  newDays: number | null;
+}
+
+/**
+ * Issue #615 (D-09) — the exit plan as read-only rows. It decides NOTHING itself: every row is a
+ * projection of an action (or a skip) of {@link planEmploymentExit}, the one decision about which
+ * row ends, so a previewed row equals what the apply phase then does. Writes nothing.
+ */
+export async function previewEmploymentExit(
+  app: FastifyInstance,
+  input: EmploymentExitInput,
+): Promise<EmploymentExitPreviewRow[]> {
+  const plan = await planEmploymentExit(app, input);
+  const exitIso = isoDay(input.exitDay);
+  const rows: EmploymentExitPreviewRow[] = [];
+
+  for (const action of plan.actions) {
+    if (action.kind === "cancelLeave") {
+      rows.push({
+        entity: "LeaveRequest",
+        id: action.requestId,
+        action: "CANCEL",
+        reason: action.guard.startDate > input.exitDay ? "AFTER_EXIT" : "NO_DAY_LEFT",
+        typeCode: action.leaveTypeCode,
+        status: action.guard.status,
+        startDate: isoDay(action.guard.startDate),
+        endDate: isoDay(action.guard.endDate),
+        newEndDate: null,
+        days: action.days,
+        newDays: null,
+      });
+    } else if (action.kind === "shortenLeave") {
+      const existing = action.correction.existing;
+      rows.push({
+        entity: "LeaveRequest",
+        id: action.requestId,
+        action: "SHORTEN",
+        reason: "SPANS_EXIT",
+        typeCode: existing.leaveType.code,
+        status: action.guard.status,
+        startDate: isoDay(existing.startDate),
+        endDate: isoDay(existing.endDate),
+        newEndDate: isoDay(action.correction.end),
+        days: Number(existing.days),
+        newDays: action.correction.days,
+      });
+    } else if (action.kind === "repricePending") {
+      rows.push({
+        entity: "LeaveRequest",
+        id: action.requestId,
+        action: "SHORTEN",
+        reason: "SPANS_EXIT",
+        typeCode: action.leaveTypeCode,
+        status: "PENDING",
+        startDate: isoDay(action.guard.startDate),
+        endDate: isoDay(action.guard.endDate),
+        newEndDate: exitIso,
+        days: action.guard.days,
+        newDays: action.days,
+      });
+    } else {
+      rows.push({
+        entity: "Absence",
+        id: action.absenceId,
+        action: "DELETE",
+        reason: "AFTER_EXIT",
+        typeCode: action.type,
+        status: null,
+        startDate: isoDay(action.guard.startDate),
+        endDate: isoDay(action.guard.endDate),
+        newEndDate: null,
+        days: action.days,
+        newDays: null,
+      });
+    }
+  }
+
+  // A skipped row carries only its id and reason in the plan: read its period, type and status
+  // (and nothing else) here. Both reads are scoped to the person AND the tenant.
+  const skippedRequestIds = plan.skipped
+    .filter((s) => s.entity === "LeaveRequest")
+    .map((s) => s.id);
+  const skippedAbsenceIds = plan.skipped.filter((s) => s.entity === "Absence").map((s) => s.id);
+  const requestRows = skippedRequestIds.length
+    ? await app.prisma.leaveRequest.findMany({
+        where: {
+          id: { in: skippedRequestIds },
+          employeeId: input.employeeId,
+          employee: { tenantId: input.tenantId },
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          status: true,
+          days: true,
+          startDate: true,
+          endDate: true,
+          leaveType: { select: { code: true } },
+        },
+      })
+    : [];
+  const absenceRows = skippedAbsenceIds.length
+    ? await app.prisma.absence.findMany({
+        where: {
+          id: { in: skippedAbsenceIds },
+          employeeId: input.employeeId,
+          employee: { tenantId: input.tenantId },
+          deletedAt: null,
+        },
+        select: { id: true, type: true, days: true, startDate: true, endDate: true },
+      })
+    : [];
+  const requestById = new Map(requestRows.map((r) => [r.id, r]));
+  const absenceById = new Map(absenceRows.map((r) => [r.id, r]));
+  for (const skip of plan.skipped) {
+    if (skip.entity === "LeaveRequest") {
+      const row = requestById.get(skip.id);
+      if (!row) continue;
+      rows.push({
+        entity: "LeaveRequest",
+        id: row.id,
+        action: "SKIP",
+        reason: skip.reason,
+        typeCode: row.leaveType.code,
+        status: row.status,
+        startDate: isoDay(row.startDate),
+        endDate: isoDay(row.endDate),
+        newEndDate: null,
+        days: Number(row.days),
+        newDays: null,
+      });
+    } else {
+      const row = absenceById.get(skip.id);
+      if (!row) continue;
+      rows.push({
+        entity: "Absence",
+        id: row.id,
+        action: "SKIP",
+        reason: skip.reason,
+        typeCode: row.type,
+        status: null,
+        startDate: isoDay(row.startDate),
+        endDate: isoDay(row.endDate),
+        newEndDate: null,
+        days: Number(row.days),
+        newDays: null,
+      });
+    }
+  }
+
+  return rows.sort((a, b) =>
+    a.startDate !== b.startDate
+      ? a.startDate < b.startDate
+        ? -1
+        : 1
+      : a.id < b.id
+        ? -1
+        : a.id > b.id
+          ? 1
+          : 0,
+  );
+}
+
 /** Phase 2 — writes and audits, inside the caller's (anonymization) transaction. */
 export async function applyEmploymentExit(
   tx: Prisma.TransactionClient,
