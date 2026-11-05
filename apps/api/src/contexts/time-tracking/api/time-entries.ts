@@ -1534,6 +1534,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             targetDate: new Date(body.date),
             status: "APPROVED",
             deletedAt: null,
+            // Issue #657 (CR-02): a grant was never coupled to an entry. An approved entry-first
+            // Nachtrag stays APPROVED and is coupled, so it must not be redeemable as a grant (it
+            // would let the employee write arbitrary times with no approval: four-eyes bypass).
+            timeEntry: { is: null },
           },
           select: { id: true },
         });
@@ -1805,7 +1809,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             // same-grant writes — otherwise the loser could fail on the overlap check (409) before
             // the grant guard ever gets a chance to reject it with 403.
             const consumed = await tx.retroEntryRequest.updateMany({
-              where: { id: grantIdForTx, status: "APPROVED" },
+              where: { id: grantIdForTx, status: "APPROVED", timeEntry: { is: null } },
               data: { status: "USED" },
             });
             if (consumed.count !== 1) {
@@ -2361,6 +2365,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             targetDate: overlapDate,
             status: "APPROVED",
             deletedAt: null,
+            // Issue #657 (CR-02): a grant was never coupled to an entry. An approved entry-first
+            // Nachtrag stays APPROVED and is coupled, so it must not be redeemable as a grant (it
+            // would let the employee write arbitrary times with no approval: four-eyes bypass).
+            timeEntry: { is: null },
           },
           select: { id: true },
         });
@@ -2590,7 +2598,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             // Conditional flip FIRST after the lock: only succeeds if still APPROVED (single-use
             // guard), so a losing same-grant request is rejected with 403 before any conflict check.
             const consumed = await tx.retroEntryRequest.updateMany({
-              where: { id: putResolvedGrantId, status: "APPROVED" },
+              where: { id: putResolvedGrantId, status: "APPROVED", timeEntry: { is: null } },
               data: { status: "USED" },
             });
             if (consumed.count !== 1) {

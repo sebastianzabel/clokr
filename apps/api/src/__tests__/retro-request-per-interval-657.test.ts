@@ -415,6 +415,77 @@ describe("Issue #657 — Zeitnachtrag per interval", () => {
     });
   });
 
+  describe("an entry-first request cannot be redeemed as a grant (CR-02, four-eyes)", () => {
+    it("POST with the own approved coupled request as grantId is refused like a missing grant", async () => {
+      const day = nextDay();
+      const approved = await seedRequest(day, {
+        status: "APPROVED",
+        coupled: { from: "08:00", to: "12:00" },
+      });
+      const send = (grantId: string) =>
+        app.inject({
+          method: "POST",
+          url: "/api/v1/time-entries",
+          headers: { authorization: `Bearer ${seed.empToken}` },
+          payload: {
+            employeeId,
+            date: day,
+            startTime: at(day, "13:00").toISOString(),
+            endTime: at(day, "17:00").toISOString(),
+            breakMinutes: 0,
+            reason: "Nachtrag fixture",
+            grantId,
+          },
+        });
+      const missing = await send(crypto.randomUUID());
+      const bypass = await send(approved.id);
+      expect(missing.statusCode).toBe(403);
+      expect(bypass.statusCode).toBe(403);
+      expect(bypass.body).toBe(missing.body);
+      expect(
+        (await app.prisma.retroEntryRequest.findUniqueOrThrow({ where: { id: approved.id } }))
+          .status,
+      ).toBe("APPROVED");
+      expect(await pendingRows(day)).toBe(1);
+    });
+
+    it("PUT with the own approved coupled request as grantId is refused like a missing grant", async () => {
+      const day = nextDay();
+      const approved = await seedRequest(day, {
+        status: "APPROVED",
+        coupled: { from: "08:00", to: "12:00" },
+      });
+      const entry = await app.prisma.timeEntry.findFirstOrThrow({
+        where: { retroRequestId: approved.id },
+      });
+      const send = (grantId: string) =>
+        app.inject({
+          method: "PUT",
+          url: `/api/v1/time-entries/${entry.id}`,
+          headers: { authorization: `Bearer ${seed.empToken}` },
+          payload: {
+            startTime: at(day, "07:00").toISOString(),
+            endTime: at(day, "19:00").toISOString(),
+            breakMinutes: 0,
+            reason: "Nachtrag fixture",
+            grantId,
+          },
+        });
+      const missing = await send(crypto.randomUUID());
+      const bypass = await send(approved.id);
+      expect(missing.statusCode).toBe(403);
+      expect(bypass.statusCode).toBe(403);
+      expect(bypass.body).toBe(missing.body);
+      const after = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
+      expect(after.startTime.toISOString()).toBe(at(day, "08:00").toISOString());
+      expect(after.endTime?.toISOString()).toBe(at(day, "12:00").toISOString());
+      expect(
+        (await app.prisma.retroEntryRequest.findUniqueOrThrow({ where: { id: approved.id } }))
+          .status,
+      ).toBe("APPROVED");
+    });
+  });
+
   describe("check and write run under the employee row lock (D-04)", () => {
     const holderRequest =
       (day: string) =>
