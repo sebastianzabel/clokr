@@ -5,14 +5,15 @@
 //
 //  - D-01: intervals are half-open on the tenant-local day. A request ending 12:00 and one starting
 //    12:00 touch but do not overlap (the #70 convention of the entry overlap rule).
-//  - D-02: a live request WITHOUT times (a legacy row) covers the whole tenant-local day. No time is
+//  - D-02: a pending request WITHOUT times (a legacy row) covers the whole tenant-local day. No time is
 //    ever invented for it, so it refuses every new request of that day.
-//  - D-13: only LIVE requests refuse. PENDING counts (a coupled one is judged by the interval of its
-//    non-deleted coupled entry, because an own PUT moves the entry and never the request's HH:MM; an
-//    uncoupled one by its HH:MM). APPROVED counts only while no non-deleted coupled entry exists (an
-//    unconsumed grant or approved proposal). REJECTED, USED and withdrawn (`deletedAt`) requests are
-//    ignored, and so is an APPROVED coupled request: that is an ordinary recorded entry by now and the
-//    entry overlap rule judges it.
+//  - D-13: only PENDING requests refuse (a coupled one is judged by the interval of its non-deleted
+//    coupled entry, because an own PUT moves the entry and never the request's HH:MM; an uncoupled
+//    one by its HH:MM). APPROVED, REJECTED, USED and withdrawn (`deletedAt`) requests are ignored: a
+//    decided request is no open question any more, and nothing in the product consumes or withdraws
+//    an APPROVED one (an approved correction proposal, or an approved Nachtrag whose entry was
+//    deleted later, would otherwise block its interval for good). A real collision with a recorded
+//    time is caught by the entry overlap rule when an entry is written.
 //
 // The callers run the check inside the transaction whose FIRST statement is
 // `lockEmployeeForEntryWrite()` (D-04), so a creation that waited on the lock sees the winner's
@@ -80,7 +81,7 @@ export function intervalsOverlap(a: RequestInterval, b: RequestInterval): boolea
 }
 
 /**
- * The first live request of the employee's day whose interval overlaps `interval`, else null.
+ * The first pending request of the employee's day whose interval overlaps `interval`, else null.
  * `tenantId` is required (never optional) so the read cannot silently widen across tenants.
  */
 export async function findOverlappingRetroRequest(
@@ -100,12 +101,11 @@ export async function findOverlappingRetroRequest(
       employeeId: params.employeeId,
       targetDate: params.targetDate,
       deletedAt: null,
-      status: { in: ["PENDING", "APPROVED"] },
+      status: "PENDING",
       employee: { tenantId: params.tenantId },
     },
     select: {
       id: true,
-      status: true,
       startTime: true,
       endTime: true,
       timeEntry: { select: { startTime: true, endTime: true, deletedAt: true } },
@@ -117,8 +117,6 @@ export async function findOverlappingRetroRequest(
     const coupled = row.timeEntry && row.timeEntry.deletedAt === null ? row.timeEntry : null;
     let occupied: RequestInterval;
     if (coupled) {
-      // An APPROVED coupled request is an ordinary entry by now (entry overlap rule).
-      if (row.status !== "PENDING") continue;
       occupied = {
         start: coupled.startTime,
         end: coupled.endTime ?? wholeTenantDay(targetDateStr, params.tz).end,

@@ -1988,7 +1988,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (err instanceof TravelRefusalError) {
           return reply.code(err.refusal.status).send(err.refusal.body);
         }
-        // Issue #657: the Nachtrag overlaps a live Zeitnachtrag request of the same day (neutral
+        // Issue #657: the Nachtrag overlaps a pending Zeitnachtrag request of the same day (neutral
         // text: no date, time or person, so no reach decision is needed).
         if (err instanceof RetroRequestOverlapError) {
           return reply

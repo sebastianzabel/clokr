@@ -6503,10 +6503,12 @@ Die Aussagen „ein Antrag je Mitarbeiter und Tag“ und „ein ausstehender Ant
 gelten nicht mehr. **Schwere:** keine Änderung am Unterbau, kein Schema, keine Migration; nur Zeiterfassung.
 
 - **Die Regel (eine Stelle):** `findOverlappingRetroRequest()` (`contexts/time-tracking/retro-request-overlap.ts`)
-  entscheidet, ob ein neuer Antrag einen lebenden Antrag desselben Tages überlappt. Es zählen offene (`PENDING`) Anträge
-  (mit gekoppelter Zeile über deren Intervall, sonst über die beantragten Zeiten) und freigegebene Anträge ohne gekoppelte
-  Zeile; ein freigegebener Antrag mit gekoppelter Zeile ist ein gewöhnlicher Eintrag und fällt unter die
-  Überschneidungsprüfung des Eintrags. Abgelehnte, verbrauchte und zurückgezogene Anträge zählen nicht. Halboffene Intervalle; ein Antrag ohne Zeiten deckt den ganzen Tag ab. Antwort
+  entscheidet, ob ein neuer Antrag einen offenen Antrag desselben Tages überlappt. Es zählen nur offene (`PENDING`) Anträge
+  (mit gekoppelter Zeile über deren Intervall, sonst über die beantragten Zeiten). Freigegebene, abgelehnte, verbrauchte
+  und zurückgezogene Anträge zählen nicht: ein freigegebener Antrag ist entschieden, wird von nichts im Produkt eingelöst
+  oder zurückgezogen (ein freigegebener Korrekturvorschlag, ein freigegebener Nachtrag mit später gelöschter Zeile) und
+  würde seinen Zeitraum sonst dauerhaft sperren; eine echte Kollision mit gebuchter Zeit fängt die
+  Überschneidungsprüfung des Eintrags beim Schreiben. Halboffene Intervalle; ein Antrag ohne Zeiten deckt den ganzen Tag ab. Antwort
   bei einem Treffer: 409 `RETRO_REQUEST_OVERLAP`, es wird nichts geschrieben.
 - **Beide Anlagewege** (`POST /retro-entry-requests` und der Zeitnachtrag „Eintrag zuerst“ in `POST /time-entries`)
   prüfen und schreiben unter `lockEmployeeForEntryWrite()` als erster Anweisung. Der Korrekturvorschlag hat keine

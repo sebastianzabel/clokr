@@ -429,8 +429,8 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   salons and never across a travel entry. Run `apps/api/scripts/audit-70-entry-overlaps.ts` (read-only) before deploying
   (`docs/migrations.md`, "Phase 70b"). Never re-create a one-entry-per-day rule — not as an index, a check or a
   comment. A Zeitnachtrag is per interval (Issue #657): `findOverlappingRetroRequest()`
-  (`contexts/time-tracking/retro-request-overlap.ts`) is the ONE place that decides whether a new request overlaps a live
-  request of the same day (half-open; a request without times covers the whole day; 409 `RETRO_REQUEST_OVERLAP`), run
+  (`contexts/time-tracking/retro-request-overlap.ts`) is the ONE place that decides whether a new request overlaps a pending
+  request of the same day (only PENDING ones count: a decided request is no open question, and a real collision with a recorded time is the entry overlap rule's job; half-open; a request without times covers the whole day; 409 `RETRO_REQUEST_OVERLAP`), run
   under `lockEmployeeForEntryWrite()` on both creation paths; the entry-first path keeps its entry re-check, the
   correction proposal (`POST /retro-entry-requests`) has none because it overlaps the entry it corrects.
 - **Presence and working time come from one function (Issue #79).** `entryDurations()` and its

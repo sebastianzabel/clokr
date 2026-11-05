@@ -252,7 +252,7 @@ describe("Issue #657 — Zeitnachtrag per interval", () => {
     });
   });
 
-  describe("which requests are live (D-13)", () => {
+  describe("which requests are live (D-13): only PENDING ones", () => {
     const ignored: Array<[string, Parameters<typeof seedRequest>[1]]> = [
       ["REJECTED", { status: "REJECTED" }],
       ["USED", { status: "USED" }],
@@ -261,18 +261,35 @@ describe("Issue #657 — Zeitnachtrag per interval", () => {
         "APPROVED with a coupled entry",
         { status: "APPROVED", coupled: { from: "08:00", to: "12:00" } },
       ],
+      // CR-01 scenario 1: an approved correction proposal writes no entry and nothing consumes it.
+      ["APPROVED without a coupled entry (approved correction proposal)", { status: "APPROVED" }],
     ];
     for (const [label, opts] of ignored) {
-      it(`${label} never refuses`, async () => {
+      it(`${label} never refuses, on either creation path`, async () => {
         const day = nextDay();
         await seedRequest(day, opts);
         expect((await propose(day, "09:00", "10:00")).statusCode).toBe(201);
+        expect((await entryFirst(day, "13:00", "14:00")).statusCode).toBe(201);
       });
     }
 
-    it("an APPROVED request without a coupled entry (an unconsumed grant) refuses", async () => {
+    it("an APPROVED Nachtrag whose coupled entry was deleted later does not block a re-filing (CR-01 scenario 2)", async () => {
       const day = nextDay();
-      await seedRequest(day, { status: "APPROVED" });
+      const request = await seedRequest(day, {
+        status: "APPROVED",
+        coupled: { from: "08:00", to: "12:00" },
+      });
+      await app.prisma.timeEntry.updateMany({
+        where: { retroRequestId: request.id },
+        data: { deletedAt: new Date() },
+      });
+      expect((await entryFirst(day, "08:00", "12:00")).statusCode).toBe(201);
+      expect((await propose(day, "12:00", "13:00")).statusCode).toBe(201);
+    });
+
+    it("a PENDING request still refuses an overlapping one", async () => {
+      const day = nextDay();
+      await seedRequest(day, { status: "PENDING" });
       const res = await propose(day, "09:00", "10:00");
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.body)).toEqual(OVERLAP_BODY);
