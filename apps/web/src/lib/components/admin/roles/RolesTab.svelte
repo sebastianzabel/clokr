@@ -34,9 +34,15 @@
     draft: RoleDraft | null;
     /** Called once catalog and roles have loaded — the page gates its unsaved marker on it. */
     onReady?: () => void;
+    /**
+     * Issue #624: given only when the Ketten-Paket is known to be missing. It replaces the create
+     * action „Neue Rolle“ (display only — the server answers 409 MODULE_NOT_BOOKED either way) and
+     * switches copying off, because a copy is a new role too. Editing and deleting stay free.
+     */
+    createHint?: import("svelte").Snippet;
   }
 
-  let { canManage, draft = $bindable(), onReady }: Props = $props();
+  let { canManage, draft = $bindable(), onReady, createHint }: Props = $props();
 
   let groups = $state<PermissionCatalogGroup[]>([]);
   let roles = $state<AccessRole[]>([]);
@@ -243,9 +249,18 @@
 {:else}
   <Section title="ROLLEN" sub="Systemrollen und die eigenen Rollen des Mandanten">
     {#snippet actions()}
-      <button type="button" class="btn btn-primary btn-sm" disabled={!canManage} onclick={openNew}>
-        Neue Rolle
-      </button>
+      {#if createHint}
+        {@render createHint()}
+      {:else}
+        <button
+          type="button"
+          class="btn btn-primary btn-sm"
+          disabled={!canManage}
+          onclick={openNew}
+        >
+          Neue Rolle
+        </button>
+      {/if}
     {/snippet}
 
     {#if errorText && !draft}
@@ -280,8 +295,12 @@
               <button
                 type="button"
                 class="btn btn-ghost btn-sm"
-                disabled={!canManage}
-                title={canManage ? undefined : "Dafür fehlt Ihnen das Recht, Rollen zu verwalten."}
+                disabled={!canManage || !!createHint}
+                title={createHint
+                  ? "Eine Kopie ist eine neue Rolle und braucht das Ketten-Paket."
+                  : canManage
+                    ? undefined
+                    : "Dafür fehlt Ihnen das Recht, Rollen zu verwalten."}
                 onclick={() => copy(role)}
               >
                 Kopieren
@@ -315,7 +334,7 @@
         {lockReason}
         {saving}
         {isSystem}
-        canCopy={canManage}
+        canCopy={canManage && !createHint}
         {errorText}
         onSubmit={save}
         onDiscard={discard}

@@ -7,7 +7,8 @@
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import RolesTab from "$lib/components/admin/roles/RolesTab.svelte";
   import AssignmentsTab from "$lib/components/admin/roles/AssignmentsTab.svelte";
-  import { salonContext } from "$stores/salon-context";
+  import { salonContext, moduleBooked } from "$stores/salon-context";
+  import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
   import { draftDirty, type RoleDraft } from "$lib/components/admin/roles/role-draft";
   import { authStore } from "$stores/auth";
   import { markUnsaved } from "$stores/unsaved";
@@ -16,6 +17,10 @@
   let canReadRoles = $derived(hasPermission($authStore.user, "role:read:ZUGEWIESEN"));
   let canManage = $derived(hasPermission($authStore.user, "role:manage:ZUGEWIESEN"));
   let canAssign = $derived(hasPermission($authStore.user, "role-assignment:manage:ZUGEWIESEN"));
+
+  // Display only (Phase 566, D-12; sixth set-up spot, Issue #624): a new own role needs the
+  // Ketten-Paket. An unknown package state (null) hides nothing; the server's 409 stays the authority.
+  const chainHint = $derived(moduleBooked($salonContext, "CHAIN") === false);
 
   let tabs = $derived([
     ...(canReadRoles ? [{ id: "roles", label: "Rollen" }] : []),
@@ -33,6 +38,10 @@
   });
 </script>
 
+{#snippet chainHintSnippet()}
+  <ModuleHint module="CHAIN" subject="Eigene Rollen" />
+{/snippet}
+
 <SectionStack
   eyebrow="System"
   title="Rollen & Rechte"
@@ -43,7 +52,12 @@
 >
   {#snippet tabContent(tab)}
     {#if tab === "roles"}
-      <RolesTab {canManage} bind:draft onReady={() => (snapshotsReady = true)} />
+      <RolesTab
+        {canManage}
+        bind:draft
+        onReady={() => (snapshotsReady = true)}
+        createHint={chainHint ? chainHintSnippet : undefined}
+      />
     {:else if tab === "zuweisungen"}
       <AssignmentsTab
         {canReadRoles}
