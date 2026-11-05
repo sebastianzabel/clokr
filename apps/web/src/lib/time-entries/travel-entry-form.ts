@@ -15,6 +15,8 @@
  * Pure module: no Svelte, no API call, so it is unit-testable without a mounted page.
  */
 
+import type { DayCheck, DayCheckTravelOffer } from "$lib/breaks/day-break-violation";
+
 /**
  * The fields of a `GET /time-entries` row a trip adds. The pages' own row types extend this, so a
  * page never has to name the kind field itself — every kind read goes through `isTravelRow`.
@@ -42,6 +44,9 @@ export const TRAVEL_TEXTS = {
   salonsRequired: "Bitte wählen Sie „Von Salon“ und „Nach Salon“.",
   outsideWindow:
     "Eine Fahrzeit außerhalb des Bearbeitungsfensters kann nicht nachträglich beantragt werden.",
+  offerHint:
+    "War die Lücke eine Fahrt zwischen den Salons, lässt sie sich hier als Fahrzeit übernehmen.",
+  offerFailed: "Die Fahrzeit konnte nicht erfasst werden.",
 } as const;
 
 /** The name shown for a side of the route whose name the server did not serve. */
@@ -145,4 +150,44 @@ export function travelFormMode(
   if (!multiEntryUi) return "none";
   if (!editingRow) return "offer";
   return isTravelRow(editingRow) ? "travel" : "none";
+}
+
+/**
+ * Issue #660 (AC-660-6): the ONE place the #64 presentation gate of the day-check travel offer
+ * lives. The offers are the server's (`travelOffers` of a full day); this only hides them where
+ * the page shows no salon options (a single-salon tenant looks as before) and on a withheld day.
+ * It derives no gap, no salon pair and no permission.
+ */
+export function travelOffersShown(check: DayCheck, multiEntryUi: boolean): DayCheckTravelOffer[] {
+  if (!multiEntryUi || check.detail !== "full") return [];
+  return check.travelOffers ?? [];
+}
+
+/** „Fahrzeit HH:MM–HH:MM von {Abfahrtssalon} nach {Zielsalon} erfassen“ from the served offer. */
+export function travelOfferLabel(offer: DayCheckTravelOffer): string {
+  const time = (iso: string) =>
+    new Date(iso).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  return (
+    `Fahrzeit ${time(offer.startTime)}\u2013${time(offer.endTime)} ` +
+    `von ${offer.departureSalonName} nach ${offer.arrivalSalonName} erfassen`
+  );
+}
+
+/**
+ * The body of the POST that takes an offer over: the served interval and salon ids through the
+ * one trip body builder (`travelPayload`) — exactly the five trip keys, no note, no kind.
+ */
+export function travelOfferPayload(date: string, offer: DayCheckTravelOffer) {
+  return travelPayload({
+    date,
+    start: offer.startTime,
+    end: offer.endTime,
+    fromSalonId: offer.departureSalonId,
+    toSalonId: offer.arrivalSalonId,
+  });
+}
+
+/** The server's own German refusal text (`ApiError.message`), else the generic fallback. */
+export function travelOfferErrorText(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : TRAVEL_TEXTS.offerFailed;
 }

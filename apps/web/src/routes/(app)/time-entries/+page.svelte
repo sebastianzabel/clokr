@@ -15,6 +15,7 @@
   // cross-salon finding itself.
   import {
     type DayCheck,
+    type DayCheckTravelOffer,
     type DayCheckWarning,
     type DayChecksResponse,
     type DayWarning,
@@ -46,10 +47,13 @@
     isTravelRow,
     travelArrivalOptions,
     travelFormMode,
+    travelOfferErrorText,
+    travelOfferPayload,
+    travelOffersShown,
     travelPayload,
     travelRouteLabel,
     type TravelRowFields,
-  } from "$lib/time-entries/travel-entry-form"; // Issue #92, D-08
+  } from "$lib/time-entries/travel-entry-form"; // Issue #92, D-08; offer: Issue #660
   import { mayFileRetroRequest } from "$lib/page-rights";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
@@ -1237,6 +1241,24 @@
     await loadAll();
   }
 
+  // Issue #660: an offer of the day check goes through the trip body of the form; the server
+  // re-decides the write. A refusal is the server's own text (a toast survives the reload, the
+  // panel may not), and the reload shows the new day state either way.
+  async function recordTravelOffer(date: string, offer: DayCheckTravelOffer) {
+    try {
+      const saved = await api.post<{ warnings?: unknown }>(
+        "/time-entries",
+        travelOfferPayload(date, offer),
+      );
+      const notice = breakFindingSaveNotice(saved?.warnings);
+      if (notice) toasts.warning(notice);
+    } catch (e: unknown) {
+      toasts.error(travelOfferErrorText(e));
+    } finally {
+      await loadAll();
+    }
+  }
+
   async function deleteDayBreak(id: string, reason: string) {
     await api.delete(`/day-breaks/${id}`, { reason });
     await loadAll();
@@ -1983,6 +2005,8 @@
       onDeleteBreak={deleteDayBreak}
       onAcknowledge={(reason) => acknowledgeDay(dayCheck.date, reason)}
       onRevoke={revokeDayAck}
+      travelOffers={travelOffersShown(dayCheck, multiEntryUi)}
+      onRecordTravel={(offer) => recordTravelOffer(dayCheck.date, offer)}
     />
   {/each}
 

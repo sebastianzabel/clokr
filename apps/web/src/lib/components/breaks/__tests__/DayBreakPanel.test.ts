@@ -11,6 +11,7 @@ import type {
   FullDayCheck,
   WithheldDayCheck,
   DayCheckWarning,
+  DayCheckTravelOffer,
 } from "$lib/breaks/day-break-violation";
 
 function check(over: Partial<FullDayCheck> = {}): FullDayCheck {
@@ -416,5 +417,105 @@ describe("DayBreakPanel", () => {
     expect(screen.getByTestId("day-break-ack").textContent?.trim()).toBe(
       "Als „durchgearbeitet“ quittieren",
     );
+  });
+});
+
+// Issue #660 (D-07) — the server's travel offer as a one-click action. The panel renders what the
+// page passes and decides nothing: no gap, no salon pair and no permission is derived here.
+describe("Issue #660 — the travel offer", () => {
+  const offer = (over: Partial<DayCheckTravelOffer> = {}): DayCheckTravelOffer => ({
+    startTime: "2026-03-10T12:00:00",
+    endTime: "2026-03-10T12:30:00",
+    departureSalonId: "s1",
+    arrivalSalonId: "s2",
+    departureSalonName: "Salon A",
+    arrivalSalonName: "Salon B",
+    ...over,
+  });
+
+  it("shows one labelled button and the hint, and passes the very offer object on click", async () => {
+    const onRecordTravel = vi.fn(async (_offer: DayCheckTravelOffer) => {});
+    const served = offer();
+    renderWithTheme(DayBreakPanel, {
+      check: check(),
+      travelOffers: [served],
+      onRecordTravel,
+    });
+    const buttons = screen.getAllByTestId("day-break-travel-offer");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].textContent?.trim()).toBe(
+      "Fahrzeit 12:00–12:30 von Salon A nach Salon B erfassen",
+    );
+    expect(screen.getByText(/lässt sie sich hier als Fahrzeit übernehmen/)).toBeTruthy();
+    await fireEvent.click(buttons[0]);
+    expect(onRecordTravel).toHaveBeenCalledTimes(1);
+    expect(onRecordTravel.mock.calls[0][0]).toBe(served);
+  });
+
+  it("disables the button while the request runs and ignores a second click", async () => {
+    let release: () => void = () => {};
+    const onRecordTravel = vi.fn(
+      (_offer: DayCheckTravelOffer) =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    renderWithTheme(DayBreakPanel, { check: check(), travelOffers: [offer()], onRecordTravel });
+    const button = screen.getByTestId("day-break-travel-offer") as HTMLButtonElement;
+    await fireEvent.click(button);
+    await waitFor(() => expect(button.disabled).toBe(true));
+    await fireEvent.click(button);
+    expect(onRecordTravel).toHaveBeenCalledTimes(1);
+    release();
+    await waitFor(() => expect(button.disabled).toBe(false));
+  });
+
+  it("shows no button without offers, without a callback, or on a redacted day", () => {
+    const onRecordTravel = vi.fn(async (_offer: DayCheckTravelOffer) => {});
+    const { unmount: u1 } = renderWithTheme(DayBreakPanel, {
+      check: check(),
+      travelOffers: [],
+      onRecordTravel,
+    });
+    expect(screen.queryByTestId("day-break-travel-offer")).toBeNull();
+    u1();
+    const { unmount: u2 } = renderWithTheme(DayBreakPanel, {
+      check: check(),
+      travelOffers: [offer()],
+    });
+    expect(screen.queryByTestId("day-break-travel-offer")).toBeNull();
+    u2();
+    renderWithTheme(DayBreakPanel, {
+      check: redacted(),
+      travelOffers: [offer()],
+      onRecordTravel,
+    });
+    expect(screen.getByTestId("day-break-panel")).toBeTruthy();
+    expect(screen.queryByTestId("day-break-travel-offer")).toBeNull();
+  });
+
+  it("renders two offers in served order, each passing its own offer", async () => {
+    const onRecordTravel = vi.fn(async (_offer: DayCheckTravelOffer) => {});
+    const first = offer();
+    const second = offer({
+      startTime: "2026-03-10T14:00:00",
+      endTime: "2026-03-10T14:20:00",
+      departureSalonId: "s2",
+      arrivalSalonId: "s1",
+      departureSalonName: "Salon B",
+      arrivalSalonName: "Salon A",
+    });
+    renderWithTheme(DayBreakPanel, {
+      check: check(),
+      travelOffers: [first, second],
+      onRecordTravel,
+    });
+    const buttons = screen.getAllByTestId("day-break-travel-offer");
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual([
+      "Fahrzeit 12:00–12:30 von Salon A nach Salon B erfassen",
+      "Fahrzeit 14:00–14:20 von Salon B nach Salon A erfassen",
+    ]);
+    await fireEvent.click(buttons[1]);
+    expect(onRecordTravel).toHaveBeenCalledWith(second);
   });
 });
