@@ -9,9 +9,10 @@
  * Every date is computed relative to the tenant-local today, so the file passes on any day of the
  * year.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import { fromZonedTime } from "date-fns-tz";
 import type { FastifyInstance } from "fastify";
 import {
   getTestApp,
@@ -19,10 +20,13 @@ import {
   cleanupTestData,
   seedEntitlementYears,
   grantSystemRole,
+  auditRowsFor,
   soleAuditRow,
   numericEmployeeNumber,
+  reissueTokenNow,
 } from "./setup";
-import { getTenantTimezone, todayInTz } from "../contexts/working-time-account";
+import { getTenantTimezone, monthRangeUtc, todayInTz } from "../contexts/working-time-account";
+import { getHolidayMap } from "../contexts/absence/leave-days";
 
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 const utcMidnight = (iso: string) => new Date(`${iso}T00:00:00Z`);
@@ -244,7 +248,444 @@ describe("Issue #615 — deactivation takes the last working day", () => {
       expect(ok.statusCode, ok.body).toBe(200);
     });
   });
-});
 
-// Helper kept referenced for the cases added in Task 2.
-void utcMidnight;
+  type Worker = Awaited<ReturnType<typeof createWorker>>;
+
+  /** Plain-JSON copy so Decimal / Date compare by value. */
+  const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+  /**
+   * Everything a deactivation could touch for one person: the login state, the employee row, every
+   * leave request, absence and entitlement row, the unrevoked refresh tokens and the audit rows that
+   * concern the person (employee, leave requests, entitlements).
+   */
+  async function writeSnapshot(who: Worker) {
+    const employeeId = who.employee.id;
+    const leave = await app.prisma.leaveRequest.findMany({
+      where: { employeeId },
+      orderBy: [{ id: "asc" }],
+    });
+    const entitlements = await app.prisma.leaveEntitlement.findMany({
+      where: { employeeId },
+      orderBy: [{ year: "asc" }, { id: "asc" }],
+    });
+    return plain({
+      user: await app.prisma.user.findUniqueOrThrow({ where: { id: who.user.id } }),
+      employee: await app.prisma.employee.findUniqueOrThrow({ where: { id: employeeId } }),
+      leave,
+      absences: await app.prisma.absence.findMany({
+        where: { employeeId },
+        orderBy: [{ id: "asc" }],
+      }),
+      entitlements,
+      unrevokedTokens: await app.prisma.refreshToken.count({
+        where: { userId: who.user.id, revokedAt: null },
+      }),
+      audits: await app.prisma.auditLog.count({
+        where: {
+          entityId: {
+            in: [employeeId, ...leave.map((l) => l.id), ...entitlements.map((e) => e.id)],
+          },
+        },
+      }),
+    });
+  }
+
+  /** A worker with an approved vacation wholly after today, so a wrongly written exit is visible. */
+  async function workerWithVacation(label: string, opts: { hireDate?: Date } = {}) {
+    const worker = await createWorker(label, opts);
+    const start = onOrAfter(addDays(today, 8), 1);
+    await approvedVacation(worker, start, addDays(start, 2));
+    return worker;
+  }
+
+  /** The first Monday-Friday day on or after `from`. */
+  const firstWeekday = (from: Date) => {
+    let day = from;
+    while (day.getUTCDay() === 0 || day.getUTCDay() === 6) day = addDays(day, 1);
+    return day;
+  };
+
+  // ── Refusals write nothing ───────────────────────────────────────────────────────────────────
+  describe("refusals write nothing", () => {
+    async function expectRefusedWithoutWrite(
+      who: Worker,
+      payload: Record<string, unknown>,
+      status: number,
+      code?: string,
+    ) {
+      const before = await writeSnapshot(who);
+      expect(before.unrevokedTokens).toBeGreaterThan(0);
+      expect(before.leave).toHaveLength(1);
+      const res = await deactivate(who.employee.id, payload);
+      expect(res.statusCode, res.body).toBe(status);
+      const body = JSON.parse(res.body) as { error: string; code?: string };
+      if (code) {
+        expect(body.code).toBe(code);
+        expect(body.error.length).toBeGreaterThan(10);
+      }
+      expect(await writeSnapshot(who)).toEqual(before);
+    }
+
+    it("a day after the tenant-local today is a 400 EXIT_DATE_IN_FUTURE (D-02)", async () => {
+      const worker = await workerWithVacation("future");
+      await expectRefusedWithoutWrite(
+        worker,
+        { exitDate: isoDay(addDays(today, 1)) },
+        400,
+        "EXIT_DATE_IN_FUTURE",
+      );
+    });
+
+    it("a day before the tenant-local hire day is a 400 EXIT_DATE_BEFORE_HIRE; the hire day itself is accepted (D-22)", async () => {
+      const hireDay = addDays(today, -10);
+      const worker = await workerWithVacation("before-hire", {
+        hireDate: utcMidnight(isoDay(hireDay)),
+      });
+      await expectRefusedWithoutWrite(
+        worker,
+        { exitDate: isoDay(addDays(hireDay, -1)) },
+        400,
+        "EXIT_DATE_BEFORE_HIRE",
+      );
+      const ok = await deactivate(worker.employee.id, { exitDate: isoDay(hireDay) });
+      expect(ok.statusCode, ok.body).toBe(200);
+    });
+
+    it("a day in a closed month is a 409 MONTH_LOCKED (D-03)", async () => {
+      const worker = await workerWithVacation("locked");
+      const closed = await app.inject({
+        method: "POST",
+        url: "/api/v1/overtime/close-month",
+        headers: auth(),
+        payload: {
+          employeeId: worker.employee.id,
+          year: firstOfLastMonth.getUTCFullYear(),
+          month: firstOfLastMonth.getUTCMonth() + 1,
+          confirmGaps: true,
+        },
+      });
+      expect(closed.statusCode, closed.body).toBe(201);
+      await expectRefusedWithoutWrite(
+        worker,
+        { exitDate: isoDay(firstWeekday(firstOfLastMonth)) },
+        409,
+        "MONTH_LOCKED",
+      );
+    });
+
+    it("a day in an OPEN month before a LATER closed month is a 409 MONTH_LOCKED (D-16)", async () => {
+      // Two months back, so last month can be closed while the month before it stays open. Across a
+      // year boundary the API cannot reach this state (the close is sequential per year), so the
+      // closed month is written the way the closer writes it: the converted month start.
+      const monthBeforeLast = new Date(
+        Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 2, 1),
+      );
+      const worker = await workerWithVacation("later-locked", { hireDate: monthBeforeLast });
+      const range = monthRangeUtc(
+        firstOfLastMonth.getUTCFullYear(),
+        firstOfLastMonth.getUTCMonth() + 1,
+        "Europe/Berlin",
+      );
+      await app.prisma.saldoSnapshot.create({
+        data: {
+          employeeId: worker.employee.id,
+          periodType: "MONTHLY",
+          periodStart: range.start,
+          periodEnd: range.end,
+          workedMinutes: 0,
+          expectedMinutes: 0,
+          balanceMinutes: 0,
+          carryOver: 0,
+          closedAt: new Date(),
+          closedBy: "test-system",
+        },
+      });
+      await expectRefusedWithoutWrite(
+        worker,
+        { exitDate: isoDay(firstWeekday(monthBeforeLast)) },
+        409,
+        "MONTH_LOCKED",
+      );
+    });
+
+    it("an impossible or foreign date format is a validation 400 (D-19)", async () => {
+      const worker = await workerWithVacation("format");
+      await expectRefusedWithoutWrite(worker, { exitDate: "31.12.2026" }, 400);
+      await expectRefusedWithoutWrite(worker, { exitDate: "2026-02-30" }, 400);
+    });
+  });
+
+  // ── Accepted days and formats ────────────────────────────────────────────────────────────────
+  describe("accepted days and formats", () => {
+    it("a past day in an open month is stored as that day's UTC midnight", async () => {
+      const worker = await createWorker("yesterday");
+      const yesterday = addDays(today, -1);
+      const res = await deactivate(worker.employee.id, { exitDate: isoDay(yesterday) });
+      expect(res.statusCode, res.body).toBe(200);
+      const stored = await app.prisma.employee.findUniqueOrThrow({
+        where: { id: worker.employee.id },
+      });
+      expect(stored.exitDate!.toISOString()).toBe(`${isoDay(yesterday)}T00:00:00.000Z`);
+    });
+
+    it("an ISO datetime is reduced to its tenant-local calendar day (D-19)", async () => {
+      const worker = await createWorker("datetime");
+      const yesterday = addDays(today, -1);
+      const res = await deactivate(worker.employee.id, {
+        exitDate: `${isoDay(yesterday)}T00:00:00.000Z`,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const stored = await app.prisma.employee.findUniqueOrThrow({
+        where: { id: worker.employee.id },
+      });
+      expect(stored.exitDate!.toISOString()).toBe(`${isoDay(yesterday)}T00:00:00.000Z`);
+    });
+  });
+
+  // ── Europe/Berlin day boundary (AC-615-3) ────────────────────────────────────────────────────
+  describe("the default and the bounds follow the tenant-local day, not the UTC day", () => {
+    it("at 00:30 Europe/Berlin (the UTC day is still the previous one) no body stores the Berlin day, that day is accepted and the next one refused", async () => {
+      const noBody = await createWorker("berlin-default");
+      const sameDay = await createWorker("berlin-same");
+      const nextDay = await createWorker("berlin-next");
+      const instant = fromZonedTime(`${isoDay(today)}T00:30:00`, "Europe/Berlin");
+      // Anchor: at this instant the UTC calendar day is the day BEFORE the Berlin day.
+      expect(isoDay(instant)).toBe(isoDay(addDays(today, -1)));
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(instant);
+      try {
+        const headers = { authorization: `Bearer ${reissueTokenNow(app, data.adminToken)}` };
+        const patch = (id: string, payload?: Record<string, unknown>) =>
+          app.inject({
+            method: "PATCH",
+            url: `/api/v1/employees/${id}/deactivate`,
+            headers,
+            ...(payload === undefined ? {} : { payload }),
+          });
+
+        const a = await patch(noBody.employee.id);
+        expect(a.statusCode, a.body).toBe(200);
+        const storedA = await app.prisma.employee.findUniqueOrThrow({
+          where: { id: noBody.employee.id },
+        });
+        // A UTC implementation would store the previous day here.
+        expect(storedA.exitDate!.toISOString()).toBe(`${isoDay(today)}T00:00:00.000Z`);
+
+        const b = await patch(sameDay.employee.id, { exitDate: isoDay(today) });
+        expect(b.statusCode, b.body).toBe(200);
+
+        const c = await patch(nextDay.employee.id, { exitDate: isoDay(addDays(today, 1)) });
+        expect(c.statusCode, c.body).toBe(400);
+        expect(JSON.parse(c.body).code).toBe("EXIT_DATE_IN_FUTURE");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── The whole exit rule with its own marker (AC-615-4) ───────────────────────────────────────
+  describe("the employment-exit rule with the marker DEACTIVATION", () => {
+    it("shortens the spanning vacation, cancels the later pending one, deletes the later Berufsschule row, reports the spanning absence, writes no free text", async () => {
+      const NOTE = "Notiz-Zebra-615";
+      const worker = await createWorker("rule", {
+        hireDate: utcMidnight(`${today.getUTCFullYear() - 2}-01-01`),
+      });
+      // X: the most recent weekday that is no public holiday (a weekend or holiday exit day would
+      // re-price the spanning vacation to 0 days, which is the cancel path of #614, not a shortening).
+      let exit = today;
+      for (let i = 0; i < 14; i++) {
+        const holidays = await getHolidayMap(
+          app.prisma,
+          data.tenant.id,
+          worker.employee.id,
+          exit,
+          exit,
+        );
+        if (exit.getUTCDay() >= 1 && exit.getUTCDay() <= 5 && holidays.size === 0) break;
+        exit = addDays(exit, -1);
+      }
+      // Bookings are not part of this case: lift usedDays so a reversal can never run negative.
+      await app.prisma.leaveEntitlement.updateMany({
+        where: { employeeId: worker.employee.id },
+        data: { usedDays: 20 },
+      });
+
+      // The past is not creatable through the API: the spanning vacation is written directly.
+      const spanning = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: worker.employee.id,
+          leaveTypeId: data.vacationType.id,
+          startDate: exit,
+          endDate: addDays(exit, 6),
+          days: 5,
+          status: "APPROVED",
+          reviewedBy: "system",
+          reviewedAt: new Date(),
+          note: NOTE,
+        },
+      });
+      const pendingStart = onOrAfter(addDays(today, 14), 1);
+      const created = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${worker.token}` },
+        payload: {
+          type: "VACATION",
+          startDate: isoDay(pendingStart),
+          endDate: isoDay(addDays(pendingStart, 1)),
+          note: NOTE,
+        },
+      });
+      expect(created.statusCode, created.body).toBe(201);
+      const pendingId = JSON.parse(created.body).id as string;
+      const later = await app.prisma.absence.create({
+        data: {
+          employeeId: worker.employee.id,
+          type: "VOCATIONAL_SCHOOL",
+          source: "MANUAL",
+          startDate: onOrAfter(addDays(today, 21), 1),
+          endDate: onOrAfter(addDays(today, 21), 1),
+          days: 1,
+          note: NOTE,
+          createdBy: "system",
+        },
+      });
+      const across = await app.prisma.absence.create({
+        data: {
+          employeeId: worker.employee.id,
+          type: "MATERNITY",
+          source: "MANUAL",
+          startDate: addDays(exit, -1),
+          endDate: addDays(exit, 1),
+          days: 3,
+          createdBy: "system",
+        },
+      });
+
+      const res = await deactivate(worker.employee.id, { exitDate: isoDay(exit) });
+      expect(res.statusCode, res.body).toBe(200);
+
+      const shortened = await app.prisma.leaveRequest.findUniqueOrThrow({
+        where: { id: spanning.id },
+      });
+      expect(shortened.status).toBe("APPROVED");
+      expect(isoDay(shortened.endDate)).toBe(isoDay(exit));
+      const corrected = await soleAuditRow(app.prisma, {
+        where: { entity: "LeaveRequest", entityId: spanning.id, action: "LEAVE_CORRECTED" },
+      });
+      const correctedValue = corrected.newValue as Record<string, unknown>;
+      expect(correctedValue.trigger).toBe("DEACTIVATION");
+      expect(correctedValue.auditReason).toBe("Deaktivierung");
+
+      expect(
+        (await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: pendingId } })).status,
+      ).toBe("CANCELLED");
+      const cancel = await soleAuditRow(app.prisma, {
+        where: { entity: "LeaveRequest", entityId: pendingId, action: "CANCEL" },
+      });
+      expect((cancel.newValue as Record<string, unknown>).trigger).toBe("DEACTIVATION");
+
+      expect(
+        (await app.prisma.absence.findUniqueOrThrow({ where: { id: later.id } })).deletedAt,
+      ).not.toBeNull();
+      const removed = await soleAuditRow(app.prisma, {
+        where: { entity: "Absence", entityId: later.id, action: "DELETE" },
+      });
+      expect((removed.newValue as Record<string, unknown>).trigger).toBe("DEACTIVATION");
+      expect(
+        (await app.prisma.absence.findUniqueOrThrow({ where: { id: across.id } })).deletedAt,
+      ).toBeNull();
+      expect(await auditRowsFor(app, "Absence", across.id)).toHaveLength(0);
+
+      const update = await soleAuditRow(app.prisma, {
+        where: { entity: "Employee", entityId: worker.employee.id, action: "UPDATE" },
+      });
+      const summary = update.newValue as {
+        absencesEnded: { cancelled: number; shortened: number; deleted: number };
+        exitSkipped: unknown[];
+      };
+      expect(summary.absencesEnded).toEqual({ cancelled: 1, shortened: 1, deleted: 1 });
+      expect(summary.exitSkipped).toEqual([
+        { entity: "Absence", id: across.id, reason: "SPANNING_ABSENCE" },
+      ]);
+
+      // No audit row the deactivation wrote carries a note, a name or an e-mail.
+      const rows = await app.prisma.auditLog.findMany({
+        where: {
+          entityId: { in: [worker.employee.id, spanning.id, pendingId, later.id, across.id] },
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+      expect(rows.length).toBeGreaterThanOrEqual(5);
+      for (const row of rows) {
+        const text = JSON.stringify(row.oldValue) + JSON.stringify(row.newValue);
+        for (const secret of [NOTE, "Exit615", "Fixture", worker.user.email]) {
+          expect(text).not.toContain(secret);
+        }
+      }
+    });
+  });
+
+  // ── § 5 BUrlG after the exit rule, reactivate unchanged (AC-615-5, AC-615-9) ─────────────────
+  describe("exit-year entitlement and reactivate", () => {
+    it("deactivating equals PATCH exitDate for an identical twin on the exit-year row; reactivate restores the full value and does not restore the cancelled request", async () => {
+      const exitYear = today.getUTCFullYear();
+      const june30 = utcMidnight(`${exitYear}-06-30`);
+      const exitDay = isoDay(today.getTime() < june30.getTime() ? today : june30);
+      const hire = utcMidnight("2024-01-01");
+      const a = await createWorker("twin-a", { hireDate: hire });
+      const b = await createWorker("twin-b", { hireDate: hire });
+      // Machine-owned exit-year rows: the sync recomputes those only.
+      await app.prisma.leaveEntitlement.updateMany({
+        where: { employeeId: { in: [a.employee.id, b.employee.id] }, year: exitYear },
+        data: { isAutoCalculated: true, totalDays: 30 },
+      });
+      const rowOf = (employeeId: string, year = exitYear) =>
+        app.prisma.leaveEntitlement.findFirstOrThrow({
+          where: { employeeId, year, leaveType: { code: "VACATION" } },
+        });
+
+      const start = onOrAfter(addDays(today, 8), 1);
+      const vacation = await approvedVacation(a, start, addDays(start, 2));
+      const vacationYear = vacation.startDate.getUTCFullYear();
+      const usedBefore = await usedDays(a.employee.id, vacationYear);
+
+      const deact = await deactivate(a.employee.id, { exitDate: exitDay });
+      expect(deact.statusCode, deact.body).toBe(200);
+      const patched = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${b.employee.id}`,
+        headers: auth(),
+        payload: { exitDate: `${exitDay}T00:00:00.000Z` },
+      });
+      expect(patched.statusCode, patched.body).toBe(200);
+
+      const rowA = await rowOf(a.employee.id);
+      const rowB = await rowOf(b.employee.id);
+      expect(Number(rowA.totalDays)).toBe(Number(rowB.totalDays));
+      expect(Number(rowA.totalDays)).toBeLessThan(30);
+      expect(await usedDays(a.employee.id, vacationYear)).toBe(usedBefore - Number(vacation.days));
+
+      const react = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${a.employee.id}/reactivate`,
+        headers: auth(),
+      });
+      expect(react.statusCode, react.body).toBe(200);
+      const reactivated = await app.prisma.employee.findUniqueOrThrow({
+        where: { id: a.employee.id },
+        include: { user: true },
+      });
+      expect(reactivated.exitDate).toBeNull();
+      expect(reactivated.user.isActive).toBe(true);
+      expect(Number((await rowOf(a.employee.id)).totalDays)).toBe(30);
+      expect(
+        (await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: vacation.id } })).status,
+      ).toBe("CANCELLED");
+      const audits = await auditRowsFor(app, "Employee", a.employee.id, "UPDATE");
+      expect(audits.at(-1)!.newValue).toEqual({ isActive: true, exitDate: null });
+    });
+  });
+});
