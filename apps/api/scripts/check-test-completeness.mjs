@@ -1030,7 +1030,6 @@ import { readFileSync } from "node:fs";
 // total of the full API run (805 files).
 // Merge of #657 onto main after #647: 806 + 4 new files.
 const MIN_FILES = 810;
-const MIN_FILES = 806;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
