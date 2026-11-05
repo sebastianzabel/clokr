@@ -327,6 +327,32 @@ describe("Issue #647 — coverage-rule writes validate the salon", () => {
     ).toEqual(reference.map((r) => [r.templateId, r.dayOfWeek]));
   });
 
+  it("GET shows salonName/salonActive only to callers with shift-config:manage or salon:read; an employee gets null names but keeps salonId (WR-01)", async () => {
+    const employee = await app.inject({
+      method: "GET",
+      url: "/api/v1/shifts/coverage-rules",
+      headers: auth(data.empToken),
+    });
+    expect(employee.statusCode, employee.body).toBe(200);
+    const employeeRows = JSON.parse(employee.body) as RuleBody[];
+    const salonRows = employeeRows.filter((r) => r.salonId !== null);
+    // Salon rules exist (A and the deactivated C) and the id stays visible, like before
+    expect(salonRows.map((r) => r.salonId)).toEqual(expect.arrayContaining([salonA.id, salonC.id]));
+    expect(employeeRows.every((r) => r.salonName === null && r.salonActive === null)).toBe(true);
+    const admin = await app.inject({
+      method: "GET",
+      url: "/api/v1/shifts/coverage-rules",
+      headers: auth(data.adminToken),
+    });
+    const adminRows = JSON.parse(admin.body) as RuleBody[];
+    expect(adminRows.find((r) => r.salonId === salonA.id)).toMatchObject({
+      salonName: salonA.name,
+      salonActive: true,
+    });
+    // The two answers differ only in the display fields
+    expect(employeeRows.map((r) => r.id)).toEqual(adminRows.map((r) => r.id));
+  });
+
   it("PUT with a foreign or unknown template is the identical 404; a template of the tenant and null are accepted (D-13)", async () => {
     const rule = await seedRule();
     for (const templateId of [templateFT.id, randomUUID()]) {

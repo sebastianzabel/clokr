@@ -13,6 +13,7 @@ import {
   findDefaultSalon, // Phase 325 (issue #325), D-04/D-05
   findSalon, // Phase 325 (issue #325) Plan 02, D-06 (explicit salonId resolution)
   listSalons, // Phase 325 (issue #325), D-08 (copy-week fallback)
+  hasPermission,
   permissionReach,
   requirePermission,
   salonForDay, // Phase 344 (issue #344) — the employee's actual per-day salon assignment
@@ -1103,15 +1104,23 @@ export async function shiftRoutes(app: FastifyInstance) {
   app.get("/coverage-rules", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
     handler: async (req) => {
+      // Issue #647 WR-01 — the salon's display fields (name, active flag, inactive salons included)
+      // are salon master data. The endpoint's own guard stays `requireAuth` only (neutrality), so the
+      // fields are attached only for callers who may read salons (`salon:read`) or manage the rules
+      // (`shift-config:manage`, the one consumer is /admin/shifts); everybody else gets `null`.
+      const showSalonFields =
+        (await hasPermission(req, "shift-config:manage:ZUGEWIESEN")) ||
+        (await hasPermission(req, "salon:read:ZUGEWIESEN"));
       const [rules, salons] = await Promise.all([
         app.prisma.coverageRule.findMany({
           where: { tenantId: req.user.tenantId },
           orderBy: [{ templateId: "asc" }, { dayOfWeek: "asc" }],
         }),
-        listSalons(app.prisma, req.user.tenantId, { includeInactive: true }),
+        showSalonFields
+          ? listSalons(app.prisma, req.user.tenantId, { includeInactive: true })
+          : Promise.resolve([]),
       ]);
-      // Issue #647 D-09 — display fields only; the control value is `salonId`, never the name. The
-      // endpoint's guard is unchanged (neutrality); salon names are tenant master data, no person data.
+      // Issue #647 D-09 — display fields only; the control value is `salonId`, never the name.
       const salonById = new Map(salons.map((salon) => [salon.id, salon]));
       return rules.map((rule) => {
         const salon = rule.salonId === null ? undefined : salonById.get(rule.salonId);

@@ -1150,7 +1150,8 @@ const MIN_FILES = 805;
 // exactly the deliberately deleted #539/#75b role-column cases named in the #641 comment above.
 // Issue #531: imports.test.ts -1 (whole-import refusal replaced) +5 (Stammsalon per row); full run measured 801 files / 11793 tests (incl. 3 skipped).
 // Phase 647 (2026-11-05): 11793 -> 11834, measured by the full run named at MIN_FILES (the four new files add 41 cases).
-const MIN_TESTS = 11834;
+// Phase 647 review fix WR-01: 11834 -> 11835 (+1 case in coverage-rule-write-salon-647.test.ts).
+const MIN_TESTS = 11835;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

@@ -3170,7 +3170,8 @@ Spalte); kein Export von `contexts/platform/index.ts` ändert sich, und `Salon` 
   auf die Vorlage eines anderen Mandanten (gemessen im roten Lauf: 200). Eine geänderte `templateId` wird jetzt gegen den
   Mandanten geprüft; fremd und unbekannt antworten mit derselben 404 „Vorlage nicht gefunden“, nichts wird geschrieben.
 - **Liste (D-09).** `GET /coverage-rules` liefert je Regel `salonId`, `salonName`, `salonActive` (Anzeige, serverseitig
-  zusammengesetzt wie bei den NFC-Terminals, #541).
+  zusammengesetzt wie bei den NFC-Terminals, #541); Name und Aktiv-Kennzeichen nur für Aufrufer mit `shift-config:manage`
+  oder `salon:read`, sonst `null` (Salonstammdaten folgen dem `salon:read`-Tor, Review WR-01).
 - **Oberfläche (D-10).** `/admin/shifts` zeigt im Regelformular die Auswahl „Salon“ nur unter `showSalonOptions()` (#64) und
   sendet `salonId` nur, solange die Auswahl sichtbar ist; die Spalte „Salon“ erscheint bei Salonwahl oder sobald eine Regel
   einen Salon trägt; ein deaktivierter Salon bleibt Auswahl (`<Name> (deaktiviert)`) und wird in der Liste markiert. Die Seite
@@ -3194,7 +3195,9 @@ Spalte); kein Export von `contexts/platform/index.ts` ändert sich, und `Salon` 
 - **Keine Zeile je Vorlage und Salon** (offene Idee), kein neuer Schlüssel in der `/week`-Antwort.
 - **Keine Reichweitenprüfung für mandantenweite Regeln** (D-07). Sie kann heute nicht eintreten: `shift-config:manage` ist ein
   Mandanten-Schlüssel, nur eine Zuweisung mit Scope Mandant besteht die Prüfung; ein Salonmanager bekommt bei jedem Schreiben
-  403 (getestet). Die Leserechte von `GET /coverage-rules` bleiben unverändert.
+  403 (getestet). Der Wächter von `GET /coverage-rules` bleibt `requireAuth` (die Statuscodes der Neutralitätsaufnahmen sind
+  unverändert), der Inhalt wurde aber bewusst eingeschränkt (Review WR-01): `salonName` und `salonActive` stehen nur für
+  Aufrufer mit `shift-config:manage` oder `salon:read`, für alle anderen sind beide `null`; `salonId` bleibt sichtbar.
 - **Kein `migrate deploy` gegen die Dev-Datenbank während der Phase.** Gemessen mit `prisma migrate status`: dort fehlte die
   Migration `20261103000000_drop_user_role` (#641), und der laufende Dev-Stack ist auf einer Basis vor #641 gebaut und liest
   `User.role`; ein Deploy hätte die Spalte entfernt. Dev erhält die Migration mit dem nächsten Neubau aus `main`.
