@@ -8,6 +8,7 @@
 │       │   └── /:employeeId/contracts (GET, HEAD)
 │       │   └── /:salonId (PATCH)
 │       │   └── /authorize (POST)
+│       │   └── /preview (POST)
 │       │   ├── /:employeeId/month (GET, HEAD)
 │       │   ├── /home (POST)
 │       └── /activate (POST)

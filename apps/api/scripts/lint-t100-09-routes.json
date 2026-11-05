@@ -143,6 +143,18 @@
       "validatedAt": null
     },
     {
+      "route": "POST /api/v1/employees/:id/deactivate/preview",
+      "file": "apps/api/src/contexts/platform/api/employees.ts",
+      "category": "probe",
+      "params": {
+        "id": "employee"
+      },
+      "minimalBody": null,
+      "reason": "employees.ts (POST /:id/deactivate/preview, Issue #615 D-08/D-17): the read-only twin of PATCH /:id/deactivate. Both routes go through the one module-private loadDeactivationTarget(): fetch-then-compare, byte-identical 404 for a nonexistent id, a foreign-tenant employee (CROSS_TENANT_ACCESS_DENIED audited) and an in-tenant employee outside the caller's Stammsalon scope (enforcePersonAdminScope, SCOPE_ACCESS_DENIED audited); only an in-scope person can ever see the already-deactivated 409. The optional body (`deactivateBodySchema.parse(req.body ?? {})`, all fields optional) is parsed before the lookup, so a malformed value is the same 400 for every id and a bodyless probe reaches the guard without a minimalBody. The exit day (future / before hire / closed month) is resolved only after the lookup and is returned in the 200 body as `refusal`, so it reveals nothing about a foreign or out-of-scope person. A successful preview writes no row. Covered by the scope-variant sweep in t100-09-oracle-probe.test.ts (a SALONS-scoped actor's real, in-tenant, out-of-scope employee and a nonexistent id are proven byte-identical).",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "PATCH /api/v1/employees/:id/reactivate",
       "file": "apps/api/src/contexts/platform/api/employees.ts",
       "category": "probe",

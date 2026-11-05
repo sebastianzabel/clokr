@@ -452,6 +452,11 @@ export interface EmployeeExitPorts {
     toDay: string,
     tz: string,
   ): Promise<boolean>;
+  /**
+   * Issue #615 (D-10): the live saldo through tenant-local yesterday, the value of
+   * `GET /overtime/:employeeId`; `null` for a § 18 ArbZG exempt person. May throw.
+   */
+  liveSaldo(app: FastifyInstance, employeeId: string): Promise<{ totalHours: number } | null>;
 }
 
 export interface EmployeeRoutesOptions {
@@ -499,7 +504,13 @@ const deactivateBodySchema = z.object({
 
 type ExitDayResolution =
   | { ok: true; day: string; date: Date; today: string; tz: string }
-  | { ok: false; status: 400 | 409; body: { error: string; code: string } };
+  | {
+      ok: false;
+      status: 400 | 409;
+      body: { error: string; code: string };
+      day: string;
+      today: string;
+    };
 
 /**
  * Issue #615 (D-01/D-02/D-03/D-16/D-22) - the ONE resolution of a deactivation's last working day,
@@ -519,9 +530,11 @@ async function resolveExitDay(
       : CALENDAR_DAY_PATTERN.test(input.raw)
         ? input.raw
         : tenantLocalDay(new Date(input.raw), tz);
-  if (day > today) return { ok: false, status: 400, body: EXIT_DATE_IN_FUTURE_RESPONSE };
+  if (day > today) {
+    return { ok: false, status: 400, body: EXIT_DATE_IN_FUTURE_RESPONSE, day, today };
+  }
   if (day < tenantLocalDay(input.hireDate, tz)) {
-    return { ok: false, status: 400, body: EXIT_DATE_BEFORE_HIRE_RESPONSE };
+    return { ok: false, status: 400, body: EXIT_DATE_BEFORE_HIRE_RESPONSE, day, today };
   }
   // D-16: the exit month or any later month up to the current one is closed - moving the end of the
   // employment before a closed month would change that month's DATEV population (§ 147 AO).
@@ -535,9 +548,34 @@ async function resolveExitDay(
       tz,
     )
   ) {
-    return { ok: false, status: 409, body: EXIT_MONTH_LOCKED_RESPONSE };
+    return { ok: false, status: 409, body: EXIT_MONTH_LOCKED_RESPONSE, day, today };
   }
   return { ok: true, day, date: dayToDate(day), today, tz };
+}
+
+/**
+ * Issue #615 (D-11/D-21) - may this caller read the person's leave entitlement? The permission of
+ * `GET /leave/entitlements/:employeeId`: EIGENE covers only the caller's own person, ZUGEWIESEN the
+ * caller plus a Stammsalon scope match judged at `day` (the Stichtag of the figure shown, here the
+ * last working day). Decided before the figure is computed; writes and audits nothing.
+ */
+async function canReadEntitlementOf(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  employeeId: string,
+  day: Date,
+): Promise<boolean> {
+  const reach = await permissionReach(req, "leave-entitlement:read");
+  if (reach === null) return false;
+  const own = req.user.employeeId === employeeId;
+  if (reach !== "ZUGEWIESEN") return own;
+  if (own) return true;
+  const scopeReach = await resolveAccessReach(
+    app.prisma,
+    accessContextFromRequest(req),
+    "leave-entitlement:read:ZUGEWIESEN",
+  );
+  return isStammsalonScopeMatch(app.prisma, req.user.tenantId, scopeReach, employeeId, day);
 }
 
 export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesOptions) {
@@ -1544,6 +1582,138 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
       if (exitResult) await app.absenceExit.afterCommit(exitResult);
 
       return { success: true };
+    },
+  });
+
+  // POST /api/v1/employees/:id/deactivate/preview
+  //
+  // Issue #615 (D-08/D-09/D-10/D-11/D-17/D-21): what the deactivation on a chosen last working day
+  // would do, without doing it. Same permission, same lookup (404 / 409) and the same exit-day
+  // resolution as PATCH /:id/deactivate; a refused day is returned as `refusal` with the status, code
+  // and text the deactivation answers. A successful preview writes no row - no business row, no
+  // audit row. The absences are the exit rule's read-only plan, the Resturlaub the § 5 projection
+  // of the Abwesenheiten facade, the saldo the live account figure through the composition port.
+  // Each figure is computed only for a caller who holds its own right (`null` + a reason code).
+  app.post("/:id/deactivate/preview", {
+    schema: {
+      tags: ["Mitarbeiter"],
+      description:
+        "Read-only preview of a deactivation on a chosen last working day: the absences the exit rule would end, the live saldo and the exit-year leave balance. Writes nothing.",
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: requirePermission("employee:manage-access:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const { exitDate } = deactivateBodySchema.parse(req.body ?? {});
+      const tenantId = req.user.tenantId;
+
+      // Issue #615 (D-17): the lookup, tenant check, scope check and 409 below are line for line the
+      // ones of PATCH /:id/deactivate, so both answer the same 404 / 409 (T-100-09); the oracle probe
+      // and deactivate-preview-rights-615.test.ts compare the bodies.
+      const employee = await app.prisma.employee.findUnique({
+        where: { id },
+        include: { user: true },
+      });
+      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Employee",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: account-lifecycle action, Stammsalon-only -
+      // runs BEFORE the isActive branch below, so an out-of-scope employee's current state never
+      // leaks through a distinguishable 409 (T-100-09).
+      if (
+        !(await enforcePersonAdminScope(
+          app,
+          req,
+          reply,
+          id,
+          "employee:manage-access:ZUGEWIESEN",
+          "Mitarbeiter nicht gefunden",
+        ))
+      ) {
+        return;
+      }
+      if (!employee.user.isActive)
+        return reply.code(409).send({ error: "Mitarbeiter ist bereits deaktiviert" });
+
+      const resolved = await resolveExitDay(app, opts, {
+        tenantId,
+        employeeId: id,
+        hireDate: employee.hireDate,
+        raw: exitDate,
+      });
+      const day = resolved.day;
+      const exitInstant = dayToDate(day);
+
+      // D-10/D-21: the saldo does not depend on the chosen day (live, through tenant-local
+      // yesterday), so it stays visible next to a refused day - but only within the caller's
+      // `overtime:read` reach, decided before anything is computed.
+      const saldoYesterday = new Date(dayToDate(resolved.today).getTime() - 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      let saldo: { balanceMinutes: number; asOf: string } | null = null;
+      let saldoUnavailableReason: "NO_PERMISSION" | "NOT_TRACKED" | "UNAVAILABLE" | null = null;
+      const balanceVisibleFor = await resolveBalanceVisibility(app, req);
+      if (balanceVisibleFor !== "all" && !balanceVisibleFor.has(id)) {
+        saldoUnavailableReason = "NO_PERMISSION";
+      } else {
+        try {
+          const live = await opts.exitPorts.liveSaldo(app, id);
+          if (live === null) {
+            saldoUnavailableReason = "NOT_TRACKED";
+          } else {
+            saldo = { balanceMinutes: Math.round(live.totalHours * 60), asOf: saldoYesterday };
+          }
+        } catch (err) {
+          app.log.warn({ err, employeeId: id }, "deactivate preview: live saldo failed");
+          saldoUnavailableReason = "UNAVAILABLE";
+        }
+      }
+
+      const base = {
+        exitDate: day,
+        today: resolved.today,
+        storedExitDate: employee.exitDate ? employee.exitDate.toISOString().slice(0, 10) : null,
+        saldo,
+        saldoUnavailableReason,
+      };
+
+      if (!resolved.ok) {
+        return {
+          ...base,
+          refusal: { status: resolved.status, ...resolved.body },
+          absences: null,
+          vacation: null,
+          vacationUnavailableReason: "EXIT_DATE_REFUSED" as const,
+        };
+      }
+
+      // D-09: the exit plan as read-only rows, with the marker the deactivation itself uses.
+      const absences = await app.absenceExit.preview({
+        tenantId,
+        employeeId: id,
+        exitDay: exitInstant,
+        marker: { auditReason: "Deaktivierung", trigger: "DEACTIVATION" },
+      });
+
+      // D-11/D-18/D-21: the exit-year Resturlaub, only with the right to read the entitlement.
+      let vacation: Awaited<ReturnType<FastifyInstance["exitVacationBalance"]>> = null;
+      let vacationUnavailableReason: "NO_PERMISSION" | "NO_ENTITLEMENT" | null = null;
+      if (!(await canReadEntitlementOf(app, req, id, exitInstant))) {
+        vacationUnavailableReason = "NO_PERMISSION";
+      } else {
+        vacation = await app.exitVacationBalance(id, tenantId, day);
+        if (vacation === null) vacationUnavailableReason = "NO_ENTITLEMENT";
+      }
+
+      return { ...base, refusal: null, absences, vacation, vacationUnavailableReason };
     },
   });
 
