@@ -217,6 +217,32 @@ const coverageRuleSchema = z.object({
   salonId: z.string().uuid().nullable().optional(),
 });
 
+/**
+ * Issue #647 D-06/D-07 — the one admission of a salon named on a coverage-rule write: the same
+ * validator as every other salon-taking endpoint (`resolveSalonInReach`) against the caller's
+ * `shift-config:manage` reach. A foreign, unknown or inactive salon is `ok: false` (the caller
+ * answers the one `SALON_NOT_FOUND` 404 before any write). `shift-config:manage` is a MANDANT key,
+ * so a caller who reaches a coverage-rule write holds a tenant-wide reach today and the check
+ * reduces to "an active salon of the tenant"; it stays correct if the key ever changes.
+ */
+async function coverageRuleSalonAdmissible(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  salonId: string,
+): Promise<{ ok: true; salonId: string } | { ok: false }> {
+  const salon = await resolveSalonInReach(
+    app.prisma,
+    req.user.tenantId,
+    await resolveAccessReach(
+      app.prisma,
+      accessContextFromRequest(req),
+      "shift-config:manage:ZUGEWIESEN",
+    ),
+    salonId,
+  );
+  return salon.ok && salon.salonId !== null ? { ok: true, salonId: salon.salonId } : { ok: false };
+}
+
 // Per-day coverage status
 type CoverageStatus = "ok" | "under" | "supervision-missing";
 
@@ -1077,9 +1103,23 @@ export async function shiftRoutes(app: FastifyInstance) {
   app.get("/coverage-rules", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
     handler: async (req) => {
-      return app.prisma.coverageRule.findMany({
-        where: { tenantId: req.user.tenantId },
-        orderBy: [{ templateId: "asc" }, { dayOfWeek: "asc" }],
+      const [rules, salons] = await Promise.all([
+        app.prisma.coverageRule.findMany({
+          where: { tenantId: req.user.tenantId },
+          orderBy: [{ templateId: "asc" }, { dayOfWeek: "asc" }],
+        }),
+        listSalons(app.prisma, req.user.tenantId, { includeInactive: true }),
+      ]);
+      // Issue #647 D-09 — display fields only; the control value is `salonId`, never the name. The
+      // endpoint's guard is unchanged (neutrality); salon names are tenant master data, no person data.
+      const salonById = new Map(salons.map((salon) => [salon.id, salon]));
+      return rules.map((rule) => {
+        const salon = rule.salonId === null ? undefined : salonById.get(rule.salonId);
+        return {
+          ...rule,
+          salonName: salon?.name ?? null,
+          salonActive: salon?.isActive ?? null,
+        };
       });
     },
   });
@@ -1098,21 +1138,10 @@ export async function shiftRoutes(app: FastifyInstance) {
         if (!tpl) return reply.code(404).send({ error: "Vorlage nicht gefunden" });
       }
       // Issue #647 D-06/D-07 — one validator, one 404 for a foreign, unknown or inactive salon;
-      // tenant-wide rules keep today's permission behaviour. `shift-config:manage` is a MANDANT key,
-      // so a caller who reaches this line holds a tenant-wide reach today and the check reduces to
-      // "an active salon of the tenant".
+      // tenant-wide rules (no salonId) keep today's permission behaviour.
       let ruleSalonId: string | null = null;
       if (typeof body.salonId === "string") {
-        const salon = await resolveSalonInReach(
-          app.prisma,
-          req.user.tenantId,
-          await resolveAccessReach(
-            app.prisma,
-            accessContextFromRequest(req),
-            "shift-config:manage:ZUGEWIESEN",
-          ),
-          body.salonId,
-        );
+        const salon = await coverageRuleSalonAdmissible(app, req, body.salonId);
         if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
         ruleSalonId = salon.salonId;
       }
@@ -1150,10 +1179,27 @@ export async function shiftRoutes(app: FastifyInstance) {
       });
       if (!existing) return reply.code(404).send({ error: "Bedarfsregel nicht gefunden" });
 
+      // Issue #647 D-13 — a CHANGED template is checked against the tenant like on create: closes a
+      // cross-tenant reference and a foreign-vs-unknown oracle (the T-100-09 gate sees path
+      // parameters only).
+      if (typeof body.templateId === "string" && body.templateId !== existing.templateId) {
+        const tpl = await app.prisma.shiftTemplate.findFirst({
+          where: { id: body.templateId, tenantId: req.user.tenantId },
+        });
+        if (!tpl) return reply.code(404).send({ error: "Vorlage nicht gefunden" });
+      }
+      // Issue #647 D-06 — only a CHANGED salon is validated, so a rule of a salon deactivated later
+      // stays editable while a new assignment must name an active salon.
+      if (typeof body.salonId === "string" && body.salonId !== existing.salonId) {
+        const salon = await coverageRuleSalonAdmissible(app, req, body.salonId);
+        if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
+      }
+
       const updated = await app.prisma.coverageRule.update({
         where: { id },
         data: {
           ...(body.templateId !== undefined ? { templateId: body.templateId ?? null } : {}),
+          ...(body.salonId !== undefined ? { salonId: body.salonId } : {}),
           ...(body.dayOfWeek !== undefined ? { dayOfWeek: body.dayOfWeek } : {}),
           ...(body.minStaff !== undefined ? { minStaff: body.minStaff } : {}),
           ...(body.requiresNonSupervised !== undefined
