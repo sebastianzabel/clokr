@@ -359,6 +359,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/services/phorest/sync-shifts.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**)
   "src/services/phorest/sync-tenant.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**) — Phase 65b (#65) orchestrator
   "src/services/phorest/types.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**)
+  "src/contexts/scheduling/coverage-rule.ts": "schichtplanung", // Issue #647 — pure: the coverage rule of a day (candidate set + ladder), no model access
   "src/contexts/scheduling/get-current-shift.ts": "schichtplanung", // Shift lookup; sole importer routes/presence.ts, but the model concept is Shift itself
   "src/contexts/scheduling/shift-availability.ts": "schichtplanung", // EmployeeAvailability/Shift availability checks
   "src/contexts/scheduling/shift-cleanup.ts": "schichtplanung", // soft-deletes/flags Shift rows on VOCATIONAL_SCHOOL Absence creation — Shift is the model it manipulates

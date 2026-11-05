@@ -125,6 +125,9 @@ model Salon {
   // Issue #541: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung, approved by
   // #541 reaching Ready) — the NFC terminal keys bound to this salon.
   terminalApiKeys     TerminalApiKey[]
+  // Issue #647: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung named on
+  // #647, D-02) — the coverage rules that apply to this salon's view.
+  coverageRules       CoverageRule[]
 
   @@index([tenantId])
 }
@@ -1975,11 +1978,18 @@ model CoverageRule {
   dayOfWeek             Int // 0=Mo..6=So; -1 = "all days"
   minStaff              Decimal        @default(2) @db.Decimal(4, 2)
   requiresNonSupervised Boolean        @default(false)
+  // Issue #647 (D-01): the salon whose view the rule applies to; NULL = tenant-wide, which every
+  // rule written before #647 is (no backfill). The same tenant is enforced by the application
+  // through resolveSalonInReach, not by the database. Restrict because a salon is never
+  // hard-deleted. A new Shared-Kernel dependency, named on #647.
+  salonId               String?
   createdAt             DateTime       @default(now()) @db.Timestamptz
   updatedAt             DateTime       @updatedAt @db.Timestamptz
+  salon                 Salon?         @relation(fields: [salonId], references: [id], onDelete: Restrict)
 
   @@index([tenantId])
   @@index([templateId])
+  @@index([salonId])
 }
 
 model Shift {
